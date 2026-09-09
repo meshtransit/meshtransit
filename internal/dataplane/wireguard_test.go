@@ -201,8 +201,8 @@ func TestWireGuardEngineNewMapRevisionResetsPreferredEndpoint(t *testing.T) {
 	}
 	if device.configureCalls != 3 || !strings.Contains(
 		device.configurations[2],
-		"replace_peers=true",
-	) {
+		"update_only=true",
+	) || strings.Contains(device.configurations[2], "replace_peers=true") {
 		t.Fatalf("new revision configuration = %q", device.configuration)
 	}
 	if err := engine.RestorePreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID); err != nil {
@@ -217,6 +217,94 @@ func TestWireGuardEngineNewMapRevisionResetsPreferredEndpoint(t *testing.T) {
 			opener.calls,
 			device.upCalls,
 			device.closeCalls,
+		)
+	}
+}
+
+func TestWireGuardEngineNewEquivalentRevisionPreservesSocket(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	opener := &wireGuardTUNOpener{}
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		opener,
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	oldRevision := snapshot.Revision
+	snapshot.Revision++
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply(new revision) error = %v", err)
+	}
+	if device.configureCalls != 1 || opener.calls != 1 || device.upCalls != 1 ||
+		device.closeCalls != 0 {
+		t.Fatalf(
+			"equivalent revision changed tunnel: configure=%d open=%d up=%d close=%d",
+			device.configureCalls,
+			opener.calls,
+			device.upCalls,
+			device.closeCalls,
+		)
+	}
+	if err := engine.SetPreferredEndpoint(
+		oldRevision,
+		snapshot.Peers[0].ID,
+		snapshot.Peers[0].Endpoints[0],
+	); !errors.Is(err, ErrPeerEndpointGeneration) {
+		t.Fatalf("old-revision SetPreferredEndpoint() error = %v", err)
+	}
+	if err := engine.SetPreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+		snapshot.Peers[0].Endpoints[0],
+	); err != nil {
+		t.Fatalf("current-revision SetPreferredEndpoint() error = %v", err)
+	}
+}
+
+func TestWireGuardEngineClosesWhenEquivalentRevisionResetFails(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	preferred := netip.MustParseAddrPort("192.168.1.23:41641")
+	snapshot.Peers[0].Endpoints = append(snapshot.Peers[0].Endpoints, preferred)
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if err := engine.SetPreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID, preferred); err != nil {
+		t.Fatalf("SetPreferredEndpoint() error = %v", err)
+	}
+	device.configureErr = errors.New("test reset failure")
+	snapshot.Revision++
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err == nil {
+		t.Fatal("Apply(new revision) error = nil")
+	}
+	if device.configureCalls != 3 || device.closeCalls != 1 || engine.device != nil ||
+		engine.appliedRevision != 0 {
+		t.Fatalf(
+			"failed revision reset calls=%d close=%d device=%#v revision=%d",
+			device.configureCalls,
+			device.closeCalls,
+			engine.device,
+			engine.appliedRevision,
 		)
 	}
 }

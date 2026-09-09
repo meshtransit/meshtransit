@@ -22,7 +22,7 @@ copied into this repository.
 | Expiry | Improve history by scheduling removal at its actual deadline. | The reference tracker can retain an expired address until another link or discovery event triggers an update. |
 | Path proof | Require an authenticated discovery response before a candidate becomes the preferred data path. | A control-distributed address is a probe target, not proof that the peer currently owns that path. |
 | Selection | Admit only fresh authenticated paths, smooth measured latency, require a material improvement to switch, then use deterministic local/IPv6/address preferences for near-equivalent paths. | This avoids random first-packet routing and latency-jitter flapping while remaining testable. |
-| Activity | Probe and heartbeat only active peer sessions; apply per-peer and global rate limits. | Idle meshes should not create continuous background traffic or unbounded timers. |
+| Activity | Run bounded periodic health rounds for online peers now; add packet-activity pacing before scale-out. | Fresh proof is required for safe roaming, while idle meshes should eventually avoid unnecessary background traffic. |
 | Control requests | Continue rejecting arbitrary control-supplied probe URLs. | Executing them would create an SSRF primitive unrelated to peer path discovery. |
 | Isolation | Bind every discovery result and callback to an active-profile generation. | Results from a cancelled profile or old network map must never cross a Network boundary. |
 | Observability | Expose candidate counts, source classes, chosen path class, freshness, and failure reason; do not log raw discovery packets. | Operators need an inspectable state machine without secrets, payloads, or unnecessary address history. |
@@ -93,16 +93,19 @@ peer map ──────────► authenticated path manager ───�
    enforces bounded per-peer/global state, exact peer/map/socket/source binding,
    five-second deadlines, consume-once replay rejection, and generation resets.
    Live shared-socket demultiplexing, bounded asynchronous authentication, Pong
-   responses, paced map-triggered scheduling, failed-send cancellation, and
-   authenticated transaction completion are implemented. The bounded
+   responses, paced map-triggered scheduling, randomized periodic health
+   rounds, failed-send cancellation, and authenticated transaction completion
+   are implemented. The bounded
    product-owned selector now enforces authorized candidates, a 6.5-second
    freshness window, smoothed RTT, switch hysteresis, deterministic ties,
    exact expiry/fallback, generation reset, and rollback rejection. One owned
    daemon worker applies selector transitions through peer-scoped WireGuard
    `update_only` requests, guards the installed map revision and signed endpoint
    set, restores the signed base endpoint at exact proof expiry, and closes the
-   engine on an ambiguous update. Heartbeat, traffic-idle pacing, and continuous
-   roaming remain.
+   engine on an ambiguous update. Equivalent map revisions safely retire stale
+   path proof without reopening the shared socket. Activity-aware probe
+   suppression remains; periodic authenticated rounds currently keep roaming
+   decisions fresh for all online peers.
 5. Pending: Linux end-to-end tests with no manually advertised endpoint, including
    restart, socket rebinding, stale-result cancellation, and default-deny
    policy behavior.

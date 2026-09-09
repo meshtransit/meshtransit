@@ -217,9 +217,17 @@ func (e *WireGuardEngine) Apply(
 	}
 	if e.device != nil {
 		if e.configurationHash == plan.configurationHash &&
-			e.appliedRevision == snapshot.Revision &&
 			equalPeerEndpointAuthority(e.peers, plan.peers) {
-			return plan.state(), nil
+			if e.appliedRevision == snapshot.Revision {
+				return plan.state(), nil
+			}
+			advanced, err := e.advanceEquivalentPlan(snapshot.Revision, plan.peers)
+			if err != nil {
+				return StateFailed, err
+			}
+			if advanced {
+				return plan.state(), nil
+			}
 		}
 		if err := e.device.Configure(bytes.NewReader(plan.configuration)); err != nil {
 			_ = e.Close()
@@ -467,6 +475,31 @@ func (e *WireGuardEngine) RestorePreferredEndpoint(
 	}
 
 	return e.configurePeerEndpoint(peerID, peer, peer.baseEndpoint)
+}
+
+// advanceEquivalentPlan binds a new map revision without reopening the shared
+// UDP socket. A path selected under the previous revision is first returned to
+// its control-plane endpoint so stale path proof cannot cross generations.
+func (e *WireGuardEngine) advanceEquivalentPlan(
+	revision uint64,
+	planned []wireGuardPeerPlan,
+) (bool, error) {
+	for _, peer := range planned {
+		installed := e.peers[peer.id]
+		if installed.currentEndpoint != installed.baseEndpoint &&
+			!installed.baseEndpoint.IsValid() {
+			return false, nil
+		}
+	}
+	for _, peer := range planned {
+		installed := e.peers[peer.id]
+		if err := e.configurePeerEndpoint(peer.id, installed, installed.baseEndpoint); err != nil {
+			return false, err
+		}
+	}
+	e.appliedRevision = revision
+
+	return true, nil
 }
 
 func (e *WireGuardEngine) configurePeerEndpoint(

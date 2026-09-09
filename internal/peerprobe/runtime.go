@@ -3,8 +3,10 @@ package peerprobe
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/netip"
 	"sync"
 	"time"
@@ -20,6 +22,8 @@ const (
 	maxScheduledProbes      = 512
 	maxScheduledPerPeer     = 8
 	defaultProbePace        = 10 * time.Millisecond
+	minProbeRefresh         = 2800 * time.Millisecond
+	maxProbeRefresh         = 3200 * time.Millisecond
 	incomingPingWindow      = time.Second
 	maxIncomingPings        = 128
 	maxIncomingPingsPerPeer = 16
@@ -63,6 +67,7 @@ type Runtime struct {
 	observer  PathObserver
 	clock     func() time.Time
 	pace      time.Duration
+	refresh   time.Duration
 
 	lifecycleMu sync.RWMutex
 	enqueueMu   sync.RWMutex
@@ -97,6 +102,7 @@ func NewRuntime(
 		observer,
 		time.Now,
 		defaultProbePace,
+		randomProbeRefresh(),
 	)
 }
 
@@ -107,8 +113,9 @@ func newRuntime(
 	observer PathObserver,
 	clock func() time.Time,
 	pace time.Duration,
+	refresh time.Duration,
 ) (*Runtime, error) {
-	if ctx == nil || transport == nil || clock == nil || pace <= 0 {
+	if ctx == nil || transport == nil || clock == nil || pace <= 0 || refresh <= 0 {
 		return nil, errors.New("peerprobe: runtime dependencies are invalid")
 	}
 	if err := ctx.Err(); err != nil {
@@ -126,6 +133,7 @@ func newRuntime(
 		observer:  observer,
 		clock:     clock,
 		pace:      pace,
+		refresh:   refresh,
 		datagrams: make(chan receivedDatagram, maxQueuedDatagrams),
 		slots:     make(chan struct{}, maxQueuedDatagrams),
 		schedules: make(chan probeBatch, 1),
@@ -400,12 +408,16 @@ func (r *Runtime) runScheduler(ctx context.Context) {
 	var timerChannel <-chan time.Time
 	current := probeBatch{}
 	index := 0
+	roundStarted := time.Time{}
+	waitingForRound := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case current = <-r.schedules:
 			index = 0
+			roundStarted = time.Time{}
+			waitingForRound = true
 			if len(current.targets) == 0 {
 				timerChannel = nil
 
@@ -416,7 +428,11 @@ func (r *Runtime) runScheduler(ctx context.Context) {
 		case <-timerChannel:
 			timerChannel = nil
 			if current.generation != r.activeGeneration() {
-				index = len(current.targets)
+				continue
+			}
+			if waitingForRound {
+				roundStarted = r.clock()
+				waitingForRound = false
 			}
 			if index < len(current.targets) {
 				target := current.targets[index]
@@ -433,9 +449,40 @@ func (r *Runtime) runScheduler(ctx context.Context) {
 			if index < len(current.targets) {
 				resetRuntimeTimer(timer, r.pace)
 				timerChannel = timer.C
+
+				continue
 			}
+			index = 0
+			waitingForRound = true
+			resetRuntimeTimer(
+				timer,
+				nextProbeRoundDelay(roundStarted, r.clock(), r.refresh),
+			)
+			timerChannel = timer.C
 		}
 	}
+}
+
+func nextProbeRoundDelay(startedAt, now time.Time, interval time.Duration) time.Duration {
+	if startedAt.IsZero() || now.IsZero() || now.Before(startedAt) {
+		return interval
+	}
+	elapsed := now.Sub(startedAt)
+	if elapsed >= interval {
+		return 0
+	}
+
+	return interval - elapsed
+}
+
+func randomProbeRefresh() time.Duration {
+	span := maxProbeRefresh - minProbeRefresh
+	random, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(span)))
+	if err != nil {
+		return minProbeRefresh + span/2
+	}
+
+	return minProbeRefresh + time.Duration(random.Int64())
 }
 
 func (r *Runtime) activeGeneration() pathdiscovery.ProbeGeneration {

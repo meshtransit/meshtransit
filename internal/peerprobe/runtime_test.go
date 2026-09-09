@@ -197,6 +197,7 @@ func TestRuntimeLimitsAuthenticatedPingResponses(t *testing.T) {
 		nil,
 		clock.Now,
 		time.Millisecond,
+		time.Hour,
 	)
 	if err != nil {
 		t.Fatalf("newRuntime() error = %v", err)
@@ -281,6 +282,103 @@ func TestBuildProbeTargetsIsBoundedAndRoundRobin(t *testing.T) {
 	}
 	if !slices.Equal(targets, want) {
 		t.Fatalf("buildProbeTargets() = %#v, want %#v", targets, want)
+	}
+}
+
+func TestRuntimeRepeatsProbeRounds(t *testing.T) {
+	t.Parallel()
+
+	local := testIdentity(t)
+	remote := testIdentity(t)
+	transport := newRuntimeTransport()
+	runtime, err := newRuntime(
+		t.Context(),
+		local,
+		transport,
+		nil,
+		time.Now,
+		time.Millisecond,
+		20*time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("newRuntime() error = %v", err)
+	}
+	t.Cleanup(runtime.Close)
+	snapshot, generation := runtimeSnapshot(t, local, remote)
+	if _, _, err := runtime.Activate(snapshot, generation); err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	first := waitForRuntimeSend(t, transport)
+	second := waitForRuntimeSend(t, transport)
+	if first.destination != second.destination || bytes.Equal(first.packet, second.packet) {
+		t.Fatalf("repeated probes = %#v then %#v", first, second)
+	}
+}
+
+func TestRuntimeDeactivateStopsProbeRounds(t *testing.T) {
+	t.Parallel()
+
+	local := testIdentity(t)
+	remote := testIdentity(t)
+	transport := newRuntimeTransport()
+	runtime, err := newRuntime(
+		t.Context(),
+		local,
+		transport,
+		nil,
+		time.Now,
+		time.Millisecond,
+		500*time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("newRuntime() error = %v", err)
+	}
+	t.Cleanup(runtime.Close)
+	snapshot, generation := runtimeSnapshot(t, local, remote)
+	if _, _, err := runtime.Activate(snapshot, generation); err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	waitForRuntimeSend(t, transport)
+	runtime.Deactivate()
+	time.Sleep(30 * time.Millisecond)
+	if sends := transport.sentSnapshot(); len(sends) != 1 {
+		t.Fatalf("deactivated runtime sent %d probes, want 1", len(sends))
+	}
+}
+
+func TestNextProbeRoundDelay(t *testing.T) {
+	t.Parallel()
+
+	startedAt := time.Unix(2_000, 0)
+	interval := 3 * time.Second
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Duration
+	}{
+		{name: "partial", now: startedAt.Add(time.Second), want: 2 * time.Second},
+		{name: "deadline", now: startedAt.Add(interval), want: 0},
+		{name: "overdue", now: startedAt.Add(4 * time.Second), want: 0},
+		{name: "clock regression", now: startedAt.Add(-time.Second), want: interval},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := nextProbeRoundDelay(startedAt, test.now, interval); got != test.want {
+				t.Fatalf("nextProbeRoundDelay() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestRandomProbeRefreshBounds(t *testing.T) {
+	t.Parallel()
+
+	for range 100 {
+		refresh := randomProbeRefresh()
+		if refresh < minProbeRefresh || refresh >= maxProbeRefresh {
+			t.Fatalf("randomProbeRefresh() = %v", refresh)
+		}
 	}
 }
 
@@ -490,6 +588,7 @@ func testRuntime(
 		observer,
 		time.Now,
 		time.Millisecond,
+		time.Hour,
 	)
 	if err != nil {
 		t.Fatalf("newRuntime() error = %v", err)
