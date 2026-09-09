@@ -87,6 +87,22 @@ func TestParseWireGuardPOC(t *testing.T) {
 	}
 }
 
+func TestParseWireGuardPOCWithAutomaticEndpointDiscovery(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Parse([]string{
+		"--enable-wireguard-poc",
+		"--wireguard-listen-port", "41641",
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if !cfg.EnableWireGuardPOC || cfg.WireGuardListenPort != 41641 ||
+		len(cfg.AdvertiseEndpoints) != 0 {
+		t.Fatalf("parsed config = %#v", cfg)
+	}
+}
+
 func TestParseFlowLogging(t *testing.T) {
 	t.Parallel()
 
@@ -111,7 +127,6 @@ func TestParseRejectsUnsafeWireGuardPOC(t *testing.T) {
 
 	tests := [][]string{
 		{"--enable-wireguard-poc"},
-		{"--enable-wireguard-poc", "--wireguard-listen-port", "41641"},
 		{
 			"--enable-wireguard-poc",
 			"--wireguard-listen-port", "41641",

@@ -88,7 +88,7 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	flags.Var(
 		&advertiseEndpoints,
 		"advertise-endpoint",
-		"explicit public UDP endpoint advertised to control; repeatable",
+		"optional explicit UDP endpoint advertised to control; repeatable",
 	)
 	flags.BoolVar(
 		&cfg.EnableFlowLogs,
@@ -205,9 +205,6 @@ func validate(cfg Config) error {
 	if cfg.EnableWireGuardPOC {
 		if cfg.WireGuardListenPort == 0 {
 			return errors.New("wireguard poc requires a non-zero listen port")
-		}
-		if len(cfg.AdvertiseEndpoints) == 0 {
-			return errors.New("wireguard poc requires at least one advertised endpoint")
 		}
 	} else if cfg.WireGuardListenPort != 0 || len(cfg.AdvertiseEndpoints) != 0 {
 		return errors.New("wireguard endpoint options require --enable-wireguard-poc")

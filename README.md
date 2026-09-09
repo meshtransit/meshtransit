@@ -9,7 +9,7 @@ $ meshd --socket /tmp/meshd.sock --state-dir /tmp/meshd-state
 {"level":"INFO","msg":"meshd started","socket":"/tmp/meshd.sock","version":"dev"}
 ```
 
-Without an explicit POC flag the daemon remains control-only and reports `data_plane: not_implemented`. The direct-path POC is deliberately narrower than a production client: it supports fixed public peer endpoints and host routes, enforces node-specific protocol/port policy, and permits only bounded replies to flows initiated by the local node. The Linux DNS POC serves MagicDNS A, AAAA, and PTR records, authoritative negative answers, classic-IP split DNS, and global forwarding without replacing local DNS unless the control map explicitly requests a default route. Relay, subnet/exit routing, encrypted DNS transports, fragmented packets, and unsupported narrow transport semantics remain fail closed.
+Without an explicit POC flag the daemon remains control-only and reports `data_plane: not_implemented`. The direct-path POC is deliberately narrower than a production client: it discovers safe host-interface and server-reflexive peer endpoints, supports optional explicitly configured candidates, installs host routes, enforces node-specific protocol/port policy, and permits only bounded replies to flows initiated by the local node. The Linux DNS POC serves MagicDNS A, AAAA, and PTR records, authoritative negative answers, classic-IP split DNS, and global forwarding without replacing local DNS unless the control map explicitly requests a default route. Relay, subnet/exit routing, encrypted DNS transports, fragmented packets, and unsupported narrow transport semantics remain fail closed.
 
 On a disposable Linux host, the privileged boundary can be exercised explicitly:
 
@@ -18,9 +18,13 @@ On a disposable Linux host, the privileged boundary can be exercised explicitly:
     --allow-prefix 100.64.0.0/10 \
     --allow-prefix fd7a:115c:a1e0::/48
 $ meshd --enable-wireguard-poc \
-    --wireguard-listen-port 41641 \
-    --advertise-endpoint 203.0.113.10:41641
+    --wireguard-listen-port 41641
 ```
+
+The daemon normally derives candidates from the shared WireGuard socket and
+the control-signed STUN map. `--advertise-endpoint` remains an optional,
+repeatable bootstrap or diagnostic input; it is not required for direct-path
+startup.
 
 `meshnetd` fixes the allowed UID, interface names, MTU, overlay pools, DNS endpoint, and `resolvectl` path at startup. The protocol contains only bounded TUN lifecycle and per-link DNS operations; it cannot carry commands, arbitrary paths, or keys. The helper rejects subnets, duplicates, self-route overlap, every prefix outside its root-configured pools, and non-canonical DNS domains. It returns descriptors through `SCM_RIGHTS` and never receives control or node private keys. `meshd` verifies TUN responses byte-for-byte, starts userspace WireGuard, and recreates or tears down non-persistent interfaces as signed state changes.
 
@@ -86,8 +90,8 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - Status-only visibility into control synchronization, latest validated revision, and peer count; raw policy and peer keys are not exposed locally.
 - Linux-only `meshnetd` privilege boundary with `SO_PEERCRED`, bounded `SOCK_SEQPACKET` framing, root-configured overlay pools, host-route-only dynamic TUN configuration, and descriptor passing via `SCM_RIGHTS`.
 - Explicit `--enable-tun-poc` lifecycle that closes the non-persistent TUN on default-deny, profile changes, control failure, and shutdown.
-- Linux userspace WireGuard direct-path POC with signed-map key binding, fixed endpoints, exact dynamic helper address/route verification, node-specific inbound protocol/port filtering, and bounded stateful replies for locally initiated TCP, UDP, and ICMP echo flows.
-- Shared-socket STUN endpoint publication and authenticated peer probing with session/map/socket generation binding, bounded asynchronous receive work, paced signed-endpoint scheduling, and deterministic authenticated path selection that is not yet applied to the tunnel endpoint.
+- Linux userspace WireGuard direct-path POC with signed-map key binding, automatically discovered endpoints, optional configured candidates, exact dynamic helper address/route verification, node-specific inbound protocol/port filtering, and bounded stateful replies for locally initiated TCP, UDP, and ICMP echo flows.
+- Shared-socket STUN endpoint publication and authenticated peer probing with session/map/socket generation binding, bounded asynchronous receive work, paced signed-endpoint scheduling, and deterministic authenticated endpoint promotion, expiry, fallback, and roaming.
 - Opt-in native flow telemetry with redacted control-issued credentials, bounded non-blocking queues, TCP handshake state, explicit per-direction counters, HTTPS-only uploads, redirect refusal, and no packet payload retention.
 - No copied compatibility-reference source.
 
@@ -95,7 +99,7 @@ See [docs/architecture.md](docs/architecture.md) and [docs/security-model.md](do
 
 ## Current scope
 
-This repository can validate a server key, explicitly pin it, persist and register a per-profile identity, maintain the active profile's control stream, atomically publish a validated network map, activate Linux MagicDNS and split-DNS routing, create a Linux TUN through a separate privileged process, reconcile signed host routes inside fixed overlay pools, enforce host-level packet policy, publish discovered endpoints, run authenticated direct-path probes, and exchange encrypted packets directly between known public endpoints. `doctor control` remains a non-persisting diagnostic. It does not yet implement encrypted resolver transports, relay traversal, authenticated endpoint promotion and roaming, subnet/exit routes, fragment reassembly, or complete port semantics for transports other than TCP and UDP.
+This repository can validate a server key, explicitly pin it, persist and register a per-profile identity, maintain the active profile's control stream, atomically publish a validated network map, activate Linux MagicDNS and split-DNS routing, create a Linux TUN through a separate privileged process, reconcile signed host routes inside fixed overlay pools, enforce host-level packet policy, publish discovered endpoints, run authenticated direct-path probes, and roam encrypted traffic between authenticated public and private direct paths. `doctor control` remains a non-persisting diagnostic. It does not yet implement encrypted resolver transports, relay traversal, subnet/exit routes, fragment reassembly, or complete port semantics for transports other than TCP and UDP.
 
 Private identity records currently rely on the daemon account and filesystem permissions for at-rest protection. Treat `/var/lib/meshd` and its backups as secrets. OS-backed sealing is still a production release gate.
 
