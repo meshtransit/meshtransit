@@ -4,6 +4,7 @@ package dataplane
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/netip"
 	"os"
@@ -14,7 +15,9 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 )
 
-type officialWireGuardFactory struct{}
+type officialWireGuardFactory struct {
+	generations *socketGenerationSource
+}
 
 type officialWireGuardDevice struct {
 	device    *device.Device
@@ -24,15 +27,18 @@ type officialWireGuardDevice struct {
 }
 
 func newWireGuardFactory() (wireGuardFactory, error) {
-	return officialWireGuardFactory{}, nil
+	return &officialWireGuardFactory{generations: &socketGenerationSource{}}, nil
 }
 
-func (officialWireGuardFactory) New(
+func (f *officialWireGuardFactory) New(
 	file *os.File,
 	mtu int,
 	filter *policyFilter,
 	observer PacketObserver,
 ) (wireGuardDevice, error) {
+	if f == nil || f.generations == nil {
+		return nil, errors.New("dataplane: wireguard factory is not initialized")
+	}
 	tunDevice, err := tun.CreateTUNFromFile(file, mtu)
 	if err != nil {
 		return nil, err
@@ -48,7 +54,10 @@ func (officialWireGuardFactory) New(
 		Verbosef: device.DiscardLogf,
 		Errorf:   device.DiscardLogf,
 	}
-	bind, err := newSharedBind(conn.NewDefaultBind())
+	bind, err := newSharedBindWithGenerationSource(
+		conn.NewDefaultBind(),
+		f.generations,
+	)
 	if err != nil {
 		_ = tunDevice.Close()
 

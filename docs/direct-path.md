@@ -106,9 +106,13 @@ peer map ──────────► authenticated path manager ───�
    path proof without reopening the shared socket. Activity-aware probe
    suppression remains; periodic authenticated rounds currently keep roaming
    decisions fresh for all online peers.
-5. Pending: Linux end-to-end tests with no manually advertised endpoint, including
-   restart, socket rebinding, stale-result cancellation, and default-deny
-   policy behavior.
+5. Implemented as a POC: Linux end-to-end tests use only automatically
+   discovered host and server-reflexive candidates. They cover daemon restart,
+   private-path selection, socket rebinding, stale-result cancellation, and a
+   live default-deny to restored-policy transition without restarting the
+   daemon. Socket generations share one monotonic namespace for the complete
+   WireGuard engine lifetime, so recreating a bind cannot make a fresh path
+   generation look stale or reuse authority from an earlier socket.
 
 Port mapping and relay transport remain separate follow-up capabilities. They
 have candidate types now, but they are not treated as implemented until their

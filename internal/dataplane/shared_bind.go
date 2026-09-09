@@ -16,12 +16,20 @@ const maxControlDatagramSize = 2048
 // sharedBind demultiplexes bounded control datagrams before WireGuard sees
 // them and exposes the same sockets to the discovery scheduler.
 type sharedBind struct {
-	inner      conn.Bind
-	mu         sync.RWMutex
-	handler    pathdiscovery.DatagramHandler
-	isOpen     bool
-	port       uint16
-	generation uint64
+	inner       conn.Bind
+	generations *socketGenerationSource
+	mu          sync.RWMutex
+	handler     pathdiscovery.DatagramHandler
+	isOpen      bool
+	port        uint16
+	generation  uint64
+}
+
+// socketGenerationSource provides one monotonic namespace across every bind
+// created during a WireGuard engine's lifetime. Gaps are safe; reuse is not.
+type socketGenerationSource struct {
+	mu     sync.Mutex
+	latest uint64
 }
 
 var (
@@ -30,11 +38,35 @@ var (
 )
 
 func newSharedBind(inner conn.Bind) (*sharedBind, error) {
+	return newSharedBindWithGenerationSource(inner, &socketGenerationSource{})
+}
+
+func newSharedBindWithGenerationSource(
+	inner conn.Bind,
+	generations *socketGenerationSource,
+) (*sharedBind, error) {
 	if inner == nil {
 		return nil, errors.New("dataplane: inner wireguard bind is required")
 	}
+	if generations == nil {
+		return nil, errors.New("dataplane: socket generation source is required")
+	}
 
-	return &sharedBind{inner: inner}, nil
+	return &sharedBind{inner: inner, generations: generations}, nil
+}
+
+func (s *socketGenerationSource) next() (uint64, error) {
+	if s == nil {
+		return 0, errors.New("dataplane: socket generation source is unavailable")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.latest == math.MaxUint64 {
+		return 0, errors.New("dataplane: socket generation is exhausted")
+	}
+	s.latest++
+
+	return s.latest, nil
 }
 
 func (b *sharedBind) setDatagramHandler(handler pathdiscovery.DatagramHandler) error {
@@ -57,9 +89,6 @@ func (b *sharedBind) setDatagramHandler(handler pathdiscovery.DatagramHandler) e
 func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.generation == math.MaxUint64 {
-		return nil, 0, errors.New("dataplane: socket generation is exhausted")
-	}
 	receivers, actualPort, err := b.inner.Open(port)
 	if err != nil {
 		return nil, 0, fmt.Errorf("dataplane: opening wireguard bind: %w", err)
@@ -69,7 +98,13 @@ func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 
 		return nil, 0, errors.New("dataplane: wireguard bind returned invalid socket metadata")
 	}
-	b.generation++
+	generation, err := b.generations.next()
+	if err != nil {
+		_ = b.inner.Close()
+
+		return nil, 0, err
+	}
+	b.generation = generation
 	b.port = actualPort
 	b.isOpen = true
 	socket := pathdiscovery.Socket{

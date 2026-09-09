@@ -2,6 +2,7 @@ package dataplane
 
 import (
 	"errors"
+	"math"
 	"net/netip"
 	"slices"
 	"sync"
@@ -20,6 +21,12 @@ func TestNewSharedBind(t *testing.T) {
 	}
 	if shared, err := newSharedBind(newFakeInnerBind()); err != nil || shared == nil {
 		t.Fatalf("newSharedBind() = %#v, %v", shared, err)
+	}
+	if _, err := newSharedBindWithGenerationSource(
+		newFakeInnerBind(),
+		nil,
+	); err == nil {
+		t.Fatal("newSharedBindWithGenerationSource(nil) error = nil, want non-nil")
 	}
 }
 
@@ -139,6 +146,54 @@ func TestSharedBindSendDatagramAndSocketGeneration(t *testing.T) {
 	}
 	if got := shared.Socket(); got.Generation != 2 || got.Port != 41641 {
 		t.Fatalf("second Open() socket = %#v", got)
+	}
+}
+
+func TestSharedBindSocketGenerationContinuesAcrossInstances(t *testing.T) {
+	t.Parallel()
+
+	generations := &socketGenerationSource{}
+	first, err := newSharedBindWithGenerationSource(newFakeInnerBind(), generations)
+	if err != nil {
+		t.Fatalf("newSharedBindWithGenerationSource(first) error = %v", err)
+	}
+	if _, _, err := first.Open(41641); err != nil {
+		t.Fatalf("first Open() error = %v", err)
+	}
+	if got := first.Socket().Generation; got != 1 {
+		t.Fatalf("first socket generation = %d, want 1", got)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("first Close() error = %v", err)
+	}
+
+	second, err := newSharedBindWithGenerationSource(newFakeInnerBind(), generations)
+	if err != nil {
+		t.Fatalf("newSharedBindWithGenerationSource(second) error = %v", err)
+	}
+	if _, _, err := second.Open(41641); err != nil {
+		t.Fatalf("second Open() error = %v", err)
+	}
+	if got := second.Socket().Generation; got != 2 {
+		t.Fatalf("second socket generation = %d, want 2", got)
+	}
+}
+
+func TestSharedBindSocketGenerationExhaustionFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	inner := newFakeInnerBind()
+	shared, err := newSharedBindWithGenerationSource(inner, &socketGenerationSource{
+		latest: math.MaxUint64,
+	})
+	if err != nil {
+		t.Fatalf("newSharedBindWithGenerationSource() error = %v", err)
+	}
+	if _, _, err := shared.Open(41641); err == nil {
+		t.Fatal("Open() at generation exhaustion error = nil")
+	}
+	if shared.Socket().IsOpen() || inner.isOpen {
+		t.Fatalf("exhausted bind remained open: shared=%#v inner=%v", shared.Socket(), inner.isOpen)
 	}
 }
 

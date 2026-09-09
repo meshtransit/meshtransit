@@ -2,6 +2,7 @@ package pathdiscovery
 
 import (
 	"errors"
+	"fmt"
 	"net/netip"
 	"slices"
 	"sync"
@@ -118,8 +119,17 @@ func (s *PathSelector) Activate(
 	if s == nil {
 		return PathSelectionResult{}, ErrPathSelectionInactive
 	}
-	if !generation.IsValid() || snapshot.Revision != generation.MapRevision {
-		return PathSelectionResult{}, ErrInvalidPathSnapshot
+	if !generation.IsValid() {
+		return PathSelectionResult{}, fmt.Errorf(
+			"%w: generation is incomplete",
+			ErrInvalidPathSnapshot,
+		)
+	}
+	if snapshot.Revision != generation.MapRevision {
+		return PathSelectionResult{}, fmt.Errorf(
+			"%w: map revision does not match generation",
+			ErrInvalidPathSnapshot,
+		)
 	}
 	next, err := buildPeerPathState(snapshot)
 	if err != nil {
@@ -269,12 +279,30 @@ func (s *PathSelector) canActivateLocked(generation ProbeGeneration) error {
 	if !s.latest.IsValid() {
 		return nil
 	}
-	if generation.Scope != s.latest.Scope ||
-		generation.MapRevision < s.latest.MapRevision ||
-		generation.Socket.Generation < s.latest.Socket.Generation ||
-		(generation.Socket.Generation == s.latest.Socket.Generation &&
-			generation.Socket.Port != s.latest.Socket.Port) {
-		return ErrInvalidPathSnapshot
+	if generation.Scope != s.latest.Scope {
+		return fmt.Errorf(
+			"%w: discovery scope changed",
+			ErrInvalidPathSnapshot,
+		)
+	}
+	if generation.MapRevision < s.latest.MapRevision {
+		return fmt.Errorf(
+			"%w: map revision regressed",
+			ErrInvalidPathSnapshot,
+		)
+	}
+	if generation.Socket.Generation < s.latest.Socket.Generation {
+		return fmt.Errorf(
+			"%w: socket generation regressed",
+			ErrInvalidPathSnapshot,
+		)
+	}
+	if generation.Socket.Generation == s.latest.Socket.Generation &&
+		generation.Socket.Port != s.latest.Socket.Port {
+		return fmt.Errorf(
+			"%w: socket port changed without a new generation",
+			ErrInvalidPathSnapshot,
+		)
 	}
 
 	return nil
@@ -371,18 +399,26 @@ func (s *PathSelector) resultLocked(
 func buildPeerPathState(
 	snapshot networkmap.Snapshot,
 ) (map[uint64]*peerPathState, error) {
-	if snapshot.Self.ID == 0 || len(snapshot.Peers) > maxPathPeers {
-		return nil, ErrInvalidPathSnapshot
+	if snapshot.Self.ID == 0 {
+		return nil, fmt.Errorf("%w: self identity is missing", ErrInvalidPathSnapshot)
+	}
+	if len(snapshot.Peers) > maxPathPeers {
+		return nil, fmt.Errorf("%w: peer count exceeds limit", ErrInvalidPathSnapshot)
 	}
 	seenPeerIDs := map[uint64]struct{}{snapshot.Self.ID: {}}
 	peers := make(map[uint64]*peerPathState, len(snapshot.Peers))
 	for _, peer := range snapshot.Peers {
-		if peer.ID == 0 || peer.Expired || !peer.MachineAuthorized ||
-			len(peer.Endpoints) > maxPathCandidatesPerPeer {
-			return nil, ErrInvalidPathSnapshot
+		if peer.ID == 0 {
+			return nil, fmt.Errorf("%w: peer identity is missing", ErrInvalidPathSnapshot)
+		}
+		if peer.Expired || !peer.MachineAuthorized {
+			return nil, fmt.Errorf("%w: peer is not authorized", ErrInvalidPathSnapshot)
+		}
+		if len(peer.Endpoints) > maxPathCandidatesPerPeer {
+			return nil, fmt.Errorf("%w: peer endpoint count exceeds limit", ErrInvalidPathSnapshot)
 		}
 		if _, exists := seenPeerIDs[peer.ID]; exists {
-			return nil, ErrInvalidPathSnapshot
+			return nil, fmt.Errorf("%w: peer identity is duplicated", ErrInvalidPathSnapshot)
 		}
 		seenPeerIDs[peer.ID] = struct{}{}
 		if peer.DiscoveryKey == "" {
@@ -394,10 +430,10 @@ func buildPeerPathState(
 		)
 		for _, endpoint := range peer.Endpoints {
 			if validateEndpoint(endpoint) != nil {
-				return nil, ErrInvalidPathSnapshot
+				return nil, fmt.Errorf("%w: peer endpoint is invalid", ErrInvalidPathSnapshot)
 			}
 			if _, exists := candidates[endpoint]; exists {
-				return nil, ErrInvalidPathSnapshot
+				return nil, fmt.Errorf("%w: peer endpoint is duplicated", ErrInvalidPathSnapshot)
 			}
 			candidates[endpoint] = pathCandidateState{}
 		}
