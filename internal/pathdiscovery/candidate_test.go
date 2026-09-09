@@ -233,6 +233,52 @@ func TestNewSet_TooManyCandidatesSentinel(t *testing.T) {
 	}
 }
 
+func TestMergePrioritizesAndBoundsCandidates(t *testing.T) {
+	t.Parallel()
+
+	configuredInputs := make([]Candidate, 0, MaxCandidates)
+	for index := 1; index <= MaxCandidates; index++ {
+		candidate, err := NewCandidate(
+			netip.AddrPortFrom(netip.AddrFrom4([4]byte{192, 0, 2, byte(index)}), 41641),
+			SourceConfigured,
+		)
+		if err != nil {
+			t.Fatalf("NewCandidate(configured %d) error = %v", index, err)
+		}
+		configuredInputs = append(configuredInputs, candidate)
+	}
+	configured, err := NewSet(configuredInputs)
+	if err != nil {
+		t.Fatalf("NewSet(configured) error = %v", err)
+	}
+	reflexiveCandidate, err := NewCandidate(
+		netip.MustParseAddrPort("198.51.100.1:41641"),
+		SourceServerReflexive,
+	)
+	if err != nil {
+		t.Fatalf("NewCandidate(reflexive) error = %v", err)
+	}
+	reflexive, err := NewSet([]Candidate{reflexiveCandidate})
+	if err != nil {
+		t.Fatalf("NewSet(reflexive) error = %v", err)
+	}
+
+	merged, err := Merge(configured, reflexive)
+	if err != nil {
+		t.Fatalf("Merge() error = %v", err)
+	}
+	got := merged.Candidates()
+	if len(got) != MaxCandidates {
+		t.Fatalf("len(Merge()) = %d, want %d", len(got), MaxCandidates)
+	}
+	if got[0] != reflexiveCandidate {
+		t.Fatalf("Merge()[0] = %#v, want reflexive candidate", got[0])
+	}
+	if got[len(got)-1].Endpoint() == configuredInputs[len(configuredInputs)-1].Endpoint() {
+		t.Fatal("Merge() retained the lowest-priority overflow candidate")
+	}
+}
+
 func TestSet_DefensiveCopiesAndEquality(t *testing.T) {
 	t.Parallel()
 

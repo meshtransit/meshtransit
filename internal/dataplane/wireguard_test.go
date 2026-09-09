@@ -13,6 +13,7 @@ import (
 
 	"github.com/meshtransit/meshd/internal/netadmin"
 	"github.com/meshtransit/meshd/internal/networkmap"
+	"github.com/meshtransit/meshd/internal/pathdiscovery"
 )
 
 func TestWireGuardEngineApply(t *testing.T) {
@@ -106,13 +107,190 @@ func TestWireGuardEngineWaitsForEndpoint(t *testing.T) {
 	privateKey, snapshot := testWireGuardSnapshot(t)
 	snapshot.Peers[0].Endpoints = nil
 	opener := &wireGuardTUNOpener{}
-	engine, err := newWireGuardEngine(opener, 41641, &fakeWireGuardFactory{}, nil)
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		opener,
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
 	if err != nil {
 		t.Fatalf("newWireGuardEngine() error = %v", err)
 	}
 	state, err := engine.Apply(t.Context(), snapshot, privateKey)
-	if err != nil || state != StateWaitingEndpoint || opener.calls != 0 {
+	if err != nil || state != StateWaitingEndpoint || opener.calls != 1 {
 		t.Fatalf("Apply() = %q, %v, opens=%d", state, err, opener.calls)
+	}
+	if device.upCalls != 1 || device.configureCalls != 1 {
+		t.Fatalf(
+			"device calls up=%d configure=%d",
+			device.upCalls,
+			device.configureCalls,
+		)
+	}
+	if strings.Contains(device.configuration, "endpoint=") {
+		t.Fatalf("pending configuration contains endpoint: %q", device.configuration)
+	}
+	if !strings.Contains(device.configuration, "allowed_ip=100.64.0.4/32") {
+		t.Fatalf("pending configuration is missing peer route: %q", device.configuration)
+	}
+}
+
+func TestWireGuardEngineDiscoversOnActiveDevice(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot.Peers[0].Endpoints = nil
+	server := netip.MustParseAddrPort("192.0.2.10:3478")
+	candidate, err := pathdiscovery.NewCandidate(
+		netip.MustParseAddrPort("198.51.100.20:41641"),
+		pathdiscovery.SourceServerReflexive,
+	)
+	if err != nil {
+		t.Fatalf("NewCandidate() error = %v", err)
+	}
+	candidates, err := pathdiscovery.NewSet([]pathdiscovery.Candidate{candidate})
+	if err != nil {
+		t.Fatalf("NewSet() error = %v", err)
+	}
+	device := &fakeWireGuardDevice{
+		discoverySocket: pathdiscovery.Socket{Port: 41641, Generation: 3},
+		discoveryResult: pathdiscovery.DiscoveryResult{
+			Scope:      7,
+			Socket:     pathdiscovery.Socket{Port: 41641, Generation: 3},
+			Candidates: candidates,
+		},
+	}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	engine.hostAddresses = func() ([]netip.Addr, error) { return nil, nil }
+
+	result, err := engine.DiscoverEndpoints(t.Context(), 7, []netip.AddrPort{server})
+	if err != nil {
+		t.Fatalf("DiscoverEndpoints() error = %v", err)
+	}
+	if result.Scope != 7 || !result.Candidates.Equal(candidates) {
+		t.Fatalf("DiscoverEndpoints() = %#v", result)
+	}
+	if device.discoveryScope != 7 || !slices.Equal(device.discoveryServers, []netip.AddrPort{server}) {
+		t.Fatalf(
+			"device discovery scope=%d servers=%v",
+			device.discoveryScope,
+			device.discoveryServers,
+		)
+	}
+}
+
+func TestWireGuardEngineRejectsDiscoveryWithoutActiveDevice(t *testing.T) {
+	t.Parallel()
+
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.DiscoverEndpoints(
+		t.Context(),
+		1,
+		[]netip.AddrPort{netip.MustParseAddrPort("192.0.2.10:3478")},
+	); err == nil {
+		t.Fatal("DiscoverEndpoints() error = nil")
+	}
+}
+
+func TestWireGuardEnginePublishesHostCandidateWhenSTUNIsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot.Peers[0].Endpoints = nil
+	socket := pathdiscovery.Socket{Port: 41641, Generation: 4}
+	device := &fakeWireGuardDevice{
+		discoverySocket: socket,
+		discoveryErr:    pathdiscovery.ErrNoSTUNResponse,
+	}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	engine.hostAddresses = func() ([]netip.Addr, error) {
+		return []netip.Addr{
+			netip.MustParseAddr("192.168.1.20"),
+			snapshot.Self.Addresses[0].Addr(),
+		}, nil
+	}
+
+	result, err := engine.DiscoverEndpoints(
+		t.Context(),
+		9,
+		[]netip.AddrPort{netip.MustParseAddrPort("192.0.2.10:3478")},
+	)
+	if err != nil {
+		t.Fatalf("DiscoverEndpoints() error = %v", err)
+	}
+	want := netip.MustParseAddrPort("192.168.1.20:41641")
+	got := result.Candidates.Candidates()
+	if result.Scope != 9 || result.Socket != socket || len(got) != 1 ||
+		got[0].Endpoint() != want || got[0].Source() != pathdiscovery.SourceHost {
+		t.Fatalf("DiscoverEndpoints() = %#v, candidates %#v", result, got)
+	}
+}
+
+func TestWireGuardEnginePublishesHostCandidateWithoutSTUNServer(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot.Peers[0].Endpoints = nil
+	socket := pathdiscovery.Socket{Port: 41641, Generation: 5}
+	device := &fakeWireGuardDevice{discoverySocket: socket}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	engine.hostAddresses = func() ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("192.168.1.21")}, nil
+	}
+
+	result, err := engine.DiscoverEndpoints(t.Context(), 10, nil)
+	if err != nil {
+		t.Fatalf("DiscoverEndpoints() error = %v", err)
+	}
+	if got := result.Candidates.Endpoints(); !slices.Equal(got, []netip.AddrPort{
+		netip.MustParseAddrPort("192.168.1.21:41641"),
+	}) {
+		t.Fatalf("DiscoverEndpoints() candidates = %v", got)
+	}
+	if device.discoveryCalls != 0 {
+		t.Fatalf("device discovery calls = %d, want 0", device.discoveryCalls)
 	}
 }
 
@@ -270,10 +448,16 @@ func (f *fakeWireGuardFactory) New(
 }
 
 type fakeWireGuardDevice struct {
-	configuration  string
-	configureCalls int
-	upCalls        int
-	closeCalls     int
+	configuration    string
+	configureCalls   int
+	upCalls          int
+	closeCalls       int
+	discoveryScope   uint64
+	discoveryServers []netip.AddrPort
+	discoverySocket  pathdiscovery.Socket
+	discoveryResult  pathdiscovery.DiscoveryResult
+	discoveryErr     error
+	discoveryCalls   int
 }
 
 func (d *fakeWireGuardDevice) Configure(configuration io.Reader) error {
@@ -294,3 +478,19 @@ func (d *fakeWireGuardDevice) Up() error {
 }
 
 func (d *fakeWireGuardDevice) Close() { d.closeCalls++ }
+
+func (d *fakeWireGuardDevice) DiscoverySocket() pathdiscovery.Socket {
+	return d.discoverySocket
+}
+
+func (d *fakeWireGuardDevice) DiscoverEndpoints(
+	_ context.Context,
+	scope uint64,
+	servers []netip.AddrPort,
+) (pathdiscovery.DiscoveryResult, error) {
+	d.discoveryCalls++
+	d.discoveryScope = scope
+	d.discoveryServers = append([]netip.AddrPort(nil), servers...)
+
+	return d.discoveryResult, d.discoveryErr
+}

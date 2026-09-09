@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/meshtransit/meshd/internal/dataplane"
 	"github.com/meshtransit/meshd/internal/identity"
 	"github.com/meshtransit/meshd/internal/networkmap"
+	"github.com/meshtransit/meshd/internal/pathdiscovery"
 	"github.com/meshtransit/meshd/internal/profile"
 	"github.com/meshtransit/meshd/internal/version"
 )
@@ -194,6 +196,90 @@ func TestService_RunPublishesLatestValidatedSnapshot(t *testing.T) {
 	}
 }
 
+func TestService_RunDiscoversAndPublishesDirectEndpoint(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	reflexive, err := pathdiscovery.NewCandidate(
+		netip.MustParseAddrPort("198.51.100.20:41641"),
+		pathdiscovery.SourceServerReflexive,
+	)
+	if err != nil {
+		t.Fatalf("NewCandidate() error = %v", err)
+	}
+	candidates, err := pathdiscovery.NewSet([]pathdiscovery.Candidate{reflexive})
+	if err != nil {
+		t.Fatalf("NewSet() error = %v", err)
+	}
+	dataPlane := &fakeEndpointDataPlane{
+		discoveryResult: pathdiscovery.DiscoveryResult{Candidates: candidates},
+	}
+	service.dataPlane = dataPlane
+	service.setSyncStatus(syncStatus{
+		state:     ControlSessionInactive,
+		dataPlane: string(dataplane.StateIdle),
+	})
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	control.streamSnapshot = &networkmap.Snapshot{
+		Revision: 1,
+		Self: networkmap.Node{
+			Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
+		},
+		Peers: []networkmap.Node{{
+			Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.2/32")},
+		}},
+		Relays: map[int]networkmap.RelayRegion{
+			1: {
+				ID: 1,
+				Nodes: []networkmap.RelayNode{{
+					Name: "relay-1",
+					IPv4: "192.0.2.10",
+				}},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	runResult := make(chan error, 1)
+	go func() { runResult <- service.Run(ctx) }()
+	select {
+	case <-control.streamPublished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for endpoint publication")
+	}
+
+	control.mu.Lock()
+	updates := append([]pathdiscovery.Set(nil), control.endpointUpdates...)
+	control.mu.Unlock()
+	if len(updates) != 1 || !updates[0].Equal(candidates) {
+		t.Fatalf("endpoint updates = %#v", updates)
+	}
+	if dataPlane.discoveryScope == 0 ||
+		!slices.Equal(dataPlane.discoveryServers, []netip.AddrPort{
+			netip.MustParseAddrPort("192.0.2.10:3478"),
+		}) {
+		t.Fatalf(
+			"discovery scope=%d servers=%v",
+			dataPlane.discoveryScope,
+			dataPlane.discoveryServers,
+		)
+	}
+
+	cancel()
+	if err := <-runResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context cancellation", err)
+	}
+}
+
 func TestService_StatusReportsOnlineForEncryptedDataPlane(t *testing.T) {
 	t.Parallel()
 
@@ -223,6 +309,8 @@ type fakeControl struct {
 	registerOptions     []ts2021.RegisterOptions
 	streamSnapshot      *networkmap.Snapshot
 	streamPublished     chan struct{}
+	endpointUpdates     []pathdiscovery.Set
+	endpointUpdateErr   error
 }
 
 type fakeDataPlane struct {
@@ -325,7 +413,14 @@ func (f *fakeControl) StreamNetmap(
 	published := f.streamPublished
 	f.mu.Unlock()
 	if snapshot != nil {
-		if err := handler(ctx, *snapshot); err != nil {
+		publisher := func(candidates pathdiscovery.Set) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.endpointUpdates = append(f.endpointUpdates, candidates)
+
+			return f.endpointUpdateErr
+		}
+		if err := handler(ctx, *snapshot, publisher); err != nil {
 			return err
 		}
 		select {
@@ -336,6 +431,25 @@ func (f *fakeControl) StreamNetmap(
 	<-ctx.Done()
 
 	return ctx.Err()
+}
+
+type fakeEndpointDataPlane struct {
+	fakeDataPlane
+	discoveryScope   uint64
+	discoveryServers []netip.AddrPort
+	discoveryResult  pathdiscovery.DiscoveryResult
+	discoveryErr     error
+}
+
+func (f *fakeEndpointDataPlane) DiscoverEndpoints(
+	_ context.Context,
+	scope uint64,
+	servers []netip.AddrPort,
+) (pathdiscovery.DiscoveryResult, error) {
+	f.discoveryScope = scope
+	f.discoveryServers = append([]netip.AddrPort(nil), servers...)
+
+	return f.discoveryResult, f.discoveryErr
 }
 
 func newTestService(t *testing.T) (*Service, *identity.Store, *fakeControl, string, string) {

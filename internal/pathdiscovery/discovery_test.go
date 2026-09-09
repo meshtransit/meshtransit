@@ -86,7 +86,7 @@ func TestDiscoveryDiscover(t *testing.T) {
 	t.Parallel()
 
 	firstServer := netip.MustParseAddrPort("203.0.113.1:3478")
-	secondServer := netip.MustParseAddrPort("203.0.113.2:3478")
+	secondServer := netip.MustParseAddrPort("[2001:db8::2]:3478")
 	firstAddress := netip.MustParseAddrPort("198.51.100.1:41641")
 	secondAddress := netip.MustParseAddrPort("[2001:db8::1]:41641")
 	transport := newFakeDiscoveryTransport()
@@ -173,6 +173,24 @@ func TestDiscoveryDiscoverRejectsUnexpectedResponses(t *testing.T) {
 	discovery.mu.Unlock()
 	if pendingCount != 0 {
 		t.Fatalf("Discover() retained %d pending probes", pendingCount)
+	}
+}
+
+func TestDiscoveryDiscoverRejectsMappedAddressFromWrongFamily(t *testing.T) {
+	t.Parallel()
+
+	server := netip.MustParseAddrPort("203.0.113.5:3478")
+	transport := newFakeDiscoveryTransport()
+	transport.mapped[server] = netip.MustParseAddrPort("[2001:db8::5]:41641")
+	discovery, err := newDiscovery(transport, 25*time.Millisecond, 5*time.Millisecond)
+	if err != nil {
+		t.Fatalf("newDiscovery() error = %v", err)
+	}
+	transport.handler = discovery
+
+	_, err = discovery.Discover(t.Context(), 9, []netip.AddrPort{server})
+	if !errors.Is(err, ErrNoSTUNResponse) || !errors.Is(err, ErrProbeTimeout) {
+		t.Fatalf("Discover() error = %v, want no response and timeout", err)
 	}
 }
 

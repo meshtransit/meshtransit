@@ -23,6 +23,8 @@ var (
 	ErrInvalidScope = errors.New("pathdiscovery: discovery scope is invalid")
 	// ErrInvalidSTUNServers means the server set is empty, malformed, or too large.
 	ErrInvalidSTUNServers = errors.New("pathdiscovery: stun server set is invalid")
+	// ErrNoSTUNServers means the signed topology has no usable literal STUN address.
+	ErrNoSTUNServers = errors.New("pathdiscovery: no literal stun server is available")
 	// ErrProbeTimeout means a server did not answer within the bounded window.
 	ErrProbeTimeout = errors.New("pathdiscovery: stun probe timed out")
 	// ErrSocketChanged means a response or send crossed a socket generation.
@@ -94,6 +96,15 @@ func (d *Discovery) MatchesDatagram(packet []byte) bool {
 	return compatstun.LooksLikeMessage(packet)
 }
 
+// Socket returns the currently open transport generation, if any.
+func (d *Discovery) Socket() Socket {
+	if d == nil || d.transport == nil {
+		return Socket{}
+	}
+
+	return d.transport.Socket()
+}
+
 // HandleDatagram implements DatagramHandler. Invalid, unexpected, late, or
 // wrong-source responses are consumed and ignored.
 func (d *Discovery) HandleDatagram(
@@ -108,11 +119,15 @@ func (d *Discovery) HandleDatagram(
 	if err != nil {
 		return
 	}
+	if err := validateEndpoint(address); err != nil {
+		return
+	}
 
 	d.mu.Lock()
 	pending, exists := d.pending[transactionID]
 	if !exists || pending.scope != d.activeScope || pending.server != source ||
-		pending.socket != socket {
+		pending.socket != socket ||
+		pending.server.Addr().Is4() != address.Addr().Is4() {
 		d.mu.Unlock()
 
 		return

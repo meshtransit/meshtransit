@@ -249,12 +249,19 @@ func validateNode(node Node, self bool, now time.Time) error {
 			return fmt.Errorf("allowed prefix %q is invalid", prefix)
 		}
 	}
+	seenEndpoints := make(map[netip.AddrPort]struct{}, len(node.Endpoints))
 	for _, endpoint := range node.Endpoints {
-		address := endpoint.Addr().Unmap()
+		address := endpoint.Addr()
 		if !endpoint.IsValid() || endpoint.Port() == 0 || !address.IsValid() ||
-			address.IsUnspecified() || address.IsMulticast() || address.IsLoopback() {
+			address.Is4In6() || address.Zone() != "" || address != address.Unmap() ||
+			!address.IsGlobalUnicast() || address.IsUnspecified() ||
+			address.IsMulticast() || address.IsLoopback() || address.IsLinkLocalUnicast() {
 			return fmt.Errorf("endpoint %q is invalid", endpoint)
 		}
+		if _, exists := seenEndpoints[endpoint]; exists {
+			return fmt.Errorf("endpoint %q is duplicated", endpoint)
+		}
+		seenEndpoints[endpoint] = struct{}{}
 	}
 	if self && !node.MachineAuthorized {
 		return errors.New("machine is not authorized")
@@ -357,8 +364,10 @@ func validateRelayRegion(region RelayRegion) error {
 			}
 			address, err := netip.ParseAddr(rawAddress)
 			wrongFamily := (index == 0 && !address.Is4()) || (index == 1 && !address.Is6())
-			if err != nil || wrongFamily || address.IsUnspecified() ||
-				address.IsMulticast() || address.IsLoopback() {
+			if err != nil || wrongFamily || address.Is4In6() || address.Zone() != "" ||
+				address != address.Unmap() || !address.IsGlobalUnicast() ||
+				address.IsUnspecified() || address.IsMulticast() || address.IsLoopback() ||
+				address.IsLinkLocalUnicast() {
 				return errors.New("relay address is invalid")
 			}
 		}

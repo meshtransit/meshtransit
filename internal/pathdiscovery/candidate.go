@@ -138,6 +138,38 @@ func NewSet(candidates []Candidate) (Set, error) {
 	return Set{candidates: normalized}, nil
 }
 
+// Merge combines validated sets and deliberately keeps only the highest
+// publication-priority candidates when their union exceeds MaxCandidates.
+func Merge(sets ...Set) (Set, error) {
+	total := 0
+	for _, set := range sets {
+		total += set.Len()
+		if total > maxCandidateInputs {
+			return Set{}, fmt.Errorf(
+				"%w: received more than %d merged inputs",
+				ErrTooManyCandidates,
+				maxCandidateInputs,
+			)
+		}
+	}
+	candidates := make([]Candidate, 0, total)
+	for _, set := range sets {
+		candidates = append(candidates, set.candidates...)
+	}
+	for _, candidate := range candidates {
+		if err := candidate.validate(); err != nil {
+			return Set{}, err
+		}
+	}
+	slices.SortFunc(candidates, compareCandidates)
+	candidates = compactEndpoints(candidates)
+	if len(candidates) > MaxCandidates {
+		candidates = candidates[:MaxCandidates]
+	}
+
+	return Set{candidates: candidates}, nil
+}
+
 // Candidates returns a defensive copy in publication-priority order.
 func (s Set) Candidates() []Candidate { return slices.Clone(s.candidates) }
 

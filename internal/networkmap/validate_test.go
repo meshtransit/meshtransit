@@ -131,6 +131,37 @@ func TestValidateAndClone_RejectsUnsafeSnapshots(t *testing.T) {
 			},
 		},
 		{
+			name: "relay link local ip",
+			mutate: func(snapshot *Snapshot) {
+				region := snapshot.Relays[1]
+				region.Nodes[0].IPv6 = "fe80::1"
+				snapshot.Relays[1] = region
+			},
+		},
+		{
+			name: "peer mapped endpoint",
+			mutate: func(snapshot *Snapshot) {
+				snapshot.Peers[0].Endpoints = []netip.AddrPort{
+					netip.MustParseAddrPort("[::ffff:192.0.2.10]:41641"),
+				}
+			},
+		},
+		{
+			name: "peer link local endpoint",
+			mutate: func(snapshot *Snapshot) {
+				snapshot.Peers[0].Endpoints = []netip.AddrPort{
+					netip.MustParseAddrPort("169.254.1.1:41641"),
+				}
+			},
+		},
+		{
+			name: "peer duplicate endpoint",
+			mutate: func(snapshot *Snapshot) {
+				endpoint := netip.MustParseAddrPort("192.0.2.10:41641")
+				snapshot.Peers[0].Endpoints = []netip.AddrPort{endpoint, endpoint}
+			},
+		},
+		{
 			name: "loopback dns resolver",
 			mutate: func(snapshot *Snapshot) {
 				snapshot.DNS.FallbackResolvers[0].Address = netip.MustParseAddrPort("127.0.0.1:53")

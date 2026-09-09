@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/netip"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/meshtransit/meshd/internal/dataplane"
 	"github.com/meshtransit/meshd/internal/identity"
 	"github.com/meshtransit/meshd/internal/networkmap"
+	"github.com/meshtransit/meshd/internal/pathdiscovery"
 	"github.com/meshtransit/meshd/internal/profile"
 	"github.com/meshtransit/meshd/internal/version"
 )
@@ -139,6 +141,14 @@ type DataPlaneController interface {
 	Close() error
 }
 
+type endpointDiscoverer interface {
+	DiscoverEndpoints(
+		context.Context,
+		uint64,
+		[]netip.AddrPort,
+	) (pathdiscovery.DiscoveryResult, error)
+}
+
 // DNSController consumes validated maps and owns transactional local resolver
 // plus host configuration. Reset keeps it reusable across profile changes;
 // Close permanently releases it during process shutdown.
@@ -150,18 +160,19 @@ type DNSController interface {
 
 // Service coordinates use cases without depending on HTTP or CLI details.
 type Service struct {
-	profiles           *profile.Store
-	identities         *identity.Store
-	build              version.Info
-	prober             controlProber
-	dataPlane          DataPlaneController
-	dns                DNSController
-	hostname           string
-	advertiseEndpoints []netip.AddrPort
-	clock              func() time.Time
-	syncSignal         chan struct{}
-	syncMu             sync.RWMutex
-	syncState          syncStatus
+	profiles             *profile.Store
+	identities           *identity.Store
+	build                version.Info
+	prober               controlProber
+	dataPlane            DataPlaneController
+	dns                  DNSController
+	hostname             string
+	configuredCandidates pathdiscovery.Set
+	clock                func() time.Time
+	syncSignal           chan struct{}
+	syncMu               sync.RWMutex
+	syncState            syncStatus
+	discoveryScope       uint64
 }
 
 type syncStatus struct {
@@ -208,6 +219,25 @@ func New(
 	if options.Clock == nil {
 		options.Clock = time.Now
 	}
+	configuredCandidates := make(
+		[]pathdiscovery.Candidate,
+		0,
+		len(options.AdvertiseEndpoints),
+	)
+	for _, endpoint := range options.AdvertiseEndpoints {
+		candidate, err := pathdiscovery.NewCandidate(
+			endpoint,
+			pathdiscovery.SourceConfigured,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("daemon: configured endpoint is invalid: %w", err)
+		}
+		configuredCandidates = append(configuredCandidates, candidate)
+	}
+	configuredSet, err := pathdiscovery.NewSet(configuredCandidates)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: configured endpoints are invalid: %w", err)
+	}
 
 	initialDataPlane := DataPlanePending
 	if options.DataPlane != nil {
@@ -215,16 +245,16 @@ func New(
 	}
 
 	return &Service{
-		profiles:           profiles,
-		identities:         identities,
-		build:              build,
-		prober:             prober,
-		dataPlane:          options.DataPlane,
-		dns:                options.DNS,
-		hostname:           options.Hostname,
-		advertiseEndpoints: append([]netip.AddrPort(nil), options.AdvertiseEndpoints...),
-		clock:              options.Clock,
-		syncSignal:         make(chan struct{}, 1),
+		profiles:             profiles,
+		identities:           identities,
+		build:                build,
+		prober:               prober,
+		dataPlane:            options.DataPlane,
+		dns:                  options.DNS,
+		hostname:             options.Hostname,
+		configuredCandidates: configuredSet,
+		clock:                options.Clock,
+		syncSignal:           make(chan struct{}, 1),
 		syncState: syncStatus{
 			state:     ControlSessionInactive,
 			dataPlane: initialDataPlane,
@@ -304,6 +334,13 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			privateKey = dataplane.NodePrivateKey(rawPrivateKey)
 			clear(rawPrivateKey[:])
 		}
+		discoveryScope, err := s.nextDiscoveryScope()
+		if err != nil {
+			clear(privateKey[:])
+			clearProtocolMaterial(protocolMaterial)
+
+			return err
+		}
 
 		s.setSyncStatus(syncStatus{
 			profileID: active.ID,
@@ -313,6 +350,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		})
 		streamCtx, cancel := context.WithCancel(ctx)
 		streamDone := make(chan error, 1)
+		publishedCandidates := s.configuredCandidates
 		go func() {
 			streamDone <- s.prober.StreamNetmap(
 				streamCtx,
@@ -322,9 +360,13 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					Hostname:          s.hostname,
 					Version:           "meshd/" + s.build.Version,
 					PinnedFingerprint: record.ControlKeyFingerprint(),
-					Endpoints:         append([]netip.AddrPort(nil), s.advertiseEndpoints...),
+					Candidates:        s.configuredCandidates,
 				},
-				func(callbackCtx context.Context, snapshot networkmap.Snapshot) error {
+				func(
+					callbackCtx context.Context,
+					snapshot networkmap.Snapshot,
+					publishEndpoints ts2021.EndpointPublisher,
+				) error {
 					if err := callbackCtx.Err(); err != nil {
 						return err
 					}
@@ -348,6 +390,15 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 							return fmt.Errorf("applying data plane: %w", err)
 						}
 						dataPlaneState = string(state)
+					}
+					if err := s.discoverAndPublishEndpoints(
+						callbackCtx,
+						discoveryScope,
+						snapshot,
+						publishEndpoints,
+						&publishedCandidates,
+					); err != nil {
+						return err
 					}
 					dnsState := DNSInactive
 					if s.dns != nil {
@@ -430,6 +481,68 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			}
 		}
 	}
+}
+
+func (s *Service) discoverAndPublishEndpoints(
+	ctx context.Context,
+	scope uint64,
+	snapshot networkmap.Snapshot,
+	publish ts2021.EndpointPublisher,
+	published *pathdiscovery.Set,
+) error {
+	discoverer, supported := s.dataPlane.(endpointDiscoverer)
+	if !supported || len(snapshot.Peers) == 0 {
+		return nil
+	}
+	servers, err := pathdiscovery.ServersFromRelayMap(snapshot.Relays)
+	if errors.Is(err, pathdiscovery.ErrNoSTUNServers) {
+		servers = nil
+	}
+	if err != nil && !errors.Is(err, pathdiscovery.ErrNoSTUNServers) {
+		return fmt.Errorf("deriving discovery servers: %w", err)
+	}
+	result, err := discoverer.DiscoverEndpoints(ctx, scope, servers)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(err, pathdiscovery.ErrNoSTUNResponse) ||
+			errors.Is(err, pathdiscovery.ErrNoSTUNServers) ||
+			errors.Is(err, pathdiscovery.ErrSocketChanged) {
+			return nil
+		}
+
+		return fmt.Errorf("discovering direct endpoints: %w", err)
+	}
+	merged, err := pathdiscovery.Merge(s.configuredCandidates, result.Candidates)
+	if err != nil {
+		return fmt.Errorf("merging direct endpoints: %w", err)
+	}
+	if published != nil && published.Equal(merged) {
+		return nil
+	}
+	if publish == nil {
+		return errors.New("daemon: endpoint publisher is unavailable")
+	}
+	if err := publish(merged); err != nil {
+		return fmt.Errorf("publishing direct endpoints: %w", err)
+	}
+	if published != nil {
+		*published = merged
+	}
+
+	return nil
+}
+
+func (s *Service) nextDiscoveryScope() (uint64, error) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	if s.discoveryScope == math.MaxUint64 {
+		return 0, errors.New("daemon: discovery scope is exhausted")
+	}
+	s.discoveryScope++
+
+	return s.discoveryScope, nil
 }
 
 // TrustControl creates a per-profile identity only after the operator-provided

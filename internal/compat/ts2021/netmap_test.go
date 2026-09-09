@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshd/internal/networkmap"
+	"github.com/meshtransit/meshd/internal/pathdiscovery"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"
@@ -43,20 +44,50 @@ func TestNewMapRequest_OmitsNetworkSelector(t *testing.T) {
 func TestNewMapRequest_EndpointUpdateIsNonStreaming(t *testing.T) {
 	t.Parallel()
 
-	endpoint := netip.MustParseAddrPort("203.0.113.10:41641")
+	candidate, err := pathdiscovery.NewCandidate(
+		netip.MustParseAddrPort("203.0.113.10:41641"),
+		pathdiscovery.SourceServerReflexive,
+	)
+	if err != nil {
+		t.Fatalf("NewCandidate() error = %v", err)
+	}
+	candidates, err := pathdiscovery.NewSet([]pathdiscovery.Candidate{candidate})
+	if err != nil {
+		t.Fatalf("NewSet() error = %v", err)
+	}
 	request := newMapRequest(key.NewNode(), key.NewDisco().Public(), NetmapOptions{
 		Hostname:          "node-a",
 		Version:           "meshd/dev",
 		PinnedFingerprint: "sha256:" + strings.Repeat("a", 64),
-		Endpoints:         []netip.AddrPort{endpoint},
+		Candidates:        candidates,
 	}, false)
 	if request.Stream || !request.OmitPeers {
 		t.Fatalf("endpoint request stream=%t omitPeers=%t", request.Stream, request.OmitPeers)
 	}
-	if len(request.Endpoints) != 1 || request.Endpoints[0] != endpoint ||
+	if len(request.Endpoints) != 1 || request.Endpoints[0] != candidate.Endpoint() ||
 		len(request.EndpointTypes) != 1 ||
-		request.EndpointTypes[0] != tailcfg.EndpointExplicitConf {
+		request.EndpointTypes[0] != tailcfg.EndpointSTUN {
 		t.Fatalf("endpoint request = %#v", request)
+	}
+}
+
+func TestProtocolEndpointType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		source pathdiscovery.Source
+		want   tailcfg.EndpointType
+	}{
+		{source: pathdiscovery.SourceHost, want: tailcfg.EndpointLocal},
+		{source: pathdiscovery.SourceServerReflexive, want: tailcfg.EndpointSTUN},
+		{source: pathdiscovery.SourcePortMapping, want: tailcfg.EndpointPortmapped},
+		{source: pathdiscovery.SourceConfigured, want: tailcfg.EndpointExplicitConf},
+		{source: pathdiscovery.SourceUnknown, want: tailcfg.EndpointUnknownType},
+	}
+	for _, test := range tests {
+		if got := protocolEndpointType(test.source); got != test.want {
+			t.Fatalf("protocolEndpointType(%v) = %v, want %v", test.source, got, test.want)
+		}
 	}
 }
 
@@ -334,6 +365,18 @@ func TestJitteredReconnectDelay_Bounds(t *testing.T) {
 		if delay < 5*time.Second || delay >= 10*time.Second {
 			t.Fatalf("jittered delay = %s, want [5s, 10s)", delay)
 		}
+	}
+}
+
+func TestEndpointUpdateErrorIsTransientUnlessTrustChanged(t *testing.T) {
+	t.Parallel()
+
+	if isPermanentNetmapError(ErrEndpointUpdate) {
+		t.Fatal("endpoint transport failure was classified as permanent")
+	}
+	trustFailure := fmt.Errorf("%w: %w", ErrEndpointUpdate, ErrControlKeyChanged)
+	if !isPermanentNetmapError(trustFailure) {
+		t.Fatal("control key change inside endpoint update was classified as transient")
 	}
 }
 

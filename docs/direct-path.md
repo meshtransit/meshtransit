@@ -76,11 +76,13 @@ peer map ──────────► authenticated path manager ───�
 
 ## Delivery phases
 
-1. Product-owned candidate validation and deterministic collection.
-2. Shared UDP transport plus bounded STUN discovery on that socket.
-3. Non-streaming endpoint publication through the compatibility adapter.
-4. Encrypted discovery messages and authenticated path selection/roaming.
-5. Linux end-to-end tests with no manually advertised endpoint, including
+1. Implemented: product-owned candidate validation and deterministic collection.
+2. Implemented: shared UDP transport plus bounded STUN discovery on that socket.
+3. Implemented for initial and map-triggered discovery: non-streaming endpoint
+   publication through the compatibility adapter. Periodic refresh, exact
+   expiry, and anti-flap history are the next hardening slice.
+4. Pending: encrypted discovery messages and authenticated path selection/roaming.
+5. Pending: Linux end-to-end tests with no manually advertised endpoint, including
    restart, socket rebinding, stale-result cancellation, and default-deny
    policy behavior.
 

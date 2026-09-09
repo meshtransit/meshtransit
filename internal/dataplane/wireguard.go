@@ -18,14 +18,13 @@ import (
 
 	"github.com/meshtransit/meshd/internal/netadmin"
 	"github.com/meshtransit/meshd/internal/networkmap"
+	"github.com/meshtransit/meshd/internal/pathdiscovery"
 )
 
 const (
 	maxWireGuardPeers  = 256
 	maxWireGuardRoutes = 512
 )
-
-var errEndpointPending = errors.New("dataplane: peer endpoint is pending")
 
 // NodePrivateKey is the raw WireGuard-compatible node key. Its formatting is
 // deliberately redacted, and callers must clear temporary copies.
@@ -41,6 +40,15 @@ type wireGuardDevice interface {
 	Configure(io.Reader) error
 	Up() error
 	Close()
+}
+
+type endpointDiscoveringDevice interface {
+	DiscoverySocket() pathdiscovery.Socket
+	DiscoverEndpoints(
+		context.Context,
+		uint64,
+		[]netip.AddrPort,
+	) (pathdiscovery.DiscoveryResult, error)
 }
 
 type wireGuardFactory interface {
@@ -67,6 +75,7 @@ type wireGuardPlan struct {
 	configurationHash [32]byte
 	addresses         []netip.Prefix
 	routes            []netip.Prefix
+	pendingEndpoints  bool
 }
 
 // WireGuardEngine owns the encrypted userspace packet engine. The daemon
@@ -81,6 +90,7 @@ type WireGuardEngine struct {
 	routes            []netip.Prefix
 	filter            *policyFilter
 	observer          PacketObserver
+	hostAddresses     func() ([]netip.Addr, error)
 }
 
 // NewWireGuard constructs the Linux direct-path POC packet engine.
@@ -120,11 +130,12 @@ func newWireGuardEngine(
 	}
 
 	return &WireGuardEngine{
-		opener:     opener,
-		factory:    factory,
-		listenPort: listenPort,
-		filter:     newPolicyFilter(),
-		observer:   observer,
+		opener:        opener,
+		factory:       factory,
+		listenPort:    listenPort,
+		filter:        newPolicyFilter(),
+		observer:      observer,
+		hostAddresses: localHostAddresses,
 	}, nil
 }
 
@@ -158,12 +169,8 @@ func (e *WireGuardEngine) Apply(
 	plan, err := buildWireGuardPlan(snapshot, privateKey, e.listenPort)
 	if err != nil {
 		_ = e.Close()
-		switch {
-		case errors.Is(err, errEndpointPending):
-			return StateWaitingEndpoint, nil
-		default:
-			return StateFailed, err
-		}
+
+		return StateFailed, err
 	}
 	defer clear(plan.configuration)
 
@@ -174,7 +181,7 @@ func (e *WireGuardEngine) Apply(
 	}
 	if e.device != nil {
 		if e.configurationHash == plan.configurationHash {
-			return StateEncrypted, nil
+			return plan.state(), nil
 		}
 		if err := e.device.Configure(bytes.NewReader(plan.configuration)); err != nil {
 			_ = e.Close()
@@ -183,7 +190,7 @@ func (e *WireGuardEngine) Apply(
 		}
 		e.configurationHash = plan.configurationHash
 
-		return StateEncrypted, nil
+		return plan.state(), nil
 	}
 
 	tunDevice, err := e.opener.OpenTUN(ctx, netadmin.TUNConfig{
@@ -221,7 +228,100 @@ func (e *WireGuardEngine) Apply(
 	e.addresses = append([]netip.Prefix(nil), plan.addresses...)
 	e.routes = append([]netip.Prefix(nil), plan.routes...)
 
-	return StateEncrypted, nil
+	return plan.state(), nil
+}
+
+func (p wireGuardPlan) state() State {
+	if p.pendingEndpoints {
+		return StateWaitingEndpoint
+	}
+
+	return StateEncrypted
+}
+
+// DiscoverEndpoints performs one bounded discovery round on the exact UDP
+// socket owned by the active encrypted packet engine.
+func (e *WireGuardEngine) DiscoverEndpoints(
+	ctx context.Context,
+	scope uint64,
+	servers []netip.AddrPort,
+) (pathdiscovery.DiscoveryResult, error) {
+	if e == nil {
+		return pathdiscovery.DiscoveryResult{}, errors.New(
+			"dataplane: wireguard engine is not initialized",
+		)
+	}
+	if err := ctx.Err(); err != nil {
+		return pathdiscovery.DiscoveryResult{}, err
+	}
+	if scope == 0 {
+		return pathdiscovery.DiscoveryResult{}, pathdiscovery.ErrInvalidScope
+	}
+	device, supported := e.device.(endpointDiscoveringDevice)
+	if !supported {
+		return pathdiscovery.DiscoveryResult{}, errors.New(
+			"dataplane: endpoint discovery is unavailable",
+		)
+	}
+	socket := device.DiscoverySocket()
+	if !socket.IsOpen() {
+		return pathdiscovery.DiscoveryResult{}, pathdiscovery.ErrTransportClosed
+	}
+	hostCandidates := pathdiscovery.Set{}
+	var hostErr error
+	if e.hostAddresses != nil {
+		addresses, err := e.hostAddresses()
+		if err != nil {
+			hostErr = err
+		} else {
+			hostCandidates, hostErr = pathdiscovery.HostCandidates(
+				addresses,
+				socket.Port,
+				e.addresses,
+			)
+		}
+	}
+	if len(servers) == 0 {
+		if hostCandidates.Len() == 0 {
+			return pathdiscovery.DiscoveryResult{}, errors.Join(
+				pathdiscovery.ErrNoSTUNServers,
+				hostErr,
+			)
+		}
+
+		return pathdiscovery.DiscoveryResult{
+			Scope:      scope,
+			Socket:     socket,
+			Candidates: hostCandidates,
+		}, nil
+	}
+	result, err := device.DiscoverEndpoints(
+		ctx,
+		scope,
+		append([]netip.AddrPort(nil), servers...),
+	)
+	if err != nil {
+		if errors.Is(err, pathdiscovery.ErrNoSTUNResponse) && hostCandidates.Len() != 0 {
+			return pathdiscovery.DiscoveryResult{
+				Scope:         scope,
+				Socket:        socket,
+				Candidates:    hostCandidates,
+				FailedServers: len(servers),
+			}, nil
+		}
+
+		return result, errors.Join(err, hostErr)
+	}
+	if result.Scope != scope || result.Socket != socket {
+		return pathdiscovery.DiscoveryResult{}, pathdiscovery.ErrSocketChanged
+	}
+	merged, err := pathdiscovery.Merge(result.Candidates, hostCandidates)
+	if err != nil {
+		return pathdiscovery.DiscoveryResult{}, err
+	}
+	result.Candidates = merged
+
+	return result, nil
 }
 
 // Close destroys the userspace device, which closes the TUN descriptor and
@@ -286,6 +386,7 @@ func buildWireGuardPlan(
 	selectedSelfAddresses := append([]netip.Prefix{}, allSelfAddresses...)
 	allRoutes := make([]netip.Prefix, 0, len(snapshot.Peers))
 	seenKeys := make(map[[32]byte]struct{}, len(snapshot.Peers))
+	pendingEndpoints := false
 	for _, peer := range snapshot.Peers {
 		if peer.Expired || !peer.MachineAuthorized {
 			return wireGuardPlan{}, errors.New("dataplane: peer is not authorized")
@@ -321,6 +422,9 @@ func buildWireGuardPlan(
 		endpoint, err := selectEndpoint(peer.Endpoints)
 		if err != nil {
 			return wireGuardPlan{}, err
+		}
+		if !endpoint.IsValid() {
+			pendingEndpoints = true
 		}
 		plannedPeers = append(plannedPeers, plannedPeer{
 			key:        peerKey,
@@ -364,9 +468,13 @@ func buildWireGuardPlan(
 		var encodedPublic [64]byte
 		hex.Encode(encodedPublic[:], peer.key[:])
 		configuration.Write(encodedPublic[:])
-		configuration.WriteString("\nprotocol_version=1\nendpoint=")
-		configuration.WriteString(peer.endpoint.String())
-		configuration.WriteString("\nreplace_allowed_ips=true\n")
+		configuration.WriteString("\nprotocol_version=1\n")
+		if peer.endpoint.IsValid() {
+			configuration.WriteString("endpoint=")
+			configuration.WriteString(peer.endpoint.String())
+			configuration.WriteByte('\n')
+		}
+		configuration.WriteString("replace_allowed_ips=true\n")
 		for _, allowedIP := range peer.allowedIPs {
 			configuration.WriteString("allowed_ip=")
 			configuration.WriteString(allowedIP.String())
@@ -380,6 +488,7 @@ func buildWireGuardPlan(
 		configurationHash: sha256.Sum256(encoded),
 		addresses:         addresses,
 		routes:            routes,
+		pendingEndpoints:  pendingEndpoints,
 	}, nil
 }
 
@@ -437,7 +546,7 @@ func uniquePrefixes(prefixes []netip.Prefix) ([]netip.Prefix, error) {
 
 func selectEndpoint(endpoints []netip.AddrPort) (netip.AddrPort, error) {
 	if len(endpoints) == 0 {
-		return netip.AddrPort{}, errEndpointPending
+		return netip.AddrPort{}, nil
 	}
 	valid := make([]netip.AddrPort, 0, len(endpoints))
 	for _, endpoint := range endpoints {

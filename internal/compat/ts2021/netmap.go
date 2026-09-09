@@ -18,9 +18,11 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/meshtransit/meshd/internal/networkmap"
+	"github.com/meshtransit/meshd/internal/pathdiscovery"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"
@@ -44,6 +46,8 @@ var (
 	ErrNetmapInvalid = errors.New("ts2021: invalid netmap update")
 	// ErrNetmapConsumer indicates that the product consumer rejected a snapshot.
 	ErrNetmapConsumer = errors.New("ts2021: netmap consumer failed")
+	// ErrEndpointUpdate indicates that a candidate publication did not complete.
+	ErrEndpointUpdate = errors.New("ts2021: endpoint update failed")
 )
 
 // NetmapOptions contains stable host facts and the persisted control-key pin.
@@ -51,11 +55,15 @@ type NetmapOptions struct {
 	Hostname          string
 	Version           string
 	PinnedFingerprint string
-	Endpoints         []netip.AddrPort
+	Candidates        pathdiscovery.Set
 }
 
+// EndpointPublisher sends one complete candidate set with the discovery key
+// owned by the active stream. It is valid only during its handler invocation.
+type EndpointPublisher func(pathdiscovery.Set) error
+
 // NetmapHandler consumes one fully validated, defensive network snapshot.
-type NetmapHandler func(context.Context, networkmap.Snapshot) error
+type NetmapHandler func(context.Context, networkmap.Snapshot, EndpointPublisher) error
 
 // StreamNetmap maintains a bounded streaming map session until cancellation or
 // a permanent security/registration failure. Reconnects always re-verify the
@@ -144,7 +152,7 @@ func (c *Client) pollNetmapOnce(
 		return false, ErrControlKeyChanged
 	}
 
-	if len(options.Endpoints) != 0 {
+	if options.Candidates.Len() != 0 {
 		if err := c.sendEndpointUpdate(
 			ctx,
 			discovered,
@@ -205,8 +213,32 @@ func (c *Client) pollNetmapOnce(
 				ErrNetmapInvalid,
 			)
 		}
-		if err := handler(ctx, snapshot); err != nil {
-			return receivedMap, fmt.Errorf("%w: %w", ErrNetmapConsumer, err)
+		var publisherActive atomic.Bool
+		publisherActive.Store(true)
+		publisher := func(candidates pathdiscovery.Set) error {
+			if !publisherActive.CompareAndSwap(true, false) {
+				return fmt.Errorf("%w: publisher is outside its map callback", ErrEndpointUpdate)
+			}
+			updateOptions := options
+			updateOptions.Candidates = candidates
+
+			return c.sendEndpointUpdate(
+				ctx,
+				discovered,
+				machineKey,
+				nodeKey,
+				controlKey,
+				discoKey,
+				updateOptions,
+			)
+		}
+		handlerErr := handler(ctx, snapshot, publisher)
+		publisherActive.Store(false)
+		if handlerErr != nil {
+			if errors.Is(handlerErr, ErrEndpointUpdate) {
+				return receivedMap, handlerErr
+			}
+			return receivedMap, fmt.Errorf("%w: %w", ErrNetmapConsumer, handlerErr)
 		}
 		receivedMap = true
 	}
@@ -231,7 +263,12 @@ func (c *Client) sendEndpointUpdate(
 	controlKey key.MachinePublic,
 	discoKey key.DiscoPublic,
 	options NetmapOptions,
-) error {
+) (returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			returnErr = fmt.Errorf("%w: %w", ErrEndpointUpdate, returnErr)
+		}
+	}()
 	request := newMapRequest(nodeKey, discoKey, options, false)
 	exchange, err := c.openMapExchange(
 		ctx,
@@ -411,10 +448,12 @@ func newMapRequest(
 	}
 	if !stream {
 		request.OmitPeers = true
-		request.Endpoints = append([]netip.AddrPort(nil), options.Endpoints...)
+		candidates := options.Candidates.Candidates()
+		request.Endpoints = make([]netip.AddrPort, len(candidates))
 		request.EndpointTypes = make([]tailcfg.EndpointType, len(request.Endpoints))
-		for index := range request.EndpointTypes {
-			request.EndpointTypes[index] = tailcfg.EndpointExplicitConf
+		for index, candidate := range candidates {
+			request.Endpoints[index] = candidate.Endpoint()
+			request.EndpointTypes[index] = protocolEndpointType(candidate.Source())
 		}
 	}
 
@@ -428,23 +467,27 @@ func validateNetmapOptions(options NetmapOptions) error {
 	if err := validateDisplayText("hostname", options.Hostname, maxHostnameRunes); err != nil {
 		return err
 	}
-	if len(options.Endpoints) > 16 {
-		return errors.New("ts2021: too many advertised endpoints")
-	}
-	seenEndpoints := make(map[netip.AddrPort]struct{}, len(options.Endpoints))
-	for _, endpoint := range options.Endpoints {
-		address := endpoint.Addr()
-		if !endpoint.IsValid() || address.Is4In6() || !address.IsGlobalUnicast() ||
-			address.IsLinkLocalUnicast() || endpoint.Port() == 0 {
-			return errors.New("ts2021: advertised endpoint is invalid")
-		}
-		if _, exists := seenEndpoints[endpoint]; exists {
-			return errors.New("ts2021: advertised endpoint is duplicated")
-		}
-		seenEndpoints[endpoint] = struct{}{}
+	candidates, err := pathdiscovery.NewSet(options.Candidates.Candidates())
+	if err != nil || !candidates.Equal(options.Candidates) {
+		return errors.New("ts2021: advertised candidates are invalid")
 	}
 
 	return validateDisplayText("version", options.Version, maxVersionRunes)
+}
+
+func protocolEndpointType(source pathdiscovery.Source) tailcfg.EndpointType {
+	switch source {
+	case pathdiscovery.SourceHost:
+		return tailcfg.EndpointLocal
+	case pathdiscovery.SourceServerReflexive:
+		return tailcfg.EndpointSTUN
+	case pathdiscovery.SourcePortMapping:
+		return tailcfg.EndpointPortmapped
+	case pathdiscovery.SourceConfigured:
+		return tailcfg.EndpointExplicitConf
+	default:
+		return tailcfg.EndpointUnknownType
+	}
 }
 
 func netmapEndpoint(keyURL *url.URL) *url.URL {
