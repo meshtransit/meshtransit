@@ -1,0 +1,18 @@
+# meshd
+
+> MeshTransit node daemon written in Go.
+
+## Read first
+
+- README.md: scope and build instructions
+- docs/architecture.md: component and compatibility boundaries
+- docs/security-model.md: threat model, controls, and release gates
+- AGENTS.md: mandatory instructions for coding agents
+
+## Core invariants
+
+- A non-empty profile store has exactly one active profile.
+- Multiple network views are never merged in the client.
+- The client never chooses or sends a network identifier.
+- Public API, command, path, and log names use MeshTransit terminology.
+- Compatibility code stays isolated under internal adapters and is pinned to reviewed versions.

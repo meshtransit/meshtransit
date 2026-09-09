@@ -1,0 +1,252 @@
+// Command meshd runs the unprivileged MeshTransit coordination daemon.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/meshtransit/meshd/internal/compat/ts2021"
+	"github.com/meshtransit/meshd/internal/config"
+	"github.com/meshtransit/meshd/internal/daemon"
+	"github.com/meshtransit/meshd/internal/dataplane"
+	"github.com/meshtransit/meshd/internal/flowlog"
+	"github.com/meshtransit/meshd/internal/identity"
+	"github.com/meshtransit/meshd/internal/localapi"
+	"github.com/meshtransit/meshd/internal/netadmin"
+	"github.com/meshtransit/meshd/internal/profile"
+	"github.com/meshtransit/meshd/internal/socket"
+	"github.com/meshtransit/meshd/internal/version"
+)
+
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func run(args []string, stdout, stderr io.Writer) int {
+	cfg, err := config.Parse(args, stderr)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "meshd: %v\n", err)
+
+		return 2
+	}
+	if cfg.ShowVersion {
+		_, _ = fmt.Fprintln(stdout, version.String())
+
+		return 0
+	}
+
+	logger := newLogger(stderr, cfg.LogLevel)
+	profiles, err := profile.Open(cfg.StateDir)
+	if err != nil {
+		logger.Error("opening profile store failed", "error", err)
+
+		return 1
+	}
+	defer func() {
+		if closeErr := profiles.Close(); closeErr != nil {
+			logger.Error("closing profile store failed", "error", closeErr)
+		}
+	}()
+	identities, err := identity.Open(cfg.StateDir)
+	if err != nil {
+		logger.Error("opening identity store failed", "error", err)
+
+		return 1
+	}
+	defer func() {
+		if closeErr := identities.Close(); closeErr != nil {
+			logger.Error("closing identity store failed", "error", closeErr)
+		}
+	}()
+	hostname, err := os.Hostname()
+	if err != nil || strings.TrimSpace(hostname) == "" {
+		hostname = "mesh-node"
+	}
+	daemonOptions := daemon.Options{
+		Hostname:           hostname,
+		AdvertiseEndpoints: cfg.AdvertiseEndpoints,
+	}
+	var flowReporter *flowlog.Reporter
+	if cfg.EnableFlowLogs {
+		flowReporter, err = flowlog.New(flowlog.Config{
+			BaseURL:  cfg.FlowLogURL,
+			Interval: cfg.FlowLogInterval,
+			Timeout:  cfg.FlowLogTimeout,
+			Logger:   logger,
+		})
+		if err != nil {
+			logger.Error("creating flow log reporter failed", "error", err)
+
+			return 1
+		}
+	}
+	if cfg.EnableTUNPOC || cfg.EnableWireGuardPOC {
+		netAdminClient, err := netadmin.NewClient(cfg.NetAdminSocketPath, 5*time.Second)
+		if err != nil {
+			logger.Error("creating privileged helper client failed", "error", err)
+
+			return 1
+		}
+		if cfg.EnableWireGuardPOC {
+			engine, err := dataplane.NewWireGuardWithObserver(
+				netAdminClient,
+				cfg.WireGuardListenPort,
+				flowReporter,
+			)
+			if err != nil {
+				logger.Error("creating wireguard poc failed", "error", err)
+
+				return 1
+			}
+			daemonOptions.DataPlane = engine
+			logger.Warn(
+				"direct wireguard poc enabled",
+				"socket", cfg.NetAdminSocketPath,
+				"listen_port", cfg.WireGuardListenPort,
+			)
+			if flowReporter != nil {
+				logger.Warn(
+					"header-only flow logging enabled",
+					"origin", cfg.FlowLogURL,
+					"interval", cfg.FlowLogInterval,
+				)
+			}
+		} else {
+			engine, err := dataplane.New(netAdminClient)
+			if err != nil {
+				logger.Error("creating tun poc failed", "error", err)
+
+				return 1
+			}
+			daemonOptions.DataPlane = engine
+			logger.Warn("tun poc enabled without packet forwarding", "socket", cfg.NetAdminSocketPath)
+		}
+	}
+	service, err := daemon.New(
+		profiles,
+		identities,
+		version.Current(),
+		ts2021.New(),
+		daemonOptions,
+	)
+	if err != nil {
+		logger.Error("creating daemon service failed", "error", err)
+
+		return 1
+	}
+	daemonUID, err := effectiveUID()
+	if err != nil {
+		logger.Error("reading daemon uid failed", "error", err)
+
+		return 1
+	}
+	allowedUIDs := append([]uint32{0, daemonUID}, cfg.AllowedUIDs...)
+	server, err := localapi.New(service, logger, localapi.Options{
+		AllowedUIDs:                    allowedUIDs,
+		UnsafeAllowUnverifiedLocalPeer: cfg.UnsafeAllowUnverifiedLocalPeer,
+	})
+	if err != nil {
+		logger.Error("creating local api failed", "error", err)
+
+		return 1
+	}
+	if cfg.UnsafeAllowUnverifiedLocalPeer {
+		logger.Warn("unsafe local peer authorization is enabled")
+	}
+	listener, err := socket.Listen(cfg.SocketPath)
+	if err != nil {
+		logger.Error("opening local socket failed", "error", err, "path", cfg.SocketPath)
+
+		return 1
+	}
+	defer func() {
+		if closeErr := listener.Close(); closeErr != nil {
+			logger.Error("closing local socket failed", "error", closeErr)
+		}
+	}()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	logger.Info("meshd started", "socket", cfg.SocketPath, "version", version.Version)
+	serverResult := make(chan error, 1)
+	syncResult := make(chan error, 1)
+	go func() { serverResult <- server.Serve(ctx, listener) }()
+	go func() { syncResult <- service.Run(ctx) }()
+	var flowResult chan error
+	if flowReporter != nil {
+		flowResult = make(chan error, 1)
+		go func() { flowResult <- flowReporter.Run(ctx) }()
+	}
+
+	var serverErr error
+	var syncErr error
+	serverFinished := false
+	syncFinished := false
+	select {
+	case serverErr = <-serverResult:
+		serverFinished = true
+	case syncErr = <-syncResult:
+		syncFinished = true
+	case <-ctx.Done():
+	}
+	stop()
+	if !serverFinished {
+		serverErr = <-serverResult
+	}
+	if !syncFinished {
+		syncErr = <-syncResult
+	}
+	var flowErr error
+	if flowResult != nil {
+		flowErr = <-flowResult
+	}
+	if errors.Is(serverErr, context.Canceled) {
+		serverErr = nil
+	}
+	if errors.Is(syncErr, context.Canceled) {
+		syncErr = nil
+	}
+	if errors.Is(flowErr, context.Canceled) {
+		flowErr = nil
+	}
+	if err := errors.Join(serverErr, syncErr, flowErr); err != nil {
+		logger.Error("meshd stopped unexpectedly", "error", err)
+
+		return 1
+	}
+	logger.Info("meshd stopped")
+
+	return 0
+}
+
+func effectiveUID() (uint32, error) {
+	uid := os.Geteuid()
+	if uid < 0 || uint64(uid) > uint64(^uint32(0)) {
+		return 0, errors.New("effective uid is outside uint32")
+	}
+
+	return uint32(uid), nil
+}
+
+func newLogger(writer io.Writer, levelName string) *slog.Logger {
+	level := slog.LevelInfo
+	switch levelName {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+
+	return slog.New(slog.NewJSONHandler(writer, &slog.HandlerOptions{Level: level}))
+}
