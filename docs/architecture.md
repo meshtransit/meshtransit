@@ -41,6 +41,14 @@ The unprivileged data-plane engine opens the descriptor after a validated map co
 
 The WireGuard bind owns one UDP socket generation for encrypted packets and bounded STUN requests. STUN responses are removed before WireGuard parsing and accepted only when transaction ID, signed relay source, socket generation, and active-profile generation all match. Literal relay IPs are selected deterministically across regions. Server-reflexive and safe host-interface candidates are merged with configured candidates, translated to protocol endpoint types only inside the compatibility adapter, and sent through non-streaming updates using the active stream's discovery key. While peers exist, discovery refreshes at a randomized 20–26 second interval. Changed sets are coalesced; transient publication failures retry with bounded backoff; the latest desired set is resent after a map reconnect. Recently observed non-host candidates survive a short probe flap within bounded per-address and global history, then a dedicated timer withdraws them at the exact deadline. Authenticated path probes, traffic-idle pacing, relay transport, and subnet/exit route transactions remain separate milestones.
 
+The peer-probe wire adapter implements the current encrypted Ping/Pong format
+behind `internal/compat/disco`. It owns ephemeral X25519 identity material,
+precomputed NaCl channels, canonical public-key parsing, authenticated sender
+verification, and bounded message parsing. The adapter is not registered with
+the live UDP transport until the product-owned path manager can bind every
+transaction to a validated peer, map generation, socket generation, deadline,
+and source endpoint.
+
 ## DNS boundary
 
 The compatibility adapter translates every non-nil DNS map into product-owned values and preserves nil-as-unchanged delta semantics inside a streaming session. Resolver order, locally authoritative empty routes, search domains, MagicDNS intent, and A/AAAA records are retained. Names are canonicalized to lowercase without a trailing dot and the entire candidate remains atomic with the rest of the network map. The initial resolver boundary accepts only classic IP resolvers on port 53. URL-based DoH/HTTP resolvers, bootstrap addresses, exit-node overrides, malformed names, duplicate routes/records, and unsafe resolver addresses fail closed.

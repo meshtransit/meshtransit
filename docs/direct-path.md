@@ -82,7 +82,9 @@ peer map ──────────► authenticated path manager ───�
    adapter, randomized 20–26 second refresh while peers exist, bounded
    anti-flap history, retry/coalescing, and expiry scheduled at the exact
    candidate deadline.
-4. Pending: encrypted discovery messages and authenticated path selection/roaming.
+4. In progress: the compatible encrypted Ping/Pong identity and bounded wire
+   codec are implemented. Transaction replay protection, probe scheduling,
+   authenticated path selection, heartbeat, and roaming remain pending.
 5. Pending: Linux end-to-end tests with no manually advertised endpoint, including
    restart, socket rebinding, stale-result cancellation, and default-deny
    policy behavior.
