@@ -46,8 +46,13 @@ behind `internal/compat/disco`. The daemon creates one ephemeral X25519 identity
 per active control session, advertises its canonical public key through every
 map reconnect and endpoint update, then destroys its private material after all
 session workers stop. The adapter owns precomputed NaCl channels, authenticated
-sender verification, and bounded message parsing. It is not registered with the
-live UDP transport yet. The product-owned probe manager binds every outgoing
+sender verification, and bounded message parsing. A product bridge atomically
+derives a bounded peer-channel registry from each validated map, requires the
+map to echo the session's discovery key, binds every channel to the peer's node
+and discovery keys, and destroys replaced shared secrets. It authorizes outgoing
+probe destinations against that peer's signed endpoint set and translates only
+authenticated packets into product-owned messages. It is not registered with
+the live UDP transport yet. The product-owned probe manager binds every outgoing
 transaction to a validated peer, active-session scope, map revision, socket
 generation, exact remote endpoint, and five-second deadline. It caps pending
 state globally and per peer, consumes authenticated mismatches, rejects replay

@@ -63,6 +63,10 @@ type ProbeGeneration struct {
 	Socket      Socket
 }
 
+// IsValid reports whether the generation identifies an active session, map,
+// and UDP socket.
+func (g ProbeGeneration) IsValid() bool { return g.validate() == nil }
+
 func (g ProbeGeneration) validate() error {
 	if g.Scope == 0 || g.MapRevision == 0 || !g.Socket.IsOpen() {
 		return ErrInvalidPeerProbe

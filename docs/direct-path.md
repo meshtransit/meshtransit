@@ -85,7 +85,10 @@ peer map ──────────► authenticated path manager ───�
 4. In progress: the compatible encrypted Ping/Pong identity and bounded wire
    codec are implemented. One ephemeral identity is now owned by each daemon
    control session and its exact public key is used for map and endpoint
-   publication across reconnects. The product-owned transaction manager now
+   publication across reconnects. A bounded registry atomically derives peer
+   channels from each validated map, binds node and discovery identities,
+   authorizes signed probe destinations, translates authenticated messages, and
+   destroys replaced shared secrets. The product-owned transaction manager
    enforces bounded per-peer/global state, exact peer/map/socket/source binding,
    five-second deadlines, consume-once replay rejection, and generation resets.
    Probe scheduling, live UDP integration, authenticated path selection,
