@@ -127,6 +127,38 @@ func TestTrackerBoundsPortChurnPerAddress(t *testing.T) {
 	}
 }
 
+func TestTrackerResetDropsHistory(t *testing.T) {
+	t.Parallel()
+
+	tracker := newTracker(time.Minute)
+	now := time.Unix(4_000, 0)
+	reflexive := mustCandidate(
+		t,
+		netip.MustParseAddrPort("198.51.100.40:41641"),
+		SourceServerReflexive,
+	)
+	configured := mustCandidate(
+		t,
+		netip.MustParseAddrPort("192.0.2.40:41641"),
+		SourceConfigured,
+	)
+	if _, err := tracker.Update(now, mustSet(t, reflexive, configured)); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	reset, err := tracker.Reset(now.Add(time.Second), mustSet(t, configured))
+	if err != nil {
+		t.Fatalf("Reset() error = %v", err)
+	}
+	if !reset.Changed || !reset.Candidates.Equal(mustSet(t, configured)) ||
+		!reset.ExpiresAt.IsZero() || len(tracker.tracked) != 0 {
+		t.Fatalf("Reset() = %#v, tracked=%d", reset, len(tracker.tracked))
+	}
+	if _, err := tracker.Reset(now, mustSet(t, reflexive)); err == nil {
+		t.Fatal("Reset(reflexive) error = nil")
+	}
+}
+
 func TestTrackerRejectsInvalidBoundary(t *testing.T) {
 	t.Parallel()
 

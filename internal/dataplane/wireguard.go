@@ -239,6 +239,19 @@ func (p wireGuardPlan) state() State {
 	return StateEncrypted
 }
 
+// DiscoverySocket returns the active shared UDP socket generation.
+func (e *WireGuardEngine) DiscoverySocket() pathdiscovery.Socket {
+	if e == nil {
+		return pathdiscovery.Socket{}
+	}
+	device, supported := e.device.(endpointDiscoveringDevice)
+	if !supported {
+		return pathdiscovery.Socket{}
+	}
+
+	return device.DiscoverySocket()
+}
+
 // DiscoverEndpoints performs one bounded discovery round on the exact UDP
 // socket owned by the active encrypted packet engine.
 func (e *WireGuardEngine) DiscoverEndpoints(

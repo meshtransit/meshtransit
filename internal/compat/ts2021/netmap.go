@@ -18,7 +18,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/meshtransit/meshd/internal/networkmap"
@@ -50,20 +50,18 @@ var (
 	ErrEndpointUpdate = errors.New("ts2021: endpoint update failed")
 )
 
-// NetmapOptions contains stable host facts and the persisted control-key pin.
+// NetmapOptions contains stable host facts, the persisted control-key pin, and
+// an optional active-session stream of complete candidate sets.
 type NetmapOptions struct {
 	Hostname          string
 	Version           string
 	PinnedFingerprint string
 	Candidates        pathdiscovery.Set
+	EndpointUpdates   <-chan pathdiscovery.Set
 }
 
-// EndpointPublisher sends one complete candidate set with the discovery key
-// owned by the active stream. It is valid only during its handler invocation.
-type EndpointPublisher func(pathdiscovery.Set) error
-
 // NetmapHandler consumes one fully validated, defensive network snapshot.
-type NetmapHandler func(context.Context, networkmap.Snapshot, EndpointPublisher) error
+type NetmapHandler func(context.Context, networkmap.Snapshot) error
 
 // StreamNetmap maintains a bounded streaming map session until cancellation or
 // a permanent security/registration failure. Reconnects always re-verify the
@@ -89,6 +87,82 @@ func (c *Client) StreamNetmap(
 		return err
 	}
 	discoKey := key.NewDisco()
+	endpointState := newEndpointState(options.Candidates)
+	if options.EndpointUpdates == nil {
+		return c.streamNetmapLoop(
+			ctx,
+			controlURL,
+			machineKey,
+			nodeKey,
+			controlKey,
+			discoKey.Public(),
+			options,
+			endpointState,
+			handler,
+		)
+	}
+
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	mapDone := make(chan error, 1)
+	go func() {
+		mapDone <- c.streamNetmapLoop(
+			streamCtx,
+			controlURL,
+			machineKey,
+			nodeKey,
+			controlKey,
+			discoKey.Public(),
+			options,
+			endpointState,
+			handler,
+		)
+	}()
+	endpointDone := make(chan error, 1)
+	go func() {
+		endpointDone <- c.runEndpointUpdates(
+			streamCtx,
+			controlURL,
+			machineKey,
+			nodeKey,
+			controlKey,
+			discoKey.Public(),
+			options,
+			endpointState,
+		)
+	}()
+
+	select {
+	case err := <-mapDone:
+		cancel()
+		<-endpointDone
+
+		return err
+	case err := <-endpointDone:
+		cancel()
+		<-mapDone
+
+		return err
+	case <-ctx.Done():
+		cancel()
+		<-mapDone
+		<-endpointDone
+
+		return ctx.Err()
+	}
+}
+
+func (c *Client) streamNetmapLoop(
+	ctx context.Context,
+	controlURL string,
+	machineKey key.MachinePrivate,
+	nodeKey key.NodePrivate,
+	controlKey key.MachinePublic,
+	discoKey key.DiscoPublic,
+	options NetmapOptions,
+	endpointState *endpointState,
+	handler NetmapHandler,
+) error {
 	accumulator := newMapAccumulator()
 	backoff := minReconnectDelay
 
@@ -99,8 +173,9 @@ func (c *Client) StreamNetmap(
 			machineKey,
 			nodeKey,
 			controlKey,
-			discoKey.Public(),
+			discoKey,
 			options,
+			endpointState,
 			accumulator,
 			handler,
 		)
@@ -134,6 +209,7 @@ func (c *Client) pollNetmapOnce(
 	controlKey key.MachinePublic,
 	discoKey key.DiscoPublic,
 	options NetmapOptions,
+	endpointState *endpointState,
 	accumulator *mapAccumulator,
 	handler NetmapHandler,
 ) (bool, error) {
@@ -152,18 +228,17 @@ func (c *Client) pollNetmapOnce(
 		return false, ErrControlKeyChanged
 	}
 
-	if options.Candidates.Len() != 0 {
-		if err := c.sendEndpointUpdate(
-			ctx,
-			discovered,
-			machineKey,
-			nodeKey,
-			controlKey,
-			discoKey,
-			options,
-		); err != nil {
-			return false, err
-		}
+	if err := c.sendEndpointState(
+		ctx,
+		discovered,
+		machineKey,
+		nodeKey,
+		controlKey,
+		discoKey,
+		options,
+		endpointState,
+	); err != nil {
+		return false, err
 	}
 
 	mapRequest := newMapRequest(nodeKey, discoKey, options, true)
@@ -213,35 +288,207 @@ func (c *Client) pollNetmapOnce(
 				ErrNetmapInvalid,
 			)
 		}
-		var publisherActive atomic.Bool
-		publisherActive.Store(true)
-		publisher := func(candidates pathdiscovery.Set) error {
-			if !publisherActive.CompareAndSwap(true, false) {
-				return fmt.Errorf("%w: publisher is outside its map callback", ErrEndpointUpdate)
-			}
-			updateOptions := options
-			updateOptions.Candidates = candidates
+		if err := handler(ctx, snapshot); err != nil {
+			return receivedMap, fmt.Errorf("%w: %w", ErrNetmapConsumer, err)
+		}
+		receivedMap = true
+	}
+}
 
-			return c.sendEndpointUpdate(
+type endpointState struct {
+	mu         sync.RWMutex
+	publishMu  sync.Mutex
+	candidates pathdiscovery.Set
+	shouldSend bool
+}
+
+func newEndpointState(candidates pathdiscovery.Set) *endpointState {
+	return &endpointState{
+		candidates: candidates,
+		shouldSend: true,
+	}
+}
+
+func (s *endpointState) set(candidates pathdiscovery.Set) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.candidates.Equal(candidates) {
+		return false
+	}
+	s.candidates = candidates
+	s.shouldSend = true
+
+	return true
+}
+
+func (s *endpointState) snapshot() (pathdiscovery.Set, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.candidates, s.shouldSend
+}
+
+func (c *Client) sendEndpointState(
+	ctx context.Context,
+	discovered discoveredControlKey,
+	machineKey key.MachinePrivate,
+	nodeKey key.NodePrivate,
+	controlKey key.MachinePublic,
+	discoKey key.DiscoPublic,
+	options NetmapOptions,
+	state *endpointState,
+) error {
+	if state == nil {
+		return errors.New("ts2021: endpoint state is required")
+	}
+	state.publishMu.Lock()
+	defer state.publishMu.Unlock()
+	candidates, shouldSend := state.snapshot()
+	if !shouldSend {
+		return nil
+	}
+	options.Candidates = candidates
+
+	return c.sendEndpointUpdate(
+		ctx,
+		discovered,
+		machineKey,
+		nodeKey,
+		controlKey,
+		discoKey,
+		options,
+	)
+}
+
+func (c *Client) runEndpointUpdates(
+	ctx context.Context,
+	controlURL string,
+	machineKey key.MachinePrivate,
+	nodeKey key.NodePrivate,
+	controlKey key.MachinePublic,
+	discoKey key.DiscoPublic,
+	options NetmapOptions,
+	state *endpointState,
+) error {
+	updates := options.EndpointUpdates
+	backoff := minReconnectDelay
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case candidates, open := <-updates:
+			if !open {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+
+				return fmt.Errorf("%w: update channel closed", ErrEndpointUpdate)
+			}
+			if err := validateCandidateSet(candidates); err != nil {
+				return err
+			}
+			if !state.set(candidates) {
+				continue
+			}
+		}
+
+		for {
+			err := c.publishEndpointState(
 				ctx,
-				discovered,
+				controlURL,
 				machineKey,
 				nodeKey,
 				controlKey,
 				discoKey,
-				updateOptions,
+				options,
+				state,
 			)
-		}
-		handlerErr := handler(ctx, snapshot, publisher)
-		publisherActive.Store(false)
-		if handlerErr != nil {
-			if errors.Is(handlerErr, ErrEndpointUpdate) {
-				return receivedMap, handlerErr
+			if err == nil {
+				backoff = minReconnectDelay
+
+				break
 			}
-			return receivedMap, fmt.Errorf("%w: %w", ErrNetmapConsumer, handlerErr)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if isPermanentNetmapError(err) {
+				return err
+			}
+
+			delay := jitteredReconnectDelay(backoff)
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				stopTimer(timer)
+
+				return ctx.Err()
+			case candidates, open := <-updates:
+				stopTimer(timer)
+				if !open {
+					return fmt.Errorf("%w: update channel closed", ErrEndpointUpdate)
+				}
+				if err := validateCandidateSet(candidates); err != nil {
+					return err
+				}
+				state.set(candidates)
+				backoff = minReconnectDelay
+			case <-timer.C:
+				if backoff < maxReconnectDelay {
+					backoff *= 2
+					if backoff > maxReconnectDelay {
+						backoff = maxReconnectDelay
+					}
+				}
+			}
 		}
-		receivedMap = true
 	}
+}
+
+func stopTimer(timer *time.Timer) {
+	if timer == nil || timer.Stop() {
+		return
+	}
+	select {
+	case <-timer.C:
+	default:
+	}
+}
+
+func (c *Client) publishEndpointState(
+	ctx context.Context,
+	controlURL string,
+	machineKey key.MachinePrivate,
+	nodeKey key.NodePrivate,
+	controlKey key.MachinePublic,
+	discoKey key.DiscoPublic,
+	options NetmapOptions,
+	state *endpointState,
+) error {
+	discovered, err := c.discoverControlKey(ctx, controlURL)
+	if err != nil {
+		return err
+	}
+	if _, err := verifyFingerprint(
+		options.PinnedFingerprint,
+		controlKeyFingerprint(controlKey),
+	); err != nil {
+		return fmt.Errorf("%w: persisted pin and key disagree", ErrInvalidMaterial)
+	}
+	if !constantTimeFingerprintEqual(discovered.fingerprint, options.PinnedFingerprint) ||
+		discovered.publicKey != controlKey {
+		return ErrControlKeyChanged
+	}
+
+	return c.sendEndpointState(
+		ctx,
+		discovered,
+		machineKey,
+		nodeKey,
+		controlKey,
+		discoKey,
+		options,
+		state,
+	)
 }
 
 type mapExchange struct {
@@ -307,7 +554,7 @@ func (c *Client) openMapExchange(
 	controlKey key.MachinePublic,
 	mapRequest tailcfg.MapRequest,
 ) (*mapExchange, error) {
-	encoded, err := json.Marshal(mapRequest)
+	encoded, err := marshalMapRequest(mapRequest)
 	if err != nil {
 		return nil, fmt.Errorf("ts2021: encoding netmap request: %w", err)
 	}
@@ -425,6 +672,21 @@ func (c *Client) openMapExchange(
 	}, nil
 }
 
+func marshalMapRequest(request tailcfg.MapRequest) ([]byte, error) {
+	if request.Stream || request.Endpoints == nil || len(request.Endpoints) != 0 {
+		return json.Marshal(request)
+	}
+	type requestWithEndpointWithdrawal struct {
+		tailcfg.MapRequest
+		Endpoints []netip.AddrPort `json:"Endpoints"`
+	}
+
+	return json.Marshal(requestWithEndpointWithdrawal{
+		MapRequest: request,
+		Endpoints:  []netip.AddrPort{},
+	})
+}
+
 func newMapRequest(
 	nodeKey key.NodePrivate,
 	discoKey key.DiscoPublic,
@@ -467,12 +729,20 @@ func validateNetmapOptions(options NetmapOptions) error {
 	if err := validateDisplayText("hostname", options.Hostname, maxHostnameRunes); err != nil {
 		return err
 	}
-	candidates, err := pathdiscovery.NewSet(options.Candidates.Candidates())
-	if err != nil || !candidates.Equal(options.Candidates) {
-		return errors.New("ts2021: advertised candidates are invalid")
+	if err := validateCandidateSet(options.Candidates); err != nil {
+		return err
 	}
 
 	return validateDisplayText("version", options.Version, maxVersionRunes)
+}
+
+func validateCandidateSet(candidates pathdiscovery.Set) error {
+	validated, err := pathdiscovery.NewSet(candidates.Candidates())
+	if err != nil || !validated.Equal(candidates) {
+		return errors.New("ts2021: advertised candidates are invalid")
+	}
+
+	return nil
 }
 
 func protocolEndpointType(source pathdiscovery.Source) tailcfg.EndpointType {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/netip"
 	"strings"
 	"testing"
@@ -71,6 +72,31 @@ func TestNewMapRequest_EndpointUpdateIsNonStreaming(t *testing.T) {
 	}
 }
 
+func TestMarshalMapRequestPreservesEndpointWithdrawal(t *testing.T) {
+	t.Parallel()
+
+	request := newMapRequest(
+		key.NewNode(),
+		key.NewDisco().Public(),
+		NetmapOptions{},
+		false,
+	)
+	encoded, err := marshalMapRequest(request)
+	if err != nil {
+		t.Fatalf("marshalMapRequest() error = %v", err)
+	}
+	if !bytes.Contains(encoded, []byte(`"Endpoints":[]`)) {
+		t.Fatalf("endpoint withdrawal omitted from request: %s", encoded)
+	}
+	decoded := tailcfg.MapRequest{}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if decoded.Endpoints == nil || len(decoded.Endpoints) != 0 {
+		t.Fatalf("decoded endpoint withdrawal = %#v", decoded.Endpoints)
+	}
+}
+
 func TestProtocolEndpointType(t *testing.T) {
 	t.Parallel()
 
@@ -89,6 +115,90 @@ func TestProtocolEndpointType(t *testing.T) {
 			t.Fatalf("protocolEndpointType(%v) = %v, want %v", test.source, got, test.want)
 		}
 	}
+}
+
+func TestEndpointStateRetainsLatestSetAcrossReconnect(t *testing.T) {
+	t.Parallel()
+
+	initial := mustProtocolCandidateSet(
+		t,
+		"192.0.2.70:41641",
+		pathdiscovery.SourceConfigured,
+	)
+	state := newEndpointState(initial)
+	if got, shouldSend := state.snapshot(); !shouldSend || !got.Equal(initial) {
+		t.Fatalf("initial endpoint state = %#v, %t", got, shouldSend)
+	}
+	dynamic := mustProtocolCandidateSet(
+		t,
+		"198.51.100.70:41641",
+		pathdiscovery.SourceServerReflexive,
+	)
+	if !state.set(dynamic) || state.set(dynamic) {
+		t.Fatal("endpoint state change detection is incorrect")
+	}
+	if got, shouldSend := state.snapshot(); !shouldSend || !got.Equal(dynamic) {
+		t.Fatalf("dynamic endpoint state = %#v, %t", got, shouldSend)
+	}
+	if !state.set(pathdiscovery.Set{}) {
+		t.Fatal("endpoint withdrawal was not recorded")
+	}
+	if got, shouldSend := state.snapshot(); !shouldSend || got.Len() != 0 {
+		t.Fatalf("withdrawn endpoint state = %#v, %t", got, shouldSend)
+	}
+}
+
+func TestEndpointStateStartsWithExplicitWithdrawal(t *testing.T) {
+	t.Parallel()
+
+	state := newEndpointState(pathdiscovery.Set{})
+	got, shouldSend := state.snapshot()
+	if !shouldSend || got.Len() != 0 {
+		t.Fatalf("initial endpoint state = %#v, %t", got, shouldSend)
+	}
+}
+
+func TestEndpointUpdaterRejectsClosedChannel(t *testing.T) {
+	t.Parallel()
+
+	updates := make(chan pathdiscovery.Set)
+	close(updates)
+	client := newWithHTTPClient(http.DefaultClient)
+	options := NetmapOptions{
+		EndpointUpdates: updates,
+	}
+	err := client.runEndpointUpdates(
+		t.Context(),
+		"https://control.example.com",
+		key.NewMachine(),
+		key.NewNode(),
+		key.NewMachine().Public(),
+		key.NewDisco().Public(),
+		options,
+		newEndpointState(pathdiscovery.Set{}),
+	)
+	if !errors.Is(err, ErrEndpointUpdate) {
+		t.Fatalf("runEndpointUpdates() error = %v, want ErrEndpointUpdate", err)
+	}
+}
+
+func mustProtocolCandidateSet(
+	t *testing.T,
+	endpoint string,
+	source pathdiscovery.Source,
+) pathdiscovery.Set {
+	t.Helper()
+
+	candidate, err := pathdiscovery.NewCandidate(netip.MustParseAddrPort(endpoint), source)
+	if err != nil {
+		t.Fatalf("NewCandidate() error = %v", err)
+	}
+	set, err := pathdiscovery.NewSet([]pathdiscovery.Candidate{candidate})
+	if err != nil {
+		t.Fatalf("NewSet() error = %v", err)
+	}
+
+	return set
 }
 
 func TestMapAccumulator_FullAndDelta(t *testing.T) {

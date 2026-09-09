@@ -3,10 +3,13 @@ package daemon
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"net/netip"
+	"slices"
 	"sync"
 	"time"
 
@@ -69,6 +72,8 @@ const (
 	ControlSessionBlocked = "blocked"
 	completionPollTimeout = 3 * time.Second
 	dnsCleanupTimeout     = 5 * time.Second
+	minEndpointRefresh    = 20 * time.Second
+	maxEndpointRefresh    = 26 * time.Second
 )
 
 // Status is the daemon-owned status model before it is mapped to a wire format.
@@ -142,6 +147,7 @@ type DataPlaneController interface {
 }
 
 type endpointDiscoverer interface {
+	DiscoverySocket() pathdiscovery.Socket
 	DiscoverEndpoints(
 		context.Context,
 		uint64,
@@ -169,7 +175,9 @@ type Service struct {
 	hostname             string
 	configuredCandidates pathdiscovery.Set
 	clock                func() time.Time
+	endpointRefreshDelay func() time.Duration
 	syncSignal           chan struct{}
+	dataPlaneMu          sync.Mutex
 	syncMu               sync.RWMutex
 	syncState            syncStatus
 	discoveryScope       uint64
@@ -185,6 +193,12 @@ type syncStatus struct {
 	policyRuleCount int
 	dataPlane       string
 	dns             string
+}
+
+type endpointRefreshRequest struct {
+	active  bool
+	socket  pathdiscovery.Socket
+	servers []netip.AddrPort
 }
 
 // Options contains host facts and injectable time for the daemon use cases.
@@ -254,6 +268,7 @@ func New(
 		hostname:             options.Hostname,
 		configuredCandidates: configuredSet,
 		clock:                options.Clock,
+		endpointRefreshDelay: randomEndpointRefreshDelay,
 		syncSignal:           make(chan struct{}, 1),
 		syncState: syncStatus{
 			state:     ControlSessionInactive,
@@ -350,7 +365,28 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		})
 		streamCtx, cancel := context.WithCancel(ctx)
 		streamDone := make(chan error, 1)
-		publishedCandidates := s.configuredCandidates
+		var discoveryRequests chan endpointRefreshRequest
+		var candidateUpdates chan pathdiscovery.Set
+		var refreshDone <-chan error
+		var sessionDiscoverer endpointDiscoverer
+		if discoverer, supported := s.dataPlane.(endpointDiscoverer); supported {
+			sessionDiscoverer = discoverer
+			discoveryRequests = make(chan endpointRefreshRequest, 1)
+			candidateUpdates = make(chan pathdiscovery.Set, 1)
+			done := make(chan error, 1)
+			refreshDone = done
+			go func() {
+				done <- s.runEndpointRefresh(
+					streamCtx,
+					discoveryScope,
+					discoverer,
+					discoveryRequests,
+					candidateUpdates,
+				)
+			}()
+		}
+		lastRefreshRequest := endpointRefreshRequest{}
+		hasRefreshRequest := false
 		go func() {
 			streamDone <- s.prober.StreamNetmap(
 				streamCtx,
@@ -361,12 +397,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					Version:           "meshd/" + s.build.Version,
 					PinnedFingerprint: record.ControlKeyFingerprint(),
 					Candidates:        s.configuredCandidates,
+					EndpointUpdates:   candidateUpdates,
 				},
-				func(
-					callbackCtx context.Context,
-					snapshot networkmap.Snapshot,
-					publishEndpoints ts2021.EndpointPublisher,
-				) error {
+				func(callbackCtx context.Context, snapshot networkmap.Snapshot) error {
 					if err := callbackCtx.Err(); err != nil {
 						return err
 					}
@@ -379,7 +412,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					}
 					dataPlaneState := s.defaultDataPlaneState()
 					if s.dataPlane != nil {
+						s.dataPlaneMu.Lock()
 						state, err := s.dataPlane.Apply(callbackCtx, snapshot, privateKey)
+						s.dataPlaneMu.Unlock()
 						if err != nil {
 							s.setSyncStatus(syncStatus{
 								profileID: active.ID,
@@ -391,14 +426,21 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						}
 						dataPlaneState = string(state)
 					}
-					if err := s.discoverAndPublishEndpoints(
-						callbackCtx,
-						discoveryScope,
-						snapshot,
-						publishEndpoints,
-						&publishedCandidates,
-					); err != nil {
-						return err
+					if discoveryRequests != nil {
+						s.dataPlaneMu.Lock()
+						request, err := endpointRequest(
+							snapshot,
+							sessionDiscoverer,
+						)
+						s.dataPlaneMu.Unlock()
+						if err != nil {
+							return err
+						}
+						if !hasRefreshRequest || !lastRefreshRequest.equal(request) {
+							offerLatest(discoveryRequests, request)
+							lastRefreshRequest = request
+							hasRefreshRequest = true
+						}
 					}
 					dnsState := DNSInactive
 					if s.dns != nil {
@@ -440,6 +482,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		case <-ctx.Done():
 			cancel()
 			<-streamDone
+			if refreshDone != nil {
+				<-refreshDone
+			}
 			clear(privateKey[:])
 			clearProtocolMaterial(protocolMaterial)
 
@@ -447,6 +492,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		case <-s.syncSignal:
 			cancel()
 			<-streamDone
+			if refreshDone != nil {
+				<-refreshDone
+			}
 			clear(privateKey[:])
 			clearProtocolMaterial(protocolMaterial)
 			if err := s.stopRuntime(); err != nil {
@@ -456,6 +504,35 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			continue
 		case <-streamDone:
 			cancel()
+			if refreshDone != nil {
+				<-refreshDone
+			}
+			clear(privateKey[:])
+			clearProtocolMaterial(protocolMaterial)
+			dataPlaneState := s.currentDataPlaneState()
+			dnsState := s.currentDNSState()
+			if err := s.stopRuntime(); err != nil {
+				dataPlaneState = string(dataplane.StateFailed)
+				dnsState = DNSFailed
+			}
+			if dataPlaneState != string(dataplane.StateFailed) {
+				dataPlaneState = s.defaultDataPlaneState()
+			}
+			if dnsState != DNSFailed {
+				dnsState = DNSInactive
+			}
+			s.setSyncStatus(syncStatus{
+				profileID: active.ID,
+				state:     ControlSessionBlocked,
+				dataPlane: dataPlaneState,
+				dns:       dnsState,
+			})
+			if err := s.waitForSyncSignal(ctx); err != nil {
+				return err
+			}
+		case <-refreshDone:
+			cancel()
+			<-streamDone
 			clear(privateKey[:])
 			clearProtocolMaterial(protocolMaterial)
 			dataPlaneState := s.currentDataPlaneState()
@@ -483,55 +560,207 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 	}
 }
 
-func (s *Service) discoverAndPublishEndpoints(
-	ctx context.Context,
-	scope uint64,
+func endpointRequest(
 	snapshot networkmap.Snapshot,
-	publish ts2021.EndpointPublisher,
-	published *pathdiscovery.Set,
-) error {
-	discoverer, supported := s.dataPlane.(endpointDiscoverer)
-	if !supported || len(snapshot.Peers) == 0 {
-		return nil
+	discoverer endpointDiscoverer,
+) (endpointRefreshRequest, error) {
+	if len(snapshot.Peers) == 0 {
+		return endpointRefreshRequest{}, nil
+	}
+	if discoverer == nil {
+		return endpointRefreshRequest{}, errors.New("daemon: endpoint discoverer is unavailable")
+	}
+	socket := discoverer.DiscoverySocket()
+	if !socket.IsOpen() {
+		return endpointRefreshRequest{}, pathdiscovery.ErrTransportClosed
 	}
 	servers, err := pathdiscovery.ServersFromRelayMap(snapshot.Relays)
 	if errors.Is(err, pathdiscovery.ErrNoSTUNServers) {
 		servers = nil
+	} else if err != nil {
+		return endpointRefreshRequest{}, fmt.Errorf("deriving discovery servers: %w", err)
 	}
-	if err != nil && !errors.Is(err, pathdiscovery.ErrNoSTUNServers) {
-		return fmt.Errorf("deriving discovery servers: %w", err)
+
+	return endpointRefreshRequest{
+		active:  true,
+		socket:  socket,
+		servers: append([]netip.AddrPort(nil), servers...),
+	}, nil
+}
+
+func (r endpointRefreshRequest) equal(other endpointRefreshRequest) bool {
+	return r.active == other.active && r.socket == other.socket &&
+		slices.Equal(r.servers, other.servers)
+}
+
+func offerLatest[T any](updates chan T, value T) {
+	select {
+	case updates <- value:
+		return
+	default:
 	}
-	result, err := discoverer.DiscoverEndpoints(ctx, scope, servers)
-	if err != nil {
-		if ctx.Err() != nil {
+	select {
+	case <-updates:
+	default:
+	}
+	select {
+	case updates <- value:
+	default:
+	}
+}
+
+func (s *Service) runEndpointRefresh(
+	ctx context.Context,
+	scope uint64,
+	discoverer endpointDiscoverer,
+	requests <-chan endpointRefreshRequest,
+	updates chan pathdiscovery.Set,
+) error {
+	if discoverer == nil || requests == nil || updates == nil {
+		return errors.New("daemon: endpoint refresh dependencies are missing")
+	}
+	tracker := pathdiscovery.NewTracker()
+	current := endpointRefreshRequest{}
+	hasCurrent := false
+	var timer *time.Timer
+	var timerChannel <-chan time.Time
+	defer func() { stopRefreshTimer(timer) }()
+
+	for {
+		resetForSocketChange := false
+		select {
+		case <-ctx.Done():
 			return ctx.Err()
+		case request, open := <-requests:
+			if !open {
+				return errors.New("daemon: endpoint refresh request channel closed")
+			}
+			resetForSocketChange = hasCurrent && current.active && request.active &&
+				current.socket != request.socket
+			current = request
+			hasCurrent = true
+			stopRefreshTimer(timer)
+			timer = nil
+			timerChannel = nil
+		case <-timerChannel:
+			timer = nil
+			timerChannel = nil
 		}
-		if errors.Is(err, pathdiscovery.ErrNoSTUNResponse) ||
-			errors.Is(err, pathdiscovery.ErrNoSTUNServers) ||
-			errors.Is(err, pathdiscovery.ErrSocketChanged) {
-			return nil
+		if !hasCurrent {
+			continue
+		}
+		if resetForSocketChange {
+			result, err := tracker.Reset(s.clock(), s.configuredCandidates)
+			if err != nil {
+				return err
+			}
+			if result.Changed {
+				offerLatest(updates, result.Candidates)
+			}
+		}
+		if !current.active {
+			result, err := tracker.Reset(s.clock(), s.configuredCandidates)
+			if err != nil {
+				return err
+			}
+			if result.Changed {
+				offerLatest(updates, result.Candidates)
+			}
+			hasCurrent = false
+
+			continue
 		}
 
-		return fmt.Errorf("discovering direct endpoints: %w", err)
+		expired, err := tracker.Expire(s.clock())
+		if err != nil {
+			return err
+		}
+		if expired.Changed {
+			offerLatest(updates, expired.Candidates)
+		}
+		observed, err := s.discoverEndpoints(ctx, scope, discoverer, current.servers)
+		if err != nil {
+			return err
+		}
+		tracked, err := tracker.Update(s.clock(), observed)
+		if err != nil {
+			return err
+		}
+		if tracked.Changed {
+			offerLatest(updates, tracked.Candidates)
+		}
+		if s.endpointRefreshDelay == nil {
+			return errors.New("daemon: endpoint refresh delay is unavailable")
+		}
+		delay := s.endpointRefreshDelay()
+		if delay <= 0 {
+			return errors.New("daemon: endpoint refresh delay is invalid")
+		}
+		if !tracked.ExpiresAt.IsZero() {
+			untilExpiry := tracked.ExpiresAt.Sub(s.clock())
+			if untilExpiry < delay {
+				if untilExpiry < 0 {
+					untilExpiry = 0
+				}
+				delay = untilExpiry
+			}
+		}
+		timer = time.NewTimer(delay)
+		timerChannel = timer.C
 	}
-	merged, err := pathdiscovery.Merge(s.configuredCandidates, result.Candidates)
+}
+
+func (s *Service) discoverEndpoints(
+	ctx context.Context,
+	scope uint64,
+	discoverer endpointDiscoverer,
+	servers []netip.AddrPort,
+) (pathdiscovery.Set, error) {
+	s.dataPlaneMu.Lock()
+	result, err := discoverer.DiscoverEndpoints(ctx, scope, servers)
+	s.dataPlaneMu.Unlock()
+	if err == nil {
+		merged, mergeErr := pathdiscovery.Merge(
+			s.configuredCandidates,
+			result.Candidates,
+		)
+		if mergeErr != nil {
+			return pathdiscovery.Set{}, fmt.Errorf("merging direct endpoints: %w", mergeErr)
+		}
+
+		return merged, nil
+	}
+	if ctx.Err() != nil {
+		return pathdiscovery.Set{}, ctx.Err()
+	}
+	if errors.Is(err, pathdiscovery.ErrNoSTUNResponse) ||
+		errors.Is(err, pathdiscovery.ErrNoSTUNServers) ||
+		errors.Is(err, pathdiscovery.ErrSocketChanged) ||
+		errors.Is(err, pathdiscovery.ErrTransportClosed) {
+		return s.configuredCandidates, nil
+	}
+
+	return pathdiscovery.Set{}, fmt.Errorf("discovering direct endpoints: %w", err)
+}
+
+func randomEndpointRefreshDelay() time.Duration {
+	span := maxEndpointRefresh - minEndpointRefresh
+	random, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(span)))
 	if err != nil {
-		return fmt.Errorf("merging direct endpoints: %w", err)
-	}
-	if published != nil && published.Equal(merged) {
-		return nil
-	}
-	if publish == nil {
-		return errors.New("daemon: endpoint publisher is unavailable")
-	}
-	if err := publish(merged); err != nil {
-		return fmt.Errorf("publishing direct endpoints: %w", err)
-	}
-	if published != nil {
-		*published = merged
+		return minEndpointRefresh + span/2
 	}
 
-	return nil
+	return minEndpointRefresh + time.Duration(random.Int64())
+}
+
+func stopRefreshTimer(timer *time.Timer) {
+	if timer == nil || timer.Stop() {
+		return
+	}
+	select {
+	case <-timer.C:
+	default:
+	}
 }
 
 func (s *Service) nextDiscoveryScope() (uint64, error) {
@@ -979,7 +1208,10 @@ func (s *Service) stopDataPlane() error {
 	if s.dataPlane == nil {
 		return nil
 	}
-	if err := s.dataPlane.Close(); err != nil {
+	s.dataPlaneMu.Lock()
+	err := s.dataPlane.Close()
+	s.dataPlaneMu.Unlock()
+	if err != nil {
 		return fmt.Errorf("closing data plane: %w", err)
 	}
 

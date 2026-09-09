@@ -252,7 +252,7 @@ func TestService_RunDiscoversAndPublishesDirectEndpoint(t *testing.T) {
 	runResult := make(chan error, 1)
 	go func() { runResult <- service.Run(ctx) }()
 	select {
-	case <-control.streamPublished:
+	case <-control.endpointPublished:
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for endpoint publication")
 	}
@@ -278,6 +278,214 @@ func TestService_RunDiscoversAndPublishesDirectEndpoint(t *testing.T) {
 	if err := <-runResult; !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context cancellation", err)
 	}
+}
+
+func TestEndpointRefreshRunsPeriodicallyWithoutDuplicatePublication(t *testing.T) {
+	t.Parallel()
+
+	candidate, err := pathdiscovery.NewCandidate(
+		netip.MustParseAddrPort("198.51.100.50:41641"),
+		pathdiscovery.SourceServerReflexive,
+	)
+	if err != nil {
+		t.Fatalf("NewCandidate() error = %v", err)
+	}
+	candidates, err := pathdiscovery.NewSet([]pathdiscovery.Candidate{candidate})
+	if err != nil {
+		t.Fatalf("NewSet() error = %v", err)
+	}
+	discoverer := &refreshDiscoverer{
+		calls:  make(chan struct{}, 4),
+		result: pathdiscovery.DiscoveryResult{Candidates: candidates},
+	}
+	service := &Service{
+		clock:                time.Now,
+		endpointRefreshDelay: func() time.Duration { return 5 * time.Millisecond },
+	}
+	requests := make(chan endpointRefreshRequest, 1)
+	updates := make(chan pathdiscovery.Set, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- service.runEndpointRefresh(ctx, 11, discoverer, requests, updates)
+	}()
+	requests <- endpointRefreshRequest{
+		active:  true,
+		servers: []netip.AddrPort{netip.MustParseAddrPort("192.0.2.50:3478")},
+	}
+
+	select {
+	case update := <-updates:
+		if !update.Equal(candidates) {
+			t.Fatalf("first endpoint update = %#v", update)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first endpoint update")
+	}
+	for range 2 {
+		select {
+		case <-discoverer.calls:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for periodic discovery")
+		}
+	}
+	select {
+	case duplicate := <-updates:
+		t.Fatalf("received duplicate endpoint update %#v", duplicate)
+	default:
+	}
+
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("runEndpointRefresh() error = %v, want context cancellation", err)
+	}
+}
+
+func TestEndpointRefreshResetWithdrawsDynamicCandidate(t *testing.T) {
+	t.Parallel()
+
+	candidate, err := pathdiscovery.NewCandidate(
+		netip.MustParseAddrPort("198.51.100.60:41641"),
+		pathdiscovery.SourceServerReflexive,
+	)
+	if err != nil {
+		t.Fatalf("NewCandidate() error = %v", err)
+	}
+	candidates, err := pathdiscovery.NewSet([]pathdiscovery.Candidate{candidate})
+	if err != nil {
+		t.Fatalf("NewSet() error = %v", err)
+	}
+	discoverer := &refreshDiscoverer{
+		calls:  make(chan struct{}, 1),
+		result: pathdiscovery.DiscoveryResult{Candidates: candidates},
+	}
+	service := &Service{
+		clock:                time.Now,
+		endpointRefreshDelay: func() time.Duration { return time.Hour },
+	}
+	requests := make(chan endpointRefreshRequest, 1)
+	updates := make(chan pathdiscovery.Set, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- service.runEndpointRefresh(ctx, 12, discoverer, requests, updates)
+	}()
+	requests <- endpointRefreshRequest{active: true}
+	select {
+	case <-updates:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for discovered endpoint")
+	}
+	requests <- endpointRefreshRequest{}
+	select {
+	case update := <-updates:
+		if update.Len() != 0 {
+			t.Fatalf("withdrawal contains %d candidates", update.Len())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for endpoint withdrawal")
+	}
+
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("runEndpointRefresh() error = %v, want context cancellation", err)
+	}
+}
+
+func TestEndpointRefreshSocketChangeDropsOldDynamicCandidate(t *testing.T) {
+	t.Parallel()
+
+	candidate, err := pathdiscovery.NewCandidate(
+		netip.MustParseAddrPort("198.51.100.61:41641"),
+		pathdiscovery.SourceServerReflexive,
+	)
+	if err != nil {
+		t.Fatalf("NewCandidate() error = %v", err)
+	}
+	candidates, err := pathdiscovery.NewSet([]pathdiscovery.Candidate{candidate})
+	if err != nil {
+		t.Fatalf("NewSet() error = %v", err)
+	}
+	discoverer := &refreshDiscoverer{
+		calls:  make(chan struct{}, 2),
+		result: pathdiscovery.DiscoveryResult{Candidates: candidates},
+	}
+	service := &Service{
+		clock:                time.Now,
+		endpointRefreshDelay: func() time.Duration { return time.Hour },
+	}
+	requests := make(chan endpointRefreshRequest, 1)
+	updates := make(chan pathdiscovery.Set, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- service.runEndpointRefresh(ctx, 13, discoverer, requests, updates)
+	}()
+	requests <- endpointRefreshRequest{
+		active: true,
+		socket: pathdiscovery.Socket{Port: 41641, Generation: 1},
+	}
+	select {
+	case update := <-updates:
+		if !update.Equal(candidates) {
+			t.Fatalf("first endpoint update = %#v", update)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for discovered endpoint")
+	}
+
+	discoverer.err = pathdiscovery.ErrNoSTUNResponse
+	requests <- endpointRefreshRequest{
+		active: true,
+		socket: pathdiscovery.Socket{Port: 41641, Generation: 2},
+	}
+	select {
+	case update := <-updates:
+		if update.Len() != 0 {
+			t.Fatalf("socket-change withdrawal contains %d candidates", update.Len())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for socket-change withdrawal")
+	}
+
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("runEndpointRefresh() error = %v, want context cancellation", err)
+	}
+}
+
+func TestRandomEndpointRefreshDelayBounds(t *testing.T) {
+	t.Parallel()
+
+	for range 100 {
+		delay := randomEndpointRefreshDelay()
+		if delay < minEndpointRefresh || delay >= maxEndpointRefresh {
+			t.Fatalf("randomEndpointRefreshDelay() = %v", delay)
+		}
+	}
+}
+
+type refreshDiscoverer struct {
+	calls  chan struct{}
+	result pathdiscovery.DiscoveryResult
+	err    error
+}
+
+func (d *refreshDiscoverer) DiscoverySocket() pathdiscovery.Socket {
+	return pathdiscovery.Socket{Port: 41641, Generation: 1}
+}
+
+func (d *refreshDiscoverer) DiscoverEndpoints(
+	_ context.Context,
+	_ uint64,
+	_ []netip.AddrPort,
+) (pathdiscovery.DiscoveryResult, error) {
+	select {
+	case d.calls <- struct{}{}:
+	default:
+	}
+
+	return d.result, d.err
 }
 
 func TestService_StatusReportsOnlineForEncryptedDataPlane(t *testing.T) {
@@ -309,8 +517,8 @@ type fakeControl struct {
 	registerOptions     []ts2021.RegisterOptions
 	streamSnapshot      *networkmap.Snapshot
 	streamPublished     chan struct{}
+	endpointPublished   chan struct{}
 	endpointUpdates     []pathdiscovery.Set
-	endpointUpdateErr   error
 }
 
 type fakeDataPlane struct {
@@ -405,7 +613,7 @@ func (f *fakeControl) StreamNetmap(
 	ctx context.Context,
 	_ string,
 	_ ts2021.KeyMaterial,
-	_ ts2021.NetmapOptions,
+	options ts2021.NetmapOptions,
 	handler ts2021.NetmapHandler,
 ) error {
 	f.mu.Lock()
@@ -413,14 +621,7 @@ func (f *fakeControl) StreamNetmap(
 	published := f.streamPublished
 	f.mu.Unlock()
 	if snapshot != nil {
-		publisher := func(candidates pathdiscovery.Set) error {
-			f.mu.Lock()
-			defer f.mu.Unlock()
-			f.endpointUpdates = append(f.endpointUpdates, candidates)
-
-			return f.endpointUpdateErr
-		}
-		if err := handler(ctx, *snapshot, publisher); err != nil {
+		if err := handler(ctx, *snapshot); err != nil {
 			return err
 		}
 		select {
@@ -428,9 +629,26 @@ func (f *fakeControl) StreamNetmap(
 		default:
 		}
 	}
-	<-ctx.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case candidates, open := <-options.EndpointUpdates:
+			if !open {
+				options.EndpointUpdates = nil
 
-	return ctx.Err()
+				continue
+			}
+			f.mu.Lock()
+			f.endpointUpdates = append(f.endpointUpdates, candidates)
+			endpointPublished := f.endpointPublished
+			f.mu.Unlock()
+			select {
+			case endpointPublished <- struct{}{}:
+			default:
+			}
+		}
+	}
 }
 
 type fakeEndpointDataPlane struct {
@@ -439,6 +657,10 @@ type fakeEndpointDataPlane struct {
 	discoveryServers []netip.AddrPort
 	discoveryResult  pathdiscovery.DiscoveryResult
 	discoveryErr     error
+}
+
+func (f *fakeEndpointDataPlane) DiscoverySocket() pathdiscovery.Socket {
+	return pathdiscovery.Socket{Port: 41641, Generation: 1}
 }
 
 func (f *fakeEndpointDataPlane) DiscoverEndpoints(
@@ -473,7 +695,10 @@ func newTestService(t *testing.T) (*Service, *identity.Store, *fakeControl, stri
 		t.Fatalf("identity.Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = identities.Close() })
-	control := &fakeControl{streamPublished: make(chan struct{}, 1)}
+	control := &fakeControl{
+		streamPublished:   make(chan struct{}, 1),
+		endpointPublished: make(chan struct{}, 1),
+	}
 	service, err := New(
 		profiles,
 		identities,

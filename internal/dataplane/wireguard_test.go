@@ -174,6 +174,9 @@ func TestWireGuardEngineDiscoversOnActiveDevice(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	engine.hostAddresses = func() ([]netip.Addr, error) { return nil, nil }
+	if got := engine.DiscoverySocket(); got != device.discoverySocket {
+		t.Fatalf("DiscoverySocket() = %#v, want %#v", got, device.discoverySocket)
+	}
 
 	result, err := engine.DiscoverEndpoints(t.Context(), 7, []netip.AddrPort{server})
 	if err != nil {
@@ -188,6 +191,12 @@ func TestWireGuardEngineDiscoversOnActiveDevice(t *testing.T) {
 			device.discoveryScope,
 			device.discoveryServers,
 		)
+	}
+	if err := engine.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if got := engine.DiscoverySocket(); got.IsOpen() {
+		t.Fatalf("DiscoverySocket() after Close = %#v", got)
 	}
 }
 

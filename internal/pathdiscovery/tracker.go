@@ -102,6 +102,37 @@ func (t *Tracker) Expire(now time.Time) (TrackingResult, error) {
 	return t.resultLocked(now, t.stable), nil
 }
 
+// Reset drops all retained history and publishes only the supplied stable
+// candidates. It is used when the shared socket or active peer set closes.
+func (t *Tracker) Reset(now time.Time, current Set) (TrackingResult, error) {
+	if t == nil {
+		return TrackingResult{}, errors.New("pathdiscovery: tracker is not initialized")
+	}
+	if now.IsZero() {
+		return TrackingResult{}, errors.New("pathdiscovery: tracker time is invalid")
+	}
+	validated, err := NewSet(current.Candidates())
+	if err != nil || !validated.Equal(current) {
+		return TrackingResult{}, errors.New("pathdiscovery: tracker candidates are invalid")
+	}
+	stable := make([]Candidate, 0, current.Len())
+	for _, candidate := range current.candidates {
+		if candidate.source != SourceHost && candidate.source != SourceConfigured {
+			return TrackingResult{}, errors.New(
+				"pathdiscovery: tracker reset candidates must be stable",
+			)
+		}
+		stable = append(stable, candidate)
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	clear(t.tracked)
+	t.stable = append(t.stable[:0], stable...)
+
+	return t.resultLocked(now, stable), nil
+}
+
 func (t *Tracker) resultLocked(now time.Time, preferred []Candidate) TrackingResult {
 	selected := make([]Candidate, 0, MaxCandidates)
 	seen := make(map[netip.AddrPort]struct{}, MaxCandidates)
