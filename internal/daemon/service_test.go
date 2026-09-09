@@ -381,6 +381,23 @@ func TestService_RunAttachesAndSchedulesLivePeerProbes(t *testing.T) {
 	if !ok || ping.NodeKey.String() != control.streamSnapshot.Self.PublicKey {
 		t.Fatalf("remote Open(scheduled ping) = %#v", message)
 	}
+	authenticatedPong, err := remoteChannel.Seal(peerwire.Pong{
+		ID:     ping.ID,
+		Source: netip.MustParseAddrPort("198.51.100.80:41641"),
+	})
+	if err != nil {
+		t.Fatalf("remote Seal(pong) error = %v", err)
+	}
+	handler := dataPlane.handlerSnapshot()
+	if handler == nil {
+		t.Fatal("peer-probe handler was not attached")
+	}
+	handler.HandleDatagram(authenticatedPong, peerEndpoint, dataPlane.socket)
+	endpointUpdate := waitForEndpointUpdate(t, dataPlane.endpointUpdates)
+	if endpointUpdate.restore || endpointUpdate.revision != 1 ||
+		endpointUpdate.peerID != 2 || endpointUpdate.endpoint != peerEndpoint {
+		t.Fatalf("authenticated endpoint update = %#v", endpointUpdate)
+	}
 
 	remotePingID := peerwire.TransactionID{9, 8, 7, 6, 5, 4, 3, 2, 1, 4, 5, 6}
 	remotePing, err := remoteChannel.Seal(peerwire.Ping{
@@ -389,10 +406,6 @@ func TestService_RunAttachesAndSchedulesLivePeerProbes(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("remote Seal(ping) error = %v", err)
-	}
-	handler := dataPlane.handlerSnapshot()
-	if handler == nil {
-		t.Fatal("peer-probe handler was not attached")
 	}
 	handler.HandleDatagram(remotePing, peerEndpoint, dataPlane.socket)
 	replied := waitForLiveProbeSend(t, dataPlane)
@@ -904,17 +917,19 @@ type liveProbeSend struct {
 }
 
 type fakeLiveProbeDataPlane struct {
-	mu      sync.Mutex
-	socket  pathdiscovery.Socket
-	handler pathdiscovery.DatagramHandler
-	sends   chan liveProbeSend
-	closed  int
+	mu              sync.Mutex
+	socket          pathdiscovery.Socket
+	handler         pathdiscovery.DatagramHandler
+	sends           chan liveProbeSend
+	endpointUpdates chan endpointUpdate
+	closed          int
 }
 
 func newFakeLiveProbeDataPlane() *fakeLiveProbeDataPlane {
 	return &fakeLiveProbeDataPlane{
-		socket: pathdiscovery.Socket{Port: 41641, Generation: 1},
-		sends:  make(chan liveProbeSend, 8),
+		socket:          pathdiscovery.Socket{Port: 41641, Generation: 1},
+		sends:           make(chan liveProbeSend, 8),
+		endpointUpdates: make(chan endpointUpdate, 8),
 	}
 }
 
@@ -963,6 +978,33 @@ func (d *fakeLiveProbeDataPlane) SetPeerProbeHandler(
 	d.mu.Lock()
 	d.handler = handler
 	d.mu.Unlock()
+
+	return nil
+}
+
+func (d *fakeLiveProbeDataPlane) SetPreferredEndpoint(
+	revision uint64,
+	peerID uint64,
+	endpoint netip.AddrPort,
+) error {
+	d.endpointUpdates <- endpointUpdate{
+		revision: revision,
+		peerID:   peerID,
+		endpoint: endpoint,
+	}
+
+	return nil
+}
+
+func (d *fakeLiveProbeDataPlane) RestorePreferredEndpoint(
+	revision uint64,
+	peerID uint64,
+) error {
+	d.endpointUpdates <- endpointUpdate{
+		revision: revision,
+		peerID:   peerID,
+		restore:  true,
+	}
 
 	return nil
 }

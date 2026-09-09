@@ -22,9 +22,37 @@ import (
 )
 
 const (
-	maxWireGuardPeers  = 256
-	maxWireGuardRoutes = 512
+	maxWireGuardPeers         = 256
+	maxWireGuardRoutes        = 512
+	maxWireGuardPeerEndpoints = 128
 )
+
+var (
+	// ErrPeerEndpointUnavailable means no matching active peer configuration
+	// exists for an incremental endpoint update.
+	ErrPeerEndpointUnavailable = errors.New("dataplane: peer endpoint is unavailable")
+	// ErrPeerEndpointGeneration means an endpoint update targets a map other
+	// than the one currently installed in the tunnel engine.
+	ErrPeerEndpointGeneration = errors.New("dataplane: peer endpoint generation mismatch")
+	// ErrPeerEndpointUnauthorized means an endpoint was not authorized by the
+	// currently installed control-plane snapshot.
+	ErrPeerEndpointUnauthorized = errors.New("dataplane: peer endpoint is not authorized")
+)
+
+type wireGuardPeerPlan struct {
+	id                  uint64
+	key                 [32]byte
+	baseEndpoint        netip.AddrPort
+	authorizedEndpoints []netip.AddrPort
+	allowedIPs          []netip.Prefix
+}
+
+type wireGuardPeerState struct {
+	key                 [32]byte
+	baseEndpoint        netip.AddrPort
+	currentEndpoint     netip.AddrPort
+	authorizedEndpoints []netip.AddrPort
+}
 
 // NodePrivateKey is the raw WireGuard-compatible node key. Its formatting is
 // deliberately redacted, and callers must clear temporary copies.
@@ -80,6 +108,7 @@ type wireGuardPlan struct {
 	configurationHash [32]byte
 	addresses         []netip.Prefix
 	routes            []netip.Prefix
+	peers             []wireGuardPeerPlan
 	pendingEndpoints  bool
 }
 
@@ -91,6 +120,8 @@ type WireGuardEngine struct {
 	listenPort        uint16
 	device            wireGuardDevice
 	configurationHash [32]byte
+	appliedRevision   uint64
+	peers             map[uint64]wireGuardPeerState
 	addresses         []netip.Prefix
 	routes            []netip.Prefix
 	filter            *policyFilter
@@ -185,7 +216,9 @@ func (e *WireGuardEngine) Apply(
 		}
 	}
 	if e.device != nil {
-		if e.configurationHash == plan.configurationHash {
+		if e.configurationHash == plan.configurationHash &&
+			e.appliedRevision == snapshot.Revision &&
+			equalPeerEndpointAuthority(e.peers, plan.peers) {
 			return plan.state(), nil
 		}
 		if err := e.device.Configure(bytes.NewReader(plan.configuration)); err != nil {
@@ -193,7 +226,7 @@ func (e *WireGuardEngine) Apply(
 
 			return StateFailed, errors.New("dataplane: applying wireguard peer configuration failed")
 		}
-		e.configurationHash = plan.configurationHash
+		e.adoptPlan(snapshot.Revision, plan)
 
 		return plan.state(), nil
 	}
@@ -229,9 +262,7 @@ func (e *WireGuardEngine) Apply(
 		return StateFailed, errors.New("dataplane: starting wireguard device failed")
 	}
 	e.device = device
-	e.configurationHash = plan.configurationHash
-	e.addresses = append([]netip.Prefix(nil), plan.addresses...)
-	e.routes = append([]netip.Prefix(nil), plan.routes...)
+	e.adoptPlan(snapshot.Revision, plan)
 
 	return plan.state(), nil
 }
@@ -394,6 +425,93 @@ func (e *WireGuardEngine) SetPeerProbeHandler(
 	return nil
 }
 
+// SetPreferredEndpoint applies one authenticated path selection to the exact
+// peer and map revision currently installed in the tunnel engine.
+func (e *WireGuardEngine) SetPreferredEndpoint(
+	mapRevision uint64,
+	peerID uint64,
+	endpoint netip.AddrPort,
+) error {
+	if e == nil || e.device == nil || peerID == 0 {
+		return ErrPeerEndpointUnavailable
+	}
+	if mapRevision == 0 || mapRevision != e.appliedRevision {
+		return ErrPeerEndpointGeneration
+	}
+	peer, exists := e.peers[peerID]
+	if !exists {
+		return ErrPeerEndpointUnavailable
+	}
+	if !slices.Contains(peer.authorizedEndpoints, endpoint) {
+		return ErrPeerEndpointUnauthorized
+	}
+
+	return e.configurePeerEndpoint(peerID, peer, endpoint)
+}
+
+// RestorePreferredEndpoint returns one peer to the deterministic endpoint from
+// the currently installed control-plane snapshot.
+func (e *WireGuardEngine) RestorePreferredEndpoint(
+	mapRevision uint64,
+	peerID uint64,
+) error {
+	if e == nil || e.device == nil || peerID == 0 {
+		return ErrPeerEndpointUnavailable
+	}
+	if mapRevision == 0 || mapRevision != e.appliedRevision {
+		return ErrPeerEndpointGeneration
+	}
+	peer, exists := e.peers[peerID]
+	if !exists || !peer.baseEndpoint.IsValid() {
+		return ErrPeerEndpointUnavailable
+	}
+
+	return e.configurePeerEndpoint(peerID, peer, peer.baseEndpoint)
+}
+
+func (e *WireGuardEngine) configurePeerEndpoint(
+	peerID uint64,
+	peer wireGuardPeerState,
+	endpoint netip.AddrPort,
+) error {
+	if peer.currentEndpoint == endpoint {
+		return nil
+	}
+	var configuration bytes.Buffer
+	configuration.WriteString("public_key=")
+	var encodedPublic [64]byte
+	hex.Encode(encodedPublic[:], peer.key[:])
+	configuration.Write(encodedPublic[:])
+	configuration.WriteString("\nupdate_only=true\nendpoint=")
+	configuration.WriteString(endpoint.String())
+	configuration.WriteByte('\n')
+	if err := e.device.Configure(bytes.NewReader(configuration.Bytes())); err != nil {
+		_ = e.Close()
+
+		return errors.New("dataplane: applying peer endpoint failed")
+	}
+	peer.currentEndpoint = endpoint
+	e.peers[peerID] = peer
+
+	return nil
+}
+
+func (e *WireGuardEngine) adoptPlan(revision uint64, plan wireGuardPlan) {
+	e.configurationHash = plan.configurationHash
+	e.appliedRevision = revision
+	e.addresses = append([]netip.Prefix(nil), plan.addresses...)
+	e.routes = append([]netip.Prefix(nil), plan.routes...)
+	e.peers = make(map[uint64]wireGuardPeerState, len(plan.peers))
+	for _, peer := range plan.peers {
+		e.peers[peer.id] = wireGuardPeerState{
+			key:                 peer.key,
+			baseEndpoint:        peer.baseEndpoint,
+			currentEndpoint:     peer.baseEndpoint,
+			authorizedEndpoints: append([]netip.AddrPort(nil), peer.authorizedEndpoints...),
+		}
+	}
+}
+
 // Close destroys the userspace device, which closes the TUN descriptor and
 // causes Linux to remove the non-persistent interface and its routes.
 func (e *WireGuardEngine) Close() error {
@@ -403,6 +521,8 @@ func (e *WireGuardEngine) Close() error {
 	e.device.Close()
 	e.device = nil
 	e.configurationHash = [32]byte{}
+	e.appliedRevision = 0
+	e.peers = nil
 	e.addresses = nil
 	e.routes = nil
 
@@ -427,6 +547,9 @@ func buildWireGuardPlan(
 	privateKey NodePrivateKey,
 	listenPort uint16,
 ) (wireGuardPlan, error) {
+	if snapshot.Revision == 0 || snapshot.Self.ID == 0 {
+		return wireGuardPlan{}, errors.New("dataplane: snapshot identity is invalid")
+	}
 	if len(snapshot.Peers) == 0 || len(snapshot.Peers) > maxWireGuardPeers {
 		return wireGuardPlan{}, errors.New("dataplane: peer count is outside the allowed range")
 	}
@@ -447,20 +570,20 @@ func buildWireGuardPlan(
 		return wireGuardPlan{}, errors.New("dataplane: self addresses are invalid")
 	}
 
-	type plannedPeer struct {
-		key        [32]byte
-		endpoint   netip.AddrPort
-		allowedIPs []netip.Prefix
-	}
-	plannedPeers := make([]plannedPeer, 0, len(snapshot.Peers))
+	plannedPeers := make([]wireGuardPeerPlan, 0, len(snapshot.Peers))
 	selectedSelfAddresses := append([]netip.Prefix{}, allSelfAddresses...)
 	allRoutes := make([]netip.Prefix, 0, len(snapshot.Peers))
 	seenKeys := make(map[[32]byte]struct{}, len(snapshot.Peers))
+	seenIDs := map[uint64]struct{}{snapshot.Self.ID: {}}
 	pendingEndpoints := false
 	for _, peer := range snapshot.Peers {
-		if peer.Expired || !peer.MachineAuthorized {
+		if peer.ID == 0 || peer.Expired || !peer.MachineAuthorized {
 			return wireGuardPlan{}, errors.New("dataplane: peer is not authorized")
 		}
+		if _, exists := seenIDs[peer.ID]; exists {
+			return wireGuardPlan{}, errors.New("dataplane: peer id is duplicated")
+		}
+		seenIDs[peer.ID] = struct{}{}
 		peerKey, err := parseNodePublicKey(peer.PublicKey)
 		if err != nil || peerKey == selfKey {
 			return wireGuardPlan{}, errors.New("dataplane: peer public key is invalid")
@@ -489,6 +612,13 @@ func buildWireGuardPlan(
 		if len(allowedIPs) == 0 {
 			return wireGuardPlan{}, errors.New("dataplane: peer has no direct host route")
 		}
+		if len(peer.Endpoints) > maxWireGuardPeerEndpoints {
+			return wireGuardPlan{}, errors.New("dataplane: peer endpoint count exceeds limit")
+		}
+		authorizedEndpoints := validPeerEndpoints(peer.Endpoints)
+		if len(authorizedEndpoints) != len(peer.Endpoints) {
+			return wireGuardPlan{}, errors.New("dataplane: peer endpoints are invalid")
+		}
 		endpoint, err := selectEndpoint(peer.Endpoints)
 		if err != nil {
 			return wireGuardPlan{}, err
@@ -496,10 +626,12 @@ func buildWireGuardPlan(
 		if !endpoint.IsValid() {
 			pendingEndpoints = true
 		}
-		plannedPeers = append(plannedPeers, plannedPeer{
-			key:        peerKey,
-			endpoint:   endpoint,
-			allowedIPs: allowedIPs,
+		plannedPeers = append(plannedPeers, wireGuardPeerPlan{
+			id:                  peer.ID,
+			key:                 peerKey,
+			baseEndpoint:        endpoint,
+			authorizedEndpoints: authorizedEndpoints,
+			allowedIPs:          allowedIPs,
 		})
 		allRoutes = append(allRoutes, allowedIPs...)
 	}
@@ -519,7 +651,7 @@ func buildWireGuardPlan(
 			return wireGuardPlan{}, errors.New("dataplane: peer route overlaps a self address")
 		}
 	}
-	slices.SortFunc(plannedPeers, func(left, right plannedPeer) int {
+	slices.SortFunc(plannedPeers, func(left, right wireGuardPeerPlan) int {
 		return bytes.Compare(left.key[:], right.key[:])
 	})
 
@@ -539,9 +671,9 @@ func buildWireGuardPlan(
 		hex.Encode(encodedPublic[:], peer.key[:])
 		configuration.Write(encodedPublic[:])
 		configuration.WriteString("\nprotocol_version=1\n")
-		if peer.endpoint.IsValid() {
+		if peer.baseEndpoint.IsValid() {
 			configuration.WriteString("endpoint=")
-			configuration.WriteString(peer.endpoint.String())
+			configuration.WriteString(peer.baseEndpoint.String())
 			configuration.WriteByte('\n')
 		}
 		configuration.WriteString("replace_allowed_ips=true\n")
@@ -558,8 +690,45 @@ func buildWireGuardPlan(
 		configurationHash: sha256.Sum256(encoded),
 		addresses:         addresses,
 		routes:            routes,
+		peers:             plannedPeers,
 		pendingEndpoints:  pendingEndpoints,
 	}, nil
+}
+
+func equalPeerEndpointAuthority(
+	current map[uint64]wireGuardPeerState,
+	planned []wireGuardPeerPlan,
+) bool {
+	if len(current) != len(planned) {
+		return false
+	}
+	for _, peer := range planned {
+		installed, exists := current[peer.id]
+		if !exists || installed.key != peer.key ||
+			installed.baseEndpoint != peer.baseEndpoint ||
+			!slices.Equal(installed.authorizedEndpoints, peer.authorizedEndpoints) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func validPeerEndpoints(endpoints []netip.AddrPort) []netip.AddrPort {
+	valid := make([]netip.AddrPort, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		address := endpoint.Addr()
+		if endpoint.IsValid() && !address.Is4In6() &&
+			address.IsGlobalUnicast() && !address.IsLinkLocalUnicast() &&
+			endpoint.Port() != 0 {
+			valid = append(valid, endpoint)
+		}
+	}
+	slices.SortFunc(valid, func(left, right netip.AddrPort) int {
+		return left.Compare(right)
+	})
+
+	return slices.Compact(valid)
 }
 
 func parseNodePublicKey(value string) ([32]byte, error) {

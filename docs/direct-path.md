@@ -82,7 +82,7 @@ peer map ──────────► authenticated path manager ───�
    adapter, randomized 20–26 second refresh while peers exist, bounded
    anti-flap history, retry/coalescing, and expiry scheduled at the exact
    candidate deadline.
-4. In progress: the compatible encrypted Ping/Pong identity and bounded wire
+4. Implemented as a POC: the compatible encrypted Ping/Pong identity and bounded wire
    codec are implemented. One ephemeral identity is now owned by each daemon
    control session and its exact public key is used for map and endpoint
    publication across reconnects. A bounded registry atomically derives peer
@@ -97,9 +97,12 @@ peer map ──────────► authenticated path manager ───�
    authenticated transaction completion are implemented. The bounded
    product-owned selector now enforces authorized candidates, a 6.5-second
    freshness window, smoothed RTT, switch hysteresis, deterministic ties,
-   exact expiry/fallback, generation reset, and rollback rejection. Applying
-   selected paths to WireGuard, heartbeat, traffic-idle pacing, and roaming
-   remain.
+   exact expiry/fallback, generation reset, and rollback rejection. One owned
+   daemon worker applies selector transitions through peer-scoped WireGuard
+   `update_only` requests, guards the installed map revision and signed endpoint
+   set, restores the signed base endpoint at exact proof expiry, and closes the
+   engine on an ambiguous update. Heartbeat, traffic-idle pacing, and continuous
+   roaming remain.
 5. Pending: Linux end-to-end tests with no manually advertised endpoint, including
    restart, socket rebinding, stale-result cancellation, and default-deny
    policy behavior.

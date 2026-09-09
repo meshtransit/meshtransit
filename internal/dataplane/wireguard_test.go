@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdh"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/netip"
 	"os"
@@ -59,6 +60,197 @@ func TestWireGuardEngineApply(t *testing.T) {
 	}
 	if err := engine.Close(); err != nil || device.closeCalls != 1 {
 		t.Fatalf("Close() error=%v calls=%d", err, device.closeCalls)
+	}
+}
+
+func TestWireGuardEngineAppliesAndRestoresAuthenticatedPeerEndpoint(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	base := snapshot.Peers[0].Endpoints[0]
+	preferred := netip.MustParseAddrPort("192.168.1.20:41641")
+	snapshot.Peers[0].Endpoints = append(snapshot.Peers[0].Endpoints, preferred)
+	opener := &wireGuardTUNOpener{}
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		opener,
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if err := engine.SetPreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID, preferred); err != nil {
+		t.Fatalf("SetPreferredEndpoint() error = %v", err)
+	}
+	if device.configureCalls != 2 || len(device.configurations) != 2 {
+		t.Fatalf("configure calls = %d, configurations=%d", device.configureCalls, len(device.configurations))
+	}
+	update := device.configurations[1]
+	for _, expected := range []string{
+		"public_key=",
+		"update_only=true",
+		"endpoint=" + preferred.String(),
+	} {
+		if !strings.Contains(update, expected) {
+			t.Fatalf("incremental configuration is missing %q: %q", expected, update)
+		}
+	}
+	for _, forbidden := range []string{"private_key=", "replace_peers=", "allowed_ip="} {
+		if strings.Contains(update, forbidden) {
+			t.Fatalf("incremental configuration contains %q: %q", forbidden, update)
+		}
+	}
+	if err := engine.SetPreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID, preferred); err != nil {
+		t.Fatalf("repeat SetPreferredEndpoint() error = %v", err)
+	}
+	if device.configureCalls != 2 {
+		t.Fatalf("repeat preferred endpoint configure calls = %d, want 2", device.configureCalls)
+	}
+	if err := engine.RestorePreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID); err != nil {
+		t.Fatalf("RestorePreferredEndpoint() error = %v", err)
+	}
+	if device.configureCalls != 3 || !strings.Contains(
+		device.configurations[2],
+		"endpoint="+base.String(),
+	) {
+		t.Fatalf("restore configuration = %q", device.configuration)
+	}
+	if opener.calls != 1 || device.upCalls != 1 || device.closeCalls != 0 {
+		t.Fatalf(
+			"endpoint updates recreated tunnel: open=%d up=%d close=%d",
+			opener.calls,
+			device.upCalls,
+			device.closeCalls,
+		)
+	}
+}
+
+func TestWireGuardEngineRejectsUnauthorizedOrStalePeerEndpoint(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if err := engine.SetPreferredEndpoint(
+		snapshot.Revision+1,
+		snapshot.Peers[0].ID,
+		snapshot.Peers[0].Endpoints[0],
+	); !errors.Is(err, ErrPeerEndpointGeneration) {
+		t.Fatalf("stale SetPreferredEndpoint() error = %v", err)
+	}
+	if err := engine.SetPreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+		netip.MustParseAddrPort("203.0.113.99:41641"),
+	); !errors.Is(err, ErrPeerEndpointUnauthorized) {
+		t.Fatalf("unauthorized SetPreferredEndpoint() error = %v", err)
+	}
+	if err := engine.RestorePreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID+1); !errors.Is(
+		err,
+		ErrPeerEndpointUnavailable,
+	) {
+		t.Fatalf("unknown RestorePreferredEndpoint() error = %v", err)
+	}
+	if device.configureCalls != 1 {
+		t.Fatalf("rejected updates changed device, configure calls = %d", device.configureCalls)
+	}
+}
+
+func TestWireGuardEngineNewMapRevisionResetsPreferredEndpoint(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	preferred := netip.MustParseAddrPort("192.168.1.21:41641")
+	snapshot.Peers[0].Endpoints = append(snapshot.Peers[0].Endpoints, preferred)
+	opener := &wireGuardTUNOpener{}
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		opener,
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if err := engine.SetPreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID, preferred); err != nil {
+		t.Fatalf("SetPreferredEndpoint() error = %v", err)
+	}
+	snapshot.Revision++
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply(new revision) error = %v", err)
+	}
+	if device.configureCalls != 3 || !strings.Contains(
+		device.configurations[2],
+		"replace_peers=true",
+	) {
+		t.Fatalf("new revision configuration = %q", device.configuration)
+	}
+	if err := engine.RestorePreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID); err != nil {
+		t.Fatalf("RestorePreferredEndpoint() error = %v", err)
+	}
+	if device.configureCalls != 3 {
+		t.Fatalf("restored base was not tracked, configure calls = %d", device.configureCalls)
+	}
+	if opener.calls != 1 || device.upCalls != 1 || device.closeCalls != 0 {
+		t.Fatalf(
+			"map revision reset recreated tunnel: open=%d up=%d close=%d",
+			opener.calls,
+			device.upCalls,
+			device.closeCalls,
+		)
+	}
+}
+
+func TestWireGuardEngineClosesAfterPeerEndpointConfigureFailure(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	preferred := netip.MustParseAddrPort("192.168.1.22:41641")
+	snapshot.Peers[0].Endpoints = append(snapshot.Peers[0].Endpoints, preferred)
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	device.configureErr = errors.New("test update failure")
+	if err := engine.SetPreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID, preferred); err == nil {
+		t.Fatal("SetPreferredEndpoint() error = nil")
+	}
+	if device.closeCalls != 1 || engine.device != nil || engine.appliedRevision != 0 {
+		t.Fatalf(
+			"failed update close calls=%d device=%#v revision=%d",
+			device.closeCalls,
+			engine.device,
+			engine.appliedRevision,
+		)
 	}
 }
 
@@ -437,11 +629,14 @@ func testWireGuardSnapshot(t *testing.T) (NodePrivateKey, networkmap.Snapshot) {
 	peerAddress := netip.MustParsePrefix("100.64.0.4/32")
 
 	return privateKey, networkmap.Snapshot{
+		Revision: 1,
 		Self: networkmap.Node{
+			ID:        1,
 			PublicKey: publicText(self.PublicKey().Bytes()),
 			Addresses: []netip.Prefix{selfAddress},
 		},
 		Peers: []networkmap.Node{{
+			ID:                2,
 			PublicKey:         publicText(peer.PublicKey().Bytes()),
 			Addresses:         []netip.Prefix{peerAddress},
 			AllowedIPs:        []netip.Prefix{peerAddress},
@@ -512,6 +707,8 @@ func (f *fakeWireGuardFactory) New(
 
 type fakeWireGuardDevice struct {
 	configuration    string
+	configurations   []string
+	configureErr     error
 	configureCalls   int
 	upCalls          int
 	closeCalls       int
@@ -533,8 +730,9 @@ func (d *fakeWireGuardDevice) Configure(configuration io.Reader) error {
 		return err
 	}
 	d.configuration = string(encoded)
+	d.configurations = append(d.configurations, d.configuration)
 
-	return nil
+	return d.configureErr
 }
 
 func (d *fakeWireGuardDevice) Up() error {

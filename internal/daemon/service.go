@@ -421,8 +421,29 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		streamDone := make(chan error, 1)
 		var probeRuntime *peerprobe.Runtime
 		var probeDataPlane peerProbeDataPlane
+		var pathController *pathEndpointController
 		if dataPlane, supported := s.dataPlane.(peerProbeDataPlane); supported {
 			probeDataPlane = dataPlane
+			var pathObserver peerprobe.PathObserver
+			if endpoints, supported := s.dataPlane.(preferredEndpointDataPlane); supported {
+				pathController, err = newPathEndpointController(
+					streamCtx,
+					pathdiscovery.NewPathSelector(),
+					endpoints,
+					&s.dataPlaneMu,
+					s.clock,
+					cancel,
+				)
+				if err != nil {
+					cancel()
+					probeIdentity.Close()
+					clear(privateKey[:])
+					clearProtocolMaterial(protocolMaterial)
+
+					return fmt.Errorf("creating path endpoint controller: %w", err)
+				}
+				pathObserver = pathController
+			}
 			probeRuntime, err = peerprobe.NewRuntime(
 				streamCtx,
 				probeIdentity,
@@ -430,9 +451,10 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					mu:        &s.dataPlaneMu,
 					dataPlane: dataPlane,
 				},
-				nil,
+				pathObserver,
 			)
 			if err != nil {
+				pathController.Close()
 				cancel()
 				probeIdentity.Close()
 				clear(privateKey[:])
@@ -445,6 +467,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if probeRuntime != nil {
 				probeRuntime.Close()
 			}
+			pathController.Close()
 			var detachErr error
 			if probeDataPlane != nil {
 				s.dataPlaneMu.Lock()
@@ -507,6 +530,11 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					if probeRuntime != nil {
 						probeRuntime.Deactivate()
 					}
+					if pathController != nil {
+						if err := pathController.Pause(callbackCtx); err != nil {
+							return fmt.Errorf("pausing path endpoint controller: %w", err)
+						}
+					}
 					probeSocket := pathdiscovery.Socket{}
 					var probeAttachErr error
 					if s.dataPlane != nil {
@@ -539,16 +567,30 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						if !probeSocket.IsOpen() {
 							return pathdiscovery.ErrTransportClosed
 						}
+						generation := pathdiscovery.ProbeGeneration{
+							Scope:       discoveryScope,
+							MapRevision: snapshot.Revision,
+							Socket:      probeSocket,
+						}
+						if pathController != nil {
+							if err := pathController.Activate(
+								callbackCtx,
+								snapshot,
+								generation,
+							); err != nil {
+								return fmt.Errorf("activating path endpoint controller: %w", err)
+							}
+						}
 						_, _, err := probeRuntime.Activate(
 							snapshot,
-							pathdiscovery.ProbeGeneration{
-								Scope:       discoveryScope,
-								MapRevision: snapshot.Revision,
-								Socket:      probeSocket,
-							},
+							generation,
 						)
 						if err != nil {
 							return fmt.Errorf("activating peer probes: %w", err)
+						}
+					} else if pathController != nil {
+						if err := pathController.Deactivate(callbackCtx); err != nil {
+							return fmt.Errorf("deactivating path endpoint controller: %w", err)
 						}
 					}
 					if discoveryRequests != nil {
@@ -635,6 +677,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if err := cleanupSession(); err != nil {
 				return fmt.Errorf("detaching peer-probe transport: %w", err)
 			}
+			pathErr := pathController.Err()
 			dataPlaneState := s.currentDataPlaneState()
 			dnsState := s.currentDNSState()
 			if err := s.stopRuntime(); err != nil {
@@ -642,7 +685,11 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				dnsState = DNSFailed
 			}
 			if dataPlaneState != string(dataplane.StateFailed) {
-				dataPlaneState = s.defaultDataPlaneState()
+				if pathErr != nil {
+					dataPlaneState = string(dataplane.StateFailed)
+				} else {
+					dataPlaneState = s.defaultDataPlaneState()
+				}
 			}
 			if dnsState != DNSFailed {
 				dnsState = DNSInactive
@@ -662,6 +709,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if err := cleanupSession(); err != nil {
 				return fmt.Errorf("detaching peer-probe transport: %w", err)
 			}
+			pathErr := pathController.Err()
 			dataPlaneState := s.currentDataPlaneState()
 			dnsState := s.currentDNSState()
 			if err := s.stopRuntime(); err != nil {
@@ -669,7 +717,11 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				dnsState = DNSFailed
 			}
 			if dataPlaneState != string(dataplane.StateFailed) {
-				dataPlaneState = s.defaultDataPlaneState()
+				if pathErr != nil {
+					dataPlaneState = string(dataplane.StateFailed)
+				} else {
+					dataPlaneState = s.defaultDataPlaneState()
+				}
 			}
 			if dnsState != DNSFailed {
 				dnsState = DNSInactive
