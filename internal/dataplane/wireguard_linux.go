@@ -19,6 +19,8 @@ type officialWireGuardFactory struct{}
 type officialWireGuardDevice struct {
 	device    *device.Device
 	discovery *pathdiscovery.Discovery
+	bind      *sharedBind
+	datagrams *controlDatagramMux
 }
 
 func newWireGuardFactory() (wireGuardFactory, error) {
@@ -58,7 +60,13 @@ func (officialWireGuardFactory) New(
 
 		return nil, err
 	}
-	if err := bind.setDatagramHandler(discovery); err != nil {
+	datagrams, err := newControlDatagramMux(discovery)
+	if err != nil {
+		_ = tunDevice.Close()
+
+		return nil, err
+	}
+	if err := bind.setDatagramHandler(datagrams); err != nil {
 		_ = tunDevice.Close()
 
 		return nil, err
@@ -67,6 +75,8 @@ func (officialWireGuardFactory) New(
 	return &officialWireGuardDevice{
 		device:    device.NewDevice(tunDevice, bind, logger),
 		discovery: discovery,
+		bind:      bind,
+		datagrams: datagrams,
 	}, nil
 }
 
@@ -96,4 +106,32 @@ func (d *officialWireGuardDevice) DiscoverEndpoints(
 	}
 
 	return d.discovery.Discover(ctx, scope, servers)
+}
+
+func (d *officialWireGuardDevice) Socket() pathdiscovery.Socket {
+	if d == nil || d.bind == nil {
+		return pathdiscovery.Socket{}
+	}
+
+	return d.bind.Socket()
+}
+
+func (d *officialWireGuardDevice) SendDatagram(
+	packet []byte,
+	destination netip.AddrPort,
+) (pathdiscovery.Socket, error) {
+	if d == nil || d.bind == nil {
+		return pathdiscovery.Socket{}, pathdiscovery.ErrTransportClosed
+	}
+
+	return d.bind.SendDatagram(packet, destination)
+}
+
+func (d *officialWireGuardDevice) SetPeerProbeHandler(
+	handler pathdiscovery.DatagramHandler,
+) {
+	if d == nil || d.datagrams == nil {
+		return
+	}
+	d.datagrams.setPeerHandler(handler)
 }

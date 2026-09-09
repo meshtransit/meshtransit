@@ -221,6 +221,60 @@ func TestWireGuardEngineRejectsDiscoveryWithoutActiveDevice(t *testing.T) {
 	}
 }
 
+func TestWireGuardEngineExposesSharedPeerProbeTransport(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	device := &fakeWireGuardDevice{
+		discoverySocket: pathdiscovery.Socket{Port: 41641, Generation: 4},
+	}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	handler := &recordingDatagramHandler{}
+	if err := engine.SetPeerProbeHandler(handler); err != nil {
+		t.Fatalf("SetPeerProbeHandler() error = %v", err)
+	}
+	packet := []byte{1, 2, 3}
+	destination := netip.MustParseAddrPort("203.0.113.40:41641")
+	socket, err := engine.SendDatagram(packet, destination)
+	if err != nil {
+		t.Fatalf("SendDatagram() error = %v", err)
+	}
+	if socket != device.discoverySocket || engine.Socket() != device.discoverySocket ||
+		device.peerHandler != handler || device.peerDestination != destination ||
+		!slices.Equal(device.peerPacket, packet) {
+		t.Fatalf(
+			"peer transport socket=%#v handler=%#v destination=%v packet=%v",
+			socket,
+			device.peerHandler,
+			device.peerDestination,
+			device.peerPacket,
+		)
+	}
+	if err := engine.SetPeerProbeHandler(nil); err != nil || device.peerHandler != nil {
+		t.Fatalf("SetPeerProbeHandler(nil) error=%v handler=%#v", err, device.peerHandler)
+	}
+	if err := engine.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := engine.SetPeerProbeHandler(nil); err != nil {
+		t.Fatalf("SetPeerProbeHandler(nil) after Close error = %v", err)
+	}
+	if _, err := engine.SendDatagram(packet, destination); err == nil {
+		t.Fatal("SendDatagram() after Close error = nil")
+	}
+}
+
 func TestWireGuardEnginePublishesHostCandidateWhenSTUNIsUnavailable(t *testing.T) {
 	t.Parallel()
 
@@ -467,6 +521,9 @@ type fakeWireGuardDevice struct {
 	discoveryResult  pathdiscovery.DiscoveryResult
 	discoveryErr     error
 	discoveryCalls   int
+	peerHandler      pathdiscovery.DatagramHandler
+	peerPacket       []byte
+	peerDestination  netip.AddrPort
 }
 
 func (d *fakeWireGuardDevice) Configure(configuration io.Reader) error {
@@ -502,4 +559,24 @@ func (d *fakeWireGuardDevice) DiscoverEndpoints(
 	d.discoveryServers = append([]netip.AddrPort(nil), servers...)
 
 	return d.discoveryResult, d.discoveryErr
+}
+
+func (d *fakeWireGuardDevice) Socket() pathdiscovery.Socket {
+	return d.discoverySocket
+}
+
+func (d *fakeWireGuardDevice) SendDatagram(
+	packet []byte,
+	destination netip.AddrPort,
+) (pathdiscovery.Socket, error) {
+	d.peerPacket = append([]byte(nil), packet...)
+	d.peerDestination = destination
+
+	return d.discoverySocket, nil
+}
+
+func (d *fakeWireGuardDevice) SetPeerProbeHandler(
+	handler pathdiscovery.DatagramHandler,
+) {
+	d.peerHandler = handler
 }

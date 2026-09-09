@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/netip"
@@ -294,6 +295,128 @@ func TestService_RunFailsClosedWithoutPeerProbeIdentity(t *testing.T) {
 	control.mu.Unlock()
 	if streamCalls != 0 {
 		t.Fatalf("control stream calls = %d, want 0", streamCalls)
+	}
+}
+
+func TestService_RunAttachesAndSchedulesLivePeerProbes(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	dataPlane := newFakeLiveProbeDataPlane()
+	service.dataPlane = dataPlane
+	service.setSyncStatus(syncStatus{
+		state:     ControlSessionInactive,
+		dataPlane: string(dataplane.StateIdle),
+	})
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+
+	localProbe, err := peerwire.NewIdentity()
+	if err != nil {
+		t.Fatalf("NewIdentity(local) error = %v", err)
+	}
+	remoteProbe, err := peerwire.NewIdentity()
+	if err != nil {
+		localProbe.Close()
+
+		t.Fatalf("NewIdentity(remote) error = %v", err)
+	}
+	t.Cleanup(remoteProbe.Close)
+	service.newPeerProbeIdentity = func() (*peerwire.Identity, error) {
+		return localProbe, nil
+	}
+	remotePublic, err := remoteProbe.Public()
+	if err != nil {
+		t.Fatalf("remote Public() error = %v", err)
+	}
+	peerEndpoint := netip.MustParseAddrPort("203.0.113.80:41641")
+	control.mu.Lock()
+	control.echoPeerProbeKey = true
+	control.streamSnapshot = &networkmap.Snapshot{
+		Revision: 1,
+		Self: networkmap.Node{
+			ID:                1,
+			PublicKey:         "nodekey:" + strings.Repeat("11", 32),
+			MachineAuthorized: true,
+		},
+		Peers: []networkmap.Node{{
+			ID:                2,
+			PublicKey:         "nodekey:" + strings.Repeat("22", 32),
+			DiscoveryKey:      remotePublic.String(),
+			Endpoints:         []netip.AddrPort{peerEndpoint},
+			MachineAuthorized: true,
+		}},
+	}
+	control.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	runResult := make(chan error, 1)
+	go func() { runResult <- service.Run(ctx) }()
+	scheduled := waitForLiveProbeSend(t, dataPlane)
+	if scheduled.destination != peerEndpoint || scheduled.socket != dataPlane.socket {
+		t.Fatalf("scheduled probe = %#v", scheduled)
+	}
+	localPublic, err := localProbe.Public()
+	if err != nil {
+		t.Fatalf("local Public() error = %v", err)
+	}
+	remoteChannel, err := remoteProbe.Peer(localPublic)
+	if err != nil {
+		t.Fatalf("remote Peer() error = %v", err)
+	}
+	t.Cleanup(remoteChannel.Close)
+	message, err := remoteChannel.Open(scheduled.packet)
+	if err != nil {
+		t.Fatalf("remote Open(scheduled ping) error = %v", err)
+	}
+	ping, ok := message.(peerwire.Ping)
+	if !ok || ping.NodeKey.String() != control.streamSnapshot.Self.PublicKey {
+		t.Fatalf("remote Open(scheduled ping) = %#v", message)
+	}
+
+	remotePingID := peerwire.TransactionID{9, 8, 7, 6, 5, 4, 3, 2, 1, 4, 5, 6}
+	remotePing, err := remoteChannel.Seal(peerwire.Ping{
+		ID:      remotePingID,
+		NodeKey: mustDaemonNodeKey(t, control.streamSnapshot.Peers[0].PublicKey),
+	})
+	if err != nil {
+		t.Fatalf("remote Seal(ping) error = %v", err)
+	}
+	handler := dataPlane.handlerSnapshot()
+	if handler == nil {
+		t.Fatal("peer-probe handler was not attached")
+	}
+	handler.HandleDatagram(remotePing, peerEndpoint, dataPlane.socket)
+	replied := waitForLiveProbeSend(t, dataPlane)
+	if replied.destination != peerEndpoint {
+		t.Fatalf("pong destination = %v, want %v", replied.destination, peerEndpoint)
+	}
+	message, err = remoteChannel.Open(replied.packet)
+	if err != nil {
+		t.Fatalf("remote Open(pong) error = %v", err)
+	}
+	pong, ok := message.(peerwire.Pong)
+	if !ok || pong.ID != remotePingID || pong.Source != peerEndpoint {
+		t.Fatalf("remote Open(pong) = %#v", message)
+	}
+
+	cancel()
+	if err := <-runResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context cancellation", err)
+	}
+	if dataPlane.handlerSnapshot() != nil {
+		t.Fatal("peer-probe handler remained attached after shutdown")
+	}
+	if _, err := localProbe.Public(); !errors.Is(err, peerwire.ErrClosed) {
+		t.Fatalf("local probe identity after shutdown error = %v, want ErrClosed", err)
 	}
 }
 
@@ -622,6 +745,7 @@ type fakeControl struct {
 	endpointUpdates     []pathdiscovery.Set
 	streamOptions       []ts2021.NetmapOptions
 	streamStarted       chan struct{}
+	echoPeerProbeKey    bool
 }
 
 type fakeDataPlane struct {
@@ -721,6 +845,7 @@ func (f *fakeControl) StreamNetmap(
 ) error {
 	f.mu.Lock()
 	snapshot := f.streamSnapshot
+	echoPeerProbeKey := f.echoPeerProbeKey
 	published := f.streamPublished
 	f.streamOptions = append(f.streamOptions, options)
 	started := f.streamStarted
@@ -730,7 +855,11 @@ func (f *fakeControl) StreamNetmap(
 	default:
 	}
 	if snapshot != nil {
-		if err := handler(ctx, *snapshot); err != nil {
+		current := *snapshot
+		if echoPeerProbeKey {
+			current.Self.DiscoveryKey = options.PeerProbePublicKey
+		}
+		if err := handler(ctx, current); err != nil {
 			return err
 		}
 		select {
@@ -766,6 +895,110 @@ type fakeEndpointDataPlane struct {
 	discoveryServers []netip.AddrPort
 	discoveryResult  pathdiscovery.DiscoveryResult
 	discoveryErr     error
+}
+
+type liveProbeSend struct {
+	packet      []byte
+	destination netip.AddrPort
+	socket      pathdiscovery.Socket
+}
+
+type fakeLiveProbeDataPlane struct {
+	mu      sync.Mutex
+	socket  pathdiscovery.Socket
+	handler pathdiscovery.DatagramHandler
+	sends   chan liveProbeSend
+	closed  int
+}
+
+func newFakeLiveProbeDataPlane() *fakeLiveProbeDataPlane {
+	return &fakeLiveProbeDataPlane{
+		socket: pathdiscovery.Socket{Port: 41641, Generation: 1},
+		sends:  make(chan liveProbeSend, 8),
+	}
+}
+
+func (*fakeLiveProbeDataPlane) Apply(
+	context.Context,
+	networkmap.Snapshot,
+	dataplane.NodePrivateKey,
+) (dataplane.State, error) {
+	return dataplane.StateEncrypted, nil
+}
+
+func (d *fakeLiveProbeDataPlane) Close() error {
+	d.mu.Lock()
+	d.closed++
+	d.mu.Unlock()
+
+	return nil
+}
+
+func (d *fakeLiveProbeDataPlane) Socket() pathdiscovery.Socket {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.socket
+}
+
+func (d *fakeLiveProbeDataPlane) SendDatagram(
+	packet []byte,
+	destination netip.AddrPort,
+) (pathdiscovery.Socket, error) {
+	d.mu.Lock()
+	socket := d.socket
+	d.mu.Unlock()
+	d.sends <- liveProbeSend{
+		packet:      bytes.Clone(packet),
+		destination: destination,
+		socket:      socket,
+	}
+
+	return socket, nil
+}
+
+func (d *fakeLiveProbeDataPlane) SetPeerProbeHandler(
+	handler pathdiscovery.DatagramHandler,
+) error {
+	d.mu.Lock()
+	d.handler = handler
+	d.mu.Unlock()
+
+	return nil
+}
+
+func (d *fakeLiveProbeDataPlane) handlerSnapshot() pathdiscovery.DatagramHandler {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.handler
+}
+
+func waitForLiveProbeSend(
+	t *testing.T,
+	dataPlane *fakeLiveProbeDataPlane,
+) liveProbeSend {
+	t.Helper()
+
+	select {
+	case sent := <-dataPlane.sends:
+		return sent
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for live peer-probe send")
+
+		return liveProbeSend{}
+	}
+}
+
+func mustDaemonNodeKey(t *testing.T, text string) peerwire.NodeKey {
+	t.Helper()
+
+	key, err := peerwire.ParseNodeKey(text)
+	if err != nil {
+		t.Fatalf("ParseNodeKey() error = %v", err)
+	}
+
+	return key
 }
 
 func (f *fakeEndpointDataPlane) DiscoverySocket() pathdiscovery.Socket {

@@ -39,7 +39,7 @@ The current code implements the profile service, persistent per-profile identity
 
 The unprivileged data-plane engine opens the descriptor after a validated map contains a visible authorized peer, even when that peer has no direct endpoint yet. It proves the private key belongs to the signed self node, intersects each peer route with that peer's signed host addresses, requests exactly those self/peer host prefixes, verifies the helper response byte-for-byte, and configures the official userspace WireGuard engine. A peer without an endpoint is installed with its public key and allowed host routes but remains unreachable until a valid endpoint arrives. A node with no local inbound rule may still open the path because Headscale sends node-reduced inbound filters and the remote destination enforces outbound authorization. A signed address or route change closes the old descriptor and creates a freshly confined interface in the same map application; removing every peer path closes it entirely. Profile changes, permanent control failure, and process shutdown also close it.
 
-The WireGuard bind owns one UDP socket generation for encrypted packets and bounded STUN requests. STUN responses are removed before WireGuard parsing and accepted only when transaction ID, signed relay source, socket generation, and active-profile generation all match. Literal relay IPs are selected deterministically across regions. Server-reflexive and safe host-interface candidates are merged with configured candidates, translated to protocol endpoint types only inside the compatibility adapter, and sent through non-streaming updates using the active stream's discovery key. While peers exist, discovery refreshes at a randomized 20–26 second interval. Changed sets are coalesced; transient publication failures retry with bounded backoff; the latest desired set is resent after a map reconnect. Recently observed non-host candidates survive a short probe flap within bounded per-address and global history, then a dedicated timer withdraws them at the exact deadline. Authenticated path probes, traffic-idle pacing, relay transport, and subnet/exit route transactions remain separate milestones.
+The WireGuard bind owns one UDP socket generation for encrypted packets, bounded STUN requests, and authenticated peer probes. A fixed control-datagram mux consumes both control protocols before WireGuard parsing; detaching a session leaves its probe classifier in drop-only mode until the socket closes. STUN responses are accepted only when transaction ID, signed relay source, socket generation, and active-profile generation all match. Literal relay IPs are selected deterministically across regions. Server-reflexive and safe host-interface candidates are merged with configured candidates, translated to protocol endpoint types only inside the compatibility adapter, and sent through non-streaming updates using the active stream's discovery key. While peers exist, discovery refreshes at a randomized 20–26 second interval. Changed sets are coalesced; transient publication failures retry with bounded backoff; the latest desired set is resent after a map reconnect. Recently observed non-host candidates survive a short probe flap within bounded per-address and global history, then a dedicated timer withdraws them at the exact deadline. Authenticated path selection, traffic-idle pacing, relay transport, and subnet/exit route transactions remain separate milestones.
 
 The peer-probe wire adapter implements the current encrypted Ping/Pong format
 behind `internal/compat/disco`. The daemon creates one ephemeral X25519 identity
@@ -49,14 +49,20 @@ session workers stop. The adapter owns precomputed NaCl channels, authenticated
 sender verification, and bounded message parsing. A product bridge atomically
 derives a bounded peer-channel registry from each validated map, requires the
 map to echo the session's discovery key, binds every channel to the peer's node
-and discovery keys, and destroys replaced shared secrets. It authorizes outgoing
+and discovery keys, and destroys replaced or deactivated shared secrets. It authorizes outgoing
 probe destinations against that peer's signed endpoint set and translates only
-authenticated packets into product-owned messages. It is not registered with
-the live UDP transport yet. The product-owned probe manager binds every outgoing
-transaction to a validated peer, active-session scope, map revision, socket
-generation, exact remote endpoint, and five-second deadline. It caps pending
-state globally and per peer, consumes authenticated mismatches, rejects replay
-and late replies, and invalidates all state when any generation changes.
+authenticated packets into product-owned messages. A session-scoped runtime is
+now attached to the shared UDP mux after each successful data-plane apply. It
+copies matching packets into a bounded non-blocking queue, authenticates them on
+an owned worker, answers valid Ping messages, and completes valid Pong messages
+without blocking the WireGuard receive loop. Map-triggered probes are selected
+round-robin across peers, capped, coalesced, and paced. The product-owned probe
+manager binds every outgoing transaction to a validated peer, active-session
+scope, map revision, socket generation, exact remote endpoint, and five-second
+deadline. It caps pending state globally and per peer, consumes authenticated
+mismatches, rejects replay and late replies, and invalidates all state before a
+map or socket transition. Authenticated observations do not change WireGuard
+endpoints yet.
 
 ## DNS boundary
 

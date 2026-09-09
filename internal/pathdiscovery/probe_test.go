@@ -153,6 +153,45 @@ func TestProbeManagerExpiresTransactions(t *testing.T) {
 	}
 }
 
+func TestProbeManagerCancelsExactTransaction(t *testing.T) {
+	t.Parallel()
+
+	manager := testProbeManager(2, 1)
+	generation := testProbeGeneration(1)
+	if _, err := manager.Activate(generation); err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	now := time.Unix(350, 0)
+	transaction, err := manager.Start(
+		now,
+		10,
+		netip.MustParseAddrPort("203.0.113.35:41641"),
+	)
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	mismatch := transaction
+	mismatch.PeerID++
+	if manager.Cancel(mismatch) {
+		t.Fatal("Cancel(mismatch) = true")
+	}
+	if !manager.Cancel(transaction) {
+		t.Fatal("Cancel(exact) = false")
+	}
+	if manager.Cancel(transaction) {
+		t.Fatal("Cancel(replay) = true")
+	}
+	if _, err := manager.Complete(now.Add(time.Millisecond), AuthenticatedProbeReply{
+		ID:                    transaction.ID,
+		PeerID:                transaction.PeerID,
+		Generation:            transaction.Generation,
+		Source:                transaction.Endpoint,
+		ObservedLocalEndpoint: netip.MustParseAddrPort("198.51.100.35:41641"),
+	}); !errors.Is(err, ErrPeerProbeNotFound) {
+		t.Fatalf("Complete(cancelled) error = %v, want ErrPeerProbeNotFound", err)
+	}
+}
+
 func TestProbeManagerEnforcesResourceLimits(t *testing.T) {
 	t.Parallel()
 

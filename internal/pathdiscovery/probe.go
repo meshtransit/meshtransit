@@ -298,6 +298,23 @@ func (m *ProbeManager) Complete(
 	}, nil
 }
 
+// Cancel removes a transaction only when every immutable field still matches
+// the pending value. It is used when encoding or transport fails after Start.
+func (m *ProbeManager) Cancel(transaction ProbeTransaction) bool {
+	if m == nil || transaction.ID.IsZero() {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pending, exists := m.pending[transaction.ID]
+	if !exists || pending != transaction {
+		return false
+	}
+	m.removeLocked(transaction.ID)
+
+	return true
+}
+
 // Expire removes transactions whose deadline has arrived.
 func (m *ProbeManager) Expire(now time.Time) (int, error) {
 	if m == nil {

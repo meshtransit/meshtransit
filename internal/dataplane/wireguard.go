@@ -51,6 +51,11 @@ type endpointDiscoveringDevice interface {
 	) (pathdiscovery.DiscoveryResult, error)
 }
 
+type peerProbingDevice interface {
+	pathdiscovery.DatagramTransport
+	SetPeerProbeHandler(pathdiscovery.DatagramHandler)
+}
+
 type wireGuardFactory interface {
 	New(*os.File, int, *policyFilter, PacketObserver) (wireGuardDevice, error)
 }
@@ -335,6 +340,58 @@ func (e *WireGuardEngine) DiscoverEndpoints(
 	result.Candidates = merged
 
 	return result, nil
+}
+
+// Socket returns the active generation of the shared encrypted-packet socket.
+func (e *WireGuardEngine) Socket() pathdiscovery.Socket {
+	if e == nil || e.device == nil {
+		return pathdiscovery.Socket{}
+	}
+	device, supported := e.device.(peerProbingDevice)
+	if !supported {
+		return pathdiscovery.Socket{}
+	}
+
+	return device.Socket()
+}
+
+// SendDatagram sends one bounded peer-probe packet through the shared socket.
+func (e *WireGuardEngine) SendDatagram(
+	packet []byte,
+	destination netip.AddrPort,
+) (pathdiscovery.Socket, error) {
+	if e == nil || e.device == nil {
+		return pathdiscovery.Socket{}, pathdiscovery.ErrTransportClosed
+	}
+	device, supported := e.device.(peerProbingDevice)
+	if !supported {
+		return pathdiscovery.Socket{}, errors.New(
+			"dataplane: peer-probe transport is unavailable",
+		)
+	}
+
+	return device.SendDatagram(packet, destination)
+}
+
+// SetPeerProbeHandler atomically attaches or detaches the active session from
+// shared-socket demultiplexing. A nil handler detaches.
+func (e *WireGuardEngine) SetPeerProbeHandler(
+	handler pathdiscovery.DatagramHandler,
+) error {
+	if e == nil || e.device == nil {
+		if handler == nil {
+			return nil
+		}
+
+		return pathdiscovery.ErrTransportClosed
+	}
+	device, supported := e.device.(peerProbingDevice)
+	if !supported {
+		return errors.New("dataplane: peer-probe handler is unavailable")
+	}
+	device.SetPeerProbeHandler(handler)
+
+	return nil
 }
 
 // Close destroys the userspace device, which closes the TUN descriptor and

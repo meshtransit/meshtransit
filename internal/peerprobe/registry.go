@@ -99,6 +99,7 @@ type Registry struct {
 	identity          *disco.Identity
 	localDiscoveryKey disco.PublicKey
 	generation        pathdiscovery.ProbeGeneration
+	latestGeneration  pathdiscovery.ProbeGeneration
 	localNodeKey      disco.NodeKey
 	byID              map[uint64]*peerChannel
 	byDiscovery       map[disco.PublicKey]*peerChannel
@@ -163,6 +164,7 @@ func (r *Registry) Replace(
 		byDiscovery:  r.byDiscovery,
 	}
 	r.generation = generation
+	r.latestGeneration = generation
 	r.localNodeKey = next.localNodeKey
 	r.byID = next.byID
 	r.byDiscovery = next.byDiscovery
@@ -171,6 +173,34 @@ func (r *Registry) Replace(
 	closeChannelSet(previous)
 
 	return len(next.byID), nil
+}
+
+// Deactivate invalidates the active map and destroys all derived peer secrets.
+// The latest generation is retained as a rollback-prevention watermark.
+func (r *Registry) Deactivate() int {
+	if r == nil {
+		return 0
+	}
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+
+		return 0
+	}
+	previous := channelSet{
+		localNodeKey: r.localNodeKey,
+		byID:         r.byID,
+		byDiscovery:  r.byDiscovery,
+	}
+	r.generation = pathdiscovery.ProbeGeneration{}
+	r.localNodeKey = disco.NodeKey{}
+	r.byID = nil
+	r.byDiscovery = nil
+	r.mu.Unlock()
+
+	closeChannelSet(previous)
+
+	return len(previous.byID)
 }
 
 // Len reports the number of probe-capable peers in the active generation.
@@ -337,6 +367,7 @@ func (r *Registry) Close() {
 	}
 	r.closed = true
 	r.generation = pathdiscovery.ProbeGeneration{}
+	r.latestGeneration = pathdiscovery.ProbeGeneration{}
 	r.localNodeKey = disco.NodeKey{}
 	r.byID = nil
 	r.byDiscovery = nil
@@ -349,14 +380,14 @@ func (r *Registry) canReplaceLocked(generation pathdiscovery.ProbeGeneration) er
 	if r.closed {
 		return ErrInactive
 	}
-	if !r.generation.IsValid() {
+	if !r.latestGeneration.IsValid() {
 		return nil
 	}
-	if generation.Scope != r.generation.Scope ||
-		generation.MapRevision < r.generation.MapRevision ||
-		generation.Socket.Generation < r.generation.Socket.Generation ||
-		(generation.Socket.Generation == r.generation.Socket.Generation &&
-			generation.Socket.Port != r.generation.Socket.Port) {
+	if generation.Scope != r.latestGeneration.Scope ||
+		generation.MapRevision < r.latestGeneration.MapRevision ||
+		generation.Socket.Generation < r.latestGeneration.Socket.Generation ||
+		(generation.Socket.Generation == r.latestGeneration.Socket.Generation &&
+			generation.Socket.Port != r.latestGeneration.Socket.Port) {
 		return ErrInvalidGeneration
 	}
 

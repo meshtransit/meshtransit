@@ -88,11 +88,14 @@ peer map ──────────► authenticated path manager ───�
    publication across reconnects. A bounded registry atomically derives peer
    channels from each validated map, binds node and discovery identities,
    authorizes signed probe destinations, translates authenticated messages, and
-   destroys replaced shared secrets. The product-owned transaction manager
+   destroys replaced or deactivated shared secrets while retaining its
+   generation rollback watermark. The product-owned transaction manager
    enforces bounded per-peer/global state, exact peer/map/socket/source binding,
    five-second deadlines, consume-once replay rejection, and generation resets.
-   Probe scheduling, live UDP integration, authenticated path selection,
-   heartbeat, and roaming remain.
+   Live shared-socket demultiplexing, bounded asynchronous authentication, Pong
+   responses, paced map-triggered scheduling, failed-send cancellation, and
+   authenticated transaction completion are implemented. Authenticated path
+   selection, heartbeat, traffic-idle pacing, and roaming remain.
 5. Pending: Linux end-to-end tests with no manually advertised endpoint, including
    restart, socket rebinding, stale-result cancellation, and default-deny
    policy behavior.

@@ -19,6 +19,7 @@ import (
 	"github.com/meshtransit/meshd/internal/identity"
 	"github.com/meshtransit/meshd/internal/networkmap"
 	"github.com/meshtransit/meshd/internal/pathdiscovery"
+	"github.com/meshtransit/meshd/internal/peerprobe"
 	"github.com/meshtransit/meshd/internal/profile"
 	"github.com/meshtransit/meshd/internal/version"
 )
@@ -154,6 +155,41 @@ type endpointDiscoverer interface {
 		uint64,
 		[]netip.AddrPort,
 	) (pathdiscovery.DiscoveryResult, error)
+}
+
+type peerProbeDataPlane interface {
+	pathdiscovery.DatagramTransport
+	SetPeerProbeHandler(pathdiscovery.DatagramHandler) error
+}
+
+type lockedPeerProbeTransport struct {
+	mu        *sync.Mutex
+	dataPlane peerProbeDataPlane
+}
+
+var _ pathdiscovery.DatagramTransport = (*lockedPeerProbeTransport)(nil)
+
+func (t *lockedPeerProbeTransport) Socket() pathdiscovery.Socket {
+	if t == nil || t.mu == nil || t.dataPlane == nil {
+		return pathdiscovery.Socket{}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.dataPlane.Socket()
+}
+
+func (t *lockedPeerProbeTransport) SendDatagram(
+	packet []byte,
+	destination netip.AddrPort,
+) (pathdiscovery.Socket, error) {
+	if t == nil || t.mu == nil || t.dataPlane == nil {
+		return pathdiscovery.Socket{}, pathdiscovery.ErrTransportClosed
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.dataPlane.SendDatagram(packet, destination)
 }
 
 // DNSController consumes validated maps and owns transactional local resolver
@@ -383,6 +419,44 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		})
 		streamCtx, cancel := context.WithCancel(ctx)
 		streamDone := make(chan error, 1)
+		var probeRuntime *peerprobe.Runtime
+		var probeDataPlane peerProbeDataPlane
+		if dataPlane, supported := s.dataPlane.(peerProbeDataPlane); supported {
+			probeDataPlane = dataPlane
+			probeRuntime, err = peerprobe.NewRuntime(
+				streamCtx,
+				probeIdentity,
+				&lockedPeerProbeTransport{
+					mu:        &s.dataPlaneMu,
+					dataPlane: dataPlane,
+				},
+				nil,
+			)
+			if err != nil {
+				cancel()
+				probeIdentity.Close()
+				clear(privateKey[:])
+				clearProtocolMaterial(protocolMaterial)
+
+				return fmt.Errorf("creating peer-probe runtime: %w", err)
+			}
+		}
+		cleanupSession := func() error {
+			if probeRuntime != nil {
+				probeRuntime.Close()
+			}
+			var detachErr error
+			if probeDataPlane != nil {
+				s.dataPlaneMu.Lock()
+				detachErr = probeDataPlane.SetPeerProbeHandler(nil)
+				s.dataPlaneMu.Unlock()
+			}
+			probeIdentity.Close()
+			clear(privateKey[:])
+			clearProtocolMaterial(protocolMaterial)
+
+			return detachErr
+		}
 		var discoveryRequests chan endpointRefreshRequest
 		var candidateUpdates chan pathdiscovery.Set
 		var refreshDone <-chan error
@@ -430,9 +504,22 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						selfAddresses[index] = address.String()
 					}
 					dataPlaneState := s.defaultDataPlaneState()
+					if probeRuntime != nil {
+						probeRuntime.Deactivate()
+					}
+					probeSocket := pathdiscovery.Socket{}
+					var probeAttachErr error
 					if s.dataPlane != nil {
 						s.dataPlaneMu.Lock()
 						state, err := s.dataPlane.Apply(callbackCtx, snapshot, privateKey)
+						if err == nil && probeDataPlane != nil {
+							if len(snapshot.Peers) == 0 {
+								probeAttachErr = probeDataPlane.SetPeerProbeHandler(nil)
+							} else {
+								probeAttachErr = probeDataPlane.SetPeerProbeHandler(probeRuntime)
+								probeSocket = probeDataPlane.Socket()
+							}
+						}
 						s.dataPlaneMu.Unlock()
 						if err != nil {
 							s.setSyncStatus(syncStatus{
@@ -444,6 +531,25 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 							return fmt.Errorf("applying data plane: %w", err)
 						}
 						dataPlaneState = string(state)
+					}
+					if probeAttachErr != nil {
+						return fmt.Errorf("attaching peer-probe transport: %w", probeAttachErr)
+					}
+					if probeRuntime != nil && len(snapshot.Peers) != 0 {
+						if !probeSocket.IsOpen() {
+							return pathdiscovery.ErrTransportClosed
+						}
+						_, _, err := probeRuntime.Activate(
+							snapshot,
+							pathdiscovery.ProbeGeneration{
+								Scope:       discoveryScope,
+								MapRevision: snapshot.Revision,
+								Socket:      probeSocket,
+							},
+						)
+						if err != nil {
+							return fmt.Errorf("activating peer probes: %w", err)
+						}
 					}
 					if discoveryRequests != nil {
 						s.dataPlaneMu.Lock()
@@ -504,20 +610,18 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if refreshDone != nil {
 				<-refreshDone
 			}
-			probeIdentity.Close()
-			clear(privateKey[:])
-			clearProtocolMaterial(protocolMaterial)
+			cleanupErr := cleanupSession()
 
-			return ctx.Err()
+			return errors.Join(ctx.Err(), cleanupErr)
 		case <-s.syncSignal:
 			cancel()
 			<-streamDone
 			if refreshDone != nil {
 				<-refreshDone
 			}
-			probeIdentity.Close()
-			clear(privateKey[:])
-			clearProtocolMaterial(protocolMaterial)
+			if err := cleanupSession(); err != nil {
+				return fmt.Errorf("detaching peer-probe transport: %w", err)
+			}
 			if err := s.stopRuntime(); err != nil {
 				return err
 			}
@@ -528,9 +632,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if refreshDone != nil {
 				<-refreshDone
 			}
-			probeIdentity.Close()
-			clear(privateKey[:])
-			clearProtocolMaterial(protocolMaterial)
+			if err := cleanupSession(); err != nil {
+				return fmt.Errorf("detaching peer-probe transport: %w", err)
+			}
 			dataPlaneState := s.currentDataPlaneState()
 			dnsState := s.currentDNSState()
 			if err := s.stopRuntime(); err != nil {
@@ -555,9 +659,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		case <-refreshDone:
 			cancel()
 			<-streamDone
-			probeIdentity.Close()
-			clear(privateKey[:])
-			clearProtocolMaterial(protocolMaterial)
+			if err := cleanupSession(); err != nil {
+				return fmt.Errorf("detaching peer-probe transport: %w", err)
+			}
 			dataPlaneState := s.currentDataPlaneState()
 			dnsState := s.currentDNSState()
 			if err := s.stopRuntime(); err != nil {

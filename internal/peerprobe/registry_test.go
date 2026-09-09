@@ -203,6 +203,42 @@ func TestRegistryReplacementIsAtomicAndDestroysOldChannels(t *testing.T) {
 	}
 }
 
+func TestRegistryDeactivateDestroysChannelsAndRetainsGenerationFloor(t *testing.T) {
+	t.Parallel()
+
+	_, _, registry, snapshot, generation := testRegistry(t)
+	oldChannel := registry.byID[snapshot.Peers[0].ID].wire
+	if removed := registry.Deactivate(); removed != 1 {
+		t.Fatalf("Deactivate() = %d, want 1", removed)
+	}
+	if count := registry.Len(); count != 0 {
+		t.Fatalf("Len() after Deactivate = %d, want 0", count)
+	}
+	if _, err := registry.SealPing(
+		testTransaction(generation, snapshot.Peers[0]),
+		0,
+	); !errors.Is(err, ErrInactive) {
+		t.Fatalf("SealPing() after Deactivate error = %v, want ErrInactive", err)
+	}
+	if _, err := oldChannel.Seal(disco.Ping{
+		ID:      disco.TransactionID{1},
+		NodeKey: testNodeKey(t, snapshot.Self.PublicKey),
+	}); !errors.Is(err, disco.ErrClosed) {
+		t.Fatalf("old channel Seal() error = %v, want disco.ErrClosed", err)
+	}
+
+	stale := cloneTestSnapshot(snapshot)
+	stale.Revision--
+	staleGeneration := generation
+	staleGeneration.MapRevision = stale.Revision
+	if _, err := registry.Replace(stale, staleGeneration); !errors.Is(err, ErrInvalidGeneration) {
+		t.Fatalf("Replace(stale) error = %v, want ErrInvalidGeneration", err)
+	}
+	if count, err := registry.Replace(snapshot, generation); err != nil || count != 1 {
+		t.Fatalf("Replace(current) = %d, %v, want 1", count, err)
+	}
+}
+
 func TestRegistryValidatesSessionAndPeerMap(t *testing.T) {
 	t.Parallel()
 
