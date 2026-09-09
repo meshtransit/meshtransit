@@ -86,7 +86,7 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - Long-lived, pinned Noise/HTTP2 control-map stream with a two-minute watchdog and bounded jittered reconnect.
 - Product-owned network-map model with atomic full/delta application, strict size/cardinality limits, identity binding, duplicate-address rejection, policy selector validation, and insecure-relay rejection.
 - Product-owned DNS model for MagicDNS, classic IP resolvers, split routes, search domains, and A/AAAA records; deterministic plan compilation rejects name shadowing and unrouted node records.
-- Linux MagicDNS server with A/AAAA/PTR answers, short-name search, authoritative NXDOMAIN/NODATA, classic UDP/TCP forwarding, truncated-UDP retry over TCP, bounded concurrency, and transactional `systemd-resolved` rollback.
+- Linux MagicDNS server with A/AAAA/PTR answers, short-name search, authoritative NXDOMAIN/NODATA, RFC 6891 EDNS0 negotiation, classic UDP/TCP forwarding, truncated-UDP retry over TCP, bounded concurrency, and transactional `systemd-resolved` rollback.
 - Status-only visibility into control synchronization, latest validated revision, and peer count; raw policy and peer keys are not exposed locally.
 - Linux-only `meshnetd` privilege boundary with `SO_PEERCRED`, bounded `SOCK_SEQPACKET` framing, root-configured overlay pools, host-route-only dynamic TUN configuration, and descriptor passing via `SCM_RIGHTS`.
 - Explicit `--enable-tun-poc` lifecycle that closes the non-persistent TUN on default-deny, profile changes, control failure, and shutdown.
@@ -95,7 +95,7 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - Opt-in native flow telemetry with redacted control-issued credentials, bounded non-blocking queues, TCP handshake state, explicit per-direction counters, HTTPS-only uploads, redirect refusal, and no packet payload retention.
 - No copied compatibility-reference source.
 
-See [docs/architecture.md](docs/architecture.md) and [docs/security-model.md](docs/security-model.md).
+See [docs/architecture.md](docs/architecture.md), [docs/dns.md](docs/dns.md), and [docs/security-model.md](docs/security-model.md).
 
 ## Current scope
 

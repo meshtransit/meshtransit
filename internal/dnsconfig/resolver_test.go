@@ -2,6 +2,7 @@ package dnsconfig
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"net/netip"
@@ -79,6 +80,139 @@ func TestResolverEngineLocalRecordsAndNegativeAnswers(t *testing.T) {
 				t.Fatalf("authorities = %#v", message.Authorities)
 			}
 		})
+	}
+}
+
+func TestResolverEngineRespondsWithSanitizedEDNS0(t *testing.T) {
+	t.Parallel()
+
+	plan, err := Compile(dnsSnapshot())
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	query := packEDNS0Query(t, "node-a.example.mesh.", dnsmessage.TypeA, 1232)
+	response, err := newResolverEngine().resolve(t.Context(), plan, query, "udp")
+	if err != nil {
+		t.Fatalf("resolve EDNS0 error = %v", err)
+	}
+	message := unpackMessage(t, response)
+	if len(message.Additionals) != 1 {
+		t.Fatalf("additional records = %#v, want one OPT record", message.Additionals)
+	}
+	additional := message.Additionals[0]
+	options, ok := additional.Body.(*dnsmessage.OPTResource)
+	if !ok || additional.Header.Name.String() != "." ||
+		additional.Header.Class != dnsmessage.Class(maxUDPSize) ||
+		additional.Header.TTL != 0 || len(options.Options) != 0 {
+		t.Fatalf("EDNS0 response = %#v", additional)
+	}
+}
+
+func TestResolverEnginePreservesEDNS0OnTruncatedResponse(t *testing.T) {
+	t.Parallel()
+
+	query := packEDNS0Query(t, "large.example.mesh.", dnsmessage.TypeA, defaultUDPSize)
+	response := unpackMessage(t, packQuery(t, "large.example.mesh.", dnsmessage.TypeA))
+	response.Response = true
+	response.Authoritative = true
+	for index := range 64 {
+		response.Answers = append(response.Answers, dnsmessage.Resource{
+			Header: dnsmessage.ResourceHeader{
+				Name:  response.Questions[0].Name,
+				Type:  dnsmessage.TypeA,
+				Class: dnsmessage.ClassINET,
+				TTL:   5,
+			},
+			Body: &dnsmessage.AResource{A: [4]byte{192, 0, 2, byte(index + 1)}},
+		})
+	}
+	packed, err := response.Pack()
+	if err != nil {
+		t.Fatalf("Pack() response error = %v", err)
+	}
+	limited, err := limitUDPResponse(query, packed, "udp")
+	if err != nil {
+		t.Fatalf("limitUDPResponse() error = %v", err)
+	}
+	message := unpackMessage(t, limited)
+	if !message.Truncated || len(message.Answers) != 0 ||
+		len(message.Authorities) != 0 || len(message.Additionals) != 1 ||
+		message.Additionals[0].Header.Type != dnsmessage.TypeOPT {
+		t.Fatalf("truncated EDNS0 response = %#v", message)
+	}
+	if len(limited) > defaultUDPSize {
+		t.Fatalf("truncated response size = %d, want <= %d", len(limited), defaultUDPSize)
+	}
+}
+
+func TestResolverEnginePreservesEDNS0OnServerFailure(t *testing.T) {
+	t.Parallel()
+
+	query := packEDNS0Query(t, "unrouted.example.", dnsmessage.TypeA, 1232)
+	response, err := newResolverEngine().resolve(t.Context(), Plan{Enabled: true}, query, "udp")
+	if !errors.Is(err, errNoResolver) {
+		t.Fatalf("resolve error = %v, want %v", err, errNoResolver)
+	}
+	message := unpackMessage(t, response)
+	if message.RCode != dnsmessage.RCodeServerFailure ||
+		len(message.Additionals) != 1 ||
+		message.Additionals[0].Header.Type != dnsmessage.TypeOPT {
+		t.Fatalf("server failure response = %#v", message)
+	}
+}
+
+func TestResolverEngineRejectsUnsupportedEDNSVersion(t *testing.T) {
+	t.Parallel()
+
+	plan, err := Compile(dnsSnapshot())
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	query := unpackMessage(t, packEDNS0Query(
+		t,
+		"node-a.example.mesh.",
+		dnsmessage.TypeA,
+		1232,
+	))
+	query.Additionals[0].Header.TTL |= 1 << 16
+	payload, err := query.Pack()
+	if err != nil {
+		t.Fatalf("Pack() EDNS version error = %v", err)
+	}
+	response, err := newResolverEngine().resolve(t.Context(), plan, payload, "udp")
+	if err != nil {
+		t.Fatalf("resolve unsupported EDNS version error = %v", err)
+	}
+	message := unpackMessage(t, response)
+	if len(message.Answers) != 0 || len(message.Additionals) != 1 ||
+		message.Additionals[0].Header.Type != dnsmessage.TypeOPT ||
+		message.Additionals[0].Header.ExtendedRCode(message.RCode) != ednsBadVersionRCode {
+		t.Fatalf("unsupported EDNS version response = %#v", message)
+	}
+}
+
+func TestResolverEngineReturnsEDNS0OnMalformedOPT(t *testing.T) {
+	t.Parallel()
+
+	query := unpackMessage(t, packEDNS0Query(t, "node-a.example.mesh.", dnsmessage.TypeA, 1232))
+	invalidName, err := dnsmessage.NewName("invalid.example.")
+	if err != nil {
+		t.Fatalf("NewName() error = %v", err)
+	}
+	query.Additionals[0].Header.Name = invalidName
+	payload, err := query.Pack()
+	if err != nil {
+		t.Fatalf("Pack() malformed OPT error = %v", err)
+	}
+	response, err := newResolverEngine().resolve(t.Context(), Plan{Enabled: true}, payload, "udp")
+	if err != nil {
+		t.Fatalf("resolve malformed OPT error = %v", err)
+	}
+	message := unpackMessage(t, response)
+	if message.RCode != dnsmessage.RCodeFormatError ||
+		len(message.Questions) != 1 || len(message.Additionals) != 1 ||
+		message.Additionals[0].Header.Type != dnsmessage.TypeOPT {
+		t.Fatalf("malformed OPT response = %#v", message)
 	}
 }
 
@@ -192,6 +326,34 @@ func packQuery(t *testing.T, name string, recordType dnsmessage.Type) []byte {
 	}
 
 	return query
+}
+
+func packEDNS0Query(
+	t *testing.T,
+	name string,
+	recordType dnsmessage.Type,
+	udpPayloadSize int,
+) []byte {
+	t.Helper()
+
+	query := unpackMessage(t, packQuery(t, name, recordType))
+	header := dnsmessage.ResourceHeader{}
+	if err := header.SetEDNS0(udpPayloadSize, dnsmessage.RCodeSuccess, false); err != nil {
+		t.Fatalf("SetEDNS0() error = %v", err)
+	}
+	query.Additionals = []dnsmessage.Resource{{
+		Header: header,
+		Body: &dnsmessage.OPTResource{Options: []dnsmessage.Option{{
+			Code: 65001,
+			Data: []byte{1, 2, 3},
+		}}},
+	}}
+	payload, err := query.Pack()
+	if err != nil {
+		t.Fatalf("Pack() EDNS0 error = %v", err)
+	}
+
+	return payload
 }
 
 func unpackMessage(t *testing.T, payload []byte) dnsmessage.Message {

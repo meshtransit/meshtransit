@@ -26,12 +26,14 @@ const (
 	defaultUDPSize         = 512
 	maxUDPSize             = 4096
 	maxForwardQueries      = 128
+	ednsBadVersionRCode    = dnsmessage.RCode(16)
 )
 
 var (
-	errMalformedQuery = errors.New("dnsconfig: malformed dns query")
-	errNoResolver     = errors.New("dnsconfig: no resolver for query")
-	errForwardBusy    = errors.New("dnsconfig: forward queue is full")
+	errMalformedQuery         = errors.New("dnsconfig: malformed dns query")
+	errUnsupportedEDNSVersion = errors.New("dnsconfig: unsupported EDNS version")
+	errNoResolver             = errors.New("dnsconfig: no resolver for query")
+	errForwardBusy            = errors.New("dnsconfig: forward queue is full")
 )
 
 type resolverEngine struct {
@@ -50,6 +52,10 @@ func (e *resolverEngine) resolve(
 ) ([]byte, error) {
 	message, question, name, err := parseQuery(query)
 	if err != nil {
+		if errors.Is(err, errUnsupportedEDNSVersion) {
+			return unsupportedEDNSVersionResponse(message)
+		}
+
 		return formatError(query), nil
 	}
 	if host, found := findHost(plan.Hosts, name); found {
@@ -87,26 +93,20 @@ func (e *resolverEngine) resolve(
 		resolvers = route.Resolvers
 	}
 	if len(resolvers) == 0 {
-		response, responseErr := serverFailure(message, question, plan)
-
-		return response, errors.Join(errNoResolver, responseErr)
+		return failureResponse(query, message, question, plan, transport, errNoResolver)
 	}
 
 	select {
 	case e.forwardSlots <- struct{}{}:
 		defer func() { <-e.forwardSlots }()
 	default:
-		response, responseErr := serverFailure(message, question, plan)
-
-		return response, errors.Join(errForwardBusy, responseErr)
+		return failureResponse(query, message, question, plan, transport, errForwardBusy)
 	}
 	forwardCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 	response, err := forwardQuery(forwardCtx, query, question, resolvers, transport)
 	if err != nil {
-		failure, failureErr := serverFailure(message, question, plan)
-
-		return failure, errors.Join(err, failureErr)
+		return failureResponse(query, message, question, plan, transport, err)
 	}
 
 	return limitUDPResponse(query, response, transport)
@@ -124,10 +124,16 @@ func parseQuery(query []byte) (dnsmessage.Message, dnsmessage.Question, string, 
 		len(message.Answers) != 0 || len(message.Authorities) != 0 || len(message.Additionals) > 1 {
 		return dnsmessage.Message{}, dnsmessage.Question{}, "", errMalformedQuery
 	}
-	if len(message.Additionals) == 1 && message.Additionals[0].Header.Type != dnsmessage.TypeOPT {
-		return dnsmessage.Message{}, dnsmessage.Question{}, "", errMalformedQuery
-	}
 	question := message.Questions[0]
+	if len(message.Additionals) == 1 {
+		additional := message.Additionals[0]
+		if additional.Header.Type != dnsmessage.TypeOPT || additional.Header.Name.String() != "." {
+			return dnsmessage.Message{}, dnsmessage.Question{}, "", errMalformedQuery
+		}
+		if additional.Header.TTL>>16&0xff != 0 {
+			return message, question, "", errUnsupportedEDNSVersion
+		}
+	}
 	if question.Class != dnsmessage.ClassINET {
 		return dnsmessage.Message{}, dnsmessage.Question{}, "", errMalformedQuery
 	}
@@ -232,6 +238,38 @@ func serverFailure(
 	response.Header.RCode = dnsmessage.RCodeServerFailure
 
 	return response.Pack()
+}
+
+func failureResponse(
+	query []byte,
+	request dnsmessage.Message,
+	question dnsmessage.Question,
+	plan Plan,
+	transport string,
+	cause error,
+) ([]byte, error) {
+	response, responseErr := serverFailure(request, question, plan)
+	response, limitErr := limitUDPResponse(query, response, transport)
+
+	return response, errors.Join(cause, responseErr, limitErr)
+}
+
+func unsupportedEDNSVersionResponse(query dnsmessage.Message) ([]byte, error) {
+	response := baseResponse(query, Plan{})
+	header := dnsmessage.ResourceHeader{}
+	if err := header.SetEDNS0(maxUDPSize, ednsBadVersionRCode, false); err != nil {
+		return nil, fmt.Errorf("dnsconfig: building unsupported EDNS version response: %w", err)
+	}
+	response.Additionals = []dnsmessage.Resource{{
+		Header: header,
+		Body:   &dnsmessage.OPTResource{},
+	}}
+	packed, err := response.Pack()
+	if err != nil {
+		return nil, fmt.Errorf("dnsconfig: packing unsupported EDNS version response: %w", err)
+	}
+
+	return packed, nil
 }
 
 func baseResponse(query dnsmessage.Message, plan Plan) dnsmessage.Message {
@@ -532,6 +570,10 @@ func isTruncated(message []byte) bool {
 }
 
 func limitUDPResponse(query, response []byte, transport string) ([]byte, error) {
+	response, err := addEDNS0Response(query, response)
+	if err != nil {
+		return nil, err
+	}
 	if transport != "udp" || len(response) <= udpResponseLimit(query) {
 		return response, nil
 	}
@@ -542,9 +584,55 @@ func limitUDPResponse(query, response []byte, transport string) ([]byte, error) 
 	message.Header.Truncated = true
 	message.Answers = nil
 	message.Authorities = nil
-	message.Additionals = nil
+	message.Additionals = slices.DeleteFunc(message.Additionals, func(resource dnsmessage.Resource) bool {
+		return resource.Header.Type != dnsmessage.TypeOPT
+	})
 
 	return message.Pack()
+}
+
+func addEDNS0Response(query, response []byte) ([]byte, error) {
+	var queryMessage dnsmessage.Message
+	if err := queryMessage.Unpack(query); err != nil {
+		return nil, fmt.Errorf("dnsconfig: parsing query for EDNS0: %w", err)
+	}
+	if len(queryMessage.Additionals) == 0 {
+		return response, nil
+	}
+	if queryMessage.Additionals[0].Header.Type != dnsmessage.TypeOPT {
+		return response, nil
+	}
+
+	var responseMessage dnsmessage.Message
+	if err := responseMessage.Unpack(response); err != nil {
+		return nil, fmt.Errorf("dnsconfig: parsing response for EDNS0: %w", err)
+	}
+	additionals := make([]dnsmessage.Resource, 0, len(responseMessage.Additionals)+1)
+	for _, additional := range responseMessage.Additionals {
+		if additional.Header.Type != dnsmessage.TypeOPT {
+			additionals = append(additionals, additional)
+		}
+	}
+	header := dnsmessage.ResourceHeader{}
+	if err := header.SetEDNS0(
+		maxUDPSize,
+		dnsmessage.RCodeSuccess,
+		false,
+	); err != nil {
+		return nil, fmt.Errorf("dnsconfig: building EDNS0 response: %w", err)
+	}
+	responseMessage.Additionals = additionals
+	responseMessage.Additionals = append(responseMessage.Additionals, dnsmessage.Resource{
+		Header: header,
+		Body:   &dnsmessage.OPTResource{},
+	})
+
+	packed, err := responseMessage.Pack()
+	if err != nil {
+		return nil, fmt.Errorf("dnsconfig: packing EDNS0 response: %w", err)
+	}
+
+	return packed, nil
 }
 
 func udpResponseLimit(query []byte) int {
@@ -580,6 +668,25 @@ func formatError(query []byte) []byte {
 		Response: true,
 		RCode:    dnsmessage.RCodeFormatError,
 	}}
+	var request dnsmessage.Message
+	if err := request.Unpack(query); err == nil {
+		message.OpCode = request.OpCode
+		message.RecursionDesired = request.RecursionDesired
+		if len(request.Questions) == 1 {
+			message.Questions = append(message.Questions, request.Questions[0])
+		}
+		if slices.ContainsFunc(request.Additionals, func(resource dnsmessage.Resource) bool {
+			return resource.Header.Type == dnsmessage.TypeOPT
+		}) {
+			header := dnsmessage.ResourceHeader{}
+			if err := header.SetEDNS0(maxUDPSize, dnsmessage.RCodeSuccess, false); err == nil {
+				message.Additionals = []dnsmessage.Resource{{
+					Header: header,
+					Body:   &dnsmessage.OPTResource{},
+				}}
+			}
+		}
+	}
 	response, err := message.Pack()
 	if err != nil {
 		return nil
