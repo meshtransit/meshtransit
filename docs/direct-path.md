@@ -21,7 +21,7 @@ copied into this repository.
 | Endpoint history | Keep short-lived non-host candidates to tolerate one failed discovery round. | Immediate withdrawal causes avoidable flapping during NAT rebinding or packet loss. |
 | Expiry | Improve history by scheduling removal at its actual deadline. | The reference tracker can retain an expired address until another link or discovery event triggers an update. |
 | Path proof | Require an authenticated discovery response before a candidate becomes the preferred data path. | A control-distributed address is a probe target, not proof that the peer currently owns that path. |
-| Selection | Prefer a recently authenticated path, then measured latency, with deterministic tie-breaking. | This avoids random first-packet routing and makes behavior testable while still allowing roaming. |
+| Selection | Admit only fresh authenticated paths, smooth measured latency, require a material improvement to switch, then use deterministic local/IPv6/address preferences for near-equivalent paths. | This avoids random first-packet routing and latency-jitter flapping while remaining testable. |
 | Activity | Probe and heartbeat only active peer sessions; apply per-peer and global rate limits. | Idle meshes should not create continuous background traffic or unbounded timers. |
 | Control requests | Continue rejecting arbitrary control-supplied probe URLs. | Executing them would create an SSRF primitive unrelated to peer path discovery. |
 | Isolation | Bind every discovery result and callback to an active-profile generation. | Results from a cancelled profile or old network map must never cross a Network boundary. |
@@ -94,8 +94,12 @@ peer map ──────────► authenticated path manager ───�
    five-second deadlines, consume-once replay rejection, and generation resets.
    Live shared-socket demultiplexing, bounded asynchronous authentication, Pong
    responses, paced map-triggered scheduling, failed-send cancellation, and
-   authenticated transaction completion are implemented. Authenticated path
-   selection, heartbeat, traffic-idle pacing, and roaming remain.
+   authenticated transaction completion are implemented. The bounded
+   product-owned selector now enforces authorized candidates, a 6.5-second
+   freshness window, smoothed RTT, switch hysteresis, deterministic ties,
+   exact expiry/fallback, generation reset, and rollback rejection. Applying
+   selected paths to WireGuard, heartbeat, traffic-idle pacing, and roaming
+   remain.
 5. Pending: Linux end-to-end tests with no manually advertised endpoint, including
    restart, socket rebinding, stale-result cancellation, and default-deny
    policy behavior.

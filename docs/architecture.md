@@ -62,7 +62,14 @@ scope, map revision, socket generation, exact remote endpoint, and five-second
 deadline. It caps pending state globally and per peer, consumes authenticated
 mismatches, rejects replay and late replies, and invalidates all state before a
 map or socket transition. Authenticated observations do not change WireGuard
-endpoints yet.
+endpoints yet. They now feed a product-owned bounded selector that retains one
+smoothed RTT and exact expiry per authorized candidate, uses a 6.5-second
+freshness gate, requires a material improvement before switching, and resolves
+near-equivalent paths deterministically by private reachability, IPv6, then
+canonical address. An exact repeated generation preserves evidence only when
+its peer/candidate authority is identical; every map or socket generation
+change clears it. The selector reports exact expiry deadlines and explicit
+fallback/removal transitions for the next tunnel-integration milestone.
 
 ## DNS boundary
 

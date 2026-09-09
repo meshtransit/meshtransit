@@ -45,7 +45,8 @@ func TestProbeManagerCompletesExactAuthenticatedReply(t *testing.T) {
 	if observation.PeerID != transaction.PeerID ||
 		observation.Generation != generation || observation.RemoteEndpoint != remote ||
 		observation.ObservedLocalEndpoint != observedLocal ||
-		observation.RoundTrip != 25*time.Millisecond {
+		observation.RoundTrip != 25*time.Millisecond ||
+		observation.ObservedAt != startedAt.Add(25*time.Millisecond) {
 		t.Fatalf("Complete() observation = %#v", observation)
 	}
 	if _, err := manager.Complete(startedAt.Add(30*time.Millisecond), AuthenticatedProbeReply{

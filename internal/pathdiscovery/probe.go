@@ -104,6 +104,7 @@ type PathObservation struct {
 	RemoteEndpoint        netip.AddrPort
 	ObservedLocalEndpoint netip.AddrPort
 	RoundTrip             time.Duration
+	ObservedAt            time.Time
 }
 
 // ProbeManager owns bounded outgoing peer-probe transactions. It does not
@@ -295,6 +296,7 @@ func (m *ProbeManager) Complete(
 		RemoteEndpoint:        transaction.Endpoint,
 		ObservedLocalEndpoint: reply.ObservedLocalEndpoint,
 		RoundTrip:             now.Sub(transaction.StartedAt),
+		ObservedAt:            now,
 	}, nil
 }
 
