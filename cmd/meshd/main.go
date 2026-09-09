@@ -17,6 +17,7 @@ import (
 	"github.com/meshtransit/meshd/internal/config"
 	"github.com/meshtransit/meshd/internal/daemon"
 	"github.com/meshtransit/meshd/internal/dataplane"
+	"github.com/meshtransit/meshd/internal/dnsconfig"
 	"github.com/meshtransit/meshd/internal/flowlog"
 	"github.com/meshtransit/meshd/internal/identity"
 	"github.com/meshtransit/meshd/internal/localapi"
@@ -88,13 +89,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	if cfg.EnableTUNPOC || cfg.EnableWireGuardPOC {
-		netAdminClient, err := netadmin.NewClient(cfg.NetAdminSocketPath, 5*time.Second)
+	var netAdminClient *netadmin.Client
+	if cfg.EnableTUNPOC || cfg.EnableWireGuardPOC || cfg.EnableDNSPOC {
+		netAdminClient, err = netadmin.NewClient(cfg.NetAdminSocketPath, 5*time.Second)
 		if err != nil {
 			logger.Error("creating privileged helper client failed", "error", err)
 
 			return 1
 		}
+	}
+	if cfg.EnableTUNPOC || cfg.EnableWireGuardPOC {
 		if cfg.EnableWireGuardPOC {
 			engine, err := dataplane.NewWireGuardWithObserver(
 				netAdminClient,
@@ -129,6 +133,28 @@ func run(args []string, stdout, stderr io.Writer) int {
 			daemonOptions.DataPlane = engine
 			logger.Warn("tun poc enabled without packet forwarding", "socket", cfg.NetAdminSocketPath)
 		}
+	}
+	if cfg.EnableDNSPOC {
+		resolver, err := dnsconfig.NewServer(netAdminClient)
+		if err != nil {
+			logger.Error("creating local dns resolver failed", "error", err)
+
+			return 1
+		}
+		hostDNS, err := dnsconfig.NewResolvedHost(netAdminClient, resolver)
+		if err != nil {
+			logger.Error("creating host dns configurator failed", "error", err)
+
+			return 1
+		}
+		dnsManager, err := dnsconfig.NewManager(resolver, hostDNS)
+		if err != nil {
+			logger.Error("creating dns manager failed", "error", err)
+
+			return 1
+		}
+		daemonOptions.DNS = dnsManager
+		logger.Warn("MagicDNS poc enabled", "socket", cfg.NetAdminSocketPath)
 	}
 	service, err := daemon.New(
 		profiles,

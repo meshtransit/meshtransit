@@ -6,16 +6,20 @@ import (
 	"fmt"
 	"net/netip"
 	"sync"
+	"time"
 
 	"github.com/meshtransit/meshd/internal/networkmap"
 )
 
 var ErrClosed = errors.New("dnsconfig: manager is closed")
 
+const rollbackTimeout = 5 * time.Second
+
 // Resolver atomically installs one local resolver plan. An unsuccessful call
 // must leave the previous plan active. A disabled plan clears local records.
 type Resolver interface {
-	Apply(Plan) error
+	Apply(context.Context, Plan) error
+	Close(context.Context) error
 }
 
 // HostConfigurator atomically installs the OS-facing DNS configuration. An
@@ -47,50 +51,56 @@ func NewManager(resolver Resolver, host HostConfigurator) (*Manager, error) {
 	return &Manager{resolver: resolver, host: host}, nil
 }
 
-// Apply compiles and transactionally activates one network-map revision.
-func (m *Manager) Apply(ctx context.Context, snapshot networkmap.Snapshot) error {
+// Apply compiles and transactionally activates one network-map revision. The
+// returned state is true only when both the local resolver and host DNS are
+// configured for an enabled plan.
+func (m *Manager) Apply(ctx context.Context, snapshot networkmap.Snapshot) (bool, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 	plan, err := Compile(snapshot)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		return ErrClosed
+		return false, ErrClosed
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 	previous := clonePlan(m.current)
 	if !plan.Enabled {
-		return m.disableLocked(ctx, previous, plan)
+		return false, m.disableLocked(ctx, previous, plan)
 	}
 
-	if err := m.resolver.Apply(clonePlan(plan)); err != nil {
-		return fmt.Errorf("configuring local dns resolver: %w", err)
+	if err := m.resolver.Apply(ctx, clonePlan(plan)); err != nil {
+		return false, fmt.Errorf("configuring local dns resolver: %w", err)
 	}
 	if err := m.host.Apply(ctx, clonePlan(plan)); err != nil {
-		rollbackErr := m.resolver.Apply(clonePlan(previous))
-		return errors.Join(
+		rollbackCtx, cancel := rollbackContext(ctx)
+		rollbackErr := m.resolver.Apply(rollbackCtx, clonePlan(previous))
+		cancel()
+		return false, errors.Join(
 			fmt.Errorf("configuring host dns: %w", err),
 			wrapRollbackError("local resolver", rollbackErr),
 		)
 	}
 	m.current = clonePlan(plan)
 
-	return nil
+	return true, nil
 }
 
 func (m *Manager) disableLocked(ctx context.Context, previous, disabled Plan) error {
 	if err := m.host.Apply(ctx, clonePlan(disabled)); err != nil {
 		return fmt.Errorf("restoring host dns: %w", err)
 	}
-	if err := m.resolver.Apply(clonePlan(disabled)); err != nil {
-		rollbackErr := m.host.Apply(ctx, clonePlan(previous))
+	if err := m.resolver.Apply(ctx, clonePlan(disabled)); err != nil {
+		rollbackCtx, cancel := rollbackContext(ctx)
+		rollbackErr := m.host.Apply(rollbackCtx, clonePlan(previous))
+		cancel()
 		return errors.Join(
 			fmt.Errorf("clearing local dns resolver: %w", err),
 			wrapRollbackError("host dns", rollbackErr),
@@ -134,8 +144,11 @@ func (m *Manager) Close(ctx context.Context) error {
 	if err := m.host.Apply(ctx, disabled); err != nil {
 		return fmt.Errorf("restoring host dns during close: %w", err)
 	}
-	if err := m.resolver.Apply(disabled); err != nil {
+	if err := m.resolver.Apply(ctx, disabled); err != nil {
 		return fmt.Errorf("clearing local dns resolver during close: %w", err)
+	}
+	if err := m.resolver.Close(ctx); err != nil {
+		return fmt.Errorf("closing local dns resolver: %w", err)
 	}
 	m.current = disabled
 	m.closed = true
@@ -149,6 +162,10 @@ func wrapRollbackError(component string, err error) error {
 	}
 
 	return fmt.Errorf("rolling back %s: %w", component, err)
+}
+
+func rollbackContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
 }
 
 func clonePlan(plan Plan) Plan {

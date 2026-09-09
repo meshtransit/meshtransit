@@ -28,6 +28,18 @@ func TestParseTUNPOC(t *testing.T) {
 	}
 }
 
+func TestParseDNSPOC(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Parse([]string{"--enable-dns-poc"}, io.Discard)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if !cfg.EnableDNSPOC {
+		t.Fatalf("parsed config = %#v", cfg)
+	}
+}
+
 func TestParseRejectsUnsafeNetAdminSocket(t *testing.T) {
 	t.Parallel()
 

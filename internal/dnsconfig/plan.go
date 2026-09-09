@@ -15,6 +15,8 @@ import (
 
 var ErrInvalid = errors.New("dnsconfig: invalid plan")
 
+const maxAddressesPerHost = 32
+
 // Plan is an immutable-by-convention DNS configuration ready for a local
 // resolver and an operating-system configurator.
 type Plan struct {
@@ -59,7 +61,6 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 	}
 
 	config := snapshot.DNS
-	plan.Enabled = true
 	plan.Proxied = config.Proxied
 	plan.DefaultResolvers = resolverAddresses(config.Resolvers)
 	plan.FallbackResolvers = resolverAddresses(config.FallbackResolvers)
@@ -112,6 +113,14 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 	sort.Strings(hostNames)
 	for _, name := range hostNames {
 		addresses := hosts[name]
+		if len(addresses) > maxAddressesPerHost {
+			return Plan{}, fmt.Errorf(
+				"%w: host %q has more than %d addresses",
+				ErrInvalid,
+				name,
+				maxAddressesPerHost,
+			)
+		}
 		slices.SortFunc(addresses, func(left, right netip.Addr) int {
 			return left.Compare(right)
 		})
@@ -133,6 +142,17 @@ func Compile(snapshot networkmap.Snapshot) (Plan, error) {
 	sort.Slice(plan.Reverse, func(left, right int) bool {
 		return plan.Reverse[left].Address.Compare(plan.Reverse[right].Address) < 0
 	})
+	for _, domain := range plan.SearchDomains {
+		if len(plan.DefaultResolvers) == 0 && !hasRoute(plan.Routes, domain) {
+			return Plan{}, fmt.Errorf(
+				"%w: search domain %q has no resolver route",
+				ErrInvalid,
+				domain,
+			)
+		}
+	}
+	plan.Enabled = len(plan.DefaultResolvers) != 0 || len(plan.Routes) != 0 ||
+		len(plan.SearchDomains) != 0 || len(plan.Hosts) != 0
 
 	return plan, nil
 }
@@ -203,4 +223,10 @@ func findReverseName(records []Reverse, name string) (Reverse, bool) {
 	}
 
 	return Reverse{}, false
+}
+
+func hasRoute(routes []Route, name string) bool {
+	return slices.ContainsFunc(routes, func(route Route) bool {
+		return dnsSuffixContains(route.Suffix, name)
+	})
 }

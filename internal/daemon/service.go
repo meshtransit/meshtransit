@@ -143,7 +143,7 @@ type DataPlaneController interface {
 // plus host configuration. Reset keeps it reusable across profile changes;
 // Close permanently releases it during process shutdown.
 type DNSController interface {
-	Apply(context.Context, networkmap.Snapshot) error
+	Apply(context.Context, networkmap.Snapshot) (bool, error)
 	Reset(context.Context) error
 	Close(context.Context) error
 }
@@ -351,7 +351,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					}
 					dnsState := DNSInactive
 					if s.dns != nil {
-						if err := s.dns.Apply(callbackCtx, snapshot); err != nil {
+						configured, err := s.dns.Apply(callbackCtx, snapshot)
+						if err != nil {
 							s.setSyncStatus(syncStatus{
 								profileID: active.ID,
 								state:     ControlSessionBlocked,
@@ -361,7 +362,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 
 							return fmt.Errorf("applying dns configuration: %w", err)
 						}
-						if snapshot.DNS != nil {
+						if configured {
 							dnsState = DNSConfigured
 						}
 					} else if snapshot.DNS != nil {

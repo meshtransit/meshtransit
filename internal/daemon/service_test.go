@@ -123,7 +123,7 @@ func TestService_RunPublishesLatestValidatedSnapshot(t *testing.T) {
 
 	service, _, control, _, _ := newTestService(t)
 	dataPlane := &fakeDataPlane{}
-	dns := &fakeDNS{}
+	dns := &fakeDNS{configured: true}
 	service.dataPlane = dataPlane
 	service.dns = dns
 	service.setSyncStatus(syncStatus{
@@ -234,12 +234,13 @@ type fakeDNS struct {
 	applyCalls int
 	resetCalls int
 	closeCalls int
+	configured bool
 }
 
-func (f *fakeDNS) Apply(context.Context, networkmap.Snapshot) error {
+func (f *fakeDNS) Apply(context.Context, networkmap.Snapshot) (bool, error) {
 	f.applyCalls++
 
-	return nil
+	return f.configured, nil
 }
 
 func (f *fakeDNS) Reset(context.Context) error {

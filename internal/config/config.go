@@ -34,6 +34,7 @@ type Config struct {
 	UnsafeAllowUnverifiedLocalPeer bool
 	EnableTUNPOC                   bool
 	EnableWireGuardPOC             bool
+	EnableDNSPOC                   bool
 	WireGuardListenPort            uint16
 	AdvertiseEndpoints             []netip.AddrPort
 	EnableFlowLogs                 bool
@@ -71,6 +72,12 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 		"enable-wireguard-poc",
 		false,
 		"enable encrypted direct-path poc with fail-closed policy checks",
+	)
+	flags.BoolVar(
+		&cfg.EnableDNSPOC,
+		"enable-dns-poc",
+		false,
+		"enable MagicDNS and systemd-resolved integration",
 	)
 	flags.Uint64Var(
 		&listenPort,

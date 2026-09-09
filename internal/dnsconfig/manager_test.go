@@ -19,16 +19,24 @@ func TestManagerApplyAndDisableOrdering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
-	if err := manager.Apply(t.Context(), dnsSnapshot()); err != nil {
+	configured, err := manager.Apply(t.Context(), dnsSnapshot())
+	if err != nil {
 		t.Fatalf("enabled Apply() error = %v", err)
+	}
+	if !configured {
+		t.Fatal("enabled Apply() configured = false")
 	}
 	if got, want := calls, []string{"resolver:on", "host:on"}; !slices.Equal(got, want) {
 		t.Fatalf("enabled calls = %v, want %v", got, want)
 	}
 
 	calls = nil
-	if err := manager.Apply(t.Context(), networkmap.Snapshot{Revision: 8}); err != nil {
+	configured, err = manager.Apply(t.Context(), networkmap.Snapshot{Revision: 8})
+	if err != nil {
 		t.Fatalf("disabled Apply() error = %v", err)
+	}
+	if configured {
+		t.Fatal("disabled Apply() configured = true")
 	}
 	if got, want := calls, []string{"host:off", "resolver:off"}; !slices.Equal(got, want) {
 		t.Fatalf("disabled calls = %v, want %v", got, want)
@@ -45,7 +53,7 @@ func TestManagerRollsBackResolverAfterHostFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
-	if err := manager.Apply(t.Context(), dnsSnapshot()); err != nil {
+	if _, err := manager.Apply(t.Context(), dnsSnapshot()); err != nil {
 		t.Fatalf("initial Apply() error = %v", err)
 	}
 
@@ -53,7 +61,7 @@ func TestManagerRollsBackResolverAfterHostFailure(t *testing.T) {
 	host.err = errors.New("host failed")
 	updated := dnsSnapshot()
 	updated.Revision++
-	if err := manager.Apply(t.Context(), updated); err == nil {
+	if _, err := manager.Apply(t.Context(), updated); err == nil {
 		t.Fatal("failed Apply() error = nil")
 	}
 	if got, want := calls, []string{"resolver:on", "host:on", "resolver:on"}; !slices.Equal(got, want) {
@@ -74,13 +82,13 @@ func TestManagerDisableRollsBackHostAfterResolverFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
-	if err := manager.Apply(t.Context(), dnsSnapshot()); err != nil {
+	if _, err := manager.Apply(t.Context(), dnsSnapshot()); err != nil {
 		t.Fatalf("initial Apply() error = %v", err)
 	}
 
 	calls = nil
 	resolver.errWhenDisabled = errors.New("resolver failed")
-	if err := manager.Apply(t.Context(), networkmap.Snapshot{Revision: 8}); err == nil {
+	if _, err := manager.Apply(t.Context(), networkmap.Snapshot{Revision: 8}); err == nil {
 		t.Fatal("disabled Apply() error = nil")
 	}
 	if got, want := calls, []string{"host:off", "resolver:off", "host:on"}; !slices.Equal(got, want) {
@@ -98,7 +106,7 @@ func TestManagerCloseIsOrderedAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
-	if err := manager.Apply(t.Context(), dnsSnapshot()); err != nil {
+	if _, err := manager.Apply(t.Context(), dnsSnapshot()); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
 
@@ -112,7 +120,7 @@ func TestManagerCloseIsOrderedAndIdempotent(t *testing.T) {
 	if got, want := calls, []string{"host:off", "resolver:off"}; !slices.Equal(got, want) {
 		t.Fatalf("close calls = %v, want %v", got, want)
 	}
-	if err := manager.Apply(t.Context(), dnsSnapshot()); !errors.Is(err, ErrClosed) {
+	if _, err := manager.Apply(t.Context(), dnsSnapshot()); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Apply() after close error = %v, want ErrClosed", err)
 	}
 }
@@ -127,7 +135,7 @@ func TestManagerResetKeepsManagerReusable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
-	if err := manager.Apply(t.Context(), dnsSnapshot()); err != nil {
+	if _, err := manager.Apply(t.Context(), dnsSnapshot()); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
 
@@ -135,8 +143,10 @@ func TestManagerResetKeepsManagerReusable(t *testing.T) {
 	if err := manager.Reset(t.Context()); err != nil {
 		t.Fatalf("Reset() error = %v", err)
 	}
-	if err := manager.Apply(t.Context(), dnsSnapshot()); err != nil {
+	if configured, err := manager.Apply(t.Context(), dnsSnapshot()); err != nil {
 		t.Fatalf("Apply() after reset error = %v", err)
+	} else if !configured {
+		t.Fatal("Apply() after reset configured = false")
 	}
 	if got, want := calls, []string{"host:off", "resolver:off", "resolver:on", "host:on"}; !slices.Equal(got, want) {
 		t.Fatalf("reset/reapply calls = %v, want %v", got, want)
@@ -149,7 +159,7 @@ type fakeResolver struct {
 	errWhenDisabled error
 }
 
-func (f *fakeResolver) Apply(plan Plan) error {
+func (f *fakeResolver) Apply(_ context.Context, plan Plan) error {
 	state := "off"
 	if plan.Enabled {
 		state = "on"
@@ -162,6 +172,8 @@ func (f *fakeResolver) Apply(plan Plan) error {
 
 	return nil
 }
+
+func (f *fakeResolver) Close(context.Context) error { return nil }
 
 type fakeHost struct {
 	calls *[]string
