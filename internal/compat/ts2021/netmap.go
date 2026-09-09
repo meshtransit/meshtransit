@@ -53,11 +53,12 @@ var (
 // NetmapOptions contains stable host facts, the persisted control-key pin, and
 // an optional active-session stream of complete candidate sets.
 type NetmapOptions struct {
-	Hostname          string
-	Version           string
-	PinnedFingerprint string
-	Candidates        pathdiscovery.Set
-	EndpointUpdates   <-chan pathdiscovery.Set
+	Hostname           string
+	Version            string
+	PinnedFingerprint  string
+	PeerProbePublicKey string
+	Candidates         pathdiscovery.Set
+	EndpointUpdates    <-chan pathdiscovery.Set
 }
 
 // NetmapHandler consumes one fully validated, defensive network snapshot.
@@ -79,14 +80,14 @@ func (c *Client) StreamNetmap(
 	if handler == nil {
 		return errors.New("ts2021: netmap handler is required")
 	}
-	if err := validateNetmapOptions(options); err != nil {
+	discoKey, err := parseNetmapOptions(options)
+	if err != nil {
 		return err
 	}
 	machineKey, nodeKey, controlKey, err := parseMaterial(material)
 	if err != nil {
 		return err
 	}
-	discoKey := key.NewDisco()
 	endpointState := newEndpointState(options.Candidates)
 	if options.EndpointUpdates == nil {
 		return c.streamNetmapLoop(
@@ -95,7 +96,7 @@ func (c *Client) StreamNetmap(
 			machineKey,
 			nodeKey,
 			controlKey,
-			discoKey.Public(),
+			discoKey,
 			options,
 			endpointState,
 			handler,
@@ -112,7 +113,7 @@ func (c *Client) StreamNetmap(
 			machineKey,
 			nodeKey,
 			controlKey,
-			discoKey.Public(),
+			discoKey,
 			options,
 			endpointState,
 			handler,
@@ -126,7 +127,7 @@ func (c *Client) StreamNetmap(
 			machineKey,
 			nodeKey,
 			controlKey,
-			discoKey.Public(),
+			discoKey,
 			options,
 			endpointState,
 		)
@@ -722,18 +723,38 @@ func newMapRequest(
 	return request
 }
 
-func validateNetmapOptions(options NetmapOptions) error {
+func parseNetmapOptions(options NetmapOptions) (key.DiscoPublic, error) {
+	discoKey, err := parsePeerProbePublicKey(options.PeerProbePublicKey)
+	if err != nil {
+		return key.DiscoPublic{}, err
+	}
 	if _, err := canonicalFingerprint(options.PinnedFingerprint); err != nil {
-		return err
+		return key.DiscoPublic{}, err
 	}
 	if err := validateDisplayText("hostname", options.Hostname, maxHostnameRunes); err != nil {
-		return err
+		return key.DiscoPublic{}, err
 	}
 	if err := validateCandidateSet(options.Candidates); err != nil {
-		return err
+		return key.DiscoPublic{}, err
+	}
+	if err := validateDisplayText("version", options.Version, maxVersionRunes); err != nil {
+		return key.DiscoPublic{}, err
 	}
 
-	return validateDisplayText("version", options.Version, maxVersionRunes)
+	return discoKey, nil
+}
+
+func parsePeerProbePublicKey(value string) (key.DiscoPublic, error) {
+	var discoKey key.DiscoPublic
+	if err := discoKey.UnmarshalText([]byte(value)); err != nil ||
+		discoKey.IsZero() || discoKey.String() != value {
+		return key.DiscoPublic{}, fmt.Errorf(
+			"%w: peer-probe public key is invalid",
+			ErrInvalidMaterial,
+		)
+	}
+
+	return discoKey, nil
 }
 
 func validateCandidateSet(candidates pathdiscovery.Set) error {

@@ -83,8 +83,10 @@ peer map ──────────► authenticated path manager ───�
    anti-flap history, retry/coalescing, and expiry scheduled at the exact
    candidate deadline.
 4. In progress: the compatible encrypted Ping/Pong identity and bounded wire
-   codec are implemented. Transaction replay protection, probe scheduling,
-   authenticated path selection, heartbeat, and roaming remain pending.
+   codec are implemented. One ephemeral identity is now owned by each daemon
+   control session and its exact public key is used for map and endpoint
+   publication across reconnects. Transaction replay protection, probe
+   scheduling, authenticated path selection, heartbeat, and roaming remain.
 5. Pending: Linux end-to-end tests with no manually advertised endpoint, including
    restart, socket rebinding, stale-result cancellation, and default-deny
    policy behavior.

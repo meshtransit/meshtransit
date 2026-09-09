@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	peerwire "github.com/meshtransit/meshd/internal/compat/disco"
 	"github.com/meshtransit/meshd/internal/compat/ts2021"
 	"github.com/meshtransit/meshd/internal/dataplane"
 	"github.com/meshtransit/meshd/internal/identity"
@@ -193,6 +194,106 @@ func TestService_RunPublishesLatestValidatedSnapshot(t *testing.T) {
 	}
 	if dns.applyCalls != 1 || dns.resetCalls != 0 || dns.closeCalls != 1 {
 		t.Fatalf("dns calls apply=%d reset=%d close=%d, want 1/0/1", dns.applyCalls, dns.resetCalls, dns.closeCalls)
+	}
+}
+
+func TestService_RunRotatesAndClosesPeerProbeIdentity(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+
+	created := make(chan *peerwire.Identity, 2)
+	service.newPeerProbeIdentity = func() (*peerwire.Identity, error) {
+		identity, err := peerwire.NewIdentity()
+		if err == nil {
+			created <- identity
+		}
+
+		return identity, err
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	runResult := make(chan error, 1)
+	go func() { runResult <- service.Run(ctx) }()
+
+	firstIdentity := waitForPeerProbeIdentity(t, created)
+	waitForStreamStart(t, control)
+	firstOptions := latestStreamOptions(t, control)
+	firstPublic, err := firstIdentity.Public()
+	if err != nil || firstOptions.PeerProbePublicKey != firstPublic.String() {
+		t.Fatalf(
+			"first peer-probe key = %q, public=%q, error=%v",
+			firstOptions.PeerProbePublicKey,
+			firstPublic.String(),
+			err,
+		)
+	}
+
+	service.signalControlSync()
+	secondIdentity := waitForPeerProbeIdentity(t, created)
+	waitForStreamStart(t, control)
+	secondOptions := latestStreamOptions(t, control)
+	secondPublic, err := secondIdentity.Public()
+	if err != nil || secondOptions.PeerProbePublicKey != secondPublic.String() {
+		t.Fatalf(
+			"second peer-probe key = %q, public=%q, error=%v",
+			secondOptions.PeerProbePublicKey,
+			secondPublic.String(),
+			err,
+		)
+	}
+	if firstOptions.PeerProbePublicKey == secondOptions.PeerProbePublicKey {
+		t.Fatal("peer-probe identity did not rotate with the control session")
+	}
+	if _, err := firstIdentity.Public(); !errors.Is(err, peerwire.ErrClosed) {
+		t.Fatalf("first identity after rotation error = %v, want ErrClosed", err)
+	}
+
+	cancel()
+	if err := <-runResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context cancellation", err)
+	}
+	if _, err := secondIdentity.Public(); !errors.Is(err, peerwire.ErrClosed) {
+		t.Fatalf("second identity after shutdown error = %v, want ErrClosed", err)
+	}
+}
+
+func TestService_RunFailsClosedWithoutPeerProbeIdentity(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+
+	identityErr := errors.New("test entropy unavailable")
+	service.newPeerProbeIdentity = func() (*peerwire.Identity, error) {
+		return nil, identityErr
+	}
+	if err := service.Run(t.Context()); !errors.Is(err, identityErr) {
+		t.Fatalf("Run() error = %v, want identity failure", err)
+	}
+	control.mu.Lock()
+	streamCalls := len(control.streamOptions)
+	control.mu.Unlock()
+	if streamCalls != 0 {
+		t.Fatalf("control stream calls = %d, want 0", streamCalls)
 	}
 }
 
@@ -519,6 +620,8 @@ type fakeControl struct {
 	streamPublished     chan struct{}
 	endpointPublished   chan struct{}
 	endpointUpdates     []pathdiscovery.Set
+	streamOptions       []ts2021.NetmapOptions
+	streamStarted       chan struct{}
 }
 
 type fakeDataPlane struct {
@@ -619,7 +722,13 @@ func (f *fakeControl) StreamNetmap(
 	f.mu.Lock()
 	snapshot := f.streamSnapshot
 	published := f.streamPublished
+	f.streamOptions = append(f.streamOptions, options)
+	started := f.streamStarted
 	f.mu.Unlock()
+	select {
+	case started <- struct{}{}:
+	default:
+	}
 	if snapshot != nil {
 		if err := handler(ctx, *snapshot); err != nil {
 			return err
@@ -698,6 +807,7 @@ func newTestService(t *testing.T) (*Service, *identity.Store, *fakeControl, stri
 	control := &fakeControl{
 		streamPublished:   make(chan struct{}, 1),
 		endpointPublished: make(chan struct{}, 1),
+		streamStarted:     make(chan struct{}, 4),
 	}
 	service, err := New(
 		profiles,
@@ -714,6 +824,44 @@ func newTestService(t *testing.T) (*Service, *identity.Store, *fakeControl, stri
 	}
 
 	return service, identities, control, created.ID, stateDir
+}
+
+func waitForStreamStart(t *testing.T, control *fakeControl) {
+	t.Helper()
+
+	select {
+	case <-control.streamStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for control stream start")
+	}
+}
+
+func waitForPeerProbeIdentity(
+	t *testing.T,
+	created <-chan *peerwire.Identity,
+) *peerwire.Identity {
+	t.Helper()
+
+	select {
+	case identity := <-created:
+		return identity
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for peer-probe identity")
+
+		return nil
+	}
+}
+
+func latestStreamOptions(t *testing.T, control *fakeControl) ts2021.NetmapOptions {
+	t.Helper()
+
+	control.mu.Lock()
+	defer control.mu.Unlock()
+	if len(control.streamOptions) == 0 {
+		t.Fatal("control stream options are missing")
+	}
+
+	return control.streamOptions[len(control.streamOptions)-1]
 }
 
 var _ controlProber = (*fakeControl)(nil)

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	peerwire "github.com/meshtransit/meshd/internal/compat/disco"
 	"github.com/meshtransit/meshd/internal/compat/ts2021"
 	"github.com/meshtransit/meshd/internal/dataplane"
 	"github.com/meshtransit/meshd/internal/identity"
@@ -176,6 +177,7 @@ type Service struct {
 	configuredCandidates pathdiscovery.Set
 	clock                func() time.Time
 	endpointRefreshDelay func() time.Duration
+	newPeerProbeIdentity func() (*peerwire.Identity, error)
 	syncSignal           chan struct{}
 	dataPlaneMu          sync.Mutex
 	syncMu               sync.RWMutex
@@ -269,6 +271,7 @@ func New(
 		configuredCandidates: configuredSet,
 		clock:                options.Clock,
 		endpointRefreshDelay: randomEndpointRefreshDelay,
+		newPeerProbeIdentity: peerwire.NewIdentity,
 		syncSignal:           make(chan struct{}, 1),
 		syncState: syncStatus{
 			state:     ControlSessionInactive,
@@ -356,6 +359,21 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 
 			return err
 		}
+		probeIdentity, err := s.newPeerProbeIdentity()
+		if err != nil {
+			clear(privateKey[:])
+			clearProtocolMaterial(protocolMaterial)
+
+			return fmt.Errorf("creating peer-probe identity: %w", err)
+		}
+		probePublicKey, err := probeIdentity.Public()
+		if err != nil {
+			probeIdentity.Close()
+			clear(privateKey[:])
+			clearProtocolMaterial(protocolMaterial)
+
+			return fmt.Errorf("reading peer-probe public key: %w", err)
+		}
 
 		s.setSyncStatus(syncStatus{
 			profileID: active.ID,
@@ -393,11 +411,12 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				active.ControlURL,
 				protocolMaterial,
 				ts2021.NetmapOptions{
-					Hostname:          s.hostname,
-					Version:           "meshd/" + s.build.Version,
-					PinnedFingerprint: record.ControlKeyFingerprint(),
-					Candidates:        s.configuredCandidates,
-					EndpointUpdates:   candidateUpdates,
+					Hostname:           s.hostname,
+					Version:            "meshd/" + s.build.Version,
+					PinnedFingerprint:  record.ControlKeyFingerprint(),
+					PeerProbePublicKey: probePublicKey.String(),
+					Candidates:         s.configuredCandidates,
+					EndpointUpdates:    candidateUpdates,
 				},
 				func(callbackCtx context.Context, snapshot networkmap.Snapshot) error {
 					if err := callbackCtx.Err(); err != nil {
@@ -485,6 +504,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if refreshDone != nil {
 				<-refreshDone
 			}
+			probeIdentity.Close()
 			clear(privateKey[:])
 			clearProtocolMaterial(protocolMaterial)
 
@@ -495,6 +515,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if refreshDone != nil {
 				<-refreshDone
 			}
+			probeIdentity.Close()
 			clear(privateKey[:])
 			clearProtocolMaterial(protocolMaterial)
 			if err := s.stopRuntime(); err != nil {
@@ -507,6 +528,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if refreshDone != nil {
 				<-refreshDone
 			}
+			probeIdentity.Close()
 			clear(privateKey[:])
 			clearProtocolMaterial(protocolMaterial)
 			dataPlaneState := s.currentDataPlaneState()
@@ -533,6 +555,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		case <-refreshDone:
 			cancel()
 			<-streamDone
+			probeIdentity.Close()
 			clear(privateKey[:])
 			clearProtocolMaterial(protocolMaterial)
 			dataPlaneState := s.currentDataPlaneState()

@@ -97,6 +97,44 @@ func TestMarshalMapRequestPreservesEndpointWithdrawal(t *testing.T) {
 	}
 }
 
+func TestParseNetmapOptionsRequiresCanonicalPeerProbeKey(t *testing.T) {
+	t.Parallel()
+
+	validKey := "discokey:" + strings.Repeat("01", 32)
+	validOptions := NetmapOptions{
+		Hostname:           "node-a",
+		Version:            "meshd/test",
+		PinnedFingerprint:  "sha256:" + strings.Repeat("a", 64),
+		PeerProbePublicKey: validKey,
+	}
+	parsed, err := parseNetmapOptions(validOptions)
+	if err != nil || parsed.String() != validKey {
+		t.Fatalf("parseNetmapOptions() = %v, %v", parsed, err)
+	}
+
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{name: "missing"},
+		{name: "wrong prefix", value: "nodekey:" + strings.Repeat("01", 32)},
+		{name: "uppercase", value: strings.ToUpper(validKey)},
+		{name: "zero", value: "discokey:" + strings.Repeat("00", 32)},
+		{name: "short", value: "discokey:01"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			options := validOptions
+			options.PeerProbePublicKey = test.value
+			if _, err := parseNetmapOptions(options); !errors.Is(err, ErrInvalidMaterial) {
+				t.Fatalf("parseNetmapOptions() error = %v, want ErrInvalidMaterial", err)
+			}
+		})
+	}
+}
+
 func TestProtocolEndpointType(t *testing.T) {
 	t.Parallel()
 
