@@ -32,6 +32,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	socketPath := flags.String("socket", "/run/meshd/meshnetd.sock", "path to the privileged unixpacket socket")
 	interfaceName := flags.String("interface", "mesh0", "fixed tun interface name")
 	mtu := flags.Int("mtu", 1280, "fixed tun interface mtu")
+	enableDNS := flags.Bool("enable-dns-poc", false, "enable the systemd-resolved dns boundary")
+	dnsInterfaceName := flags.String("dns-interface", "meshdns0", "fixed dns service interface name")
+	dnsAddress := flags.String("dns-address", "192.0.2.53", "fixed dns service IPv4 or IPv6 address")
+	dnsPort := flags.Uint64("dns-port", 1053, "unprivileged local dns service port")
+	resolvectlPath := flags.String(
+		"resolvectl-path",
+		"/usr/bin/resolvectl",
+		"absolute trusted resolvectl binary path",
+	)
 	showVersion := flags.Bool("version", false, "print version and exit")
 	allowedPrefixes := prefixList{}
 	flags.Var(
@@ -82,6 +91,25 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 		return 2
 	}
+	var dnsOptions *netadmin.DNSOptions
+	if *enableDNS {
+		address, parseErr := netip.ParseAddr(*dnsAddress)
+		if parseErr != nil || address.String() != *dnsAddress || address.Is4In6() {
+			_, _ = fmt.Fprintln(stderr, "meshnetd: --dns-address must be canonical")
+
+			return 2
+		}
+		if *dnsPort < 1024 || *dnsPort > 65535 {
+			_, _ = fmt.Fprintln(stderr, "meshnetd: --dns-port must be between 1024 and 65535")
+
+			return 2
+		}
+		dnsOptions = &netadmin.DNSOptions{
+			InterfaceName:  *dnsInterfaceName,
+			Resolver:       netip.AddrPortFrom(address, uint16(*dnsPort)),
+			ResolvectlPath: *resolvectlPath,
+		}
+	}
 
 	logger := slog.New(slog.NewJSONHandler(stderr, nil))
 	server, err := netadmin.NewServer(netadmin.ServerOptions{
@@ -89,6 +117,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		InterfaceName:   *interfaceName,
 		MTU:             *mtu,
 		AllowedPrefixes: allowedPrefixes,
+		DNS:             dnsOptions,
 		Logger:          logger,
 	})
 	if err != nil {
@@ -110,7 +139,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	logger.Info("meshnetd started", "socket", *socketPath, "interface", *interfaceName, "mtu", *mtu)
+	logger.Info(
+		"meshnetd started",
+		"socket", *socketPath,
+		"interface", *interfaceName,
+		"mtu", *mtu,
+		"dns_enabled", *enableDNS,
+	)
 	if err := server.Serve(ctx, listener); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("meshnetd stopped unexpectedly", "error", err)
 

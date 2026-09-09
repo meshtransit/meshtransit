@@ -125,6 +125,76 @@ func TestClientServerOpenTUN(t *testing.T) {
 	}
 }
 
+func TestClientServerDNSLifecycle(t *testing.T) {
+	t.Parallel()
+
+	creator := &fakeTUNCreator{}
+	configurator := &fakeDNSConfigurator{}
+	endpoint := DNSEndpoint{
+		InterfaceName: "meshdns0",
+		Resolver:      netip.MustParseAddrPort("192.0.2.53:1053"),
+	}
+	server, err := newServerWithDNS(ServerOptions{
+		AllowedUID:      testEffectiveUID(t),
+		InterfaceName:   "mesh0",
+		MTU:             1280,
+		AllowedPrefixes: []netip.Prefix{netip.MustParsePrefix("100.64.0.0/10")},
+		DNS: &DNSOptions{
+			InterfaceName: endpoint.InterfaceName,
+			Resolver:      endpoint.Resolver,
+		},
+		Logger: slog.New(slog.DiscardHandler),
+	}, creator, configurator)
+	if err != nil {
+		t.Fatalf("newServerWithDNS() error = %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "meshnetd.sock")
+	listener, err := socket.ListenPacket(path)
+	if err != nil {
+		t.Fatalf("ListenPacket() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() { result <- server.Serve(ctx, listener) }()
+	t.Cleanup(func() {
+		cancel()
+		<-result
+	})
+
+	client, err := NewClient(path, time.Second)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	link, err := client.OpenDNS(t.Context())
+	if err != nil {
+		t.Fatalf("OpenDNS() error = %v", err)
+	}
+	t.Cleanup(func() { _ = link.File.Close() })
+	if link.Endpoint != endpoint || link.File == nil {
+		t.Fatalf("OpenDNS() = %#v", link)
+	}
+	config := DNSConfig{
+		Endpoint:      endpoint,
+		SearchDomains: []string{"mesh.example"},
+		RouteDomains:  []string{"64.100.in-addr.arpa", "mesh.example.internal"},
+	}
+	if err := client.ConfigureDNS(t.Context(), config); err != nil {
+		t.Fatalf("ConfigureDNS() error = %v", err)
+	}
+	if err := client.ResetDNS(t.Context()); err != nil {
+		t.Fatalf("ResetDNS() error = %v", err)
+	}
+	if configurator.applyCalls != 1 || configurator.resetCalls != 1 ||
+		configurator.config.Endpoint != endpoint {
+		t.Fatalf("dns calls apply=%d reset=%d config=%#v", configurator.applyCalls, configurator.resetCalls, configurator.config)
+	}
+	if creator.calls != 1 || !slices.Equal(creator.addresses, []netip.Prefix{
+		netip.MustParsePrefix("192.0.2.53/32"),
+	}) {
+		t.Fatalf("dns link calls=%d addresses=%v", creator.calls, creator.addresses)
+	}
+}
+
 func TestClientServerRejectsUnauthorizedUID(t *testing.T) {
 	t.Parallel()
 
@@ -218,6 +288,25 @@ type fakeTUNCreator struct {
 	writer    *os.File
 	addresses []netip.Prefix
 	routes    []netip.Prefix
+}
+
+type fakeDNSConfigurator struct {
+	applyCalls int
+	resetCalls int
+	config     DNSConfig
+}
+
+func (f *fakeDNSConfigurator) Apply(_ context.Context, config DNSConfig) error {
+	f.applyCalls++
+	f.config = config
+
+	return nil
+}
+
+func (f *fakeDNSConfigurator) Reset(_ context.Context, _ DNSEndpoint) error {
+	f.resetCalls++
+
+	return nil
 }
 
 func (f *fakeTUNCreator) Open(

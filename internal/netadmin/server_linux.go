@@ -25,12 +25,26 @@ type tunCreator interface {
 	Open(string, int, uint32, []netip.Prefix, []netip.Prefix) (*os.File, error)
 }
 
+type dnsConfigurator interface {
+	Apply(context.Context, DNSConfig) error
+	Reset(context.Context, DNSEndpoint) error
+}
+
+// DNSOptions fixes the dedicated resolver link at privileged-helper startup.
+// No value in this struct is client controlled.
+type DNSOptions struct {
+	InterfaceName  string
+	Resolver       netip.AddrPort
+	ResolvectlPath string
+}
+
 // ServerOptions fixes privileged device values and overlay pools at helper startup.
 type ServerOptions struct {
 	AllowedUID      uint32
 	InterfaceName   string
 	MTU             int
 	AllowedPrefixes []netip.Prefix
+	DNS             *DNSOptions
 	Logger          *slog.Logger
 }
 
@@ -42,14 +56,33 @@ type Server struct {
 	allowedPrefixes []netip.Prefix
 	logger          *slog.Logger
 	creator         tunCreator
+	dns             dnsConfigurator
+	dnsEndpoint     DNSEndpoint
 }
 
 // NewServer constructs a privileged helper confined to explicit overlay pools.
 func NewServer(options ServerOptions) (*Server, error) {
-	return newServer(options, kernelTUNCreator{})
+	var configurator dnsConfigurator
+	if options.DNS != nil {
+		resolved, err := newResolvectlConfigurator(options.DNS.ResolvectlPath)
+		if err != nil {
+			return nil, err
+		}
+		configurator = resolved
+	}
+
+	return newServerWithDNS(options, kernelTUNCreator{}, configurator)
 }
 
 func newServer(options ServerOptions, creator tunCreator) (*Server, error) {
+	return newServerWithDNS(options, creator, nil)
+}
+
+func newServerWithDNS(
+	options ServerOptions,
+	creator tunCreator,
+	dns dnsConfigurator,
+) (*Server, error) {
 	if options.Logger == nil {
 		return nil, errors.New("netadmin: logger is required")
 	}
@@ -66,6 +99,27 @@ func newServer(options ServerOptions, creator tunCreator) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	dnsEndpoint := DNSEndpoint{}
+	if options.DNS != nil {
+		if dns == nil {
+			return nil, errors.New("netadmin: dns configurator is required")
+		}
+		endpoint, err := parseDNSEndpoint(options.DNS.InterfaceName, options.DNS.Resolver.String())
+		if err != nil || endpoint.Resolver != options.DNS.Resolver {
+			return nil, errors.New("netadmin: dns endpoint is invalid")
+		}
+		if endpoint.InterfaceName == options.InterfaceName {
+			return nil, errors.New("netadmin: dns and data interfaces must be different")
+		}
+		for _, pool := range allowedPrefixes {
+			if pool.Contains(endpoint.Resolver.Addr()) {
+				return nil, errors.New("netadmin: dns endpoint overlaps an overlay pool")
+			}
+		}
+		dnsEndpoint = endpoint
+	} else if dns != nil {
+		return nil, errors.New("netadmin: dns options are required")
+	}
 
 	return &Server{
 		allowedUID:      options.AllowedUID,
@@ -74,6 +128,8 @@ func newServer(options ServerOptions, creator tunCreator) (*Server, error) {
 		allowedPrefixes: allowedPrefixes,
 		logger:          options.Logger,
 		creator:         creator,
+		dns:             dns,
+		dnsEndpoint:     dnsEndpoint,
 	}, nil
 }
 
@@ -97,7 +153,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 
 			return fmt.Errorf("netadmin: accepting helper connection: %w", err)
 		}
-		if err := s.handle(connection); err != nil {
+		if err := s.handle(ctx, connection); err != nil {
 			s.logger.Warn("meshnetd request rejected", "error", err)
 		}
 		if err := connection.Close(); err != nil {
@@ -106,7 +162,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	}
 }
 
-func (s *Server) handle(rawConnection net.Conn) error {
+func (s *Server) handle(ctx context.Context, rawConnection net.Conn) error {
 	connection, ok := rawConnection.(*net.UnixConn)
 	if !ok {
 		return errors.New("netadmin: accepted connection is not unix")
@@ -160,7 +216,7 @@ func (s *Server) handle(rawConnection net.Conn) error {
 
 		return err
 	}
-	config, err := validateRequest(value)
+	validated, err := validateRequest(value)
 	if err != nil {
 		_ = writeResponse(connection, response{
 			Version: protocolVersion,
@@ -170,6 +226,21 @@ func (s *Server) handle(rawConnection net.Conn) error {
 
 		return err
 	}
+	switch validated.operation {
+	case operationOpenTUN:
+		return s.openTUN(connection, validated.tun)
+	case operationOpenDNS:
+		return s.openDNS(connection)
+	case operationSetDNS:
+		return s.setDNS(ctx, connection, validated.dns)
+	case operationResetDNS:
+		return s.resetDNS(ctx, connection)
+	default:
+		return errors.New("netadmin: validated request has an unknown operation")
+	}
+}
+
+func (s *Server) openTUN(connection *net.UnixConn, config TUNConfig) error {
 	if err := validateAllowedTUNConfig(config, s.allowedPrefixes); err != nil {
 		_ = writeResponse(connection, response{
 			Version: protocolVersion,
@@ -206,6 +277,100 @@ func (s *Server) handle(rawConnection net.Conn) error {
 		Addresses:     prefixStrings(config.Addresses),
 		Routes:        prefixStrings(config.Routes),
 	}, file)
+}
+
+func (s *Server) openDNS(connection *net.UnixConn) error {
+	if s.dns == nil || !s.dnsEndpoint.Resolver.IsValid() {
+		_ = writeResponse(connection, response{
+			Version: protocolVersion,
+			Code:    "dns_unavailable",
+			Message: "dns support is not enabled",
+		}, nil)
+
+		return errors.New("netadmin: dns support is not enabled")
+	}
+	prefix := netip.PrefixFrom(
+		s.dnsEndpoint.Resolver.Addr(),
+		s.dnsEndpoint.Resolver.Addr().BitLen(),
+	)
+	file, err := s.creator.Open(
+		s.dnsEndpoint.InterfaceName,
+		1280,
+		s.allowedUID,
+		[]netip.Prefix{prefix},
+		[]netip.Prefix{},
+	)
+	if err != nil {
+		_ = writeResponse(connection, response{
+			Version: protocolVersion,
+			Code:    "dns_link_unavailable",
+			Message: "dns link could not be opened",
+		}, nil)
+
+		return fmt.Errorf("netadmin: opening dns link: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	return writeResponse(connection, response{
+		Version:       protocolVersion,
+		OK:            true,
+		InterfaceName: s.dnsEndpoint.InterfaceName,
+		Resolver:      s.dnsEndpoint.Resolver.String(),
+	}, file)
+}
+
+func (s *Server) setDNS(
+	ctx context.Context,
+	connection *net.UnixConn,
+	config DNSConfig,
+) error {
+	if s.dns == nil || config.Endpoint != s.dnsEndpoint {
+		_ = writeResponse(connection, response{
+			Version: protocolVersion,
+			Code:    "invalid_dns_config",
+			Message: "dns endpoint does not match helper configuration",
+		}, nil)
+
+		return errors.New("netadmin: dns endpoint does not match helper configuration")
+	}
+	operationCtx, cancel := context.WithTimeout(ctx, helperOperationTimeout)
+	defer cancel()
+	if err := s.dns.Apply(operationCtx, config); err != nil {
+		_ = writeResponse(connection, response{
+			Version: protocolVersion,
+			Code:    "dns_config_failed",
+			Message: "host dns configuration failed",
+		}, nil)
+
+		return fmt.Errorf("netadmin: configuring host dns: %w", err)
+	}
+
+	return writeResponse(connection, response{Version: protocolVersion, OK: true}, nil)
+}
+
+func (s *Server) resetDNS(ctx context.Context, connection *net.UnixConn) error {
+	if s.dns == nil {
+		_ = writeResponse(connection, response{
+			Version: protocolVersion,
+			Code:    "dns_unavailable",
+			Message: "dns support is not enabled",
+		}, nil)
+
+		return errors.New("netadmin: dns support is not enabled")
+	}
+	operationCtx, cancel := context.WithTimeout(ctx, helperOperationTimeout)
+	defer cancel()
+	if err := s.dns.Reset(operationCtx, s.dnsEndpoint); err != nil {
+		_ = writeResponse(connection, response{
+			Version: protocolVersion,
+			Code:    "dns_reset_failed",
+			Message: "host dns reset failed",
+		}, nil)
+
+		return fmt.Errorf("netadmin: resetting host dns: %w", err)
+	}
+
+	return writeResponse(connection, response{Version: protocolVersion, OK: true}, nil)
 }
 
 func normalizeAllowedPrefixes(values []netip.Prefix) ([]netip.Prefix, error) {
@@ -297,19 +462,4 @@ func peerUID(connection *net.UnixConn) (uint32, error) {
 	}
 
 	return credentials.Uid, nil
-}
-
-func validInterfaceName(name string) bool {
-	if len(name) < len("mesh0") || len(name) >= unix.IFNAMSIZ || name[:4] != "mesh" {
-		return false
-	}
-	for _, character := range name[4:] {
-		if (character < 'a' || character > 'z') &&
-			(character < 'A' || character > 'Z') &&
-			(character < '0' || character > '9') && character != '-' {
-			return false
-		}
-	}
-
-	return true
 }

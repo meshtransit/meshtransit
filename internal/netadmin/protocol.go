@@ -10,15 +10,22 @@ import (
 	"net/netip"
 	"os"
 	"slices"
+	"strings"
 )
 
 const (
-	protocolVersion  = 3
-	maxMessageBytes  = 32 << 10
-	operationOpenTUN = "open_tun"
-	maxTUNAddresses  = 8
-	maxTUNRoutes     = 512
-	maxAllowedPools  = 16
+	protocolVersion   = 4
+	maxMessageBytes   = 32 << 10
+	operationOpenTUN  = "open_tun"
+	operationOpenDNS  = "open_dns"
+	operationSetDNS   = "set_dns"
+	operationResetDNS = "reset_dns"
+	maxTUNAddresses   = 8
+	maxTUNRoutes      = 512
+	maxAllowedPools   = 16
+	maxDNSDomains     = 256
+	maxDNSDomainBytes = 16 << 10
+	interfaceNameSize = 16
 )
 
 var (
@@ -48,11 +55,40 @@ type TUN struct {
 	Routes    []netip.Prefix
 }
 
+// DNSEndpoint identifies the dedicated systemd-resolved link and the local
+// unprivileged resolver endpoint opened for meshd by meshnetd.
+type DNSEndpoint struct {
+	InterfaceName string
+	Resolver      netip.AddrPort
+}
+
+// DNSLink owns the non-persistent TUN descriptor backing one DNS endpoint.
+// Closing File removes the dedicated link and its per-link resolved state.
+type DNSLink struct {
+	File     *os.File
+	Endpoint DNSEndpoint
+}
+
+// DNSConfig is the complete, bounded per-link systemd-resolved transaction.
+// Domain names are canonical lowercase names without trailing dots. A route
+// domain of "." represents the DNS root.
+type DNSConfig struct {
+	Endpoint      DNSEndpoint
+	SearchDomains []string
+	RouteDomains  []string
+	DefaultRoute  bool
+}
+
 type request struct {
-	Version   int      `json:"version"`
-	Operation string   `json:"operation"`
-	Addresses []string `json:"addresses"`
-	Routes    []string `json:"routes"`
+	Version         int      `json:"version"`
+	Operation       string   `json:"operation"`
+	Addresses       []string `json:"addresses"`
+	Routes          []string `json:"routes"`
+	InterfaceName   string   `json:"interface_name,omitempty"`
+	Resolver        string   `json:"resolver,omitempty"`
+	SearchDomains   []string `json:"search_domains"`
+	RouteDomains    []string `json:"route_domains"`
+	DNSDefaultRoute bool     `json:"dns_default_route,omitempty"`
 }
 
 type response struct {
@@ -64,6 +100,7 @@ type response struct {
 	MTU           int      `json:"mtu,omitempty"`
 	Addresses     []string `json:"addresses"`
 	Routes        []string `json:"routes"`
+	Resolver      string   `json:"resolver,omitempty"`
 }
 
 func decodeMessage(payload []byte, target any) error {
@@ -83,47 +120,201 @@ func decodeMessage(payload []byte, target any) error {
 	return nil
 }
 
-func validateRequest(value request) (TUNConfig, error) {
-	if value.Version != protocolVersion {
-		return TUNConfig{}, fmt.Errorf("%w: unsupported protocol version", ErrProtocol)
-	}
-	if value.Operation != operationOpenTUN {
-		return TUNConfig{}, fmt.Errorf("%w: unsupported operation", ErrProtocol)
-	}
-	if value.Addresses == nil || value.Routes == nil {
-		return TUNConfig{}, fmt.Errorf("%w: prefix arrays are required", ErrProtocol)
-	}
-
-	config, err := parseTUNConfig(value.Addresses, value.Routes)
-	if err != nil {
-		return TUNConfig{}, err
-	}
-	if !slices.Equal(value.Addresses, prefixStrings(config.Addresses)) ||
-		!slices.Equal(value.Routes, prefixStrings(config.Routes)) {
-		return TUNConfig{}, fmt.Errorf("%w: prefixes must be sorted and canonical", ErrTUNConfig)
-	}
-
-	return config, nil
+type validatedRequest struct {
+	operation string
+	tun       TUNConfig
+	dns       DNSConfig
 }
 
-func validateResponse(value response) error {
+func validateRequest(value request) (validatedRequest, error) {
+	if value.Version != protocolVersion {
+		return validatedRequest{}, fmt.Errorf("%w: unsupported protocol version", ErrProtocol)
+	}
+
+	switch value.Operation {
+	case operationOpenTUN:
+		if value.Addresses == nil || value.Routes == nil || hasDNSRequestFields(value) {
+			return validatedRequest{}, fmt.Errorf("%w: open tun fields are invalid", ErrProtocol)
+		}
+		config, err := parseTUNConfig(value.Addresses, value.Routes)
+		if err != nil {
+			return validatedRequest{}, err
+		}
+		if !slices.Equal(value.Addresses, prefixStrings(config.Addresses)) ||
+			!slices.Equal(value.Routes, prefixStrings(config.Routes)) {
+			return validatedRequest{}, fmt.Errorf("%w: prefixes must be sorted and canonical", ErrTUNConfig)
+		}
+
+		return validatedRequest{operation: value.Operation, tun: config}, nil
+	case operationOpenDNS, operationResetDNS:
+		if value.Addresses != nil || value.Routes != nil || hasDNSConfigFields(value) {
+			return validatedRequest{}, fmt.Errorf("%w: dns lifecycle fields are invalid", ErrProtocol)
+		}
+
+		return validatedRequest{operation: value.Operation}, nil
+	case operationSetDNS:
+		if value.Addresses != nil || value.Routes != nil ||
+			value.SearchDomains == nil || value.RouteDomains == nil {
+			return validatedRequest{}, fmt.Errorf("%w: dns configuration fields are invalid", ErrProtocol)
+		}
+		endpoint, err := parseDNSEndpoint(value.InterfaceName, value.Resolver)
+		if err != nil {
+			return validatedRequest{}, err
+		}
+		config := DNSConfig{
+			Endpoint:      endpoint,
+			SearchDomains: append([]string(nil), value.SearchDomains...),
+			RouteDomains:  append([]string(nil), value.RouteDomains...),
+			DefaultRoute:  value.DNSDefaultRoute,
+		}
+		if err := validateDNSConfig(config); err != nil {
+			return validatedRequest{}, err
+		}
+
+		return validatedRequest{operation: value.Operation, dns: config}, nil
+	default:
+		return validatedRequest{}, fmt.Errorf("%w: unsupported operation", ErrProtocol)
+	}
+}
+
+func validateResponse(value response, operation string) error {
 	if value.Version != protocolVersion {
 		return fmt.Errorf("%w: unsupported protocol version", ErrProtocol)
 	}
 	if value.OK {
-		if value.Code != "" || value.Message != "" || value.InterfaceName == "" || value.MTU == 0 ||
-			value.Addresses == nil || value.Routes == nil {
+		if value.Code != "" || value.Message != "" {
 			return fmt.Errorf("%w: malformed success response", ErrProtocol)
+		}
+		switch operation {
+		case operationOpenTUN:
+			if value.InterfaceName == "" || value.MTU == 0 || value.Addresses == nil ||
+				value.Routes == nil || value.Resolver != "" {
+				return fmt.Errorf("%w: malformed open tun response", ErrProtocol)
+			}
+		case operationOpenDNS:
+			if value.InterfaceName == "" || value.Resolver == "" || value.MTU != 0 ||
+				value.Addresses != nil || value.Routes != nil {
+				return fmt.Errorf("%w: malformed open dns response", ErrProtocol)
+			}
+		case operationSetDNS, operationResetDNS:
+			if value.InterfaceName != "" || value.Resolver != "" || value.MTU != 0 ||
+				value.Addresses != nil || value.Routes != nil {
+				return fmt.Errorf("%w: malformed dns response", ErrProtocol)
+			}
+		default:
+			return fmt.Errorf("%w: unknown response operation", ErrProtocol)
 		}
 
 		return nil
 	}
 	if value.Code == "" || value.Message == "" || value.InterfaceName != "" || value.MTU != 0 ||
-		len(value.Addresses) != 0 || len(value.Routes) != 0 {
+		len(value.Addresses) != 0 || len(value.Routes) != 0 || value.Resolver != "" {
 		return fmt.Errorf("%w: malformed error response", ErrProtocol)
 	}
 
 	return nil
+}
+
+func hasDNSRequestFields(value request) bool {
+	return hasDNSConfigFields(value) || value.SearchDomains != nil || value.RouteDomains != nil
+}
+
+func hasDNSConfigFields(value request) bool {
+	return value.InterfaceName != "" || value.Resolver != "" || value.DNSDefaultRoute
+}
+
+func parseDNSEndpoint(interfaceName, resolver string) (DNSEndpoint, error) {
+	if !validInterfaceName(interfaceName) {
+		return DNSEndpoint{}, fmt.Errorf("%w: dns interface name is invalid", ErrProtocol)
+	}
+	address, err := netip.ParseAddrPort(resolver)
+	if err != nil || address.String() != resolver || address.Addr().Is4In6() ||
+		!address.Addr().IsGlobalUnicast() || address.Addr().IsLinkLocalUnicast() ||
+		address.Port() < 1024 {
+		return DNSEndpoint{}, fmt.Errorf("%w: dns resolver endpoint is invalid", ErrProtocol)
+	}
+
+	return DNSEndpoint{InterfaceName: interfaceName, Resolver: address}, nil
+}
+
+func validateDNSConfig(config DNSConfig) error {
+	endpoint, err := parseDNSEndpoint(config.Endpoint.InterfaceName, config.Endpoint.Resolver.String())
+	if err != nil || endpoint != config.Endpoint {
+		return fmt.Errorf("%w: dns endpoint is invalid", ErrProtocol)
+	}
+	if len(config.SearchDomains)+len(config.RouteDomains) == 0 ||
+		len(config.SearchDomains)+len(config.RouteDomains) > maxDNSDomains {
+		return fmt.Errorf("%w: dns domain count is outside the allowed range", ErrProtocol)
+	}
+	seen := make(map[string]struct{}, len(config.SearchDomains)+len(config.RouteDomains))
+	totalBytes := 0
+	for _, domain := range config.SearchDomains {
+		if !validDNSDomain(domain, false) {
+			return fmt.Errorf("%w: dns search domain is invalid", ErrProtocol)
+		}
+		if _, exists := seen[domain]; exists {
+			return fmt.Errorf("%w: dns domain is duplicated", ErrProtocol)
+		}
+		seen[domain] = struct{}{}
+		totalBytes += len(domain)
+	}
+	for _, domain := range config.RouteDomains {
+		if !validDNSDomain(domain, true) {
+			return fmt.Errorf("%w: dns route domain is invalid", ErrProtocol)
+		}
+		if _, exists := seen[domain]; exists {
+			return fmt.Errorf("%w: dns domain is duplicated", ErrProtocol)
+		}
+		seen[domain] = struct{}{}
+		totalBytes += len(domain)
+	}
+	if totalBytes > maxDNSDomainBytes {
+		return fmt.Errorf("%w: dns domain bytes exceed the allowed range", ErrProtocol)
+	}
+	hasRoot := slices.Contains(config.RouteDomains, ".")
+	if config.DefaultRoute != hasRoot {
+		return fmt.Errorf("%w: dns default route does not match root route", ErrProtocol)
+	}
+
+	return nil
+}
+
+func validDNSDomain(value string, allowRoot bool) bool {
+	if value == "." {
+		return allowRoot
+	}
+	if value == "" || len(value) > 253 || value != strings.ToLower(value) ||
+		strings.HasSuffix(value, ".") {
+		return false
+	}
+	for label := range strings.SplitSeq(value, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, character := range label {
+			if (character < 'a' || character > 'z') &&
+				(character < '0' || character > '9') && character != '-' {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+func validInterfaceName(name string) bool {
+	if len(name) < len("mesh0") || len(name) >= interfaceNameSize || name[:4] != "mesh" {
+		return false
+	}
+	for _, character := range name[4:] {
+		if (character < 'a' || character > 'z') &&
+			(character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') && character != '-' {
+			return false
+		}
+	}
+
+	return true
 }
 
 func parseTUNConfig(addressValues, routeValues []string) (TUNConfig, error) {

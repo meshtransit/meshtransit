@@ -69,12 +69,73 @@ func TestValidateResponse(t *testing.T) {
 		Addresses:     []string{},
 		Routes:        []string{},
 	}
-	if err := validateResponse(valid); err != nil {
+	if err := validateResponse(valid, operationOpenTUN); err != nil {
 		t.Fatalf("validateResponse() error = %v", err)
 	}
 	valid.Code = "unexpected"
-	if err := validateResponse(valid); !errors.Is(err, ErrProtocol) {
+	if err := validateResponse(valid, operationOpenTUN); !errors.Is(err, ErrProtocol) {
 		t.Fatalf("validateResponse() error = %v, want ErrProtocol", err)
+	}
+}
+
+func TestValidateDNSConfig(t *testing.T) {
+	t.Parallel()
+
+	valid := validDNSConfigForTest()
+	if err := validateDNSConfig(valid); err != nil {
+		t.Fatalf("validateDNSConfig() error = %v", err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*DNSConfig)
+	}{
+		{
+			name: "privileged resolver port",
+			mutate: func(config *DNSConfig) {
+				config.Endpoint.Resolver = netip.MustParseAddrPort("192.0.2.53:53")
+			},
+		},
+		{
+			name: "uppercase domain",
+			mutate: func(config *DNSConfig) {
+				config.SearchDomains[0] = "Mesh.Example"
+			},
+		},
+		{
+			name: "duplicate domain",
+			mutate: func(config *DNSConfig) {
+				config.RouteDomains[1] = "mesh.example"
+			},
+		},
+		{
+			name: "default route mismatch",
+			mutate: func(config *DNSConfig) {
+				config.DefaultRoute = false
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			config := validDNSConfigForTest()
+			test.mutate(&config)
+			if err := validateDNSConfig(config); !errors.Is(err, ErrProtocol) {
+				t.Fatalf("validateDNSConfig() error = %v, want ErrProtocol", err)
+			}
+		})
+	}
+}
+
+func validDNSConfigForTest() DNSConfig {
+	return DNSConfig{
+		Endpoint: DNSEndpoint{
+			InterfaceName: "meshdns0",
+			Resolver:      netip.MustParseAddrPort("192.0.2.53:1053"),
+		},
+		SearchDomains: []string{"mesh.example"},
+		RouteDomains:  []string{".", "64.100.in-addr.arpa"},
+		DefaultRoute:  true,
 	}
 }
 
