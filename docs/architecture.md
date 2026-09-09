@@ -47,9 +47,11 @@ per active control session, advertises its canonical public key through every
 map reconnect and endpoint update, then destroys its private material after all
 session workers stop. The adapter owns precomputed NaCl channels, authenticated
 sender verification, and bounded message parsing. It is not registered with the
-live UDP transport until the product-owned path manager can bind every
-transaction to a validated peer, map generation, socket generation, deadline,
-and source endpoint.
+live UDP transport yet. The product-owned probe manager binds every outgoing
+transaction to a validated peer, active-session scope, map revision, socket
+generation, exact remote endpoint, and five-second deadline. It caps pending
+state globally and per peer, consumes authenticated mismatches, rejects replay
+and late replies, and invalidates all state when any generation changes.
 
 ## DNS boundary
 
