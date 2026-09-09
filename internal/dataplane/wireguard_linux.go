@@ -42,9 +42,13 @@ func (officialWireGuardFactory) New(
 		Verbosef: device.DiscardLogf,
 		Errorf:   device.DiscardLogf,
 	}
+	bind, err := newSharedBind(conn.NewDefaultBind())
+	if err != nil {
+		return nil, err
+	}
 
 	return &officialWireGuardDevice{
-		device: device.NewDevice(tunDevice, conn.NewDefaultBind(), logger),
+		device: device.NewDevice(tunDevice, bind, logger),
 	}, nil
 }
 

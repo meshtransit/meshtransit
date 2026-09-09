@@ -78,8 +78,16 @@ func (c Candidate) validate() error {
 		return errors.New("pathdiscovery: candidate source is invalid")
 	}
 
-	address := c.endpoint.Addr()
-	if !c.endpoint.IsValid() || c.endpoint.Port() == 0 || !address.IsValid() {
+	if err := validateEndpoint(c.endpoint); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateEndpoint(endpoint netip.AddrPort) error {
+	address := endpoint.Addr()
+	if !endpoint.IsValid() || endpoint.Port() == 0 || !address.IsValid() {
 		return errors.New("pathdiscovery: candidate endpoint is invalid")
 	}
 	if address.Is4In6() || address.Zone() != "" || address != address.Unmap() {
