@@ -278,17 +278,17 @@ func (e *WireGuardEngine) Apply(
 	if err != nil {
 		_ = tunDevice.File.Close()
 
-		return StateFailed, errors.New("dataplane: creating wireguard device failed")
+		return StateFailed, fmt.Errorf("dataplane: creating wireguard device: %w", err)
 	}
 	if err := device.Configure(bytes.NewReader(plan.configuration)); err != nil {
 		device.Close()
 
-		return StateFailed, errors.New("dataplane: applying wireguard configuration failed")
+		return StateFailed, fmt.Errorf("dataplane: applying wireguard configuration: %w", err)
 	}
 	if err := device.Up(); err != nil {
 		device.Close()
 
-		return StateFailed, errors.New("dataplane: starting wireguard device failed")
+		return StateFailed, fmt.Errorf("dataplane: starting wireguard device: %w", err)
 	}
 	e.device = device
 	e.adoptPlan(snapshot.Revision, plan)
