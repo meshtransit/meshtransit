@@ -174,6 +174,32 @@ func TestHomeSelectorPreparesReplacementBeforeSwitch(t *testing.T) {
 	}
 }
 
+func TestHomeSelectorRetainsPreparedCandidateAcrossProbeBatches(t *testing.T) {
+	t.Parallel()
+
+	selector := NewHomeSelector()
+	now := time.Now()
+	if _, err := selector.Reconcile(1, []int{1, 2, 3}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	result, err := selector.Observe(now, []RegionLatency{
+		{RegionID: 1, Latency: 100 * time.Millisecond},
+		{RegionID: 2, Latency: 20 * time.Millisecond},
+	}, healthyRelaySnapshot(now, 1, 1))
+	if err != nil || result.RegionID != 1 || result.PreparationRegionID != 2 {
+		t.Fatalf("first batch Observe() = %#v, %v", result, err)
+	}
+	now = now.Add(time.Second)
+	result, err = selector.Observe(now, []RegionLatency{
+		{RegionID: 1, Latency: 100 * time.Millisecond},
+		{RegionID: 3, Latency: 40 * time.Millisecond},
+	}, healthyRelaySnapshot(now, 1, 1, 2))
+	if err != nil || result.RegionID != 2 || !result.Changed ||
+		result.PreparationRegionID != 0 {
+		t.Fatalf("rotated batch Observe() = %#v, %v", result, err)
+	}
+}
+
 func TestHomeSelectorKeepsRecentlyActiveHomeWithoutSTUN(t *testing.T) {
 	t.Parallel()
 

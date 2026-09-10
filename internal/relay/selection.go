@@ -146,8 +146,6 @@ func (s *HomeSelector) Observe(
 	}
 	previous := s.current
 	currentObserved := false
-	bestObserved := 0
-	bestAlternative := 0
 	for _, sample := range samples {
 		state, exists := s.latencies[sample.RegionID]
 		if exists {
@@ -160,17 +158,17 @@ func (s *HomeSelector) Observe(
 		if sample.RegionID == s.current {
 			currentObserved = true
 		}
-		if bestObserved == 0 || s.better(sample.RegionID, bestObserved) {
-			bestObserved = sample.RegionID
-		}
-		if sample.RegionID != s.current &&
-			(bestAlternative == 0 || s.better(sample.RegionID, bestAlternative)) {
-			bestAlternative = sample.RegionID
-		}
 	}
 
 	if s.current == 0 || len(samples) == 0 {
 		return HomeSelection{RegionID: s.current}, nil
+	}
+	bestAlternative := 0
+	for regionID := range s.latencies {
+		if regionID != s.current &&
+			(bestAlternative == 0 || s.better(regionID, bestAlternative)) {
+			bestAlternative = regionID
+		}
 	}
 	preparationRegionID := 0
 	candidateRegionID := 0
@@ -188,15 +186,14 @@ func (s *HomeSelector) Observe(
 			s.consecutiveMisses = 0
 		} else {
 			s.consecutiveMisses++
-			if s.consecutiveMisses >= missesBeforeRelayFailover && bestObserved != 0 {
-				candidateRegionID = bestObserved
+			if s.consecutiveMisses >= missesBeforeRelayFailover && bestAlternative != 0 {
+				candidateRegionID = bestAlternative
 			}
 		}
 	default:
 		s.consecutiveMisses = 0
-		if bestObserved != 0 && bestObserved != s.current &&
-			s.materiallyBetter(bestObserved, s.current) {
-			candidateRegionID = bestObserved
+		if bestAlternative != 0 && s.materiallyBetter(bestAlternative, s.current) {
+			candidateRegionID = bestAlternative
 		}
 	}
 	if candidateRegionID != 0 {
