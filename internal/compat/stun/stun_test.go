@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
+	"math"
 	"net/netip"
 	"slices"
 	"testing"
@@ -242,7 +243,8 @@ func TestParseBindingResponse_RejectsMalformedPackets(t *testing.T) {
 	)
 	oversized := make([]byte, maxPacketSize+1)
 	copy(oversized, valid)
-	binary.BigEndian.PutUint16(oversized[2:4], uint16(len(oversized)-headerSize))
+	const oversizedAttributesLength uint16 = maxPacketSize + 1 - headerSize
+	binary.BigEndian.PutUint16(oversized[2:4], oversizedAttributesLength)
 
 	tests := []struct {
 		name     string
@@ -304,7 +306,7 @@ func testResponse(transactionID TransactionID, attributes ...[]byte) []byte {
 	}
 	packet := make([]byte, headerSize, headerSize+attributesLength)
 	binary.BigEndian.PutUint16(packet[0:2], bindingSuccessType)
-	binary.BigEndian.PutUint16(packet[2:4], uint16(attributesLength))
+	binary.BigEndian.PutUint16(packet[2:4], checkedTestUint16Length(attributesLength))
 	binary.BigEndian.PutUint32(packet[4:8], magicCookie)
 	copy(packet[8:headerSize], transactionID[:])
 	for _, attribute := range attributes {
@@ -384,11 +386,19 @@ func testFingerprintAttribute(value uint32) []byte {
 func testAttribute(attributeType uint16, value []byte) []byte {
 	attribute := make([]byte, 4, 4+paddedLength(len(value)))
 	binary.BigEndian.PutUint16(attribute[0:2], attributeType)
-	binary.BigEndian.PutUint16(attribute[2:4], uint16(len(value)))
+	binary.BigEndian.PutUint16(attribute[2:4], checkedTestUint16Length(len(value)))
 	attribute = append(attribute, value...)
 	for len(attribute)%4 != 0 {
 		attribute = append(attribute, 0)
 	}
 
 	return attribute
+}
+
+func checkedTestUint16Length(length int) uint16 {
+	if length < 0 || length > math.MaxUint16 {
+		panic("test STUN length exceeds uint16")
+	}
+
+	return uint16(length)
 }

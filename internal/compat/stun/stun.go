@@ -27,7 +27,9 @@ const (
 
 	// The current compatibility server requires this SOFTWARE value and a
 	// valid FINGERPRINT before it answers an otherwise standard request.
-	compatibilitySoftware = "tailnode"
+	compatibilitySoftware          = "tailnode"
+	compatibilitySoftwareLength    = uint16(len(compatibilitySoftware))
+	bindingRequestAttributesLength = 4 + ((compatibilitySoftwareLength + 3) &^ 3) + 8
 )
 
 var (
@@ -58,16 +60,18 @@ func NewTransactionID() (TransactionID, error) {
 
 // BindingRequest returns one compatibility-form RFC 5389 binding request.
 func BindingRequest(transactionID TransactionID) []byte {
-	softwareLength := len(compatibilitySoftware)
-	softwarePaddedLength := paddedLength(softwareLength)
-	attributesLength := 4 + softwarePaddedLength + 8
-	packet := make([]byte, headerSize, headerSize+attributesLength)
+	packet := make([]byte, headerSize, headerSize+bindingRequestAttributesLength)
 	binary.BigEndian.PutUint16(packet[0:2], bindingRequestType)
-	binary.BigEndian.PutUint16(packet[2:4], uint16(attributesLength))
+	binary.BigEndian.PutUint16(packet[2:4], bindingRequestAttributesLength)
 	binary.BigEndian.PutUint32(packet[4:8], magicCookie)
 	copy(packet[8:headerSize], transactionID[:])
 
-	packet = appendAttribute(packet, attributeSoftware, []byte(compatibilitySoftware))
+	packet = binary.BigEndian.AppendUint16(packet, attributeSoftware)
+	packet = binary.BigEndian.AppendUint16(packet, compatibilitySoftwareLength)
+	packet = append(packet, compatibilitySoftware...)
+	for len(packet)%4 != 0 {
+		packet = append(packet, 0)
+	}
 	fingerprint := crc32.ChecksumIEEE(packet) ^ fingerprintMask
 	packet = binary.BigEndian.AppendUint16(packet, attributeFingerprint)
 	packet = binary.BigEndian.AppendUint16(packet, 4)
@@ -223,16 +227,4 @@ func addressPort(family byte, port uint16, addressBytes []byte) (netip.AddrPort,
 
 	return netip.AddrPortFrom(address, port), nil
 }
-
-func appendAttribute(packet []byte, attributeType uint16, value []byte) []byte {
-	packet = binary.BigEndian.AppendUint16(packet, attributeType)
-	packet = binary.BigEndian.AppendUint16(packet, uint16(len(value)))
-	packet = append(packet, value...)
-	for len(packet)%4 != 0 {
-		packet = append(packet, 0)
-	}
-
-	return packet
-}
-
 func paddedLength(length int) int { return (length + 3) &^ 3 }

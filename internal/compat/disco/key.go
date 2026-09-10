@@ -223,7 +223,7 @@ func (p *Peer) Close() {
 	p.isClosed = true
 }
 
-func parseTypedKey(text string, prefix string) ([keySize]byte, error) {
+func parseTypedKey(text, prefix string) ([keySize]byte, error) {
 	var raw [keySize]byte
 	if len(text) != len(prefix)+hex.EncodedLen(keySize) ||
 		text[:min(len(text), len(prefix))] != prefix {

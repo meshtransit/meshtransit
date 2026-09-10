@@ -70,8 +70,8 @@ func TestResolverEngineLocalRecordsAndNegativeAnswers(t *testing.T) {
 			query := packQuery(t, test.queryName, test.queryType)
 			response, _ := engine.resolve(t.Context(), plan, query, "udp")
 			message := unpackMessage(t, response)
-			if message.Header.RCode != test.rcode || len(message.Answers) != test.answerCount {
-				t.Fatalf("response rcode=%v answers=%#v", message.Header.RCode, message.Answers)
+			if message.RCode != test.rcode || len(message.Answers) != test.answerCount {
+				t.Fatalf("response rcode=%v answers=%#v", message.RCode, message.Answers)
 			}
 			if test.answerCount != 0 && message.Answers[0].Header.Type != test.answerType {
 				t.Fatalf("answer type = %v, want %v", message.Answers[0].Header.Type, test.answerType)
@@ -240,7 +240,7 @@ func TestResolverEnginePTRAndMalformedQuery(t *testing.T) {
 
 	response, _ = engine.resolve(t.Context(), plan, []byte{0x12, 0x34}, "udp")
 	message = unpackMessage(t, response)
-	if message.Header.ID != 0x1234 || message.Header.RCode != dnsmessage.RCodeFormatError {
+	if message.ID != 0x1234 || message.RCode != dnsmessage.RCodeFormatError {
 		t.Fatalf("format response = %#v", message.Header)
 	}
 }
@@ -263,7 +263,7 @@ func TestResolverEngineForwardsAndRestoresTransactionID(t *testing.T) {
 		t.Fatalf("resolve forwarded error = %v", err)
 	}
 	message := unpackMessage(t, response)
-	if message.Header.ID != originalID || len(message.Answers) != 1 {
+	if message.ID != originalID || len(message.Answers) != 1 {
 		t.Fatalf("forwarded response header=%#v answers=%#v", message.Header, message.Answers)
 	}
 }
@@ -282,7 +282,7 @@ func TestResolverEngineRetriesTruncatedUDPOverTCP(t *testing.T) {
 		t.Fatalf("resolve forwarded error = %v", err)
 	}
 	message := unpackMessage(t, response)
-	if message.Header.Truncated || len(message.Answers) != 1 {
+	if message.Truncated || len(message.Answers) != 1 {
 		t.Fatalf("forwarded response header=%#v answers=%#v", message.Header, message.Answers)
 	}
 }
@@ -389,7 +389,7 @@ func startUDPUpstream(t *testing.T, answer netip.Addr) netip.AddrPort {
 		}
 		response := dnsmessage.Message{
 			Header: dnsmessage.Header{
-				ID:                 query.Header.ID,
+				ID:                 query.ID,
 				Response:           true,
 				RecursionAvailable: true,
 			},
@@ -416,7 +416,11 @@ func startUDPUpstream(t *testing.T, answer netip.Addr) netip.AddrPort {
 			t.Errorf("upstream server error = %v", err)
 		}
 	})
-	address := listener.LocalAddr().(*net.UDPAddr).AddrPort()
+	localAddress, ok := listener.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		t.Fatalf("UDP listener address type = %T, want *net.UDPAddr", listener.LocalAddr())
+	}
+	address := localAddress.AddrPort()
 
 	return netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), address.Port())
 }
@@ -427,7 +431,12 @@ func startTruncatingUpstream(t *testing.T, answer netip.Addr) netip.AddrPort {
 	if err != nil {
 		t.Fatalf("ListenTCP() error = %v", err)
 	}
-	port := tcpListener.Addr().(*net.TCPAddr).Port
+	localAddress, ok := tcpListener.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = tcpListener.Close()
+		t.Fatalf("TCP listener address type = %T, want *net.TCPAddr", tcpListener.Addr())
+	}
+	port := localAddress.Port
 	udpListener, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: port})
 	if err != nil {
 		_ = tcpListener.Close()
@@ -449,7 +458,7 @@ func startTruncatingUpstream(t *testing.T, answer netip.Addr) netip.AddrPort {
 			return
 		}
 		response := dnsmessage.Message{
-			Header:    dnsmessage.Header{ID: query.Header.ID, Response: true, Truncated: true},
+			Header:    dnsmessage.Header{ID: query.ID, Response: true, Truncated: true},
 			Questions: query.Questions,
 		}
 		payload, packErr := response.Pack()
@@ -486,7 +495,7 @@ func startTruncatingUpstream(t *testing.T, answer netip.Addr) netip.AddrPort {
 		}
 		response := dnsmessage.Message{
 			Header: dnsmessage.Header{
-				ID:                 query.Header.ID,
+				ID:                 query.ID,
 				Response:           true,
 				RecursionAvailable: true,
 			},
@@ -502,9 +511,19 @@ func startTruncatingUpstream(t *testing.T, answer netip.Addr) netip.AddrPort {
 			}},
 		}
 		payload, packErr := response.Pack()
-		if packErr == nil {
-			packErr = binary.Write(connection, binary.BigEndian, uint16(len(payload)))
+		if packErr != nil {
+			results <- packErr
+
+			return
 		}
+		payloadLength := len(payload)
+		if payloadLength > maxDNSMessageBytes {
+			results <- errors.New("packed test response is too large")
+
+			return
+		}
+		wirePayloadLength := uint16(payloadLength)
+		packErr = binary.Write(connection, binary.BigEndian, wirePayloadLength)
 		if packErr == nil {
 			_, packErr = connection.Write(payload)
 		}

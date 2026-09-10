@@ -295,10 +295,15 @@ func (s *Server) handleTCP(ctx context.Context, connection *net.TCPConn) {
 			return
 		}
 		response, _ := s.engine.resolve(ctx, s.currentPlan(), query, "tcp")
-		if len(response) == 0 || len(response) > maxDNSMessageBytes {
+		responseLength := len(response)
+		if responseLength == 0 {
 			return
 		}
-		if err := binary.Write(connection, binary.BigEndian, uint16(len(response))); err != nil {
+		if responseLength > maxDNSMessageBytes {
+			return
+		}
+		wireResponseLength := uint16(responseLength)
+		if err := binary.Write(connection, binary.BigEndian, wireResponseLength); err != nil {
 			return
 		}
 		if _, err := connection.Write(response); err != nil {
@@ -352,5 +357,7 @@ func busyResponse(query []byte) []byte {
 	return response
 }
 
-var _ Resolver = (*Server)(nil)
-var _ EndpointSource = (*Server)(nil)
+var (
+	_ Resolver       = (*Server)(nil)
+	_ EndpointSource = (*Server)(nil)
+)

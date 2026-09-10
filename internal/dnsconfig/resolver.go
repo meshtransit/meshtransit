@@ -118,9 +118,9 @@ func parseQuery(query []byte) (dnsmessage.Message, dnsmessage.Question, string, 
 	}
 	var message dnsmessage.Message
 	if err := message.Unpack(query); err != nil {
-		return dnsmessage.Message{}, dnsmessage.Question{}, "", fmt.Errorf("%w: %v", errMalformedQuery, err)
+		return dnsmessage.Message{}, dnsmessage.Question{}, "", fmt.Errorf("%w: %w", errMalformedQuery, err)
 	}
-	if message.Header.Response || message.Header.OpCode != 0 || len(message.Questions) != 1 ||
+	if message.Response || message.OpCode != 0 || len(message.Questions) != 1 ||
 		len(message.Answers) != 0 || len(message.Authorities) != 0 || len(message.Additionals) > 1 {
 		return dnsmessage.Message{}, dnsmessage.Question{}, "", errMalformedQuery
 	}
@@ -152,7 +152,7 @@ func hostResponse(
 	plan Plan,
 ) ([]byte, error) {
 	response := baseResponse(query, plan)
-	response.Header.Authoritative = true
+	response.Authoritative = true
 	for _, address := range host.Addresses {
 		switch {
 		case address.Is4() && (question.Type == dnsmessage.TypeA || question.Type == dnsmessage.TypeALL):
@@ -198,7 +198,7 @@ func ptrResponse(
 		return nil, err
 	}
 	response := baseResponse(query, plan)
-	response.Header.Authoritative = true
+	response.Authoritative = true
 	response.Answers = []dnsmessage.Resource{{
 		Header: dnsmessage.ResourceHeader{
 			Name:  question.Name,
@@ -220,8 +220,8 @@ func negativeResponse(
 	plan Plan,
 ) ([]byte, error) {
 	response := baseResponse(query, plan)
-	response.Header.Authoritative = true
-	response.Header.RCode = rcode
+	response.Authoritative = true
+	response.RCode = rcode
 	if err := appendSOA(&response, zone); err != nil {
 		return nil, err
 	}
@@ -235,7 +235,7 @@ func serverFailure(
 	plan Plan,
 ) ([]byte, error) {
 	response := baseResponse(query, plan)
-	response.Header.RCode = dnsmessage.RCodeServerFailure
+	response.RCode = dnsmessage.RCodeServerFailure
 
 	return response.Pack()
 }
@@ -275,10 +275,10 @@ func unsupportedEDNSVersionResponse(query dnsmessage.Message) ([]byte, error) {
 func baseResponse(query dnsmessage.Message, plan Plan) dnsmessage.Message {
 	return dnsmessage.Message{
 		Header: dnsmessage.Header{
-			ID:                 query.Header.ID,
+			ID:                 query.ID,
 			Response:           true,
-			OpCode:             query.Header.OpCode,
-			RecursionDesired:   query.Header.RecursionDesired,
+			OpCode:             query.OpCode,
+			RecursionDesired:   query.RecursionDesired,
 			RecursionAvailable: hasForwardResolvers(plan),
 		},
 		Questions: append([]dnsmessage.Question(nil), query.Questions...),
@@ -509,6 +509,12 @@ func exchangeUDP(ctx context.Context, query []byte, resolver netip.AddrPort) ([]
 }
 
 func exchangeTCP(ctx context.Context, query []byte, resolver netip.AddrPort) ([]byte, error) {
+	queryLength := len(query)
+	if queryLength > maxDNSMessageBytes {
+		return nil, errors.New("dnsconfig: tcp query is too large")
+	}
+	wireQueryLength := uint16(queryLength)
+
 	network := "tcp4"
 	if resolver.Addr().Is6() {
 		network = "tcp6"
@@ -523,7 +529,7 @@ func exchangeTCP(ctx context.Context, query []byte, resolver netip.AddrPort) ([]
 			return nil, fmt.Errorf("setting tcp deadline: %w", err)
 		}
 	}
-	if err := binary.Write(connection, binary.BigEndian, uint16(len(query))); err != nil {
+	if err := binary.Write(connection, binary.BigEndian, wireQueryLength); err != nil {
 		return nil, fmt.Errorf("writing tcp query length: %w", err)
 	}
 	if _, err := connection.Write(query); err != nil {
@@ -557,7 +563,7 @@ func validateForwardResponse(
 	if err := message.Unpack(response); err != nil {
 		return fmt.Errorf("dnsconfig: parsing upstream response: %w", err)
 	}
-	if !message.Header.Response || message.Header.OpCode != 0 ||
+	if !message.Response || message.OpCode != 0 ||
 		len(message.Questions) != 1 || message.Questions[0] != question {
 		return errors.New("dnsconfig: upstream response question does not match")
 	}
@@ -581,7 +587,7 @@ func limitUDPResponse(query, response []byte, transport string) ([]byte, error) 
 	if err := message.Unpack(response); err != nil {
 		return nil, fmt.Errorf("dnsconfig: parsing oversized response: %w", err)
 	}
-	message.Header.Truncated = true
+	message.Truncated = true
 	message.Answers = nil
 	message.Authorities = nil
 	message.Additionals = slices.DeleteFunc(message.Additionals, func(resource dnsmessage.Resource) bool {

@@ -335,7 +335,6 @@ func TestProbeManagerConcurrentLifecycle(t *testing.T) {
 	transactions := make(chan ProbeTransaction, 128)
 	var starters sync.WaitGroup
 	for peerID := uint64(1); peerID <= 128; peerID++ {
-		peerID := peerID
 		starters.Go(func() {
 			transaction, err := manager.Start(now, peerID, remote)
 			if err != nil {
@@ -351,7 +350,6 @@ func TestProbeManagerConcurrentLifecycle(t *testing.T) {
 
 	var completers sync.WaitGroup
 	for transaction := range transactions {
-		transaction := transaction
 		completers.Go(func() {
 			if _, err := manager.Complete(now.Add(time.Millisecond), AuthenticatedProbeReply{
 				ID:                    transaction.ID,
@@ -415,7 +413,7 @@ func FuzzProbeManagerComplete(f *testing.F) {
 	})
 }
 
-func testProbeManager(maxPending int, maxPerPeer int) *ProbeManager {
+func testProbeManager(maxPending, maxPerPeer int) *ProbeManager {
 	random := make([]byte, probeIDSize*64)
 	for index := range random {
 		random[index] = byte(index/probeIDSize + 1)
