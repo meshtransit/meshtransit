@@ -31,7 +31,35 @@ type statusResponse struct {
 	SelfAddresses      []string     `json:"self_addresses,omitempty"`
 	PeerCount          int          `json:"peer_count"`
 	PolicyRuleCount    int          `json:"policy_rule_count"`
+	PeerPaths          pathStatus   `json:"paths"`
+	Relay              relayStatus  `json:"relay"`
 	CompatibilityNote  string       `json:"compatibility_note"`
+}
+
+type pathStatus struct {
+	Available    bool `json:"available"`
+	PeerCount    int  `json:"peer_count"`
+	DirectCount  int  `json:"direct_count"`
+	RelayCount   int  `json:"relay_count"`
+	PendingCount int  `json:"pending_count"`
+}
+
+type relayStatus struct {
+	Available        bool                `json:"available"`
+	HomeRegion       int                 `json:"home_region,omitempty"`
+	ActiveRegions    int                 `json:"active_regions"`
+	ConnectedRegions int                 `json:"connected_regions"`
+	Regions          []relayRegionStatus `json:"regions,omitempty"`
+}
+
+type relayRegionStatus struct {
+	RegionID            int    `json:"region_id"`
+	Connected           bool   `json:"connected"`
+	ConsecutiveFailures int    `json:"consecutive_failures"`
+	LastConnected       string `json:"last_connected,omitempty"`
+	LastActivity        string `json:"last_activity,omitempty"`
+	LastSend            string `json:"last_send,omitempty"`
+	LastFailure         string `json:"last_failure,omitempty"`
 }
 
 type profileResponse struct {

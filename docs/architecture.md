@@ -190,9 +190,13 @@ Unknown JSON fields are rejected. A create request contains only a display name 
 
 Status exposes only non-secret diagnostics from the latest validated snapshot:
 the server-provided Network name, this node's overlay prefixes, peer count,
-packet-policy rule count, and DNS lifecycle state. These values never influence
+packet-policy rule count, DNS lifecycle state, aggregate direct/relay/pending
+peer-path counts, and relay-region connection health. Relay timing is included
+for lifecycle diagnosis, but peer identity, endpoint addresses, hostnames,
+keys, and packet contents are omitted. These values never influence
 registration or Network selection; they let operators verify the
-server-authorized scope without reading daemon state or private key material.
+server-authorized scope and transport transitions without reading daemon state
+or private key material.
 
 ## Identity and registration lifecycle
 

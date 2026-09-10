@@ -881,6 +881,51 @@ func TestService_StatusReportsOnlineForEncryptedDataPlane(t *testing.T) {
 	}
 }
 
+func TestService_StatusReportsAggregateTransportState(t *testing.T) {
+	t.Parallel()
+
+	service, _, _, profileID, _ := newTestService(t)
+	now := time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC)
+	dataPlane := &fakeDataPlane{
+		peerPaths: dataplane.PeerPathSnapshot{
+			Available:   true,
+			PeerCount:   2,
+			DirectCount: 1,
+			RelayCount:  1,
+		},
+		relayStatus: relay.HealthSnapshot{
+			Available:  true,
+			HomeRegion: 7,
+			Regions: []relay.RegionHealth{{
+				RegionID:      7,
+				Connected:     true,
+				LastConnected: now,
+			}},
+		},
+	}
+	service.dataPlane = dataPlane
+	service.setSyncStatus(syncStatus{
+		profileID: profileID,
+		state:     ControlSessionSynchronized,
+		dataPlane: string(dataplane.StateEncryptedRelay),
+	})
+
+	status, err := service.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if status.PeerPaths != dataPlane.peerPaths || !status.Relay.Available ||
+		status.Relay.HomeRegion != 7 || len(status.Relay.Regions) != 1 {
+		t.Fatalf("Status() transport state = %#v, %#v", status.PeerPaths, status.Relay)
+	}
+	status.Relay.Regions[0].Connected = false
+	if second, err := service.Status(t.Context()); err != nil {
+		t.Fatalf("second Status() error = %v", err)
+	} else if !second.Relay.Regions[0].Connected {
+		t.Fatal("Status() returned mutable relay state")
+	}
+}
+
 const testFingerprint = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 type fakeControl struct {
@@ -899,8 +944,10 @@ type fakeControl struct {
 }
 
 type fakeDataPlane struct {
-	applyCalls int
-	closeCalls int
+	applyCalls  int
+	closeCalls  int
+	peerPaths   dataplane.PeerPathSnapshot
+	relayStatus relay.HealthSnapshot
 }
 
 type fakeDNS struct {
@@ -942,6 +989,14 @@ func (f *fakeDataPlane) Close() error {
 	f.closeCalls++
 
 	return nil
+}
+
+func (f *fakeDataPlane) PeerPaths() dataplane.PeerPathSnapshot {
+	return f.peerPaths
+}
+
+func (f *fakeDataPlane) RelayHealth() relay.HealthSnapshot {
+	return f.relayStatus
 }
 
 func (f *fakeControl) Probe(context.Context, string) (ts2021.Result, error) {

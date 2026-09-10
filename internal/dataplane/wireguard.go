@@ -44,6 +44,7 @@ type wireGuardPeerPlan struct {
 	id                  uint64
 	key                 [32]byte
 	baseEndpoint        string
+	basePath            peerPath
 	authorizedEndpoints []netip.AddrPort
 	allowedIPs          []netip.Prefix
 }
@@ -51,8 +52,28 @@ type wireGuardPeerPlan struct {
 type wireGuardPeerState struct {
 	key                 [32]byte
 	baseEndpoint        string
+	basePath            peerPath
 	currentEndpoint     string
+	currentPath         peerPath
 	authorizedEndpoints []netip.AddrPort
+}
+
+type peerPath uint8
+
+const (
+	peerPathPending peerPath = iota
+	peerPathDirect
+	peerPathRelay
+)
+
+// PeerPathSnapshot reports aggregate path selection without exposing peer
+// identities, endpoint addresses, or key material.
+type PeerPathSnapshot struct {
+	Available    bool
+	PeerCount    int
+	DirectCount  int
+	RelayCount   int
+	PendingCount int
 }
 
 // NodePrivateKey is the raw WireGuard-compatible node key. Its formatting is
@@ -486,6 +507,30 @@ func (e *WireGuardEngine) RelayHealth() relay.HealthSnapshot {
 	return device.RelayHealth()
 }
 
+// PeerPaths returns aggregate endpoint state for the installed peers. The
+// daemon serializes this call with Apply, incremental updates, and Close.
+func (e *WireGuardEngine) PeerPaths() PeerPathSnapshot {
+	if e == nil || e.device == nil {
+		return PeerPathSnapshot{}
+	}
+	snapshot := PeerPathSnapshot{
+		Available: true,
+		PeerCount: len(e.peers),
+	}
+	for _, peer := range e.peers {
+		switch peer.currentPath {
+		case peerPathDirect:
+			snapshot.DirectCount++
+		case peerPathRelay:
+			snapshot.RelayCount++
+		default:
+			snapshot.PendingCount++
+		}
+	}
+
+	return snapshot
+}
+
 // PrepareRelayRegion opens a control-authorized relay connection without
 // changing packet routing. Home selection waits for RelayHealth confirmation.
 func (e *WireGuardEngine) PrepareRelayRegion(regionID int) error {
@@ -521,7 +566,7 @@ func (e *WireGuardEngine) SetPreferredEndpoint(
 		return ErrPeerEndpointUnauthorized
 	}
 
-	return e.configurePeerEndpoint(peerID, peer, endpoint.String(), true)
+	return e.configurePeerEndpoint(peerID, peer, endpoint.String(), peerPathDirect, true)
 }
 
 // RestorePreferredEndpoint returns one peer to the deterministic endpoint from
@@ -541,7 +586,7 @@ func (e *WireGuardEngine) RestorePreferredEndpoint(
 		return ErrPeerEndpointUnavailable
 	}
 
-	return e.configurePeerEndpoint(peerID, peer, peer.baseEndpoint, false)
+	return e.configurePeerEndpoint(peerID, peer, peer.baseEndpoint, peer.basePath, false)
 }
 
 // advanceEquivalentPlan binds a new map revision without reopening the shared
@@ -563,6 +608,7 @@ func (e *WireGuardEngine) advanceEquivalentPlan(
 			peer.id,
 			installed,
 			installed.baseEndpoint,
+			installed.basePath,
 			false,
 		); err != nil {
 			return false, err
@@ -577,12 +623,13 @@ func (e *WireGuardEngine) configurePeerEndpoint(
 	peerID uint64,
 	peer wireGuardPeerState,
 	endpoint string,
+	path peerPath,
 	reassert bool,
 ) error {
-	if endpoint == "" {
+	if endpoint == "" || (path != peerPathDirect && path != peerPathRelay) {
 		return ErrPeerEndpointUnavailable
 	}
-	if peer.currentEndpoint == endpoint && !reassert {
+	if peer.currentEndpoint == endpoint && peer.currentPath == path && !reassert {
 		return nil
 	}
 	var configuration bytes.Buffer
@@ -599,6 +646,7 @@ func (e *WireGuardEngine) configurePeerEndpoint(
 		return errors.New("dataplane: applying peer endpoint failed")
 	}
 	peer.currentEndpoint = endpoint
+	peer.currentPath = path
 	e.peers[peerID] = peer
 
 	return nil
@@ -615,7 +663,9 @@ func (e *WireGuardEngine) adoptPlan(revision uint64, plan wireGuardPlan) {
 		e.peers[peer.id] = wireGuardPeerState{
 			key:                 peer.key,
 			baseEndpoint:        peer.baseEndpoint,
+			basePath:            peer.basePath,
 			currentEndpoint:     peer.baseEndpoint,
+			currentPath:         peer.basePath,
 			authorizedEndpoints: append([]netip.AddrPort(nil), peer.authorizedEndpoints...),
 		}
 	}
@@ -744,10 +794,13 @@ func buildWireGuardPlan(
 			return wireGuardPlan{}, err
 		}
 		baseEndpoint := ""
+		basePath := peerPathPending
 		if regionID := relayRegions[peerKey]; regionID != 0 {
 			baseEndpoint = formatRelayEndpoint(regionID, relay.Key(peerKey))
+			basePath = peerPathRelay
 		} else if directEndpoint.IsValid() {
 			baseEndpoint = directEndpoint.String()
+			basePath = peerPathDirect
 		}
 		if baseEndpoint == "" {
 			pendingEndpoints = true
@@ -756,6 +809,7 @@ func buildWireGuardPlan(
 			id:                  peer.ID,
 			key:                 peerKey,
 			baseEndpoint:        baseEndpoint,
+			basePath:            basePath,
 			authorizedEndpoints: authorizedEndpoints,
 			allowedIPs:          allowedIPs,
 		})
@@ -839,6 +893,7 @@ func equalPeerEndpointAuthority(
 		installed, exists := current[peer.id]
 		if !exists || installed.key != peer.key ||
 			installed.baseEndpoint != peer.baseEndpoint ||
+			installed.basePath != peer.basePath ||
 			!slices.Equal(installed.authorizedEndpoints, peer.authorizedEndpoints) {
 			return false
 		}

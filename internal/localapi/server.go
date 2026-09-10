@@ -16,7 +16,9 @@ import (
 
 	"github.com/meshtransit/meshd/internal/compat/ts2021"
 	"github.com/meshtransit/meshd/internal/daemon"
+	"github.com/meshtransit/meshd/internal/dataplane"
 	"github.com/meshtransit/meshd/internal/profile"
+	"github.com/meshtransit/meshd/internal/relay"
 )
 
 const (
@@ -321,8 +323,55 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		SelfAddresses:      status.SelfAddresses,
 		PeerCount:          status.PeerCount,
 		PolicyRuleCount:    status.PolicyRuleCount,
+		PeerPaths:          mapPathStatus(status.PeerPaths),
+		Relay:              mapRelayStatus(status.Relay),
 		CompatibilityNote:  status.CompatibilityNote,
 	})
+}
+
+func mapPathStatus(snapshot dataplane.PeerPathSnapshot) pathStatus {
+	return pathStatus{
+		Available:    snapshot.Available,
+		PeerCount:    snapshot.PeerCount,
+		DirectCount:  snapshot.DirectCount,
+		RelayCount:   snapshot.RelayCount,
+		PendingCount: snapshot.PendingCount,
+	}
+}
+
+func mapRelayStatus(snapshot relay.HealthSnapshot) relayStatus {
+	regions := make([]relayRegionStatus, 0, len(snapshot.Regions))
+	connected := 0
+	for _, region := range snapshot.Regions {
+		if region.Connected {
+			connected++
+		}
+		regions = append(regions, relayRegionStatus{
+			RegionID:            region.RegionID,
+			Connected:           region.Connected,
+			ConsecutiveFailures: region.ConsecutiveFailures,
+			LastConnected:       formatStatusTime(region.LastConnected),
+			LastActivity:        formatStatusTime(region.LastActivity),
+			LastSend:            formatStatusTime(region.LastSend),
+			LastFailure:         formatStatusTime(region.LastFailure),
+		})
+	}
+
+	return relayStatus{
+		Available:        snapshot.Available,
+		HomeRegion:       snapshot.HomeRegion,
+		ActiveRegions:    len(snapshot.Regions),
+		ConnectedRegions: connected,
+		Regions:          regions,
+	}
+}
+
+func formatStatusTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 func (s *Server) handleProfiles(writer http.ResponseWriter, request *http.Request) {

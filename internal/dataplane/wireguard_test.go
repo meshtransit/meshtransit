@@ -766,6 +766,10 @@ func TestWireGuardEngineUsesRelayBeforeAuthenticatedDirectPath(t *testing.T) {
 	if factory.relayFingerprint == ([32]byte{}) {
 		t.Fatal("factory did not receive relay authority")
 	}
+	if paths := engine.PeerPaths(); !paths.Available || paths.PeerCount != 1 ||
+		paths.RelayCount != 1 || paths.DirectCount != 0 || paths.PendingCount != 0 {
+		t.Fatalf("initial PeerPaths() = %#v, want one relay path", paths)
+	}
 
 	if err := engine.SetPreferredEndpoint(
 		snapshot.Revision,
@@ -777,6 +781,10 @@ func TestWireGuardEngineUsesRelayBeforeAuthenticatedDirectPath(t *testing.T) {
 	if !strings.Contains(device.configuration, "endpoint="+directEndpoint.String()+"\n") {
 		t.Fatalf("preferred configuration = %q", device.configuration)
 	}
+	if paths := engine.PeerPaths(); paths.DirectCount != 1 ||
+		paths.RelayCount != 0 || paths.PendingCount != 0 {
+		t.Fatalf("preferred PeerPaths() = %#v, want one direct path", paths)
+	}
 	if err := engine.RestorePreferredEndpoint(
 		snapshot.Revision,
 		snapshot.Peers[0].ID,
@@ -785,6 +793,31 @@ func TestWireGuardEngineUsesRelayBeforeAuthenticatedDirectPath(t *testing.T) {
 	}
 	if !strings.Contains(device.configuration, "endpoint="+relayEndpoint+"\n") {
 		t.Fatalf("restored configuration = %q", device.configuration)
+	}
+	if paths := engine.PeerPaths(); paths.RelayCount != 1 ||
+		paths.DirectCount != 0 || paths.PendingCount != 0 {
+		t.Fatalf("restored PeerPaths() = %#v, want one relay path", paths)
+	}
+}
+
+func TestWireGuardEnginePeerPathsUnavailableAfterClose(t *testing.T) {
+	t.Parallel()
+
+	engine := &WireGuardEngine{
+		device: &fakeWireGuardDevice{},
+		peers: map[uint64]wireGuardPeerState{
+			1: {currentEndpoint: "not-an-endpoint", currentPath: peerPathPending},
+		},
+	}
+	paths := engine.PeerPaths()
+	if !paths.Available || paths.PeerCount != 1 || paths.PendingCount != 1 {
+		t.Fatalf("PeerPaths() = %#v, want one pending path", paths)
+	}
+	if err := engine.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if paths := engine.PeerPaths(); paths != (PeerPathSnapshot{}) {
+		t.Fatalf("PeerPaths() after Close = %#v, want unavailable", paths)
 	}
 }
 

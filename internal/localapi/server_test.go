@@ -9,11 +9,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/meshtransit/meshd/internal/compat/ts2021"
 	"github.com/meshtransit/meshd/internal/daemon"
+	"github.com/meshtransit/meshd/internal/dataplane"
 	"github.com/meshtransit/meshd/internal/identity"
 	"github.com/meshtransit/meshd/internal/profile"
+	"github.com/meshtransit/meshd/internal/relay"
 	"github.com/meshtransit/meshd/internal/version"
 )
 
@@ -41,7 +44,9 @@ func TestServer_ProfileLifecycle(t *testing.T) {
 	if status.ControlSession != daemon.ControlSessionInactive ||
 		status.NetmapRevision != 0 || status.NetworkName != "" ||
 		len(status.SelfAddresses) != 0 || status.PeerCount != 0 ||
-		status.PolicyRuleCount != 0 {
+		status.PolicyRuleCount != 0 || status.PeerPaths.Available ||
+		status.Relay.Available || status.Relay.ActiveRegions != 0 ||
+		status.Relay.ConnectedRegions != 0 {
 		t.Fatalf("initial control sync = %#v, want inactive empty snapshot", status)
 	}
 
@@ -83,6 +88,38 @@ func TestServer_ProfileLifecycle(t *testing.T) {
 	}
 	if activeCount != 1 {
 		t.Fatalf("active profile count = %d, want 1", activeCount)
+	}
+}
+
+func TestStatusTransportMapping(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.September, 10, 12, 0, 0, 123, time.UTC)
+	paths := mapPathStatus(dataplane.PeerPathSnapshot{
+		Available:    true,
+		PeerCount:    3,
+		DirectCount:  1,
+		RelayCount:   1,
+		PendingCount: 1,
+	})
+	if !paths.Available || paths.PeerCount != 3 || paths.DirectCount != 1 ||
+		paths.RelayCount != 1 || paths.PendingCount != 1 {
+		t.Fatalf("mapPathStatus() = %#v", paths)
+	}
+	relayState := mapRelayStatus(relay.HealthSnapshot{
+		Available:  true,
+		HomeRegion: 9,
+		Regions: []relay.RegionHealth{
+			{RegionID: 9, Connected: true, LastActivity: now},
+			{RegionID: 10, ConsecutiveFailures: 2, LastFailure: now},
+		},
+	})
+	if !relayState.Available || relayState.HomeRegion != 9 ||
+		relayState.ActiveRegions != 2 || relayState.ConnectedRegions != 1 ||
+		len(relayState.Regions) != 2 ||
+		relayState.Regions[0].LastActivity != now.Format(time.RFC3339Nano) ||
+		relayState.Regions[1].LastFailure != now.Format(time.RFC3339Nano) {
+		t.Fatalf("mapRelayStatus() = %#v", relayState)
 	}
 }
 

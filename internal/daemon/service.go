@@ -99,6 +99,8 @@ type Status struct {
 	SelfAddresses      []string
 	PeerCount          int
 	PolicyRuleCount    int
+	PeerPaths          dataplane.PeerPathSnapshot
+	Relay              relay.HealthSnapshot
 }
 
 // ControlProbe is the sanitized control compatibility result returned locally.
@@ -161,8 +163,16 @@ type endpointDiscoverer interface {
 }
 
 type relayHealthDataPlane interface {
-	RelayHealth() relay.HealthSnapshot
+	relayStatusDataPlane
 	PrepareRelayRegion(int) error
+}
+
+type relayStatusDataPlane interface {
+	RelayHealth() relay.HealthSnapshot
+}
+
+type peerPathStatusDataPlane interface {
+	PeerPaths() dataplane.PeerPathSnapshot
 }
 
 type peerProbeDataPlane interface {
@@ -1312,6 +1322,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		dataPlaneState == string(dataplane.StateEncryptedRelay) {
 		daemonState = StateOnline
 	}
+	peerPaths, relayStatus := s.dataPlaneStatus()
 
 	return Status{
 		Build:              s.build,
@@ -1330,7 +1341,29 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		SelfAddresses:      append([]string(nil), syncState.selfAddresses...),
 		PeerCount:          syncState.peerCount,
 		PolicyRuleCount:    syncState.policyRuleCount,
+		PeerPaths:          peerPaths,
+		Relay:              relayStatus,
 	}, nil
+}
+
+func (s *Service) dataPlaneStatus() (dataplane.PeerPathSnapshot, relay.HealthSnapshot) {
+	if s == nil || s.dataPlane == nil {
+		return dataplane.PeerPathSnapshot{}, relay.HealthSnapshot{}
+	}
+	s.dataPlaneMu.Lock()
+	defer s.dataPlaneMu.Unlock()
+
+	peerPaths := dataplane.PeerPathSnapshot{}
+	if reporter, supported := s.dataPlane.(peerPathStatusDataPlane); supported {
+		peerPaths = reporter.PeerPaths()
+	}
+	relayStatus := relay.HealthSnapshot{}
+	if reporter, supported := s.dataPlane.(relayStatusDataPlane); supported {
+		relayStatus = reporter.RelayHealth()
+	}
+	relayStatus.Regions = append([]relay.RegionHealth(nil), relayStatus.Regions...)
+
+	return peerPaths, relayStatus
 }
 
 // StartLogin registers the active profile with either an in-memory auth key or
