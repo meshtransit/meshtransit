@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -105,12 +106,19 @@ func TestClientServerOpenTUN(t *testing.T) {
 		!slices.Equal(tun.Routes, []netip.Prefix{route}) {
 		t.Fatalf("OpenTUN() = %#v", tun)
 	}
-	if creator.calls != 1 || !slices.Equal(creator.addresses, []netip.Prefix{address}) ||
-		!slices.Equal(creator.routes, []netip.Prefix{route}) {
-		t.Fatalf("creator config addresses=%v routes=%v calls=%d", creator.addresses, creator.routes, creator.calls)
+	creatorState := creator.snapshot()
+	if creatorState.calls != 1 ||
+		!slices.Equal(creatorState.addresses, []netip.Prefix{address}) ||
+		!slices.Equal(creatorState.routes, []netip.Prefix{route}) {
+		t.Fatalf(
+			"creator config addresses=%v routes=%v calls=%d",
+			creatorState.addresses,
+			creatorState.routes,
+			creatorState.calls,
+		)
 	}
 
-	if _, err := creator.writer.Write([]byte("packet")); err != nil {
+	if _, err := creatorState.writer.Write([]byte("packet")); err != nil {
 		t.Fatalf("pipe Write() error = %v", err)
 	}
 	payload := make([]byte, len("packet"))
@@ -120,7 +128,7 @@ func TestClientServerOpenTUN(t *testing.T) {
 	if got := string(payload); got != "packet" {
 		t.Fatalf("received payload = %q", got)
 	}
-	if err := creator.writer.Close(); err != nil {
+	if err := creatorState.writer.Close(); err != nil {
 		t.Fatalf("pipe writer Close() error = %v", err)
 	}
 }
@@ -184,14 +192,21 @@ func TestClientServerDNSLifecycle(t *testing.T) {
 	if err := client.ResetDNS(t.Context()); err != nil {
 		t.Fatalf("ResetDNS() error = %v", err)
 	}
-	if configurator.applyCalls != 1 || configurator.resetCalls != 1 ||
-		configurator.config.Endpoint != endpoint {
-		t.Fatalf("dns calls apply=%d reset=%d config=%#v", configurator.applyCalls, configurator.resetCalls, configurator.config)
+	dnsState := configurator.snapshot()
+	if dnsState.applyCalls != 1 || dnsState.resetCalls != 1 ||
+		dnsState.config.Endpoint != endpoint {
+		t.Fatalf(
+			"dns calls apply=%d reset=%d config=%#v",
+			dnsState.applyCalls,
+			dnsState.resetCalls,
+			dnsState.config,
+		)
 	}
-	if creator.calls != 1 || !slices.Equal(creator.addresses, []netip.Prefix{
+	creatorState := creator.snapshot()
+	if creatorState.calls != 1 || !slices.Equal(creatorState.addresses, []netip.Prefix{
 		netip.MustParsePrefix("192.0.2.53/32"),
 	}) {
-		t.Fatalf("dns link calls=%d addresses=%v", creator.calls, creator.addresses)
+		t.Fatalf("dns link calls=%d addresses=%v", creatorState.calls, creatorState.addresses)
 	}
 }
 
@@ -265,8 +280,9 @@ func TestClientServerRejectsPrefixOutsideAllowlist(t *testing.T) {
 		Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.10/32")},
 		Routes:    []netip.Prefix{},
 	})
-	if !errors.Is(err, ErrRemote) || creator.calls != 0 {
-		t.Fatalf("OpenTUN() error = %v, creator calls = %d", err, creator.calls)
+	creatorState := creator.snapshot()
+	if !errors.Is(err, ErrRemote) || creatorState.calls != 0 {
+		t.Fatalf("OpenTUN() error = %v, creator calls = %d", err, creatorState.calls)
 	}
 }
 
@@ -284,6 +300,14 @@ func testEffectiveUID(t *testing.T) uint32 {
 }
 
 type fakeTUNCreator struct {
+	mu        sync.Mutex
+	calls     int
+	writer    *os.File
+	addresses []netip.Prefix
+	routes    []netip.Prefix
+}
+
+type fakeTUNCreatorState struct {
 	calls     int
 	writer    *os.File
 	addresses []netip.Prefix
@@ -291,22 +315,46 @@ type fakeTUNCreator struct {
 }
 
 type fakeDNSConfigurator struct {
+	mu         sync.Mutex
+	applyCalls int
+	resetCalls int
+	config     DNSConfig
+}
+
+type fakeDNSConfiguratorState struct {
 	applyCalls int
 	resetCalls int
 	config     DNSConfig
 }
 
 func (f *fakeDNSConfigurator) Apply(_ context.Context, config DNSConfig) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	f.applyCalls++
-	f.config = config
+	f.config = cloneDNSConfig(config)
 
 	return nil
 }
 
 func (f *fakeDNSConfigurator) Reset(_ context.Context, _ DNSEndpoint) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	f.resetCalls++
 
 	return nil
+}
+
+func (f *fakeDNSConfigurator) snapshot() fakeDNSConfiguratorState {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return fakeDNSConfiguratorState{
+		applyCalls: f.applyCalls,
+		resetCalls: f.resetCalls,
+		config:     cloneDNSConfig(f.config),
+	}
 }
 
 func (f *fakeTUNCreator) Open(
@@ -316,14 +364,35 @@ func (f *fakeTUNCreator) Open(
 	addresses []netip.Prefix,
 	routes []netip.Prefix,
 ) (*os.File, error) {
-	f.calls++
-	f.addresses = append([]netip.Prefix{}, addresses...)
-	f.routes = append([]netip.Prefix{}, routes...)
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
+	f.mu.Lock()
+	f.calls++
+	f.addresses = append([]netip.Prefix{}, addresses...)
+	f.routes = append([]netip.Prefix{}, routes...)
 	f.writer = writer
+	f.mu.Unlock()
 
 	return reader, nil
+}
+
+func (f *fakeTUNCreator) snapshot() fakeTUNCreatorState {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return fakeTUNCreatorState{
+		calls:     f.calls,
+		writer:    f.writer,
+		addresses: append([]netip.Prefix{}, f.addresses...),
+		routes:    append([]netip.Prefix{}, f.routes...),
+	}
+}
+
+func cloneDNSConfig(config DNSConfig) DNSConfig {
+	config.SearchDomains = append([]string{}, config.SearchDomains...)
+	config.RouteDomains = append([]string{}, config.RouteDomains...)
+
+	return config
 }
