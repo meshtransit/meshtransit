@@ -73,6 +73,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	daemonOptions := daemon.Options{
 		Hostname:           hostname,
+		Logger:             logger,
 		AdvertiseEndpoints: cfg.AdvertiseEndpoints,
 	}
 	var flowReporter *flowlog.Reporter

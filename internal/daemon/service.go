@@ -6,6 +6,7 @@ import (
 	cryptorand "crypto/rand"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"math/big"
 	"net/netip"
@@ -214,6 +215,7 @@ type Service struct {
 	clock                func() time.Time
 	endpointRefreshDelay func() time.Duration
 	newPeerProbeIdentity func() (*peerwire.Identity, error)
+	logger               *slog.Logger
 	syncSignal           chan struct{}
 	dataPlaneMu          sync.Mutex
 	syncMu               sync.RWMutex
@@ -245,6 +247,7 @@ type Options struct {
 	Clock              func() time.Time
 	DataPlane          DataPlaneController
 	DNS                DNSController
+	Logger             *slog.Logger
 	AdvertiseEndpoints []netip.AddrPort
 }
 
@@ -308,6 +311,7 @@ func New(
 		clock:                options.Clock,
 		endpointRefreshDelay: randomEndpointRefreshDelay,
 		newPeerProbeIdentity: peerwire.NewIdentity,
+		logger:               options.Logger,
 		syncSignal:           make(chan struct{}, 1),
 		syncState: syncStatus{
 			state:     ControlSessionInactive,
@@ -669,7 +673,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			}
 
 			continue
-		case <-streamDone:
+		case streamErr := <-streamDone:
+			s.logControlSessionFailure("map stream stopped", streamErr)
 			cancel()
 			if refreshDone != nil {
 				<-refreshDone
@@ -703,7 +708,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if err := s.waitForSyncSignal(ctx); err != nil {
 				return err
 			}
-		case <-refreshDone:
+		case refreshErr := <-refreshDone:
+			s.logControlSessionFailure("endpoint refresh stopped", refreshErr)
 			cancel()
 			<-streamDone
 			if err := cleanupSession(); err != nil {
@@ -736,6 +742,12 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				return err
 			}
 		}
+	}
+}
+
+func (s *Service) logControlSessionFailure(message string, err error) {
+	if s != nil && s.logger != nil && err != nil && !errors.Is(err, context.Canceled) {
+		s.logger.Warn(message, "error", err)
 	}
 }
 
