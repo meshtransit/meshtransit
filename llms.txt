@@ -1,0 +1,17 @@
+# meshctl
+
+> Unprivileged MeshTransit command-line client written in Go.
+
+## Read first
+
+- README.md: commands, build instructions, and security boundary
+- AGENTS.md: mandatory instructions for coding agents
+- ../meshd/docs/architecture.md: daemon and compatibility architecture when both repositories are checked out together
+
+## Core invariants
+
+- Communicate with meshd only through its versioned local API.
+- Never read daemon state or hold control and node private keys.
+- Never accept or send a client-selected network identifier.
+- Keep compatibility implementation and tunnel code out of this repository.
+- Keep public terminology under the MeshTransit product names.

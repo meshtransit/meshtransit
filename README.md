@@ -1,0 +1,88 @@
+# meshctl
+
+`meshctl` is the unprivileged command-line client for the local MeshTransit daemon. It controls profiles and reads status only through the versioned `meshd` Unix API.
+
+## Demo
+
+```console
+$ meshctl status
+Daemon: dev
+State: offline
+Data plane: not_implemented
+DNS: not_implemented
+Active profile: none
+Profiles: 0
+Control trust: unconfigured
+Registration: unregistered
+Control session: inactive
+Netmap revision: 0
+Network: none
+Self addresses: none
+Peers: 0
+Peer paths: unavailable
+Relay: unavailable
+Policy rules: 0
+Control key: none
+Note: control synchronization is available; encrypted tunnel is not active
+```
+
+## Getting started
+
+Requirements: Go 1.24 or newer and a running `meshd` from the matching API generation.
+
+```bash
+make test
+make build
+./bin/meshctl --socket /tmp/meshd.sock status
+./bin/meshctl --socket /tmp/meshd.sock profile create \
+  --name production \
+  --control-url https://transit.example.com
+./bin/meshctl --socket /tmp/meshd.sock profile list
+./bin/meshctl --socket /tmp/meshd.sock doctor control
+./bin/meshctl --socket /tmp/meshd.sock profile trust \
+  --fingerprint sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+./bin/meshctl --socket /tmp/meshd.sock login
+./bin/meshctl --socket /tmp/meshd.sock login complete
+```
+
+Global flags must appear before the command. `MESHCTL_SOCKET` and `MESHCTL_TIMEOUT` provide environment defaults; explicit flags take precedence.
+
+## Commands
+
+- `meshctl status`
+- `meshctl profile list`
+- `meshctl profile create --name NAME --control-url HTTPS_URL`
+- `meshctl profile use PROFILE_ID`
+- `meshctl profile trust --fingerprint sha256:...`
+- `meshctl login`
+- `meshctl login --auth-key-stdin`
+- `meshctl login complete`
+- `meshctl version`
+- `meshctl doctor control`
+- `meshctl --json ...` for machine-readable output
+
+`doctor control` verifies the TLS certificate, reads the capability-142 server key, completes a short-lived Noise IK handshake, and prints only the public-key fingerprint. It does not register or modify a node.
+
+Before `profile trust`, compare that fingerprint with a value delivered through an independent trusted channel. Reusing the value printed over the same connection is only trust on first use.
+
+`login` starts browser enrollment and prints the authorization URL. After approving it, run `login complete`; pending state survives a daemon restart. For a pre-auth key, pipe it to `login --auth-key-stdin`. Auth keys are deliberately unavailable as flags or environment variables and are not persisted by either process.
+
+Creating a profile does not accept a network ID. The control plane derives and authorizes network membership from the registration or session credential.
+
+After registration, `meshd` automatically maintains the active profile's control-map stream. `meshctl status` reports synchronization, the latest validated revision, aggregate direct/relay path counts, and redacted relay health. It does not expose peer public keys, endpoint addresses, raw policy, or registration handles.
+
+## Security boundary
+
+`meshctl` does not read `/var/lib/meshd`, access private keys, or manipulate network devices. On Linux, `meshd` additionally checks kernel `SO_PEERCRED` identity for every accepted Unix-socket connection.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Contributors
+
+MeshTransit contributors.
+
+## License
+
+No project license has been selected yet. Do not publish or redistribute this repository until the maintainers add a `LICENSE` file.
