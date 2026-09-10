@@ -1,4 +1,7 @@
-.PHONY: build test race vet lint clean
+.PHONY: build test race vet lint package-deb clean
+
+VERSION ?= 0.1.0~dev
+ARCH ?= amd64
 
 build:
 	mkdir -p bin
@@ -16,6 +19,10 @@ vet:
 
 lint:
 	golangci-lint run ./...
+
+package-deb:
+	bash packaging/linux/build-deb.sh "$(VERSION)" "$(ARCH)" dist
+	bash packaging/linux/verify-deb.sh "dist/meshd_$(VERSION)_$(ARCH).deb" "$(ARCH)"
 
 clean:
 	go clean

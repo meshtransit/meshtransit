@@ -11,6 +11,8 @@ All notable user-visible changes will be documented in this file.
 - Linux quality, vulnerability, opt-in CodeQL, and cross-platform build
   workflows with pinned action and tool versions.
 - Go 1.26.8 toolchain baseline.
+- Reproducible amd64/arm64 Debian package builder with hardened split-privilege
+  systemd services and package lifecycle scripts.
 - Initial daemon composition root.
 - Atomic profile store with one-active-profile enforcement.
 - Versioned local Unix-socket API for health, status, profile creation, listing, and selection.

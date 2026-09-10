@@ -8,6 +8,7 @@
 - docs/architecture.md: component and compatibility boundaries
 - docs/platform-contracts.md: operating-system adapter and privilege boundaries
 - docs/release-v0.1.md: first stable release scope, platform order, and gates
+- docs/linux-packaging.md: Debian package contents, service identities, lifecycle, and rollback procedure
 - docs/security-model.md: threat model, controls, and release gates
 - AGENTS.md: mandatory instructions for coding agents
 

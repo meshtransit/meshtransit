@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|deconfigure)
+        if [ -d /run/systemd/system ]; then
+            systemctl disable --now meshd.service meshnetd.service >/dev/null || true
+        fi
+        ;;
+esac

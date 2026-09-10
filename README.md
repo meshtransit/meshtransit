@@ -99,6 +99,7 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 See [docs/architecture.md](docs/architecture.md),
 [docs/platform-contracts.md](docs/platform-contracts.md),
 [docs/release-v0.1.md](docs/release-v0.1.md),
+[docs/linux-packaging.md](docs/linux-packaging.md),
 [docs/relay.md](docs/relay.md), [docs/dns.md](docs/dns.md), and
 [docs/security-model.md](docs/security-model.md).
 

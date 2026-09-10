@@ -1,0 +1,42 @@
+[Unit]
+Description=MeshTransit privileged network helper
+Documentation=https://github.com/meshtransit/meshd
+After=systemd-sysusers.service systemd-tmpfiles-setup.service
+Before=meshd.service
+PartOf=meshd.service
+
+[Service]
+Type=simple
+User=root
+Group=meshd
+SupplementaryGroups=meshtransit
+UMask=0007
+ExecStart=/usr/libexec/meshtransit/meshnetd --allow-user=meshd --allow-prefix=100.64.0.0/10 --allow-prefix=fd7a:115c:a1e0::/48 --enable-dns-poc
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=15s
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_NET_ADMIN
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=/run/meshd
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

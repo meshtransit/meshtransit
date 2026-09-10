@@ -1,0 +1,45 @@
+[Unit]
+Description=MeshTransit node daemon
+Documentation=https://github.com/meshtransit/meshd
+Wants=network-online.target
+Requires=meshnetd.service
+After=network-online.target meshnetd.service systemd-resolved.service
+
+[Service]
+Type=simple
+User=meshd
+Group=meshtransit
+SupplementaryGroups=meshd
+UMask=0007
+Environment=MESHD_FLAGS=
+EnvironmentFile=-/etc/meshd/meshd.env
+ExecStart=/usr/bin/meshd --allow-socket-peers --enable-wireguard-poc --wireguard-listen-port=41641 --enable-dns-poc $MESHD_FLAGS
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=15s
+StateDirectory=meshd
+StateDirectoryMode=0700
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=/run/meshd
+RemoveIPC=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
