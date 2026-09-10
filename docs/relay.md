@@ -96,7 +96,11 @@ in a newly validated map.
 - received packet queue: 128 entries;
 - connection deadline: 10 seconds;
 - per-node TCP dial deadline: 1.5 seconds;
+- per-node TLS, upgrade, and authenticated-confirmation deadline: 4 seconds;
 - address-family fallback delay: 200 milliseconds;
+- pre-authentication upgrade response: 32 KiB maximum;
+- authenticated server-info frame: 64 KiB maximum;
+- authenticated health and peer-state frames: 1 KiB maximum;
 - write deadline: 5 seconds;
 - reconnect delay: cryptographically jittered from 250 milliseconds to 5
   seconds;
@@ -110,17 +114,22 @@ reverse route. If every non-home worker is protected, preparation fails with a
 bounded region-limit error rather than exceeding the goroutine cap.
 
 Unknown sources and invalid peer packets are discarded. Invalid adapter event
-shapes, unhealthy server reports, receive silence, and transport failures close
-the affected connection and enter bounded reconnect. Cancellation closes active
+shapes, unknown or out-of-phase wire frames, unhealthy server reports, receive
+silence, and transport failures close the affected connection and enter bounded
+reconnect. Cancellation closes active
 connections and joins every worker. WireGuard bind reconfiguration stops one
 connection generation and can safely open the next; destroying the device
 permanently closes the pool and clears its retained private authority. If no
 usable signed relay exists, the data plane can still use a control-authorized
 direct endpoint, but it never invents a relay, disables TLS verification, or
-accepts an unauthorized peer/region combination.
+accepts an unauthorized peer/region combination. A node that authenticates and
+immediately disconnects does not reset exponential retry. Reset requires a
+connection lifetime of at least thirty seconds.
 
 ## Follow-up work
 
-The next relay milestones are operator-facing aggregate health telemetry
-without keys or payloads and adversarial end-to-end tests against malformed or
-overloaded relay servers.
+Deterministic adversarial coverage now includes oversized upgrade headers,
+stalled TLS and missing greetings, unknown and malformed authenticated frames,
+rapid connection churn, and queue byte pressure. Remaining relay release work
+is long-duration saturation testing and operator-facing aggregate health
+telemetry without keys or payloads.

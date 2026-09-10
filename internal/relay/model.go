@@ -19,6 +19,8 @@ const (
 	maxRegions        = 1_024
 	maxNodesPerRegion = 32
 	maxPeers          = 256
+	// MaxPacketSize is the largest encrypted packet accepted by relay orchestration.
+	MaxPacketSize = 2048
 )
 
 // Key is one WireGuard-compatible node identity used only as a relay address.

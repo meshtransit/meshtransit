@@ -97,6 +97,30 @@ func TestPoolBoundsDisconnectedSendQueue(t *testing.T) {
 	}
 }
 
+func TestPoolBoundsDisconnectedSendBytes(t *testing.T) {
+	t.Parallel()
+
+	pool, err := New(t.Context(), testConfig(), blockingDialer{})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+	if err := pool.Open(); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	packetCount := maxRegionQueuedByte / MaxPacketSize
+	batch := make([][]byte, packetCount)
+	for index := range batch {
+		batch[index] = make([]byte, MaxPacketSize)
+	}
+	if err := pool.Send(1, Key{2}, batch); err != nil {
+		t.Fatalf("full-budget Send() error = %v", err)
+	}
+	if err := pool.Send(1, Key{2}, [][]byte{{1}}); !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("over-budget Send() error = %v, want ErrQueueFull", err)
+	}
+}
+
 func TestPoolRestartsConnectionGeneration(t *testing.T) {
 	t.Parallel()
 
@@ -313,6 +337,87 @@ func TestPoolReconnectsSilentAuthenticatedConnection(t *testing.T) {
 	})
 }
 
+func TestPoolBacksOffAcrossAuthenticatedConnectionChurn(t *testing.T) {
+	t.Parallel()
+
+	parent, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	pool, err := New(parent, testConfig(), churnDialer{})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+	attempts := make(chan int, 3)
+	callCount := 0
+	pool.retryDelay = func(attempt int) time.Duration {
+		attempts <- attempt
+		callCount++
+		if callCount == cap(attempts) {
+			cancel()
+		}
+
+		return 0
+	}
+	if err := pool.Open(); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	got := make([]int, 0, cap(attempts))
+	for range cap(attempts) {
+		select {
+		case attempt := <-attempts:
+			got = append(got, attempt)
+		case <-time.After(time.Second):
+			t.Fatalf("retry attempts = %v", got)
+		}
+	}
+	if want := []int{1, 2, 3}; !slices.Equal(got, want) {
+		t.Fatalf("retry attempts = %v, want %v", got, want)
+	}
+}
+
+func TestNextRetryAttempt(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		previous     int
+		connectedFor time.Duration
+		want         int
+	}{
+		{
+			name: "first failure",
+			want: 1,
+		},
+		{
+			name:         "rapid churn",
+			previous:     2,
+			connectedFor: stableConnectionAge - time.Nanosecond,
+			want:         3,
+		},
+		{
+			name:         "stable connection",
+			previous:     5,
+			connectedFor: stableConnectionAge,
+			want:         1,
+		},
+		{
+			name:     "saturated counter",
+			previous: int(^uint(0) >> 1),
+			want:     int(^uint(0) >> 1),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := nextRetryAttempt(test.previous, test.connectedFor); got != test.want {
+				t.Fatalf("nextRetryAttempt() = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
 func TestPoolDoesNotClearNewReverseGeneration(t *testing.T) {
 	t.Parallel()
 
@@ -458,6 +563,30 @@ func (blockingDialer) Dial(
 	<-ctx.Done()
 
 	return nil, ctx.Err()
+}
+
+type churnDialer struct{}
+
+func (churnDialer) Dial(
+	context.Context,
+	Key,
+	Region,
+) (Client, error) {
+	return churnClient{}, nil
+}
+
+type churnClient struct{}
+
+func (churnClient) Send(Key, []byte) error {
+	return nil
+}
+
+func (churnClient) Receive() (ReceiveEvent, error) {
+	return ReceiveEvent{}, errors.New("connection dropped")
+}
+
+func (churnClient) Close() error {
+	return nil
 }
 
 type countingBlockingDialer struct {

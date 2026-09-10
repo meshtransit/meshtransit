@@ -14,7 +14,6 @@ import (
 )
 
 const (
-	maxPacketSize       = 2048
 	maxActiveRegions    = 16
 	sendQueueDepth      = 32
 	receiveQueueDepth   = 128
@@ -24,6 +23,7 @@ const (
 	maxRetryDelay       = 5 * time.Second
 	connectTimeout      = 10 * time.Second
 	receiveSilenceLimit = 2*time.Minute + 10*time.Second
+	stableConnectionAge = 30 * time.Second
 )
 
 var (
@@ -166,7 +166,7 @@ func (p *Pool) Send(regionID int, destination Key, packets [][]byte) error {
 	}
 	total := 0
 	for _, packet := range packets {
-		if len(packet) == 0 || len(packet) > maxPacketSize {
+		if len(packet) == 0 || len(packet) > MaxPacketSize {
 			return errors.New("relay: packet size is invalid")
 		}
 		total += len(packet)
@@ -496,8 +496,8 @@ func (p *Pool) runWorker(worker *regionWorker) {
 
 			return
 		}
+		connectedAt := p.clock()
 		if err == nil {
-			attempt = 0
 			p.markConnected(worker)
 			err = p.runConnection(worker, client)
 		}
@@ -505,11 +505,22 @@ func (p *Pool) runWorker(worker *regionWorker) {
 			return
 		}
 		p.markFailure(worker)
-		attempt++
+		attempt = nextRetryAttempt(attempt, p.clock().Sub(connectedAt))
 		if !waitContext(worker.ctx, p.retryDelay(attempt)) {
 			return
 		}
 	}
+}
+
+func nextRetryAttempt(previous int, connectedFor time.Duration) int {
+	if connectedFor >= stableConnectionAge {
+		return 1
+	}
+	if previous >= math.MaxInt {
+		return math.MaxInt
+	}
+
+	return previous + 1
 }
 
 func (p *Pool) runConnection(worker *regionWorker, client Client) error {
@@ -589,7 +600,7 @@ func (p *Pool) runReceiver(
 			continue
 		}
 		if event.Source == (Key{}) || len(event.Data) == 0 ||
-			len(event.Data) > maxPacketSize {
+			len(event.Data) > MaxPacketSize {
 			continue
 		}
 		if _, exists := p.peerByKey[event.Source]; !exists {

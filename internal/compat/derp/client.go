@@ -3,6 +3,7 @@ package derp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -29,12 +30,14 @@ import (
 )
 
 const (
-	relayPath           = "/derp"
-	writeTimeout        = 5 * time.Second
-	nodeDialTimeout     = 1500 * time.Millisecond
-	familyFallbackDelay = 200 * time.Millisecond
-	maxErrorBody        = 4096
-	certificatePinLabel = "sha256-raw:"
+	relayPath                 = "/derp"
+	writeTimeout              = 5 * time.Second
+	nodeDialTimeout           = 1500 * time.Millisecond
+	defaultNodeSessionTimeout = 4 * time.Second
+	familyFallbackDelay       = 200 * time.Millisecond
+	maxUpgradeResponseBytes   = 32 << 10
+	maxErrorBody              = 4096
+	certificatePinLabel       = "sha256-raw:"
 )
 
 type dialContextFunc func(context.Context, string, string) (net.Conn, error)
@@ -51,8 +54,9 @@ type dialResult struct {
 
 // Dialer opens TLS-only relay sessions without environment proxies or redirects.
 type Dialer struct {
-	dialContext dialContextFunc
-	rootCAs     *x509.CertPool
+	dialContext        dialContextFunc
+	rootCAs            *x509.CertPool
+	nodeSessionTimeout time.Duration
 }
 
 // Client adapts the pinned protocol client to the product relay contract.
@@ -74,7 +78,10 @@ func NewDialer() *Dialer {
 		KeepAlive: 30 * time.Second,
 	}
 
-	return &Dialer{dialContext: networkDialer.DialContext}
+	return &Dialer{
+		dialContext:        networkDialer.DialContext,
+		nodeSessionTimeout: defaultNodeSessionTimeout,
+	}
 }
 
 // Dial tries the control-authorized relay nodes in their signed order.
@@ -95,7 +102,13 @@ func (d *Dialer) Dial(
 
 	var firstErr error
 	for _, node := range region.Nodes {
-		client, err := d.dialNode(ctx, privateKey, node)
+		nodeCtx, cancel := context.WithTimeout(ctx, d.sessionTimeout())
+		client, err := d.dialNode(nodeCtx, privateKey, node)
+		nodeErr := nodeCtx.Err()
+		cancel()
+		if err != nil && nodeErr != nil {
+			err = nodeErr
+		}
 		if err == nil {
 			return client, nil
 		}
@@ -111,6 +124,14 @@ func (d *Dialer) Dial(
 	}
 
 	return nil, fmt.Errorf("relay protocol: connecting to region %d: %w", region.ID, firstErr)
+}
+
+func (d *Dialer) sessionTimeout() time.Duration {
+	if d.nodeSessionTimeout <= 0 {
+		return defaultNodeSessionTimeout
+	}
+
+	return d.nodeSessionTimeout
 }
 
 func (d *Dialer) dialNode(
@@ -147,7 +168,13 @@ func (d *Dialer) dialNode(
 
 		return nil, fmt.Errorf("verifying relay tls: %w", err)
 	}
-	buffer := bufio.NewReadWriter(bufio.NewReader(tlsConn), bufio.NewWriter(tlsConn))
+	upgradeLimit := &io.LimitedReader{
+		R: tlsConn,
+		N: maxUpgradeResponseBytes + 1,
+	}
+	upgradeReader := bufio.NewReader(upgradeLimit)
+	writer := bufio.NewWriter(tlsConn)
+	buffer := bufio.NewReadWriter(upgradeReader, writer)
 	requestURL := &url.URL{
 		Scheme: "https",
 		Host:   authority,
@@ -172,6 +199,15 @@ func (d *Dialer) dialNode(
 		return nil, fmt.Errorf("flushing relay upgrade request: %w", err)
 	}
 	response, err := http.ReadResponse(buffer.Reader, request)
+	upgradeBytes := maxUpgradeResponseBytes + 1 - upgradeLimit.N
+	if upgradeBytes > maxUpgradeResponseBytes {
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		_ = tlsConn.Close()
+
+		return nil, errors.New("relay protocol: upgrade response exceeds limit")
+	}
 	if err != nil {
 		_ = tlsConn.Close()
 
@@ -186,6 +222,15 @@ func (d *Dialer) dialNode(
 
 		return nil, fmt.Errorf("relay protocol: upgrade rejected with status %d", response.StatusCode)
 	}
+	_ = response.Body.Close()
+	prefetched := make([]byte, upgradeReader.Buffered())
+	if _, err := io.ReadFull(upgradeReader, prefetched); err != nil {
+		_ = tlsConn.Close()
+
+		return nil, fmt.Errorf("preserving relay greeting: %w", err)
+	}
+	guardedReader := newServerFrameReader(io.MultiReader(bytes.NewReader(prefetched), tlsConn))
+	buffer = bufio.NewReadWriter(bufio.NewReader(guardedReader), writer)
 
 	var encodedPrivate [64]byte
 	hex.Encode(encodedPrivate[:], privateKey[:])

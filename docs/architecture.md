@@ -109,7 +109,12 @@ product types. `internal/compat/derp` alone owns the pinned wire codec. The
 adapter opens raw TLS without environment proxies or redirects, verifies normal,
 alternate-name, or exact control-signed certificate authority, requires the
 protocol upgrade and authenticated server greeting, and carries unchanged
-WireGuard ciphertext. Each client has at most sixteen active region workers,
+WireGuard ciphertext. Each signed node receives a four-second end-to-end
+session attempt inside the ten-second region budget, so a node that stalls TLS,
+upgrade, or greeting cannot consume all failover time. The upgrade response is
+limited to 32 KiB. After upgrade, a strict reader admits only version-pinned
+server frame types and bounds their shape before the compatibility codec can
+allocate from a remote length. Each client has at most sixteen active region workers,
 32 queued batches per region, one MiB per-region and four MiB total queued send
 data, plus a bounded receive queue. An authenticated inbound packet records a
 connection-scoped reverse route so a responder can reply on the exact region
@@ -120,7 +125,9 @@ reverse routes; replacement waits for complete worker exit, preserving the
 goroutine bound. Authenticated liveness frames update payload-free health state,
 and receive silence forces bounded reconnect. Closing a pool
 cancels dials, closes active connections, unblocks receive, and joins every
-worker.
+worker. Rapid authenticate-and-disconnect churn preserves exponential backoff;
+the retry sequence resets only after a connection remains established for
+thirty seconds.
 
 ## DNS boundary
 

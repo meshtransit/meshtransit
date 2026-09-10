@@ -64,6 +64,62 @@ func TestDialRejectsNonUpgradeResponse(t *testing.T) {
 	}
 }
 
+func TestDialRejectsOversizedUpgradeResponse(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(
+		response http.ResponseWriter,
+		_ *http.Request,
+	) {
+		hijacker, ok := response.(http.Hijacker)
+		if !ok {
+			t.Error("test server cannot hijack connection")
+
+			return
+		}
+		connection, _, err := hijacker.Hijack()
+		if err != nil {
+			t.Errorf("Hijack() error = %v", err)
+
+			return
+		}
+		defer func() { _ = connection.Close() }()
+		_, _ = io.WriteString(
+			connection,
+			"HTTP/1.1 101 Switching Protocols\r\n"+
+				"Upgrade: DERP\r\n"+
+				"Connection: Upgrade\r\n"+
+				"X-Padding: "+strings.Repeat("a", 40<<10)+"\r\n\r\n",
+		)
+	}))
+	t.Cleanup(server.Close)
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	dialer := &Dialer{
+		dialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			var networkDialer net.Dialer
+
+			return networkDialer.DialContext(ctx, network, server.Listener.Addr().String())
+		},
+		rootCAs: roots,
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	_, err := dialer.Dial(ctx, relay.Key{1}, relay.Region{
+		ID: 1,
+		Nodes: []relay.Node{{
+			Name:     "relay",
+			HostName: server.Certificate().DNSNames[0],
+			IPv4:     "192.0.2.1",
+			IPv6:     "none",
+			Port:     443,
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "upgrade response exceeds limit") {
+		t.Fatalf("Dial() error = %v", err)
+	}
+}
+
 func TestTLSConfigVerifiesAlternateCertificateName(t *testing.T) {
 	t.Parallel()
 
