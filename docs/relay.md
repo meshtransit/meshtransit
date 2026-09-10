@@ -48,6 +48,15 @@ verification accepts only one of these control-authorized modes:
 - an exact lowercase `sha256-raw:` certificate pin, with hostname and validity
   checks still enforced.
 
+Each node uses its signed IPv6 and IPv4 fields independently. An empty field
+resolves the signed hostname for that family, `none` disables that family, and
+a literal must be a valid global-unicast address of the declared family.
+IPv6 starts first and IPv4 follows after 200 milliseconds, or immediately when
+IPv6 fails. Only the winning TCP socket proceeds to TLS and protocol
+authentication; every started losing attempt is canceled, closed, and joined.
+The TLS SNI and HTTP authority remain the signed hostname even when the socket
+dials a literal address.
+
 The adapter answers protocol pings, treats restart notices and explicit unhealthy
 reports as reconnect signals, and translates authenticated keepalive, presence,
 and healthy-status frames into a payload-free product activity event. It returns
@@ -86,6 +95,8 @@ in a newly validated map.
 - pending send bytes: 1 MiB per region and 4 MiB total;
 - received packet queue: 128 entries;
 - connection deadline: 10 seconds;
+- per-node TCP dial deadline: 1.5 seconds;
+- address-family fallback delay: 200 milliseconds;
 - write deadline: 5 seconds;
 - reconnect delay: cryptographically jittered from 250 milliseconds to 5
   seconds;
@@ -110,7 +121,6 @@ accepts an unauthorized peer/region combination.
 
 ## Follow-up work
 
-The next relay milestones are explicit IPv4/IPv6 node dialing with bounded
-happy-eyeballs behavior, operator-facing aggregate health telemetry without
-keys or payloads, and adversarial end-to-end tests against malformed or
+The next relay milestones are operator-facing aggregate health telemetry
+without keys or payloads and adversarial end-to-end tests against malformed or
 overloaded relay servers.

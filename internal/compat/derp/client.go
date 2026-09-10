@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -30,11 +31,23 @@ import (
 const (
 	relayPath           = "/derp"
 	writeTimeout        = 5 * time.Second
+	nodeDialTimeout     = 1500 * time.Millisecond
+	familyFallbackDelay = 200 * time.Millisecond
 	maxErrorBody        = 4096
 	certificatePinLabel = "sha256-raw:"
 )
 
 type dialContextFunc func(context.Context, string, string) (net.Conn, error)
+
+type dialCandidate struct {
+	network string
+	address string
+}
+
+type dialResult struct {
+	conn net.Conn
+	err  error
+}
 
 // Dialer opens TLS-only relay sessions without environment proxies or redirects.
 type Dialer struct {
@@ -108,8 +121,8 @@ func (d *Dialer) dialNode(
 	if node.HostName == "" || node.Port == 0 {
 		return nil, errors.New("relay protocol: node endpoint is invalid")
 	}
-	address := net.JoinHostPort(node.HostName, fmt.Sprint(node.Port))
-	tcpConn, err := d.dialContext(ctx, "tcp", address)
+	authority := net.JoinHostPort(node.HostName, fmt.Sprint(node.Port))
+	tcpConn, err := d.dialNodeTCP(ctx, node)
 	if err != nil {
 		return nil, fmt.Errorf("dialing relay node: %w", err)
 	}
@@ -137,7 +150,7 @@ func (d *Dialer) dialNode(
 	buffer := bufio.NewReadWriter(bufio.NewReader(tlsConn), bufio.NewWriter(tlsConn))
 	requestURL := &url.URL{
 		Scheme: "https",
-		Host:   address,
+		Host:   authority,
 		Path:   relayPath,
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
@@ -214,6 +227,165 @@ func (d *Dialer) dialNode(
 	}
 
 	return &Client{protocol: protocolClient, conn: tlsConn}, nil
+}
+
+func (d *Dialer) dialNodeTCP(ctx context.Context, node relay.Node) (net.Conn, error) {
+	candidates, err := relayDialCandidates(node)
+	if err != nil {
+		return nil, err
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, nodeDialTimeout)
+	defer cancel()
+	if len(candidates) == 1 {
+		return d.raceDialCandidates(dialCtx, candidates, nil)
+	}
+
+	timer := time.NewTimer(familyFallbackDelay)
+	defer timer.Stop()
+
+	return d.raceDialCandidates(dialCtx, candidates, timer.C)
+}
+
+// raceDialCandidates starts the preferred family immediately. The fallback
+// starts when the preferred attempt fails or fallbackReady fires, whichever is
+// first. Every started attempt is joined before the function returns.
+func (d *Dialer) raceDialCandidates(
+	ctx context.Context,
+	candidates []dialCandidate,
+	fallbackReady <-chan time.Time,
+) (net.Conn, error) {
+	if len(candidates) == 0 || len(candidates) > 2 {
+		return nil, errors.New("relay protocol: dial candidate set is invalid")
+	}
+	dialCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan dialResult, len(candidates))
+	start := func(candidate dialCandidate) {
+		go func() {
+			conn, err := d.dialContext(dialCtx, candidate.network, candidate.address)
+			if conn == nil && err == nil {
+				err = errors.New("relay protocol: dial returned an empty connection")
+			}
+			results <- dialResult{conn: conn, err: err}
+		}()
+	}
+
+	start(candidates[0])
+	next := 1
+	pending := 1
+	var failures []error
+	closePending := func(count int) {
+		for range count {
+			result := <-results
+			if result.conn != nil {
+				_ = result.conn.Close()
+			}
+		}
+	}
+	for {
+		select {
+		case result := <-results:
+			pending--
+			if result.err == nil {
+				if err := ctx.Err(); err != nil {
+					_ = result.conn.Close()
+					cancel()
+					closePending(pending)
+
+					return nil, err
+				}
+				cancel()
+				closePending(pending)
+
+				return result.conn, nil
+			}
+			if result.conn != nil {
+				_ = result.conn.Close()
+			}
+			failures = append(failures, result.err)
+			if next < len(candidates) {
+				start(candidates[next])
+				next++
+				pending++
+				fallbackReady = nil
+			}
+			if pending == 0 {
+				return nil, errors.Join(failures...)
+			}
+		case <-fallbackReady:
+			fallbackReady = nil
+			if next < len(candidates) {
+				start(candidates[next])
+				next++
+				pending++
+			}
+		case <-ctx.Done():
+			cancel()
+			closePending(pending)
+
+			return nil, ctx.Err()
+		}
+	}
+}
+
+func relayDialCandidates(node relay.Node) ([]dialCandidate, error) {
+	candidates := make([]dialCandidate, 0, 2)
+	for _, family := range []struct {
+		network string
+		rawIP   string
+		is4     bool
+	}{
+		{network: "tcp6", rawIP: node.IPv6},
+		{network: "tcp4", rawIP: node.IPv4, is4: true},
+	} {
+		candidate, enabled, err := relayDialCandidate(node, family.network, family.rawIP, family.is4)
+		if err != nil {
+			return nil, err
+		}
+		if enabled {
+			candidates = append(candidates, candidate)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, errors.New("relay protocol: both address families are disabled")
+	}
+
+	return candidates, nil
+}
+
+func relayDialCandidate(
+	node relay.Node,
+	network string,
+	rawIP string,
+	wantIPv4 bool,
+) (dialCandidate, bool, error) {
+	if rawIP == "none" {
+		return dialCandidate{}, false, nil
+	}
+	host := node.HostName
+	if rawIP != "" {
+		address, err := netip.ParseAddr(rawIP)
+		wrongFamily := (wantIPv4 && !address.Is4()) || (!wantIPv4 && !address.Is6())
+		if err != nil || wrongFamily || address.Is4In6() || address.Zone() != "" ||
+			address != address.Unmap() || !address.IsGlobalUnicast() ||
+			address.IsUnspecified() || address.IsMulticast() || address.IsLoopback() ||
+			address.IsLinkLocalUnicast() {
+			return dialCandidate{}, false, errors.New(
+				"relay protocol: explicit node address is invalid",
+			)
+		}
+		host = address.String()
+	} else if address, err := netip.ParseAddr(host); err == nil {
+		if (wantIPv4 && !address.Is4()) || (!wantIPv4 && !address.Is6()) {
+			return dialCandidate{}, false, nil
+		}
+		host = address.String()
+	}
+
+	return dialCandidate{
+		network: network,
+		address: net.JoinHostPort(host, fmt.Sprint(node.Port)),
+	}, true, nil
 }
 
 // Send writes one encrypted WireGuard packet to a relay-addressed peer.
