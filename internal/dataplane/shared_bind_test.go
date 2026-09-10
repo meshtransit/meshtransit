@@ -267,36 +267,8 @@ func TestSharedBindDelegatesWireGuardOperations(t *testing.T) {
 func TestSharedBindRoutesEncryptedPacketsThroughRelay(t *testing.T) {
 	t.Parallel()
 
-	privateKey := relay.Key{1}
-	private, err := ecdh.X25519().NewPrivateKey(privateKey[:])
-	if err != nil {
-		t.Fatalf("NewPrivateKey() error = %v", err)
-	}
-	peerKey := relay.Key{2}
 	client := newRelayTestClient()
-	pool, err := relay.New(t.Context(), relay.Config{
-		PrivateKey: privateKey,
-		PublicKey:  relay.Key(private.PublicKey().Bytes()),
-		HomeRegion: 1,
-		Regions: map[int]relay.Region{
-			1: {
-				ID: 1,
-				Nodes: []relay.Node{{
-					Name:     "relay",
-					HostName: "relay.example.com",
-					Port:     443,
-				}},
-			},
-		},
-		Peers: []relay.Peer{{
-			Key:        peerKey,
-			HomeRegion: 1,
-			Address:    netip.MustParseAddr("100.64.0.4"),
-		}},
-	}, relayTestDialer{client: client})
-	if err != nil {
-		t.Fatalf("relay.New() error = %v", err)
-	}
+	pool, peerKey := newTestRelayPool(t, client)
 	inner := newFakeInnerBind()
 	shared, err := newSharedBindWithRelay(inner, &socketGenerationSource{}, pool)
 	if err != nil {
@@ -306,7 +278,10 @@ func TestSharedBindRoutesEncryptedPacketsThroughRelay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	t.Cleanup(func() { _ = shared.Close() })
+	t.Cleanup(func() {
+		_ = shared.Close()
+		_ = shared.closeRelayPermanently()
+	})
 	if len(receivers) != 2 {
 		t.Fatalf("Open() receivers = %d, want 2", len(receivers))
 	}
@@ -355,6 +330,74 @@ func TestSharedBindRoutesEncryptedPacketsThroughRelay(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("relay receive timed out")
 	}
+}
+
+func TestSharedBindRestartsRelayAcrossBindCycles(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := newTestRelayPool(t, newRelayTestClient())
+	shared, err := newSharedBindWithRelay(
+		newFakeInnerBind(),
+		&socketGenerationSource{},
+		pool,
+	)
+	if err != nil {
+		t.Fatalf("newSharedBindWithRelay() error = %v", err)
+	}
+	if err := shared.Close(); err != nil {
+		t.Fatalf("Close() before Open() error = %v", err)
+	}
+	for cycle := 1; cycle <= 2; cycle++ {
+		receivers, _, err := shared.Open(41641)
+		if err != nil || len(receivers) != 2 {
+			t.Fatalf("Open(cycle %d) = %d receivers, %v", cycle, len(receivers), err)
+		}
+		if err := shared.Close(); err != nil {
+			t.Fatalf("Close(cycle %d) error = %v", cycle, err)
+		}
+	}
+	if err := shared.closeRelayPermanently(); err != nil {
+		t.Fatalf("closeRelayPermanently() error = %v", err)
+	}
+	if _, _, err := shared.Open(41641); !errors.Is(err, relay.ErrClosed) {
+		t.Fatalf("Open() after permanent close error = %v, want relay.ErrClosed", err)
+	}
+}
+
+func newTestRelayPool(t *testing.T, client relay.Client) (*relay.Pool, relay.Key) {
+	t.Helper()
+
+	privateKey := relay.Key{1}
+	private, err := ecdh.X25519().NewPrivateKey(privateKey[:])
+	if err != nil {
+		t.Fatalf("NewPrivateKey() error = %v", err)
+	}
+	peerKey := relay.Key{2}
+	pool, err := relay.New(t.Context(), relay.Config{
+		PrivateKey: privateKey,
+		PublicKey:  relay.Key(private.PublicKey().Bytes()),
+		HomeRegion: 1,
+		Regions: map[int]relay.Region{
+			1: {
+				ID: 1,
+				Nodes: []relay.Node{{
+					Name:     "relay",
+					HostName: "relay.example.com",
+					Port:     443,
+				}},
+			},
+		},
+		Peers: []relay.Peer{{
+			Key:        peerKey,
+			HomeRegion: 1,
+			Address:    netip.MustParseAddr("100.64.0.4"),
+		}},
+	}, relayTestDialer{client: client})
+	if err != nil {
+		t.Fatalf("relay.New() error = %v", err)
+	}
+
+	return pool, peerKey
 }
 
 type queuedDatagram struct {

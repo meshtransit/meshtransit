@@ -51,12 +51,14 @@ type regionWorker struct {
 type Pool struct {
 	config     Config
 	dialer     Dialer
+	parent     context.Context
 	ctx        context.Context
 	cancel     context.CancelFunc
 	retryDelay func(int) time.Duration
 	receive    chan Packet
 	done       chan struct{}
 
+	lifecycle    sync.Mutex
 	mu           sync.Mutex
 	workers      map[int]*regionWorker
 	peerByKey    map[Key]Peer
@@ -65,7 +67,6 @@ type Pool struct {
 	isOpen       bool
 	isClosed     bool
 	wait         sync.WaitGroup
-	closeOnce    sync.Once
 }
 
 // New constructs a stopped relay pool from one validated map authority.
@@ -80,23 +81,17 @@ func New(parent context.Context, config Config, dialer Dialer) (*Pool, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(parent)
 	peers := make(map[Key]Peer, len(validated.Peers))
 	for _, peer := range validated.Peers {
 		peers[peer.Key] = peer
 	}
 
 	return &Pool{
-		config:       validated,
-		dialer:       dialer,
-		ctx:          ctx,
-		cancel:       cancel,
-		retryDelay:   randomizedRetryDelay,
-		receive:      make(chan Packet, receiveQueueDepth),
-		done:         make(chan struct{}),
-		workers:      make(map[int]*regionWorker),
-		peerByKey:    peers,
-		reverseByKey: make(map[Key]int),
+		config:     validated,
+		dialer:     dialer,
+		parent:     parent,
+		retryDelay: randomizedRetryDelay,
+		peerByKey:  peers,
 	}, nil
 }
 
@@ -104,6 +99,11 @@ func New(parent context.Context, config Config, dialer Dialer) (*Pool, error) {
 func (p *Pool) Open() error {
 	if p == nil {
 		return ErrClosed
+	}
+	p.lifecycle.Lock()
+	defer p.lifecycle.Unlock()
+	if err := p.parent.Err(); err != nil {
+		return err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -113,6 +113,12 @@ func (p *Pool) Open() error {
 	if p.isOpen {
 		return nil
 	}
+	p.ctx, p.cancel = context.WithCancel(p.parent)
+	p.receive = make(chan Packet, receiveQueueDepth)
+	p.done = make(chan struct{})
+	p.workers = make(map[int]*regionWorker)
+	p.reverseByKey = make(map[Key]int)
+	p.queuedBytes = 0
 	p.isOpen = true
 	if _, err := p.ensureWorkerLocked(p.config.HomeRegion); err != nil {
 		p.isOpen = false
@@ -185,15 +191,24 @@ func (p *Pool) Receive() (Packet, error) {
 	if p == nil {
 		return Packet{}, ErrClosed
 	}
+	p.mu.Lock()
+	if !p.isOpen {
+		p.mu.Unlock()
+
+		return Packet{}, net.ErrClosed
+	}
+	receive := p.receive
+	done := p.done
+	p.mu.Unlock()
 	select {
-	case <-p.done:
+	case <-done:
 		return Packet{}, net.ErrClosed
 	default:
 	}
 	select {
-	case packet := <-p.receive:
+	case packet := <-receive:
 		return packet, nil
-	case <-p.done:
+	case <-done:
 		return Packet{}, net.ErrClosed
 	}
 }
@@ -219,23 +234,57 @@ func (p *Pool) Region(id int) (Region, bool) {
 	return region, exists
 }
 
-// Close cancels all connection workers and waits for every goroutine to exit.
+// Stop ends the current connection generation while keeping the pool reusable.
+func (p *Pool) Stop() error {
+	if p == nil {
+		return nil
+	}
+	p.lifecycle.Lock()
+	defer p.lifecycle.Unlock()
+	p.stopLocked()
+
+	return nil
+}
+
+// Close permanently stops the pool and clears its private relay authority.
 func (p *Pool) Close() error {
 	if p == nil {
 		return nil
 	}
-	p.closeOnce.Do(func() {
-		p.mu.Lock()
-		p.isClosed = true
-		p.isOpen = false
-		p.mu.Unlock()
-		p.cancel()
-		p.wait.Wait()
-		clear(p.config.PrivateKey[:])
-		close(p.done)
-	})
+	p.lifecycle.Lock()
+	defer p.lifecycle.Unlock()
+	p.stopLocked()
+	p.mu.Lock()
+	p.isClosed = true
+	clear(p.config.PrivateKey[:])
+	p.mu.Unlock()
 
 	return nil
+}
+
+func (p *Pool) stopLocked() {
+	p.mu.Lock()
+	if !p.isOpen {
+		p.mu.Unlock()
+
+		return
+	}
+	p.isOpen = false
+	cancel := p.cancel
+	done := p.done
+	p.mu.Unlock()
+	cancel()
+	close(done)
+	p.wait.Wait()
+	p.mu.Lock()
+	p.ctx = nil
+	p.cancel = nil
+	p.receive = nil
+	p.done = nil
+	p.workers = nil
+	p.reverseByKey = nil
+	p.queuedBytes = 0
+	p.mu.Unlock()
 }
 
 func (p *Pool) ensureWorkerLocked(regionID int) (*regionWorker, error) {

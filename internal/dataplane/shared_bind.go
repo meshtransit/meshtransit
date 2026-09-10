@@ -326,5 +326,13 @@ func (b *sharedBind) closeRelay() error {
 		return nil
 	}
 
+	return b.relay.Stop()
+}
+
+func (b *sharedBind) closeRelayPermanently() error {
+	if b.relay == nil {
+		return nil
+	}
+
 	return b.relay.Close()
 }

@@ -95,6 +95,37 @@ func TestPoolBoundsDisconnectedSendQueue(t *testing.T) {
 	}
 }
 
+func TestPoolRestartsConnectionGeneration(t *testing.T) {
+	t.Parallel()
+
+	dialer := blockingDialer{}
+	pool, err := New(t.Context(), testConfig(), dialer)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if err := pool.Stop(); err != nil {
+		t.Fatalf("Stop() before Open() error = %v", err)
+	}
+	if err := pool.Open(); err != nil {
+		t.Fatalf("first Open() error = %v", err)
+	}
+	if err := pool.Stop(); err != nil {
+		t.Fatalf("first Stop() error = %v", err)
+	}
+	if pool.config.PrivateKey == (Key{}) {
+		t.Fatal("Stop() cleared reusable private relay authority")
+	}
+	if err := pool.Open(); err != nil {
+		t.Fatalf("second Open() error = %v", err)
+	}
+	if err := pool.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := pool.Open(); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Open() after Close() error = %v, want ErrClosed", err)
+	}
+}
+
 func TestPoolRejectsPeerOnWrongRegion(t *testing.T) {
 	t.Parallel()
 

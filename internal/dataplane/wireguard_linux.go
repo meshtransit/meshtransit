@@ -113,7 +113,10 @@ func (d *officialWireGuardDevice) Configure(configuration io.Reader) error {
 
 func (d *officialWireGuardDevice) Up() error { return d.device.Up() }
 
-func (d *officialWireGuardDevice) Close() { d.device.Close() }
+func (d *officialWireGuardDevice) Close() {
+	d.device.Close()
+	_ = d.bind.closeRelayPermanently()
+}
 
 func (d *officialWireGuardDevice) DiscoverySocket() pathdiscovery.Socket {
 	if d == nil || d.discovery == nil {

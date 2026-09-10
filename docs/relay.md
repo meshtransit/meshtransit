@@ -70,10 +70,12 @@ is deleted when that relay connection ends.
 
 Queue saturation drops the attempted relay packet instead of growing memory.
 Unknown sources and invalid frames are discarded. Cancellation closes active
-connections and joins every worker. If no usable signed relay exists, the data
-plane can still use a control-authorized direct endpoint, but it never invents
-a relay, disables TLS verification, or accepts an unauthorized peer/region
-combination.
+connections and joins every worker. WireGuard bind reconfiguration stops one
+connection generation and can safely open the next; destroying the device
+permanently closes the pool and clears its retained private authority. If no
+usable signed relay exists, the data plane can still use a control-authorized
+direct endpoint, but it never invents a relay, disables TLS verification, or
+accepts an unauthorized peer/region combination.
 
 ## Follow-up work
 
