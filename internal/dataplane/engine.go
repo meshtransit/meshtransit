@@ -25,6 +25,8 @@ const (
 	StatePolicyUnsupported State = "policy_unsupported"
 	// StateEncrypted means the direct encrypted packet engine is active.
 	StateEncrypted State = "encrypted_direct"
+	// StateEncryptedRelay means the encrypted engine has a bounded relay fallback.
+	StateEncryptedRelay State = "encrypted_relay_ready"
 	// StateFailed means privileged setup failed closed.
 	StateFailed State = "failed"
 )

@@ -9,7 +9,9 @@ import (
 	"net/netip"
 	"os"
 
+	relaywire "github.com/meshtransit/meshd/internal/compat/derp"
 	"github.com/meshtransit/meshd/internal/pathdiscovery"
+	"github.com/meshtransit/meshd/internal/relay"
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
@@ -31,10 +33,12 @@ func newWireGuardFactory() (wireGuardFactory, error) {
 }
 
 func (f *officialWireGuardFactory) New(
+	ctx context.Context,
 	file *os.File,
 	mtu int,
 	filter *policyFilter,
 	observer PacketObserver,
+	relayConfig *relay.Config,
 ) (wireGuardDevice, error) {
 	if f == nil || f.generations == nil {
 		return nil, errors.New("dataplane: wireguard factory is not initialized")
@@ -54,29 +58,43 @@ func (f *officialWireGuardFactory) New(
 		Verbosef: device.DiscardLogf,
 		Errorf:   device.DiscardLogf,
 	}
-	bind, err := newSharedBindWithGenerationSource(
+	var relayPool *relay.Pool
+	if relayConfig != nil {
+		relayPool, err = relay.New(ctx, *relayConfig, relaywire.NewDialer())
+		if err != nil {
+			_ = tunDevice.Close()
+
+			return nil, err
+		}
+	}
+	bind, err := newSharedBindWithRelay(
 		conn.NewDefaultBind(),
 		f.generations,
+		relayPool,
 	)
 	if err != nil {
 		_ = tunDevice.Close()
+		_ = relayPool.Close()
 
 		return nil, err
 	}
 	discovery, err := pathdiscovery.NewDiscovery(bind)
 	if err != nil {
 		_ = tunDevice.Close()
+		_ = relayPool.Close()
 
 		return nil, err
 	}
 	datagrams, err := newControlDatagramMux(discovery)
 	if err != nil {
 		_ = tunDevice.Close()
+		_ = relayPool.Close()
 
 		return nil, err
 	}
 	if err := bind.setDatagramHandler(datagrams); err != nil {
 		_ = tunDevice.Close()
+		_ = relayPool.Close()
 
 		return nil, err
 	}

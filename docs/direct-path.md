@@ -114,6 +114,6 @@ peer map ──────────► authenticated path manager ───�
    WireGuard engine lifetime, so recreating a bind cannot make a fresh path
    generation look stale or reuse authority from an earlier socket.
 
-Port mapping and relay transport remain separate follow-up capabilities. They
-have candidate types now, but they are not treated as implemented until their
-own security and interoperability gates pass.
+Port mapping remains a separate follow-up capability. The bounded relay base
+path is described in [relay.md](relay.md); it is not a direct candidate and does
+not weaken the endpoint authority or freshness rules above.

@@ -1,6 +1,6 @@
 # meshd
 
-`meshd` is the MeshTransit node daemon. It owns local profile and identity state, performs pinned encrypted control registration, maintains a validated control-map stream, and exposes a versioned local API. Opt-in Linux POCs run an encrypted direct WireGuard path, MagicDNS through `systemd-resolved`, and header-only flow telemetry on explicitly authorized peer routes.
+`meshd` is the MeshTransit node daemon. It owns local profile and identity state, performs pinned encrypted control registration, maintains a validated control-map stream, and exposes a versioned local API. Opt-in Linux POCs run encrypted WireGuard over authenticated relay and direct paths, MagicDNS through `systemd-resolved`, and header-only flow telemetry on explicitly authorized peer routes.
 
 ## Demo
 
@@ -9,7 +9,7 @@ $ meshd --socket /tmp/meshd.sock --state-dir /tmp/meshd-state
 {"level":"INFO","msg":"meshd started","socket":"/tmp/meshd.sock","version":"dev"}
 ```
 
-Without an explicit POC flag the daemon remains control-only and reports `data_plane: not_implemented`. The direct-path POC is deliberately narrower than a production client: it discovers safe host-interface and server-reflexive peer endpoints, supports optional explicitly configured candidates, installs host routes, enforces node-specific protocol/port policy, and permits only bounded replies to flows initiated by the local node. The Linux DNS POC serves MagicDNS A, AAAA, and PTR records, authoritative negative answers, classic-IP split DNS, and global forwarding without replacing local DNS unless the control map explicitly requests a default route. Relay, subnet/exit routing, encrypted DNS transports, fragmented packets, and unsupported narrow transport semantics remain fail closed.
+Without an explicit POC flag the daemon remains control-only and reports `data_plane: not_implemented`. The packet-path POC is deliberately narrower than a production client: it keeps a bounded TLS relay path as the initial encrypted route, discovers safe host-interface and server-reflexive peer endpoints, promotes only authenticated direct candidates, installs host routes, enforces node-specific protocol/port policy, and permits only bounded replies to flows initiated by the local node. The Linux DNS POC serves MagicDNS A, AAAA, and PTR records, authoritative negative answers, classic-IP split DNS, and global forwarding without replacing local DNS unless the control map explicitly requests a default route. Subnet/exit routing, encrypted DNS transports, fragmented packets, and unsupported narrow transport semantics remain fail closed.
 
 On a disposable Linux host, the privileged boundary can be exercised explicitly:
 
@@ -92,14 +92,15 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - Explicit `--enable-tun-poc` lifecycle that closes the non-persistent TUN on default-deny, profile changes, control failure, and shutdown.
 - Linux userspace WireGuard direct-path POC with signed-map key binding, automatically discovered endpoints, optional configured candidates, exact dynamic helper address/route verification, node-specific inbound protocol/port filtering, and bounded stateful replies for locally initiated TCP, UDP, and ICMP echo flows.
 - Shared-socket STUN endpoint publication and authenticated peer probing with session/map/socket generation binding, bounded asynchronous receive work, paced signed-endpoint scheduling, and deterministic authenticated endpoint promotion, expiry, fallback, and roaming.
+- Bounded TLS relay sessions selected only from the validated control map, carrying unchanged WireGuard ciphertext and serving as the base route until a direct endpoint is cryptographically proven.
 - Opt-in native flow telemetry with redacted control-issued credentials, bounded non-blocking queues, TCP handshake state, explicit per-direction counters, HTTPS-only uploads, redirect refusal, and no packet payload retention.
 - No copied compatibility-reference source.
 
-See [docs/architecture.md](docs/architecture.md), [docs/dns.md](docs/dns.md), and [docs/security-model.md](docs/security-model.md).
+See [docs/architecture.md](docs/architecture.md), [docs/relay.md](docs/relay.md), [docs/dns.md](docs/dns.md), and [docs/security-model.md](docs/security-model.md).
 
 ## Current scope
 
-This repository can validate a server key, explicitly pin it, persist and register a per-profile identity, maintain the active profile's control stream, atomically publish a validated network map, activate Linux MagicDNS and split-DNS routing, create a Linux TUN through a separate privileged process, reconcile signed host routes inside fixed overlay pools, enforce host-level packet policy, publish discovered endpoints, run authenticated direct-path probes, and roam encrypted traffic between authenticated public and private direct paths. `doctor control` remains a non-persisting diagnostic. It does not yet implement encrypted resolver transports, relay traversal, subnet/exit routes, fragment reassembly, or complete port semantics for transports other than TCP and UDP.
+This repository can validate a server key, explicitly pin it, persist and register a per-profile identity, maintain the active profile's control stream, atomically publish a validated network map, activate Linux MagicDNS and split-DNS routing, create a Linux TUN through a separate privileged process, reconcile signed host routes inside fixed overlay pools, enforce host-level packet policy, maintain an encrypted relay base path, publish discovered endpoints, run authenticated direct-path probes, and roam encrypted traffic between relay, public, and private paths. `doctor control` remains a non-persisting diagnostic. It does not yet implement encrypted resolver transports, subnet/exit routes, fragment reassembly, or complete port semantics for transports other than TCP and UDP.
 
 Private identity records currently rely on the daemon account and filesystem permissions for at-rest protection. Treat `/var/lib/meshd` and its backups as secrets. OS-backed sealing is still a production release gate.
 

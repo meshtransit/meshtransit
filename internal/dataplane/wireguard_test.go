@@ -5,6 +5,7 @@ import (
 	"crypto/ecdh"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/netip"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/meshtransit/meshd/internal/netadmin"
 	"github.com/meshtransit/meshd/internal/networkmap"
 	"github.com/meshtransit/meshd/internal/pathdiscovery"
+	"github.com/meshtransit/meshd/internal/relay"
 )
 
 func TestWireGuardEngineApply(t *testing.T) {
@@ -690,6 +692,198 @@ func TestNodePrivateKeyFormattingIsRedacted(t *testing.T) {
 	}
 }
 
+func TestWireGuardEngineUsesRelayBeforeAuthenticatedDirectPath(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot = addTestRelay(snapshot)
+	opener := &wireGuardTUNOpener{}
+	device := &fakeWireGuardDevice{}
+	factory := &fakeWireGuardFactory{device: device}
+	engine, err := newWireGuardEngine(opener, 41641, factory, nil)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	state, err := engine.Apply(t.Context(), snapshot, privateKey)
+	if err != nil || state != StateEncryptedRelay {
+		t.Fatalf("Apply() = %q, %v", state, err)
+	}
+	peerKey, err := parseNodePublicKey(snapshot.Peers[0].PublicKey)
+	if err != nil {
+		t.Fatalf("parseNodePublicKey() error = %v", err)
+	}
+	relayEndpoint := formatRelayEndpoint(1, relay.Key(peerKey))
+	if !strings.Contains(device.configuration, "endpoint="+relayEndpoint+"\n") {
+		t.Fatalf("initial configuration = %q, want relay endpoint", device.configuration)
+	}
+	directEndpoint := snapshot.Peers[0].Endpoints[0]
+	if strings.Contains(device.configuration, "endpoint="+directEndpoint.String()+"\n") {
+		t.Fatalf("initial configuration selected unproven direct endpoint: %q", device.configuration)
+	}
+	if factory.relayFingerprint == ([32]byte{}) {
+		t.Fatal("factory did not receive relay authority")
+	}
+
+	if err := engine.SetPreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+		directEndpoint,
+	); err != nil {
+		t.Fatalf("SetPreferredEndpoint() error = %v", err)
+	}
+	if !strings.Contains(device.configuration, "endpoint="+directEndpoint.String()+"\n") {
+		t.Fatalf("preferred configuration = %q", device.configuration)
+	}
+	if err := engine.RestorePreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+	); err != nil {
+		t.Fatalf("RestorePreferredEndpoint() error = %v", err)
+	}
+	if !strings.Contains(device.configuration, "endpoint="+relayEndpoint+"\n") {
+		t.Fatalf("restored configuration = %q", device.configuration)
+	}
+}
+
+func TestWireGuardEngineFallsBackToDirectWithoutUsableRelay(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot.Relays = map[int]networkmap.RelayRegion{
+		1: {
+			ID: 1,
+			Nodes: []networkmap.RelayNode{{
+				Name:      "stun-only",
+				HostName:  "relay.example.com",
+				STUNOnly:  true,
+				RelayPort: 443,
+			}},
+		},
+	}
+	snapshot.Self.HomeRelay = 1
+	snapshot.Peers[0].HomeRelay = 1
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	state, err := engine.Apply(t.Context(), snapshot, privateKey)
+	if err != nil || state != StateEncrypted {
+		t.Fatalf("Apply() = %q, %v", state, err)
+	}
+	if !strings.Contains(
+		device.configuration,
+		"endpoint="+snapshot.Peers[0].Endpoints[0].String()+"\n",
+	) {
+		t.Fatalf("configuration = %q, want direct endpoint", device.configuration)
+	}
+}
+
+func TestWireGuardEngineSelectsDeterministicRelayFallback(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot.Relays = map[int]networkmap.RelayRegion{
+		2: testRelayRegion(2, "relay-2.example.com"),
+		1: testRelayRegion(1, "relay-1.example.com"),
+	}
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	state, err := engine.Apply(t.Context(), snapshot, privateKey)
+	if err != nil || state != StateEncryptedRelay {
+		t.Fatalf("Apply() = %q, %v", state, err)
+	}
+	peerKey, err := parseNodePublicKey(snapshot.Peers[0].PublicKey)
+	if err != nil {
+		t.Fatalf("parseNodePublicKey() error = %v", err)
+	}
+	wantEndpoint := formatRelayEndpoint(1, relay.Key(peerKey))
+	if !strings.Contains(device.configuration, "endpoint="+wantEndpoint+"\n") {
+		t.Fatalf("configuration = %q, want %q", device.configuration, wantEndpoint)
+	}
+}
+
+func TestWireGuardEngineReopensOnRelayAuthorityChange(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot = addTestRelay(snapshot)
+	opener := &wireGuardTUNOpener{}
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		opener,
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("first Apply() error = %v", err)
+	}
+	snapshot.Revision++
+	region := snapshot.Relays[1]
+	region.Nodes[0].HostName = "relay-2.example.com"
+	snapshot.Relays[1] = region
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("second Apply() error = %v", err)
+	}
+	if opener.calls != 2 || device.closeCalls != 1 || device.upCalls != 2 {
+		t.Fatalf(
+			"authority change calls open=%d close=%d up=%d, want 2/1/2",
+			opener.calls,
+			device.closeCalls,
+			device.upCalls,
+		)
+	}
+}
+
+func addTestRelay(snapshot networkmap.Snapshot) networkmap.Snapshot {
+	snapshot.Self.HomeRelay = 1
+	snapshot.Peers[0].HomeRelay = 1
+	snapshot.Relays = map[int]networkmap.RelayRegion{
+		1: {
+			ID:   1,
+			Code: "test",
+			Name: "Test Relay",
+			Nodes: []networkmap.RelayNode{{
+				Name:      "relay-1",
+				HostName:  "relay.example.com",
+				RelayPort: 443,
+			}},
+		},
+	}
+
+	return snapshot
+}
+
+func testRelayRegion(id int, hostName string) networkmap.RelayRegion {
+	return networkmap.RelayRegion{
+		ID:   id,
+		Code: fmt.Sprintf("test-%d", id),
+		Name: fmt.Sprintf("Test Relay %d", id),
+		Nodes: []networkmap.RelayNode{{
+			Name:      fmt.Sprintf("relay-%d", id),
+			HostName:  hostName,
+			RelayPort: 443,
+		}},
+	}
+}
+
 func testWireGuardSnapshot(t *testing.T) (NodePrivateKey, networkmap.Snapshot) {
 	t.Helper()
 
@@ -777,15 +971,23 @@ func (o *wireGuardTUNOpener) OpenTUN(
 }
 
 type fakeWireGuardFactory struct {
-	device *fakeWireGuardDevice
+	device           *fakeWireGuardDevice
+	relayFingerprint [32]byte
 }
 
 func (f *fakeWireGuardFactory) New(
-	*os.File,
-	int,
-	*policyFilter,
-	PacketObserver,
+	_ context.Context,
+	_ *os.File,
+	_ int,
+	_ *policyFilter,
+	_ PacketObserver,
+	relayConfig *relay.Config,
 ) (wireGuardDevice, error) {
+	if relayConfig != nil {
+		f.relayFingerprint = relay.Fingerprint(*relayConfig)
+	} else {
+		f.relayFingerprint = [32]byte{}
+	}
 	if f.device == nil {
 		f.device = &fakeWireGuardDevice{}
 	}

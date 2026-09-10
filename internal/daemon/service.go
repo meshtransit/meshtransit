@@ -1093,15 +1093,22 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		compatibilityNote = "encrypted poc is fail-closed because the current packet gate cannot enforce this policy safely"
 	case string(dataplane.StateEncrypted):
 		if dnsState == DNSConfigured {
-			compatibilityNote = "encrypted direct path, host packet policy, and dns are active; relay and generalized routes are not implemented"
+			compatibilityNote = "encrypted direct path, host packet policy, and dns are active; no usable signed relay is available and generalized routes are not implemented"
 		} else {
-			compatibilityNote = "encrypted direct path and host packet policy are active; relay, dns, and generalized routes are not implemented"
+			compatibilityNote = "encrypted direct path and host packet policy are active; no usable signed relay is available, and dns and generalized routes are not implemented"
+		}
+	case string(dataplane.StateEncryptedRelay):
+		if dnsState == DNSConfigured {
+			compatibilityNote = "encrypted mesh with bounded relay fallback, authenticated direct paths, host packet policy, and dns is active; generalized routes are not implemented"
+		} else {
+			compatibilityNote = "encrypted mesh with bounded relay fallback, authenticated direct paths, and host packet policy is active; dns and generalized routes are not implemented"
 		}
 	case string(dataplane.StateFailed):
 		compatibilityNote = "data-plane poc failed closed; encrypted tunnel is not active"
 	}
 	daemonState := StateOffline
-	if dataPlaneState == string(dataplane.StateEncrypted) {
+	if dataPlaneState == string(dataplane.StateEncrypted) ||
+		dataPlaneState == string(dataplane.StateEncryptedRelay) {
 		daemonState = StateOnline
 	}
 

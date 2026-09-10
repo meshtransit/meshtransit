@@ -1,6 +1,6 @@
 # Third-party notices
 
-`meshd` uses selected packages from `tailscale.com v1.102.3` inside the internal TS2021 compatibility adapter. That dependency is licensed under the BSD 3-Clause License.
+`meshd` uses selected packages from `tailscale.com v1.102.3` inside isolated TS2021 and relay wire compatibility adapters. That dependency is licensed under the BSD 3-Clause License.
 
 The Linux direct-path POC uses `golang.zx2c4.com/wireguard`, licensed under the MIT License, and `github.com/vishvananda/netlink`, licensed under the Apache License 2.0. The compatible peer-probe cryptography uses `golang.org/x/crypto`, licensed under the BSD 3-Clause License.
 

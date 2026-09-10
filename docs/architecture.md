@@ -16,7 +16,7 @@ meshd
   ├── policy validator      fail-closed, atomic network-map validation
   ├── DNS planner           protocol-independent MagicDNS/split-DNS transaction plan
   ├── packet policy gate    inbound ACL plus bounded return-flow state
-  ├── tunnel engine         userspace WireGuard direct-path POC
+  ├── tunnel engine         userspace WireGuard relay/direct path POC
   ├── traffic events        bounded 5-tuple/counter events without payloads
   └── net-admin client      fixed-schema descriptor request to privileged meshnetd
                               │
@@ -25,7 +25,7 @@ meshd
                               pool-confined TUN and resolved-link setup; firewall later
 ```
 
-The current code implements the profile service, persistent per-profile identity, explicit control-key pinning, TS2021/Noise registration, long-lived map streaming, product-owned map and DNS validation, local API, composition root, bounded control compatibility probe, and opt-in Linux TUN/WireGuard POCs. Data-plane status distinguishes `not_implemented`, `idle`, `tun_ready_no_crypto`, `waiting_endpoint`, `policy_unsupported`, `encrypted_direct`, and `failed`; DNS is reported separately as `inactive`, `not_implemented`, `configured`, or `failed`.
+The current code implements the profile service, persistent per-profile identity, explicit control-key pinning, TS2021/Noise registration, long-lived map streaming, product-owned map and DNS validation, local API, composition root, bounded control compatibility probe, and opt-in Linux TUN/WireGuard POCs. Data-plane status distinguishes `not_implemented`, `idle`, `tun_ready_no_crypto`, `waiting_endpoint`, `policy_unsupported`, `encrypted_direct`, `encrypted_relay_ready`, and `failed`; DNS is reported separately as `inactive`, `not_implemented`, `configured`, or `failed`.
 
 ## Repository boundary
 
@@ -39,7 +39,7 @@ The current code implements the profile service, persistent per-profile identity
 
 The unprivileged data-plane engine opens the descriptor after a validated map contains a visible authorized peer, even when that peer has no direct endpoint yet. It proves the private key belongs to the signed self node, intersects each peer route with that peer's signed host addresses, requests exactly those self/peer host prefixes, verifies the helper response byte-for-byte, and configures the official userspace WireGuard engine. A peer without an endpoint is installed with its public key and allowed host routes but remains unreachable until a valid endpoint arrives. A node with no local inbound rule may still open the path because Headscale sends node-reduced inbound filters and the remote destination enforces outbound authorization. A signed address or route change closes the old descriptor and creates a freshly confined interface in the same map application; removing every peer path closes it entirely. Profile changes, permanent control failure, and process shutdown also close it.
 
-The WireGuard engine owns one monotonic UDP socket-generation namespace across every bind it creates for encrypted packets, bounded STUN requests, and authenticated peer probes. Recreating a tunnel consumes a fresh generation instead of restarting the counter. A fixed control-datagram mux consumes both control protocols before WireGuard parsing; detaching a session leaves its probe classifier in drop-only mode until the socket closes. STUN responses are accepted only when transaction ID, signed relay source, socket generation, and active-profile generation all match. Literal relay IPs are selected deterministically across regions. Server-reflexive and safe host-interface candidates are merged with configured candidates, translated to protocol endpoint types only inside the compatibility adapter, and sent through non-streaming updates using the active stream's discovery key. While peers exist, discovery refreshes at a randomized 20–26 second interval. Changed sets are coalesced; transient publication failures retry with bounded backoff; the latest desired set is resent after a map reconnect. Recently observed non-host candidates survive a short probe flap within bounded per-address and global history, then a dedicated timer withdraws them at the exact deadline. Authenticated direct-path selection runs bounded, paced candidate rounds on a randomized 2.8–3.2 second cadence, safely resets stale preferred paths across map revisions without reopening an equivalent tunnel, and applies proven endpoint changes incrementally. Traffic-idle pacing, relay transport, and subnet/exit route transactions remain separate milestones.
+The WireGuard engine owns one monotonic UDP socket-generation namespace across every bind it creates for encrypted packets, bounded STUN requests, and authenticated peer probes. Recreating a tunnel consumes a fresh generation instead of restarting the counter. A fixed control-datagram mux consumes both control protocols before WireGuard parsing; detaching a session leaves its probe classifier in drop-only mode until the socket closes. STUN responses are accepted only when transaction ID, signed relay source, socket generation, and active-profile generation all match. Literal relay IPs are selected deterministically across regions. Server-reflexive and safe host-interface candidates are merged with configured candidates, translated to protocol endpoint types only inside the compatibility adapter, and sent through non-streaming updates using the active stream's discovery key. While peers exist, discovery refreshes at a randomized 20–26 second interval. Changed sets are coalesced; transient publication failures retry with bounded backoff; the latest desired set is resent after a map reconnect. Recently observed non-host candidates survive a short probe flap within bounded per-address and global history, then a dedicated timer withdraws them at the exact deadline. Authenticated direct-path selection runs bounded, paced candidate rounds on a randomized 2.8–3.2 second cadence, safely resets stale preferred paths across map revisions without reopening an equivalent tunnel, and applies proven endpoint changes incrementally. Traffic-idle pacing and subnet/exit route transactions remain separate milestones.
 
 The peer-probe wire adapter implements the current encrypted Ping/Pong format
 behind `internal/compat/disco`. The daemon creates one ephemeral X25519 identity
@@ -74,6 +74,29 @@ the exact installed peer and map revision through bounded WireGuard UAPI
 expiry restores the deterministic control-signed base endpoint; a new map
 revision reapplies the full signed configuration before new proof is admitted.
 Update ambiguity closes the packet engine and stops the session fail closed.
+
+The relay subsystem compiles an independent immutable authority from each
+validated map. It accepts only non-STUN relay nodes, binds every destination
+key to one selected region and one signed overlay identity, and starts the home
+connection without blocking WireGuard startup. A valid control preference wins;
+otherwise the lowest usable signed region is selected deterministically so
+clients can rendezvous before latency reporting is implemented. WireGuard peer
+endpoints begin on the relay. An authenticated direct proof can replace that
+endpoint incrementally, and proof expiry restores the relay instead of an
+unproven network address.
+
+`internal/relay` owns bounded queues, connection lifecycle, retry policy, and
+product types. `internal/compat/derp` alone owns the pinned wire codec. The
+adapter opens raw TLS without environment proxies or redirects, verifies normal,
+alternate-name, or exact control-signed certificate authority, requires the
+protocol upgrade and authenticated server greeting, and carries unchanged
+WireGuard ciphertext. Each client has at most sixteen active region workers,
+32 queued batches per region, one MiB per-region and four MiB total queued send
+data, plus a bounded receive queue. An authenticated inbound packet records a
+connection-scoped reverse route so a responder can reply on the exact region
+where the peer was observed; disconnect removes that authority. Closing a pool
+cancels dials, closes active connections, unblocks receive, and joins every
+worker.
 
 ## DNS boundary
 
@@ -152,4 +175,4 @@ Reconnect deliberately resets delta state and requires a new full self snapshot.
 
 ## Dependency policy
 
-Use the standard library by default. Every external module requires a purpose, license review, fixed version, vulnerability scan, and maintainer approval. Protocol-specific dependencies remain behind internal packages so the product API does not inherit their naming or lifecycle model.
+Use the standard library by default. Every external module requires a purpose, license review, fixed version, vulnerability scan, and maintainer approval. Protocol-specific dependencies remain behind internal packages so the product API does not inherit their naming or lifecycle model. The pinned relay codec is used only inside `internal/compat/derp`; dialing, TLS policy, retries, memory bounds, authorization, and path selection remain product-owned.

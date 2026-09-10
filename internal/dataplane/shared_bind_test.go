@@ -1,15 +1,20 @@
 package dataplane
 
 import (
+	"context"
+	"crypto/ecdh"
 	"errors"
 	"math"
+	"net"
 	"net/netip"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	compatstun "github.com/meshtransit/meshd/internal/compat/stun"
 	"github.com/meshtransit/meshd/internal/pathdiscovery"
+	"github.com/meshtransit/meshd/internal/relay"
 	"golang.zx2c4.com/wireguard/conn"
 )
 
@@ -259,6 +264,99 @@ func TestSharedBindDelegatesWireGuardOperations(t *testing.T) {
 	}
 }
 
+func TestSharedBindRoutesEncryptedPacketsThroughRelay(t *testing.T) {
+	t.Parallel()
+
+	privateKey := relay.Key{1}
+	private, err := ecdh.X25519().NewPrivateKey(privateKey[:])
+	if err != nil {
+		t.Fatalf("NewPrivateKey() error = %v", err)
+	}
+	peerKey := relay.Key{2}
+	client := newRelayTestClient()
+	pool, err := relay.New(t.Context(), relay.Config{
+		PrivateKey: privateKey,
+		PublicKey:  relay.Key(private.PublicKey().Bytes()),
+		HomeRegion: 1,
+		Regions: map[int]relay.Region{
+			1: {
+				ID: 1,
+				Nodes: []relay.Node{{
+					Name:     "relay",
+					HostName: "relay.example.com",
+					Port:     443,
+				}},
+			},
+		},
+		Peers: []relay.Peer{{
+			Key:        peerKey,
+			HomeRegion: 1,
+			Address:    netip.MustParseAddr("100.64.0.4"),
+		}},
+	}, relayTestDialer{client: client})
+	if err != nil {
+		t.Fatalf("relay.New() error = %v", err)
+	}
+	inner := newFakeInnerBind()
+	shared, err := newSharedBindWithRelay(inner, &socketGenerationSource{}, pool)
+	if err != nil {
+		t.Fatalf("newSharedBindWithRelay() error = %v", err)
+	}
+	receivers, _, err := shared.Open(41641)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = shared.Close() })
+	if len(receivers) != 2 {
+		t.Fatalf("Open() receivers = %d, want 2", len(receivers))
+	}
+
+	encodedEndpoint := formatRelayEndpoint(1, peerKey)
+	endpoint, err := shared.ParseEndpoint(encodedEndpoint)
+	if err != nil {
+		t.Fatalf("ParseEndpoint() error = %v", err)
+	}
+	outbound := []byte{1, 2, 3}
+	if err := shared.Send([][]byte{outbound}, endpoint); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	select {
+	case sent := <-client.sent:
+		if sent.destination != peerKey || !slices.Equal(sent.packet, outbound) {
+			t.Fatalf("relay Send() = %#v", sent)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("relay Send() timed out")
+	}
+
+	packets := [][]byte{make([]byte, maxControlDatagramSize)}
+	sizes := make([]int, 1)
+	endpoints := make([]conn.Endpoint, 1)
+	type receiveResult struct {
+		count int
+		err   error
+	}
+	received := make(chan receiveResult, 1)
+	go func() {
+		count, err := receivers[1](packets, sizes, endpoints)
+		received <- receiveResult{count: count, err: err}
+	}()
+	client.receive <- relay.ReceivedPacket{Source: peerKey, Data: []byte{4, 5, 6}}
+	select {
+	case result := <-received:
+		if result.err != nil || result.count != 1 || sizes[0] != 3 ||
+			!slices.Equal(packets[0][:sizes[0]], []byte{4, 5, 6}) {
+			t.Fatalf("relay receive count=%d size=%d err=%v", result.count, sizes[0], result.err)
+		}
+		if endpoints[0].DstToString() != encodedEndpoint ||
+			endpoints[0].DstIP() != netip.MustParseAddr("100.64.0.4") {
+			t.Fatalf("relay source endpoint = %#v", endpoints[0])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("relay receive timed out")
+	}
+}
+
 type queuedDatagram struct {
 	packet   []byte
 	endpoint conn.Endpoint
@@ -381,6 +479,69 @@ func (b *fakeInnerBind) sentSnapshot() ([][]byte, netip.AddrPort) {
 
 type fakeBindEndpoint struct {
 	destination string
+}
+
+type relayTestSentPacket struct {
+	destination relay.Key
+	packet      []byte
+}
+
+type relayTestClient struct {
+	sent      chan relayTestSentPacket
+	receive   chan relay.ReceivedPacket
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func newRelayTestClient() *relayTestClient {
+	return &relayTestClient{
+		sent:    make(chan relayTestSentPacket, 1),
+		receive: make(chan relay.ReceivedPacket, 1),
+		closed:  make(chan struct{}),
+	}
+}
+
+func (c *relayTestClient) Send(destination relay.Key, packet []byte) error {
+	select {
+	case c.sent <- relayTestSentPacket{
+		destination: destination,
+		packet:      slices.Clone(packet),
+	}:
+		return nil
+	case <-c.closed:
+		return net.ErrClosed
+	}
+}
+
+func (c *relayTestClient) Receive() (relay.ReceivedPacket, error) {
+	select {
+	case packet := <-c.receive:
+		return packet, nil
+	case <-c.closed:
+		return relay.ReceivedPacket{}, net.ErrClosed
+	}
+}
+
+func (c *relayTestClient) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+
+	return nil
+}
+
+type relayTestDialer struct {
+	client relay.Client
+}
+
+func (d relayTestDialer) Dial(
+	ctx context.Context,
+	_ relay.Key,
+	_ relay.Region,
+) (relay.Client, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	return d.client, nil
 }
 
 func (*fakeBindEndpoint) ClearSrc()           {}

@@ -4,10 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"net/netip"
+	"strings"
 	"sync"
 
 	"github.com/meshtransit/meshd/internal/pathdiscovery"
+	"github.com/meshtransit/meshd/internal/relay"
 	"golang.zx2c4.com/wireguard/conn"
 )
 
@@ -17,6 +20,7 @@ const maxControlDatagramSize = 2048
 // them and exposes the same sockets to the discovery scheduler.
 type sharedBind struct {
 	inner       conn.Bind
+	relay       *relay.Pool
 	generations *socketGenerationSource
 	mu          sync.RWMutex
 	handler     pathdiscovery.DatagramHandler
@@ -45,6 +49,14 @@ func newSharedBindWithGenerationSource(
 	inner conn.Bind,
 	generations *socketGenerationSource,
 ) (*sharedBind, error) {
+	return newSharedBindWithRelay(inner, generations, nil)
+}
+
+func newSharedBindWithRelay(
+	inner conn.Bind,
+	generations *socketGenerationSource,
+	relayPool *relay.Pool,
+) (*sharedBind, error) {
 	if inner == nil {
 		return nil, errors.New("dataplane: inner wireguard bind is required")
 	}
@@ -52,7 +64,11 @@ func newSharedBindWithGenerationSource(
 		return nil, errors.New("dataplane: socket generation source is required")
 	}
 
-	return &sharedBind{inner: inner, generations: generations}, nil
+	return &sharedBind{
+		inner:       inner,
+		generations: generations,
+		relay:       relayPool,
+	}, nil
 }
 
 func (s *socketGenerationSource) next() (uint64, error) {
@@ -98,9 +114,18 @@ func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 
 		return nil, 0, errors.New("dataplane: wireguard bind returned invalid socket metadata")
 	}
+	if b.relay != nil {
+		if err := b.relay.Open(); err != nil {
+			_ = b.inner.Close()
+
+			return nil, 0, fmt.Errorf("dataplane: opening relay pool: %w", err)
+		}
+		receivers = append(receivers, b.receiveRelay)
+	}
 	generation, err := b.generations.next()
 	if err != nil {
 		_ = b.inner.Close()
+		_ = b.closeRelay()
 
 		return nil, 0, err
 	}
@@ -114,6 +139,7 @@ func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 	for index, receiver := range receivers {
 		if receiver == nil {
 			_ = b.inner.Close()
+			_ = b.closeRelay()
 			b.isOpen = false
 			b.port = 0
 
@@ -128,7 +154,7 @@ func (b *sharedBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, error) {
 func (b *sharedBind) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	err := b.inner.Close()
+	err := errors.Join(b.inner.Close(), b.closeRelay())
 	b.isOpen = false
 	b.port = 0
 
@@ -138,10 +164,26 @@ func (b *sharedBind) Close() error {
 func (b *sharedBind) SetMark(mark uint32) error { return b.inner.SetMark(mark) }
 
 func (b *sharedBind) Send(buffers [][]byte, endpoint conn.Endpoint) error {
+	if relayDestination, ok := endpoint.(*relayEndpoint); ok {
+		if b.relay == nil {
+			return conn.ErrWrongEndpointType
+		}
+
+		return b.relay.Send(
+			relayDestination.regionID,
+			relayDestination.peerKey,
+			buffers,
+		)
+	}
+
 	return b.inner.Send(buffers, endpoint)
 }
 
 func (b *sharedBind) ParseEndpoint(value string) (conn.Endpoint, error) {
+	if strings.HasPrefix(value, relayEndpointPrefix) {
+		return parseRelayEndpoint(value, b.relay)
+	}
+
 	return b.inner.ParseEndpoint(value)
 }
 
@@ -249,4 +291,40 @@ func validDatagramEndpoint(endpoint netip.AddrPort) bool {
 		!address.Is4In6() && address.Zone() == "" && address == address.Unmap() &&
 		address.IsGlobalUnicast() && !address.IsUnspecified() && !address.IsMulticast() &&
 		!address.IsLoopback() && !address.IsLinkLocalUnicast()
+}
+
+func (b *sharedBind) receiveRelay(
+	packets [][]byte,
+	sizes []int,
+	endpoints []conn.Endpoint,
+) (int, error) {
+	if b.relay == nil {
+		return 0, net.ErrClosed
+	}
+	for {
+		packet, err := b.relay.Receive()
+		if err != nil {
+			return 0, err
+		}
+		if len(packets) == 0 || len(sizes) == 0 || len(endpoints) == 0 ||
+			len(packet.Data) > len(packets[0]) {
+			continue
+		}
+		endpoint, err := receivedRelayEndpoint(packet, b.relay)
+		if err != nil {
+			continue
+		}
+		sizes[0] = copy(packets[0], packet.Data)
+		endpoints[0] = endpoint
+
+		return 1, nil
+	}
+}
+
+func (b *sharedBind) closeRelay() error {
+	if b.relay == nil {
+		return nil
+	}
+
+	return b.relay.Close()
 }

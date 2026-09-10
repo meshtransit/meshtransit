@@ -19,6 +19,7 @@ import (
 	"github.com/meshtransit/meshd/internal/netadmin"
 	"github.com/meshtransit/meshd/internal/networkmap"
 	"github.com/meshtransit/meshd/internal/pathdiscovery"
+	"github.com/meshtransit/meshd/internal/relay"
 )
 
 const (
@@ -42,15 +43,15 @@ var (
 type wireGuardPeerPlan struct {
 	id                  uint64
 	key                 [32]byte
-	baseEndpoint        netip.AddrPort
+	baseEndpoint        string
 	authorizedEndpoints []netip.AddrPort
 	allowedIPs          []netip.Prefix
 }
 
 type wireGuardPeerState struct {
 	key                 [32]byte
-	baseEndpoint        netip.AddrPort
-	currentEndpoint     netip.AddrPort
+	baseEndpoint        string
+	currentEndpoint     string
 	authorizedEndpoints []netip.AddrPort
 }
 
@@ -85,7 +86,14 @@ type peerProbingDevice interface {
 }
 
 type wireGuardFactory interface {
-	New(*os.File, int, *policyFilter, PacketObserver) (wireGuardDevice, error)
+	New(
+		context.Context,
+		*os.File,
+		int,
+		*policyFilter,
+		PacketObserver,
+		*relay.Config,
+	) (wireGuardDevice, error)
 }
 
 // PacketDirection identifies plaintext packet movement at the TUN boundary.
@@ -110,6 +118,9 @@ type wireGuardPlan struct {
 	routes            []netip.Prefix
 	peers             []wireGuardPeerPlan
 	pendingEndpoints  bool
+	relayConfig       *relay.Config
+	relayFingerprint  [32]byte
+	hasRelayFallback  bool
 }
 
 // WireGuardEngine owns the encrypted userspace packet engine. The daemon
@@ -120,6 +131,7 @@ type WireGuardEngine struct {
 	listenPort        uint16
 	device            wireGuardDevice
 	configurationHash [32]byte
+	relayFingerprint  [32]byte
 	appliedRevision   uint64
 	peers             map[uint64]wireGuardPeerState
 	addresses         []netip.Prefix
@@ -208,10 +220,12 @@ func (e *WireGuardEngine) Apply(
 
 		return StateFailed, err
 	}
-	defer clear(plan.configuration)
+	defer plan.clearSecrets()
 
 	if e.device != nil {
-		if !slices.Equal(e.addresses, plan.addresses) || !slices.Equal(e.routes, plan.routes) {
+		if !slices.Equal(e.addresses, plan.addresses) ||
+			!slices.Equal(e.routes, plan.routes) ||
+			e.relayFingerprint != plan.relayFingerprint {
 			_ = e.Close()
 		}
 	}
@@ -253,7 +267,14 @@ func (e *WireGuardEngine) Apply(
 
 		return StateFailed, err
 	}
-	device, err := e.factory.New(tunDevice.File, tunDevice.MTU, e.filter, e.observer)
+	device, err := e.factory.New(
+		ctx,
+		tunDevice.File,
+		tunDevice.MTU,
+		e.filter,
+		e.observer,
+		plan.relayConfig,
+	)
 	if err != nil {
 		_ = tunDevice.File.Close()
 
@@ -279,8 +300,21 @@ func (p wireGuardPlan) state() State {
 	if p.pendingEndpoints {
 		return StateWaitingEndpoint
 	}
+	if p.hasRelayFallback {
+		return StateEncryptedRelay
+	}
 
 	return StateEncrypted
+}
+
+func (p *wireGuardPlan) clearSecrets() {
+	if p == nil {
+		return
+	}
+	clear(p.configuration)
+	if p.relayConfig != nil {
+		clear(p.relayConfig.PrivateKey[:])
+	}
 }
 
 // DiscoverySocket returns the active shared UDP socket generation.
@@ -454,7 +488,7 @@ func (e *WireGuardEngine) SetPreferredEndpoint(
 		return ErrPeerEndpointUnauthorized
 	}
 
-	return e.configurePeerEndpoint(peerID, peer, endpoint)
+	return e.configurePeerEndpoint(peerID, peer, endpoint.String())
 }
 
 // RestorePreferredEndpoint returns one peer to the deterministic endpoint from
@@ -470,7 +504,7 @@ func (e *WireGuardEngine) RestorePreferredEndpoint(
 		return ErrPeerEndpointGeneration
 	}
 	peer, exists := e.peers[peerID]
-	if !exists || !peer.baseEndpoint.IsValid() {
+	if !exists || peer.baseEndpoint == "" {
 		return ErrPeerEndpointUnavailable
 	}
 
@@ -486,8 +520,7 @@ func (e *WireGuardEngine) advanceEquivalentPlan(
 ) (bool, error) {
 	for _, peer := range planned {
 		installed := e.peers[peer.id]
-		if installed.currentEndpoint != installed.baseEndpoint &&
-			!installed.baseEndpoint.IsValid() {
+		if installed.currentEndpoint != installed.baseEndpoint && installed.baseEndpoint == "" {
 			return false, nil
 		}
 	}
@@ -505,8 +538,11 @@ func (e *WireGuardEngine) advanceEquivalentPlan(
 func (e *WireGuardEngine) configurePeerEndpoint(
 	peerID uint64,
 	peer wireGuardPeerState,
-	endpoint netip.AddrPort,
+	endpoint string,
 ) error {
+	if endpoint == "" {
+		return ErrPeerEndpointUnavailable
+	}
 	if peer.currentEndpoint == endpoint {
 		return nil
 	}
@@ -516,7 +552,7 @@ func (e *WireGuardEngine) configurePeerEndpoint(
 	hex.Encode(encodedPublic[:], peer.key[:])
 	configuration.Write(encodedPublic[:])
 	configuration.WriteString("\nupdate_only=true\nendpoint=")
-	configuration.WriteString(endpoint.String())
+	configuration.WriteString(endpoint)
 	configuration.WriteByte('\n')
 	if err := e.device.Configure(bytes.NewReader(configuration.Bytes())); err != nil {
 		_ = e.Close()
@@ -531,6 +567,7 @@ func (e *WireGuardEngine) configurePeerEndpoint(
 
 func (e *WireGuardEngine) adoptPlan(revision uint64, plan wireGuardPlan) {
 	e.configurationHash = plan.configurationHash
+	e.relayFingerprint = plan.relayFingerprint
 	e.appliedRevision = revision
 	e.addresses = append([]netip.Prefix(nil), plan.addresses...)
 	e.routes = append([]netip.Prefix(nil), plan.routes...)
@@ -554,6 +591,7 @@ func (e *WireGuardEngine) Close() error {
 	e.device.Close()
 	e.device = nil
 	e.configurationHash = [32]byte{}
+	e.relayFingerprint = [32]byte{}
 	e.appliedRevision = 0
 	e.peers = nil
 	e.addresses = nil
@@ -604,6 +642,16 @@ func buildWireGuardPlan(
 	}
 
 	plannedPeers := make([]wireGuardPeerPlan, 0, len(snapshot.Peers))
+	relayConfig, err := buildRelayConfig(snapshot, privateKey, selfKey)
+	if err != nil {
+		return wireGuardPlan{}, err
+	}
+	relayRegions := make(map[[32]byte]int)
+	if relayConfig != nil {
+		for _, peer := range relayConfig.Peers {
+			relayRegions[[32]byte(peer.Key)] = peer.HomeRegion
+		}
+	}
 	selectedSelfAddresses := append([]netip.Prefix{}, allSelfAddresses...)
 	allRoutes := make([]netip.Prefix, 0, len(snapshot.Peers))
 	seenKeys := make(map[[32]byte]struct{}, len(snapshot.Peers))
@@ -652,17 +700,23 @@ func buildWireGuardPlan(
 		if len(authorizedEndpoints) != len(peer.Endpoints) {
 			return wireGuardPlan{}, errors.New("dataplane: peer endpoints are invalid")
 		}
-		endpoint, err := selectEndpoint(peer.Endpoints)
+		directEndpoint, err := selectEndpoint(peer.Endpoints)
 		if err != nil {
 			return wireGuardPlan{}, err
 		}
-		if !endpoint.IsValid() {
+		baseEndpoint := ""
+		if regionID := relayRegions[peerKey]; regionID != 0 {
+			baseEndpoint = formatRelayEndpoint(regionID, relay.Key(peerKey))
+		} else if directEndpoint.IsValid() {
+			baseEndpoint = directEndpoint.String()
+		}
+		if baseEndpoint == "" {
 			pendingEndpoints = true
 		}
 		plannedPeers = append(plannedPeers, wireGuardPeerPlan{
 			id:                  peer.ID,
 			key:                 peerKey,
-			baseEndpoint:        endpoint,
+			baseEndpoint:        baseEndpoint,
 			authorizedEndpoints: authorizedEndpoints,
 			allowedIPs:          allowedIPs,
 		})
@@ -704,9 +758,9 @@ func buildWireGuardPlan(
 		hex.Encode(encodedPublic[:], peer.key[:])
 		configuration.Write(encodedPublic[:])
 		configuration.WriteString("\nprotocol_version=1\n")
-		if peer.baseEndpoint.IsValid() {
+		if peer.baseEndpoint != "" {
 			configuration.WriteString("endpoint=")
-			configuration.WriteString(peer.baseEndpoint.String())
+			configuration.WriteString(peer.baseEndpoint)
 			configuration.WriteByte('\n')
 		}
 		configuration.WriteString("replace_allowed_ips=true\n")
@@ -718,14 +772,21 @@ func buildWireGuardPlan(
 	}
 	encoded := configuration.Bytes()
 
-	return wireGuardPlan{
+	plan := wireGuardPlan{
 		configuration:     encoded,
 		configurationHash: sha256.Sum256(encoded),
 		addresses:         addresses,
 		routes:            routes,
 		peers:             plannedPeers,
 		pendingEndpoints:  pendingEndpoints,
-	}, nil
+		relayConfig:       relayConfig,
+		hasRelayFallback:  relayConfig != nil,
+	}
+	if relayConfig != nil {
+		plan.relayFingerprint = relay.Fingerprint(*relayConfig)
+	}
+
+	return plan, nil
 }
 
 func equalPeerEndpointAuthority(
@@ -745,6 +806,135 @@ func equalPeerEndpointAuthority(
 	}
 
 	return true
+}
+
+func buildRelayConfig(
+	snapshot networkmap.Snapshot,
+	privateKey NodePrivateKey,
+	publicKey [32]byte,
+) (*relay.Config, error) {
+	if len(snapshot.Relays) == 0 {
+		return nil, nil
+	}
+	homeRegion := selectHomeRelay(snapshot.Relays, snapshot.Self.HomeRelay)
+	home, homeExists := usableRelayRegion(snapshot.Relays, homeRegion)
+	if !homeExists {
+		return nil, nil
+	}
+	config := relay.Config{
+		PrivateKey: relay.Key(privateKey),
+		PublicKey:  relay.Key(publicKey),
+		HomeRegion: homeRegion,
+		Regions: map[int]relay.Region{
+			home.ID: home,
+		},
+		Peers: make([]relay.Peer, 0, len(snapshot.Peers)),
+	}
+	for _, node := range snapshot.Peers {
+		peerRegion := selectHomeRelay(snapshot.Relays, node.HomeRelay)
+		if node.HomeRelay <= 0 {
+			peerRegion = homeRegion
+		}
+		region, exists := usableRelayRegion(snapshot.Relays, peerRegion)
+		if !exists {
+			continue
+		}
+		key, err := parseNodePublicKey(node.PublicKey)
+		if err != nil {
+			return nil, errors.New("dataplane: relay peer key is invalid")
+		}
+		address := firstNodeAddress(node.Addresses)
+		if !address.IsValid() {
+			return nil, errors.New("dataplane: relay peer address is invalid")
+		}
+		config.Regions[region.ID] = region
+		config.Peers = append(config.Peers, relay.Peer{
+			Key:        relay.Key(key),
+			HomeRegion: peerRegion,
+			Address:    address,
+		})
+	}
+	if len(config.Peers) == 0 {
+		clear(config.PrivateKey[:])
+
+		return nil, nil
+	}
+	validated, err := relay.Validate(config)
+	clear(config.PrivateKey[:])
+	if err != nil {
+		return nil, fmt.Errorf("dataplane: compiling relay authority: %w", err)
+	}
+
+	return &validated, nil
+}
+
+// selectHomeRelay preserves a usable control preference and otherwise chooses
+// the lowest usable signed region. The deterministic fallback keeps peers on
+// the same rendezvous region until latency-based selection is published.
+func selectHomeRelay(regions map[int]networkmap.RelayRegion, preferred int) int {
+	if _, exists := usableRelayRegion(regions, preferred); exists {
+		return preferred
+	}
+	regionIDs := make([]int, 0, len(regions))
+	for regionID := range regions {
+		regionIDs = append(regionIDs, regionID)
+	}
+	slices.Sort(regionIDs)
+	for _, regionID := range regionIDs {
+		if _, exists := usableRelayRegion(regions, regionID); exists {
+			return regionID
+		}
+	}
+
+	return 0
+}
+
+func usableRelayRegion(
+	regions map[int]networkmap.RelayRegion,
+	regionID int,
+) (relay.Region, bool) {
+	region, exists := regions[regionID]
+	if !exists || region.ID != regionID {
+		return relay.Region{}, false
+	}
+	converted := relay.Region{
+		ID:    region.ID,
+		Nodes: make([]relay.Node, 0, len(region.Nodes)),
+	}
+	for _, node := range region.Nodes {
+		if node.STUNOnly {
+			continue
+		}
+		port := node.RelayPort
+		if port == 0 {
+			port = 443
+		}
+		converted.Nodes = append(converted.Nodes, relay.Node{
+			Name:     node.Name,
+			HostName: node.HostName,
+			CertName: node.CertName,
+			IPv4:     node.IPv4,
+			IPv6:     node.IPv6,
+			Port:     uint16(port),
+		})
+	}
+
+	return converted, len(converted.Nodes) != 0
+}
+
+func firstNodeAddress(prefixes []netip.Prefix) netip.Addr {
+	addresses := make([]netip.Addr, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		if prefix.IsValid() {
+			addresses = append(addresses, prefix.Addr().Unmap())
+		}
+	}
+	if len(addresses) == 0 {
+		return netip.Addr{}
+	}
+	slices.SortFunc(addresses, netip.Addr.Compare)
+
+	return addresses[0]
 }
 
 func validPeerEndpoints(endpoints []netip.AddrPort) []netip.AddrPort {
