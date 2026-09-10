@@ -18,7 +18,7 @@ const (
 	// DefaultSocketPath is the local control socket used by meshctl.
 	DefaultSocketPath = "/run/meshd/meshd.sock"
 	// DefaultNetAdminSocketPath is the separate privileged-helper endpoint.
-	DefaultNetAdminSocketPath = "/run/meshd/meshnetd.sock"
+	DefaultNetAdminSocketPath = "/run/meshnetd/meshnetd.sock"
 	// DefaultStateDir contains profile metadata and, later, encrypted key material.
 	DefaultStateDir = "/var/lib/meshd"
 )

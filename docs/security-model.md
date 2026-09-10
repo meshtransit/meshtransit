@@ -60,6 +60,10 @@ Packet payloads are not an observability asset and must not be collected.
 - The local DNS resolver bounds message sizes, EDNS0 payload advertisement, forwarding concurrency, TCP connections, idle time, and query time. It randomizes upstream transaction IDs, validates the returned question, retries truncated UDP over TCP, sanitizes EDNS options, preserves OPT on truncated/error responses, rejects unsupported EDNS versions, and does not log query names.
 - DNS privilege is limited to a helper-fixed endpoint and interface. The helper accepts only bounded canonical search/route domains, invokes one root-owned non-writable `resolvectl` path without a shell, disables LLMNR/mDNS on the dedicated link, and reverts partial or removed configurations.
 - Linux `meshnetd` uses a separate `SOCK_SEQPACKET` socket, verifies the configured UID with `SO_PEERCRED`, bounds each message to 32 KiB, rejects unknown JSON fields and ancillary descriptors, and applies a five-second operation deadline.
+- Packaged Linux services place the local API and helper sockets in different
+  mode `0750` runtime directories. `meshd:meshtransit` owns `/run/meshd`, while
+  `root:meshd` owns `/run/meshnetd`; neither caller group can replace the other
+  listener.
 - The helper's startup configuration fixes data/DNS interface names, MTU, allowed service account or UID, non-overlapping overlay pools, DNS endpoint, and `resolvectl` path. An account name is resolved once at startup to the UID checked by `SO_PEERCRED`. Its four operations are `open_tun`, `open_dns`, `set_dns`, and `reset_dns`; requests cannot carry subnet/default TUN routes, commands, client-selected paths, keys, or kernel parameters.
 - The helper validates requested prefixes independently of `meshd`, and `meshd` validates the returned address/route set byte-for-byte against the signed map before attaching the userspace packet engine.
 - TUN descriptors are non-persistent and passed with `SCM_RIGHTS`; `meshd` closes them when no authorized peer path remains, on profile change, on control failure, and at shutdown. Control and node keys never cross the helper boundary.

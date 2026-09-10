@@ -2,8 +2,21 @@ package config
 
 import (
 	"io"
+	"path/filepath"
 	"testing"
 )
+
+func TestDefaultSocketsUseSeparateDirectories(t *testing.T) {
+	t.Parallel()
+
+	if filepath.Dir(DefaultSocketPath) == filepath.Dir(DefaultNetAdminSocketPath) {
+		t.Fatalf(
+			"default socket directories are shared: %q and %q",
+			DefaultSocketPath,
+			DefaultNetAdminSocketPath,
+		)
+	}
+}
 
 func TestParseTUNPOC(t *testing.T) {
 	t.Parallel()

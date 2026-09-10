@@ -14,6 +14,9 @@ local API permits independent upgrades.
 - `meshnetd` runs as root with primary group `meshd`. Its capability bounding
   set contains only `CAP_CHOWN` and `CAP_NET_ADMIN`; `/dev/net/tun` is the only
   allowed device.
+- The local API and privileged-helper sockets use separate runtime directories:
+  `/run/meshd` is owned by `meshd:meshtransit`, while `/run/meshnetd` is owned
+  by `root:meshd`. Neither operator group receives directory write access.
 - The main daemon has no Linux capabilities. It receives non-persistent TUN
   descriptors over the helper socket and never sends keys or control
   credentials to the helper.

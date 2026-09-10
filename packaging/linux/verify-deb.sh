@@ -41,6 +41,12 @@ grep -Fq -- '--allow-user=meshd' \
     "${work_dir}/root/usr/lib/systemd/system/meshnetd.service"
 grep -Fq 'CapabilityBoundingSet=CAP_CHOWN CAP_NET_ADMIN' \
     "${work_dir}/root/usr/lib/systemd/system/meshnetd.service"
+grep -Fq 'ReadWritePaths=/run/meshnetd' \
+    "${work_dir}/root/usr/lib/systemd/system/meshnetd.service"
+grep -Fq 'd /run/meshd 0750 meshd meshtransit -' \
+    "${work_dir}/root/usr/lib/tmpfiles.d/meshd.conf"
+grep -Fq 'd /run/meshnetd 0750 root meshd -' \
+    "${work_dir}/root/usr/lib/tmpfiles.d/meshd.conf"
 
 if command -v systemd-analyze >/dev/null; then
     cp "${work_dir}/root/usr/lib/systemd/system/meshd.service" \
