@@ -23,6 +23,8 @@ concurrency:
 
 jobs:
   analyze:
+    # Enable after the repository is public or GitHub Advanced Security is active.
+    if: ${{ vars.ENABLE_CODEQL == 'true' }}
     name: Analyze Go
     runs-on: ubuntu-24.04
     timeout-minutes: 30

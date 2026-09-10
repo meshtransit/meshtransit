@@ -8,8 +8,8 @@ All notable user-visible changes will be documented in this file.
 
 - v0.1 release contract, platform priority, native validation matrix, and
   operating-system adapter boundaries.
-- Linux quality, vulnerability, CodeQL, and cross-platform build workflows with
-  pinned action and tool versions.
+- Linux quality, vulnerability, opt-in CodeQL, and cross-platform build
+  workflows with pinned action and tool versions.
 - Go 1.26.8 toolchain baseline.
 - Initial daemon composition root.
 - Atomic profile store with one-active-profile enforcement.

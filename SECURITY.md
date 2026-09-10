@@ -6,4 +6,10 @@ Report suspected vulnerabilities privately to the repository maintainers. Do not
 
 Supported versions will be listed here after the first release. The `main` branch currently receives security fixes.
 
+The CodeQL workflow requires a repository variable named `ENABLE_CODEQL` with
+the value `true`. Keep it unset while this private repository lacks GitHub
+Advanced Security; enable it before public release or immediately after GitHub
+Advanced Security is activated. Race detection, `go vet`, `golangci-lint`,
+`gosec`, and `govulncheck` remain mandatory in CI independently of CodeQL.
+
 See `docs/security-model.md` for trust boundaries, implemented controls, and known gaps.

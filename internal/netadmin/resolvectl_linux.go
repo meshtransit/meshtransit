@@ -21,7 +21,9 @@ type commandRunner interface {
 type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, path string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, path, args...).CombinedOutput()
+	// The helper startup path is canonical, root-owned, non-writable, and never
+	// accepted from an IPC request. Arguments are passed directly without a shell.
+	return exec.CommandContext(ctx, path, args...).CombinedOutput() //nolint:gosec // G204 is constrained by newResolvectlConfigurator.
 }
 
 type resolvectlConfigurator struct {
