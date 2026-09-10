@@ -66,6 +66,45 @@ func TestWireGuardEngineApply(t *testing.T) {
 	}
 }
 
+func TestWireGuardEngineApplyDualStack(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	selfIPv6 := netip.MustParsePrefix("fd7a:115c:a1e0::f/128")
+	peerIPv6 := netip.MustParsePrefix("fd7a:115c:a1e0::5/128")
+	snapshot.Self.Addresses = append(snapshot.Self.Addresses, selfIPv6)
+	snapshot.Peers[0].Addresses = append(snapshot.Peers[0].Addresses, peerIPv6)
+	snapshot.Peers[0].AllowedIPs = append(snapshot.Peers[0].AllowedIPs, peerIPv6)
+	opener := &wireGuardTUNOpener{}
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		opener,
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+
+	if !slices.Equal(opener.config.Addresses, snapshot.Self.Addresses) ||
+		!slices.Equal(opener.config.Routes, snapshot.Peers[0].Addresses) {
+		t.Fatalf("dual-stack helper config = %#v", opener.config)
+	}
+	for _, expected := range []string{
+		"allowed_ip=100.64.0.4/32",
+		"allowed_ip=fd7a:115c:a1e0::5/128",
+	} {
+		if !strings.Contains(device.configuration, expected) {
+			t.Fatalf("configuration is missing %q", expected)
+		}
+	}
+}
+
 func TestWireGuardEngineAppliesAndRestoresAuthenticatedPeerEndpoint(t *testing.T) {
 	t.Parallel()
 

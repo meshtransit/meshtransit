@@ -15,7 +15,7 @@ func TestObservedTUNReportsSuccessfulPackets(t *testing.T) {
 
 	device := &fakeTUNDevice{
 		readPacket: []byte{1, 2, 3},
-		writeCount: 1,
+		writeCount: 2,
 	}
 	observer := &recordingPacketObserver{}
 	wrapped := &observedTUN{Device: device, observer: observer}
@@ -36,6 +36,20 @@ func TestObservedTUNReportsSuccessfulPackets(t *testing.T) {
 	}
 	if got := observer.packets[1]; len(got) != 2 || got[0] != 8 || got[1] != 7 {
 		t.Fatalf("inbound packet = %v", got)
+	}
+}
+
+func TestObservedTUNDoesNotReportFailedInboundWrite(t *testing.T) {
+	t.Parallel()
+
+	device := &fakeTUNDevice{writeErr: errors.New("write failed")}
+	observer := &recordingPacketObserver{}
+	wrapped := &observedTUN{Device: device, observer: observer}
+	if count, err := wrapped.Write([][]byte{{1, 2, 3}}, 1); err == nil || count != 0 {
+		t.Fatalf("Write() = %d, %v", count, err)
+	}
+	if len(observer.packets) != 0 {
+		t.Fatalf("failed write observations = %d", len(observer.packets))
 	}
 }
 
@@ -104,6 +118,7 @@ func (o *recordingPacketObserver) ObservePacket(direction PacketDirection, packe
 type fakeTUNDevice struct {
 	readPacket []byte
 	writeCount int
+	writeErr   error
 }
 
 func (d *fakeTUNDevice) File() *os.File                   { return nil }
@@ -112,7 +127,7 @@ func (d *fakeTUNDevice) Name() (string, error)            { return "mesh0", nil 
 func (d *fakeTUNDevice) Events() <-chan tun.Event         { return nil }
 func (d *fakeTUNDevice) Close() error                     { return nil }
 func (d *fakeTUNDevice) BatchSize() int                   { return 1 }
-func (d *fakeTUNDevice) Write([][]byte, int) (int, error) { return d.writeCount, nil }
+func (d *fakeTUNDevice) Write([][]byte, int) (int, error) { return d.writeCount, d.writeErr }
 
 func (d *fakeTUNDevice) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 	if len(bufs) == 0 || len(sizes) == 0 || offset+len(d.readPacket) > len(bufs[0]) {

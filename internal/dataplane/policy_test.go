@@ -144,6 +144,43 @@ func TestPolicyFilterAllowsUDPAndICMPEchoReplies(t *testing.T) {
 	}
 }
 
+func TestPolicyFilterAllowsICMPv6(t *testing.T) {
+	t.Parallel()
+
+	self := netip.MustParsePrefix("fd7a:115c:a1e0::f/128")
+	peer := netip.MustParsePrefix("fd7a:115c:a1e0::5/128")
+	snapshot := networkmap.Snapshot{
+		Self:  networkmap.Node{Addresses: []netip.Prefix{self}},
+		Peers: []networkmap.Node{{Addresses: []netip.Prefix{peer}}},
+	}
+	filter := newPolicyFilter()
+	filter.UpdateNetwork(snapshot)
+	outboundRequest := testIPv6ICMPPacket(self.Addr(), peer.Addr(), 128, 42)
+	inboundReply := testIPv6ICMPPacket(peer.Addr(), self.Addr(), 129, 42)
+	if !filter.Allow(PacketOutbound, outboundRequest) || !filter.Allow(PacketInbound, inboundReply) {
+		t.Fatal("ICMPv6 echo request or reply was denied")
+	}
+	wrongIdentifier := testIPv6ICMPPacket(peer.Addr(), self.Addr(), 129, 43)
+	if filter.Allow(PacketInbound, wrongIdentifier) {
+		t.Fatal("untracked ICMPv6 echo reply was allowed")
+	}
+
+	snapshot.Policy = []networkmap.Rule{{
+		Sources: []networkmap.Selector{{Kind: networkmap.SelectorPrefix, Prefix: peer}},
+		Destinations: []networkmap.Destination{{
+			Selector: networkmap.Selector{Kind: networkmap.SelectorPrefix, Prefix: self},
+			PortFrom: 0,
+			PortTo:   65535,
+		}},
+		Protocols: []uint8{packetmeta.ProtocolICMPv6},
+	}}
+	filter.UpdateNetwork(snapshot)
+	inboundRequest := testIPv6ICMPPacket(peer.Addr(), self.Addr(), 128, 42)
+	if !filter.Allow(PacketInbound, inboundRequest) {
+		t.Fatal("policy-authorized ICMPv6 echo request was denied")
+	}
+}
+
 func TestPolicyFilterExpiresAndBoundsFlows(t *testing.T) {
 	t.Parallel()
 
@@ -282,6 +319,26 @@ func testIPv4ICMPPacket(source, destination [4]byte, messageType uint8, identifi
 	copy(packet[16:20], destination[:])
 	packet[20] = messageType
 	binary.BigEndian.PutUint16(packet[24:26], identifier)
+
+	return packet
+}
+
+func testIPv6ICMPPacket(
+	source, destination netip.Addr,
+	messageType uint8,
+	identifier uint16,
+) []byte {
+	packet := make([]byte, 48)
+	packet[0] = 0x60
+	binary.BigEndian.PutUint16(packet[4:6], 8)
+	packet[6] = packetmeta.ProtocolICMPv6
+	packet[7] = 64
+	sourceBytes := source.As16()
+	destinationBytes := destination.As16()
+	copy(packet[8:24], sourceBytes[:])
+	copy(packet[24:40], destinationBytes[:])
+	packet[40] = messageType
+	binary.BigEndian.PutUint16(packet[44:46], identifier)
 
 	return packet
 }

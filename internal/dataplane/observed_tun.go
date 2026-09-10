@@ -69,17 +69,20 @@ func (d *observedTUN) Write(bufs [][]byte, offset int) (int, error) {
 	if len(allowed) == 0 {
 		return 0, nil
 	}
-	count, err := d.Device.Write(allowed, offset)
-	if count < 0 || count > len(allowed) {
-		return 0, errors.New("dataplane: invalid tun write count")
+	// Native Linux TUN writes report bytes, while this interface reports
+	// packets. A nil error means every allowed buffer was accepted; normalize
+	// the result so callers see the portable packet-count contract.
+	_, err := d.Device.Write(allowed, offset)
+	if err != nil {
+		return 0, err
 	}
 	if d.observer != nil {
-		for index := range count {
-			d.observer.ObservePacket(PacketInbound, allowed[index][offset:])
+		for _, buffer := range allowed {
+			d.observer.ObservePacket(PacketInbound, buffer[offset:])
 		}
 	}
 
-	return count, err
+	return len(allowed), nil
 }
 
 func packetFromReadBuffer(buffer []byte, size, offset int) ([]byte, bool) {
