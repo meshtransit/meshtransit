@@ -85,6 +85,11 @@ type peerProbingDevice interface {
 	SetPeerProbeHandler(pathdiscovery.DatagramHandler)
 }
 
+type relayManagingDevice interface {
+	RelayHealth() relay.HealthSnapshot
+	PrepareRelayRegion(int) error
+}
+
 type wireGuardFactory interface {
 	New(
 		context.Context,
@@ -467,6 +472,34 @@ func (e *WireGuardEngine) SetPeerProbeHandler(
 	return nil
 }
 
+// RelayHealth returns non-secret authenticated connection state for home
+// selection. The daemon serializes this call with Apply and Close.
+func (e *WireGuardEngine) RelayHealth() relay.HealthSnapshot {
+	if e == nil || e.device == nil {
+		return relay.HealthSnapshot{}
+	}
+	device, supported := e.device.(relayManagingDevice)
+	if !supported {
+		return relay.HealthSnapshot{}
+	}
+
+	return device.RelayHealth()
+}
+
+// PrepareRelayRegion opens a control-authorized relay connection without
+// changing packet routing. Home selection waits for RelayHealth confirmation.
+func (e *WireGuardEngine) PrepareRelayRegion(regionID int) error {
+	if e == nil || e.device == nil {
+		return pathdiscovery.ErrTransportClosed
+	}
+	device, supported := e.device.(relayManagingDevice)
+	if !supported {
+		return errors.New("dataplane: relay preparation is unavailable")
+	}
+
+	return device.PrepareRelayRegion(regionID)
+}
+
 // SetPreferredEndpoint applies one authenticated path selection to the exact
 // peer and map revision currently installed in the tunnel engine.
 func (e *WireGuardEngine) SetPreferredEndpoint(
@@ -817,7 +850,7 @@ func buildRelayConfig(
 		return nil, nil
 	}
 	homeRegion := selectHomeRelay(snapshot.Relays, snapshot.Self.HomeRelay)
-	home, homeExists := usableRelayRegion(snapshot.Relays, homeRegion)
+	_, homeExists := usableRelayRegion(snapshot.Relays, homeRegion)
 	if !homeExists {
 		return nil, nil
 	}
@@ -825,10 +858,18 @@ func buildRelayConfig(
 		PrivateKey: relay.Key(privateKey),
 		PublicKey:  relay.Key(publicKey),
 		HomeRegion: homeRegion,
-		Regions: map[int]relay.Region{
-			home.ID: home,
-		},
-		Peers: make([]relay.Peer, 0, len(snapshot.Peers)),
+		Regions:    make(map[int]relay.Region, len(snapshot.Relays)),
+		Peers:      make([]relay.Peer, 0, len(snapshot.Peers)),
+	}
+	regionIDs := make([]int, 0, len(snapshot.Relays))
+	for regionID := range snapshot.Relays {
+		regionIDs = append(regionIDs, regionID)
+	}
+	slices.Sort(regionIDs)
+	for _, regionID := range regionIDs {
+		if region, exists := usableRelayRegion(snapshot.Relays, regionID); exists {
+			config.Regions[regionID] = region
+		}
 	}
 	for _, node := range snapshot.Peers {
 		peerRegion := selectHomeRelay(snapshot.Relays, node.HomeRelay)

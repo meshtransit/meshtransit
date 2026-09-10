@@ -12,10 +12,11 @@ import (
 	"net/netip"
 	"slices"
 	"strconv"
+	"time"
 )
 
 const (
-	maxRegions        = 256
+	maxRegions        = 1_024
 	maxNodesPerRegion = 32
 	maxPeers          = 256
 )
@@ -55,8 +56,20 @@ type Config struct {
 	Peers      []Peer
 }
 
-// ReceivedPacket is one encrypted packet delivered by a wire adapter.
-type ReceivedPacket struct {
+// ReceiveKind identifies one authenticated event delivered by a wire adapter.
+type ReceiveKind uint8
+
+const (
+	// ReceivePacket carries encrypted peer traffic.
+	ReceivePacket ReceiveKind = iota + 1
+	// ReceiveActivity records an authenticated relay liveness frame without data.
+	ReceiveActivity
+)
+
+// ReceiveEvent is one authenticated relay event delivered by a wire adapter.
+// Activity events never contain peer identity or packet data.
+type ReceiveEvent struct {
+	Kind   ReceiveKind
 	Source Key
 	Data   []byte
 }
@@ -68,11 +81,29 @@ type Packet struct {
 	Data     []byte
 }
 
+// RegionHealth is a non-secret connection snapshot for one active region.
+type RegionHealth struct {
+	RegionID            int
+	Connected           bool
+	LastConnected       time.Time
+	LastActivity        time.Time
+	LastSend            time.Time
+	LastFailure         time.Time
+	ConsecutiveFailures int
+}
+
+// HealthSnapshot is a defensive point-in-time view of active relay workers.
+type HealthSnapshot struct {
+	Available  bool
+	HomeRegion int
+	Regions    []RegionHealth
+}
+
 // Client is the small wire-protocol contract consumed by the relay pool.
 // Close must interrupt a concurrent Receive call.
 type Client interface {
 	Send(Key, []byte) error
-	Receive() (ReceivedPacket, error)
+	Receive() (ReceiveEvent, error)
 	Close() error
 }
 

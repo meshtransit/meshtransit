@@ -13,6 +13,7 @@ const (
 	relayImprovementPercent   = 20
 	missesBeforeRelayFailover = 2
 	selectionLatencyRetention = 5*time.Minute + 10*time.Second
+	relayActivityRetention    = 2 * time.Minute
 )
 
 var errInvalidSelection = errors.New("relay: invalid home selection input")
@@ -26,8 +27,9 @@ type RegionLatency struct {
 
 // HomeSelection is the currently selected rendezvous region.
 type HomeSelection struct {
-	RegionID int
-	Changed  bool
+	RegionID            int
+	PreparationRegionID int
+	Changed             bool
 }
 
 type latencyState struct {
@@ -101,12 +103,15 @@ func (s *HomeSelector) Reconcile(
 	}, nil
 }
 
-// Observe incorporates one bounded probe batch. Latency uses a 75/25 moving
-// average. A live home changes only for both a 10 ms and 20 percent gain; two
-// partial rounds must miss it before reachability failover.
+// Observe incorporates one bounded probe batch and an authenticated relay
+// health snapshot. Latency uses a 75/25 moving average. A live home changes
+// only for both a 10 ms and 20 percent gain; two partial rounds must miss it
+// before reachability failover. A replacement must be connected and fresh
+// before selection changes.
 func (s *HomeSelector) Observe(
 	now time.Time,
 	samples []RegionLatency,
+	health HealthSnapshot,
 ) (HomeSelection, error) {
 	if s == nil {
 		return HomeSelection{}, errors.New("relay: home selector is not initialized")
@@ -129,6 +134,10 @@ func (s *HomeSelector) Observe(
 		}
 		seen[sample.RegionID] = struct{}{}
 	}
+	healthByRegion, err := normalizeHealth(now, health, s.usable)
+	if err != nil {
+		return HomeSelection{}, err
+	}
 	s.lastObservation = now
 	for regionID, state := range s.latencies {
 		if !state.observed.Add(selectionLatencyRetention).After(now) {
@@ -138,6 +147,7 @@ func (s *HomeSelector) Observe(
 	previous := s.current
 	currentObserved := false
 	bestObserved := 0
+	bestAlternative := 0
 	for _, sample := range samples {
 		state, exists := s.latencies[sample.RegionID]
 		if exists {
@@ -153,28 +163,55 @@ func (s *HomeSelector) Observe(
 		if bestObserved == 0 || s.better(sample.RegionID, bestObserved) {
 			bestObserved = sample.RegionID
 		}
+		if sample.RegionID != s.current &&
+			(bestAlternative == 0 || s.better(sample.RegionID, bestAlternative)) {
+			bestAlternative = sample.RegionID
+		}
 	}
 
 	if s.current == 0 || len(samples) == 0 {
 		return HomeSelection{RegionID: s.current}, nil
 	}
-	if !currentObserved {
+	preparationRegionID := 0
+	candidateRegionID := 0
+	currentHealth, currentHealthExists := healthByRegion[s.current]
+	currentRelayFailed := health.Available && currentHealthExists &&
+		currentHealth.ConsecutiveFailures > 0 && !regionHealthy(now, currentHealth)
+	switch {
+	case currentRelayFailed && currentObserved:
 		s.consecutiveMisses++
-		if s.consecutiveMisses >= missesBeforeRelayFailover && bestObserved != 0 {
-			s.current = bestObserved
-			s.consecutiveMisses = 0
+		if s.consecutiveMisses >= missesBeforeRelayFailover && bestAlternative != 0 {
+			candidateRegionID = bestAlternative
 		}
-	} else {
+	case !currentObserved:
+		if regionHealthy(now, healthByRegion[s.current]) {
+			s.consecutiveMisses = 0
+		} else {
+			s.consecutiveMisses++
+			if s.consecutiveMisses >= missesBeforeRelayFailover && bestObserved != 0 {
+				candidateRegionID = bestObserved
+			}
+		}
+	default:
 		s.consecutiveMisses = 0
 		if bestObserved != 0 && bestObserved != s.current &&
 			s.materiallyBetter(bestObserved, s.current) {
-			s.current = bestObserved
+			candidateRegionID = bestObserved
+		}
+	}
+	if candidateRegionID != 0 {
+		if regionHealthy(now, healthByRegion[candidateRegionID]) {
+			s.current = candidateRegionID
+			s.consecutiveMisses = 0
+		} else {
+			preparationRegionID = candidateRegionID
 		}
 	}
 
 	return HomeSelection{
-		RegionID: s.current,
-		Changed:  s.current != previous,
+		RegionID:            s.current,
+		PreparationRegionID: preparationRegionID,
+		Changed:             s.current != previous,
 	}, nil
 }
 
@@ -231,4 +268,58 @@ func normalizeUsableRegions(regions []int) (map[int]struct{}, []int, error) {
 	}
 
 	return usable, ordered, nil
+}
+
+func normalizeHealth(
+	now time.Time,
+	health HealthSnapshot,
+	usable map[int]struct{},
+) (map[int]RegionHealth, error) {
+	if !health.Available {
+		if health.HomeRegion != 0 || len(health.Regions) != 0 {
+			return nil, errInvalidSelection
+		}
+
+		return nil, nil
+	}
+	if health.HomeRegion <= 0 || len(health.Regions) > maxActiveRegions {
+		return nil, errInvalidSelection
+	}
+	if _, exists := usable[health.HomeRegion]; !exists {
+		return nil, errInvalidSelection
+	}
+	regions := make(map[int]RegionHealth, len(health.Regions))
+	for _, region := range health.Regions {
+		if region.RegionID <= 0 || region.ConsecutiveFailures < 0 ||
+			dateAfter(region.LastConnected, now) || dateAfter(region.LastActivity, now) ||
+			dateAfter(region.LastSend, now) || dateAfter(region.LastFailure, now) {
+			return nil, errInvalidSelection
+		}
+		if _, exists := usable[region.RegionID]; !exists {
+			return nil, errInvalidSelection
+		}
+		if _, exists := regions[region.RegionID]; exists {
+			return nil, errInvalidSelection
+		}
+		if region.ConsecutiveFailures > 0 && region.LastFailure.IsZero() {
+			return nil, errInvalidSelection
+		}
+		if region.Connected && (region.LastConnected.IsZero() || region.LastActivity.IsZero() ||
+			region.LastActivity.Before(region.LastConnected) ||
+			region.ConsecutiveFailures != 0) {
+			return nil, errInvalidSelection
+		}
+		regions[region.RegionID] = region
+	}
+
+	return regions, nil
+}
+
+func regionHealthy(now time.Time, health RegionHealth) bool {
+	return health.Connected && !health.LastActivity.IsZero() &&
+		health.LastActivity.Add(relayActivityRetention).After(now)
+}
+
+func dateAfter(value, limit time.Time) bool {
+	return !value.IsZero() && value.After(limit)
 }

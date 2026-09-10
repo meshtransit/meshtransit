@@ -78,6 +78,7 @@ const (
 	dnsCleanupTimeout     = 5 * time.Second
 	minEndpointRefresh    = 20 * time.Second
 	maxEndpointRefresh    = 26 * time.Second
+	relayPreparationPoll  = 5 * time.Second
 )
 
 // Status is the daemon-owned status model before it is mapped to a wire format.
@@ -157,6 +158,11 @@ type endpointDiscoverer interface {
 		uint64,
 		[]netip.AddrPort,
 	) (pathdiscovery.DiscoveryResult, error)
+}
+
+type relayHealthDataPlane interface {
+	RelayHealth() relay.HealthSnapshot
+	PrepareRelayRegion(int) error
 }
 
 type peerProbeDataPlane interface {
@@ -936,10 +942,11 @@ func (s *Service) runEndpointRefresh(
 			return fmt.Errorf("selecting relay probe batch: %w", err)
 		}
 		serverCursor = nextCursor
-		observed, serverLatencies, err := s.discoverEndpoints(
+		observed, serverLatencies, health, err := s.discoverEndpoints(
 			ctx,
 			scope,
 			discoverer,
+			current.socket,
 			batch,
 		)
 		if err != nil {
@@ -958,9 +965,25 @@ func (s *Service) runEndpointRefresh(
 		if err != nil {
 			return err
 		}
-		selection, err = homeSelector.Observe(s.clock(), regionLatencies)
+		relayDataPlane, hasRelayHealth := discoverer.(relayHealthDataPlane)
+		selection, err = homeSelector.Observe(s.clock(), regionLatencies, health)
 		if err != nil {
 			return fmt.Errorf("selecting home relay: %w", err)
+		}
+		preparingRelay := false
+		if selection.PreparationRegionID != 0 && hasRelayHealth {
+			s.dataPlaneMu.Lock()
+			prepareErr := relayDataPlane.PrepareRelayRegion(selection.PreparationRegionID)
+			s.dataPlaneMu.Unlock()
+			if prepareErr == nil {
+				preparingRelay = true
+			} else if s.logger != nil {
+				s.logger.Debug(
+					"relay preparation deferred",
+					"region_id", selection.PreparationRegionID,
+					"error", prepareErr,
+				)
+			}
 		}
 		publish(currentCandidates, selection.RegionID)
 		if s.endpointRefreshDelay == nil {
@@ -979,6 +1002,9 @@ func (s *Service) runEndpointRefresh(
 				delay = untilExpiry
 			}
 		}
+		if preparingRelay && relayPreparationPoll < delay {
+			delay = relayPreparationPoll
+		}
 		timer = time.NewTimer(delay)
 		timerChannel = timer.C
 	}
@@ -988,14 +1014,24 @@ func (s *Service) discoverEndpoints(
 	ctx context.Context,
 	scope uint64,
 	discoverer endpointDiscoverer,
+	expectedSocket pathdiscovery.Socket,
 	servers []pathdiscovery.RelayServer,
-) (pathdiscovery.Set, []pathdiscovery.ServerLatency, error) {
+) (pathdiscovery.Set, []pathdiscovery.ServerLatency, relay.HealthSnapshot, error) {
 	endpoints := make([]netip.AddrPort, len(servers))
 	for index, server := range servers {
 		endpoints[index] = server.Endpoint
 	}
 	s.dataPlaneMu.Lock()
+	if expectedSocket.IsOpen() && discoverer.DiscoverySocket() != expectedSocket {
+		s.dataPlaneMu.Unlock()
+
+		return s.configuredCandidates, nil, relay.HealthSnapshot{}, nil
+	}
 	result, err := discoverer.DiscoverEndpoints(ctx, scope, endpoints)
+	health := relay.HealthSnapshot{}
+	if relayDataPlane, supported := discoverer.(relayHealthDataPlane); supported {
+		health = relayDataPlane.RelayHealth()
+	}
 	s.dataPlaneMu.Unlock()
 	if err == nil {
 		merged, mergeErr := pathdiscovery.Merge(
@@ -1003,25 +1039,31 @@ func (s *Service) discoverEndpoints(
 			result.Candidates,
 		)
 		if mergeErr != nil {
-			return pathdiscovery.Set{}, nil, fmt.Errorf(
+			return pathdiscovery.Set{}, nil, relay.HealthSnapshot{}, fmt.Errorf(
 				"merging direct endpoints: %w",
 				mergeErr,
 			)
 		}
 
-		return merged, append([]pathdiscovery.ServerLatency(nil), result.ServerLatencies...), nil
+		return merged,
+			append([]pathdiscovery.ServerLatency(nil), result.ServerLatencies...),
+			health,
+			nil
 	}
 	if ctx.Err() != nil {
-		return pathdiscovery.Set{}, nil, ctx.Err()
+		return pathdiscovery.Set{}, nil, relay.HealthSnapshot{}, ctx.Err()
 	}
 	if errors.Is(err, pathdiscovery.ErrNoSTUNResponse) ||
 		errors.Is(err, pathdiscovery.ErrNoSTUNServers) ||
 		errors.Is(err, pathdiscovery.ErrSocketChanged) ||
 		errors.Is(err, pathdiscovery.ErrTransportClosed) {
-		return s.configuredCandidates, nil, nil
+		return s.configuredCandidates, nil, health, nil
 	}
 
-	return pathdiscovery.Set{}, nil, fmt.Errorf("discovering direct endpoints: %w", err)
+	return pathdiscovery.Set{}, nil, relay.HealthSnapshot{}, fmt.Errorf(
+		"discovering direct endpoints: %w",
+		err,
+	)
 }
 
 func relayRegionLatencies(

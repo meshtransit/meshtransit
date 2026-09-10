@@ -5,6 +5,7 @@ import (
 	cryptorand "crypto/rand"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"net"
 	"slices"
@@ -22,6 +23,7 @@ const (
 	minRetryDelay       = 250 * time.Millisecond
 	maxRetryDelay       = 5 * time.Second
 	connectTimeout      = 10 * time.Second
+	receiveSilenceLimit = 2*time.Minute + 10*time.Second
 )
 
 var (
@@ -43,30 +45,45 @@ type sendRequest struct {
 
 type regionWorker struct {
 	region      Region
+	generation  uint64
+	ctx         context.Context
+	cancel      context.CancelFunc
+	done        chan struct{}
 	send        chan sendRequest
 	queuedBytes int
+	busy        bool
+	lastUsed    time.Time
+	health      RegionHealth
+}
+
+type reverseRoute struct {
+	regionID   int
+	generation uint64
 }
 
 // Pool owns bounded relay connections and their goroutine lifecycle.
 type Pool struct {
-	config     Config
-	dialer     Dialer
-	parent     context.Context
-	ctx        context.Context
-	cancel     context.CancelFunc
-	retryDelay func(int) time.Duration
-	receive    chan Packet
-	done       chan struct{}
+	config         Config
+	dialer         Dialer
+	parent         context.Context
+	ctx            context.Context
+	cancel         context.CancelFunc
+	retryDelay     func(int) time.Duration
+	clock          func() time.Time
+	receiveSilence time.Duration
+	receive        chan Packet
+	done           chan struct{}
 
-	lifecycle    sync.Mutex
-	mu           sync.Mutex
-	workers      map[int]*regionWorker
-	peerByKey    map[Key]Peer
-	reverseByKey map[Key]int
-	queuedBytes  int
-	isOpen       bool
-	isClosed     bool
-	wait         sync.WaitGroup
+	lifecycle        sync.Mutex
+	mu               sync.Mutex
+	workers          map[int]*regionWorker
+	peerByKey        map[Key]Peer
+	reverseByKey     map[Key]reverseRoute
+	queuedBytes      int
+	workerGeneration uint64
+	isOpen           bool
+	isClosed         bool
+	wait             sync.WaitGroup
 }
 
 // New constructs a stopped relay pool from one validated map authority.
@@ -87,11 +104,13 @@ func New(parent context.Context, config Config, dialer Dialer) (*Pool, error) {
 	}
 
 	return &Pool{
-		config:     validated,
-		dialer:     dialer,
-		parent:     parent,
-		retryDelay: randomizedRetryDelay,
-		peerByKey:  peers,
+		config:         validated,
+		dialer:         dialer,
+		parent:         parent,
+		retryDelay:     randomizedRetryDelay,
+		clock:          time.Now,
+		receiveSilence: receiveSilenceLimit,
+		peerByKey:      peers,
 	}, nil
 }
 
@@ -117,11 +136,19 @@ func (p *Pool) Open() error {
 	p.receive = make(chan Packet, receiveQueueDepth)
 	p.done = make(chan struct{})
 	p.workers = make(map[int]*regionWorker)
-	p.reverseByKey = make(map[Key]int)
+	p.reverseByKey = make(map[Key]reverseRoute)
 	p.queuedBytes = 0
 	p.isOpen = true
-	if _, err := p.ensureWorkerLocked(p.config.HomeRegion); err != nil {
+	if _, err := p.startWorkerLocked(p.config.HomeRegion); err != nil {
 		p.isOpen = false
+		p.cancel()
+		close(p.done)
+		p.ctx = nil
+		p.cancel = nil
+		p.receive = nil
+		p.done = nil
+		p.workers = nil
+		p.reverseByKey = nil
 
 		return err
 	}
@@ -147,33 +174,53 @@ func (p *Pool) Send(regionID int, destination Key, packets [][]byte) error {
 			return ErrQueueFull
 		}
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.isClosed || !p.isOpen {
-		return ErrClosed
-	}
-	peer, peerExists := p.peerByKey[destination]
-	_, regionExists := p.config.Regions[regionID]
-	reverseRegion := p.reverseByKey[destination]
-	if !peerExists || !regionExists || regionID <= 0 ||
-		(peer.HomeRegion != regionID && reverseRegion != regionID) {
-		return ErrUnauthorized
-	}
-	worker, err := p.ensureWorkerLocked(regionID)
-	if err != nil {
-		return err
-	}
-	if worker.queuedBytes+total > maxRegionQueuedByte ||
-		p.queuedBytes+total > maxTotalQueuedByte {
-		return ErrQueueFull
-	}
 	request := sendRequest{
 		destination: destination,
 		packets:     clonePackets(packets),
 		bytes:       total,
 	}
+
+	p.lifecycle.Lock()
+	defer p.lifecycle.Unlock()
+	p.mu.Lock()
+	if p.isClosed || !p.isOpen {
+		p.mu.Unlock()
+
+		return ErrClosed
+	}
+	peer, peerExists := p.peerByKey[destination]
+	_, regionExists := p.config.Regions[regionID]
+	reverse := p.reverseByKey[destination]
+	if !peerExists || !regionExists || regionID <= 0 ||
+		(peer.HomeRegion != regionID && reverse.regionID != regionID) {
+		p.mu.Unlock()
+
+		return ErrUnauthorized
+	}
+	p.mu.Unlock()
+	worker, err := p.ensureWorker(regionID)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.isClosed || !p.isOpen {
+		return ErrClosed
+	}
+	peer, peerExists = p.peerByKey[destination]
+	_, regionExists = p.config.Regions[regionID]
+	reverse = p.reverseByKey[destination]
+	if !peerExists || !regionExists || regionID <= 0 ||
+		peer.HomeRegion != regionID &&
+			(reverse.regionID != regionID || reverse.generation != worker.generation) {
+		return ErrUnauthorized
+	}
+	if worker.queuedBytes+total > maxRegionQueuedByte ||
+		p.queuedBytes+total > maxTotalQueuedByte {
+		return ErrQueueFull
+	}
 	worker.queuedBytes += total
+	worker.lastUsed = p.clock()
 	p.queuedBytes += total
 	select {
 	case worker.send <- request:
@@ -183,6 +230,47 @@ func (p *Pool) Send(regionID int, destination Key, packets [][]byte) error {
 		p.queuedBytes -= total
 
 		return ErrQueueFull
+	}
+}
+
+// PrepareRegion starts an authenticated connection to a control-authorized
+// region without routing packets through it. Callers can inspect Health before
+// publishing a home-region change.
+func (p *Pool) PrepareRegion(regionID int) error {
+	if p == nil {
+		return ErrClosed
+	}
+	p.lifecycle.Lock()
+	defer p.lifecycle.Unlock()
+	_, err := p.ensureWorker(regionID)
+
+	return err
+}
+
+// Health returns a defensive, non-secret snapshot of active region workers.
+func (p *Pool) Health() HealthSnapshot {
+	if p == nil {
+		return HealthSnapshot{}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.isOpen {
+		return HealthSnapshot{}
+	}
+	regionIDs := make([]int, 0, len(p.workers))
+	for regionID := range p.workers {
+		regionIDs = append(regionIDs, regionID)
+	}
+	slices.Sort(regionIDs)
+	regions := make([]RegionHealth, 0, len(regionIDs))
+	for _, regionID := range regionIDs {
+		regions = append(regions, p.workers[regionID].health)
+	}
+
+	return HealthSnapshot{
+		Available:  true,
+		HomeRegion: p.config.HomeRegion,
+		Regions:    regions,
 	}
 }
 
@@ -287,7 +375,47 @@ func (p *Pool) stopLocked() {
 	p.mu.Unlock()
 }
 
-func (p *Pool) ensureWorkerLocked(regionID int) (*regionWorker, error) {
+// ensureWorker requires lifecycle to be held so eviction, replacement, and
+// shutdown cannot overlap.
+func (p *Pool) ensureWorker(regionID int) (*regionWorker, error) {
+	for {
+		p.mu.Lock()
+		if p.isClosed || !p.isOpen {
+			p.mu.Unlock()
+
+			return nil, ErrClosed
+		}
+		if _, exists := p.config.Regions[regionID]; !exists || regionID <= 0 {
+			p.mu.Unlock()
+
+			return nil, ErrUnauthorized
+		}
+		if worker := p.workers[regionID]; worker != nil {
+			worker.lastUsed = p.clock()
+			p.mu.Unlock()
+
+			return worker, nil
+		}
+		if len(p.workers) < maxActiveRegions {
+			worker, err := p.startWorkerLocked(regionID)
+			p.mu.Unlock()
+
+			return worker, err
+		}
+		victim := p.evictionCandidateLocked()
+		if victim == nil {
+			p.mu.Unlock()
+
+			return nil, ErrRegionLimit
+		}
+		delete(p.workers, victim.region.ID)
+		victim.cancel()
+		p.mu.Unlock()
+		<-victim.done
+	}
+}
+
+func (p *Pool) startWorkerLocked(regionID int) (*regionWorker, error) {
 	region, exists := p.config.Regions[regionID]
 	if !exists {
 		return nil, ErrUnauthorized
@@ -295,12 +423,20 @@ func (p *Pool) ensureWorkerLocked(regionID int) (*regionWorker, error) {
 	if worker := p.workers[regionID]; worker != nil {
 		return worker, nil
 	}
-	if len(p.workers) >= maxActiveRegions {
+	if len(p.workers) >= maxActiveRegions || p.workerGeneration == math.MaxUint64 {
 		return nil, ErrRegionLimit
 	}
+	p.workerGeneration++
+	workerCtx, cancel := context.WithCancel(p.ctx)
 	worker := &regionWorker{
-		region: region,
-		send:   make(chan sendRequest, sendQueueDepth),
+		region:     region,
+		generation: p.workerGeneration,
+		ctx:        workerCtx,
+		cancel:     cancel,
+		done:       make(chan struct{}),
+		send:       make(chan sendRequest, sendQueueDepth),
+		lastUsed:   p.clock(),
+		health:     RegionHealth{RegionID: regionID},
 	}
 	p.workers[regionID] = worker
 	p.wait.Add(1)
@@ -309,29 +445,68 @@ func (p *Pool) ensureWorkerLocked(regionID int) (*regionWorker, error) {
 	return worker, nil
 }
 
+func (p *Pool) evictionCandidateLocked() *regionWorker {
+	var selected *regionWorker
+	for regionID, worker := range p.workers {
+		if regionID == p.config.HomeRegion || worker.busy || worker.queuedBytes != 0 ||
+			p.hasReverseRegionLocked(regionID, worker.generation) {
+			continue
+		}
+		if selected == nil || worker.lastUsed.Before(selected.lastUsed) ||
+			(worker.lastUsed.Equal(selected.lastUsed) && regionID < selected.region.ID) {
+			selected = worker
+		}
+	}
+
+	return selected
+}
+
+func (p *Pool) hasReverseRegionLocked(regionID int, generation uint64) bool {
+	for _, route := range p.reverseByKey {
+		if route.regionID == regionID && route.generation == generation {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (p *Pool) runWorker(worker *regionWorker) {
-	defer p.wait.Done()
+	defer func() {
+		close(worker.done)
+		p.wait.Done()
+	}()
 	attempt := 0
 	for {
-		if err := p.ctx.Err(); err != nil {
+		if err := worker.ctx.Err(); err != nil {
 			return
 		}
-		dialCtx, cancel := context.WithTimeout(p.ctx, connectTimeout)
+		dialCtx, cancel := context.WithTimeout(worker.ctx, connectTimeout)
 		client, err := p.dialer.Dial(
 			dialCtx,
 			p.config.PrivateKey,
 			worker.region,
 		)
 		cancel()
-		if err == nil {
-			attempt = 0
-			err = p.runConnection(worker, client)
+		if err == nil && client == nil {
+			err = errors.New("relay: dialer returned a nil client")
 		}
-		if errors.Is(err, context.Canceled) || errors.Is(err, net.ErrClosed) && p.ctx.Err() != nil {
+		if err == nil && worker.ctx.Err() != nil {
+			_ = client.Close()
+
 			return
 		}
+		if err == nil {
+			attempt = 0
+			p.markConnected(worker)
+			err = p.runConnection(worker, client)
+		}
+		if worker.ctx.Err() != nil || errors.Is(err, context.Canceled) {
+			return
+		}
+		p.markFailure(worker)
 		attempt++
-		if !waitContext(p.ctx, p.retryDelay(attempt)) {
+		if !waitContext(worker.ctx, p.retryDelay(attempt)) {
 			return
 		}
 	}
@@ -341,86 +516,176 @@ func (p *Pool) runConnection(worker *regionWorker, client Client) error {
 	if client == nil {
 		return errors.New("relay: dialer returned a nil client")
 	}
-	defer p.clearReverseRegion(worker.region.ID)
+	defer p.clearReverseRegion(worker.region.ID, worker.generation)
 	receiveErr := make(chan error, 1)
+	activity := make(chan struct{}, 1)
 	go func() {
-		receiveErr <- p.runReceiver(worker.region.ID, client)
+		receiveErr <- p.runReceiver(worker, client, activity)
 	}()
+	activityTimer := time.NewTimer(p.receiveSilence)
+	defer activityTimer.Stop()
 
 	for {
 		select {
-		case <-p.ctx.Done():
+		case <-worker.ctx.Done():
 			_ = client.Close()
 			<-receiveErr
 
-			return p.ctx.Err()
+			return worker.ctx.Err()
 		case err := <-receiveErr:
 			_ = client.Close()
 
 			return err
+		case <-activity:
+			resetTimer(activityTimer, p.receiveSilence)
+		case <-activityTimer.C:
+			_ = client.Close()
+			<-receiveErr
+
+			return errors.New("relay: authenticated connection became unresponsive")
 		case request := <-worker.send:
-			p.releaseQueued(worker, request.bytes)
+			p.beginSend(worker, request.bytes)
 			for _, packet := range request.packets {
 				if err := client.Send(request.destination, packet); err != nil {
+					p.finishSend(worker, false)
 					_ = client.Close()
 					<-receiveErr
 
 					return fmt.Errorf("relay: sending encrypted packet: %w", err)
 				}
 			}
+			p.finishSend(worker, true)
 		}
 	}
 }
 
-func (p *Pool) runReceiver(regionID int, client Client) error {
+func (p *Pool) runReceiver(
+	worker *regionWorker,
+	client Client,
+	activity chan<- struct{},
+) error {
 	for {
-		packet, err := client.Receive()
+		event, err := client.Receive()
 		if err != nil {
 			return err
 		}
-		if packet.Source == (Key{}) || len(packet.Data) == 0 ||
-			len(packet.Data) > maxPacketSize {
+		switch event.Kind {
+		case ReceiveActivity:
+			if event.Source != (Key{}) || len(event.Data) != 0 {
+				return errors.New("relay: liveness event contains packet data")
+			}
+		case ReceivePacket:
+		case 0:
+			return errors.New("relay: receive event kind is missing")
+		default:
+			return errors.New("relay: receive event kind is unsupported")
+		}
+		p.markActivity(worker, false)
+		select {
+		case activity <- struct{}{}:
+		default:
+		}
+		if event.Kind == ReceiveActivity {
 			continue
 		}
-		if _, exists := p.peerByKey[packet.Source]; !exists {
+		if event.Source == (Key{}) || len(event.Data) == 0 ||
+			len(event.Data) > maxPacketSize {
 			continue
 		}
-		p.setReverseRegion(packet.Source, regionID)
+		if _, exists := p.peerByKey[event.Source]; !exists {
+			continue
+		}
+		p.markActivity(worker, true)
+		p.setReverseRegion(event.Source, worker.region.ID, worker.generation)
 		received := Packet{
-			RegionID: regionID,
-			Source:   packet.Source,
-			Data:     slices.Clone(packet.Data),
+			RegionID: worker.region.ID,
+			Source:   event.Source,
+			Data:     slices.Clone(event.Data),
 		}
 		select {
 		case p.receive <- received:
-		case <-p.ctx.Done():
-			return p.ctx.Err()
+		case <-worker.ctx.Done():
+			return worker.ctx.Err()
 		default:
 		}
 	}
 }
 
-func (p *Pool) setReverseRegion(peer Key, regionID int) {
+func (p *Pool) setReverseRegion(peer Key, regionID int, generation uint64) {
 	p.mu.Lock()
-	p.reverseByKey[peer] = regionID
+	worker := p.workers[regionID]
+	if worker != nil && worker.generation == generation {
+		p.reverseByKey[peer] = reverseRoute{regionID: regionID, generation: generation}
+	}
 	p.mu.Unlock()
 }
 
-func (p *Pool) clearReverseRegion(regionID int) {
+func (p *Pool) clearReverseRegion(regionID int, generation uint64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for peer, currentRegion := range p.reverseByKey {
-		if currentRegion == regionID {
+	for peer, route := range p.reverseByKey {
+		if route.regionID == regionID && route.generation == generation {
 			delete(p.reverseByKey, peer)
 		}
 	}
 }
 
-func (p *Pool) releaseQueued(worker *regionWorker, count int) {
+func (p *Pool) beginSend(worker *regionWorker, count int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	worker.queuedBytes -= count
 	p.queuedBytes -= count
+	worker.busy = true
+}
+
+func (p *Pool) finishSend(worker *regionWorker, sent bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	worker.busy = false
+	if sent {
+		now := p.clock()
+		worker.lastUsed = now
+		worker.health.LastSend = now
+	}
+}
+
+func (p *Pool) markConnected(worker *regionWorker) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.workers[worker.region.ID] != worker {
+		return
+	}
+	now := p.clock()
+	worker.health.Connected = true
+	worker.health.LastConnected = now
+	worker.health.LastActivity = now
+	worker.health.ConsecutiveFailures = 0
+}
+
+func (p *Pool) markActivity(worker *regionWorker, peerPacket bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.workers[worker.region.ID] != worker {
+		return
+	}
+	now := p.clock()
+	worker.health.LastActivity = now
+	if peerPacket {
+		worker.lastUsed = now
+	}
+}
+
+func (p *Pool) markFailure(worker *regionWorker) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.workers[worker.region.ID] != worker {
+		return
+	}
+	worker.health.Connected = false
+	worker.health.LastFailure = p.clock()
+	if worker.health.ConsecutiveFailures < math.MaxInt {
+		worker.health.ConsecutiveFailures++
+	}
 }
 
 func clonePackets(packets [][]byte) [][]byte {
@@ -462,4 +727,14 @@ func waitContext(ctx context.Context, delay time.Duration) bool {
 	case <-timer.C:
 		return true
 	}
+}
+
+func resetTimer(timer *time.Timer, delay time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(delay)
 }

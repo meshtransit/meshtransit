@@ -316,7 +316,11 @@ func TestSharedBindRoutesEncryptedPacketsThroughRelay(t *testing.T) {
 		count, err := receivers[1](packets, sizes, endpoints)
 		received <- receiveResult{count: count, err: err}
 	}()
-	client.receive <- relay.ReceivedPacket{Source: peerKey, Data: []byte{4, 5, 6}}
+	client.receive <- relay.ReceiveEvent{
+		Kind:   relay.ReceivePacket,
+		Source: peerKey,
+		Data:   []byte{4, 5, 6},
+	}
 	select {
 	case result := <-received:
 		if result.err != nil || result.count != 1 || sizes[0] != 3 ||
@@ -531,7 +535,7 @@ type relayTestSentPacket struct {
 
 type relayTestClient struct {
 	sent      chan relayTestSentPacket
-	receive   chan relay.ReceivedPacket
+	receive   chan relay.ReceiveEvent
 	closed    chan struct{}
 	closeOnce sync.Once
 }
@@ -539,7 +543,7 @@ type relayTestClient struct {
 func newRelayTestClient() *relayTestClient {
 	return &relayTestClient{
 		sent:    make(chan relayTestSentPacket, 1),
-		receive: make(chan relay.ReceivedPacket, 1),
+		receive: make(chan relay.ReceiveEvent, 1),
 		closed:  make(chan struct{}),
 	}
 }
@@ -556,12 +560,12 @@ func (c *relayTestClient) Send(destination relay.Key, packet []byte) error {
 	}
 }
 
-func (c *relayTestClient) Receive() (relay.ReceivedPacket, error) {
+func (c *relayTestClient) Receive() (relay.ReceiveEvent, error) {
 	select {
 	case packet := <-c.receive:
 		return packet, nil
 	case <-c.closed:
-		return relay.ReceivedPacket{}, net.ErrClosed
+		return relay.ReceiveEvent{}, net.ErrClosed
 	}
 }
 

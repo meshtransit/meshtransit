@@ -47,11 +47,13 @@ func TestPoolSendsAndReceivesAuthorizedPackets(t *testing.T) {
 		t.Fatal("Send() did not reach client")
 	}
 
-	client.received <- receiveResult{packet: ReceivedPacket{
+	client.received <- receiveResult{event: ReceiveEvent{
+		Kind:   ReceivePacket,
 		Source: Key{99},
 		Data:   []byte{4},
 	}}
-	client.received <- receiveResult{packet: ReceivedPacket{
+	client.received <- receiveResult{event: ReceiveEvent{
+		Kind:   ReceivePacket,
 		Source: Key{2},
 		Data:   []byte{5, 6},
 	}}
@@ -182,7 +184,8 @@ func TestPoolLearnsAuthenticatedReverseRegion(t *testing.T) {
 	if err := pool.Send(2, Key{2}, [][]byte{{1}}); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("Send() before observation error = %v, want ErrUnauthorized", err)
 	}
-	client.received <- receiveResult{packet: ReceivedPacket{
+	client.received <- receiveResult{event: ReceiveEvent{
+		Kind:   ReceivePacket,
 		Source: Key{2},
 		Data:   []byte{2},
 	}}
@@ -240,14 +243,151 @@ func TestPoolBoundsActiveRegions(t *testing.T) {
 	}
 }
 
+func TestPoolReportsAuthenticatedRegionHealth(t *testing.T) {
+	t.Parallel()
+
+	client := newFakeClient()
+	dialer := &fakeDialer{client: client, calls: make(chan int, 1)}
+	pool, err := New(t.Context(), testConfig(), dialer)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+	if err := pool.Open(); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	select {
+	case <-dialer.calls:
+	case <-time.After(time.Second):
+		t.Fatal("Dial() was not called")
+	}
+	waitForRegionHealth(t, pool, 1, func(health RegionHealth) bool {
+		return health.Connected && !health.LastConnected.IsZero() &&
+			!health.LastActivity.IsZero()
+	})
+	client.received <- receiveResult{event: ReceiveEvent{Kind: ReceiveActivity}}
+	if err := pool.Send(1, Key{2}, [][]byte{{1}}); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	select {
+	case <-client.sent:
+	case <-time.After(time.Second):
+		t.Fatal("Send() did not reach client")
+	}
+	waitForRegionHealth(t, pool, 1, func(health RegionHealth) bool {
+		return health.Connected && !health.LastSend.IsZero()
+	})
+	health := pool.Health()
+	health.Regions[0].Connected = false
+	if !pool.Health().Regions[0].Connected {
+		t.Fatal("Health() returned mutable worker state")
+	}
+}
+
+func TestPoolReconnectsSilentAuthenticatedConnection(t *testing.T) {
+	t.Parallel()
+
+	client := newFakeClient()
+	dialer := &fakeDialer{client: client, calls: make(chan int, 1)}
+	pool, err := New(t.Context(), testConfig(), dialer)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+	pool.receiveSilence = 100 * time.Millisecond
+	pool.retryDelay = func(int) time.Duration { return time.Hour }
+	if err := pool.Open(); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	select {
+	case <-dialer.calls:
+	case <-time.After(time.Second):
+		t.Fatal("Dial() was not called")
+	}
+	waitForRegionHealth(t, pool, 1, func(health RegionHealth) bool {
+		return health.Connected
+	})
+	waitForRegionHealth(t, pool, 1, func(health RegionHealth) bool {
+		return !health.Connected && health.ConsecutiveFailures == 1 &&
+			!health.LastFailure.IsZero()
+	})
+}
+
+func TestPoolDoesNotClearNewReverseGeneration(t *testing.T) {
+	t.Parallel()
+
+	peer := Key{2}
+	worker := &regionWorker{region: Region{ID: 1}, generation: 2}
+	pool := &Pool{
+		workers: map[int]*regionWorker{1: worker},
+		reverseByKey: map[Key]reverseRoute{
+			peer: {regionID: 1, generation: 2},
+		},
+	}
+	pool.clearReverseRegion(1, 1)
+	if route, exists := pool.reverseByKey[peer]; !exists || route.generation != 2 {
+		t.Fatalf("new reverse route was cleared: %#v", pool.reverseByKey)
+	}
+}
+
+func TestPoolEvictsOnlyIdleNonHomeWorkers(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig()
+	for regionID := 2; regionID <= maxActiveRegions+1; regionID++ {
+		config.Regions[regionID] = Region{
+			ID: regionID,
+			Nodes: []Node{{
+				Name:     "relay",
+				HostName: "relay.example.com",
+				Port:     443,
+			}},
+		}
+	}
+	dialer := &countingBlockingDialer{}
+	pool, err := New(t.Context(), config, dialer)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+	if err := pool.Open(); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	for regionID := 2; regionID <= maxActiveRegions+1; regionID++ {
+		if err := pool.PrepareRegion(regionID); err != nil {
+			t.Fatalf("PrepareRegion(%d) error = %v", regionID, err)
+		}
+	}
+	health := pool.Health()
+	if !health.Available || health.HomeRegion != 1 || len(health.Regions) != maxActiveRegions {
+		t.Fatalf("Health() = %#v", health)
+	}
+	seen := make(map[int]struct{}, len(health.Regions))
+	for _, region := range health.Regions {
+		seen[region.RegionID] = struct{}{}
+	}
+	if _, exists := seen[1]; !exists {
+		t.Fatal("home worker was evicted")
+	}
+	if _, exists := seen[2]; exists {
+		t.Fatal("oldest idle non-home worker was retained")
+	}
+	if _, exists := seen[maxActiveRegions+1]; !exists {
+		t.Fatal("prepared replacement worker is missing")
+	}
+	if maximum := dialer.maximumActive(); maximum > maxActiveRegions {
+		t.Fatalf("active dial workers = %d, want at most %d", maximum, maxActiveRegions)
+	}
+}
+
 type sentPacket struct {
 	destination Key
 	packet      []byte
 }
 
 type receiveResult struct {
-	packet ReceivedPacket
-	err    error
+	event ReceiveEvent
+	err   error
 }
 
 type fakeClient struct {
@@ -274,12 +414,12 @@ func (c *fakeClient) Send(destination Key, packet []byte) error {
 	}
 }
 
-func (c *fakeClient) Receive() (ReceivedPacket, error) {
+func (c *fakeClient) Receive() (ReceiveEvent, error) {
 	select {
 	case result := <-c.received:
-		return result.packet, result.err
+		return result.event, result.err
 	case <-c.closed:
-		return ReceivedPacket{}, net.ErrClosed
+		return ReceiveEvent{}, net.ErrClosed
 	}
 }
 
@@ -318,6 +458,57 @@ func (blockingDialer) Dial(
 	<-ctx.Done()
 
 	return nil, ctx.Err()
+}
+
+type countingBlockingDialer struct {
+	mu      sync.Mutex
+	active  int
+	maximum int
+}
+
+func (d *countingBlockingDialer) Dial(
+	ctx context.Context,
+	_ Key,
+	_ Region,
+) (Client, error) {
+	d.mu.Lock()
+	d.active++
+	d.maximum = max(d.maximum, d.active)
+	d.mu.Unlock()
+	defer func() {
+		d.mu.Lock()
+		d.active--
+		d.mu.Unlock()
+	}()
+	<-ctx.Done()
+
+	return nil, ctx.Err()
+}
+
+func (d *countingBlockingDialer) maximumActive() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.maximum
+}
+
+func waitForRegionHealth(
+	t *testing.T,
+	pool *Pool,
+	regionID int,
+	ready func(RegionHealth) bool,
+) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		for _, health := range pool.Health().Regions {
+			if health.RegionID == regionID && ready(health) {
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("region %d health did not become ready: %#v", regionID, pool.Health())
 }
 
 func receivePoolWithTimeout(pool *Pool, timeout time.Duration) (Packet, error) {

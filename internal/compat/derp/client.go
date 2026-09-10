@@ -238,41 +238,50 @@ func (c *Client) Send(destination relay.Key, packet []byte) error {
 	return nil
 }
 
-// Receive returns only encrypted peer packets and handles protocol liveness frames.
-func (c *Client) Receive() (relay.ReceivedPacket, error) {
+// Receive returns encrypted peer packets and authenticated relay activity.
+func (c *Client) Receive() (relay.ReceiveEvent, error) {
 	if c == nil || c.protocol == nil || c.conn == nil {
-		return relay.ReceivedPacket{}, errors.New("relay protocol: client is closed")
+		return relay.ReceiveEvent{}, errors.New("relay protocol: client is closed")
 	}
 	for {
 		message, err := c.protocol.Recv()
 		if err != nil {
-			return relay.ReceivedPacket{}, fmt.Errorf("receiving relay frame: %w", err)
+			return relay.ReceiveEvent{}, fmt.Errorf("receiving relay frame: %w", err)
 		}
 		switch message := message.(type) {
 		case protocol.ReceivedPacket:
 			rawSource := message.Source.AppendTo(nil)
 			if len(rawSource) != len(relay.Key{}) {
-				return relay.ReceivedPacket{}, errors.New(
+				return relay.ReceiveEvent{}, errors.New(
 					"relay protocol: source identity size is invalid",
 				)
 			}
 			var source relay.Key
 			copy(source[:], rawSource)
 
-			return relay.ReceivedPacket{
+			return relay.ReceiveEvent{
+				Kind:   relay.ReceivePacket,
 				Source: source,
 				Data:   append([]byte{}, message.Data...),
 			}, nil
 		case protocol.PingMessage:
 			if err := c.sendPong([8]byte(message)); err != nil {
-				return relay.ReceivedPacket{}, err
+				return relay.ReceiveEvent{}, err
 			}
+
+			return relay.ReceiveEvent{Kind: relay.ReceiveActivity}, nil
 		case protocol.ServerRestartingMessage:
-			return relay.ReceivedPacket{}, errors.New("relay protocol: server is restarting")
+			return relay.ReceiveEvent{}, errors.New("relay protocol: server is restarting")
+		case protocol.HealthMessage:
+			if message.Problem != "" {
+				return relay.ReceiveEvent{}, errors.New("relay protocol: server reports unhealthy")
+			}
+
+			return relay.ReceiveEvent{Kind: relay.ReceiveActivity}, nil
 		case protocol.ServerInfoMessage, protocol.PongMessage,
-			protocol.KeepAliveMessage, protocol.HealthMessage,
+			protocol.KeepAliveMessage,
 			protocol.PeerGoneMessage, protocol.PeerPresentMessage:
-			continue
+			return relay.ReceiveEvent{Kind: relay.ReceiveActivity}, nil
 		default:
 			continue
 		}

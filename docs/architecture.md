@@ -49,7 +49,10 @@ slots across the topology. A session-owned selector smooths RTT with a 75/25
 moving average, expires stale samples after five minutes and ten seconds, and
 switches a reachable home only when another observed region is at least 10 ms
 and 20 percent faster. A partial round must miss the current home twice before
-reachability failover. A changed usable control preference remains
+reachability failover. Recent authenticated relay activity preserves the current
+home during partial STUN loss. A measured replacement is opened without routing
+traffic through it and must complete authenticated setup before publication; it
+is polled on a bounded five-second cadence while pending. A changed usable control preference remains
 authoritative; absent one, the lowest usable signed region is the deterministic
 cold-start fallback. Candidate and home-relay changes are published atomically
 through the pinned map protocol and resent after reconnect. The packet engine
@@ -110,7 +113,12 @@ WireGuard ciphertext. Each client has at most sixteen active region workers,
 32 queued batches per region, one MiB per-region and four MiB total queued send
 data, plus a bounded receive queue. An authenticated inbound packet records a
 connection-scoped reverse route so a responder can reply on the exact region
-where the peer was observed; disconnect removes that authority. Closing a pool
+where the peer was observed; disconnect removes that authority. Worker generations
+prevent stale cleanup from deleting newer reverse authority. The oldest idle
+non-home worker can be evicted only when it has no queued/in-flight traffic or
+reverse routes; replacement waits for complete worker exit, preserving the
+goroutine bound. Authenticated liveness frames update payload-free health state,
+and receive silence forces bounded reconnect. Closing a pool
 cancels dials, closes active connections, unblocks receive, and joins every
 worker.
 
@@ -151,7 +159,7 @@ Compatibility must be proven independently at four layers:
 1. HTTPS server-key discovery and TS2021/Noise session establishment. Implemented by `doctor control`, registration, and the long-lived map stream.
 2. Registration, login completion, keepalive watchdog, and bounded reconnect are implemented. Session-handle resume remains; reconnect currently requires a new full snapshot.
 3. Network-map decoding, structural policy validation, DNS translation/planning, Linux DNS activation, and host-level TCP/UDP/ICMP policy enforcement are implemented. Capability-based networking, subnet/exit policy, and URL resolver transports remain.
-4. Privileged TUN/DNS lifecycle, direct userspace WireGuard traffic, shared-socket STUN discovery, periodic candidate refresh/expiry, typed endpoint and home-relay publication, bounded encrypted relay traffic, and authenticated direct endpoint switching are implemented as opt-in Linux POCs. Heartbeat-driven roaming, traffic-idle discovery pacing, relay-region eviction, generalized routes, and non-Linux DNS backends remain.
+4. Privileged TUN/DNS lifecycle, direct userspace WireGuard traffic, shared-socket STUN discovery, periodic candidate refresh/expiry, typed endpoint and health-gated home-relay publication, bounded encrypted relay traffic with idle region eviction, and authenticated direct endpoint switching are implemented as opt-in Linux POCs. Heartbeat-driven roaming, traffic-idle discovery pacing, generalized routes, and non-Linux DNS backends remain.
 
 ## Local API
 

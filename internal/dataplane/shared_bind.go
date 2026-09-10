@@ -179,6 +179,22 @@ func (b *sharedBind) Send(buffers [][]byte, endpoint conn.Endpoint) error {
 	return b.inner.Send(buffers, endpoint)
 }
 
+func (b *sharedBind) RelayHealth() relay.HealthSnapshot {
+	if b == nil || b.relay == nil {
+		return relay.HealthSnapshot{}
+	}
+
+	return b.relay.Health()
+}
+
+func (b *sharedBind) PrepareRelayRegion(regionID int) error {
+	if b == nil || b.relay == nil {
+		return pathdiscovery.ErrTransportClosed
+	}
+
+	return b.relay.PrepareRegion(regionID)
+}
+
 func (b *sharedBind) ParseEndpoint(value string) (conn.Endpoint, error) {
 	if strings.HasPrefix(value, relayEndpointPrefix) {
 		return parseRelayEndpoint(value, b.relay)

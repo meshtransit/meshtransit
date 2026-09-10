@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/meshtransit/meshd/internal/netadmin"
 	"github.com/meshtransit/meshd/internal/networkmap"
@@ -745,6 +746,55 @@ func TestWireGuardEngineUsesRelayBeforeAuthenticatedDirectPath(t *testing.T) {
 	}
 }
 
+func TestWireGuardEnginePreparesAuthorizedRelayBeforeSelection(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot = addTestRelay(snapshot)
+	snapshot.Relays[2] = testRelayRegion(2, "relay-2.example.com")
+	now := time.Now()
+	device := &fakeWireGuardDevice{relayHealth: relay.HealthSnapshot{
+		Available:  true,
+		HomeRegion: 1,
+		Regions: []relay.RegionHealth{{
+			RegionID:      1,
+			Connected:     true,
+			LastConnected: now,
+			LastActivity:  now,
+		}},
+	}}
+	factory := &fakeWireGuardFactory{device: device}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		factory,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if !slices.Equal(factory.relayRegions, []int{1, 2}) {
+		t.Fatalf("relay authority regions = %v, want [1 2]", factory.relayRegions)
+	}
+	health := engine.RelayHealth()
+	if !health.Available || health.HomeRegion != 1 || len(health.Regions) != 1 {
+		t.Fatalf("RelayHealth() = %#v", health)
+	}
+	health.Regions[0].Connected = false
+	if !engine.RelayHealth().Regions[0].Connected {
+		t.Fatal("RelayHealth() returned mutable device state")
+	}
+	if err := engine.PrepareRelayRegion(2); err != nil {
+		t.Fatalf("PrepareRelayRegion() error = %v", err)
+	}
+	if !slices.Equal(device.preparedRelays, []int{2}) {
+		t.Fatalf("prepared relay regions = %v", device.preparedRelays)
+	}
+}
+
 func TestWireGuardEngineFallsBackToDirectWithoutUsableRelay(t *testing.T) {
 	t.Parallel()
 
@@ -973,6 +1023,7 @@ func (o *wireGuardTUNOpener) OpenTUN(
 type fakeWireGuardFactory struct {
 	device           *fakeWireGuardDevice
 	relayFingerprint [32]byte
+	relayRegions     []int
 }
 
 func (f *fakeWireGuardFactory) New(
@@ -985,8 +1036,14 @@ func (f *fakeWireGuardFactory) New(
 ) (wireGuardDevice, error) {
 	if relayConfig != nil {
 		f.relayFingerprint = relay.Fingerprint(*relayConfig)
+		f.relayRegions = f.relayRegions[:0]
+		for regionID := range relayConfig.Regions {
+			f.relayRegions = append(f.relayRegions, regionID)
+		}
+		slices.Sort(f.relayRegions)
 	} else {
 		f.relayFingerprint = [32]byte{}
+		f.relayRegions = nil
 	}
 	if f.device == nil {
 		f.device = &fakeWireGuardDevice{}
@@ -1011,6 +1068,8 @@ type fakeWireGuardDevice struct {
 	peerHandler      pathdiscovery.DatagramHandler
 	peerPacket       []byte
 	peerDestination  netip.AddrPort
+	relayHealth      relay.HealthSnapshot
+	preparedRelays   []int
 }
 
 func (d *fakeWireGuardDevice) Configure(configuration io.Reader) error {
@@ -1067,4 +1126,17 @@ func (d *fakeWireGuardDevice) SetPeerProbeHandler(
 	handler pathdiscovery.DatagramHandler,
 ) {
 	d.peerHandler = handler
+}
+
+func (d *fakeWireGuardDevice) RelayHealth() relay.HealthSnapshot {
+	health := d.relayHealth
+	health.Regions = append([]relay.RegionHealth(nil), d.relayHealth.Regions...)
+
+	return health
+}
+
+func (d *fakeWireGuardDevice) PrepareRelayRegion(regionID int) error {
+	d.preparedRelays = append(d.preparedRelays, regionID)
+
+	return nil
 }

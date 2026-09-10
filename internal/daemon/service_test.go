@@ -20,6 +20,7 @@ import (
 	"github.com/meshtransit/meshd/internal/networkmap"
 	"github.com/meshtransit/meshd/internal/pathdiscovery"
 	"github.com/meshtransit/meshd/internal/profile"
+	"github.com/meshtransit/meshd/internal/relay"
 	"github.com/meshtransit/meshd/internal/version"
 )
 
@@ -588,15 +589,25 @@ func TestEndpointRefreshSelectsMeasuredHomeRelay(t *testing.T) {
 	firstServer := netip.MustParseAddrPort("192.0.2.71:3478")
 	secondServer := netip.MustParseAddrPort("192.0.2.72:3478")
 	discoverer := &refreshDiscoverer{
-		calls: make(chan struct{}, 1),
+		calls: make(chan struct{}, 4),
 		result: pathdiscovery.DiscoveryResult{ServerLatencies: []pathdiscovery.ServerLatency{
 			{Server: firstServer, Latency: 100 * time.Millisecond},
 			{Server: secondServer, Latency: 20 * time.Millisecond},
 		}},
+		health: relay.HealthSnapshot{
+			Available:  true,
+			HomeRegion: 1,
+			Regions: []relay.RegionHealth{{
+				RegionID:      1,
+				Connected:     true,
+				LastConnected: time.Now().Add(-time.Second),
+				LastActivity:  time.Now(),
+			}},
+		},
 	}
 	service := &Service{
 		clock:                time.Now,
-		endpointRefreshDelay: func() time.Duration { return time.Hour },
+		endpointRefreshDelay: func() time.Duration { return 5 * time.Millisecond },
 	}
 	requests := make(chan endpointRefreshRequest, 1)
 	updates := make(chan ts2021.EndpointUpdate, 1)
@@ -615,13 +626,23 @@ func TestEndpointRefreshSelectsMeasuredHomeRelay(t *testing.T) {
 		},
 	}
 
-	select {
-	case update := <-updates:
-		if update.PreferredRelay != 2 || !update.HasPreferredRelay {
-			t.Fatalf("preferred relay update = %#v, want region 2", update)
+	selected := false
+	deadline := time.After(time.Second)
+	for !selected {
+		select {
+		case update := <-updates:
+			if update.PreferredRelay == 2 && update.HasPreferredRelay {
+				selected = true
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for prepared preferred relay update")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for preferred relay update")
+	}
+	discoverer.mu.Lock()
+	prepared := append([]int(nil), discoverer.prepared...)
+	discoverer.mu.Unlock()
+	if !slices.Contains(prepared, 2) {
+		t.Fatalf("prepared relay regions = %v, want region 2", prepared)
 	}
 
 	cancel()
@@ -742,7 +763,9 @@ func TestEndpointRefreshSocketChangeDropsOldDynamicCandidate(t *testing.T) {
 		t.Fatal("timed out waiting for discovered endpoint")
 	}
 
+	discoverer.mu.Lock()
 	discoverer.err = pathdiscovery.ErrNoSTUNResponse
+	discoverer.mu.Unlock()
 	requests <- endpointRefreshRequest{
 		active: true,
 		socket: pathdiscovery.Socket{Port: 41641, Generation: 2},
@@ -774,9 +797,12 @@ func TestRandomEndpointRefreshDelayBounds(t *testing.T) {
 }
 
 type refreshDiscoverer struct {
-	calls  chan struct{}
-	result pathdiscovery.DiscoveryResult
-	err    error
+	mu       sync.Mutex
+	calls    chan struct{}
+	result   pathdiscovery.DiscoveryResult
+	err      error
+	health   relay.HealthSnapshot
+	prepared []int
 }
 
 func (d *refreshDiscoverer) DiscoverySocket() pathdiscovery.Socket {
@@ -792,8 +818,48 @@ func (d *refreshDiscoverer) DiscoverEndpoints(
 	case d.calls <- struct{}{}:
 	default:
 	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	result := d.result
+	result.ServerLatencies = append(
+		[]pathdiscovery.ServerLatency(nil),
+		d.result.ServerLatencies...,
+	)
 
-	return d.result, d.err
+	return result, d.err
+}
+
+func (d *refreshDiscoverer) RelayHealth() relay.HealthSnapshot {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	health := d.health
+	health.Regions = append([]relay.RegionHealth(nil), d.health.Regions...)
+
+	return health
+}
+
+func (d *refreshDiscoverer) PrepareRelayRegion(regionID int) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.prepared = append(d.prepared, regionID)
+	now := time.Now()
+	for index := range d.health.Regions {
+		if d.health.Regions[index].RegionID == regionID {
+			d.health.Regions[index].Connected = true
+			d.health.Regions[index].LastConnected = now
+			d.health.Regions[index].LastActivity = now
+
+			return nil
+		}
+	}
+	d.health.Regions = append(d.health.Regions, relay.RegionHealth{
+		RegionID:      regionID,
+		Connected:     true,
+		LastConnected: now,
+		LastActivity:  now,
+	})
+
+	return nil
 }
 
 func TestService_StatusReportsOnlineForEncryptedDataPlane(t *testing.T) {

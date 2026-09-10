@@ -165,3 +165,19 @@ func (d *officialWireGuardDevice) SetPeerProbeHandler(
 	}
 	d.datagrams.setPeerHandler(handler)
 }
+
+func (d *officialWireGuardDevice) RelayHealth() relay.HealthSnapshot {
+	if d == nil || d.bind == nil {
+		return relay.HealthSnapshot{}
+	}
+
+	return d.bind.RelayHealth()
+}
+
+func (d *officialWireGuardDevice) PrepareRelayRegion(regionID int) error {
+	if d == nil || d.bind == nil {
+		return pathdiscovery.ErrTransportClosed
+	}
+
+	return d.bind.PrepareRelayRegion(regionID)
+}

@@ -17,10 +17,12 @@ For each validated map, the data plane derives a private relay configuration:
 3. Bind every authorized peer public key and overlay address to its usable home
    preference. A missing preference uses the local deterministic rendezvous
    region.
-4. Configure each WireGuard peer with its relay endpoint as the base path.
-5. Promote a direct UDP endpoint only after the session-bound authenticated
+4. Retain every usable signed region as connection authority, while opening
+   workers lazily and keeping the active set bounded.
+5. Configure each WireGuard peer with its relay endpoint as the base path.
+6. Promote a direct UDP endpoint only after the session-bound authenticated
    probe protocol proves it.
-6. Restore the relay endpoint when that proof expires, the candidate is removed,
+7. Restore the relay endpoint when that proof expires, the candidate is removed,
    or the direct update is explicitly rolled back.
 
 Changing relay topology, identity, peer-region binding, or overlay identity
@@ -46,15 +48,35 @@ verification accepts only one of these control-authorized modes:
 - an exact lowercase `sha256-raw:` certificate pin, with hostname and validity
   checks still enforced.
 
-The adapter answers protocol pings, treats restart notices as reconnect signals,
-and ignores informational presence and health frames. It returns only encrypted
-peer packets to the product pool.
+The adapter answers protocol pings, treats restart notices and explicit unhealthy
+reports as reconnect signals, and translates authenticated keepalive, presence,
+and healthy-status frames into a payload-free product activity event. It returns
+encrypted peer packets as a separate event kind, so wire-specific message types
+never enter relay orchestration.
 
 An authenticated inbound packet may establish a reverse route for its source
 peer on that exact active region. This lets a responder answer on the connection
 where the initiator was observed when their home regions differ. The route is
 never learned from the WireGuard payload or an arbitrary endpoint string, and it
-is deleted when that relay connection ends.
+is deleted when that relay connection ends. The route carries the worker
+generation, so cleanup from an older connection lifecycle cannot delete newer
+authority.
+
+## Health-aware home selection
+
+The pool exposes an internal, non-secret snapshot containing region ID,
+authenticated connection state, bounded failure count, and last connection,
+receive, send, and failure times. It contains no node keys, packet data, relay
+health text, or network identity.
+
+STUN latency remains the source of relative region quality, but no measured
+candidate is published immediately. The packet engine first opens that signed
+region without routing traffic through it. Selection changes only after the new
+connection completes TLS, protocol authentication, and has fresh activity.
+Recent authenticated activity on the current home also prevents a partial STUN
+round from causing false failover. Control remains authoritative: the running
+packet configuration changes home only after the published preference is echoed
+in a newly validated map.
 
 ## Resource bounds and failure behavior
 
@@ -66,10 +88,19 @@ is deleted when that relay connection ends.
 - connection deadline: 10 seconds;
 - write deadline: 5 seconds;
 - reconnect delay: cryptographically jittered from 250 milliseconds to 5
-  seconds.
+  seconds;
+- authenticated receive silence: 2 minutes 10 seconds maximum before reconnect.
 
 Queue saturation drops the attempted relay packet instead of growing memory.
-Unknown sources and invalid frames are discarded. Cancellation closes active
+When all sixteen slots are used, the pool waits for the oldest idle non-home
+worker to exit before starting a replacement. It never evicts the home worker,
+a worker with queued or in-flight sends, or a worker carrying an authenticated
+reverse route. If every non-home worker is protected, preparation fails with a
+bounded region-limit error rather than exceeding the goroutine cap.
+
+Unknown sources and invalid peer packets are discarded. Invalid adapter event
+shapes, unhealthy server reports, receive silence, and transport failures close
+the affected connection and enter bounded reconnect. Cancellation closes active
 connections and joins every worker. WireGuard bind reconfiguration stops one
 connection generation and can safely open the next; destroying the device
 permanently closes the pool and clears its retained private authority. If no
@@ -79,10 +110,7 @@ accepts an unauthorized peer/region combination.
 
 ## Follow-up work
 
-The next relay milestones are worker eviction when more than sixteen regions
-are touched, relay-connection-aware preference retention, explicit IPv4/IPv6
-node dialing with bounded happy-eyeballs behavior, connection health telemetry
-without payloads, and adversarial end-to-end tests against malformed or
-overloaded relay servers. Latency measurement and atomic publication of the
-preferred region are implemented in the discovery/control path; the packet
-engine adopts the result only after it is echoed in a validated network map.
+The next relay milestones are explicit IPv4/IPv6 node dialing with bounded
+happy-eyeballs behavior, operator-facing aggregate health telemetry without
+keys or payloads, and adversarial end-to-end tests against malformed or
+overloaded relay servers.
