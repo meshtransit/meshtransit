@@ -181,7 +181,7 @@ Compatibility must be proven independently at four layers:
 
 ## Local API
 
-The API is versioned under `/v1` and is served only on a Unix socket. On Linux, every connection is associated with kernel `SO_PEERCRED` credentials; root, the daemon UID, and explicitly configured operator UIDs are allowed. Platforms without a verified credential implementation deny requests unless an unsafe development override is set. Current endpoints are:
+The API is versioned under `/v1` and is served only on a Unix socket. On Linux, every connection is associated with kernel `SO_PEERCRED` credentials; root, the daemon UID, and explicitly configured operator UIDs are allowed. A packaged service may also authorize kernel-verified callers that the daemon-owned `0660` socket admitted through its dedicated operator group. Platforms without a verified credential implementation deny requests unless an unsafe development override is set. Current endpoints are:
 
 - `GET /v1/health`
 - `GET /v1/status`

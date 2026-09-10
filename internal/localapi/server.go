@@ -44,13 +44,18 @@ type Server struct {
 	logger                    *slog.Logger
 	handler                   http.Handler
 	allowedUIDs               map[uint32]struct{}
+	allowSocketPeers          bool
 	unsafeAllowUnverifiedPeer bool
 }
 
 // Options configures local authorization. AllowedUIDs is copied during
 // construction so later caller mutation cannot change access policy.
 type Options struct {
-	AllowedUIDs                    []uint32
+	AllowedUIDs []uint32
+	// AllowSocketPeers authorizes any kernel-verified peer that passed the
+	// filesystem permissions on the daemon-owned Unix socket. It must only be
+	// enabled when the socket group is the intended operator boundary.
+	AllowSocketPeers               bool
 	UnsafeAllowUnverifiedLocalPeer bool
 }
 
@@ -71,6 +76,7 @@ func New(service service, logger *slog.Logger, options Options) (*Server, error)
 		service:                   service,
 		logger:                    logger,
 		allowedUIDs:               allowedUIDs,
+		allowSocketPeers:          options.AllowSocketPeers,
 		unsafeAllowUnverifiedPeer: options.UnsafeAllowUnverifiedLocalPeer,
 	}
 	server.handler = server.routes()
@@ -248,9 +254,9 @@ func (s *Server) isAuthorized(ctx context.Context) bool {
 	if !peer.isVerified {
 		return s.unsafeAllowUnverifiedPeer
 	}
-	_, allowed := s.allowedUIDs[peer.uid]
+	_, explicitlyAllowed := s.allowedUIDs[peer.uid]
 
-	return allowed
+	return explicitlyAllowed || s.allowSocketPeers
 }
 
 func (s *Server) handleControlProbe(writer http.ResponseWriter, request *http.Request) {

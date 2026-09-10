@@ -31,6 +31,7 @@ type Config struct {
 	LogLevel                       string
 	ShowVersion                    bool
 	AllowedUIDs                    []uint32
+	AllowSocketPeers               bool
 	UnsafeAllowUnverifiedLocalPeer bool
 	EnableTUNPOC                   bool
 	EnableWireGuardPOC             bool
@@ -115,6 +116,12 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 		"timeout for each flow log upload attempt",
 	)
 	flags.Var(&allowedUIDs, "allow-uid", "additional local uid allowed to call the api; repeatable")
+	flags.BoolVar(
+		&cfg.AllowSocketPeers,
+		"allow-socket-peers",
+		false,
+		"authorize kernel-verified peers admitted by unix socket permissions",
+	)
 	flags.BoolVar(
 		&cfg.UnsafeAllowUnverifiedLocalPeer,
 		"unsafe-allow-unverified-local-peer",

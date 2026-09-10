@@ -312,7 +312,44 @@ func TestServer_Authorization(t *testing.T) {
 	}
 }
 
+func TestServer_AuthorizesVerifiedSocketPeerWhenEnabled(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServerWithOptions(t, Options{
+		AllowedUIDs:      []uint32{testUID},
+		AllowSocketPeers: true,
+	})
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/status", nil)
+	request = request.WithContext(contextWithPeer(request.Context(), peerIdentity{
+		uid:        testUID + 1,
+		isPresent:  true,
+		isVerified: true,
+	}))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("verified socket peer status code = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	request = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1/status", nil)
+	request = request.WithContext(contextWithPeer(request.Context(), peerIdentity{
+		uid:       testUID + 1,
+		isPresent: true,
+	}))
+	response = httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("unverified socket peer status code = %d, want %d", response.Code, http.StatusForbidden)
+	}
+}
+
 func newTestServer(t *testing.T) *Server {
+	t.Helper()
+
+	return newTestServerWithOptions(t, Options{AllowedUIDs: []uint32{testUID}})
+}
+
+func newTestServerWithOptions(t *testing.T, options Options) *Server {
 	t.Helper()
 
 	stateDir := t.TempDir()
@@ -341,9 +378,7 @@ func newTestServer(t *testing.T) *Server {
 		t.Fatalf("daemon.New() error = %v", err)
 	}
 	logger := slog.New(slog.DiscardHandler)
-	server, err := New(service, logger, Options{
-		AllowedUIDs: []uint32{testUID},
-	})
+	server, err := New(service, logger, options)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}

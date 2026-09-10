@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"os/user"
 	"strconv"
 	"strings"
 	"syscall"
@@ -50,6 +51,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	)
 	var allowedUID uint64
 	var hasAllowedUID bool
+	allowedUser := flags.String("allow-user", "", "single meshd user allowed to open the tun")
 	flags.Func("allow-uid", "single meshd uid allowed to open the tun", func(value string) error {
 		if hasAllowedUID {
 			return errors.New("allow-uid may be specified only once")
@@ -81,8 +83,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 		return 1
 	}
-	if !hasAllowedUID {
-		_, _ = fmt.Fprintln(stderr, "meshnetd: --allow-uid is required")
+	resolvedUID, err := resolveAllowedUID(hasAllowedUID, allowedUID, *allowedUser, lookupLocalUser)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "meshnetd: %v\n", err)
 
 		return 2
 	}
@@ -113,7 +116,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	logger := slog.New(slog.NewJSONHandler(stderr, nil))
 	server, err := netadmin.NewServer(netadmin.ServerOptions{
-		AllowedUID:      uint32(allowedUID),
+		AllowedUID:      resolvedUID,
 		InterfaceName:   *interfaceName,
 		MTU:             *mtu,
 		AllowedPrefixes: allowedPrefixes,
@@ -157,6 +160,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 type prefixList []netip.Prefix
+
+func lookupLocalUser(username string) (*user.User, error) {
+	return user.Lookup(username)
+}
 
 func (p *prefixList) Set(value string) error {
 	prefix, err := netip.ParsePrefix(value)

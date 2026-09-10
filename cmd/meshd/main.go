@@ -178,6 +178,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	allowedUIDs := append([]uint32{0, daemonUID}, cfg.AllowedUIDs...)
 	server, err := localapi.New(service, logger, localapi.Options{
 		AllowedUIDs:                    allowedUIDs,
+		AllowSocketPeers:               cfg.AllowSocketPeers,
 		UnsafeAllowUnverifiedLocalPeer: cfg.UnsafeAllowUnverifiedLocalPeer,
 	})
 	if err != nil {

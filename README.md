@@ -14,7 +14,7 @@ Without an explicit POC flag the daemon remains control-only and reports `data_p
 On a disposable Linux host, the privileged boundary can be exercised explicitly:
 
 ```console
-# meshnetd --allow-uid 1001 \
+# meshnetd --allow-user meshd \
     --allow-prefix 100.64.0.0/10 \
     --allow-prefix fd7a:115c:a1e0::/48
 $ meshd --enable-wireguard-poc \
@@ -32,7 +32,7 @@ MagicDNS is separately opt-in and requires `systemd-resolved` plus a root-owned,
 non-writable `/usr/bin/resolvectl`:
 
 ```console
-# meshnetd --allow-uid 1001 \
+# meshnetd --allow-user meshd \
     --allow-prefix 100.64.0.0/10 \
     --allow-prefix fd7a:115c:a1e0::/48 \
     --enable-dns-poc
@@ -65,7 +65,7 @@ make build
 ./bin/meshd --socket /tmp/meshd.sock --state-dir /tmp/meshd-state
 ```
 
-Production defaults are `/run/meshd/meshd.sock` and `/var/lib/meshd`. Run the daemon under a dedicated service account and restrict membership of the socket's owning group. Linux authorizes UID `0`, the daemon UID, and values supplied through repeatable `--allow-uid UID` flags.
+Production defaults are `/run/meshd/meshd.sock` and `/var/lib/meshd`. Run the daemon under a dedicated service account and restrict membership of the socket's owning group. Linux authorizes UID `0`, the daemon UID, and values supplied through repeatable `--allow-uid UID` flags. A packaged service can enable `--allow-socket-peers` so kernel-verified callers admitted by the socket's `0660` owner/group permissions are also authorized.
 
 Non-Linux development currently lacks a verified peer-credential implementation and therefore denies API requests by default. The explicit `--unsafe-allow-unverified-local-peer` flag is for isolated development only and must not be used in production.
 
@@ -76,7 +76,7 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - HTTPS-only control URLs without embedded credentials, query strings, or fragments.
 - No client-supplied `network_id`; network membership is resolved by the control plane.
 - Versioned JSON API available only through a Unix-domain listener.
-- Linux `SO_PEERCRED` authorization for root, the daemon UID, and explicit operator UIDs.
+- Linux `SO_PEERCRED` authorization for root, the daemon UID, explicit operator UIDs, or verified callers admitted by an explicitly enabled socket-group boundary.
 - Bounded HTTP headers, bodies, reads, writes, and graceful shutdown.
 - HTTPS-only TS2021 capability-142 control-key and Noise-handshake probe with certificate verification, redirect refusal, and fingerprint-only output.
 - Explicit operator fingerprint verification before creating a control-key pin.

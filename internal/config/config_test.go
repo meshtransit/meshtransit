@@ -40,6 +40,18 @@ func TestParseDNSPOC(t *testing.T) {
 	}
 }
 
+func TestParseSocketPeerAuthorization(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Parse([]string{"--allow-socket-peers"}, io.Discard)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if !cfg.AllowSocketPeers {
+		t.Fatalf("parsed config = %#v", cfg)
+	}
+}
+
 func TestParseRejectsUnsafeNetAdminSocket(t *testing.T) {
 	t.Parallel()
 

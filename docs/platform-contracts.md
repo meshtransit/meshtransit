@@ -41,8 +41,10 @@ principal, not an address or caller-supplied identity.
 | macOS | Unix-domain socket | kernel peer credentials mapped to UID/PID where available |
 
 The listener must apply restrictive permissions before accepting requests,
-bound frame/header/body sizes, and authorize every new connection. A successful
-filesystem open or pipe connection alone is not sufficient authorization.
+bound frame/header/body sizes, and authorize every new connection. Linux may
+use its dedicated socket group as the authorization policy only after kernel
+peer credentials prove the caller is local; other transports must map their
+kernel-authenticated principal to an explicit local policy.
 
 ## Tunnel and route lifecycle
 
