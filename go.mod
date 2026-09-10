@@ -1,6 +1,6 @@
 module github.com/meshtransit/meshd
 
-go 1.26.6
+go 1.26.8
 
 require (
 	github.com/vishvananda/netlink v1.3.1

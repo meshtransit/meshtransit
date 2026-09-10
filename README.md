@@ -57,7 +57,7 @@ The observer reads only IPv4/IPv6 TCP or UDP headers at the plaintext TUN bounda
 
 ## Getting started
 
-Requirements: Go 1.26.6 or newer. Go's automatic toolchain selection can use the version declared in `go.mod`.
+Requirements: Go 1.26.8 or newer. Go's automatic toolchain selection can use the version declared in `go.mod`.
 
 ```bash
 make test
