@@ -45,6 +45,9 @@ make build
 ./bin/meshctl --socket /tmp/meshd.sock login complete
 ```
 
+Linux amd64/arm64 Debian package build and installation are documented in
+[docs/linux-packaging.md](docs/linux-packaging.md).
+
 Global flags must appear before the command. `MESHCTL_SOCKET` and `MESHCTL_TIMEOUT` provide environment defaults; explicit flags take precedence.
 
 ## Commands

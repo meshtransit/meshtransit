@@ -5,6 +5,7 @@
 ## Read first
 
 - README.md: commands, build instructions, and security boundary
+- docs/linux-packaging.md: Debian package build, contents, and installation
 - AGENTS.md: mandatory instructions for coding agents
 - ../meshd/docs/architecture.md: daemon and compatibility architecture when both repositories are checked out together
 
