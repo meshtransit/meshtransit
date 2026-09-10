@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.24 or newer
+- Go 1.26.8 or newer
 - `golangci-lint` v2 for the lint target
 
 ## Local workflow

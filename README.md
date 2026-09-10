@@ -28,7 +28,7 @@ Note: control synchronization is available; encrypted tunnel is not active
 
 ## Getting started
 
-Requirements: Go 1.24 or newer and a running `meshd` from the matching API generation.
+Requirements: Go 1.26.8 or newer and a running `meshd` from the matching API generation.
 
 ```bash
 make test
