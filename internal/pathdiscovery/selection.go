@@ -54,8 +54,9 @@ func (s PathSelection) IsValid() bool {
 		!s.ConfirmedAt.IsZero() && s.ExpiresAt.After(s.ConfirmedAt)
 }
 
-// PathChange reports a selected endpoint transition. Metadata-only refreshes
-// of the same endpoint do not produce a change.
+// PathChange reports a selected endpoint transition or an authenticated
+// reassertion. Equal previous and current endpoints mean the data plane must
+// reconcile protocol-level endpoint roaming with the still-trusted selection.
 type PathChange struct {
 	PeerID   uint64
 	Previous PathSelection
@@ -225,7 +226,28 @@ func (s *PathSelector) Observe(
 	s.advancedAt = observation.ObservedAt
 	s.selectPeerLocked(peer, observation.ObservedAt)
 
-	return s.resultLocked(previous), nil
+	result := s.resultLocked(previous)
+	if len(result.Changes) == 0 && peer.selected == observation.RemoteEndpoint {
+		before, hadBefore := previous[observation.PeerID]
+		if hadBefore && before.RemoteEndpoint == observation.RemoteEndpoint {
+			after := PathSelection{
+				PeerID:                observation.PeerID,
+				Generation:            s.active,
+				RemoteEndpoint:        observation.RemoteEndpoint,
+				ObservedLocalEndpoint: state.observedLocal,
+				RoundTrip:             state.roundTrip,
+				ConfirmedAt:           state.confirmedAt,
+				ExpiresAt:             state.expiresAt,
+			}
+			result.Changes = append(result.Changes, PathChange{
+				PeerID:   observation.PeerID,
+				Previous: before,
+				Current:  after,
+			})
+		}
+	}
+
+	return result, nil
 }
 
 // Expire removes proof whose deadline has arrived and falls back to the best

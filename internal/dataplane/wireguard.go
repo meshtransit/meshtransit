@@ -500,8 +500,8 @@ func (e *WireGuardEngine) PrepareRelayRegion(regionID int) error {
 	return device.PrepareRelayRegion(regionID)
 }
 
-// SetPreferredEndpoint applies one authenticated path selection to the exact
-// peer and map revision currently installed in the tunnel engine.
+// SetPreferredEndpoint applies or reasserts one authenticated path selection
+// for the exact peer and map revision currently installed in the tunnel engine.
 func (e *WireGuardEngine) SetPreferredEndpoint(
 	mapRevision uint64,
 	peerID uint64,
@@ -521,7 +521,7 @@ func (e *WireGuardEngine) SetPreferredEndpoint(
 		return ErrPeerEndpointUnauthorized
 	}
 
-	return e.configurePeerEndpoint(peerID, peer, endpoint.String())
+	return e.configurePeerEndpoint(peerID, peer, endpoint.String(), true)
 }
 
 // RestorePreferredEndpoint returns one peer to the deterministic endpoint from
@@ -541,7 +541,7 @@ func (e *WireGuardEngine) RestorePreferredEndpoint(
 		return ErrPeerEndpointUnavailable
 	}
 
-	return e.configurePeerEndpoint(peerID, peer, peer.baseEndpoint)
+	return e.configurePeerEndpoint(peerID, peer, peer.baseEndpoint, false)
 }
 
 // advanceEquivalentPlan binds a new map revision without reopening the shared
@@ -559,7 +559,12 @@ func (e *WireGuardEngine) advanceEquivalentPlan(
 	}
 	for _, peer := range planned {
 		installed := e.peers[peer.id]
-		if err := e.configurePeerEndpoint(peer.id, installed, installed.baseEndpoint); err != nil {
+		if err := e.configurePeerEndpoint(
+			peer.id,
+			installed,
+			installed.baseEndpoint,
+			false,
+		); err != nil {
 			return false, err
 		}
 	}
@@ -572,11 +577,12 @@ func (e *WireGuardEngine) configurePeerEndpoint(
 	peerID uint64,
 	peer wireGuardPeerState,
 	endpoint string,
+	reassert bool,
 ) error {
 	if endpoint == "" {
 		return ErrPeerEndpointUnavailable
 	}
-	if peer.currentEndpoint == endpoint {
+	if peer.currentEndpoint == endpoint && !reassert {
 		return nil
 	}
 	var configuration bytes.Buffer

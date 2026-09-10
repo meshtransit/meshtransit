@@ -37,7 +37,9 @@ func TestPathSelectorSelectsAndSmoothsAuthenticatedPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Observe(second) error = %v", err)
 	}
-	if len(result.Changes) != 0 ||
+	if len(result.Changes) != 1 ||
+		result.Changes[0].Previous.RemoteEndpoint != remote ||
+		result.Changes[0].Current.RemoteEndpoint != remote ||
 		result.ExpiresAt != second.ObservedAt.Add(defaultPathTrust) {
 		t.Fatalf("Observe(second) result = %#v", result)
 	}
@@ -51,6 +53,32 @@ func TestPathSelectorSelectsAndSmoothsAuthenticatedPath(t *testing.T) {
 		selected[0].ExpiresAt != second.ObservedAt.Add(defaultPathTrust) ||
 		!selected[0].IsValid() {
 		t.Fatalf("Selections() = %#v", selected)
+	}
+}
+
+func TestPathSelectorDoesNotReassertUnselectedPath(t *testing.T) {
+	t.Parallel()
+
+	selected := netip.MustParseAddrPort("203.0.113.10:41641")
+	unselected := netip.MustParseAddrPort("192.168.1.10:41641")
+	selector, _, generation := activePathSelector(t, selected, unselected)
+	now := time.Unix(1_500, 0)
+	if _, err := selector.Observe(
+		pathObservation(generation, selected, 10*time.Millisecond, now),
+	); err != nil {
+		t.Fatalf("Observe(selected) error = %v", err)
+	}
+	result, err := selector.Observe(pathObservation(
+		generation,
+		unselected,
+		100*time.Millisecond,
+		now.Add(time.Millisecond),
+	))
+	if err != nil {
+		t.Fatalf("Observe(unselected) error = %v", err)
+	}
+	if len(result.Changes) != 0 {
+		t.Fatalf("Observe(unselected) changes = %#v", result.Changes)
 	}
 }
 

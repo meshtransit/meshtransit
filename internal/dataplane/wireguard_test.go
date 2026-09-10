@@ -150,14 +150,17 @@ func TestWireGuardEngineAppliesAndRestoresAuthenticatedPeerEndpoint(t *testing.T
 	if err := engine.SetPreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID, preferred); err != nil {
 		t.Fatalf("repeat SetPreferredEndpoint() error = %v", err)
 	}
-	if device.configureCalls != 2 {
-		t.Fatalf("repeat preferred endpoint configure calls = %d, want 2", device.configureCalls)
+	if device.configureCalls != 3 || !strings.Contains(
+		device.configurations[2],
+		"endpoint="+preferred.String(),
+	) {
+		t.Fatalf("reassert preferred endpoint configuration = %q", device.configuration)
 	}
 	if err := engine.RestorePreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID); err != nil {
 		t.Fatalf("RestorePreferredEndpoint() error = %v", err)
 	}
-	if device.configureCalls != 3 || !strings.Contains(
-		device.configurations[2],
+	if device.configureCalls != 4 || !strings.Contains(
+		device.configurations[3],
 		"endpoint="+base.String(),
 	) {
 		t.Fatalf("restore configuration = %q", device.configuration)
