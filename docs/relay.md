@@ -79,8 +79,10 @@ accepts an unauthorized peer/region combination.
 
 ## Follow-up work
 
-The next relay milestones are latency measurement and publication of the
-preferred region to control, worker eviction when more than sixteen regions are
-touched, explicit IPv4/IPv6 node dialing with bounded happy-eyeballs behavior,
-connection health telemetry without payloads, and adversarial end-to-end tests
-against malformed or overloaded relay servers.
+The next relay milestones are worker eviction when more than sixteen regions
+are touched, relay-connection-aware preference retention, explicit IPv4/IPv6
+node dialing with bounded happy-eyeballs behavior, connection health telemetry
+without payloads, and adversarial end-to-end tests against malformed or
+overloaded relay servers. Latency measurement and atomic publication of the
+preferred region are implemented in the discovery/control path; the packet
+engine adopts the result only after it is echoed in a validated network map.

@@ -40,6 +40,9 @@ func TestNewMapRequest_OmitsNetworkSelector(t *testing.T) {
 	if !request.Stream || !request.KeepAlive || request.Version != tailcfg.CurrentCapabilityVersion {
 		t.Fatalf("map request flags = %#v, want streaming capability %d", request, tailcfg.CurrentCapabilityVersion)
 	}
+	if request.Hostinfo.NetInfo != nil {
+		t.Fatalf("map request published unknown relay state: %#v", request.Hostinfo.NetInfo)
+	}
 }
 
 func TestNewMapRequest_EndpointUpdateIsNonStreaming(t *testing.T) {
@@ -61,6 +64,8 @@ func TestNewMapRequest_EndpointUpdateIsNonStreaming(t *testing.T) {
 		Version:           "meshd/dev",
 		PinnedFingerprint: "sha256:" + strings.Repeat("a", 64),
 		Candidates:        candidates,
+		PreferredRelay:    7,
+		HasPreferredRelay: true,
 	}, false)
 	if request.Stream || !request.OmitPeers {
 		t.Fatalf("endpoint request stream=%t omitPeers=%t", request.Stream, request.OmitPeers)
@@ -69,6 +74,9 @@ func TestNewMapRequest_EndpointUpdateIsNonStreaming(t *testing.T) {
 		len(request.EndpointTypes) != 1 ||
 		request.EndpointTypes[0] != tailcfg.EndpointSTUN {
 		t.Fatalf("endpoint request = %#v", request)
+	}
+	if request.Hostinfo.NetInfo == nil || request.Hostinfo.NetInfo.PreferredDERP != 7 {
+		t.Fatalf("endpoint request netinfo = %#v", request.Hostinfo.NetInfo)
 	}
 }
 
@@ -135,6 +143,37 @@ func TestParseNetmapOptionsRequiresCanonicalPeerProbeKey(t *testing.T) {
 	}
 }
 
+func TestParseNetmapOptionsRejectsInvalidPreferredRelay(t *testing.T) {
+	t.Parallel()
+
+	base := NetmapOptions{
+		Hostname:           "node-a",
+		Version:            "meshd/test",
+		PinnedFingerprint:  "sha256:" + strings.Repeat("a", 64),
+		PeerProbePublicKey: "discokey:" + strings.Repeat("01", 32),
+	}
+	tests := []struct {
+		name     string
+		regionID int
+		isSet    bool
+	}{
+		{name: "positive unknown", regionID: 1},
+		{name: "negative", regionID: -1, isSet: true},
+		{name: "outside wire range", regionID: 65_536, isSet: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			options := base
+			options.PreferredRelay = test.regionID
+			options.HasPreferredRelay = test.isSet
+			if _, err := parseNetmapOptions(options); !errors.Is(err, ErrInvalidMaterial) {
+				t.Fatalf("parseNetmapOptions() error = %v, want ErrInvalidMaterial", err)
+			}
+		})
+	}
+}
+
 func TestProtocolEndpointType(t *testing.T) {
 	t.Parallel()
 
@@ -163,8 +202,14 @@ func TestEndpointStateRetainsLatestSetAcrossReconnect(t *testing.T) {
 		"192.0.2.70:41641",
 		pathdiscovery.SourceConfigured,
 	)
-	state := newEndpointState(initial)
-	if got, shouldSend := state.snapshot(); !shouldSend || !got.Equal(initial) {
+	state := newEndpointState(EndpointUpdate{
+		Candidates:        initial,
+		PreferredRelay:    1,
+		HasPreferredRelay: true,
+	})
+	if got, shouldSend := state.snapshot(); !shouldSend ||
+		!got.Candidates.Equal(initial) || got.PreferredRelay != 1 ||
+		!got.HasPreferredRelay {
 		t.Fatalf("initial endpoint state = %#v, %t", got, shouldSend)
 	}
 	dynamic := mustProtocolCandidateSet(
@@ -172,16 +217,24 @@ func TestEndpointStateRetainsLatestSetAcrossReconnect(t *testing.T) {
 		"198.51.100.70:41641",
 		pathdiscovery.SourceServerReflexive,
 	)
-	if !state.set(dynamic) || state.set(dynamic) {
+	dynamicUpdate := EndpointUpdate{
+		Candidates:        dynamic,
+		PreferredRelay:    2,
+		HasPreferredRelay: true,
+	}
+	if !state.set(dynamicUpdate) || state.set(dynamicUpdate) {
 		t.Fatal("endpoint state change detection is incorrect")
 	}
-	if got, shouldSend := state.snapshot(); !shouldSend || !got.Equal(dynamic) {
+	if got, shouldSend := state.snapshot(); !shouldSend ||
+		!got.Candidates.Equal(dynamic) || got.PreferredRelay != 2 ||
+		!got.HasPreferredRelay {
 		t.Fatalf("dynamic endpoint state = %#v, %t", got, shouldSend)
 	}
-	if !state.set(pathdiscovery.Set{}) {
+	if !state.set(EndpointUpdate{}) {
 		t.Fatal("endpoint withdrawal was not recorded")
 	}
-	if got, shouldSend := state.snapshot(); !shouldSend || got.Len() != 0 {
+	if got, shouldSend := state.snapshot(); !shouldSend ||
+		got.Candidates.Len() != 0 || got.PreferredRelay != 0 {
 		t.Fatalf("withdrawn endpoint state = %#v, %t", got, shouldSend)
 	}
 }
@@ -189,9 +242,9 @@ func TestEndpointStateRetainsLatestSetAcrossReconnect(t *testing.T) {
 func TestEndpointStateStartsWithExplicitWithdrawal(t *testing.T) {
 	t.Parallel()
 
-	state := newEndpointState(pathdiscovery.Set{})
+	state := newEndpointState(EndpointUpdate{})
 	got, shouldSend := state.snapshot()
-	if !shouldSend || got.Len() != 0 {
+	if !shouldSend || got.Candidates.Len() != 0 || got.PreferredRelay != 0 {
 		t.Fatalf("initial endpoint state = %#v, %t", got, shouldSend)
 	}
 }
@@ -199,7 +252,7 @@ func TestEndpointStateStartsWithExplicitWithdrawal(t *testing.T) {
 func TestEndpointUpdaterRejectsClosedChannel(t *testing.T) {
 	t.Parallel()
 
-	updates := make(chan pathdiscovery.Set)
+	updates := make(chan EndpointUpdate)
 	close(updates)
 	client := newWithHTTPClient(http.DefaultClient)
 	options := NetmapOptions{
@@ -213,7 +266,7 @@ func TestEndpointUpdaterRejectsClosedChannel(t *testing.T) {
 		key.NewMachine().Public(),
 		key.NewDisco().Public(),
 		options,
-		newEndpointState(pathdiscovery.Set{}),
+		newEndpointState(EndpointUpdate{}),
 	)
 	if !errors.Is(err, ErrEndpointUpdate) {
 		t.Fatalf("runEndpointUpdates() error = %v, want ErrEndpointUpdate", err)

@@ -495,9 +495,10 @@ func TestService_RunDiscoversAndPublishesDirectEndpoint(t *testing.T) {
 	}
 
 	control.mu.Lock()
-	updates := append([]pathdiscovery.Set(nil), control.endpointUpdates...)
+	updates := append([]ts2021.EndpointUpdate(nil), control.endpointUpdates...)
 	control.mu.Unlock()
-	if len(updates) != 1 || !updates[0].Equal(candidates) {
+	if len(updates) != 1 || !updates[0].Candidates.Equal(candidates) ||
+		updates[0].PreferredRelay != 1 {
 		t.Fatalf("endpoint updates = %#v", updates)
 	}
 	if dataPlane.discoveryScope == 0 ||
@@ -540,20 +541,23 @@ func TestEndpointRefreshRunsPeriodicallyWithoutDuplicatePublication(t *testing.T
 		endpointRefreshDelay: func() time.Duration { return 5 * time.Millisecond },
 	}
 	requests := make(chan endpointRefreshRequest, 1)
-	updates := make(chan pathdiscovery.Set, 1)
+	updates := make(chan ts2021.EndpointUpdate, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
 		done <- service.runEndpointRefresh(ctx, 11, discoverer, requests, updates)
 	}()
 	requests <- endpointRefreshRequest{
-		active:  true,
-		servers: []netip.AddrPort{netip.MustParseAddrPort("192.0.2.50:3478")},
+		active: true,
+		servers: []pathdiscovery.RelayServer{{
+			RegionID: 1,
+			Endpoint: netip.MustParseAddrPort("192.0.2.50:3478"),
+		}},
 	}
 
 	select {
 	case update := <-updates:
-		if !update.Equal(candidates) {
+		if !update.Candidates.Equal(candidates) {
 			t.Fatalf("first endpoint update = %#v", update)
 		}
 	case <-time.After(time.Second):
@@ -575,6 +579,73 @@ func TestEndpointRefreshRunsPeriodicallyWithoutDuplicatePublication(t *testing.T
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("runEndpointRefresh() error = %v, want context cancellation", err)
+	}
+}
+
+func TestEndpointRefreshSelectsMeasuredHomeRelay(t *testing.T) {
+	t.Parallel()
+
+	firstServer := netip.MustParseAddrPort("192.0.2.71:3478")
+	secondServer := netip.MustParseAddrPort("192.0.2.72:3478")
+	discoverer := &refreshDiscoverer{
+		calls: make(chan struct{}, 1),
+		result: pathdiscovery.DiscoveryResult{ServerLatencies: []pathdiscovery.ServerLatency{
+			{Server: firstServer, Latency: 100 * time.Millisecond},
+			{Server: secondServer, Latency: 20 * time.Millisecond},
+		}},
+	}
+	service := &Service{
+		clock:                time.Now,
+		endpointRefreshDelay: func() time.Duration { return time.Hour },
+	}
+	requests := make(chan endpointRefreshRequest, 1)
+	updates := make(chan ts2021.EndpointUpdate, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- service.runEndpointRefresh(ctx, 14, discoverer, requests, updates)
+	}()
+	requests <- endpointRefreshRequest{
+		active:           true,
+		controlHomeRelay: 1,
+		usableRelays:     []int{1, 2},
+		servers: []pathdiscovery.RelayServer{
+			{RegionID: 1, Endpoint: firstServer},
+			{RegionID: 2, Endpoint: secondServer},
+		},
+	}
+
+	select {
+	case update := <-updates:
+		if update.PreferredRelay != 2 || !update.HasPreferredRelay {
+			t.Fatalf("preferred relay update = %#v, want region 2", update)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for preferred relay update")
+	}
+
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("runEndpointRefresh() error = %v, want context cancellation", err)
+	}
+}
+
+func TestRelayRegionLatenciesRejectsUnknownServer(t *testing.T) {
+	t.Parallel()
+
+	_, err := relayRegionLatencies(
+		[]pathdiscovery.RelayServer{{
+			RegionID: 1,
+			Endpoint: netip.MustParseAddrPort("192.0.2.81:3478"),
+		}},
+		[]pathdiscovery.ServerLatency{{
+			Server:  netip.MustParseAddrPort("192.0.2.82:3478"),
+			Latency: time.Millisecond,
+		}},
+		[]int{1},
+	)
+	if err == nil {
+		t.Fatal("relayRegionLatencies() error = nil")
 	}
 }
 
@@ -601,7 +672,7 @@ func TestEndpointRefreshResetWithdrawsDynamicCandidate(t *testing.T) {
 		endpointRefreshDelay: func() time.Duration { return time.Hour },
 	}
 	requests := make(chan endpointRefreshRequest, 1)
-	updates := make(chan pathdiscovery.Set, 1)
+	updates := make(chan ts2021.EndpointUpdate, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
@@ -616,8 +687,8 @@ func TestEndpointRefreshResetWithdrawsDynamicCandidate(t *testing.T) {
 	requests <- endpointRefreshRequest{}
 	select {
 	case update := <-updates:
-		if update.Len() != 0 {
-			t.Fatalf("withdrawal contains %d candidates", update.Len())
+		if update.Candidates.Len() != 0 || update.PreferredRelay != 0 {
+			t.Fatalf("withdrawal = %#v", update)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for endpoint withdrawal")
@@ -652,7 +723,7 @@ func TestEndpointRefreshSocketChangeDropsOldDynamicCandidate(t *testing.T) {
 		endpointRefreshDelay: func() time.Duration { return time.Hour },
 	}
 	requests := make(chan endpointRefreshRequest, 1)
-	updates := make(chan pathdiscovery.Set, 1)
+	updates := make(chan ts2021.EndpointUpdate, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
@@ -664,7 +735,7 @@ func TestEndpointRefreshSocketChangeDropsOldDynamicCandidate(t *testing.T) {
 	}
 	select {
 	case update := <-updates:
-		if !update.Equal(candidates) {
+		if !update.Candidates.Equal(candidates) {
 			t.Fatalf("first endpoint update = %#v", update)
 		}
 	case <-time.After(time.Second):
@@ -678,8 +749,8 @@ func TestEndpointRefreshSocketChangeDropsOldDynamicCandidate(t *testing.T) {
 	}
 	select {
 	case update := <-updates:
-		if update.Len() != 0 {
-			t.Fatalf("socket-change withdrawal contains %d candidates", update.Len())
+		if update.Candidates.Len() != 0 {
+			t.Fatalf("socket-change withdrawal = %#v", update)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for socket-change withdrawal")
@@ -755,7 +826,7 @@ type fakeControl struct {
 	streamSnapshot      *networkmap.Snapshot
 	streamPublished     chan struct{}
 	endpointPublished   chan struct{}
-	endpointUpdates     []pathdiscovery.Set
+	endpointUpdates     []ts2021.EndpointUpdate
 	streamOptions       []ts2021.NetmapOptions
 	streamStarted       chan struct{}
 	echoPeerProbeKey    bool
@@ -884,14 +955,14 @@ func (f *fakeControl) StreamNetmap(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case candidates, open := <-options.EndpointUpdates:
+		case update, open := <-options.EndpointUpdates:
 			if !open {
 				options.EndpointUpdates = nil
 
 				continue
 			}
 			f.mu.Lock()
-			f.endpointUpdates = append(f.endpointUpdates, candidates)
+			f.endpointUpdates = append(f.endpointUpdates, update)
 			endpointPublished := f.endpointPublished
 			f.mu.Unlock()
 			select {

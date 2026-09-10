@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"sync"
 	"time"
 
@@ -38,19 +39,29 @@ type DiscoveryResult struct {
 	Scope            uint64
 	Socket           Socket
 	Candidates       Set
+	ServerLatencies  []ServerLatency
 	ReachableServers int
 	FailedServers    int
+}
+
+// ServerLatency is one authenticated STUN round-trip observation. Server is
+// the exact control-authorized endpoint that answered the request.
+type ServerLatency struct {
+	Server  netip.AddrPort
+	Latency time.Duration
 }
 
 type probeResponse struct {
 	address netip.AddrPort
 	socket  Socket
+	latency time.Duration
 }
 
 type pendingProbe struct {
 	server   netip.AddrPort
 	socket   Socket
 	scope    uint64
+	started  time.Time
 	response chan probeResponse
 }
 
@@ -123,6 +134,7 @@ func (d *Discovery) HandleDatagram(
 		return
 	}
 
+	now := time.Now()
 	d.mu.Lock()
 	pending, exists := d.pending[transactionID]
 	if !exists || pending.scope != d.activeScope || pending.server != source ||
@@ -132,12 +144,22 @@ func (d *Discovery) HandleDatagram(
 
 		return
 	}
+	latency := now.Sub(pending.started)
+	if latency > d.probeWindow {
+		d.mu.Unlock()
+
+		return
+	}
+	if latency <= 0 {
+		latency = time.Nanosecond
+	}
 	delete(d.pending, transactionID)
 	d.mu.Unlock()
 
 	pending.response <- probeResponse{
 		address: address,
 		socket:  socket,
+		latency: latency,
 	}
 }
 
@@ -176,22 +198,27 @@ func (d *Discovery) Discover(
 
 	type outcome struct {
 		candidate Candidate
+		server    netip.AddrPort
 		socket    Socket
+		latency   time.Duration
 		err       error
 	}
 	outcomes := make(chan outcome, len(servers))
 	for _, server := range servers {
 		go func(server netip.AddrPort) {
-			candidate, usedSocket, err := d.probe(ctx, scope, server, socket)
+			candidate, usedSocket, latency, err := d.probe(ctx, scope, server, socket)
 			outcomes <- outcome{
 				candidate: candidate,
+				server:    server,
 				socket:    usedSocket,
+				latency:   latency,
 				err:       err,
 			}
 		}(server)
 	}
 
 	candidates := make([]Candidate, 0, len(servers))
+	latencies := make([]ServerLatency, 0, len(servers))
 	probeErrors := []error{}
 	for range servers {
 		result := <-outcomes
@@ -206,6 +233,10 @@ func (d *Discovery) Discover(
 			continue
 		}
 		candidates = append(candidates, result.candidate)
+		latencies = append(latencies, ServerLatency{
+			Server:  result.server,
+			Latency: result.latency,
+		})
 	}
 	if err := ctx.Err(); err != nil {
 		return DiscoveryResult{}, err
@@ -222,11 +253,15 @@ func (d *Discovery) Discover(
 	if err != nil {
 		return DiscoveryResult{}, fmt.Errorf("pathdiscovery: normalizing stun results: %w", err)
 	}
+	slices.SortFunc(latencies, func(left, right ServerLatency) int {
+		return left.Server.Compare(right.Server)
+	})
 
 	return DiscoveryResult{
 		Scope:            scope,
 		Socket:           socket,
 		Candidates:       set,
+		ServerLatencies:  latencies,
 		ReachableServers: len(candidates),
 		FailedServers:    len(servers) - len(candidates),
 	}, nil
@@ -237,20 +272,20 @@ func (d *Discovery) probe(
 	scope uint64,
 	server netip.AddrPort,
 	expectedSocket Socket,
-) (Candidate, Socket, error) {
+) (Candidate, Socket, time.Duration, error) {
 	transactionID, response, err := d.registerProbe(scope, server, expectedSocket)
 	if err != nil {
-		return Candidate{}, Socket{}, err
+		return Candidate{}, Socket{}, 0, err
 	}
 	defer d.removeProbe(transactionID)
 
 	packet := compatstun.BindingRequest(transactionID)
 	usedSocket, err := d.transport.SendDatagram(packet, server)
 	if err != nil {
-		return Candidate{}, Socket{}, err
+		return Candidate{}, Socket{}, 0, err
 	}
 	if usedSocket != expectedSocket {
-		return Candidate{}, usedSocket, ErrSocketChanged
+		return Candidate{}, usedSocket, 0, ErrSocketChanged
 	}
 
 	retryTimer := time.NewTimer(d.retryDelay)
@@ -262,22 +297,22 @@ func (d *Discovery) probe(
 		case result := <-response:
 			candidate, err := NewCandidate(result.address, SourceServerReflexive)
 			if err != nil {
-				return Candidate{}, result.socket, err
+				return Candidate{}, result.socket, 0, err
 			}
 
-			return candidate, result.socket, nil
+			return candidate, result.socket, result.latency, nil
 		case <-retryTimer.C:
 			usedSocket, sendErr := d.transport.SendDatagram(packet, server)
 			if sendErr != nil {
 				continue
 			}
 			if usedSocket != expectedSocket {
-				return Candidate{}, usedSocket, ErrSocketChanged
+				return Candidate{}, usedSocket, 0, ErrSocketChanged
 			}
 		case <-deadline.C:
-			return Candidate{}, expectedSocket, ErrProbeTimeout
+			return Candidate{}, expectedSocket, 0, ErrProbeTimeout
 		case <-ctx.Done():
-			return Candidate{}, expectedSocket, ctx.Err()
+			return Candidate{}, expectedSocket, 0, ctx.Err()
 		}
 	}
 }
@@ -314,6 +349,7 @@ func (d *Discovery) registerProbe(
 			server:   server,
 			socket:   socket,
 			scope:    scope,
+			started:  time.Now(),
 			response: response,
 		}
 		d.mu.Unlock()
@@ -358,7 +394,7 @@ func validateSTUNServers(servers []netip.AddrPort) error {
 	seen := make(map[netip.AddrPort]struct{}, len(servers))
 	for _, server := range servers {
 		if err := validateEndpoint(server); err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalidSTUNServers, err)
+			return fmt.Errorf("%w: %w", ErrInvalidSTUNServers, err)
 		}
 		if _, exists := seen[server]; exists {
 			return ErrInvalidSTUNServers

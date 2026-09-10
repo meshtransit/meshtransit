@@ -870,7 +870,7 @@ func buildRelayConfig(
 
 // selectHomeRelay preserves a usable control preference and otherwise chooses
 // the lowest usable signed region. The deterministic fallback keeps peers on
-// the same rendezvous region until latency-based selection is published.
+// the same rendezvous region until control echoes a measured preference.
 func selectHomeRelay(regions map[int]networkmap.RelayRegion, preferred int) int {
 	if _, exists := usableRelayRegion(regions, preferred); exists {
 		return preferred

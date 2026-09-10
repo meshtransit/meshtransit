@@ -58,7 +58,17 @@ type NetmapOptions struct {
 	PinnedFingerprint  string
 	PeerProbePublicKey string
 	Candidates         pathdiscovery.Set
-	EndpointUpdates    <-chan pathdiscovery.Set
+	PreferredRelay     int
+	HasPreferredRelay  bool
+	EndpointUpdates    <-chan EndpointUpdate
+}
+
+// EndpointUpdate is one complete product-owned network presence update. The
+// direct candidates and preferred relay are published atomically.
+type EndpointUpdate struct {
+	Candidates        pathdiscovery.Set
+	PreferredRelay    int
+	HasPreferredRelay bool
 }
 
 // NetmapHandler consumes one fully validated, defensive network snapshot.
@@ -88,7 +98,11 @@ func (c *Client) StreamNetmap(
 	if err != nil {
 		return err
 	}
-	endpointState := newEndpointState(options.Candidates)
+	endpointState := newEndpointState(EndpointUpdate{
+		Candidates:        options.Candidates,
+		PreferredRelay:    options.PreferredRelay,
+		HasPreferredRelay: options.HasPreferredRelay,
+	})
 	if options.EndpointUpdates == nil {
 		return c.streamNetmapLoop(
 			ctx,
@@ -242,6 +256,10 @@ func (c *Client) pollNetmapOnce(
 		return false, err
 	}
 
+	latest, _ := endpointState.snapshot()
+	options.Candidates = latest.Candidates
+	options.PreferredRelay = latest.PreferredRelay
+	options.HasPreferredRelay = latest.HasPreferredRelay
 	mapRequest := newMapRequest(nodeKey, discoKey, options, true)
 	exchange, err := c.openMapExchange(
 		ctx,
@@ -299,34 +317,36 @@ func (c *Client) pollNetmapOnce(
 type endpointState struct {
 	mu         sync.RWMutex
 	publishMu  sync.Mutex
-	candidates pathdiscovery.Set
+	update     EndpointUpdate
 	shouldSend bool
 }
 
-func newEndpointState(candidates pathdiscovery.Set) *endpointState {
+func newEndpointState(update EndpointUpdate) *endpointState {
 	return &endpointState{
-		candidates: candidates,
+		update:     update,
 		shouldSend: true,
 	}
 }
 
-func (s *endpointState) set(candidates pathdiscovery.Set) bool {
+func (s *endpointState) set(update EndpointUpdate) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.candidates.Equal(candidates) {
+	if s.update.Candidates.Equal(update.Candidates) &&
+		s.update.PreferredRelay == update.PreferredRelay &&
+		s.update.HasPreferredRelay == update.HasPreferredRelay {
 		return false
 	}
-	s.candidates = candidates
+	s.update = update
 	s.shouldSend = true
 
 	return true
 }
 
-func (s *endpointState) snapshot() (pathdiscovery.Set, bool) {
+func (s *endpointState) snapshot() (EndpointUpdate, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	return s.candidates, s.shouldSend
+	return s.update, s.shouldSend
 }
 
 func (c *Client) sendEndpointState(
@@ -344,11 +364,13 @@ func (c *Client) sendEndpointState(
 	}
 	state.publishMu.Lock()
 	defer state.publishMu.Unlock()
-	candidates, shouldSend := state.snapshot()
+	update, shouldSend := state.snapshot()
 	if !shouldSend {
 		return nil
 	}
-	options.Candidates = candidates
+	options.Candidates = update.Candidates
+	options.PreferredRelay = update.PreferredRelay
+	options.HasPreferredRelay = update.HasPreferredRelay
 
 	return c.sendEndpointUpdate(
 		ctx,
@@ -377,7 +399,7 @@ func (c *Client) runEndpointUpdates(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case candidates, open := <-updates:
+		case update, open := <-updates:
 			if !open {
 				if err := ctx.Err(); err != nil {
 					return err
@@ -385,10 +407,10 @@ func (c *Client) runEndpointUpdates(
 
 				return fmt.Errorf("%w: update channel closed", ErrEndpointUpdate)
 			}
-			if err := validateCandidateSet(candidates); err != nil {
+			if err := validateEndpointUpdate(update); err != nil {
 				return err
 			}
-			if !state.set(candidates) {
+			if !state.set(update) {
 				continue
 			}
 		}
@@ -423,15 +445,15 @@ func (c *Client) runEndpointUpdates(
 				stopTimer(timer)
 
 				return ctx.Err()
-			case candidates, open := <-updates:
+			case update, open := <-updates:
 				stopTimer(timer)
 				if !open {
 					return fmt.Errorf("%w: update channel closed", ErrEndpointUpdate)
 				}
-				if err := validateCandidateSet(candidates); err != nil {
+				if err := validateEndpointUpdate(update); err != nil {
 					return err
 				}
-				state.set(candidates)
+				state.set(update)
 				backoff = minReconnectDelay
 			case <-timer.C:
 				if backoff < maxReconnectDelay {
@@ -709,6 +731,11 @@ func newMapRequest(
 			NoLogsNoSupport: true,
 		},
 	}
+	if options.HasPreferredRelay {
+		request.Hostinfo.NetInfo = &tailcfg.NetInfo{
+			PreferredDERP: options.PreferredRelay,
+		}
+	}
 	if !stream {
 		request.OmitPeers = true
 		candidates := options.Candidates.Candidates()
@@ -737,11 +764,33 @@ func parseNetmapOptions(options NetmapOptions) (key.DiscoPublic, error) {
 	if err := validateCandidateSet(options.Candidates); err != nil {
 		return key.DiscoPublic{}, err
 	}
+	if err := validatePreferredRelay(
+		options.PreferredRelay,
+		options.HasPreferredRelay,
+	); err != nil {
+		return key.DiscoPublic{}, err
+	}
 	if err := validateDisplayText("version", options.Version, maxVersionRunes); err != nil {
 		return key.DiscoPublic{}, err
 	}
 
 	return discoKey, nil
+}
+
+func validateEndpointUpdate(update EndpointUpdate) error {
+	if err := validateCandidateSet(update.Candidates); err != nil {
+		return err
+	}
+
+	return validatePreferredRelay(update.PreferredRelay, update.HasPreferredRelay)
+}
+
+func validatePreferredRelay(regionID int, isSet bool) error {
+	if regionID < 0 || regionID > 65_535 || (!isSet && regionID != 0) {
+		return fmt.Errorf("%w: preferred relay is invalid", ErrInvalidMaterial)
+	}
+
+	return nil
 }
 
 func parsePeerProbePublicKey(value string) (key.DiscoPublic, error) {

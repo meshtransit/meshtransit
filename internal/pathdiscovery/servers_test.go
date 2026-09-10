@@ -34,12 +34,12 @@ func TestServersFromRelayMap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ServersFromRelayMap() error = %v", err)
 	}
-	want := []netip.AddrPort{
-		netip.MustParseAddrPort("192.0.2.11:3478"),
-		netip.MustParseAddrPort("192.0.2.21:5349"),
-		netip.MustParseAddrPort("[2001:db8:1::11]:3478"),
-		netip.MustParseAddrPort("[2001:db8:2::21]:5349"),
-		netip.MustParseAddrPort("192.0.2.12:3478"),
+	want := []RelayServer{
+		{RegionID: 1, Endpoint: netip.MustParseAddrPort("192.0.2.11:3478")},
+		{RegionID: 2, Endpoint: netip.MustParseAddrPort("192.0.2.21:5349")},
+		{RegionID: 1, Endpoint: netip.MustParseAddrPort("[2001:db8:1::11]:3478")},
+		{RegionID: 2, Endpoint: netip.MustParseAddrPort("[2001:db8:2::21]:5349")},
+		{RegionID: 1, Endpoint: netip.MustParseAddrPort("192.0.2.12:3478")},
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("ServersFromRelayMap() = %v, want %v", got, want)
@@ -73,15 +73,63 @@ func TestServersFromRelayMapBoundsAndDeduplicates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ServersFromRelayMap() error = %v", err)
 	}
-	if len(got) != maxSTUNServers {
-		t.Fatalf("len(ServersFromRelayMap()) = %d, want %d", len(got), maxSTUNServers)
+	if len(got) != 9 {
+		t.Fatalf("len(ServersFromRelayMap()) = %d, want 9", len(got))
 	}
 	seen := make(map[netip.AddrPort]struct{}, len(got))
 	for _, server := range got {
-		if _, exists := seen[server]; exists {
+		if _, exists := seen[server.Endpoint]; exists {
 			t.Fatalf("duplicate server %v", server)
 		}
-		seen[server] = struct{}{}
+		seen[server.Endpoint] = struct{}{}
+	}
+}
+
+func TestNextServerBatchKeepsHomeAndRotates(t *testing.T) {
+	t.Parallel()
+
+	servers := make([]RelayServer, 0, 12)
+	for regionID := 1; regionID <= 12; regionID++ {
+		servers = append(servers, RelayServer{
+			RegionID: regionID,
+			Endpoint: netip.MustParseAddrPort(
+				"192.0.2." + strconv.Itoa(regionID) + ":3478",
+			),
+		})
+	}
+	first, cursor, err := NextServerBatch(servers, 12, 0)
+	if err != nil {
+		t.Fatalf("NextServerBatch() error = %v", err)
+	}
+	if len(first) != maxSTUNServers || first[0].RegionID != 12 || cursor != 7 {
+		t.Fatalf("first batch = %#v, cursor %d", first, cursor)
+	}
+	second, cursor, err := NextServerBatch(servers, 12, cursor)
+	if err != nil {
+		t.Fatalf("NextServerBatch() second error = %v", err)
+	}
+	if len(second) != maxSTUNServers || second[0].RegionID != 12 || cursor != 3 {
+		t.Fatalf("second batch = %#v, cursor %d", second, cursor)
+	}
+	seen := make(map[int]struct{}, len(first)+len(second))
+	for _, server := range append(first, second...) {
+		seen[server.RegionID] = struct{}{}
+	}
+	if len(seen) != len(servers) {
+		t.Fatalf("rotating batches covered %d regions, want %d", len(seen), len(servers))
+	}
+}
+
+func TestNextServerBatchRejectsAmbiguousServers(t *testing.T) {
+	t.Parallel()
+
+	endpoint := netip.MustParseAddrPort("192.0.2.1:3478")
+	_, _, err := NextServerBatch([]RelayServer{
+		{RegionID: 1, Endpoint: endpoint},
+		{RegionID: 2, Endpoint: endpoint},
+	}, 1, 0)
+	if !errors.Is(err, ErrInvalidSTUNServers) {
+		t.Fatalf("NextServerBatch() error = %v, want ErrInvalidSTUNServers", err)
 	}
 }
 

@@ -109,6 +109,13 @@ func TestDiscoveryDiscover(t *testing.T) {
 		result.ReachableServers != 2 || result.FailedServers != 0 {
 		t.Fatalf("Discover() result = %#v", result)
 	}
+	if len(result.ServerLatencies) != 2 ||
+		result.ServerLatencies[0].Server != firstServer ||
+		result.ServerLatencies[1].Server != secondServer ||
+		result.ServerLatencies[0].Latency <= 0 ||
+		result.ServerLatencies[1].Latency <= 0 {
+		t.Fatalf("Discover() server latencies = %#v", result.ServerLatencies)
+	}
 	if got := result.Candidates.Endpoints(); !slices.Equal(got, []netip.AddrPort{
 		firstAddress,
 		secondAddress,
@@ -145,6 +152,11 @@ func TestDiscoveryDiscoverReturnsPartialResult(t *testing.T) {
 	if result.ReachableServers != 1 || result.FailedServers != 1 ||
 		!slices.Equal(result.Candidates.Endpoints(), []netip.AddrPort{expected}) {
 		t.Fatalf("Discover() partial result = %#v", result)
+	}
+	if len(result.ServerLatencies) != 1 ||
+		result.ServerLatencies[0].Server != responsiveServer ||
+		result.ServerLatencies[0].Latency <= 0 {
+		t.Fatalf("Discover() partial server latencies = %#v", result.ServerLatencies)
 	}
 	if transport.sendCount() != 3 {
 		t.Fatalf("Discover() sends = %d, want initial responses plus one retry", transport.sendCount())
@@ -336,14 +348,17 @@ func testBindingResponse(
 	transactionID compatstun.TransactionID,
 	address netip.AddrPort,
 ) []byte {
+	const attributeHeaderLength uint16 = 4
 	const cookie = 0x2112a442
 
 	addressBytes := address.Addr().AsSlice()
 	family := byte(1)
+	valueLength := uint16(8)
 	if address.Addr().Is6() {
 		family = 2
+		valueLength = 20
 	}
-	value := make([]byte, 4+len(addressBytes))
+	value := make([]byte, valueLength)
 	value[1] = family
 	binary.BigEndian.PutUint16(value[2:4], address.Port()^uint16(cookie>>16))
 	mask := make([]byte, 16)
@@ -353,13 +368,13 @@ func testBindingResponse(
 		value[4+index] = addressBytes[index] ^ mask[index]
 	}
 
-	packet := make([]byte, 20, 24+len(value))
+	packet := make([]byte, 20, 24+int(valueLength))
 	binary.BigEndian.PutUint16(packet[0:2], 0x0101)
-	binary.BigEndian.PutUint16(packet[2:4], uint16(4+len(value)))
+	binary.BigEndian.PutUint16(packet[2:4], attributeHeaderLength+valueLength)
 	binary.BigEndian.PutUint32(packet[4:8], cookie)
 	copy(packet[8:20], transactionID[:])
 	packet = binary.BigEndian.AppendUint16(packet, 0x0020)
-	packet = binary.BigEndian.AppendUint16(packet, uint16(len(value)))
+	packet = binary.BigEndian.AppendUint16(packet, valueLength)
 	packet = append(packet, value...)
 
 	return packet

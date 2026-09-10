@@ -9,14 +9,24 @@ import (
 	"github.com/meshtransit/meshd/internal/networkmap"
 )
 
-const defaultSTUNPort = 3478
+const (
+	defaultSTUNPort   = 3478
+	maxKnownSTUNNodes = 2_048
+)
+
+// RelayServer binds one control-authorized STUN endpoint to its relay region.
+// The region association is used only for reachability and latency selection.
+type RelayServer struct {
+	RegionID int
+	Endpoint netip.AddrPort
+}
 
 // ServersFromRelayMap derives a bounded and deterministic probe set from the
 // currently validated relay topology. It spreads probes across regions before
 // adding another address from the same region.
 func ServersFromRelayMap(
 	relays map[int]networkmap.RelayRegion,
-) ([]netip.AddrPort, error) {
+) ([]RelayServer, error) {
 	if len(relays) == 0 {
 		return nil, ErrNoSTUNServers
 	}
@@ -27,24 +37,31 @@ func ServersFromRelayMap(
 	}
 	slices.Sort(regionIDs)
 
-	byRegion := make([][]netip.AddrPort, 0, len(regionIDs))
+	byRegion := make([][]RelayServer, 0, len(regionIDs))
 	for _, id := range regionIDs {
 		region := relays[id]
 		if id <= 0 || region.ID != id {
 			return nil, errors.New("pathdiscovery: relay region identity is invalid")
 		}
-		servers, err := relayRegionServers(region)
+		endpoints, err := relayRegionServers(region)
 		if err != nil {
 			return nil, err
+		}
+		servers := make([]RelayServer, 0, len(endpoints))
+		for _, endpoint := range endpoints {
+			servers = append(servers, RelayServer{
+				RegionID: id,
+				Endpoint: endpoint,
+			})
 		}
 		if len(servers) != 0 {
 			byRegion = append(byRegion, servers)
 		}
 	}
 
-	servers := make([]netip.AddrPort, 0, maxSTUNServers)
-	seen := make(map[netip.AddrPort]struct{}, maxSTUNServers)
-	for offset := 0; len(servers) < maxSTUNServers; offset++ {
+	servers := make([]RelayServer, 0, min(len(relays)*2, maxKnownSTUNNodes))
+	seen := make(map[netip.AddrPort]struct{}, maxKnownSTUNNodes)
+	for offset := 0; len(servers) < maxKnownSTUNNodes; offset++ {
 		added := false
 		for _, regionServers := range byRegion {
 			if offset >= len(regionServers) {
@@ -52,12 +69,12 @@ func ServersFromRelayMap(
 			}
 			added = true
 			server := regionServers[offset]
-			if _, exists := seen[server]; exists {
+			if _, exists := seen[server.Endpoint]; exists {
 				continue
 			}
-			seen[server] = struct{}{}
+			seen[server.Endpoint] = struct{}{}
 			servers = append(servers, server)
-			if len(servers) == maxSTUNServers {
+			if len(servers) == maxKnownSTUNNodes {
 				break
 			}
 		}
@@ -70,6 +87,60 @@ func ServersFromRelayMap(
 	}
 
 	return servers, nil
+}
+
+// NextServerBatch returns one bounded rotating probe batch. A usable current
+// home region is sampled every round while the remaining slots walk the full
+// signed topology without unbounded fan-out.
+func NextServerBatch(
+	servers []RelayServer,
+	homeRegion int,
+	cursor int,
+) ([]RelayServer, int, error) {
+	if len(servers) == 0 {
+		return nil, 0, nil
+	}
+	if len(servers) > maxKnownSTUNNodes || cursor < 0 {
+		return nil, 0, ErrInvalidSTUNServers
+	}
+	seen := make(map[netip.AddrPort]struct{}, min(len(servers), maxSTUNServers))
+	for _, server := range servers {
+		if server.RegionID <= 0 || validateEndpoint(server.Endpoint) != nil {
+			return nil, 0, ErrInvalidSTUNServers
+		}
+		if _, exists := seen[server.Endpoint]; exists {
+			return nil, 0, ErrInvalidSTUNServers
+		}
+		seen[server.Endpoint] = struct{}{}
+	}
+
+	cursor %= len(servers)
+	batch := make([]RelayServer, 0, min(len(servers), maxSTUNServers))
+	selected := make(map[netip.AddrPort]struct{}, cap(batch))
+	if homeRegion > 0 {
+		for offset := range len(servers) {
+			server := servers[(cursor+offset)%len(servers)]
+			if server.RegionID == homeRegion {
+				batch = append(batch, server)
+				selected[server.Endpoint] = struct{}{}
+
+				break
+			}
+		}
+	}
+
+	visited := 0
+	for visited < len(servers) && len(batch) < maxSTUNServers {
+		server := servers[(cursor+visited)%len(servers)]
+		visited++
+		if _, exists := selected[server.Endpoint]; exists {
+			continue
+		}
+		batch = append(batch, server)
+		selected[server.Endpoint] = struct{}{}
+	}
+
+	return batch, (cursor + visited) % len(servers), nil
 }
 
 func relayRegionServers(region networkmap.RelayRegion) ([]netip.AddrPort, error) {

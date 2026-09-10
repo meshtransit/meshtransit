@@ -22,6 +22,7 @@ import (
 	"github.com/meshtransit/meshd/internal/pathdiscovery"
 	"github.com/meshtransit/meshd/internal/peerprobe"
 	"github.com/meshtransit/meshd/internal/profile"
+	"github.com/meshtransit/meshd/internal/relay"
 	"github.com/meshtransit/meshd/internal/version"
 )
 
@@ -236,9 +237,11 @@ type syncStatus struct {
 }
 
 type endpointRefreshRequest struct {
-	active  bool
-	socket  pathdiscovery.Socket
-	servers []netip.AddrPort
+	active           bool
+	socket           pathdiscovery.Socket
+	controlHomeRelay int
+	usableRelays     []int
+	servers          []pathdiscovery.RelayServer
 }
 
 // Options contains host facts and injectable time for the daemon use cases.
@@ -485,13 +488,13 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			return detachErr
 		}
 		var discoveryRequests chan endpointRefreshRequest
-		var candidateUpdates chan pathdiscovery.Set
+		var endpointUpdates chan ts2021.EndpointUpdate
 		var refreshDone <-chan error
 		var sessionDiscoverer endpointDiscoverer
 		if discoverer, supported := s.dataPlane.(endpointDiscoverer); supported {
 			sessionDiscoverer = discoverer
 			discoveryRequests = make(chan endpointRefreshRequest, 1)
-			candidateUpdates = make(chan pathdiscovery.Set, 1)
+			endpointUpdates = make(chan ts2021.EndpointUpdate, 1)
 			done := make(chan error, 1)
 			refreshDone = done
 			go func() {
@@ -500,7 +503,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					discoveryScope,
 					discoverer,
 					discoveryRequests,
-					candidateUpdates,
+					endpointUpdates,
 				)
 			}()
 		}
@@ -517,7 +520,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					PinnedFingerprint:  record.ControlKeyFingerprint(),
 					PeerProbePublicKey: probePublicKey.String(),
 					Candidates:         s.configuredCandidates,
-					EndpointUpdates:    candidateUpdates,
+					EndpointUpdates:    endpointUpdates,
 				},
 				func(callbackCtx context.Context, snapshot networkmap.Snapshot) error {
 					if err := callbackCtx.Err(); err != nil {
@@ -773,15 +776,38 @@ func endpointRequest(
 	}
 
 	return endpointRefreshRequest{
-		active:  true,
-		socket:  socket,
-		servers: append([]netip.AddrPort(nil), servers...),
+		active:           true,
+		socket:           socket,
+		controlHomeRelay: snapshot.Self.HomeRelay,
+		usableRelays:     usableRelayRegionIDs(snapshot.Relays),
+		servers:          append([]pathdiscovery.RelayServer(nil), servers...),
 	}, nil
 }
 
 func (r endpointRefreshRequest) equal(other endpointRefreshRequest) bool {
 	return r.active == other.active && r.socket == other.socket &&
+		r.controlHomeRelay == other.controlHomeRelay &&
+		slices.Equal(r.usableRelays, other.usableRelays) &&
 		slices.Equal(r.servers, other.servers)
+}
+
+func usableRelayRegionIDs(regions map[int]networkmap.RelayRegion) []int {
+	regionIDs := make([]int, 0, len(regions))
+	for regionID, region := range regions {
+		if regionID <= 0 || region.ID != regionID || regionID > 65_535 {
+			continue
+		}
+		for _, node := range region.Nodes {
+			if !node.STUNOnly {
+				regionIDs = append(regionIDs, regionID)
+
+				break
+			}
+		}
+	}
+	slices.Sort(regionIDs)
+
+	return regionIDs
 }
 
 func offerLatest[T any](updates chan T, value T) {
@@ -805,20 +831,41 @@ func (s *Service) runEndpointRefresh(
 	scope uint64,
 	discoverer endpointDiscoverer,
 	requests <-chan endpointRefreshRequest,
-	updates chan pathdiscovery.Set,
+	updates chan ts2021.EndpointUpdate,
 ) error {
 	if discoverer == nil || requests == nil || updates == nil {
 		return errors.New("daemon: endpoint refresh dependencies are missing")
 	}
 	tracker := pathdiscovery.NewTracker()
+	homeSelector := relay.NewHomeSelector()
 	current := endpointRefreshRequest{}
+	var currentCandidates pathdiscovery.Set
+	lastPublished := ts2021.EndpointUpdate{Candidates: s.configuredCandidates}
+	hasPublished := true
 	hasCurrent := false
+	serverCursor := 0
 	var timer *time.Timer
 	var timerChannel <-chan time.Time
 	defer func() { stopRefreshTimer(timer) }()
+	publish := func(candidates pathdiscovery.Set, preferredRelay int) {
+		update := ts2021.EndpointUpdate{
+			Candidates:        candidates,
+			PreferredRelay:    preferredRelay,
+			HasPreferredRelay: true,
+		}
+		if hasPublished && lastPublished.PreferredRelay == preferredRelay &&
+			lastPublished.HasPreferredRelay == update.HasPreferredRelay &&
+			lastPublished.Candidates.Equal(candidates) {
+			return
+		}
+		offerLatest(updates, update)
+		lastPublished = update
+		hasPublished = true
+	}
 
 	for {
 		resetForSocketChange := false
+		resetChanged := false
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -830,6 +877,7 @@ func (s *Service) runEndpointRefresh(
 				current.socket != request.socket
 			current = request
 			hasCurrent = true
+			serverCursor = 0
 			stopRefreshTimer(timer)
 			timer = nil
 			timerChannel = nil
@@ -845,31 +893,55 @@ func (s *Service) runEndpointRefresh(
 			if err != nil {
 				return err
 			}
-			if result.Changed {
-				offerLatest(updates, result.Candidates)
-			}
+			currentCandidates = result.Candidates
+			resetChanged = result.Changed
 		}
 		if !current.active {
 			result, err := tracker.Reset(s.clock(), s.configuredCandidates)
 			if err != nil {
 				return err
 			}
-			if result.Changed {
-				offerLatest(updates, result.Candidates)
-			}
+			currentCandidates = result.Candidates
+			homeSelector.Reset()
+			publish(currentCandidates, 0)
 			hasCurrent = false
 
 			continue
+		}
+		selection, err := homeSelector.Reconcile(
+			current.controlHomeRelay,
+			current.usableRelays,
+		)
+		if err != nil {
+			return fmt.Errorf("reconciling relay selection: %w", err)
+		}
+		if resetChanged {
+			publish(currentCandidates, selection.RegionID)
 		}
 
 		expired, err := tracker.Expire(s.clock())
 		if err != nil {
 			return err
 		}
+		currentCandidates = expired.Candidates
 		if expired.Changed {
-			offerLatest(updates, expired.Candidates)
+			publish(currentCandidates, selection.RegionID)
 		}
-		observed, err := s.discoverEndpoints(ctx, scope, discoverer, current.servers)
+		batch, nextCursor, err := pathdiscovery.NextServerBatch(
+			current.servers,
+			selection.RegionID,
+			serverCursor,
+		)
+		if err != nil {
+			return fmt.Errorf("selecting relay probe batch: %w", err)
+		}
+		serverCursor = nextCursor
+		observed, serverLatencies, err := s.discoverEndpoints(
+			ctx,
+			scope,
+			discoverer,
+			batch,
+		)
 		if err != nil {
 			return err
 		}
@@ -877,9 +949,20 @@ func (s *Service) runEndpointRefresh(
 		if err != nil {
 			return err
 		}
-		if tracked.Changed {
-			offerLatest(updates, tracked.Candidates)
+		currentCandidates = tracked.Candidates
+		regionLatencies, err := relayRegionLatencies(
+			batch,
+			serverLatencies,
+			current.usableRelays,
+		)
+		if err != nil {
+			return err
 		}
+		selection, err = homeSelector.Observe(s.clock(), regionLatencies)
+		if err != nil {
+			return fmt.Errorf("selecting home relay: %w", err)
+		}
+		publish(currentCandidates, selection.RegionID)
 		if s.endpointRefreshDelay == nil {
 			return errors.New("daemon: endpoint refresh delay is unavailable")
 		}
@@ -905,10 +988,14 @@ func (s *Service) discoverEndpoints(
 	ctx context.Context,
 	scope uint64,
 	discoverer endpointDiscoverer,
-	servers []netip.AddrPort,
-) (pathdiscovery.Set, error) {
+	servers []pathdiscovery.RelayServer,
+) (pathdiscovery.Set, []pathdiscovery.ServerLatency, error) {
+	endpoints := make([]netip.AddrPort, len(servers))
+	for index, server := range servers {
+		endpoints[index] = server.Endpoint
+	}
 	s.dataPlaneMu.Lock()
-	result, err := discoverer.DiscoverEndpoints(ctx, scope, servers)
+	result, err := discoverer.DiscoverEndpoints(ctx, scope, endpoints)
 	s.dataPlaneMu.Unlock()
 	if err == nil {
 		merged, mergeErr := pathdiscovery.Merge(
@@ -916,22 +1003,82 @@ func (s *Service) discoverEndpoints(
 			result.Candidates,
 		)
 		if mergeErr != nil {
-			return pathdiscovery.Set{}, fmt.Errorf("merging direct endpoints: %w", mergeErr)
+			return pathdiscovery.Set{}, nil, fmt.Errorf(
+				"merging direct endpoints: %w",
+				mergeErr,
+			)
 		}
 
-		return merged, nil
+		return merged, append([]pathdiscovery.ServerLatency(nil), result.ServerLatencies...), nil
 	}
 	if ctx.Err() != nil {
-		return pathdiscovery.Set{}, ctx.Err()
+		return pathdiscovery.Set{}, nil, ctx.Err()
 	}
 	if errors.Is(err, pathdiscovery.ErrNoSTUNResponse) ||
 		errors.Is(err, pathdiscovery.ErrNoSTUNServers) ||
 		errors.Is(err, pathdiscovery.ErrSocketChanged) ||
 		errors.Is(err, pathdiscovery.ErrTransportClosed) {
-		return s.configuredCandidates, nil
+		return s.configuredCandidates, nil, nil
 	}
 
-	return pathdiscovery.Set{}, fmt.Errorf("discovering direct endpoints: %w", err)
+	return pathdiscovery.Set{}, nil, fmt.Errorf("discovering direct endpoints: %w", err)
+}
+
+func relayRegionLatencies(
+	servers []pathdiscovery.RelayServer,
+	observed []pathdiscovery.ServerLatency,
+	usableRegions []int,
+) ([]relay.RegionLatency, error) {
+	usable := make(map[int]struct{}, len(usableRegions))
+	for _, regionID := range usableRegions {
+		if regionID <= 0 {
+			return nil, errors.New("daemon: usable relay region is invalid")
+		}
+		usable[regionID] = struct{}{}
+	}
+	regions := make(map[netip.AddrPort]int, len(servers))
+	for _, server := range servers {
+		if server.RegionID <= 0 || !server.Endpoint.IsValid() {
+			return nil, errors.New("daemon: relay probe server is invalid")
+		}
+		if _, exists := regions[server.Endpoint]; exists {
+			return nil, errors.New("daemon: relay probe server is duplicated")
+		}
+		regions[server.Endpoint] = server.RegionID
+	}
+	latencies := make(map[int]time.Duration, len(observed))
+	seen := make(map[netip.AddrPort]struct{}, len(observed))
+	for _, latency := range observed {
+		regionID, exists := regions[latency.Server]
+		if !exists || latency.Latency <= 0 {
+			return nil, errors.New("daemon: relay latency observation is invalid")
+		}
+		if _, exists := seen[latency.Server]; exists {
+			return nil, errors.New("daemon: relay latency observation is duplicated")
+		}
+		seen[latency.Server] = struct{}{}
+		if _, selectable := usable[regionID]; !selectable {
+			continue
+		}
+		current, exists := latencies[regionID]
+		if !exists || latency.Latency < current {
+			latencies[regionID] = latency.Latency
+		}
+	}
+	regionIDs := make([]int, 0, len(latencies))
+	for regionID := range latencies {
+		regionIDs = append(regionIDs, regionID)
+	}
+	slices.Sort(regionIDs)
+	result := make([]relay.RegionLatency, 0, len(regionIDs))
+	for _, regionID := range regionIDs {
+		result = append(result, relay.RegionLatency{
+			RegionID: regionID,
+			Latency:  latencies[regionID],
+		})
+	}
+
+	return result, nil
 }
 
 func randomEndpointRefreshDelay() time.Duration {

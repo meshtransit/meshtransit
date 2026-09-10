@@ -41,6 +41,21 @@ The unprivileged data-plane engine opens the descriptor after a validated map co
 
 The WireGuard engine owns one monotonic UDP socket-generation namespace across every bind it creates for encrypted packets, bounded STUN requests, and authenticated peer probes. Recreating a tunnel consumes a fresh generation instead of restarting the counter. A fixed control-datagram mux consumes both control protocols before WireGuard parsing; detaching a session leaves its probe classifier in drop-only mode until the socket closes. STUN responses are accepted only when transaction ID, signed relay source, socket generation, and active-profile generation all match. Literal relay IPs are selected deterministically across regions. Server-reflexive and safe host-interface candidates are merged with configured candidates, translated to protocol endpoint types only inside the compatibility adapter, and sent through non-streaming updates using the active stream's discovery key. While peers exist, discovery refreshes at a randomized 20–26 second interval. Changed sets are coalesced; transient publication failures retry with bounded backoff; the latest desired set is resent after a map reconnect. Recently observed non-host candidates survive a short probe flap within bounded per-address and global history, then a dedicated timer withdraws them at the exact deadline. Authenticated direct-path selection runs bounded, paced candidate rounds on a randomized 2.8–3.2 second cadence, safely resets stale preferred paths across map revisions without reopening an equivalent tunnel, and applies proven endpoint changes incrementally. Traffic-idle pacing and subnet/exit route transactions remain separate milestones.
 
+Each accepted STUN response also produces an RTT bound to its exact signed
+server, transaction, profile scope, and socket generation. The client retains
+at most 2,048 signed probe targets, probes at most eight concurrently, keeps one
+target from the current home region in every round, and rotates the remaining
+slots across the topology. A session-owned selector smooths RTT with a 75/25
+moving average, expires stale samples after five minutes and ten seconds, and
+switches a reachable home only when another observed region is at least 10 ms
+and 20 percent faster. A partial round must miss the current home twice before
+reachability failover. A changed usable control preference remains
+authoritative; absent one, the lowest usable signed region is the deterministic
+cold-start fallback. Candidate and home-relay changes are published atomically
+through the pinned map protocol and resent after reconnect. The packet engine
+changes home only after the control plane echoes the preference in a validated
+map, so local network observations cannot rewrite peer authority directly.
+
 The peer-probe wire adapter implements the current encrypted Ping/Pong format
 behind `internal/compat/disco`. The daemon creates one ephemeral X25519 identity
 per active control session, advertises its canonical public key through every
@@ -79,8 +94,9 @@ The relay subsystem compiles an independent immutable authority from each
 validated map. It accepts only non-STUN relay nodes, binds every destination
 key to one selected region and one signed overlay identity, and starts the home
 connection without blocking WireGuard startup. A valid control preference wins;
-otherwise the lowest usable signed region is selected deterministically so
-clients can rendezvous before latency reporting is implemented. WireGuard peer
+otherwise the latency selector reports a stable preferred region and retains a
+deterministic lowest-region fallback while measurements are unavailable.
+WireGuard peer
 endpoints begin on the relay. An authenticated direct proof can replace that
 endpoint incrementally, and proof expiry restores the relay instead of an
 unproven network address.
@@ -135,7 +151,7 @@ Compatibility must be proven independently at four layers:
 1. HTTPS server-key discovery and TS2021/Noise session establishment. Implemented by `doctor control`, registration, and the long-lived map stream.
 2. Registration, login completion, keepalive watchdog, and bounded reconnect are implemented. Session-handle resume remains; reconnect currently requires a new full snapshot.
 3. Network-map decoding, structural policy validation, DNS translation/planning, Linux DNS activation, and host-level TCP/UDP/ICMP policy enforcement are implemented. Capability-based networking, subnet/exit policy, and URL resolver transports remain.
-4. Privileged TUN/DNS lifecycle, direct userspace WireGuard traffic, shared-socket STUN discovery, periodic candidate refresh/expiry, typed endpoint publication, and authenticated direct endpoint switching are implemented as opt-in Linux POCs. Heartbeat-driven roaming, traffic-idle discovery pacing, relay traffic, generalized routes, and non-Linux DNS backends remain.
+4. Privileged TUN/DNS lifecycle, direct userspace WireGuard traffic, shared-socket STUN discovery, periodic candidate refresh/expiry, typed endpoint and home-relay publication, bounded encrypted relay traffic, and authenticated direct endpoint switching are implemented as opt-in Linux POCs. Heartbeat-driven roaming, traffic-idle discovery pacing, relay-region eviction, generalized routes, and non-Linux DNS backends remain.
 
 ## Local API
 
