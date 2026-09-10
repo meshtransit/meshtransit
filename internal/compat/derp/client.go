@@ -34,6 +34,8 @@ const (
 	writeTimeout              = 5 * time.Second
 	nodeDialTimeout           = 1500 * time.Millisecond
 	defaultNodeSessionTimeout = 4 * time.Second
+	defaultNodeFallbackDelay  = 200 * time.Millisecond
+	maxConcurrentNodeAttempts = 2
 	familyFallbackDelay       = 200 * time.Millisecond
 	maxUpgradeResponseBytes   = 32 << 10
 	maxErrorBody              = 4096
@@ -52,11 +54,18 @@ type dialResult struct {
 	err  error
 }
 
+type nodeDialResult struct {
+	index  int
+	client *Client
+	err    error
+}
+
 // Dialer opens TLS-only relay sessions without environment proxies or redirects.
 type Dialer struct {
 	dialContext        dialContextFunc
 	rootCAs            *x509.CertPool
 	nodeSessionTimeout time.Duration
+	nodeFallbackDelay  time.Duration
 }
 
 // Client adapts the pinned protocol client to the product relay contract.
@@ -81,10 +90,12 @@ func NewDialer() *Dialer {
 	return &Dialer{
 		dialContext:        networkDialer.DialContext,
 		nodeSessionTimeout: defaultNodeSessionTimeout,
+		nodeFallbackDelay:  defaultNodeFallbackDelay,
 	}
 }
 
-// Dial tries the control-authorized relay nodes in their signed order.
+// Dial starts control-authorized relay nodes in their signed order and returns
+// the first session that completes authentication.
 func (d *Dialer) Dial(
 	ctx context.Context,
 	privateKey relay.Key,
@@ -100,30 +111,16 @@ func (d *Dialer) Dial(
 		return nil, errors.New("relay protocol: connection authority is invalid")
 	}
 
-	var firstErr error
-	for _, node := range region.Nodes {
-		nodeCtx, cancel := context.WithTimeout(ctx, d.sessionTimeout())
-		client, err := d.dialNode(nodeCtx, privateKey, node)
-		nodeErr := nodeCtx.Err()
-		cancel()
-		if err != nil && nodeErr != nil {
-			err = nodeErr
-		}
-		if err == nil {
-			return client, nil
-		}
-		if firstErr == nil {
-			firstErr = err
-		}
+	client, err := d.raceRegionNodes(ctx, privateKey, region.Nodes)
+	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-	}
-	if firstErr == nil {
-		firstErr = errors.New("no relay node is available")
+
+		return nil, fmt.Errorf("relay protocol: connecting to region %d: %w", region.ID, err)
 	}
 
-	return nil, fmt.Errorf("relay protocol: connecting to region %d: %w", region.ID, firstErr)
+	return client, nil
 }
 
 func (d *Dialer) sessionTimeout() time.Duration {
@@ -132,6 +129,117 @@ func (d *Dialer) sessionTimeout() time.Duration {
 	}
 
 	return d.nodeSessionTimeout
+}
+
+func (d *Dialer) fallbackDelay() time.Duration {
+	if d.nodeFallbackDelay <= 0 {
+		return defaultNodeFallbackDelay
+	}
+
+	return d.nodeFallbackDelay
+}
+
+// raceRegionNodes keeps at most two fully authenticated node attempts active.
+// The second lane starts after a short delay, while a failed lane is replaced
+// immediately. Every started attempt is canceled, closed, and joined before
+// this function returns.
+func (d *Dialer) raceRegionNodes(
+	ctx context.Context,
+	privateKey relay.Key,
+	nodes []relay.Node,
+) (*Client, error) {
+	dialCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan nodeDialResult, maxConcurrentNodeAttempts)
+	failures := make([]error, len(nodes))
+	next := 0
+	active := 0
+	startNext := func() {
+		index := next
+		next++
+		active++
+		go func() {
+			nodeCtx, cancelNode := context.WithTimeout(dialCtx, d.sessionTimeout())
+			client, err := d.dialNode(nodeCtx, privateKey, nodes[index])
+			nodeErr := nodeCtx.Err()
+			cancelNode()
+			if err != nil && nodeErr != nil {
+				err = nodeErr
+			}
+			if client == nil && err == nil {
+				err = errors.New("relay protocol: node dial returned an empty client")
+			}
+			results <- nodeDialResult{index: index, client: client, err: err}
+		}()
+	}
+	drain := func(count int) {
+		for range count {
+			result := <-results
+			if result.client != nil {
+				_ = result.client.Close()
+			}
+		}
+	}
+
+	startNext()
+	var fallbackTimer *time.Timer
+	var fallbackReady <-chan time.Time
+	if len(nodes) > 1 {
+		fallbackTimer = time.NewTimer(d.fallbackDelay())
+		fallbackReady = fallbackTimer.C
+		defer fallbackTimer.Stop()
+	}
+	for {
+		select {
+		case result := <-results:
+			active--
+			if result.err == nil {
+				if err := ctx.Err(); err != nil {
+					_ = result.client.Close()
+					cancel()
+					drain(active)
+
+					return nil, err
+				}
+				cancel()
+				drain(active)
+
+				return result.client, nil
+			}
+			if result.client != nil {
+				_ = result.client.Close()
+			}
+			failures[result.index] = result.err
+			if err := ctx.Err(); err != nil {
+				cancel()
+				drain(active)
+
+				return nil, err
+			}
+			if next < len(nodes) {
+				startNext()
+			}
+			if active == 0 {
+				for _, err := range failures {
+					if err != nil {
+						return nil, err
+					}
+				}
+
+				return nil, errors.New("no relay node is available")
+			}
+		case <-fallbackReady:
+			fallbackReady = nil
+			if active < maxConcurrentNodeAttempts && next < len(nodes) {
+				startNext()
+			}
+		case <-ctx.Done():
+			cancel()
+			drain(active)
+
+			return nil, ctx.Err()
+		}
+	}
 }
 
 func (d *Dialer) dialNode(

@@ -52,10 +52,15 @@ Each node uses its signed IPv6 and IPv4 fields independently. An empty field
 resolves the signed hostname for that family, `none` disables that family, and
 a literal must be a valid global-unicast address of the declared family.
 IPv6 starts first and IPv4 follows after 200 milliseconds, or immediately when
-IPv6 fails. Only the winning TCP socket proceeds to TLS and protocol
-authentication; every started losing attempt is canceled, closed, and joined.
-The TLS SNI and HTTP authority remain the signed hostname even when the socket
-dials a literal address.
+IPv6 fails. Within one node, only the winning TCP socket proceeds to TLS and
+protocol authentication; every started losing family attempt is canceled,
+closed, and joined. Across a region, the first signed node starts immediately
+and a second starts after 200 milliseconds. A failed lane is replaced
+immediately in signed order, but no more than two node sessions may run at
+once. The first fully authenticated session wins, and all started losing node
+attempts are canceled, closed, and joined before the call returns. The TLS SNI
+and HTTP authority remain the signed hostname even when the socket dials a
+literal address.
 
 The adapter answers protocol pings, treats restart notices and explicit unhealthy
 reports as reconnect signals, and translates authenticated keepalive, presence,
@@ -97,6 +102,8 @@ in a newly validated map.
 - connection deadline: 10 seconds;
 - per-node TCP dial deadline: 1.5 seconds;
 - per-node TLS, upgrade, and authenticated-confirmation deadline: 4 seconds;
+- concurrent authenticated node attempts per region: 2;
+- region-node fallback delay: 200 milliseconds;
 - address-family fallback delay: 200 milliseconds;
 - pre-authentication upgrade response: 32 KiB maximum;
 - authenticated server-info frame: 64 KiB maximum;
@@ -129,7 +136,8 @@ connection lifetime of at least thirty seconds.
 ## Follow-up work
 
 Deterministic adversarial coverage now includes oversized upgrade headers,
-stalled TLS and missing greetings, unknown and malformed authenticated frames,
-rapid connection churn, and queue byte pressure. Remaining relay release work
-is long-duration saturation testing and operator-facing aggregate health
-telemetry without keys or payloads.
+stalled TLS and missing greetings, authenticated node racing and cancellation,
+concurrency bounds, unknown and malformed authenticated frames, rapid
+connection churn, and queue byte pressure. Remaining relay release work is
+long-duration saturation testing and operator-facing aggregate health telemetry
+without keys or payloads.

@@ -109,10 +109,14 @@ product types. `internal/compat/derp` alone owns the pinned wire codec. The
 adapter opens raw TLS without environment proxies or redirects, verifies normal,
 alternate-name, or exact control-signed certificate authority, requires the
 protocol upgrade and authenticated server greeting, and carries unchanged
-WireGuard ciphertext. Each signed node receives a four-second end-to-end
+WireGuard ciphertext. Region dialing starts the first signed node immediately
+and a second after 200 milliseconds, replaces failed attempts without delay,
+and never runs more than two node sessions concurrently. Only a fully
+authenticated session can win; cancellation closes and joins every started
+loser before returning. Each signed node receives a four-second end-to-end
 session attempt inside the ten-second region budget, so a node that stalls TLS,
-upgrade, or greeting cannot consume all failover time. The upgrade response is
-limited to 32 KiB. After upgrade, a strict reader admits only version-pinned
+upgrade, or greeting cannot serialize all failover work. The upgrade response
+is limited to 32 KiB. After upgrade, a strict reader admits only version-pinned
 server frame types and bounds their shape before the compatibility codec can
 allocate from a remote length. Each client has at most sixteen active region workers,
 32 queued batches per region, one MiB per-region and four MiB total queued send

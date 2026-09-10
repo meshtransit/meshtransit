@@ -13,6 +13,8 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,7 +24,7 @@ import (
 	"tailscale.com/types/key"
 )
 
-func TestDialFailsOverAfterNodeSessionTimeout(t *testing.T) {
+func TestDialRacesAuthenticatedNodeBeforeSessionTimeout(t *testing.T) {
 	t.Parallel()
 
 	server := newAuthenticatedRelayServer(t, nil)
@@ -33,10 +35,13 @@ func TestDialFailsOverAfterNodeSessionTimeout(t *testing.T) {
 	})
 	roots := x509.NewCertPool()
 	roots.AddCert(server.Certificate())
+	var attemptsMu sync.Mutex
 	attempted := make([]string, 0, 2)
 	dialer := &Dialer{
 		dialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			attemptsMu.Lock()
 			attempted = append(attempted, address)
+			attemptsMu.Unlock()
 			if address == "192.0.2.1:443" {
 				return stalledClient, nil
 			}
@@ -45,7 +50,8 @@ func TestDialFailsOverAfterNodeSessionTimeout(t *testing.T) {
 			return networkDialer.DialContext(ctx, network, server.Listener.Addr().String())
 		},
 		rootCAs:            roots,
-		nodeSessionTimeout: 50 * time.Millisecond,
+		nodeSessionTimeout: time.Second,
+		nodeFallbackDelay:  20 * time.Millisecond,
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
@@ -73,11 +79,132 @@ func TestDialFailsOverAfterNodeSessionTimeout(t *testing.T) {
 		t.Fatalf("Dial() error = %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
+	attemptsMu.Lock()
+	slices.Sort(attempted)
 	if want := []string{"192.0.2.1:443", "192.0.2.2:443"}; !slices.Equal(attempted, want) {
+		attemptsMu.Unlock()
 		t.Fatalf("dial attempts = %v, want %v", attempted, want)
 	}
+	attemptsMu.Unlock()
 	if elapsed := time.Since(started); elapsed >= 500*time.Millisecond {
-		t.Fatalf("Dial() failover took %v", elapsed)
+		t.Fatalf("Dial() authenticated race took %v", elapsed)
+	}
+	if err := stalledServer.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		if errors.Is(err, io.ErrClosedPipe) {
+			return
+		}
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+	if _, err := io.Copy(io.Discard, stalledServer); err != nil {
+		var netError net.Error
+		if errors.As(err, &netError) && netError.Timeout() {
+			t.Fatal("Dial() returned before the losing node was closed")
+		}
+	}
+}
+
+func TestDialCapsAndJoinsConcurrentNodeAttempts(t *testing.T) {
+	t.Parallel()
+
+	var active atomic.Int32
+	var maximum atomic.Int32
+	var attempts atomic.Int32
+	dialer := &Dialer{
+		dialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			attempts.Add(1)
+			current := active.Add(1)
+			for observed := maximum.Load(); current > observed; observed = maximum.Load() {
+				if maximum.CompareAndSwap(observed, current) {
+					break
+				}
+			}
+			<-ctx.Done()
+			active.Add(-1)
+
+			return nil, ctx.Err()
+		},
+		nodeSessionTimeout: 100 * time.Millisecond,
+		nodeFallbackDelay:  10 * time.Millisecond,
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	_, err := dialer.Dial(ctx, relay.Key{1}, relay.Region{
+		ID: 1,
+		Nodes: []relay.Node{
+			{Name: "one", HostName: "one.example.com", IPv4: "192.0.2.1", IPv6: "none", Port: 443},
+			{Name: "two", HostName: "two.example.com", IPv4: "192.0.2.2", IPv6: "none", Port: 443},
+			{Name: "three", HostName: "three.example.com", IPv4: "192.0.2.3", IPv6: "none", Port: 443},
+			{Name: "four", HostName: "four.example.com", IPv4: "192.0.2.4", IPv6: "none", Port: 443},
+		},
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Dial() error = %v, want context deadline exceeded", err)
+	}
+	if got := attempts.Load(); got != 4 {
+		t.Fatalf("dial attempts = %d, want 4", got)
+	}
+	if got := maximum.Load(); got != 2 {
+		t.Fatalf("maximum concurrent node attempts = %d, want 2", got)
+	}
+	if got := active.Load(); got != 0 {
+		t.Fatalf("active node attempts after Dial() = %d, want 0", got)
+	}
+}
+
+func TestDialCancellationJoinsNodeAttempts(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan struct{}, 2)
+	var active atomic.Int32
+	var attempts atomic.Int32
+	dialer := &Dialer{
+		dialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			attempts.Add(1)
+			active.Add(1)
+			started <- struct{}{}
+			<-ctx.Done()
+			active.Add(-1)
+
+			return nil, ctx.Err()
+		},
+		nodeSessionTimeout: time.Second,
+		nodeFallbackDelay:  10 * time.Millisecond,
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := dialer.Dial(ctx, relay.Key{1}, relay.Region{
+			ID: 1,
+			Nodes: []relay.Node{
+				{Name: "one", HostName: "one.example.com", IPv4: "192.0.2.1", IPv6: "none", Port: 443},
+				{Name: "two", HostName: "two.example.com", IPv4: "192.0.2.2", IPv6: "none", Port: 443},
+				{Name: "three", HostName: "three.example.com", IPv4: "192.0.2.3", IPv6: "none", Port: 443},
+			},
+		})
+		result <- err
+	}()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("concurrent node attempt did not start")
+		}
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Dial() error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Dial() did not join canceled node attempts")
+	}
+	if got := active.Load(); got != 0 {
+		t.Fatalf("active node attempts after cancellation = %d, want 0", got)
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("dial attempts after cancellation = %d, want 2", got)
 	}
 }
 
