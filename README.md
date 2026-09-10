@@ -96,7 +96,11 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - Opt-in native flow telemetry with redacted control-issued credentials, bounded non-blocking queues, TCP handshake state, explicit per-direction counters, HTTPS-only uploads, redirect refusal, and no packet payload retention.
 - No copied compatibility-reference source.
 
-See [docs/architecture.md](docs/architecture.md), [docs/relay.md](docs/relay.md), [docs/dns.md](docs/dns.md), and [docs/security-model.md](docs/security-model.md).
+See [docs/architecture.md](docs/architecture.md),
+[docs/platform-contracts.md](docs/platform-contracts.md),
+[docs/release-v0.1.md](docs/release-v0.1.md),
+[docs/relay.md](docs/relay.md), [docs/dns.md](docs/dns.md), and
+[docs/security-model.md](docs/security-model.md).
 
 ## Current scope
 

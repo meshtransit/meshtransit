@@ -33,6 +33,13 @@ The current code implements the profile service, persistent per-profile identity
 - `meshctl` is an unprivileged client of that API. It must not import a tunnel engine or read daemon state files.
 - `meshnetd` is a minimal privileged Linux helper in this repository. It holds no control-plane or node private keys and validates every request from `meshd`.
 
+The cross-platform boundary is defined in
+[platform-contracts.md](platform-contracts.md). Linux is the reference
+implementation, followed by Windows and then macOS. The v0.1 capability scope,
+native support matrix, and measurable release gates are defined in
+[release-v0.1.md](release-v0.1.md); cross-compilation alone is not treated as
+platform support.
+
 ## Privileged TUN boundary
 
 `meshnetd` listens on a separate Linux `SOCK_SEQPACKET` Unix socket. Startup fixes exactly one allowed meshd UID, data and DNS interface names, one MTU, at most sixteen non-overlapping overlay pools, one DNS endpoint, and one `resolvectl` path. The versioned JSON protocol is capped at 32 KiB and exposes only `open_tun`, `open_dns`, `set_dns`, and `reset_dns`. TUN requests contain bounded address and route lists; DNS requests contain only the helper-fixed endpoint plus bounded search and route domains. Subnet/default TUN routes, duplicates, address overlap, commands, client-selected paths, device parameters, and keys are impossible in the schema or rejected. The helper checks kernel `SO_PEERCRED`, creates non-persistent `IFF_TUN|IFF_NO_PI` interfaces, assigns descriptor ownership to the configured UID, applies only validated host prefixes, raises each link, and passes descriptors with `SCM_RIGHTS`.

@@ -6,6 +6,8 @@ All notable user-visible changes will be documented in this file.
 
 ### Added
 
+- v0.1 release contract, platform priority, native validation matrix, and
+  operating-system adapter boundaries.
 - Initial daemon composition root.
 - Atomic profile store with one-active-profile enforcement.
 - Versioned local Unix-socket API for health, status, profile creation, listing, and selection.
