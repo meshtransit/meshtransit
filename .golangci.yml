@@ -48,5 +48,4 @@ formatters:
     - goimports
   settings:
     gofumpt:
-      extra:
-        group-params: true
+      extra-rules: true
