@@ -61,6 +61,8 @@ jobs:
           bash -n \
             tools/qualification/linux-restart.sh \
             tools/qualification/test-linux-restart.sh \
+            tools/qualification/linux-crash-repeat.sh \
+            tools/qualification/test-linux-crash-repeat.sh \
             tools/qualification/linux-reboot.sh \
             tools/qualification/test-linux-reboot.sh \
             tools/qualification/linux-network-change.sh \
@@ -75,6 +77,8 @@ jobs:
           shellcheck \
             tools/qualification/linux-restart.sh \
             tools/qualification/test-linux-restart.sh \
+            tools/qualification/linux-crash-repeat.sh \
+            tools/qualification/test-linux-crash-repeat.sh \
             tools/qualification/linux-reboot.sh \
             tools/qualification/test-linux-reboot.sh \
             tools/qualification/linux-network-change.sh \
@@ -89,6 +93,7 @@ jobs:
           PYTHONPYCACHEPREFIX="${RUNNER_TEMP}/pycache" \
             python3 -m py_compile tools/qualification/testdata/policy_peer.py
           bash tools/qualification/test-linux-restart.sh
+          bash tools/qualification/test-linux-crash-repeat.sh
           bash tools/qualification/test-linux-reboot.sh
           bash tools/qualification/test-linux-network-change.sh
           bash tools/qualification/test-linux-relay-fallback.sh

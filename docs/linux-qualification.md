@@ -110,6 +110,42 @@ latency or the 72-hour reliability target. Aggregate candidate reports must also
 record sample count, topology/load definition, artifact digest, and percentile
 calculations as required by [release-v0.1.md](release-v0.1.md).
 
+## Run repeated crash qualification
+
+The repeat runner invokes only the bounded single-run harness and stops at the
+first failed sample or resource invariant. Runs are serial; it never terminates
+both nodes or both local services concurrently. The default is three samples,
+with a maximum of 20 per invocation.
+
+```bash
+sudo tools/qualification/linux-crash-repeat.sh \
+  --node-label ubuntu-a \
+  --peer-label ubuntu-b \
+  --peer-v4 100.64.0.6 \
+  --peer-v6 fd7a:115c:a1e0::d \
+  --peer-name ubuntu-b \
+  --service meshd \
+  --iterations 3 \
+  --ready-timeout-seconds 20 \
+  --artifact-sha256 SHA256_OF_DEB \
+  >ubuntu-a-meshd-crash-repeat.json
+```
+
+After every sample the runner requires exactly one daemon process, one helper
+process, one data interface, one DNS interface, one UDP resolver listener, and
+one TCP resolver listener. It hashes but does not emit the identity/profile/env
+contents, route set, or per-link resolver configuration, and requires all three
+to equal the baseline. Descriptor counts may exceed the initial steady-state
+count by at most four to accommodate connection timing; a new process with zero
+observable descriptors is always a failure.
+
+The aggregate schema is
+`meshtransit.linux-crash-repeat-qualification/v1`. It retains redacted
+single-run measurements, per-sample resource checks, nearest-rank p95 full
+readiness and stable-traffic timings, and the count of error-level service log
+entries. The outer trap starts both services after interruption or failure and
+deletes all temporary reports.
+
 The first complete two-node alpha15 restart matrix is recorded in
 [linux-restart-qualification-2026-09-11.md](linux-restart-qualification-2026-09-11.md),
 with its redacted machine-readable reports retained under `docs/evidence`. The
@@ -388,6 +424,8 @@ confirmation, clock progression, and help output.
 ```bash
 bash -n tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-restart.sh \
+  tools/qualification/linux-crash-repeat.sh \
+  tools/qualification/test-linux-crash-repeat.sh \
   tools/qualification/linux-reboot.sh \
   tools/qualification/test-linux-reboot.sh \
   tools/qualification/linux-network-change.sh \
@@ -401,6 +439,8 @@ bash -n tools/qualification/linux-restart.sh \
   tools/qualification/testdata/ping
 shellcheck tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-restart.sh \
+  tools/qualification/linux-crash-repeat.sh \
+  tools/qualification/test-linux-crash-repeat.sh \
   tools/qualification/linux-reboot.sh \
   tools/qualification/test-linux-reboot.sh \
   tools/qualification/linux-network-change.sh \
@@ -415,6 +455,7 @@ shellcheck tools/qualification/linux-restart.sh \
 PYTHONPYCACHEPREFIX=/tmp/meshd-pycache \
   python3 -m py_compile tools/qualification/testdata/policy_peer.py
 bash tools/qualification/test-linux-restart.sh
+bash tools/qualification/test-linux-crash-repeat.sh
 bash tools/qualification/test-linux-reboot.sh
 bash tools/qualification/test-linux-network-change.sh
 bash tools/qualification/test-linux-relay-fallback.sh
