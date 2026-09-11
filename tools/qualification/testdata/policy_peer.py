@@ -23,6 +23,17 @@ MAX_MESSAGE_SIZE = 64
 PROBE_BLOCKED = 10
 PROBE_INVALID_RESPONSE = 20
 SOCKET_TIMEOUT_SECONDS = 1.0
+BLOCKED_ERRNOS = frozenset(
+    {
+        None,
+        errno.EACCES,
+        errno.EADDRNOTAVAIL,
+        errno.ECONNREFUSED,
+        errno.EHOSTUNREACH,
+        errno.ENETUNREACH,
+        errno.ETIMEDOUT,
+    }
+)
 
 
 class PolicyPeer:
@@ -130,6 +141,12 @@ def create_challenge() -> bytes:
     return CHALLENGE_PREFIX + secrets.token_bytes(32)
 
 
+def classify_socket_error(error: BaseException) -> int:
+    if isinstance(error, OSError) and error.errno not in BLOCKED_ERRNOS:
+        return PROBE_INVALID_RESPONSE
+    return PROBE_BLOCKED
+
+
 def write_ready_file(path: str) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
@@ -165,17 +182,10 @@ def probe(protocol: str, source_text: str, address_text: str, port: int, timeout
                     break
                 response.extend(chunk)
     except (ConnectionError, TimeoutError, OSError) as error:
-        if isinstance(error, OSError) and error.errno not in {
-            None,
-            errno.EACCES,
-            errno.ECONNREFUSED,
-            errno.EHOSTUNREACH,
-            errno.ENETUNREACH,
-            errno.ETIMEDOUT,
-        }:
+        result = classify_socket_error(error)
+        if result == PROBE_INVALID_RESPONSE:
             print(f"probe infrastructure error: errno={error.errno}", file=sys.stderr)
-            return PROBE_INVALID_RESPONSE
-        return PROBE_BLOCKED
+        return result
 
     if secrets.compare_digest(response, challenge):
         return 0
@@ -208,6 +218,11 @@ def reserve_port(socket_type: int) -> int:
 
 
 def self_test() -> int:
+    if classify_socket_error(OSError(errno.EADDRNOTAVAIL, "address removed")) != PROBE_BLOCKED:
+        raise RuntimeError("removed source address must classify as blocked")
+    if classify_socket_error(OSError(errno.EINVAL, "invalid argument")) != PROBE_INVALID_RESPONSE:
+        raise RuntimeError("unexpected socket errors must classify as infrastructure failures")
+
     tcp_port = reserve_port(socket.SOCK_STREAM)
     udp_port = reserve_port(socket.SOCK_DGRAM)
     stop = threading.Event()
