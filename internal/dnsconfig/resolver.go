@@ -34,6 +34,8 @@ var (
 	errUnsupportedEDNSVersion = errors.New("dnsconfig: unsupported EDNS version")
 	errNoResolver             = errors.New("dnsconfig: no resolver for query")
 	errForwardBusy            = errors.New("dnsconfig: forward queue is full")
+	errUpstreamServerFailure  = errors.New("dnsconfig: upstream returned server failure")
+	errUpstreamRefused        = errors.New("dnsconfig: upstream refused query")
 )
 
 type resolverEngine struct {
@@ -566,6 +568,12 @@ func validateForwardResponse(
 	if !message.Response || message.OpCode != 0 ||
 		len(message.Questions) != 1 || message.Questions[0] != question {
 		return errors.New("dnsconfig: upstream response question does not match")
+	}
+	switch message.RCode {
+	case dnsmessage.RCodeServerFailure:
+		return errUpstreamServerFailure
+	case dnsmessage.RCodeRefused:
+		return errUpstreamRefused
 	}
 
 	return nil

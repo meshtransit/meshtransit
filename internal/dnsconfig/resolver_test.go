@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/meshtransit/meshd/internal/networkmap"
 	"golang.org/x/net/dns/dnsmessage"
@@ -273,6 +274,105 @@ func TestResolverEngineForwardsAndRestoresTransactionID(t *testing.T) {
 	}
 }
 
+func TestResolverEngineRetriesRetryableUpstreamResponses(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		rcode dnsmessage.RCode
+	}{
+		{name: "server failure", rcode: dnsmessage.RCodeServerFailure},
+		{name: "refused", rcode: dnsmessage.RCodeRefused},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			failed := startUDPResponseUpstream(t, test.rcode, netip.Addr{})
+			succeeded := startUDPUpstream(t, netip.MustParseAddr("203.0.113.82"))
+			plan := Plan{
+				Enabled:          true,
+				DefaultResolvers: []netip.AddrPort{failed, succeeded},
+			}
+			query := packQuery(t, "retry.example.", dnsmessage.TypeA)
+			response, err := newResolverEngine().resolve(t.Context(), plan, query, "udp")
+			if err != nil {
+				t.Fatalf("resolve() error = %v", err)
+			}
+			message := unpackMessage(t, response)
+			if message.RCode != dnsmessage.RCodeSuccess || len(message.Answers) != 1 {
+				t.Fatalf("response rcode=%v answers=%#v", message.RCode, message.Answers)
+			}
+		})
+	}
+}
+
+func TestResolverEngineDoesNotRetryNXDOMAIN(t *testing.T) {
+	t.Parallel()
+
+	negative := startUDPResponseUpstream(t, dnsmessage.RCodeNameError, netip.Addr{})
+	plan := Plan{
+		Enabled: true,
+		DefaultResolvers: []netip.AddrPort{
+			negative,
+			netip.MustParseAddrPort("127.0.0.1:1"),
+		},
+	}
+	query := packQuery(t, "missing.example.", dnsmessage.TypeA)
+	response, err := newResolverEngine().resolve(t.Context(), plan, query, "udp")
+	if err != nil {
+		t.Fatalf("resolve() error = %v", err)
+	}
+	message := unpackMessage(t, response)
+	if message.RCode != dnsmessage.RCodeNameError {
+		t.Fatalf("response rcode = %v, want %v", message.RCode, dnsmessage.RCodeNameError)
+	}
+}
+
+func TestResolverEngineRetriesUnresponsiveUpstream(t *testing.T) {
+	t.Parallel()
+
+	unresponsive := startUnresponsiveUDPUpstream(t)
+	succeeded := startUDPUpstream(t, netip.MustParseAddr("203.0.113.83"))
+	plan := Plan{
+		Enabled:          true,
+		DefaultResolvers: []netip.AddrPort{unresponsive, succeeded},
+	}
+	query := packQuery(t, "timeout.example.", dnsmessage.TypeA)
+	started := time.Now()
+	response, err := newResolverEngine().resolve(t.Context(), plan, query, "udp")
+	if err != nil {
+		t.Fatalf("resolve() error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= queryTimeout {
+		t.Fatalf("resolve() elapsed = %v, want less than %v", elapsed, queryTimeout)
+	}
+	message := unpackMessage(t, response)
+	if message.RCode != dnsmessage.RCodeSuccess || len(message.Answers) != 1 {
+		t.Fatalf("response rcode=%v answers=%#v", message.RCode, message.Answers)
+	}
+}
+
+func TestResolverEngineReturnsServerFailureWhenAllUpstreamsFail(t *testing.T) {
+	t.Parallel()
+
+	failed := startUDPResponseUpstream(t, dnsmessage.RCodeServerFailure, netip.Addr{})
+	refused := startUDPResponseUpstream(t, dnsmessage.RCodeRefused, netip.Addr{})
+	plan := Plan{
+		Enabled:          true,
+		DefaultResolvers: []netip.AddrPort{failed, refused},
+	}
+	query := packQuery(t, "failure.example.", dnsmessage.TypeA)
+	response, err := newResolverEngine().resolve(t.Context(), plan, query, "udp")
+	if !errors.Is(err, errUpstreamServerFailure) || !errors.Is(err, errUpstreamRefused) {
+		t.Fatalf("resolve() error = %v, want both retryable upstream errors", err)
+	}
+	message := unpackMessage(t, response)
+	if message.RCode != dnsmessage.RCodeServerFailure {
+		t.Fatalf("response rcode = %v, want %v", message.RCode, dnsmessage.RCodeServerFailure)
+	}
+}
+
 func TestResolverEngineRetriesTruncatedUDPOverTCP(t *testing.T) {
 	t.Parallel()
 
@@ -438,6 +538,16 @@ func unpackMessage(t *testing.T, payload []byte) dnsmessage.Message {
 
 func startUDPUpstream(t *testing.T, answer netip.Addr) netip.AddrPort {
 	t.Helper()
+
+	return startUDPResponseUpstream(t, dnsmessage.RCodeSuccess, answer)
+}
+
+func startUDPResponseUpstream(
+	t *testing.T,
+	rcode dnsmessage.RCode,
+	answer netip.Addr,
+) netip.AddrPort {
+	t.Helper()
 	listener, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		t.Fatalf("ListenUDP() error = %v", err)
@@ -462,9 +572,12 @@ func startUDPUpstream(t *testing.T, answer netip.Addr) netip.AddrPort {
 				ID:                 query.ID,
 				Response:           true,
 				RecursionAvailable: true,
+				RCode:              rcode,
 			},
 			Questions: query.Questions,
-			Answers: []dnsmessage.Resource{{
+		}
+		if answer.IsValid() {
+			response.Answers = []dnsmessage.Resource{{
 				Header: dnsmessage.ResourceHeader{
 					Name:  query.Questions[0].Name,
 					Type:  dnsmessage.TypeA,
@@ -472,7 +585,7 @@ func startUDPUpstream(t *testing.T, answer netip.Addr) netip.AddrPort {
 					TTL:   30,
 				},
 				Body: &dnsmessage.AResource{A: answer.As4()},
-			}},
+			}}
 		}
 		payload, packErr := response.Pack()
 		if packErr == nil {
@@ -493,6 +606,25 @@ func startUDPUpstream(t *testing.T, answer netip.Addr) netip.AddrPort {
 	address := localAddress.AddrPort()
 
 	return netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), address.Port())
+}
+
+func startUnresponsiveUDPUpstream(t *testing.T) netip.AddrPort {
+	t.Helper()
+
+	listener, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP() error = %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	localAddress, ok := listener.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		t.Fatalf("UDP listener address type = %T, want *net.UDPAddr", listener.LocalAddr())
+	}
+
+	return netip.AddrPortFrom(
+		netip.MustParseAddr("127.0.0.1"),
+		localAddress.AddrPort().Port(),
+	)
 }
 
 func startTruncatingUpstream(t *testing.T, answer netip.Addr) netip.AddrPort {
