@@ -1,6 +1,8 @@
 #!/bin/sh
 set -e
 
+reinstall_marker=/etc/meshd/.start-on-reinstall
+
 configure_accounts_and_directories() {
     if [ -n "${DPKG_ROOT:-}" ]; then
         systemd-sysusers --root="${DPKG_ROOT}" meshd.conf
@@ -48,12 +50,19 @@ case "$1" in
 
         if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
             systemctl --system daemon-reload >/dev/null || true
-            if [ "$1" = configure ] && [ -n "${2:-}" ]; then
+            remove_reinstall_marker=false
+            if [ "$1" = configure ] && [ -f "${reinstall_marker}" ]; then
+                action=start
+                remove_reinstall_marker=true
+            elif [ "$1" = configure ] && [ -n "${2:-}" ]; then
                 action=try-restart
             else
                 action=start
             fi
             deb-systemd-invoke "${action}" meshnetd.service meshd.service >/dev/null
+            if [ "${remove_reinstall_marker}" = true ]; then
+                rm -f -- "${reinstall_marker}"
+            fi
         fi
         ;;
 esac

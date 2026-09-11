@@ -33,6 +33,8 @@ if [ "$1" = "purge" ]; then
     if command -v deb-systemd-helper >/dev/null; then
         deb-systemd-helper purge meshnetd.service meshd.service >/dev/null || true
     fi
+    rm -f -- "${root_prefix}/etc/meshd/.start-on-reinstall"
+    rmdir -- "${root_prefix}/etc/meshd" 2>/dev/null || true
     rm -rf -- \
         "${root_prefix}/var/lib/meshd" \
         "${root_prefix}/run/meshd" \

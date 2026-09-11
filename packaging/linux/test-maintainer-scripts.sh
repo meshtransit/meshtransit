@@ -120,6 +120,7 @@ run_script "${script_dir}/deb/postrm" remove
 [[ -f "${package_root}/var/lib/meshd/profiles.json" ]]
 [[ -f "${package_root}/etc/meshd/meshd.env" ]]
 
+touch "${package_root}/etc/meshd/.start-on-reinstall"
 mkdir -p "${package_root}/run/meshd" "${package_root}/run/meshnetd"
 touch "${package_root}/run/meshd/stale" "${package_root}/run/meshnetd/stale"
 : >"${calls}"
@@ -128,6 +129,7 @@ grep -Fqx 'deb-systemd-helper <purge> <meshnetd.service> <meshd.service>' "${cal
 [[ ! -e "${package_root}/var/lib/meshd" ]]
 [[ ! -e "${package_root}/run/meshd" ]]
 [[ ! -e "${package_root}/run/meshnetd" ]]
+[[ ! -e "${package_root}/etc/meshd/.start-on-reinstall" ]]
 [[ -f "${package_root}/etc/meshd/meshd.env" ]]
 
 if env \

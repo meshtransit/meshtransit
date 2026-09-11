@@ -1,9 +1,17 @@
 #!/bin/sh
 set -e
 
+reinstall_marker=/etc/meshd/.start-on-reinstall
+
 case "$1" in
     remove)
         if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
+            if systemctl --system is-active --quiet meshd.service; then
+                umask 077
+                : >"${reinstall_marker}"
+            else
+                rm -f -- "${reinstall_marker}"
+            fi
             deb-systemd-invoke stop meshd.service meshnetd.service >/dev/null || true
         fi
         ;;

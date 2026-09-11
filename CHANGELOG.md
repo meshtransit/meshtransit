@@ -13,6 +13,8 @@ All notable user-visible changes will be documented in this file.
 - Go 1.26.8 toolchain baseline.
 - Reproducible amd64/arm64 Debian package builder with hardened split-privilege
   systemd services and package lifecycle scripts.
+- Debian service-state preservation across upgrade, removal, and reinstall,
+  alternate-root-safe purge behavior, and disposable package lifecycle tests.
 - Separate owner-writable runtime directories for the operator API and
   privileged-helper sockets.
 - Initial daemon composition root.

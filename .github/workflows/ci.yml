@@ -144,7 +144,8 @@ jobs:
       - name: Validate packaging scripts
         run: |
           bash -n packaging/linux/build-deb.sh packaging/linux/verify-deb.sh packaging/linux/test-maintainer-scripts.sh
-          shellcheck packaging/linux/build-deb.sh packaging/linux/verify-deb.sh packaging/linux/test-maintainer-scripts.sh packaging/linux/deb/*
+          dash -n packaging/linux/test-package-maintainers.sh packaging/linux/deb/*
+          shellcheck packaging/linux/build-deb.sh packaging/linux/verify-deb.sh packaging/linux/test-maintainer-scripts.sh packaging/linux/test-package-maintainers.sh packaging/linux/deb/*
 
       - name: Test package maintainer lifecycle
         run: bash packaging/linux/test-maintainer-scripts.sh
@@ -153,3 +154,12 @@ jobs:
         run: |
           bash packaging/linux/build-deb.sh "0.1.0~ci.${GITHUB_RUN_NUMBER}" "${{ matrix.arch }}" dist
           bash packaging/linux/verify-deb.sh "dist/meshd_0.1.0~ci.${GITHUB_RUN_NUMBER}_${{ matrix.arch }}.deb" "${{ matrix.arch }}"
+
+      - name: Test packaged maintainer lifecycle
+        run: |
+          docker run --rm \
+            --volume "${PWD}:/src:ro" \
+            --workdir /src \
+            debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 \
+            /src/packaging/linux/test-package-maintainers.sh \
+            "/src/dist/meshd_0.1.0~ci.${GITHUB_RUN_NUMBER}_${{ matrix.arch }}.deb"

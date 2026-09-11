@@ -64,7 +64,8 @@ sudo dpkg -i meshctl_PREVIOUS_amd64.deb meshd_PREVIOUS_amd64.deb
 
 Normal removal stops both services, removes their volatile sockets, and
 preserves identity state plus the root-owned conffile. Reinstalling reconnects
-the same node identity. Purge additionally removes `/var/lib/meshd`
+the same node identity when it was running before removal; an intentionally
+stopped service stays stopped. Purge additionally removes `/var/lib/meshd`
 permanently. Maintainer scripts honor `DPKG_ROOT`, so image-building and
 alternate-root operations cannot delete state from the host root.
 

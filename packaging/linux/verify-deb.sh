@@ -46,6 +46,10 @@ grep -Fq "deb-systemd-invoke \"\${action}\" meshnetd.service meshd.service" \
     "${work_dir}/control/postinst"
 grep -Fq 'deb-systemd-invoke stop meshd.service meshnetd.service' \
     "${work_dir}/control/prerm"
+grep -Fq 'systemctl --system is-active --quiet meshd.service' \
+    "${work_dir}/control/prerm"
+grep -Fq ": >\"\${reinstall_marker}\"" "${work_dir}/control/prerm"
+grep -Fq 'remove_reinstall_marker=true' "${work_dir}/control/postinst"
 grep -Fq 'deb-systemd-helper purge meshnetd.service meshd.service' \
     "${work_dir}/control/postrm"
 grep -Fq "root_prefix=\"\${DPKG_ROOT%/}\"" "${work_dir}/control/postrm"
