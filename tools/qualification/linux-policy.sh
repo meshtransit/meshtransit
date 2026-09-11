@@ -228,6 +228,24 @@ any_mesh_route() {
   [[ "$1" == true || "$2" == true || "$3" == true || "$4" == true ]]
 }
 
+mesh_route_present() {
+  local source_ssh="$1"
+  local family="$2"
+  local destination="$3"
+
+  remote_exec "${source_ssh}" \
+    "ip -${family} route get ${destination} | grep -Fq ' dev mesh0 '" >/dev/null 2>&1
+}
+
+policy_peer_is_ready() {
+  local destination="$1"
+  local remote_dir="$2"
+
+  remote_exec "${destination}" \
+    "test -f ${remote_dir}/ready && kill -0 \$(cat ${remote_dir}/server.pid)" \
+    >/dev/null 2>&1
+}
+
 classify_helper_probe() {
   local exit_code="$1"
 
@@ -283,7 +301,8 @@ main() {
   local node_a_route6=false
   local node_b_route4=false
   local node_b_route6=false
-  local listeners_started=false
+  local node_a_listener_ready=false
+  local node_b_listener_ready=false
   local start_ms
   local end_ms
   local mismatch_count=0
@@ -429,20 +448,16 @@ main() {
     fail "node A status does not contain the expected self addresses"
   status_has_addresses "${node_b_status}" "${node_b_v4}" "${node_b_v6}" ||
     fail "node B status does not contain the expected self addresses"
-  if remote_exec "${node_a_ssh}" \
-    "ip -4 route get ${node_b_v4} | grep -Fq ' dev mesh0 '" >/dev/null 2>&1; then
+  if mesh_route_present "${node_a_ssh}" 4 "${node_b_v4}"; then
     node_a_route4=true
   fi
-  if remote_exec "${node_a_ssh}" \
-    "ip -6 route get ${node_b_v6} | grep -Fq ' dev mesh0 '" >/dev/null 2>&1; then
+  if mesh_route_present "${node_a_ssh}" 6 "${node_b_v6}"; then
     node_a_route6=true
   fi
-  if remote_exec "${node_b_ssh}" \
-    "ip -4 route get ${node_a_v4} | grep -Fq ' dev mesh0 '" >/dev/null 2>&1; then
+  if mesh_route_present "${node_b_ssh}" 4 "${node_a_v4}"; then
     node_b_route4=true
   fi
-  if remote_exec "${node_b_ssh}" \
-    "ip -6 route get ${node_a_v6} | grep -Fq ' dev mesh0 '" >/dev/null 2>&1; then
+  if mesh_route_present "${node_b_ssh}" 6 "${node_a_v6}"; then
     node_b_route6=true
   fi
   if [[ "${any_allow}" == true ]]; then
@@ -474,21 +489,39 @@ main() {
       "setpriv --reuid=meshd --regid=meshd --init-groups -- python3 ${node_b_remote_dir}/policy_peer.py serve --address ${node_b_v4} --address ${node_b_v6} --tcp-port ${tcp_port} --udp-port ${udp_port} --ready-file ${node_b_remote_dir}/ready >/dev/null 2>&1 & echo \$! >${node_b_remote_dir}/server.pid"
 
     for _ in {1..20}; do
-      if remote_exec "${node_a_ssh}" \
-        "test -f ${node_a_remote_dir}/ready && kill -0 \$(cat ${node_a_remote_dir}/server.pid)" >/dev/null 2>&1 &&
-        remote_exec "${node_b_ssh}" \
-          "test -f ${node_b_remote_dir}/ready && kill -0 \$(cat ${node_b_remote_dir}/server.pid)" >/dev/null 2>&1; then
+      if [[ "${node_a_listener_ready}" != true ]] &&
+        policy_peer_is_ready "${node_a_ssh}" "${node_a_remote_dir}"; then
+        node_a_listener_ready=true
+      fi
+      if [[ "${node_b_listener_ready}" != true ]] &&
+        policy_peer_is_ready "${node_b_ssh}" "${node_b_remote_dir}"; then
+        node_b_listener_ready=true
+      fi
+      if [[ "${node_a_listener_ready}" == true && "${node_b_listener_ready}" == true ]]; then
         break
       fi
       sleep 0.25
     done
-    remote_exec "${node_a_ssh}" \
-      "test -f ${node_a_remote_dir}/ready && kill -0 \$(cat ${node_a_remote_dir}/server.pid)" >/dev/null 2>&1 ||
-      fail "node A policy peer did not become ready"
-    remote_exec "${node_b_ssh}" \
-      "test -f ${node_b_remote_dir}/ready && kill -0 \$(cat ${node_b_remote_dir}/server.pid)" >/dev/null 2>&1 ||
-      fail "node B policy peer did not become ready"
-    listeners_started=true
+    if [[ "${node_a_listener_ready}" != true ]]; then
+      node_b_route4=false
+      node_b_route6=false
+      mesh_route_present "${node_b_ssh}" 4 "${node_a_v4}" && node_b_route4=true
+      mesh_route_present "${node_b_ssh}" 6 "${node_a_v6}" && node_b_route6=true
+      if [[ "${node_b_route4}" == true || "${node_b_route6}" == true ]]; then
+        fail "node A policy peer did not become ready while an inbound mesh route remained"
+      fi
+      progress "node A listener became unnecessary after its inbound mesh routes were removed"
+    fi
+    if [[ "${node_b_listener_ready}" != true ]]; then
+      node_a_route4=false
+      node_a_route6=false
+      mesh_route_present "${node_a_ssh}" 4 "${node_b_v4}" && node_a_route4=true
+      mesh_route_present "${node_a_ssh}" 6 "${node_b_v6}" && node_a_route6=true
+      if [[ "${node_a_route4}" == true || "${node_a_route6}" == true ]]; then
+        fail "node B policy peer did not become ready while an inbound mesh route remained"
+      fi
+      progress "node B listener became unnecessary after its inbound mesh routes were removed"
+    fi
   else
     progress "no mesh routes are present; recording route-level deny evidence"
   fi
@@ -588,13 +621,27 @@ main() {
     done
   done
 
-  if [[ "${listeners_started}" == true ]]; then
-    remote_exec "${node_a_ssh}" \
-      "kill -0 \$(cat ${node_a_remote_dir}/server.pid)" >/dev/null 2>&1 ||
+  if [[ "${node_a_listener_ready}" == true ]] &&
+    ! policy_peer_is_ready "${node_a_ssh}" "${node_a_remote_dir}"; then
+    if [[ "${any_allow}" == true ]] ||
+      mesh_route_present "${node_b_ssh}" 4 "${node_a_v4}" ||
+      mesh_route_present "${node_b_ssh}" 6 "${node_a_v6}"; then
       infrastructure_error_count=$((infrastructure_error_count + 1))
-    remote_exec "${node_b_ssh}" \
-      "kill -0 \$(cat ${node_b_remote_dir}/server.pid)" >/dev/null 2>&1 ||
+    else
+      node_b_route4=false
+      node_b_route6=false
+    fi
+  fi
+  if [[ "${node_b_listener_ready}" == true ]] &&
+    ! policy_peer_is_ready "${node_b_ssh}" "${node_b_remote_dir}"; then
+    if [[ "${any_allow}" == true ]] ||
+      mesh_route_present "${node_a_ssh}" 4 "${node_b_v4}" ||
+      mesh_route_present "${node_a_ssh}" 6 "${node_b_v6}"; then
       infrastructure_error_count=$((infrastructure_error_count + 1))
+    else
+      node_a_route4=false
+      node_a_route6=false
+    fi
   fi
 
   expected_json="$(jq -n \
