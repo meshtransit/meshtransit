@@ -119,6 +119,13 @@ reapply the current signed desired state. The monitor cannot alter map
 authority, policy, routes, peer keys, or DNS contents. Event storms are bounded
 and shutdown joins every worker.
 
+Linux currently implements native route/link/address notifications with a
+canonical snapshot comparison, startup reconciliation, bounded event draining,
+and a polling fallback. The fixed MeshTransit data and DNS interfaces are
+excluded. Native sleep/resume and reachability hints, plus native Windows and
+macOS sources, remain platform-specific release work; polling keeps their
+cross-build behavior explicit without claiming native qualification.
+
 ## Service lifecycle
 
 The native service adapter must expose consistent start, stop, reload/upgrade,

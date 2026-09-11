@@ -583,6 +583,77 @@ func TestEndpointRefreshRunsPeriodicallyWithoutDuplicatePublication(t *testing.T
 	}
 }
 
+func TestEndpointRefreshRunsImmediatelyAfterNetworkChange(t *testing.T) {
+	t.Parallel()
+
+	firstCandidate, err := pathdiscovery.NewCandidate(
+		netip.MustParseAddrPort("198.51.100.51:41641"),
+		pathdiscovery.SourceServerReflexive,
+	)
+	if err != nil {
+		t.Fatalf("NewCandidate() error = %v", err)
+	}
+	firstCandidates, err := pathdiscovery.NewSet([]pathdiscovery.Candidate{firstCandidate})
+	if err != nil {
+		t.Fatalf("NewSet() error = %v", err)
+	}
+	secondCandidate, err := pathdiscovery.NewCandidate(
+		netip.MustParseAddrPort("198.51.100.52:41641"),
+		pathdiscovery.SourceServerReflexive,
+	)
+	if err != nil {
+		t.Fatalf("NewCandidate() error = %v", err)
+	}
+	secondCandidates, err := pathdiscovery.NewSet([]pathdiscovery.Candidate{secondCandidate})
+	if err != nil {
+		t.Fatalf("NewSet() error = %v", err)
+	}
+	discoverer := &refreshDiscoverer{
+		calls:  make(chan struct{}, 2),
+		result: pathdiscovery.DiscoveryResult{Candidates: firstCandidates},
+	}
+	networkChanges := make(chan struct{}, 1)
+	service := &Service{
+		clock:                time.Now,
+		endpointRefreshDelay: func() time.Duration { return time.Hour },
+		networkChanges:       networkChanges,
+	}
+	requests := make(chan endpointRefreshRequest, 1)
+	updates := make(chan ts2021.EndpointUpdate, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- service.runEndpointRefresh(ctx, 15, discoverer, requests, updates)
+	}()
+	requests <- endpointRefreshRequest{active: true}
+	select {
+	case <-updates:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for initial endpoint update")
+	}
+
+	discoverer.mu.Lock()
+	discoverer.result = pathdiscovery.DiscoveryResult{Candidates: secondCandidates}
+	discoverer.mu.Unlock()
+	networkChanges <- struct{}{}
+	select {
+	case <-updates:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for network-triggered endpoint update")
+	}
+	if observed := service.networkObserved.Load(); observed != 1 {
+		t.Fatalf("network changes observed = %d, want 1", observed)
+	}
+	if refreshes := service.networkRefreshes.Load(); refreshes != 1 {
+		t.Fatalf("network endpoint refreshes = %d, want 1", refreshes)
+	}
+
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("runEndpointRefresh() error = %v, want context cancellation", err)
+	}
+}
+
 func TestEndpointRefreshSelectsMeasuredHomeRelay(t *testing.T) {
 	t.Parallel()
 
@@ -878,6 +949,24 @@ func TestService_StatusReportsOnlineForEncryptedDataPlane(t *testing.T) {
 	}
 	if status.State != StateOnline || status.DataPlane != string(dataplane.StateEncrypted) {
 		t.Fatalf("Status() = %#v, want online encrypted data plane", status)
+	}
+}
+
+func TestService_StatusReportsNetworkChangeCounters(t *testing.T) {
+	t.Parallel()
+
+	service, _, _, _, _ := newTestService(t)
+	service.networkChanges = make(chan struct{})
+	service.networkObserved.Store(4)
+	service.networkRefreshes.Store(3)
+
+	status, err := service.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if !status.NetworkChanges.Available || status.NetworkChanges.Observed != 4 ||
+		status.NetworkChanges.EndpointRefreshes != 3 {
+		t.Fatalf("network change status = %#v", status.NetworkChanges)
 	}
 }
 

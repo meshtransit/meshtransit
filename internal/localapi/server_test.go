@@ -46,7 +46,8 @@ func TestServer_ProfileLifecycle(t *testing.T) {
 		len(status.SelfAddresses) != 0 || status.PeerCount != 0 ||
 		status.PolicyRuleCount != 0 || status.PeerPaths.Available ||
 		status.Relay.Available || status.Relay.ActiveRegions != 0 ||
-		status.Relay.ConnectedRegions != 0 {
+		status.Relay.ConnectedRegions != 0 || status.NetworkChanges.Available ||
+		status.NetworkChanges.Observed != 0 || status.NetworkChanges.EndpointRefreshes != 0 {
 		t.Fatalf("initial control sync = %#v, want inactive empty snapshot", status)
 	}
 
@@ -88,6 +89,19 @@ func TestServer_ProfileLifecycle(t *testing.T) {
 	}
 	if activeCount != 1 {
 		t.Fatalf("active profile count = %d, want 1", activeCount)
+	}
+}
+
+func TestMapNetworkChangeStatus(t *testing.T) {
+	t.Parallel()
+
+	status := mapNetworkChangeStatus(daemon.NetworkChangeStatus{
+		Available:         true,
+		Observed:          3,
+		EndpointRefreshes: 2,
+	})
+	if !status.Available || status.Observed != 3 || status.EndpointRefreshes != 2 {
+		t.Fatalf("mapNetworkChangeStatus() = %#v", status)
 	}
 }
 

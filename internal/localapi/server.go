@@ -331,8 +331,17 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		PolicyRuleCount:    status.PolicyRuleCount,
 		PeerPaths:          mapPathStatus(status.PeerPaths),
 		Relay:              mapRelayStatus(status.Relay),
+		NetworkChanges:     mapNetworkChangeStatus(status.NetworkChanges),
 		CompatibilityNote:  status.CompatibilityNote,
 	})
+}
+
+func mapNetworkChangeStatus(status daemon.NetworkChangeStatus) networkChangeStatus {
+	return networkChangeStatus{
+		Available:         status.Available,
+		Observed:          status.Observed,
+		EndpointRefreshes: status.EndpointRefreshes,
+	}
 }
 
 func mapPathStatus(snapshot dataplane.PeerPathSnapshot) pathStatus {

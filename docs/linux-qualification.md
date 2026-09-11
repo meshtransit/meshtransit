@@ -2,8 +2,9 @@
 
 The Linux qualification tools measure recovery of one installed MeshTransit
 node against one healthy peer. They cover explicit restart of either
-`meshd.service` or `meshnetd.service` and a full host reboot. Package upgrade,
-network change, forced-relay recovery, and soak scenarios remain separate gates.
+`meshd.service` or `meshnetd.service`, a full host reboot, and a controlled
+interface-address change. Package upgrade, real multi-uplink migration,
+forced-relay recovery, and soak scenarios remain separate gates.
 
 ## Restart safety boundary
 
@@ -138,6 +139,39 @@ The reboot schema identifier is
 boot ID, all readiness and persistence gates, parseable IPv4 and IPv6 traffic,
 and a final stable traffic run that begins within the recovery deadline.
 
+## Run a network-change scenario
+
+The network-change harness runs on the node under test. It requires an exact
+`--confirm-network-change` match, refuses to reuse an existing interface, and
+creates only a dedicated dummy interface with one fixed RFC 2544 benchmarking
+address. It does not change the real uplink, default route, `mesh0`, or
+`meshdns0`. A trap removes the test interface if the run is interrupted.
+
+```bash
+sudo tools/qualification/linux-network-change.sh \
+  --node-label ubuntu-a \
+  --peer-label ubuntu-b \
+  --peer-v4 100.64.0.6 \
+  --peer-v6 fd7a:115c:a1e0::d \
+  --peer-name ubuntu-b \
+  --artifact-sha256 SHA256_OF_DEB \
+  --confirm-network-change ubuntu-a \
+  >ubuntu-a-network-change.json
+```
+
+The schema identifier is
+`meshtransit.linux-network-change-qualification/v1`. Preflight requires both
+services, MagicDNS, a direct peer path, dual-stack traffic, and the
+`network_changes` status counters. A pass requires meshd to observe the change,
+complete endpoint discovery within 20 seconds, retain a usable direct path and
+stable dual-stack traffic, and remove the dedicated interface. Reports contain
+only labels, artifact/platform metadata, aggregate counters, and timings.
+
+This controlled scenario qualifies notification, coalescing, daemon handoff,
+endpoint refresh, and no-regression behavior without risking SSH access. It is
+not evidence for migration between two real underlays. That stronger test needs
+a multi-homed lab with an independent management path and scheduled rollback.
+
 ## Local validation
 
 The restart parser has deterministic recovery and no-recovery fixtures. The
@@ -149,12 +183,17 @@ bash -n tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-restart.sh \
   tools/qualification/linux-reboot.sh \
   tools/qualification/test-linux-reboot.sh \
+  tools/qualification/linux-network-change.sh \
+  tools/qualification/test-linux-network-change.sh \
   tools/qualification/testdata/ping
 shellcheck tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-restart.sh \
   tools/qualification/linux-reboot.sh \
   tools/qualification/test-linux-reboot.sh \
+  tools/qualification/linux-network-change.sh \
+  tools/qualification/test-linux-network-change.sh \
   tools/qualification/testdata/ping
 bash tools/qualification/test-linux-restart.sh
 bash tools/qualification/test-linux-reboot.sh
+bash tools/qualification/test-linux-network-change.sh
 ```

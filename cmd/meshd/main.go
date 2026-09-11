@@ -22,6 +22,7 @@ import (
 	"github.com/meshtransit/meshd/internal/identity"
 	"github.com/meshtransit/meshd/internal/localapi"
 	"github.com/meshtransit/meshd/internal/netadmin"
+	"github.com/meshtransit/meshd/internal/netwatch"
 	"github.com/meshtransit/meshd/internal/profile"
 	"github.com/meshtransit/meshd/internal/socket"
 	"github.com/meshtransit/meshd/internal/version"
@@ -157,6 +158,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 		daemonOptions.DNS = dnsManager
 		logger.Warn("MagicDNS poc enabled", "socket", cfg.NetAdminSocketPath)
 	}
+	var networkMonitor *netwatch.Monitor
+	if cfg.EnableWireGuardPOC {
+		networkMonitor, err = netwatch.New(netwatch.Options{
+			Logger:             logger,
+			ExcludedInterfaces: []string{"mesh0", "meshdns0"},
+		})
+		if err != nil {
+			logger.Warn(
+				"host network monitor unavailable",
+				"error", err,
+				"fallback", "periodic endpoint refresh",
+			)
+		} else {
+			daemonOptions.NetworkChanges = networkMonitor.Events()
+		}
+	}
 	service, err := daemon.New(
 		profiles,
 		identities,
@@ -209,6 +226,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	syncResult := make(chan error, 1)
 	go func() { serverResult <- server.Serve(ctx, listener) }()
 	go func() { syncResult <- service.Run(ctx) }()
+	var networkResult chan error
+	if networkMonitor != nil {
+		networkResult = make(chan error, 1)
+		go func() { networkResult <- networkMonitor.Run(ctx) }()
+	}
 	var flowResult chan error
 	if flowReporter != nil {
 		flowResult = make(chan error, 1)
@@ -217,13 +239,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	var serverErr error
 	var syncErr error
+	var networkErr error
 	serverFinished := false
 	syncFinished := false
+	networkFinished := false
 	select {
 	case serverErr = <-serverResult:
 		serverFinished = true
 	case syncErr = <-syncResult:
 		syncFinished = true
+	case networkErr = <-networkResult:
+		networkFinished = true
 	case <-ctx.Done():
 	}
 	stop()
@@ -232,6 +258,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if !syncFinished {
 		syncErr = <-syncResult
+	}
+	if networkResult != nil && !networkFinished {
+		networkErr = <-networkResult
 	}
 	var flowErr error
 	if flowResult != nil {
@@ -243,10 +272,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if errors.Is(syncErr, context.Canceled) {
 		syncErr = nil
 	}
+	if errors.Is(networkErr, context.Canceled) {
+		networkErr = nil
+	}
 	if errors.Is(flowErr, context.Canceled) {
 		flowErr = nil
 	}
-	if err := errors.Join(serverErr, syncErr, flowErr); err != nil {
+	if err := errors.Join(serverErr, syncErr, networkErr, flowErr); err != nil {
 		logger.Error("meshd stopped unexpectedly", "error", err)
 
 		return 1

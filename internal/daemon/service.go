@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	peerwire "github.com/meshtransit/meshd/internal/compat/disco"
@@ -101,6 +102,14 @@ type Status struct {
 	PolicyRuleCount    int
 	PeerPaths          dataplane.PeerPathSnapshot
 	Relay              relay.HealthSnapshot
+	NetworkChanges     NetworkChangeStatus
+}
+
+// NetworkChangeStatus contains process-local aggregate recovery counters.
+type NetworkChangeStatus struct {
+	Available         bool
+	Observed          uint64
+	EndpointRefreshes uint64
 }
 
 // ControlProbe is the sanitized control compatibility result returned locally.
@@ -233,11 +242,14 @@ type Service struct {
 	endpointRefreshDelay func() time.Duration
 	newPeerProbeIdentity func() (*peerwire.Identity, error)
 	logger               *slog.Logger
+	networkChanges       <-chan struct{}
 	syncSignal           chan struct{}
 	dataPlaneMu          sync.Mutex
 	syncMu               sync.RWMutex
 	syncState            syncStatus
 	discoveryScope       uint64
+	networkObserved      atomic.Uint64
+	networkRefreshes     atomic.Uint64
 }
 
 type syncStatus struct {
@@ -268,6 +280,7 @@ type Options struct {
 	DNS                DNSController
 	Logger             *slog.Logger
 	AdvertiseEndpoints []netip.AddrPort
+	NetworkChanges     <-chan struct{}
 }
 
 // New creates a daemon service from explicit dependencies.
@@ -331,6 +344,7 @@ func New(
 		endpointRefreshDelay: randomEndpointRefreshDelay,
 		newPeerProbeIdentity: peerwire.NewIdentity,
 		logger:               options.Logger,
+		networkChanges:       options.NetworkChanges,
 		syncSignal:           make(chan struct{}, 1),
 		syncState: syncStatus{
 			state:     ControlSessionInactive,
@@ -860,6 +874,7 @@ func (s *Service) runEndpointRefresh(
 	hasPublished := true
 	hasCurrent := false
 	serverCursor := 0
+	networkChanges := s.networkChanges
 	var timer *time.Timer
 	var timerChannel <-chan time.Time
 	defer func() { stopRefreshTimer(timer) }()
@@ -882,6 +897,7 @@ func (s *Service) runEndpointRefresh(
 	for {
 		resetForSocketChange := false
 		resetChanged := false
+		networkTriggered := false
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -898,6 +914,17 @@ func (s *Service) runEndpointRefresh(
 			timer = nil
 			timerChannel = nil
 		case <-timerChannel:
+			timer = nil
+			timerChannel = nil
+		case _, open := <-networkChanges:
+			if !open {
+				networkChanges = nil
+
+				continue
+			}
+			s.networkObserved.Add(1)
+			networkTriggered = true
+			stopRefreshTimer(timer)
 			timer = nil
 			timerChannel = nil
 		}
@@ -996,6 +1023,9 @@ func (s *Service) runEndpointRefresh(
 			}
 		}
 		publish(currentCandidates, selection.RegionID)
+		if networkTriggered {
+			s.networkRefreshes.Add(1)
+		}
 		if s.endpointRefreshDelay == nil {
 			return errors.New("daemon: endpoint refresh delay is unavailable")
 		}
@@ -1343,6 +1373,11 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		PolicyRuleCount:    syncState.policyRuleCount,
 		PeerPaths:          peerPaths,
 		Relay:              relayStatus,
+		NetworkChanges: NetworkChangeStatus{
+			Available:         s.networkChanges != nil,
+			Observed:          s.networkObserved.Load(),
+			EndpointRefreshes: s.networkRefreshes.Load(),
+		},
 	}, nil
 }
 

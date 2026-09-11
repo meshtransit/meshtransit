@@ -79,9 +79,12 @@ peer map ──────────► authenticated path manager ───�
 1. Implemented: product-owned candidate validation and deterministic collection.
 2. Implemented: shared UDP transport plus bounded STUN discovery on that socket.
 3. Implemented: non-streaming endpoint publication through the compatibility
-   adapter, randomized 20–26 second refresh while peers exist, bounded
-   anti-flap history, retry/coalescing, and expiry scheduled at the exact
-   candidate deadline.
+   adapter, randomized 20–26 second refresh while peers exist, immediate refresh
+   after a debounced meaningful host-network change, bounded anti-flap history,
+   retry/coalescing, and expiry scheduled at the exact candidate deadline. Linux
+   uses native route/link/address notifications and falls back to five-second
+   polling; other platforms poll until native adapters are implemented and
+   qualified. Product-owned data and DNS interfaces are ignored.
 4. Implemented as a POC: the compatible encrypted Ping/Pong identity and bounded wire
    codec are implemented. One ephemeral identity is now owned by each daemon
    control session and its exact public key is used for map and endpoint
@@ -113,6 +116,13 @@ peer map ──────────► authenticated path manager ───�
    daemon. Socket generations share one monotonic namespace for the complete
    WireGuard engine lifetime, so recreating a bind cannot make a fresh path
    generation look stale or reuse authority from an earlier socket.
+6. Implemented as a POC: a bounded Linux qualification scenario creates a
+   dedicated dummy interface, adds one non-production test address, requires an
+   observed network event and completed endpoint refresh within 20 seconds, and
+   verifies uninterrupted dual-stack peer traffic before removing the interface.
+   This safely proves proactive detection and refresh without modifying the SSH
+   uplink or default route. It does not by itself prove failover between two real
+   underlays; that requires a separately controlled multi-homed lab.
 
 Port mapping remains a separate follow-up capability. The bounded relay base
 path is described in [relay.md](relay.md); it is not a direct candidate and does

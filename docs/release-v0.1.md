@@ -81,11 +81,13 @@ The current `main` branch already contains the common profile, identity,
 control, validated map, policy, DNS-planning, relay, endpoint-discovery,
 authenticated direct-path, local API, and flow-observation components. Linux
 has opt-in TUN, userspace WireGuard, `SO_PEERCRED`, privileged `meshnetd`, and
-`systemd-resolved` adapters.
+`systemd-resolved` adapters. It also has native route/link/address monitoring,
+immediate endpoint refresh after meaningful changes, and a polling fallback.
 
 The Linux packet and DNS paths remain explicitly marked as POCs. Linux has a
-reproducible Debian package, lifecycle contract, and bounded restart and reboot
-qualification harnesses, but does not yet have a signed artifact pipeline or
+reproducible Debian package, lifecycle contract, and bounded restart, reboot,
+and controlled interface-change qualification harnesses, but does not yet have
+a signed artifact pipeline, real multi-uplink migration qualification, or
 long-duration qualification suite. Windows and macOS deny local API access
 without an unsafe development override and do not have native tunnel, DNS, or
 installer activation.

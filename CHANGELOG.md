@@ -19,6 +19,9 @@ All notable user-visible changes will be documented in this file.
   traffic recovery, with redacted machine-readable reports and parser fixtures.
 - Bounded two-node Linux reboot qualification for service, route, identity,
   MagicDNS, and dual-stack traffic recovery with explicit target confirmation.
+- Linux route/link/address monitoring with bounded netlink event coalescing,
+  polling fallback, immediate endpoint refresh, redacted status counters, and a
+  reversible network-change qualification harness.
 - WireGuard peer sessions now survive control-map endpoint-authority refreshes;
   stale direct selections return to the relay path without replacing the peer.
 - Separate owner-writable runtime directories for the operator API and
