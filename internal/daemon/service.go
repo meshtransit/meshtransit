@@ -1022,10 +1022,10 @@ func (s *Service) runEndpointRefresh(
 				)
 			}
 		}
-		publish(currentCandidates, selection.RegionID)
 		if networkTriggered {
 			s.networkRefreshes.Add(1)
 		}
+		publish(currentCandidates, selection.RegionID)
 		if s.endpointRefreshDelay == nil {
 			return errors.New("daemon: endpoint refresh delay is unavailable")
 		}

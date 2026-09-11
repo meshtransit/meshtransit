@@ -50,6 +50,8 @@ All notable user-visible changes will be documented in this file.
 
 ### Changed
 
+- Successful network-triggered endpoint refreshes are counted before their
+  resulting endpoint update becomes observable.
 - Semantically unchanged control-map deltas are revalidated without publishing
   a new local generation, avoiding unnecessary probe, data-plane, and DNS
   reconfiguration while preserving expiry enforcement and reconnect isolation.
