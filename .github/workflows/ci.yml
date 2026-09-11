@@ -69,6 +69,8 @@ jobs:
             tools/qualification/test-linux-relay-fallback.sh \
             tools/qualification/linux-dns.sh \
             tools/qualification/test-linux-dns.sh \
+            tools/qualification/linux-policy.sh \
+            tools/qualification/test-linux-policy.sh \
             tools/qualification/testdata/ping
           shellcheck \
             tools/qualification/linux-restart.sh \
@@ -81,12 +83,17 @@ jobs:
             tools/qualification/test-linux-relay-fallback.sh \
             tools/qualification/linux-dns.sh \
             tools/qualification/test-linux-dns.sh \
+            tools/qualification/linux-policy.sh \
+            tools/qualification/test-linux-policy.sh \
             tools/qualification/testdata/ping
+          PYTHONPYCACHEPREFIX="${RUNNER_TEMP}/pycache" \
+            python3 -m py_compile tools/qualification/testdata/policy_peer.py
           bash tools/qualification/test-linux-restart.sh
           bash tools/qualification/test-linux-reboot.sh
           bash tools/qualification/test-linux-network-change.sh
           bash tools/qualification/test-linux-relay-fallback.sh
           bash tools/qualification/test-linux-dns.sh
+          bash tools/qualification/test-linux-policy.sh
 
       - name: Run vet
         run: go vet ./...

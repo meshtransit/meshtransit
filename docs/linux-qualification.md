@@ -267,6 +267,56 @@ explicit-default resolvers, verified both nodes, and restored the original
 split-only configuration. That mutation is deliberately operator-driven rather
 than part of the host-local lifecycle harness.
 
+## Run a host-policy phase
+
+Run the policy harness from an operator host that can reach both installed
+nodes over SSH. The control policy must already be active and converged before
+each invocation. The harness does not edit policy itself; all eight directional
+protocol expectations are mandatory so an untested direction cannot be
+mistaken for a pass.
+
+```bash
+tools/qualification/linux-policy.sh \
+  --node-a-ssh root@NODE_A_HOST \
+  --node-b-ssh root@NODE_B_HOST \
+  --node-a-label ubuntu-a \
+  --node-b-label ubuntu-b \
+  --node-a-v4 NODE_A_OVERLAY_V4 \
+  --node-a-v6 NODE_A_OVERLAY_V6 \
+  --node-b-v4 NODE_B_OVERLAY_V4 \
+  --node-b-v6 NODE_B_OVERLAY_V6 \
+  --phase-label asymmetric-a-to-b \
+  --expect-a-to-b-tcp allow \
+  --expect-a-to-b-udp allow \
+  --expect-a-to-b-icmp4 allow \
+  --expect-a-to-b-icmp6 allow \
+  --expect-b-to-a-tcp deny \
+  --expect-b-to-a-udp deny \
+  --expect-b-to-a-icmp4 deny \
+  --expect-b-to-a-icmp6 deny \
+  --artifact-sha256 SHA256_OF_DEB \
+  --confirm-policy-test asymmetric-a-to-b \
+  --ssh-driver rtk \
+  >asymmetric-a-to-b.json
+```
+
+Any expected allow requires a visible encrypted peer path and exact host routes
+on both nodes. An all-deny phase accepts a reduced map with no visible peer so
+default deny remains testable. Both services, the data interface, registered
+identity, synchronized control session, exact self addresses, and a valid
+policy revision remain mandatory in every phase.
+
+TCP and UDP run over IPv4 and IPv6 with a fixed-format random challenge served
+under the unprivileged `meshd` identity. ICMP probes use distinct echo
+identifiers for each direction, preventing a reply tracked for one direction
+from authorizing the reverse test. If an all-deny reduced map has no mesh route,
+the corresponding probes are not sent through the underlay default route; the
+report records that route absence and exit code `90` as the denial mechanism.
+The report schema is `meshtransit.linux-policy-qualification/v1`. Reports omit
+SSH destinations, overlay addresses, policy contents, raw status, and payloads.
+See [policy.md](policy.md) for the complete enforcement and staged rollback
+contract.
+
 ## Local validation
 
 The restart parser has deterministic recovery and no-recovery fixtures. The
@@ -284,6 +334,8 @@ bash -n tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-relay-fallback.sh \
   tools/qualification/linux-dns.sh \
   tools/qualification/test-linux-dns.sh \
+  tools/qualification/linux-policy.sh \
+  tools/qualification/test-linux-policy.sh \
   tools/qualification/testdata/ping
 shellcheck tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-restart.sh \
@@ -295,10 +347,15 @@ shellcheck tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-relay-fallback.sh \
   tools/qualification/linux-dns.sh \
   tools/qualification/test-linux-dns.sh \
+  tools/qualification/linux-policy.sh \
+  tools/qualification/test-linux-policy.sh \
   tools/qualification/testdata/ping
+PYTHONPYCACHEPREFIX=/tmp/meshd-pycache \
+  python3 -m py_compile tools/qualification/testdata/policy_peer.py
 bash tools/qualification/test-linux-restart.sh
 bash tools/qualification/test-linux-reboot.sh
 bash tools/qualification/test-linux-network-change.sh
 bash tools/qualification/test-linux-relay-fallback.sh
 bash tools/qualification/test-linux-dns.sh
+bash tools/qualification/test-linux-policy.sh
 ```

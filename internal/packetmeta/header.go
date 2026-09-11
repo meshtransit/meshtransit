@@ -180,6 +180,10 @@ func parseUDP(packet []byte, offset int, header Header) (Header, error) {
 }
 
 func parseICMP(packet []byte, offset int, header Header) (Header, error) {
+	if (header.Protocol == ProtocolICMPv4 && !header.Source.Is4()) ||
+		(header.Protocol == ProtocolICMPv6 && !header.Source.Is6()) {
+		return Header{}, errors.New("packetmeta: icmp protocol does not match ip version")
+	}
 	if offset+4 > len(packet) {
 		return Header{}, errors.New("packetmeta: icmp header is truncated")
 	}
@@ -189,6 +193,9 @@ func parseICMP(packet []byte, offset int, header Header) (Header, error) {
 		(header.Protocol == ProtocolICMPv6 && (header.ICMPType == 128 || header.ICMPType == 129))
 	if !isEcho {
 		return header, nil
+	}
+	if header.ICMPCode != 0 {
+		return Header{}, errors.New("packetmeta: icmp echo code is invalid")
 	}
 	if offset+8 > len(packet) {
 		return Header{}, errors.New("packetmeta: icmp echo header is truncated")

@@ -107,7 +107,8 @@ See [docs/architecture.md](docs/architecture.md),
 [docs/release-v0.1.md](docs/release-v0.1.md),
 [docs/linux-packaging.md](docs/linux-packaging.md),
 [docs/linux-qualification.md](docs/linux-qualification.md),
-[docs/relay.md](docs/relay.md), [docs/dns.md](docs/dns.md), and
+[docs/relay.md](docs/relay.md), [docs/dns.md](docs/dns.md),
+[docs/policy.md](docs/policy.md), and
 [docs/security-model.md](docs/security-model.md).
 
 ## Current scope

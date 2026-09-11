@@ -226,15 +226,25 @@ func rulesAllow(rules []compiledRule, header packetmeta.Header) bool {
 			continue
 		}
 		for _, destination := range rule.destinations {
-			if selectorContains(destination.Selector, header.Destination) &&
-				destination.PortFrom <= header.DestinationPort &&
-				destination.PortTo >= header.DestinationPort {
+			if destinationAllows(destination, header) {
 				return true
 			}
 		}
 	}
 
 	return false
+}
+
+func destinationAllows(destination networkmap.Destination, header packetmeta.Header) bool {
+	if !selectorContains(destination.Selector, header.Destination) {
+		return false
+	}
+	if header.Protocol != packetmeta.ProtocolTCP && header.Protocol != packetmeta.ProtocolUDP {
+		return destination.PortFrom == 0 && destination.PortTo == ^uint16(0)
+	}
+
+	return destination.PortFrom <= header.DestinationPort &&
+		destination.PortTo >= header.DestinationPort
 }
 
 func protocolsContain(protocols []uint8, protocol uint8) bool {

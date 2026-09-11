@@ -61,6 +61,10 @@ func TestParseRejectsFragmentsAndMalformedTransport(t *testing.T) {
 	binary.BigEndian.PutUint16(fragment[6:8], 0x2000)
 	badTCP := testIPv4Packet(ProtocolTCP, 42000, 443)
 	badTCP[32] = 0x10
+	ipv4ICMPv6 := testIPv4ICMPPacket(ProtocolICMPv6, 128, 0)
+	ipv6ICMPv4 := testIPv6ICMPPacket(ProtocolICMPv4, 8, 0)
+	badICMPv4Code := testIPv4ICMPPacket(ProtocolICMPv4, 8, 1)
+	badICMPv6Code := testIPv6ICMPPacket(ProtocolICMPv6, 128, 1)
 
 	tests := []struct {
 		name   string
@@ -70,6 +74,10 @@ func TestParseRejectsFragmentsAndMalformedTransport(t *testing.T) {
 		{name: "ipv4 fragment", packet: fragment},
 		{name: "invalid tcp data offset", packet: badTCP},
 		{name: "ipv6 fragment", packet: testIPv6Fragment()},
+		{name: "icmpv6 inside ipv4", packet: ipv4ICMPv6},
+		{name: "icmpv4 inside ipv6", packet: ipv6ICMPv4},
+		{name: "icmpv4 echo with nonzero code", packet: badICMPv4Code},
+		{name: "icmpv6 echo with nonzero code", packet: badICMPv6Code},
 	}
 
 	for _, test := range tests {
@@ -138,6 +146,38 @@ func testIPv6Fragment() []byte {
 	packet[0] = 0x60
 	binary.BigEndian.PutUint16(packet[4:6], 8)
 	packet[6] = 44
+
+	return packet
+}
+
+func testIPv4ICMPPacket(protocol, messageType, code uint8) []byte {
+	packet := make([]byte, 28)
+	packet[0] = 0x45
+	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
+	packet[8] = 64
+	packet[9] = protocol
+	copy(packet[12:16], []byte{100, 64, 0, 3})
+	copy(packet[16:20], []byte{100, 64, 0, 4})
+	packet[20] = messageType
+	packet[21] = code
+	binary.BigEndian.PutUint16(packet[24:26], 42)
+
+	return packet
+}
+
+func testIPv6ICMPPacket(protocol, messageType, code uint8) []byte {
+	packet := make([]byte, 48)
+	packet[0] = 0x60
+	binary.BigEndian.PutUint16(packet[4:6], 8)
+	packet[6] = protocol
+	packet[7] = 64
+	source := netip.MustParseAddr("fd7a:115c:a1e0::3").As16()
+	destination := netip.MustParseAddr("fd7a:115c:a1e0::4").As16()
+	copy(packet[8:24], source[:])
+	copy(packet[24:40], destination[:])
+	packet[40] = messageType
+	packet[41] = code
+	binary.BigEndian.PutUint16(packet[44:46], 42)
 
 	return packet
 }
