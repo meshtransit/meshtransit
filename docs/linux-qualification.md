@@ -4,8 +4,8 @@ The Linux qualification tools measure recovery of one installed MeshTransit
 node against one healthy peer. They cover explicit restart of either
 `meshd.service` or `meshnetd.service`, a full host reboot, and a controlled
 interface-address change. They also exercise direct-path loss, relay fallback,
-and later direct recovery. Package upgrade, real multi-uplink migration, and
-soak scenarios remain separate gates.
+later direct recovery, and split-DNS cleanup and restoration. Package upgrade,
+real multi-uplink migration, and soak scenarios remain separate gates.
 
 ## Restart safety boundary
 
@@ -226,6 +226,47 @@ two-node repeatability evidence is recorded in
 It is Linux alpha evidence and does not qualify an IPv6-only underlay or the
 release-candidate p95 target.
 
+## Run a DNS lifecycle scenario
+
+The DNS harness runs on the node under test and requires `--confirm-dns-lifecycle`
+to exactly match its operator label. Preflight verifies the installed split-only
+configuration, dedicated UDP/TCP listeners, authoritative A/AAAA/PTR/NODATA/
+NXDOMAIN behavior, short-name search, FQDN resolution, and isolation of the
+host's non-mesh DNS path.
+
+It then stops only `meshd.service`, verifies that the dedicated link, listeners,
+and per-link resolved state disappear while external DNS remains available, and
+starts the daemon again. A trap starts the service after interruption or failure.
+It does not stop `meshnetd`, edit resolver files, change the default route, or
+modify control-plane DNS configuration.
+
+```bash
+sudo tools/qualification/linux-dns.sh \
+  --node-label ubuntu-a \
+  --peer-label ubuntu-b \
+  --peer-v4 100.64.0.6 \
+  --peer-v6 fd7a:115c:a1e0::d \
+  --peer-name ubuntu-b \
+  --dns-domain NETWORK_DNS_DOMAIN \
+  --artifact-sha256 SHA256_OF_DEB \
+  --confirm-dns-lifecycle ubuntu-a \
+  >ubuntu-a-dns.json
+```
+
+The schema identifier is `meshtransit.linux-dns-qualification/v1`. Reports do
+not include DNS names, DNS answers, addresses, network identifiers, resolver
+responses, control fingerprints, or raw daemon status. A pass requires cleanup
+and restoration within 20 seconds, continued non-mesh DNS during the stop, and
+all authoritative and host-integration checks after recovery.
+
+Reverse the node and peer arguments and repeat on the second host. The first
+two-node evidence is recorded in
+[linux-dns-qualification-2026-09-11.md](linux-dns-qualification-2026-09-11.md).
+The same evidence run temporarily staged control-configured upstream split and
+explicit-default resolvers, verified both nodes, and restored the original
+split-only configuration. That mutation is deliberately operator-driven rather
+than part of the host-local lifecycle harness.
+
 ## Local validation
 
 The restart parser has deterministic recovery and no-recovery fixtures. The
@@ -241,6 +282,8 @@ bash -n tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-network-change.sh \
   tools/qualification/linux-relay-fallback.sh \
   tools/qualification/test-linux-relay-fallback.sh \
+  tools/qualification/linux-dns.sh \
+  tools/qualification/test-linux-dns.sh \
   tools/qualification/testdata/ping
 shellcheck tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-restart.sh \
@@ -250,9 +293,12 @@ shellcheck tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-network-change.sh \
   tools/qualification/linux-relay-fallback.sh \
   tools/qualification/test-linux-relay-fallback.sh \
+  tools/qualification/linux-dns.sh \
+  tools/qualification/test-linux-dns.sh \
   tools/qualification/testdata/ping
 bash tools/qualification/test-linux-restart.sh
 bash tools/qualification/test-linux-reboot.sh
 bash tools/qualification/test-linux-network-change.sh
 bash tools/qualification/test-linux-relay-fallback.sh
+bash tools/qualification/test-linux-dns.sh
 ```

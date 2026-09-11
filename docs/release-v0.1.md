@@ -86,10 +86,11 @@ immediate endpoint refresh after meaningful changes, and a polling fallback.
 
 The Linux packet and DNS paths remain explicitly marked as POCs. Linux has a
 reproducible Debian package, lifecycle contract, and bounded restart, reboot,
-controlled interface-change, and relay-fallback qualification harnesses. The
-two-host Linux alpha topology has repeatable direct-loss fallback evidence, but
-does not yet have a signed artifact pipeline, IPv6-only underlay evidence, real
-multi-uplink migration qualification, or a long-duration qualification suite.
+controlled interface-change, relay-fallback, and split-DNS qualification
+harnesses. The two-host Linux alpha topology has repeatable direct-loss fallback
+and split-DNS cleanup/recovery evidence, but does not yet have a signed artifact
+pipeline, IPv6-only underlay evidence, real multi-uplink migration qualification,
+or a long-duration qualification suite.
 Windows and macOS deny local API access without an unsafe development override
 and do not have native tunnel, DNS, or installer activation.
 

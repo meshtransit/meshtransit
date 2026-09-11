@@ -107,6 +107,29 @@ func TestCompileWithoutDNS(t *testing.T) {
 	}
 }
 
+func TestCompileDoesNotEnableFallbackOnlyPlan(t *testing.T) {
+	t.Parallel()
+
+	snapshot := networkmap.Snapshot{
+		Revision: 10,
+		DNS: &networkmap.DNSConfig{FallbackResolvers: []networkmap.DNSResolver{{
+			Address: netip.MustParseAddrPort("1.1.1.1:53"),
+		}}},
+	}
+	plan, err := Compile(snapshot)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	if plan.Enabled {
+		t.Fatal("fallback-only plan enabled the local resolver")
+	}
+	if len(plan.DefaultResolvers) != 0 ||
+		len(plan.FallbackResolvers) != 1 ||
+		plan.FallbackResolvers[0] != netip.MustParseAddrPort("1.1.1.1:53") {
+		t.Fatalf("fallback-only plan = %#v", plan)
+	}
+}
+
 func dnsSnapshot() networkmap.Snapshot {
 	return networkmap.Snapshot{
 		Revision: 7,

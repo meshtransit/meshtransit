@@ -224,22 +224,27 @@ func TestResolverEnginePTRAndMalformedQuery(t *testing.T) {
 		t.Fatalf("Compile() error = %v", err)
 	}
 	engine := newResolverEngine()
-	query := packQuery(t, "1.0.64.100.in-addr.arpa.", dnsmessage.TypePTR)
-	response, err := engine.resolve(t.Context(), plan, query, "udp")
-	if err != nil {
-		t.Fatalf("resolve PTR error = %v", err)
-	}
-	message := unpackMessage(t, response)
-	if len(message.Answers) != 1 {
-		t.Fatalf("PTR answers = %#v", message.Answers)
-	}
-	ptr, ok := message.Answers[0].Body.(*dnsmessage.PTRResource)
-	if !ok || ptr.PTR.String() != "node-a.example.mesh." {
-		t.Fatalf("PTR body = %#v", message.Answers[0].Body)
+	for _, name := range []string{
+		"1.0.64.100.in-addr.arpa.",
+		"1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.e.1.a.c.5.1.1.a.7.d.f.ip6.arpa.",
+	} {
+		query := packQuery(t, name, dnsmessage.TypePTR)
+		response, err := engine.resolve(t.Context(), plan, query, "udp")
+		if err != nil {
+			t.Fatalf("resolve PTR %q error = %v", name, err)
+		}
+		message := unpackMessage(t, response)
+		if len(message.Answers) != 1 {
+			t.Fatalf("PTR %q answers = %#v", name, message.Answers)
+		}
+		ptr, ok := message.Answers[0].Body.(*dnsmessage.PTRResource)
+		if !ok || ptr.PTR.String() != "node-a.example.mesh." {
+			t.Fatalf("PTR %q body = %#v", name, message.Answers[0].Body)
+		}
 	}
 
-	response, _ = engine.resolve(t.Context(), plan, []byte{0x12, 0x34}, "udp")
-	message = unpackMessage(t, response)
+	response, _ := engine.resolve(t.Context(), plan, []byte{0x12, 0x34}, "udp")
+	message := unpackMessage(t, response)
 	if message.ID != 0x1234 || message.RCode != dnsmessage.RCodeFormatError {
 		t.Fatalf("format response = %#v", message.Header)
 	}
@@ -284,6 +289,71 @@ func TestResolverEngineRetriesTruncatedUDPOverTCP(t *testing.T) {
 	message := unpackMessage(t, response)
 	if message.Truncated || len(message.Answers) != 1 {
 		t.Fatalf("forwarded response header=%#v answers=%#v", message.Header, message.Answers)
+	}
+}
+
+func TestResolverEngineSelectsMostSpecificRouteThenDefault(t *testing.T) {
+	t.Parallel()
+
+	defaultResolver := startUDPUpstream(t, netip.MustParseAddr("203.0.113.90"))
+	corpResolver := startUDPUpstream(t, netip.MustParseAddr("203.0.113.91"))
+	devResolver := startUDPUpstream(t, netip.MustParseAddr("203.0.113.92"))
+	plan := Plan{
+		Enabled:          true,
+		DefaultResolvers: []netip.AddrPort{defaultResolver},
+		FallbackResolvers: []netip.AddrPort{
+			netip.MustParseAddrPort("127.0.0.1:1"),
+		},
+		Routes: []Route{
+			{Suffix: "corp.example", Resolvers: []netip.AddrPort{corpResolver}},
+			{Suffix: "dev.corp.example", Resolvers: []netip.AddrPort{devResolver}},
+		},
+	}
+	tests := []struct {
+		name      string
+		queryName string
+		want      netip.Addr
+	}{
+		{name: "default", queryName: "public.example.", want: netip.MustParseAddr("203.0.113.90")},
+		{name: "split route", queryName: "api.corp.example.", want: netip.MustParseAddr("203.0.113.91")},
+		{name: "most specific split route", queryName: "api.dev.corp.example.", want: netip.MustParseAddr("203.0.113.92")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			query := packQuery(t, test.queryName, dnsmessage.TypeA)
+			response, err := newResolverEngine().resolve(t.Context(), plan, query, "udp")
+			if err != nil {
+				t.Fatalf("resolve() error = %v", err)
+			}
+			message := unpackMessage(t, response)
+			if len(message.Answers) != 1 {
+				t.Fatalf("answers = %#v, want one", message.Answers)
+			}
+			answer, ok := message.Answers[0].Body.(*dnsmessage.AResource)
+			if !ok || netip.AddrFrom4(answer.A) != test.want {
+				t.Fatalf("answer = %#v, want %s", message.Answers[0].Body, test.want)
+			}
+		})
+	}
+}
+
+func TestResolverEngineDoesNotPromoteFallbackResolverToDefault(t *testing.T) {
+	t.Parallel()
+
+	plan := Plan{
+		Enabled: true,
+		FallbackResolvers: []netip.AddrPort{
+			netip.MustParseAddrPort("127.0.0.1:1"),
+		},
+	}
+	query := packQuery(t, "public.example.", dnsmessage.TypeA)
+	response, err := newResolverEngine().resolve(t.Context(), plan, query, "udp")
+	if !errors.Is(err, errNoResolver) {
+		t.Fatalf("resolve() error = %v, want %v", err, errNoResolver)
+	}
+	message := unpackMessage(t, response)
+	if message.RCode != dnsmessage.RCodeServerFailure || message.RecursionAvailable {
+		t.Fatalf("fallback-only response header = %#v", message.Header)
 	}
 }
 
