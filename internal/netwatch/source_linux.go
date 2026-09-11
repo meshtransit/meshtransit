@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -20,6 +21,7 @@ const (
 
 type netlinkSource struct {
 	fileDescriptor int
+	pollDescriptor int32
 	buffer         []byte
 }
 
@@ -31,6 +33,12 @@ func newNativeSource(_ time.Duration) (changeSource, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("opening route netlink socket: %w", err)
+	}
+	pollDescriptor, err := checkedPollDescriptor(fileDescriptor)
+	if err != nil {
+		closeErr := unix.Close(fileDescriptor)
+
+		return nil, errors.Join(err, closeErr)
 	}
 	groups := uint32(
 		unix.RTMGRP_LINK |
@@ -60,6 +68,7 @@ func newNativeSource(_ time.Duration) (changeSource, error) {
 
 	return &netlinkSource{
 		fileDescriptor: fileDescriptor,
+		pollDescriptor: pollDescriptor,
 		buffer:         make([]byte, netlinkReadBufferSize),
 	}, nil
 }
@@ -69,7 +78,7 @@ func (s *netlinkSource) Wait(ctx context.Context) error {
 		return errors.New("netwatch: netlink source is closed")
 	}
 	pollDescriptors := []unix.PollFd{{
-		Fd:     int32(s.fileDescriptor),
+		Fd:     s.pollDescriptor,
 		Events: unix.POLLIN,
 	}}
 	for {
@@ -91,6 +100,14 @@ func (s *netlinkSource) Wait(ctx context.Context) error {
 			return errors.New("netwatch: route netlink socket stopped")
 		}
 	}
+}
+
+func checkedPollDescriptor(fileDescriptor int) (int32, error) {
+	if fileDescriptor < 0 || int64(fileDescriptor) > math.MaxInt32 {
+		return 0, errors.New("netwatch: file descriptor is outside int32")
+	}
+
+	return int32(fileDescriptor), nil
 }
 
 func (s *netlinkSource) drain() error {
