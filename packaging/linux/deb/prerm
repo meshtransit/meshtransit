@@ -2,9 +2,9 @@
 set -e
 
 case "$1" in
-    remove|deconfigure)
-        if [ -d /run/systemd/system ]; then
-            systemctl disable --now meshd.service meshnetd.service >/dev/null || true
+    remove)
+        if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
+            deb-systemd-invoke stop meshd.service meshnetd.service >/dev/null || true
         fi
         ;;
 esac

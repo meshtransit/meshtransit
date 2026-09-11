@@ -1,15 +1,59 @@
 #!/bin/sh
 set -e
 
+configure_accounts_and_directories() {
+    if [ -n "${DPKG_ROOT:-}" ]; then
+        systemd-sysusers --root="${DPKG_ROOT}" meshd.conf
+        systemd-tmpfiles --root="${DPKG_ROOT}" --create meshd.conf
+    else
+        systemd-sysusers meshd.conf
+        systemd-tmpfiles --create meshd.conf
+    fi
+}
+
+configure_unit() {
+    unit="$1"
+    previous_version="$2"
+
+    deb-systemd-helper unmask "${unit}" >/dev/null || true
+
+    # Packages before 0.1.0~alpha6 did not create deb-systemd-helper state.
+    # Preserve an administrator's disabled unit when migrating those systems.
+    if [ -n "${previous_version}" ] &&
+        ! deb-systemd-helper debian-installed "${unit}"; then
+        if [ -n "${DPKG_ROOT:-}" ]; then
+            if ! systemctl --root="${DPKG_ROOT}" is-enabled "${unit}" >/dev/null 2>&1; then
+                deb-systemd-helper update-state "${unit}" >/dev/null || true
+                return
+            fi
+        elif [ -d /run/systemd/system ] &&
+            ! systemctl --system is-enabled "${unit}" >/dev/null 2>&1; then
+            deb-systemd-helper update-state "${unit}" >/dev/null || true
+            return
+        fi
+    fi
+
+    if deb-systemd-helper --quiet was-enabled "${unit}"; then
+        deb-systemd-helper enable "${unit}" >/dev/null || true
+    else
+        deb-systemd-helper update-state "${unit}" >/dev/null || true
+    fi
+}
+
 case "$1" in
     configure|abort-upgrade|abort-deconfigure|abort-remove)
-        systemd-sysusers /usr/lib/sysusers.d/meshd.conf
-        systemd-tmpfiles --create /usr/lib/tmpfiles.d/meshd.conf
+        configure_accounts_and_directories
+        configure_unit meshnetd.service "${2:-}"
+        configure_unit meshd.service "${2:-}"
 
-        if [ -d /run/systemd/system ]; then
-            systemctl daemon-reload
-            systemctl enable meshnetd.service meshd.service >/dev/null
-            systemctl restart meshnetd.service meshd.service
+        if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
+            systemctl --system daemon-reload >/dev/null || true
+            if [ "$1" = configure ] && [ -n "${2:-}" ]; then
+                action=try-restart
+            else
+                action=start
+            fi
+            deb-systemd-invoke "${action}" meshnetd.service meshd.service >/dev/null
         fi
         ;;
 esac

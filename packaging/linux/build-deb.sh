@@ -105,7 +105,7 @@ Maintainer: MeshTransit maintainers
 Installed-Size: ${installed_size}
 Section: net
 Priority: optional
-Depends: systemd (>= 249), systemd-resolved
+Depends: init-system-helpers (>= 1.54~), systemd (>= 249), systemd-resolved
 Recommends: meshctl
 Homepage: https://github.com/meshtransit/meshd
 Description: MeshTransit node daemon

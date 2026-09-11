@@ -42,8 +42,11 @@ reproducible timestamps, and writes a sibling SHA-256 checksum file.
 
 ## Install, upgrade, rollback, and uninstall
 
-Install `meshctl` first, then `meshd`. A package configure or upgrade reloads
-systemd and restarts `meshnetd` before `meshd` through unit ordering.
+Install `meshctl` first, then `meshd`. A fresh install enables and starts the
+services through Debian's service-policy helpers. An upgrade preserves an
+administrator's enabled/disabled and running/stopped choices; only services
+that are already running are restarted. Unit dependency ordering starts
+`meshnetd` before `meshd`.
 
 ```bash
 sudo dpkg -i meshctl_0.1.0~alpha1_amd64.deb
@@ -59,8 +62,11 @@ of packages; package artifacts and checksums are retained per release candidate.
 sudo dpkg -i meshctl_PREVIOUS_amd64.deb meshd_PREVIOUS_amd64.deb
 ```
 
-Normal removal preserves identity state and the root-owned conffile. Purge
-stops both services and removes `/var/lib/meshd` permanently.
+Normal removal stops both services, removes their volatile sockets, and
+preserves identity state plus the root-owned conffile. Reinstalling reconnects
+the same node identity. Purge additionally removes `/var/lib/meshd`
+permanently. Maintainer scripts honor `DPKG_ROOT`, so image-building and
+alternate-root operations cannot delete state from the host root.
 
 ```bash
 sudo apt-get remove meshd meshctl

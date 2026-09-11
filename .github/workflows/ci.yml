@@ -143,8 +143,11 @@ jobs:
 
       - name: Validate packaging scripts
         run: |
-          bash -n packaging/linux/build-deb.sh packaging/linux/verify-deb.sh
-          shellcheck packaging/linux/build-deb.sh packaging/linux/verify-deb.sh packaging/linux/deb/*
+          bash -n packaging/linux/build-deb.sh packaging/linux/verify-deb.sh packaging/linux/test-maintainer-scripts.sh
+          shellcheck packaging/linux/build-deb.sh packaging/linux/verify-deb.sh packaging/linux/test-maintainer-scripts.sh packaging/linux/deb/*
+
+      - name: Test package maintainer lifecycle
+        run: bash packaging/linux/test-maintainer-scripts.sh
 
       - name: Build and inspect package
         run: |

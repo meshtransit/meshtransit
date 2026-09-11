@@ -30,10 +30,33 @@ trap cleanup EXIT
 dpkg-deb --extract "${package_path}" "${work_dir}/root"
 dpkg-deb --control "${package_path}" "${work_dir}/control"
 
+for script in postinst prerm postrm; do
+    dash -n "${work_dir}/control/${script}"
+done
+
 [[ -x "${work_dir}/root/usr/bin/meshd" ]]
 [[ -x "${work_dir}/root/usr/libexec/meshtransit/meshnetd" ]]
 [[ "$(stat -c '%a' "${work_dir}/root/etc/meshd/meshd.env")" == '640' ]]
 [[ "$(cat "${work_dir}/control/conffiles")" == '/etc/meshd/meshd.env' ]]
+grep -Fq 'init-system-helpers (>= 1.54~)' "${work_dir}/control/control"
+
+grep -Fq "deb-systemd-helper enable \"\${unit}\"" \
+    "${work_dir}/control/postinst"
+grep -Fq "deb-systemd-invoke \"\${action}\" meshnetd.service meshd.service" \
+    "${work_dir}/control/postinst"
+grep -Fq 'deb-systemd-invoke stop meshd.service meshnetd.service' \
+    "${work_dir}/control/prerm"
+grep -Fq 'deb-systemd-helper purge meshnetd.service meshd.service' \
+    "${work_dir}/control/postrm"
+grep -Fq "root_prefix=\"\${DPKG_ROOT%/}\"" "${work_dir}/control/postrm"
+if grep -Fq 'systemctl enable' "${work_dir}/control/postinst"; then
+    printf 'postinst must preserve administrator enablement state\n' >&2
+    exit 1
+fi
+if grep -Fq 'systemctl disable' "${work_dir}/control/prerm"; then
+    printf 'prerm must preserve administrator enablement state\n' >&2
+    exit 1
+fi
 
 grep -Fq -- '--allow-socket-peers' \
     "${work_dir}/root/usr/lib/systemd/system/meshd.service"
