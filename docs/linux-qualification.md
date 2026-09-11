@@ -326,9 +326,10 @@ SSH destinations, overlay addresses, policy contents, raw status, and payloads.
 See [policy.md](policy.md) for the complete enforcement and staged rollback
 contract.
 
-The first bounded two-node matrix is recorded in
+The bounded two-node matrix history is recorded in
 [linux-policy-qualification-2026-09-11.md](linux-policy-qualification-2026-09-11.md).
-It is Linux alpha POC evidence for one artifact and topology, not the repeated
+It includes the first complete alpha15 sample and its redacted machine-readable
+reports. It remains Linux alpha POC evidence for one topology, not the repeated
 sample set required for release-candidate qualification.
 
 ## Local validation

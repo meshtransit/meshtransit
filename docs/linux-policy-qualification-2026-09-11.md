@@ -267,6 +267,47 @@ alpha12, alpha13, and alpha14. This result qualifies compatible host-route and
 peer-authority replacement; it does not broaden the current subnet/exit-route
 scope or complete the remaining Linux v0.1 qualification matrix.
 
+## Accepted alpha15 complete matrix — sample 1
+
+The complete five-phase matrix was repeated against the same immutable
+`0.1.0~alpha15` artifact after the in-place churn gate. All 60 new-flow probes
+matched their expected result with zero policy mismatch and zero infrastructure
+error.
+
+| Phase | Expected contract | Result | Per-probe duration |
+| --- | --- | --- | --- |
+| `asymmetric-a-to-b-alpha15-s1` | A to B TCP, UDP, ICMPv4, and ICMPv6 allowed; every reverse new flow denied | 12/12 pass | 3,177–5,861 ms |
+| `asymmetric-b-to-a-alpha15-s1` | B to A TCP, UDP, ICMPv4, and ICMPv6 allowed; every reverse new flow denied | 12/12 pass | 3,173–5,453 ms |
+| `port-narrowing-allowed-alpha15-s1` | Only A to B TCP `31870` and UDP `31871` allowed; ICMP and reverse new flows denied | 12/12 pass | 3,331–5,630 ms |
+| `adjacent-ports-default-deny-alpha15-s1` | TCP `31871`, UDP `31872`, ICMP, and reverse flows denied while peer routes remained | 12/12 pass | 5,009–5,945 ms |
+| `explicit-default-deny-alpha15-s1` | Empty grants removed peer routes and denied both families and directions | 12/12 pass | 25–32 ms |
+
+The adjacent-port phase deliberately reused the allowed UDP port number as its
+TCP probe. This demonstrated that the filter did not widen either the port or
+protocol dimension. The explicit default-deny phase converged to synchronized,
+peerless idle nodes with zero reduced rules and no peer host routes; the report
+records exit code `90` as bounded route-level denial for every probe.
+
+Every phase retained both daemon process IDs and zero restart counters. Phase
+local memory peaks did not increase. From the beginning of the first phase to
+the end of the fifth, current service memory changed from 13,488,128 to
+13,623,296 bytes on `ubuntu-a` and from 13,733,888 to 13,815,808 bytes on
+`ubuntu-b`.
+
+The exact four-rule ICMP baseline was then restored. Both nodes returned to one
+peer, two reduced inbound rules, configured DNS, and an authenticated direct
+path. Three IPv4 and three IPv6 packets passed in both directions. The original
+process IDs, UDP socket inodes, and home-relay connection timestamps were still
+present, temporary harness directories were absent, and the bounded
+warning-level journal query returned no entries.
+
+The redacted machine-readable reports are retained in
+[`docs/evidence/linux-policy-alpha15-s1`](evidence/linux-policy-alpha15-s1).
+They exclude SSH destinations, overlay addresses, policy contents, and probe
+payloads. This is the first complete alpha15 sample; a second independently run
+sample is still required before claiming policy-matrix repeatability for Linux
+alpha promotion.
+
 ## Supporting quality gates
 
 The runtime implementation passed the full race-enabled Go test suite, `go
@@ -275,5 +316,6 @@ amd64/arm64 package jobs. The corresponding runtime CI evidence is
 [GitHub Actions run 34621187171](https://github.com/meshtransit/meshd/actions/runs/34621187171).
 
 Before using this evidence for Linux-alpha promotion, repeat the complete five
-phase matrix from the next immutable candidate artifact and retain multiple
-reports to demonstrate repeatability rather than a single successful sample.
+phase matrix once more from the immutable candidate artifact and retain the
+second report set to demonstrate repeatability rather than a single successful
+alpha15 sample.

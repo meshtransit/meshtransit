@@ -87,9 +87,10 @@ immediate endpoint refresh after meaningful changes, and a polling fallback.
 The Linux packet and DNS paths remain explicitly marked as POCs. Linux has a
 reproducible Debian package, lifecycle contract, and bounded restart, reboot,
 controlled interface-change, relay-fallback, split-DNS, and host-policy
-qualification harnesses. The two-host Linux alpha topology has repeatable direct-loss fallback
-and split-DNS cleanup/recovery evidence plus one complete live bidirectional
-host-policy matrix. It does not yet have repeated policy-matrix samples, a
+qualification harnesses. The two-host Linux alpha topology has repeatable
+direct-loss fallback and split-DNS cleanup/recovery evidence plus complete live
+bidirectional host-policy matrices on alpha10 and alpha15. It does not yet have
+a second complete alpha15 policy-matrix sample, a
 signed artifact pipeline, IPv6-only underlay evidence, real multi-uplink
 migration qualification, or a long-duration qualification suite. See
 [linux-policy-qualification-2026-09-11.md](linux-policy-qualification-2026-09-11.md)
