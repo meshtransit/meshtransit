@@ -205,7 +205,7 @@ dns_digest() {
 
   {
     resolvectl status "${interface_name}" --no-pager 2>&1 || true
-  } | sha256sum | awk '{print $1}'
+  } | sed -E 's/^Link [0-9]+ /Link /' | sha256sum | awk '{print $1}'
 }
 
 resource_snapshot() {
@@ -456,7 +456,7 @@ main() {
   [[ -x "${single_run_harness}" ]] || fail "single-run harness is not executable"
   for command_name in \
     awk date find ip journalctl jq meshctl mktemp pgrep resolvectl sha256sum \
-    sleep sort ss stat systemctl uname; do
+    sed sleep sort ss stat systemctl uname; do
     require_command "${command_name}"
   done
 

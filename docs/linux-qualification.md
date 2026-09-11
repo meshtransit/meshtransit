@@ -135,9 +135,11 @@ After every sample the runner requires exactly one daemon process, one helper
 process, one data interface, one DNS interface, one UDP resolver listener, and
 one TCP resolver listener. It hashes but does not emit the identity/profile/env
 contents, route set, or per-link resolver configuration, and requires all three
-to equal the baseline. Descriptor counts may exceed the initial steady-state
-count by at most four to accommodate connection timing; a new process with zero
-observable descriptors is always a failure.
+to equal the baseline. Only the kernel-assigned DNS link index is normalized
+before comparison because it must change when the non-persistent link is
+recreated. Descriptor counts may exceed the initial steady-state count by at
+most four to accommodate connection timing; a new process with zero observable
+descriptors is always a failure.
 
 The aggregate schema is
 `meshtransit.linux-crash-repeat-qualification/v1`. It retains redacted
