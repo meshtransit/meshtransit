@@ -5,6 +5,9 @@ node against one healthy peer. They cover explicit restart or abrupt `SIGKILL`
 of either `meshd.service` or `meshnetd.service`, a full host reboot, and a
 controlled interface-address change. They also exercise direct-path loss,
 relay fallback, later direct recovery, and split-DNS cleanup and restoration.
+The helper-recovery/change chain verifies that the newly coordinated service
+generation can process the first subsequent host-network event without another
+restart.
 Package upgrade, real multi-uplink migration, and soak scenarios remain
 separate gates.
 
@@ -157,6 +160,40 @@ are retained under
 The first three-sample matrix for every node/service combination is retained
 under
 [`docs/evidence/linux-crash-repeat-alpha16-s1`](evidence/linux-crash-repeat-alpha16-s1).
+
+## Chain helper recovery and network change
+
+The chained harness invokes the existing single-run tools serially. It first
+qualifies `meshnetd SIGKILL`, including the mandatory coordinated `meshd`
+generation change, and then launches the controlled dummy-interface scenario
+as its first post-recovery action. The confirmation label must exactly match
+the node label.
+
+```bash
+sudo tools/qualification/linux-helper-recovery-change.sh \
+  --node-label ubuntu-a \
+  --peer-label ubuntu-b \
+  --peer-v4 100.64.0.6 \
+  --peer-v6 fd7a:115c:a1e0::d \
+  --peer-name ubuntu-b \
+  --artifact-sha256 SHA256_OF_DEB \
+  --confirm-recovery-change ubuntu-a \
+  >ubuntu-a-helper-recovery-change.json
+```
+
+The aggregate schema is
+`meshtransit.linux-helper-recovery-change-qualification/v1`. A pass requires
+both child reports to pass and match exactly on topology, platform, and
+artifact metadata. The network-change counters must advance, and the recovered
+`meshd` and `meshnetd` PIDs and restart counters must remain stable throughout
+the network-change phase. Raw PIDs are compared in memory but omitted from the
+report. Both child reports retain their existing redaction contract.
+
+The chain shortens only the healthy stability tail after crash recovery and the
+healthy lead before the dummy-interface action to one second each. It retains
+the 20-second readiness and endpoint-refresh deadlines and the full five-second
+network-change stability tail. Failure or interruption starts both services;
+the child network-change trap owns removal of its dedicated interface.
 
 ## Run a reboot scenario
 
@@ -435,6 +472,8 @@ bash -n tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-reboot.sh \
   tools/qualification/linux-network-change.sh \
   tools/qualification/test-linux-network-change.sh \
+  tools/qualification/linux-helper-recovery-change.sh \
+  tools/qualification/test-linux-helper-recovery-change.sh \
   tools/qualification/linux-relay-fallback.sh \
   tools/qualification/test-linux-relay-fallback.sh \
   tools/qualification/linux-dns.sh \
@@ -450,6 +489,8 @@ shellcheck tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-reboot.sh \
   tools/qualification/linux-network-change.sh \
   tools/qualification/test-linux-network-change.sh \
+  tools/qualification/linux-helper-recovery-change.sh \
+  tools/qualification/test-linux-helper-recovery-change.sh \
   tools/qualification/linux-relay-fallback.sh \
   tools/qualification/test-linux-relay-fallback.sh \
   tools/qualification/linux-dns.sh \
@@ -463,6 +504,7 @@ bash tools/qualification/test-linux-restart.sh
 bash tools/qualification/test-linux-crash-repeat.sh
 bash tools/qualification/test-linux-reboot.sh
 bash tools/qualification/test-linux-network-change.sh
+bash tools/qualification/test-linux-helper-recovery-change.sh
 bash tools/qualification/test-linux-relay-fallback.sh
 bash tools/qualification/test-linux-dns.sh
 bash tools/qualification/test-linux-policy.sh

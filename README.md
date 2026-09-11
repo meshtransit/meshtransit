@@ -99,6 +99,9 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - Bounded, repeatable Linux crash qualification for direct daemon cleanup,
   systemd automatic restart, coordinated helper/daemon generation replacement,
   resource invariants, MagicDNS recovery, and stable dual-stack traffic.
+- A chained Linux helper-crash/network-change gate that proves the recovered
+  helper/daemon generation can immediately refresh endpoints without another
+  service restart.
 - Reversible Linux split-DNS qualification for authoritative forward and reverse
   answers, short-name search, UDP/TCP service, host-resolver isolation, cleanup,
   and recovery.
