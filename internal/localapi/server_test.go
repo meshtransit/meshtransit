@@ -17,6 +17,7 @@ import (
 	"github.com/meshtransit/meshd/internal/identity"
 	"github.com/meshtransit/meshd/internal/profile"
 	"github.com/meshtransit/meshd/internal/relay"
+	"github.com/meshtransit/meshd/internal/runtimehealth"
 	"github.com/meshtransit/meshd/internal/version"
 )
 
@@ -37,6 +38,10 @@ func TestServer_ProfileLifecycle(t *testing.T) {
 	}
 	if status.DataPlane != daemon.DataPlanePending {
 		t.Fatalf("data plane = %q, want %q", status.DataPlane, daemon.DataPlanePending)
+	}
+	if status.Runtime.Goroutines == 0 || status.Runtime.HeapAllocBytes == 0 ||
+		status.Runtime.HeapObjects == 0 || status.Runtime.SysBytes == 0 {
+		t.Fatalf("runtime status = %#v, want populated aggregate counters", status.Runtime)
 	}
 	if status.DNS != daemon.DNSInactive {
 		t.Fatalf("dns = %q, want %q", status.DNS, daemon.DNSInactive)
@@ -102,6 +107,26 @@ func TestMapNetworkChangeStatus(t *testing.T) {
 	})
 	if !status.Available || status.Observed != 3 || status.EndpointRefreshes != 2 {
 		t.Fatalf("mapNetworkChangeStatus() = %#v", status)
+	}
+}
+
+func TestMapRuntimeStatus(t *testing.T) {
+	t.Parallel()
+
+	status := mapRuntimeStatus(runtimehealth.Snapshot{
+		Goroutines:      11,
+		HeapAllocBytes:  12,
+		HeapInUseBytes:  13,
+		HeapObjects:     14,
+		StackInUseBytes: 15,
+		SysBytes:        16,
+		GCCycles:        17,
+	})
+	if status.Goroutines != 11 || status.HeapAllocBytes != 12 ||
+		status.HeapInUseBytes != 13 || status.HeapObjects != 14 ||
+		status.StackInUseBytes != 15 || status.SysBytes != 16 ||
+		status.GCCycles != 17 {
+		t.Fatalf("mapRuntimeStatus() = %#v", status)
 	}
 }
 

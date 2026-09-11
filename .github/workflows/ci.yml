@@ -69,6 +69,8 @@ jobs:
             tools/qualification/test-linux-network-change.sh \
             tools/qualification/linux-helper-recovery-change.sh \
             tools/qualification/test-linux-helper-recovery-change.sh \
+            tools/qualification/linux-soak.sh \
+            tools/qualification/test-linux-soak.sh \
             tools/qualification/linux-relay-fallback.sh \
             tools/qualification/test-linux-relay-fallback.sh \
             tools/qualification/linux-dns.sh \
@@ -87,6 +89,8 @@ jobs:
             tools/qualification/test-linux-network-change.sh \
             tools/qualification/linux-helper-recovery-change.sh \
             tools/qualification/test-linux-helper-recovery-change.sh \
+            tools/qualification/linux-soak.sh \
+            tools/qualification/test-linux-soak.sh \
             tools/qualification/linux-relay-fallback.sh \
             tools/qualification/test-linux-relay-fallback.sh \
             tools/qualification/linux-dns.sh \
@@ -101,6 +105,7 @@ jobs:
           bash tools/qualification/test-linux-reboot.sh
           bash tools/qualification/test-linux-network-change.sh
           bash tools/qualification/test-linux-helper-recovery-change.sh
+          bash tools/qualification/test-linux-soak.sh
           bash tools/qualification/test-linux-relay-fallback.sh
           bash tools/qualification/test-linux-dns.sh
           bash tools/qualification/test-linux-policy.sh

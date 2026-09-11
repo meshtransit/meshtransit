@@ -206,6 +206,12 @@ registration or Network selection; they let operators verify the
 server-authorized scope and transport transitions without reading daemon state
 or private key material.
 
+The same authenticated status response includes aggregate Go runtime health:
+goroutine count, heap allocation/in-use/object counts, stack/system bytes, and
+completed GC cycles. It does not expose stack traces, allocation profiles,
+labels, addresses, command lines, or per-peer metrics. These counters exist for
+bounded local soak qualification and never feed control or packet-path state.
+
 ## Identity and registration lifecycle
 
 Each profile has distinct machine and node private keys plus an independent control-key pin. Identity creation is create-only so two enrollment attempts cannot silently overwrite each other. Repeating the trust command verifies the saved key and fingerprint against the live server; it never rotates either value.

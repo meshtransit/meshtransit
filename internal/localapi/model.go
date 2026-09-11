@@ -34,6 +34,7 @@ type statusResponse struct {
 	PeerPaths          pathStatus          `json:"paths"`
 	Relay              relayStatus         `json:"relay"`
 	NetworkChanges     networkChangeStatus `json:"network_changes"`
+	Runtime            runtimeStatus       `json:"runtime"`
 	CompatibilityNote  string              `json:"compatibility_note"`
 }
 
@@ -41,6 +42,16 @@ type networkChangeStatus struct {
 	Available         bool   `json:"available"`
 	Observed          uint64 `json:"observed"`
 	EndpointRefreshes uint64 `json:"endpoint_refreshes"`
+}
+
+type runtimeStatus struct {
+	Goroutines      int    `json:"goroutines"`
+	HeapAllocBytes  uint64 `json:"heap_alloc_bytes"`
+	HeapInUseBytes  uint64 `json:"heap_in_use_bytes"`
+	HeapObjects     uint64 `json:"heap_objects"`
+	StackInUseBytes uint64 `json:"stack_in_use_bytes"`
+	SysBytes        uint64 `json:"sys_bytes"`
+	GCCycles        uint32 `json:"gc_cycles"`
 }
 
 type pathStatus struct {

@@ -1061,6 +1061,20 @@ func TestService_StatusReportsNetworkChangeCounters(t *testing.T) {
 	}
 }
 
+func TestService_StatusReportsRuntimeHealth(t *testing.T) {
+	t.Parallel()
+
+	service, _, _, _, _ := newTestService(t)
+	status, err := service.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if status.Runtime.Goroutines == 0 || status.Runtime.HeapAllocBytes == 0 ||
+		status.Runtime.HeapObjects == 0 || status.Runtime.SysBytes == 0 {
+		t.Fatalf("runtime health = %#v, want populated aggregate counters", status.Runtime)
+	}
+}
+
 func TestService_StatusReportsAggregateTransportState(t *testing.T) {
 	t.Parallel()
 

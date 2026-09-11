@@ -19,6 +19,7 @@ import (
 	"github.com/meshtransit/meshd/internal/dataplane"
 	"github.com/meshtransit/meshd/internal/profile"
 	"github.com/meshtransit/meshd/internal/relay"
+	"github.com/meshtransit/meshd/internal/runtimehealth"
 )
 
 const (
@@ -332,6 +333,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		PeerPaths:          mapPathStatus(status.PeerPaths),
 		Relay:              mapRelayStatus(status.Relay),
 		NetworkChanges:     mapNetworkChangeStatus(status.NetworkChanges),
+		Runtime:            mapRuntimeStatus(status.Runtime),
 		CompatibilityNote:  status.CompatibilityNote,
 	})
 }
@@ -341,6 +343,18 @@ func mapNetworkChangeStatus(status daemon.NetworkChangeStatus) networkChangeStat
 		Available:         status.Available,
 		Observed:          status.Observed,
 		EndpointRefreshes: status.EndpointRefreshes,
+	}
+}
+
+func mapRuntimeStatus(status runtimehealth.Snapshot) runtimeStatus {
+	return runtimeStatus{
+		Goroutines:      status.Goroutines,
+		HeapAllocBytes:  status.HeapAllocBytes,
+		HeapInUseBytes:  status.HeapInUseBytes,
+		HeapObjects:     status.HeapObjects,
+		StackInUseBytes: status.StackInUseBytes,
+		SysBytes:        status.SysBytes,
+		GCCycles:        status.GCCycles,
 	}
 }
 

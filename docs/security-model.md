@@ -42,6 +42,10 @@ Packet payloads are not an observability asset and must not be collected.
 - The socket creator will not overwrite a regular file or a responding daemon socket.
 - API errors do not expose state paths or internal persistence errors.
 - Local transport status exposes only aggregate direct/relay/pending peer counts, relay-region lifecycle health, and process-local network-change/endpoint-refresh counters. It omits peer identities, endpoint addresses, hostnames, keys, and packet contents, and never feeds status data back into path selection.
+- Authenticated local status also exposes aggregate Go runtime memory,
+  goroutine, and GC counters for soak qualification. It exposes no stack trace,
+  allocation profile, label, command line, address, or per-peer metric and does
+  not open a network listener.
 - Control URLs reject credentials, query strings, and fragments.
 - Control URLs and the TS2021 key probe permit TLS port 443 only.
 - The control probe bypasses environment proxies, refuses redirects, uses TLS 1.2 or newer with standard certificate and hostname verification, limits the key response to 64 KiB, validates the typed machine key, completes Noise IK with an ephemeral machine key, and returns only a SHA-256 fingerprint.

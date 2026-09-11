@@ -105,6 +105,9 @@ samples for every node/service combination with state and resource invariants.
 Each node also has one passing chained sample proving that the newly recovered
 helper/daemon generation handles its first controlled network change, refreshes
 endpoints, and remains stable without an additional restart.
+The authenticated local status contract and read-only Linux soak harness now
+expose the bounded aggregate runtime and operating-system resource measurements
+needed for the long-duration gate; native smoke and 72-hour evidence remain.
 It does not yet have a signed artifact pipeline, IPv6-only underlay evidence,
 real multi-uplink migration qualification, the larger candidate crash sample
 set, repeated candidate DNS-failure samples, or a long-duration qualification

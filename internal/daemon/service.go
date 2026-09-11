@@ -24,6 +24,7 @@ import (
 	"github.com/meshtransit/meshd/internal/peerprobe"
 	"github.com/meshtransit/meshd/internal/profile"
 	"github.com/meshtransit/meshd/internal/relay"
+	"github.com/meshtransit/meshd/internal/runtimehealth"
 	"github.com/meshtransit/meshd/internal/version"
 )
 
@@ -103,6 +104,7 @@ type Status struct {
 	PeerPaths          dataplane.PeerPathSnapshot
 	Relay              relay.HealthSnapshot
 	NetworkChanges     NetworkChangeStatus
+	Runtime            runtimehealth.Snapshot
 }
 
 // NetworkChangeStatus contains process-local aggregate recovery counters.
@@ -1374,6 +1376,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 			Observed:          s.networkObserved.Load(),
 			EndpointRefreshes: s.networkRefreshes.Load(),
 		},
+		Runtime: runtimehealth.Read(),
 	}, nil
 }
 

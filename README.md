@@ -102,6 +102,9 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - A chained Linux helper-crash/network-change gate that proves the recovered
   helper/daemon generation can immediately refresh endpoints without another
   service restart.
+- A read-only fixed-topology Linux soak gate for service generations,
+  resource cardinality, runtime/OS memory, goroutines, threads, descriptors,
+  routes, resolver policy, MagicDNS, and sampled dual-stack traffic.
 - Reversible Linux split-DNS qualification for authoritative forward and reverse
   answers, short-name search, UDP/TCP service, host-resolver isolation, cleanup,
   and recovery.

@@ -199,6 +199,42 @@ The first passing two-node alpha16 chain is recorded in
 [linux-helper-recovery-change-qualification-2026-09-12.md](linux-helper-recovery-change-qualification-2026-09-12.md),
 with its redacted reports retained under `docs/evidence`.
 
+## Run a fixed-topology soak
+
+The soak harness is read-only and runs on the node under test. It samples the
+authenticated local status API and `/proc`, checks service generations and
+restart counters, and verifies process/interface/listener cardinality,
+persisted identity/configuration bytes, routes, resolver policy, MagicDNS, and
+one IPv4 plus one IPv6 peer probe at every interval.
+
+```bash
+sudo tools/qualification/linux-soak.sh \
+  --node-label ubuntu-a \
+  --peer-label ubuntu-b \
+  --peer-v4 100.64.0.6 \
+  --peer-v6 fd7a:115c:a1e0::d \
+  --peer-name ubuntu-b \
+  --artifact-sha256 SHA256_OF_DEB \
+  >ubuntu-a-soak.json
+```
+
+Release-candidate defaults run for 72 hours, sample every 30 seconds, and use
+the first sample at or after one hour as the steady-state memory baseline. A
+pass requires every sample to remain healthy, unchanged service generations,
+no warning-level service journal entries, maximum post-warmup RSS growth of at
+most ten percent for either process, and no more than eight goroutines or four
+threads/descriptors above the steady-state baseline. Shorter runs may validate
+the harness but are marked `scenario.release_candidate_eligible: false`.
+
+The schema is `meshtransit.linux-soak-qualification/v1`. Reports retain only
+operator labels, artifact/platform metadata, booleans, aggregate status,
+resource counters, and traffic success. They omit raw PIDs, state digests,
+addresses, DNS names and answers, profile/network identity, control
+fingerprints, endpoint data, and packet contents. The static data-plane queue
+caps prevent unbounded allocation; runtime goroutine, heap/object, system
+memory, RSS, thread, and descriptor trends detect retained work without
+exposing a profiling endpoint.
+
 ## Run a reboot scenario
 
 Run the reboot harness from an operator host that can reach two registered
@@ -478,6 +514,8 @@ bash -n tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-network-change.sh \
   tools/qualification/linux-helper-recovery-change.sh \
   tools/qualification/test-linux-helper-recovery-change.sh \
+  tools/qualification/linux-soak.sh \
+  tools/qualification/test-linux-soak.sh \
   tools/qualification/linux-relay-fallback.sh \
   tools/qualification/test-linux-relay-fallback.sh \
   tools/qualification/linux-dns.sh \
@@ -495,6 +533,8 @@ shellcheck tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-network-change.sh \
   tools/qualification/linux-helper-recovery-change.sh \
   tools/qualification/test-linux-helper-recovery-change.sh \
+  tools/qualification/linux-soak.sh \
+  tools/qualification/test-linux-soak.sh \
   tools/qualification/linux-relay-fallback.sh \
   tools/qualification/test-linux-relay-fallback.sh \
   tools/qualification/linux-dns.sh \
@@ -509,6 +549,7 @@ bash tools/qualification/test-linux-crash-repeat.sh
 bash tools/qualification/test-linux-reboot.sh
 bash tools/qualification/test-linux-network-change.sh
 bash tools/qualification/test-linux-helper-recovery-change.sh
+bash tools/qualification/test-linux-soak.sh
 bash tools/qualification/test-linux-relay-fallback.sh
 bash tools/qualification/test-linux-dns.sh
 bash tools/qualification/test-linux-policy.sh
