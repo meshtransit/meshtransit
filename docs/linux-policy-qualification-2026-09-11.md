@@ -210,6 +210,63 @@ exact baseline policy was restored immediately. The next candidate must use a
 peer-only live configuration that cannot carry the private key or listen port,
 then prove stable socket and relay generations through repeated transitions.
 
+## Accepted alpha15 in-place churn gate
+
+`0.1.0~alpha15` was built independently twice from commit
+`3e6ed3aaadf228e248a5158f2a8cb87d85f80e23`. Both amd64 Debian packages were
+byte-identical, passed package verification, and had SHA-256
+`1766c157059c6b70918c49a4878767f3b38418316be3f762bf45e82b8ae0ac82`.
+The source passed the complete Linux race suite, `go vet`, `golangci-lint`,
+reachable-vulnerability scanning, and all five release-target builds.
+The node-B canary and mixed alpha14/alpha15 dual-stack traffic passed before the
+same artifact was installed on node A.
+
+Three complete default-deny and exact-baseline-restoration cycles then passed.
+Every deny state was synchronized with zero peers, zero policy rules, idle data
+plane, configured DNS, retained self addresses, and no peer host routes. Every
+restored state returned to one peer, two reduced inbound rules, and one
+authenticated direct path. Map revisions advanced once per expected control
+transition without the alpha12 oscillation.
+
+The following lifecycle identities remained unchanged through all six policy
+transitions:
+
+| Evidence | `ubuntu-a` | `ubuntu-b` |
+| --- | --- | --- |
+| `meshd` PID | `42846` | `38776` |
+| systemd restarts | `0` | `0` |
+| `mesh0` ifindex | `141` | `142` |
+| IPv4 UDP socket inode | `155580` | `148826` |
+| IPv6 UDP socket inode | `155581` | `148827` |
+| Home relay connected at | `2026-09-11T20:02:26.004878848Z` | `2026-09-11T20:01:27.001961529Z` |
+
+This proves that compatible peer/policy changes replaced packet-filter state,
+relay peer authority, WireGuard peers, and host routes without recreating the
+TUN, rebinding the UDP sockets, or reconnecting the home relay.
+
+Memory showed a bounded initial warm-up rather than per-cycle device retention:
+
+| Observation | `ubuntu-a` current | `ubuntu-b` current |
+| --- | ---: | ---: |
+| Initial baseline | 10,174,464 B | 13,774,848 B |
+| Restore after cycle 1 | 14,282,752 B | 16,809,984 B |
+| Restore after cycle 2 | 14,974,976 B | 16,875,520 B |
+| Deny cycle 3 | 15,060,992 B | 16,875,520 B |
+| Final restore | 15,114,240 B | 14,266,368 B |
+
+During the third deny cycle, the official policy harness matched all twelve
+TCP, UDP, ICMPv4, and ICMPv6 deny observations with zero policy mismatches and
+zero infrastructure errors. Both process IDs and memory readings were exactly
+stable across that bounded phase. The final exact policy restoration reinstated
+both IPv4 and IPv6 peer routes; three packets per family passed in both
+directions. Both services remained active, DNS remained configured, and the
+ten-minute warning-level journal query returned no entries on either node.
+
+Alpha15 therefore passes the repeated peerless policy-churn gate that rejected
+alpha12, alpha13, and alpha14. This result qualifies compatible host-route and
+peer-authority replacement; it does not broaden the current subnet/exit-route
+scope or complete the remaining Linux v0.1 qualification matrix.
+
 ## Supporting quality gates
 
 The runtime implementation passed the full race-enabled Go test suite, `go
