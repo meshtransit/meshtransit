@@ -154,6 +154,9 @@ with its redacted machine-readable reports retained under `docs/evidence`. The
 same document records the first alpha16 abrupt-termination matrix; those reports
 are retained under
 [`docs/evidence/linux-crash-recovery-alpha16-s1`](evidence/linux-crash-recovery-alpha16-s1).
+The first three-sample matrix for every node/service combination is retained
+under
+[`docs/evidence/linux-crash-repeat-alpha16-s1`](evidence/linux-crash-repeat-alpha16-s1).
 
 ## Run a reboot scenario
 

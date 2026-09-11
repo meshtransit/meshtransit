@@ -100,10 +100,12 @@ back to the exact baseline without a daemon restart. Alpha16 adds one bounded
 two-node ordered-upstream timeout, failover, fail-closed, DNS-destination
 isolation, and rollback sample. Alpha16 also has one passing `SIGKILL` recovery
 sample for each service on each node, including observed daemon DNS cleanup and
-coordinated daemon/helper generation replacement. It does not yet have a signed
-artifact pipeline, IPv6-only underlay evidence, real multi-uplink migration
-qualification, repeated candidate crash/DNS-failure samples, or a long-duration
-qualification suite.
+coordinated daemon/helper generation replacement, followed by three passing
+samples for every node/service combination with state and resource invariants.
+It does not yet have a signed artifact pipeline, IPv6-only underlay evidence,
+real multi-uplink migration qualification, the larger candidate crash sample
+set, repeated candidate DNS-failure samples, or a long-duration qualification
+suite.
 See [linux-qualification.md](linux-qualification.md) for the bounded alpha
 evidence and its limitations.
 Windows and macOS deny local API access without an unsafe development override

@@ -96,3 +96,30 @@ The redacted reports and checksum manifest are retained in
 This remains one bounded sample per node and service. It does not establish p95
 recovery, long-duration reliability, kernel-panic behavior, power-loss safety,
 or storage-corruption recovery.
+
+## Alpha16 repeated abrupt-termination matrix
+
+The crash scenarios were then repeated three times per service and node with
+the same immutable alpha16 artifact. A resource snapshot after every sample
+required one process per service, one data link, one DNS link, one UDP resolver
+listener, one TCP resolver listener, unchanged persisted state, unchanged data
+routes, unchanged semantic resolved policy, and bounded descriptor counts.
+
+| Node | Killed service | Samples | Full readiness p95 | Stable traffic p95 | DNS cleanup p95 | Result |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| `ubuntu-b` | `meshd.service` | 3 | 7,575 ms | 7,346 ms | 36 ms | pass |
+| `ubuntu-b` | `meshnetd.service` | 3 | 7,192 ms | 7,151 ms | not applicable | pass |
+| `ubuntu-a` | `meshd.service` | 3 | 7,027 ms | 6,783 ms | 52 ms | pass |
+| `ubuntu-a` | `meshnetd.service` | 3 | 6,852 ms | 6,735 ms | not applicable | pass |
+
+All 12 samples passed. All six helper terminations recreated both helper and
+daemon generations, and all six direct daemon terminations observed DNS runtime
+cleanup. Every persisted, route, resolver, process, link, and listener invariant
+remained intact. The maximum descriptor drift was one daemon descriptor in one
+scenario, and no error-level service log was recorded.
+
+The aggregate reports and checksums are retained in
+[`docs/evidence/linux-crash-repeat-alpha16-s1`](evidence/linux-crash-repeat-alpha16-s1).
+Each scenario has only three samples, so its nearest-rank p95 is its maximum.
+This is repeatability evidence for the alpha topology, not the larger sample set
+or long-duration soak required for a release candidate.
