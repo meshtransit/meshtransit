@@ -23,6 +23,7 @@ const (
 
 type tunCreator interface {
 	Open(string, int, uint32, []netip.Prefix, []netip.Prefix) (*os.File, error)
+	ReplaceRoutes(string, []netip.Prefix, []netip.Prefix) error
 }
 
 type dnsConfigurator interface {
@@ -58,6 +59,8 @@ type Server struct {
 	creator         tunCreator
 	dns             dnsConfigurator
 	dnsEndpoint     DNSEndpoint
+	activeTUN       TUNConfig
+	hasActiveTUN    bool
 }
 
 // NewServer constructs a privileged helper confined to explicit overlay pools.
@@ -229,6 +232,8 @@ func (s *Server) handle(ctx context.Context, rawConnection net.Conn) error {
 	switch validated.operation {
 	case operationOpenTUN:
 		return s.openTUN(connection, validated.tun)
+	case operationSetTUN:
+		return s.setTUN(connection, validated.tun)
 	case operationOpenDNS:
 		return s.openDNS(connection)
 	case operationSetDNS:
@@ -268,6 +273,8 @@ func (s *Server) openTUN(connection *net.UnixConn, config TUNConfig) error {
 		return fmt.Errorf("netadmin: opening tun: %w", err)
 	}
 	defer func() { _ = file.Close() }()
+	s.activeTUN = cloneTUNConfig(config)
+	s.hasActiveTUN = true
 
 	return writeResponse(connection, response{
 		Version:       protocolVersion,
@@ -277,6 +284,50 @@ func (s *Server) openTUN(connection *net.UnixConn, config TUNConfig) error {
 		Addresses:     prefixStrings(config.Addresses),
 		Routes:        prefixStrings(config.Routes),
 	}, file)
+}
+
+func (s *Server) setTUN(connection *net.UnixConn, config TUNConfig) error {
+	if !s.hasActiveTUN || !slices.Equal(config.Addresses, s.activeTUN.Addresses) {
+		_ = writeResponse(connection, response{
+			Version: protocolVersion,
+			Code:    "invalid_tun_state",
+			Message: "tun interface is not owned by this helper generation",
+		}, nil)
+
+		return errors.New("netadmin: tun interface is not owned by this helper generation")
+	}
+	if err := validateAllowedTUNConfig(config, s.allowedPrefixes); err != nil {
+		_ = writeResponse(connection, response{
+			Version: protocolVersion,
+			Code:    "invalid_tun_config",
+			Message: "requested prefixes are outside the helper allowlist",
+		}, nil)
+
+		return err
+	}
+	if err := s.creator.ReplaceRoutes(
+		s.interfaceName,
+		s.activeTUN.Routes,
+		config.Routes,
+	); err != nil {
+		_ = writeResponse(connection, response{
+			Version: protocolVersion,
+			Code:    "tun_config_failed",
+			Message: "tun routes could not be replaced",
+		}, nil)
+
+		return fmt.Errorf("netadmin: replacing tun routes: %w", err)
+	}
+	s.activeTUN = cloneTUNConfig(config)
+
+	return writeResponse(connection, response{Version: protocolVersion, OK: true}, nil)
+}
+
+func cloneTUNConfig(config TUNConfig) TUNConfig {
+	return TUNConfig{
+		Addresses: append([]netip.Prefix(nil), config.Addresses...),
+		Routes:    append([]netip.Prefix(nil), config.Routes...),
+	}
 }
 
 func (s *Server) openDNS(connection *net.UnixConn) error {

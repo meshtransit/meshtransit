@@ -36,6 +36,10 @@ type tunOpener interface {
 	OpenTUN(context.Context, netadmin.TUNConfig) (netadmin.TUN, error)
 }
 
+type tunRouteConfigurer interface {
+	ConfigureTUNRoutes(context.Context, netadmin.TUNConfig) error
+}
+
 // Engine owns a TUN descriptor without yet reading packets or configuring routes.
 // The daemon serializes Apply and Close after stopping the map callback.
 type Engine struct {

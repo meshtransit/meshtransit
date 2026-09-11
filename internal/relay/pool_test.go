@@ -67,6 +67,68 @@ func TestPoolSendsAndReceivesAuthorizedPackets(t *testing.T) {
 	}
 }
 
+func TestPoolReplacesPeerAuthorityInPlace(t *testing.T) {
+	t.Parallel()
+
+	client := newFakeClient()
+	dialer := &fakeDialer{client: client, calls: make(chan int, 1)}
+	pool, err := New(t.Context(), testConfig(), dialer)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+	if err := pool.Open(); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	select {
+	case <-dialer.calls:
+	case <-time.After(time.Second):
+		t.Fatal("Dial() was not called")
+	}
+	if err := pool.ReplacePeers(nil); err != nil {
+		t.Fatalf("ReplacePeers(nil) error = %v", err)
+	}
+	if _, exists := pool.Peer(Key{2}); exists {
+		t.Fatal("removed peer remains authorized")
+	}
+	if err := pool.Send(1, Key{2}, [][]byte{{1}}); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("Send() error = %v, want ErrUnauthorized", err)
+	}
+	client.received <- receiveResult{event: ReceiveEvent{
+		Kind:   ReceivePacket,
+		Source: Key{2},
+		Data:   []byte{2},
+	}}
+	replacement := Peer{
+		Key:        Key{3},
+		HomeRegion: 1,
+		Address:    testConfig().Peers[0].Address.Next(),
+	}
+	if err := pool.ReplacePeers([]Peer{replacement}); err != nil {
+		t.Fatalf("ReplacePeers(replacement) error = %v", err)
+	}
+	if peer, exists := pool.Peer(replacement.Key); !exists || peer != replacement {
+		t.Fatalf("replacement peer = %#v, exists=%t", peer, exists)
+	}
+	client.received <- receiveResult{event: ReceiveEvent{
+		Kind:   ReceivePacket,
+		Source: replacement.Key,
+		Data:   []byte{3},
+	}}
+	packet, err := receivePoolWithTimeout(pool, time.Second)
+	if err != nil {
+		t.Fatalf("Receive() error = %v", err)
+	}
+	if packet.Source != replacement.Key || !slices.Equal(packet.Data, []byte{3}) {
+		t.Fatalf("Receive() = %#v", packet)
+	}
+	select {
+	case <-dialer.calls:
+		t.Fatal("peer replacement restarted relay transport")
+	default:
+	}
+}
+
 func TestPoolBoundsDisconnectedSendQueue(t *testing.T) {
 	t.Parallel()
 

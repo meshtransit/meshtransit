@@ -4,6 +4,8 @@ package netadmin
 
 import (
 	"errors"
+	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/vishvananda/netlink"
@@ -26,6 +28,68 @@ func TestConfigureLinkUsesNetlink(t *testing.T) {
 	}
 	if configurer.upLink != link {
 		t.Fatalf("link brought up = %T, want %T", configurer.upLink, link)
+	}
+}
+
+func TestReplaceRoutesAddsBeforeRemoving(t *testing.T) {
+	t.Parallel()
+
+	current := []netip.Prefix{
+		netip.MustParsePrefix("100.64.0.2/32"),
+		netip.MustParsePrefix("100.64.0.3/32"),
+	}
+	desired := []netip.Prefix{
+		netip.MustParsePrefix("100.64.0.3/32"),
+		netip.MustParsePrefix("100.64.0.4/32"),
+	}
+	configurer := &fakeRouteConfigurer{
+		link: &netlink.Tuntap{LinkAttrs: netlink.LinkAttrs{Index: 7, Name: "mesh0"}},
+	}
+	if err := replaceRoutesWith(configurer, "mesh0", current, desired); err != nil {
+		t.Fatalf("replaceRoutesWith() error = %v", err)
+	}
+	want := []routeOperation{
+		{prefix: desired[1], added: true},
+		{prefix: current[0]},
+	}
+	if len(configurer.operations) != len(want) {
+		t.Fatalf("operations = %#v, want %#v", configurer.operations, want)
+	}
+	for index := range want {
+		if configurer.operations[index] != want[index] {
+			t.Fatalf("operations = %#v, want %#v", configurer.operations, want)
+		}
+	}
+}
+
+func TestReplaceRoutesRollsBackCompletedChanges(t *testing.T) {
+	t.Parallel()
+
+	current := []netip.Prefix{netip.MustParsePrefix("100.64.0.2/32")}
+	desired := []netip.Prefix{netip.MustParsePrefix("100.64.0.4/32")}
+	configurer := &fakeRouteConfigurer{
+		link:   &netlink.Tuntap{LinkAttrs: netlink.LinkAttrs{Index: 7, Name: "mesh0"}},
+		failAt: 2,
+	}
+	err := replaceRoutesWith(configurer, "mesh0", current, desired)
+	if err == nil {
+		t.Fatal("replaceRoutesWith() error = nil")
+	}
+	if strings.Contains(err.Error(), "100.64.") {
+		t.Fatalf("replaceRoutesWith() disclosed an overlay route: %v", err)
+	}
+	want := []routeOperation{
+		{prefix: desired[0], added: true},
+		{prefix: current[0]},
+		{prefix: desired[0]},
+	}
+	if len(configurer.operations) != len(want) {
+		t.Fatalf("operations = %#v, want %#v", configurer.operations, want)
+	}
+	for index := range want {
+		if configurer.operations[index] != want[index] {
+			t.Fatalf("operations = %#v, want %#v", configurer.operations, want)
+		}
 	}
 }
 
@@ -89,6 +153,46 @@ type fakeLinkConfigurer struct {
 	mtuLink       netlink.Link
 	mtu           int
 	upLink        netlink.Link
+}
+
+type routeOperation struct {
+	prefix netip.Prefix
+	added  bool
+}
+
+type fakeRouteConfigurer struct {
+	link       netlink.Link
+	failAt     int
+	operations []routeOperation
+}
+
+func (f *fakeRouteConfigurer) LinkByName(string) (netlink.Link, error) {
+	return f.link, nil
+}
+
+func (f *fakeRouteConfigurer) Add(route *netlink.Route) error {
+	return f.record(route, true)
+}
+
+func (f *fakeRouteConfigurer) Delete(route *netlink.Route) error {
+	return f.record(route, false)
+}
+
+func (f *fakeRouteConfigurer) record(route *netlink.Route, added bool) error {
+	prefix, ok := netip.AddrFromSlice(route.Dst.IP)
+	if !ok {
+		return errors.New("invalid route")
+	}
+	ones, _ := route.Dst.Mask.Size()
+	f.operations = append(f.operations, routeOperation{
+		prefix: netip.PrefixFrom(prefix.Unmap(), ones),
+		added:  added,
+	})
+	if f.failAt > 0 && len(f.operations) == f.failAt {
+		return errors.New("injected route failure")
+	}
+
+	return nil
 }
 
 func (f *fakeLinkConfigurer) LinkByName(name string) (netlink.Link, error) {

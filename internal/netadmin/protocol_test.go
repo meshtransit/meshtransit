@@ -76,6 +76,9 @@ func TestValidateResponse(t *testing.T) {
 	if err := validateResponse(valid, operationOpenTUN); !errors.Is(err, ErrProtocol) {
 		t.Fatalf("validateResponse() error = %v, want ErrProtocol", err)
 	}
+	if err := validateResponse(response{Version: protocolVersion, OK: true}, operationSetTUN); err != nil {
+		t.Fatalf("validateResponse(set tun) error = %v", err)
+	}
 }
 
 func TestValidateDNSConfig(t *testing.T) {

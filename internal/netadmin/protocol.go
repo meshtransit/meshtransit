@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	protocolVersion   = 4
+	protocolVersion   = 5
 	maxMessageBytes   = 32 << 10
 	operationOpenTUN  = "open_tun"
+	operationSetTUN   = "set_tun_routes"
 	operationOpenDNS  = "open_dns"
 	operationSetDNS   = "set_dns"
 	operationResetDNS = "reset_dns"
@@ -132,9 +133,9 @@ func validateRequest(value request) (validatedRequest, error) {
 	}
 
 	switch value.Operation {
-	case operationOpenTUN:
+	case operationOpenTUN, operationSetTUN:
 		if value.Addresses == nil || value.Routes == nil || hasDNSRequestFields(value) {
-			return validatedRequest{}, fmt.Errorf("%w: open tun fields are invalid", ErrProtocol)
+			return validatedRequest{}, fmt.Errorf("%w: tun fields are invalid", ErrProtocol)
 		}
 		config, err := parseTUNConfig(value.Addresses, value.Routes)
 		if err != nil {
@@ -190,6 +191,11 @@ func validateResponse(value response, operation string) error {
 			if value.InterfaceName == "" || value.MTU == 0 || value.Addresses == nil ||
 				value.Routes == nil || value.Resolver != "" {
 				return fmt.Errorf("%w: malformed open tun response", ErrProtocol)
+			}
+		case operationSetTUN:
+			if value.InterfaceName != "" || value.Resolver != "" || value.MTU != 0 ||
+				value.Addresses != nil || value.Routes != nil {
+				return fmt.Errorf("%w: malformed set tun response", ErrProtocol)
 			}
 		case operationOpenDNS:
 			if value.InterfaceName == "" || value.Resolver == "" || value.MTU != 0 ||

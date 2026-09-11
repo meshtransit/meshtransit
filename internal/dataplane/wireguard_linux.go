@@ -249,3 +249,11 @@ func (d *officialWireGuardDevice) PrepareRelayRegion(regionID int) error {
 
 	return d.bind.PrepareRelayRegion(regionID)
 }
+
+func (d *officialWireGuardDevice) ReplaceRelayPeers(peers []relay.Peer) error {
+	if d == nil || d.bind == nil {
+		return pathdiscovery.ErrTransportClosed
+	}
+
+	return d.bind.ReplaceRelayPeers(peers)
+}

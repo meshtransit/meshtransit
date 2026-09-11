@@ -131,6 +131,64 @@ func TestClientServerOpenTUN(t *testing.T) {
 	if err := creatorState.writer.Close(); err != nil {
 		t.Fatalf("pipe writer Close() error = %v", err)
 	}
+	newRoute := netip.MustParsePrefix("100.64.0.5/32")
+	if err := client.ConfigureTUNRoutes(t.Context(), TUNConfig{
+		Addresses: []netip.Prefix{address},
+		Routes:    []netip.Prefix{newRoute},
+	}); err != nil {
+		t.Fatalf("ConfigureTUNRoutes() error = %v", err)
+	}
+	creatorState = creator.snapshot()
+	if creatorState.updateCalls != 1 ||
+		!slices.Equal(creatorState.previousRoutes, []netip.Prefix{route}) ||
+		!slices.Equal(creatorState.routes, []netip.Prefix{newRoute}) {
+		t.Fatalf(
+			"route update calls=%d previous=%v routes=%v",
+			creatorState.updateCalls,
+			creatorState.previousRoutes,
+			creatorState.routes,
+		)
+	}
+}
+
+func TestClientServerRejectsTUNRouteUpdateWithoutOwnedInterface(t *testing.T) {
+	t.Parallel()
+
+	creator := &fakeTUNCreator{}
+	server, err := newServer(ServerOptions{
+		AllowedUID:      testEffectiveUID(t),
+		InterfaceName:   "mesh0",
+		MTU:             1280,
+		AllowedPrefixes: []netip.Prefix{netip.MustParsePrefix("100.64.0.0/10")},
+		Logger:          slog.New(slog.DiscardHandler),
+	}, creator)
+	if err != nil {
+		t.Fatalf("newServer() error = %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "meshnetd.sock")
+	listener, err := socket.ListenPacket(path)
+	if err != nil {
+		t.Fatalf("ListenPacket() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() { result <- server.Serve(ctx, listener) }()
+	t.Cleanup(func() {
+		cancel()
+		<-result
+	})
+
+	client, err := NewClient(path, time.Second)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	err = client.ConfigureTUNRoutes(t.Context(), TUNConfig{
+		Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.3/32")},
+		Routes:    []netip.Prefix{},
+	})
+	if !errors.Is(err, ErrRemote) || creator.snapshot().updateCalls != 0 {
+		t.Fatalf("ConfigureTUNRoutes() error=%v updates=%d", err, creator.snapshot().updateCalls)
+	}
 }
 
 func TestClientServerDNSLifecycle(t *testing.T) {
@@ -300,18 +358,22 @@ func testEffectiveUID(t *testing.T) uint32 {
 }
 
 type fakeTUNCreator struct {
-	mu        sync.Mutex
-	calls     int
-	writer    *os.File
-	addresses []netip.Prefix
-	routes    []netip.Prefix
+	mu             sync.Mutex
+	calls          int
+	updateCalls    int
+	writer         *os.File
+	addresses      []netip.Prefix
+	previousRoutes []netip.Prefix
+	routes         []netip.Prefix
 }
 
 type fakeTUNCreatorState struct {
-	calls     int
-	writer    *os.File
-	addresses []netip.Prefix
-	routes    []netip.Prefix
+	calls          int
+	updateCalls    int
+	writer         *os.File
+	addresses      []netip.Prefix
+	previousRoutes []netip.Prefix
+	routes         []netip.Prefix
 }
 
 type fakeDNSConfigurator struct {
@@ -378,15 +440,31 @@ func (f *fakeTUNCreator) Open(
 	return reader, nil
 }
 
+func (f *fakeTUNCreator) ReplaceRoutes(
+	_ string,
+	current []netip.Prefix,
+	desired []netip.Prefix,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updateCalls++
+	f.previousRoutes = append([]netip.Prefix(nil), current...)
+	f.routes = append([]netip.Prefix(nil), desired...)
+
+	return nil
+}
+
 func (f *fakeTUNCreator) snapshot() fakeTUNCreatorState {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	return fakeTUNCreatorState{
-		calls:     f.calls,
-		writer:    f.writer,
-		addresses: append([]netip.Prefix{}, f.addresses...),
-		routes:    append([]netip.Prefix{}, f.routes...),
+		calls:          f.calls,
+		updateCalls:    f.updateCalls,
+		writer:         f.writer,
+		addresses:      append([]netip.Prefix{}, f.addresses...),
+		previousRoutes: append([]netip.Prefix{}, f.previousRoutes...),
+		routes:         append([]netip.Prefix{}, f.routes...),
 	}
 }
 

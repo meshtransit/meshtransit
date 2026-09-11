@@ -49,7 +49,7 @@ type Peer struct {
 	Address    netip.Addr
 }
 
-// Config is an immutable-by-convention relay authority for one map revision.
+// Config is a relay topology and its replaceable peer authority.
 type Config struct {
 	PrivateKey Key
 	PublicKey  Key
@@ -120,7 +120,7 @@ var errInvalidConfig = errors.New("relay: invalid configuration")
 func Validate(config Config) (Config, error) {
 	if config.PrivateKey == (Key{}) || config.PublicKey == (Key{}) || config.HomeRegion <= 0 ||
 		len(config.Regions) == 0 || len(config.Regions) > maxRegions ||
-		len(config.Peers) == 0 || len(config.Peers) > maxPeers {
+		len(config.Peers) > maxPeers {
 		return Config{}, errInvalidConfig
 	}
 	home, exists := config.Regions[config.HomeRegion]
@@ -179,6 +179,25 @@ func Validate(config Config) (Config, error) {
 // Fingerprint returns a deterministic public-authority fingerprint. The node
 // private key is deliberately excluded.
 func Fingerprint(config Config) [32]byte {
+	encoded := encodeTopology(config)
+	for _, peer := range config.Peers {
+		encoded.Write(peer.Key[:])
+		writeString(&encoded, strconv.Itoa(peer.HomeRegion))
+		writeString(&encoded, peer.Address.String())
+	}
+
+	return sha256.Sum256(encoded.Bytes())
+}
+
+// TopologyFingerprint identifies the relay transport independently from the
+// peer authorization set that can be replaced on a live pool.
+func TopologyFingerprint(config Config) [32]byte {
+	encoded := encodeTopology(config)
+
+	return sha256.Sum256(encoded.Bytes())
+}
+
+func encodeTopology(config Config) bytes.Buffer {
 	var encoded bytes.Buffer
 	encoded.Write(config.PublicKey[:])
 	writeString(&encoded, strconv.Itoa(config.HomeRegion))
@@ -199,13 +218,8 @@ func Fingerprint(config Config) [32]byte {
 			writeUint64(&encoded, uint64(node.Port))
 		}
 	}
-	for _, peer := range config.Peers {
-		encoded.Write(peer.Key[:])
-		writeString(&encoded, strconv.Itoa(peer.HomeRegion))
-		writeString(&encoded, peer.Address.String())
-	}
 
-	return sha256.Sum256(encoded.Bytes())
+	return encoded
 }
 
 func writeString(buffer *bytes.Buffer, value string) {

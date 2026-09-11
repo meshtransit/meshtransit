@@ -25,10 +25,13 @@ For each validated map, the data plane derives a private relay configuration:
 7. Restore the relay endpoint when that proof expires, the candidate is removed,
    or the direct update is explicitly rolled back.
 
-Changing relay topology, identity, peer-region binding, or overlay identity
-changes the public relay fingerprint and recreates the packet engine. Temporary
-private-key copies are cleared after configuration and never enter that
-fingerprint.
+Changing relay topology or node identity changes the topology fingerprint and
+recreates the packet engine. Peer-region bindings and overlay rate-limit
+identities form a separate authorization fingerprint; compatible changes
+replace that bounded set on the live pool without restarting its connections.
+Queued sends and received packets are checked again against the current set,
+and reverse routes for removed peers are discarded. Temporary private-key
+copies are cleared after configuration and never enter either fingerprint.
 
 ## Transport boundary
 

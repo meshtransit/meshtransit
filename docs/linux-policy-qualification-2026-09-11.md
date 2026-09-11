@@ -155,6 +155,40 @@ for policy churn. The next candidate must retain fail-closed peerless presence,
 replace endpoints atomically across socket generations, bound idle discovery,
 and repeat this exact live transition before promotion.
 
+## Rejected alpha13 repeated-transition gate
+
+`0.1.0~alpha13` fixed the endpoint-withdrawal feedback loop. It was built twice
+from commit `deb43cb361eee138577c4e576e7c9bf242377e1a`; both builds produced the
+same amd64 Debian artifact with SHA-256
+`707051e34936fb380d5a01e8ee472787351af0faffa831b5c6e8f378d4df1bf3`.
+Mixed-version canary traffic and the first all-alpha13 dual-stack baseline
+passed in both directions.
+
+During a default-deny transition, both nodes stayed synchronized and stable at
+one new revision, retained their process IDs with zero restarts, exposed zero
+peers and zero peer routes, and reported the idle data-plane state. The bounded
+policy harness matched all twelve deny expectations with no infrastructure
+errors. Memory stayed flat during that deny phase, at approximately 11.7 MiB
+on `ubuntu-a` and 14.5 MiB on `ubuntu-b`.
+
+The complete repeated-transition gate nevertheless failed. Restoring the exact
+baseline policy increased current memory to approximately 45.5 MiB and 47.6
+MiB. A second default-deny transition increased it again to 68.4 MiB and 65.0
+MiB, and the second restoration ended at approximately 70.0 MiB and 67.4 MiB.
+Control revisions did not oscillate and traffic remained correct, so this was
+not the alpha12 feedback bug. Inspection showed that each legitimate peer-route
+and relay-authority change still closed and recreated the complete userspace
+WireGuard/TUN device. Alpha13 is therefore not qualified for repeated policy
+churn.
+
+The exact baseline policy was restored, IPv4 and IPv6 passed in both
+directions, and the services were restarted one node at a time. Current memory
+returned to approximately 8.8 MiB on each node with the same alpha13 artifact,
+synchronized control, configured DNS, and one authenticated direct peer path.
+The next candidate must update compatible peer, relay-peer, and host-route
+authority in place, then pass multiple deny/restore cycles with bounded memory
+before promotion.
+
 ## Supporting quality gates
 
 The runtime implementation passed the full race-enabled Go test suite, `go

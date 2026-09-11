@@ -233,6 +233,45 @@ func (p *Pool) Send(regionID int, destination Key, packets [][]byte) error {
 	}
 }
 
+// ReplacePeers atomically replaces the bounded peer authorization set while
+// retaining relay connections. Packets already in flight may complete; queued
+// and newly received packets are checked again against the new authority.
+func (p *Pool) ReplacePeers(peers []Peer) error {
+	if p == nil {
+		return ErrClosed
+	}
+	p.lifecycle.Lock()
+	defer p.lifecycle.Unlock()
+	validated, err := Validate(Config{
+		PrivateKey: p.config.PrivateKey,
+		PublicKey:  p.config.PublicKey,
+		HomeRegion: p.config.HomeRegion,
+		Regions:    p.config.Regions,
+		Peers:      peers,
+	})
+	if err != nil {
+		return err
+	}
+	peerByKey := make(map[Key]Peer, len(validated.Peers))
+	for _, peer := range validated.Peers {
+		peerByKey[peer.Key] = peer
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.isClosed {
+		return ErrClosed
+	}
+	p.config.Peers = validated.Peers
+	p.peerByKey = peerByKey
+	for peer := range p.reverseByKey {
+		if _, authorized := peerByKey[peer]; !authorized {
+			delete(p.reverseByKey, peer)
+		}
+	}
+
+	return nil
+}
+
 // PrepareRegion starts an authenticated connection to a control-authorized
 // region without routing packets through it. Callers can inspect Health before
 // publishing a home-region change.
@@ -293,11 +332,18 @@ func (p *Pool) Receive() (Packet, error) {
 		return Packet{}, net.ErrClosed
 	default:
 	}
-	select {
-	case packet := <-receive:
-		return packet, nil
-	case <-done:
-		return Packet{}, net.ErrClosed
+	for {
+		select {
+		case packet := <-receive:
+			p.mu.Lock()
+			_, authorized := p.peerByKey[packet.Source]
+			p.mu.Unlock()
+			if authorized {
+				return packet, nil
+			}
+		case <-done:
+			return Packet{}, net.ErrClosed
+		}
 	}
 }
 
@@ -306,6 +352,8 @@ func (p *Pool) Peer(key Key) (Peer, bool) {
 	if p == nil {
 		return Peer{}, false
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	peer, exists := p.peerByKey[key]
 
 	return peer, exists
@@ -316,6 +364,8 @@ func (p *Pool) Region(id int) (Region, bool) {
 	if p == nil {
 		return Region{}, false
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	region, exists := p.config.Regions[id]
 	region.Nodes = append([]Node{}, region.Nodes...)
 
@@ -556,6 +606,11 @@ func (p *Pool) runConnection(worker *regionWorker, client Client) error {
 			return errors.New("relay: authenticated connection became unresponsive")
 		case request := <-worker.send:
 			p.beginSend(worker, request.bytes)
+			if !p.authorizes(worker, request.destination) {
+				p.finishSend(worker, false)
+
+				continue
+			}
 			for _, packet := range request.packets {
 				if err := client.Send(request.destination, packet); err != nil {
 					p.finishSend(worker, false)
@@ -568,6 +623,19 @@ func (p *Pool) runConnection(worker *regionWorker, client Client) error {
 			p.finishSend(worker, true)
 		}
 	}
+}
+
+func (p *Pool) authorizes(worker *regionWorker, destination Key) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	peer, peerExists := p.peerByKey[destination]
+	if !peerExists || p.workers[worker.region.ID] != worker {
+		return false
+	}
+	reverse := p.reverseByKey[destination]
+
+	return peer.HomeRegion == worker.region.ID ||
+		reverse.regionID == worker.region.ID && reverse.generation == worker.generation
 }
 
 func (p *Pool) runReceiver(
@@ -603,7 +671,10 @@ func (p *Pool) runReceiver(
 			len(event.Data) > MaxPacketSize {
 			continue
 		}
-		if _, exists := p.peerByKey[event.Source]; !exists {
+		p.mu.Lock()
+		_, authorized := p.peerByKey[event.Source]
+		p.mu.Unlock()
+		if !authorized {
 			continue
 		}
 		p.markActivity(worker, true)
@@ -625,7 +696,8 @@ func (p *Pool) runReceiver(
 func (p *Pool) setReverseRegion(peer Key, regionID int, generation uint64) {
 	p.mu.Lock()
 	worker := p.workers[regionID]
-	if worker != nil && worker.generation == generation {
+	_, authorized := p.peerByKey[peer]
+	if authorized && worker != nil && worker.generation == generation {
 		p.reverseByKey[peer] = reverseRoute{regionID: regionID, generation: generation}
 	}
 	p.mu.Unlock()

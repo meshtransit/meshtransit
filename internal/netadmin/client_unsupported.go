@@ -20,6 +20,11 @@ func (c *Client) OpenTUN(_ context.Context, _ TUNConfig) (TUN, error) {
 	return TUN{}, ErrUnsupported
 }
 
+// ConfigureTUNRoutes reports that privileged route updates are Linux-only.
+func (c *Client) ConfigureTUNRoutes(_ context.Context, _ TUNConfig) error {
+	return ErrUnsupported
+}
+
 // OpenDNS reports that the privileged DNS link is Linux-only.
 func (c *Client) OpenDNS(_ context.Context) (DNSLink, error) {
 	return DNSLink{}, ErrUnsupported

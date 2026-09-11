@@ -50,6 +50,11 @@ All notable user-visible changes will be documented in this file.
 
 ### Changed
 
+- Compatible peer and policy changes now replace WireGuard peers, relay peer
+  authority, and helper-confined host routes without recreating the TUN or UDP
+  transport. The privileged route operation is bound to an interface opened by
+  the same helper generation, requires unchanged self addresses, and rolls
+  completed netlink changes back on failure.
 - Peerless reduced maps now install an empty peer and route configuration while
   retaining the encrypted UDP presence transport. Socket-generation changes
   replace endpoint advertisements only after current-socket discovery, and

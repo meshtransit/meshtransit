@@ -31,6 +31,14 @@ func encodeMessage(value any) ([]byte, error) {
 }
 
 func newOpenTUNRequest(config TUNConfig) (request, TUNConfig, error) {
+	return newTUNRequest(operationOpenTUN, config)
+}
+
+func newSetTUNRequest(config TUNConfig) (request, TUNConfig, error) {
+	return newTUNRequest(operationSetTUN, config)
+}
+
+func newTUNRequest(operation string, config TUNConfig) (request, TUNConfig, error) {
 	normalized, err := normalizeTUNConfig(config)
 	if err != nil {
 		return request{}, TUNConfig{}, err
@@ -38,7 +46,7 @@ func newOpenTUNRequest(config TUNConfig) (request, TUNConfig, error) {
 
 	return request{
 		Version:   protocolVersion,
-		Operation: operationOpenTUN,
+		Operation: operation,
 		Addresses: prefixStrings(normalized.Addresses),
 		Routes:    prefixStrings(normalized.Routes),
 	}, normalized, nil

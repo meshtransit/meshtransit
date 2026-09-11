@@ -26,7 +26,7 @@ the control-signed STUN map. `--advertise-endpoint` remains an optional,
 repeatable bootstrap or diagnostic input; it is not required for direct-path
 startup.
 
-`meshnetd` fixes the allowed UID, interface names, MTU, overlay pools, DNS endpoint, and `resolvectl` path at startup. The protocol contains only bounded TUN lifecycle and per-link DNS operations; it cannot carry commands, arbitrary paths, or keys. The helper rejects subnets, duplicates, self-route overlap, every prefix outside its root-configured pools, and non-canonical DNS domains. It returns descriptors through `SCM_RIGHTS` and never receives control or node private keys. `meshd` verifies TUN responses byte-for-byte, starts userspace WireGuard, and recreates or tears down non-persistent interfaces as signed state changes.
+`meshnetd` fixes the allowed UID, interface names, MTU, overlay pools, DNS endpoint, and `resolvectl` path at startup. The protocol contains only bounded TUN lifecycle, host-route replacement, and per-link DNS operations; it cannot carry commands, arbitrary paths, or keys. The helper rejects subnets, duplicates, self-route overlap, every prefix outside its root-configured pools, and non-canonical DNS domains. It returns descriptors through `SCM_RIGHTS` and never receives control or node private keys. `meshd` verifies TUN responses byte-for-byte, starts userspace WireGuard, and replaces peer routes on the live helper-owned interface when self identity and relay topology remain compatible. Address or relay-topology changes still recreate the non-persistent interface fail closed.
 
 MagicDNS is separately opt-in and requires `systemd-resolved` plus a root-owned,
 non-writable `/usr/bin/resolvectl`:

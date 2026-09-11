@@ -96,6 +96,28 @@ func (c *Client) OpenTUN(ctx context.Context, config TUNConfig) (TUN, error) {
 	}, nil
 }
 
+// ConfigureTUNRoutes replaces routes on the helper-owned data interface.
+// Addresses must exactly match the interface opened earlier by this helper.
+func (c *Client) ConfigureTUNRoutes(ctx context.Context, config TUNConfig) error {
+	if c == nil {
+		return errors.New("netadmin: client is not initialized")
+	}
+	requestValue, _, err := newSetTUNRequest(config)
+	if err != nil {
+		return err
+	}
+	_, descriptors, err := c.exchange(ctx, requestValue)
+	closeDescriptors(descriptors)
+	if err != nil {
+		return err
+	}
+	if len(descriptors) != 0 {
+		return fmt.Errorf("%w: set tun response included descriptors", ErrProtocol)
+	}
+
+	return nil
+}
+
 // OpenDNS opens the fixed non-persistent DNS link configured by meshnetd.
 func (c *Client) OpenDNS(ctx context.Context) (DNSLink, error) {
 	if c == nil {

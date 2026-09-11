@@ -21,6 +21,20 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsPeerlessTopology(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig()
+	config.Peers = nil
+	validated, err := Validate(config)
+	if err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if len(validated.Peers) != 0 || TopologyFingerprint(validated) == ([32]byte{}) {
+		t.Fatalf("validated peerless topology = %#v", validated)
+	}
+}
+
 func TestValidateRejectsInvalidAuthority(t *testing.T) {
 	t.Parallel()
 
@@ -100,6 +114,14 @@ func TestFingerprintIsDeterministicAndExcludesPrivateKey(t *testing.T) {
 	second.Regions[1] = region
 	if Fingerprint(first) == Fingerprint(second) {
 		t.Fatal("Fingerprint() ignored public relay authority change")
+	}
+	peerChanged := testConfig()
+	peerChanged.Peers = nil
+	if Fingerprint(first) == Fingerprint(peerChanged) {
+		t.Fatal("Fingerprint() ignored peer authority change")
+	}
+	if TopologyFingerprint(first) != TopologyFingerprint(peerChanged) {
+		t.Fatal("TopologyFingerprint() changed with peer authority")
 	}
 }
 

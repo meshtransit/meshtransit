@@ -111,6 +111,10 @@ type relayManagingDevice interface {
 	PrepareRelayRegion(int) error
 }
 
+type relayConfiguringDevice interface {
+	ReplaceRelayPeers([]relay.Peer) error
+}
+
 type wireGuardFactory interface {
 	New(
 		context.Context,
@@ -146,6 +150,7 @@ type wireGuardPlan struct {
 	pendingEndpoints  bool
 	relayConfig       *relay.Config
 	relayFingerprint  [32]byte
+	relayTopology     [32]byte
 	hasRelayFallback  bool
 }
 
@@ -158,6 +163,7 @@ type WireGuardEngine struct {
 	device            wireGuardDevice
 	configurationHash [32]byte
 	relayFingerprint  [32]byte
+	relayTopology     [32]byte
 	appliedRevision   uint64
 	peers             map[uint64]wireGuardPeerState
 	addresses         []netip.Prefix
@@ -243,32 +249,74 @@ func (e *WireGuardEngine) Apply(
 	}
 	defer plan.clearSecrets()
 
+	routesChanged := false
 	if e.device != nil {
-		if !slices.Equal(e.addresses, plan.addresses) ||
-			!slices.Equal(e.routes, plan.routes) ||
-			e.relayFingerprint != plan.relayFingerprint {
+		if !slices.Equal(e.addresses, plan.addresses) || e.relayTopology != plan.relayTopology {
 			_ = e.Close()
+		} else if !slices.Equal(e.routes, plan.routes) {
+			if _, supported := e.opener.(tunRouteConfigurer); !supported {
+				_ = e.Close()
+			} else {
+				routesChanged = true
+			}
 		}
 	}
 	if e.device != nil {
-		if e.configurationHash == plan.configurationHash &&
-			equalPeerBaseConfiguration(e.peers, plan.peers) {
+		relayChanged := e.relayFingerprint != plan.relayFingerprint
+		relayReplaced := false
+		baseCompatible := e.configurationHash == plan.configurationHash &&
+			equalPeerBaseConfiguration(e.peers, plan.peers)
+		if baseCompatible && !routesChanged {
 			if e.appliedRevision == snapshot.Revision &&
-				equalPeerEndpointAuthority(e.peers, plan.peers) {
+				equalPeerEndpointAuthority(e.peers, plan.peers) && !relayChanged {
 				return plan.state(), nil
+			}
+			if relayChanged {
+				if err := e.replaceRelayPeers(plan); err != nil {
+					_ = e.Close()
+
+					return StateFailed, err
+				}
+				relayReplaced = true
 			}
 			advanced, err := e.advanceCompatiblePlan(snapshot.Revision, plan.peers)
 			if err != nil {
 				return StateFailed, err
 			}
 			if advanced {
+				e.relayFingerprint = plan.relayFingerprint
+				e.relayTopology = plan.relayTopology
+
 				return plan.state(), nil
+			}
+		}
+		if relayChanged && !relayReplaced {
+			if err := e.replaceRelayPeers(plan); err != nil {
+				_ = e.Close()
+
+				return StateFailed, err
 			}
 		}
 		if err := e.device.Configure(bytes.NewReader(plan.configuration)); err != nil {
 			_ = e.Close()
 
 			return StateFailed, errors.New("dataplane: applying wireguard peer configuration failed")
+		}
+		if routesChanged {
+			configurer, supported := e.opener.(tunRouteConfigurer)
+			if !supported {
+				_ = e.Close()
+
+				return StateFailed, errors.New("dataplane: live tun route update is unavailable")
+			}
+			if err := configurer.ConfigureTUNRoutes(ctx, netadmin.TUNConfig{
+				Addresses: append([]netip.Prefix(nil), plan.addresses...),
+				Routes:    append([]netip.Prefix(nil), plan.routes...),
+			}); err != nil {
+				_ = e.Close()
+
+				return StateFailed, fmt.Errorf("dataplane: replacing tun routes: %w", err)
+			}
 		}
 		e.adoptPlan(snapshot.Revision, plan)
 
@@ -316,6 +364,18 @@ func (e *WireGuardEngine) Apply(
 	e.adoptPlan(snapshot.Revision, plan)
 
 	return plan.state(), nil
+}
+
+func (e *WireGuardEngine) replaceRelayPeers(plan wireGuardPlan) error {
+	device, supported := e.device.(relayConfiguringDevice)
+	if !supported || plan.relayConfig == nil {
+		return errors.New("dataplane: live relay authority update is unavailable")
+	}
+	if err := device.ReplaceRelayPeers(append([]relay.Peer(nil), plan.relayConfig.Peers...)); err != nil {
+		return errors.New("dataplane: replacing relay peer authority failed")
+	}
+
+	return nil
 }
 
 func (p wireGuardPlan) state() State {
@@ -665,6 +725,7 @@ func (e *WireGuardEngine) configurePeerEndpoint(
 func (e *WireGuardEngine) adoptPlan(revision uint64, plan wireGuardPlan) {
 	e.configurationHash = plan.configurationHash
 	e.relayFingerprint = plan.relayFingerprint
+	e.relayTopology = plan.relayTopology
 	e.appliedRevision = revision
 	e.addresses = append([]netip.Prefix(nil), plan.addresses...)
 	e.routes = append([]netip.Prefix(nil), plan.routes...)
@@ -691,6 +752,7 @@ func (e *WireGuardEngine) Close() error {
 	e.device = nil
 	e.configurationHash = [32]byte{}
 	e.relayFingerprint = [32]byte{}
+	e.relayTopology = [32]byte{}
 	e.appliedRevision = 0
 	e.peers = nil
 	e.addresses = nil
@@ -883,10 +945,11 @@ func buildWireGuardPlan(
 		peers:             plannedPeers,
 		pendingEndpoints:  pendingEndpoints,
 		relayConfig:       relayConfig,
-		hasRelayFallback:  relayConfig != nil,
+		hasRelayFallback:  relayConfig != nil && len(relayConfig.Peers) != 0,
 	}
 	if relayConfig != nil {
 		plan.relayFingerprint = relay.Fingerprint(*relayConfig)
+		plan.relayTopology = relay.TopologyFingerprint(*relayConfig)
 	}
 
 	return plan, nil
@@ -980,11 +1043,6 @@ func buildRelayConfig(
 			HomeRegion: peerRegion,
 			Address:    address,
 		})
-	}
-	if len(config.Peers) == 0 {
-		clear(config.PrivateKey[:])
-
-		return nil, nil
 	}
 	validated, err := relay.Validate(config)
 	clear(config.PrivateKey[:])

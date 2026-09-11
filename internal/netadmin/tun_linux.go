@@ -17,6 +17,26 @@ const tunDevicePath = "/dev/net/tun"
 
 type kernelTUNCreator struct{}
 
+type routeConfigurer interface {
+	LinkByName(string) (netlink.Link, error)
+	Add(*netlink.Route) error
+	Delete(*netlink.Route) error
+}
+
+type kernelRouteConfigurer struct{}
+
+func (kernelRouteConfigurer) LinkByName(name string) (netlink.Link, error) {
+	return netlink.LinkByName(name)
+}
+
+func (kernelRouteConfigurer) Add(route *netlink.Route) error {
+	return netlink.RouteAdd(route)
+}
+
+func (kernelRouteConfigurer) Delete(route *netlink.Route) error {
+	return netlink.RouteDel(route)
+}
+
 type linkConfigurer interface {
 	LinkByName(string) (netlink.Link, error)
 	SetMTU(netlink.Link, int) error
@@ -91,6 +111,91 @@ func (kernelTUNCreator) Open(
 	succeeded = true
 
 	return file, nil
+}
+
+func (kernelTUNCreator) ReplaceRoutes(
+	name string,
+	current []netip.Prefix,
+	desired []netip.Prefix,
+) error {
+	return replaceRoutesWith(kernelRouteConfigurer{}, name, current, desired)
+}
+
+func replaceRoutesWith(
+	configurer routeConfigurer,
+	name string,
+	current []netip.Prefix,
+	desired []netip.Prefix,
+) error {
+	link, err := configurer.LinkByName(name)
+	if err != nil {
+		return fmt.Errorf("finding tun link for route update: %w", err)
+	}
+	if link == nil || link.Attrs() == nil || link.Attrs().Index <= 0 || link.Type() != "tuntap" {
+		return errors.New("tun route update target is invalid")
+	}
+	added := prefixDifference(desired, current)
+	removed := prefixDifference(current, desired)
+	type completedOperation struct {
+		prefix netip.Prefix
+		added  bool
+	}
+	completed := make([]completedOperation, 0, len(added)+len(removed))
+	apply := func(prefix netip.Prefix, add bool) error {
+		route := &netlink.Route{
+			LinkIndex: link.Attrs().Index,
+			Dst:       prefixIPNet(prefix),
+			Scope:     netlink.SCOPE_LINK,
+		}
+		if add {
+			return configurer.Add(route)
+		}
+
+		return configurer.Delete(route)
+	}
+	rollback := func(cause error) error {
+		var rollbackErrors []error
+		for index := len(completed) - 1; index >= 0; index-- {
+			operation := completed[index]
+			if rollbackErr := apply(operation.prefix, !operation.added); rollbackErr != nil {
+				rollbackErrors = append(
+					rollbackErrors,
+					fmt.Errorf("rolling back tun route: %w", rollbackErr),
+				)
+			}
+		}
+
+		return errors.Join(append([]error{cause}, rollbackErrors...)...)
+	}
+	for _, prefix := range added {
+		if err := apply(prefix, true); err != nil {
+			return rollback(fmt.Errorf("adding tun route: %w", err))
+		}
+		completed = append(completed, completedOperation{prefix: prefix, added: true})
+	}
+	for _, prefix := range removed {
+		if err := apply(prefix, false); err != nil {
+			return rollback(fmt.Errorf("removing tun route: %w", err))
+		}
+		completed = append(completed, completedOperation{prefix: prefix})
+	}
+
+	return nil
+}
+
+func prefixDifference(left, right []netip.Prefix) []netip.Prefix {
+	rightSet := make(map[netip.Prefix]struct{}, len(right))
+	for _, prefix := range right {
+		rightSet[prefix] = struct{}{}
+	}
+	difference := make([]netip.Prefix, 0, len(left))
+	for _, prefix := range left {
+		if _, exists := rightSet[prefix]; !exists {
+			difference = append(difference, prefix)
+		}
+	}
+
+	return difference
 }
 
 func configureAddressesAndRoutes(

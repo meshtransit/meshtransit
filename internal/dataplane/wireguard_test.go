@@ -70,6 +70,7 @@ func TestWireGuardEngineRetainsPresenceTransportWithoutPeers(t *testing.T) {
 	t.Parallel()
 
 	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot = addTestRelay(snapshot)
 	opener := &wireGuardTUNOpener{}
 	device := &fakeWireGuardDevice{
 		discoverySocket: pathdiscovery.Socket{Port: 41641, Generation: 1},
@@ -101,12 +102,16 @@ func TestWireGuardEngineRetainsPresenceTransportWithoutPeers(t *testing.T) {
 	if paths := engine.PeerPaths(); !paths.Available || paths.PeerCount != 0 {
 		t.Fatalf("peerless paths = %#v", paths)
 	}
-	if opener.calls != 2 || device.closeCalls != 1 || device.upCalls != 2 {
+	if opener.calls != 1 || opener.updateCalls != 1 || device.closeCalls != 0 ||
+		device.upCalls != 1 || device.relayUpdateCalls != 1 || len(device.relayPeers) != 0 {
 		t.Fatalf(
-			"peerless transition calls open=%d close=%d up=%d",
+			"peerless transition calls open=%d update=%d close=%d up=%d relay=%d peers=%d",
 			opener.calls,
+			opener.updateCalls,
 			device.closeCalls,
 			device.upCalls,
+			device.relayUpdateCalls,
+			len(device.relayPeers),
 		)
 	}
 	if len(opener.config.Routes) != 0 || !slices.Equal(opener.config.Addresses, peerless.Self.Addresses) {
@@ -117,17 +122,87 @@ func TestWireGuardEngineRetainsPresenceTransportWithoutPeers(t *testing.T) {
 	if state, err := engine.Apply(t.Context(), peerless, privateKey); err != nil || state != StateIdle {
 		t.Fatalf("repeat Apply(peerless map) = %q, %v", state, err)
 	}
-	if opener.calls != 2 || device.closeCalls != 1 || device.configureCalls != 2 {
+	if opener.calls != 1 || opener.updateCalls != 1 || device.closeCalls != 0 ||
+		device.configureCalls != 2 || device.relayUpdateCalls != 1 {
 		t.Fatalf(
-			"repeat peerless calls open=%d close=%d configure=%d",
+			"repeat peerless calls open=%d update=%d close=%d configure=%d relay=%d",
 			opener.calls,
+			opener.updateCalls,
 			device.closeCalls,
 			device.configureCalls,
+			device.relayUpdateCalls,
+		)
+	}
+	snapshot.Revision = peerless.Revision + 1
+	if state, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil ||
+		state != StateEncryptedRelay {
+		t.Fatalf("Apply(restored peer map) = %q, %v", state, err)
+	}
+	if opener.calls != 1 || opener.updateCalls != 2 || device.closeCalls != 0 ||
+		device.configureCalls != 3 || device.relayUpdateCalls != 2 || len(device.relayPeers) != 1 {
+		t.Fatalf(
+			"restored transition calls open=%d update=%d close=%d configure=%d relay=%d peers=%d",
+			opener.calls,
+			opener.updateCalls,
+			device.closeCalls,
+			device.configureCalls,
+			device.relayUpdateCalls,
+			len(device.relayPeers),
 		)
 	}
 
 	if err := engine.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+func TestWireGuardEngineBoundsRepeatedPeerlessTransitions(t *testing.T) {
+	t.Parallel()
+
+	privateKey, peerMap := testWireGuardSnapshot(t)
+	peerMap = addTestRelay(peerMap)
+	peerlessMap := peerMap
+	peerlessMap.Peers = nil
+	peerlessMap.Policy = nil
+	opener := &wireGuardTUNOpener{}
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		opener,
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), peerMap, privateKey); err != nil {
+		t.Fatalf("initial Apply() error = %v", err)
+	}
+	const cycles = 100
+	for cycle := range cycles {
+		peerlessMap.Revision = uint64(cycle*2 + 2)
+		if state, err := engine.Apply(t.Context(), peerlessMap, privateKey); err != nil ||
+			state != StateIdle {
+			t.Fatalf("cycle %d peerless Apply() = %q, %v", cycle, state, err)
+		}
+		peerMap.Revision = uint64(cycle*2 + 3)
+		if state, err := engine.Apply(t.Context(), peerMap, privateKey); err != nil ||
+			state != StateEncryptedRelay {
+			t.Fatalf("cycle %d peer Apply() = %q, %v", cycle, state, err)
+		}
+	}
+	if opener.calls != 1 || opener.updateCalls != cycles*2 || device.closeCalls != 0 ||
+		device.upCalls != 1 || device.configureCalls != cycles*2+1 ||
+		device.relayUpdateCalls != cycles*2 {
+		t.Fatalf(
+			"repeated transitions open=%d update=%d close=%d up=%d configure=%d relay=%d",
+			opener.calls,
+			opener.updateCalls,
+			device.closeCalls,
+			device.upCalls,
+			device.configureCalls,
+			device.relayUpdateCalls,
+		)
 	}
 }
 
@@ -558,7 +633,7 @@ func TestWireGuardEngineClosesAfterPeerEndpointConfigureFailure(t *testing.T) {
 	}
 }
 
-func TestWireGuardEngineReopensTUNWhenSignedRoutesChange(t *testing.T) {
+func TestWireGuardEngineReplacesSignedRoutesInPlace(t *testing.T) {
 	t.Parallel()
 
 	privateKey, snapshot := testWireGuardSnapshot(t)
@@ -584,16 +659,56 @@ func TestWireGuardEngineReopensTUNWhenSignedRoutesChange(t *testing.T) {
 	if state, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil || state != StateEncrypted {
 		t.Fatalf("changed Apply() = %q, %v", state, err)
 	}
-	if opener.calls != 2 || device.closeCalls != 1 || device.upCalls != 2 {
+	if opener.calls != 1 || opener.updateCalls != 1 || device.closeCalls != 0 ||
+		device.upCalls != 1 {
 		t.Fatalf(
-			"changed calls open=%d close=%d up=%d",
+			"changed calls open=%d update=%d close=%d up=%d",
 			opener.calls,
+			opener.updateCalls,
 			device.closeCalls,
 			device.upCalls,
 		)
 	}
 	if !slices.Equal(opener.config.Routes, []netip.Prefix{newRoute}) {
 		t.Fatalf("changed helper routes = %#v", opener.config.Routes)
+	}
+}
+
+func TestWireGuardEngineFailsClosedWhenRouteReplacementFails(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	opener := &wireGuardTUNOpener{}
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		opener,
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("initial Apply() error = %v", err)
+	}
+	opener.updateErr = errors.New("injected route failure")
+	snapshot.Revision++
+	snapshot.Peers = nil
+	snapshot.Policy = nil
+	state, err := engine.Apply(t.Context(), snapshot, privateKey)
+	if err == nil || state != StateFailed {
+		t.Fatalf("Apply() = %q, %v, want failed", state, err)
+	}
+	if opener.calls != 1 || opener.updateCalls != 1 || device.closeCalls != 1 ||
+		engine.device != nil {
+		t.Fatalf(
+			"failed transition open=%d update=%d close=%d device=%#v",
+			opener.calls,
+			opener.updateCalls,
+			device.closeCalls,
+			engine.device,
+		)
 	}
 }
 
@@ -1239,8 +1354,26 @@ func testWireGuardSnapshot(t *testing.T) (NodePrivateKey, networkmap.Snapshot) {
 }
 
 type wireGuardTUNOpener struct {
-	calls  int
-	config netadmin.TUNConfig
+	calls       int
+	updateCalls int
+	updateErr   error
+	config      netadmin.TUNConfig
+}
+
+func (o *wireGuardTUNOpener) ConfigureTUNRoutes(
+	_ context.Context,
+	config netadmin.TUNConfig,
+) error {
+	o.updateCalls++
+	if o.updateErr != nil {
+		return o.updateErr
+	}
+	o.config = netadmin.TUNConfig{
+		Addresses: append([]netip.Prefix{}, config.Addresses...),
+		Routes:    append([]netip.Prefix{}, config.Routes...),
+	}
+
+	return nil
 }
 
 func (o *wireGuardTUNOpener) OpenTUN(
@@ -1316,6 +1449,9 @@ type fakeWireGuardDevice struct {
 	peerDestination  netip.AddrPort
 	relayHealth      relay.HealthSnapshot
 	preparedRelays   []int
+	relayPeers       []relay.Peer
+	relayUpdateCalls int
+	relayUpdateErr   error
 }
 
 func (d *fakeWireGuardDevice) Configure(configuration io.Reader) error {
@@ -1385,4 +1521,11 @@ func (d *fakeWireGuardDevice) PrepareRelayRegion(regionID int) error {
 	d.preparedRelays = append(d.preparedRelays, regionID)
 
 	return nil
+}
+
+func (d *fakeWireGuardDevice) ReplaceRelayPeers(peers []relay.Peer) error {
+	d.relayUpdateCalls++
+	d.relayPeers = append([]relay.Peer(nil), peers...)
+
+	return d.relayUpdateErr
 }
