@@ -44,6 +44,15 @@ assert_rejected "${harness}" __validate-port 65536
 [[ "$("${harness}" __classify-ping-probe 2)" == deny ]]
 [[ "$("${harness}" __classify-ping-probe 255)" == error ]]
 
+status_with_prefixes='{"self_addresses":["100.64.0.5/32","fd7a:115c:a1e0::6/128"]}'
+"${harness}" __status-has-addresses \
+  "${status_with_prefixes}" 100.64.0.5 fd7a:115c:a1e0::6
+assert_rejected "${harness}" __status-has-addresses \
+  "${status_with_prefixes}" 100.64.0.6 fd7a:115c:a1e0::6
+assert_rejected "${harness}" __status-has-addresses \
+  '{"self_addresses":["100.64.0.5","fd7a:115c:a1e0::6"]}' \
+  100.64.0.5 fd7a:115c:a1e0::6
+
 common_arguments=(
   --node-a-ssh root@192.0.2.10
   --node-b-ssh root@192.0.2.11

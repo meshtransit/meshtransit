@@ -203,7 +203,7 @@ status_has_addresses() {
   local ipv4="$2"
   local ipv6="$3"
 
-  jq -e --arg ipv4 "${ipv4}" --arg ipv6 "${ipv6}" '
+  jq -e --arg ipv4 "${ipv4}/32" --arg ipv6 "${ipv6}/128" '
     (.self_addresses | index($ipv4)) != null and
     (.self_addresses | index($ipv6)) != null
   ' >/dev/null <<<"${status}"
@@ -715,6 +715,12 @@ fi
 if [[ "${1:-}" == __classify-ping-probe ]]; then
   [[ $# -eq 2 ]] || fail "__classify-ping-probe requires one value"
   classify_ping_probe "$2"
+  exit
+fi
+
+if [[ "${1:-}" == __status-has-addresses ]]; then
+  [[ $# -eq 4 ]] || fail "__status-has-addresses requires status, IPv4, and IPv6 values"
+  status_has_addresses "$2" "$3" "$4"
   exit
 fi
 
