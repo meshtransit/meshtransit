@@ -92,11 +92,12 @@ direct-loss fallback and split-DNS cleanup/recovery evidence plus complete live
 bidirectional host-policy matrices on alpha10 and two repeatable alpha15
 samples. Alpha15 also has one bounded passing restart scenario for each service
 on each node, one passing reboot sample per node, and one passing controlled
-network-change sample per node with no packet loss. It does not yet have a
-signed artifact pipeline, IPv6-only underlay evidence, real multi-uplink
-migration qualification, or a long-duration qualification suite. See
-[linux-policy-qualification-2026-09-11.md](linux-policy-qualification-2026-09-11.md)
-for the bounded alpha evidence and its limitations.
+network-change sample per node with no packet loss. Its direct-loss matrix also
+has one passing relay-fallback and direct-restoration sample per node. It does
+not yet have a signed artifact pipeline, IPv6-only underlay evidence, real
+multi-uplink migration qualification, or a long-duration qualification suite.
+See [linux-qualification.md](linux-qualification.md) for the bounded alpha
+evidence and its limitations.
 Windows and macOS deny local API access without an unsafe development override
 and do not have native tunnel, DNS, or installer activation.
 

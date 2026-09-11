@@ -52,6 +52,35 @@ establish the release-candidate p95 target.
 - The longest observed disruption was five 200-millisecond probe sequences.
   Total loss includes the intentional direct-path failure interval.
 
+## Alpha15 validation sample
+
+After the packet-path, TUN lifecycle, and live-update fixes were combined in
+`0.1.0~alpha15`, the scenario was repeated once on each node using the same
+immutable Debian package as the other alpha15 qualification matrices.
+
+- Runtime commit: `3e6ed3aaadf228e248a5158f2a8cb87d85f80e23`
+- Artifact SHA-256:
+  `1766c157059c6b70918c49a4878767f3b38418316be3f762bf45e82b8ae0ac82`
+- Harness schema: `meshtransit.linux-relay-fallback-qualification/v1`
+- Relay-fallback deadline: 10 seconds
+- Direct-recovery deadline: 15 seconds
+
+| Node | Relay observed | Direct restored | First IPv4/IPv6 reply | Maximum consecutive loss | Total loss per family | Dropped UDP (out/in) | Result |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `ubuntu-b` | 5,809 ms | 2,771 ms | 6,346 / 6,348 ms | 5 | 8.7719% | 19 / 6 | pass |
+| `ubuntu-a` | 4,871 ms | 2,585 ms | 5,021 / 5,020 ms | 4 | 6.7797% | 17 / 6 | pass |
+
+Both address families exchanged traffic while aggregate status selected relay.
+After rollback, the continuous streams stabilized within 71 milliseconds and
+ended with at least 33 consecutive replies. Independent post-run inspection
+confirmed that `meshd_relay_qual` was absent, the original default route was
+unchanged, peer routes still used `mesh0`, both services remained active,
+MagicDNS and dual-stack traffic were healthy, and the bounded warning-level
+journal query returned no entries.
+
+The redacted reports and checksum manifest are retained in
+[`docs/evidence/linux-relay-fallback-alpha15-s1`](evidence/linux-relay-fallback-alpha15-s1).
+
 ## Limitations and next evidence
 
 The nodes share a cloud environment and the fault blocks an explicit set of

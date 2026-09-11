@@ -230,11 +230,12 @@ counters, and timings. Raw endpoint and overlay addresses are never emitted;
 temporary probe logs are deleted with the mode-`0700` directory.
 
 Reverse node and peer inputs and repeat the scenario on the second host. Never
-run it concurrently on both ends of the same peer relationship. The first
-two-node repeatability evidence is recorded in
-[linux-relay-fallback-qualification-2026-09-11.md](linux-relay-fallback-qualification-2026-09-11.md).
-It is Linux alpha evidence and does not qualify an IPv6-only underlay or the
-release-candidate p95 target.
+run it concurrently on both ends of the same peer relationship. The initial
+repeatability matrix and the later two-node alpha15 validation are recorded in
+[linux-relay-fallback-qualification-2026-09-11.md](linux-relay-fallback-qualification-2026-09-11.md),
+with redacted alpha15 reports retained under `docs/evidence`. They are Linux
+alpha evidence and do not qualify an IPv6-only underlay or the release-candidate
+p95 target.
 
 ## Run a DNS lifecycle scenario
 
