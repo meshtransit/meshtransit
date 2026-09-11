@@ -88,9 +88,12 @@ The Linux packet and DNS paths remain explicitly marked as POCs. Linux has a
 reproducible Debian package, lifecycle contract, and bounded restart, reboot,
 controlled interface-change, relay-fallback, split-DNS, and host-policy
 qualification harnesses. The two-host Linux alpha topology has repeatable direct-loss fallback
-and split-DNS cleanup/recovery evidence, but does not yet have a signed artifact
-pipeline, IPv6-only underlay evidence, real multi-uplink migration qualification,
-or a long-duration qualification suite.
+and split-DNS cleanup/recovery evidence plus one complete live bidirectional
+host-policy matrix. It does not yet have repeated policy-matrix samples, a
+signed artifact pipeline, IPv6-only underlay evidence, real multi-uplink
+migration qualification, or a long-duration qualification suite. See
+[linux-policy-qualification-2026-09-11.md](linux-policy-qualification-2026-09-11.md)
+for the bounded alpha evidence and its limitations.
 Windows and macOS deny local API access without an unsafe development override
 and do not have native tunnel, DNS, or installer activation.
 

@@ -302,9 +302,12 @@ tools/qualification/linux-policy.sh \
 
 Any expected allow requires a visible encrypted peer path and exact host routes
 on both nodes. An all-deny phase accepts a reduced map with no visible peer so
-default deny remains testable. Both services, the data interface, registered
-identity, synchronized control session, exact self addresses, and a valid
-policy revision remain mandatory in every phase.
+default deny remains testable. Both services, registered identity, synchronized
+control session, exact self addresses, and a valid policy revision remain
+mandatory in every phase. A phase with an expected allow additionally requires
+the data interface and encrypted peer path. A deny-only phase permits the
+healthy `offline`/`idle` state and an absent data interface when the reduced map
+removes every authorized peer path.
 
 TCP and UDP run over IPv4 and IPv6 with a fixed-format random challenge served
 under the unprivileged `meshd` identity. ICMP probes use distinct echo
@@ -312,10 +315,19 @@ identifiers for each direction, preventing a reply tracked for one direction
 from authorizing the reverse test. If an all-deny reduced map has no mesh route,
 the corresponding probes are not sent through the underlay default route; the
 report records that route absence and exit code `90` as the denial mechanism.
+If a deny-only map removes a source address or inbound route during listener
+startup, the harness re-checks the affected route before accepting the
+transition as denial evidence. A missing listener while its inbound route
+remains is still an infrastructure failure.
 The report schema is `meshtransit.linux-policy-qualification/v1`. Reports omit
 SSH destinations, overlay addresses, policy contents, raw status, and payloads.
 See [policy.md](policy.md) for the complete enforcement and staged rollback
 contract.
+
+The first bounded two-node matrix is recorded in
+[linux-policy-qualification-2026-09-11.md](linux-policy-qualification-2026-09-11.md).
+It is Linux alpha POC evidence for one artifact and topology, not the repeated
+sample set required for release-candidate qualification.
 
 ## Local validation
 
