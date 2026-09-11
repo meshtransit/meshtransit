@@ -144,6 +144,13 @@ process IDs, zero systemd restarts, and no warning-level journal entries. The
 redacted aggregate report is retained in
 [`docs/evidence/linux-dns-alpha16-upstream-failure-s1`](evidence/linux-dns-alpha16-upstream-failure-s1).
 
+A separate alpha16 crash-recovery matrix killed `meshd` with `SIGKILL` on both
+nodes. The dedicated link, UDP/TCP listeners, and per-link resolved state were
+observed absent in 31–60 milliseconds before systemd rebuilt them. Exact
+MagicDNS and stable dual-stack traffic recovered within the 20-second gate.
+The four daemon/helper reports are retained in
+[`docs/evidence/linux-crash-recovery-alpha16-s1`](evidence/linux-crash-recovery-alpha16-s1).
+
 ## Interpretation and release-candidate limits
 
 This evidence demonstrates installed-host authoritative resolution, UDP/TCP

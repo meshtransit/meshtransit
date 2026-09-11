@@ -1,6 +1,7 @@
 # Linux restart qualification — 2026-09-11 UTC
 
-Status: bounded Linux alpha evidence, not p95 or release-candidate evidence.
+Status: bounded Linux alpha restart and crash-recovery evidence, not p95 or
+release-candidate evidence.
 
 ## Scope
 
@@ -53,3 +54,45 @@ combination in the current topology. It does not establish the release target's
 p95 latency or 72-hour reliability requirement. Repeated restart samples,
 reboot recovery, fault injection, and the remaining native Linux matrix are
 separate gates.
+
+## Alpha16 abrupt-termination matrix
+
+The immutable `0.1.0~alpha16` Debian package was then tested with `SIGKILL`
+instead of a graceful service restart. The same action was applied separately
+to `meshd.service` and `meshnetd.service` on each node while the peer stayed
+healthy.
+
+- Runtime commit: `fa246a10468b831b9cb83d29b1f46497a54ac20b`
+- Artifact SHA-256:
+  `51b32b18380122522e980812288fdedaa6efbf3f6d39823ece29be13b25ec159`
+- Harness schema: `meshtransit.linux-crash-recovery-qualification/v1`
+- Readiness deadline: 20 seconds
+- Traffic: concurrent IPv4 and IPv6 ICMP at 200-millisecond pacing
+- Stability tail: five seconds with at least three consecutive replies
+
+| Node | Killed service | DNS cleanup | Full readiness | IPv4 stable | IPv6 stable | Result |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| `ubuntu-b` | `meshd.service` | 31 ms | 6,791 ms | 6,513 ms | 6,513 ms | pass |
+| `ubuntu-b` | `meshnetd.service` | not required | 6,715 ms | 6,885 ms | 6,808 ms | pass |
+| `ubuntu-a` | `meshd.service` | 60 ms | 6,282 ms | 6,002 ms | 6,005 ms | pass |
+| `ubuntu-a` | `meshnetd.service` | not required | 6,771 ms | 6,519 ms | 6,575 ms | pass |
+
+Every selected service acquired a new PID and increased its systemd automatic
+restart counter. Direct `meshd` termination removed the non-persistent DNS
+link, UDP/TCP listeners, and per-link `systemd-resolved` state before the new
+daemon became ready. Terminating `meshnetd` caused systemd to stop and recreate
+`meshd` as part of the dependency restart; the harness requires both PIDs to
+change so the daemon cannot continue against stale helper-generation TUN state.
+
+All eight probe streams stabilized within 6,885 milliseconds and ended with
+82–86 consecutive replies per address family. Post-matrix inspection found one
+data link, one DNS link, one UDP and one TCP resolver listener owned by the
+current daemon, synchronized direct paths, configured MagicDNS, unchanged
+identity/profile/env bytes, and no error-level service log entries on either
+node.
+
+The redacted reports and checksum manifest are retained in
+[`docs/evidence/linux-crash-recovery-alpha16-s1`](evidence/linux-crash-recovery-alpha16-s1).
+This remains one bounded sample per node and service. It does not establish p95
+recovery, long-duration reliability, kernel-panic behavior, power-loss safety,
+or storage-corruption recovery.

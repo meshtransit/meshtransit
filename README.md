@@ -96,6 +96,9 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - Bounded TLS relay sessions selected only from the validated control map, carrying unchanged WireGuard ciphertext and serving as the base route until a direct endpoint is cryptographically proven.
 - Reversible Linux qualification for direct-path loss, encrypted relay fallback,
   dual-stack traffic over relay, and later authenticated direct-path recovery.
+- Bounded Linux crash qualification for direct daemon cleanup, systemd automatic
+  restart, coordinated helper/daemon generation replacement, MagicDNS recovery,
+  and stable dual-stack traffic.
 - Reversible Linux split-DNS qualification for authoritative forward and reverse
   answers, short-name search, UDP/TCP service, host-resolver isolation, cleanup,
   and recovery.

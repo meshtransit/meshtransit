@@ -1,0 +1,88 @@
+{
+  "schema": "meshtransit.linux-crash-recovery-qualification/v1",
+  "started_at": "2026-09-11T22:39:15Z",
+  "topology": {
+    "node_label": "ubuntu-b",
+    "peer_label": "ubuntu-a",
+    "address_families": [
+      "ipv4",
+      "ipv6"
+    ]
+  },
+  "platform": {
+    "kernel_release": "6.8.0-139-generic",
+    "architecture": "x86_64"
+  },
+  "artifact": {
+    "version": "0.1.0~alpha16",
+    "commit": "fa246a10468b831b9cb83d29b1f46497a54ac20b",
+    "sha256": "51b32b18380122522e980812288fdedaa6efbf3f6d39823ece29be13b25ec159",
+    "evidence_complete": true
+  },
+  "scenario": {
+    "action": "sigkill",
+    "service": "meshnetd.service"
+  },
+  "baseline": {
+    "direct_peer_count": 1,
+    "relay_peer_count": 0
+  },
+  "observation": {
+    "lead_seconds": 2,
+    "ready_timeout_seconds": 20,
+    "tail_seconds": 5,
+    "ping_interval_seconds": 0.2,
+    "readiness_poll_interval_seconds": 0.1,
+    "minimum_stable_replies": 3
+  },
+  "action": {
+    "exit_code": 0,
+    "duration_ms": 22,
+    "target_pid_changed": true,
+    "meshd_pid_changed": true,
+    "restart_count_before": 0,
+    "restart_count_after": 1,
+    "restart_count_increased": true
+  },
+  "dns_cleanup": {
+    "required": false,
+    "observed": false,
+    "observed_ms": null
+  },
+  "readiness_ms": {
+    "services_active": 2221,
+    "data_interface": 6715,
+    "daemon_online": 6715,
+    "magic_dns": 6715
+  },
+  "traffic": {
+    "ipv4": {
+      "command_exit_code": 0,
+      "parser_ok": true,
+      "transmitted": 113,
+      "received": 102,
+      "loss_percent": 9.7345,
+      "first_reply_after_action_ms": 93,
+      "maximum_consecutive_loss": 11,
+      "missing_after_action": 11,
+      "replies_after_action": 93,
+      "stable_recovery_ms": 6885,
+      "consecutive_replies_at_end": 84
+    },
+    "ipv6": {
+      "command_exit_code": 0,
+      "parser_ok": true,
+      "transmitted": 122,
+      "received": 102,
+      "loss_percent": 16.3934,
+      "first_reply_after_action_ms": 96,
+      "maximum_consecutive_loss": 20,
+      "missing_after_action": 20,
+      "replies_after_action": 93,
+      "stable_recovery_ms": 6808,
+      "consecutive_replies_at_end": 84
+    }
+  },
+  "failures": [],
+  "outcome": "pass"
+}

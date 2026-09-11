@@ -1,20 +1,23 @@
 # Linux qualification
 
 The Linux qualification tools measure recovery of one installed MeshTransit
-node against one healthy peer. They cover explicit restart of either
-`meshd.service` or `meshnetd.service`, a full host reboot, and a controlled
-interface-address change. They also exercise direct-path loss, relay fallback,
-later direct recovery, and split-DNS cleanup and restoration. Package upgrade,
-real multi-uplink migration, and soak scenarios remain separate gates.
+node against one healthy peer. They cover explicit restart or abrupt `SIGKILL`
+of either `meshd.service` or `meshnetd.service`, a full host reboot, and a
+controlled interface-address change. They also exercise direct-path loss,
+relay fallback, later direct recovery, and split-DNS cleanup and restoration.
+Package upgrade, real multi-uplink migration, and soak scenarios remain
+separate gates.
 
-## Restart safety boundary
+## Service-action safety boundary
 
 The harness runs on the node being tested and requires root only for the selected
-`systemctl restart`. It accepts exactly `meshd` or `meshnetd` as the service. It
-does not remove packages, purge state, change profiles or policy, write identity
-files, or change routes and resolver configuration directly.
+`systemctl restart` or `systemctl kill`. It accepts exactly `restart` or
+`sigkill` as the action and exactly `meshd` or `meshnetd` as the service. It does
+not remove packages, purge state, change profiles or policy, write identity
+files, or change routes and resolver configuration directly. An exit trap
+starts both services if an action or the harness is interrupted.
 
-Preflight must prove all of the following before the restart is attempted:
+Preflight must prove all of the following before the service action is attempted:
 
 - both services are active and have live process IDs;
 - the data and DNS interfaces exist;
@@ -28,13 +31,14 @@ fingerprint stay in a mode-`0700` temporary directory and are deleted on exit.
 The JSON report contains only operator-selected topology labels, platform and
 artifact metadata, aggregate timing, and packet counters.
 
-## Restart prerequisites
+## Service-action prerequisites
 
 Run the harness on a supported Ubuntu host with the packaged services already
 registered. It requires Bash, `iproute2`, `iputils-ping`, `jq`, `meshctl`,
-`systemd`, `systemd-resolved`, and GNU `timeout`. The peer must stay healthy for
-the complete observation window. Current policy must allow ICMP and IPv6 ICMP
-between the two test nodes.
+`systemd`, `systemd-resolved`, and GNU `timeout`. A direct daemon-crash run also
+uses `ss` to prove that its dedicated resolver listeners disappear. The peer
+must stay healthy for the complete observation window. Current policy must
+allow ICMP and IPv6 ICMP between the two test nodes.
 
 Use the SHA-256 of the exact `.deb` under test. The harness accepts a run without
 it for development, but marks `artifact.evidence_complete` false; such a report
@@ -67,6 +71,14 @@ interface cannot terminate the rest of the observation window. Timing
 parameters are available for controlled experiments, but release-candidate
 runs use the documented defaults.
 
+For abrupt-termination qualification, add `--action sigkill` and use the
+documented 20-second crash-recovery deadline. Direct daemon termination must
+expose a cleanup window in which `meshdns0`, both resolver listeners, and its
+per-link `systemd-resolved` record are absent. Helper termination must also
+produce a new daemon PID, proving that systemd recreated the unprivileged
+consumer against the new helper generation instead of retaining stale TUN
+ownership state.
+
 ## Restart report contract
 
 The schema identifier is `meshtransit.linux-restart-qualification/v1`.
@@ -85,6 +97,14 @@ The schema identifier is `meshtransit.linux-restart-qualification/v1`.
   meets the deadline, and both traffic families end with at least three
   consecutive replies whose stable run began within the deadline.
 
+`--action sigkill` changes the schema identifier to
+`meshtransit.linux-crash-recovery-qualification/v1`. Its report additionally
+records the selected unit's restart counter, whether the `meshd` generation
+changed, and the observed DNS cleanup time when the daemon itself was killed.
+A pass requires systemd to record an automatic restart, the selected PID to
+change, a new daemon generation to become ready, and the same final readiness
+and stable dual-stack traffic gates as a controlled restart.
+
 A passing single run proves only that scenario. It does not establish p95
 latency or the 72-hour reliability target. Aggregate candidate reports must also
 record sample count, topology/load definition, artifact digest, and percentile
@@ -92,7 +112,10 @@ calculations as required by [release-v0.1.md](release-v0.1.md).
 
 The first complete two-node alpha15 restart matrix is recorded in
 [linux-restart-qualification-2026-09-11.md](linux-restart-qualification-2026-09-11.md),
-with its redacted machine-readable reports retained under `docs/evidence`.
+with its redacted machine-readable reports retained under `docs/evidence`. The
+same document records the first alpha16 abrupt-termination matrix; those reports
+are retained under
+[`docs/evidence/linux-crash-recovery-alpha16-s1`](evidence/linux-crash-recovery-alpha16-s1).
 
 ## Run a reboot scenario
 
