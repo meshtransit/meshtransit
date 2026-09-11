@@ -281,6 +281,15 @@ lifecycle harness. The same three-phase update and rollback matrix has now been
 repeated on alpha15 without restarting either daemon, with redacted aggregate
 evidence retained under `docs/evidence`.
 
+Alpha16 additionally has one bounded two-node upstream-failure matrix. An
+ordered non-responsive/responsive resolver pair failed over after one bounded
+attempt on every query; the non-responsive-only phase returned `SERVFAIL` and
+packet capture found no query to an unexpected DNS destination. The temporary
+split route was then removed and both clients returned to their exact
+MagicDNS-only baseline without restart. Redacted aggregate evidence is retained
+under
+[`docs/evidence/linux-dns-alpha16-upstream-failure-s1`](evidence/linux-dns-alpha16-upstream-failure-s1).
+
 ## Run a host-policy phase
 
 Run the policy harness from an operator host that can reach both installed

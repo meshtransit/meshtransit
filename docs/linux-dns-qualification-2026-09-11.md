@@ -115,13 +115,44 @@ Resolver addresses, test names, answers, process IDs, and network identifiers
 are intentionally omitted. This sample used one classic IPv4 resolver and does
 not cover upstream failure, multiple-resolver failover, or encrypted DNS.
 
+## Alpha16 upstream-failure validation
+
+Alpha16 added bounded sequential failover for retryable upstream DNS responses.
+It treats `SERVFAIL` and `REFUSED` as soft failures, preserves `NXDOMAIN` as a
+terminal answer, and never promotes fallback metadata or the host resolver into
+the selected route's resolver set. Tests cover those response-code semantics,
+transaction validation, a non-responsive first resolver, and failure of every
+selected resolver.
+
+The immutable alpha16 Debian package was built independently twice with
+byte-identical output, rolled to one canary, verified in a mixed alpha15/alpha16
+topology, and then installed on the second node. Both upgrades preserved
+identity and configuration bytes, synchronized control, MagicDNS, and
+bidirectional encrypted IPv4/IPv6 traffic.
+
+A live split route then placed a non-responsive resolver before a reachable
+resolver. Six queries across the two nodes all succeeded after one bounded
+attempt, in 1,526–1,554 milliseconds. With only the non-responsive resolver
+selected, six direct queries returned `SERVFAIL` in 1,531–1,543 milliseconds
+and host-resolver queries failed. Packet capture recorded twelve upstream DNS
+packets, all to the selected resolver, and zero packets to an unexpected DNS
+destination. Unrelated names remained on the host DNS path in both phases.
+
+The temporary route was removed after the test. Both nodes returned to the
+exact MagicDNS-only baseline without a daemon restart, with the original
+process IDs, zero systemd restarts, and no warning-level journal entries. The
+redacted aggregate report is retained in
+[`docs/evidence/linux-dns-alpha16-upstream-failure-s1`](evidence/linux-dns-alpha16-upstream-failure-s1).
+
 ## Interpretation and release-candidate limits
 
 This evidence demonstrates installed-host authoritative resolution, UDP/TCP
 service, `systemd-resolved` search integration, split and explicit-default
-upstream forwarding, non-mesh DNS isolation, clean graceful removal, bounded
-restoration, and control-plane rollback on the two-node Linux POC topology.
-Isolated resolver tests additionally cover most-specific-route selection,
-fallback-resolver isolation, transaction-ID validation, and UDP truncation retry
-over TCP. A release candidate still needs the larger repeated sample set and
-fault-injected upstream failure scenarios defined by the release plan.
+upstream forwarding, non-mesh DNS isolation, bounded sequential upstream
+failover, fail-closed routing, clean graceful removal, bounded restoration, and
+control-plane rollback on the two-node Linux POC topology. Isolated resolver
+tests additionally cover most-specific-route selection, fallback-resolver
+isolation, transaction-ID validation, retryable response codes, and UDP
+truncation retry over TCP. A release candidate still needs repeated immutable
+candidate samples, percentile calculations, IPv6-upstream coverage, and
+encrypted-DNS qualification.

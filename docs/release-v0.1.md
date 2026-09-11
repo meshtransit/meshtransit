@@ -96,9 +96,11 @@ network-change sample per node with no packet loss. Its direct-loss matrix also
 has one passing relay-fallback and direct-restoration sample per node, and its
 split-only DNS lifecycle has one passing sample per node. Alpha15 split and
 explicit-default upstream DNS modes also applied live on both nodes and rolled
-back to the exact baseline without a daemon restart. It does not yet have a
-signed artifact pipeline, IPv6-only underlay evidence, real multi-uplink
-migration qualification, or a long-duration qualification suite.
+back to the exact baseline without a daemon restart. Alpha16 adds one bounded
+two-node ordered-upstream timeout, failover, fail-closed, DNS-destination
+isolation, and rollback sample. It does not yet have a signed artifact pipeline,
+IPv6-only underlay evidence, real multi-uplink migration qualification,
+repeated candidate DNS-failure samples, or a long-duration qualification suite.
 See [linux-qualification.md](linux-qualification.md) for the bounded alpha
 evidence and its limitations.
 Windows and macOS deny local API access without an unsafe development override
