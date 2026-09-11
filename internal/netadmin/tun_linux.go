@@ -17,6 +17,26 @@ const tunDevicePath = "/dev/net/tun"
 
 type kernelTUNCreator struct{}
 
+type linkConfigurer interface {
+	LinkByName(string) (netlink.Link, error)
+	SetMTU(netlink.Link, int) error
+	SetUp(netlink.Link) error
+}
+
+type kernelLinkConfigurer struct{}
+
+func (kernelLinkConfigurer) LinkByName(name string) (netlink.Link, error) {
+	return netlink.LinkByName(name)
+}
+
+func (kernelLinkConfigurer) SetMTU(link netlink.Link, mtu int) error {
+	return netlink.LinkSetMTU(link, mtu)
+}
+
+func (kernelLinkConfigurer) SetUp(link netlink.Link) error {
+	return netlink.LinkSetUp(link)
+}
+
 func (kernelTUNCreator) Open(
 	name string,
 	mtu int,
@@ -110,33 +130,21 @@ func prefixIPNet(prefix netip.Prefix) *net.IPNet {
 }
 
 func configureLink(name string, mtu int) error {
+	return configureLinkWith(kernelLinkConfigurer{}, name, mtu)
+}
+
+func configureLinkWith(configurer linkConfigurer, name string, mtu int) error {
 	if mtu < 0 || uint64(mtu) > uint64(^uint32(0)) {
 		return errors.New("tun mtu is outside uint32")
 	}
-	descriptor, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	link, err := configurer.LinkByName(name)
 	if err != nil {
-		return fmt.Errorf("opening interface control socket: %w", err)
+		return fmt.Errorf("finding tun link for configuration: %w", err)
 	}
-	defer func() { _ = unix.Close(descriptor) }()
-
-	mtuRequest, err := unix.NewIfreq(name)
-	if err != nil {
-		return fmt.Errorf("creating mtu request: %w", err)
-	}
-	mtuRequest.SetUint32(uint32(mtu))
-	if err := unix.IoctlIfreq(descriptor, unix.SIOCSIFMTU, mtuRequest); err != nil {
+	if err := configurer.SetMTU(link, mtu); err != nil {
 		return fmt.Errorf("setting tun mtu: %w", err)
 	}
-
-	flagsRequest, err := unix.NewIfreq(name)
-	if err != nil {
-		return fmt.Errorf("creating link request: %w", err)
-	}
-	if err := unix.IoctlIfreq(descriptor, unix.SIOCGIFFLAGS, flagsRequest); err != nil {
-		return fmt.Errorf("reading tun flags: %w", err)
-	}
-	flagsRequest.SetUint16(flagsRequest.Uint16() | uint16(unix.IFF_UP))
-	if err := unix.IoctlIfreq(descriptor, unix.SIOCSIFFLAGS, flagsRequest); err != nil {
+	if err := configurer.SetUp(link); err != nil {
 		return fmt.Errorf("bringing tun interface up: %w", err)
 	}
 
