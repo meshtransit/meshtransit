@@ -53,6 +53,15 @@ assert_rejected "${harness}" __status-has-addresses \
   '{"self_addresses":["100.64.0.5","fd7a:115c:a1e0::6"]}' \
   100.64.0.5 fd7a:115c:a1e0::6
 
+online_status='{"state":"online","control_session":"synchronized","registration":"registered","data_plane":"encrypted_relay_ready","policy_rule_count":0,"netmap_revision":1,"self_addresses":[]}'
+idle_status='{"state":"offline","control_session":"synchronized","registration":"registered","data_plane":"idle","policy_rule_count":0,"netmap_revision":1,"self_addresses":[]}'
+failed_status='{"state":"offline","control_session":"synchronized","registration":"registered","data_plane":"failed","policy_rule_count":0,"netmap_revision":1,"self_addresses":[]}'
+"${harness}" __status-is-ready "${online_status}" true
+"${harness}" __status-is-ready "${online_status}" false
+"${harness}" __status-is-ready "${idle_status}" false
+assert_rejected "${harness}" __status-is-ready "${idle_status}" true
+assert_rejected "${harness}" __status-is-ready "${failed_status}" false
+
 common_arguments=(
   --node-a-ssh root@192.0.2.10
   --node-b-ssh root@192.0.2.11

@@ -184,9 +184,13 @@ trap 'exit 130' HUP INT TERM
 
 status_is_ready() {
   local status="$1"
+  local require_online="$2"
 
-  jq -e '
-    .state == "online" and
+  jq -e --argjson require_online "${require_online}" '
+    (
+      .state == "online" or
+      ($require_online == false and .state == "offline" and .data_plane == "idle")
+    ) and
     .control_session == "synchronized" and
     .registration == "registered" and
     (.data_plane | type) == "string" and
@@ -412,8 +416,10 @@ main() {
     fail "node A status is unavailable"
   node_b_status="$(remote_exec "${node_b_ssh}" "meshctl --timeout 3s --json status")" ||
     fail "node B status is unavailable"
-  status_is_ready "${node_a_status}" || fail "node A is not synchronized and policy-ready"
-  status_is_ready "${node_b_status}" || fail "node B is not synchronized and policy-ready"
+  status_is_ready "${node_a_status}" "${any_allow}" ||
+    fail "node A is not synchronized and ready for the expected phase"
+  status_is_ready "${node_b_status}" "${any_allow}" ||
+    fail "node B is not synchronized and ready for the expected phase"
   status_has_addresses "${node_a_status}" "${node_a_v4}" "${node_a_v6}" ||
     fail "node A status does not contain the expected self addresses"
   status_has_addresses "${node_b_status}" "${node_b_v4}" "${node_b_v6}" ||
@@ -721,6 +727,13 @@ fi
 if [[ "${1:-}" == __status-has-addresses ]]; then
   [[ $# -eq 4 ]] || fail "__status-has-addresses requires status, IPv4, and IPv6 values"
   status_has_addresses "$2" "$3" "$4"
+  exit
+fi
+
+if [[ "${1:-}" == __status-is-ready ]]; then
+  [[ $# -eq 3 ]] || fail "__status-is-ready requires status and an online requirement"
+  [[ "$3" == true || "$3" == false ]] || fail "online requirement must be true or false"
+  status_is_ready "$2" "$3"
   exit
 fi
 
