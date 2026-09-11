@@ -99,6 +99,38 @@ profile, identity, DNS configuration, or service definition was changed by the
 policy harness. Temporary peer helpers and listeners were removed by its exit
 trap.
 
+## Alpha12 churn-remediation baseline
+
+Before repeating the mutable policy matrix, a bounded baseline phase was run
+against `0.1.0~alpha12` on both nodes. The candidate was built independently
+twice from commit `9c3f0fe2d360755ecd381204338b3e43527a28b0`; both builds produced the
+same amd64 Debian artifact with SHA-256
+`52a9d3360605a3e45a18235710e14e41440462f727c086f752d4362b1af40a36`.
+The candidate was deployed to one node first, passed mixed-version dual-stack
+traffic checks, and was then deployed to the second node.
+
+The active baseline policy allowed ICMPv4 and ICMPv6 while denying new TCP and
+UDP flows in both directions. All twelve observations matched that contract,
+with zero policy mismatches and zero infrastructure errors. Both `meshd`
+process IDs remained stable and both systemd restart counters remained zero.
+
+Service memory evidence for the phase was:
+
+| Node | Current before | Current after | Peak before | Peak after |
+| --- | ---: | ---: | ---: | ---: |
+| `ubuntu-a` | 11,763,712 B | 12,603,392 B | 12,013,568 B | 12,857,344 B |
+| `ubuntu-b` | 12,345,344 B | 12,439,552 B | 12,607,488 B | 12,701,696 B |
+
+Post-phase inspection confirmed that the temporary listeners, ports, helpers,
+and directories were removed. This baseline qualifies the immutable artifact
+and the runtime-health reporting path; it does not yet qualify control-map
+churn. A controlled default-deny transition followed by exact policy
+restoration remains required for that claim.
+
+The alpha12 source passed the race-enabled quality job, all five cross-build
+targets, and both Linux package jobs in
+[GitHub Actions run 34632024073](https://github.com/meshtransit/meshd/actions/runs/34632024073).
+
 ## Supporting quality gates
 
 The runtime implementation passed the full race-enabled Go test suite, `go
