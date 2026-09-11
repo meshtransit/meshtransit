@@ -61,7 +61,7 @@ published compatibility matrix.
 
 | Priority | Platform | Architectures | Native validation targets | Current status |
 | --- | --- | --- | --- | --- |
-| 1 | Linux | amd64, arm64 | Ubuntu 24.04 and 26.04 LTS with `systemd-resolved` | Ubuntu 24.04 amd64 POC exercised; packaging and sustained validation remain |
+| 1 | Linux | amd64, arm64 | Ubuntu 24.04 and 26.04 LTS with `systemd-resolved` | Ubuntu 24.04 amd64 POC and package lifecycle exercised; native matrix and sustained validation remain |
 | 2 | Windows | amd64 | Windows 11 25H2 and Windows Server 2025 | cross-build only; tunnel, DNS, IPC, and service adapters remain |
 | 3 | macOS | arm64, amd64 | macOS 26 on arm64 and macOS 15 on amd64 | cross-build only; tunnel, DNS, IPC, entitlement, and service adapters remain |
 
@@ -83,10 +83,12 @@ authenticated direct-path, local API, and flow-observation components. Linux
 has opt-in TUN, userspace WireGuard, `SO_PEERCRED`, privileged `meshnetd`, and
 `systemd-resolved` adapters.
 
-The Linux packet and DNS paths remain explicitly marked as POCs. Windows and
-macOS deny local API access without an unsafe development override and do not
-have native tunnel or DNS activation. There is no native installer, signed
-artifact pipeline, upgrade contract, or long-duration qualification suite yet.
+The Linux packet and DNS paths remain explicitly marked as POCs. Linux has a
+reproducible Debian package, lifecycle contract, and bounded restart
+qualification harness, but does not yet have a signed artifact pipeline or
+long-duration qualification suite. Windows and macOS deny local API access
+without an unsafe development override and do not have native tunnel, DNS, or
+installer activation.
 
 ## Definition of done
 

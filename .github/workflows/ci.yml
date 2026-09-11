@@ -56,6 +56,12 @@ jobs:
             exit 1
           fi
 
+      - name: Validate Linux qualification harness
+        run: |
+          bash -n tools/qualification/linux-restart.sh tools/qualification/test-linux-restart.sh
+          shellcheck tools/qualification/linux-restart.sh tools/qualification/test-linux-restart.sh
+          bash tools/qualification/test-linux-restart.sh
+
       - name: Run vet
         run: go vet ./...
 
