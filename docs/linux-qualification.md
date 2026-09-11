@@ -144,6 +144,10 @@ The reboot schema identifier is
 boot ID, all readiness and persistence gates, parseable IPv4 and IPv6 traffic,
 and a final stable traffic run that begins within the recovery deadline.
 
+The first complete two-node alpha15 reboot matrix is recorded in
+[linux-reboot-qualification-2026-09-11.md](linux-reboot-qualification-2026-09-11.md),
+with its redacted machine-readable reports retained under `docs/evidence`.
+
 ## Run a network-change scenario
 
 The network-change harness runs on the node under test. It requires an exact
