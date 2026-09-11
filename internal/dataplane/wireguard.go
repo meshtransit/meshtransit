@@ -234,11 +234,6 @@ func (e *WireGuardEngine) Apply(
 	if e.observer != nil {
 		e.observer.UpdateNetwork(snapshot)
 	}
-	if len(snapshot.Peers) == 0 {
-		_ = e.Close()
-
-		return StateIdle, nil
-	}
 
 	plan, err := buildWireGuardPlan(snapshot, privateKey, e.listenPort)
 	if err != nil {
@@ -324,6 +319,9 @@ func (e *WireGuardEngine) Apply(
 }
 
 func (p wireGuardPlan) state() State {
+	if len(p.peers) == 0 {
+		return StateIdle
+	}
 	if p.pendingEndpoints {
 		return StateWaitingEndpoint
 	}
@@ -722,7 +720,7 @@ func buildWireGuardPlan(
 	if snapshot.Revision == 0 || snapshot.Self.ID == 0 {
 		return wireGuardPlan{}, errors.New("dataplane: snapshot identity is invalid")
 	}
-	if len(snapshot.Peers) == 0 || len(snapshot.Peers) > maxWireGuardPeers {
+	if len(snapshot.Peers) > maxWireGuardPeers {
 		return wireGuardPlan{}, errors.New("dataplane: peer count is outside the allowed range")
 	}
 	var zeroPrivateKey NodePrivateKey

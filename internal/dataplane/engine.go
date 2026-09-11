@@ -15,7 +15,8 @@ import (
 type State string
 
 const (
-	// StateIdle means no server-authorized peer path requires a TUN descriptor.
+	// StateIdle means no server-authorized peer path is active. An encrypted
+	// transport may remain ready so control presence does not depend on peers.
 	StateIdle State = "idle"
 	// StateTUNReady means the privileged descriptor exists but packet crypto is absent.
 	StateTUNReady State = "tun_ready_no_crypto"

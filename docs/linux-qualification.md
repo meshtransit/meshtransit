@@ -306,8 +306,10 @@ default deny remains testable. Both services, registered identity, synchronized
 control session, exact self addresses, and a valid policy revision remain
 mandatory in every phase. A phase with an expected allow additionally requires
 the data interface and encrypted peer path. A deny-only phase permits the
-healthy `offline`/`idle` state and an absent data interface when the reduced map
-removes every authorized peer path.
+healthy `offline`/`idle` state when the reduced map removes every authorized
+peer path. Current artifacts may retain a peerless data interface for endpoint
+presence, but it must contain no peer routes; older artifacts may remove the
+interface entirely.
 
 TCP and UDP run over IPv4 and IPv6 with a fixed-format random challenge served
 under the unprivileged `meshd` identity. ICMP probes use distinct echo

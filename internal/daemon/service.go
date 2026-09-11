@@ -266,6 +266,7 @@ type syncStatus struct {
 
 type endpointRefreshRequest struct {
 	active           bool
+	periodic         bool
 	socket           pathdiscovery.Socket
 	controlHomeRelay int
 	usableRelays     []int
@@ -788,9 +789,6 @@ func endpointRequest(
 	snapshot networkmap.Snapshot,
 	discoverer endpointDiscoverer,
 ) (endpointRefreshRequest, error) {
-	if len(snapshot.Peers) == 0 {
-		return endpointRefreshRequest{}, nil
-	}
 	if discoverer == nil {
 		return endpointRefreshRequest{}, errors.New("daemon: endpoint discoverer is unavailable")
 	}
@@ -807,6 +805,7 @@ func endpointRequest(
 
 	return endpointRefreshRequest{
 		active:           true,
+		periodic:         len(snapshot.Peers) != 0,
 		socket:           socket,
 		controlHomeRelay: snapshot.Self.HomeRelay,
 		usableRelays:     usableRelayRegionIDs(snapshot.Relays),
@@ -815,7 +814,8 @@ func endpointRequest(
 }
 
 func (r endpointRefreshRequest) equal(other endpointRefreshRequest) bool {
-	return r.active == other.active && r.socket == other.socket &&
+	return r.active == other.active && r.periodic == other.periodic &&
+		r.socket == other.socket &&
 		r.controlHomeRelay == other.controlHomeRelay &&
 		slices.Equal(r.usableRelays, other.usableRelays) &&
 		slices.Equal(r.servers, other.servers)
@@ -896,7 +896,6 @@ func (s *Service) runEndpointRefresh(
 
 	for {
 		resetForSocketChange := false
-		resetChanged := false
 		networkTriggered := false
 		select {
 		case <-ctx.Done():
@@ -932,12 +931,10 @@ func (s *Service) runEndpointRefresh(
 			continue
 		}
 		if resetForSocketChange {
-			result, err := tracker.Reset(s.clock(), s.configuredCandidates)
+			_, err := tracker.Reset(s.clock(), s.configuredCandidates)
 			if err != nil {
 				return err
 			}
-			currentCandidates = result.Candidates
-			resetChanged = result.Changed
 		}
 		if !current.active {
 			result, err := tracker.Reset(s.clock(), s.configuredCandidates)
@@ -958,10 +955,6 @@ func (s *Service) runEndpointRefresh(
 		if err != nil {
 			return fmt.Errorf("reconciling relay selection: %w", err)
 		}
-		if resetChanged {
-			publish(currentCandidates, selection.RegionID)
-		}
-
 		expired, err := tracker.Expire(s.clock())
 		if err != nil {
 			return err
@@ -1026,6 +1019,9 @@ func (s *Service) runEndpointRefresh(
 			s.networkRefreshes.Add(1)
 		}
 		publish(currentCandidates, selection.RegionID)
+		if !current.periodic {
+			continue
+		}
 		if s.endpointRefreshDelay == nil {
 			return errors.New("daemon: endpoint refresh delay is unavailable")
 		}

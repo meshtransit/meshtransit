@@ -549,7 +549,8 @@ func TestEndpointRefreshRunsPeriodicallyWithoutDuplicatePublication(t *testing.T
 		done <- service.runEndpointRefresh(ctx, 11, discoverer, requests, updates)
 	}()
 	requests <- endpointRefreshRequest{
-		active: true,
+		active:   true,
+		periodic: true,
 		servers: []pathdiscovery.RelayServer{{
 			RegionID: 1,
 			Endpoint: netip.MustParseAddrPort("192.0.2.50:3478"),
@@ -575,6 +576,58 @@ func TestEndpointRefreshRunsPeriodicallyWithoutDuplicatePublication(t *testing.T
 	case duplicate := <-updates:
 		t.Fatalf("received duplicate endpoint update %#v", duplicate)
 	default:
+	}
+
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("runEndpointRefresh() error = %v, want context cancellation", err)
+	}
+}
+
+func TestEndpointRefreshDoesNotPollWithoutPeers(t *testing.T) {
+	t.Parallel()
+
+	candidate, err := pathdiscovery.NewCandidate(
+		netip.MustParseAddrPort("198.51.100.53:41641"),
+		pathdiscovery.SourceServerReflexive,
+	)
+	if err != nil {
+		t.Fatalf("NewCandidate() error = %v", err)
+	}
+	candidates, err := pathdiscovery.NewSet([]pathdiscovery.Candidate{candidate})
+	if err != nil {
+		t.Fatalf("NewSet() error = %v", err)
+	}
+	discoverer := &refreshDiscoverer{
+		calls:  make(chan struct{}, 2),
+		result: pathdiscovery.DiscoveryResult{Candidates: candidates},
+	}
+	service := &Service{
+		clock:                time.Now,
+		endpointRefreshDelay: func() time.Duration { return 5 * time.Millisecond },
+	}
+	requests := make(chan endpointRefreshRequest, 1)
+	updates := make(chan ts2021.EndpointUpdate, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- service.runEndpointRefresh(ctx, 16, discoverer, requests, updates)
+	}()
+	requests <- endpointRefreshRequest{active: true}
+	select {
+	case <-updates:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for peerless endpoint update")
+	}
+	select {
+	case <-discoverer.calls:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for initial peerless discovery")
+	}
+	select {
+	case <-discoverer.calls:
+		t.Fatal("peerless endpoint discovery polled periodically")
+	case <-time.After(25 * time.Millisecond):
 	}
 
 	cancel()
@@ -689,6 +742,7 @@ func TestEndpointRefreshSelectsMeasuredHomeRelay(t *testing.T) {
 	}()
 	requests <- endpointRefreshRequest{
 		active:           true,
+		periodic:         true,
 		controlHomeRelay: 1,
 		usableRelays:     []int{1, 2},
 		servers: []pathdiscovery.RelayServer{
@@ -792,23 +846,47 @@ func TestEndpointRefreshResetWithdrawsDynamicCandidate(t *testing.T) {
 	}
 }
 
-func TestEndpointRefreshSocketChangeDropsOldDynamicCandidate(t *testing.T) {
+func TestEndpointRequestKeepsPresenceActiveWithoutPeers(t *testing.T) {
 	t.Parallel()
 
-	candidate, err := pathdiscovery.NewCandidate(
+	discoverer := &refreshDiscoverer{}
+	request, err := endpointRequest(networkmap.Snapshot{}, discoverer)
+	if err != nil {
+		t.Fatalf("endpointRequest() error = %v", err)
+	}
+	if !request.active || request.periodic || request.socket != discoverer.DiscoverySocket() {
+		t.Fatalf("endpointRequest() = %#v", request)
+	}
+}
+
+func TestEndpointRefreshSocketChangePublishesReplacementAtomically(t *testing.T) {
+	t.Parallel()
+
+	oldCandidate, err := pathdiscovery.NewCandidate(
 		netip.MustParseAddrPort("198.51.100.61:41641"),
 		pathdiscovery.SourceServerReflexive,
 	)
 	if err != nil {
 		t.Fatalf("NewCandidate() error = %v", err)
 	}
-	candidates, err := pathdiscovery.NewSet([]pathdiscovery.Candidate{candidate})
+	oldCandidates, err := pathdiscovery.NewSet([]pathdiscovery.Candidate{oldCandidate})
 	if err != nil {
 		t.Fatalf("NewSet() error = %v", err)
 	}
+	newCandidate, err := pathdiscovery.NewCandidate(
+		netip.MustParseAddrPort("198.51.100.62:41641"),
+		pathdiscovery.SourceServerReflexive,
+	)
+	if err != nil {
+		t.Fatalf("NewCandidate(replacement) error = %v", err)
+	}
+	newCandidates, err := pathdiscovery.NewSet([]pathdiscovery.Candidate{newCandidate})
+	if err != nil {
+		t.Fatalf("NewSet(replacement) error = %v", err)
+	}
 	discoverer := &refreshDiscoverer{
 		calls:  make(chan struct{}, 2),
-		result: pathdiscovery.DiscoveryResult{Candidates: candidates},
+		result: pathdiscovery.DiscoveryResult{Candidates: oldCandidates},
 	}
 	service := &Service{
 		clock:                time.Now,
@@ -827,7 +905,7 @@ func TestEndpointRefreshSocketChangeDropsOldDynamicCandidate(t *testing.T) {
 	}
 	select {
 	case update := <-updates:
-		if !update.Candidates.Equal(candidates) {
+		if !update.Candidates.Equal(oldCandidates) {
 			t.Fatalf("first endpoint update = %#v", update)
 		}
 	case <-time.After(time.Second):
@@ -835,7 +913,8 @@ func TestEndpointRefreshSocketChangeDropsOldDynamicCandidate(t *testing.T) {
 	}
 
 	discoverer.mu.Lock()
-	discoverer.err = pathdiscovery.ErrNoSTUNResponse
+	discoverer.result = pathdiscovery.DiscoveryResult{Candidates: newCandidates}
+	discoverer.socket = pathdiscovery.Socket{Port: 41641, Generation: 2}
 	discoverer.mu.Unlock()
 	requests <- endpointRefreshRequest{
 		active: true,
@@ -843,11 +922,16 @@ func TestEndpointRefreshSocketChangeDropsOldDynamicCandidate(t *testing.T) {
 	}
 	select {
 	case update := <-updates:
-		if update.Candidates.Len() != 0 {
-			t.Fatalf("socket-change withdrawal = %#v", update)
+		if !update.Candidates.Equal(newCandidates) {
+			t.Fatalf("socket-change replacement = %#v", update)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for socket-change withdrawal")
+		t.Fatal("timed out waiting for socket-change replacement")
+	}
+	select {
+	case update := <-updates:
+		t.Fatalf("unexpected intermediate endpoint update = %#v", update)
+	case <-time.After(20 * time.Millisecond):
 	}
 
 	cancel()
@@ -870,6 +954,7 @@ func TestRandomEndpointRefreshDelayBounds(t *testing.T) {
 type refreshDiscoverer struct {
 	mu       sync.Mutex
 	calls    chan struct{}
+	socket   pathdiscovery.Socket
 	result   pathdiscovery.DiscoveryResult
 	err      error
 	health   relay.HealthSnapshot
@@ -877,6 +962,12 @@ type refreshDiscoverer struct {
 }
 
 func (d *refreshDiscoverer) DiscoverySocket() pathdiscovery.Socket {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.socket.IsOpen() {
+		return d.socket
+	}
+
 	return pathdiscovery.Socket{Port: 41641, Generation: 1}
 }
 

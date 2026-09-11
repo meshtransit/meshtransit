@@ -50,6 +50,11 @@ All notable user-visible changes will be documented in this file.
 
 ### Changed
 
+- Peerless reduced maps now install an empty peer and route configuration while
+  retaining the encrypted UDP presence transport. Socket-generation changes
+  replace endpoint advertisements only after current-socket discovery, and
+  periodic discovery pauses while no peers are visible. This prevents
+  transient endpoint withdrawal from driving control-map and tunnel churn.
 - Successful network-triggered endpoint refreshes are counted before their
   resulting endpoint update becomes observable.
 - Semantically unchanged control-map deltas are revalidated without publishing

@@ -131,6 +131,30 @@ The alpha12 source passed the race-enabled quality job, all five cross-build
 targets, and both Linux package jobs in
 [GitHub Actions run 34632024073](https://github.com/meshtransit/meshd/actions/runs/34632024073).
 
+## Rejected alpha12 churn transition
+
+The first controlled default-deny transition on alpha12 was rejected and the
+baseline policy was restored immediately. During a 24-second observation, both
+nodes alternated between a one-peer encrypted state and a zero-peer idle state.
+Map revisions advanced from 23 to 33 on `ubuntu-a` and from 29 to 39 on
+`ubuntu-b`. The service processes did not restart, but current memory rose from
+approximately 12 MiB to 53.5 MiB and 84.2 MiB respectively.
+
+Exact baseline restoration stopped the revision oscillation and restored one
+direct dual-stack peer on both nodes, but the transition had already raised
+current memory to approximately 122.4 MiB and 114.7 MiB. IPv4 and IPv6 traffic
+passed in both directions after restoration. The services were then restarted
+one node at a time; each returned to approximately 10 MiB with the same
+installed artifact, synchronized control, configured DNS, and a direct path.
+
+Source inspection identified a client-side feedback path: a peerless reduced
+map closed the shared UDP transport and published a transient endpoint
+withdrawal; the resulting control update could make the peer visible again,
+recreate the tunnel, and repeat the cycle. Alpha12 is therefore not qualified
+for policy churn. The next candidate must retain fail-closed peerless presence,
+replace endpoints atomically across socket generations, bound idle discovery,
+and repeat this exact live transition before promotion.
+
 ## Supporting quality gates
 
 The runtime implementation passed the full race-enabled Go test suite, `go

@@ -66,6 +66,71 @@ func TestWireGuardEngineApply(t *testing.T) {
 	}
 }
 
+func TestWireGuardEngineRetainsPresenceTransportWithoutPeers(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	opener := &wireGuardTUNOpener{}
+	device := &fakeWireGuardDevice{
+		discoverySocket: pathdiscovery.Socket{Port: 41641, Generation: 1},
+	}
+	engine, err := newWireGuardEngine(
+		opener,
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply(peer map) error = %v", err)
+	}
+
+	peerless := snapshot
+	peerless.Revision++
+	peerless.Peers = nil
+	peerless.Policy = nil
+	state, err := engine.Apply(t.Context(), peerless, privateKey)
+	if err != nil || state != StateIdle {
+		t.Fatalf("Apply(peerless map) = %q, %v", state, err)
+	}
+	if engine.device == nil || engine.DiscoverySocket() != device.discoverySocket {
+		t.Fatalf("peerless presence transport = %#v", engine.DiscoverySocket())
+	}
+	if paths := engine.PeerPaths(); !paths.Available || paths.PeerCount != 0 {
+		t.Fatalf("peerless paths = %#v", paths)
+	}
+	if opener.calls != 2 || device.closeCalls != 1 || device.upCalls != 2 {
+		t.Fatalf(
+			"peerless transition calls open=%d close=%d up=%d",
+			opener.calls,
+			device.closeCalls,
+			device.upCalls,
+		)
+	}
+	if len(opener.config.Routes) != 0 || !slices.Equal(opener.config.Addresses, peerless.Self.Addresses) {
+		t.Fatalf("peerless helper config = %#v", opener.config)
+	}
+
+	peerless.Revision++
+	if state, err := engine.Apply(t.Context(), peerless, privateKey); err != nil || state != StateIdle {
+		t.Fatalf("repeat Apply(peerless map) = %q, %v", state, err)
+	}
+	if opener.calls != 2 || device.closeCalls != 1 || device.configureCalls != 2 {
+		t.Fatalf(
+			"repeat peerless calls open=%d close=%d configure=%d",
+			opener.calls,
+			device.closeCalls,
+			device.configureCalls,
+		)
+	}
+
+	if err := engine.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
 func TestWireGuardEngineApplyDualStack(t *testing.T) {
 	t.Parallel()
 
