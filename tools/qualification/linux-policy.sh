@@ -224,6 +224,10 @@ status_has_peer_path() {
   ' >/dev/null <<<"${status}"
 }
 
+any_mesh_route() {
+  [[ "$1" == true || "$2" == true || "$3" == true || "$4" == true ]]
+}
+
 classify_helper_probe() {
   local exit_code="$1"
 
@@ -279,6 +283,7 @@ main() {
   local node_a_route6=false
   local node_b_route4=false
   local node_b_route6=false
+  local listeners_started=false
   local start_ms
   local end_ms
   local mismatch_count=0
@@ -408,7 +413,7 @@ main() {
   progress "checking both Linux nodes"
   for source_ssh in "${node_a_ssh}" "${node_b_ssh}"; do
     remote_exec "${source_ssh}" \
-      "command -v python3 >/dev/null && command -v setpriv >/dev/null && command -v ping >/dev/null && id meshd >/dev/null 2>&1 && systemctl is-active --quiet meshd.service meshnetd.service && ip link show dev mesh0 >/dev/null" ||
+      "command -v python3 >/dev/null && command -v setpriv >/dev/null && command -v ping >/dev/null && id meshd >/dev/null 2>&1 && systemctl is-active --quiet meshd.service meshnetd.service" ||
       fail "remote prerequisite check failed"
   done
 
@@ -449,38 +454,44 @@ main() {
       fail "node B dual-stack mesh routes are unavailable"
   fi
 
-  node_a_remote_dir="$(remote_exec "${node_a_ssh}" "mktemp -d /tmp/meshd-policy.XXXXXXXX")" ||
-    fail "could not create node A temporary directory"
-  validate_remote_dir "${node_a_remote_dir}"
-  node_b_remote_dir="$(remote_exec "${node_b_ssh}" "mktemp -d /tmp/meshd-policy.XXXXXXXX")" ||
-    fail "could not create node B temporary directory"
-  validate_remote_dir "${node_b_remote_dir}"
-  remote_exec "${node_a_ssh}" "chown meshd:meshd ${node_a_remote_dir} && chmod 0700 ${node_a_remote_dir}"
-  remote_exec "${node_b_ssh}" "chown meshd:meshd ${node_b_remote_dir} && chmod 0700 ${node_b_remote_dir}"
-  copy_helper "${node_a_ssh}" "${node_a_remote_dir}"
-  copy_helper "${node_b_ssh}" "${node_b_remote_dir}"
+  if any_mesh_route \
+    "${node_a_route4}" "${node_a_route6}" "${node_b_route4}" "${node_b_route6}"; then
+    node_a_remote_dir="$(remote_exec "${node_a_ssh}" "mktemp -d /tmp/meshd-policy.XXXXXXXX")" ||
+      fail "could not create node A temporary directory"
+    validate_remote_dir "${node_a_remote_dir}"
+    node_b_remote_dir="$(remote_exec "${node_b_ssh}" "mktemp -d /tmp/meshd-policy.XXXXXXXX")" ||
+      fail "could not create node B temporary directory"
+    validate_remote_dir "${node_b_remote_dir}"
+    remote_exec "${node_a_ssh}" "chown meshd:meshd ${node_a_remote_dir} && chmod 0700 ${node_a_remote_dir}"
+    remote_exec "${node_b_ssh}" "chown meshd:meshd ${node_b_remote_dir} && chmod 0700 ${node_b_remote_dir}"
+    copy_helper "${node_a_ssh}" "${node_a_remote_dir}"
+    copy_helper "${node_b_ssh}" "${node_b_remote_dir}"
 
-  progress "starting bounded peer listeners"
-  remote_exec "${node_a_ssh}" \
-    "setpriv --reuid=meshd --regid=meshd --init-groups -- python3 ${node_a_remote_dir}/policy_peer.py serve --address ${node_a_v4} --address ${node_a_v6} --tcp-port ${tcp_port} --udp-port ${udp_port} --ready-file ${node_a_remote_dir}/ready >/dev/null 2>&1 & echo \$! >${node_a_remote_dir}/server.pid"
-  remote_exec "${node_b_ssh}" \
-    "setpriv --reuid=meshd --regid=meshd --init-groups -- python3 ${node_b_remote_dir}/policy_peer.py serve --address ${node_b_v4} --address ${node_b_v6} --tcp-port ${tcp_port} --udp-port ${udp_port} --ready-file ${node_b_remote_dir}/ready >/dev/null 2>&1 & echo \$! >${node_b_remote_dir}/server.pid"
+    progress "starting bounded peer listeners"
+    remote_exec "${node_a_ssh}" \
+      "setpriv --reuid=meshd --regid=meshd --init-groups -- python3 ${node_a_remote_dir}/policy_peer.py serve --address ${node_a_v4} --address ${node_a_v6} --tcp-port ${tcp_port} --udp-port ${udp_port} --ready-file ${node_a_remote_dir}/ready >/dev/null 2>&1 & echo \$! >${node_a_remote_dir}/server.pid"
+    remote_exec "${node_b_ssh}" \
+      "setpriv --reuid=meshd --regid=meshd --init-groups -- python3 ${node_b_remote_dir}/policy_peer.py serve --address ${node_b_v4} --address ${node_b_v6} --tcp-port ${tcp_port} --udp-port ${udp_port} --ready-file ${node_b_remote_dir}/ready >/dev/null 2>&1 & echo \$! >${node_b_remote_dir}/server.pid"
 
-  for _ in {1..20}; do
-    if remote_exec "${node_a_ssh}" \
-      "test -f ${node_a_remote_dir}/ready && kill -0 \$(cat ${node_a_remote_dir}/server.pid)" >/dev/null 2>&1 &&
-      remote_exec "${node_b_ssh}" \
-        "test -f ${node_b_remote_dir}/ready && kill -0 \$(cat ${node_b_remote_dir}/server.pid)" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 0.25
-  done
-  remote_exec "${node_a_ssh}" \
-    "test -f ${node_a_remote_dir}/ready && kill -0 \$(cat ${node_a_remote_dir}/server.pid)" >/dev/null 2>&1 ||
-    fail "node A policy peer did not become ready"
-  remote_exec "${node_b_ssh}" \
-    "test -f ${node_b_remote_dir}/ready && kill -0 \$(cat ${node_b_remote_dir}/server.pid)" >/dev/null 2>&1 ||
-    fail "node B policy peer did not become ready"
+    for _ in {1..20}; do
+      if remote_exec "${node_a_ssh}" \
+        "test -f ${node_a_remote_dir}/ready && kill -0 \$(cat ${node_a_remote_dir}/server.pid)" >/dev/null 2>&1 &&
+        remote_exec "${node_b_ssh}" \
+          "test -f ${node_b_remote_dir}/ready && kill -0 \$(cat ${node_b_remote_dir}/server.pid)" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.25
+    done
+    remote_exec "${node_a_ssh}" \
+      "test -f ${node_a_remote_dir}/ready && kill -0 \$(cat ${node_a_remote_dir}/server.pid)" >/dev/null 2>&1 ||
+      fail "node A policy peer did not become ready"
+    remote_exec "${node_b_ssh}" \
+      "test -f ${node_b_remote_dir}/ready && kill -0 \$(cat ${node_b_remote_dir}/server.pid)" >/dev/null 2>&1 ||
+      fail "node B policy peer did not become ready"
+    listeners_started=true
+  else
+    progress "no mesh routes are present; recording route-level deny evidence"
+  fi
 
   started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   for direction in a_to_b b_to_a; do
@@ -577,12 +588,14 @@ main() {
     done
   done
 
-  remote_exec "${node_a_ssh}" \
-    "kill -0 \$(cat ${node_a_remote_dir}/server.pid)" >/dev/null 2>&1 ||
-    infrastructure_error_count=$((infrastructure_error_count + 1))
-  remote_exec "${node_b_ssh}" \
-    "kill -0 \$(cat ${node_b_remote_dir}/server.pid)" >/dev/null 2>&1 ||
-    infrastructure_error_count=$((infrastructure_error_count + 1))
+  if [[ "${listeners_started}" == true ]]; then
+    remote_exec "${node_a_ssh}" \
+      "kill -0 \$(cat ${node_a_remote_dir}/server.pid)" >/dev/null 2>&1 ||
+      infrastructure_error_count=$((infrastructure_error_count + 1))
+    remote_exec "${node_b_ssh}" \
+      "kill -0 \$(cat ${node_b_remote_dir}/server.pid)" >/dev/null 2>&1 ||
+      infrastructure_error_count=$((infrastructure_error_count + 1))
+  fi
 
   expected_json="$(jq -n \
     --arg a_tcp "${expected[0]}" --arg a_udp "${expected[2]}" \
@@ -734,6 +747,12 @@ if [[ "${1:-}" == __status-is-ready ]]; then
   [[ $# -eq 3 ]] || fail "__status-is-ready requires status and an online requirement"
   [[ "$3" == true || "$3" == false ]] || fail "online requirement must be true or false"
   status_is_ready "$2" "$3"
+  exit
+fi
+
+if [[ "${1:-}" == __any-mesh-route ]]; then
+  [[ $# -eq 5 ]] || fail "__any-mesh-route requires four route states"
+  any_mesh_route "$2" "$3" "$4" "$5"
   exit
 fi
 

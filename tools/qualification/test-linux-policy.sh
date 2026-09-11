@@ -62,6 +62,10 @@ failed_status='{"state":"offline","control_session":"synchronized","registration
 assert_rejected "${harness}" __status-is-ready "${idle_status}" true
 assert_rejected "${harness}" __status-is-ready "${failed_status}" false
 
+assert_rejected "${harness}" __any-mesh-route false false false false
+"${harness}" __any-mesh-route true false false false
+"${harness}" __any-mesh-route false false false true
+
 common_arguments=(
   --node-a-ssh root@192.0.2.10
   --node-b-ssh root@192.0.2.11
