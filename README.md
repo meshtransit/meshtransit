@@ -111,6 +111,7 @@ See [docs/architecture.md](docs/architecture.md),
 [docs/linux-reboot-qualification-2026-09-11.md](docs/linux-reboot-qualification-2026-09-11.md),
 [docs/linux-network-change-qualification-2026-09-11.md](docs/linux-network-change-qualification-2026-09-11.md),
 [docs/linux-relay-fallback-qualification-2026-09-11.md](docs/linux-relay-fallback-qualification-2026-09-11.md),
+[docs/linux-dns-qualification-2026-09-11.md](docs/linux-dns-qualification-2026-09-11.md),
 [docs/relay.md](docs/relay.md), [docs/dns.md](docs/dns.md),
 [docs/policy.md](docs/policy.md), and
 [docs/security-model.md](docs/security-model.md).

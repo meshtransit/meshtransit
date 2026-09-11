@@ -270,13 +270,14 @@ responses, control fingerprints, or raw daemon status. A pass requires cleanup
 and restoration within 20 seconds, continued non-mesh DNS during the stop, and
 all authoritative and host-integration checks after recovery.
 
-Reverse the node and peer arguments and repeat on the second host. The first
-two-node evidence is recorded in
-[linux-dns-qualification-2026-09-11.md](linux-dns-qualification-2026-09-11.md).
-The same evidence run temporarily staged control-configured upstream split and
-explicit-default resolvers, verified both nodes, and restored the original
-split-only configuration. That mutation is deliberately operator-driven rather
-than part of the host-local lifecycle harness.
+Reverse the node and peer arguments and repeat on the second host. The initial
+matrix and the later two-node alpha15 lifecycle validation are recorded in
+[linux-dns-qualification-2026-09-11.md](linux-dns-qualification-2026-09-11.md),
+with redacted alpha15 reports retained under `docs/evidence`. The initial run
+also staged control-configured upstream split and explicit-default resolvers,
+verified both nodes, and restored the original split-only configuration. That
+mutation is deliberately operator-driven rather than part of the host-local
+lifecycle harness and has not yet been repeated on alpha15.
 
 ## Run a host-policy phase
 
