@@ -315,6 +315,112 @@ func TestWireGuardEngineNewEquivalentRevisionPreservesSocket(t *testing.T) {
 	}
 }
 
+func TestWireGuardEngineEndpointAuthorityChangePreservesPeerSession(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot = addTestRelay(snapshot)
+	opener := &wireGuardTUNOpener{}
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		opener,
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	oldEndpoint := snapshot.Peers[0].Endpoints[0]
+	newEndpoint := netip.MustParseAddrPort("198.51.100.44:41641")
+	snapshot.Revision++
+	snapshot.Peers[0].Endpoints = []netip.AddrPort{newEndpoint}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply(authority change) error = %v", err)
+	}
+	if device.configureCalls != 1 {
+		t.Fatalf(
+			"authority change replaced peer session: configure calls = %d",
+			device.configureCalls,
+		)
+	}
+	if opener.calls != 1 || device.upCalls != 1 || device.closeCalls != 0 {
+		t.Fatalf(
+			"authority change recreated tunnel: open=%d up=%d close=%d",
+			opener.calls,
+			device.upCalls,
+			device.closeCalls,
+		)
+	}
+	if err := engine.SetPreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+		oldEndpoint,
+	); !errors.Is(err, ErrPeerEndpointUnauthorized) {
+		t.Fatalf("removed endpoint SetPreferredEndpoint() error = %v", err)
+	}
+	if err := engine.SetPreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+		newEndpoint,
+	); err != nil {
+		t.Fatalf("new endpoint SetPreferredEndpoint() error = %v", err)
+	}
+}
+
+func TestWireGuardEngineEndpointAuthorityChangeResetsSelectedPath(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot = addTestRelay(snapshot)
+	preferred := snapshot.Peers[0].Endpoints[0]
+	opener := &wireGuardTUNOpener{}
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		opener,
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if err := engine.SetPreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID, preferred); err != nil {
+		t.Fatalf("SetPreferredEndpoint() error = %v", err)
+	}
+	snapshot.Revision++
+	snapshot.Peers[0].Endpoints = []netip.AddrPort{
+		netip.MustParseAddrPort("198.51.100.45:41641"),
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply(authority change) error = %v", err)
+	}
+	if device.configureCalls != 3 || !strings.Contains(
+		device.configurations[2],
+		"update_only=true",
+	) || strings.Contains(device.configurations[2], "replace_peers=true") {
+		t.Fatalf("authority change configuration = %q", device.configuration)
+	}
+	paths := engine.PeerPaths()
+	if paths.RelayCount != 1 || paths.DirectCount != 0 {
+		t.Fatalf("PeerPaths() = %#v, want relay reset", paths)
+	}
+	if opener.calls != 1 || device.upCalls != 1 || device.closeCalls != 0 {
+		t.Fatalf(
+			"authority change recreated tunnel: open=%d up=%d close=%d",
+			opener.calls,
+			device.upCalls,
+			device.closeCalls,
+		)
+	}
+}
+
 func TestWireGuardEngineClosesWhenEquivalentRevisionResetFails(t *testing.T) {
 	t.Parallel()
 

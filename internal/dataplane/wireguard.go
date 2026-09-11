@@ -257,11 +257,12 @@ func (e *WireGuardEngine) Apply(
 	}
 	if e.device != nil {
 		if e.configurationHash == plan.configurationHash &&
-			equalPeerEndpointAuthority(e.peers, plan.peers) {
-			if e.appliedRevision == snapshot.Revision {
+			equalPeerBaseConfiguration(e.peers, plan.peers) {
+			if e.appliedRevision == snapshot.Revision &&
+				equalPeerEndpointAuthority(e.peers, plan.peers) {
 				return plan.state(), nil
 			}
-			advanced, err := e.advanceEquivalentPlan(snapshot.Revision, plan.peers)
+			advanced, err := e.advanceCompatiblePlan(snapshot.Revision, plan.peers)
 			if err != nil {
 				return StateFailed, err
 			}
@@ -589,10 +590,11 @@ func (e *WireGuardEngine) RestorePreferredEndpoint(
 	return e.configurePeerEndpoint(peerID, peer, peer.baseEndpoint, peer.basePath, false)
 }
 
-// advanceEquivalentPlan binds a new map revision without reopening the shared
-// UDP socket. A path selected under the previous revision is first returned to
-// its control-plane endpoint so stale path proof cannot cross generations.
-func (e *WireGuardEngine) advanceEquivalentPlan(
+// advanceCompatiblePlan adopts peer endpoint authority without replacing the
+// WireGuard peers or reopening the shared UDP socket. A path selected under
+// the previous authority is first returned to its control-plane endpoint so
+// stale path proof cannot cross generations.
+func (e *WireGuardEngine) advanceCompatiblePlan(
 	revision uint64,
 	planned []wireGuardPeerPlan,
 ) (bool, error) {
@@ -614,6 +616,16 @@ func (e *WireGuardEngine) advanceEquivalentPlan(
 			return false, err
 		}
 	}
+	nextPeers := make(map[uint64]wireGuardPeerState, len(planned))
+	for _, peer := range planned {
+		installed := e.peers[peer.id]
+		installed.authorizedEndpoints = append(
+			[]netip.AddrPort(nil),
+			peer.authorizedEndpoints...,
+		)
+		nextPeers[peer.id] = installed
+	}
+	e.peers = nextPeers
 	e.appliedRevision = revision
 
 	return true, nil
@@ -886,6 +898,22 @@ func equalPeerEndpointAuthority(
 	current map[uint64]wireGuardPeerState,
 	planned []wireGuardPeerPlan,
 ) bool {
+	if !equalPeerBaseConfiguration(current, planned) {
+		return false
+	}
+	for _, peer := range planned {
+		if !slices.Equal(current[peer.id].authorizedEndpoints, peer.authorizedEndpoints) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func equalPeerBaseConfiguration(
+	current map[uint64]wireGuardPeerState,
+	planned []wireGuardPeerPlan,
+) bool {
 	if len(current) != len(planned) {
 		return false
 	}
@@ -893,8 +921,7 @@ func equalPeerEndpointAuthority(
 		installed, exists := current[peer.id]
 		if !exists || installed.key != peer.key ||
 			installed.baseEndpoint != peer.baseEndpoint ||
-			installed.basePath != peer.basePath ||
-			!slices.Equal(installed.authorizedEndpoints, peer.authorizedEndpoints) {
+			installed.basePath != peer.basePath {
 			return false
 		}
 	}
