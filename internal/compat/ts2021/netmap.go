@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/big"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"net/url"
 	"path"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1062,6 +1064,13 @@ func (a *mapAccumulator) apply(
 		}
 		candidate.dns = dnsConfig
 	}
+	if a.initialized && equalMapAccumulatorState(a, candidate) {
+		if _, err := networkmap.ValidateAndClone(candidate.snapshot(), now); err != nil {
+			return networkmap.Snapshot{}, false, fmt.Errorf("%w: %w", ErrNetmapInvalid, err)
+		}
+
+		return networkmap.Snapshot{}, false, nil
+	}
 
 	candidate.revision++
 	candidate.initialized = true
@@ -1164,6 +1173,66 @@ func (a *mapAccumulator) clone() *mapAccumulator {
 	}
 
 	return cloned
+}
+
+func equalMapAccumulatorState(left, right *mapAccumulator) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+
+	return left.networkName == right.networkName &&
+		left.controlTime.Equal(right.controlTime) &&
+		equalMapNode(left.self, right.self) &&
+		maps.EqualFunc(left.peers, right.peers, equalMapNode) &&
+		maps.EqualFunc(left.namedPolicies, right.namedPolicies, equalRules) &&
+		maps.EqualFunc(left.relays, right.relays, equalRelayRegion) &&
+		equalDNSConfig(left.dns, right.dns) &&
+		left.audit == right.audit
+}
+
+func equalMapNode(left, right networkmap.Node) bool {
+	return left.ID == right.ID && left.StableID == right.StableID &&
+		left.Name == right.Name && left.PublicKey == right.PublicKey &&
+		left.DiscoveryKey == right.DiscoveryKey &&
+		slices.Equal(left.Addresses, right.Addresses) &&
+		slices.Equal(left.AllowedIPs, right.AllowedIPs) &&
+		slices.Equal(left.Endpoints, right.Endpoints) &&
+		left.HomeRelay == right.HomeRelay &&
+		left.OnlineKnown == right.OnlineKnown && left.Online == right.Online &&
+		left.KeyExpiry.Equal(right.KeyExpiry) && left.Expired == right.Expired &&
+		left.MachineAuthorized == right.MachineAuthorized
+}
+
+func equalRules(left, right []networkmap.Rule) bool {
+	return slices.EqualFunc(left, right, func(leftRule, rightRule networkmap.Rule) bool {
+		return slices.Equal(leftRule.Sources, rightRule.Sources) &&
+			slices.Equal(leftRule.Destinations, rightRule.Destinations) &&
+			slices.Equal(leftRule.Protocols, rightRule.Protocols)
+	})
+}
+
+func equalRelayRegion(left, right networkmap.RelayRegion) bool {
+	return left.ID == right.ID && left.Code == right.Code && left.Name == right.Name &&
+		slices.Equal(left.Nodes, right.Nodes)
+}
+
+func equalDNSConfig(left, right *networkmap.DNSConfig) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	if !slices.Equal(left.Resolvers, right.Resolvers) ||
+		!slices.Equal(left.FallbackResolvers, right.FallbackResolvers) ||
+		!slices.Equal(left.SearchDomains, right.SearchDomains) ||
+		left.Proxied != right.Proxied || !slices.Equal(left.Records, right.Records) {
+		return false
+	}
+
+	return slices.EqualFunc(left.Routes, right.Routes, func(
+		leftRoute, rightRoute networkmap.DNSRoute,
+	) bool {
+		return leftRoute.Suffix == rightRoute.Suffix &&
+			slices.Equal(leftRoute.Resolvers, rightRoute.Resolvers)
+	})
 }
 
 //nolint:staticcheck // Capability 142 no longer sends Nameservers, but the adapter validates legacy input defensively.

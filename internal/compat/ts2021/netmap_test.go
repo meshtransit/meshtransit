@@ -396,13 +396,149 @@ func TestMapAccumulator_DNSReplacementIsAtomic(t *testing.T) {
 	}, time.Now()); !errors.Is(err, ErrNetmapInvalid) {
 		t.Fatalf("unsupported dns apply() error = %v, want ErrNetmapInvalid", err)
 	}
-	preserved, _, err := accumulator.apply(tailcfg.MapResponse{}, time.Now())
+	preserved, changed, err := accumulator.apply(tailcfg.MapResponse{}, time.Now())
 	if err != nil {
 		t.Fatalf("post-rejection apply() error = %v", err)
 	}
-	if preserved.Revision != initial.Revision+1 || preserved.DNS == nil ||
-		!preserved.DNS.Proxied || preserved.DNS.SearchDomains[0] != "example.mesh" {
-		t.Fatalf("dns changed after rejected update: %#v", preserved.DNS)
+	if changed {
+		t.Fatal("empty delta published an unchanged snapshot")
+	}
+	if preserved.Revision != 0 {
+		t.Fatalf("empty delta snapshot revision = %d, want zero unpublished value", preserved.Revision)
+	}
+	if accumulator.revision != initial.Revision || accumulator.dns == nil ||
+		!accumulator.dns.Proxied || accumulator.dns.SearchDomains[0] != "example.mesh" {
+		t.Fatalf("dns changed after rejected update: %#v", accumulator.dns)
+	}
+}
+
+func TestMapAccumulator_EquivalentDeltaDoesNotAdvanceRevision(t *testing.T) {
+	t.Parallel()
+
+	self := testWireNode(1, 1)
+	peer := testWireNode(2, 2)
+	peer.Endpoints = []netip.AddrPort{netip.MustParseAddrPort("203.0.113.2:41641")}
+	online := true
+	peer.Online = &online
+	accumulator := newMapAccumulator()
+	initial, changed, err := accumulator.apply(tailcfg.MapResponse{
+		Node:  self,
+		Peers: []*tailcfg.Node{peer},
+	}, time.Now())
+	if err != nil || !changed {
+		t.Fatalf("initial apply() = changed %t, error %v", changed, err)
+	}
+
+	responses := []tailcfg.MapResponse{
+		{},
+		{OnlineChange: map[tailcfg.NodeID]bool{peer.ID: true}},
+		{PeersChangedPatch: []*tailcfg.PeerChange{{
+			NodeID:    peer.ID,
+			Online:    &online,
+			Endpoints: append([]netip.AddrPort(nil), peer.Endpoints...),
+		}}},
+	}
+	for index, response := range responses {
+		snapshot, changed, err := accumulator.apply(response, time.Now())
+		if err != nil {
+			t.Fatalf("equivalent apply %d error = %v", index, err)
+		}
+		if changed || snapshot.Revision != 0 {
+			t.Fatalf(
+				"equivalent apply %d = changed %t revision %d, want unpublished",
+				index,
+				changed,
+				snapshot.Revision,
+			)
+		}
+		if accumulator.revision != initial.Revision {
+			t.Fatalf(
+				"equivalent apply %d advanced revision to %d, want %d",
+				index,
+				accumulator.revision,
+				initial.Revision,
+			)
+		}
+	}
+}
+
+func TestMapAccumulator_ControlTimeChangeAdvancesRevision(t *testing.T) {
+	t.Parallel()
+
+	accumulator := newMapAccumulator()
+	initialTime := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC)
+	initial, _, err := accumulator.apply(tailcfg.MapResponse{
+		Node:        testWireNode(1, 1),
+		Peers:       []*tailcfg.Node{},
+		ControlTime: &initialTime,
+	}, initialTime)
+	if err != nil {
+		t.Fatalf("initial apply() error = %v", err)
+	}
+	updatedTime := initialTime.Add(time.Second)
+	updated, changed, err := accumulator.apply(tailcfg.MapResponse{
+		ControlTime: &updatedTime,
+	}, updatedTime)
+	if err != nil || !changed {
+		t.Fatalf("control-time apply() = changed %t, error %v", changed, err)
+	}
+	if updated.Revision != initial.Revision+1 || !updated.ControlTime.Equal(updatedTime) {
+		t.Fatalf("updated snapshot = %#v", updated)
+	}
+}
+
+func TestMapAccumulator_EquivalentReconnectPublishesNewGeneration(t *testing.T) {
+	t.Parallel()
+
+	self := testWireNode(1, 1)
+	peer := testWireNode(2, 2)
+	accumulator := newMapAccumulator()
+	initial, _, err := accumulator.apply(tailcfg.MapResponse{
+		Node:  self,
+		Peers: []*tailcfg.Node{peer},
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("initial apply() error = %v", err)
+	}
+	accumulator.resetSession()
+	reconnected, changed, err := accumulator.apply(tailcfg.MapResponse{
+		Node:  self,
+		Peers: []*tailcfg.Node{peer},
+	}, time.Now())
+	if err != nil || !changed {
+		t.Fatalf("reconnect apply() = changed %t, error %v", changed, err)
+	}
+	if reconnected.Revision != initial.Revision+1 {
+		t.Fatalf(
+			"reconnect revision = %d, want %d",
+			reconnected.Revision,
+			initial.Revision+1,
+		)
+	}
+	if len(reconnected.Peers) != 1 || reconnected.Peers[0].ID != 2 {
+		t.Fatalf("reconnected snapshot changed peers: %#v", reconnected.Peers)
+	}
+}
+
+func TestMapAccumulator_EquivalentDeltaRevalidatesExpiry(t *testing.T) {
+	t.Parallel()
+
+	expiresAt := time.Date(2026, time.September, 11, 12, 0, 1, 0, time.UTC)
+	self := testWireNode(1, 1)
+	self.KeyExpiry = expiresAt
+	accumulator := newMapAccumulator()
+	if _, _, err := accumulator.apply(tailcfg.MapResponse{
+		Node:  self,
+		Peers: []*tailcfg.Node{},
+	}, expiresAt.Add(-time.Second)); err != nil {
+		t.Fatalf("initial apply() error = %v", err)
+	}
+
+	if _, _, err := accumulator.apply(
+		tailcfg.MapResponse{},
+		expiresAt,
+	); !errors.Is(err, ErrNetmapInvalid) {
+		t.Fatalf("expired equivalent apply() error = %v, want ErrNetmapInvalid", err)
 	}
 }
 

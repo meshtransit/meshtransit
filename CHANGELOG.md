@@ -45,3 +45,9 @@ All notable user-visible changes will be documented in this file.
 - Pinned capability-142 network-map streaming with frame bounds, watchdog deadlines, and bounded jittered reconnect.
 - Upstream-independent validated network snapshots with atomic delta updates and deny-by-default policy state.
 - Control-session, netmap-revision, and peer-count status fields.
+
+### Changed
+
+- Semantically unchanged control-map deltas are revalidated without publishing
+  a new local generation, avoiding unnecessary probe, data-plane, and DNS
+  reconfiguration while preserving expiry enforcement and reconnect isolation.
