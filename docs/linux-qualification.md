@@ -181,10 +181,12 @@ endpoint refresh, and no-regression behavior without risking SSH access. It is
 not evidence for migration between two real underlays. That stronger test needs
 a multi-homed lab with an independent management path and scheduled rollback.
 
-The first two-node repeatability evidence is recorded in
-[linux-network-change-qualification-2026-09-11.md](linux-network-change-qualification-2026-09-11.md).
-It is Linux alpha POC evidence and does not replace the larger real multi-uplink
-sample set required for release-candidate p95 qualification.
+The initial repeatability matrix and the later two-node alpha15 validation are
+recorded in
+[linux-network-change-qualification-2026-09-11.md](linux-network-change-qualification-2026-09-11.md),
+with redacted alpha15 reports retained under `docs/evidence`. They are Linux
+alpha POC evidence and do not replace the larger real multi-uplink sample set
+required for release-candidate p95 qualification.
 
 ## Run a relay-fallback scenario
 

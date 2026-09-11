@@ -1,0 +1,86 @@
+{
+  "schema": "meshtransit.linux-network-change-qualification/v1",
+  "started_at": "2026-09-11T21:17:08Z",
+  "topology": {
+    "node_label": "ubuntu-b",
+    "peer_label": "ubuntu-a",
+    "address_families": [
+      "ipv4",
+      "ipv6"
+    ]
+  },
+  "platform": {
+    "kernel_release": "6.8.0-139-generic",
+    "architecture": "x86_64"
+  },
+  "artifact": {
+    "version": "0.1.0~alpha15",
+    "commit": "3e6ed3aaadf228e248a5158f2a8cb87d85f80e23",
+    "sha256": "1766c157059c6b70918c49a4878767f3b38418316be3f762bf45e82b8ae0ac82",
+    "evidence_complete": true
+  },
+  "scenario": {
+    "action": "controlled_interface_address_change",
+    "interface": "meshqchg0",
+    "changes_existing_uplink": false,
+    "changes_default_route": false
+  },
+  "baseline": {
+    "direct_peer_count": 1,
+    "relay_peer_count": 0,
+    "network_changes_observed": 0,
+    "endpoint_refreshes": 0
+  },
+  "observation": {
+    "lead_seconds": 2,
+    "recovery_timeout_seconds": 20,
+    "tail_seconds": 5,
+    "ping_interval_seconds": 0.2,
+    "status_poll_interval_seconds": 0.1,
+    "minimum_stable_replies": 3
+  },
+  "action": {
+    "exit_code": 0,
+    "duration_ms": 33,
+    "cleanup_ok": true
+  },
+  "recovery_ms": {
+    "event_observed": 881,
+    "endpoint_refresh": 881,
+    "path_usable": 48
+  },
+  "final": {
+    "network_changes_observed": 1,
+    "endpoint_refreshes": 1
+  },
+  "traffic": {
+    "ipv4": {
+      "command_exit_code": 0,
+      "parser_ok": true,
+      "transmitted": 122,
+      "received": 122,
+      "loss_percent": 0.0000,
+      "first_reply_after_action_ms": 117,
+      "maximum_consecutive_loss": 0,
+      "missing_after_action": 0,
+      "replies_after_action": 113,
+      "stable_recovery_ms": 117,
+      "consecutive_replies_at_end": 113
+    },
+    "ipv6": {
+      "command_exit_code": 0,
+      "parser_ok": true,
+      "transmitted": 122,
+      "received": 122,
+      "loss_percent": 0.0000,
+      "first_reply_after_action_ms": 116,
+      "maximum_consecutive_loss": 0,
+      "missing_after_action": 0,
+      "replies_after_action": 113,
+      "stable_recovery_ms": 116,
+      "consecutive_replies_at_end": 113
+    }
+  },
+  "failures": [],
+  "outcome": "pass"
+}

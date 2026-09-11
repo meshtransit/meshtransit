@@ -50,6 +50,34 @@ family lost a probe, and no service warning was recorded during the test window.
 After the final sample, both nodes remained online and synchronized with DNS
 configured, one direct peer path, and matching observed/refresh counters.
 
+## Alpha15 validation sample
+
+After the packet-path, TUN lifecycle, and live-update fixes were combined in
+`0.1.0~alpha15`, the controlled scenario was repeated once on each node using
+the same immutable Debian package as the alpha15 policy, restart, and reboot
+matrices.
+
+- Runtime commit: `3e6ed3aaadf228e248a5158f2a8cb87d85f80e23`
+- Artifact SHA-256:
+  `1766c157059c6b70918c49a4878767f3b38418316be3f762bf45e82b8ae0ac82`
+- Harness schema: `meshtransit.linux-network-change-qualification/v1`
+- Recovery deadline: 20 seconds
+
+| Node | Event observed | Endpoint refresh | Path usable | IPv4 stable | IPv6 stable | Loss | Cleanup | Result |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `ubuntu-b` | 881 ms | 881 ms | 48 ms | 117 ms | 116 ms | 0% | pass | pass |
+| `ubuntu-a` | 849 ms | 849 ms | 54 ms | 88 ms | 93 ms | 0% | pass | pass |
+
+Both status counters advanced for interface creation and advanced again after
+the interface was removed. Independent post-run inspection confirmed that
+`meshqchg0` was absent, the original default route and uplink were unchanged,
+peer routes still used `mesh0`, both services remained active, MagicDNS and
+dual-stack traffic remained healthy, and the bounded warning-level journal
+query returned no entries.
+
+The redacted reports and checksum manifest are retained in
+[`docs/evidence/linux-network-change-alpha15-s1`](evidence/linux-network-change-alpha15-s1).
+
 ## Scope limit
 
 This scenario proves that the daemon detects a bounded interface/address change,
