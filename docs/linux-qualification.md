@@ -1,12 +1,11 @@
-# Linux restart qualification
+# Linux qualification
 
-The Linux restart harness measures recovery of one installed MeshTransit node
-against one healthy peer. It is the first native reliability tool for the v0.1
-release contract. The current scenario covers an explicit restart of either
-`meshd.service` or `meshnetd.service`; package upgrade, boot recovery, network
-change, and soak scenarios remain separate gates.
+The Linux qualification tools measure recovery of one installed MeshTransit
+node against one healthy peer. They cover explicit restart of either
+`meshd.service` or `meshnetd.service` and a full host reboot. Package upgrade,
+network change, forced-relay recovery, and soak scenarios remain separate gates.
 
-## Safety boundary
+## Restart safety boundary
 
 The harness runs on the node being tested and requires root only for the selected
 `systemctl restart`. It accepts exactly `meshd` or `meshnetd` as the service. It
@@ -27,7 +26,7 @@ fingerprint stay in a mode-`0700` temporary directory and are deleted on exit.
 The JSON report contains only operator-selected topology labels, platform and
 artifact metadata, aggregate timing, and packet counters.
 
-## Prerequisites
+## Restart prerequisites
 
 Run the harness on a supported Ubuntu host with the packaged services already
 registered. It requires Bash, `iproute2`, `iputils-ping`, `jq`, `meshctl`,
@@ -66,7 +65,7 @@ interface cannot terminate the rest of the observation window. Timing
 parameters are available for controlled experiments, but release-candidate
 runs use the documented defaults.
 
-## Report contract
+## Restart report contract
 
 The schema identifier is `meshtransit.linux-restart-qualification/v1`.
 
@@ -89,16 +88,73 @@ latency or the 72-hour reliability target. Aggregate candidate reports must also
 record sample count, topology/load definition, artifact digest, and percentile
 calculations as required by [release-v0.1.md](release-v0.1.md).
 
+## Run a reboot scenario
+
+Run the reboot harness from an operator host that can reach two registered
+Linux nodes over SSH. The target is the only node rebooted. The observer stays
+online and records IPv4 and IPv6 traffic for the complete bounded window.
+
+The harness rejects SSH option and shell metacharacter injection, uses strict
+host-key checking, and requires `--confirm-reboot` to exactly match the target
+label. A changed kernel boot ID is mandatory evidence; observing an SSH outage
+is recorded but is not mandatory because a short outage can fall between
+polls. Raw traffic, SSH destinations, overlay addresses, DNS answers, boot IDs,
+profile IDs, and control fingerprints are not included in the JSON report.
+
+```bash
+tools/qualification/linux-reboot.sh \
+  --target-ssh root@TARGET_HOST \
+  --observer-ssh root@OBSERVER_HOST \
+  --target-label ubuntu-a \
+  --observer-label ubuntu-b \
+  --target-v4 100.64.0.5 \
+  --target-v6 fd7a:115c:a1e0::6 \
+  --target-name ubuntu-a \
+  --observer-v4 100.64.0.6 \
+  --observer-v6 fd7a:115c:a1e0::d \
+  --observer-name ubuntu-b \
+  --artifact-sha256 SHA256_OF_DEB \
+  --confirm-reboot ubuntu-a \
+  >ubuntu-a-reboot.json
+```
+
+Use `--ssh-driver rtk` when the operator environment routes SSH through RTK.
+The harness still uses plain `ssh` for the two long-running traffic streams so
+the wrapper cannot outlive or truncate their observation window.
+
+Preflight requires both nodes to be online, synchronized, registered, and able
+to exchange dual-stack traffic. After the reboot, the target must recover both
+services, the data interface and peer routes, daemon readiness, exact MagicDNS
+answers, and outbound dual-stack traffic. The active profile, profile count,
+self addresses, daemon version, and daemon commit must remain unchanged.
+
+Defaults provide a three-second healthy lead, a 60-second recovery deadline, a
+five-second stability tail, and a 75-second observation window. The operator
+host clock must remain stable during the run. Reverse target and observer and
+repeat the scenario on the second node; never reboot both nodes concurrently.
+
+The reboot schema identifier is
+`meshtransit.linux-reboot-qualification/v1`. A passing report requires a changed
+boot ID, all readiness and persistence gates, parseable IPv4 and IPv6 traffic,
+and a final stable traffic run that begins within the recovery deadline.
+
 ## Local validation
 
-The ping parser has deterministic recovery and no-recovery fixtures:
+The restart parser has deterministic recovery and no-recovery fixtures. The
+reboot validation tests cover SSH destination filtering, explicit target
+confirmation, clock progression, and help output.
 
 ```bash
 bash -n tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-restart.sh \
+  tools/qualification/linux-reboot.sh \
+  tools/qualification/test-linux-reboot.sh \
   tools/qualification/testdata/ping
 shellcheck tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-restart.sh \
+  tools/qualification/linux-reboot.sh \
+  tools/qualification/test-linux-reboot.sh \
   tools/qualification/testdata/ping
 bash tools/qualification/test-linux-restart.sh
+bash tools/qualification/test-linux-reboot.sh
 ```

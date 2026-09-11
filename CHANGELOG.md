@@ -17,6 +17,8 @@ All notable user-visible changes will be documented in this file.
   alternate-root-safe purge behavior, and disposable package lifecycle tests.
 - Bounded Linux restart qualification for service, TUN, MagicDNS, and dual-stack
   traffic recovery, with redacted machine-readable reports and parser fixtures.
+- Bounded two-node Linux reboot qualification for service, route, identity,
+  MagicDNS, and dual-stack traffic recovery with explicit target confirmation.
 - WireGuard peer sessions now survive control-map endpoint-authority refreshes;
   stale direct selections return to the relay path without replacing the peer.
 - Separate owner-writable runtime directories for the operator API and

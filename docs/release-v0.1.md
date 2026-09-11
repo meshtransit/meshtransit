@@ -84,8 +84,8 @@ has opt-in TUN, userspace WireGuard, `SO_PEERCRED`, privileged `meshnetd`, and
 `systemd-resolved` adapters.
 
 The Linux packet and DNS paths remain explicitly marked as POCs. Linux has a
-reproducible Debian package, lifecycle contract, and bounded restart
-qualification harness, but does not yet have a signed artifact pipeline or
+reproducible Debian package, lifecycle contract, and bounded restart and reboot
+qualification harnesses, but does not yet have a signed artifact pipeline or
 long-duration qualification suite. Windows and macOS deny local API access
 without an unsafe development override and do not have native tunnel, DNS, or
 installer activation.
