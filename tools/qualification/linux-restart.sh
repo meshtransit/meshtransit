@@ -453,12 +453,16 @@ main() {
   local meshd_pid_after
   local meshnetd_pid_after
   local target_pid_changed=false
+  local meshd_pid_changed=false
   local target_restart_count_before
   local target_restart_count_after
   local target_restart_count_increased=false
   local target_restarted=false
+  local meshd_restarted=false
+  local recovery_generation_ready=false
   local target_pid_before
   local current_target_pid
+  local current_meshd_pid
   local current_target_restart_count
   local observation_seconds
   local started_at
@@ -740,6 +744,7 @@ main() {
     fi
 
     current_target_pid="$(unit_pid "${unit}")"
+    current_meshd_pid="$(unit_pid meshd.service)"
     current_target_restart_count="$(unit_restart_count "${unit}")"
     if [[ "${current_target_pid}" != 0 &&
       "${current_target_pid}" != "${target_pid_before}" ]]; then
@@ -748,23 +753,30 @@ main() {
         target_restarted=true
       fi
     fi
+    if [[ "${current_meshd_pid}" != 0 &&
+      "${current_meshd_pid}" != "${meshd_pid_before}" ]]; then
+      meshd_restarted=true
+    fi
+    if [[ "${target_restarted}" == true && "${meshd_restarted}" == true ]]; then
+      recovery_generation_ready=true
+    fi
 
-    if [[ "${target_restarted}" == true && -z "${service_ready_ns}" ]] &&
+    if [[ "${recovery_generation_ready}" == true && -z "${service_ready_ns}" ]] &&
       systemctl is-active --quiet meshd.service meshnetd.service; then
       service_ready_ns="${current_ns}"
     fi
-    if [[ "${target_restarted}" == true && -z "${tun_ready_ns}" ]] &&
+    if [[ "${recovery_generation_ready}" == true && -z "${tun_ready_ns}" ]] &&
       ip link show dev "${data_interface}" >/dev/null 2>&1; then
       tun_ready_ns="${current_ns}"
     fi
 
     current_status="$(meshctl --timeout 1s --json status 2>/dev/null || true)"
-    if [[ "${target_restarted}" == true && -z "${online_ready_ns}" &&
+    if [[ "${recovery_generation_ready}" == true && -z "${online_ready_ns}" &&
       -n "${current_status}" ]] &&
       status_is_ready "${current_status}"; then
       online_ready_ns="${current_ns}"
     fi
-    if [[ "${target_restarted}" == true && -z "${dns_ready_ns}" &&
+    if [[ "${recovery_generation_ready}" == true && -z "${dns_ready_ns}" &&
       -n "${current_status}" ]] &&
       jq -e '.dns == "configured"' >/dev/null <<<"${current_status}" &&
       ip link show dev "${dns_interface}" >/dev/null 2>&1 &&
@@ -820,6 +832,10 @@ main() {
 
   meshd_pid_after="$(unit_pid meshd.service)"
   meshnetd_pid_after="$(unit_pid meshnetd.service)"
+  if [[ "${meshd_pid_before}" != "${meshd_pid_after}" &&
+    "${meshd_pid_after}" != 0 ]]; then
+    meshd_pid_changed=true
+  fi
   target_restart_count_after="$(unit_restart_count "${unit}")"
   if (( target_restart_count_after > target_restart_count_before )); then
     target_restart_count_increased=true
@@ -854,6 +870,7 @@ main() {
     --argjson action_exit_code "${action_exit_code}" \
     --argjson action_duration_ms "${action_duration_ms}" \
     --argjson target_pid_changed "${target_pid_changed}" \
+    --argjson meshd_pid_changed "${meshd_pid_changed}" \
     --argjson target_restart_count_before "${target_restart_count_before}" \
     --argjson target_restart_count_after "${target_restart_count_after}" \
     --argjson target_restart_count_increased "${target_restart_count_increased}" \
@@ -930,6 +947,7 @@ main() {
           exit_code: $action_exit_code,
           duration_ms: $action_duration_ms,
           target_pid_changed: $target_pid_changed,
+          meshd_pid_changed: $meshd_pid_changed,
           restart_count_before: $target_restart_count_before,
           restart_count_after: $target_restart_count_after,
           restart_count_increased: $target_restart_count_increased
@@ -978,6 +996,7 @@ main() {
           if .action.exit_code != 0 and .scenario.action == "restart" then "restart_command_failed" else empty end,
           if .action.exit_code != 0 and .scenario.action == "sigkill" then "sigkill_command_failed" else empty end,
           if .action.target_pid_changed != true then "target_pid_did_not_change" else empty end,
+          if .scenario.service == "meshnetd.service" and .action.meshd_pid_changed != true then "meshd_generation_did_not_change" else empty end,
           if .scenario.action == "sigkill" and .action.restart_count_increased != true then "restart_count_did_not_increase" else empty end,
           if .dns_cleanup.required == true and .dns_cleanup.observed != true then "dns_cleanup_not_observed" else empty end,
           if .readiness_ms.services_active == null then "services_not_ready" else empty end,
