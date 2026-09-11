@@ -117,6 +117,9 @@ func TestWireGuardEngineRetainsPresenceTransportWithoutPeers(t *testing.T) {
 	if len(opener.config.Routes) != 0 || !slices.Equal(opener.config.Addresses, peerless.Self.Addresses) {
 		t.Fatalf("peerless helper config = %#v", opener.config)
 	}
+	if device.configuration != "replace_peers=true\n" {
+		t.Fatalf("peerless wireguard update restarted the bind: %q", device.configuration)
+	}
 
 	peerless.Revision++
 	if state, err := engine.Apply(t.Context(), peerless, privateKey); err != nil || state != StateIdle {
@@ -149,6 +152,11 @@ func TestWireGuardEngineRetainsPresenceTransportWithoutPeers(t *testing.T) {
 			device.relayUpdateCalls,
 			len(device.relayPeers),
 		)
+	}
+	for _, forbidden := range []string{"private_key=", "listen_port="} {
+		if strings.Contains(device.configuration, forbidden) {
+			t.Fatalf("restored wireguard update contains %q: %q", forbidden, device.configuration)
+		}
 	}
 
 	if err := engine.Close(); err != nil {

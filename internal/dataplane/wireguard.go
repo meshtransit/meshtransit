@@ -143,6 +143,7 @@ type PacketObserver interface {
 
 type wireGuardPlan struct {
 	configuration     []byte
+	peerConfiguration []byte
 	configurationHash [32]byte
 	addresses         []netip.Prefix
 	routes            []netip.Prefix
@@ -297,7 +298,7 @@ func (e *WireGuardEngine) Apply(
 				return StateFailed, err
 			}
 		}
-		if err := e.device.Configure(bytes.NewReader(plan.configuration)); err != nil {
+		if err := e.device.Configure(bytes.NewReader(plan.peerConfiguration)); err != nil {
 			_ = e.Close()
 
 			return StateFailed, errors.New("dataplane: applying wireguard peer configuration failed")
@@ -397,6 +398,7 @@ func (p *wireGuardPlan) clearSecrets() {
 		return
 	}
 	clear(p.configuration)
+	clear(p.peerConfiguration)
 	if p.relayConfig != nil {
 		clear(p.relayConfig.PrivateKey[:])
 	}
@@ -916,29 +918,34 @@ func buildWireGuardPlan(
 	configuration.WriteByte('\n')
 	configuration.WriteString("listen_port=")
 	configuration.Write(strconv.AppendUint(nil, uint64(listenPort), 10))
-	configuration.WriteString("\nreplace_peers=true\n")
+	configuration.WriteByte('\n')
+	var peerConfiguration bytes.Buffer
+	peerConfiguration.WriteString("replace_peers=true\n")
 	for _, peer := range plannedPeers {
-		configuration.WriteString("public_key=")
+		peerConfiguration.WriteString("public_key=")
 		var encodedPublic [64]byte
 		hex.Encode(encodedPublic[:], peer.key[:])
-		configuration.Write(encodedPublic[:])
-		configuration.WriteString("\nprotocol_version=1\n")
+		peerConfiguration.Write(encodedPublic[:])
+		peerConfiguration.WriteString("\nprotocol_version=1\n")
 		if peer.baseEndpoint != "" {
-			configuration.WriteString("endpoint=")
-			configuration.WriteString(peer.baseEndpoint)
-			configuration.WriteByte('\n')
+			peerConfiguration.WriteString("endpoint=")
+			peerConfiguration.WriteString(peer.baseEndpoint)
+			peerConfiguration.WriteByte('\n')
 		}
-		configuration.WriteString("replace_allowed_ips=true\n")
+		peerConfiguration.WriteString("replace_allowed_ips=true\n")
 		for _, allowedIP := range peer.allowedIPs {
-			configuration.WriteString("allowed_ip=")
-			configuration.WriteString(allowedIP.String())
-			configuration.WriteByte('\n')
+			peerConfiguration.WriteString("allowed_ip=")
+			peerConfiguration.WriteString(allowedIP.String())
+			peerConfiguration.WriteByte('\n')
 		}
 	}
+	configuration.Write(peerConfiguration.Bytes())
 	encoded := configuration.Bytes()
+	encodedPeers := peerConfiguration.Bytes()
 
 	plan := wireGuardPlan{
 		configuration:     encoded,
+		peerConfiguration: encodedPeers,
 		configurationHash: sha256.Sum256(encoded),
 		addresses:         addresses,
 		routes:            routes,

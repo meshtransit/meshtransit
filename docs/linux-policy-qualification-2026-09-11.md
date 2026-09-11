@@ -189,6 +189,27 @@ The next candidate must update compatible peer, relay-peer, and host-route
 authority in place, then pass multiple deny/restore cycles with bounded memory
 before promotion.
 
+## Rejected alpha14 pre-gate
+
+`0.1.0~alpha14` was built independently twice from commit
+`672f3f5dfba28bdd38137b50e44993acdfe33ea6`; both builds were byte-identical
+with SHA-256
+`dc0f769596ed406dbd278805001ddebf1dcf8930733359d2151ce483ac85b952`.
+The canary upgrade, mixed-version dual-stack traffic, second-node rollout, and
+all-alpha14 baseline passed. The first default-deny transition retained both
+service process IDs, removed all peer routes, reported zero peers and idle, and
+kept current memory near the pre-transition values.
+
+The candidate was rejected before the repeated-transition gate because both
+relay `last_connected` timestamps reset at the policy transition. The TUN was
+not recreated, but source inspection confirmed that the live full-peer UAPI
+configuration resent the unchanged `listen_port`. The official userspace
+WireGuard engine handles every listen-port assignment with an unconditional
+bind update, which closed and reopened the shared UDP and relay transport. The
+exact baseline policy was restored immediately. The next candidate must use a
+peer-only live configuration that cannot carry the private key or listen port,
+then prove stable socket and relay generations through repeated transitions.
+
 ## Supporting quality gates
 
 The runtime implementation passed the full race-enabled Go test suite, `go
