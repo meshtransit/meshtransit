@@ -102,6 +102,9 @@ isolation, and rollback sample. Alpha16 also has one passing `SIGKILL` recovery
 sample for each service on each node, including observed daemon DNS cleanup and
 coordinated daemon/helper generation replacement, followed by three passing
 samples for every node/service combination with state and resource invariants.
+Each node also has one passing chained sample proving that the newly recovered
+helper/daemon generation handles its first controlled network change, refreshes
+endpoints, and remains stable without an additional restart.
 It does not yet have a signed artifact pipeline, IPv6-only underlay evidence,
 real multi-uplink migration qualification, the larger candidate crash sample
 set, repeated candidate DNS-failure samples, or a long-duration qualification

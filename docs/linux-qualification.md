@@ -195,6 +195,10 @@ the 20-second readiness and endpoint-refresh deadlines and the full five-second
 network-change stability tail. Failure or interruption starts both services;
 the child network-change trap owns removal of its dedicated interface.
 
+The first passing two-node alpha16 chain is recorded in
+[linux-helper-recovery-change-qualification-2026-09-12.md](linux-helper-recovery-change-qualification-2026-09-12.md),
+with its redacted reports retained under `docs/evidence`.
+
 ## Run a reboot scenario
 
 Run the reboot harness from an operator host that can reach two registered
