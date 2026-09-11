@@ -52,6 +52,7 @@ Runs a bounded dual-stack host-policy phase from an operator host. It creates
 temporary TCP and UDP challenge listeners on both registered Linux nodes and
 checks new TCP, UDP, ICMPv4, and ICMPv6 flows in both directions. The harness
 does not change control policy, profiles, routes, DNS, packages, or services.
+It fails if meshd restarts on either node and records bounded service-memory evidence.
 The JSON report excludes SSH destinations, overlay addresses, and payloads.
 EOF
 }
@@ -146,6 +147,68 @@ remote_exec() {
     -o StrictHostKeyChecking=yes \
     "${destination}" \
     "${remote_command}"
+}
+
+parse_service_metrics() {
+  local raw="$1"
+  local main_pid=""
+  local restarts=""
+  local memory_current=""
+  local memory_peak=""
+  local key
+  local value
+
+  while IFS='=' read -r key value; do
+    case "${key}" in
+      MainPID) main_pid="${value}" ;;
+      NRestarts) restarts="${value}" ;;
+      MemoryCurrent) memory_current="${value}" ;;
+      MemoryPeak) memory_peak="${value}" ;;
+    esac
+  done <<<"${raw}"
+  for value in "${main_pid}" "${restarts}" "${memory_current}" "${memory_peak}"; do
+    [[ "${value}" =~ ^[0-9]+$ ]] || return 1
+  done
+  ((10#${main_pid} > 0)) || return 1
+
+  jq -cn \
+    --argjson main_pid "${main_pid}" \
+    --argjson restarts "${restarts}" \
+    --argjson memory_current "${memory_current}" \
+    --argjson memory_peak "${memory_peak}" \
+    '{main_pid:$main_pid,restarts:$restarts,memory_current_bytes:$memory_current,memory_peak_bytes:$memory_peak}'
+}
+
+collect_service_metrics() {
+  local destination="$1"
+  local raw
+
+  raw="$(remote_exec "${destination}" \
+    "systemctl show meshd.service -p MainPID -p NRestarts -p MemoryCurrent -p MemoryPeak --no-pager")" ||
+    return 1
+  parse_service_metrics "${raw}"
+}
+
+compare_service_metrics() {
+  local before="$1"
+  local after="$2"
+
+  jq -cn \
+    --argjson before "${before}" \
+    --argjson after "${after}" '
+      {
+        service_pid_stable: ($before.main_pid == $after.main_pid),
+        restarts: {before:$before.restarts, after:$after.restarts},
+        memory_current_bytes: {
+          before:$before.memory_current_bytes,
+          after:$after.memory_current_bytes
+        },
+        memory_peak_bytes: {
+          before:$before.memory_peak_bytes,
+          after:$after.memory_peak_bytes
+        }
+      }
+    '
 }
 
 copy_helper() {
@@ -282,6 +345,12 @@ main() {
   local probe_timeout_seconds=2
   local node_a_status
   local node_b_status
+  local node_a_metrics_before
+  local node_b_metrics_before
+  local node_a_metrics_after
+  local node_b_metrics_after
+  local node_a_runtime
+  local node_b_runtime
   local started_at
   local any_allow=false
   local evidence_complete=true
@@ -448,6 +517,10 @@ main() {
     fail "node A status does not contain the expected self addresses"
   status_has_addresses "${node_b_status}" "${node_b_v4}" "${node_b_v6}" ||
     fail "node B status does not contain the expected self addresses"
+  node_a_metrics_before="$(collect_service_metrics "${node_a_ssh}")" ||
+    fail "node A service metrics are unavailable"
+  node_b_metrics_before="$(collect_service_metrics "${node_b_ssh}")" ||
+    fail "node B service metrics are unavailable"
   if mesh_route_present "${node_a_ssh}" 4 "${node_b_v4}"; then
     node_a_route4=true
   fi
@@ -644,6 +717,15 @@ main() {
     fi
   fi
 
+  node_a_metrics_after="$(collect_service_metrics "${node_a_ssh}")" ||
+    fail "node A post-probe service metrics are unavailable"
+  node_b_metrics_after="$(collect_service_metrics "${node_b_ssh}")" ||
+    fail "node B post-probe service metrics are unavailable"
+  node_a_runtime="$(compare_service_metrics \
+    "${node_a_metrics_before}" "${node_a_metrics_after}")"
+  node_b_runtime="$(compare_service_metrics \
+    "${node_b_metrics_before}" "${node_b_metrics_after}")"
+
   expected_json="$(jq -n \
     --arg a_tcp "${expected[0]}" --arg a_udp "${expected[2]}" \
     --arg a_i4 "${expected[4]}" --arg a_i6 "${expected[5]}" \
@@ -694,6 +776,8 @@ main() {
     --argjson node_a_route6 "${node_a_route6}" \
     --argjson node_b_route4 "${node_b_route4}" \
     --argjson node_b_route6 "${node_b_route6}" \
+    --argjson node_a_runtime "${node_a_runtime}" \
+    --argjson node_b_runtime "${node_b_runtime}" \
     --argjson tcp_port "${tcp_port}" \
     --argjson udp_port "${udp_port}" \
     --argjson probe_timeout "${probe_timeout_seconds}" \
@@ -728,6 +812,7 @@ main() {
           a_to_b: {ipv4: $node_a_route4, ipv6: $node_a_route6},
           b_to_a: {ipv4: $node_b_route4, ipv6: $node_b_route6}
         },
+        runtime: {node_a:$node_a_runtime, node_b:$node_b_runtime},
         listeners: {tcp_port: $tcp_port, udp_port: $udp_port},
         probe_timeout_seconds: $probe_timeout,
         expected: $expected,
@@ -739,6 +824,9 @@ main() {
       }
       | .failures = [
           if .artifact.same_runtime != true then "runtime_mismatch" else empty end,
+          if ([.runtime.node_a, .runtime.node_b] | all(
+            .service_pid_stable and .restarts.before == .restarts.after
+          ) | not) then "daemon_restarted" else empty end,
           if .mismatch_count != 0 then "policy_expectation_mismatch" else empty end,
           if .infrastructure_error_count != 0 then "probe_infrastructure_error" else empty end
         ]
@@ -800,6 +888,18 @@ fi
 if [[ "${1:-}" == __any-mesh-route ]]; then
   [[ $# -eq 5 ]] || fail "__any-mesh-route requires four route states"
   any_mesh_route "$2" "$3" "$4" "$5"
+  exit
+fi
+
+if [[ "${1:-}" == __parse-service-metrics ]]; then
+  [[ $# -eq 2 ]] || fail "__parse-service-metrics requires one systemd output value"
+  parse_service_metrics "$2"
+  exit
+fi
+
+if [[ "${1:-}" == __compare-service-metrics ]]; then
+  [[ $# -eq 3 ]] || fail "__compare-service-metrics requires before and after values"
+  compare_service_metrics "$2" "$3"
   exit
 fi
 

@@ -21,6 +21,7 @@ assert_rejected() {
 help_output="$("${harness}" --help)"
 grep -Fq -- 'bounded dual-stack host-policy phase' <<<"${help_output}"
 grep -Fq -- 'does not change control policy' <<<"${help_output}"
+grep -Fq -- 'fails if meshd restarts on either node' <<<"${help_output}"
 grep -Fq -- 'excludes SSH destinations, overlay addresses, and payloads' <<<"${help_output}"
 
 "${harness}" __validate-ssh-destination root@192.0.2.10
@@ -65,6 +66,32 @@ assert_rejected "${harness}" __status-is-ready "${failed_status}" false
 assert_rejected "${harness}" __any-mesh-route false false false false
 "${harness}" __any-mesh-route true false false false
 "${harness}" __any-mesh-route false false false true
+
+service_metrics=$'MainPID=123\nNRestarts=2\nMemoryCurrent=1048576\nMemoryPeak=2097152'
+parsed_metrics="$("${harness}" __parse-service-metrics "${service_metrics}")"
+jq -e '
+  .main_pid == 123 and .restarts == 2 and
+  .memory_current_bytes == 1048576 and .memory_peak_bytes == 2097152
+' >/dev/null <<<"${parsed_metrics}"
+assert_rejected "${harness}" __parse-service-metrics \
+  $'MainPID=0\nNRestarts=0\nMemoryCurrent=1\nMemoryPeak=1'
+assert_rejected "${harness}" __parse-service-metrics \
+  $'MainPID=123\nNRestarts=0\nMemoryCurrent=[not set]\nMemoryPeak=1'
+
+stable_runtime="$("${harness}" __compare-service-metrics \
+  "${parsed_metrics}" \
+  '{"main_pid":123,"restarts":2,"memory_current_bytes":1572864,"memory_peak_bytes":2621440}')"
+jq -e '
+  .service_pid_stable == true and .restarts == {before:2,after:2} and
+  .memory_current_bytes == {before:1048576,after:1572864} and
+  .memory_peak_bytes == {before:2097152,after:2621440}
+' >/dev/null <<<"${stable_runtime}"
+restarted_runtime="$("${harness}" __compare-service-metrics \
+  "${parsed_metrics}" \
+  '{"main_pid":456,"restarts":3,"memory_current_bytes":524288,"memory_peak_bytes":786432}')"
+jq -e '
+  .service_pid_stable == false and .restarts == {before:2,after:3}
+' >/dev/null <<<"${restarted_runtime}"
 
 common_arguments=(
   --node-a-ssh root@192.0.2.10

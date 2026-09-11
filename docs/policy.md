@@ -94,9 +94,12 @@ and exact rollback:
 
 The report schema is `meshtransit.linux-policy-qualification/v1`. Reports
 contain labels, artifact identity, map revisions, aggregate rule counts,
-expectations, observations, timings, and process exit codes. They exclude SSH
-destinations, overlay addresses, network identity, policy contents, daemon
-status documents, and challenge bytes.
+expectations, observations, timings, process exit codes, and the `meshd`
+service's current and peak memory before and after the phase. The harness also
+requires the service PID and systemd restart count to remain stable on both
+nodes; otherwise it emits `daemon_restarted` and fails the phase. Reports
+exclude SSH destinations, overlay addresses, network identity, policy contents,
+daemon status documents, process IDs, and challenge bytes.
 
 If the reduced map removes a peer route during an all-deny phase, the harness
 does not leak a probe toward the underlay default route. It records the missing

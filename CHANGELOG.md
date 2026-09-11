@@ -25,6 +25,8 @@ All notable user-visible changes will be documented in this file.
 - Bounded Linux direct-path loss qualification with UDP-only peer isolation,
   measured relay fallback, dual-stack relay traffic proof, direct recovery, and
   automatic nftables cleanup.
+- Linux host-policy qualification now records bounded `meshd` memory evidence
+  and fails a phase if the service restarts on either node.
 - WireGuard peer sessions now survive control-map endpoint-authority refreshes;
   stale direct selections return to the relay path without replacing the peer.
 - Separate owner-writable runtime directories for the operator API and
