@@ -4,6 +4,7 @@ package dataplane
 
 import (
 	"errors"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -87,8 +88,12 @@ func TestAdoptPrivilegedTUNDescriptor(t *testing.T) {
 			if _, err := device.File().Write(payload); err != nil {
 				t.Fatalf("writing adopted descriptor: %v", err)
 			}
+			if descriptors[1] < 0 || descriptors[1] > math.MaxInt32 {
+				t.Fatalf("peer descriptor is outside poll range: %d", descriptors[1])
+			}
+			peerDescriptor := int32(descriptors[1]) //nolint:gosec // Bounds checked above.
 			poll := []unix.PollFd{{
-				Fd:     int32(peer.Fd()),
+				Fd:     peerDescriptor,
 				Events: unix.POLLIN,
 			}}
 			ready, err := unix.Poll(poll, 1000)
@@ -99,7 +104,7 @@ func TestAdoptPrivilegedTUNDescriptor(t *testing.T) {
 				t.Fatalf("peer descriptor readiness = (%d, %d), want readable", ready, poll[0].Revents)
 			}
 			got := make([]byte, len(payload))
-			if _, err := unix.Read(int(peer.Fd()), got); err != nil {
+			if _, err := unix.Read(descriptors[1], got); err != nil {
 				t.Fatalf("reading peer descriptor: %v", err)
 			}
 			if string(got) != string(payload) {
