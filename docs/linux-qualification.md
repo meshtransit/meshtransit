@@ -90,6 +90,10 @@ latency or the 72-hour reliability target. Aggregate candidate reports must also
 record sample count, topology/load definition, artifact digest, and percentile
 calculations as required by [release-v0.1.md](release-v0.1.md).
 
+The first complete two-node alpha15 restart matrix is recorded in
+[linux-restart-qualification-2026-09-11.md](linux-restart-qualification-2026-09-11.md),
+with its redacted machine-readable reports retained under `docs/evidence`.
+
 ## Run a reboot scenario
 
 Run the reboot harness from an operator host that can reach two registered
