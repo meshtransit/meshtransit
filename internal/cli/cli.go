@@ -362,11 +362,12 @@ func runStatus(
 	}
 	_, _ = fmt.Fprintf(
 		stdout,
-		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nPeers: %d\nPeer paths: %s\nRelay: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
+		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nPeers: %d\nPeer paths: %s\nRelay: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
 		status.Daemon.Version,
 		status.State,
 		status.DataPlane,
 		status.DNS,
+		formatNetworkChangeStatus(status.NetworkChanges),
 		activeProfile,
 		status.ProfileCount,
 		status.ControlTrust,
@@ -384,6 +385,18 @@ func runStatus(
 	)
 
 	return 0
+}
+
+func formatNetworkChangeStatus(status localapi.NetworkChangeStatus) string {
+	if !status.Available {
+		return "unavailable"
+	}
+
+	return fmt.Sprintf(
+		"%d observed (%d endpoint refreshes)",
+		status.Observed,
+		status.EndpointRefreshes,
+	)
 }
 
 func formatPathStatus(status localapi.PathStatus) string {

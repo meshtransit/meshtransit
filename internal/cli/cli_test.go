@@ -61,6 +61,11 @@ func TestRun_Status(t *testing.T) {
 				ActiveRegions:    2,
 				ConnectedRegions: 1,
 			},
+			NetworkChanges: localapi.NetworkChangeStatus{
+				Available:         true,
+				Observed:          4,
+				EndpointRefreshes: 3,
+			},
 			CompatibilityNote: "foundation only",
 		},
 	}
@@ -80,6 +85,7 @@ func TestRun_Status(t *testing.T) {
 		"State: offline",
 		"Data plane: not_implemented",
 		"DNS: not_implemented",
+		"Network changes: 4 observed (3 endpoint refreshes)",
 		"Active profile: none",
 		"Control session: synchronized",
 		"Netmap revision: 9",

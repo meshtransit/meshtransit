@@ -62,6 +62,7 @@ func TestClient_Status(t *testing.T) {
 	"policy_rule_count":2,
 	"paths":{"available":true,"peer_count":2,"direct_count":1,"relay_count":1,"pending_count":0},
 	"relay":{"available":true,"home_region":7,"active_regions":2,"connected_regions":1,"regions":[{"region_id":7,"connected":true,"consecutive_failures":0}]},
+	"network_changes":{"available":true,"observed":4,"endpoint_refreshes":3},
   "compatibility_note":"foundation only"
 }`), nil
 	})
@@ -89,6 +90,10 @@ func TestClient_Status(t *testing.T) {
 	if !status.Relay.Available || status.Relay.HomeRegion != 7 ||
 		status.Relay.ConnectedRegions != 1 || len(status.Relay.Regions) != 1 {
 		t.Fatalf("Status().Relay = %#v, want connected home region 7", status.Relay)
+	}
+	if !status.NetworkChanges.Available || status.NetworkChanges.Observed != 4 ||
+		status.NetworkChanges.EndpointRefreshes != 3 {
+		t.Fatalf("Status().NetworkChanges = %#v, want four changes and three refreshes", status.NetworkChanges)
 	}
 }
 

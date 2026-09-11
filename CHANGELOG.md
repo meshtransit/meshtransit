@@ -20,3 +20,4 @@ All notable user-visible changes will be documented in this file.
 - Control-trust, registration, and pinned-key status fields.
 - Control-session, validated netmap-revision, and peer-count status output.
 - Aggregate direct/relay path counts and redacted relay-region health.
+- Aggregate host-network-change and completed endpoint-refresh status counters.

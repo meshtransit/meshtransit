@@ -13,25 +13,26 @@ type VersionInfo struct {
 
 // Status is the stable v1 daemon status response.
 type Status struct {
-	APIVersion         string      `json:"api_version"`
-	Daemon             VersionInfo `json:"daemon"`
-	State              string      `json:"state"`
-	DataPlane          string      `json:"data_plane"`
-	DNS                string      `json:"dns"`
-	ActiveProfileID    string      `json:"active_profile_id"`
-	ProfileCount       int         `json:"profile_count"`
-	ControlTrust       string      `json:"control_trust"`
-	Registration       string      `json:"registration"`
-	ControlFingerprint string      `json:"control_key_fingerprint,omitempty"`
-	ControlSession     string      `json:"control_session"`
-	NetmapRevision     uint64      `json:"netmap_revision"`
-	NetworkName        string      `json:"network_name,omitempty"`
-	SelfAddresses      []string    `json:"self_addresses,omitempty"`
-	PeerCount          int         `json:"peer_count"`
-	PolicyRuleCount    int         `json:"policy_rule_count"`
-	PeerPaths          PathStatus  `json:"paths"`
-	Relay              RelayStatus `json:"relay"`
-	CompatibilityNote  string      `json:"compatibility_note"`
+	APIVersion         string              `json:"api_version"`
+	Daemon             VersionInfo         `json:"daemon"`
+	State              string              `json:"state"`
+	DataPlane          string              `json:"data_plane"`
+	DNS                string              `json:"dns"`
+	ActiveProfileID    string              `json:"active_profile_id"`
+	ProfileCount       int                 `json:"profile_count"`
+	ControlTrust       string              `json:"control_trust"`
+	Registration       string              `json:"registration"`
+	ControlFingerprint string              `json:"control_key_fingerprint,omitempty"`
+	ControlSession     string              `json:"control_session"`
+	NetmapRevision     uint64              `json:"netmap_revision"`
+	NetworkName        string              `json:"network_name,omitempty"`
+	SelfAddresses      []string            `json:"self_addresses,omitempty"`
+	PeerCount          int                 `json:"peer_count"`
+	PolicyRuleCount    int                 `json:"policy_rule_count"`
+	PeerPaths          PathStatus          `json:"paths"`
+	Relay              RelayStatus         `json:"relay"`
+	NetworkChanges     NetworkChangeStatus `json:"network_changes"`
+	CompatibilityNote  string              `json:"compatibility_note"`
 }
 
 // PathStatus summarizes the selected transport for visible peers.
@@ -61,6 +62,13 @@ type RelayRegionStatus struct {
 	LastActivity        string `json:"last_activity,omitempty"`
 	LastSend            string `json:"last_send,omitempty"`
 	LastFailure         string `json:"last_failure,omitempty"`
+}
+
+// NetworkChangeStatus summarizes endpoint refreshes triggered by host network changes.
+type NetworkChangeStatus struct {
+	Available         bool   `json:"available"`
+	Observed          uint64 `json:"observed"`
+	EndpointRefreshes uint64 `json:"endpoint_refreshes"`
 }
 
 // Profile describes one isolated control-plane identity.
