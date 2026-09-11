@@ -237,16 +237,18 @@ parse_ping_log() {
       post_run = 0
       post_run_start = -1
     }
-    /^\[[0-9]+[.][0-9]+\]/ && / bytes from / && /icmp_seq=[0-9]+/ {
+    /^\[[0-9]+[.][0-9]+\]/ &&
+      ((/ bytes from / && /icmp_seq=[0-9]+/) ||
+      (/ probe_seq=[0-9]+ / && / reply$/)) {
       timestamp = $1
       gsub(/^\[/, "", timestamp)
       gsub(/\]$/, "", timestamp)
 
       sequence = -1
       for (field_index = 1; field_index <= NF; field_index++) {
-        if ($field_index ~ /^icmp_seq=[0-9]+$/) {
+        if ($field_index ~ /^(icmp|probe)_seq=[0-9]+$/) {
           sequence = $field_index
-          sub(/^icmp_seq=/, "", sequence)
+          sub(/^(icmp|probe)_seq=/, "", sequence)
           sequence += 0
           break
         }
@@ -335,9 +337,46 @@ run_ping() {
   local duration="$3"
   local target="$4"
   local log_path="$5"
+  local started_ns
+  local deadline_ns
+  local current_ns
+  local timestamp_ns
+  local transmitted=0
+  local received=0
+  local loss
 
-  ping "-${family}" -D -O -n -i "${interval}" -W 1 -w "${duration}" \
-    "${target}" >"${log_path}" 2>&1
+  started_ns="$(now_ns)"
+  deadline_ns=$(( started_ns + duration * 1000000000 ))
+  current_ns="${started_ns}"
+  : >"${log_path}"
+
+  while (( current_ns < deadline_ns )); do
+    transmitted=$((transmitted + 1))
+    if ping "-${family}" -n -c 1 -W "${interval}" "${target}" >/dev/null 2>&1; then
+      received=$((received + 1))
+      timestamp_ns="$(now_ns)"
+      printf '[%s] probe_seq=%d reply\n' \
+        "$(epoch_ns_to_seconds "${timestamp_ns}")" \
+        "${transmitted}" >>"${log_path}"
+    else
+      timestamp_ns="$(now_ns)"
+      printf '[%s] probe_seq=%d timeout\n' \
+        "$(epoch_ns_to_seconds "${timestamp_ns}")" \
+        "${transmitted}" >>"${log_path}"
+    fi
+    sleep "${interval}"
+    current_ns="$(now_ns)"
+  done
+
+  loss="$(awk -v transmitted="${transmitted}" -v received="${received}" 'BEGIN {
+    if (transmitted == 0) {
+      print 100
+    } else {
+      printf "%.4f", ((transmitted - received) * 100) / transmitted
+    }
+  }')"
+  printf '%d packets transmitted, %d received, %s%% packet loss\n' \
+    "${transmitted}" "${received}" "${loss}" >>"${log_path}"
 }
 
 main() {
@@ -834,6 +873,12 @@ main() {
 if [[ "${1:-}" == __parse-ping-log ]]; then
   [[ $# -eq 4 ]] || fail "__parse-ping-log requires LOG START_NS END_NS"
   parse_ping_log "$2" "$3" "$4"
+  exit
+fi
+
+if [[ "${1:-}" == __run-ping ]]; then
+  [[ $# -eq 6 ]] || fail "__run-ping requires FAMILY INTERVAL DURATION TARGET LOG"
+  run_ping "$2" "$3" "$4" "$5" "$6"
   exit
 fi
 

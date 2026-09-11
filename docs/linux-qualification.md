@@ -60,8 +60,11 @@ sudo tools/qualification/linux-restart.sh \
 Repeat with `--service meshnetd`. Reverse the node and peer arguments and run
 both scenarios on the second host. Defaults provide a two-second healthy lead,
 a 15-second readiness deadline, a five-second stability tail, and parallel
-IPv4/IPv6 probes every 200 milliseconds. Timing parameters are available for
-controlled experiments, but release-candidate runs use the documented defaults.
+IPv4/IPv6 probe loops with 200-millisecond pacing and per-attempt timeouts. Each
+loop starts a bounded probe attempt so deletion and recreation of the data
+interface cannot terminate the rest of the observation window. Timing
+parameters are available for controlled experiments, but release-candidate
+runs use the documented defaults.
 
 ## Report contract
 
@@ -92,8 +95,10 @@ The ping parser has deterministic recovery and no-recovery fixtures:
 
 ```bash
 bash -n tools/qualification/linux-restart.sh \
-  tools/qualification/test-linux-restart.sh
+  tools/qualification/test-linux-restart.sh \
+  tools/qualification/testdata/ping
 shellcheck tools/qualification/linux-restart.sh \
-  tools/qualification/test-linux-restart.sh
+  tools/qualification/test-linux-restart.sh \
+  tools/qualification/testdata/ping
 bash tools/qualification/test-linux-restart.sh
 ```
