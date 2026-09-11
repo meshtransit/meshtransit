@@ -329,8 +329,9 @@ contract.
 The bounded two-node matrix history is recorded in
 [linux-policy-qualification-2026-09-11.md](linux-policy-qualification-2026-09-11.md).
 It includes the first complete alpha15 sample and its redacted machine-readable
-reports. It remains Linux alpha POC evidence for one topology, not the repeated
-sample set required for release-candidate qualification.
+reports plus an independent second sample. The two samples complete the bounded
+policy-matrix repeatability gate for the current Linux alpha topology; they do
+not replace the remaining release-candidate qualification.
 
 ## Local validation
 

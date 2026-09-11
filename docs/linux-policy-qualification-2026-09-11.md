@@ -304,9 +304,39 @@ warning-level journal query returned no entries.
 The redacted machine-readable reports are retained in
 [`docs/evidence/linux-policy-alpha15-s1`](evidence/linux-policy-alpha15-s1).
 They exclude SSH destinations, overlay addresses, policy contents, and probe
-payloads. This is the first complete alpha15 sample; a second independently run
-sample is still required before claiming policy-matrix repeatability for Linux
-alpha promotion.
+payloads. This is the first complete alpha15 sample.
+
+## Accepted alpha15 complete matrix — sample 2
+
+A second independent invocation of every phase passed against the unchanged
+alpha15 package. All 60 observations matched again with zero policy mismatch
+and zero infrastructure error.
+
+| Phase | Result | Per-probe duration |
+| --- | --- | --- |
+| `asymmetric-a-to-b-alpha15-s2` | 12/12 pass | 3,199–6,023 ms |
+| `asymmetric-b-to-a-alpha15-s2` | 12/12 pass | 3,250–5,689 ms |
+| `port-narrowing-allowed-alpha15-s2` | 12/12 pass | 3,025–5,234 ms |
+| `adjacent-ports-default-deny-alpha15-s2` | 12/12 pass | 5,158–5,935 ms |
+| `explicit-default-deny-alpha15-s2` | 12/12 pass | 26–31 ms |
+
+Both daemon process IDs, restart counters, UDP socket inodes, and home-relay
+connection timestamps remained unchanged through sample 2. Every phase-local
+memory peak was unchanged. Current memory moved from 13,758,464 to 13,762,560
+bytes on `ubuntu-a` and from 13,832,192 to 13,897,728 bytes on `ubuntu-b`
+between the first and last bounded phase observations.
+
+After exact baseline restoration, both nodes were synchronized with one peer,
+two reduced inbound rules, configured DNS, and an authenticated direct path.
+Three IPv4 and three IPv6 packets passed in both directions. No harness
+directory remained and the bounded warning-level journal query returned no
+entries.
+
+The second redacted report set and its checksum manifest are retained in
+[`docs/evidence/linux-policy-alpha15-s2`](evidence/linux-policy-alpha15-s2).
+Together, the two alpha15 sets contain 120 matching observations across ten
+phases. They complete the bounded policy-matrix repeatability gate for this
+Linux alpha topology; other Linux release gates remain independent.
 
 ## Supporting quality gates
 
@@ -315,7 +345,6 @@ vet`, `golangci-lint`, `govulncheck`, cross-platform compile jobs, and Linux
 amd64/arm64 package jobs. The corresponding runtime CI evidence is
 [GitHub Actions run 34621187171](https://github.com/meshtransit/meshd/actions/runs/34621187171).
 
-Before using this evidence for Linux-alpha promotion, repeat the complete five
-phase matrix once more from the immutable candidate artifact and retain the
-second report set to demonstrate repeatability rather than a single successful
-alpha15 sample.
+The two retained alpha15 report sets satisfy the current bounded policy-matrix
+repeatability requirement. They do not replace signed-artifact, native-platform,
+IPv6-only underlay, multi-uplink, or long-duration qualification.

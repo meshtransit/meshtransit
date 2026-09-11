@@ -89,9 +89,9 @@ reproducible Debian package, lifecycle contract, and bounded restart, reboot,
 controlled interface-change, relay-fallback, split-DNS, and host-policy
 qualification harnesses. The two-host Linux alpha topology has repeatable
 direct-loss fallback and split-DNS cleanup/recovery evidence plus complete live
-bidirectional host-policy matrices on alpha10 and alpha15. It does not yet have
-a second complete alpha15 policy-matrix sample, a
-signed artifact pipeline, IPv6-only underlay evidence, real multi-uplink
+bidirectional host-policy matrices on alpha10 and two repeatable alpha15
+samples. It does not yet have a signed artifact pipeline, IPv6-only underlay
+evidence, real multi-uplink
 migration qualification, or a long-duration qualification suite. See
 [linux-policy-qualification-2026-09-11.md](linux-policy-qualification-2026-09-11.md)
 for the bounded alpha evidence and its limitations.
