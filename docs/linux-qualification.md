@@ -3,8 +3,9 @@
 The Linux qualification tools measure recovery of one installed MeshTransit
 node against one healthy peer. They cover explicit restart of either
 `meshd.service` or `meshnetd.service`, a full host reboot, and a controlled
-interface-address change. Package upgrade, real multi-uplink migration,
-forced-relay recovery, and soak scenarios remain separate gates.
+interface-address change. They also exercise direct-path loss, relay fallback,
+and later direct recovery. Package upgrade, real multi-uplink migration, and
+soak scenarios remain separate gates.
 
 ## Restart safety boundary
 
@@ -177,6 +178,54 @@ The first two-node repeatability evidence is recorded in
 It is Linux alpha POC evidence and does not replace the larger real multi-uplink
 sample set required for release-candidate p95 qualification.
 
+## Run a relay-fallback scenario
+
+The relay-fallback harness runs on a node with exactly one installed peer. It
+requires every current underlay address advertised by that peer, including
+public, private, and IPv6 candidates where present. Omitting a usable candidate
+leaves the path direct and causes the run to fail instead of producing false
+relay evidence.
+
+Preflight requires an online synchronized daemon, one direct peer, at least one
+connected relay region, exact MagicDNS answers, dual-stack traffic, and routes
+that separate overlay from underlay addresses. The harness refuses to reuse its
+fixed `meshd_relay_qual` nftables table. It then atomically creates two hooks
+which drop only UDP whose source or destination is one of the explicit peer
+underlay addresses. It never changes SSH, routes, interfaces, DNS, control or
+relay destinations. A trap deletes the dedicated table after failure, signal,
+or successful completion.
+
+```bash
+sudo tools/qualification/linux-relay-fallback.sh \
+  --node-label ubuntu-a \
+  --peer-label ubuntu-b \
+  --peer-v4 100.64.0.6 \
+  --peer-v6 fd7a:115c:a1e0::d \
+  --peer-name ubuntu-b \
+  --peer-underlay-v4 PEER_PUBLIC_IPV4 \
+  --peer-underlay-v4 PEER_PRIVATE_IPV4 \
+  --artifact-sha256 SHA256_OF_DEB \
+  --confirm-direct-loss ubuntu-a \
+  >ubuntu-a-relay-fallback.json
+```
+
+The schema identifier is
+`meshtransit.linux-relay-fallback-qualification/v1`. A pass requires nftables
+drop counters to prove that direct traffic hit the fault, aggregate status to
+change from one direct peer to one relay peer within 10 seconds, successful
+IPv4 and IPv6 traffic while the fault remains active, complete table removal,
+and return to a stable direct path within 15 seconds. Reports contain only
+operator labels, candidate counts, artifact/platform metadata, aggregate
+counters, and timings. Raw endpoint and overlay addresses are never emitted;
+temporary probe logs are deleted with the mode-`0700` directory.
+
+Reverse node and peer inputs and repeat the scenario on the second host. Never
+run it concurrently on both ends of the same peer relationship. The first
+two-node repeatability evidence is recorded in
+[linux-relay-fallback-qualification-2026-09-11.md](linux-relay-fallback-qualification-2026-09-11.md).
+It is Linux alpha evidence and does not qualify an IPv6-only underlay or the
+release-candidate p95 target.
+
 ## Local validation
 
 The restart parser has deterministic recovery and no-recovery fixtures. The
@@ -190,6 +239,8 @@ bash -n tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-reboot.sh \
   tools/qualification/linux-network-change.sh \
   tools/qualification/test-linux-network-change.sh \
+  tools/qualification/linux-relay-fallback.sh \
+  tools/qualification/test-linux-relay-fallback.sh \
   tools/qualification/testdata/ping
 shellcheck tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-restart.sh \
@@ -197,8 +248,11 @@ shellcheck tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-reboot.sh \
   tools/qualification/linux-network-change.sh \
   tools/qualification/test-linux-network-change.sh \
+  tools/qualification/linux-relay-fallback.sh \
+  tools/qualification/test-linux-relay-fallback.sh \
   tools/qualification/testdata/ping
 bash tools/qualification/test-linux-restart.sh
 bash tools/qualification/test-linux-reboot.sh
 bash tools/qualification/test-linux-network-change.sh
+bash tools/qualification/test-linux-relay-fallback.sh
 ```

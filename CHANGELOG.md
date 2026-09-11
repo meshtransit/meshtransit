@@ -22,6 +22,9 @@ All notable user-visible changes will be documented in this file.
 - Linux route/link/address monitoring with bounded netlink event coalescing,
   polling fallback, immediate endpoint refresh, redacted status counters, and a
   reversible network-change qualification harness.
+- Bounded Linux direct-path loss qualification with UDP-only peer isolation,
+  measured relay fallback, dual-stack relay traffic proof, direct recovery, and
+  automatic nftables cleanup.
 - WireGuard peer sessions now survive control-map endpoint-authority refreshes;
   stale direct selections return to the relay path without replacing the peer.
 - Separate owner-writable runtime directories for the operator API and

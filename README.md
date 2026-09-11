@@ -94,6 +94,8 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - Shared-socket STUN endpoint publication and authenticated peer probing with session/map/socket generation binding, bounded asynchronous receive work, paced signed-endpoint scheduling, and deterministic authenticated endpoint promotion, expiry, fallback, and roaming.
 - Linux route/link/address monitoring with snapshot filtering, event coalescing, immediate endpoint refresh, and a polling fallback; MeshTransit-owned data and DNS interfaces are excluded to prevent self-triggered refresh loops.
 - Bounded TLS relay sessions selected only from the validated control map, carrying unchanged WireGuard ciphertext and serving as the base route until a direct endpoint is cryptographically proven.
+- Reversible Linux qualification for direct-path loss, encrypted relay fallback,
+  dual-stack traffic over relay, and later authenticated direct-path recovery.
 - Opt-in native flow telemetry with redacted control-issued credentials, bounded non-blocking queues, TCP handshake state, explicit per-direction counters, HTTPS-only uploads, redirect refusal, and no packet payload retention.
 - No copied compatibility-reference source.
 

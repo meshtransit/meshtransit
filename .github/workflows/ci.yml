@@ -65,6 +65,8 @@ jobs:
             tools/qualification/test-linux-reboot.sh \
             tools/qualification/linux-network-change.sh \
             tools/qualification/test-linux-network-change.sh \
+            tools/qualification/linux-relay-fallback.sh \
+            tools/qualification/test-linux-relay-fallback.sh \
             tools/qualification/testdata/ping
           shellcheck \
             tools/qualification/linux-restart.sh \
@@ -73,10 +75,13 @@ jobs:
             tools/qualification/test-linux-reboot.sh \
             tools/qualification/linux-network-change.sh \
             tools/qualification/test-linux-network-change.sh \
+            tools/qualification/linux-relay-fallback.sh \
+            tools/qualification/test-linux-relay-fallback.sh \
             tools/qualification/testdata/ping
           bash tools/qualification/test-linux-restart.sh
           bash tools/qualification/test-linux-reboot.sh
           bash tools/qualification/test-linux-network-change.sh
+          bash tools/qualification/test-linux-relay-fallback.sh
 
       - name: Run vet
         run: go vet ./...
