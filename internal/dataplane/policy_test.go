@@ -547,9 +547,10 @@ func reverseTestPacket(packet []byte) []byte {
 }
 
 func testIPv4ProtocolPacket(source, destination [4]byte, protocol uint8) []byte {
-	packet := make([]byte, 20)
+	const packetSize = 20
+	packet := make([]byte, packetSize)
 	packet[0] = 0x45
-	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
+	binary.BigEndian.PutUint16(packet[2:4], packetSize)
 	packet[8] = 64
 	packet[9] = protocol
 	copy(packet[12:16], source[:])

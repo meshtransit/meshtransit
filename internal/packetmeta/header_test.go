@@ -151,9 +151,10 @@ func testIPv6Fragment() []byte {
 }
 
 func testIPv4ICMPPacket(protocol, messageType, code uint8) []byte {
-	packet := make([]byte, 28)
+	const packetSize = 28
+	packet := make([]byte, packetSize)
 	packet[0] = 0x45
-	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
+	binary.BigEndian.PutUint16(packet[2:4], packetSize)
 	packet[8] = 64
 	packet[9] = protocol
 	copy(packet[12:16], []byte{100, 64, 0, 3})
