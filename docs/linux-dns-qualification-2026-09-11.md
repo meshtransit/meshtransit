@@ -81,8 +81,39 @@ entries.
 
 The redacted reports and checksum manifest are retained in
 [`docs/evidence/linux-dns-alpha15-s1`](evidence/linux-dns-alpha15-s1). This
-sample did not mutate the control-plane resolver configuration; the upstream
-split and explicit-default modes described above remain alpha9 evidence.
+host-local lifecycle sample did not mutate the control-plane resolver
+configuration. The separate alpha15 live-update matrix below covers those
+upstream modes.
+
+## Alpha15 live-update validation
+
+A second alpha15 matrix exercised three control-plane updates sequentially
+without restarting either client. The initial state was captured before the
+first change and used as the exact rollback target.
+
+1. One public test suffix was routed to one reachable classic IPv4 resolver.
+   Both clients installed only that route, forwarded direct and host-resolver
+   queries with recursion available, and kept an unrelated public query on the
+   non-mesh resolver path.
+2. The split route was replaced by the same resolver as an explicit default.
+   Both clients installed `+DefaultRoute` and `~.`, forwarded unrelated public
+   queries through `meshdns0`, and continued to answer MagicDNS.
+3. The global resolver and override were removed. Both clients returned to
+   `-DefaultRoute`, removed `~.` and the temporary split route, sent public
+   queries back to the host resolver, and stopped forwarding public names from
+   the local MeshTransit resolver.
+
+Every phase completed on both nodes with synchronized control, configured DNS,
+direct IPv4/IPv6 traffic, and MagicDNS resolution. The original daemon process
+IDs remained unchanged and both systemd restart counters remained zero,
+demonstrating live application rather than restart recovery. The final bounded
+warning-level journal query returned no entries.
+
+The redacted aggregate report and checksum manifest are retained in
+[`docs/evidence/linux-dns-alpha15-live-update-s1`](evidence/linux-dns-alpha15-live-update-s1).
+Resolver addresses, test names, answers, process IDs, and network identifiers
+are intentionally omitted. This sample used one classic IPv4 resolver and does
+not cover upstream failure, multiple-resolver failover, or encrypted DNS.
 
 ## Interpretation and release-candidate limits
 

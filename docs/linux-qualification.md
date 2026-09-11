@@ -277,7 +277,9 @@ with redacted alpha15 reports retained under `docs/evidence`. The initial run
 also staged control-configured upstream split and explicit-default resolvers,
 verified both nodes, and restored the original split-only configuration. That
 mutation is deliberately operator-driven rather than part of the host-local
-lifecycle harness and has not yet been repeated on alpha15.
+lifecycle harness. The same three-phase update and rollback matrix has now been
+repeated on alpha15 without restarting either daemon, with redacted aggregate
+evidence retained under `docs/evidence`.
 
 ## Run a host-policy phase
 
