@@ -5,12 +5,16 @@ set -Eeuo pipefail
 export LC_ALL=C
 umask 077
 
-readonly schema_version="meshtransit.linux-restart-qualification/v1"
+readonly restart_schema_version="meshtransit.linux-restart-qualification/v1"
+readonly crash_schema_version="meshtransit.linux-crash-recovery-qualification/v1"
 readonly minimum_post_action_replies=3
+readonly dns_resolver_address="192.0.2.53"
+readonly dns_resolver_port="1053"
 
 temp_dir=""
 ping4_pid=""
 ping6_pid=""
+restore_services=false
 
 usage() {
   cat <<'EOF'
@@ -22,6 +26,7 @@ Usage:
     --peer-v6 ADDRESS \
     --peer-name MAGICDNS_NAME \
     --service meshd|meshnetd \
+    [--action restart|sigkill] \
     [--artifact-sha256 HEX] \
     [--lead-seconds N] \
     [--ready-timeout-seconds N] \
@@ -31,10 +36,12 @@ Usage:
     [--data-interface NAME] \
     [--dns-interface NAME]
 
-Runs a bounded restart qualification on the current Linux node. The JSON report
-is written to stdout; progress and errors are written to stderr. Peer addresses,
-DNS answers, control fingerprints, and raw ping output are not included in the
-report.
+Runs a bounded restart or SIGKILL recovery qualification on the current Linux
+node. SIGKILL of meshd additionally requires observation of the non-persistent
+DNS link, listeners, and systemd-resolved state being removed before recovery.
+The JSON report is written to stdout; progress and errors are written to stderr.
+Peer addresses, DNS answers, control fingerprints, and raw ping output are not
+included in the report.
 EOF
 }
 
@@ -51,6 +58,9 @@ cleanup() {
   local path
 
   set +e
+  if [[ "${restore_services}" == true ]]; then
+    systemctl start meshnetd.service meshd.service >/dev/null 2>&1
+  fi
   if [[ -n "${ping4_pid}" ]]; then
     kill "${ping4_pid}" 2>/dev/null
     wait "${ping4_pid}" 2>/dev/null
@@ -137,6 +147,13 @@ validate_interval() {
   fi
 }
 
+validate_action_mode() {
+  case "$1" in
+    restart|sigkill) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 now_ns() {
   local value
 
@@ -173,6 +190,34 @@ unit_pid() {
     return
   fi
   printf '0\n'
+}
+
+unit_restart_count() {
+  local unit="$1"
+  local count
+
+  count="$(systemctl show --property=NRestarts --value "${unit}" 2>/dev/null || true)"
+  if [[ "${count}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${count}"
+    return
+  fi
+  printf '0\n'
+}
+
+dns_runtime_removed() {
+  local dns_interface="$1"
+  local resolved_state
+
+  ip link show dev "${dns_interface}" >/dev/null 2>&1 && return 1
+  ss -H -lnu "sport = :${dns_resolver_port}" 2>/dev/null |
+    grep -Fq -- "${dns_resolver_address}:${dns_resolver_port}" && return 1
+  ss -H -lnt "sport = :${dns_resolver_port}" 2>/dev/null |
+    grep -Fq -- "${dns_resolver_address}:${dns_resolver_port}" && return 1
+  resolved_state="$(resolvectl status "${dns_interface}" --no-pager 2>&1 || true)"
+  ! awk -v expected="(${dns_interface})" '
+    $1 == "Link" && $3 == expected { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' <<<"${resolved_state}"
 }
 
 route_uses_interface() {
@@ -386,6 +431,8 @@ main() {
   local peer_v6=""
   local peer_name=""
   local service_name=""
+  local action_mode=restart
+  local selected_schema_version="${restart_schema_version}"
   local artifact_sha256=""
   local lead_seconds=2
   local ready_timeout_seconds=15
@@ -406,6 +453,13 @@ main() {
   local meshd_pid_after
   local meshnetd_pid_after
   local target_pid_changed=false
+  local target_restart_count_before
+  local target_restart_count_after
+  local target_restart_count_increased=false
+  local target_restarted=false
+  local target_pid_before
+  local current_target_pid
+  local current_target_restart_count
   local observation_seconds
   local started_at
   local action_start_ns
@@ -418,10 +472,14 @@ main() {
   local tun_ready_ns=""
   local online_ready_ns=""
   local dns_ready_ns=""
+  local dns_cleanup_required=false
+  local dns_cleanup_observed=false
+  local dns_cleanup_ns=""
   local service_ready_ms=null
   local tun_ready_ms=null
   local online_ready_ms=null
   local dns_ready_ms=null
+  local dns_cleanup_ms=null
   local current_status=""
   local ping4_exit_code=0
   local ping6_exit_code=0
@@ -485,6 +543,11 @@ main() {
         service_name="$2"
         shift 2
         ;;
+      --action)
+        [[ $# -ge 2 ]] || fail "--action requires a value"
+        action_mode="$2"
+        shift 2
+        ;;
       --artifact-sha256)
         [[ $# -ge 2 ]] || fail "--artifact-sha256 requires a value"
         artifact_sha256="$2"
@@ -536,7 +599,7 @@ main() {
   done
 
   [[ "$(uname -s)" == Linux ]] || fail "this harness requires Linux"
-  (( EUID == 0 )) || fail "run as root so the selected service can be restarted"
+  (( EUID == 0 )) || fail "run as root so the selected service state can be changed"
 
   [[ -n "${node_label}" ]] || fail "--node-label is required"
   [[ -n "${peer_label}" ]] || fail "--peer-label is required"
@@ -544,6 +607,10 @@ main() {
   [[ -n "${peer_v6}" ]] || fail "--peer-v6 is required"
   [[ -n "${peer_name}" ]] || fail "--peer-name is required"
   [[ -n "${service_name}" ]] || fail "--service is required"
+  validate_action_mode "${action_mode}" || fail "action must be restart or sigkill"
+  if [[ "${action_mode}" == sigkill ]]; then
+    selected_schema_version="${crash_schema_version}"
+  fi
 
   validate_label node-label "${node_label}"
   validate_label peer-label "${peer_label}"
@@ -575,9 +642,16 @@ main() {
       ;;
   esac
 
+  if [[ "${action_mode}" == sigkill && "${service_name}" == meshd ]]; then
+    dns_cleanup_required=true
+  fi
+
   for command_name in awk date grep ip jq meshctl mktemp ping resolvectl sleep systemctl timeout uname; do
     require_command "${command_name}"
   done
+  if [[ "${dns_cleanup_required}" == true ]]; then
+    require_command ss
+  fi
 
   route_uses_interface 4 "${peer_v4}" "${data_interface}" ||
     fail "peer-v4 does not resolve through ${data_interface}"
@@ -612,6 +686,11 @@ main() {
   meshnetd_pid_before="$(unit_pid meshnetd.service)"
   [[ "${meshd_pid_before}" != 0 && "${meshnetd_pid_before}" != 0 ]] ||
     fail "could not resolve both baseline service PIDs"
+  case "${service_name}" in
+    meshd) target_pid_before="${meshd_pid_before}" ;;
+    meshnetd) target_pid_before="${meshnetd_pid_before}" ;;
+  esac
+  target_restart_count_before="$(unit_restart_count "${unit}")"
 
   observation_seconds=$(( lead_seconds + ready_timeout_seconds + tail_seconds ))
   temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/meshd-linux-restart.XXXXXXXX")"
@@ -619,7 +698,7 @@ main() {
   kernel_release="$(uname -r)"
   machine_arch="$(uname -m)"
 
-  progress "preflight passed; observing ${service_name} restart"
+  progress "preflight passed; observing ${service_name} ${action_mode} recovery"
   run_ping 4 "${ping_interval}" "${observation_seconds}" "${peer_v4}" \
     "${temp_dir}/ping-v4.log" &
   ping4_pid=$!
@@ -629,33 +708,64 @@ main() {
 
   sleep "${lead_seconds}"
   action_start_ns="$(now_ns)"
-  if timeout --signal=TERM --kill-after=2s "${ready_timeout_seconds}s" \
-    systemctl restart "${unit}"; then
-    action_exit_code=0
-  else
-    action_exit_code=$?
-  fi
+  restore_services=true
+  case "${action_mode}" in
+    restart)
+      if timeout --signal=TERM --kill-after=2s "${ready_timeout_seconds}s" \
+        systemctl restart "${unit}"; then
+        action_exit_code=0
+      else
+        action_exit_code=$?
+      fi
+      ;;
+    sigkill)
+      if systemctl kill --kill-whom=main --signal=KILL "${unit}"; then
+        action_exit_code=0
+      else
+        action_exit_code=$?
+      fi
+      ;;
+  esac
   action_end_ns="$(now_ns)"
   action_duration_ms="$(elapsed_ms "${action_start_ns}" "${action_end_ns}")"
   deadline_ns=$(( action_start_ns + ready_timeout_seconds * 1000000000 ))
 
   while true; do
     current_ns="$(now_ns)"
-    if [[ -z "${service_ready_ns}" ]] &&
+    if [[ "${dns_cleanup_required}" == true &&
+      "${dns_cleanup_observed}" == false ]] &&
+      dns_runtime_removed "${dns_interface}"; then
+      dns_cleanup_ns="${current_ns}"
+      dns_cleanup_observed=true
+    fi
+
+    current_target_pid="$(unit_pid "${unit}")"
+    current_target_restart_count="$(unit_restart_count "${unit}")"
+    if [[ "${current_target_pid}" != 0 &&
+      "${current_target_pid}" != "${target_pid_before}" ]]; then
+      if [[ "${action_mode}" == restart ||
+        "${current_target_restart_count}" -gt "${target_restart_count_before}" ]]; then
+        target_restarted=true
+      fi
+    fi
+
+    if [[ "${target_restarted}" == true && -z "${service_ready_ns}" ]] &&
       systemctl is-active --quiet meshd.service meshnetd.service; then
       service_ready_ns="${current_ns}"
     fi
-    if [[ -z "${tun_ready_ns}" ]] &&
+    if [[ "${target_restarted}" == true && -z "${tun_ready_ns}" ]] &&
       ip link show dev "${data_interface}" >/dev/null 2>&1; then
       tun_ready_ns="${current_ns}"
     fi
 
     current_status="$(meshctl --timeout 1s --json status 2>/dev/null || true)"
-    if [[ -z "${online_ready_ns}" && -n "${current_status}" ]] &&
+    if [[ "${target_restarted}" == true && -z "${online_ready_ns}" &&
+      -n "${current_status}" ]] &&
       status_is_ready "${current_status}"; then
       online_ready_ns="${current_ns}"
     fi
-    if [[ -z "${dns_ready_ns}" && -n "${current_status}" ]] &&
+    if [[ "${target_restarted}" == true && -z "${dns_ready_ns}" &&
+      -n "${current_status}" ]] &&
       jq -e '.dns == "configured"' >/dev/null <<<"${current_status}" &&
       ip link show dev "${dns_interface}" >/dev/null 2>&1 &&
       dns_is_ready "${peer_name}" "${peer_v4}" "${peer_v6}"; then
@@ -663,7 +773,9 @@ main() {
     fi
 
     if [[ -n "${service_ready_ns}" && -n "${tun_ready_ns}" &&
-      -n "${online_ready_ns}" && -n "${dns_ready_ns}" ]]; then
+      -n "${online_ready_ns}" && -n "${dns_ready_ns}" ]] &&
+      [[ "${dns_cleanup_required}" == false ||
+        "${dns_cleanup_observed}" == true ]]; then
       break
     fi
     if (( current_ns >= deadline_ns )); then
@@ -676,6 +788,7 @@ main() {
   [[ -z "${tun_ready_ns}" ]] || tun_ready_ms="$(elapsed_ms "${action_start_ns}" "${tun_ready_ns}")"
   [[ -z "${online_ready_ns}" ]] || online_ready_ms="$(elapsed_ms "${action_start_ns}" "${online_ready_ns}")"
   [[ -z "${dns_ready_ns}" ]] || dns_ready_ms="$(elapsed_ms "${action_start_ns}" "${dns_ready_ns}")"
+  [[ -z "${dns_cleanup_ns}" ]] || dns_cleanup_ms="$(elapsed_ms "${action_start_ns}" "${dns_cleanup_ns}")"
 
   if wait "${ping4_pid}"; then
     ping4_exit_code=0
@@ -707,6 +820,10 @@ main() {
 
   meshd_pid_after="$(unit_pid meshd.service)"
   meshnetd_pid_after="$(unit_pid meshnetd.service)"
+  target_restart_count_after="$(unit_restart_count "${unit}")"
+  if (( target_restart_count_after > target_restart_count_before )); then
+    target_restart_count_increased=true
+  fi
   if [[ "${service_name}" == meshd && "${meshd_pid_before}" != "${meshd_pid_after}" &&
     "${meshd_pid_after}" != 0 ]]; then
     target_pid_changed=true
@@ -721,13 +838,14 @@ main() {
   fi
 
   report="$(jq -n \
-    --arg schema "${schema_version}" \
+    --arg schema "${selected_schema_version}" \
     --arg started_at "${started_at}" \
     --arg node_label "${node_label}" \
     --arg peer_label "${peer_label}" \
     --arg kernel_release "${kernel_release}" \
     --arg arch "${machine_arch}" \
     --arg service "${unit}" \
+    --arg action_mode "${action_mode}" \
     --arg daemon_version "${daemon_version}" \
     --arg daemon_commit "${daemon_commit}" \
     --argjson artifact_sha256 "${artifact_digest_json}" \
@@ -736,6 +854,12 @@ main() {
     --argjson action_exit_code "${action_exit_code}" \
     --argjson action_duration_ms "${action_duration_ms}" \
     --argjson target_pid_changed "${target_pid_changed}" \
+    --argjson target_restart_count_before "${target_restart_count_before}" \
+    --argjson target_restart_count_after "${target_restart_count_after}" \
+    --argjson target_restart_count_increased "${target_restart_count_increased}" \
+    --argjson dns_cleanup_required "${dns_cleanup_required}" \
+    --argjson dns_cleanup_observed "${dns_cleanup_observed}" \
+    --argjson dns_cleanup_ms "${dns_cleanup_ms}" \
     --argjson service_ready_ms "${service_ready_ms}" \
     --argjson tun_ready_ms "${tun_ready_ms}" \
     --argjson online_ready_ms "${online_ready_ms}" \
@@ -787,7 +911,7 @@ main() {
           evidence_complete: ($artifact_sha256 != null)
         },
         scenario: {
-          action: "restart",
+          action: $action_mode,
           service: $service
         },
         baseline: {
@@ -805,7 +929,15 @@ main() {
         action: {
           exit_code: $action_exit_code,
           duration_ms: $action_duration_ms,
-          target_pid_changed: $target_pid_changed
+          target_pid_changed: $target_pid_changed,
+          restart_count_before: $target_restart_count_before,
+          restart_count_after: $target_restart_count_after,
+          restart_count_increased: $target_restart_count_increased
+        },
+        dns_cleanup: {
+          required: $dns_cleanup_required,
+          observed: $dns_cleanup_observed,
+          observed_ms: $dns_cleanup_ms
         },
         readiness_ms: {
           services_active: $service_ready_ms,
@@ -843,8 +975,11 @@ main() {
         }
       }
       | .failures = [
-          if .action.exit_code != 0 then "restart_command_failed" else empty end,
+          if .action.exit_code != 0 and .scenario.action == "restart" then "restart_command_failed" else empty end,
+          if .action.exit_code != 0 and .scenario.action == "sigkill" then "sigkill_command_failed" else empty end,
           if .action.target_pid_changed != true then "target_pid_did_not_change" else empty end,
+          if .scenario.action == "sigkill" and .action.restart_count_increased != true then "restart_count_did_not_increase" else empty end,
+          if .dns_cleanup.required == true and .dns_cleanup.observed != true then "dns_cleanup_not_observed" else empty end,
           if .readiness_ms.services_active == null then "services_not_ready" else empty end,
           if .readiness_ms.data_interface == null then "data_interface_not_ready" else empty end,
           if .readiness_ms.daemon_online == null then "daemon_not_ready" else empty end,
@@ -867,6 +1002,7 @@ main() {
     progress "qualification failed; inspect the JSON failure codes"
     return 2
   fi
+  restore_services=false
   progress "qualification passed"
 }
 
@@ -879,6 +1015,12 @@ fi
 if [[ "${1:-}" == __run-ping ]]; then
   [[ $# -eq 6 ]] || fail "__run-ping requires FAMILY INTERVAL DURATION TARGET LOG"
   run_ping "$2" "$3" "$4" "$5" "$6"
+  exit
+fi
+
+if [[ "${1:-}" == __validate-action-mode ]]; then
+  [[ $# -eq 2 ]] || fail "__validate-action-mode requires ACTION"
+  validate_action_mode "$2"
   exit
 fi
 

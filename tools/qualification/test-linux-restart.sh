@@ -66,5 +66,11 @@ grep -Eq '^[0-9]+ packets transmitted, [0-9]+ received, [0-9.]+% packet loss$' \
   "${test_dir}/ping.log"
 
 "${harness}" --help >/dev/null
+"${harness}" __validate-action-mode restart
+"${harness}" __validate-action-mode sigkill
+if "${harness}" __validate-action-mode invalid; then
+  printf 'invalid action mode was accepted\n' >&2
+  exit 1
+fi
 
 printf 'linux restart qualification parser tests passed\n'
