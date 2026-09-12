@@ -61,7 +61,7 @@ published compatibility matrix.
 
 | Priority | Platform | Architectures | Native validation targets | Current status |
 | --- | --- | --- | --- | --- |
-| 1 | Linux | amd64, arm64 | Ubuntu 24.04 and 26.04 LTS with `systemd-resolved` | amd64 lifecycle passed on Ubuntu 26.04 and Debian 13; arm64 lifecycle plus registered mixed-architecture direct traffic, DNS, policy, forced relay, network-change recovery, and rollback passed on Ubuntu 24.04; Ubuntu 26.04 arm64 and sustained validation remain |
+| 1 | Linux | amd64, arm64 | Ubuntu 24.04 and 26.04 LTS with `systemd-resolved` | amd64 lifecycle passed on Ubuntu 26.04 and Debian 13; arm64 lifecycle plus registered mixed-architecture direct traffic, DNS, policy, forced relay, network-change recovery, and rollback passed on Ubuntu 24.04 and 26.04; sustained validation and remaining release security gates remain |
 | 2 | Windows | amd64 | Windows 11 25H2 and Windows Server 2025 | cross-build only; tunnel, DNS, IPC, and service adapters remain |
 | 3 | macOS | arm64, amd64 | macOS 26 on arm64 and macOS 15 on amd64 | cross-build only; tunnel, DNS, IPC, entitlement, and service adapters remain |
 
@@ -162,6 +162,11 @@ byte-identical across independent Ubuntu and Amazon Linux ARM64 builders. The
 Amazon host remains a build-only portability result, not a supported RPM
 target. See
 [linux-arm64-qualification-2026-09-12.md](linux-arm64-qualification-2026-09-12.md).
+The same rc3 candidate subsequently passed the complete native package and
+registered functional matrix on Ubuntu 26.04 ARM64, including direct traffic,
+DNS, policy, forced relay, controlled network change, mixed-version rollback,
+credential preservation, and final cleanup. See
+[linux-ubuntu26-arm64-rc3-s1](evidence/linux-ubuntu26-arm64-rc3-s1/README.md).
 It does not yet have a signed artifact and provenance pipeline, IPv6-only
 underlay evidence, real multi-uplink migration qualification, the larger
 candidate crash sample set, repeated candidate DNS-failure samples, or a

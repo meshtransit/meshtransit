@@ -96,8 +96,9 @@ The machine-readable reports are in
 - Native ARM64 package, peer-credential, service-readiness, and rollback
   qualification subsequently passed on Ubuntu 24.04; see
   [linux-arm64-qualification-2026-09-12.md](linux-arm64-qualification-2026-09-12.md).
-  Registered ARM64 traffic, DNS, policy, relay, and Ubuntu 26.04 ARM64 evidence
-  remain.
+  Registered ARM64 traffic, DNS, policy, relay, network-change, rollback, and
+  Ubuntu 26.04 ARM64 qualification have also passed on the immutable rc3
+  candidate.
 - The active 72-hour registered-node soak and its final immutable report remain
   independent gates.
 - Signed release artifacts and repository publication remain required before a

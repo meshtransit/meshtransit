@@ -2,10 +2,10 @@
 
 ## Scope
 
-This qualification records the first native ARM64 candidate build and package
-lifecycle on Ubuntu 24.04. A second ARM64 host running Amazon Linux 2023 was
-used only as an independent build and portability environment. Neither host is
-one of the registered 72-hour soak nodes.
+This qualification records native ARM64 candidate builds and package
+lifecycles on Ubuntu 24.04 and Ubuntu 26.04. A third ARM64 host running Amazon
+Linux 2023 was used only as an independent build and portability environment.
+None of these hosts is one of the registered 72-hour soak nodes.
 
 The Ubuntu host was intentionally left unregistered during the package-lifecycle
 phase. A follow-on qualification registered that same immutable candidate and
@@ -15,8 +15,10 @@ now proven for this mixed-architecture topology. Bounded forced-relay fallback
 and direct-path recovery subsequently passed from both initiating nodes. Native
 network-change observation and endpoint refresh also passed on both nodes with
 zero packet loss. Registered rollback and re-upgrade subsequently preserved the
-active identity, control trust, DNS, and mixed-version direct traffic. Only
-long-duration behavior remains open for this registered topology.
+active identity, control trust, DNS, and mixed-version direct traffic. Ubuntu
+26.04 ARM64 then passed the same candidate lifecycle and complete registered
+functional matrix against the dedicated AMD64 peer. Only the remaining Linux
+release gates, including sustained behavior, remain open.
 
 ## Candidate
 
@@ -26,7 +28,8 @@ long-duration behavior remains open for this registered topology.
 | Source archive SHA-256 | `157a416096962f60ea35920eddb422c82754bd8fe30d9e0a0505b518677717ca` |
 | Package version | `0.1.0~rc3+69e5e2f` |
 | Build date | `2026-09-12T11:31:54Z` |
-| ARM64 package SHA-256 | `8ea1a650b82ba911bb6033af1b80947a1ff81d983800a49b6919cde33908cff1` |
+| Ubuntu 24.04 ARM64 package SHA-256 | `8ea1a650b82ba911bb6033af1b80947a1ff81d983800a49b6919cde33908cff1` |
+| Ubuntu 26.04 ARM64 package SHA-256 | `c3ac50a269cbf90605f4123834072630d985f9db9ab8f4ec44d2653d6621a0fd` |
 | Rollback commit | `2e3fe8f41315cbeaccbb2e2e194cfe9731510ae3` |
 | Rollback version | `0.1.0~rc1+2e3fe8f` |
 | Rollback package SHA-256 | `c92f2251b2f2459dfae626512e515fba69d84893946e91d921ff8b119849113f` |
@@ -64,6 +67,42 @@ and Go 1.26.8 on ARM64.
 The host finished with `0.1.0~rc3+69e5e2f` installed, both services
 active/running as `Type=notify`, `NotifyAccess=main`, a 30-second startup
 deadline, and zero automatic restarts.
+
+## Ubuntu 26.04 ARM64 result
+
+The second native host ran Ubuntu 26.04, kernel `7.0.0-1006-aws`, systemd 259,
+and Go 1.26.8 on ARM64. It used the same immutable source archive, commit,
+build date, and release flags as the earlier ARM64 qualification.
+
+- The native race suite, vet, module, formatting, ShellCheck, qualification,
+  packaging, emitted-binary, and systemd unit gates passed. Two isolated
+  package builds were byte-identical on the host. The three release binaries
+  also matched the independent Ubuntu 24.04 and Amazon Linux builds exactly.
+- Clean installation, candidate upgrade, reinstall, downgrade, re-upgrade,
+  socket authorization, and encrypted-credential preservation passed. Five
+  coordinated candidate restarts took 895–1,011 ms; every single immediate
+  health request passed in 26–31 ms and automatic restart counters stayed zero.
+- Browser registration produced one authenticated direct peer. Bidirectional
+  IPv4 and IPv6 direct traffic passed with 40 of 40 packets delivered. DNS
+  authoritative UDP/TCP, negative-answer, reverse, short-name, FQDN, cleanup,
+  recovery, and non-mesh preservation checks passed.
+- Four policy phases produced 48 of 48 matching observations. The phases
+  covered ICMP baseline behavior, directional TCP/UDP port narrowing, adjacent
+  port default denial, and explicit default denial. The original baseline was
+  restored after the matrix.
+- A bounded direct-path fault selected relay in 4,787 ms for both address
+  families, recovered direct in 2,231 ms, and removed its temporary nftables
+  table. A controlled dummy-interface change was observed and refreshed in
+  802 ms while all 244 dual-stack probes succeeded; the interface was removed.
+- Registered rc3→rc1→rc3 rollback delivered 40 of 40 mixed-version probes and
+  preserved the active profile projection, self addresses, network identity,
+  control pin, DNS, policy, and encrypted credential. Both services finished
+  active on rc3 with zero automatic restarts.
+
+The Debian archives built on Ubuntu 24.04 and 26.04 have different container
+bytes because the hosts use different `dpkg` implementations. Their installed
+release binaries are byte-identical. Reproducibility claims therefore remain
+scoped to same-environment package bytes and cross-builder binary payloads.
 
 ## Cross-builder reproducibility
 
@@ -128,9 +167,15 @@ rc3. Both transitions preserved the active profile projection, self addresses,
 network identity, and pinned control trust. The final services were active with
 zero automatic restarts.
 
+The complete Ubuntu 26.04 ARM64 aggregate is retained under
+[`docs/evidence/linux-ubuntu26-arm64-rc3-s1`](evidence/linux-ubuntu26-arm64-rc3-s1/README.md).
+It records the native build and package gates, five-sample readiness result,
+socket and credential boundaries, complete registered functional matrix,
+forced relay, controlled network change, and registered rollback without
+publishing host or mesh identifiers.
+
 ## Remaining release gates
 
-- Run the same package lifecycle on Ubuntu 26.04 ARM64.
 - Complete the larger crash sample set and sustained candidate validation.
 - Produce and verify the exact candidate SBOM, signature, and provenance before
   publication.
