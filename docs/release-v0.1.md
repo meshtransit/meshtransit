@@ -194,6 +194,8 @@ digests so results are reproducible.
 - `go test -race`, `go vet`, the configured linter, vulnerability scanning,
   packet/parser fuzz targets, and adversarial protocol tests pass for the
   release commit.
+- The complete Git history and release working tree pass the pinned Gitleaks
+  scan with no untriaged baseline or allowlisted production credential.
 - Release artifacts are reproducible where practical, carry checksums and an
   SBOM, are signed with protected release credentials, and can be traced to one
   reviewed commit.

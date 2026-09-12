@@ -130,5 +130,7 @@ Before a Linux compatibility release:
 2. Keep control credentials in the unprivileged daemon; give the helper no key access.
 3. Pin and verify the compatibility dependency and publish required notices.
 4. Run `go test -race`, `go vet`, `golangci-lint`, `govulncheck`, fuzz targets, and cross-builds.
+   CI must also scan the complete Git history and checked-out filesystem with
+   the pinned Gitleaks version; findings fail the build without a baseline.
 5. Test auth-key registration, browser registration plus restart completion, reconnect, direct traffic, relay traffic, exit behavior, route cleanup, DNS rollback, and malicious netmaps against disposable hosts.
 6. Confirm traffic logs have no payloads, secrets, or cross-network identifiers outside server-authorized scope.

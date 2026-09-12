@@ -1,4 +1,4 @@
-.PHONY: build test race vet lint package-deb clean
+.PHONY: build test race vet lint scan-secrets package-deb clean
 
 VERSION ?= 0.1.0~dev
 ARCH ?= amd64
@@ -19,6 +19,9 @@ vet:
 
 lint:
 	golangci-lint run ./...
+
+scan-secrets:
+	bash tools/security/scan-secrets.sh
 
 package-deb:
 	bash packaging/linux/build-deb.sh "$(VERSION)" "$(ARCH)" dist
