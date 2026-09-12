@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -19,6 +20,7 @@ const (
 	// KeySize is the required AES-256 envelope-key size.
 	KeySize         = 32
 	maxKeyFileBytes = KeySize + 1
+	systemdRoot     = "/run/credentials"
 )
 
 var (
@@ -64,8 +66,25 @@ func newWithRandom(key []byte, random io.Reader) (*Protector, error) {
 
 // Load reads an owner-only key from an absolute, non-symlink path.
 func Load(path string) (*Protector, error) {
+	return load(path, validateOwnerOnly)
+}
+
+// LoadSystemdCredential reads a key from a systemd private credential mount.
+// The mount uses root-owned mode 0440 files and isolates access per service.
+func LoadSystemdCredential(path string) (*Protector, error) {
+	if !isSystemdCredentialPath(path) {
+		return nil, fmt.Errorf("%w: path is outside a systemd service credential mount", ErrKeyInvalid)
+	}
+
+	return load(path, validateSystemdCredentialMetadata)
+}
+
+func load(path string, validateMetadata func(os.FileInfo) error) (*Protector, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) == string(filepath.Separator) {
 		return nil, fmt.Errorf("%w: key path must be an absolute file", ErrKeyInvalid)
+	}
+	if validateMetadata == nil {
+		return nil, fmt.Errorf("%w: key metadata policy is required", ErrKeyInvalid)
 	}
 
 	info, err := os.Lstat(path)
@@ -81,11 +100,11 @@ func Load(path string) (*Protector, error) {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w: key must be a regular file, not a link", ErrKeyInvalid)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("%w: key permissions are too broad", ErrKeyInvalid)
-	}
 	if info.Size() != KeySize {
 		return nil, fmt.Errorf("%w: key must contain exactly %d bytes", ErrKeyInvalid, KeySize)
+	}
+	if err := validateMetadata(info); err != nil {
+		return nil, err
 	}
 
 	file, err := os.Open(path) //nolint:gosec // The path is absolute and validated above.
@@ -104,8 +123,11 @@ func Load(path string) (*Protector, error) {
 	if !os.SameFile(info, openedInfo) || !openedInfo.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w: key changed while opening", ErrKeyInvalid)
 	}
-	if openedInfo.Mode().Perm()&0o077 != 0 || openedInfo.Size() != KeySize {
+	if openedInfo.Size() != KeySize {
 		return nil, fmt.Errorf("%w: opened key metadata is unsafe", ErrKeyInvalid)
+	}
+	if err := validateMetadata(openedInfo); err != nil {
+		return nil, err
 	}
 
 	key := make([]byte, maxKeyFileBytes)
@@ -131,6 +153,29 @@ func Load(path string) (*Protector, error) {
 	}
 
 	return protector, nil
+}
+
+func validateOwnerOnly(info os.FileInfo) error {
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("%w: key permissions are too broad", ErrKeyInvalid)
+	}
+
+	return nil
+}
+
+func isSystemdCredentialPath(path string) bool {
+	if !filepath.IsAbs(path) {
+		return false
+	}
+	cleaned := filepath.Clean(path)
+	relative, err := filepath.Rel(systemdRoot, cleaned)
+	if err != nil || relative == "." || relative == ".." ||
+		strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return false
+	}
+	parts := strings.Split(relative, string(filepath.Separator))
+
+	return len(parts) == 2 && strings.HasSuffix(parts[0], ".service") && parts[1] != ""
 }
 
 // Seal returns nonce-prefixed authenticated ciphertext bound to additionalData.

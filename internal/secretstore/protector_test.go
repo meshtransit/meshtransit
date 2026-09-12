@@ -195,6 +195,27 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+func TestSystemdCredentialPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		path     string
+		expected bool
+	}{
+		{path: "/run/credentials/meshd.service/meshd.identity-key", expected: true},
+		{path: "/run/credentials/meshd.service", expected: false},
+		{path: "/run/credentials/meshd.identity-key", expected: false},
+		{path: "/run/credentials/../meshd.service/meshd.identity-key", expected: false},
+		{path: "/tmp/meshd.service/meshd.identity-key", expected: false},
+		{path: "run/credentials/meshd.service/meshd.identity-key", expected: false},
+	}
+	for _, test := range tests {
+		if actual := isSystemdCredentialPath(test.path); actual != test.expected {
+			t.Errorf("isSystemdCredentialPath(%q) = %v, want %v", test.path, actual, test.expected)
+		}
+	}
+}
+
 func FuzzProtectorOpen(f *testing.F) {
 	protector, err := New(bytes.Repeat([]byte{0x61}, KeySize))
 	if err != nil {

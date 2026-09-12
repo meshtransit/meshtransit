@@ -58,7 +58,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			logger.Error("closing profile store failed", "error", closeErr)
 		}
 	}()
-	protector, err := secretstore.Load(cfg.IdentityKeyPath)
+	protector, err := loadIdentityProtector(cfg.IdentityKeyPath)
 	if err != nil {
 		logger.Error("loading identity envelope key failed", "error", err)
 
@@ -294,6 +294,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	logger.Info("meshd stopped")
 
 	return 0
+}
+
+func loadIdentityProtector(path string) (*secretstore.Protector, error) {
+	if path == config.DefaultIdentityKeyPath {
+		return secretstore.LoadSystemdCredential(path)
+	}
+
+	return secretstore.Load(path)
 }
 
 func effectiveUID() (uint32, error) {
