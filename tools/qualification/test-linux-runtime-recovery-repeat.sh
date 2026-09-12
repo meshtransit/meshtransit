@@ -46,14 +46,15 @@ fi
 
 normalized_routes="$(printf '%s\n' \
   '100.64.0.2/32 scope link' \
+  '100.64.0.3/32 proto static scope link' \
   'fd7a:115c:a1e0::2 proto kernel metric 256 pref medium' \
   'fe80::/64 proto kernel metric 256 pref medium' |
   "${harness}" __normalize-routes)"
 grep -Fq -- '100.64.0.2/32 scope link' <<<"${normalized_routes}"
-grep -Fq -- 'fd7a:115c:a1e0::2 proto kernel metric 256 pref medium' \
+grep -Fq -- '100.64.0.3/32 proto static scope link' \
   <<<"${normalized_routes}"
-if grep -Fq -- 'fe80::/64' <<<"${normalized_routes}"; then
-  printf 'kernel link-local route was not normalized\n' >&2
+if grep -Fq -- 'proto kernel' <<<"${normalized_routes}"; then
+  printf 'address-derived kernel route was not normalized\n' >&2
   exit 1
 fi
 

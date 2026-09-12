@@ -290,15 +290,16 @@ The aggregate schema is
 pass the single-run report validator and retain the same platform and artifact
 identity. After each sample the gate requires one process per service, one data
 and DNS interface, one UDP and TCP DNS listener, unchanged persisted bytes,
-routes and resolver state, stable systemd restart counters, the packaged helper
-socket contract, bounded descriptor growth, ready status, and no pending
-recovery. Transient kernel route or link convergence is given a bounded
+explicit peer routes, self addresses and resolver state, stable systemd restart
+counters, the packaged helper socket contract, bounded descriptor growth, ready
+status, and no pending recovery. Transient kernel route or link convergence is given a bounded
 five-second window; the report retains both the initial failure codes and the
 time until all invariants become stable. Its report contains the redacted child
 evidence and nearest-rank p95 times for observing the failure and returning to
-synchronized service. The route digest covers overlay and peer routes but
-excludes the kernel-generated IPv6 link-local route, whose DAD timing is not
-controlled by MeshTransit.
+synchronized service. The route digest covers explicit peer routes but excludes
+address-derived `proto kernel` routes, whose IPv6 DAD timing is not controlled
+by MeshTransit; an independent digest requires the exact global self-address
+set to remain unchanged.
 
 ## Run a fixed-topology soak
 

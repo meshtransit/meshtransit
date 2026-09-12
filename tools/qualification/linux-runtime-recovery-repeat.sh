@@ -256,10 +256,21 @@ route_digest() {
 }
 
 normalize_routes() {
-  # The kernel-owned IPv6 link-local route follows address generation and DAD,
-  # so its presence is not an overlay-route invariant. All other routes remain
-  # byte-for-byte inputs to the digest.
-  awk '$1 != "fe80::/64" && NF { print }'
+  # Address installation creates kernel-protocol routes that follow IPv6 DAD
+  # and are not part of the explicit peer-route plan. Self addresses are
+  # checked separately; every non-kernel route remains a digest input.
+  awk '$0 !~ /(^|[[:space:]])proto kernel([[:space:]]|$)/ && NF { print }'
+}
+
+address_digest() {
+  local interface_name="$1"
+
+  {
+    ip -o -4 address show dev "${interface_name}" scope global 2>/dev/null |
+      awk '{ print $4 }'
+    ip -o -6 address show dev "${interface_name}" scope global 2>/dev/null |
+      awk '{ print $4 }'
+  } | sort | sha256sum | awk '{print $1}'
 }
 
 dns_digest() {
@@ -281,10 +292,11 @@ resource_snapshot() {
   local baseline_state_digest="$3"
   local baseline_route_digest="$4"
   local baseline_dns_digest="$5"
-  local baseline_meshd_restarts="$6"
-  local baseline_meshnetd_restarts="$7"
-  local baseline_meshd_fds="$8"
-  local baseline_meshnetd_fds="$9"
+  local baseline_address_digest="$6"
+  local baseline_meshd_restarts="$7"
+  local baseline_meshnetd_restarts="$8"
+  local baseline_meshd_fds="$9"
+  local baseline_meshnetd_fds="${10}"
   local services_active=false
   local helper_socket_contract=false
   local status_ready=false
@@ -300,6 +312,7 @@ resource_snapshot() {
   local state_preserved=false
   local routes_preserved=false
   local dns_preserved=false
+  local addresses_preserved=false
   local restart_counts_stable=false
   local meshd_fds
   local meshnetd_fds
@@ -349,6 +362,8 @@ resource_snapshot() {
     routes_preserved=true
   [[ "$(dns_digest "${dns_interface}")" == "${baseline_dns_digest}" ]] &&
     dns_preserved=true
+  [[ "$(address_digest "${data_interface}")" == "${baseline_address_digest}" ]] &&
+    addresses_preserved=true
   if [[ "$(unit_restart_count meshd.service)" == "${baseline_meshd_restarts}" ]] &&
     [[ "$(unit_restart_count meshnetd.service)" == "${baseline_meshnetd_restarts}" ]]; then
     restart_counts_stable=true
@@ -372,6 +387,7 @@ resource_snapshot() {
     --argjson state_preserved "${state_preserved}" \
     --argjson routes_preserved "${routes_preserved}" \
     --argjson dns_preserved "${dns_preserved}" \
+    --argjson addresses_preserved "${addresses_preserved}" \
     --argjson restart_counts_stable "${restart_counts_stable}" \
     --argjson meshd_fds "${meshd_fds}" \
     --argjson meshnetd_fds "${meshnetd_fds}" \
@@ -398,6 +414,7 @@ resource_snapshot() {
         persisted_state_preserved: $state_preserved,
         route_state_preserved: $routes_preserved,
         dns_state_preserved: $dns_preserved,
+        address_state_preserved: $addresses_preserved,
         restart_counts_stable: $restart_counts_stable,
         descriptors: {
           meshd: $meshd_fds,
@@ -421,6 +438,7 @@ resource_snapshot() {
           if .persisted_state_preserved != true then "persisted_state_changed" else empty end,
           if .route_state_preserved != true then "route_state_changed" else empty end,
           if .dns_state_preserved != true then "dns_state_changed" else empty end,
+          if .address_state_preserved != true then "address_state_changed" else empty end,
           if .restart_counts_stable != true then "restart_count_increased" else empty end,
           if .descriptors.meshd == 0 then "meshd_descriptors_unavailable" else empty end,
           if .descriptors.meshnetd == 0 then "meshnetd_descriptors_unavailable" else empty end,
@@ -437,12 +455,13 @@ wait_for_resources() {
   local baseline_state_digest="$3"
   local baseline_route_digest="$4"
   local baseline_dns_digest="$5"
-  local baseline_meshd_restarts="$6"
-  local baseline_meshnetd_restarts="$7"
-  local baseline_meshd_fds="$8"
-  local baseline_meshnetd_fds="$9"
-  local timeout_seconds="${10}"
-  local poll_interval="${11}"
+  local baseline_address_digest="$6"
+  local baseline_meshd_restarts="$7"
+  local baseline_meshnetd_restarts="$8"
+  local baseline_meshd_fds="$9"
+  local baseline_meshnetd_fds="${10}"
+  local timeout_seconds="${11}"
+  local poll_interval="${12}"
   local start_ns
   local deadline_ns
   local current_ns
@@ -457,6 +476,7 @@ wait_for_resources() {
     "${baseline_state_digest}" \
     "${baseline_route_digest}" \
     "${baseline_dns_digest}" \
+    "${baseline_address_digest}" \
     "${baseline_meshd_restarts}" \
     "${baseline_meshnetd_restarts}" \
     "${baseline_meshd_fds}" \
@@ -475,6 +495,7 @@ wait_for_resources() {
       "${baseline_state_digest}" \
       "${baseline_route_digest}" \
       "${baseline_dns_digest}" \
+      "${baseline_address_digest}" \
       "${baseline_meshd_restarts}" \
       "${baseline_meshnetd_restarts}" \
       "${baseline_meshd_fds}" \
@@ -562,6 +583,7 @@ main() {
   local baseline_state_digest
   local baseline_route_digest
   local baseline_dns_digest
+  local baseline_address_digest
   local baseline_meshd_restarts
   local baseline_meshnetd_restarts
   local baseline_meshd_fds
@@ -676,6 +698,7 @@ main() {
   baseline_state_digest="$(state_digest)"
   baseline_route_digest="$(route_digest "${data_interface}")"
   baseline_dns_digest="$(dns_digest "${dns_interface}")"
+  baseline_address_digest="$(address_digest "${data_interface}")"
   baseline_meshd_restarts="$(unit_restart_count meshd.service)"
   baseline_meshnetd_restarts="$(unit_restart_count meshnetd.service)"
   baseline_meshd_fds="$(fd_count "$(unit_pid meshd.service)")"
@@ -689,6 +712,7 @@ main() {
     "${baseline_state_digest}" \
     "${baseline_route_digest}" \
     "${baseline_dns_digest}" \
+    "${baseline_address_digest}" \
     "${baseline_meshd_restarts}" \
     "${baseline_meshnetd_restarts}" \
     "${baseline_meshd_fds}" \
@@ -759,6 +783,7 @@ main() {
       "${baseline_state_digest}" \
       "${baseline_route_digest}" \
       "${baseline_dns_digest}" \
+      "${baseline_address_digest}" \
       "${baseline_meshd_restarts}" \
       "${baseline_meshnetd_restarts}" \
       "${baseline_meshd_fds}" \
