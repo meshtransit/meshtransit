@@ -49,6 +49,9 @@ make build
 
 Linux amd64/arm64 Debian package build and installation are documented in
 [docs/linux-packaging.md](docs/linux-packaging.md).
+Native amd64/arm64 qualification of the additive runtime-recovery status is
+recorded in
+[docs/linux-runtime-recovery-status-qualification-2026-09-13.md](docs/linux-runtime-recovery-status-qualification-2026-09-13.md).
 
 Global flags must appear before the command. `MESHCTL_SOCKET` and `MESHCTL_TIMEOUT` provide environment defaults; explicit flags take precedence.
 
