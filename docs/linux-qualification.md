@@ -305,6 +305,10 @@ only that aggregate count plus the explicit route count. A topology change is
 classified as `peer_count_changed` instead of being mistaken for a recovery
 regression; no peer identity or route value is emitted.
 
+The first native rc5 5/5 result on Ubuntu 26.04 amd64 and arm64 is recorded in
+[linux-runtime-recovery-repeat-qualification-2026-09-13.md](linux-runtime-recovery-repeat-qualification-2026-09-13.md),
+with the two redacted aggregate reports retained under `docs/evidence`.
+
 ## Run a fixed-topology soak
 
 The soak harness is read-only and runs on the node under test. It samples the
