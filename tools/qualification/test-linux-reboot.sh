@@ -20,6 +20,19 @@ if "${harness}" __validate-ssh-destination '-oProxyCommand=unsafe' 2>/dev/null; 
   exit 1
 fi
 
+if [[ "$("${harness}" __ssh-driver-command ssh)" != ssh ]]; then
+  printf 'ssh driver did not select the native SSH command\n' >&2
+  exit 1
+fi
+if [[ "$("${harness}" __ssh-driver-command rtk)" != 'rtk proxy ssh' ]]; then
+  printf 'rtk driver did not select the RTK SSH command\n' >&2
+  exit 1
+fi
+if "${harness}" __ssh-driver-command unsupported 2>/dev/null; then
+  printf 'unsupported SSH driver was accepted\n' >&2
+  exit 1
+fi
+
 if "${harness}" \
   --target-ssh root@192.0.2.10 \
   --observer-ssh root@192.0.2.11 \

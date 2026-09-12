@@ -14,6 +14,7 @@ readonly ping_parser="${script_dir}/linux-restart.sh"
 temp_dir=""
 ping4_pid=""
 ping6_pid=""
+ssh_command=()
 
 usage() {
   cat <<'EOF'
@@ -85,6 +86,22 @@ require_command() {
 
   command -v "${command_name}" >/dev/null 2>&1 ||
     fail "required command not found: ${command_name}"
+}
+
+configure_ssh_command() {
+  local driver="$1"
+
+  case "${driver}" in
+    ssh)
+      ssh_command=(ssh)
+      ;;
+    rtk)
+      ssh_command=(rtk proxy ssh)
+      ;;
+    *)
+      fail "ssh-driver must be ssh or rtk"
+      ;;
+  esac
 }
 
 validate_label() {
@@ -199,7 +216,6 @@ main() {
   local ping_interval=0.2
   local poll_interval=1
   local ssh_connect_timeout_seconds=3
-  local -a ssh_command
   local command_name
   local target_status
   local observer_status
@@ -418,41 +434,16 @@ main() {
   for command_name in awk date grep jq mktemp python3 sleep uname; do
     require_command "${command_name}"
   done
-  require_command ssh
   [[ -x "${ping_parser}" ]] || fail "linux restart parser is unavailable"
 
-  case "${ssh_driver}" in
-    ssh)
-      ssh_command=(ssh)
-      ;;
-    rtk)
-      require_command rtk
-      ssh_command=(rtk proxy ssh)
-      ;;
-    *)
-      fail "ssh-driver must be ssh or rtk"
-      ;;
-  esac
+  configure_ssh_command "${ssh_driver}"
+  require_command "${ssh_command[0]}"
 
   remote() {
     local destination="$1"
     local remote_command="$2"
 
     "${ssh_command[@]}" \
-      -o BatchMode=yes \
-      -o ConnectTimeout="${ssh_connect_timeout_seconds}" \
-      -o ServerAliveInterval=2 \
-      -o ServerAliveCountMax=2 \
-      -o StrictHostKeyChecking=yes \
-      "${destination}" \
-      "${remote_command}"
-  }
-
-  probe_remote() {
-    local destination="$1"
-    local remote_command="$2"
-
-    ssh \
       -o BatchMode=yes \
       -o ConnectTimeout="${ssh_connect_timeout_seconds}" \
       -o ServerAliveInterval=2 \
@@ -533,11 +524,11 @@ main() {
   started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   progress "preflight passed; starting observer traffic"
-  probe_remote "${observer_ssh}" \
+  remote "${observer_ssh}" \
     "ping -4 -D -O -n -i ${ping_interval} -W 1 -w ${observation_seconds} ${target_v4}" \
     >"${temp_dir}/ping-v4.log" 2>&1 &
   ping4_pid=$!
-  probe_remote "${observer_ssh}" \
+  remote "${observer_ssh}" \
     "ping -6 -D -O -n -i ${ping_interval} -W 1 -w ${observation_seconds} ${target_v6}" \
     >"${temp_dir}/ping-v6.log" 2>&1 &
   ping6_pid=$!
@@ -851,6 +842,13 @@ fi
 if [[ "${1:-}" == __now-ms ]]; then
   [[ $# -eq 1 ]] || fail "__now-ms does not accept arguments"
   now_ms
+  exit
+fi
+
+if [[ "${1:-}" == __ssh-driver-command ]]; then
+  [[ $# -eq 2 ]] || fail "__ssh-driver-command requires one value"
+  configure_ssh_command "$2"
+  printf '%s\n' "${ssh_command[*]}"
   exit
 fi
 
