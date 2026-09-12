@@ -500,6 +500,48 @@ MagicDNS-only baseline without restart. Redacted aggregate evidence is retained
 under
 [`docs/evidence/linux-dns-alpha16-upstream-failure-s1`](evidence/linux-dns-alpha16-upstream-failure-s1).
 
+For release-candidate repetition, use a dedicated Network that does not contain
+soak or production nodes. Commit the ordered split route through the authenticated
+control API, wait for the route on both clients, and run the node-local gate on
+each architecture:
+
+```bash
+sudo tools/qualification/linux-dns-upstream.sh \
+  --node-label ubuntu-arm64 \
+  --peer-label ubuntu-amd64 \
+  --peer-v4 PEER_OVERLAY_V4 \
+  --peer-v6 PEER_OVERLAY_V6 \
+  --peer-name PEER_MAGICDNS_NAME \
+  --magic-domain NETWORK_MAGICDNS_DOMAIN \
+  --test-domain example.com \
+  --test-query example.com \
+  --phase failover \
+  --blocked-resolver FIRST_RESOLVER_IPV4 \
+  --fallback-resolver SECOND_RESOLVER_IPV4 \
+  --samples 5 \
+  --artifact-sha256 SHA256_OF_DEB \
+  --confirm-dns-upstream ubuntu-arm64 \
+  >ubuntu-arm64-failover.json
+```
+
+Both declared resolvers must answer UDP and TCP before fault injection. The
+harness then installs one temporary nftables output chain scoped to the
+non-root `meshd` UID, drops only port 53 traffic to the declared first resolver,
+and counts blocked, fallback, and unexpected destinations. Every UDP and TCP
+query must observe the injected timeout and complete inside the bounded query
+window. MagicDNS, dual-stack peer traffic, daemon generation, and restart count
+must remain stable. A trap removes the exact qualification table.
+
+For `fail-closed`, publish only the first resolver, omit
+`--fallback-resolver`, and require bounded `SERVFAIL` through both direct and
+host-resolver paths. Finally restore the exact control snapshot and run
+`--phase rollback` without either resolver argument. Rollback requires the
+temporary split route to be absent, public resolution to avoid the MeshTransit
+link, local forwarding to fail closed, and all continuity gates to remain
+healthy. The harness deliberately does not hold browser credentials or mutate
+control state; configuration changes remain authenticated, versioned CAS
+operations with an operator-visible rollback.
+
 ## Run a host-policy phase
 
 Run the policy harness from an operator host that can reach both installed
@@ -591,6 +633,8 @@ bash -n tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-relay-fallback.sh \
   tools/qualification/linux-dns.sh \
   tools/qualification/test-linux-dns.sh \
+  tools/qualification/linux-dns-upstream.sh \
+  tools/qualification/test-linux-dns-upstream.sh \
   tools/qualification/linux-policy.sh \
   tools/qualification/test-linux-policy.sh \
   tools/qualification/testdata/ping
@@ -612,6 +656,8 @@ shellcheck tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-relay-fallback.sh \
   tools/qualification/linux-dns.sh \
   tools/qualification/test-linux-dns.sh \
+  tools/qualification/linux-dns-upstream.sh \
+  tools/qualification/test-linux-dns-upstream.sh \
   tools/qualification/linux-policy.sh \
   tools/qualification/test-linux-policy.sh \
   tools/qualification/testdata/ping
@@ -626,5 +672,6 @@ bash tools/qualification/test-linux-soak.sh
 bash tools/qualification/test-linux-soak-systemd.sh
 bash tools/qualification/test-linux-relay-fallback.sh
 bash tools/qualification/test-linux-dns.sh
+bash tools/qualification/test-linux-dns-upstream.sh
 bash tools/qualification/test-linux-policy.sh
 ```
