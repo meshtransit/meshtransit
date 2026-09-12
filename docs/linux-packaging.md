@@ -87,6 +87,9 @@ CI retains the `.deb`, its checksum, the CycloneDX SBOM, the vulnerability
 report, and both report checksums for 14 days. Release publication will attach
 the same SBOM contract to signed candidate artifacts.
 
+The first exact-commit amd64/arm64 result is recorded in
+[linux-supply-chain-qualification-2026-09-12.md](linux-supply-chain-qualification-2026-09-12.md).
+
 ## Install, upgrade, rollback, and uninstall
 
 Install `meshctl` first, then `meshd`. A fresh install enables and starts the

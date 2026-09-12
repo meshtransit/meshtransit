@@ -123,10 +123,15 @@ remain before this gate is production-complete. See
 [linux-secret-storage-qualification-2026-09-12.md](linux-secret-storage-qualification-2026-09-12.md).
 Linux package CI now emits a digest-bound CycloneDX SBOM, verifies it against
 the modules embedded in all packaged binaries, and applies a symbol-aware
-High/Critical vulnerability gate. It does not yet have a signed artifact and
-provenance pipeline, IPv6-only underlay evidence, real multi-uplink migration
-qualification, the larger candidate crash sample set, repeated candidate
-DNS-failure samples, or a long-duration qualification suite.
+High/Critical vulnerability gate. Exact-commit alpha20 packages and SBOMs were
+byte-reproducible for amd64 and arm64 across two runs and passed independent
+artifact inspection on Debian 13; this does not yet establish cross-builder
+reproducibility. See
+[linux-supply-chain-qualification-2026-09-12.md](linux-supply-chain-qualification-2026-09-12.md).
+It does not yet have a signed artifact and provenance pipeline, IPv6-only
+underlay evidence, real multi-uplink migration qualification, the larger
+candidate crash sample set, repeated candidate DNS-failure samples, or a
+long-duration qualification suite.
 See [linux-qualification.md](linux-qualification.md) for the bounded alpha
 evidence and its limitations.
 Windows and macOS deny local API access without an unsafe development override
