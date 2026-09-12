@@ -192,7 +192,7 @@ func verifyExisting(ctx context.Context, cfg Config) error {
 	if err := cfg.run(
 		ctx,
 		systemdToolPath,
-		[]string{"--no-pager", "decrypt", cfg.Path, "-"},
+		[]string{"--no-pager", "--name=" + fileName, "decrypt", cfg.Path, "-"},
 		nil,
 		key,
 	); err != nil {
@@ -218,7 +218,7 @@ func verifyCredential(
 	if err := cfg.run(
 		ctx,
 		systemdToolPath,
-		[]string{"--no-pager", "decrypt", path, "-"},
+		[]string{"--no-pager", "--name=" + fileName, "decrypt", path, "-"},
 		nil,
 		decrypted,
 	); err != nil {

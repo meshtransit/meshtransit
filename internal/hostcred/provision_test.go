@@ -171,14 +171,14 @@ func (r *fakeRunner) Run(
 		}
 		defer clear(key)
 		return os.WriteFile(args[5], append([]byte("encrypted:"), key...), 0o600)
-	case len(args) == 4 && args[1] == "decrypt":
+	case len(args) == 5 && args[1] == "--name="+fileName && args[2] == "decrypt":
 		r.decryptCalls++
 		if r.decryptOverride != nil {
 			_, err := stdout.Write(r.decryptOverride)
 
 			return err
 		}
-		encoded, err := os.ReadFile(args[2])
+		encoded, err := os.ReadFile(args[3])
 		if err != nil {
 			return err
 		}
