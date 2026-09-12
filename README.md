@@ -126,6 +126,9 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - A bounded Linux local-runtime fault gate that temporarily removes helper
   socket access, proves the daemon exposes a pending failure, and requires the
   same process generation to rebuild TUN and DNS after access is restored.
+- A fail-fast repeated local-runtime gate that checks resource, state, route,
+  resolver, socket-permission, and restart-count invariants after every sample
+  and emits redacted nearest-rank p95 recovery timings.
 - A restart-intolerant, read-only fixed-topology Linux soak gate for service generations,
   resource cardinality, runtime/OS memory, goroutines, threads, descriptors,
   routes, resolver policy, MagicDNS, and sampled dual-stack traffic. Its

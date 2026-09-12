@@ -52,6 +52,8 @@ All notable user-visible changes will be documented in this file.
 - Process-local aggregate runtime-recovery status for native fault qualification.
 - Bounded, reversible Linux helper-socket fault qualification that requires
   in-process TUN and DNS recovery without a service restart.
+- Fail-fast repeated Linux local-runtime recovery qualification with per-sample
+  resource invariants and redacted nearest-rank p95 recovery timings.
 
 ### Changed
 

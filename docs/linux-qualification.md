@@ -272,6 +272,29 @@ observed, both counters to advance, final `pending=false`, synchronized control,
 configured DNS, both interfaces, restored socket mode, and unchanged daemon and
 helper generations/restart counters throughout recovery.
 
+For repeatability and resource-stability evidence, run the serial aggregate
+gate. It stops at the first failed sample and uses the same explicit fault
+confirmation as the single-run harness.
+
+```bash
+sudo tools/qualification/linux-runtime-recovery-repeat.sh \
+  --node-label ubuntu-amd64 \
+  --iterations 5 \
+  --artifact-sha256 SHA256_OF_DEB \
+  --confirm-helper-socket-fault ubuntu-amd64 \
+  >ubuntu-amd64-runtime-recovery-repeat.json
+```
+
+The aggregate schema is
+`meshtransit.linux-runtime-recovery-repeat-qualification/v1`. Every sample must
+pass the single-run report validator and retain the same platform and artifact
+identity. After each sample the gate requires one process per service, one data
+and DNS interface, one UDP and TCP DNS listener, unchanged persisted bytes,
+routes and resolver state, stable systemd restart counters, the packaged helper
+socket contract, bounded descriptor growth, ready status, and no pending
+recovery. Its report contains the redacted child evidence and nearest-rank p95
+times for observing the failure and returning to synchronized service.
+
 ## Run a fixed-topology soak
 
 The soak harness is read-only and runs on the node under test. It samples the
@@ -675,6 +698,10 @@ bash -n tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-network-change.sh \
   tools/qualification/linux-helper-recovery-change.sh \
   tools/qualification/test-linux-helper-recovery-change.sh \
+  tools/qualification/linux-runtime-recovery.sh \
+  tools/qualification/test-linux-runtime-recovery.sh \
+  tools/qualification/linux-runtime-recovery-repeat.sh \
+  tools/qualification/test-linux-runtime-recovery-repeat.sh \
   tools/qualification/linux-soak.sh \
   tools/qualification/linux-soak-systemd.sh \
   tools/qualification/test-linux-soak.sh \
@@ -698,6 +725,10 @@ shellcheck tools/qualification/linux-restart.sh \
   tools/qualification/test-linux-network-change.sh \
   tools/qualification/linux-helper-recovery-change.sh \
   tools/qualification/test-linux-helper-recovery-change.sh \
+  tools/qualification/linux-runtime-recovery.sh \
+  tools/qualification/test-linux-runtime-recovery.sh \
+  tools/qualification/linux-runtime-recovery-repeat.sh \
+  tools/qualification/test-linux-runtime-recovery-repeat.sh \
   tools/qualification/linux-soak.sh \
   tools/qualification/linux-soak-systemd.sh \
   tools/qualification/test-linux-soak.sh \
@@ -718,6 +749,8 @@ bash tools/qualification/test-linux-crash-repeat.sh
 bash tools/qualification/test-linux-reboot.sh
 bash tools/qualification/test-linux-network-change.sh
 bash tools/qualification/test-linux-helper-recovery-change.sh
+bash tools/qualification/test-linux-runtime-recovery.sh
+bash tools/qualification/test-linux-runtime-recovery-repeat.sh
 bash tools/qualification/test-linux-soak.sh
 bash tools/qualification/test-linux-soak-systemd.sh
 bash tools/qualification/test-linux-relay-fallback.sh
