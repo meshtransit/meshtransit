@@ -238,6 +238,40 @@ The first passing two-node alpha16 chain is recorded in
 [linux-helper-recovery-change-qualification-2026-09-12.md](linux-helper-recovery-change-qualification-2026-09-12.md),
 with its redacted reports retained under `docs/evidence`.
 
+## Run local runtime-recovery qualification
+
+The runtime-recovery harness proves a different boundary from a systemd crash
+test. It intentionally starts a fresh `meshd` generation while the fixed
+`meshnetd` socket temporarily has mode `000`. The unprivileged daemon must stay
+alive, expose a pending local-runtime failure, and retry from a fresh full map.
+After the harness restores the package mode `0660`, that exact daemon and helper
+generation must synchronize TUN and DNS without an automatic service restart.
+
+```bash
+sudo tools/qualification/linux-runtime-recovery.sh \
+  --node-label ubuntu-amd64 \
+  --artifact-sha256 SHA256_OF_DEB \
+  --confirm-helper-socket-fault ubuntu-amd64 \
+  >ubuntu-amd64-runtime-recovery.json
+```
+
+The explicit confirmation must exactly match the node label. Preflight requires
+an online registered node, both packaged services, the package-owned `0660`
+helper socket, and active data and DNS interfaces. The test does not require a
+peer and does not modify profile, identity, policy, control, or default-route
+state. An exit trap restores the socket mode and starts both services after any
+failure or interruption.
+
+The report schema is
+`meshtransit.linux-runtime-recovery-qualification/v1`. It contains only the
+operator label, kernel/architecture, artifact identity, aggregate timing and
+recovery counters, service-generation comparisons, and final readiness. It
+omits process IDs, socket paths, network names, addresses, fingerprints, error
+text, and control or identity data. A pass requires the pending state to be
+observed, both counters to advance, final `pending=false`, synchronized control,
+configured DNS, both interfaces, restored socket mode, and unchanged daemon and
+helper generations/restart counters throughout recovery.
+
 ## Run a fixed-topology soak
 
 The soak harness is read-only and runs on the node under test. It samples the

@@ -50,6 +50,8 @@ All notable user-visible changes will be documented in this file.
 - Upstream-independent validated network snapshots with atomic delta updates and deny-by-default policy state.
 - Control-session, netmap-revision, and peer-count status fields.
 - Process-local aggregate runtime-recovery status for native fault qualification.
+- Bounded, reversible Linux helper-socket fault qualification that requires
+  in-process TUN and DNS recovery without a service restart.
 
 ### Changed
 

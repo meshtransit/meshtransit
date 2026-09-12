@@ -123,6 +123,9 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - A chained Linux helper-crash/network-change gate that proves the recovered
   helper/daemon generation can immediately refresh endpoints without another
   service restart.
+- A bounded Linux local-runtime fault gate that temporarily removes helper
+  socket access, proves the daemon exposes a pending failure, and requires the
+  same process generation to rebuild TUN and DNS after access is restored.
 - A restart-intolerant, read-only fixed-topology Linux soak gate for service generations,
   resource cardinality, runtime/OS memory, goroutines, threads, descriptors,
   routes, resolver policy, MagicDNS, and sampled dual-stack traffic. Its
@@ -143,6 +146,7 @@ See [docs/architecture.md](docs/architecture.md),
 [docs/linux-reboot-qualification-2026-09-11.md](docs/linux-reboot-qualification-2026-09-11.md),
 [docs/linux-network-change-qualification-2026-09-11.md](docs/linux-network-change-qualification-2026-09-11.md),
 [docs/linux-helper-recovery-change-qualification-2026-09-12.md](docs/linux-helper-recovery-change-qualification-2026-09-12.md),
+[docs/linux-runtime-recovery-qualification-2026-09-13.md](docs/linux-runtime-recovery-qualification-2026-09-13.md),
 [docs/linux-secret-storage-qualification-2026-09-12.md](docs/linux-secret-storage-qualification-2026-09-12.md),
 [docs/linux-identity-key-rotation-qualification-2026-09-12.md](docs/linux-identity-key-rotation-qualification-2026-09-12.md),
 [docs/linux-relay-fallback-qualification-2026-09-11.md](docs/linux-relay-fallback-qualification-2026-09-11.md),

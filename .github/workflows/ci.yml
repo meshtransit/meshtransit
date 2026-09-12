@@ -80,6 +80,8 @@ jobs:
             tools/qualification/test-linux-network-change.sh \
             tools/qualification/linux-helper-recovery-change.sh \
             tools/qualification/test-linux-helper-recovery-change.sh \
+            tools/qualification/linux-runtime-recovery.sh \
+            tools/qualification/test-linux-runtime-recovery.sh \
             tools/qualification/linux-soak.sh \
             tools/qualification/linux-soak-systemd.sh \
             tools/qualification/test-linux-soak.sh \
@@ -104,6 +106,8 @@ jobs:
             tools/qualification/test-linux-network-change.sh \
             tools/qualification/linux-helper-recovery-change.sh \
             tools/qualification/test-linux-helper-recovery-change.sh \
+            tools/qualification/linux-runtime-recovery.sh \
+            tools/qualification/test-linux-runtime-recovery.sh \
             tools/qualification/linux-soak.sh \
             tools/qualification/linux-soak-systemd.sh \
             tools/qualification/test-linux-soak.sh \
@@ -124,6 +128,7 @@ jobs:
           bash tools/qualification/test-linux-reboot.sh
           bash tools/qualification/test-linux-network-change.sh
           bash tools/qualification/test-linux-helper-recovery-change.sh
+          bash tools/qualification/test-linux-runtime-recovery.sh
           bash tools/qualification/test-linux-soak.sh
           bash tools/qualification/test-linux-soak-systemd.sh
           bash tools/qualification/test-linux-relay-fallback.sh

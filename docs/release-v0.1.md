@@ -112,6 +112,11 @@ samples for every node/service combination with state and resource invariants.
 Each node also has one passing chained sample proving that the newly recovered
 helper/daemon generation handles its first controlled network change, refreshes
 endpoints, and remains stable without an additional restart.
+The rc5 candidate also has one passing native amd64 and arm64 local-runtime
+fault sample: each daemon exposed the helper permission failure, then rebuilt
+TUN and DNS from a fresh map in the same process after helper access returned.
+See
+[linux-runtime-recovery-qualification-2026-09-13.md](linux-runtime-recovery-qualification-2026-09-13.md).
 The authenticated local status contract and read-only Linux soak harness now
 expose the bounded aggregate runtime and operating-system resource measurements
 needed for the long-duration gate. The first two-node alpha17 native smoke
