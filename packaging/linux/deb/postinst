@@ -42,6 +42,34 @@ configure_unit() {
     fi
 }
 
+wait_for_readiness_transition() {
+    unit="$1"
+    expected_running="$2"
+    active_state="$(systemctl --system show --property=ActiveState --value "${unit}")"
+
+    case "${active_state}" in
+        active)
+            return
+            ;;
+        activating|deactivating|reloading|refreshing)
+            # Join the existing job. Type=notify keeps this command blocked
+            # until the unit reports READY=1 or its startup deadline expires.
+            systemctl --system start "${unit}" >/dev/null
+            ;;
+        inactive|failed)
+            if [ "${expected_running}" = true ]; then
+                printf '%s did not return to an active state\n' "${unit}" >&2
+                return 1
+            fi
+            ;;
+        *)
+            printf '%s returned unexpected ActiveState=%s\n' \
+                "${unit}" "${active_state}" >&2
+            return 1
+            ;;
+    esac
+}
+
 case "$1" in
     configure|abort-upgrade|abort-deconfigure|abort-remove)
         configure_accounts_and_directories
@@ -59,7 +87,21 @@ case "$1" in
             else
                 action=start
             fi
+            meshnetd_expected_running=false
+            meshd_expected_running=false
+            if [ "${action}" = try-restart ]; then
+                if systemctl --system is-active --quiet meshnetd.service; then
+                    meshnetd_expected_running=true
+                fi
+                if systemctl --system is-active --quiet meshd.service; then
+                    meshd_expected_running=true
+                fi
+            fi
             deb-systemd-invoke "${action}" meshnetd.service meshd.service >/dev/null
+            wait_for_readiness_transition \
+                meshnetd.service "${meshnetd_expected_running}"
+            wait_for_readiness_transition \
+                meshd.service "${meshd_expected_running}"
             if [ "${remove_reinstall_marker}" = true ]; then
                 rm -f -- "${reinstall_marker}"
             fi

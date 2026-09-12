@@ -120,7 +120,10 @@ Install `meshctl` first, then `meshd`. A fresh install enables and starts the
 services through Debian's service-policy helpers. An upgrade preserves an
 administrator's enabled/disabled and running/stopped choices; only services
 that are already running are restarted. Unit dependency ordering provisions
-the credential and starts `meshnetd` before `meshd`.
+the credential and starts `meshnetd` before `meshd`. If the distribution's
+policy-aware helper returns while a unit is still transitioning, the package
+joins that existing systemd job and waits for the same readiness result without
+starting a service that was intentionally stopped.
 
 ```bash
 sudo dpkg -i meshctl_0.1.0~alpha1_amd64.deb

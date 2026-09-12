@@ -92,7 +92,9 @@ controlled interface-change, relay-fallback, split-DNS, and host-policy
 qualification harnesses. Both packaged daemons now bind their owned Unix
 listener before reporting `READY=1` through a bounded, fail-closed systemd
 notification adapter; the dedicated registration-independent harness requires
-one immediate health attempt after every completed restart. The two-host Linux
+one immediate health attempt after every completed restart. The Debian
+maintainer lifecycle also joins an in-progress notification job before an
+install or upgrade returns. The two-host Linux
 alpha topology has repeatable
 direct-loss fallback and split-DNS cleanup/recovery evidence plus complete live
 bidirectional host-policy matrices on alpha10 and two repeatable alpha15

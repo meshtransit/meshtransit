@@ -47,12 +47,21 @@ EOF
 
 cat >"${mock_bin}/systemctl" <<'EOF'
 #!/bin/sh
+printf 'systemctl' >>"${MESHD_TEST_SERVICE_CALLS}"
+for argument in "$@"; do
+    printf ' <%s>' "${argument}" >>"${MESHD_TEST_SERVICE_CALLS}"
+done
+printf '\n' >>"${MESHD_TEST_SERVICE_CALLS}"
+
 case " $* " in
     *" is-active "*)
         if [ "${MESHD_TEST_ACTIVE:-true}" = true ]; then
             exit 0
         fi
         exit 3
+        ;;
+    *" show "*"--property=ActiveState"*)
+        printf '%s\n' "${MESHD_TEST_ACTIVE_STATE:-active}"
         ;;
 esac
 exit 0
@@ -127,6 +136,18 @@ MESHD_TEST_ACTIVE=false "${control_dir}/prerm" remove
 "${control_dir}/postinst" configure 0.1.0~previous
 grep -Fqx 'deb-systemd-invoke <try-restart> <meshnetd.service> <meshd.service>' \
     "${service_calls}"
+
+: >"${service_calls}"
+MESHD_TEST_ACTIVE=true MESHD_TEST_ACTIVE_STATE=activating \
+    "${control_dir}/postinst" configure 0.1.0~previous
+grep -Fqx 'systemctl <--system> <start> <meshnetd.service>' "${service_calls}"
+grep -Fqx 'systemctl <--system> <start> <meshd.service>' "${service_calls}"
+
+if MESHD_TEST_ACTIVE=true MESHD_TEST_ACTIVE_STATE=inactive \
+    "${control_dir}/postinst" configure 0.1.0~previous >/dev/null 2>&1; then
+    printf 'upgrade accepted loss of a previously active service\n' >&2
+    exit 1
+fi
 
 mkdir -p /run/meshd /run/meshnetd
 touch /etc/meshd/.start-on-reinstall /run/meshd/stale /run/meshnetd/stale

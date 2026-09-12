@@ -56,6 +56,9 @@ grep -Fq "deb-systemd-helper enable \"\${unit}\"" \
     "${work_dir}/control/postinst"
 grep -Fq "deb-systemd-invoke \"\${action}\" meshnetd.service meshd.service" \
     "${work_dir}/control/postinst"
+grep -Fq 'wait_for_readiness_transition' "${work_dir}/control/postinst"
+grep -Fq 'systemctl --system show --property=ActiveState --value' \
+    "${work_dir}/control/postinst"
 grep -Fq 'deb-systemd-invoke stop meshd.service meshnetd.service meshcred.service' \
     "${work_dir}/control/prerm"
 grep -Fq 'systemctl --system is-active --quiet meshd.service' \
