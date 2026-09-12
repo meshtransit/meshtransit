@@ -204,6 +204,59 @@ unit_restart_count() {
   printf '0\n'
 }
 
+unit_invocation_id() {
+  local unit="$1"
+  local invocation_id
+
+  invocation_id="$(systemctl show --property=InvocationID --value "${unit}" 2>/dev/null || true)"
+  if [[ "${invocation_id}" =~ ^[0-9A-Fa-f]{32}$ ]]; then
+    printf '%s\n' "${invocation_id}"
+  fi
+}
+
+unit_restart_policy() {
+  local unit="$1"
+
+  systemctl show --property=Restart --value "${unit}" 2>/dev/null || true
+}
+
+restart_policy_supports_sigkill() {
+  case "$1" in
+    always|on-abnormal|on-abort|on-failure) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+invocation_changed() {
+  local before="$1"
+  local after="$2"
+
+  [[ "${before}" =~ ^[0-9A-Fa-f]{32}$ ]] || return 1
+  [[ "${after}" =~ ^[0-9A-Fa-f]{32}$ ]] || return 1
+  [[ "${before}" != "${after}" ]]
+}
+
+restart_count_evidence() {
+  local baseline="$1"
+  local sample
+  local peak
+  local increased=false
+
+  shift
+  [[ "${baseline}" =~ ^[0-9]+$ ]] || return 1
+  peak="${baseline}"
+  for sample in "$@"; do
+    [[ "${sample}" =~ ^[0-9]+$ ]] || return 1
+    if (( sample > peak )); then
+      peak="${sample}"
+    fi
+  done
+  if (( peak > baseline )); then
+    increased=true
+  fi
+  printf '%s\t%s\n' "${peak}" "${increased}"
+}
+
 dns_runtime_removed() {
   local dns_interface="$1"
   local resolved_state
@@ -456,7 +509,13 @@ main() {
   local meshd_pid_changed=false
   local target_restart_count_before
   local target_restart_count_after
+  local target_restart_count_peak
   local target_restart_count_increased=false
+  local target_restart_policy
+  local target_restart_policy_supports_sigkill=false
+  local target_invocation_before
+  local target_invocation_after
+  local target_invocation_changed=false
   local target_restarted=false
   local meshd_restarted=false
   local recovery_generation_ready=false
@@ -464,6 +523,7 @@ main() {
   local current_target_pid
   local current_meshd_pid
   local current_target_restart_count
+  local current_target_invocation
   local observation_seconds
   local started_at
   local action_start_ns
@@ -695,6 +755,18 @@ main() {
     meshnetd) target_pid_before="${meshnetd_pid_before}" ;;
   esac
   target_restart_count_before="$(unit_restart_count "${unit}")"
+  target_restart_count_peak="${target_restart_count_before}"
+  target_restart_policy="$(unit_restart_policy "${unit}")"
+  if restart_policy_supports_sigkill "${target_restart_policy}"; then
+    target_restart_policy_supports_sigkill=true
+  fi
+  target_invocation_before="$(unit_invocation_id "${unit}")"
+  [[ -n "${target_invocation_before}" ]] ||
+    fail "could not resolve the baseline service invocation ID"
+  if [[ "${action_mode}" == sigkill &&
+    "${target_restart_policy_supports_sigkill}" != true ]]; then
+    fail "selected service restart policy does not recover SIGKILL"
+  fi
 
   observation_seconds=$(( lead_seconds + ready_timeout_seconds + tail_seconds ))
   temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/meshd-linux-restart.XXXXXXXX")"
@@ -746,10 +818,25 @@ main() {
     current_target_pid="$(unit_pid "${unit}")"
     current_meshd_pid="$(unit_pid meshd.service)"
     current_target_restart_count="$(unit_restart_count "${unit}")"
+    current_target_invocation="$(unit_invocation_id "${unit}")"
+    # A fast successful activation can reset NRestarts before the new PID is
+    # visible. Keep the transient counter peak for diagnostics and use the
+    # persistent InvocationID transition as the generation boundary.
+    if invocation_changed \
+      "${target_invocation_before}" \
+      "${current_target_invocation}"; then
+      target_invocation_changed=true
+    fi
+    IFS=$'\t' read -r target_restart_count_peak target_restart_count_increased < <(
+      restart_count_evidence \
+        "${target_restart_count_before}" \
+        "${target_restart_count_peak}" \
+        "${current_target_restart_count}"
+    )
     if [[ "${current_target_pid}" != 0 &&
       "${current_target_pid}" != "${target_pid_before}" ]]; then
       if [[ "${action_mode}" == restart ||
-        "${current_target_restart_count}" -gt "${target_restart_count_before}" ]]; then
+        "${target_invocation_changed}" == true ]]; then
         target_restarted=true
       fi
     fi
@@ -837,9 +924,18 @@ main() {
     meshd_pid_changed=true
   fi
   target_restart_count_after="$(unit_restart_count "${unit}")"
-  if (( target_restart_count_after > target_restart_count_before )); then
-    target_restart_count_increased=true
+  target_invocation_after="$(unit_invocation_id "${unit}")"
+  if invocation_changed \
+    "${target_invocation_before}" \
+    "${target_invocation_after}"; then
+    target_invocation_changed=true
   fi
+  IFS=$'\t' read -r target_restart_count_peak target_restart_count_increased < <(
+    restart_count_evidence \
+      "${target_restart_count_before}" \
+      "${target_restart_count_peak}" \
+      "${target_restart_count_after}"
+  )
   if [[ "${service_name}" == meshd && "${meshd_pid_before}" != "${meshd_pid_after}" &&
     "${meshd_pid_after}" != 0 ]]; then
     target_pid_changed=true
@@ -873,7 +969,11 @@ main() {
     --argjson meshd_pid_changed "${meshd_pid_changed}" \
     --argjson target_restart_count_before "${target_restart_count_before}" \
     --argjson target_restart_count_after "${target_restart_count_after}" \
+    --argjson target_restart_count_peak "${target_restart_count_peak}" \
     --argjson target_restart_count_increased "${target_restart_count_increased}" \
+    --arg target_restart_policy "${target_restart_policy}" \
+    --argjson target_restart_policy_supports_sigkill "${target_restart_policy_supports_sigkill}" \
+    --argjson target_invocation_changed "${target_invocation_changed}" \
     --argjson dns_cleanup_required "${dns_cleanup_required}" \
     --argjson dns_cleanup_observed "${dns_cleanup_observed}" \
     --argjson dns_cleanup_ms "${dns_cleanup_ms}" \
@@ -950,7 +1050,11 @@ main() {
           meshd_pid_changed: $meshd_pid_changed,
           restart_count_before: $target_restart_count_before,
           restart_count_after: $target_restart_count_after,
-          restart_count_increased: $target_restart_count_increased
+          restart_count_peak: $target_restart_count_peak,
+          restart_count_increased: $target_restart_count_increased,
+          restart_policy: $target_restart_policy,
+          restart_policy_supports_sigkill: $target_restart_policy_supports_sigkill,
+          invocation_changed: $target_invocation_changed
         },
         dns_cleanup: {
           required: $dns_cleanup_required,
@@ -997,7 +1101,8 @@ main() {
           if .action.exit_code != 0 and .scenario.action == "sigkill" then "sigkill_command_failed" else empty end,
           if .action.target_pid_changed != true then "target_pid_did_not_change" else empty end,
           if .scenario.service == "meshnetd.service" and .action.meshd_pid_changed != true then "meshd_generation_did_not_change" else empty end,
-          if .scenario.action == "sigkill" and .action.restart_count_increased != true then "restart_count_did_not_increase" else empty end,
+          if .scenario.action == "sigkill" and .action.restart_policy_supports_sigkill != true then "restart_policy_does_not_recover_sigkill" else empty end,
+          if .scenario.action == "sigkill" and .action.invocation_changed != true then "service_invocation_did_not_change" else empty end,
           if .dns_cleanup.required == true and .dns_cleanup.observed != true then "dns_cleanup_not_observed" else empty end,
           if .readiness_ms.services_active == null then "services_not_ready" else empty end,
           if .readiness_ms.data_interface == null then "data_interface_not_ready" else empty end,
@@ -1040,6 +1145,24 @@ fi
 if [[ "${1:-}" == __validate-action-mode ]]; then
   [[ $# -eq 2 ]] || fail "__validate-action-mode requires ACTION"
   validate_action_mode "$2"
+  exit
+fi
+
+if [[ "${1:-}" == __restart-count-evidence ]]; then
+  [[ $# -ge 2 ]] || fail "__restart-count-evidence requires BASELINE [SAMPLE ...]"
+  restart_count_evidence "${@:2}"
+  exit
+fi
+
+if [[ "${1:-}" == __restart-policy-supports-sigkill ]]; then
+  [[ $# -eq 2 ]] || fail "__restart-policy-supports-sigkill requires POLICY"
+  restart_policy_supports_sigkill "$2"
+  exit
+fi
+
+if [[ "${1:-}" == __invocation-changed ]]; then
+  [[ $# -eq 3 ]] || fail "__invocation-changed requires BEFORE AFTER"
+  invocation_changed "$2" "$3"
   exit
 fi
 

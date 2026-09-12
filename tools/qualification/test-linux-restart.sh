@@ -73,4 +73,48 @@ if "${harness}" __validate-action-mode invalid; then
   exit 1
 fi
 
+restart_count_evidence="$(
+  "${harness}" __restart-count-evidence 0 0 1 0
+)"
+assert_equal transient-restart-count "${restart_count_evidence}" $'1\ttrue'
+
+restart_count_evidence="$(
+  "${harness}" __restart-count-evidence 3 3 4 0
+)"
+assert_equal reset-restart-count "${restart_count_evidence}" $'4\ttrue'
+
+restart_count_evidence="$(
+  "${harness}" __restart-count-evidence 0 0 0
+)"
+assert_equal unchanged-restart-count "${restart_count_evidence}" $'0\tfalse'
+
+if "${harness}" __restart-count-evidence 0 invalid >/dev/null 2>&1; then
+  printf 'invalid restart count was accepted\n' >&2
+  exit 1
+fi
+
+for restart_policy in always on-abnormal on-abort on-failure; do
+  "${harness}" __restart-policy-supports-sigkill "${restart_policy}"
+done
+for restart_policy in no on-success on-watchdog invalid; do
+  if "${harness}" __restart-policy-supports-sigkill "${restart_policy}"; then
+    printf 'unsafe restart policy was accepted: %s\n' "${restart_policy}" >&2
+    exit 1
+  fi
+done
+
+"${harness}" __invocation-changed \
+  0123456789abcdef0123456789abcdef \
+  fedcba9876543210fedcba9876543210
+if "${harness}" __invocation-changed \
+  0123456789abcdef0123456789abcdef \
+  0123456789abcdef0123456789abcdef; then
+  printf 'unchanged invocation ID was accepted\n' >&2
+  exit 1
+fi
+if "${harness}" __invocation-changed invalid fedcba9876543210fedcba9876543210; then
+  printf 'invalid invocation ID was accepted\n' >&2
+  exit 1
+fi
+
 printf 'linux restart qualification parser tests passed\n'
