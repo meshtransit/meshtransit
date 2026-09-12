@@ -35,9 +35,10 @@ type commandRunner func(
 // Config contains the fixed provisioning boundaries. Non-default values are
 // intended for deterministic tests, not the packaged command.
 type Config struct {
-	Path   string
-	Random io.Reader
-	run    commandRunner
+	Path         string
+	RecoveryPath string
+	Random       io.Reader
+	run          commandRunner
 }
 
 // Provision creates the encrypted host credential once, verifies that systemd
@@ -46,29 +47,13 @@ func Provision(ctx context.Context, cfg Config) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("provisioning host credential: %w", err)
 	}
-	if cfg.Path == "" {
-		cfg.Path = defaultPath
-	}
-	if cfg.Random == nil {
-		cfg.Random = rand.Reader
-	}
-	if cfg.run == nil {
-		cfg.run = runCommand
-	}
-	if err := validateConfig(cfg); err != nil {
+	var err error
+	cfg, err = normalizeConfig(cfg)
+	if err != nil {
 		return err
 	}
-	if err := prepareCredentialDirectory(filepath.Dir(cfg.Path)); err != nil {
+	if err := prepareBackend(ctx, cfg); err != nil {
 		return err
-	}
-	if err := cfg.run(
-		ctx,
-		systemdToolPath,
-		[]string{"--no-pager", "setup"},
-		nil,
-		io.Discard,
-	); err != nil {
-		return fmt.Errorf("initializing systemd host credential key: %w", err)
 	}
 
 	info, err := os.Lstat(cfg.Path)
@@ -82,14 +67,62 @@ func Provision(ctx context.Context, cfg Config) error {
 	if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspecting encrypted identity credential: %w", err)
 	}
+	if _, recoveryErr := os.Lstat(cfg.RecoveryPath); recoveryErr == nil {
+		return ErrRecoveryAvailable
+	} else if !errors.Is(recoveryErr, os.ErrNotExist) {
+		return fmt.Errorf("inspecting identity credential recovery copy: %w", recoveryErr)
+	}
 
 	return createCredential(ctx, cfg)
+}
+
+func normalizeConfig(cfg Config) (Config, error) {
+	if cfg.Path == "" {
+		cfg.Path = defaultPath
+	}
+	if cfg.RecoveryPath == "" {
+		cfg.RecoveryPath = cfg.Path + ".recovery"
+	}
+	if cfg.Random == nil {
+		cfg.Random = rand.Reader
+	}
+	if cfg.run == nil {
+		cfg.run = runCommand
+	}
+	if err := validateConfig(cfg); err != nil {
+		return Config{}, err
+	}
+
+	return cfg, nil
+}
+
+func prepareBackend(ctx context.Context, cfg Config) error {
+	if err := prepareCredentialDirectory(filepath.Dir(cfg.Path)); err != nil {
+		return err
+	}
+	if err := cfg.run(
+		ctx,
+		systemdToolPath,
+		[]string{"--no-pager", "setup"},
+		nil,
+		io.Discard,
+	); err != nil {
+		return fmt.Errorf("initializing systemd host credential key: %w", err)
+	}
+
+	return nil
 }
 
 func validateConfig(cfg Config) error {
 	if !filepath.IsAbs(cfg.Path) ||
 		filepath.Clean(cfg.Path) == string(filepath.Separator) {
 		return errors.New("hostcred: credential path must be an absolute file")
+	}
+	if !filepath.IsAbs(cfg.RecoveryPath) ||
+		filepath.Clean(cfg.RecoveryPath) == string(filepath.Separator) ||
+		filepath.Clean(cfg.RecoveryPath) == filepath.Clean(cfg.Path) ||
+		filepath.Dir(filepath.Clean(cfg.RecoveryPath)) != filepath.Dir(filepath.Clean(cfg.Path)) {
+		return errors.New("hostcred: recovery path must be a different file in the credential directory")
 	}
 
 	return nil
@@ -122,57 +155,11 @@ func createCredential(ctx context.Context, cfg Config) error {
 	}
 	defer clear(key)
 
-	temporary, err := os.CreateTemp(filepath.Dir(cfg.Path), ".meshd.identity-key-*.tmp")
+	temporaryPath, err := encryptTemporary(ctx, cfg, key)
 	if err != nil {
-		return fmt.Errorf("reserving encrypted credential path: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	if err := temporary.Close(); err != nil {
-		_ = os.Remove(temporaryPath)
-
-		return fmt.Errorf("closing encrypted credential reservation: %w", err)
-	}
-	if err := os.Remove(temporaryPath); err != nil {
-		return fmt.Errorf("releasing encrypted credential reservation: %w", err)
+		return err
 	}
 	defer func() { _ = os.Remove(temporaryPath) }()
-
-	if err := cfg.run(
-		ctx,
-		systemdToolPath,
-		[]string{
-			"--no-pager",
-			"--with-key=host",
-			"--name=" + fileName,
-			"encrypt",
-			"-",
-			temporaryPath,
-		},
-		bytes.NewReader(key),
-		io.Discard,
-	); err != nil {
-		return fmt.Errorf("encrypting identity credential: %w", err)
-	}
-	info, err := os.Lstat(temporaryPath)
-	if err != nil {
-		return fmt.Errorf("inspecting new encrypted identity credential: %w", err)
-	}
-	if err := validateCredentialShape(info); err != nil {
-		return err
-	}
-	if err := os.Chmod(temporaryPath, 0o600); err != nil {
-		return fmt.Errorf("restricting encrypted identity credential: %w", err)
-	}
-	info, err = os.Lstat(temporaryPath)
-	if err != nil {
-		return fmt.Errorf("reinspecting new encrypted identity credential: %w", err)
-	}
-	if err := validateCredentialInfo(info); err != nil {
-		return err
-	}
-	if err := verifyCredential(ctx, cfg, temporaryPath, key); err != nil {
-		return err
-	}
 	if err := os.Link(temporaryPath, cfg.Path); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return verifyExisting(ctx, cfg)
@@ -216,7 +203,7 @@ func verifyCredential(
 	path string,
 	expected []byte,
 ) error {
-	decrypted := &boundedBuffer{maximum: secretstore.KeySize}
+	decrypted := &boundedBuffer{maximum: secretstore.MaxCredentialSize}
 	if err := cfg.run(
 		ctx,
 		systemdToolPath,

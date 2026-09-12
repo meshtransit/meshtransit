@@ -58,6 +58,7 @@ grep -Fq 'remove_reinstall_marker=true' "${work_dir}/control/postinst"
 grep -Fq 'deb-systemd-helper purge meshcred.service meshnetd.service meshd.service' \
     "${work_dir}/control/postrm"
 grep -Fq "root_prefix=\"\${DPKG_ROOT%/}\"" "${work_dir}/control/postrm"
+grep -Fq 'meshd.identity-key.recovery' "${work_dir}/control/postrm"
 if grep -Fq 'systemctl enable' "${work_dir}/control/postinst"; then
     printf 'postinst must preserve administrator enablement state\n' >&2
     exit 1

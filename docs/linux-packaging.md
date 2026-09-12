@@ -26,6 +26,9 @@ independent upgrades.
   envelope key and persists only a host-encrypted systemd credential at
   `/etc/credstore.encrypted/meshd.identity-key`. The service verifies decryption
   before create-only installation and safely reuses an existing credential.
+  During explicit rotation it also maintains a verified host-encrypted
+  `.recovery` copy; ordinary package removal preserves both files and purge
+  removes both.
 - systemd decrypts that credential into
   `/run/credentials/meshd.service/meshd.identity-key`, visible inside the
   daemon's private credential mount. `meshnetd` cannot access the decrypted key.
@@ -111,6 +114,52 @@ of packages; package artifacts and checksums are retained per release candidate.
 ```bash
 sudo dpkg -i meshctl_PREVIOUS_amd64.deb meshd_PREVIOUS_amd64.deb
 ```
+
+## Identity envelope-key rotation
+
+Rotation is an explicit, staged transaction. Deploy and retain a build that
+understands the bounded two-key credential before beginning; after `rotate`, a
+build that accepts only the original 32-byte credential is not a valid rollback
+target. None of these commands prints key material.
+
+1. Stage a new active key and a durable host-encrypted recovery copy. The
+   running daemon keeps its already mounted old key until restart.
+2. Restart `meshd`. Before reopening its local API, the daemon verifies and
+   atomically rewraps every canonical identity record with the new active key.
+3. Stop `meshd` and finalize. Finalization refuses to proceed unless every
+   identity is readable using the active key alone; the recovery copy remains.
+4. Start and qualify `meshd` with the single active key. Only after that
+   succeeds, stop it once more and commit the rotation to delete fallback key
+   material.
+
+```bash
+sudo /usr/libexec/meshtransit/meshcred rotate
+sudo systemctl restart meshd.service
+# Verify registration continuity and daemon health here.
+sudo systemctl stop meshd.service
+sudo /usr/libexec/meshtransit/meshcred finalize
+sudo systemctl start meshd.service
+# Verify the finalized credential here before committing.
+sudo systemctl stop meshd.service
+sudo /usr/libexec/meshtransit/meshcred commit
+sudo systemctl start meshd.service
+```
+
+`finalize`, `commit`, and `recover` fail closed unless systemd reports
+`meshd.service` as stopped or failed. Before `commit`, recovery restores the
+verified two-key credential atomically and keeps its source copy:
+
+```bash
+sudo systemctl stop meshd.service
+sudo /usr/libexec/meshtransit/meshcred recover
+sudo systemctl start meshd.service
+```
+
+An interrupted `rotate` is resumable: the recovery copy is made durable before
+the primary credential is replaced, and rerunning `rotate` activates that exact
+copy instead of generating another key. An interrupted `finalize` leaves either
+the verified two-key credential or the verified active key as the complete
+primary file. Never delete the `.recovery` file manually.
 
 Normal removal stops the services, removes their volatile sockets, and
 preserves identity state, the encrypted credential, and the root-owned

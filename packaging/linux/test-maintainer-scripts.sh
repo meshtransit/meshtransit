@@ -22,6 +22,7 @@ mkdir -p \
     "${package_root}/var/lib/meshd/identities"
 touch \
     "${package_root}/etc/credstore.encrypted/meshd.identity-key" \
+    "${package_root}/etc/credstore.encrypted/meshd.identity-key.recovery" \
     "${package_root}/etc/meshd/meshd.env" \
     "${package_root}/run/meshd/meshd.sock" \
     "${package_root}/run/meshnetd/meshnetd.sock" \
@@ -122,6 +123,7 @@ run_script "${script_dir}/deb/postrm" remove
 [[ -f "${package_root}/var/lib/meshd/profiles.json" ]]
 [[ -f "${package_root}/etc/meshd/meshd.env" ]]
 [[ -f "${package_root}/etc/credstore.encrypted/meshd.identity-key" ]]
+[[ -f "${package_root}/etc/credstore.encrypted/meshd.identity-key.recovery" ]]
 
 touch "${package_root}/etc/meshd/.start-on-reinstall"
 mkdir -p "${package_root}/run/meshd" "${package_root}/run/meshnetd"
@@ -134,6 +136,7 @@ grep -Fqx 'deb-systemd-helper <purge> <meshcred.service> <meshnetd.service> <mes
 [[ ! -e "${package_root}/run/meshnetd" ]]
 [[ ! -e "${package_root}/etc/meshd/.start-on-reinstall" ]]
 [[ ! -e "${package_root}/etc/credstore.encrypted/meshd.identity-key" ]]
+[[ ! -e "${package_root}/etc/credstore.encrypted/meshd.identity-key.recovery" ]]
 [[ -f "${package_root}/etc/meshd/meshd.env" ]]
 
 if env \

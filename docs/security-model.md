@@ -64,6 +64,11 @@ Packet payloads are not an observability asset and must not be collected.
   atomically rewrapped before use. Daemon startup performs that bounded rewrite
   across every canonical identity record before opening the local API.
   Duplicate, malformed, oversized, and unsupported key sets fail closed.
+- Explicit Linux rotation makes a verified host-encrypted recovery copy durable
+  before replacing the primary credential. Finalization proves every record is
+  active-key-readable and retains that copy; a separate commit repeats the
+  proof before deleting fallback material. Offline mutation commands refuse to
+  run while systemd reports `meshd.service` active.
 - First enrollment is create-only. A caller-supplied canonical SHA-256 fingerprint must match before identity keys are created, and later operations verify both the stored raw control key and fingerprint before opening Noise.
 - Secret key wrappers redact their string and Go-string representations. Identity material is never returned by the local API.
 - Registration runs through the pinned Noise connection and a bounded HTTP/2 client; it refuses redirects and never falls back to plaintext transport.

@@ -116,23 +116,67 @@ func NewFromCredential(encoded []byte) (*Protector, error) {
 	return newFromCredentialWithRandom(encoded, rand.Reader)
 }
 
+// CredentialHasFallback validates encoded and reports whether it contains the
+// bounded fallback key used during an in-progress rotation.
+func CredentialHasFallback(encoded []byte) (bool, error) {
+	_, _, hasFallback, err := credentialParts(encoded)
+
+	return hasFallback, err
+}
+
+// CopyActiveKey validates encoded and returns an owned copy of its active key.
+// The caller must clear the returned bytes after use.
+func CopyActiveKey(encoded []byte) ([]byte, error) {
+	active, _, _, err := credentialParts(encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	return append([]byte(nil), active...), nil
+}
+
+// CredentialFallbackMatches reports whether a rotating credential's fallback
+// is the supplied legacy key without returning fallback material.
+func CredentialFallbackMatches(encoded, legacyKey []byte) (bool, error) {
+	_, fallback, hasFallback, err := credentialParts(encoded)
+	if err != nil {
+		return false, err
+	}
+	if !hasFallback || len(legacyKey) != KeySize {
+		return false, nil
+	}
+
+	return subtle.ConstantTimeCompare(fallback, legacyKey) == 1, nil
+}
+
 func newFromCredentialWithRandom(encoded []byte, random io.Reader) (*Protector, error) {
+	active, fallback, _, err := credentialParts(encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	return newWithRandom(active, fallback, random)
+}
+
+func credentialParts(encoded []byte) (active, fallback []byte, hasFallback bool, err error) {
 	if len(encoded) == KeySize {
-		return newWithRandom(encoded, nil, random)
+		return encoded, nil, false, nil
 	}
 	if len(encoded) != credentialSize ||
 		string(encoded[:len(credentialMagic)]) != credentialMagic ||
 		encoded[len(credentialMagic)] != credentialVersion ||
 		encoded[len(credentialMagic)+1] != credentialKeyCount {
-		return nil, ErrKeyInvalid
+		return nil, nil, false, ErrKeyInvalid
 	}
 
 	offset := credentialHeaderSize
-	return newWithRandom(
-		encoded[offset:offset+KeySize],
-		encoded[offset+KeySize:],
-		random,
-	)
+	active = encoded[offset : offset+KeySize]
+	fallback = encoded[offset+KeySize:]
+	if subtle.ConstantTimeCompare(active, fallback) == 1 {
+		return nil, nil, false, ErrKeyInvalid
+	}
+
+	return active, fallback, true, nil
 }
 
 // Load reads an owner-only key from an absolute, non-symlink path.

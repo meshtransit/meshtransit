@@ -85,6 +85,7 @@ grep -Fqx 'deb-systemd-invoke <start> <meshnetd.service> <meshd.service>' \
 mkdir -p /etc/credstore.encrypted /run/meshd /run/meshnetd /var/lib/meshd/identities
 touch \
     /etc/credstore.encrypted/meshd.identity-key \
+    /etc/credstore.encrypted/meshd.identity-key.recovery \
     /etc/meshd/meshd.env \
     /run/meshd/meshd.sock \
     /run/meshnetd/meshnetd.sock \
@@ -103,6 +104,7 @@ grep -Fqx 'deb-systemd-invoke <stop> <meshd.service> <meshnetd.service> <meshcre
 [ -f /var/lib/meshd/profiles.json ]
 [ -f /etc/meshd/meshd.env ]
 [ -f /etc/credstore.encrypted/meshd.identity-key ]
+[ -f /etc/credstore.encrypted/meshd.identity-key.recovery ]
 
 : >"${service_calls}"
 "${control_dir}/postinst" configure 0.1.0~previous
@@ -134,6 +136,7 @@ touch /etc/meshd/.start-on-reinstall /run/meshd/stale /run/meshnetd/stale
 [ ! -e /run/meshnetd ]
 [ ! -e /etc/meshd/.start-on-reinstall ]
 [ ! -e /etc/credstore.encrypted/meshd.identity-key ]
+[ ! -e /etc/credstore.encrypted/meshd.identity-key.recovery ]
 [ -f /etc/meshd/meshd.env ]
 
 printf 'package maintainer lifecycle verified\n'

@@ -120,9 +120,11 @@ provision only the original format. The first key is active for every new seal;
 the second key is read-only fallback material. Opening a record through the
 fallback forces a verified same-directory atomic rewrite with the active key.
 Daemon startup completes that rewrite for every bounded canonical identity
-record before serving local requests. No packaged command creates, activates,
-or prunes a rotation credential yet, so deploying this reader alone does not
-alter rollback compatibility.
+record before serving local requests. The root-only `meshcred` command stages a
+verified host-encrypted recovery copy before activation, requires active-only
+identity verification before finalization, retains recovery across the first
+single-key restart, and deletes fallback material only on an explicit commit.
+Finalization, commit, and recovery require `meshd.service` to be stopped.
 
 The systemd host-key backend raises the cost of offline state disclosure but
 does not defend against an attacker with root access and the host credential

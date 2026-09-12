@@ -34,7 +34,9 @@ if [ "$1" = "purge" ]; then
         deb-systemd-helper purge meshcred.service meshnetd.service meshd.service >/dev/null || true
     fi
 	rm -f -- "${root_prefix}/etc/meshd/.start-on-reinstall"
-	rm -f -- "${root_prefix}/etc/credstore.encrypted/meshd.identity-key"
+	rm -f -- \
+		"${root_prefix}/etc/credstore.encrypted/meshd.identity-key" \
+		"${root_prefix}/etc/credstore.encrypted/meshd.identity-key.recovery"
 	rmdir -- "${root_prefix}/etc/meshd" 2>/dev/null || true
 	rmdir -- "${root_prefix}/etc/credstore.encrypted" 2>/dev/null || true
     rm -rf -- \

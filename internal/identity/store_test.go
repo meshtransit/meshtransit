@@ -348,6 +348,40 @@ func TestStore_MigrateAllRejectsNonCanonicalRecordName(t *testing.T) {
 	}
 }
 
+func TestStore_VerifyAllCurrentDoesNotMigrateLegacyRecord(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	store, err := Open(stateDir, testProtector(t, 0x3b))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	record := testRecord(t, time.Now())
+	legacy, err := json.Marshal(toPersisted(record))
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	legacy = append(legacy, '\n')
+	path := filepath.Join(store.dir, recordFileName(testProfileID))
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := store.VerifyAllCurrent(t.Context()); !errors.Is(err, ErrMigrationRequired) {
+		t.Fatalf("VerifyAllCurrent() error = %v, want ErrMigrationRequired", err)
+	}
+	if after := readIdentityFilePath(t, path); !bytes.Equal(after, legacy) {
+		t.Fatal("VerifyAllCurrent() changed legacy state")
+	}
+	if err := store.MigrateAll(t.Context()); err != nil {
+		t.Fatalf("MigrateAll() error = %v", err)
+	}
+	if err := store.VerifyAllCurrent(t.Context()); err != nil {
+		t.Fatalf("VerifyAllCurrent(migrated) error = %v", err)
+	}
+}
+
 func TestStore_RejectsTamperingWrongKeyAndProfileSwap(t *testing.T) {
 	t.Parallel()
 

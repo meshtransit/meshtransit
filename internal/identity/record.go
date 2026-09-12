@@ -29,6 +29,8 @@ var (
 	ErrCorrupt = errors.New("identity: corrupt")
 	// ErrUnsupported indicates a protected identity format this build cannot open safely.
 	ErrUnsupported = errors.New("identity: unsupported")
+	// ErrMigrationRequired indicates readable state that is not protected by the active key.
+	ErrMigrationRequired = errors.New("identity: migration required")
 )
 
 // Material contains protocol key encodings. It must never be logged, encoded

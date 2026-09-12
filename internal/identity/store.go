@@ -201,6 +201,39 @@ func (s *Store) MigrateAll(ctx context.Context) error {
 	return nil
 }
 
+// VerifyAllCurrent proves that every identity is readable without migration.
+// It does not change persistent state.
+func (s *Store) VerifyAllCurrent(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("verifying identities: %w", err)
+	}
+	if s == nil || s.root == nil || s.protector == nil {
+		return errors.New("identity store is not initialized")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	profileIDs, err := s.profileIDsLocked()
+	if err != nil {
+		return err
+	}
+	for _, profileID := range profileIDs {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("verifying identities: %w", err)
+		}
+		_, needsRewrite, err := s.loadLocked(ctx, profileID)
+		if err != nil {
+			return fmt.Errorf("verifying identity record: %w", err)
+		}
+		if needsRewrite {
+			return fmt.Errorf("%w: identity record", ErrMigrationRequired)
+		}
+	}
+
+	return nil
+}
+
 func (s *Store) profileIDsLocked() ([]string, error) {
 	directory, err := s.root.Open(".")
 	if err != nil {
