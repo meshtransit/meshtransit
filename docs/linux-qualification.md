@@ -300,6 +300,10 @@ synchronized service. The route digest covers explicit peer routes but excludes
 address-derived `proto kernel` routes, whose IPv6 DAD timing is not controlled
 by MeshTransit; an independent digest requires the exact global self-address
 set to remain unchanged.
+The baseline peer count is pinned for the run, and each resource check reports
+only that aggregate count plus the explicit route count. A topology change is
+classified as `peer_count_changed` instead of being mistaken for a recovery
+regression; no peer identity or route value is emitted.
 
 ## Run a fixed-topology soak
 

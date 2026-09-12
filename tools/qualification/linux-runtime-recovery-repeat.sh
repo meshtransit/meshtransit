@@ -262,6 +262,15 @@ normalize_routes() {
   awk '$0 !~ /(^|[[:space:]])proto kernel([[:space:]]|$)/ && NF { print }'
 }
 
+explicit_route_count() {
+  local interface_name="$1"
+
+  {
+    ip -4 route show table main dev "${interface_name}" 2>/dev/null || true
+    ip -6 route show table main dev "${interface_name}" 2>/dev/null || true
+  } | normalize_routes | awk 'NF { count++ } END { print count + 0 }'
+}
+
 address_digest() {
   local interface_name="$1"
 
@@ -297,6 +306,7 @@ resource_snapshot() {
   local baseline_meshnetd_restarts="$8"
   local baseline_meshd_fds="$9"
   local baseline_meshnetd_fds="${10}"
+  local baseline_peer_count="${11}"
   local services_active=false
   local helper_socket_contract=false
   local status_ready=false
@@ -314,6 +324,9 @@ resource_snapshot() {
   local dns_preserved=false
   local addresses_preserved=false
   local restart_counts_stable=false
+  local peer_count_stable=false
+  local peer_count=-1
+  local explicit_routes
   local meshd_fds
   local meshnetd_fds
   local meshd_fd_increase
@@ -348,6 +361,11 @@ resource_snapshot() {
   ' >/dev/null 2>&1 <<<"${status}"; then
     recovery_idle=true
   fi
+  if jq -e '(.peer_count | type) == "number" and .peer_count >= 0' \
+    >/dev/null 2>&1 <<<"${status}"; then
+    peer_count="$(jq -r '.peer_count' <<<"${status}")"
+  fi
+  [[ "${peer_count}" == "${baseline_peer_count}" ]] && peer_count_stable=true
 
   meshd_pid="$(unit_pid meshd.service)"
   meshnetd_pid="$(unit_pid meshnetd.service)"
@@ -357,6 +375,7 @@ resource_snapshot() {
   dns_interfaces="$(interface_count "${dns_interface}")"
   udp_listeners="$(listener_count udp)"
   tcp_listeners="$(listener_count tcp)"
+  explicit_routes="$(explicit_route_count "${data_interface}")"
   [[ "$(state_digest)" == "${baseline_state_digest}" ]] && state_preserved=true
   [[ "$(route_digest "${data_interface}")" == "${baseline_route_digest}" ]] &&
     routes_preserved=true
@@ -389,6 +408,9 @@ resource_snapshot() {
     --argjson dns_preserved "${dns_preserved}" \
     --argjson addresses_preserved "${addresses_preserved}" \
     --argjson restart_counts_stable "${restart_counts_stable}" \
+    --argjson peer_count "${peer_count}" \
+    --argjson peer_count_stable "${peer_count_stable}" \
+    --argjson explicit_routes "${explicit_routes}" \
     --argjson meshd_fds "${meshd_fds}" \
     --argjson meshnetd_fds "${meshnetd_fds}" \
     --argjson meshd_fd_increase "${meshd_fd_increase}" \
@@ -410,6 +432,11 @@ resource_snapshot() {
         listener_count: {
           udp: $udp_listeners,
           tcp: $tcp_listeners
+        },
+        topology: {
+          peer_count: $peer_count,
+          peer_count_stable: $peer_count_stable,
+          explicit_route_count: $explicit_routes
         },
         persisted_state_preserved: $state_preserved,
         route_state_preserved: $routes_preserved,
@@ -435,6 +462,7 @@ resource_snapshot() {
           if .interface_count.dns != 1 then "unexpected_dns_interface_count" else empty end,
           if .listener_count.udp != 1 then "unexpected_udp_listener_count" else empty end,
           if .listener_count.tcp != 1 then "unexpected_tcp_listener_count" else empty end,
+          if .topology.peer_count_stable != true then "peer_count_changed" else empty end,
           if .persisted_state_preserved != true then "persisted_state_changed" else empty end,
           if .route_state_preserved != true then "route_state_changed" else empty end,
           if .dns_state_preserved != true then "dns_state_changed" else empty end,
@@ -460,8 +488,9 @@ wait_for_resources() {
   local baseline_meshnetd_restarts="$8"
   local baseline_meshd_fds="$9"
   local baseline_meshnetd_fds="${10}"
-  local timeout_seconds="${11}"
-  local poll_interval="${12}"
+  local baseline_peer_count="${11}"
+  local timeout_seconds="${12}"
+  local poll_interval="${13}"
   local start_ns
   local deadline_ns
   local current_ns
@@ -480,7 +509,8 @@ wait_for_resources() {
     "${baseline_meshd_restarts}" \
     "${baseline_meshnetd_restarts}" \
     "${baseline_meshd_fds}" \
-    "${baseline_meshnetd_fds}")"
+    "${baseline_meshnetd_fds}" \
+    "${baseline_peer_count}")"
   initial_failures="$(jq -c '.failures' <<<"${snapshot}")"
 
   while ! jq -e '.outcome == "pass"' >/dev/null <<<"${snapshot}"; do
@@ -499,7 +529,8 @@ wait_for_resources() {
       "${baseline_meshd_restarts}" \
       "${baseline_meshnetd_restarts}" \
       "${baseline_meshd_fds}" \
-      "${baseline_meshnetd_fds}")"
+      "${baseline_meshnetd_fds}" \
+      "${baseline_peer_count}")"
   done
   current_ns="$(now_ns)"
   jq \
@@ -584,6 +615,8 @@ main() {
   local baseline_route_digest
   local baseline_dns_digest
   local baseline_address_digest
+  local baseline_status
+  local baseline_peer_count
   local baseline_meshd_restarts
   local baseline_meshnetd_restarts
   local baseline_meshd_fds
@@ -699,6 +732,15 @@ main() {
   baseline_route_digest="$(route_digest "${data_interface}")"
   baseline_dns_digest="$(dns_digest "${dns_interface}")"
   baseline_address_digest="$(address_digest "${data_interface}")"
+  baseline_status="$(read_status)"
+  baseline_peer_count="$(jq -r '
+    if (.peer_count | type) == "number" and .peer_count >= 0
+    then .peer_count
+    else -1
+    end
+  ' <<<"${baseline_status}")"
+  [[ "${baseline_peer_count}" =~ ^[0-9]+$ ]] ||
+    fail "baseline peer count is unavailable"
   baseline_meshd_restarts="$(unit_restart_count meshd.service)"
   baseline_meshnetd_restarts="$(unit_restart_count meshnetd.service)"
   baseline_meshd_fds="$(fd_count "$(unit_pid meshd.service)")"
@@ -716,7 +758,8 @@ main() {
     "${baseline_meshd_restarts}" \
     "${baseline_meshnetd_restarts}" \
     "${baseline_meshd_fds}" \
-    "${baseline_meshnetd_fds}")"
+    "${baseline_meshnetd_fds}" \
+    "${baseline_peer_count}")"
   baseline_resources="$(jq '
     .failures |= map(select(. != "runtime_recovery_not_idle"))
     | .outcome = if (.failures | length) == 0 then "pass" else "fail" end
@@ -788,6 +831,7 @@ main() {
       "${baseline_meshnetd_restarts}" \
       "${baseline_meshd_fds}" \
       "${baseline_meshnetd_fds}" \
+      "${baseline_peer_count}" \
       "${resource_timeout_seconds}" \
       "${poll_interval}")"
     jq -c \
