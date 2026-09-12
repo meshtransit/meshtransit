@@ -94,8 +94,7 @@ listener before reporting `READY=1` through a bounded, fail-closed systemd
 notification adapter; the dedicated registration-independent harness requires
 one immediate health attempt after every completed restart. The Debian
 maintainer lifecycle also joins an in-progress notification job before an
-install or upgrade returns. The two-host Linux
-alpha topology has repeatable
+install or upgrade returns. The two-host Linux alpha topology has repeatable
 direct-loss fallback and split-DNS cleanup/recovery evidence plus complete live
 bidirectional host-policy matrices on alpha10 and two repeatable alpha15
 samples. Alpha15 also has one bounded passing restart scenario for each service
@@ -152,6 +151,10 @@ removed development flags and unverified-peer bypass markers. Exact candidate
 package upgrade passed on Ubuntu 26.04 and Debian 13; Ubuntu also passed an
 exact-artifact rollback and re-upgrade. See
 [linux-production-surface-qualification-2026-09-12.md](linux-production-surface-qualification-2026-09-12.md).
+The subsequent rc2 readiness candidate passed immediate post-upgrade health,
+five no-retry restart samples per host, rollback, and immediate re-upgrade
+health on the same dedicated platforms. See
+[linux-service-readiness-qualification-2026-09-12.md](linux-service-readiness-qualification-2026-09-12.md).
 It does not yet have a signed artifact and provenance pipeline, IPv6-only
 underlay evidence, real multi-uplink migration qualification, the larger
 candidate crash sample set, repeated candidate DNS-failure samples, or a

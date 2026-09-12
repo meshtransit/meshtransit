@@ -51,13 +51,7 @@ func TestNewRejectsInvalidAddress(t *testing.T) {
 }
 
 func TestNotifierLifecycle(t *testing.T) {
-	directory, err := os.MkdirTemp("/tmp", "meshd-notify-test.")
-	if err != nil {
-		t.Fatalf("MkdirTemp() error = %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(directory) })
-
-	path := filepath.Join(directory, "notify.sock")
+	path := filepath.Join(t.TempDir(), "notify.sock")
 	listener, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: path, Net: "unixgram"})
 	if err != nil {
 		t.Fatalf("ListenUnixgram() error = %v", err)

@@ -34,6 +34,8 @@ automatic failure restart, checks both Unix sockets, and issues exactly one
 immediate `/v1/health` request after `systemctl restart` returns. There is no
 readiness polling between the restart and that request. The report excludes
 process IDs, socket paths, hostnames, profile state, and control data.
+The first passing exact-candidate sample is recorded in
+[linux-service-readiness-qualification-2026-09-12.md](linux-service-readiness-qualification-2026-09-12.md).
 
 The bounded Linux secret-storage, staged migration, package lifecycle, and boot
 recovery results are recorded in
