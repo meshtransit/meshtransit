@@ -17,6 +17,8 @@ All notable user-visible changes will be documented in this file.
 - `doctor control` command for capability and control-key fingerprint checks.
 - Explicit control-key trust with an operator-supplied SHA-256 fingerprint.
 - Browser and standard-input auth-key login workflows.
+- Bounded browser-login waiting with automatic completion, cancellation, and
+  resumable timeout behavior.
 - Control-trust, registration, and pinned-key status fields.
 - Control-session, validated netmap-revision, and peer-count status output.
 - Aggregate direct/relay path counts and redacted relay-region health.

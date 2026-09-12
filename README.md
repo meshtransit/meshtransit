@@ -44,7 +44,6 @@ make build
 ./bin/meshctl --socket /tmp/meshd.sock profile trust \
   --fingerprint sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ./bin/meshctl --socket /tmp/meshd.sock login
-./bin/meshctl --socket /tmp/meshd.sock login complete
 ```
 
 Linux amd64/arm64 Debian package build and installation are documented in
@@ -60,6 +59,8 @@ Global flags must appear before the command. `MESHCTL_SOCKET` and `MESHCTL_TIMEO
 - `meshctl profile use PROFILE_ID`
 - `meshctl profile trust --fingerprint sha256:...`
 - `meshctl login`
+- `meshctl login --wait-timeout 10m`
+- `meshctl login --no-wait`
 - `meshctl login --auth-key-stdin`
 - `meshctl login complete`
 - `meshctl version`
@@ -70,7 +71,14 @@ Global flags must appear before the command. `MESHCTL_SOCKET` and `MESHCTL_TIMEO
 
 Before `profile trust`, compare that fingerprint with a value delivered through an independent trusted channel. Reusing the value printed over the same connection is only trust on first use.
 
-`login` starts browser enrollment and prints the authorization URL. After approving it, run `login complete`; pending state survives a daemon restart. For a pre-auth key, pipe it to `login --auth-key-stdin`. Auth keys are deliberately unavailable as flags or environment variables and are not persisted by either process.
+`login` starts browser enrollment, prints the authorization URL, and waits up to
+five minutes for approval. `--wait-timeout` changes that bounded wait and
+`--no-wait` returns immediately after printing the URL. Re-running `login`
+resumes a pending flow; `login complete` remains available as a recovery command.
+In JSON mode, a waiting browser flow emits the pending and registered responses
+as successive JSON documents. For a pre-auth key, pipe it to
+`login --auth-key-stdin`. Auth keys are deliberately unavailable as flags or
+environment variables and are not persisted by either process.
 
 Creating a profile does not accept a network ID. The control plane derives and authorizes network membership from the registration or session credential.
 

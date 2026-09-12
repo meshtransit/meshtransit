@@ -3,7 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -217,14 +219,14 @@ func TestRun_LoginCommands(t *testing.T) {
 	}{
 		{
 			name: "browser start",
-			args: []string{"login"},
+			args: []string{"login", "--no-wait"},
 			login: localapi.Login{
 				APIVersion: "v1",
 				ProfileID:  profileID,
 				State:      "authorization_required",
 				AuthURL:    "https://control.example.com/register/opaque",
 			},
-			contains: "meshctl login complete",
+			contains: "https://control.example.com/register/opaque",
 		},
 		{
 			name:        "auth key from stdin",
@@ -262,6 +264,257 @@ func TestRun_LoginCommands(t *testing.T) {
 				t.Fatalf("received auth key = %q, want %q", client.receivedAuthKey, test.wantAuthKey)
 			}
 		})
+	}
+}
+
+func TestRun_LoginWaitsForBrowserAuthorization(t *testing.T) {
+	t.Parallel()
+
+	const profileID = "00000000000000000000000000000001"
+	completeCalls := 0
+	client := &fakeClient{
+		login: localapi.Login{
+			APIVersion: "v1",
+			ProfileID:  profileID,
+			State:      "authorization_required",
+			AuthURL:    "https://control.example.com/register/opaque",
+		},
+		completeLogin: func(context.Context) (localapi.Login, error) {
+			completeCalls++
+			if completeCalls == 1 {
+				return localapi.Login{}, &localapi.APIError{
+					StatusCode: 409,
+					Code:       "authorization_pending",
+					Message:    "browser authorization is still pending",
+				}
+			}
+
+			return localapi.Login{
+				APIVersion: "v1",
+				ProfileID:  profileID,
+				State:      "registered",
+			}, nil
+		},
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exitCode := Run(
+		t.Context(),
+		[]string{"login", "--wait-timeout", "1s"},
+		stdout,
+		stderr,
+		testOptions(client),
+	)
+	if exitCode != 0 {
+		t.Fatalf("Run() exit code = %d, want 0; stderr=%s", exitCode, stderr.String())
+	}
+	if completeCalls != 2 {
+		t.Fatalf("CompleteLogin() calls = %d, want 2", completeCalls)
+	}
+	if !strings.Contains(stdout.String(), "https://control.example.com/register/opaque") ||
+		!strings.Contains(stdout.String(), "Registered active profile") {
+		t.Fatalf("login output = %q, want authorization URL and success", stdout.String())
+	}
+}
+
+func TestRun_LoginWaitTimeout(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeClient{
+		login: localapi.Login{
+			APIVersion: "v1",
+			ProfileID:  "00000000000000000000000000000001",
+			State:      "authorization_required",
+			AuthURL:    "https://control.example.com/register/opaque",
+		},
+		completeLogin: func(ctx context.Context) (localapi.Login, error) {
+			<-ctx.Done()
+
+			return localapi.Login{}, ctx.Err()
+		},
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exitCode := Run(
+		t.Context(),
+		[]string{"login", "--wait-timeout", "1ms"},
+		stdout,
+		stderr,
+		testOptions(client),
+	)
+	if exitCode != 1 {
+		t.Fatalf("Run() exit code = %d, want 1", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "timed out") {
+		t.Fatalf("stderr = %q, want bounded timeout", stderr.String())
+	}
+}
+
+func TestRun_LoginNoWaitDoesNotPoll(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeClient{
+		login: localapi.Login{
+			APIVersion: "v1",
+			ProfileID:  "00000000000000000000000000000001",
+			State:      "authorization_required",
+			AuthURL:    "https://control.example.com/register/opaque",
+		},
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exitCode := Run(
+		t.Context(),
+		[]string{"login", "--no-wait"},
+		stdout,
+		stderr,
+		testOptions(client),
+	)
+	if exitCode != 0 {
+		t.Fatalf("Run() exit code = %d, want 0; stderr=%s", exitCode, stderr.String())
+	}
+	if client.completeCalls != 0 {
+		t.Fatalf("CompleteLogin() calls = %d, want 0", client.completeCalls)
+	}
+}
+
+func TestRun_LoginWaitHonorsCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	client := &fakeClient{
+		login: localapi.Login{
+			APIVersion: "v1",
+			ProfileID:  "00000000000000000000000000000001",
+			State:      "authorization_required",
+			AuthURL:    "https://control.example.com/register/opaque",
+		},
+		completeLogin: func(callCtx context.Context) (localapi.Login, error) {
+			cancel()
+			<-callCtx.Done()
+
+			return localapi.Login{}, callCtx.Err()
+		},
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exitCode := Run(
+		ctx,
+		[]string{"login", "--wait-timeout", "1s"},
+		stdout,
+		stderr,
+		testOptions(client),
+	)
+	if exitCode != 1 {
+		t.Fatalf("Run() exit code = %d, want 1", exitCode)
+	}
+	if !strings.Contains(stderr.String(), context.Canceled.Error()) {
+		t.Fatalf("stderr = %q, want cancellation", stderr.String())
+	}
+}
+
+func TestRun_LoginWaitStopsOnUnexpectedError(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeClient{
+		login: localapi.Login{
+			APIVersion: "v1",
+			ProfileID:  "00000000000000000000000000000001",
+			State:      "authorization_required",
+			AuthURL:    "https://control.example.com/register/opaque",
+		},
+		completeLogin: func(context.Context) (localapi.Login, error) {
+			return localapi.Login{}, errors.New("daemon unavailable")
+		},
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exitCode := Run(
+		t.Context(),
+		[]string{"login", "--wait-timeout", "1s"},
+		stdout,
+		stderr,
+		testOptions(client),
+	)
+	if exitCode != 1 {
+		t.Fatalf("Run() exit code = %d, want 1", exitCode)
+	}
+	if client.completeCalls != 1 || !strings.Contains(stderr.String(), "daemon unavailable") {
+		t.Fatalf(
+			"CompleteLogin() calls = %d, stderr = %q, want one terminal error",
+			client.completeCalls,
+			stderr.String(),
+		)
+	}
+}
+
+func TestRun_LoginRejectsInvalidWaitTimeout(t *testing.T) {
+	t.Parallel()
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exitCode := Run(
+		t.Context(),
+		[]string{"login", "--wait-timeout", "0s"},
+		stdout,
+		stderr,
+		testOptions(&fakeClient{}),
+	)
+	if exitCode != 2 {
+		t.Fatalf("Run() exit code = %d, want 2", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "must be positive") {
+		t.Fatalf("stderr = %q, want validation error", stderr.String())
+	}
+}
+
+func TestRun_LoginJSONStreamsPendingThenRegistered(t *testing.T) {
+	t.Parallel()
+
+	const profileID = "00000000000000000000000000000001"
+	client := &fakeClient{
+		login: localapi.Login{
+			APIVersion: "v1",
+			ProfileID:  profileID,
+			State:      "authorization_required",
+			AuthURL:    "https://control.example.com/register/opaque",
+		},
+		completeLogin: func(context.Context) (localapi.Login, error) {
+			return localapi.Login{
+				APIVersion: "v1",
+				ProfileID:  profileID,
+				State:      "registered",
+			}, nil
+		},
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exitCode := Run(
+		t.Context(),
+		[]string{"--json", "login", "--wait-timeout", "1s"},
+		stdout,
+		stderr,
+		testOptions(client),
+	)
+	if exitCode != 0 {
+		t.Fatalf("Run() exit code = %d, want 0; stderr=%s", exitCode, stderr.String())
+	}
+
+	decoder := json.NewDecoder(stdout)
+	first := localapi.Login{}
+	if err := decoder.Decode(&first); err != nil {
+		t.Fatalf("decoding pending login: %v", err)
+	}
+	second := localapi.Login{}
+	if err := decoder.Decode(&second); err != nil {
+		t.Fatalf("decoding registered login: %v", err)
+	}
+	if err := decoder.Decode(&localapi.Login{}); !errors.Is(err, io.EOF) {
+		t.Fatalf("decoding trailing output error = %v, want EOF", err)
+	}
+	if first.State != "authorization_required" || first.AuthURL == "" ||
+		second.State != "registered" || second.AuthURL != "" {
+		t.Fatalf("login stream = %#v then %#v, want pending then registered", first, second)
 	}
 }
 
@@ -360,7 +613,9 @@ type fakeClient struct {
 	trusted         localapi.ControlTrust
 	login           localapi.Login
 	completedLogin  localapi.Login
+	completeLogin   func(context.Context) (localapi.Login, error)
 	receivedAuthKey string
+	completeCalls   int
 	err             error
 }
 
@@ -397,7 +652,12 @@ func (f *fakeClient) StartLogin(_ context.Context, authKey string) (localapi.Log
 	return f.login, f.err
 }
 
-func (f *fakeClient) CompleteLogin(_ context.Context) (localapi.Login, error) {
+func (f *fakeClient) CompleteLogin(ctx context.Context) (localapi.Login, error) {
+	f.completeCalls++
+	if f.completeLogin != nil {
+		return f.completeLogin(ctx)
+	}
+
 	return f.completedLogin, f.err
 }
 

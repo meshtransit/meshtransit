@@ -20,10 +20,14 @@ import (
 )
 
 const (
-	defaultSocketPath = "/run/meshd/meshd.sock"
-	defaultTimeout    = 5 * time.Second
-	maxAuthKeyBytes   = 4096
+	defaultSocketPath       = "/run/meshd/meshd.sock"
+	defaultTimeout          = 5 * time.Second
+	defaultLoginWaitTimeout = 5 * time.Minute
+	loginRetryDelay         = 100 * time.Millisecond
+	maxAuthKeyBytes         = 4096
 )
+
+var errLoginWaitTimeout = errors.New("browser authorization wait timed out")
 
 // DaemonClient is the narrow local API surface consumed by the CLI.
 type DaemonClient interface {
@@ -157,11 +161,25 @@ func runLogin(
 	flags := flag.NewFlagSet("meshctl login", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	authKeyStdin := flags.Bool("auth-key-stdin", false, "read an auth key from stdin")
+	noWait := flags.Bool("no-wait", false, "return after printing the browser authorization URL")
+	waitTimeout := flags.Duration(
+		"wait-timeout",
+		defaultLoginWaitTimeout,
+		"maximum time to wait for browser authorization",
+	)
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 	if flags.NArg() != 0 {
-		_, _ = fmt.Fprintln(stderr, "usage: meshctl login [--auth-key-stdin]")
+		_, _ = fmt.Fprintln(
+			stderr,
+			"usage: meshctl login [--auth-key-stdin] [--no-wait] [--wait-timeout DURATION]",
+		)
+
+		return 2
+	}
+	if *waitTimeout <= 0 {
+		_, _ = fmt.Fprintln(stderr, "meshctl: login wait timeout must be positive")
 
 		return 2
 	}
@@ -180,8 +198,80 @@ func runLogin(
 	if err != nil {
 		return writeRuntimeError(stderr, err)
 	}
+	if result.State != "authorization_required" {
+		return writeLoginResult(stdout, stderr, isJSON, result)
+	}
+	if exitCode := writeLoginResult(stdout, stderr, isJSON, result); exitCode != 0 {
+		return exitCode
+	}
+	if *noWait {
+		return 0
+	}
+	if !isJSON {
+		_, _ = fmt.Fprintf(stdout, "Waiting up to %s for browser approval...\n", *waitTimeout)
+	}
 
-	return writeLoginResult(stdout, stderr, isJSON, result)
+	waitCtx, cancel := context.WithTimeoutCause(ctx, *waitTimeout, errLoginWaitTimeout)
+	defer cancel()
+
+	return waitForLogin(waitCtx, stdout, stderr, isJSON, *waitTimeout, client)
+}
+
+func waitForLogin(
+	ctx context.Context,
+	stdout io.Writer,
+	stderr io.Writer,
+	isJSON bool,
+	waitTimeout time.Duration,
+	client DaemonClient,
+) int {
+	for {
+		result, err := client.CompleteLogin(ctx)
+		switch {
+		case err == nil && result.State == "registered":
+			return writeLoginResult(stdout, stderr, isJSON, result)
+		case err == nil && result.State == "authorization_required":
+		case err == nil:
+			return writeRuntimeError(
+				stderr,
+				fmt.Errorf("daemon returned unsupported login state %q", result.State),
+			)
+		case isAuthorizationPending(err):
+		case ctx.Err() != nil:
+			return writeLoginWaitError(ctx, stderr, waitTimeout)
+		default:
+			return writeRuntimeError(stderr, err)
+		}
+
+		timer := time.NewTimer(loginRetryDelay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+
+			return writeLoginWaitError(ctx, stderr, waitTimeout)
+		}
+	}
+}
+
+func isAuthorizationPending(err error) bool {
+	apiErr := &localapi.APIError{}
+
+	return errors.As(err, &apiErr) && apiErr.Code == "authorization_pending"
+}
+
+func writeLoginWaitError(ctx context.Context, stderr io.Writer, waitTimeout time.Duration) int {
+	if errors.Is(context.Cause(ctx), errLoginWaitTimeout) {
+		return writeRuntimeError(
+			stderr,
+			fmt.Errorf(
+				"browser authorization timed out after %s; run meshctl login to continue waiting",
+				waitTimeout,
+			),
+		)
+	}
+
+	return writeRuntimeError(stderr, context.Cause(ctx))
 }
 
 func writeLoginResult(
@@ -196,7 +286,7 @@ func writeLoginResult(
 	if result.State == "authorization_required" {
 		_, _ = fmt.Fprintf(
 			stdout,
-			"Browser authorization required.\nOpen: %s\nAfter approval, run: meshctl login complete\n",
+			"Browser authorization required.\nOpen: %s\n",
 			result.AuthURL,
 		)
 
@@ -678,8 +768,9 @@ Commands:
   profile create --name N --control-url U Create an isolated profile
   profile use PROFILE_ID                  Select the only active profile
   profile trust --fingerprint SHA256      Verify and pin the active control key
-  login [--auth-key-stdin]                Register the active profile
-  login complete                          Complete browser authorization
+  login [--auth-key-stdin] [--no-wait] [--wait-timeout DURATION]
+                                          Register the active profile and wait for browser approval
+  login complete                          Recover a pending browser authorization
   doctor control                          Probe active control compatibility
   version                                 Show meshctl build information
   help                                    Show this help
