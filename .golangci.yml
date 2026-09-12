@@ -1,0 +1,24 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - noctx
+    - nolintlint
+    - revive
+    - staticcheck
+    - unused
+
+formatters:
+  enable:
+    - gofmt
