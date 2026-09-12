@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,7 @@ const (
 	identityDirName      = "identities"
 	maxRecordBytes       = 64 << 10
 	maxPlaintextBytes    = 32 << 10
+	maxIdentityRecords   = 4096
 	temporaryIDBytes     = 12
 	envelopeFormat       = "meshtransit.identity"
 	envelopeVersion      = 1
@@ -160,6 +162,74 @@ func (s *Store) Get(ctx context.Context, profileID string) (Record, error) {
 	}
 
 	return record, nil
+}
+
+// MigrateAll rewrites every legacy or fallback-key identity before the daemon
+// becomes available. Each record is independently verified and atomically
+// replaced, so interruption never removes its last readable copy.
+func (s *Store) MigrateAll(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("migrating identities: %w", err)
+	}
+	if s == nil || s.root == nil || s.protector == nil {
+		return errors.New("identity store is not initialized")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	profileIDs, err := s.profileIDsLocked()
+	if err != nil {
+		return err
+	}
+	for _, profileID := range profileIDs {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("migrating identities: %w", err)
+		}
+		record, needsRewrite, err := s.loadLocked(ctx, profileID)
+		if err != nil {
+			return fmt.Errorf("migrating identity record: %w", err)
+		}
+		if !needsRewrite {
+			continue
+		}
+		if err := s.persistLocked(ctx, record, true); err != nil {
+			return fmt.Errorf("migrating identity record: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (s *Store) profileIDsLocked() ([]string, error) {
+	directory, err := s.root.Open(".")
+	if err != nil {
+		return nil, fmt.Errorf("opening identity directory: %w", err)
+	}
+	defer func() { _ = directory.Close() }()
+
+	entries, err := directory.ReadDir(maxIdentityRecords + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("listing identity records: %w", err)
+	}
+	if len(entries) > maxIdentityRecords {
+		return nil, fmt.Errorf("%w: too many identity records", ErrCorrupt)
+	}
+
+	profileIDs := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		profileID := strings.TrimSuffix(name, ".json")
+		if !isProfileID(profileID) || recordFileName(profileID) != name {
+			return nil, fmt.Errorf("%w: identity record name", ErrCorrupt)
+		}
+		profileIDs = append(profileIDs, profileID)
+	}
+
+	return profileIDs, nil
 }
 
 // Create persists a new identity and refuses to overwrite an existing pin or key.

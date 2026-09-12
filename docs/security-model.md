@@ -61,8 +61,9 @@ Packet payloads are not an observability asset and must not be collected.
 - Rotation compatibility accepts either that legacy key or one strictly
   versioned, bounded two-key credential. New ciphertext always uses the active
   key; the fallback key can only open existing records, which are verified and
-  atomically rewrapped before use. Duplicate, malformed, oversized, and
-  unsupported key sets fail closed.
+  atomically rewrapped before use. Daemon startup performs that bounded rewrite
+  across every canonical identity record before opening the local API.
+  Duplicate, malformed, oversized, and unsupported key sets fail closed.
 - First enrollment is create-only. A caller-supplied canonical SHA-256 fingerprint must match before identity keys are created, and later operations verify both the stored raw control key and fingerprint before opening Noise.
 - Secret key wrappers redact their string and Go-string representations. Identity material is never returned by the local API.
 - Registration runs through the pinned Noise connection and a bounded HTTP/2 client; it refuses redirects and never falls back to plaintext transport.

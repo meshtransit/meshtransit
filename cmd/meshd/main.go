@@ -29,6 +29,8 @@ import (
 	"github.com/meshtransit/meshd/internal/version"
 )
 
+const identityMigrationTimeout = 30 * time.Second
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -76,6 +78,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 			logger.Error("closing identity store failed", "error", closeErr)
 		}
 	}()
+	migrationContext, cancelMigration := context.WithTimeout(
+		context.Background(),
+		identityMigrationTimeout,
+	)
+	err = identities.MigrateAll(migrationContext)
+	cancelMigration()
+	if err != nil {
+		logger.Error("migrating identity records failed", "error", err)
+
+		return 1
+	}
 	hostname, err := os.Hostname()
 	if err != nil || strings.TrimSpace(hostname) == "" {
 		hostname = "mesh-node"

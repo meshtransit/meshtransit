@@ -275,6 +275,79 @@ func TestStore_RewrapFailurePreservesFallbackKeyRecord(t *testing.T) {
 	}
 }
 
+func TestStore_MigrateAllRewrapsEveryFallbackRecord(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	oldKey := bytes.Repeat([]byte{0x38}, secretstore.KeySize)
+	newKey := bytes.Repeat([]byte{0x39}, secretstore.KeySize)
+	oldProtector, err := secretstore.New(oldKey)
+	if err != nil {
+		t.Fatalf("secretstore.New(old) error = %v", err)
+	}
+	oldStore, err := Open(stateDir, oldProtector)
+	if err != nil {
+		t.Fatalf("Open(old) error = %v", err)
+	}
+	for _, profileID := range []string{testProfileID, secondTestProfileID} {
+		if err := oldStore.Create(
+			t.Context(),
+			testRecordForProfile(t, profileID, time.Now()),
+		); err != nil {
+			t.Fatalf("Create(%s) error = %v", profileID, err)
+		}
+	}
+	if err := oldStore.Close(); err != nil {
+		t.Fatalf("Close(old) error = %v", err)
+	}
+
+	rotatingProtector, err := secretstore.NewWithFallback(newKey, oldKey)
+	if err != nil {
+		t.Fatalf("secretstore.NewWithFallback() error = %v", err)
+	}
+	rotatingStore, err := Open(stateDir, rotatingProtector)
+	if err != nil {
+		t.Fatalf("Open(rotating) error = %v", err)
+	}
+	if err := rotatingStore.MigrateAll(t.Context()); err != nil {
+		t.Fatalf("MigrateAll() error = %v", err)
+	}
+	if err := rotatingStore.Close(); err != nil {
+		t.Fatalf("Close(rotating) error = %v", err)
+	}
+
+	newProtector, err := secretstore.New(newKey)
+	if err != nil {
+		t.Fatalf("secretstore.New(new) error = %v", err)
+	}
+	newStore, err := Open(stateDir, newProtector)
+	if err != nil {
+		t.Fatalf("Open(new) error = %v", err)
+	}
+	t.Cleanup(func() { _ = newStore.Close() })
+	for _, profileID := range []string{testProfileID, secondTestProfileID} {
+		if _, err := newStore.Get(t.Context(), profileID); err != nil {
+			t.Fatalf("Get(%s) error = %v", profileID, err)
+		}
+	}
+}
+
+func TestStore_MigrateAllRejectsNonCanonicalRecordName(t *testing.T) {
+	t.Parallel()
+
+	store, err := Open(t.TempDir(), testProtector(t, 0x3a))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := os.WriteFile(filepath.Join(store.dir, "INVALID.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := store.MigrateAll(t.Context()); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("MigrateAll() error = %v, want ErrCorrupt", err)
+	}
+}
+
 func TestStore_RejectsTamperingWrongKeyAndProfileSwap(t *testing.T) {
 	t.Parallel()
 
