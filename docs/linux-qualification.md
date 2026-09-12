@@ -292,8 +292,11 @@ identity. After each sample the gate requires one process per service, one data
 and DNS interface, one UDP and TCP DNS listener, unchanged persisted bytes,
 routes and resolver state, stable systemd restart counters, the packaged helper
 socket contract, bounded descriptor growth, ready status, and no pending
-recovery. Its report contains the redacted child evidence and nearest-rank p95
-times for observing the failure and returning to synchronized service.
+recovery. Transient kernel route or link convergence is given a bounded
+five-second window; the report retains both the initial failure codes and the
+time until all invariants become stable. Its report contains the redacted child
+evidence and nearest-rank p95 times for observing the failure and returning to
+synchronized service.
 
 ## Run a fixed-topology soak
 

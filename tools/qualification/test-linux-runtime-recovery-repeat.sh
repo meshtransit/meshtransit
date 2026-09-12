@@ -22,6 +22,7 @@ trap cleanup EXIT
 help_output="$("${harness}" --help)"
 grep -Fq -- 'stops at the first failed' <<<"${help_output}"
 grep -Fq -- 'nearest-rank p95 timing' <<<"${help_output}"
+grep -Fq -- '--resource-timeout-seconds N' <<<"${help_output}"
 
 "${harness}" __validate-label ubuntu26-amd64
 "${harness}" __validate-positive-integer iterations 1 20
@@ -69,7 +70,8 @@ jq -n '
       services_active: true,
       helper_socket_contract: true,
       status_ready: true,
-      runtime_recovery_idle: true
+      runtime_recovery_idle: true,
+      settle_ms: 17
     };
   def sample(i; failure_ms; synchronized_ms):
     {
@@ -101,7 +103,8 @@ jq -n '
     ],
     summary: {
       failure_observed_p95_ms: 15,
-      synchronized_p95_ms: 105
+      synchronized_p95_ms: 105,
+      resource_stable_p95_ms: 17
     },
     failures: [],
     outcome: "pass"

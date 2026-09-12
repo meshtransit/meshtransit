@@ -27,6 +27,7 @@ Usage:
     [--iterations N] \
     [--inter-run-seconds N] \
     [--recovery-timeout-seconds N] \
+    [--resource-timeout-seconds N] \
     [--poll-interval SECONDS] \
     [--data-interface NAME] \
     [--dns-interface NAME]
@@ -118,6 +119,22 @@ validate_interval() {
   }'; then
     fail "${label} must be between 0.05 and 2 seconds"
   fi
+}
+
+now_ns() {
+  local value
+
+  value="$(date +%s%N)"
+  [[ "${value}" =~ ^[0-9]{19}$ ]] ||
+    fail "date does not provide nanosecond epoch timestamps"
+  printf '%s\n' "${value}"
+}
+
+elapsed_ms() {
+  local start_ns="$1"
+  local end_ns="$2"
+
+  printf '%d\n' "$(( (end_ns - start_ns + 500000) / 1000000 ))"
 }
 
 unit_pid() {
@@ -407,6 +424,66 @@ resource_snapshot() {
     '
 }
 
+wait_for_resources() {
+  local data_interface="$1"
+  local dns_interface="$2"
+  local baseline_state_digest="$3"
+  local baseline_route_digest="$4"
+  local baseline_dns_digest="$5"
+  local baseline_meshd_restarts="$6"
+  local baseline_meshnetd_restarts="$7"
+  local baseline_meshd_fds="$8"
+  local baseline_meshnetd_fds="$9"
+  local timeout_seconds="${10}"
+  local poll_interval="${11}"
+  local start_ns
+  local deadline_ns
+  local current_ns
+  local snapshot
+  local initial_failures
+
+  start_ns="$(now_ns)"
+  deadline_ns=$(( start_ns + timeout_seconds * 1000000000 ))
+  snapshot="$(resource_snapshot \
+    "${data_interface}" \
+    "${dns_interface}" \
+    "${baseline_state_digest}" \
+    "${baseline_route_digest}" \
+    "${baseline_dns_digest}" \
+    "${baseline_meshd_restarts}" \
+    "${baseline_meshnetd_restarts}" \
+    "${baseline_meshd_fds}" \
+    "${baseline_meshnetd_fds}")"
+  initial_failures="$(jq -c '.failures' <<<"${snapshot}")"
+
+  while ! jq -e '.outcome == "pass"' >/dev/null <<<"${snapshot}"; do
+    current_ns="$(now_ns)"
+    if (( current_ns >= deadline_ns )); then
+      break
+    fi
+    sleep "${poll_interval}"
+    snapshot="$(resource_snapshot \
+      "${data_interface}" \
+      "${dns_interface}" \
+      "${baseline_state_digest}" \
+      "${baseline_route_digest}" \
+      "${baseline_dns_digest}" \
+      "${baseline_meshd_restarts}" \
+      "${baseline_meshnetd_restarts}" \
+      "${baseline_meshd_fds}" \
+      "${baseline_meshnetd_fds}")"
+  done
+  current_ns="$(now_ns)"
+  jq \
+    --argjson initial_failures "${initial_failures}" \
+    --argjson settle_ms "$(elapsed_ms "${start_ns}" "${current_ns}")" '
+      . + {
+        initial_failures: $initial_failures,
+        settle_ms: $settle_ms
+      }
+    ' <<<"${snapshot}"
+}
+
 sample_identity_matches() {
   local report_path="$1"
   local node_label="$2"
@@ -455,6 +532,7 @@ valid_repeat_report() {
     )) and
     (.summary.failure_observed_p95_ms | type) == "number" and
     (.summary.synchronized_p95_ms | type) == "number" and
+    (.summary.resource_stable_p95_ms | type) == "number" and
     .outcome == "pass" and
     (.failures | type == "array" and length == 0)
   ' "${report_path}" >/dev/null 2>&1
@@ -467,6 +545,7 @@ main() {
   local iterations=5
   local inter_run_seconds=1
   local recovery_timeout_seconds=30
+  local resource_timeout_seconds=5
   local poll_interval=0.1
   local data_interface=mesh0
   local dns_interface=meshdns0
@@ -533,6 +612,11 @@ main() {
         recovery_timeout_seconds="$2"
         shift 2
         ;;
+      --resource-timeout-seconds)
+        [[ $# -ge 2 ]] || fail "--resource-timeout-seconds requires a value"
+        resource_timeout_seconds="$2"
+        shift 2
+        ;;
       --poll-interval)
         [[ $# -ge 2 ]] || fail "--poll-interval requires a value"
         poll_interval="$2"
@@ -567,6 +651,7 @@ main() {
   validate_positive_integer iterations "${iterations}" 20
   validate_positive_integer inter-run-seconds "${inter_run_seconds}" 60
   validate_positive_integer recovery-timeout-seconds "${recovery_timeout_seconds}" 120
+  validate_positive_integer resource-timeout-seconds "${resource_timeout_seconds}" 30
   validate_interval poll-interval "${poll_interval}"
   if [[ -n "${artifact_sha256}" && ! "${artifact_sha256}" =~ ^[0-9A-Fa-f]{64}$ ]]; then
     fail "artifact-sha256 must contain exactly 64 hexadecimal characters"
@@ -576,7 +661,7 @@ main() {
   single_run_harness="${script_dir}/linux-runtime-recovery.sh"
   [[ -x "${single_run_harness}" ]] || fail "single-run harness is not executable"
   for command_name in \
-    awk chmod curl find ip jq meshctl mktemp pgrep resolvectl sha256sum sleep \
+    awk chmod curl date find ip jq meshctl mktemp pgrep resolvectl sha256sum sleep \
     sort ss stat systemctl uname; do
     require_command "${command_name}"
   done
@@ -661,7 +746,7 @@ main() {
       identity_consistent=true
     fi
 
-    resources="$(resource_snapshot \
+    resources="$(wait_for_resources \
       "${data_interface}" \
       "${dns_interface}" \
       "${baseline_state_digest}" \
@@ -670,7 +755,9 @@ main() {
       "${baseline_meshd_restarts}" \
       "${baseline_meshnetd_restarts}" \
       "${baseline_meshd_fds}" \
-      "${baseline_meshnetd_fds}")"
+      "${baseline_meshnetd_fds}" \
+      "${resource_timeout_seconds}" \
+      "${poll_interval}")"
     jq -c \
       --argjson iteration "${iteration}" \
       --argjson run_exit_code "${run_exit_code}" \
@@ -718,6 +805,7 @@ main() {
     --argjson iterations_completed "${completed_iterations}" \
     --argjson inter_run_seconds "${inter_run_seconds}" \
     --argjson recovery_timeout_seconds "${recovery_timeout_seconds}" \
+    --argjson resource_timeout_seconds "${resource_timeout_seconds}" \
     --argjson fd_headroom "${fd_headroom}" \
     --argjson baseline_resources "${baseline_resources}" \
     --argjson runs "${runs}" '
@@ -745,7 +833,8 @@ main() {
           iterations_requested: $iterations_requested,
           iterations_completed: $iterations_completed,
           inter_run_seconds: $inter_run_seconds,
-          recovery_timeout_seconds: $recovery_timeout_seconds
+          recovery_timeout_seconds: $recovery_timeout_seconds,
+          resource_timeout_seconds: $resource_timeout_seconds
         },
         resource_contract: {
           descriptor_increase_headroom: $fd_headroom,
@@ -766,7 +855,8 @@ main() {
         })),
         summary: {
           failure_observed_p95_ms: p95($runs | map(.recovery_ms.failure_observed)),
-          synchronized_p95_ms: p95($runs | map(.recovery_ms.synchronized))
+          synchronized_p95_ms: p95($runs | map(.recovery_ms.synchronized)),
+          resource_stable_p95_ms: p95($runs | map(.resource_check.settle_ms))
         }
       }
       | .failures = ([
