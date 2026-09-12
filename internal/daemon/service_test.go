@@ -86,6 +86,89 @@ func TestService_TrustAndBrowserRegistration(t *testing.T) {
 	}
 }
 
+func TestService_CompleteLoginSerializesPendingAuthorization(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:   ts2021.RegistrationStateAuthorizationRequired,
+		AuthURL: "https://control.example.com/register/opaque",
+	}}
+	if _, err := service.StartLogin(t.Context(), ""); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+
+	registerStarted := make(chan struct{}, 2)
+	releaseRegister := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseRegister) }) }
+	defer release()
+	control.mu.Lock()
+	control.registerFunc = func(
+		ctx context.Context,
+		_ ts2021.RegisterOptions,
+	) (ts2021.RegistrationResult, error) {
+		registerStarted <- struct{}{}
+		select {
+		case <-ctx.Done():
+			return ts2021.RegistrationResult{}, ctx.Err()
+		case <-releaseRegister:
+			return ts2021.RegistrationResult{
+				State:             ts2021.RegistrationStateAuthorized,
+				MachineAuthorized: true,
+			}, nil
+		}
+	}
+	control.mu.Unlock()
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := service.CompleteLogin(t.Context())
+		firstDone <- err
+	}()
+	select {
+	case <-registerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first login completion did not reach the control adapter")
+	}
+
+	secondCtx, cancelSecond := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancelSecond()
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := service.CompleteLogin(secondCtx)
+		secondDone <- err
+	}()
+
+	select {
+	case <-registerStarted:
+		t.Error("second login completion reached the control adapter concurrently")
+	case err := <-secondDone:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("second CompleteLogin() error = %v, want context deadline", err)
+		}
+	case <-time.After(time.Second):
+		t.Error("second login completion did not honor context cancellation")
+	}
+
+	release()
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first CompleteLogin() error = %v", err)
+	}
+	if _, err := service.CompleteLogin(t.Context()); !errors.Is(err, ErrNoPendingAuthorization) {
+		t.Fatalf("completed flow error = %v, want ErrNoPendingAuthorization", err)
+	}
+	control.mu.Lock()
+	registerCalls := len(control.registerOptions)
+	control.mu.Unlock()
+	if registerCalls != 2 {
+		t.Fatalf("control registration calls = %d, want start plus one completion", registerCalls)
+	}
+}
+
 func TestService_AuthKeyIsNotPersisted(t *testing.T) {
 	t.Parallel()
 
@@ -197,6 +280,62 @@ func TestService_RunPublishesLatestValidatedSnapshot(t *testing.T) {
 	}
 	if dns.applyCalls != 1 || dns.resetCalls != 0 || dns.closeCalls != 1 {
 		t.Fatalf("dns calls apply=%d reset=%d close=%d, want 1/0/1", dns.applyCalls, dns.resetCalls, dns.closeCalls)
+	}
+}
+
+func TestService_RunRejectsConcurrentSupervisor(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- service.Run(ctx) }()
+	waitForStreamStart(t, control)
+
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- service.Run(ctx) }()
+	var secondErr error
+	duplicateStarted := false
+	select {
+	case secondErr = <-secondDone:
+	case <-control.streamStarted:
+		duplicateStarted = true
+	case <-time.After(time.Second):
+		secondErr = errors.New("concurrent Run did not return")
+	}
+
+	cancel()
+	if err := <-firstDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("first Run() error = %v, want context cancellation", err)
+	}
+	if duplicateStarted {
+		if err := <-secondDone; !errors.Is(err, context.Canceled) {
+			t.Fatalf("duplicate Run() error = %v, want context cancellation", err)
+		}
+		t.Fatal("concurrent Run opened a duplicate control session")
+	}
+	if !errors.Is(secondErr, ErrServiceRunning) {
+		t.Fatalf("concurrent Run() error = %v, want ErrServiceRunning", secondErr)
+	}
+
+	restartCtx, cancelRestart := context.WithCancel(t.Context())
+	restartDone := make(chan error, 1)
+	go func() { restartDone <- service.Run(restartCtx) }()
+	waitForStreamStart(t, control)
+	cancelRestart()
+	if err := <-restartDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("restarted Run() error = %v, want context cancellation", err)
 	}
 }
 
@@ -1168,13 +1307,17 @@ type fakeControl struct {
 	verifyCalls         int
 	registrationResults []ts2021.RegistrationResult
 	registerOptions     []ts2021.RegisterOptions
-	streamSnapshot      *networkmap.Snapshot
-	streamPublished     chan struct{}
-	endpointPublished   chan struct{}
-	endpointUpdates     []ts2021.EndpointUpdate
-	streamOptions       []ts2021.NetmapOptions
-	streamStarted       chan struct{}
-	echoPeerProbeKey    bool
+	registerFunc        func(
+		context.Context,
+		ts2021.RegisterOptions,
+	) (ts2021.RegistrationResult, error)
+	streamSnapshot    *networkmap.Snapshot
+	streamPublished   chan struct{}
+	endpointPublished chan struct{}
+	endpointUpdates   []ts2021.EndpointUpdate
+	streamOptions     []ts2021.NetmapOptions
+	streamStarted     chan struct{}
+	echoPeerProbeKey  bool
 }
 
 type fakeDataPlane struct {
@@ -1257,20 +1400,27 @@ func (f *fakeControl) VerifyTrust(context.Context, string, ts2021.KeyMaterial, s
 }
 
 func (f *fakeControl) Register(
-	_ context.Context,
+	ctx context.Context,
 	_ string,
 	_ ts2021.KeyMaterial,
 	options ts2021.RegisterOptions,
 ) (ts2021.RegistrationResult, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-
 	f.registerOptions = append(f.registerOptions, options)
+	registerFunc := f.registerFunc
+	if registerFunc != nil {
+		f.mu.Unlock()
+
+		return registerFunc(ctx, options)
+	}
 	if len(f.registrationResults) == 0 {
+		f.mu.Unlock()
+
 		return ts2021.RegistrationResult{}, errors.New("unexpected registration call")
 	}
 	result := f.registrationResults[0]
 	f.registrationResults = f.registrationResults[1:]
+	f.mu.Unlock()
 
 	return result, nil
 }

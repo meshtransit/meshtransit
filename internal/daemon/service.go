@@ -41,6 +41,8 @@ var (
 	ErrAuthorizationPending = errors.New("daemon: browser authorization is pending")
 	// ErrNoPendingAuthorization indicates that there is no browser flow to complete.
 	ErrNoPendingAuthorization = errors.New("daemon: no pending browser authorization")
+	// ErrServiceRunning indicates that this service already owns an active supervisor.
+	ErrServiceRunning = errors.New("daemon: service supervisor is already running")
 )
 
 const (
@@ -247,7 +249,10 @@ type Service struct {
 	logger               *slog.Logger
 	networkChanges       <-chan struct{}
 	syncSignal           chan struct{}
+	registrationGate     chan struct{}
 	dataPlaneMu          sync.Mutex
+	supervisorMu         sync.Mutex
+	supervisorRunning    bool
 	syncMu               sync.RWMutex
 	syncState            syncStatus
 	discoveryScope       uint64
@@ -335,6 +340,9 @@ func New(
 		initialDataPlane = string(dataplane.StateIdle)
 	}
 
+	registrationGate := make(chan struct{}, 1)
+	registrationGate <- struct{}{}
+
 	return &Service{
 		profiles:             profiles,
 		identities:           identities,
@@ -350,6 +358,7 @@ func New(
 		logger:               options.Logger,
 		networkChanges:       options.NetworkChanges,
 		syncSignal:           make(chan struct{}, 1),
+		registrationGate:     registrationGate,
 		syncState: syncStatus{
 			state:     ControlSessionInactive,
 			dataPlane: initialDataPlane,
@@ -362,6 +371,10 @@ func New(
 // local management available after permanent remote failures and retries only
 // after an operator-visible state change.
 func (s *Service) Run(ctx context.Context) (runErr error) {
+	if !s.beginRun() {
+		return ErrServiceRunning
+	}
+	defer s.endRun()
 	defer func() {
 		runErr = errors.Join(runErr, s.closeDNS(), s.stopDataPlane())
 	}()
@@ -1403,11 +1416,23 @@ func (s *Service) dataPlaneStatus() (dataplane.PeerPathSnapshot, relay.HealthSna
 // StartLogin registers the active profile with either an in-memory auth key or
 // an interactive browser flow. The auth key is never persisted.
 func (s *Service) StartLogin(ctx context.Context, authKey string) (Login, error) {
+	release, err := s.acquireRegistration(ctx)
+	if err != nil {
+		return Login{}, err
+	}
+	defer release()
+
 	return s.register(ctx, authKey, "")
 }
 
 // CompleteLogin performs a short follow-up poll using the persisted browser URL.
 func (s *Service) CompleteLogin(ctx context.Context) (Login, error) {
+	release, err := s.acquireRegistration(ctx)
+	if err != nil {
+		return Login{}, err
+	}
+	defer release()
+
 	active, err := s.profiles.Active(ctx)
 	if err != nil {
 		return Login{}, err
@@ -1576,6 +1601,32 @@ func (s *Service) waitForSyncSignal(ctx context.Context) error {
 	case <-s.syncSignal:
 		return nil
 	}
+}
+
+func (s *Service) acquireRegistration(ctx context.Context) (func(), error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.registrationGate:
+		return func() { s.registrationGate <- struct{}{} }, nil
+	}
+}
+
+func (s *Service) beginRun() bool {
+	s.supervisorMu.Lock()
+	defer s.supervisorMu.Unlock()
+	if s.supervisorRunning {
+		return false
+	}
+	s.supervisorRunning = true
+
+	return true
+}
+
+func (s *Service) endRun() {
+	s.supervisorMu.Lock()
+	s.supervisorRunning = false
+	s.supervisorMu.Unlock()
 }
 
 func (s *Service) signalControlSync() {

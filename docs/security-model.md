@@ -73,6 +73,12 @@ Packet payloads are not an observability asset and must not be collected.
 - Secret key wrappers redact their string and Go-string representations. Identity material is never returned by the local API.
 - Registration runs through the pinned Noise connection and a bounded HTTP/2 client; it refuses redirects and never falls back to plaintext transport.
 - Auth keys are transient and are not written to identity state. Browser follow-up URLs must be same-origin HTTPS registration paths and are cleared after authorization.
+- Registration transitions have one context-aware owner, preventing concurrent
+  local callers from replaying the same pending browser follow-up or racing
+  identity persistence.
+- One daemon service can own only one control supervisor at a time. A duplicate
+  runner is rejected before session keys, endpoint workers, or a map stream are
+  created, and ownership remains held through fail-closed runtime cleanup.
 - Each map-stream connection repeats control-key discovery and compares the persisted raw key and fingerprint before opening Noise; plaintext and proxy fallback remain disabled.
 - Map frames are length-prefixed and limited to 16 MiB, response headers are bounded, and a two-minute read deadline terminates silent streams.
 - Reconnect uses bounded jittered exponential backoff and requires a new validated full snapshot before accepting deltas.

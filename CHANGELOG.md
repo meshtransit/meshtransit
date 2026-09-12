@@ -52,6 +52,10 @@ All notable user-visible changes will be documented in this file.
 
 ### Changed
 
+- Control supervision now enforces one active runner per daemon service, and
+  browser/auth-key registration transitions are serialized with cancellable
+  waiting so concurrent local clients cannot create duplicate control sessions
+  or reuse the same pending authorization concurrently.
 - Linux host-credential provisioning and staged key rotation now tolerate an
   ambiguous return after directory synchronization: retries verify and accept
   the completed state without generating another key or deleting recovery
