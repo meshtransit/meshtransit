@@ -174,9 +174,16 @@ socket and credential boundaries, complete registered functional matrix,
 forced relay, controlled network change, and registered rollback without
 publishing host or mesh identifiers.
 
+The subsequent repeated crash-recovery matrix is retained under
+[`docs/evidence/linux-crash-repeat-rc3-s1`](evidence/linux-crash-repeat-rc3-s1/README.md).
+Five `meshd` and five `meshnetd` `SIGKILL` samples passed on both Ubuntu 26.04
+ARM64 and AMD64. The slowest scenario p95 full readiness was 4,257 ms, and all
+post-sample state, route, DNS, process, interface, listener, and descriptor
+invariants passed.
+
 ## Remaining release gates
 
-- Complete the larger crash sample set and sustained candidate validation.
+- Complete sustained candidate validation.
 - Produce and verify the exact candidate SBOM, signature, and provenance before
   publication.
 

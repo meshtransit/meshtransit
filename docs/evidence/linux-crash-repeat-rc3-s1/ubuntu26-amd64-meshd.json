@@ -1,0 +1,515 @@
+{
+  "schema": "meshtransit.linux-crash-repeat-qualification/v1",
+  "started_at": "2026-09-12T15:20:49Z",
+  "topology": {
+    "node_label": "ubuntu26-amd64",
+    "peer_label": "ubuntu26-arm64",
+    "address_families": [
+      "ipv4",
+      "ipv6"
+    ]
+  },
+  "artifact": {
+    "version": "0.1.0~rc3+69e5e2f",
+    "commit": "69e5e2f00f0fead79e5baf4848725ee3aa6590b6",
+    "sha256": "2eade02dbbe869b3bbbe9fe393e7622d57f78b6976f193b6f26e67e6b9fe1cb4",
+    "evidence_complete": true
+  },
+  "scenario": {
+    "action": "sigkill",
+    "service": "meshd.service",
+    "iterations_requested": 5,
+    "iterations_completed": 5,
+    "inter_run_seconds": 2,
+    "ready_timeout_seconds": 20
+  },
+  "resource_contract": {
+    "descriptor_increase_headroom": 4,
+    "baseline": {
+      "services_active": true,
+      "process_count": {
+        "meshd": 1,
+        "meshnetd": 1
+      },
+      "interface_count": {
+        "data": 1,
+        "dns": 1
+      },
+      "listener_count": {
+        "udp": 1,
+        "tcp": 1
+      },
+      "route_count": {
+        "ipv4": 2,
+        "ipv6": 4
+      },
+      "persisted_state_preserved": true,
+      "route_state_preserved": true,
+      "dns_state_preserved": true,
+      "descriptors": {
+        "meshd": 18,
+        "meshnetd": 7,
+        "meshd_increase_from_baseline": 0,
+        "meshnetd_increase_from_baseline": 0,
+        "allowed_increase": 4
+      },
+      "failures": [],
+      "outcome": "pass"
+    }
+  },
+  "samples": [
+    {
+      "iteration": 1,
+      "harness_exit_code": 0,
+      "action": {
+        "exit_code": 0,
+        "duration_ms": 30,
+        "target_pid_changed": true,
+        "meshd_pid_changed": true,
+        "restart_count_before": 0,
+        "restart_count_after": 0,
+        "restart_count_peak": 1,
+        "restart_count_increased": true,
+        "restart_policy": "on-failure",
+        "restart_policy_supports_sigkill": true,
+        "invocation_changed": true
+      },
+      "dns_cleanup": {
+        "required": true,
+        "observed": true,
+        "observed_ms": 78
+      },
+      "readiness_ms": {
+        "services_active": 2414,
+        "data_interface": 3901,
+        "daemon_online": 3901,
+        "magic_dns": 3901
+      },
+      "traffic": {
+        "ipv4": {
+          "command_exit_code": 0,
+          "parser_ok": true,
+          "transmitted": 108,
+          "received": 100,
+          "loss_percent": 7.4074,
+          "first_reply_after_action_ms": 3887,
+          "maximum_consecutive_loss": 8,
+          "missing_after_action": 8,
+          "replies_after_action": 91,
+          "stable_recovery_ms": 3887,
+          "consecutive_replies_at_end": 91
+        },
+        "ipv6": {
+          "command_exit_code": 0,
+          "parser_ok": true,
+          "transmitted": 115,
+          "received": 99,
+          "loss_percent": 13.9130,
+          "first_reply_after_action_ms": 3944,
+          "maximum_consecutive_loss": 16,
+          "missing_after_action": 16,
+          "replies_after_action": 90,
+          "stable_recovery_ms": 3944,
+          "consecutive_replies_at_end": 90
+        }
+      },
+      "resource_check": {
+        "services_active": true,
+        "process_count": {
+          "meshd": 1,
+          "meshnetd": 1
+        },
+        "interface_count": {
+          "data": 1,
+          "dns": 1
+        },
+        "listener_count": {
+          "udp": 1,
+          "tcp": 1
+        },
+        "route_count": {
+          "ipv4": 2,
+          "ipv6": 4
+        },
+        "persisted_state_preserved": true,
+        "route_state_preserved": true,
+        "dns_state_preserved": true,
+        "descriptors": {
+          "meshd": 19,
+          "meshnetd": 7,
+          "meshd_increase_from_baseline": 1,
+          "meshnetd_increase_from_baseline": 0,
+          "allowed_increase": 4
+        },
+        "failures": [],
+        "outcome": "pass"
+      },
+      "failures": [],
+      "outcome": "pass"
+    },
+    {
+      "iteration": 2,
+      "harness_exit_code": 0,
+      "action": {
+        "exit_code": 0,
+        "duration_ms": 30,
+        "target_pid_changed": true,
+        "meshd_pid_changed": true,
+        "restart_count_before": 0,
+        "restart_count_after": 0,
+        "restart_count_peak": 1,
+        "restart_count_increased": true,
+        "restart_policy": "on-failure",
+        "restart_policy_supports_sigkill": true,
+        "invocation_changed": true
+      },
+      "dns_cleanup": {
+        "required": true,
+        "observed": true,
+        "observed_ms": 60
+      },
+      "readiness_ms": {
+        "services_active": 2338,
+        "data_interface": 3819,
+        "daemon_online": 3819,
+        "magic_dns": 3819
+      },
+      "traffic": {
+        "ipv4": {
+          "command_exit_code": 0,
+          "parser_ok": true,
+          "transmitted": 112,
+          "received": 103,
+          "loss_percent": 8.0357,
+          "first_reply_after_action_ms": 4134,
+          "maximum_consecutive_loss": 9,
+          "missing_after_action": 9,
+          "replies_after_action": 93,
+          "stable_recovery_ms": 4134,
+          "consecutive_replies_at_end": 93
+        },
+        "ipv6": {
+          "command_exit_code": 0,
+          "parser_ok": true,
+          "transmitted": 120,
+          "received": 104,
+          "loss_percent": 13.3333,
+          "first_reply_after_action_ms": 3959,
+          "maximum_consecutive_loss": 16,
+          "missing_after_action": 16,
+          "replies_after_action": 94,
+          "stable_recovery_ms": 3959,
+          "consecutive_replies_at_end": 94
+        }
+      },
+      "resource_check": {
+        "services_active": true,
+        "process_count": {
+          "meshd": 1,
+          "meshnetd": 1
+        },
+        "interface_count": {
+          "data": 1,
+          "dns": 1
+        },
+        "listener_count": {
+          "udp": 1,
+          "tcp": 1
+        },
+        "route_count": {
+          "ipv4": 2,
+          "ipv6": 4
+        },
+        "persisted_state_preserved": true,
+        "route_state_preserved": true,
+        "dns_state_preserved": true,
+        "descriptors": {
+          "meshd": 19,
+          "meshnetd": 7,
+          "meshd_increase_from_baseline": 1,
+          "meshnetd_increase_from_baseline": 0,
+          "allowed_increase": 4
+        },
+        "failures": [],
+        "outcome": "pass"
+      },
+      "failures": [],
+      "outcome": "pass"
+    },
+    {
+      "iteration": 3,
+      "harness_exit_code": 0,
+      "action": {
+        "exit_code": 0,
+        "duration_ms": 28,
+        "target_pid_changed": true,
+        "meshd_pid_changed": true,
+        "restart_count_before": 0,
+        "restart_count_after": 0,
+        "restart_count_peak": 1,
+        "restart_count_increased": true,
+        "restart_policy": "on-failure",
+        "restart_policy_supports_sigkill": true,
+        "invocation_changed": true
+      },
+      "dns_cleanup": {
+        "required": true,
+        "observed": true,
+        "observed_ms": 35
+      },
+      "readiness_ms": {
+        "services_active": 2353,
+        "data_interface": 3740,
+        "daemon_online": 3740,
+        "magic_dns": 3740
+      },
+      "traffic": {
+        "ipv4": {
+          "command_exit_code": 0,
+          "parser_ok": true,
+          "transmitted": 112,
+          "received": 103,
+          "loss_percent": 8.0357,
+          "first_reply_after_action_ms": 3969,
+          "maximum_consecutive_loss": 9,
+          "missing_after_action": 9,
+          "replies_after_action": 94,
+          "stable_recovery_ms": 3969,
+          "consecutive_replies_at_end": 94
+        },
+        "ipv6": {
+          "command_exit_code": 0,
+          "parser_ok": true,
+          "transmitted": 120,
+          "received": 103,
+          "loss_percent": 14.1667,
+          "first_reply_after_action_ms": 3972,
+          "maximum_consecutive_loss": 17,
+          "missing_after_action": 17,
+          "replies_after_action": 94,
+          "stable_recovery_ms": 3972,
+          "consecutive_replies_at_end": 94
+        }
+      },
+      "resource_check": {
+        "services_active": true,
+        "process_count": {
+          "meshd": 1,
+          "meshnetd": 1
+        },
+        "interface_count": {
+          "data": 1,
+          "dns": 1
+        },
+        "listener_count": {
+          "udp": 1,
+          "tcp": 1
+        },
+        "route_count": {
+          "ipv4": 2,
+          "ipv6": 4
+        },
+        "persisted_state_preserved": true,
+        "route_state_preserved": true,
+        "dns_state_preserved": true,
+        "descriptors": {
+          "meshd": 19,
+          "meshnetd": 7,
+          "meshd_increase_from_baseline": 1,
+          "meshnetd_increase_from_baseline": 0,
+          "allowed_increase": 4
+        },
+        "failures": [],
+        "outcome": "pass"
+      },
+      "failures": [],
+      "outcome": "pass"
+    },
+    {
+      "iteration": 4,
+      "harness_exit_code": 0,
+      "action": {
+        "exit_code": 0,
+        "duration_ms": 69,
+        "target_pid_changed": true,
+        "meshd_pid_changed": true,
+        "restart_count_before": 0,
+        "restart_count_after": 0,
+        "restart_count_peak": 1,
+        "restart_count_increased": true,
+        "restart_policy": "on-failure",
+        "restart_policy_supports_sigkill": true,
+        "invocation_changed": true
+      },
+      "dns_cleanup": {
+        "required": true,
+        "observed": true,
+        "observed_ms": 88
+      },
+      "readiness_ms": {
+        "services_active": 2317,
+        "data_interface": 3374,
+        "daemon_online": 3731,
+        "magic_dns": 3731
+      },
+      "traffic": {
+        "ipv4": {
+          "command_exit_code": 0,
+          "parser_ok": true,
+          "transmitted": 111,
+          "received": 102,
+          "loss_percent": 8.1081,
+          "first_reply_after_action_ms": 3955,
+          "maximum_consecutive_loss": 9,
+          "missing_after_action": 9,
+          "replies_after_action": 93,
+          "stable_recovery_ms": 3955,
+          "consecutive_replies_at_end": 93
+        },
+        "ipv6": {
+          "command_exit_code": 0,
+          "parser_ok": true,
+          "transmitted": 118,
+          "received": 103,
+          "loss_percent": 12.7119,
+          "first_reply_after_action_ms": 3701,
+          "maximum_consecutive_loss": 15,
+          "missing_after_action": 15,
+          "replies_after_action": 94,
+          "stable_recovery_ms": 3701,
+          "consecutive_replies_at_end": 94
+        }
+      },
+      "resource_check": {
+        "services_active": true,
+        "process_count": {
+          "meshd": 1,
+          "meshnetd": 1
+        },
+        "interface_count": {
+          "data": 1,
+          "dns": 1
+        },
+        "listener_count": {
+          "udp": 1,
+          "tcp": 1
+        },
+        "route_count": {
+          "ipv4": 2,
+          "ipv6": 4
+        },
+        "persisted_state_preserved": true,
+        "route_state_preserved": true,
+        "dns_state_preserved": true,
+        "descriptors": {
+          "meshd": 19,
+          "meshnetd": 7,
+          "meshd_increase_from_baseline": 1,
+          "meshnetd_increase_from_baseline": 0,
+          "allowed_increase": 4
+        },
+        "failures": [],
+        "outcome": "pass"
+      },
+      "failures": [],
+      "outcome": "pass"
+    },
+    {
+      "iteration": 5,
+      "harness_exit_code": 0,
+      "action": {
+        "exit_code": 0,
+        "duration_ms": 23,
+        "target_pid_changed": true,
+        "meshd_pid_changed": true,
+        "restart_count_before": 0,
+        "restart_count_after": 0,
+        "restart_count_peak": 1,
+        "restart_count_increased": true,
+        "restart_policy": "on-failure",
+        "restart_policy_supports_sigkill": true,
+        "invocation_changed": true
+      },
+      "dns_cleanup": {
+        "required": true,
+        "observed": true,
+        "observed_ms": 31
+      },
+      "readiness_ms": {
+        "services_active": 2378,
+        "data_interface": 3587,
+        "daemon_online": 4125,
+        "magic_dns": 4125
+      },
+      "traffic": {
+        "ipv4": {
+          "command_exit_code": 0,
+          "parser_ok": true,
+          "transmitted": 114,
+          "received": 105,
+          "loss_percent": 7.8947,
+          "first_reply_after_action_ms": 3879,
+          "maximum_consecutive_loss": 9,
+          "missing_after_action": 9,
+          "replies_after_action": 95,
+          "stable_recovery_ms": 3879,
+          "consecutive_replies_at_end": 95
+        },
+        "ipv6": {
+          "command_exit_code": 0,
+          "parser_ok": true,
+          "transmitted": 120,
+          "received": 104,
+          "loss_percent": 13.3333,
+          "first_reply_after_action_ms": 3824,
+          "maximum_consecutive_loss": 16,
+          "missing_after_action": 16,
+          "replies_after_action": 94,
+          "stable_recovery_ms": 3824,
+          "consecutive_replies_at_end": 94
+        }
+      },
+      "resource_check": {
+        "services_active": true,
+        "process_count": {
+          "meshd": 1,
+          "meshnetd": 1
+        },
+        "interface_count": {
+          "data": 1,
+          "dns": 1
+        },
+        "listener_count": {
+          "udp": 1,
+          "tcp": 1
+        },
+        "route_count": {
+          "ipv4": 2,
+          "ipv6": 4
+        },
+        "persisted_state_preserved": true,
+        "route_state_preserved": true,
+        "dns_state_preserved": true,
+        "descriptors": {
+          "meshd": 20,
+          "meshnetd": 7,
+          "meshd_increase_from_baseline": 2,
+          "meshnetd_increase_from_baseline": 0,
+          "allowed_increase": 4
+        },
+        "failures": [],
+        "outcome": "pass"
+      },
+      "failures": [],
+      "outcome": "pass"
+    }
+  ],
+  "summary": {
+    "full_readiness_p95_ms": 4125,
+    "stable_traffic_p95_ms": 4134,
+    "dns_cleanup_p95_ms": 88,
+    "service_error_log_entries": 0
+  },
+  "failures": [],
+  "outcome": "pass"
+}

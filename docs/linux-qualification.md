@@ -193,6 +193,12 @@ are retained under
 The first three-sample matrix for every node/service combination is retained
 under
 [`docs/evidence/linux-crash-repeat-alpha16-s1`](evidence/linux-crash-repeat-alpha16-s1).
+The release-candidate matrix expands this to five samples for both services on
+Ubuntu 26.04 ARM64 and AMD64. Its runner latches transient `NRestarts` peaks but
+uses the installed restart policy, durable systemd `InvocationID` transition,
+and process-generation transition as the automatic-recovery boundary. All 20
+samples passed; the reports are retained under
+[`docs/evidence/linux-crash-repeat-rc3-s1`](evidence/linux-crash-repeat-rc3-s1/README.md).
 
 ## Chain helper recovery and network change
 

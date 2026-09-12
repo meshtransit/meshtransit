@@ -167,10 +167,14 @@ registered functional matrix on Ubuntu 26.04 ARM64, including direct traffic,
 DNS, policy, forced relay, controlled network change, mixed-version rollback,
 credential preservation, and final cleanup. See
 [linux-ubuntu26-arm64-rc3-s1](evidence/linux-ubuntu26-arm64-rc3-s1/README.md).
+It then passed 20 of 20 bounded `SIGKILL` recovery samples across `meshd` and
+`meshnetd` on Ubuntu 26.04 ARM64 and AMD64. All service-generation, state,
+route, DNS, process, interface, listener, descriptor, dual-stack traffic, and
+journal-error gates passed. See
+[linux-crash-repeat-rc3-s1](evidence/linux-crash-repeat-rc3-s1/README.md).
 It does not yet have a signed artifact and provenance pipeline, IPv6-only
-underlay evidence, real multi-uplink migration qualification, the larger
-candidate crash sample set, repeated candidate DNS-failure samples, or a
-long-duration qualification suite.
+underlay evidence, real multi-uplink migration qualification, repeated
+candidate DNS-failure samples, or a long-duration qualification suite.
 See [linux-qualification.md](linux-qualification.md) for the bounded alpha
 evidence and its limitations.
 Windows and macOS deny local API access, contain no unverified-peer override,
