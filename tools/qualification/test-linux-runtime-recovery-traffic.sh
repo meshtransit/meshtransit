@@ -19,7 +19,7 @@ cleanup() {
 trap cleanup EXIT
 
 help_output="$("${harness}" --help)"
-grep -Fq -- 'continuously probing a fixed peer' <<<"${help_output}"
+grep -Fq -- 'fixed peer over IPv4' <<<"${help_output}"
 grep -Fq -- 'uncached MagicDNS' <<<"${help_output}"
 grep -Fq -- 'peer addresses and DNS names are never retained' <<<"${help_output}"
 
