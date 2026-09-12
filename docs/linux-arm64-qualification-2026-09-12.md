@@ -14,7 +14,9 @@ TUN activation, DNS application and lifecycle, and host-policy enforcement are
 now proven for this mixed-architecture topology. Bounded forced-relay fallback
 and direct-path recovery subsequently passed from both initiating nodes. Native
 network-change observation and endpoint refresh also passed on both nodes with
-zero packet loss. Registered rollback and long-duration behavior remain open.
+zero packet loss. Registered rollback and re-upgrade subsequently preserved the
+active identity, control trust, DNS, and mixed-version direct traffic. Only
+long-duration behavior remains open for this registered topology.
 
 ## Candidate
 
@@ -118,10 +120,17 @@ endpoint refresh in less than 900 ms, kept the direct path usable, and carried
 502 of 502 dual-stack probes. The dedicated interfaces were removed and both
 nodes observed the removal without a service restart.
 
+The registered rollback result is retained under
+[`docs/evidence/linux-arm64-registered-rollback-rc3-s1`](evidence/linux-arm64-registered-rollback-rc3-s1/README.md).
+The ARM64 node downgraded to rc1 while its AMD64 peer remained on rc3, passed
+dual-stack traffic in both directions and DNS resolution, and then returned to
+rc3. Both transitions preserved the active profile projection, self addresses,
+network identity, and pinned control trust. The final services were active with
+zero automatic restarts.
+
 ## Remaining release gates
 
 - Run the same package lifecycle on Ubuntu 26.04 ARM64.
-- Run the registered rollback matrix against the dedicated non-soak peer.
 - Complete the larger crash sample set and sustained candidate validation.
 - Produce and verify the exact candidate SBOM, signature, and provenance before
   publication.
