@@ -44,9 +44,10 @@ var (
 )
 
 const (
-	// StateOffline means the daemon is healthy but no data plane is running.
+	// StateOffline means the active profile is not synchronized with control.
 	StateOffline = "offline"
-	// StateOnline means an encrypted data plane is actively forwarding packets.
+	// StateOnline means the active profile has a synchronized control session.
+	// DataPlane and DNS report forwarding and resolver readiness independently.
 	StateOnline = "online"
 	// DataPlanePending makes the incomplete data-plane state explicit to callers.
 	DataPlanePending = "not_implemented"
@@ -1346,8 +1347,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		compatibilityNote = "data plane failed closed; encrypted tunnel is not active"
 	}
 	daemonState := StateOffline
-	if dataPlaneState == string(dataplane.StateEncrypted) ||
-		dataPlaneState == string(dataplane.StateEncryptedRelay) {
+	if syncState.state == ControlSessionSynchronized {
 		daemonState = StateOnline
 	}
 	peerPaths, relayStatus := s.dataPlaneStatus()

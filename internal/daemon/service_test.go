@@ -1044,6 +1044,45 @@ func TestService_StatusReportsOnlineForEncryptedDataPlane(t *testing.T) {
 	}
 }
 
+func TestService_StatusReportsOnlineForSynchronizedPeerlessControl(t *testing.T) {
+	t.Parallel()
+
+	service, _, _, profileID, _ := newTestService(t)
+	service.setSyncStatus(syncStatus{
+		profileID: profileID,
+		state:     ControlSessionSynchronized,
+		dataPlane: string(dataplane.StateIdle),
+		peerCount: 0,
+	})
+
+	status, err := service.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if status.State != StateOnline {
+		t.Fatalf("Status().State = %q, want %q", status.State, StateOnline)
+	}
+}
+
+func TestService_StatusReportsOfflineUntilControlIsSynchronized(t *testing.T) {
+	t.Parallel()
+
+	service, _, _, profileID, _ := newTestService(t)
+	service.setSyncStatus(syncStatus{
+		profileID: profileID,
+		state:     ControlSessionConnecting,
+		dataPlane: string(dataplane.StateEncrypted),
+	})
+
+	status, err := service.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if status.State != StateOffline {
+		t.Fatalf("Status().State = %q, want %q", status.State, StateOffline)
+	}
+}
+
 func TestService_StatusReportsNetworkChangeCounters(t *testing.T) {
 	t.Parallel()
 

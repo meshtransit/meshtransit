@@ -52,6 +52,8 @@ All notable user-visible changes will be documented in this file.
 
 ### Changed
 
+- Top-level online status now reflects a synchronized control session even for
+  a peerless Network; data-plane and DNS readiness remain separate fields.
 - Compatible peer and policy changes now replace WireGuard peers, relay peer
   authority, and helper-confined host routes without recreating the TUN or UDP
   transport. The privileged route operation is bound to an interface opened by

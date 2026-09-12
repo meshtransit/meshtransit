@@ -213,6 +213,12 @@ registration or Network selection; they let operators verify the
 server-authorized scope and transport transitions without reading daemon state
 or private key material.
 
+The top-level `online` state means the active profile has published a validated
+snapshot and is synchronized with control. It does not require another device
+or an active peer path. Tunnel and resolver readiness remain independent in the
+`data_plane` and `dns` fields so a peerless node can report presence without
+masking a failed-closed local subsystem.
+
 The same authenticated status response includes aggregate Go runtime health:
 goroutine count, heap allocation/in-use/object counts, stack/system bytes, and
 completed GC cycles. It does not expose stack traces, allocation profiles,
