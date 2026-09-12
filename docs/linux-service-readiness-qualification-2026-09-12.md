@@ -93,8 +93,11 @@ The machine-readable reports are in
 
 ## Remaining release gates
 
-- This is amd64 evidence. Native arm64 package, peer-credential, service,
-  traffic, DNS, and rollback qualification still require an arm64 host.
+- Native ARM64 package, peer-credential, service-readiness, and rollback
+  qualification subsequently passed on Ubuntu 24.04; see
+  [linux-arm64-qualification-2026-09-12.md](linux-arm64-qualification-2026-09-12.md).
+  Registered ARM64 traffic, DNS, policy, relay, and Ubuntu 26.04 ARM64 evidence
+  remain.
 - The active 72-hour registered-node soak and its final immutable report remain
   independent gates.
 - Signed release artifacts and repository publication remain required before a
