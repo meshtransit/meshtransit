@@ -215,15 +215,33 @@ persisted identity/configuration bytes, routes, resolver policy, MagicDNS, and
 one IPv4 plus one IPv6 peer probe at every interval.
 
 ```bash
-sudo tools/qualification/linux-soak.sh \
+sudo tools/qualification/linux-soak-systemd.sh start \
+  --run-id linux-rc1-a \
+  -- \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
   --peer-v6 fd7a:115c:a1e0::d \
   --peer-name ubuntu-b \
-  --artifact-sha256 SHA256_OF_DEB \
-  >ubuntu-a-soak.json
+  --artifact-sha256 SHA256_OF_DEB
 ```
+
+The launcher creates a new root-owned mode-`0700` directory at
+`/root/meshtransit-qualification/linux-rc1-a`, installs a private, pinned,
+read-only copy of the harness, and starts
+`meshtransit-soak-linux-rc1-a.service`. Its report and stderr paths are printed
+after the unit is verified active. The report remains empty until the harness
+finishes; this is expected and must not be treated as a stalled run.
+
+Release-candidate execution is deliberately restart-intolerant. The transient
+unit sets `RefuseManualStop=yes`, which Ubuntu `needrestart` checks before
+selecting a service after library upgrades, and `Restart=no`, so a crash cannot
+silently begin a new evidence window. It does not disable unattended security
+updates or globally exclude any service. A host reboot, observer termination,
+or missing unit therefore fails the run and requires a new run ID. To abort a
+known unit deliberately, independently verify its exact name and then use
+`systemctl kill`; `systemctl restart` and `systemctl stop` are intentionally
+refused while the gate is active.
 
 Release-candidate defaults run for 72 hours, sample every 30 seconds, and use
 the first sample at or after one hour as the steady-state memory baseline. A
@@ -233,7 +251,10 @@ most ten percent for either process, and no more than eight goroutines or four
 threads/descriptors above the steady-state baseline. Shorter runs may validate
 the harness but are marked `scenario.release_candidate_eligible: false`.
 
-The schema is `meshtransit.linux-soak-qualification/v1`. Reports retain only
+The current schema is `meshtransit.linux-soak-qualification/v2`. It records
+only whether the observer was systemd-bound and restart-protected; it does not
+emit the unit name or invocation identifier. Historical alpha17 smoke evidence
+uses schema v1. Reports retain only
 operator labels, artifact/platform metadata, booleans, aggregate status,
 resource counters, and traffic success. They omit raw PIDs, state digests,
 addresses, DNS names and answers, profile/network identity, control
@@ -528,7 +549,9 @@ bash -n tools/qualification/linux-restart.sh \
   tools/qualification/linux-helper-recovery-change.sh \
   tools/qualification/test-linux-helper-recovery-change.sh \
   tools/qualification/linux-soak.sh \
+  tools/qualification/linux-soak-systemd.sh \
   tools/qualification/test-linux-soak.sh \
+  tools/qualification/test-linux-soak-systemd.sh \
   tools/qualification/linux-relay-fallback.sh \
   tools/qualification/test-linux-relay-fallback.sh \
   tools/qualification/linux-dns.sh \
@@ -547,7 +570,9 @@ shellcheck tools/qualification/linux-restart.sh \
   tools/qualification/linux-helper-recovery-change.sh \
   tools/qualification/test-linux-helper-recovery-change.sh \
   tools/qualification/linux-soak.sh \
+  tools/qualification/linux-soak-systemd.sh \
   tools/qualification/test-linux-soak.sh \
+  tools/qualification/test-linux-soak-systemd.sh \
   tools/qualification/linux-relay-fallback.sh \
   tools/qualification/test-linux-relay-fallback.sh \
   tools/qualification/linux-dns.sh \
@@ -563,6 +588,7 @@ bash tools/qualification/test-linux-reboot.sh
 bash tools/qualification/test-linux-network-change.sh
 bash tools/qualification/test-linux-helper-recovery-change.sh
 bash tools/qualification/test-linux-soak.sh
+bash tools/qualification/test-linux-soak-systemd.sh
 bash tools/qualification/test-linux-relay-fallback.sh
 bash tools/qualification/test-linux-dns.sh
 bash tools/qualification/test-linux-policy.sh

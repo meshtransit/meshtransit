@@ -11,7 +11,14 @@ test_dir=""
 
 cleanup() {
   if [[ -n "${test_dir}" ]]; then
-    rm -f -- "${test_dir}/passing.ndjson" "${test_dir}/growth.ndjson"
+    rm -f -- \
+      "${test_dir}/passing.ndjson" \
+      "${test_dir}/growth.ndjson" \
+      "${test_dir}/cgroup-v1" \
+      "${test_dir}/cgroup-v2" \
+      "${test_dir}/cgroup-invalid" \
+      "${test_dir}/bin/systemctl"
+    rmdir -- "${test_dir}/bin" 2>/dev/null || true
     rmdir -- "${test_dir}"
   fi
 }
@@ -57,8 +64,39 @@ append_sample() {
 help_output="$("${harness}" --help)"
 grep -Fq -- 'Runs a read-only fixed-topology Linux soak.' <<<"${help_output}"
 grep -Fq -- 'Release-candidate defaults are 72 hours' <<<"${help_output}"
+grep -Fq -- 'Release-candidate runs must use linux-soak-systemd.sh' <<<"${help_output}"
 
 test_dir="$(mktemp -d "${TMPDIR:-/tmp}/meshd-linux-soak-test.XXXXXXXX")"
+printf '0::/system.slice/meshtransit-soak-linux-rc1-a.service\n' >"${test_dir}/cgroup-v2"
+printf '1:name=systemd:/system.slice/meshtransit-soak-linux-rc1-b.service\n' >"${test_dir}/cgroup-v1"
+printf '0::/system.slice/unrelated.service\n' >"${test_dir}/cgroup-invalid"
+
+[[ "$("${harness}" __systemd-unit-from-cgroup "${test_dir}/cgroup-v2")" == "meshtransit-soak-linux-rc1-a.service" ]]
+[[ "$("${harness}" __systemd-unit-from-cgroup "${test_dir}/cgroup-v1")" == "meshtransit-soak-linux-rc1-b.service" ]]
+if "${harness}" __systemd-unit-from-cgroup "${test_dir}/cgroup-invalid" >/dev/null 2>&1; then
+  printf 'invalid cgroup unexpectedly produced a soak unit\n' >&2
+  exit 1
+fi
+
+mkdir -- "${test_dir}/bin"
+cat >"${test_dir}/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *RefuseManualStop*) printf 'yes\n' ;;
+  *Restart*) printf 'no\n' ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod 0755 "${test_dir}/bin/systemctl"
+PATH="${test_dir}/bin:${PATH}" \
+  "${harness}" __observer-has-restart-protection \
+  meshtransit-soak-linux-rc1-a.service
+if PATH="${test_dir}/bin:${PATH}" \
+  "${harness}" __observer-has-restart-protection unrelated.service >/dev/null 2>&1; then
+  printf 'invalid observer unit unexpectedly passed restart protection\n' >&2
+  exit 1
+fi
+
 append_sample "${test_dir}/passing.ndjson" 0 0 900 450 90
 append_sample "${test_dir}/passing.ndjson" 1 30 1000 500 100
 append_sample "${test_dir}/passing.ndjson" 2 60 1080 540 107

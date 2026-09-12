@@ -5,7 +5,7 @@ set -Eeuo pipefail
 export LC_ALL=C
 umask 077
 
-readonly schema_version="meshtransit.linux-soak-qualification/v1"
+readonly schema_version="meshtransit.linux-soak-qualification/v2"
 readonly dns_resolver_address="192.0.2.53"
 readonly dns_resolver_port="1053"
 readonly release_duration_seconds=259200
@@ -34,6 +34,8 @@ baseline_network_observed=0
 baseline_endpoint_refreshes=0
 expected_daemon_version=""
 expected_daemon_commit=""
+observer_unit_bound=false
+observer_restart_protected=false
 
 usage() {
   cat <<'EOF'
@@ -64,7 +66,8 @@ changing services, interfaces, routes, DNS, profiles, policy, or identity.
 Release-candidate defaults are 72 hours, a 30-second sample interval, a
 one-hour warmup, at most 10 percent post-warmup RSS growth, and bounded
 goroutine, descriptor, and thread headroom. The redacted JSON report is written
-to stdout.
+to stdout. Release-candidate runs must use linux-soak-systemd.sh so systemd and
+needrestart cannot replace the observer during the evidence window.
 EOF
 }
 
@@ -172,6 +175,40 @@ unit_restart_count() {
     return
   fi
   printf '0\n'
+}
+
+systemd_unit_from_cgroup() {
+  local cgroup_path="${1:-/proc/self/cgroup}"
+  local hierarchy
+  local controllers
+  local path
+  local unit
+
+  [[ -r "${cgroup_path}" ]] || return 1
+  while IFS=: read -r hierarchy controllers path; do
+    if [[ "${hierarchy}" != 0 && ",${controllers}," != *,name=systemd,* ]]; then
+      continue
+    fi
+    unit="${path##*/}"
+    if [[ "${unit}" =~ ^meshtransit-soak-[a-z0-9][a-z0-9_.@-]{0,63}\.service$ ]]; then
+      printf '%s\n' "${unit}"
+      return 0
+    fi
+  done <"${cgroup_path}"
+  return 1
+}
+
+observer_has_restart_protection() {
+  local unit="$1"
+  local refuse_manual_stop
+  local restart_policy
+
+  [[ "${unit}" =~ ^meshtransit-soak-[a-z0-9][a-z0-9_.@-]{0,63}\.service$ ]] || return 1
+  refuse_manual_stop="$(systemctl show --property=RefuseManualStop --value "${unit}" 2>/dev/null)" ||
+    return 1
+  restart_policy="$(systemctl show --property=Restart --value "${unit}" 2>/dev/null)" ||
+    return 1
+  [[ "${refuse_manual_stop}" == yes && "${restart_policy}" == no ]]
 }
 
 named_process_count() {
@@ -746,6 +783,8 @@ main() {
   local kernel_release
   local machine_arch
   local release_candidate_eligible=false
+  local release_candidate_requested=false
+  local observer_unit=""
   local report
   local outcome
 
@@ -872,6 +911,25 @@ main() {
     require_command "${command_name}"
   done
 
+  if observer_unit="$(systemd_unit_from_cgroup)"; then
+    observer_unit_bound=true
+    if observer_has_restart_protection "${observer_unit}"; then
+      observer_restart_protected=true
+    fi
+  fi
+  if (( duration_seconds >= release_duration_seconds &&
+    warmup_seconds >= release_warmup_seconds &&
+    sample_interval_seconds <= 30 &&
+    max_rss_growth_percent <= 10 &&
+    max_goroutine_increase <= 8 &&
+    max_fd_increase <= 4 &&
+    max_thread_increase <= 4 )) && [[ -n "${artifact_sha256}" ]]; then
+    release_candidate_requested=true
+  fi
+  if [[ "${release_candidate_requested}" == true && "${observer_restart_protected}" != true ]]; then
+    fail "release-candidate soak requires linux-soak-systemd.sh restart protection"
+  fi
+
   systemctl is-active --quiet meshd.service meshnetd.service ||
     fail "meshd.service and meshnetd.service must both be active"
   baseline_meshd_pid="$(unit_pid meshd.service)"
@@ -953,13 +1011,7 @@ main() {
   if [[ -n "${artifact_sha256}" ]]; then
     artifact_digest_json="\"${artifact_sha256,,}\""
   fi
-  if (( duration_seconds >= release_duration_seconds &&
-    warmup_seconds >= release_warmup_seconds &&
-    sample_interval_seconds <= 30 &&
-    max_rss_growth_percent <= 10 &&
-    max_goroutine_increase <= 8 &&
-    max_fd_increase <= 4 &&
-    max_thread_increase <= 4 )) && [[ -n "${artifact_sha256}" ]]; then
+  if [[ "${release_candidate_requested}" == true ]]; then
     release_candidate_eligible=true
   fi
 
@@ -981,6 +1033,8 @@ main() {
     --argjson samples_expected "${expected_samples}" \
     --argjson samples_completed "${completed_samples}" \
     --argjson release_candidate_eligible "${release_candidate_eligible}" \
+    --argjson observer_unit_bound "${observer_unit_bound}" \
+    --argjson observer_restart_protected "${observer_restart_protected}" \
     --argjson warning_entries "${warning_entries}" \
     --argjson error_entries "${error_entries}" \
     --argjson journal_available "${journal_available}" \
@@ -1014,6 +1068,10 @@ main() {
           samples_expected: $samples_expected,
           samples_completed: $samples_completed,
           release_candidate_eligible: $release_candidate_eligible
+        },
+        observer: {
+          systemd_unit_bound: $observer_unit_bound,
+          restart_protected: $observer_restart_protected
         },
         traffic_load: {
           ipv4_icmp_requests_per_sample: 1,
@@ -1050,6 +1108,18 @@ fi
 if [[ "${1:-}" == __finalize-report ]]; then
   [[ $# -eq 1 ]] || fail "__finalize-report does not accept arguments"
   finalize_report
+  exit
+fi
+
+if [[ "${1:-}" == __systemd-unit-from-cgroup ]]; then
+  [[ $# -eq 2 ]] || fail "__systemd-unit-from-cgroup requires FILE"
+  systemd_unit_from_cgroup "$2"
+  exit
+fi
+
+if [[ "${1:-}" == __observer-has-restart-protection ]]; then
+  [[ $# -eq 2 ]] || fail "__observer-has-restart-protection requires UNIT"
+  observer_has_restart_protection "$2"
   exit
 fi
 
