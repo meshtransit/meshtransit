@@ -61,7 +61,7 @@ published compatibility matrix.
 
 | Priority | Platform | Architectures | Native validation targets | Current status |
 | --- | --- | --- | --- | --- |
-| 1 | Linux | amd64, arm64 | Ubuntu 24.04 and 26.04 LTS with `systemd-resolved` | amd64 candidate path and package lifecycle exercised; native matrix and sustained validation remain |
+| 1 | Linux | amd64, arm64 | Ubuntu 24.04 and 26.04 LTS with `systemd-resolved` | amd64 candidate package lifecycle passed on Ubuntu 26.04 and Debian 13; registered candidate matrix, arm64, and sustained validation remain |
 | 2 | Windows | amd64 | Windows 11 25H2 and Windows Server 2025 | cross-build only; tunnel, DNS, IPC, and service adapters remain |
 | 3 | macOS | arm64, amd64 | macOS 26 on arm64 and macOS 15 on amd64 | cross-build only; tunnel, DNS, IPC, entitlement, and service adapters remain |
 
@@ -141,6 +141,11 @@ byte-reproducible for amd64 and arm64 across two runs and passed independent
 artifact inspection on Debian 13; this does not yet establish cross-builder
 reproducibility. See
 [linux-supply-chain-qualification-2026-09-12.md](linux-supply-chain-qualification-2026-09-12.md).
+The release-facing runtime surface now has an emitted-binary gate that rejects
+removed development flags and unverified-peer bypass markers. Exact candidate
+package upgrade passed on Ubuntu 26.04 and Debian 13; Ubuntu also passed an
+exact-artifact rollback and re-upgrade. See
+[linux-production-surface-qualification-2026-09-12.md](linux-production-surface-qualification-2026-09-12.md).
 It does not yet have a signed artifact and provenance pipeline, IPv6-only
 underlay evidence, real multi-uplink migration qualification, the larger
 candidate crash sample set, repeated candidate DNS-failure samples, or a

@@ -11,6 +11,12 @@ restart.
 Package upgrade, real multi-uplink migration, and soak scenarios remain
 separate gates.
 
+The first exact-commit release-facing runtime-surface, native upgrade,
+rollback, and controlled-restart results are recorded in
+[linux-production-surface-qualification-2026-09-12.md](linux-production-surface-qualification-2026-09-12.md).
+Those dedicated hosts were not registered, so this evidence does not replace
+the two-node packet, DNS, policy, relay, or soak matrices.
+
 The bounded Linux secret-storage, staged migration, package lifecycle, and boot
 recovery results are recorded in
 [linux-secret-storage-qualification-2026-09-12.md](linux-secret-storage-qualification-2026-09-12.md).
