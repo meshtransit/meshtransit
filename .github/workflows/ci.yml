@@ -81,7 +81,9 @@ jobs:
             tools/qualification/linux-helper-recovery-change.sh \
             tools/qualification/test-linux-helper-recovery-change.sh \
             tools/qualification/linux-soak.sh \
+            tools/qualification/linux-soak-systemd.sh \
             tools/qualification/test-linux-soak.sh \
+            tools/qualification/test-linux-soak-systemd.sh \
             tools/qualification/linux-relay-fallback.sh \
             tools/qualification/test-linux-relay-fallback.sh \
             tools/qualification/linux-dns.sh \
@@ -101,7 +103,9 @@ jobs:
             tools/qualification/linux-helper-recovery-change.sh \
             tools/qualification/test-linux-helper-recovery-change.sh \
             tools/qualification/linux-soak.sh \
+            tools/qualification/linux-soak-systemd.sh \
             tools/qualification/test-linux-soak.sh \
+            tools/qualification/test-linux-soak-systemd.sh \
             tools/qualification/linux-relay-fallback.sh \
             tools/qualification/test-linux-relay-fallback.sh \
             tools/qualification/linux-dns.sh \
@@ -117,6 +121,7 @@ jobs:
           bash tools/qualification/test-linux-network-change.sh
           bash tools/qualification/test-linux-helper-recovery-change.sh
           bash tools/qualification/test-linux-soak.sh
+          bash tools/qualification/test-linux-soak-systemd.sh
           bash tools/qualification/test-linux-relay-fallback.sh
           bash tools/qualification/test-linux-dns.sh
           bash tools/qualification/test-linux-policy.sh
@@ -212,6 +217,8 @@ jobs:
             packaging/linux/build-deb.sh \
             packaging/linux/verify-deb.sh \
             packaging/linux/test-maintainer-scripts.sh \
+            tools/security/audit-release-binary.sh \
+            tools/security/test-audit-release-binary.sh \
             tools/security/install-supply-chain-tools.sh \
             tools/security/audit-linux-package.sh
           dash -n packaging/linux/test-package-maintainers.sh packaging/linux/deb/*
@@ -221,6 +228,8 @@ jobs:
             packaging/linux/test-maintainer-scripts.sh \
             packaging/linux/test-package-maintainers.sh \
             packaging/linux/deb/* \
+            tools/security/audit-release-binary.sh \
+            tools/security/test-audit-release-binary.sh \
             tools/security/install-supply-chain-tools.sh \
             tools/security/audit-linux-package.sh
 
@@ -230,7 +239,9 @@ jobs:
           printf '%s\n' "${RUNNER_TEMP}/mesh-tools" >>"${GITHUB_PATH}"
 
       - name: Test package maintainer lifecycle
-        run: bash packaging/linux/test-maintainer-scripts.sh
+        run: |
+          bash packaging/linux/test-maintainer-scripts.sh
+          bash tools/security/test-audit-release-binary.sh
 
       - name: Build and inspect package
         run: |

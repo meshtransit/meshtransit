@@ -1323,13 +1323,13 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	compatibilityNote := "control synchronization is available; encrypted tunnel is not active"
 	switch dataPlaneState {
 	case string(dataplane.StateIdle):
-		compatibilityNote = "data-plane poc is enabled; no authorized peer path is active"
+		compatibilityNote = "data plane is enabled; no authorized peer path is active"
 	case string(dataplane.StateTUNReady):
 		compatibilityNote = "tun descriptor is ready; encryption, routes, dns, and packet forwarding are not active"
 	case string(dataplane.StateWaitingEndpoint):
 		compatibilityNote = "encrypted direct path is waiting for a peer endpoint"
 	case string(dataplane.StatePolicyUnsupported):
-		compatibilityNote = "encrypted poc is fail-closed because the current packet gate cannot enforce this policy safely"
+		compatibilityNote = "encrypted path is fail-closed because the current packet gate cannot enforce this policy safely"
 	case string(dataplane.StateEncrypted):
 		if dnsState == DNSConfigured {
 			compatibilityNote = "encrypted direct path, host packet policy, and dns are active; no usable signed relay is available and generalized routes are not implemented"
@@ -1343,7 +1343,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 			compatibilityNote = "encrypted mesh with bounded relay fallback, authenticated direct paths, and host packet policy is active; dns and generalized routes are not implemented"
 		}
 	case string(dataplane.StateFailed):
-		compatibilityNote = "data-plane poc failed closed; encrypted tunnel is not active"
+		compatibilityNote = "data plane failed closed; encrypted tunnel is not active"
 	}
 	daemonState := StateOffline
 	if dataPlaneState == string(dataplane.StateEncrypted) ||

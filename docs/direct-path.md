@@ -85,7 +85,7 @@ peer map ──────────► authenticated path manager ───�
    uses native route/link/address notifications and falls back to five-second
    polling; other platforms poll until native adapters are implemented and
    qualified. Product-owned data and DNS interfaces are ignored.
-4. Implemented as a POC: the compatible encrypted Ping/Pong identity and bounded wire
+4. Implemented in the Linux candidate path: the compatible encrypted Ping/Pong identity and bounded wire
    codec are implemented. One ephemeral identity is now owned by each daemon
    control session and its exact public key is used for map and endpoint
    publication across reconnects. A bounded registry atomically derives peer
@@ -109,14 +109,14 @@ peer map ──────────► authenticated path manager ───�
    path proof without reopening the shared socket. Activity-aware probe
    suppression remains; periodic authenticated rounds currently keep roaming
    decisions fresh for all online peers.
-5. Implemented as a POC: Linux end-to-end tests use only automatically
+5. Implemented in the Linux candidate path: end-to-end tests use only automatically
    discovered host and server-reflexive candidates. They cover daemon restart,
    private-path selection, socket rebinding, stale-result cancellation, and a
    live default-deny to restored-policy transition without restarting the
    daemon. Socket generations share one monotonic namespace for the complete
    WireGuard engine lifetime, so recreating a bind cannot make a fresh path
    generation look stale or reuse authority from an earlier socket.
-6. Implemented as a POC: a bounded Linux qualification scenario creates a
+6. Implemented as a bounded qualification: a Linux scenario creates a
    dedicated dummy interface, adds one non-production test address, requires an
    observed network event and completed endpoint refresh within 20 seconds, and
    verifies uninterrupted dual-stack peer traffic before removing the interface.

@@ -61,7 +61,7 @@ published compatibility matrix.
 
 | Priority | Platform | Architectures | Native validation targets | Current status |
 | --- | --- | --- | --- | --- |
-| 1 | Linux | amd64, arm64 | Ubuntu 24.04 and 26.04 LTS with `systemd-resolved` | Ubuntu 24.04 amd64 POC and package lifecycle exercised; native matrix and sustained validation remain |
+| 1 | Linux | amd64, arm64 | Ubuntu 24.04 and 26.04 LTS with `systemd-resolved` | amd64 candidate path and package lifecycle exercised; native matrix and sustained validation remain |
 | 2 | Windows | amd64 | Windows 11 25H2 and Windows Server 2025 | cross-build only; tunnel, DNS, IPC, and service adapters remain |
 | 3 | macOS | arm64, amd64 | macOS 26 on arm64 and macOS 15 on amd64 | cross-build only; tunnel, DNS, IPC, entitlement, and service adapters remain |
 
@@ -84,7 +84,9 @@ has opt-in TUN, userspace WireGuard, `SO_PEERCRED`, privileged `meshnetd`, and
 `systemd-resolved` adapters. It also has native route/link/address monitoring,
 immediate endpoint refresh after meaningful changes, and a polling fallback.
 
-The Linux packet and DNS paths remain explicitly marked as POCs. Linux has a
+The Linux packet and DNS paths now use release-facing flags and contain no
+unverified-local-peer bypass. They remain release-ineligible until every native
+candidate gate passes. Linux has a
 reproducible Debian package, lifecycle contract, and bounded restart, reboot,
 controlled interface-change, relay-fallback, split-DNS, and host-policy
 qualification harnesses. The two-host Linux alpha topology has repeatable
@@ -145,7 +147,7 @@ candidate crash sample set, repeated candidate DNS-failure samples, or a
 long-duration qualification suite.
 See [linux-qualification.md](linux-qualification.md) for the bounded alpha
 evidence and its limitations.
-Windows and macOS deny local API access without an unsafe development override
+Windows and macOS deny local API access, contain no unverified-peer override,
 and do not have native tunnel, DNS, or installer activation.
 
 ## Definition of done
@@ -176,7 +178,7 @@ a documented clean state.
 ### Reliability acceptance targets
 
 These are controlled-lab targets for the release candidate, not measurements of
-the current POC:
+the current candidate implementation:
 
 - after registration, service-start to mesh-ready latency is at most 15 seconds
   at p95 when the control plane is reachable;

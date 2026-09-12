@@ -174,7 +174,7 @@ type WireGuardEngine struct {
 	hostAddresses     func() ([]netip.Addr, error)
 }
 
-// NewWireGuard constructs the Linux direct-path POC packet engine.
+// NewWireGuard constructs the Linux encrypted packet engine.
 func NewWireGuard(opener tunOpener, listenPort uint16) (*WireGuardEngine, error) {
 	return NewWireGuardWithObserver(opener, listenPort, nil)
 }

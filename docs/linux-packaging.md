@@ -48,6 +48,18 @@ The package builder runs only on Linux and requires Go, `dpkg`, and
 reproducible timestamps, records the commit and build date in package control
 metadata, and writes a sibling SHA-256 checksum file. The
 control metadata becomes authenticated only after the package-signing stage.
+Packaged units use the release-facing `--enable-data-plane` and `--enable-dns`
+flags. Package verification scans every installed executable and fails if a
+removed POC flag or unverified-local-peer override marker is present, so the
+security property is enforced on the emitted artifact rather than inferred
+only from source review.
+
+The pre-release POC flags are intentionally not aliases. Before upgrading a
+host that customized `MESHD_FLAGS`, remove `--enable-tun-poc`,
+`--enable-wireguard-poc`, `--enable-dns-poc`, and
+`--unsafe-allow-unverified-local-peer`. The package supplies the new data-plane
+and DNS flags itself. Retaining a removed flag makes startup fail closed instead
+of silently changing its meaning.
 
 ```bash
 ./packaging/linux/build-deb.sh 0.1.0~alpha1 amd64 dist

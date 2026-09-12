@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+script_dir="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly script_dir
+
 [[ $# -eq 2 ]] || {
     printf 'usage: %s PACKAGE ARCHITECTURE\n' "$0" >&2
     exit 2
@@ -39,6 +42,10 @@ done
 [[ -x "${work_dir}/root/usr/bin/meshd" ]]
 [[ -x "${work_dir}/root/usr/libexec/meshtransit/meshnetd" ]]
 [[ -x "${work_dir}/root/usr/libexec/meshtransit/meshcred" ]]
+"${script_dir}/../../tools/security/audit-release-binary.sh" \
+    "${work_dir}/root/usr/bin/meshd" \
+    "${work_dir}/root/usr/libexec/meshtransit/meshnetd" \
+    "${work_dir}/root/usr/libexec/meshtransit/meshcred"
 [[ "$(stat -c '%a' "${work_dir}/root/etc/meshd/meshd.env")" == '640' ]]
 [[ "$(stat -c '%a' "${work_dir}/root/etc/credstore.encrypted")" == '700' ]]
 [[ "$(cat "${work_dir}/control/conffiles")" == '/etc/meshd/meshd.env' ]]
@@ -70,6 +77,10 @@ fi
 
 grep -Fq -- '--allow-socket-peers' \
     "${work_dir}/root/usr/lib/systemd/system/meshd.service"
+grep -Fq -- '--enable-data-plane' \
+    "${work_dir}/root/usr/lib/systemd/system/meshd.service"
+grep -Fq -- '--enable-dns' \
+    "${work_dir}/root/usr/lib/systemd/system/meshd.service"
 grep -Fq 'Requires=meshcred.service meshnetd.service' \
     "${work_dir}/root/usr/lib/systemd/system/meshd.service"
 grep -Fq 'LoadCredentialEncrypted=meshd.identity-key:/etc/credstore.encrypted/meshd.identity-key' \
@@ -80,6 +91,20 @@ grep -Fq 'ReadWritePaths=/etc/credstore.encrypted /var/lib/systemd' \
     "${work_dir}/root/usr/lib/systemd/system/meshcred.service"
 grep -Fq -- '--allow-user=meshd' \
     "${work_dir}/root/usr/lib/systemd/system/meshnetd.service"
+grep -Fq -- '--enable-dns' \
+    "${work_dir}/root/usr/lib/systemd/system/meshnetd.service"
+for forbidden_flag in \
+    --enable-tun-poc \
+    --enable-wireguard-poc \
+    --enable-dns-poc \
+    --unsafe-allow-unverified-local-peer; do
+    if grep -Fq -- "${forbidden_flag}" \
+        "${work_dir}/root/usr/lib/systemd/system/meshd.service" \
+        "${work_dir}/root/usr/lib/systemd/system/meshnetd.service"; then
+        printf 'packaged unit contains removed flag: %s\n' "${forbidden_flag}" >&2
+        exit 1
+    fi
+done
 grep -Fq 'CapabilityBoundingSet=CAP_CHOWN CAP_NET_ADMIN' \
     "${work_dir}/root/usr/lib/systemd/system/meshnetd.service"
 grep -Fq 'ReadWritePaths=/run/meshnetd' \

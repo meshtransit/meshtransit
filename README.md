@@ -1,6 +1,6 @@
 # meshd
 
-`meshd` is the MeshTransit node daemon. It owns local profile and identity state, performs pinned encrypted control registration, maintains a validated control-map stream, and exposes a versioned local API. Opt-in Linux POCs run encrypted WireGuard over authenticated relay and direct paths, MagicDNS through `systemd-resolved`, and header-only flow telemetry on explicitly authorized peer routes.
+`meshd` is the MeshTransit node daemon. It owns local profile and identity state, performs pinned encrypted control registration, maintains a validated control-map stream, and exposes a versioned local API. The Linux implementation runs encrypted WireGuard over authenticated relay and direct paths, MagicDNS through `systemd-resolved`, and header-only flow telemetry on explicitly authorized peer routes.
 
 ## Demo
 
@@ -12,7 +12,7 @@ $ meshd --socket /tmp/meshd.sock --state-dir /tmp/meshd-state \
 {"level":"INFO","msg":"meshd started","socket":"/tmp/meshd.sock","version":"dev"}
 ```
 
-Without an explicit POC flag the daemon remains control-only and reports `data_plane: not_implemented`. The packet-path POC is deliberately narrower than a production client: it keeps a bounded TLS relay path as the initial encrypted route, discovers safe host-interface and server-reflexive peer endpoints, promotes only authenticated direct candidates, installs host routes, enforces node-specific protocol/port policy, and permits only bounded replies to flows initiated by the local node. The Linux DNS POC serves MagicDNS A, AAAA, and PTR records, authoritative negative answers, classic-IP split DNS, and global forwarding without replacing local DNS unless the control map explicitly requests a default route. Subnet/exit routing, encrypted DNS transports, fragmented packets, and unsupported narrow transport semantics remain fail closed.
+Without `--enable-data-plane` the daemon remains control-only and reports `data_plane: not_implemented`. The current packet path is deliberately narrower than the complete v0.1 scope: it keeps a bounded TLS relay path as the initial encrypted route, discovers safe host-interface and server-reflexive peer endpoints, promotes only authenticated direct candidates, installs host routes, enforces node-specific protocol/port policy, and permits only bounded replies to flows initiated by the local node. Linux DNS serves MagicDNS A, AAAA, and PTR records, authoritative negative answers, classic-IP split DNS, and global forwarding without replacing local DNS unless the control map explicitly requests a default route. Subnet/exit routing, encrypted DNS transports, fragmented packets, and unsupported narrow transport semantics remain fail closed.
 
 On a disposable Linux host, the privileged boundary can be exercised explicitly:
 
@@ -20,7 +20,7 @@ On a disposable Linux host, the privileged boundary can be exercised explicitly:
 # meshnetd --allow-user meshd \
     --allow-prefix 100.64.0.0/10 \
     --allow-prefix fd7a:115c:a1e0::/48
-$ meshd --enable-wireguard-poc \
+$ meshd --enable-data-plane \
     --wireguard-listen-port 41641
 ```
 
@@ -38,8 +38,8 @@ non-writable `/usr/bin/resolvectl`:
 # meshnetd --allow-user meshd \
     --allow-prefix 100.64.0.0/10 \
     --allow-prefix fd7a:115c:a1e0::/48 \
-    --enable-dns-poc
-$ meshd --enable-dns-poc
+    --enable-dns
+$ meshd --enable-dns
 ```
 
 The helper creates a dedicated non-persistent DNS link at a fixed startup
@@ -73,7 +73,7 @@ head -c 32 /dev/urandom > /tmp/meshd.identity-key
 
 Production defaults are `/run/meshd/meshd.sock` and `/var/lib/meshd`. Run the daemon under a dedicated service account and restrict membership of the socket's owning group. Linux authorizes UID `0`, the daemon UID, and values supplied through repeatable `--allow-uid UID` flags. A packaged service can enable `--allow-socket-peers` so kernel-verified callers admitted by the socket's `0660` owner/group permissions are also authorized. The Debian package provisions a host-encrypted systemd credential and exposes its decrypted 32-byte key only inside `meshd.service`; unpackaged development must provide an owner-only key with `--identity-key-file`.
 
-Non-Linux development currently lacks a verified peer-credential implementation and therefore denies API requests by default. The explicit `--unsafe-allow-unverified-local-peer` flag is for isolated development only and must not be used in production.
+Non-Linux development currently lacks a verified peer-credential implementation and therefore denies API requests. No unverified-peer bypass is compiled into daemon binaries; each platform must implement native kernel-backed peer identity before it can expose the local API.
 
 ## Features and specification
 
@@ -98,8 +98,8 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - Linux MagicDNS server with A/AAAA/PTR answers, short-name search, authoritative NXDOMAIN/NODATA, RFC 6891 EDNS0 negotiation, classic UDP/TCP forwarding, truncated-UDP retry over TCP, bounded concurrency, and transactional `systemd-resolved` rollback.
 - Status-only visibility into control synchronization, latest validated revision, aggregate peer path selection, relay-region lifecycle health, and process-local network-change/endpoint-refresh counters; raw policy, peer identities, endpoint addresses, hostnames, keys, and packet contents are not exposed locally.
 - Linux-only `meshnetd` privilege boundary with `SO_PEERCRED`, bounded `SOCK_SEQPACKET` framing, root-configured overlay pools, host-route-only dynamic TUN configuration, and descriptor passing via `SCM_RIGHTS`.
-- Explicit `--enable-tun-poc` lifecycle that closes the non-persistent TUN on default-deny, profile changes, control failure, and shutdown.
-- Linux userspace WireGuard direct-path POC with signed-map key binding, automatically discovered endpoints, optional configured candidates, exact dynamic helper address/route verification, node-specific inbound protocol/port filtering, and bounded stateful replies for locally initiated TCP, UDP, and ICMP echo flows.
+- Explicit `--enable-data-plane` lifecycle that closes the non-persistent TUN on default-deny, profile changes, control failure, and shutdown.
+- Linux userspace WireGuard packet path with signed-map key binding, automatically discovered endpoints, optional configured candidates, exact dynamic helper address/route verification, node-specific inbound protocol/port filtering, and bounded stateful replies for locally initiated TCP, UDP, and ICMP echo flows.
 - Shared-socket STUN endpoint publication and authenticated peer probing with session/map/socket generation binding, bounded asynchronous receive work, paced signed-endpoint scheduling, and deterministic authenticated endpoint promotion, expiry, fallback, and roaming.
 - Linux route/link/address monitoring with snapshot filtering, event coalescing, immediate endpoint refresh, and a polling fallback; MeshTransit-owned data and DNS interfaces are excluded to prevent self-triggered refresh loops.
 - Bounded TLS relay sessions selected only from the validated control map, carrying unchanged WireGuard ciphertext and serving as the base route until a direct endpoint is cryptographically proven.

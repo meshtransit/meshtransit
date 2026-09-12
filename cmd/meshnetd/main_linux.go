@@ -33,7 +33,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	socketPath := flags.String("socket", "/run/meshnetd/meshnetd.sock", "path to the privileged unixpacket socket")
 	interfaceName := flags.String("interface", "mesh0", "fixed tun interface name")
 	mtu := flags.Int("mtu", 1280, "fixed tun interface mtu")
-	enableDNS := flags.Bool("enable-dns-poc", false, "enable the systemd-resolved dns boundary")
+	enableDNS := flags.Bool("enable-dns", false, "enable the systemd-resolved dns boundary")
 	dnsInterfaceName := flags.String("dns-interface", "meshdns0", "fixed dns service interface name")
 	dnsAddress := flags.String("dns-address", "192.0.2.53", "fixed dns service IPv4 or IPv6 address")
 	dnsPort := flags.Uint64("dns-port", 1053, "unprivileged local dns service port")

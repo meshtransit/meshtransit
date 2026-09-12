@@ -27,24 +27,22 @@ const (
 
 // Config contains the complete startup configuration for meshd.
 type Config struct {
-	SocketPath                     string
-	NetAdminSocketPath             string
-	StateDir                       string
-	IdentityKeyPath                string
-	LogLevel                       string
-	ShowVersion                    bool
-	AllowedUIDs                    []uint32
-	AllowSocketPeers               bool
-	UnsafeAllowUnverifiedLocalPeer bool
-	EnableTUNPOC                   bool
-	EnableWireGuardPOC             bool
-	EnableDNSPOC                   bool
-	WireGuardListenPort            uint16
-	AdvertiseEndpoints             []netip.AddrPort
-	EnableFlowLogs                 bool
-	FlowLogURL                     string
-	FlowLogInterval                time.Duration
-	FlowLogTimeout                 time.Duration
+	SocketPath          string
+	NetAdminSocketPath  string
+	StateDir            string
+	IdentityKeyPath     string
+	LogLevel            string
+	ShowVersion         bool
+	AllowedUIDs         []uint32
+	AllowSocketPeers    bool
+	EnableDataPlane     bool
+	EnableDNS           bool
+	WireGuardListenPort uint16
+	AdvertiseEndpoints  []netip.AddrPort
+	EnableFlowLogs      bool
+	FlowLogURL          string
+	FlowLogInterval     time.Duration
+	FlowLogTimeout      time.Duration
 }
 
 // Parse parses daemon flags without reading global flag state.
@@ -72,20 +70,14 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	flags.StringVar(&cfg.LogLevel, "log-level", "info", "log level: debug, info, warn, or error")
 	flags.BoolVar(&cfg.ShowVersion, "version", false, "print version and exit")
 	flags.BoolVar(
-		&cfg.EnableTUNPOC,
-		"enable-tun-poc",
+		&cfg.EnableDataPlane,
+		"enable-data-plane",
 		false,
-		"enable the tun descriptor poc without packet forwarding",
+		"enable the encrypted mesh packet path with fail-closed policy checks",
 	)
 	flags.BoolVar(
-		&cfg.EnableWireGuardPOC,
-		"enable-wireguard-poc",
-		false,
-		"enable encrypted direct-path poc with fail-closed policy checks",
-	)
-	flags.BoolVar(
-		&cfg.EnableDNSPOC,
-		"enable-dns-poc",
+		&cfg.EnableDNS,
+		"enable-dns",
 		false,
 		"enable MagicDNS and systemd-resolved integration",
 	)
@@ -93,7 +85,7 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 		&listenPort,
 		"wireguard-listen-port",
 		0,
-		"fixed local UDP listen port for the WireGuard poc",
+		"fixed local UDP listen port for the encrypted packet path",
 	)
 	flags.Var(
 		&advertiseEndpoints,
@@ -131,13 +123,6 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 		false,
 		"authorize kernel-verified peers admitted by unix socket permissions",
 	)
-	flags.BoolVar(
-		&cfg.UnsafeAllowUnverifiedLocalPeer,
-		"unsafe-allow-unverified-local-peer",
-		false,
-		"allow local api calls when the platform cannot verify peer credentials",
-	)
-
 	if err := flags.Parse(args); err != nil {
 		return Config{}, fmt.Errorf("parsing flags: %w", err)
 	}
@@ -219,19 +204,16 @@ func validate(cfg Config) error {
 	if filepath.Clean(cfg.SocketPath) == filepath.Clean(cfg.NetAdminSocketPath) {
 		return errors.New("local api and netadmin sockets must be different")
 	}
-	if cfg.EnableTUNPOC && cfg.EnableWireGuardPOC {
-		return errors.New("tun-only and wireguard pocs cannot be enabled together")
-	}
-	if cfg.EnableWireGuardPOC {
+	if cfg.EnableDataPlane {
 		if cfg.WireGuardListenPort == 0 {
-			return errors.New("wireguard poc requires a non-zero listen port")
+			return errors.New("data plane requires a non-zero listen port")
 		}
 	} else if cfg.WireGuardListenPort != 0 || len(cfg.AdvertiseEndpoints) != 0 {
-		return errors.New("wireguard endpoint options require --enable-wireguard-poc")
+		return errors.New("packet endpoint options require --enable-data-plane")
 	}
 	if cfg.EnableFlowLogs {
-		if !cfg.EnableWireGuardPOC {
-			return errors.New("flow logging requires the wireguard poc")
+		if !cfg.EnableDataPlane {
+			return errors.New("flow logging requires the data plane")
 		}
 		endpoint, err := url.Parse(cfg.FlowLogURL)
 		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" ||

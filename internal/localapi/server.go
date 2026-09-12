@@ -41,12 +41,11 @@ type service interface {
 
 // Server serves the local control API with bounded HTTP resources.
 type Server struct {
-	service                   service
-	logger                    *slog.Logger
-	handler                   http.Handler
-	allowedUIDs               map[uint32]struct{}
-	allowSocketPeers          bool
-	unsafeAllowUnverifiedPeer bool
+	service          service
+	logger           *slog.Logger
+	handler          http.Handler
+	allowedUIDs      map[uint32]struct{}
+	allowSocketPeers bool
 }
 
 // Options configures local authorization. AllowedUIDs is copied during
@@ -56,8 +55,7 @@ type Options struct {
 	// AllowSocketPeers authorizes any kernel-verified peer that passed the
 	// filesystem permissions on the daemon-owned Unix socket. It must only be
 	// enabled when the socket group is the intended operator boundary.
-	AllowSocketPeers               bool
-	UnsafeAllowUnverifiedLocalPeer bool
+	AllowSocketPeers bool
 }
 
 // New creates a local API server using explicit service and logger dependencies.
@@ -74,11 +72,10 @@ func New(service service, logger *slog.Logger, options Options) (*Server, error)
 		allowedUIDs[uid] = struct{}{}
 	}
 	server := &Server{
-		service:                   service,
-		logger:                    logger,
-		allowedUIDs:               allowedUIDs,
-		allowSocketPeers:          options.AllowSocketPeers,
-		unsafeAllowUnverifiedPeer: options.UnsafeAllowUnverifiedLocalPeer,
+		service:          service,
+		logger:           logger,
+		allowedUIDs:      allowedUIDs,
+		allowSocketPeers: options.AllowSocketPeers,
 	}
 	server.handler = server.routes()
 
@@ -249,11 +246,8 @@ func (s *Server) writeLogin(writer http.ResponseWriter, login daemon.Login) {
 
 func (s *Server) isAuthorized(ctx context.Context) bool {
 	peer, exists := peerFromContext(ctx)
-	if !exists || !peer.isPresent {
+	if !exists || !peer.isPresent || !peer.isVerified {
 		return false
-	}
-	if !peer.isVerified {
-		return s.unsafeAllowUnverifiedPeer
 	}
 	_, explicitlyAllowed := s.allowedUIDs[peer.uid]
 

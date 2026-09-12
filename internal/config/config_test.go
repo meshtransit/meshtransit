@@ -27,37 +27,38 @@ func TestDefaultIdentityKeyUsesSystemdCredentialPath(t *testing.T) {
 	}
 }
 
-func TestParseTUNPOC(t *testing.T) {
+func TestParseDataPlane(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := Parse(nil, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if cfg.EnableTUNPOC || cfg.NetAdminSocketPath != DefaultNetAdminSocketPath {
+	if cfg.EnableDataPlane || cfg.NetAdminSocketPath != DefaultNetAdminSocketPath {
 		t.Fatalf("default config = %#v", cfg)
 	}
 
 	cfg, err = Parse([]string{
-		"--enable-tun-poc",
+		"--enable-data-plane",
+		"--wireguard-listen-port", "41641",
 		"--netadmin-socket", "/tmp/meshnetd.sock",
 	}, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if !cfg.EnableTUNPOC || cfg.NetAdminSocketPath != "/tmp/meshnetd.sock" {
+	if !cfg.EnableDataPlane || cfg.NetAdminSocketPath != "/tmp/meshnetd.sock" {
 		t.Fatalf("parsed config = %#v", cfg)
 	}
 }
 
-func TestParseDNSPOC(t *testing.T) {
+func TestParseDNS(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := Parse([]string{"--enable-dns-poc"}, io.Discard)
+	cfg, err := Parse([]string{"--enable-dns"}, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if !cfg.EnableDNSPOC {
+	if !cfg.EnableDNS {
 		t.Fatalf("parsed config = %#v", cfg)
 	}
 }
@@ -114,34 +115,34 @@ func TestParseRejectsUnsafeIdentityKeyPath(t *testing.T) {
 	}
 }
 
-func TestParseWireGuardPOC(t *testing.T) {
+func TestParseDataPlaneWithExplicitEndpoint(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := Parse([]string{
-		"--enable-wireguard-poc",
+		"--enable-data-plane",
 		"--wireguard-listen-port", "41641",
 		"--advertise-endpoint", "203.0.113.10:41641",
 	}, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if !cfg.EnableWireGuardPOC || cfg.WireGuardListenPort != 41641 ||
+	if !cfg.EnableDataPlane || cfg.WireGuardListenPort != 41641 ||
 		len(cfg.AdvertiseEndpoints) != 1 {
 		t.Fatalf("parsed config = %#v", cfg)
 	}
 }
 
-func TestParseWireGuardPOCWithAutomaticEndpointDiscovery(t *testing.T) {
+func TestParseDataPlaneWithAutomaticEndpointDiscovery(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := Parse([]string{
-		"--enable-wireguard-poc",
+		"--enable-data-plane",
 		"--wireguard-listen-port", "41641",
 	}, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if !cfg.EnableWireGuardPOC || cfg.WireGuardListenPort != 41641 ||
+	if !cfg.EnableDataPlane || cfg.WireGuardListenPort != 41641 ||
 		len(cfg.AdvertiseEndpoints) != 0 {
 		t.Fatalf("parsed config = %#v", cfg)
 	}
@@ -151,7 +152,7 @@ func TestParseFlowLogging(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := Parse([]string{
-		"--enable-wireguard-poc",
+		"--enable-data-plane",
 		"--wireguard-listen-port", "41641",
 		"--advertise-endpoint", "203.0.113.10:41641",
 		"--enable-flow-logs",
@@ -166,40 +167,76 @@ func TestParseFlowLogging(t *testing.T) {
 	}
 }
 
-func TestParseRejectsUnsafeWireGuardPOC(t *testing.T) {
+func TestParseRejectsUnsafeDataPlane(t *testing.T) {
 	t.Parallel()
 
-	tests := [][]string{
-		{"--enable-wireguard-poc"},
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "missing listen port", args: []string{"--enable-data-plane"}},
 		{
-			"--enable-wireguard-poc",
-			"--wireguard-listen-port", "41641",
-			"--advertise-endpoint", "127.0.0.1:41641",
+			name: "loopback endpoint",
+			args: []string{
+				"--enable-data-plane",
+				"--wireguard-listen-port", "41641",
+				"--advertise-endpoint", "127.0.0.1:41641",
+			},
 		},
 		{
-			"--enable-wireguard-poc",
-			"--wireguard-listen-port", "41641",
-			"--advertise-endpoint", "203.0.113.10:41642",
+			name: "endpoint port mismatch",
+			args: []string{
+				"--enable-data-plane",
+				"--wireguard-listen-port", "41641",
+				"--advertise-endpoint", "203.0.113.10:41642",
+			},
 		},
-		{"--wireguard-listen-port", "41641"},
-		{"--enable-flow-logs", "--flow-log-url", "https://log.pingoo.click"},
+		{name: "listen port without data plane", args: []string{"--wireguard-listen-port", "41641"}},
 		{
-			"--enable-wireguard-poc",
-			"--wireguard-listen-port", "41641",
-			"--advertise-endpoint", "203.0.113.10:41641",
-			"--enable-flow-logs",
-			"--flow-log-url", "http://log.pingoo.click",
+			name: "flow logs without data plane",
+			args: []string{"--enable-flow-logs", "--flow-log-url", "https://log.pingoo.click"},
 		},
 		{
-			"--enable-tun-poc",
-			"--enable-wireguard-poc",
-			"--wireguard-listen-port", "41641",
-			"--advertise-endpoint", "203.0.113.10:41641",
+			name: "plaintext flow log origin",
+			args: []string{
+				"--enable-data-plane",
+				"--wireguard-listen-port", "41641",
+				"--advertise-endpoint", "203.0.113.10:41641",
+				"--enable-flow-logs",
+				"--flow-log-url", "http://log.pingoo.click",
+			},
 		},
 	}
-	for _, args := range tests {
-		if _, err := Parse(args, io.Discard); err == nil {
-			t.Fatalf("Parse(%v) error = nil", args)
-		}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := Parse(test.args, io.Discard); err == nil {
+				t.Fatalf("Parse(%v) error = nil", test.args)
+			}
+		})
+	}
+}
+
+func TestParseRejectsRemovedDevelopmentFlags(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		flag string
+	}{
+		{name: "tun poc", flag: "--enable-tun-poc"},
+		{name: "wireguard poc", flag: "--enable-wireguard-poc"},
+		{name: "dns poc", flag: "--enable-dns-poc"},
+		{name: "unverified local peer", flag: "--unsafe-allow-unverified-local-peer"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := Parse([]string{test.flag}, io.Discard); err == nil {
+				t.Fatalf("Parse(%q) error = nil", test.flag)
+			}
+		})
 	}
 }

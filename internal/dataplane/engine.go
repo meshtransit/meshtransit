@@ -49,7 +49,7 @@ type Engine struct {
 	mtu    int
 }
 
-// New constructs the explicit TUN POC lifecycle.
+// New constructs the explicit TUN descriptor lifecycle.
 func New(opener tunOpener) (*Engine, error) {
 	if opener == nil {
 		return nil, errors.New("dataplane: tun opener is required")

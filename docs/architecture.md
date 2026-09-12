@@ -16,7 +16,7 @@ meshd
   ├── policy validator      fail-closed, atomic network-map validation
   ├── DNS planner           protocol-independent MagicDNS/split-DNS transaction plan
   ├── packet policy gate    inbound ACL plus bounded return-flow state
-  ├── tunnel engine         userspace WireGuard relay/direct path POC
+  ├── tunnel engine         userspace WireGuard relay/direct path
   ├── traffic events        bounded 5-tuple/counter events without payloads
   └── net-admin client      fixed-schema descriptor request to privileged meshnetd
                               │
@@ -25,7 +25,7 @@ meshd
                               pool-confined TUN and resolved-link setup; firewall later
 ```
 
-The current code implements the profile service, persistent per-profile identity, explicit control-key pinning, TS2021/Noise registration, long-lived map streaming, product-owned map and DNS validation, local API, composition root, bounded control compatibility probe, and opt-in Linux TUN/WireGuard POCs. Data-plane status distinguishes `not_implemented`, `idle`, `tun_ready_no_crypto`, `waiting_endpoint`, `policy_unsupported`, `encrypted_direct`, `encrypted_relay_ready`, and `failed`; DNS is reported separately as `inactive`, `not_implemented`, `configured`, or `failed`.
+The current code implements the profile service, persistent per-profile identity, explicit control-key pinning, TS2021/Noise registration, long-lived map streaming, product-owned map and DNS validation, local API, composition root, bounded control compatibility probe, and opt-in Linux encrypted data plane. Data-plane status distinguishes `not_implemented`, `idle`, `tun_ready_no_crypto`, `waiting_endpoint`, `policy_unsupported`, `encrypted_direct`, `encrypted_relay_ready`, and `failed`; DNS is reported separately as `inactive`, `not_implemented`, `configured`, or `failed`.
 
 ## Repository boundary
 
@@ -177,11 +177,11 @@ Compatibility must be proven independently at four layers:
 1. HTTPS server-key discovery and TS2021/Noise session establishment. Implemented by `doctor control`, registration, and the long-lived map stream.
 2. Registration, login completion, keepalive watchdog, and bounded reconnect are implemented. Session-handle resume remains; reconnect currently requires a new full snapshot.
 3. Network-map decoding, structural policy validation, DNS translation/planning, Linux DNS activation, and host-level TCP/UDP/ICMP policy enforcement are implemented. Capability-based networking, subnet/exit policy, and URL resolver transports remain.
-4. Privileged TUN/DNS lifecycle, direct userspace WireGuard traffic, shared-socket STUN discovery, periodic and host-network-triggered candidate refresh/expiry, typed endpoint and health-gated home-relay publication, bounded encrypted relay traffic with idle region eviction, and authenticated direct endpoint switching are implemented as opt-in Linux POCs. Traffic-idle discovery pacing, generalized routes, native non-Linux network monitors, and non-Linux DNS backends remain.
+4. Privileged TUN/DNS lifecycle, direct userspace WireGuard traffic, shared-socket STUN discovery, periodic and host-network-triggered candidate refresh/expiry, typed endpoint and health-gated home-relay publication, bounded encrypted relay traffic with idle region eviction, and authenticated direct endpoint switching are implemented in the opt-in Linux data plane. Traffic-idle discovery pacing, generalized routes, native non-Linux network monitors, and non-Linux DNS backends remain.
 
 ## Local API
 
-The API is versioned under `/v1` and is served only on a Unix socket. On Linux, every connection is associated with kernel `SO_PEERCRED` credentials; root, the daemon UID, and explicitly configured operator UIDs are allowed. A packaged service may also authorize kernel-verified callers that the daemon-owned `0660` socket admitted through its dedicated operator group. Platforms without a verified credential implementation deny requests unless an unsafe development override is set. Current endpoints are:
+The API is versioned under `/v1` and is served only on a Unix socket. On Linux, every connection is associated with kernel `SO_PEERCRED` credentials; root, the daemon UID, and explicitly configured operator UIDs are allowed. A packaged service may also authorize kernel-verified callers that the daemon-owned `0660` socket admitted through its dedicated operator group. Platforms without a verified credential implementation deny every request; no unverified-peer override is compiled into the daemon. Current endpoints are:
 
 - `GET /v1/health`
 - `GET /v1/status`

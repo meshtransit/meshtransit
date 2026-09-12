@@ -10,7 +10,7 @@ Type=simple
 User=root
 Group=meshd
 UMask=0007
-ExecStart=/usr/libexec/meshtransit/meshnetd --allow-user=meshd --allow-prefix=100.64.0.0/10 --allow-prefix=fd7a:115c:a1e0::/48 --enable-dns-poc
+ExecStart=/usr/libexec/meshtransit/meshnetd --allow-user=meshd --allow-prefix=100.64.0.0/10 --allow-prefix=fd7a:115c:a1e0::/48 --enable-dns
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=15s

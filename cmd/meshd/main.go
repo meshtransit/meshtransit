@@ -113,7 +113,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	var netAdminClient *netadmin.Client
-	if cfg.EnableTUNPOC || cfg.EnableWireGuardPOC || cfg.EnableDNSPOC {
+	if cfg.EnableDataPlane || cfg.EnableDNS {
 		netAdminClient, err = netadmin.NewClient(cfg.NetAdminSocketPath, 5*time.Second)
 		if err != nil {
 			logger.Error("creating privileged helper client failed", "error", err)
@@ -121,43 +121,32 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
-	if cfg.EnableTUNPOC || cfg.EnableWireGuardPOC {
-		if cfg.EnableWireGuardPOC {
-			engine, err := dataplane.NewWireGuardWithObserver(
-				netAdminClient,
-				cfg.WireGuardListenPort,
-				flowReporter,
-			)
-			if err != nil {
-				logger.Error("creating wireguard poc failed", "error", err)
+	if cfg.EnableDataPlane {
+		engine, err := dataplane.NewWireGuardWithObserver(
+			netAdminClient,
+			cfg.WireGuardListenPort,
+			flowReporter,
+		)
+		if err != nil {
+			logger.Error("creating encrypted data plane failed", "error", err)
 
-				return 1
-			}
-			daemonOptions.DataPlane = engine
-			logger.Warn(
-				"direct wireguard poc enabled",
-				"socket", cfg.NetAdminSocketPath,
-				"listen_port", cfg.WireGuardListenPort,
+			return 1
+		}
+		daemonOptions.DataPlane = engine
+		logger.Info(
+			"encrypted data plane enabled",
+			"socket", cfg.NetAdminSocketPath,
+			"listen_port", cfg.WireGuardListenPort,
+		)
+		if flowReporter != nil {
+			logger.Info(
+				"header-only flow logging enabled",
+				"origin", cfg.FlowLogURL,
+				"interval", cfg.FlowLogInterval,
 			)
-			if flowReporter != nil {
-				logger.Warn(
-					"header-only flow logging enabled",
-					"origin", cfg.FlowLogURL,
-					"interval", cfg.FlowLogInterval,
-				)
-			}
-		} else {
-			engine, err := dataplane.New(netAdminClient)
-			if err != nil {
-				logger.Error("creating tun poc failed", "error", err)
-
-				return 1
-			}
-			daemonOptions.DataPlane = engine
-			logger.Warn("tun poc enabled without packet forwarding", "socket", cfg.NetAdminSocketPath)
 		}
 	}
-	if cfg.EnableDNSPOC {
+	if cfg.EnableDNS {
 		resolver, err := dnsconfig.NewServer(netAdminClient)
 		if err != nil {
 			logger.Error("creating local dns resolver failed", "error", err)
@@ -177,10 +166,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		daemonOptions.DNS = dnsManager
-		logger.Warn("MagicDNS poc enabled", "socket", cfg.NetAdminSocketPath)
+		logger.Info("MagicDNS enabled", "socket", cfg.NetAdminSocketPath)
 	}
 	var networkMonitor *netwatch.Monitor
-	if cfg.EnableWireGuardPOC {
+	if cfg.EnableDataPlane {
 		networkMonitor, err = netwatch.New(netwatch.Options{
 			Logger:             logger,
 			ExcludedInterfaces: []string{"mesh0", "meshdns0"},
@@ -215,17 +204,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	allowedUIDs := append([]uint32{0, daemonUID}, cfg.AllowedUIDs...)
 	server, err := localapi.New(service, logger, localapi.Options{
-		AllowedUIDs:                    allowedUIDs,
-		AllowSocketPeers:               cfg.AllowSocketPeers,
-		UnsafeAllowUnverifiedLocalPeer: cfg.UnsafeAllowUnverifiedLocalPeer,
+		AllowedUIDs:      allowedUIDs,
+		AllowSocketPeers: cfg.AllowSocketPeers,
 	})
 	if err != nil {
 		logger.Error("creating local api failed", "error", err)
 
 		return 1
-	}
-	if cfg.UnsafeAllowUnverifiedLocalPeer {
-		logger.Warn("unsafe local peer authorization is enabled")
 	}
 	listener, err := socket.Listen(cfg.SocketPath)
 	if err != nil {

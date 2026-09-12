@@ -1,4 +1,4 @@
-.PHONY: build test race vet lint scan-secrets package-deb audit-deb clean
+.PHONY: build test race vet lint scan-secrets audit-release package-deb audit-deb clean
 
 VERSION ?= 0.1.0~dev
 ARCH ?= amd64
@@ -22,6 +22,9 @@ lint:
 
 scan-secrets:
 	bash tools/security/scan-secrets.sh
+
+audit-release: build
+	bash tools/security/audit-release-binary.sh bin/meshd bin/meshnetd
 
 package-deb:
 	bash packaging/linux/build-deb.sh "$(VERSION)" "$(ARCH)" dist

@@ -117,7 +117,7 @@ Packet payloads are not an observability asset and must not be collected.
 
 ## Known gaps before production
 
-- macOS peer credentials and Windows named-pipe authorization are not implemented. Both remain fail closed unless an explicit unsafe development override is enabled; that override is forbidden in production.
+- macOS peer credentials and Windows named-pipe authorization are not implemented. Both remain fail closed, and daemon binaries contain no unverified-peer override.
 - Linux identity records are host-key encrypted, but TPM binding, key rotation,
   recovery credentials, and encrypted backup handling are not implemented. A
   root attacker that can obtain the systemd host key remains able to decrypt
@@ -128,7 +128,7 @@ Packet payloads are not an observability asset and must not be collected.
 - Capability grants are retained outside network permissions and are not implemented for general application authorization. Host-level TCP/UDP ports and ICMP are enforced; capability selectors, subnet/exit forwarding policy, fragment reassembly, and narrow port semantics for other transports remain fail closed.
 - The initial fingerprint must be obtained through an independent trusted channel. A fingerprint printed by `doctor control` on the same potentially compromised path provides only trust on first use.
 - Expired node keys and changed control keys fail closed. A continuity-preserving rotation and renewal protocol is not implemented.
-- Privilege separation, pool-confined host-route transactions, Linux DNS activation, packet encryption, bounded relay transport, endpoint discovery/publication, health-gated home-relay reporting, live authenticated probe transport, and authenticated direct-path switching are POC-only. Traffic-aware probe suppression, IPv6-only underlay certification, subnet/exit route transactions, firewall enforcement, and rollback after abrupt kernel or process termination remain production gaps.
+- Privilege separation, pool-confined host-route transactions, Linux DNS activation, packet encryption, bounded relay transport, endpoint discovery/publication, health-gated home-relay reporting, live authenticated probe transport, and authenticated direct-path switching are implemented but remain release-ineligible until the native candidate gates pass. Traffic-aware probe suppression, IPv6-only underlay certification, subnet/exit route transactions, firewall enforcement, and rollback after abrupt kernel or process termination remain production gaps.
 - A packet-parser fuzz target, bounded malformed/fragment tests, deterministic adversarial relay tests, and one bounded live two-node policy matrix are present. Extended fuzz campaigns, long-duration relay saturation tests, repeated policy matrices from immutable candidate artifacts, and cross-platform policy qualification remain release gates.
 - Flow delivery has scoped HMAC authentication and bounded memory, but durable client WAL, credential rotation, application-level encryption, retention/deletion policy, per-tenant query authorization, and tamper-evident storage are not implemented.
 - Windows named-pipe and macOS local-credential transports are not implemented.
