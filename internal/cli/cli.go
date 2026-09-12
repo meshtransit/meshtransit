@@ -452,12 +452,13 @@ func runStatus(
 	}
 	_, _ = fmt.Fprintf(
 		stdout,
-		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nPeers: %d\nPeer paths: %s\nRelay: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
+		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nPeers: %d\nPeer paths: %s\nRelay: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
 		status.Daemon.Version,
 		status.State,
 		status.DataPlane,
 		status.DNS,
 		formatNetworkChangeStatus(status.NetworkChanges),
+		formatRuntimeRecoveryStatus(status.RuntimeRecovery),
 		formatRuntimeStatus(status.Runtime),
 		activeProfile,
 		status.ProfileCount,
@@ -476,6 +477,24 @@ func runStatus(
 	)
 
 	return 0
+}
+
+func formatRuntimeRecoveryStatus(status *localapi.RuntimeRecoveryStatus) string {
+	if status == nil {
+		return "unavailable"
+	}
+
+	state := "idle"
+	if status.Pending {
+		state = "pending"
+	}
+
+	return fmt.Sprintf(
+		"%s (failures: %d, recoveries: %d)",
+		state,
+		status.Failures,
+		status.Recoveries,
+	)
 }
 
 func formatNetworkChangeStatus(status localapi.NetworkChangeStatus) string {

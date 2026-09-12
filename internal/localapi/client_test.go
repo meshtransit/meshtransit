@@ -63,6 +63,7 @@ func TestClient_Status(t *testing.T) {
 	"paths":{"available":true,"peer_count":2,"direct_count":1,"relay_count":1,"pending_count":0},
 	"relay":{"available":true,"home_region":7,"active_regions":2,"connected_regions":1,"regions":[{"region_id":7,"connected":true,"consecutive_failures":0}]},
 	"network_changes":{"available":true,"observed":4,"endpoint_refreshes":3},
+	"runtime_recovery":{"failures":4,"recoveries":3,"pending":true},
 	"runtime":{"goroutines":11,"heap_alloc_bytes":12582912,"heap_in_use_bytes":13631488,"heap_objects":1200,"stack_in_use_bytes":1048576,"sys_bytes":25165824,"gc_cycles":7},
   "compatibility_note":"foundation only"
 }`), nil
@@ -96,10 +97,34 @@ func TestClient_Status(t *testing.T) {
 		status.NetworkChanges.EndpointRefreshes != 3 {
 		t.Fatalf("Status().NetworkChanges = %#v, want four changes and three refreshes", status.NetworkChanges)
 	}
+	if status.RuntimeRecovery == nil || status.RuntimeRecovery.Failures != 4 ||
+		status.RuntimeRecovery.Recoveries != 3 || !status.RuntimeRecovery.Pending {
+		t.Fatalf("Status().RuntimeRecovery = %#v, want one pending recovery", status.RuntimeRecovery)
+	}
 	if status.Runtime == nil || status.Runtime.Goroutines != 11 ||
 		status.Runtime.HeapAllocBytes != 12582912 || status.Runtime.HeapObjects != 1200 ||
 		status.Runtime.SysBytes != 25165824 || status.Runtime.GCCycles != 7 {
 		t.Fatalf("Status().Runtime = %#v, want aggregate runtime health", status.Runtime)
+	}
+}
+
+func TestClient_StatusAcceptsOlderDaemonWithoutRuntimeRecovery(t *testing.T) {
+	t.Parallel()
+
+	client := newTestClient(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{
+  "api_version":"v1",
+  "daemon":{"version":"dev","commit":"none","date":"unknown"},
+  "state":"offline"
+}`), nil
+	})
+
+	status, err := client.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if status.RuntimeRecovery != nil {
+		t.Fatalf("Status().RuntimeRecovery = %#v, want unavailable", status.RuntimeRecovery)
 	}
 }
 

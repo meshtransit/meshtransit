@@ -11,6 +11,7 @@ State: offline
 Data plane: not_implemented
 DNS: not_implemented
 Network changes: unavailable
+Runtime recovery: unavailable
 Runtime: unavailable
 Active profile: none
 Profiles: 0
@@ -82,7 +83,7 @@ environment variables and are not persisted by either process.
 
 Creating a profile does not accept a network ID. The control plane derives and authorizes network membership from the registration or session credential.
 
-After registration, `meshd` automatically maintains the active profile's control-map stream. `meshctl status` reports synchronization, the latest validated revision, aggregate direct/relay path counts, redacted relay health, aggregate host-network-change/endpoint-refresh counters, and bounded process-wide runtime health. It does not expose stack traces, allocation profiles, peer public keys, endpoint addresses, host interface addresses, raw route topology, raw policy, or registration handles.
+After registration, `meshd` automatically maintains the active profile's control-map stream. `meshctl status` reports synchronization, the latest validated revision, aggregate direct/relay path counts, redacted relay health, aggregate host-network-change/endpoint-refresh counters, process-local runtime-recovery state, and bounded process-wide runtime health. Older v1 daemons that do not expose recovery state remain compatible and are shown as `unavailable`. Status does not expose stack traces, allocation profiles, peer public keys, endpoint addresses, host interface addresses, raw route topology, raw policy, or registration handles.
 
 ## Security boundary
 

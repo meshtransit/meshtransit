@@ -24,3 +24,5 @@ All notable user-visible changes will be documented in this file.
 - Aggregate direct/relay path counts and redacted relay-region health.
 - Aggregate host-network-change and completed endpoint-refresh status counters.
 - Aggregate daemon runtime health in human-readable and JSON status output.
+- Process-local runtime failure, completed recovery, and pending status with
+  backward-compatible handling of older v1 daemons.

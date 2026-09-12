@@ -68,6 +68,11 @@ func TestRun_Status(t *testing.T) {
 				Observed:          4,
 				EndpointRefreshes: 3,
 			},
+			RuntimeRecovery: &localapi.RuntimeRecoveryStatus{
+				Failures:   4,
+				Recoveries: 3,
+				Pending:    true,
+			},
 			Runtime: &localapi.RuntimeStatus{
 				Goroutines:     11,
 				HeapAllocBytes: 12582912,
@@ -94,6 +99,7 @@ func TestRun_Status(t *testing.T) {
 		"Data plane: not_implemented",
 		"DNS: not_implemented",
 		"Network changes: 4 observed (3 endpoint refreshes)",
+		"Runtime recovery: pending (failures: 4, recoveries: 3)",
 		"Runtime: 11 goroutines, 12.0 MiB heap allocated, 24.0 MiB system, 7 GC cycles",
 		"Active profile: none",
 		"Control session: synchronized",
@@ -108,6 +114,79 @@ func TestRun_Status(t *testing.T) {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("status output %q does not contain %q", stdout.String(), expected)
 		}
+	}
+}
+
+func TestRun_StatusJSONIncludesRuntimeRecovery(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeClient{
+		status: localapi.Status{
+			APIVersion: "v1",
+			RuntimeRecovery: &localapi.RuntimeRecoveryStatus{
+				Failures:   1,
+				Recoveries: 1,
+			},
+		},
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exitCode := Run(
+		t.Context(),
+		[]string{"--json", "status"},
+		stdout,
+		stderr,
+		testOptions(client),
+	)
+	if exitCode != 0 {
+		t.Fatalf("Run() exit code = %d, want 0; stderr=%s", exitCode, stderr.String())
+	}
+
+	status := localapi.Status{}
+	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if status.RuntimeRecovery == nil || status.RuntimeRecovery.Failures != 1 ||
+		status.RuntimeRecovery.Recoveries != 1 || status.RuntimeRecovery.Pending {
+		t.Fatalf("JSON runtime recovery = %#v", status.RuntimeRecovery)
+	}
+}
+
+func TestFormatRuntimeRecoveryStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		status *localapi.RuntimeRecoveryStatus
+		want   string
+	}{
+		{
+			name: "unavailable from older daemon",
+			want: "unavailable",
+		},
+		{
+			name:   "idle",
+			status: &localapi.RuntimeRecoveryStatus{},
+			want:   "idle (failures: 0, recoveries: 0)",
+		},
+		{
+			name: "pending",
+			status: &localapi.RuntimeRecoveryStatus{
+				Failures:   4,
+				Recoveries: 3,
+				Pending:    true,
+			},
+			want: "pending (failures: 4, recoveries: 3)",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := formatRuntimeRecoveryStatus(test.status); got != test.want {
+				t.Fatalf("formatRuntimeRecoveryStatus() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
