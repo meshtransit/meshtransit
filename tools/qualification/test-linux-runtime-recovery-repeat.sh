@@ -44,6 +44,19 @@ if "${harness}" __validate-positive-integer iterations invalid 20 2>/dev/null; t
   exit 1
 fi
 
+normalized_routes="$(printf '%s\n' \
+  '100.64.0.2/32 scope link' \
+  'fd7a:115c:a1e0::2 proto kernel metric 256 pref medium' \
+  'fe80::/64 proto kernel metric 256 pref medium' |
+  "${harness}" __normalize-routes)"
+grep -Fq -- '100.64.0.2/32 scope link' <<<"${normalized_routes}"
+grep -Fq -- 'fd7a:115c:a1e0::2 proto kernel metric 256 pref medium' \
+  <<<"${normalized_routes}"
+if grep -Fq -- 'fe80::/64' <<<"${normalized_routes}"; then
+  printf 'kernel link-local route was not normalized\n' >&2
+  exit 1
+fi
+
 jq -n '
   {
     schema: "meshtransit.linux-runtime-recovery-qualification/v1",

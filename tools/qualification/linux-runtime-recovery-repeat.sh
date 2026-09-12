@@ -252,7 +252,14 @@ route_digest() {
   {
     ip -4 route show table main dev "${interface_name}" 2>/dev/null || true
     ip -6 route show table main dev "${interface_name}" 2>/dev/null || true
-  } | sort | sha256sum | awk '{print $1}'
+  } | normalize_routes | sort | sha256sum | awk '{print $1}'
+}
+
+normalize_routes() {
+  # The kernel-owned IPv6 link-local route follows address generation and DAD,
+  # so its presence is not an overlay-route invariant. All other routes remain
+  # byte-for-byte inputs to the digest.
+  awk '$1 != "fe80::/64" && NF { print }'
 }
 
 dns_digest() {
@@ -893,6 +900,10 @@ case "${1:-}" in
   __validate-sample-identity)
     [[ $# -eq 8 ]] || fail "__validate-sample-identity requires REPORT LABEL VERSION COMMIT SHA256_JSON KERNEL ARCH"
     sample_identity_matches "$2" "$3" "$4" "$5" "$6" "$7" "$8"
+    ;;
+  __normalize-routes)
+    [[ $# -eq 1 ]] || fail "__normalize-routes takes no arguments"
+    normalize_routes
     ;;
   __validate-report)
     [[ $# -eq 2 ]] || fail "__validate-report requires one report path"

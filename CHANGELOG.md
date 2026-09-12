@@ -54,7 +54,8 @@ All notable user-visible changes will be documented in this file.
   in-process TUN and DNS recovery without a service restart.
 - Fail-fast repeated Linux local-runtime recovery qualification with per-sample
   resource invariants, bounded kernel-resource convergence, and redacted
-  nearest-rank p95 recovery timings.
+  nearest-rank p95 recovery timings; route comparison excludes only the
+  kernel-generated IPv6 link-local route.
 
 ### Changed
 

@@ -296,7 +296,9 @@ recovery. Transient kernel route or link convergence is given a bounded
 five-second window; the report retains both the initial failure codes and the
 time until all invariants become stable. Its report contains the redacted child
 evidence and nearest-rank p95 times for observing the failure and returning to
-synchronized service.
+synchronized service. The route digest covers overlay and peer routes but
+excludes the kernel-generated IPv6 link-local route, whose DAD timing is not
+controlled by MeshTransit.
 
 ## Run a fixed-topology soak
 
