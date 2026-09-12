@@ -183,7 +183,10 @@ An interrupted `rotate` is resumable: the recovery copy is made durable before
 the primary credential is replaced, and rerunning `rotate` activates that exact
 copy instead of generating another key. An interrupted `finalize` leaves either
 the verified two-key credential or the verified active key as the complete
-primary file. Never delete the `.recovery` file manually.
+primary file. Repeating `rotate`, `finalize`, or `commit` verifies and accepts
+the corresponding completed transaction state, so an error after directory
+`fsync` does not require manual file changes. Missing or mismatched recovery
+state still fails closed. Never delete the `.recovery` file manually.
 
 Normal removal stops the services, removes their volatile sockets, and
 preserves identity state, the encrypted credential, and the root-owned

@@ -148,8 +148,9 @@ Linux, a root-only `meshcred` one-shot creates a host-encrypted systemd
 credential once; systemd decrypts it only into the private credential mount of
 `meshd.service`. Treat `/var/lib/meshd`, `/etc/credstore.encrypted`, and their
 backups as sensitive. The current host-key backend does not protect a machine
-after full root or host-key compromise, and TPM binding, key rotation, and
-encrypted backup recovery remain production gates.
+after full root or host-key compromise, and TPM binding, native power-loss
+qualification of key rotation, and encrypted backup recovery remain production
+gates.
 
 ## Contributing
 

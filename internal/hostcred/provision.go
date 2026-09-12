@@ -32,6 +32,14 @@ type commandRunner func(
 	io.Writer,
 ) error
 
+type fileOperations struct {
+	link     func(string, string) error
+	rename   func(string, string) error
+	remove   func(string) error
+	syncFile func(string) error
+	syncDir  func(string) error
+}
+
 // Config contains the fixed provisioning boundaries. Non-default values are
 // intended for deterministic tests, not the packaged command.
 type Config struct {
@@ -39,6 +47,7 @@ type Config struct {
 	RecoveryPath string
 	Random       io.Reader
 	run          commandRunner
+	files        fileOperations
 }
 
 // Provision creates the encrypted host credential once, verifies that systemd
@@ -89,11 +98,32 @@ func normalizeConfig(cfg Config) (Config, error) {
 	if cfg.run == nil {
 		cfg.run = runCommand
 	}
+	cfg.files = normalizeFileOperations(cfg.files)
 	if err := validateConfig(cfg); err != nil {
 		return Config{}, err
 	}
 
 	return cfg, nil
+}
+
+func normalizeFileOperations(files fileOperations) fileOperations {
+	if files.link == nil {
+		files.link = os.Link
+	}
+	if files.rename == nil {
+		files.rename = os.Rename
+	}
+	if files.remove == nil {
+		files.remove = os.Remove
+	}
+	if files.syncFile == nil {
+		files.syncFile = syncRegularFile
+	}
+	if files.syncDir == nil {
+		files.syncDir = syncDirectory
+	}
+
+	return files
 }
 
 func prepareBackend(ctx context.Context, cfg Config) error {
@@ -159,19 +189,19 @@ func createCredential(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.Remove(temporaryPath) }()
-	if err := os.Link(temporaryPath, cfg.Path); err != nil {
+	defer func() { _ = cfg.files.remove(temporaryPath) }()
+	if err := cfg.files.link(temporaryPath, cfg.Path); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return verifyExisting(ctx, cfg)
 		}
 
 		return fmt.Errorf("installing encrypted identity credential: %w", err)
 	}
-	if err := os.Remove(temporaryPath); err != nil {
+	if err := cfg.files.remove(temporaryPath); err != nil {
 		return fmt.Errorf("removing linked credential temporary file: %w", err)
 	}
 
-	return syncDirectory(filepath.Dir(cfg.Path))
+	return cfg.files.syncDir(filepath.Dir(cfg.Path))
 }
 
 func verifyExisting(ctx context.Context, cfg Config) error {

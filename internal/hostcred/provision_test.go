@@ -159,6 +159,47 @@ func TestProvisionRoundTripFailureLeavesNoCredential(t *testing.T) {
 	}
 }
 
+func TestProvisionRetriesAfterDirectorySyncFailure(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, fileName)
+	key := bytes.Repeat([]byte{0x75}, secretstore.KeySize)
+	runner := &fakeRunner{}
+	errInjectedSync := errors.New("injected directory sync failure")
+	cfg := Config{
+		Path:   path,
+		Random: bytes.NewReader(key),
+		run:    runner.Run,
+		files: fileOperations{
+			syncDir: func(string) error {
+				return errInjectedSync
+			},
+		},
+	}
+	if err := Provision(t.Context(), cfg); !errors.Is(err, errInjectedSync) {
+		t.Fatalf("Provision(faulted) error = %v, want injected sync error", err)
+	}
+	if got := readFakeEncryptedCredential(t, path); !bytes.Equal(got, key) {
+		clear(got)
+		t.Fatal("faulted provision did not leave the verified credential")
+	} else {
+		clear(got)
+	}
+
+	cfg.files.syncDir = nil
+	if err := Provision(t.Context(), cfg); err != nil {
+		t.Fatalf("Provision(retry) error = %v", err)
+	}
+	if runner.encryptCalls != 1 || runner.decryptCalls != 2 {
+		t.Fatalf(
+			"retry calls encrypt=%d decrypt=%d, want 1/2",
+			runner.encryptCalls,
+			runner.decryptCalls,
+		)
+	}
+}
+
 func TestProvisionHonorsCancellation(t *testing.T) {
 	t.Parallel()
 

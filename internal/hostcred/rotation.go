@@ -33,7 +33,8 @@ type ActiveVerifier func(context.Context, []byte) error
 
 // Rotate stages a fresh active key with the current key as its read-only
 // fallback. A verified host-encrypted recovery copy is installed before the
-// primary credential is atomically replaced.
+// primary credential is atomically replaced. Retrying a fully staged rotation
+// verifies the primary and recovery pair without generating another key.
 func Rotate(ctx context.Context, cfg Config) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("rotating host credential: %w", err)
@@ -57,7 +58,14 @@ func Rotate(ctx context.Context, cfg Config) error {
 		return ErrRecoveryInvalid
 	}
 	if hasFallback {
-		return ErrRotationPending
+		// A caller can lose the successful return after the primary rename but
+		// before the directory sync completes. Treat the fully verified staged
+		// state as success so retrying Rotate is safe.
+		if err := verifyRecoveryMatches(ctx, cfg, current); err != nil {
+			return err
+		}
+
+		return cfg.files.syncDir(filepath.Dir(cfg.Path))
 	}
 
 	if _, err := os.Lstat(cfg.RecoveryPath); err == nil {
@@ -83,22 +91,22 @@ func Rotate(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.Remove(temporaryPath) }()
-	if err := os.Link(temporaryPath, cfg.RecoveryPath); err != nil {
+	defer func() { _ = cfg.files.remove(temporaryPath) }()
+	if err := cfg.files.link(temporaryPath, cfg.RecoveryPath); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return ErrRecoveryInvalid
 		}
 
 		return fmt.Errorf("installing identity-key recovery copy: %w", err)
 	}
-	if err := syncDirectory(filepath.Dir(cfg.Path)); err != nil {
+	if err := cfg.files.syncDir(filepath.Dir(cfg.Path)); err != nil {
 		return err
 	}
-	if err := os.Rename(temporaryPath, cfg.Path); err != nil {
+	if err := cfg.files.rename(temporaryPath, cfg.Path); err != nil {
 		return fmt.Errorf("activating identity-key rotation credential: %w", err)
 	}
 
-	return syncDirectory(filepath.Dir(cfg.Path))
+	return cfg.files.syncDir(filepath.Dir(cfg.Path))
 }
 
 func resumeRotation(ctx context.Context, cfg Config, current []byte) error {
@@ -112,12 +120,13 @@ func resumeRotation(ctx context.Context, cfg Config, current []byte) error {
 		return ErrRecoveryInvalid
 	}
 
-	return replaceWithLinkedCopy(cfg.RecoveryPath, cfg.Path)
+	return replaceWithLinkedCopy(cfg, cfg.RecoveryPath, cfg.Path)
 }
 
 // Finalize removes the fallback from the primary credential only after the
 // caller proves that every identity is readable by the active key. The durable
-// recovery copy remains until Commit succeeds.
+// recovery copy remains until Commit succeeds. A retry after primary replacement
+// verifies the finalized key against that recovery copy.
 func Finalize(ctx context.Context, cfg Config, verify ActiveVerifier) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("finalizing host credential rotation: %w", err)
@@ -144,7 +153,7 @@ func Finalize(ctx context.Context, cfg Config, verify ActiveVerifier) error {
 		return ErrRecoveryInvalid
 	}
 	if !hasFallback {
-		return ErrRotationNotPending
+		return verifyFinalizedRotation(ctx, cfg, current, verify)
 	}
 	if err := verifyRecoveryMatches(ctx, cfg, current); err != nil {
 		return err
@@ -163,17 +172,17 @@ func Finalize(ctx context.Context, cfg Config, verify ActiveVerifier) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.Remove(temporaryPath) }()
-	if err := os.Rename(temporaryPath, cfg.Path); err != nil {
+	defer func() { _ = cfg.files.remove(temporaryPath) }()
+	if err := cfg.files.rename(temporaryPath, cfg.Path); err != nil {
 		return fmt.Errorf("finalizing identity-key credential: %w", err)
 	}
 
-	return syncDirectory(filepath.Dir(cfg.Path))
+	return cfg.files.syncDir(filepath.Dir(cfg.Path))
 }
 
 // Commit removes the recovery copy after both the active credential and every
 // identity record have been verified. It is the only operation that deletes
-// fallback key material.
+// fallback key material. A retry after removal revalidates the active identities.
 func Commit(ctx context.Context, cfg Config, verify ActiveVerifier) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("committing host credential rotation: %w", err)
@@ -205,7 +214,14 @@ func Commit(ctx context.Context, cfg Config, verify ActiveVerifier) error {
 
 	recovery, err := decryptCredential(ctx, cfg, cfg.RecoveryPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return ErrRecoveryMissing
+		// Removal precedes the final directory sync. If that sync fails, the
+		// caller must be able to retry Commit without recreating fallback
+		// material. Revalidate the active state and accept the completed form.
+		if err := verify(ctx, current); err != nil {
+			return fmt.Errorf("verifying identities with active key: %w", err)
+		}
+
+		return cfg.files.syncDir(filepath.Dir(cfg.Path))
 	}
 	if err != nil {
 		return fmt.Errorf("validating identity-key recovery copy: %w", err)
@@ -226,7 +242,7 @@ func Commit(ctx context.Context, cfg Config, verify ActiveVerifier) error {
 	if err := verify(ctx, current); err != nil {
 		return fmt.Errorf("verifying identities with active key: %w", err)
 	}
-	if err := os.Remove(cfg.RecoveryPath); err != nil {
+	if err := cfg.files.remove(cfg.RecoveryPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrRecoveryMissing
 		}
@@ -234,7 +250,7 @@ func Commit(ctx context.Context, cfg Config, verify ActiveVerifier) error {
 		return fmt.Errorf("removing identity-key recovery copy: %w", err)
 	}
 
-	return syncDirectory(filepath.Dir(cfg.Path))
+	return cfg.files.syncDir(filepath.Dir(cfg.Path))
 }
 
 // Recover atomically restores the verified host-encrypted recovery copy as the
@@ -274,7 +290,7 @@ func Recover(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("inspecting primary identity credential: %w", err)
 	}
 
-	return replaceWithLinkedCopy(cfg.RecoveryPath, cfg.Path)
+	return replaceWithLinkedCopy(cfg, cfg.RecoveryPath, cfg.Path)
 }
 
 func verifyRecoveryMatches(ctx context.Context, cfg Config, current []byte) error {
@@ -292,6 +308,40 @@ func verifyRecoveryMatches(ctx context.Context, cfg Config, current []byte) erro
 	}
 
 	return nil
+}
+
+func verifyFinalizedRotation(
+	ctx context.Context,
+	cfg Config,
+	current []byte,
+	verify ActiveVerifier,
+) error {
+	recovery, err := decryptCredential(ctx, cfg, cfg.RecoveryPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return ErrRotationNotPending
+	}
+	if err != nil {
+		return fmt.Errorf("validating identity-key recovery copy: %w", err)
+	}
+	defer clear(recovery)
+	hasFallback, err := secretstore.CredentialHasFallback(recovery)
+	if err != nil || !hasFallback {
+		return ErrRecoveryInvalid
+	}
+	recoveryActive, err := secretstore.CopyActiveKey(recovery)
+	if err != nil {
+		return ErrRecoveryInvalid
+	}
+	defer clear(recoveryActive)
+	if len(current) != len(recoveryActive) ||
+		subtle.ConstantTimeCompare(current, recoveryActive) != 1 {
+		return ErrRecoveryInvalid
+	}
+	if err := verify(ctx, current); err != nil {
+		return fmt.Errorf("verifying identities with active key: %w", err)
+	}
+
+	return cfg.files.syncDir(filepath.Dir(cfg.Path))
 }
 
 func decryptCredential(ctx context.Context, cfg Config, path string) ([]byte, error) {
@@ -336,17 +386,17 @@ func encryptTemporary(ctx context.Context, cfg Config, plaintext []byte) (string
 	}
 	temporaryPath := temporary.Name()
 	if err := temporary.Close(); err != nil {
-		_ = os.Remove(temporaryPath)
+		_ = cfg.files.remove(temporaryPath)
 
 		return "", fmt.Errorf("closing encrypted credential reservation: %w", err)
 	}
-	if err := os.Remove(temporaryPath); err != nil {
+	if err := cfg.files.remove(temporaryPath); err != nil {
 		return "", fmt.Errorf("releasing encrypted credential reservation: %w", err)
 	}
 	removeOnError := true
 	defer func() {
 		if removeOnError {
-			_ = os.Remove(temporaryPath)
+			_ = cfg.files.remove(temporaryPath)
 		}
 	}()
 
@@ -376,7 +426,7 @@ func encryptTemporary(ctx context.Context, cfg Config, plaintext []byte) (string
 	if err := os.Chmod(temporaryPath, 0o600); err != nil {
 		return "", fmt.Errorf("restricting encrypted identity credential: %w", err)
 	}
-	if err := syncRegularFile(temporaryPath); err != nil {
+	if err := cfg.files.syncFile(temporaryPath); err != nil {
 		return "", err
 	}
 	if err := verifyCredential(ctx, cfg, temporaryPath, plaintext); err != nil {
@@ -388,29 +438,29 @@ func encryptTemporary(ctx context.Context, cfg Config, plaintext []byte) (string
 	return temporaryPath, nil
 }
 
-func replaceWithLinkedCopy(source, destination string) error {
+func replaceWithLinkedCopy(cfg Config, source, destination string) error {
 	temporary, err := os.CreateTemp(filepath.Dir(destination), ".meshd.identity-key-link-*.tmp")
 	if err != nil {
 		return fmt.Errorf("reserving credential recovery path: %w", err)
 	}
 	temporaryPath := temporary.Name()
 	if err := temporary.Close(); err != nil {
-		_ = os.Remove(temporaryPath)
+		_ = cfg.files.remove(temporaryPath)
 
 		return fmt.Errorf("closing credential recovery reservation: %w", err)
 	}
-	if err := os.Remove(temporaryPath); err != nil {
+	if err := cfg.files.remove(temporaryPath); err != nil {
 		return fmt.Errorf("releasing credential recovery reservation: %w", err)
 	}
-	defer func() { _ = os.Remove(temporaryPath) }()
-	if err := os.Link(source, temporaryPath); err != nil {
+	defer func() { _ = cfg.files.remove(temporaryPath) }()
+	if err := cfg.files.link(source, temporaryPath); err != nil {
 		return fmt.Errorf("linking credential recovery copy: %w", err)
 	}
-	if err := os.Rename(temporaryPath, destination); err != nil {
+	if err := cfg.files.rename(temporaryPath, destination); err != nil {
 		return fmt.Errorf("restoring credential recovery copy: %w", err)
 	}
 
-	return syncDirectory(filepath.Dir(destination))
+	return cfg.files.syncDir(filepath.Dir(destination))
 }
 
 func syncRegularFile(path string) (syncErr error) {

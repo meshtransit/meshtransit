@@ -52,6 +52,10 @@ All notable user-visible changes will be documented in this file.
 
 ### Changed
 
+- Linux host-credential provisioning and staged key rotation now tolerate an
+  ambiguous return after directory synchronization: retries verify and accept
+  the completed state without generating another key or deleting recovery
+  material early.
 - Top-level online status now reflects a synchronized control session even for
   a peerless Network; data-plane and DNS readiness remain separate fields.
 - Compatible peer and policy changes now replace WireGuard peers, relay peer
