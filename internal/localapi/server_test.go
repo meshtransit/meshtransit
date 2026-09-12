@@ -53,7 +53,9 @@ func TestServer_ProfileLifecycle(t *testing.T) {
 		status.PolicyRuleCount != 0 || status.PeerPaths.Available ||
 		status.Relay.Available || status.Relay.ActiveRegions != 0 ||
 		status.Relay.ConnectedRegions != 0 || status.NetworkChanges.Available ||
-		status.NetworkChanges.Observed != 0 || status.NetworkChanges.EndpointRefreshes != 0 {
+		status.NetworkChanges.Observed != 0 || status.NetworkChanges.EndpointRefreshes != 0 ||
+		status.RuntimeRecovery.Failures != 0 ||
+		status.RuntimeRecovery.Recoveries != 0 || status.RuntimeRecovery.Pending {
 		t.Fatalf("initial control sync = %#v, want inactive empty snapshot", status)
 	}
 
@@ -95,6 +97,19 @@ func TestServer_ProfileLifecycle(t *testing.T) {
 	}
 	if activeCount != 1 {
 		t.Fatalf("active profile count = %d, want 1", activeCount)
+	}
+}
+
+func TestMapRuntimeRecoveryStatus(t *testing.T) {
+	t.Parallel()
+
+	status := mapRuntimeRecoveryStatus(daemon.RuntimeRecoveryStatus{
+		Failures:   5,
+		Recoveries: 4,
+		Pending:    true,
+	})
+	if status.Failures != 5 || status.Recoveries != 4 || !status.Pending {
+		t.Fatalf("mapRuntimeRecoveryStatus() = %#v", status)
 	}
 }
 

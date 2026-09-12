@@ -15,33 +15,40 @@ type healthResponse struct {
 }
 
 type statusResponse struct {
-	APIVersion         string              `json:"api_version"`
-	Daemon             version.Info        `json:"daemon"`
-	State              string              `json:"state"`
-	DataPlane          string              `json:"data_plane"`
-	DNS                string              `json:"dns"`
-	ActiveProfileID    string              `json:"active_profile_id"`
-	ProfileCount       int                 `json:"profile_count"`
-	ControlTrust       string              `json:"control_trust"`
-	Registration       string              `json:"registration"`
-	ControlFingerprint string              `json:"control_key_fingerprint,omitempty"`
-	ControlSession     string              `json:"control_session"`
-	NetmapRevision     uint64              `json:"netmap_revision"`
-	NetworkName        string              `json:"network_name,omitempty"`
-	SelfAddresses      []string            `json:"self_addresses,omitempty"`
-	PeerCount          int                 `json:"peer_count"`
-	PolicyRuleCount    int                 `json:"policy_rule_count"`
-	PeerPaths          pathStatus          `json:"paths"`
-	Relay              relayStatus         `json:"relay"`
-	NetworkChanges     networkChangeStatus `json:"network_changes"`
-	Runtime            runtimeStatus       `json:"runtime"`
-	CompatibilityNote  string              `json:"compatibility_note"`
+	APIVersion         string                `json:"api_version"`
+	Daemon             version.Info          `json:"daemon"`
+	State              string                `json:"state"`
+	DataPlane          string                `json:"data_plane"`
+	DNS                string                `json:"dns"`
+	ActiveProfileID    string                `json:"active_profile_id"`
+	ProfileCount       int                   `json:"profile_count"`
+	ControlTrust       string                `json:"control_trust"`
+	Registration       string                `json:"registration"`
+	ControlFingerprint string                `json:"control_key_fingerprint,omitempty"`
+	ControlSession     string                `json:"control_session"`
+	NetmapRevision     uint64                `json:"netmap_revision"`
+	NetworkName        string                `json:"network_name,omitempty"`
+	SelfAddresses      []string              `json:"self_addresses,omitempty"`
+	PeerCount          int                   `json:"peer_count"`
+	PolicyRuleCount    int                   `json:"policy_rule_count"`
+	PeerPaths          pathStatus            `json:"paths"`
+	Relay              relayStatus           `json:"relay"`
+	NetworkChanges     networkChangeStatus   `json:"network_changes"`
+	RuntimeRecovery    runtimeRecoveryStatus `json:"runtime_recovery"`
+	Runtime            runtimeStatus         `json:"runtime"`
+	CompatibilityNote  string                `json:"compatibility_note"`
 }
 
 type networkChangeStatus struct {
 	Available         bool   `json:"available"`
 	Observed          uint64 `json:"observed"`
 	EndpointRefreshes uint64 `json:"endpoint_refreshes"`
+}
+
+type runtimeRecoveryStatus struct {
+	Failures   uint64 `json:"failures"`
+	Recoveries uint64 `json:"recoveries"`
+	Pending    bool   `json:"pending"`
 }
 
 type runtimeStatus struct {

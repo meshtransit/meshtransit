@@ -252,6 +252,10 @@ interrupts the delay. Control-key, registration, and malformed-map failures do
 not enter this loop and remain blocked for explicit repair. If runtime cleanup
 cannot be proven, the supervisor returns and process teardown owns the final
 cleanup attempt; it never retries in place with ambiguous state.
+The authenticated local status API exposes only process-local aggregate counts
+of accepted runtime failures and completed recoveries plus whether a recovery
+is pending. These counters reset with the daemon and contain no peer, address,
+route, DNS name, key, packet, or error-text data.
 
 Protocol structs remain inside the compatibility adapter. Each non-keepalive response is converted into a MeshTransit-owned candidate snapshot. Full and delta peer changes, named packet-filter updates, online state, relay topology, DNS configuration, and control time are applied to a clone. The candidate must pass identity, key, address, route, endpoint, policy, relay, DNS, cardinality, self-authorization, self-expiry, and registered-self-key checks before it atomically replaces the latest in-memory snapshot.
 

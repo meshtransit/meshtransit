@@ -577,6 +577,11 @@ func TestService_RunRecoversRuntimeApplyFailuresWithBoundedBackoff(t *testing.T)
 		status.DataPlane != string(dataplane.StateTUNReady) {
 		t.Fatalf("recovered status = %#v", status)
 	}
+	if status.RuntimeRecovery.Failures != 7 ||
+		status.RuntimeRecovery.Recoveries != 1 ||
+		status.RuntimeRecovery.Pending {
+		t.Fatalf("runtime recovery status = %#v", status.RuntimeRecovery)
+	}
 	if dataPlane.applyCalls != 8 || dataPlane.closeCalls != 7 {
 		t.Fatalf(
 			"runtime calls before shutdown apply=%d close=%d, want 8/7",
@@ -591,6 +596,89 @@ func TestService_RunRecoversRuntimeApplyFailuresWithBoundedBackoff(t *testing.T)
 	}
 	if dataPlane.closeCalls != 8 {
 		t.Fatalf("data plane close calls after shutdown = %d, want 8", dataPlane.closeCalls)
+	}
+}
+
+func TestService_RuntimeRecoveryStatusTracksPendingAndSuccess(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	service.dataPlane = &fakeDataPlane{
+		applyErrors: []error{errors.New("test helper temporarily unavailable")},
+	}
+	service.setSyncStatus(syncStatus{
+		state:     ControlSessionInactive,
+		dataPlane: string(dataplane.StateIdle),
+	})
+	retryStarted := make(chan struct{})
+	service.runtimeRetryDelay = func(time.Duration) time.Duration {
+		close(retryStarted)
+
+		return time.Hour
+	}
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	control.streamSnapshot = &networkmap.Snapshot{
+		Revision: 1,
+		Self: networkmap.Node{
+			Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	runResult := make(chan error, 1)
+	go func() { runResult <- service.Run(ctx) }()
+	select {
+	case <-retryStarted:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("timed out waiting for runtime recovery")
+	}
+
+	status, err := service.Status(t.Context())
+	if err != nil {
+		cancel()
+		t.Fatalf("Status() error = %v", err)
+	}
+	if status.ControlSession != ControlSessionConnecting ||
+		status.RuntimeRecovery.Failures != 1 ||
+		status.RuntimeRecovery.Recoveries != 0 ||
+		!status.RuntimeRecovery.Pending {
+		cancel()
+		t.Fatalf("pending runtime recovery status = %#v", status)
+	}
+
+	service.signalControlSync()
+	select {
+	case <-control.streamPublished:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("timed out waiting for recovered network snapshot")
+	}
+	status, err = service.Status(t.Context())
+	if err != nil {
+		cancel()
+		t.Fatalf("Status() after recovery error = %v", err)
+	}
+	if status.ControlSession != ControlSessionSynchronized ||
+		status.RuntimeRecovery.Failures != 1 ||
+		status.RuntimeRecovery.Recoveries != 1 ||
+		status.RuntimeRecovery.Pending {
+		cancel()
+		t.Fatalf("completed runtime recovery status = %#v", status)
+	}
+
+	cancel()
+	if err := <-runResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context cancellation", err)
 	}
 }
 
@@ -1732,6 +1820,25 @@ func TestService_StatusReportsNetworkChangeCounters(t *testing.T) {
 	if !status.NetworkChanges.Available || status.NetworkChanges.Observed != 4 ||
 		status.NetworkChanges.EndpointRefreshes != 3 {
 		t.Fatalf("network change status = %#v", status.NetworkChanges)
+	}
+}
+
+func TestService_StatusReportsRuntimeRecoveryCounters(t *testing.T) {
+	t.Parallel()
+
+	service, _, _, _, _ := newTestService(t)
+	service.runtimeFailures.Store(4)
+	service.runtimeRecoveries.Store(3)
+	service.runtimePending.Store(true)
+
+	status, err := service.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if status.RuntimeRecovery.Failures != 4 ||
+		status.RuntimeRecovery.Recoveries != 3 ||
+		!status.RuntimeRecovery.Pending {
+		t.Fatalf("runtime recovery status = %#v", status.RuntimeRecovery)
 	}
 }
 

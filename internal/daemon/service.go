@@ -111,14 +111,22 @@ type Status struct {
 	PeerPaths          dataplane.PeerPathSnapshot
 	Relay              relay.HealthSnapshot
 	NetworkChanges     NetworkChangeStatus
+	RuntimeRecovery    RuntimeRecoveryStatus
 	Runtime            runtimehealth.Snapshot
 }
 
-// NetworkChangeStatus contains process-local aggregate recovery counters.
+// NetworkChangeStatus contains process-local aggregate network-event counters.
 type NetworkChangeStatus struct {
 	Available         bool
 	Observed          uint64
 	EndpointRefreshes uint64
+}
+
+// RuntimeRecoveryStatus contains process-local aggregate recovery counters.
+type RuntimeRecoveryStatus struct {
+	Failures   uint64
+	Recoveries uint64
+	Pending    bool
 }
 
 // ControlProbe is the sanitized control compatibility result returned locally.
@@ -263,6 +271,9 @@ type Service struct {
 	discoveryScope       uint64
 	networkObserved      atomic.Uint64
 	networkRefreshes     atomic.Uint64
+	runtimeFailures      atomic.Uint64
+	runtimeRecoveries    atomic.Uint64
+	runtimePending       atomic.Bool
 }
 
 type syncStatus struct {
@@ -699,6 +710,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					} else if snapshot.DNS != nil {
 						dnsState = DNSPending
 					}
+					s.recordRuntimeRecovery()
 					s.setSyncStatus(syncStatus{
 						profileID:       active.ID,
 						state:           ControlSessionSynchronized,
@@ -789,6 +801,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				)
 			}
 			if recoverable {
+				s.runtimeFailures.Add(1)
+				s.runtimePending.Store(true)
 				runtimeRetry = runtimeRetryAfterSession(
 					runtimeRetry,
 					synchronizedAt,
@@ -1448,8 +1462,19 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 			Observed:          s.networkObserved.Load(),
 			EndpointRefreshes: s.networkRefreshes.Load(),
 		},
+		RuntimeRecovery: RuntimeRecoveryStatus{
+			Failures:   s.runtimeFailures.Load(),
+			Recoveries: s.runtimeRecoveries.Load(),
+			Pending:    s.runtimePending.Load(),
+		},
 		Runtime: runtimehealth.Read(),
 	}, nil
+}
+
+func (s *Service) recordRuntimeRecovery() {
+	if s.runtimePending.Swap(false) {
+		s.runtimeRecoveries.Add(1)
+	}
 }
 
 func (s *Service) dataPlaneStatus() (dataplane.PeerPathSnapshot, relay.HealthSnapshot) {

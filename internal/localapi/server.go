@@ -327,6 +327,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		PeerPaths:          mapPathStatus(status.PeerPaths),
 		Relay:              mapRelayStatus(status.Relay),
 		NetworkChanges:     mapNetworkChangeStatus(status.NetworkChanges),
+		RuntimeRecovery:    mapRuntimeRecoveryStatus(status.RuntimeRecovery),
 		Runtime:            mapRuntimeStatus(status.Runtime),
 		CompatibilityNote:  status.CompatibilityNote,
 	})
@@ -337,6 +338,14 @@ func mapNetworkChangeStatus(status daemon.NetworkChangeStatus) networkChangeStat
 		Available:         status.Available,
 		Observed:          status.Observed,
 		EndpointRefreshes: status.EndpointRefreshes,
+	}
+}
+
+func mapRuntimeRecoveryStatus(status daemon.RuntimeRecoveryStatus) runtimeRecoveryStatus {
+	return runtimeRecoveryStatus{
+		Failures:   status.Failures,
+		Recoveries: status.Recoveries,
+		Pending:    status.Pending,
 	}
 }
 
