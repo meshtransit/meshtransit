@@ -46,6 +46,31 @@ func TestProvisionCreatesAndReusesCredential(t *testing.T) {
 	}
 }
 
+func TestProvisionAcceptsRotatingCredential(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, fileName)
+	credential, err := secretstore.EncodeKeySet(
+		bytes.Repeat([]byte{0x73}, secretstore.KeySize),
+		bytes.Repeat([]byte{0x74}, secretstore.KeySize),
+	)
+	if err != nil {
+		t.Fatalf("EncodeKeySet() error = %v", err)
+	}
+	defer clear(credential)
+	if err := os.WriteFile(path, append([]byte("encrypted:"), credential...), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	runner := &fakeRunner{}
+	if err := Provision(t.Context(), Config{Path: path, run: runner.Run}); err != nil {
+		t.Fatalf("Provision() error = %v", err)
+	}
+	if runner.encryptCalls != 0 || runner.decryptCalls != 1 || runner.setupCalls != 1 {
+		t.Fatalf("calls = setup:%d encrypt:%d decrypt:%d", runner.setupCalls, runner.encryptCalls, runner.decryptCalls)
+	}
+}
+
 func TestProvisionRejectsUnsafeExistingCredential(t *testing.T) {
 	t.Parallel()
 

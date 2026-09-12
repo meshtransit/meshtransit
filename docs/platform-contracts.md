@@ -114,10 +114,19 @@ compatibility build retained as the rollback target, the migration stage now
 atomically protects legacy records on first read. New records never use the
 plaintext format.
 
+The next compatibility stage can read both the original single-key credential
+and a strictly bounded two-key rotation credential while continuing to
+provision only the original format. The first key is active for every new seal;
+the second key is read-only fallback material. Opening a record through the
+fallback forces a verified same-directory atomic rewrite with the active key.
+No packaged command creates, activates, or prunes a rotation credential yet,
+so deploying this reader alone does not alter rollback compatibility.
+
 The systemd host-key backend raises the cost of offline state disclosure but
 does not defend against an attacker with root access and the host credential
-key. TPM binding, key rotation, and encrypted backup recovery remain separate
-gates. Windows uses DPAPI or an equivalent service-identity-bound facility.
+key. TPM binding, activation and pruning of key rotation, and encrypted backup
+recovery remain separate gates. Windows uses DPAPI or an equivalent
+service-identity-bound facility.
 macOS uses Keychain access groups scoped to the signed product.
 
 ## Network-change monitor

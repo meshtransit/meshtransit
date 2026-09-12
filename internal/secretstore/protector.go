@@ -7,6 +7,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -18,9 +19,19 @@ import (
 
 const (
 	// KeySize is the required AES-256 envelope-key size.
-	KeySize         = 32
-	maxKeyFileBytes = KeySize + 1
-	systemdRoot     = "/run/credentials"
+	KeySize = 32
+
+	credentialMagic      = "meshtransit-keyset\x00"
+	credentialVersion    = byte(1)
+	credentialKeyCount   = byte(2)
+	credentialHeaderSize = len(credentialMagic) + 2
+	credentialSize       = credentialHeaderSize + int(credentialKeyCount)*KeySize
+	maxKeyFileBytes      = credentialSize + 1
+	maximumKeys          = int(credentialKeyCount)
+	systemdRoot          = "/run/credentials"
+
+	// MaxCredentialSize bounds decrypted platform credential input.
+	MaxCredentialSize = credentialSize
 )
 
 var (
@@ -40,28 +51,88 @@ var (
 // It owns a defensive copy of the supplied key and clears that copy on Close.
 type Protector struct {
 	mu       sync.RWMutex
-	key      [KeySize]byte
+	keys     [maximumKeys][KeySize]byte
+	keyCount int
 	random   io.Reader
 	isClosed bool
 }
 
 // New validates and takes a defensive copy of one envelope key.
 func New(key []byte) (*Protector, error) {
-	return newWithRandom(key, rand.Reader)
+	return newWithRandom(key, nil, rand.Reader)
 }
 
-func newWithRandom(key []byte, random io.Reader) (*Protector, error) {
-	if len(key) != KeySize {
+// NewWithFallback creates a protector that seals with active and can open
+// records protected by either active or fallback. The fallback is never used
+// for new ciphertext.
+func NewWithFallback(active, fallback []byte) (*Protector, error) {
+	return newWithRandom(active, fallback, rand.Reader)
+}
+
+func newWithRandom(active, fallback []byte, random io.Reader) (*Protector, error) {
+	if len(active) != KeySize || (fallback != nil && len(fallback) != KeySize) {
+		return nil, ErrKeyInvalid
+	}
+	if fallback != nil && subtle.ConstantTimeCompare(active, fallback) == 1 {
 		return nil, ErrKeyInvalid
 	}
 	if random == nil {
 		return nil, errors.New("secretstore: randomness source is required")
 	}
 
-	protector := &Protector{random: random}
-	copy(protector.key[:], key)
+	protector := &Protector{keyCount: 1, random: random}
+	copy(protector.keys[0][:], active)
+	if fallback != nil {
+		copy(protector.keys[1][:], fallback)
+		protector.keyCount = 2
+	}
 
 	return protector, nil
+}
+
+// EncodeKeySet returns the strict credential representation used while one
+// fallback key is retained during rotation. The caller owns and should clear
+// the returned bytes after use.
+func EncodeKeySet(active, fallback []byte) ([]byte, error) {
+	if len(active) != KeySize || len(fallback) != KeySize ||
+		subtle.ConstantTimeCompare(active, fallback) == 1 {
+		return nil, ErrKeyInvalid
+	}
+
+	encoded := make([]byte, credentialSize)
+	copy(encoded, credentialMagic)
+	encoded[len(credentialMagic)] = credentialVersion
+	encoded[len(credentialMagic)+1] = credentialKeyCount
+	offset := credentialHeaderSize
+	copy(encoded[offset:offset+KeySize], active)
+	copy(encoded[offset+KeySize:], fallback)
+
+	return encoded, nil
+}
+
+// NewFromCredential accepts either the legacy raw key or the bounded key-set
+// representation used during rotation.
+func NewFromCredential(encoded []byte) (*Protector, error) {
+	return newFromCredentialWithRandom(encoded, rand.Reader)
+}
+
+func newFromCredentialWithRandom(encoded []byte, random io.Reader) (*Protector, error) {
+	if len(encoded) == KeySize {
+		return newWithRandom(encoded, nil, random)
+	}
+	if len(encoded) != credentialSize ||
+		string(encoded[:len(credentialMagic)]) != credentialMagic ||
+		encoded[len(credentialMagic)] != credentialVersion ||
+		encoded[len(credentialMagic)+1] != credentialKeyCount {
+		return nil, ErrKeyInvalid
+	}
+
+	offset := credentialHeaderSize
+	return newWithRandom(
+		encoded[offset:offset+KeySize],
+		encoded[offset+KeySize:],
+		random,
+	)
 }
 
 // Load reads an owner-only key from an absolute, non-symlink path.
@@ -100,8 +171,8 @@ func load(path string, validateMetadata func(os.FileInfo) error) (*Protector, er
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w: key must be a regular file, not a link", ErrKeyInvalid)
 	}
-	if info.Size() != KeySize {
-		return nil, fmt.Errorf("%w: key must contain exactly %d bytes", ErrKeyInvalid, KeySize)
+	if !validCredentialSize(info.Size()) {
+		return nil, fmt.Errorf("%w: credential has an unsupported size", ErrKeyInvalid)
 	}
 	if err := validateMetadata(info); err != nil {
 		return nil, err
@@ -123,36 +194,32 @@ func load(path string, validateMetadata func(os.FileInfo) error) (*Protector, er
 	if !os.SameFile(info, openedInfo) || !openedInfo.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w: key changed while opening", ErrKeyInvalid)
 	}
-	if openedInfo.Size() != KeySize {
+	if !validCredentialSize(openedInfo.Size()) {
 		return nil, fmt.Errorf("%w: opened key metadata is unsafe", ErrKeyInvalid)
 	}
 	if err := validateMetadata(openedInfo); err != nil {
 		return nil, err
 	}
 
-	key := make([]byte, maxKeyFileBytes)
-	readBytes, err := io.ReadFull(file, key)
-	if !errors.Is(err, io.ErrUnexpectedEOF) {
-		clear(key)
-		if err == nil {
-			return nil, fmt.Errorf("%w: key exceeds %d bytes", ErrKeyInvalid, KeySize)
-		}
-
+	encoded, err := io.ReadAll(io.LimitReader(file, int64(maxKeyFileBytes)))
+	if err != nil {
 		return nil, fmt.Errorf("reading secret-store key: %w", err)
 	}
-	if readBytes != KeySize {
-		clear(key)
-
-		return nil, fmt.Errorf("%w: key must contain exactly %d bytes", ErrKeyInvalid, KeySize)
+	defer clear(encoded)
+	if len(encoded) != int(openedInfo.Size()) || !validCredentialSize(int64(len(encoded))) {
+		return nil, fmt.Errorf("%w: credential changed while reading", ErrKeyInvalid)
 	}
 
-	protector, err := New(key[:KeySize])
-	clear(key)
+	protector, err := NewFromCredential(encoded)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: credential format", err)
 	}
 
 	return protector, nil
+}
+
+func validCredentialSize(size int64) bool {
+	return size == KeySize || size == int64(credentialSize)
 }
 
 func validateOwnerOnly(info os.FileInfo) error {
@@ -200,7 +267,7 @@ func (p *Protector) Seal(
 		return nil, ErrClosed
 	}
 
-	aead, err := newGCM(p.key[:])
+	aead, err := newGCM(p.keys[0][:])
 	if err != nil {
 		return nil, err
 	}
@@ -218,37 +285,51 @@ func (p *Protector) Open(
 	protected []byte,
 	additionalData []byte,
 ) ([]byte, error) {
+	plaintext, _, err := p.OpenWithRotation(ctx, protected, additionalData)
+
+	return plaintext, err
+}
+
+// OpenWithRotation authenticates and decrypts one record and reports whether
+// it was protected by the fallback key and should be sealed again.
+func (p *Protector) OpenWithRotation(
+	ctx context.Context,
+	protected []byte,
+	additionalData []byte,
+) ([]byte, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("opening secret record: %w", err)
+		return nil, false, fmt.Errorf("opening secret record: %w", err)
 	}
 	if len(additionalData) == 0 {
-		return nil, errors.New("secretstore: additional data is required")
+		return nil, false, errors.New("secretstore: additional data is required")
 	}
 	if p == nil {
-		return nil, ErrClosed
+		return nil, false, ErrClosed
 	}
 
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if p.isClosed {
-		return nil, ErrClosed
+		return nil, false, ErrClosed
 	}
 
-	aead, err := newGCM(p.key[:])
-	if err != nil {
-		return nil, err
-	}
-	if len(protected) < aead.NonceSize()+aead.Overhead() {
-		return nil, ErrAuthentication
-	}
-	nonce := protected[:aead.NonceSize()]
-	ciphertext := protected[aead.NonceSize():]
-	plaintext, err := aead.Open(nil, nonce, ciphertext, additionalData)
-	if err != nil {
-		return nil, ErrAuthentication
+	for index := 0; index < p.keyCount; index++ {
+		aead, err := newGCM(p.keys[index][:])
+		if err != nil {
+			return nil, false, err
+		}
+		if len(protected) < aead.NonceSize()+aead.Overhead() {
+			return nil, false, ErrAuthentication
+		}
+		nonce := protected[:aead.NonceSize()]
+		ciphertext := protected[aead.NonceSize():]
+		plaintext, err := aead.Open(nil, nonce, ciphertext, additionalData)
+		if err == nil {
+			return plaintext, index != 0, nil
+		}
 	}
 
-	return plaintext, nil
+	return nil, false, ErrAuthentication
 }
 
 // Close clears the in-memory envelope key. It is safe to call more than once.
@@ -260,7 +341,10 @@ func (p *Protector) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.isClosed {
-		clear(p.key[:])
+		for index := range p.keys {
+			clear(p.keys[index][:])
+		}
+		p.keyCount = 0
 		p.isClosed = true
 	}
 

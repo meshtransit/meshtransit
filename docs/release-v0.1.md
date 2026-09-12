@@ -118,8 +118,11 @@ and passed alpha17 downgrade; with alpha18 retained as the rollback target,
 legacy state is now atomically protected on first read. Native Debian 13 and
 Ubuntu 26.04 package, credential, tamper, restart, removal, purge, and staged
 rollback evidence passed in the bounded alpha19 qualification. TPM binding,
-key rotation/recovery, encrypted backup policy, and signed release artifacts
-remain before this gate is production-complete. See
+key-rotation activation/pruning and recovery, encrypted backup policy, and
+signed release artifacts remain before this gate is production-complete. A
+bounded two-key reader and atomic fallback-record rewrap are implemented as the
+non-activating compatibility stage but do not count as native rotation evidence
+until a dedicated artifact completes the rollout/rollback matrix. See
 [linux-secret-storage-qualification-2026-09-12.md](linux-secret-storage-qualification-2026-09-12.md).
 Linux package CI now emits a digest-bound CycloneDX SBOM, verifies it against
 the modules embedded in all packaged binaries, and applies a symbol-aware

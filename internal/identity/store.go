@@ -52,7 +52,7 @@ type persistedEnvelope struct {
 
 type recordProtector interface {
 	Seal(context.Context, []byte, []byte) ([]byte, error)
-	Open(context.Context, []byte, []byte) ([]byte, error)
+	OpenWithRotation(context.Context, []byte, []byte) ([]byte, bool, error)
 	Close() error
 }
 
@@ -134,7 +134,7 @@ func (s *Store) Close() error {
 }
 
 // Get loads one profile identity without exposing persisted DTO fields. A
-// valid legacy plaintext record is migrated before Get returns.
+// valid legacy plaintext or fallback-key record is migrated before Get returns.
 func (s *Store) Get(ctx context.Context, profileID string) (Record, error) {
 	if err := ctx.Err(); err != nil {
 		return Record{}, fmt.Errorf("reading identity: %w", err)
@@ -149,11 +149,11 @@ func (s *Store) Get(ctx context.Context, profileID string) (Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	record, isLegacy, err := s.loadLocked(ctx, profileID)
+	record, needsRewrite, err := s.loadLocked(ctx, profileID)
 	if err != nil {
 		return Record{}, err
 	}
-	if isLegacy {
+	if needsRewrite {
 		if err := s.persistLocked(ctx, record, true); err != nil {
 			return Record{}, fmt.Errorf("migrating identity record: %w", err)
 		}
@@ -302,7 +302,11 @@ func (s *Store) decodeRecord(
 		return Record{}, false, fmt.Errorf("%w: protected payload encoding", ErrCorrupt)
 	}
 	protected = protected[:decodedBytes]
-	plaintext, err := s.protector.Open(ctx, protected, recordAdditionalData(profileID))
+	plaintext, needsRotation, err := s.protector.OpenWithRotation(
+		ctx,
+		protected,
+		recordAdditionalData(profileID),
+	)
 	clear(protected)
 	if errors.Is(err, secretstore.ErrAuthentication) {
 		return Record{}, false, fmt.Errorf("%w: identity envelope authentication", ErrCorrupt)
@@ -317,7 +321,7 @@ func (s *Store) decodeRecord(
 		return Record{}, false, err
 	}
 
-	return record, false, nil
+	return record, needsRotation, nil
 }
 
 func (s *Store) persistLocked(ctx context.Context, record Record, replace bool) error {
@@ -364,12 +368,12 @@ func (s *Store) persistLocked(ctx context.Context, record Record, replace bool) 
 	if err != nil {
 		return fmt.Errorf("verifying temporary identity record: %w", err)
 	}
-	verified, isLegacy, err := s.decodeRecord(ctx, record.profileID, verifiedBytes)
+	verified, needsRewrite, err := s.decodeRecord(ctx, record.profileID, verifiedBytes)
 	clear(verifiedBytes)
 	if err != nil {
 		return fmt.Errorf("verifying temporary identity record: %w", err)
 	}
-	if isLegacy || !sameRecord(verified, record) {
+	if needsRewrite || !sameRecord(verified, record) {
 		return errors.New("verifying temporary identity record: record mismatch")
 	}
 	if err := temporary.Close(); err != nil {

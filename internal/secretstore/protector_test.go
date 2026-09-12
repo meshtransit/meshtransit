@@ -44,6 +44,101 @@ func TestProtectorRoundTrip(t *testing.T) {
 	clear(opened)
 }
 
+func TestProtectorKeySetRotation(t *testing.T) {
+	t.Parallel()
+
+	active := bytes.Repeat([]byte{0x21}, KeySize)
+	fallback := bytes.Repeat([]byte{0x22}, KeySize)
+	encoded, err := EncodeKeySet(active, fallback)
+	if err != nil {
+		t.Fatalf("EncodeKeySet() error = %v", err)
+	}
+	defer clear(encoded)
+	protector, err := NewFromCredential(encoded)
+	if err != nil {
+		t.Fatalf("NewFromCredential() error = %v", err)
+	}
+	t.Cleanup(func() { _ = protector.Close() })
+
+	oldProtector, err := New(fallback)
+	if err != nil {
+		t.Fatalf("New(fallback) error = %v", err)
+	}
+	t.Cleanup(func() { _ = oldProtector.Close() })
+	additionalData := []byte("profile binding")
+	oldCiphertext, err := oldProtector.Seal(t.Context(), []byte("identity"), additionalData)
+	if err != nil {
+		t.Fatalf("Seal(fallback) error = %v", err)
+	}
+	opened, needsRotation, err := protector.OpenWithRotation(
+		t.Context(),
+		oldCiphertext,
+		additionalData,
+	)
+	if err != nil {
+		t.Fatalf("OpenWithRotation(fallback) error = %v", err)
+	}
+	if !needsRotation || string(opened) != "identity" {
+		t.Fatalf("OpenWithRotation(fallback) = %q, %t", opened, needsRotation)
+	}
+	clear(opened)
+
+	newCiphertext, err := protector.Seal(t.Context(), []byte("identity"), additionalData)
+	if err != nil {
+		t.Fatalf("Seal(active) error = %v", err)
+	}
+	opened, needsRotation, err = protector.OpenWithRotation(
+		t.Context(),
+		newCiphertext,
+		additionalData,
+	)
+	if err != nil {
+		t.Fatalf("OpenWithRotation(active) error = %v", err)
+	}
+	if needsRotation || string(opened) != "identity" {
+		t.Fatalf("OpenWithRotation(active) = %q, %t", opened, needsRotation)
+	}
+	clear(opened)
+
+	if _, err := oldProtector.Open(t.Context(), newCiphertext, additionalData); !errors.Is(err, ErrAuthentication) {
+		t.Fatalf("fallback-only Open(active ciphertext) error = %v, want ErrAuthentication", err)
+	}
+}
+
+func TestKeySetCredentialRejectsMalformedInput(t *testing.T) {
+	t.Parallel()
+
+	active := bytes.Repeat([]byte{0x31}, KeySize)
+	fallback := bytes.Repeat([]byte{0x32}, KeySize)
+	valid, err := EncodeKeySet(active, fallback)
+	if err != nil {
+		t.Fatalf("EncodeKeySet() error = %v", err)
+	}
+	defer clear(valid)
+
+	tests := []struct {
+		name    string
+		encoded []byte
+	}{
+		{name: "empty", encoded: nil},
+		{name: "truncated", encoded: append([]byte(nil), valid[:len(valid)-1]...)},
+		{name: "unknown magic", encoded: append([]byte{0xff}, valid[1:]...)},
+		{name: "unknown version", encoded: mutateCredentialByte(valid, len(credentialMagic), 0xff)},
+		{name: "wrong key count", encoded: mutateCredentialByte(valid, len(credentialMagic)+1, 1)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := NewFromCredential(test.encoded); !errors.Is(err, ErrKeyInvalid) {
+				t.Fatalf("NewFromCredential() error = %v, want ErrKeyInvalid", err)
+			}
+		})
+	}
+	if _, err := EncodeKeySet(active, active); !errors.Is(err, ErrKeyInvalid) {
+		t.Fatalf("EncodeKeySet(duplicate) error = %v, want ErrKeyInvalid", err)
+	}
+}
+
 func TestProtectorRejectsUnauthenticatedRecords(t *testing.T) {
 	t.Parallel()
 
@@ -127,6 +222,24 @@ func TestLoad(t *testing.T) {
 			prepare: func(t *testing.T, path string) {
 				t.Helper()
 				if err := os.WriteFile(path, bytes.Repeat([]byte{0x44}, KeySize), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			isSuccess: true,
+		},
+		{
+			name: "owner-only rotating key set",
+			prepare: func(t *testing.T, path string) {
+				t.Helper()
+				encoded, err := EncodeKeySet(
+					bytes.Repeat([]byte{0x45}, KeySize),
+					bytes.Repeat([]byte{0x46}, KeySize),
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer clear(encoded)
+				if err := os.WriteFile(path, encoded, 0o600); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -248,11 +361,18 @@ func FuzzProtectorOpen(f *testing.F) {
 func testProtector(t *testing.T, random *bytes.Reader) *Protector {
 	t.Helper()
 
-	protector, err := newWithRandom(bytes.Repeat([]byte{0x10}, KeySize), random)
+	protector, err := newWithRandom(bytes.Repeat([]byte{0x10}, KeySize), nil, random)
 	if err != nil {
 		t.Fatalf("newWithRandom() error = %v", err)
 	}
 	t.Cleanup(func() { _ = protector.Close() })
 
 	return protector
+}
+
+func mutateCredentialByte(encoded []byte, index int, value byte) []byte {
+	mutated := append([]byte(nil), encoded...)
+	mutated[index] = value
+
+	return mutated
 }

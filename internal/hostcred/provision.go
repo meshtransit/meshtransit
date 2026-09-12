@@ -188,22 +188,24 @@ func createCredential(ctx context.Context, cfg Config) error {
 }
 
 func verifyExisting(ctx context.Context, cfg Config) error {
-	key := &boundedBuffer{maximum: secretstore.KeySize}
+	credential := &boundedBuffer{maximum: secretstore.MaxCredentialSize}
 	if err := cfg.run(
 		ctx,
 		systemdToolPath,
 		[]string{"--no-pager", "--name=" + fileName, "decrypt", cfg.Path, "-"},
 		nil,
-		key,
+		credential,
 	); err != nil {
-		key.Clear()
+		credential.Clear()
 
 		return fmt.Errorf("verifying encrypted identity credential: %w", err)
 	}
-	defer key.Clear()
-	if len(key.Bytes()) != secretstore.KeySize {
-		return errors.New("hostcred: encrypted identity credential has an invalid plaintext size")
+	defer credential.Clear()
+	protector, err := secretstore.NewFromCredential(credential.Bytes())
+	if err != nil {
+		return errors.New("hostcred: encrypted identity credential has an invalid format")
 	}
+	defer func() { _ = protector.Close() }()
 
 	return nil
 }

@@ -159,6 +159,122 @@ func TestStore_MigrationFailurePreservesLegacyRecord(t *testing.T) {
 	}
 }
 
+func TestStore_RewrapsFallbackKeyRecordAtomically(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	oldKey := bytes.Repeat([]byte{0x35}, secretstore.KeySize)
+	newKey := bytes.Repeat([]byte{0x36}, secretstore.KeySize)
+	oldProtector, err := secretstore.New(oldKey)
+	if err != nil {
+		t.Fatalf("secretstore.New(old) error = %v", err)
+	}
+	oldStore, err := Open(stateDir, oldProtector)
+	if err != nil {
+		t.Fatalf("Open(old) error = %v", err)
+	}
+	record := testRecord(t, time.Now())
+	if err := oldStore.Create(t.Context(), record); err != nil {
+		t.Fatalf("Create(old) error = %v", err)
+	}
+	before := readIdentityFile(t, oldStore.dir, testProfileID)
+	if err := oldStore.Close(); err != nil {
+		t.Fatalf("Close(old) error = %v", err)
+	}
+
+	rotatingProtector, err := secretstore.NewWithFallback(newKey, oldKey)
+	if err != nil {
+		t.Fatalf("secretstore.NewWithFallback() error = %v", err)
+	}
+	rotatingStore, err := Open(stateDir, rotatingProtector)
+	if err != nil {
+		t.Fatalf("Open(rotating) error = %v", err)
+	}
+	loaded, err := rotatingStore.Get(t.Context(), testProfileID)
+	if err != nil {
+		t.Fatalf("Get(rotating) error = %v", err)
+	}
+	if !sameRecord(loaded, record) {
+		t.Fatal("rotated record does not match original identity")
+	}
+	after := readIdentityFile(t, rotatingStore.dir, testProfileID)
+	if bytes.Equal(after, before) {
+		t.Fatal("fallback-key record was not replaced")
+	}
+	if err := rotatingStore.Close(); err != nil {
+		t.Fatalf("Close(rotating) error = %v", err)
+	}
+
+	newProtector, err := secretstore.New(newKey)
+	if err != nil {
+		t.Fatalf("secretstore.New(new) error = %v", err)
+	}
+	newStore, err := Open(stateDir, newProtector)
+	if err != nil {
+		t.Fatalf("Open(new) error = %v", err)
+	}
+	t.Cleanup(func() { _ = newStore.Close() })
+	if _, err := newStore.Get(t.Context(), testProfileID); err != nil {
+		t.Fatalf("Get(new) error = %v", err)
+	}
+
+	oldOnlyProtector, err := secretstore.New(oldKey)
+	if err != nil {
+		t.Fatalf("secretstore.New(old-only) error = %v", err)
+	}
+	oldOnlyStore, err := Open(stateDir, oldOnlyProtector)
+	if err != nil {
+		t.Fatalf("Open(old-only) error = %v", err)
+	}
+	t.Cleanup(func() { _ = oldOnlyStore.Close() })
+	if _, err := oldOnlyStore.Get(t.Context(), testProfileID); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("Get(old-only) error = %v, want ErrCorrupt", err)
+	}
+}
+
+func TestStore_RewrapFailurePreservesFallbackKeyRecord(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	oldKey := bytes.Repeat([]byte{0x37}, secretstore.KeySize)
+	oldProtector, err := secretstore.New(oldKey)
+	if err != nil {
+		t.Fatalf("secretstore.New(old) error = %v", err)
+	}
+	oldStore, err := Open(stateDir, oldProtector)
+	if err != nil {
+		t.Fatalf("Open(old) error = %v", err)
+	}
+	if err := oldStore.Create(t.Context(), testRecord(t, time.Now())); err != nil {
+		t.Fatalf("Create(old) error = %v", err)
+	}
+	before := readIdentityFile(t, oldStore.dir, testProfileID)
+	if err := oldStore.Close(); err != nil {
+		t.Fatalf("Close(old) error = %v", err)
+	}
+
+	fallbackProtector, err := secretstore.New(oldKey)
+	if err != nil {
+		t.Fatalf("secretstore.New(fallback) error = %v", err)
+	}
+	store, err := openWith(
+		stateDir,
+		time.Now,
+		&failingRewrapProtector{fallback: fallbackProtector},
+	)
+	if err != nil {
+		t.Fatalf("openWith() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.Get(t.Context(), testProfileID); err == nil {
+		t.Fatal("Get() error = nil, want rewrap failure")
+	}
+	after := readIdentityFile(t, store.dir, testProfileID)
+	if !bytes.Equal(after, before) {
+		t.Fatal("failed rewrap changed the last readable record")
+	}
+}
+
 func TestStore_RejectsTamperingWrongKeyAndProfileSwap(t *testing.T) {
 	t.Parallel()
 
@@ -456,8 +572,32 @@ func (failingProtector) Seal(context.Context, []byte, []byte) ([]byte, error) {
 	return nil, errors.New("injected protection failure")
 }
 
-func (failingProtector) Open(context.Context, []byte, []byte) ([]byte, error) {
-	return nil, errors.New("injected open failure")
+func (failingProtector) OpenWithRotation(
+	context.Context,
+	[]byte,
+	[]byte,
+) ([]byte, bool, error) {
+	return nil, false, errors.New("injected open failure")
 }
 
 func (failingProtector) Close() error { return nil }
+
+type failingRewrapProtector struct {
+	fallback *secretstore.Protector
+}
+
+func (*failingRewrapProtector) Seal(context.Context, []byte, []byte) ([]byte, error) {
+	return nil, errors.New("injected rewrap failure")
+}
+
+func (p *failingRewrapProtector) OpenWithRotation(
+	ctx context.Context,
+	protected []byte,
+	additionalData []byte,
+) ([]byte, bool, error) {
+	plaintext, err := p.fallback.Open(ctx, protected, additionalData)
+
+	return plaintext, err == nil, err
+}
+
+func (p *failingRewrapProtector) Close() error { return p.fallback.Close() }
