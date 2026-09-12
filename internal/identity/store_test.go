@@ -90,7 +90,7 @@ func TestStore_CreateGetAndUpdate(t *testing.T) {
 	}
 }
 
-func TestStore_ProtectsLegacyPlaintextOnFirstWrite(t *testing.T) {
+func TestStore_MigratesLegacyPlaintextAtomically(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.September, 12, 1, 2, 3, 0, time.UTC)
@@ -116,13 +116,7 @@ func TestStore_ProtectsLegacyPlaintextOnFirstWrite(t *testing.T) {
 		t.Fatalf("Get() error = %v", err)
 	}
 	if !sameRecord(loaded, record) {
-		t.Fatal("loaded record does not match legacy identity")
-	}
-	if afterRead := readIdentityFile(t, store.dir, testProfileID); !bytes.Equal(afterRead, legacy) {
-		t.Fatal("read-only access changed the rollback-compatible legacy record")
-	}
-	if _, err := store.SetRegistration(t.Context(), testProfileID, "", false); err != nil {
-		t.Fatalf("SetRegistration() error = %v", err)
+		t.Fatal("migrated record does not match legacy identity")
 	}
 	protected := readIdentityFile(t, store.dir, testProfileID)
 	if bytes.Equal(protected, legacy) || bytes.Contains(protected, []byte("machine-secret")) {
@@ -157,11 +151,8 @@ func TestStore_MigrationFailurePreservesLegacyRecord(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if _, err := store.Get(t.Context(), testProfileID); err != nil {
-		t.Fatalf("Get() error = %v, want legacy read to remain available", err)
-	}
-	if _, err := store.SetRegistration(t.Context(), testProfileID, "", false); err == nil {
-		t.Fatal("SetRegistration() error = nil, want migration failure")
+	if _, err := store.Get(t.Context(), testProfileID); err == nil {
+		t.Fatal("Get() error = nil, want migration failure")
 	}
 	if after := readIdentityFile(t, store.dir, testProfileID); !bytes.Equal(after, legacy) {
 		t.Fatal("failed migration changed the last readable legacy record")

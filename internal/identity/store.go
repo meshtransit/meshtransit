@@ -58,7 +58,7 @@ type recordProtector interface {
 
 // Store owns an os.Root confined to the private identities directory and the
 // protector used for every persisted identity. Plaintext records are accepted
-// only as a migration source and are atomically protected on the first write.
+// only as a one-way migration source and are atomically protected on first use.
 type Store struct {
 	mu        sync.Mutex
 	dir       string
@@ -133,9 +133,8 @@ func (s *Store) Close() error {
 	return errors.Join(rootErr, protectorErr)
 }
 
-// Get loads one profile identity without exposing persisted DTO fields. It
-// leaves a valid legacy record unchanged so the preceding release remains a
-// rollback target during the compatibility deployment stage.
+// Get loads one profile identity without exposing persisted DTO fields. A
+// valid legacy plaintext record is migrated before Get returns.
 func (s *Store) Get(ctx context.Context, profileID string) (Record, error) {
 	if err := ctx.Err(); err != nil {
 		return Record{}, fmt.Errorf("reading identity: %w", err)
@@ -150,9 +149,14 @@ func (s *Store) Get(ctx context.Context, profileID string) (Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	record, _, err := s.loadLocked(ctx, profileID)
+	record, isLegacy, err := s.loadLocked(ctx, profileID)
 	if err != nil {
 		return Record{}, err
+	}
+	if isLegacy {
+		if err := s.persistLocked(ctx, record, true); err != nil {
+			return Record{}, fmt.Errorf("migrating identity record: %w", err)
+		}
 	}
 
 	return record, nil

@@ -107,11 +107,12 @@ profile identifier and envelope version are authenticated as associated data.
 A root-only one-shot creates the 256-bit key through `systemd-creds`, stores
 only its host-encrypted form under `/etc/credstore.encrypted`, and systemd
 exposes the decrypted key only in the private credential mount of
-`meshd.service`. `meshnetd` receives neither form. Existing plaintext `0600`
-records remain readable during the compatibility deployment stage and are
-atomically protected on their first state update; new records never use the
-plaintext format. A later migration stage may eagerly rewrite them only after
-the compatibility build is retained as the rollback target.
+`meshd.service`. `meshnetd` receives neither form. The compatibility deployment
+stage first proved that existing plaintext `0600` records remained readable
+without mutation and could roll back to the preceding build. With that
+compatibility build retained as the rollback target, the migration stage now
+atomically protects legacy records on first read. New records never use the
+plaintext format.
 
 The systemd host-key backend raises the cost of offline state disclosure but
 does not defend against an attacker with root access and the host credential
