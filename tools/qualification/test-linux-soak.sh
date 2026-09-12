@@ -86,4 +86,56 @@ jq -e '
   (.failures | index("goroutine_growth_exceeded")) != null
 ' >/dev/null <<<"${growth_summary}"
 
+passing_report="$(jq -nc '
+  {
+    scenario: {
+      requested_duration_seconds: 60,
+      actual_duration_seconds: 60,
+      samples_expected: 2,
+      samples_completed: 2
+    },
+    journal: {
+      available: true,
+      warning_or_higher_entries: 0,
+      error_or_higher_entries: 0
+    },
+    steady_state: {failures: []},
+    samples: [{failures: []}, {failures: []}]
+  }
+')"
+passing_report="$("${harness}" __finalize-report <<<"${passing_report}")"
+jq -e '.outcome == "pass" and .failures == []' >/dev/null <<<"${passing_report}"
+
+failing_report="$(jq -nc '
+  {
+    scenario: {
+      requested_duration_seconds: 60,
+      actual_duration_seconds: 45,
+      samples_expected: 3,
+      samples_completed: 2
+    },
+    journal: {
+      available: true,
+      warning_or_higher_entries: 1,
+      error_or_higher_entries: 0
+    },
+    steady_state: {failures: ["goroutine_growth_exceeded"]},
+    samples: [
+      {failures: []},
+      {failures: ["daemon_status_not_ready", "daemon_status_not_ready"]}
+    ]
+  }
+')"
+failing_report="$("${harness}" __finalize-report <<<"${failing_report}")"
+jq -e '
+  .outcome == "fail" and
+  .failures == [
+    "daemon_status_not_ready",
+    "duration_incomplete",
+    "goroutine_growth_exceeded",
+    "sample_count_incomplete",
+    "service_warning_entries_present"
+  ]
+' >/dev/null <<<"${failing_report}"
+
 printf 'linux soak qualification validation passed\n'

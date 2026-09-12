@@ -681,6 +681,21 @@ summarize_samples() {
     ' "${samples_path}"
 }
 
+finalize_report() {
+  jq '
+    .failures = ([
+      if .scenario.actual_duration_seconds < .scenario.requested_duration_seconds then "duration_incomplete" else empty end,
+      if .scenario.samples_completed != .scenario.samples_expected then "sample_count_incomplete" else empty end,
+      if .journal.available != true then "journal_unavailable" else empty end,
+      if .journal.warning_or_higher_entries != 0 then "service_warning_entries_present" else empty end,
+      if .journal.error_or_higher_entries != 0 then "service_error_entries_present" else empty end,
+      (.steady_state.failures[]),
+      (.samples[].failures[])
+    ] | unique)
+    | .outcome = if (.failures | length) == 0 then "pass" else "fail" end
+  '
+}
+
 journal_count() {
   local priority="$1"
   local since="$2"
@@ -1014,17 +1029,7 @@ main() {
         steady_state: $resource_summary,
         samples: $samples
       }
-      | .failures = [
-          if .scenario.actual_duration_seconds < .scenario.requested_duration_seconds then "duration_incomplete" else empty end,
-          if .scenario.samples_completed != .scenario.samples_expected then "sample_count_incomplete" else empty end,
-          if .journal.available != true then "journal_unavailable" else empty end,
-          if .journal.warning_or_higher_entries != 0 then "service_warning_entries_present" else empty end,
-          if .journal.error_or_higher_entries != 0 then "service_error_entries_present" else empty end,
-          (.steady_state.failures[]),
-          (.samples[].failures[])
-        ] | unique
-      | .outcome = if (.failures | length) == 0 then "pass" else "fail" end
-    ')"
+    ' | finalize_report)"
 
   printf '%s\n' "${report}"
   outcome="$(jq -r '.outcome' <<<"${report}")"
@@ -1039,6 +1044,12 @@ if [[ "${1:-}" == __summarize-samples ]]; then
   [[ $# -eq 7 ]] ||
     fail "__summarize-samples requires FILE WARMUP RSS GOROUTINES FDS THREADS"
   summarize_samples "$2" "$3" "$4" "$5" "$6" "$7"
+  exit
+fi
+
+if [[ "${1:-}" == __finalize-report ]]; then
+  [[ $# -eq 1 ]] || fail "__finalize-report does not accept arguments"
+  finalize_report
   exit
 fi
 
