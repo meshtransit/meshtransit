@@ -61,7 +61,7 @@ published compatibility matrix.
 
 | Priority | Platform | Architectures | Native validation targets | Current status |
 | --- | --- | --- | --- | --- |
-| 1 | Linux | amd64, arm64 | Ubuntu 24.04 and 26.04 LTS with `systemd-resolved` | amd64 lifecycle passed on Ubuntu 26.04 and Debian 13; arm64 lifecycle plus registered mixed-architecture direct traffic, DNS, policy, and forced relay passed on Ubuntu 24.04; network-change recovery, registered rollback, Ubuntu 26.04 arm64, and sustained validation remain |
+| 1 | Linux | amd64, arm64 | Ubuntu 24.04 and 26.04 LTS with `systemd-resolved` | amd64 lifecycle passed on Ubuntu 26.04 and Debian 13; arm64 lifecycle plus registered mixed-architecture direct traffic, DNS, policy, forced relay, and network-change recovery passed on Ubuntu 24.04; registered rollback, Ubuntu 26.04 arm64, and sustained validation remain |
 | 2 | Windows | amd64 | Windows 11 25H2 and Windows Server 2025 | cross-build only; tunnel, DNS, IPC, and service adapters remain |
 | 3 | macOS | arm64, amd64 | macOS 26 on arm64 and macOS 15 on amd64 | cross-build only; tunnel, DNS, IPC, entitlement, and service adapters remain |
 

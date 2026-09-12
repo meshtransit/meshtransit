@@ -12,9 +12,9 @@ phase. A follow-on qualification registered that same immutable candidate and
 paired it with a dedicated Ubuntu 26.04 AMD64 node. Direct encrypted traffic,
 TUN activation, DNS application and lifecycle, and host-policy enforcement are
 now proven for this mixed-architecture topology. Bounded forced-relay fallback
-and direct-path recovery subsequently passed from both initiating nodes.
-Network-change recovery, registered rollback, and long-duration behavior remain
-open.
+and direct-path recovery subsequently passed from both initiating nodes. Native
+network-change observation and endpoint refresh also passed on both nodes with
+zero packet loss. Registered rollback and long-duration behavior remain open.
 
 ## Candidate
 
@@ -111,11 +111,17 @@ carried IPv4 and IPv6 traffic, removed its bounded fault table, and recovered th
 direct path. Both nodes finished online with DNS and policy intact and zero
 automatic service restarts.
 
+The controlled interface-change reports are retained under
+[`docs/evidence/linux-arm64-network-change-rc3-s1`](evidence/linux-arm64-network-change-rc3-s1/README.md).
+Both native network monitors observed the bounded interface creation, completed
+endpoint refresh in less than 900 ms, kept the direct path usable, and carried
+502 of 502 dual-stack probes. The dedicated interfaces were removed and both
+nodes observed the removal without a service restart.
+
 ## Remaining release gates
 
 - Run the same package lifecycle on Ubuntu 26.04 ARM64.
-- Run network-change and registered rollback matrices against the dedicated
-  non-soak peer.
+- Run the registered rollback matrix against the dedicated non-soak peer.
 - Complete the larger crash sample set and sustained candidate validation.
 - Produce and verify the exact candidate SBOM, signature, and provenance before
   publication.
