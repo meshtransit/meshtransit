@@ -109,7 +109,12 @@ The authenticated local status contract and read-only Linux soak harness now
 expose the bounded aggregate runtime and operating-system resource measurements
 needed for the long-duration gate. The first two-node alpha17 native smoke
 passed with 14/14 healthy samples and unchanged resource cardinality; the
-72-hour release-candidate evidence remains.
+72-hour release-candidate evidence remains. The release-candidate harness is
+now guarded by a restart-intolerant systemd launcher that prevents the observed
+Ubuntu `needrestart` maintenance path from silently replacing the observer and
+resetting its evidence window. Native Ubuntu 26.04 lifecycle protection passed
+at commit `618d851`; see
+[linux-soak-observer-resilience-qualification-2026-09-12.md](linux-soak-observer-resilience-qualification-2026-09-12.md).
 The Linux secret-storage migration stage now writes profile-bound,
 authenticated identity envelopes and supplies their key through a
 host-encrypted systemd credential. New identity state is never plaintext. The
