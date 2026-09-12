@@ -177,6 +177,13 @@ remained online as a dual-stack observer. Complete target readiness recovered
 within 29,969 ms, and registered profiles, addresses, and runtime artifacts were
 preserved. See
 [linux-reboot-rc3-s1](evidence/linux-reboot-rc3-s1/README.md).
+The RC4 candidate then separated control presence from peer-path readiness:
+registered peerless nodes report online while their synchronized control
+session is healthy, with data-plane and DNS state still reported independently.
+The same candidate passed an end-to-end browser login in which one bounded
+`meshctl login` invocation waited for approval and completed without a separate
+`login complete` command. See
+[linux-rc4-control-login-s1](evidence/linux-rc4-control-login-s1/README.md).
 It does not yet have a signed artifact and provenance pipeline, IPv6-only
 underlay evidence, real multi-uplink migration qualification, repeated
 candidate DNS-failure samples, or a long-duration qualification suite.
