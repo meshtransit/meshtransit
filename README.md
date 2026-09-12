@@ -11,6 +11,7 @@ State: offline
 Data plane: not_implemented
 DNS: not_implemented
 Network changes: unavailable
+Runtime: unavailable
 Active profile: none
 Profiles: 0
 Control trust: unconfigured
@@ -73,7 +74,7 @@ Before `profile trust`, compare that fingerprint with a value delivered through 
 
 Creating a profile does not accept a network ID. The control plane derives and authorizes network membership from the registration or session credential.
 
-After registration, `meshd` automatically maintains the active profile's control-map stream. `meshctl status` reports synchronization, the latest validated revision, aggregate direct/relay path counts, redacted relay health, and aggregate host-network-change/endpoint-refresh counters. It does not expose peer public keys, endpoint addresses, host interface addresses, raw route topology, raw policy, or registration handles.
+After registration, `meshd` automatically maintains the active profile's control-map stream. `meshctl status` reports synchronization, the latest validated revision, aggregate direct/relay path counts, redacted relay health, aggregate host-network-change/endpoint-refresh counters, and bounded process-wide runtime health. It does not expose stack traces, allocation profiles, peer public keys, endpoint addresses, host interface addresses, raw route topology, raw policy, or registration handles.
 
 ## Security boundary
 

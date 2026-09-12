@@ -21,3 +21,4 @@ All notable user-visible changes will be documented in this file.
 - Control-session, validated netmap-revision, and peer-count status output.
 - Aggregate direct/relay path counts and redacted relay-region health.
 - Aggregate host-network-change and completed endpoint-refresh status counters.
+- Aggregate daemon runtime health in human-readable and JSON status output.

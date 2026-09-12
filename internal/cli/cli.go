@@ -362,12 +362,13 @@ func runStatus(
 	}
 	_, _ = fmt.Fprintf(
 		stdout,
-		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nPeers: %d\nPeer paths: %s\nRelay: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
+		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nPeers: %d\nPeer paths: %s\nRelay: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
 		status.Daemon.Version,
 		status.State,
 		status.DataPlane,
 		status.DNS,
 		formatNetworkChangeStatus(status.NetworkChanges),
+		formatRuntimeStatus(status.Runtime),
 		activeProfile,
 		status.ProfileCount,
 		status.ControlTrust,
@@ -396,6 +397,22 @@ func formatNetworkChangeStatus(status localapi.NetworkChangeStatus) string {
 		"%d observed (%d endpoint refreshes)",
 		status.Observed,
 		status.EndpointRefreshes,
+	)
+}
+
+func formatRuntimeStatus(status *localapi.RuntimeStatus) string {
+	if status == nil {
+		return "unavailable"
+	}
+
+	const bytesPerMiB = 1 << 20
+
+	return fmt.Sprintf(
+		"%d goroutines, %.1f MiB heap allocated, %.1f MiB system, %d GC cycles",
+		status.Goroutines,
+		float64(status.HeapAllocBytes)/bytesPerMiB,
+		float64(status.SysBytes)/bytesPerMiB,
+		status.GCCycles,
 	)
 }
 

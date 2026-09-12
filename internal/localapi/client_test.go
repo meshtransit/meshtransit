@@ -63,6 +63,7 @@ func TestClient_Status(t *testing.T) {
 	"paths":{"available":true,"peer_count":2,"direct_count":1,"relay_count":1,"pending_count":0},
 	"relay":{"available":true,"home_region":7,"active_regions":2,"connected_regions":1,"regions":[{"region_id":7,"connected":true,"consecutive_failures":0}]},
 	"network_changes":{"available":true,"observed":4,"endpoint_refreshes":3},
+	"runtime":{"goroutines":11,"heap_alloc_bytes":12582912,"heap_in_use_bytes":13631488,"heap_objects":1200,"stack_in_use_bytes":1048576,"sys_bytes":25165824,"gc_cycles":7},
   "compatibility_note":"foundation only"
 }`), nil
 	})
@@ -94,6 +95,11 @@ func TestClient_Status(t *testing.T) {
 	if !status.NetworkChanges.Available || status.NetworkChanges.Observed != 4 ||
 		status.NetworkChanges.EndpointRefreshes != 3 {
 		t.Fatalf("Status().NetworkChanges = %#v, want four changes and three refreshes", status.NetworkChanges)
+	}
+	if status.Runtime == nil || status.Runtime.Goroutines != 11 ||
+		status.Runtime.HeapAllocBytes != 12582912 || status.Runtime.HeapObjects != 1200 ||
+		status.Runtime.SysBytes != 25165824 || status.Runtime.GCCycles != 7 {
+		t.Fatalf("Status().Runtime = %#v, want aggregate runtime health", status.Runtime)
 	}
 }
 

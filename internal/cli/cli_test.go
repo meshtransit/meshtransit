@@ -66,6 +66,12 @@ func TestRun_Status(t *testing.T) {
 				Observed:          4,
 				EndpointRefreshes: 3,
 			},
+			Runtime: &localapi.RuntimeStatus{
+				Goroutines:     11,
+				HeapAllocBytes: 12582912,
+				SysBytes:       25165824,
+				GCCycles:       7,
+			},
 			CompatibilityNote: "foundation only",
 		},
 	}
@@ -86,6 +92,7 @@ func TestRun_Status(t *testing.T) {
 		"Data plane: not_implemented",
 		"DNS: not_implemented",
 		"Network changes: 4 observed (3 endpoint refreshes)",
+		"Runtime: 11 goroutines, 12.0 MiB heap allocated, 24.0 MiB system, 7 GC cycles",
 		"Active profile: none",
 		"Control session: synchronized",
 		"Netmap revision: 9",
@@ -99,6 +106,14 @@ func TestRun_Status(t *testing.T) {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("status output %q does not contain %q", stdout.String(), expected)
 		}
+	}
+}
+
+func TestFormatRuntimeStatus_Unavailable(t *testing.T) {
+	t.Parallel()
+
+	if got := formatRuntimeStatus(nil); got != "unavailable" {
+		t.Fatalf("formatRuntimeStatus(nil) = %q, want unavailable", got)
 	}
 }
 
