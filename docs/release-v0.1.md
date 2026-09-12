@@ -107,7 +107,9 @@ helper/daemon generation handles its first controlled network change, refreshes
 endpoints, and remains stable without an additional restart.
 The authenticated local status contract and read-only Linux soak harness now
 expose the bounded aggregate runtime and operating-system resource measurements
-needed for the long-duration gate; native smoke and 72-hour evidence remain.
+needed for the long-duration gate. The first two-node alpha17 native smoke
+passed with 14/14 healthy samples and unchanged resource cardinality; the
+72-hour release-candidate evidence remains.
 It does not yet have a signed artifact pipeline, IPv6-only underlay evidence,
 real multi-uplink migration qualification, the larger candidate crash sample
 set, repeated candidate DNS-failure samples, or a long-duration qualification

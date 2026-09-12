@@ -235,6 +235,12 @@ caps prevent unbounded allocation; runtime goroutine, heap/object, system
 memory, RSS, thread, and descriptor trends detect retained work without
 exposing a profiling endpoint.
 
+The first accepted native two-node alpha17 smoke is recorded in
+[linux-soak-qualification-2026-09-12.md](linux-soak-qualification-2026-09-12.md),
+with both redacted seven-sample reports retained under `docs/evidence`. The
+90-second smokes validate the instrumentation and harness but are not
+release-candidate evidence; the 72-hour gate remains.
+
 ## Run a reboot scenario
 
 Run the reboot harness from an operator host that can reach two registered
