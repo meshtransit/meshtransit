@@ -54,6 +54,9 @@ case " $* " in
     *" is-enabled "*)
         exit "${MESHD_TEST_SYSTEMCTL_IS_ENABLED:-0}"
         ;;
+    *" show "*"--property=ActiveState"*)
+        printf '%s\n' "${MESHD_TEST_ACTIVE_STATE:-active}"
+        ;;
 esac
 EOF
 chmod 0755 "${mock_bin}/systemctl"
@@ -82,6 +85,41 @@ run_script() {
         PATH="${mock_bin}:${PATH}" \
         "$@"
 }
+
+run_readiness_wait() {
+    local active_state="$1"
+    local unit="$2"
+    local expected_running="$3"
+
+    # Variables in the command string belong to the inner shell.
+    # shellcheck disable=SC2016
+    env \
+        MESHD_TEST_ACTIVE_STATE="${active_state}" \
+        MESHD_TEST_CALLS="${calls}" \
+        PATH="${mock_bin}:${PATH}" \
+        bash -c '
+            postinst="$1"
+            # Sourcing with a non-action positional argument defines the
+            # maintainer helpers without executing package lifecycle work.
+            . "${postinst}"
+            wait_for_readiness_transition "$2" "$3"
+        ' readiness-helper "${script_dir}/deb/postinst" "${unit}" "${expected_running}"
+}
+
+: >"${calls}"
+run_readiness_wait activating meshd.service true
+grep -Fqx 'systemctl <--system> <start> <meshd.service>' "${calls}"
+
+: >"${calls}"
+run_readiness_wait inactive meshd.service false
+if grep -Fq ' <start> ' "${calls}"; then
+    printf 'readiness wait started an intentionally inactive service\n' >&2
+    exit 1
+fi
+if run_readiness_wait inactive meshd.service true >/dev/null 2>&1; then
+    printf 'readiness wait accepted loss of a previously active service\n' >&2
+    exit 1
+fi
 
 run_script "${script_dir}/deb/postinst" configure
 grep -Fqx "systemd-sysusers <--root=${package_root}> <meshd.conf>" "${calls}"
