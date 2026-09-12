@@ -24,6 +24,7 @@ import (
 	"github.com/meshtransit/meshd/internal/netadmin"
 	"github.com/meshtransit/meshd/internal/netwatch"
 	"github.com/meshtransit/meshd/internal/profile"
+	"github.com/meshtransit/meshd/internal/secretstore"
 	"github.com/meshtransit/meshd/internal/socket"
 	"github.com/meshtransit/meshd/internal/version"
 )
@@ -57,9 +58,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 			logger.Error("closing profile store failed", "error", closeErr)
 		}
 	}()
-	identities, err := identity.Open(cfg.StateDir)
+	protector, err := secretstore.Load(cfg.IdentityKeyPath)
 	if err != nil {
-		logger.Error("opening identity store failed", "error", err)
+		logger.Error("loading identity envelope key failed", "error", err)
+
+		return 1
+	}
+	identities, err := identity.Open(cfg.StateDir, protector)
+	if err != nil {
+		closeErr := protector.Close()
+		logger.Error("opening identity store failed", "error", errors.Join(err, closeErr))
 
 		return 1
 	}

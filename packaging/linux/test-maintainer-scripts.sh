@@ -15,11 +15,13 @@ readonly calls="${work_dir}/calls"
 readonly package_root="${work_dir}/root"
 mkdir -p \
     "${mock_bin}" \
+    "${package_root}/etc/credstore.encrypted" \
     "${package_root}/etc/meshd" \
     "${package_root}/run/meshd" \
     "${package_root}/run/meshnetd" \
     "${package_root}/var/lib/meshd/identities"
 touch \
+    "${package_root}/etc/credstore.encrypted/meshd.identity-key" \
     "${package_root}/etc/meshd/meshd.env" \
     "${package_root}/run/meshd/meshd.sock" \
     "${package_root}/run/meshnetd/meshnetd.sock" \
@@ -119,17 +121,19 @@ run_script "${script_dir}/deb/postrm" remove
 [[ ! -e "${package_root}/run/meshnetd/meshnetd.sock" ]]
 [[ -f "${package_root}/var/lib/meshd/profiles.json" ]]
 [[ -f "${package_root}/etc/meshd/meshd.env" ]]
+[[ -f "${package_root}/etc/credstore.encrypted/meshd.identity-key" ]]
 
 touch "${package_root}/etc/meshd/.start-on-reinstall"
 mkdir -p "${package_root}/run/meshd" "${package_root}/run/meshnetd"
 touch "${package_root}/run/meshd/stale" "${package_root}/run/meshnetd/stale"
 : >"${calls}"
 run_script "${script_dir}/deb/postrm" purge
-grep -Fqx 'deb-systemd-helper <purge> <meshnetd.service> <meshd.service>' "${calls}"
+grep -Fqx 'deb-systemd-helper <purge> <meshcred.service> <meshnetd.service> <meshd.service>' "${calls}"
 [[ ! -e "${package_root}/var/lib/meshd" ]]
 [[ ! -e "${package_root}/run/meshd" ]]
 [[ ! -e "${package_root}/run/meshnetd" ]]
 [[ ! -e "${package_root}/etc/meshd/.start-on-reinstall" ]]
+[[ ! -e "${package_root}/etc/credstore.encrypted/meshd.identity-key" ]]
 [[ -f "${package_root}/etc/meshd/meshd.env" ]]
 
 if env \

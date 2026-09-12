@@ -19,8 +19,10 @@ const (
 	DefaultSocketPath = "/run/meshd/meshd.sock"
 	// DefaultNetAdminSocketPath is the separate privileged-helper endpoint.
 	DefaultNetAdminSocketPath = "/run/meshnetd/meshnetd.sock"
-	// DefaultStateDir contains profile metadata and, later, encrypted key material.
+	// DefaultStateDir contains profile metadata and encrypted identity envelopes.
 	DefaultStateDir = "/var/lib/meshd"
+	// DefaultIdentityKeyPath is the systemd credential exposed to meshd.
+	DefaultIdentityKeyPath = "/run/credentials/meshd.service/meshd.identity-key"
 )
 
 // Config contains the complete startup configuration for meshd.
@@ -28,6 +30,7 @@ type Config struct {
 	SocketPath                     string
 	NetAdminSocketPath             string
 	StateDir                       string
+	IdentityKeyPath                string
 	LogLevel                       string
 	ShowVersion                    bool
 	AllowedUIDs                    []uint32
@@ -60,6 +63,12 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 		"path to the privileged meshnetd unixpacket socket",
 	)
 	flags.StringVar(&cfg.StateDir, "state-dir", DefaultStateDir, "directory for persistent daemon state")
+	flags.StringVar(
+		&cfg.IdentityKeyPath,
+		"identity-key-file",
+		DefaultIdentityKeyPath,
+		"owner-only file containing the 32-byte identity envelope key",
+	)
 	flags.StringVar(&cfg.LogLevel, "log-level", "info", "log level: debug, info, warn, or error")
 	flags.BoolVar(&cfg.ShowVersion, "version", false, "print version and exit")
 	flags.BoolVar(
@@ -199,6 +208,10 @@ func validate(cfg Config) error {
 	}
 	if filepath.Clean(cfg.StateDir) == string(filepath.Separator) {
 		return errors.New("state directory cannot be the filesystem root")
+	}
+	if !filepath.IsAbs(cfg.IdentityKeyPath) ||
+		filepath.Clean(cfg.IdentityKeyPath) == string(filepath.Separator) {
+		return errors.New("identity key path must be an absolute file")
 	}
 	if !filepath.IsAbs(cfg.NetAdminSocketPath) {
 		return errors.New("netadmin socket path must be absolute")

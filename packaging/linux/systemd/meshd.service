@@ -2,8 +2,8 @@
 Description=MeshTransit node daemon
 Documentation=https://github.com/meshtransit/meshd
 Wants=network-online.target
-Requires=meshnetd.service
-After=network-online.target meshnetd.service systemd-resolved.service
+Requires=meshcred.service meshnetd.service
+After=network-online.target meshcred.service meshnetd.service systemd-resolved.service
 
 [Service]
 Type=simple
@@ -13,6 +13,7 @@ SupplementaryGroups=meshd
 UMask=0007
 Environment=MESHD_FLAGS=
 EnvironmentFile=-/etc/meshd/meshd.env
+LoadCredentialEncrypted=meshd.identity-key:/etc/credstore.encrypted/meshd.identity-key
 ExecStart=/usr/bin/meshd --allow-socket-peers --enable-wireguard-poc --wireguard-listen-port=41641 --enable-dns-poc $MESHD_FLAGS
 Restart=on-failure
 RestartSec=2s

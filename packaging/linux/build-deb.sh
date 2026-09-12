@@ -67,24 +67,32 @@ readonly ldflags="-s -w -X ${version_package}.Version=${version} -X ${version_pa
     CGO_ENABLED=0 GOOS=linux GOARCH="${architecture}" \
         go build -buildvcs=false -trimpath -ldflags="${ldflags}" \
         -o "${binary_dir}/meshd" ./cmd/meshd
-    CGO_ENABLED=0 GOOS=linux GOARCH="${architecture}" \
-        go build -buildvcs=false -trimpath -ldflags="${ldflags}" \
-        -o "${binary_dir}/meshnetd" ./cmd/meshnetd
+	CGO_ENABLED=0 GOOS=linux GOARCH="${architecture}" \
+		go build -buildvcs=false -trimpath -ldflags="${ldflags}" \
+		-o "${binary_dir}/meshnetd" ./cmd/meshnetd
+	CGO_ENABLED=0 GOOS=linux GOARCH="${architecture}" \
+		go build -buildvcs=false -trimpath -ldflags="${ldflags}" \
+		-o "${binary_dir}/meshcred" ./cmd/meshcred
 )
 
 install -D -m 0755 "${binary_dir}/meshd" "${package_root}/usr/bin/meshd"
 install -D -m 0755 "${binary_dir}/meshnetd" \
-    "${package_root}/usr/libexec/meshtransit/meshnetd"
+	"${package_root}/usr/libexec/meshtransit/meshnetd"
+install -D -m 0755 "${binary_dir}/meshcred" \
+	"${package_root}/usr/libexec/meshtransit/meshcred"
 install -D -m 0644 "${script_dir}/systemd/meshd.service" \
-    "${package_root}/usr/lib/systemd/system/meshd.service"
+	"${package_root}/usr/lib/systemd/system/meshd.service"
 install -D -m 0644 "${script_dir}/systemd/meshnetd.service" \
-    "${package_root}/usr/lib/systemd/system/meshnetd.service"
+	"${package_root}/usr/lib/systemd/system/meshnetd.service"
+install -D -m 0644 "${script_dir}/systemd/meshcred.service" \
+	"${package_root}/usr/lib/systemd/system/meshcred.service"
 install -D -m 0644 "${script_dir}/sysusers/meshd.conf" \
     "${package_root}/usr/lib/sysusers.d/meshd.conf"
 install -D -m 0644 "${script_dir}/tmpfiles/meshd.conf" \
     "${package_root}/usr/lib/tmpfiles.d/meshd.conf"
 install -D -m 0640 "${script_dir}/default/meshd.env" \
-    "${package_root}/etc/meshd/meshd.env"
+	"${package_root}/etc/meshd/meshd.env"
+install -d -m 0700 "${package_root}/etc/credstore.encrypted"
 install -D -m 0644 "${repository_dir}/README.md" \
     "${package_root}/usr/share/doc/meshd/README.md"
 install -D -m 0644 "${repository_dir}/THIRD_PARTY_NOTICES.md" \
@@ -105,7 +113,7 @@ Maintainer: MeshTransit maintainers
 Installed-Size: ${installed_size}
 Section: net
 Priority: optional
-Depends: init-system-helpers (>= 1.54~), systemd (>= 249), systemd-resolved
+Depends: init-system-helpers (>= 1.54~), systemd (>= 255), systemd-resolved
 Recommends: meshctl
 Homepage: https://github.com/meshtransit/meshd
 Description: MeshTransit node daemon

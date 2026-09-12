@@ -102,11 +102,22 @@ Release-eligible adapters must provide:
 - migration that never deletes the last readable copy before verification;
 - redacted errors and zeroization of temporary mutable buffers where practical.
 
-The Linux implementation will introduce an encrypted state envelope with a
-host-bound sealing backend suitable for the supported Ubuntu service model.
-Windows uses DPAPI or an equivalent service-identity-bound facility. macOS uses
-Keychain access groups scoped to the signed product. Plain `0600` records remain
-a development migration source, not a v0.1 release backend.
+Linux now stores identity records in versioned AES-256-GCM envelopes. The
+profile identifier and envelope version are authenticated as associated data.
+A root-only one-shot creates the 256-bit key through `systemd-creds`, stores
+only its host-encrypted form under `/etc/credstore.encrypted`, and systemd
+exposes the decrypted key only in the private credential mount of
+`meshd.service`. `meshnetd` receives neither form. Existing plaintext `0600`
+records remain readable during the compatibility deployment stage and are
+atomically protected on their first state update; new records never use the
+plaintext format. A later migration stage may eagerly rewrite them only after
+the compatibility build is retained as the rollback target.
+
+The systemd host-key backend raises the cost of offline state disclosure but
+does not defend against an attacker with root access and the host credential
+key. TPM binding, key rotation, and encrypted backup recovery remain separate
+gates. Windows uses DPAPI or an equivalent service-identity-bound facility.
+macOS uses Keychain access groups scoped to the signed product.
 
 ## Network-change monitor
 

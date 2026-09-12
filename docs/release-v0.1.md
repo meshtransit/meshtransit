@@ -110,6 +110,13 @@ expose the bounded aggregate runtime and operating-system resource measurements
 needed for the long-duration gate. The first two-node alpha17 native smoke
 passed with 14/14 healthy samples and unchanged resource cardinality; the
 72-hour release-candidate evidence remains.
+The Linux secret-storage compatibility stage now writes profile-bound,
+authenticated identity envelopes and supplies their key through a
+host-encrypted systemd credential. New identity state is never plaintext;
+legacy state stays readable until its first write so alpha17 remains a rollback
+target during staged qualification. Native Debian 13 and Ubuntu 26.04 package,
+credential, tamper, restart, removal, purge, and rollback evidence remains to be
+recorded before this gate is complete.
 It does not yet have a signed artifact pipeline, IPv6-only underlay evidence,
 real multi-uplink migration qualification, the larger candidate crash sample
 set, repeated candidate DNS-failure samples, or a long-duration qualification

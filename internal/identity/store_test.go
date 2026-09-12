@@ -1,7 +1,9 @@
 package identity
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -9,15 +11,24 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/meshtransit/meshd/internal/secretstore"
 )
 
-const testProfileID = "00000000000000000000000000000001"
+const (
+	testProfileID       = "00000000000000000000000000000001"
+	secondTestProfileID = "00000000000000000000000000000002"
+)
 
 func TestStore_CreateGetAndUpdate(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.September, 9, 1, 2, 3, 0, time.UTC)
-	store, err := openWith(t.TempDir(), func() time.Time { return now })
+	store, err := openWith(
+		t.TempDir(),
+		func() time.Time { return now },
+		testProtector(t, 0x10),
+	)
 	if err != nil {
 		t.Fatalf("openWith() error = %v", err)
 	}
@@ -65,6 +76,205 @@ func TestStore_CreateGetAndUpdate(t *testing.T) {
 	}
 	if got, expected := info.Mode().Perm(), os.FileMode(0o600); got != expected {
 		t.Fatalf("record mode = %04o, want %04o", got, expected)
+	}
+	encoded := readIdentityFile(t, store.dir, testProfileID)
+	for _, secret := range []string{
+		"machine-secret",
+		"node-secret",
+		"control-public",
+		pendingURL,
+	} {
+		if bytes.Contains(encoded, []byte(secret)) {
+			t.Fatalf("protected identity contains plaintext %q", secret)
+		}
+	}
+}
+
+func TestStore_ProtectsLegacyPlaintextOnFirstWrite(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.September, 12, 1, 2, 3, 0, time.UTC)
+	stateDir := t.TempDir()
+	store, err := openWith(stateDir, func() time.Time { return now }, testProtector(t, 0x31))
+	if err != nil {
+		t.Fatalf("openWith() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	record := testRecord(t, now)
+	legacy, err := json.Marshal(toPersisted(record))
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	legacy = append(legacy, '\n')
+	path := filepath.Join(store.dir, recordFileName(testProfileID))
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	loaded, err := store.Get(t.Context(), testProfileID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if !sameRecord(loaded, record) {
+		t.Fatal("loaded record does not match legacy identity")
+	}
+	if afterRead := readIdentityFile(t, store.dir, testProfileID); !bytes.Equal(afterRead, legacy) {
+		t.Fatal("read-only access changed the rollback-compatible legacy record")
+	}
+	if _, err := store.SetRegistration(t.Context(), testProfileID, "", false); err != nil {
+		t.Fatalf("SetRegistration() error = %v", err)
+	}
+	protected := readIdentityFile(t, store.dir, testProfileID)
+	if bytes.Equal(protected, legacy) || bytes.Contains(protected, []byte("machine-secret")) {
+		t.Fatal("legacy identity was not replaced with protected bytes")
+	}
+	envelope := persistedEnvelope{}
+	if err := decodeStrict(protected, &envelope); err != nil {
+		t.Fatalf("decodeStrict(envelope) error = %v", err)
+	}
+	if envelope.Format != envelopeFormat || envelope.ProfileID != testProfileID || envelope.Payload == "" {
+		t.Fatalf("migrated envelope metadata = %#v", envelope)
+	}
+}
+
+func TestStore_MigrationFailurePreservesLegacyRecord(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.September, 12, 2, 3, 4, 0, time.UTC)
+	stateDir := t.TempDir()
+	store, err := openWith(stateDir, func() time.Time { return now }, failingProtector{})
+	if err != nil {
+		t.Fatalf("openWith() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	legacy, err := json.Marshal(toPersisted(testRecord(t, now)))
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	legacy = append(legacy, '\n')
+	path := filepath.Join(store.dir, recordFileName(testProfileID))
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if _, err := store.Get(t.Context(), testProfileID); err != nil {
+		t.Fatalf("Get() error = %v, want legacy read to remain available", err)
+	}
+	if _, err := store.SetRegistration(t.Context(), testProfileID, "", false); err == nil {
+		t.Fatal("SetRegistration() error = nil, want migration failure")
+	}
+	if after := readIdentityFile(t, store.dir, testProfileID); !bytes.Equal(after, legacy) {
+		t.Fatal("failed migration changed the last readable legacy record")
+	}
+}
+
+func TestStore_RejectsTamperingWrongKeyAndProfileSwap(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mutate  func(*testing.T, string)
+		openKey byte
+	}{
+		{
+			name: "tampered ciphertext",
+			mutate: func(t *testing.T, path string) {
+				t.Helper()
+				envelope := persistedEnvelope{}
+				if err := decodeStrict(readIdentityFilePath(t, path), &envelope); err != nil {
+					t.Fatal(err)
+				}
+				if envelope.Payload[0] == 'A' {
+					envelope.Payload = "B" + envelope.Payload[1:]
+				} else {
+					envelope.Payload = "A" + envelope.Payload[1:]
+				}
+				writeEnvelope(t, path, envelope)
+			},
+			openKey: 0x41,
+		},
+		{
+			name:    "wrong key",
+			mutate:  func(*testing.T, string) {},
+			openKey: 0x42,
+		},
+		{
+			name: "unsupported version",
+			mutate: func(t *testing.T, path string) {
+				t.Helper()
+				envelope := persistedEnvelope{}
+				if err := decodeStrict(readIdentityFilePath(t, path), &envelope); err != nil {
+					t.Fatal(err)
+				}
+				envelope.Version++
+				writeEnvelope(t, path, envelope)
+			},
+			openKey: 0x41,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			stateDir := t.TempDir()
+			store, err := Open(stateDir, testProtector(t, 0x41))
+			if err != nil {
+				t.Fatalf("Open(create) error = %v", err)
+			}
+			if err := store.Create(t.Context(), testRecord(t, time.Now())); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+			path := filepath.Join(stateDir, identityDirName, recordFileName(testProfileID))
+			test.mutate(t, path)
+
+			reopened, err := Open(stateDir, testProtector(t, test.openKey))
+			if err != nil {
+				t.Fatalf("Open(read) error = %v", err)
+			}
+			t.Cleanup(func() { _ = reopened.Close() })
+			_, err = reopened.Get(t.Context(), testProfileID)
+			if test.name == "unsupported version" {
+				if !errors.Is(err, ErrUnsupported) {
+					t.Fatalf("Get() error = %v, want ErrUnsupported", err)
+				}
+
+				return
+			}
+			if !errors.Is(err, ErrCorrupt) {
+				t.Fatalf("Get() error = %v, want ErrCorrupt", err)
+			}
+		})
+	}
+}
+
+func TestStore_RejectsCrossProfileCiphertext(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	store, err := Open(stateDir, testProtector(t, 0x50))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	first := testRecordForProfile(t, testProfileID, time.Now())
+	second := testRecordForProfile(t, secondTestProfileID, time.Now())
+	if err := store.Create(t.Context(), first); err != nil {
+		t.Fatalf("Create(first) error = %v", err)
+	}
+	if err := store.Create(t.Context(), second); err != nil {
+		t.Fatalf("Create(second) error = %v", err)
+	}
+	firstBytes := readIdentityFile(t, store.dir, testProfileID)
+	secondPath := filepath.Join(store.dir, recordFileName(secondTestProfileID))
+	if err := os.WriteFile(secondPath, firstBytes, 0o600); err != nil {
+		t.Fatalf("WriteFile(swapped) error = %v", err)
+	}
+
+	if _, err := store.Get(t.Context(), secondTestProfileID); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("Get(swapped) error = %v, want ErrCorrupt", err)
 	}
 }
 
@@ -115,7 +325,7 @@ func TestStore_RejectsUnsafeRecords(t *testing.T) {
 			t.Parallel()
 
 			stateDir := t.TempDir()
-			store, err := Open(stateDir)
+			store, err := Open(stateDir, testProtector(t, 0x20))
 			if err != nil {
 				t.Fatalf("Open() error = %v", err)
 			}
@@ -150,7 +360,7 @@ func TestRecord_RedactsSecrets(t *testing.T) {
 func TestStore_ContextCancellation(t *testing.T) {
 	t.Parallel()
 
-	store, err := Open(t.TempDir())
+	store, err := Open(t.TempDir(), testProtector(t, 0x30))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -163,11 +373,36 @@ func TestStore_ContextCancellation(t *testing.T) {
 	}
 }
 
+func FuzzStoreDecodeRecord(f *testing.F) {
+	protector, err := secretstore.New(bytes.Repeat([]byte{0x62}, secretstore.KeySize))
+	if err != nil {
+		f.Fatalf("secretstore.New() error = %v", err)
+	}
+	f.Cleanup(func() { _ = protector.Close() })
+	store := &Store{protector: protector}
+	f.Add([]byte("{}"))
+	f.Add([]byte(`{"format":"meshtransit.identity","version":1}`))
+	f.Add([]byte(`{"version":1,"profile_id":"00000000000000000000000000000001"}`))
+
+	f.Fuzz(func(t *testing.T, encoded []byte) {
+		if len(encoded) == 0 || len(encoded) > maxRecordBytes {
+			t.Skip()
+		}
+		_, _, _ = store.decodeRecord(t.Context(), testProfileID, encoded)
+	})
+}
+
 func testRecord(t *testing.T, now time.Time) Record {
 	t.Helper()
 
+	return testRecordForProfile(t, testProfileID, now)
+}
+
+func testRecordForProfile(t *testing.T, profileID string, now time.Time) Record {
+	t.Helper()
+
 	record, err := NewRecord(
-		testProfileID,
+		profileID,
 		Material{
 			MachinePrivateKey: []byte("machine-secret"),
 			NodePrivateKey:    []byte("node-secret"),
@@ -182,3 +417,56 @@ func testRecord(t *testing.T, now time.Time) Record {
 
 	return record
 }
+
+func testProtector(t *testing.T, fill byte) *secretstore.Protector {
+	t.Helper()
+
+	protector, err := secretstore.New(bytes.Repeat([]byte{fill}, secretstore.KeySize))
+	if err != nil {
+		t.Fatalf("secretstore.New() error = %v", err)
+	}
+
+	return protector
+}
+
+func readIdentityFile(t *testing.T, dir, profileID string) []byte {
+	t.Helper()
+
+	return readIdentityFilePath(t, filepath.Join(dir, recordFileName(profileID)))
+}
+
+func readIdentityFilePath(t *testing.T, path string) []byte {
+	t.Helper()
+
+	//nolint:gosec // Tests read only files under their own temporary directory.
+	encoded, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	return encoded
+}
+
+func writeEnvelope(t *testing.T, path string, envelope persistedEnvelope) {
+	t.Helper()
+
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("json.Marshal(envelope) error = %v", err)
+	}
+	if err := os.WriteFile(path, append(encoded, '\n'), 0o600); err != nil {
+		t.Fatalf("WriteFile(envelope) error = %v", err)
+	}
+}
+
+type failingProtector struct{}
+
+func (failingProtector) Seal(context.Context, []byte, []byte) ([]byte, error) {
+	return nil, errors.New("injected protection failure")
+}
+
+func (failingProtector) Open(context.Context, []byte, []byte) ([]byte, error) {
+	return nil, errors.New("injected open failure")
+}
+
+func (failingProtector) Close() error { return nil }

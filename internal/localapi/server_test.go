@@ -18,6 +18,7 @@ import (
 	"github.com/meshtransit/meshd/internal/profile"
 	"github.com/meshtransit/meshd/internal/relay"
 	"github.com/meshtransit/meshd/internal/runtimehealth"
+	"github.com/meshtransit/meshd/internal/secretstore"
 	"github.com/meshtransit/meshd/internal/version"
 )
 
@@ -397,8 +398,13 @@ func newTestServerWithOptions(t *testing.T, options Options) *Server {
 		t.Fatalf("profile.Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	identities, err := identity.Open(stateDir)
+	protector, err := secretstore.New(bytes.Repeat([]byte{0x52}, secretstore.KeySize))
 	if err != nil {
+		t.Fatalf("secretstore.New() error = %v", err)
+	}
+	identities, err := identity.Open(stateDir, protector)
+	if err != nil {
+		_ = protector.Close()
 		t.Fatalf("identity.Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = identities.Close() })

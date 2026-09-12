@@ -5,7 +5,10 @@
 ## Demo
 
 ```console
-$ meshd --socket /tmp/meshd.sock --state-dir /tmp/meshd-state
+$ umask 077
+$ head -c 32 /dev/urandom > /tmp/meshd.identity-key
+$ meshd --socket /tmp/meshd.sock --state-dir /tmp/meshd-state \
+    --identity-key-file /tmp/meshd.identity-key
 {"level":"INFO","msg":"meshd started","socket":"/tmp/meshd.sock","version":"dev"}
 ```
 
@@ -62,10 +65,13 @@ Requirements: Go 1.26.8 or newer. Go's automatic toolchain selection can use the
 ```bash
 make test
 make build
-./bin/meshd --socket /tmp/meshd.sock --state-dir /tmp/meshd-state
+umask 077
+head -c 32 /dev/urandom > /tmp/meshd.identity-key
+./bin/meshd --socket /tmp/meshd.sock --state-dir /tmp/meshd-state \
+  --identity-key-file /tmp/meshd.identity-key
 ```
 
-Production defaults are `/run/meshd/meshd.sock` and `/var/lib/meshd`. Run the daemon under a dedicated service account and restrict membership of the socket's owning group. Linux authorizes UID `0`, the daemon UID, and values supplied through repeatable `--allow-uid UID` flags. A packaged service can enable `--allow-socket-peers` so kernel-verified callers admitted by the socket's `0660` owner/group permissions are also authorized.
+Production defaults are `/run/meshd/meshd.sock` and `/var/lib/meshd`. Run the daemon under a dedicated service account and restrict membership of the socket's owning group. Linux authorizes UID `0`, the daemon UID, and values supplied through repeatable `--allow-uid UID` flags. A packaged service can enable `--allow-socket-peers` so kernel-verified callers admitted by the socket's `0660` owner/group permissions are also authorized. The Debian package provisions a host-encrypted systemd credential and exposes its decrypted 32-byte key only inside `meshd.service`; unpackaged development must provide an owner-only key with `--identity-key-file`.
 
 Non-Linux development currently lacks a verified peer-credential implementation and therefore denies API requests by default. The explicit `--unsafe-allow-unverified-local-peer` flag is for isolated development only and must not be used in production.
 
@@ -80,7 +86,10 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - Bounded HTTP headers, bodies, reads, writes, and graceful shutdown.
 - HTTPS-only TS2021 capability-142 control-key and Noise-handshake probe with certificate verification, redirect refusal, and fingerprint-only output.
 - Explicit operator fingerprint verification before creating a control-key pin.
-- Per-profile machine and node identities in create-only, atomically replaced `0600` records beneath a `0700` directory.
+- Per-profile machine and node identities in create-only, atomically replaced
+  AES-256-GCM envelopes beneath a `0700` directory, bound to the profile and
+  verified before commit. The Linux package supplies their key through a
+  host-encrypted systemd credential that is unavailable to `meshnetd`.
 - Pinned Noise HTTP/2 node registration through either a same-origin browser flow or a transient auth key.
 - Persisted browser follow-up state, restart registration, and fail-closed handling for key change or required key rotation.
 - Long-lived, pinned Noise/HTTP2 control-map stream with a two-minute watchdog and bounded jittered reconnect.
@@ -130,7 +139,13 @@ See [docs/architecture.md](docs/architecture.md),
 
 This repository can validate a server key, explicitly pin it, persist and register a per-profile identity, maintain the active profile's control stream, atomically publish a validated network map, activate Linux MagicDNS and split-DNS routing, create a Linux TUN through a separate privileged process, reconcile signed host routes inside fixed overlay pools, enforce host-level packet policy, maintain an encrypted relay base path, publish discovered endpoints, run authenticated direct-path probes, and roam encrypted traffic between relay, public, and private paths. `doctor control` remains a non-persisting diagnostic. It does not yet implement encrypted resolver transports, subnet/exit routes, fragment reassembly, or complete port semantics for transports other than TCP and UDP.
 
-Private identity records currently rely on the daemon account and filesystem permissions for at-rest protection. Treat `/var/lib/meshd` and its backups as secrets. OS-backed sealing is still a production release gate.
+Private identity records are encrypted and authenticated at rest. On packaged
+Linux, a root-only `meshcred` one-shot creates a host-encrypted systemd
+credential once; systemd decrypts it only into the private credential mount of
+`meshd.service`. Treat `/var/lib/meshd`, `/etc/credstore.encrypted`, and their
+backups as sensitive. The current host-key backend does not protect a machine
+after full root or host-key compromise, and TPM binding, key rotation, and
+encrypted backup recovery remain production gates.
 
 ## Contributing
 

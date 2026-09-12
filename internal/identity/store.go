@@ -1,8 +1,10 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,12 +14,19 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/meshtransit/meshd/internal/secretstore"
 )
 
 const (
-	identityDirName  = "identities"
-	maxRecordBytes   = 64 << 10
-	temporaryIDBytes = 12
+	identityDirName      = "identities"
+	maxRecordBytes       = 64 << 10
+	maxPlaintextBytes    = 32 << 10
+	temporaryIDBytes     = 12
+	envelopeFormat       = "meshtransit.identity"
+	envelopeVersion      = 1
+	envelopeAlgorithm    = "aes-256-gcm"
+	additionalDataPrefix = "meshtransit/identity/v1\x00"
 )
 
 type persistedRecord struct {
@@ -33,25 +42,50 @@ type persistedRecord struct {
 	UpdatedAt             time.Time `json:"updated_at"`
 }
 
-// Store owns an os.Root confined to the private identities directory.
+type persistedEnvelope struct {
+	Format    string `json:"format"`
+	Version   int    `json:"version"`
+	ProfileID string `json:"profile_id"`
+	Algorithm string `json:"algorithm"`
+	Payload   string `json:"payload"`
+}
+
+type recordProtector interface {
+	Seal(context.Context, []byte, []byte) ([]byte, error)
+	Open(context.Context, []byte, []byte) ([]byte, error)
+	Close() error
+}
+
+// Store owns an os.Root confined to the private identities directory and the
+// protector used for every persisted identity. Plaintext records are accepted
+// only as a migration source and are atomically protected on the first write.
 type Store struct {
-	mu    sync.Mutex
-	dir   string
-	root  *os.Root
-	clock func() time.Time
+	mu        sync.Mutex
+	dir       string
+	root      *os.Root
+	protector recordProtector
+	clock     func() time.Time
 }
 
-// Open creates and opens stateDir/identities with owner-only permissions.
-func Open(stateDir string) (*Store, error) {
-	return openWith(stateDir, time.Now)
+// Open creates and opens stateDir/identities with owner-only permissions. The
+// store takes ownership of protector only when Open succeeds.
+func Open(stateDir string, protector *secretstore.Protector) (*Store, error) {
+	return openWith(stateDir, time.Now, protector)
 }
 
-func openWith(stateDir string, clock func() time.Time) (*Store, error) {
+func openWith(
+	stateDir string,
+	clock func() time.Time,
+	protector recordProtector,
+) (*Store, error) {
 	if !filepath.IsAbs(stateDir) {
 		return nil, errors.New("identity store directory must be absolute")
 	}
 	if clock == nil {
 		return nil, errors.New("identity store clock is required")
+	}
+	if protector == nil {
+		return nil, errors.New("identity store protector is required")
 	}
 
 	dir := filepath.Join(stateDir, identityDirName)
@@ -73,19 +107,35 @@ func openWith(stateDir string, clock func() time.Time) (*Store, error) {
 		return nil, fmt.Errorf("opening confined identity store: %w", err)
 	}
 
-	return &Store{dir: dir, root: root, clock: clock}, nil
+	return &Store{
+		dir:       dir,
+		root:      root,
+		protector: protector,
+		clock:     clock,
+	}, nil
 }
 
-// Close releases the confined directory handle.
+// Close releases the confined directory handle and clears the envelope key.
 func (s *Store) Close() error {
-	if s == nil || s.root == nil {
+	if s == nil {
 		return nil
 	}
 
-	return s.root.Close()
+	var rootErr error
+	if s.root != nil {
+		rootErr = s.root.Close()
+	}
+	var protectorErr error
+	if s.protector != nil {
+		protectorErr = s.protector.Close()
+	}
+
+	return errors.Join(rootErr, protectorErr)
 }
 
-// Get loads one profile identity without exposing persisted DTO fields.
+// Get loads one profile identity without exposing persisted DTO fields. It
+// leaves a valid legacy record unchanged so the preceding release remains a
+// rollback target during the compatibility deployment stage.
 func (s *Store) Get(ctx context.Context, profileID string) (Record, error) {
 	if err := ctx.Err(); err != nil {
 		return Record{}, fmt.Errorf("reading identity: %w", err)
@@ -93,14 +143,19 @@ func (s *Store) Get(ctx context.Context, profileID string) (Record, error) {
 	if !isProfileID(profileID) {
 		return Record{}, ErrNotFound
 	}
-	if s == nil || s.root == nil {
+	if s == nil || s.root == nil || s.protector == nil {
 		return Record{}, errors.New("identity store is not initialized")
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.loadLocked(profileID)
+	record, _, err := s.loadLocked(ctx, profileID)
+	if err != nil {
+		return Record{}, err
+	}
+
+	return record, nil
 }
 
 // Create persists a new identity and refuses to overwrite an existing pin or key.
@@ -111,7 +166,7 @@ func (s *Store) Create(ctx context.Context, record Record) error {
 	if err := validateRecord(record); err != nil {
 		return err
 	}
-	if s == nil || s.root == nil {
+	if s == nil || s.root == nil || s.protector == nil {
 		return errors.New("identity store is not initialized")
 	}
 
@@ -125,7 +180,7 @@ func (s *Store) Create(ctx context.Context, record Record) error {
 		return fmt.Errorf("inspecting identity record: %w", err)
 	}
 
-	return s.persistLocked(record, false)
+	return s.persistLocked(ctx, record, false)
 }
 
 // SetRegistration atomically updates only browser-pending and registered state.
@@ -141,14 +196,14 @@ func (s *Store) SetRegistration(
 	if !isProfileID(profileID) {
 		return Record{}, ErrNotFound
 	}
-	if s == nil || s.root == nil {
+	if s == nil || s.root == nil || s.protector == nil {
 		return Record{}, errors.New("identity store is not initialized")
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	record, err := s.loadLocked(profileID)
+	record, _, err := s.loadLocked(ctx, profileID)
 	if err != nil {
 		return Record{}, err
 	}
@@ -158,69 +213,115 @@ func (s *Store) SetRegistration(
 	if err := validateRecord(record); err != nil {
 		return Record{}, err
 	}
-	if err := s.persistLocked(record, true); err != nil {
+	if err := s.persistLocked(ctx, record, true); err != nil {
 		return Record{}, err
 	}
 
 	return record, nil
 }
 
-func (s *Store) loadLocked(profileID string) (Record, error) {
+func (s *Store) loadLocked(
+	ctx context.Context,
+	profileID string,
+) (Record, bool, error) {
 	name := recordFileName(profileID)
 	info, err := s.root.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
-		return Record{}, ErrNotFound
+		return Record{}, false, ErrNotFound
 	}
 	if err != nil {
-		return Record{}, fmt.Errorf("inspecting identity record: %w", err)
+		return Record{}, false, fmt.Errorf("inspecting identity record: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return Record{}, errors.New("identity record must be a regular file, not a link")
+		return Record{}, false, fmt.Errorf("%w: record must be a regular file, not a link", ErrCorrupt)
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return Record{}, fmt.Errorf("identity record permissions %04o are too broad", info.Mode().Perm())
+		return Record{}, false, fmt.Errorf("%w: record permissions are too broad", ErrCorrupt)
 	}
-	if info.Size() > maxRecordBytes {
-		return Record{}, fmt.Errorf("identity record exceeds %d bytes", maxRecordBytes)
+	if info.Size() <= 0 || info.Size() > maxRecordBytes {
+		return Record{}, false, fmt.Errorf("%w: record has an invalid size", ErrCorrupt)
 	}
 
 	file, err := s.root.Open(name)
 	if err != nil {
-		return Record{}, fmt.Errorf("opening identity record: %w", err)
+		return Record{}, false, fmt.Errorf("opening identity record: %w", err)
 	}
 	defer func() { _ = file.Close() }()
 
-	decoder := json.NewDecoder(io.LimitReader(file, maxRecordBytes+1))
-	decoder.DisallowUnknownFields()
-	persisted := persistedRecord{}
-	if err := decoder.Decode(&persisted); err != nil {
-		return Record{}, fmt.Errorf("decoding identity record: %w", err)
-	}
-	if err := ensureJSONEOF(decoder); err != nil {
-		return Record{}, err
-	}
-	if persisted.Version != recordVersion {
-		return Record{}, fmt.Errorf("unsupported identity record version %d", persisted.Version)
+	encoded, err := readBounded(file, maxRecordBytes)
+	if err != nil {
+		return Record{}, false, err
 	}
 
-	record := fromPersisted(persisted)
-	if record.profileID != profileID {
-		return Record{}, errors.New("identity record profile binding does not match its filename")
-	}
-	if err := validateRecord(record); err != nil {
-		return Record{}, fmt.Errorf("validating identity record: %w", err)
-	}
-
-	return record, nil
+	return s.decodeRecord(ctx, profileID, encoded)
 }
 
-func (s *Store) persistLocked(record Record, replace bool) error {
-	persisted := toPersisted(record)
-	encoded, err := json.MarshalIndent(persisted, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encoding identity record: %w", err)
+func (s *Store) decodeRecord(
+	ctx context.Context,
+	profileID string,
+	encoded []byte,
+) (Record, bool, error) {
+	header := struct {
+		Format string `json:"format"`
+	}{}
+	if err := json.Unmarshal(encoded, &header); err != nil {
+		return Record{}, false, fmt.Errorf("%w: record is not valid json", ErrCorrupt)
 	}
-	encoded = append(encoded, '\n')
+	if header.Format == "" {
+		record, err := decodePlaintextRecord(encoded, profileID)
+
+		return record, true, err
+	}
+	if header.Format != envelopeFormat {
+		return Record{}, false, fmt.Errorf("%w: identity envelope format", ErrUnsupported)
+	}
+
+	envelope := persistedEnvelope{}
+	if err := decodeStrict(encoded, &envelope); err != nil {
+		return Record{}, false, fmt.Errorf("%w: decoding identity envelope", ErrCorrupt)
+	}
+	if envelope.Version != envelopeVersion || envelope.Algorithm != envelopeAlgorithm {
+		return Record{}, false, fmt.Errorf("%w: identity envelope version or algorithm", ErrUnsupported)
+	}
+	if envelope.ProfileID != profileID {
+		return Record{}, false, fmt.Errorf("%w: envelope profile binding", ErrCorrupt)
+	}
+	decodedLength := base64.RawStdEncoding.DecodedLen(len(envelope.Payload))
+	if decodedLength <= 0 || decodedLength > maxPlaintextBytes+64 {
+		return Record{}, false, fmt.Errorf("%w: protected payload size", ErrCorrupt)
+	}
+	protected := make([]byte, decodedLength)
+	decodedBytes, err := base64.RawStdEncoding.Strict().Decode(protected, []byte(envelope.Payload))
+	if err != nil {
+		clear(protected)
+
+		return Record{}, false, fmt.Errorf("%w: protected payload encoding", ErrCorrupt)
+	}
+	protected = protected[:decodedBytes]
+	plaintext, err := s.protector.Open(ctx, protected, recordAdditionalData(profileID))
+	clear(protected)
+	if errors.Is(err, secretstore.ErrAuthentication) {
+		return Record{}, false, fmt.Errorf("%w: identity envelope authentication", ErrCorrupt)
+	}
+	if err != nil {
+		return Record{}, false, fmt.Errorf("opening identity envelope: %w", err)
+	}
+	defer clear(plaintext)
+
+	record, err := decodePlaintextRecord(plaintext, profileID)
+	if err != nil {
+		return Record{}, false, err
+	}
+
+	return record, false, nil
+}
+
+func (s *Store) persistLocked(ctx context.Context, record Record, replace bool) error {
+	encoded, err := s.encodeRecord(ctx, record)
+	if err != nil {
+		return err
+	}
+	defer clear(encoded)
 	if len(encoded) > maxRecordBytes {
 		return fmt.Errorf("encoded identity record exceeds %d bytes", maxRecordBytes)
 	}
@@ -231,7 +332,7 @@ func (s *Store) persistLocked(record Record, replace bool) error {
 	}
 	temporary, err := s.root.OpenFile(
 		temporaryName,
-		os.O_CREATE|os.O_EXCL|os.O_WRONLY,
+		os.O_CREATE|os.O_EXCL|os.O_RDWR,
 		0o600,
 	)
 	if err != nil {
@@ -242,11 +343,30 @@ func (s *Store) persistLocked(record Record, replace bool) error {
 		_ = s.root.Remove(temporaryName)
 	}()
 
-	if _, err := temporary.Write(encoded); err != nil {
+	written, err := temporary.Write(encoded)
+	if err != nil {
 		return fmt.Errorf("writing temporary identity record: %w", err)
+	}
+	if written != len(encoded) {
+		return io.ErrShortWrite
 	}
 	if err := temporary.Sync(); err != nil {
 		return fmt.Errorf("syncing temporary identity record: %w", err)
+	}
+	if _, err := temporary.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("rewinding temporary identity record: %w", err)
+	}
+	verifiedBytes, err := readBounded(temporary, maxRecordBytes)
+	if err != nil {
+		return fmt.Errorf("verifying temporary identity record: %w", err)
+	}
+	verified, isLegacy, err := s.decodeRecord(ctx, record.profileID, verifiedBytes)
+	clear(verifiedBytes)
+	if err != nil {
+		return fmt.Errorf("verifying temporary identity record: %w", err)
+	}
+	if isLegacy || !sameRecord(verified, record) {
+		return errors.New("verifying temporary identity record: record mismatch")
 	}
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("closing temporary identity record: %w", err)
@@ -273,6 +393,99 @@ func (s *Store) persistLocked(record Record, replace bool) error {
 	}
 
 	return nil
+}
+
+func (s *Store) encodeRecord(ctx context.Context, record Record) ([]byte, error) {
+	plaintext, err := json.Marshal(toPersisted(record))
+	if err != nil {
+		return nil, fmt.Errorf("encoding identity plaintext: %w", err)
+	}
+	defer clear(plaintext)
+	if len(plaintext) > maxPlaintextBytes {
+		return nil, fmt.Errorf("identity plaintext exceeds %d bytes", maxPlaintextBytes)
+	}
+
+	protected, err := s.protector.Seal(ctx, plaintext, recordAdditionalData(record.profileID))
+	if err != nil {
+		return nil, fmt.Errorf("protecting identity record: %w", err)
+	}
+	defer clear(protected)
+	envelope := persistedEnvelope{
+		Format:    envelopeFormat,
+		Version:   envelopeVersion,
+		ProfileID: record.profileID,
+		Algorithm: envelopeAlgorithm,
+		Payload:   base64.RawStdEncoding.EncodeToString(protected),
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("encoding identity envelope: %w", err)
+	}
+
+	return append(encoded, '\n'), nil
+}
+
+func decodePlaintextRecord(encoded []byte, profileID string) (Record, error) {
+	if len(encoded) > maxPlaintextBytes {
+		return Record{}, fmt.Errorf("%w: identity plaintext size", ErrCorrupt)
+	}
+	persisted := persistedRecord{}
+	if err := decodeStrict(encoded, &persisted); err != nil {
+		return Record{}, fmt.Errorf("%w: decoding identity plaintext", ErrCorrupt)
+	}
+	if persisted.Version != recordVersion {
+		return Record{}, fmt.Errorf("%w: identity record version", ErrUnsupported)
+	}
+
+	record := fromPersisted(persisted)
+	if record.profileID != profileID {
+		return Record{}, fmt.Errorf("%w: record profile binding", ErrCorrupt)
+	}
+	if err := validateRecord(record); err != nil {
+		return Record{}, fmt.Errorf("%w: validating identity record", ErrCorrupt)
+	}
+
+	return record, nil
+}
+
+func decodeStrict(encoded []byte, destination any) error {
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+
+	return ensureJSONEOF(decoder)
+}
+
+func readBounded(reader io.Reader, maximum int64) ([]byte, error) {
+	encoded, err := io.ReadAll(io.LimitReader(reader, maximum+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading identity record: %w", err)
+	}
+	if int64(len(encoded)) > maximum {
+		clear(encoded)
+
+		return nil, fmt.Errorf("%w: identity record exceeds size limit", ErrCorrupt)
+	}
+
+	return encoded, nil
+}
+
+func recordAdditionalData(profileID string) []byte {
+	return []byte(additionalDataPrefix + profileID)
+}
+
+func sameRecord(left, right Record) bool {
+	return left.profileID == right.profileID &&
+		left.machinePrivateKey == right.machinePrivateKey &&
+		left.nodePrivateKey == right.nodePrivateKey &&
+		left.controlPublicKey == right.controlPublicKey &&
+		left.controlKeyFingerprint == right.controlKeyFingerprint &&
+		left.pendingAuthURL == right.pendingAuthURL &&
+		left.isRegistered == right.isRegistered &&
+		left.createdAt.Equal(right.createdAt) &&
+		left.updatedAt.Equal(right.updatedAt)
 }
 
 func toPersisted(record Record) persistedRecord {

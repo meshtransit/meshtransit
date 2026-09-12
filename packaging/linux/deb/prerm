@@ -12,7 +12,7 @@ case "$1" in
             else
                 rm -f -- "${reinstall_marker}"
             fi
-            deb-systemd-invoke stop meshd.service meshnetd.service >/dev/null || true
+            deb-systemd-invoke stop meshd.service meshnetd.service meshcred.service >/dev/null || true
         fi
         ;;
 esac

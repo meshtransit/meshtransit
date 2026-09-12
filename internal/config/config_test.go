@@ -18,6 +18,15 @@ func TestDefaultSocketsUseSeparateDirectories(t *testing.T) {
 	}
 }
 
+func TestDefaultIdentityKeyUsesSystemdCredentialPath(t *testing.T) {
+	t.Parallel()
+
+	if !filepath.IsAbs(DefaultIdentityKeyPath) ||
+		filepath.Base(DefaultIdentityKeyPath) != "meshd.identity-key" {
+		t.Fatalf("default identity key path = %q", DefaultIdentityKeyPath)
+	}
+}
+
 func TestParseTUNPOC(t *testing.T) {
 	t.Parallel()
 
@@ -92,6 +101,16 @@ func TestParseRejectsUnsafeNetAdminSocket(t *testing.T) {
 				t.Fatal("Parse() error = nil")
 			}
 		})
+	}
+}
+
+func TestParseRejectsUnsafeIdentityKeyPath(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"identity.key", "/"} {
+		if _, err := Parse([]string{"--identity-key-file", path}, io.Discard); err == nil {
+			t.Fatalf("Parse(identity key %q) error = nil", path)
+		}
 	}
 }
 

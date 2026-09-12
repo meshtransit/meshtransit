@@ -50,6 +50,14 @@ Packet payloads are not an observability asset and must not be collected.
 - Control URLs and the TS2021 key probe permit TLS port 443 only.
 - The control probe bypasses environment proxies, refuses redirects, uses TLS 1.2 or newer with standard certificate and hostname verification, limits the key response to 64 KiB, validates the typed machine key, completes Noise IK with an ephemeral machine key, and returns only a SHA-256 fingerprint.
 - Identity files live under a separately opened `0700` directory, must be regular `0600` files, reject symlinks and malformed or oversized JSON, and use file plus directory `fsync` for durable updates.
+- Identity contents are stored in versioned AES-256-GCM envelopes with a fresh
+  random nonce and profile/version associated data. New and replaced records
+  are re-opened, authenticated, decoded, and compared before atomic commit.
+- Packaged Linux provisions a 256-bit key once with a fixed
+  `/usr/bin/systemd-creds` invocation. Only the host-encrypted blob persists in
+  `/etc/credstore.encrypted`; systemd exposes plaintext through the private
+  `meshd.service` credential mount. The root one-shot has no capabilities or
+  network access, and `meshnetd` receives no credential.
 - First enrollment is create-only. A caller-supplied canonical SHA-256 fingerprint must match before identity keys are created, and later operations verify both the stored raw control key and fingerprint before opening Noise.
 - Secret key wrappers redact their string and Go-string representations. Identity material is never returned by the local API.
 - Registration runs through the pinned Noise connection and a bounded HTTP/2 client; it refuses redirects and never falls back to plaintext transport.
@@ -99,7 +107,11 @@ Packet payloads are not an observability asset and must not be collected.
 ## Known gaps before production
 
 - macOS peer credentials and Windows named-pipe authorization are not implemented. Both remain fail closed unless an explicit unsafe development override is enabled; that override is forbidden in production.
-- Private keys are filesystem-protected but operating-system keyring, TPM-backed sealing, and encrypted backups are not implemented. State backups must be handled as secrets.
+- Linux identity records are host-key encrypted, but TPM binding, key rotation,
+  recovery credentials, and encrypted backup handling are not implemented. A
+  root attacker that can obtain the systemd host key remains able to decrypt
+  the identity credential. State and credential backups must be handled as
+  secrets.
 - Authenticated control-key rotation and cross-restart replay/rollback protection are not implemented.
 - Session-handle resume is not implemented; reconnect requests a complete new snapshot. Linux has an opt-in `systemd-resolved` backend, while macOS, Windows, Android, iOS, and non-resolved Linux DNS backends are not implemented.
 - Capability grants are retained outside network permissions and are not implemented for general application authorization. Host-level TCP/UDP ports and ICMP are enforced; capability selectors, subnet/exit forwarding policy, fragment reassembly, and narrow port semantics for other transports remain fail closed.

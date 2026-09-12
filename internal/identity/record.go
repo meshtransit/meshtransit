@@ -25,6 +25,10 @@ var (
 	ErrExists = errors.New("identity: already exists")
 	// ErrInvalid indicates malformed identity state or caller input.
 	ErrInvalid = errors.New("identity: invalid")
+	// ErrCorrupt indicates that persisted identity bytes failed validation or authentication.
+	ErrCorrupt = errors.New("identity: corrupt")
+	// ErrUnsupported indicates a protected identity format this build cannot open safely.
+	ErrUnsupported = errors.New("identity: unsupported")
 )
 
 // Material contains protocol key encodings. It must never be logged, encoded

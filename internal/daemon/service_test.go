@@ -21,6 +21,7 @@ import (
 	"github.com/meshtransit/meshd/internal/pathdiscovery"
 	"github.com/meshtransit/meshd/internal/profile"
 	"github.com/meshtransit/meshd/internal/relay"
+	"github.com/meshtransit/meshd/internal/secretstore"
 	"github.com/meshtransit/meshd/internal/version"
 )
 
@@ -1460,8 +1461,13 @@ func newTestService(t *testing.T) (*Service, *identity.Store, *fakeControl, stri
 	if err != nil {
 		t.Fatalf("profiles.Create() error = %v", err)
 	}
-	identities, err := identity.Open(stateDir)
+	protector, err := secretstore.New(bytes.Repeat([]byte{0x51}, secretstore.KeySize))
 	if err != nil {
+		t.Fatalf("secretstore.New() error = %v", err)
+	}
+	identities, err := identity.Open(stateDir, protector)
+	if err != nil {
+		_ = protector.Close()
 		t.Fatalf("identity.Open() error = %v", err)
 	}
 	t.Cleanup(func() { _ = identities.Close() })

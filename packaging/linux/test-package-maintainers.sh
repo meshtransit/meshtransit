@@ -11,7 +11,7 @@ if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
     exit 2
 fi
 
-for path in /etc/meshd /run/meshd /run/meshnetd /run/systemd/system /var/lib/meshd; do
+for path in /etc/credstore.encrypted /etc/meshd /run/meshd /run/meshnetd /run/systemd/system /var/lib/meshd; do
     if [ -e "${path}" ]; then
         printf 'container path is not clean: %s\n' "${path}" >&2
         exit 1
@@ -24,7 +24,7 @@ control_dir="${work_dir}/control"
 mock_bin="${work_dir}/bin"
 service_calls="${work_dir}/service-calls"
 cleanup() {
-    rm -rf -- /etc/meshd /run/meshd /run/meshnetd /var/lib/meshd "${work_dir}"
+    rm -rf -- /etc/credstore.encrypted /etc/meshd /run/meshd /run/meshnetd /var/lib/meshd "${work_dir}"
     rmdir -- /run/systemd/system /run/systemd 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -82,8 +82,9 @@ export PATH="${mock_bin}:${PATH}"
 grep -Fqx 'deb-systemd-invoke <start> <meshnetd.service> <meshd.service>' \
     "${service_calls}"
 
-mkdir -p /run/meshd /run/meshnetd /var/lib/meshd/identities
+mkdir -p /etc/credstore.encrypted /run/meshd /run/meshnetd /var/lib/meshd/identities
 touch \
+    /etc/credstore.encrypted/meshd.identity-key \
     /etc/meshd/meshd.env \
     /run/meshd/meshd.sock \
     /run/meshnetd/meshnetd.sock \
@@ -92,7 +93,7 @@ touch \
 
 : >"${service_calls}"
 MESHD_TEST_ACTIVE=true "${control_dir}/prerm" remove
-grep -Fqx 'deb-systemd-invoke <stop> <meshd.service> <meshnetd.service>' \
+grep -Fqx 'deb-systemd-invoke <stop> <meshd.service> <meshnetd.service> <meshcred.service>' \
     "${service_calls}"
 [ -f /etc/meshd/.start-on-reinstall ]
 
@@ -101,6 +102,7 @@ grep -Fqx 'deb-systemd-invoke <stop> <meshd.service> <meshnetd.service>' \
 [ ! -e /run/meshnetd ]
 [ -f /var/lib/meshd/profiles.json ]
 [ -f /etc/meshd/meshd.env ]
+[ -f /etc/credstore.encrypted/meshd.identity-key ]
 
 : >"${service_calls}"
 "${control_dir}/postinst" configure 0.1.0~previous
@@ -131,6 +133,7 @@ touch /etc/meshd/.start-on-reinstall /run/meshd/stale /run/meshnetd/stale
 [ ! -e /run/meshd ]
 [ ! -e /run/meshnetd ]
 [ ! -e /etc/meshd/.start-on-reinstall ]
+[ ! -e /etc/credstore.encrypted/meshd.identity-key ]
 [ -f /etc/meshd/meshd.env ]
 
 printf 'package maintainer lifecycle verified\n'
