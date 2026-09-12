@@ -172,6 +172,11 @@ It then passed 20 of 20 bounded `SIGKILL` recovery samples across `meshd` and
 route, DNS, process, interface, listener, descriptor, dual-stack traffic, and
 journal-error gates passed. See
 [linux-crash-repeat-rc3-s1](evidence/linux-crash-repeat-rc3-s1/README.md).
+Both architectures then passed a controlled host reboot while the other node
+remained online as a dual-stack observer. Complete target readiness recovered
+within 29,969 ms, and registered profiles, addresses, and runtime artifacts were
+preserved. See
+[linux-reboot-rc3-s1](evidence/linux-reboot-rc3-s1/README.md).
 It does not yet have a signed artifact and provenance pipeline, IPv6-only
 underlay evidence, real multi-uplink migration qualification, repeated
 candidate DNS-failure samples, or a long-duration qualification suite.

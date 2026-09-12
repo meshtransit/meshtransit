@@ -181,6 +181,13 @@ ARM64 and AMD64. The slowest scenario p95 full readiness was 4,257 ms, and all
 post-sample state, route, DNS, process, interface, listener, and descriptor
 invariants passed.
 
+The two-architecture reboot matrix is retained under
+[`docs/evidence/linux-reboot-rc3-s1`](evidence/linux-reboot-rc3-s1/README.md).
+Each node was rebooted separately while the other remained online as an
+observer. Both scenarios preserved the registered profile and runtime artifact,
+recovered complete readiness within 29,969 ms, and ended with stable IPv4 and
+IPv6 traffic.
+
 ## Remaining release gates
 
 - Complete sustained candidate validation.

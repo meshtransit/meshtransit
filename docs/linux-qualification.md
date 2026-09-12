@@ -332,8 +332,8 @@ tools/qualification/linux-reboot.sh \
 ```
 
 Use `--ssh-driver rtk` when the operator environment routes SSH through RTK.
-The harness still uses plain `ssh` for the two long-running traffic streams so
-the wrapper cannot outlive or truncate their observation window.
+The selected driver is used consistently for preflight, reboot, readiness
+polling, and both long-running traffic streams.
 
 Preflight requires both nodes to be online, synchronized, registered, and able
 to exchange dual-stack traffic. After the reboot, the target must recover both
@@ -354,6 +354,9 @@ and a final stable traffic run that begins within the recovery deadline.
 The first complete two-node alpha15 reboot matrix is recorded in
 [linux-reboot-qualification-2026-09-11.md](linux-reboot-qualification-2026-09-11.md),
 with its redacted machine-readable reports retained under `docs/evidence`.
+The release-candidate matrix adds native Ubuntu 26.04 ARM64 and AMD64 coverage;
+both controlled reboot scenarios passed and their reports are retained under
+[`docs/evidence/linux-reboot-rc3-s1`](evidence/linux-reboot-rc3-s1/README.md).
 
 ## Run a network-change scenario
 
