@@ -11,8 +11,10 @@ The Ubuntu host was intentionally left unregistered during the package-lifecycle
 phase. A follow-on qualification registered that same immutable candidate and
 paired it with a dedicated Ubuntu 26.04 AMD64 node. Direct encrypted traffic,
 TUN activation, DNS application and lifecycle, and host-policy enforcement are
-now proven for this mixed-architecture topology. Forced relay, network-change
-recovery, registered rollback, and long-duration behavior remain open.
+now proven for this mixed-architecture topology. Bounded forced-relay fallback
+and direct-path recovery subsequently passed from both initiating nodes.
+Network-change recovery, registered rollback, and long-duration behavior remain
+open.
 
 ## Candidate
 
@@ -102,11 +104,18 @@ non-mesh DNS. Four policy phases produced 48 matching observations with no
 mismatch or infrastructure error, and the original ICMP-only baseline was
 restored successfully.
 
+The directional forced-relay reports are retained under
+[`docs/evidence/linux-arm64-relay-rc3-s1`](evidence/linux-arm64-relay-rc3-s1/README.md).
+Each side independently lost its direct UDP path, selected the authorized relay,
+carried IPv4 and IPv6 traffic, removed its bounded fault table, and recovered the
+direct path. Both nodes finished online with DNS and policy intact and zero
+automatic service restarts.
+
 ## Remaining release gates
 
 - Run the same package lifecycle on Ubuntu 26.04 ARM64.
-- Run forced-relay, network-change, and registered rollback matrices against the
-  dedicated non-soak peer.
+- Run network-change and registered rollback matrices against the dedicated
+  non-soak peer.
 - Complete the larger crash sample set and sustained candidate validation.
 - Produce and verify the exact candidate SBOM, signature, and provenance before
   publication.
