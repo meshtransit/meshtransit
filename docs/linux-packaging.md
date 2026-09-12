@@ -42,12 +42,50 @@ address space.
 
 The package builder runs only on Linux and requires Go, `dpkg`, and
 `dpkg-deb`. It injects the exact Git commit, uses `SOURCE_DATE_EPOCH` for
-reproducible timestamps, and writes a sibling SHA-256 checksum file.
+reproducible timestamps, records the commit and build date in package control
+metadata, and writes a sibling SHA-256 checksum file. The
+control metadata becomes authenticated only after the package-signing stage.
 
 ```bash
 ./packaging/linux/build-deb.sh 0.1.0~alpha1 amd64 dist
 ./packaging/linux/verify-deb.sh dist/meshd_0.1.0~alpha1_amd64.deb amd64
 ```
+
+## SBOM and vulnerability gate
+
+Every candidate `.deb` is extracted and scanned as the filesystem that will be
+installed. Scanning the archive as one opaque file is deliberately avoided
+because that omits the Go modules embedded in `meshd`, `meshnetd`, and
+`meshcred`.
+
+The audit writes a CycloneDX 1.7 SBOM and a full Grype JSON report next to the
+package, with SHA-256 sidecars for both. The CycloneDX root component includes
+the exact `.deb` digest, architecture, build date, and Git commit. Temporary
+extraction paths are removed, every reported location must resolve inside the
+package, and the validator compares the SBOM with the module build information
+in all three binaries.
+
+Grype consumes a separate temporary Syft-native SBOM containing Go function
+symbols. This keeps the published CycloneDX document portable while allowing
+reachability-aware matching. The temporary native document is deleted after
+the scan because it includes local tool configuration. Any High or Critical
+finding fails the package job; the complete report is retained even when the
+gate fails. `govulncheck` remains an independent source-level reachability gate.
+
+Syft v1.51.1 and Grype v0.116.1 are installed from their immutable release
+archives after locally verifying hard-coded SHA-256 values. Tool self-update
+checks are disabled during generation and scanning.
+
+```bash
+./tools/security/install-supply-chain-tools.sh /tmp/mesh-tools
+PATH="/tmp/mesh-tools:${PATH}" \
+    ./tools/security/audit-linux-package.sh \
+    dist/meshd_0.1.0~alpha1_amd64.deb
+```
+
+CI retains the `.deb`, its checksum, the CycloneDX SBOM, the vulnerability
+report, and both report checksums for 14 days. Release publication will attach
+the same SBOM contract to signed candidate artifacts.
 
 ## Install, upgrade, rollback, and uninstall
 

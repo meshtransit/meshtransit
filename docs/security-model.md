@@ -132,5 +132,8 @@ Before a Linux compatibility release:
 4. Run `go test -race`, `go vet`, `golangci-lint`, `govulncheck`, fuzz targets, and cross-builds.
    CI must also scan the complete Git history and checked-out filesystem with
    the pinned Gitleaks version; findings fail the build without a baseline.
+   Each Linux package must carry a digest-bound CycloneDX SBOM produced from
+   its extracted filesystem. A pinned, checksum-verified, symbol-aware Grype
+   scan fails on High or Critical findings, while retaining the full report.
 5. Test auth-key registration, browser registration plus restart completion, reconnect, direct traffic, relay traffic, exit behavior, route cleanup, DNS rollback, and malicious netmaps against disposable hosts.
 6. Confirm traffic logs have no payloads, secrets, or cross-network identifiers outside server-authorized scope.

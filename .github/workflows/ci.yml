@@ -187,7 +187,7 @@ jobs:
   linux-package:
     name: Package Linux (${{ matrix.arch }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -208,9 +208,26 @@ jobs:
 
       - name: Validate packaging scripts
         run: |
-          bash -n packaging/linux/build-deb.sh packaging/linux/verify-deb.sh packaging/linux/test-maintainer-scripts.sh
+          bash -n \
+            packaging/linux/build-deb.sh \
+            packaging/linux/verify-deb.sh \
+            packaging/linux/test-maintainer-scripts.sh \
+            tools/security/install-supply-chain-tools.sh \
+            tools/security/audit-linux-package.sh
           dash -n packaging/linux/test-package-maintainers.sh packaging/linux/deb/*
-          shellcheck packaging/linux/build-deb.sh packaging/linux/verify-deb.sh packaging/linux/test-maintainer-scripts.sh packaging/linux/test-package-maintainers.sh packaging/linux/deb/*
+          shellcheck \
+            packaging/linux/build-deb.sh \
+            packaging/linux/verify-deb.sh \
+            packaging/linux/test-maintainer-scripts.sh \
+            packaging/linux/test-package-maintainers.sh \
+            packaging/linux/deb/* \
+            tools/security/install-supply-chain-tools.sh \
+            tools/security/audit-linux-package.sh
+
+      - name: Install pinned supply-chain tools
+        run: |
+          bash tools/security/install-supply-chain-tools.sh "${RUNNER_TEMP}/mesh-tools"
+          printf '%s\n' "${RUNNER_TEMP}/mesh-tools" >>"${GITHUB_PATH}"
 
       - name: Test package maintainer lifecycle
         run: bash packaging/linux/test-maintainer-scripts.sh
@@ -220,6 +237,9 @@ jobs:
           bash packaging/linux/build-deb.sh "0.1.0~ci.${GITHUB_RUN_NUMBER}" "${{ matrix.arch }}" dist
           bash packaging/linux/verify-deb.sh "dist/meshd_0.1.0~ci.${GITHUB_RUN_NUMBER}_${{ matrix.arch }}.deb" "${{ matrix.arch }}"
 
+      - name: Generate SBOM and scan packaged binaries
+        run: bash tools/security/audit-linux-package.sh "dist/meshd_0.1.0~ci.${GITHUB_RUN_NUMBER}_${{ matrix.arch }}.deb"
+
       - name: Test packaged maintainer lifecycle
         run: |
           docker run --rm \
@@ -228,3 +248,18 @@ jobs:
             debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 \
             /src/packaging/linux/test-package-maintainers.sh \
             "/src/dist/meshd_0.1.0~ci.${GITHUB_RUN_NUMBER}_${{ matrix.arch }}.deb"
+
+      - name: Retain package security evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: meshd-linux-${{ matrix.arch }}
+          path: |
+            dist/meshd_0.1.0~ci.${{ github.run_number }}_${{ matrix.arch }}.deb
+            dist/meshd_0.1.0~ci.${{ github.run_number }}_${{ matrix.arch }}.deb.sha256
+            dist/meshd_0.1.0~ci.${{ github.run_number }}_${{ matrix.arch }}.deb.cdx.json
+            dist/meshd_0.1.0~ci.${{ github.run_number }}_${{ matrix.arch }}.deb.cdx.json.sha256
+            dist/meshd_0.1.0~ci.${{ github.run_number }}_${{ matrix.arch }}.deb.grype.json
+            dist/meshd_0.1.0~ci.${{ github.run_number }}_${{ matrix.arch }}.deb.grype.json.sha256
+          if-no-files-found: error
+          retention-days: 14

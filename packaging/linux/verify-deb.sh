@@ -20,6 +20,8 @@ readonly expected_architecture="$2"
 
 [[ "$(dpkg-deb --field "${package_path}" Package)" == 'meshd' ]]
 [[ "$(dpkg-deb --field "${package_path}" Architecture)" == "${expected_architecture}" ]]
+[[ "$(dpkg-deb --field "${package_path}" X-MeshTransit-Commit)" =~ ^[0-9a-f]{40}$ ]]
+[[ "$(dpkg-deb --field "${package_path}" X-MeshTransit-Build-Date)" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
 
 work_dir="$(mktemp -d)"
 cleanup() {

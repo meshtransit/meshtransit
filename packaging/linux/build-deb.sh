@@ -116,6 +116,8 @@ Priority: optional
 Depends: init-system-helpers (>= 1.54~), systemd (>= 255), systemd-resolved
 Recommends: meshctl
 Homepage: https://github.com/meshtransit/meshd
+X-MeshTransit-Commit: ${commit}
+X-MeshTransit-Build-Date: ${build_date}
 Description: MeshTransit node daemon
  Unprivileged mesh coordination and encrypted packet engine with a minimal
  privileged Linux network helper.

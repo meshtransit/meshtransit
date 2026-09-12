@@ -121,10 +121,12 @@ rollback evidence passed in the bounded alpha19 qualification. TPM binding,
 key rotation/recovery, encrypted backup policy, and signed release artifacts
 remain before this gate is production-complete. See
 [linux-secret-storage-qualification-2026-09-12.md](linux-secret-storage-qualification-2026-09-12.md).
-It does not yet have a signed artifact pipeline, IPv6-only underlay evidence,
-real multi-uplink migration qualification, the larger candidate crash sample
-set, repeated candidate DNS-failure samples, or a long-duration qualification
-suite.
+Linux package CI now emits a digest-bound CycloneDX SBOM, verifies it against
+the modules embedded in all packaged binaries, and applies a symbol-aware
+High/Critical vulnerability gate. It does not yet have a signed artifact and
+provenance pipeline, IPv6-only underlay evidence, real multi-uplink migration
+qualification, the larger candidate crash sample set, repeated candidate
+DNS-failure samples, or a long-duration qualification suite.
 See [linux-qualification.md](linux-qualification.md) for the bounded alpha
 evidence and its limitations.
 Windows and macOS deny local API access without an unsafe development override

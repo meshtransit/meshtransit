@@ -10,6 +10,8 @@ All notable user-visible changes will be documented in this file.
   operating-system adapter boundaries.
 - Linux quality, vulnerability, opt-in CodeQL, and cross-platform build
   workflows with pinned action and tool versions.
+- Digest-bound CycloneDX SBOMs and symbol-aware Grype reports for Linux
+  packages, with checksum-pinned tooling and a High/Critical CI gate.
 - Go 1.26.8 toolchain baseline.
 - Reproducible amd64/arm64 Debian package builder with hardened split-privilege
   systemd services and package lifecycle scripts.
