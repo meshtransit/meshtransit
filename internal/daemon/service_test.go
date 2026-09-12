@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -166,6 +167,157 @@ func TestService_CompleteLoginSerializesPendingAuthorization(t *testing.T) {
 	control.mu.Unlock()
 	if registerCalls != 2 {
 		t.Fatalf("control registration calls = %d, want start plus one completion", registerCalls)
+	}
+}
+
+func TestService_CompleteLoginKeepsPendingStateOnTemporaryFailure(t *testing.T) {
+	t.Parallel()
+
+	service, identities, control, profileID, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:   ts2021.RegistrationStateAuthorizationRequired,
+		AuthURL: "https://control.example.com/register/opaque",
+	}}
+	if _, err := service.StartLogin(t.Context(), ""); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+
+	const pollTimeout = 25 * time.Millisecond
+	control.mu.Lock()
+	control.registerFunc = func(
+		context.Context,
+		ts2021.RegisterOptions,
+	) (ts2021.RegistrationResult, error) {
+		return ts2021.RegistrationResult{}, fmt.Errorf(
+			"test control outage: %w",
+			ts2021.ErrRegistrationTemporary,
+		)
+	}
+	control.mu.Unlock()
+	startedAt := time.Now()
+	if _, err := service.completeLogin(t.Context(), pollTimeout); !errors.Is(err, ErrAuthorizationPending) ||
+		!errors.Is(err, ts2021.ErrRegistrationTemporary) {
+		t.Fatalf("CompleteLogin() error = %v, want pending temporary failure", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed < pollTimeout {
+		t.Fatalf("temporary failure returned after %s, want at least %s", elapsed, pollTimeout)
+	}
+	record, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() error = %v", err)
+	}
+	if !record.HasPendingAuth() || record.IsRegistered() {
+		t.Fatalf("registration after temporary failure = %s, want pending", record)
+	}
+
+	control.mu.Lock()
+	control.registerFunc = func(
+		context.Context,
+		ts2021.RegisterOptions,
+	) (ts2021.RegistrationResult, error) {
+		return ts2021.RegistrationResult{
+			State:             ts2021.RegistrationStateAuthorized,
+			MachineAuthorized: true,
+		}, nil
+	}
+	control.mu.Unlock()
+	login, err := service.CompleteLogin(t.Context())
+	if err != nil || login.State != RegistrationRegistered {
+		t.Fatalf("recovered CompleteLogin() = %#v, %v", login, err)
+	}
+}
+
+func TestService_CompleteLoginThrottlesPendingResponse(t *testing.T) {
+	t.Parallel()
+
+	service, identities, control, profileID, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{
+		{
+			State:   ts2021.RegistrationStateAuthorizationRequired,
+			AuthURL: "https://control.example.com/register/opaque",
+		},
+		{
+			State:   ts2021.RegistrationStateAuthorizationRequired,
+			AuthURL: "https://control.example.com/register/opaque",
+		},
+	}
+
+	if _, err := service.StartLogin(t.Context(), ""); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	const pollTimeout = 25 * time.Millisecond
+	startedAt := time.Now()
+	login, err := service.completeLogin(t.Context(), pollTimeout)
+	if err != nil || login.State != RegistrationPending {
+		t.Fatalf("completeLogin() = %#v, %v, want pending", login, err)
+	}
+	if elapsed := time.Since(startedAt); elapsed < pollTimeout {
+		t.Fatalf("pending response returned after %s, want at least %s", elapsed, pollTimeout)
+	}
+	record, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() error = %v", err)
+	}
+	if !record.HasPendingAuth() || record.IsRegistered() {
+		t.Fatalf("registration after pending response = %s, want pending", record)
+	}
+}
+
+func TestService_CompleteLoginTemporaryFailureHonorsCancellation(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:   ts2021.RegistrationStateAuthorizationRequired,
+		AuthURL: "https://control.example.com/register/opaque",
+	}}
+	if _, err := service.StartLogin(t.Context(), ""); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+
+	registerStarted := make(chan struct{}, 1)
+	control.mu.Lock()
+	control.registerFunc = func(
+		context.Context,
+		ts2021.RegisterOptions,
+	) (ts2021.RegistrationResult, error) {
+		registerStarted <- struct{}{}
+
+		return ts2021.RegistrationResult{}, fmt.Errorf(
+			"test control outage: %w",
+			ts2021.ErrRegistrationTemporary,
+		)
+	}
+	control.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.completeLogin(ctx, time.Hour)
+		done <- err
+	}()
+	select {
+	case <-registerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("login completion did not reach the control adapter")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("CompleteLogin() error = %v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("CompleteLogin() did not stop after cancellation")
 	}
 }
 

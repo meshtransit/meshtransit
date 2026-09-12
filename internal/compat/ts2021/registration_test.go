@@ -1,10 +1,12 @@
 package ts2021
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -122,10 +124,12 @@ func TestDecodeRegistrationResponse(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		body      string
-		wantState RegistrationState
-		wantError error
+		name          string
+		status        int
+		body          string
+		wantState     RegistrationState
+		wantError     error
+		wantTemporary bool
 	}{
 		{
 			name:      "authorized",
@@ -152,14 +156,35 @@ func TestDecodeRegistrationResponse(t *testing.T) {
 			body:      `{"MachineAuthorized":true,"AuthURL":"https://control.example.com/register/opaque"}`,
 			wantError: ErrRegistration,
 		},
+		{
+			name:          "rate limited",
+			status:        http.StatusTooManyRequests,
+			wantError:     ErrRegistration,
+			wantTemporary: true,
+		},
+		{
+			name:          "service unavailable",
+			status:        http.StatusServiceUnavailable,
+			wantError:     ErrRegistration,
+			wantTemporary: true,
+		},
+		{
+			name:      "unauthorized",
+			status:    http.StatusUnauthorized,
+			wantError: ErrRegistration,
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
+			status := test.status
+			if status == 0 {
+				status = http.StatusOK
+			}
 			response := &http.Response{
-				StatusCode: http.StatusOK,
+				StatusCode: status,
 				Header: http.Header{
 					"Content-Type": []string{"application/json; charset=utf-8"},
 				},
@@ -169,10 +194,110 @@ func TestDecodeRegistrationResponse(t *testing.T) {
 			if !errors.Is(err, test.wantError) {
 				t.Fatalf("decodeRegistrationResponse() error = %v, want %v", err, test.wantError)
 			}
+			if got := errors.Is(err, ErrRegistrationTemporary); got != test.wantTemporary {
+				t.Fatalf("temporary classification = %t, want %t: %v", got, test.wantTemporary, err)
+			}
 			if result.State != test.wantState {
 				t.Fatalf("State = %q, want %q", result.State, test.wantState)
 			}
 		})
+	}
+}
+
+func TestClient_RegisterClassifiesTemporaryDiscoveryFailures(t *testing.T) {
+	t.Parallel()
+
+	controlKey := key.NewMachine().Public()
+	material, err := marshalMaterial(key.NewMachine(), key.NewNode(), controlKey)
+	if err != nil {
+		t.Fatalf("marshalMaterial() error = %v", err)
+	}
+	options := RegisterOptions{
+		Hostname:          "node-a",
+		Version:           "meshd/test",
+		PinnedFingerprint: controlKeyFingerprint(controlKey),
+	}
+	tests := []struct {
+		name          string
+		status        int
+		transportErr  error
+		wantTemporary bool
+	}{
+		{
+			name:          "control key service unavailable",
+			status:        http.StatusServiceUnavailable,
+			wantTemporary: true,
+		},
+		{
+			name:   "control key unauthorized",
+			status: http.StatusUnauthorized,
+		},
+		{
+			name: "control key lookup timeout",
+			transportErr: &net.DNSError{
+				Err:       "test timeout",
+				Name:      "control.example.com",
+				IsTimeout: true,
+			},
+			wantTemporary: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := newWithHTTPClient(&http.Client{
+				Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					if test.transportErr != nil {
+						return nil, test.transportErr
+					}
+
+					return jsonResponse(test.status, `{}`), nil
+				}),
+			})
+			_, err := client.Register(
+				t.Context(),
+				"https://control.example.com",
+				material,
+				options,
+			)
+			if err == nil {
+				t.Fatal("Register() error = nil, want discovery failure")
+			}
+			if got := errors.Is(err, ErrRegistrationTemporary); got != test.wantTemporary {
+				t.Fatalf("temporary classification = %t, want %t: %v", got, test.wantTemporary, err)
+			}
+		})
+	}
+}
+
+func TestRegistrationOperationError(t *testing.T) {
+	t.Parallel()
+
+	parentCtx, cancelParent := context.WithCancel(t.Context())
+	cancelParent()
+	if err := registrationOperationError(
+		parentCtx,
+		t.Context(),
+		errors.New("test transport failure"),
+	); !errors.Is(err, context.Canceled) || errors.Is(err, ErrRegistrationTemporary) {
+		t.Fatalf("parent cancellation error = %v", err)
+	}
+
+	operationCtx, cancelOperation := context.WithTimeout(t.Context(), 0)
+	defer cancelOperation()
+	err := registrationOperationError(
+		t.Context(),
+		operationCtx,
+		errors.New("test stalled response body"),
+	)
+	if !errors.Is(err, ErrRegistrationTemporary) {
+		t.Fatalf("operation deadline error = %v, want ErrRegistrationTemporary", err)
+	}
+
+	protocolErr := errors.New("test malformed response")
+	if err := registrationOperationError(t.Context(), t.Context(), protocolErr); !errors.Is(err, protocolErr) || errors.Is(err, ErrRegistrationTemporary) {
+		t.Fatalf("permanent protocol error = %v", err)
 	}
 }
 

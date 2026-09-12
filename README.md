@@ -90,11 +90,14 @@ Non-Linux development currently lacks a verified peer-credential implementation 
   AES-256-GCM envelopes beneath a `0700` directory, bound to the profile and
   verified before commit. The Linux package supplies their key through a
   host-encrypted systemd credential that is unavailable to `meshnetd`.
-- Pinned Noise HTTP/2 node registration through either a same-origin browser flow or a transient auth key.
+- Pinned, fifteen-second-bounded Noise HTTP/2 node registration through either
+  a same-origin browser flow or a transient auth key.
 - Persisted browser follow-up state, serialized and cancellable registration
-  completion, restart registration, and fail-closed handling for key change or
-  required key rotation.
-- Long-lived, pinned Noise/HTTP2 control-map stream with a two-minute watchdog and bounded jittered reconnect.
+  completion, throttled pending polls and temporary transport/server recovery,
+  restart registration, and fail-closed handling for key change or required
+  key rotation.
+- Long-lived, pinned Noise/HTTP2 control-map stream with a two-minute watchdog
+  and jittered exponential reconnect that resets only after a stable session.
 - Single-owner control supervision that rejects duplicate runners before they
   can open a second map session.
 - Product-owned network-map model with atomic full/delta application, strict size/cardinality limits, identity binding, duplicate-address rejection, policy selector validation, and insecure-relay rejection.

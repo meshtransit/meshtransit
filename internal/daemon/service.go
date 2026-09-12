@@ -1427,6 +1427,10 @@ func (s *Service) StartLogin(ctx context.Context, authKey string) (Login, error)
 
 // CompleteLogin performs a short follow-up poll using the persisted browser URL.
 func (s *Service) CompleteLogin(ctx context.Context) (Login, error) {
+	return s.completeLogin(ctx, completionPollTimeout)
+}
+
+func (s *Service) completeLogin(ctx context.Context, pollTimeout time.Duration) (Login, error) {
 	release, err := s.acquireRegistration(ctx)
 	if err != nil {
 		return Login{}, err
@@ -1448,12 +1452,19 @@ func (s *Service) CompleteLogin(ctx context.Context) (Login, error) {
 		return Login{}, ErrNoPendingAuthorization
 	}
 
-	pollCtx, cancel := context.WithTimeout(ctx, completionPollTimeout)
+	pollCtx, cancel := context.WithTimeout(ctx, pollTimeout)
 	defer cancel()
 	result, err := s.registerWithRecord(pollCtx, active, record, "", record.PendingAuthURL())
 	if err != nil {
 		if ctx.Err() != nil {
 			return Login{}, ctx.Err()
+		}
+		if errors.Is(err, ts2021.ErrRegistrationTemporary) {
+			if err := waitForCompletionPoll(ctx, pollCtx); err != nil {
+				return Login{}, err
+			}
+
+			return Login{}, fmt.Errorf("%w: %w", ErrAuthorizationPending, err)
 		}
 		if errors.Is(pollCtx.Err(), context.DeadlineExceeded) {
 			return Login{}, ErrAuthorizationPending
@@ -1461,8 +1472,24 @@ func (s *Service) CompleteLogin(ctx context.Context) (Login, error) {
 
 		return Login{}, err
 	}
+	if result.State == RegistrationPending {
+		if err := waitForCompletionPoll(ctx, pollCtx); err != nil {
+			return Login{}, err
+		}
+	}
 
 	return result, nil
+}
+
+func waitForCompletionPoll(ctx, pollCtx context.Context) error {
+	if pollCtx.Err() == nil {
+		<-pollCtx.Done()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (s *Service) register(ctx context.Context, authKey, followupURL string) (Login, error) {

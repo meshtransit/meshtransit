@@ -73,6 +73,12 @@ Packet payloads are not an observability asset and must not be collected.
 - Secret key wrappers redact their string and Go-string representations. Identity material is never returned by the local API.
 - Registration runs through the pinned Noise connection and a bounded HTTP/2 client; it refuses redirects and never falls back to plaintext transport.
 - Auth keys are transient and are not written to identity state. Browser follow-up URLs must be same-origin HTTPS registration paths and are cleared after authorization.
+- The complete registration exchange, including response-body consumption, is
+  capped at fifteen seconds. Browser completion has a three-second child
+  deadline; both pending responses and temporary timeouts, truncated transport,
+  HTTP 408/425/429, and HTTP 5xx consume that bounded window before the next
+  retry. Caller cancellation takes precedence, while trust, malformed-response,
+  rejection, and key-expiry failures remain terminal.
 - Registration transitions have one context-aware owner, preventing concurrent
   local callers from replaying the same pending browser follow-up or racing
   identity persistence.
@@ -81,7 +87,9 @@ Packet payloads are not an observability asset and must not be collected.
   created, and ownership remains held through fail-closed runtime cleanup.
 - Each map-stream connection repeats control-key discovery and compares the persisted raw key and fingerprint before opening Noise; plaintext and proxy fallback remain disabled.
 - Map frames are length-prefixed and limited to 16 MiB, response headers are bounded, and a two-minute read deadline terminates silent streams.
-- Reconnect uses bounded jittered exponential backoff and requires a new validated full snapshot before accepting deltas.
+- Reconnect uses bounded jittered exponential backoff, resets that backoff only
+  after thirty seconds of stable stream lifetime, and requires a new validated
+  full snapshot before accepting deltas.
 - Candidate snapshots are copied and validated before atomic publication. Validation bounds peers, addresses, routes, endpoints, rules, selectors, and relay topology; rejects duplicate direct addresses, unauthorized or expired self nodes, an unexpected self key, malformed typed keys, invalid ranges, and test-only insecure relays.
 - Control-supplied `PingRequest` URLs are not fetched, avoiding an unbounded SSRF surface.
 - DNS updates are copied into a bounded product-owned model before publication. The adapter canonicalizes names, preserves empty local routes, rejects duplicates and resolver URLs, and initially accepts only non-loopback classic IP resolvers on port 53.

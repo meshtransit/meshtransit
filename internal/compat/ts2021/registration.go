@@ -41,6 +41,8 @@ var (
 	ErrInvalidMaterial = errors.New("ts2021: invalid identity material")
 	// ErrRegistration indicates a rejected or internally inconsistent response.
 	ErrRegistration = errors.New("ts2021: registration failed")
+	// ErrRegistrationTemporary indicates a retryable transport or server failure.
+	ErrRegistrationTemporary = fmt.Errorf("%w: temporarily unavailable", ErrRegistration)
 	// ErrNodeKeyExpired indicates that registration requires a deliberate key rotation.
 	ErrNodeKeyExpired = errors.New("ts2021: node key expired")
 )
@@ -182,9 +184,15 @@ func (c *Client) Register(
 	if err := validateRegisterOptions(controlURL, options); err != nil {
 		return RegistrationResult{}, err
 	}
-	discovered, err := c.discoverControlKey(ctx, controlURL)
+	operationCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	discovered, err := c.discoverControlKey(operationCtx, controlURL)
 	if err != nil {
-		return RegistrationResult{}, err
+		return RegistrationResult{}, registrationOperationError(
+			ctx,
+			operationCtx,
+			fmt.Errorf("ts2021: discovering control key: %w", err),
+		)
 	}
 	if _, err := verifyFingerprint(
 		options.PinnedFingerprint,
@@ -208,7 +216,7 @@ func (c *Client) Register(
 
 	endpoint := registrationEndpoint(discovered.endpoint)
 	request, err := http.NewRequestWithContext(
-		ctx,
+		operationCtx,
 		http.MethodPost,
 		endpoint.String(),
 		bytes.NewReader(encoded),
@@ -264,11 +272,20 @@ func (c *Client) Register(
 
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return RegistrationResult{}, fmt.Errorf("ts2021: sending registration request: %w", err)
+		return RegistrationResult{}, registrationOperationError(
+			ctx,
+			operationCtx,
+			fmt.Errorf("ts2021: sending registration request: %w", err),
+		)
 	}
 	defer func() { _ = response.Body.Close() }()
 
-	return decodeRegistrationResponse(response, controlURL)
+	result, err := decodeRegistrationResponse(response, controlURL)
+	if err != nil {
+		return RegistrationResult{}, registrationOperationError(ctx, operationCtx, err)
+	}
+
+	return result, nil
 }
 
 func newRegisterRequest(
@@ -439,6 +456,13 @@ func decodeRegistrationResponse(
 ) (RegistrationResult, error) {
 	if response.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxRegistrationResponseBytes))
+		if isTemporaryRegistrationStatus(response.StatusCode) {
+			return RegistrationResult{}, fmt.Errorf(
+				"%w: control endpoint returned http %d",
+				ErrRegistrationTemporary,
+				response.StatusCode,
+			)
+		}
 
 		return RegistrationResult{}, fmt.Errorf(
 			"%w: control endpoint returned http %d",
@@ -459,6 +483,14 @@ func decodeRegistrationResponse(
 
 	encoded, err := io.ReadAll(io.LimitReader(response.Body, maxRegistrationResponseBytes+1))
 	if err != nil {
+		if isTemporaryRegistrationTransportError(err) {
+			return RegistrationResult{}, fmt.Errorf(
+				"%w: reading response: %w",
+				ErrRegistrationTemporary,
+				err,
+			)
+		}
+
 		return RegistrationResult{}, fmt.Errorf("%w: reading response: %w", ErrRegistration, err)
 	}
 	if len(encoded) > maxRegistrationResponseBytes {
@@ -513,6 +545,46 @@ func decodeRegistrationResponse(
 		State:   RegistrationStateAuthorizationRequired,
 		AuthURL: authURL,
 	}, nil
+}
+
+func isTemporaryRegistrationStatus(statusCode int) bool {
+	return statusCode == http.StatusRequestTimeout ||
+		statusCode == http.StatusTooEarly ||
+		statusCode == http.StatusTooManyRequests ||
+		(statusCode >= http.StatusInternalServerError && statusCode <= 599)
+}
+
+func isTemporaryRegistrationTransportError(err error) bool {
+	var statusError *controlKeyHTTPStatusError
+	if errors.As(err, &statusError) {
+		return isTemporaryRegistrationStatus(statusError.statusCode)
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var networkError net.Error
+
+	return errors.As(err, &networkError) && networkError.Timeout()
+}
+
+func registrationOperationError(
+	parentCtx context.Context,
+	operationCtx context.Context,
+	err error,
+) error {
+	if parentErr := parentCtx.Err(); parentErr != nil {
+		return parentErr
+	}
+	if errors.Is(operationCtx.Err(), context.DeadlineExceeded) ||
+		isTemporaryRegistrationTransportError(err) {
+		if errors.Is(err, ErrRegistrationTemporary) {
+			return err
+		}
+
+		return fmt.Errorf("%w: %w", ErrRegistrationTemporary, err)
+	}
+
+	return err
 }
 
 func validateAuthURL(controlURL, rawAuthURL string) (string, error) {

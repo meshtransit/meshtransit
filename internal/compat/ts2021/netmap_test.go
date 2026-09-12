@@ -2,13 +2,16 @@ package ts2021
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -678,6 +681,45 @@ func TestReadMapFrame_Bounds(t *testing.T) {
 	}
 }
 
+func TestReadMapFrameWithWatchdog(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.September, 13, 12, 0, 0, 0, time.UTC)
+	body := []byte(`{"KeepAlive":true}`)
+	encoded := make([]byte, 4, 4+len(body))
+	binary.LittleEndian.PutUint32(
+		encoded,
+		uint32(len(body)), //nolint:gosec // The body is a small compile-time test fixture.
+	)
+	encoded = append(encoded, body...)
+	connection := &recordingDeadlineSetter{}
+	frame, err := readMapFrameWithWatchdog(connection, bytes.NewReader(encoded), now)
+	if err != nil || !bytes.Equal(frame, body) {
+		t.Fatalf("readMapFrameWithWatchdog() = %q, %v", frame, err)
+	}
+	if want := now.Add(netmapReadTimeout); !connection.deadline.Equal(want) {
+		t.Fatalf("watchdog deadline = %s, want %s", connection.deadline, want)
+	}
+
+	readErr := errors.New("test watchdog timeout")
+	if _, err := readMapFrameWithWatchdog(
+		connection,
+		errorReader{err: readErr},
+		now,
+	); !errors.Is(err, readErr) {
+		t.Fatalf("watchdog read error = %v, want wrapped read error", err)
+	}
+	deadlineErr := errors.New("test deadline failure")
+	connection.err = deadlineErr
+	if _, err := readMapFrameWithWatchdog(
+		connection,
+		bytes.NewReader(encoded),
+		now,
+	); !errors.Is(err, deadlineErr) {
+		t.Fatalf("watchdog setup error = %v, want wrapped deadline error", err)
+	}
+}
+
 func TestParseSelectorAndProtocolValidation(t *testing.T) {
 	t.Parallel()
 
@@ -702,6 +744,143 @@ func TestJitteredReconnectDelay_Bounds(t *testing.T) {
 		if delay < 5*time.Second || delay >= 10*time.Second {
 			t.Fatalf("jittered delay = %s, want [5s, 10s)", delay)
 		}
+	}
+}
+
+func TestRunNetmapReconnectLoop_BacksOffAcrossFlappingMaps(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.September, 13, 12, 0, 0, 0, time.UTC)
+	polls := 0
+	waits := make([]time.Duration, 0, 3)
+	err := runNetmapReconnectLoop(
+		t.Context(),
+		func(context.Context) (bool, error) {
+			polls++
+			now = now.Add(time.Second)
+			if polls == 4 {
+				return false, ErrNetmapInvalid
+			}
+
+			return true, io.ErrUnexpectedEOF
+		},
+		func() time.Time { return now },
+		func(delay time.Duration) time.Duration { return delay },
+		func(_ context.Context, delay time.Duration) error {
+			waits = append(waits, delay)
+
+			return nil
+		},
+	)
+	if !errors.Is(err, ErrNetmapInvalid) {
+		t.Fatalf("runNetmapReconnectLoop() error = %v, want ErrNetmapInvalid", err)
+	}
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+	if !slices.Equal(waits, want) {
+		t.Fatalf("reconnect waits = %v, want %v", waits, want)
+	}
+}
+
+func TestRunNetmapReconnectLoop_ResetsAfterStableSession(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.September, 13, 12, 0, 0, 0, time.UTC)
+	polls := 0
+	waits := make([]time.Duration, 0, 2)
+	err := runNetmapReconnectLoop(
+		t.Context(),
+		func(context.Context) (bool, error) {
+			polls++
+			switch polls {
+			case 1:
+				now = now.Add(time.Second)
+			case 2:
+				now = now.Add(reconnectResetAfter)
+			default:
+				return false, ErrControlKeyChanged
+			}
+
+			return true, io.ErrUnexpectedEOF
+		},
+		func() time.Time { return now },
+		func(delay time.Duration) time.Duration { return delay },
+		func(_ context.Context, delay time.Duration) error {
+			waits = append(waits, delay)
+
+			return nil
+		},
+	)
+	if !errors.Is(err, ErrControlKeyChanged) {
+		t.Fatalf("runNetmapReconnectLoop() error = %v, want ErrControlKeyChanged", err)
+	}
+	want := []time.Duration{time.Second, time.Second}
+	if !slices.Equal(waits, want) {
+		t.Fatalf("reconnect waits = %v, want %v", waits, want)
+	}
+}
+
+func TestRunNetmapReconnectLoop_CapsBackoff(t *testing.T) {
+	t.Parallel()
+
+	polls := 0
+	waits := make([]time.Duration, 0, 7)
+	err := runNetmapReconnectLoop(
+		t.Context(),
+		func(context.Context) (bool, error) {
+			polls++
+			if polls == 8 {
+				return false, ErrNetmapRejected
+			}
+
+			return false, io.ErrUnexpectedEOF
+		},
+		time.Now,
+		func(delay time.Duration) time.Duration { return delay },
+		func(_ context.Context, delay time.Duration) error {
+			waits = append(waits, delay)
+
+			return nil
+		},
+	)
+	if !errors.Is(err, ErrNetmapRejected) {
+		t.Fatalf("runNetmapReconnectLoop() error = %v, want ErrNetmapRejected", err)
+	}
+	want := []time.Duration{
+		time.Second,
+		2 * time.Second,
+		4 * time.Second,
+		8 * time.Second,
+		16 * time.Second,
+		maxReconnectDelay,
+		maxReconnectDelay,
+	}
+	if !slices.Equal(waits, want) {
+		t.Fatalf("reconnect waits = %v, want %v", waits, want)
+	}
+}
+
+func TestRunNetmapReconnectLoop_CancelsReconnectWait(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	waits := 0
+	err := runNetmapReconnectLoop(
+		ctx,
+		func(context.Context) (bool, error) { return false, io.ErrUnexpectedEOF },
+		time.Now,
+		func(delay time.Duration) time.Duration { return delay },
+		func(waitCtx context.Context, _ time.Duration) error {
+			waits++
+			cancel()
+
+			return waitForReconnect(waitCtx, time.Hour)
+		},
+	)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("runNetmapReconnectLoop() error = %v, want context cancellation", err)
+	}
+	if waits != 1 {
+		t.Fatalf("reconnect wait calls = %d, want 1", waits)
 	}
 }
 
@@ -734,6 +913,25 @@ func FuzzParseSelector(f *testing.F) {
 		}
 		_, _ = parseSelector(raw, nil, true)
 	})
+}
+
+type recordingDeadlineSetter struct {
+	deadline time.Time
+	err      error
+}
+
+func (s *recordingDeadlineSetter) SetReadDeadline(deadline time.Time) error {
+	s.deadline = deadline
+
+	return s.err
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
 
 func testWireNode(id tailcfg.NodeID, addressByte byte) *tailcfg.Node {

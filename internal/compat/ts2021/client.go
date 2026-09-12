@@ -124,6 +124,14 @@ type discoveredControlKey struct {
 	fingerprint string
 }
 
+type controlKeyHTTPStatusError struct {
+	statusCode int
+}
+
+func (e *controlKeyHTTPStatusError) Error() string {
+	return fmt.Sprintf("ts2021: control key endpoint returned http %d", e.statusCode)
+}
+
 func (c *Client) discoverControlKey(
 	ctx context.Context,
 	controlURL string,
@@ -150,10 +158,9 @@ func (c *Client) discoverControlKey(
 	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode != http.StatusOK {
-		return discoveredControlKey{}, fmt.Errorf(
-			"ts2021: control key endpoint returned http %d",
-			response.StatusCode,
-		)
+		return discoveredControlKey{}, &controlKeyHTTPStatusError{
+			statusCode: response.StatusCode,
+		}
 	}
 	if err := validateJSONContentType(response.Header.Get("Content-Type")); err != nil {
 		return discoveredControlKey{}, err

@@ -52,6 +52,15 @@ All notable user-visible changes will be documented in this file.
 
 ### Changed
 
+- Control-map reconnect backoff now resets only after a validated stream stays
+  established for thirty seconds, preventing rapid map-then-disconnect loops
+  from holding retries at the minimum delay. The watchdog and reconnect policy
+  now have deterministic transport-fault coverage.
+- Browser-login completion treats bounded transport timeouts, truncated
+  exchanges, HTTP 408/425/429, and HTTP 5xx as temporary. Pending state is
+  retained, both pending responses and temporary failures consume the
+  three-second completion window to throttle retries, and caller cancellation
+  still wins immediately; trust and protocol failures remain terminal.
 - Control supervision now enforces one active runner per daemon service, and
   browser/auth-key registration transitions are serialized with cancellable
   waiting so concurrent local clients cannot create duplicate control sessions

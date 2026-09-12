@@ -36,6 +36,7 @@ const (
 	netmapReadTimeout      = 2 * time.Minute
 	minReconnectDelay      = time.Second
 	maxReconnectDelay      = 30 * time.Second
+	reconnectResetAfter    = 30 * time.Second
 	maxIgnoredDNSSuffixes  = 512
 	maxIgnoredCertDomains  = 256
 	meshDataPlaneAuditLogs = tailcfg.NodeCapability("https://meshtransit.io/cap/data-plane-audit-logs")
@@ -181,32 +182,58 @@ func (c *Client) streamNetmapLoop(
 	handler NetmapHandler,
 ) error {
 	accumulator := newMapAccumulator()
-	backoff := minReconnectDelay
 
+	return runNetmapReconnectLoop(
+		ctx,
+		func(pollCtx context.Context) (bool, error) {
+			return c.pollNetmapOnce(
+				pollCtx,
+				controlURL,
+				machineKey,
+				nodeKey,
+				controlKey,
+				discoKey,
+				options,
+				endpointState,
+				accumulator,
+				handler,
+			)
+		},
+		time.Now,
+		jitteredReconnectDelay,
+		waitForReconnect,
+	)
+}
+
+type (
+	netmapPollFunc     func(context.Context) (bool, error)
+	reconnectDelayFunc func(time.Duration) time.Duration
+	reconnectWaitFunc  func(context.Context, time.Duration) error
+)
+
+func runNetmapReconnectLoop(
+	ctx context.Context,
+	poll netmapPollFunc,
+	now func() time.Time,
+	reconnectDelay reconnectDelayFunc,
+	wait reconnectWaitFunc,
+) error {
+	backoff := minReconnectDelay
 	for {
-		receivedMap, pollErr := c.pollNetmapOnce(
-			ctx,
-			controlURL,
-			machineKey,
-			nodeKey,
-			controlKey,
-			discoKey,
-			options,
-			endpointState,
-			accumulator,
-			handler,
-		)
-		if ctx.Err() != nil {
-			return ctx.Err()
+		startedAt := now()
+		receivedMap, pollErr := poll(ctx)
+		endedAt := now()
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if isPermanentNetmapError(pollErr) {
 			return pollErr
 		}
-		if receivedMap {
+		if receivedMap && endedAt.Sub(startedAt) >= reconnectResetAfter {
 			backoff = minReconnectDelay
 		}
-		delay := jitteredReconnectDelay(backoff)
-		if err := waitForReconnect(ctx, delay); err != nil {
+		delay := reconnectDelay(backoff)
+		if err := wait(ctx, delay); err != nil {
 			return err
 		}
 		if backoff < maxReconnectDelay {
@@ -281,12 +308,13 @@ func (c *Client) pollNetmapOnce(
 	receivedMap := false
 	accumulator.resetSession()
 	for {
-		if err := streamConnection.SetReadDeadline(time.Now().Add(netmapReadTimeout)); err != nil {
-			return receivedMap, fmt.Errorf("ts2021: setting netmap watchdog: %w", err)
-		}
-		responseFrame, err := readMapFrame(response.Body)
+		responseFrame, err := readMapFrameWithWatchdog(
+			streamConnection,
+			response.Body,
+			time.Now(),
+		)
 		if err != nil {
-			return receivedMap, fmt.Errorf("ts2021: reading netmap stream: %w", err)
+			return receivedMap, err
 		}
 
 		update := tailcfg.MapResponse{}
@@ -314,6 +342,26 @@ func (c *Client) pollNetmapOnce(
 		}
 		receivedMap = true
 	}
+}
+
+type readDeadlineSetter interface {
+	SetReadDeadline(time.Time) error
+}
+
+func readMapFrameWithWatchdog(
+	connection readDeadlineSetter,
+	reader io.Reader,
+	now time.Time,
+) ([]byte, error) {
+	if err := connection.SetReadDeadline(now.Add(netmapReadTimeout)); err != nil {
+		return nil, fmt.Errorf("ts2021: setting netmap watchdog: %w", err)
+	}
+	frame, err := readMapFrame(reader)
+	if err != nil {
+		return nil, fmt.Errorf("ts2021: reading netmap stream: %w", err)
+	}
+
+	return frame, nil
 }
 
 type endpointState struct {
