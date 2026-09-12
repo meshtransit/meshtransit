@@ -1,0 +1,144 @@
+{
+  "schema": "meshtransit.linux-arm64-functional-qualification/v1",
+  "started_at": "2026-09-12T12:37:00Z",
+  "completed_at": "2026-09-12T13:01:00Z",
+  "topology": {
+    "node_a": {
+      "label": "ubuntu24-arm64",
+      "os": "Ubuntu 24.04.4 LTS",
+      "architecture": "arm64"
+    },
+    "node_b": {
+      "label": "ubuntu26-amd64",
+      "os": "Ubuntu 26.04 LTS",
+      "architecture": "amd64"
+    },
+    "address_families": [
+      "ipv4",
+      "ipv6"
+    ]
+  },
+  "source": {
+    "meshd_commit": "69e5e2f00f0fead79e5baf4848725ee3aa6590b6",
+    "meshd_archive_sha256": "157a416096962f60ea35920eddb422c82754bd8fe30d9e0a0505b518677717ca",
+    "meshctl_commit": "6f193636fe973e8be676779c03f29af53b172a36",
+    "meshctl_archive_sha256": "02360d628f8794741b1709bb6f3da5ee0a4b5404e16baeb367d7f721640e6a05"
+  },
+  "artifacts": {
+    "version": "0.1.0~rc3+69e5e2f",
+    "meshd": {
+      "arm64_deb_sha256": "8ea1a650b82ba911bb6033af1b80947a1ff81d983800a49b6919cde33908cff1",
+      "amd64_deb_sha256": "2eade02dbbe869b3bbbe9fe393e7622d57f78b6976f193b6f26e67e6b9fe1cb4"
+    },
+    "meshctl": {
+      "version": "0.1.0~rc1+6f19363",
+      "arm64_deb_sha256": "99776b6ff2a57b3ba676750f92400a8906b2734da3dc02beeabe4e209cdd27c0",
+      "amd64_deb_sha256": "f86990f7c4f6dfe3951cfc0dbe240f865a6a43d333b5340d66e30a05318eab82"
+    },
+    "same_runtime_commit": true
+  },
+  "control": {
+    "trust_pinned_independently": true,
+    "registration_complete": true,
+    "sessions_synchronized": true,
+    "two_identity_peer_projection": true
+  },
+  "direct": {
+    "authenticated_path": true,
+    "path_type": "direct",
+    "pre_matrix_packets": 20,
+    "pre_matrix_received": 20,
+    "post_restore_packets": 12,
+    "post_restore_received": 12,
+    "packet_loss_percent": 0,
+    "ipv4_bidirectional": true,
+    "ipv6_bidirectional": true
+  },
+  "dns": {
+    "node_a": {
+      "outcome": "pass",
+      "cleanup_ms": 48,
+      "recovery_ms": 2364
+    },
+    "node_b": {
+      "outcome": "pass",
+      "cleanup_ms": 98,
+      "recovery_ms": 1910
+    },
+    "authoritative_a_udp": true,
+    "authoritative_aaaa_udp": true,
+    "authoritative_a_tcp": true,
+    "authoritative_nodata": true,
+    "authoritative_nxdomain": true,
+    "ptr_ipv4": true,
+    "ptr_ipv6": true,
+    "short_name_search": true,
+    "fqdn_system_resolution": true,
+    "non_mesh_dns_preserved": true,
+    "dedicated_link_and_listeners_removed_on_stop": true,
+    "split_routing_and_listeners_restored": true
+  },
+  "policy": {
+    "phases": [
+      {
+        "name": "icmp-baseline-default-deny",
+        "observations": 12,
+        "matched": 12,
+        "duration_ms_min": 706,
+        "duration_ms_max": 2820
+      },
+      {
+        "name": "a-to-b-port-narrowing",
+        "observations": 12,
+        "matched": 12,
+        "duration_ms_min": 714,
+        "duration_ms_max": 2278
+      },
+      {
+        "name": "adjacent-ports-default-deny",
+        "observations": 12,
+        "matched": 12,
+        "duration_ms_min": 709,
+        "duration_ms_max": 1920
+      },
+      {
+        "name": "explicit-default-deny",
+        "observations": 12,
+        "matched": 12,
+        "duration_ms_min": 27,
+        "duration_ms_max": 31
+      }
+    ],
+    "observations": 48,
+    "matched": 48,
+    "mismatches": 0,
+    "infrastructure_errors": 0,
+    "tcp_ipv4_ipv6_port_narrowing": true,
+    "udp_ipv4_ipv6_port_narrowing": true,
+    "reverse_new_flows_denied": true,
+    "adjacent_ports_denied": true,
+    "explicit_default_deny_removed_peer_routes": true,
+    "service_pids_stable": true,
+    "automatic_restarts": 0,
+    "baseline_restored": true
+  },
+  "final_state": {
+    "nodes_online": true,
+    "control_sessions_synchronized": true,
+    "dns_configured": true,
+    "peer_count_per_node": 1,
+    "direct_path_count_per_node": 1,
+    "relay_path_count_per_node": 0,
+    "policy_rule_count_per_node": 2,
+    "temporary_policy_helpers_removed": true
+  },
+  "remaining": [
+    "forced_relay",
+    "network_change_recovery",
+    "registered_upgrade_and_rollback",
+    "sustained_validation",
+    "ipv6_only_underlay"
+  ],
+  "failures": [],
+  "outcome": "pass"
+}

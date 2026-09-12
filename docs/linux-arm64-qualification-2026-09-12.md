@@ -7,11 +7,12 @@ lifecycle on Ubuntu 24.04. A second ARM64 host running Amazon Linux 2023 was
 used only as an independent build and portability environment. Neither host is
 one of the registered 72-hour soak nodes.
 
-The Ubuntu host was intentionally left unregistered. This result proves native
-compilation, package lifecycle, systemd readiness, local socket authorization,
-and cross-builder reproducibility. It does not prove encrypted peer traffic,
-TUN activation, DNS application, policy enforcement, relay fallback, or
-long-duration behavior on ARM64.
+The Ubuntu host was intentionally left unregistered during the package-lifecycle
+phase. A follow-on qualification registered that same immutable candidate and
+paired it with a dedicated Ubuntu 26.04 AMD64 node. Direct encrypted traffic,
+TUN activation, DNS application and lifecycle, and host-policy enforcement are
+now proven for this mixed-architecture topology. Forced relay, network-change
+recovery, registered rollback, and long-duration behavior remain open.
 
 ## Candidate
 
@@ -91,12 +92,21 @@ mode `0600` on the disposable qualification hosts. They are not committed
 because raw host evidence has a broader disclosure surface than the aggregate
 release contract requires.
 
+The registered functional result is retained separately under
+[`docs/evidence/linux-arm64-functional-rc3-s1`](evidence/linux-arm64-functional-rc3-s1/README.md).
+Both nodes synchronized through independently pinned control trust, established
+one authenticated direct path, and passed bidirectional IPv4 and IPv6 traffic.
+The DNS lifecycle passed on both nodes, including authoritative UDP/TCP queries,
+PTR, negative answers, split routing, cleanup, recovery, and preservation of
+non-mesh DNS. Four policy phases produced 48 matching observations with no
+mismatch or infrastructure error, and the original ICMP-only baseline was
+restored successfully.
+
 ## Remaining release gates
 
 - Run the same package lifecycle on Ubuntu 26.04 ARM64.
-- Register an ARM64 Ubuntu candidate and run the two-node IPv4/IPv6 direct,
-  forced-relay, DNS, policy, restart, network-change, and rollback matrices
-  against a dedicated non-soak peer.
+- Run forced-relay, network-change, and registered rollback matrices against the
+  dedicated non-soak peer.
 - Complete the larger crash sample set and sustained candidate validation.
 - Produce and verify the exact candidate SBOM, signature, and provenance before
   publication.
