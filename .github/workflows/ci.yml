@@ -84,6 +84,8 @@ jobs:
             tools/qualification/test-linux-runtime-recovery.sh \
             tools/qualification/linux-runtime-recovery-repeat.sh \
             tools/qualification/test-linux-runtime-recovery-repeat.sh \
+            tools/qualification/linux-runtime-recovery-traffic.sh \
+            tools/qualification/test-linux-runtime-recovery-traffic.sh \
             tools/qualification/linux-soak.sh \
             tools/qualification/linux-soak-systemd.sh \
             tools/qualification/test-linux-soak.sh \
@@ -112,6 +114,8 @@ jobs:
             tools/qualification/test-linux-runtime-recovery.sh \
             tools/qualification/linux-runtime-recovery-repeat.sh \
             tools/qualification/test-linux-runtime-recovery-repeat.sh \
+            tools/qualification/linux-runtime-recovery-traffic.sh \
+            tools/qualification/test-linux-runtime-recovery-traffic.sh \
             tools/qualification/linux-soak.sh \
             tools/qualification/linux-soak-systemd.sh \
             tools/qualification/test-linux-soak.sh \
@@ -134,6 +138,7 @@ jobs:
           bash tools/qualification/test-linux-helper-recovery-change.sh
           bash tools/qualification/test-linux-runtime-recovery.sh
           bash tools/qualification/test-linux-runtime-recovery-repeat.sh
+          bash tools/qualification/test-linux-runtime-recovery-traffic.sh
           bash tools/qualification/test-linux-soak.sh
           bash tools/qualification/test-linux-soak-systemd.sh
           bash tools/qualification/test-linux-relay-fallback.sh
