@@ -418,7 +418,10 @@ parse_ping_log() {
       }
       stable_ms = "null"
       trailing_run = 0
-      if (have_post_previous && post_previous_sequence == transmitted) {
+      # iputils may include one final echo request in the transmitted count
+      # before its reply can arrive at the observation deadline.
+      if (have_post_previous &&
+          post_previous_sequence >= transmitted - 1) {
         trailing_run = post_run
         if (post_run >= minimum_stable) {
           stable_ms = sprintf("%.0f", (post_run_start - action_start) * 1000)

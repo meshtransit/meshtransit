@@ -37,6 +37,14 @@ recovery_metrics="$(
 )"
 assert_equal recovery "${recovery_metrics}" $'10\t8\t20\t600\t2\t2\t5\t600\t5'
 
+terminal_probe_metrics="$(
+  "${harness}" __parse-ping-log \
+    "${script_dir}/testdata/ping-terminal-outstanding.log" \
+    1789123000400000000 \
+    1789123000800000000
+)"
+assert_equal terminal-probe "${terminal_probe_metrics}" $'11\t8\t27.2727\t600\t2\t3\t5\t600\t5'
+
 probe_recovery_metrics="$(
   "${harness}" __parse-ping-log \
     "${script_dir}/testdata/probe-recovery.log" \

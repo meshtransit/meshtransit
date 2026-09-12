@@ -1,0 +1,15 @@
+PING 100.64.0.2 (100.64.0.2) 56(84) bytes of data.
+[1789123000.000000] 64 bytes from 100.64.0.2: icmp_seq=1 ttl=64 time=1.00 ms
+[1789123000.200000] 64 bytes from 100.64.0.2: icmp_seq=2 ttl=64 time=1.00 ms
+[1789123000.400000] 64 bytes from 100.64.0.2: icmp_seq=3 ttl=64 time=1.00 ms
+[1789123000.600000] no answer yet for icmp_seq=4
+[1789123000.800000] no answer yet for icmp_seq=5
+[1789123001.000000] 64 bytes from 100.64.0.2: icmp_seq=6 ttl=64 time=1.00 ms
+[1789123001.200000] 64 bytes from 100.64.0.2: icmp_seq=7 ttl=64 time=1.00 ms
+[1789123001.400000] 64 bytes from 100.64.0.2: icmp_seq=8 ttl=64 time=1.00 ms
+[1789123001.600000] 64 bytes from 100.64.0.2: icmp_seq=9 ttl=64 time=1.00 ms
+[1789123001.800000] 64 bytes from 100.64.0.2: icmp_seq=10 ttl=64 time=1.00 ms
+[1789123002.000000] no answer yet for icmp_seq=11
+
+--- 100.64.0.2 ping statistics ---
+11 packets transmitted, 8 received, 27.2727% packet loss, time 2200ms
