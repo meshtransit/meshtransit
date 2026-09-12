@@ -118,13 +118,15 @@ and passed alpha17 downgrade; with alpha18 retained as the rollback target,
 legacy state is now atomically protected on first read. Native Debian 13 and
 Ubuntu 26.04 package, credential, tamper, restart, removal, purge, and staged
 rollback evidence passed in the bounded alpha19 qualification. TPM binding,
-native key-rotation/recovery qualification, encrypted off-host backup policy,
-and signed release artifacts remain before this gate is production-complete. A
-bounded two-key reader, eager atomic fallback-record rewrap, and explicit
-rotate/finalize/commit/recover transaction are implemented but do not count as
-native rotation evidence until a dedicated artifact completes the full
-rollout, interruption, recovery, and rollback matrix. See
-[linux-secret-storage-qualification-2026-09-12.md](linux-secret-storage-qualification-2026-09-12.md).
+encrypted off-host backup policy, forced power-loss rotation samples, and
+signed release artifacts remain before this gate is production-complete. The
+bounded alpha21 matrix passed two-key staging, eager identity rewrap,
+active-only finalization, recovery, explicit fallback deletion, and rollback to
+a reader-compatible artifact while rotation was pending on Ubuntu 26.04;
+systemd 257 staging/finalization/commit also passed on Debian 13. See
+[linux-secret-storage-qualification-2026-09-12.md](linux-secret-storage-qualification-2026-09-12.md)
+and
+[linux-identity-key-rotation-qualification-2026-09-12.md](linux-identity-key-rotation-qualification-2026-09-12.md).
 Linux package CI now emits a digest-bound CycloneDX SBOM, verifies it against
 the modules embedded in all packaged binaries, and applies a symbol-aware
 High/Critical vulnerability gate. Exact-commit alpha20 packages and SBOMs were

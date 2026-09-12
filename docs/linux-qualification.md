@@ -14,6 +14,9 @@ separate gates.
 The bounded Linux secret-storage, staged migration, package lifecycle, and boot
 recovery results are recorded in
 [linux-secret-storage-qualification-2026-09-12.md](linux-secret-storage-qualification-2026-09-12.md).
+The staged key-rotation, active-only finalization, recovery, and pending-build
+rollback results are recorded in
+[linux-identity-key-rotation-qualification-2026-09-12.md](linux-identity-key-rotation-qualification-2026-09-12.md).
 
 ## Service-action safety boundary
 
