@@ -11,6 +11,10 @@ restart.
 Package upgrade, real multi-uplink migration, and soak scenarios remain
 separate gates.
 
+The bounded Linux secret-storage, staged migration, package lifecycle, and boot
+recovery results are recorded in
+[linux-secret-storage-qualification-2026-09-12.md](linux-secret-storage-qualification-2026-09-12.md).
+
 ## Service-action safety boundary
 
 The harness runs on the node being tested and requires root only for the selected

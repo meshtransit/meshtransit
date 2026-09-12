@@ -1,0 +1,40 @@
+{
+  "schema": "meshtransit.linux-secret-storage-qualification/v1",
+  "artifact": {
+    "version": "0.1.0~alpha19",
+    "commit": "48ae468aa593a9eb65847e2cc3a05f7a6e3095ec",
+    "sha256": "3ad0c59b364f36bdb160521860622449cfb9777036b2315465cd705e2243f3fa",
+    "reproducible": true
+  },
+  "rollback_artifact": {
+    "version": "0.1.0~alpha18",
+    "commit": "2ad02889c0e526307d6f986da391253e27251b31",
+    "sha256": "c6a1b99c32b0f6942e1f8d0876362d96a70c34fecfbb105126da6265ec5a2fac"
+  },
+  "platforms": [
+    {
+      "label": "debian-13-amd64",
+      "systemd": "257.13-1~deb13u1",
+      "fresh_install": true,
+      "identity_encrypted": true,
+      "identity_tamper_rejected": true,
+      "credential_tamper_rejected": true,
+      "remove_preserved_state": true,
+      "purge_removed_owned_state": true,
+      "reboot_recovered": true
+    },
+    {
+      "label": "ubuntu-26.04-amd64",
+      "systemd": "259.5-0ubuntu3",
+      "fresh_install": true,
+      "identity_encrypted": true,
+      "legacy_to_compatibility_rollback": true,
+      "migration_to_compatibility_rollback": true,
+      "reboot_recovered": true
+    }
+  ],
+  "host_key_backend": true,
+  "tpm_bound": false,
+  "outcome": "pass",
+  "release_candidate_eligible": false
+}

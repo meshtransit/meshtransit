@@ -117,7 +117,10 @@ alpha18 compatibility artifact retained legacy bytes during read-only startup
 and passed alpha17 downgrade; with alpha18 retained as the rollback target,
 legacy state is now atomically protected on first read. Native Debian 13 and
 Ubuntu 26.04 package, credential, tamper, restart, removal, purge, and staged
-rollback evidence is recorded separately before this gate is declared complete.
+rollback evidence passed in the bounded alpha19 qualification. TPM binding,
+key rotation/recovery, encrypted backup policy, and signed release artifacts
+remain before this gate is production-complete. See
+[linux-secret-storage-qualification-2026-09-12.md](linux-secret-storage-qualification-2026-09-12.md).
 It does not yet have a signed artifact pipeline, IPv6-only underlay evidence,
 real multi-uplink migration qualification, the larger candidate crash sample
 set, repeated candidate DNS-failure samples, or a long-duration qualification
