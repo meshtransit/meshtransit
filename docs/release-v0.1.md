@@ -61,7 +61,7 @@ published compatibility matrix.
 
 | Priority | Platform | Architectures | Native validation targets | Current status |
 | --- | --- | --- | --- | --- |
-| 1 | Linux | amd64, arm64 | Ubuntu 24.04 and 26.04 LTS with `systemd-resolved` | amd64 lifecycle passed on Ubuntu 26.04 and Debian 13; arm64 lifecycle plus registered mixed-architecture direct traffic, DNS, policy, forced relay, network-change recovery, and rollback passed on Ubuntu 24.04 and 26.04; sustained validation and remaining release security gates remain |
+| 1 | Linux | amd64, arm64 | Ubuntu 24.04 and 26.04 LTS with `systemd-resolved` | feature frozen at RC5 after native AMD64/ARM64 traffic-bearing runtime recovery; 72-hour soak, exact target-matrix closure, signing/provenance, and remaining release security evidence still block Linux beta/stable |
 | 2 | Windows | amd64 | Windows 11 25H2 and Windows Server 2025 | cross-build only; tunnel, DNS, IPC, and service adapters remain |
 | 3 | macOS | arm64, amd64 | macOS 26 on arm64 and macOS 15 on amd64 | cross-build only; tunnel, DNS, IPC, entitlement, and service adapters remain |
 
@@ -120,6 +120,15 @@ recorded in
 [linux-runtime-recovery-repeat-qualification-2026-09-13.md](linux-runtime-recovery-repeat-qualification-2026-09-13.md);
 the original single samples remain in
 [linux-runtime-recovery-qualification-2026-09-13.md](linux-runtime-recovery-qualification-2026-09-13.md).
+RC5 then passed three traffic-bearing runtime-recovery samples in each
+direction between native Ubuntu 26.04 AMD64 and ARM64 peers. Every sample
+observed IPv4, IPv6, and uncached MagicDNS loss during the injected local
+runtime fault, followed by stable recovery, while the nested state and resource
+contract also passed. See
+[linux-runtime-recovery-traffic-qualification-2026-09-13.md](linux-runtime-recovery-traffic-qualification-2026-09-13.md).
+Linux v0.1 feature development is now frozen under the change-control rules in
+[linux-v0.1-feature-freeze-2026-09-13.md](linux-v0.1-feature-freeze-2026-09-13.md).
+This is a code-scope freeze, not Linux beta or stable acceptance.
 The authenticated local status contract and read-only Linux soak harness now
 expose the bounded aggregate runtime and operating-system resource measurements
 needed for the long-duration gate. The first two-node alpha17 native smoke

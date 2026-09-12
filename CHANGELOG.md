@@ -57,6 +57,9 @@ All notable user-visible changes will be documented in this file.
   nearest-rank p95 recovery timings; explicit peer routes and global self
   addresses are checked independently from address-derived kernel routes, and
   aggregate peer-count changes are classified as topology changes.
+- Traffic-bearing Linux local-runtime recovery qualification with continuous
+  IPv4, IPv6, and uncached MagicDNS probes, mandatory outage observation,
+  stable-recovery timing, and nested per-sample runtime/resource validation.
 
 ### Changed
 

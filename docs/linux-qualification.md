@@ -309,6 +309,36 @@ The first native rc5 5/5 result on Ubuntu 26.04 amd64 and arm64 is recorded in
 [linux-runtime-recovery-repeat-qualification-2026-09-13.md](linux-runtime-recovery-repeat-qualification-2026-09-13.md),
 with the two redacted aggregate reports retained under `docs/evidence`.
 
+For the final traffic-bearing gate, run the aggregate wrapper on each node in a
+fixed two-peer topology. It continuously probes IPv4, IPv6, and uncached
+MagicDNS while each nested sample executes the complete runtime and resource
+gate:
+
+```bash
+sudo tools/qualification/linux-runtime-recovery-traffic.sh \
+  --node-label ubuntu-amd64 \
+  --peer-label ubuntu-arm64 \
+  --peer-v4 PEER_OVERLAY_V4 \
+  --peer-v6 PEER_OVERLAY_V6 \
+  --peer-name PEER_MAGICDNS_NAME \
+  --iterations 3 \
+  --artifact-sha256 SHA256_OF_DEB \
+  --confirm-helper-socket-fault ubuntu-amd64 \
+  >ubuntu-amd64-runtime-recovery-traffic.json
+```
+
+The schema is
+`meshtransit.linux-runtime-recovery-traffic-qualification/v1`. Every traffic
+class must observe an outage after the action begins, recover before the
+deadline, and finish with at least three consecutive successful attempts. DNS
+queries bypass the host cache and must contain the exact peer A and AAAA
+answers. The retained report contains only labels, artifact/platform identity,
+aggregate probe counters, timings, and the redacted nested runtime summary.
+
+The first native RC5 3/3 result in both directions on Ubuntu 26.04 AMD64 and
+ARM64 is recorded in
+[linux-runtime-recovery-traffic-qualification-2026-09-13.md](linux-runtime-recovery-traffic-qualification-2026-09-13.md).
+
 ## Run a fixed-topology soak
 
 The soak harness is read-only and runs on the node under test. It samples the

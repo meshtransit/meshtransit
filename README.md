@@ -129,6 +129,9 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - A fail-fast repeated local-runtime gate that checks resource, state, route,
   resolver, socket-permission, and restart-count invariants after every sample
   and emits redacted nearest-rank p95 recovery timings.
+- A traffic-bearing local-runtime gate that requires observed IPv4, IPv6, and
+  uncached MagicDNS outages followed by stable recovery while retaining the
+  complete per-sample runtime and resource contract.
 - A restart-intolerant, read-only fixed-topology Linux soak gate for service generations,
   resource cardinality, runtime/OS memory, goroutines, threads, descriptors,
   routes, resolver policy, MagicDNS, and sampled dual-stack traffic. Its
