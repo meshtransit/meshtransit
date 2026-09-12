@@ -89,7 +89,11 @@ unverified-local-peer bypass. They remain release-ineligible until every native
 candidate gate passes. Linux has a
 reproducible Debian package, lifecycle contract, and bounded restart, reboot,
 controlled interface-change, relay-fallback, split-DNS, and host-policy
-qualification harnesses. The two-host Linux alpha topology has repeatable
+qualification harnesses. Both packaged daemons now bind their owned Unix
+listener before reporting `READY=1` through a bounded, fail-closed systemd
+notification adapter; the dedicated registration-independent harness requires
+one immediate health attempt after every completed restart. The two-host Linux
+alpha topology has repeatable
 direct-loss fallback and split-DNS cleanup/recovery evidence plus complete live
 bidirectional host-policy matrices on alpha10 and two repeatable alpha15
 samples. Alpha15 also has one bounded passing restart scenario for each service

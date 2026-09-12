@@ -41,6 +41,14 @@ disabled. The privileged helper fixes the overlay pools to `100.64.0.0/10` and
 explicit root-owned unit override and must remain within the server's assigned
 address space.
 
+Both long-running units use `Type=notify`, `NotifyAccess=main`, and a 30-second
+startup deadline. `meshnetd` reports ready only after its privileged packet
+socket is bound; `meshd` reports ready only after its local API socket is bound.
+Consequently, `systemctl start` and `systemctl restart` return only after the
+corresponding socket can queue a connection. If systemd supplied a notification
+socket and the report fails, startup fails immediately instead of leaving a
+nominally active but unreachable daemon.
+
 ## Build and verify
 
 The package builder runs only on Linux and requires Go, `dpkg`, and
@@ -52,7 +60,8 @@ Packaged units use the release-facing `--enable-data-plane` and `--enable-dns`
 flags. Package verification scans every installed executable and fails if a
 removed POC flag or unverified-local-peer override marker is present, so the
 security property is enforced on the emitted artifact rather than inferred
-only from source review.
+only from source review. It also requires the readiness type, notification
+attribution, and startup deadline on both emitted service units.
 
 The pre-release POC flags are intentionally not aliases. Before upgrading a
 host that customized `MESHD_FLAGS`, remove `--enable-tun-poc`,

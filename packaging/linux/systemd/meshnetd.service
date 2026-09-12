@@ -6,7 +6,9 @@ Before=meshd.service
 PartOf=meshd.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=30s
 User=root
 Group=meshd
 UMask=0007

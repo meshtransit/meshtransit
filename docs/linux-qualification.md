@@ -17,6 +17,24 @@ rollback, and controlled-restart results are recorded in
 Those dedicated hosts were not registered, so this evidence does not replace
 the two-node packet, DNS, policy, relay, or soak matrices.
 
+The service-manager readiness gate is intentionally independent of
+registration. On an installed candidate, run:
+
+```bash
+sudo tools/qualification/linux-service-readiness.sh \
+  --node-label ubuntu-readiness \
+  --artifact-sha256 PACKAGE_SHA256 \
+  --confirm-restarts ubuntu-readiness
+```
+
+Preflight requires both packaged units to expose `Type=notify`,
+`NotifyAccess=main`, and the 30-second startup deadline. Each bounded iteration
+restarts both units, proves that both process generations changed without an
+automatic failure restart, checks both Unix sockets, and issues exactly one
+immediate `/v1/health` request after `systemctl restart` returns. There is no
+readiness polling between the restart and that request. The report excludes
+process IDs, socket paths, hostnames, profile state, and control data.
+
 The bounded Linux secret-storage, staged migration, package lifecycle, and boot
 recovery results are recorded in
 [linux-secret-storage-qualification-2026-09-12.md](linux-secret-storage-qualification-2026-09-12.md).

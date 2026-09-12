@@ -81,6 +81,14 @@ grep -Fq -- '--enable-data-plane' \
     "${work_dir}/root/usr/lib/systemd/system/meshd.service"
 grep -Fq -- '--enable-dns' \
     "${work_dir}/root/usr/lib/systemd/system/meshd.service"
+for unit in meshd.service meshnetd.service; do
+    grep -Fqx 'Type=notify' \
+        "${work_dir}/root/usr/lib/systemd/system/${unit}"
+    grep -Fqx 'NotifyAccess=main' \
+        "${work_dir}/root/usr/lib/systemd/system/${unit}"
+    grep -Fqx 'TimeoutStartSec=30s' \
+        "${work_dir}/root/usr/lib/systemd/system/${unit}"
+done
 grep -Fq 'Requires=meshcred.service meshnetd.service' \
     "${work_dir}/root/usr/lib/systemd/system/meshd.service"
 grep -Fq 'LoadCredentialEncrypted=meshd.identity-key:/etc/credstore.encrypted/meshd.identity-key' \

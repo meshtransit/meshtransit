@@ -6,7 +6,9 @@ Requires=meshcred.service meshnetd.service
 After=network-online.target meshcred.service meshnetd.service systemd-resolved.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=30s
 User=meshd
 Group=meshtransit
 SupplementaryGroups=meshd

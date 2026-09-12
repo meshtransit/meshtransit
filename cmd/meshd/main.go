@@ -25,6 +25,7 @@ import (
 	"github.com/meshtransit/meshd/internal/netwatch"
 	"github.com/meshtransit/meshd/internal/profile"
 	"github.com/meshtransit/meshd/internal/secretstore"
+	"github.com/meshtransit/meshd/internal/servicemanager"
 	"github.com/meshtransit/meshd/internal/socket"
 	"github.com/meshtransit/meshd/internal/version"
 )
@@ -49,6 +50,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	logger := newLogger(stderr, cfg.LogLevel)
+	notifier, err := servicemanager.New()
+	if err != nil {
+		logger.Error("creating service-manager notifier failed", "error", err)
+
+		return 1
+	}
 	profiles, err := profile.Open(cfg.StateDir)
 	if err != nil {
 		logger.Error("opening profile store failed", "error", err)
@@ -226,6 +233,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := notifier.Ready(ctx); err != nil {
+		logger.Error("reporting service readiness failed", "error", err)
+
+		return 1
+	}
+	defer func() {
+		notifyContext, cancelNotify := context.WithTimeout(context.Background(), time.Second)
+		defer cancelNotify()
+		if notifyErr := notifier.Stopping(notifyContext); notifyErr != nil {
+			logger.Warn("reporting service shutdown failed", "error", notifyErr)
+		}
+	}()
 
 	logger.Info("meshd started", "socket", cfg.SocketPath, "version", version.Version)
 	serverResult := make(chan error, 1)

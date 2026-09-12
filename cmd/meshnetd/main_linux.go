@@ -17,8 +17,10 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/meshtransit/meshd/internal/netadmin"
+	"github.com/meshtransit/meshd/internal/servicemanager"
 	"github.com/meshtransit/meshd/internal/socket"
 	"github.com/meshtransit/meshd/internal/version"
 )
@@ -115,6 +117,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+	notifier, err := servicemanager.New()
+	if err != nil {
+		logger.Error("creating service-manager notifier failed", "error", err)
+
+		return 1
+	}
 	server, err := netadmin.NewServer(netadmin.ServerOptions{
 		AllowedUID:      resolvedUID,
 		InterfaceName:   *interfaceName,
@@ -142,6 +150,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := notifier.Ready(ctx); err != nil {
+		logger.Error("reporting service readiness failed", "error", err)
+
+		return 1
+	}
+	defer func() {
+		notifyContext, cancelNotify := context.WithTimeout(context.Background(), time.Second)
+		defer cancelNotify()
+		if notifyErr := notifier.Stopping(notifyContext); notifyErr != nil {
+			logger.Warn("reporting service shutdown failed", "error", notifyErr)
+		}
+	}()
 	logger.Info(
 		"meshnetd started",
 		"socket", *socketPath,

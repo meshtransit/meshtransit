@@ -87,6 +87,12 @@ Packet payloads are not an observability asset and must not be collected.
   mode `0750` runtime directories. `meshd:meshtransit` owns `/run/meshd`, while
   `root:meshd` owns `/run/meshnetd`; neither caller group can replace the other
   listener.
+- Packaged Linux declares both daemons as `Type=notify`, limits notification
+  attribution to the main process, and bounds startup to 30 seconds. Each
+  daemon validates and removes `NOTIFY_SOCKET`, binds its owned listener before
+  reporting readiness, and fails startup if an expected readiness notification
+  cannot be delivered. Relative, empty abstract, NUL-containing, and oversized
+  notification addresses are rejected before any service socket is opened.
 - The helper's startup configuration fixes data/DNS interface names, MTU, allowed service account or UID, non-overlapping overlay pools, DNS endpoint, and `resolvectl` path. An account name is resolved once at startup to the UID checked by `SO_PEERCRED`. Its five operations are `open_tun`, `set_tun_routes`, `open_dns`, `set_dns`, and `reset_dns`; requests cannot carry subnet/default TUN routes, commands, client-selected paths, keys, or kernel parameters. Live route replacement requires the exact self-address set recorded when that helper generation opened the fixed data interface, adds before removing, and rolls back completed netlink changes on failure.
 - The helper validates requested prefixes independently of `meshd`, and `meshd` validates the returned address/route set byte-for-byte against the signed map before attaching the userspace packet engine.
 - TUN descriptors are non-persistent and passed with `SCM_RIGHTS`. A validated peerless map replaces all WireGuard peers, relay peer authority, and host routes in place while retaining an empty encrypted transport for control presence. Relay topology or self-address changes close the superseded descriptor before replacement, and the active descriptor is closed on any ambiguous update, profile change, control failure, and shutdown. Control and node keys never cross the helper boundary.
