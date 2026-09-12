@@ -184,9 +184,14 @@ The same candidate passed an end-to-end browser login in which one bounded
 `meshctl login` invocation waited for approval and completed without a separate
 `login complete` command. See
 [linux-rc4-control-login-s1](evidence/linux-rc4-control-login-s1/README.md).
+RC4 also passed the release-candidate upstream DNS failover, fail-closed, and
+rollback matrix on Ubuntu 26.04 AMD64 and ARM64, with five UDP and five TCP
+samples per phase, no unexpected resolver destinations in any retained report,
+and exact baseline restoration. See
+[linux-dns-rc4-upstream-failure-s1](evidence/linux-dns-rc4-upstream-failure-s1/README.md).
 It does not yet have a signed artifact and provenance pipeline, IPv6-only
-underlay evidence, real multi-uplink migration qualification, repeated
-candidate DNS-failure samples, or a long-duration qualification suite.
+underlay evidence, real multi-uplink migration qualification, or a long-duration
+qualification suite.
 See [linux-qualification.md](linux-qualification.md) for the bounded alpha
 evidence and its limitations.
 Windows and macOS deny local API access, contain no unverified-peer override,

@@ -1,0 +1,74 @@
+{
+  "schema": "meshtransit.linux-dns-upstream-node-qualification/v1",
+  "started_at": "2026-09-12T18:32:41Z",
+  "topology": {
+    "node_label": "ubuntu26-amd64",
+    "peer_label": "ubuntu26-arm64",
+    "address_families": [
+      "ipv4",
+      "ipv6"
+    ]
+  },
+  "platform": {
+    "kernel_release": "7.0.0-31-generic",
+    "architecture": "x86_64"
+  },
+  "artifact": {
+    "version": "0.1.0~rc4+e427252",
+    "commit": "e427252f4f4fc13c247d9db7e5c8d31ed62d7911",
+    "sha256": "8c195ac3825159ddd46e954d77f7c8c5e599a8c6889edafcc8cfe43180a7b4e3",
+    "evidence_complete": true
+  },
+  "scenario": {
+    "phase": "fail-closed",
+    "split_route_expected": true,
+    "blocked_resolver_count": 1,
+    "fallback_resolver_count": 0,
+    "changes_control_configuration": false,
+    "changes_host_resolver_files": false
+  },
+  "limits": {
+    "samples_per_transport": 5,
+    "maximum_query_ms": 4500
+  },
+  "queries": {
+    "expected_status": "SERVFAIL",
+    "parser_ok": true,
+    "results_within_bounds": true,
+    "host_resolver_behavior_correct": true,
+    "udp": {
+      "passed": 5,
+      "minimum_ms": 0,
+      "maximum_ms": 1
+    },
+    "tcp": {
+      "passed": 5,
+      "minimum_ms": 1500,
+      "maximum_ms": 1502
+    }
+  },
+  "resolver_traffic": {
+    "uid_scoped": true,
+    "blocked_resolver_healthy_before_fault": true,
+    "fallback_resolver_healthy_before_fault": null,
+    "blocked_udp_packets": 11,
+    "blocked_tcp_packets": 10,
+    "fallback_udp_packets": 0,
+    "fallback_tcp_packets": 0,
+    "unexpected_udp_packets": 0,
+    "unexpected_tcp_packets": 0,
+    "destination_gate_passed": true,
+    "fault_table_removed": true
+  },
+  "continuity": {
+    "split_route_state_correct": true,
+    "magic_dns_healthy": true,
+    "peer_dual_stack_healthy": true,
+    "daemon_ready": true,
+    "service_generation_preserved": true,
+    "restart_count_preserved": true,
+    "error_journal_entries": 0
+  },
+  "failures": [],
+  "outcome": "pass"
+}

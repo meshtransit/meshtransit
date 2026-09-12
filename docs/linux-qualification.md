@@ -527,10 +527,13 @@ sudo tools/qualification/linux-dns-upstream.sh \
 Both declared resolvers must answer UDP and TCP before fault injection. The
 harness then installs one temporary nftables output chain scoped to the
 non-root `meshd` UID, drops only port 53 traffic to the declared first resolver,
-and counts blocked, fallback, and unexpected destinations. Every UDP and TCP
-query must observe the injected timeout and complete inside the bounded query
-window. MagicDNS, dual-stack peer traffic, daemon generation, and restart count
-must remain stable. A trap removes the exact qualification table.
+and counts blocked, fallback, and unexpected destinations. Each UDP and TCP
+query must return the phase-specific outcome inside the bounded query window.
+The harness does not require a minimum delay: resolver racing can select the
+fallback immediately, while cached health or a circuit breaker can produce an
+immediate fail-closed result. Resolver counters prove that the injected fault
+was exercised. MagicDNS, dual-stack peer traffic, daemon generation, and
+restart count must remain stable. A trap removes the exact qualification table.
 
 For `fail-closed`, publish only the first resolver, omit
 `--fallback-resolver`, and require bounded `SERVFAIL` through both direct and
@@ -541,6 +544,19 @@ link, local forwarding to fail closed, and all continuity gates to remain
 healthy. The harness deliberately does not hold browser credentials or mutate
 control state; configuration changes remain authenticated, versioned CAS
 operations with an operator-visible rollback.
+
+Use a distinct, previously uncached query name for each phase and wait for the
+new control revision and split-route state before collecting a retained sample.
+Do not weaken the destination gate to accommodate traffic left in flight from a
+prior revision; discard that transition sample and repeat only after the old
+resolver work has drained.
+
+The RC4 candidate passed the three-phase matrix with five UDP and five TCP
+samples per phase on Ubuntu 26.04 AMD64 and ARM64. Every retained report had
+zero unexpected resolver packets, preserved daemon generations and restart
+counters, and passed MagicDNS and dual-stack peer continuity. DNS and policy
+were restored to the exact MagicDNS-only/default-deny baseline afterward. See
+[`docs/evidence/linux-dns-rc4-upstream-failure-s1`](evidence/linux-dns-rc4-upstream-failure-s1/README.md).
 
 ## Run a host-policy phase
 

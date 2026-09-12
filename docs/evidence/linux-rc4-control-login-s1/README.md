@@ -65,5 +65,8 @@ after packaging.
 This record omits SSH destinations, profile identifiers, registration URLs and
 handles, control fingerprints, overlay and underlay addresses, credentials,
 and process identifiers. It validates client and daemon behavior. A separate
-Console observation is still required to validate server-side/UI presence
-semantics, and the DNS upstream fault matrix remains outstanding.
+Console observation confirmed that both registered qualification devices were
+reported online without adding another peer. The temporary login device was
+then removed from the Console. The release-candidate DNS upstream fault matrix
+is recorded separately in
+[`linux-dns-rc4-upstream-failure-s1`](../linux-dns-rc4-upstream-failure-s1/README.md).
