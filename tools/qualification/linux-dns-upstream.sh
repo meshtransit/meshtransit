@@ -31,7 +31,6 @@ Usage:
     [--blocked-resolver IPV4] \
     [--fallback-resolver IPV4] \
     [--samples N] \
-    [--minimum-timeout-ms N] \
     [--maximum-query-ms N] \
     [--dns-interface NAME]
 
@@ -39,6 +38,9 @@ Runs one installed-host upstream DNS qualification phase. The failover phase
 requires a control-issued split route containing the blocked resolver first and
 the fallback resolver second. The fail-closed phase requires only the blocked
 resolver. The rollback phase requires the temporary split route to be absent.
+Successful failover and fail-closed responses may be immediate when resolver
+racing, cached health, or a circuit breaker has already selected the outcome.
+Resolver counters prove fault exercise; the maximum query time remains bounded.
 
 For failure phases, a temporary nftables output chain drops port 53 traffic
 from the meshd service UID to only the declared blocked resolver and counts the
@@ -125,6 +127,13 @@ validate_phase() {
     failover|fail-closed|rollback) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+query_time_within_bounds() {
+  local query_ms="$1"
+  local maximum_query_ms="$2"
+
+  (( query_ms <= maximum_query_ms ))
 }
 
 dns_name_has_suffix() {
@@ -307,7 +316,6 @@ main() {
   local blocked_resolver=""
   local fallback_resolver=""
   local samples=5
-  local minimum_timeout_ms=1000
   local maximum_query_ms=4500
   local dns_interface="meshdns0"
   local command_name
@@ -379,7 +387,6 @@ main() {
       --blocked-resolver) blocked_resolver="${2:-}"; shift 2 ;;
       --fallback-resolver) fallback_resolver="${2:-}"; shift 2 ;;
       --samples) samples="${2:-}"; shift 2 ;;
-      --minimum-timeout-ms) minimum_timeout_ms="${2:-}"; shift 2 ;;
       --maximum-query-ms) maximum_query_ms="${2:-}"; shift 2 ;;
       --dns-interface) dns_interface="${2:-}"; shift 2 ;;
       --help|-h) usage; return 0 ;;
@@ -406,12 +413,8 @@ main() {
   [[ "${confirmation}" == "${node_label}" ]] ||
     fail "confirm-dns-upstream must exactly match node-label"
   validate_positive_integer "${samples}" 20 || fail "samples must be between 1 and 20"
-  validate_positive_integer "${minimum_timeout_ms}" 10000 ||
-    fail "minimum-timeout-ms must be between 1 and 10000"
   validate_positive_integer "${maximum_query_ms}" 10000 ||
     fail "maximum-query-ms must be between 1 and 10000"
-  (( maximum_query_ms > minimum_timeout_ms )) ||
-    fail "maximum-query-ms must exceed minimum-timeout-ms"
 
   case "${phase}" in
     failover)
@@ -505,8 +508,7 @@ main() {
           [[ "${expected_status}" == SERVFAIL && ${answer_count} -ne 0 ]]; then
           query_results_ok=false
         fi
-        if (( query_ms > maximum_query_ms )) ||
-          [[ "${phase}" != rollback && ${query_ms} -lt ${minimum_timeout_ms} ]]; then
+        if ! query_time_within_bounds "${query_ms}" "${maximum_query_ms}"; then
           query_results_ok=false
         fi
         if [[ "${transport}" == udp ]]; then
@@ -604,7 +606,6 @@ main() {
     --arg artifact_sha256 "${artifact_sha256,,}" \
     --arg expected_status "${expected_status}" \
     --argjson samples "${samples}" \
-    --argjson minimum_timeout_ms "${minimum_timeout_ms}" \
     --argjson maximum_query_ms "${maximum_query_ms}" \
     --argjson route_state_ok "${route_state_ok}" \
     --argjson parser_ok "${parser_ok}" \
@@ -657,7 +658,6 @@ main() {
         },
         limits: {
           samples_per_transport: $samples,
-          minimum_timeout_ms: $minimum_timeout_ms,
           maximum_query_ms: $maximum_query_ms
         },
         queries: {
@@ -738,6 +738,11 @@ case "${1:-}" in
   __parse-nft-counter)
     [[ $# -eq 2 ]] || exit 2
     parse_nft_counter "$2"
+    exit
+    ;;
+  __query-time-within-bounds)
+    [[ $# -eq 3 ]] || exit 2
+    query_time_within_bounds "$2" "$3"
     exit
     ;;
 esac

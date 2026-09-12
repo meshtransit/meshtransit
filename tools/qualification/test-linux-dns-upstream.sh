@@ -80,6 +80,13 @@ EOF
 )"
 assert_equal missing-counter "${missing_counter}" 0
 
+"${harness}" __query-time-within-bounds 0 4500
+"${harness}" __query-time-within-bounds 3 4500
+if "${harness}" __query-time-within-bounds 4501 4500; then
+  printf 'slow failover query was accepted\n' >&2
+  exit 1
+fi
+
 "${harness}" --help >/dev/null
 
 printf 'linux DNS upstream qualification validation tests passed\n'
