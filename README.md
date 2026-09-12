@@ -94,12 +94,17 @@ Non-Linux development currently lacks a verified peer-credential implementation 
   a same-origin browser flow or a transient auth key.
 - Persisted browser follow-up state, serialized and cancellable registration
   completion, throttled pending polls and temporary transport/server recovery,
-  restart registration, and fail-closed handling for key change or required
-  key rotation.
+  durable handling of verified responses at the poll-deadline boundary,
+  restart registration, and fail-closed handling for key change or required key
+  rotation.
 - Long-lived, pinned Noise/HTTP2 control-map stream with a two-minute watchdog
   and jittered exponential reconnect that resets only after a stable session.
 - Single-owner control supervision that rejects duplicate runners before they
   can open a second map session.
+- Fail-closed recovery from temporary local map-application failures: active
+  TUN, route, DNS, probe, and session state is removed before a fresh full-map
+  retry with bounded jittered backoff. Profile and registration changes
+  interrupt that wait; trust and protocol failures require explicit repair.
 - Product-owned network-map model with atomic full/delta application, strict size/cardinality limits, identity binding, duplicate-address rejection, policy selector validation, and insecure-relay rejection.
 - Product-owned DNS model for MagicDNS, classic IP resolvers, split routes, search domains, and A/AAAA records; deterministic plan compilation rejects name shadowing and unrouted node records.
 - Linux MagicDNS server with A/AAAA/PTR answers, short-name search, authoritative NXDOMAIN/NODATA, RFC 6891 EDNS0 negotiation, classic UDP/TCP forwarding, truncated-UDP retry over TCP, bounded concurrency, and transactional `systemd-resolved` rollback.

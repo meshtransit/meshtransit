@@ -78,7 +78,11 @@ Packet payloads are not an observability asset and must not be collected.
   deadline; both pending responses and temporary timeouts, truncated transport,
   HTTP 408/425/429, and HTTP 5xx consume that bounded window before the next
   retry. Caller cancellation takes precedence, while trust, malformed-response,
-  rejection, and key-expiry failures remain terminal.
+  rejection, and key-expiry failures remain terminal. After an authenticated
+  response returns, persistence uses the caller context rather than the expired
+  remote-poll context, preventing a deadline race from discarding verified
+  pending or authorized state. Temporary registration key copies are cleared
+  after the exchange.
 - Registration transitions have one context-aware owner, preventing concurrent
   local callers from replaying the same pending browser follow-up or racing
   identity persistence.
@@ -90,6 +94,14 @@ Packet payloads are not an observability asset and must not be collected.
 - Reconnect uses bounded jittered exponential backoff, resets that backoff only
   after thirty seconds of stable stream lifetime, and requires a new validated
   full snapshot before accepting deltas.
+- A temporary local consumer failure cannot reuse partially applied state. The
+  daemon cancels and joins the map session, detaches peer probes, destroys the
+  session discovery identity, reverts DNS, and closes the data plane before an
+  interruptible one-to-thirty-second retry. The retry requires a fresh pinned
+  connection and full snapshot; trust, authorization, and malformed protocol
+  failures remain terminal until an explicit state change. Failure to prove
+  local cleanup terminates the supervisor so process teardown can release its
+  remaining ownership; uncertain state is never reused by an in-process retry.
 - Candidate snapshots are copied and validated before atomic publication. Validation bounds peers, addresses, routes, endpoints, rules, selectors, and relay topology; rejects duplicate direct addresses, unauthorized or expired self nodes, an unexpected self key, malformed typed keys, invalid ranges, and test-only insecure relays.
 - Control-supplied `PingRequest` URLs are not fetched, avoiding an unbounded SSRF surface.
 - DNS updates are copied into a bounded product-owned model before publication. The adapter canonicalizes names, preserves empty local routes, rejects duplicates and resolver URLs, and initially accepts only non-loopback classic IP resolvers on port 53.

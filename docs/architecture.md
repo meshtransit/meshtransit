@@ -231,9 +231,27 @@ Each profile has distinct machine and node private keys plus an independent cont
 
 The registration request deliberately omits any network selector. An auth key is accepted only through the local request, held in memory for that call, and never persisted. Registration transitions are serialized inside the service; a competing local request waits with its own cancellable context and re-reads persisted state only after acquiring ownership. The complete discovery, Noise, response-header, and response-body exchange has a fifteen-second deadline. Browser completion uses a shorter three-second poll window. A still-pending response consumes the remainder of that window. Bounded network timeouts, truncated exchanges, HTTP 408/425/429, and HTTP 5xx also preserve pending state and consume the remainder before another local retry; caller cancellation remains immediate. Browser registration persists only a same-origin HTTPS follow-up URL, treats it as secret state, and clears it after authorization. A changed control key, malformed response, authorization rejection, or expired node key fails closed; explicit key-rotation and node-renewal protocols remain future work.
 
+The short poll context bounds only the remote completion exchange. Once an
+authenticated response has returned, identity-state persistence uses the
+original caller context so a deadline racing that response cannot erase its
+`ProfileID`, authorization URL, or authorized state. Temporary machine, node,
+and control key copies used by registration are cleared when the call returns.
+
 ## Network-map lifecycle
 
 Only a registered active profile may open a map stream. The service permits exactly one active supervisor, rejecting a concurrent runner before it can allocate session keys or open a second map stream; ownership is released only after runtime cleanup completes. Every connection repeats HTTPS key discovery and compares both the persisted raw key and fingerprint before Noise. The client asks for uncompressed capability-142 frames, limits each frame to 16 MiB, and renews a two-minute read deadline before every frame. Transient failures use bounded jittered exponential backoff. Receiving one snapshot does not reset that backoff: the stream must remain established for thirty seconds, preventing a flapping server from forcing minimum-delay reconnect churn.
+
+A map that passes protocol validation can still fail while being applied to a
+local TUN, route, DNS, or path runtime. That failure is recoverable only at the
+daemon boundary: the active session is canceled and joined, all local runtime
+state and ephemeral probe material is removed, and the next attempt starts
+from a newly authenticated full snapshot. Retries use jittered exponential
+backoff from one to thirty seconds and reset only after thirty seconds of a
+synchronized session. A persisted profile or registration transition
+interrupts the delay. Control-key, registration, and malformed-map failures do
+not enter this loop and remain blocked for explicit repair. If runtime cleanup
+cannot be proven, the supervisor returns and process teardown owns the final
+cleanup attempt; it never retries in place with ambiguous state.
 
 Protocol structs remain inside the compatibility adapter. Each non-keepalive response is converted into a MeshTransit-owned candidate snapshot. Full and delta peer changes, named packet-filter updates, online state, relay topology, DNS configuration, and control time are applied to a clone. The candidate must pass identity, key, address, route, endpoint, policy, relay, DNS, cardinality, self-authorization, self-expiry, and registered-self-key checks before it atomically replaces the latest in-memory snapshot.
 

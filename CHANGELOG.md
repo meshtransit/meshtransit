@@ -52,6 +52,12 @@ All notable user-visible changes will be documented in this file.
 
 ### Changed
 
+- A temporary local map-application failure now tears down TUN, routes, DNS,
+  path probes, and session secrets before the daemon retries from a fresh full
+  snapshot. Recovery uses interruptible jittered exponential backoff capped at
+  thirty seconds; a profile or registration change bypasses the wait, while
+  permanent control trust and protocol failures remain blocked. An ambiguous
+  cleanup exits the supervisor instead of reusing uncertain local state.
 - Control-map reconnect backoff now resets only after a validated stream stays
   established for thirty seconds, preventing rapid map-then-disconnect loops
   from holding retries at the minimum delay. The watchdog and reconnect policy
@@ -60,7 +66,10 @@ All notable user-visible changes will be documented in this file.
   exchanges, HTTP 408/425/429, and HTTP 5xx as temporary. Pending state is
   retained, both pending responses and temporary failures consume the
   three-second completion window to throttle retries, and caller cancellation
-  still wins immediately; trust and protocol failures remain terminal.
+  still wins immediately. A verified response that races the poll deadline is
+  persisted under the caller context instead of being discarded, temporary
+  key copies are cleared after registration, and trust or protocol failures
+  remain terminal.
 - Control supervision now enforces one active runner per daemon service, and
   browser/auth-key registration transitions are serialized with cancellable
   waiting so concurrent local clients cannot create duplicate control sessions

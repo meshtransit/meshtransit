@@ -269,6 +269,70 @@ func TestService_CompleteLoginThrottlesPendingResponse(t *testing.T) {
 	}
 }
 
+func TestService_CompleteLoginPersistsResponseAfterPollDeadline(t *testing.T) {
+	t.Parallel()
+
+	service, identities, control, profileID, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{
+		{
+			State:   ts2021.RegistrationStateAuthorizationRequired,
+			AuthURL: "https://control.example.com/register/opaque",
+		},
+		{
+			State:   ts2021.RegistrationStateAuthorizationRequired,
+			AuthURL: "https://control.example.com/register/opaque",
+		},
+	}
+	if _, err := service.StartLogin(t.Context(), ""); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+
+	login, err := service.completeLogin(t.Context(), time.Nanosecond)
+	if err != nil || login.ProfileID != profileID ||
+		login.State != RegistrationPending || login.AuthURL == "" {
+		t.Fatalf("completeLogin() = %#v, %v, want persisted pending response", login, err)
+	}
+	record, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() error = %v", err)
+	}
+	if !record.HasPendingAuth() || record.PendingAuthURL() != login.AuthURL {
+		t.Fatalf("registration after expired poll deadline = %s", record)
+	}
+}
+
+func TestService_RegistrationClearsTemporaryKeyMaterial(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+
+	control.mu.Lock()
+	material := control.registerMaterial
+	control.mu.Unlock()
+	for name, secret := range map[string][]byte{
+		"machine": material.MachinePrivateKey,
+		"node":    material.NodePrivateKey,
+		"control": material.ControlPublicKey,
+	} {
+		if len(secret) == 0 || !bytes.Equal(secret, make([]byte, len(secret))) {
+			t.Fatalf("temporary %s key material was not cleared", name)
+		}
+	}
+}
+
 func TestService_CompleteLoginTemporaryFailureHonorsCancellation(t *testing.T) {
 	t.Parallel()
 
@@ -432,6 +496,285 @@ func TestService_RunPublishesLatestValidatedSnapshot(t *testing.T) {
 	}
 	if dns.applyCalls != 1 || dns.resetCalls != 0 || dns.closeCalls != 1 {
 		t.Fatalf("dns calls apply=%d reset=%d close=%d, want 1/0/1", dns.applyCalls, dns.resetCalls, dns.closeCalls)
+	}
+}
+
+func TestService_RunRecoversRuntimeApplyFailuresWithBoundedBackoff(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	applyErr := errors.New("test helper temporarily unavailable")
+	dataPlane := &fakeDataPlane{
+		applyErrors: []error{
+			applyErr,
+			applyErr,
+			applyErr,
+			applyErr,
+			applyErr,
+			applyErr,
+			applyErr,
+		},
+	}
+	service.dataPlane = dataPlane
+	service.setSyncStatus(syncStatus{
+		state:     ControlSessionInactive,
+		dataPlane: string(dataplane.StateIdle),
+	})
+	var retryBases []time.Duration
+	service.runtimeRetryDelay = func(base time.Duration) time.Duration {
+		retryBases = append(retryBases, base)
+
+		return 0
+	}
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	control.streamSnapshot = &networkmap.Snapshot{
+		Revision: 1,
+		Self: networkmap.Node{
+			Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
+		},
+		Peers: []networkmap.Node{{
+			Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.2/32")},
+		}},
+		Policy: []networkmap.Rule{{}},
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	runResult := make(chan error, 1)
+	go func() { runResult <- service.Run(ctx) }()
+	select {
+	case <-control.streamPublished:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("timed out waiting for recovered network snapshot")
+	}
+
+	wantBases := []time.Duration{
+		time.Second,
+		2 * time.Second,
+		4 * time.Second,
+		8 * time.Second,
+		16 * time.Second,
+		maxRuntimeRetry,
+		maxRuntimeRetry,
+	}
+	if !slices.Equal(retryBases, wantBases) {
+		t.Fatalf("runtime retry bases = %v, want %v", retryBases, wantBases)
+	}
+	status, err := service.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if status.ControlSession != ControlSessionSynchronized ||
+		status.DataPlane != string(dataplane.StateTUNReady) {
+		t.Fatalf("recovered status = %#v", status)
+	}
+	if dataPlane.applyCalls != 8 || dataPlane.closeCalls != 7 {
+		t.Fatalf(
+			"runtime calls before shutdown apply=%d close=%d, want 8/7",
+			dataPlane.applyCalls,
+			dataPlane.closeCalls,
+		)
+	}
+
+	cancel()
+	if err := <-runResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context cancellation", err)
+	}
+	if dataPlane.closeCalls != 8 {
+		t.Fatalf("data plane close calls after shutdown = %d, want 8", dataPlane.closeCalls)
+	}
+}
+
+func TestService_RunStopsWhenRuntimeCleanupIsAmbiguous(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	applyErr := errors.New("test helper temporarily unavailable")
+	closeErr := errors.New("test tun close failed")
+	dataPlane := &fakeDataPlane{
+		applyErrors: []error{applyErr},
+		closeErrors: []error{closeErr},
+	}
+	service.dataPlane = dataPlane
+	service.setSyncStatus(syncStatus{
+		state:     ControlSessionInactive,
+		dataPlane: string(dataplane.StateIdle),
+	})
+	retryCalled := false
+	service.runtimeRetryDelay = func(time.Duration) time.Duration {
+		retryCalled = true
+
+		return 0
+	}
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	control.streamSnapshot = &networkmap.Snapshot{
+		Revision: 1,
+		Peers:    []networkmap.Node{{}},
+		Policy:   []networkmap.Rule{{}},
+	}
+
+	err := service.Run(t.Context())
+	if !errors.Is(err, closeErr) {
+		t.Fatalf("Run() error = %v, want cleanup failure", err)
+	}
+	if retryCalled {
+		t.Fatal("ambiguous cleanup entered the runtime retry loop")
+	}
+	if dataPlane.applyCalls != 1 || dataPlane.closeCalls != 2 {
+		t.Fatalf(
+			"runtime calls apply=%d close=%d, want 1/2",
+			dataPlane.applyCalls,
+			dataPlane.closeCalls,
+		)
+	}
+}
+
+func TestService_WaitForRuntimeRecoveryInterruptsImmediately(t *testing.T) {
+	t.Parallel()
+
+	service := &Service{
+		runtimeRetryDelay: func(time.Duration) time.Duration { return time.Hour },
+		syncSignal:        make(chan struct{}, 1),
+	}
+	done := make(chan error, 1)
+	go func() {
+		elapsed, err := service.waitForRuntimeRecovery(t.Context(), minRuntimeRetry)
+		if elapsed {
+			done <- errors.New("runtime retry unexpectedly elapsed")
+
+			return
+		}
+		done <- err
+	}()
+	service.signalControlSync()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("waitForRuntimeRecovery() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("state change did not interrupt runtime recovery wait")
+	}
+}
+
+func TestService_WaitForRuntimeRecoveryHonorsCancellation(t *testing.T) {
+	t.Parallel()
+
+	service := &Service{
+		runtimeRetryDelay: func(time.Duration) time.Duration { return time.Hour },
+		syncSignal:        make(chan struct{}, 1),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.waitForRuntimeRecovery(ctx, minRuntimeRetry)
+		done <- err
+	}()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("waitForRuntimeRecovery() error = %v, want cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancellation did not interrupt runtime recovery wait")
+	}
+}
+
+func TestRuntimeRetryAfterSessionRequiresStableWindow(t *testing.T) {
+	t.Parallel()
+
+	synchronizedAt := time.Unix(1_700_000_000, 0)
+	tests := []struct {
+		name           string
+		synchronizedAt time.Time
+		now            time.Time
+		want           time.Duration
+	}{
+		{
+			name: "no synchronized map",
+			now:  synchronizedAt.Add(time.Hour),
+			want: maxRuntimeRetry,
+		},
+		{
+			name:           "flapping session",
+			synchronizedAt: synchronizedAt,
+			now:            synchronizedAt.Add(runtimeRetryReset - time.Nanosecond),
+			want:           maxRuntimeRetry,
+		},
+		{
+			name:           "stable session",
+			synchronizedAt: synchronizedAt,
+			now:            synchronizedAt.Add(runtimeRetryReset),
+			want:           minRuntimeRetry,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := runtimeRetryAfterSession(
+				maxRuntimeRetry,
+				test.synchronizedAt,
+				test.now,
+			)
+			if got != test.want {
+				t.Fatalf("runtimeRetryAfterSession() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestService_RunDoesNotRetryPermanentControlFailure(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	control.streamError = ts2021.ErrControlKeyChanged
+
+	ctx, cancel := context.WithCancel(t.Context())
+	runResult := make(chan error, 1)
+	go func() { runResult <- service.Run(ctx) }()
+	waitForStreamStart(t, control)
+	waitForControlSession(t, service, ControlSessionBlocked)
+	select {
+	case <-control.streamStarted:
+		cancel()
+		<-runResult
+		t.Fatal("permanent control failure opened another stream")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	cancel()
+	if err := <-runResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context cancellation", err)
 	}
 }
 
@@ -1459,6 +1802,7 @@ type fakeControl struct {
 	verifyCalls         int
 	registrationResults []ts2021.RegistrationResult
 	registerOptions     []ts2021.RegisterOptions
+	registerMaterial    ts2021.KeyMaterial
 	registerFunc        func(
 		context.Context,
 		ts2021.RegisterOptions,
@@ -1469,12 +1813,15 @@ type fakeControl struct {
 	endpointUpdates   []ts2021.EndpointUpdate
 	streamOptions     []ts2021.NetmapOptions
 	streamStarted     chan struct{}
+	streamError       error
 	echoPeerProbeKey  bool
 }
 
 type fakeDataPlane struct {
 	applyCalls  int
+	applyErrors []error
 	closeCalls  int
+	closeErrors []error
 	peerPaths   dataplane.PeerPathSnapshot
 	relayStatus relay.HealthSnapshot
 }
@@ -1510,12 +1857,25 @@ func (f *fakeDataPlane) Apply(
 	_ dataplane.NodePrivateKey,
 ) (dataplane.State, error) {
 	f.applyCalls++
+	if len(f.applyErrors) != 0 {
+		err := f.applyErrors[0]
+		f.applyErrors = f.applyErrors[1:]
+		if err != nil {
+			return dataplane.StateFailed, err
+		}
+	}
 
 	return dataplane.StateTUNReady, nil
 }
 
 func (f *fakeDataPlane) Close() error {
 	f.closeCalls++
+	if len(f.closeErrors) != 0 {
+		err := f.closeErrors[0]
+		f.closeErrors = f.closeErrors[1:]
+
+		return err
+	}
 
 	return nil
 }
@@ -1554,10 +1914,11 @@ func (f *fakeControl) VerifyTrust(context.Context, string, ts2021.KeyMaterial, s
 func (f *fakeControl) Register(
 	ctx context.Context,
 	_ string,
-	_ ts2021.KeyMaterial,
+	material ts2021.KeyMaterial,
 	options ts2021.RegisterOptions,
 ) (ts2021.RegistrationResult, error) {
 	f.mu.Lock()
+	f.registerMaterial = material
 	f.registerOptions = append(f.registerOptions, options)
 	registerFunc := f.registerFunc
 	if registerFunc != nil {
@@ -1586,6 +1947,7 @@ func (f *fakeControl) StreamNetmap(
 ) error {
 	f.mu.Lock()
 	snapshot := f.streamSnapshot
+	streamError := f.streamError
 	echoPeerProbeKey := f.echoPeerProbeKey
 	published := f.streamPublished
 	f.streamOptions = append(f.streamOptions, options)
@@ -1595,13 +1957,16 @@ func (f *fakeControl) StreamNetmap(
 	case started <- struct{}{}:
 	default:
 	}
+	if streamError != nil {
+		return streamError
+	}
 	if snapshot != nil {
 		current := *snapshot
 		if echoPeerProbeKey {
 			current.Self.DiscoveryKey = options.PeerProbePublicKey
 		}
 		if err := handler(ctx, current); err != nil {
-			return err
+			return fmt.Errorf("%w: %w", ts2021.ErrNetmapConsumer, err)
 		}
 		select {
 		case published <- struct{}{}:
@@ -1841,6 +2206,33 @@ func waitForStreamStart(t *testing.T, control *fakeControl) {
 	case <-control.streamStarted:
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for control stream start")
+	}
+}
+
+func waitForControlSession(t *testing.T, service *Service, want string) {
+	t.Helper()
+
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		status, err := service.Status(t.Context())
+		if err != nil {
+			t.Fatalf("Status() error = %v", err)
+		}
+		if status.ControlSession == want {
+			return
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf(
+				"timed out waiting for control session %q; last state %q",
+				want,
+				status.ControlSession,
+			)
+		case <-ticker.C:
+		}
 	}
 }
 

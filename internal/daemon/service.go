@@ -42,7 +42,8 @@ var (
 	// ErrNoPendingAuthorization indicates that there is no browser flow to complete.
 	ErrNoPendingAuthorization = errors.New("daemon: no pending browser authorization")
 	// ErrServiceRunning indicates that this service already owns an active supervisor.
-	ErrServiceRunning = errors.New("daemon: service supervisor is already running")
+	ErrServiceRunning  = errors.New("daemon: service supervisor is already running")
+	errRuntimeRecovery = errors.New("daemon: runtime recovery required")
 )
 
 const (
@@ -81,6 +82,9 @@ const (
 	ControlSessionBlocked = "blocked"
 	completionPollTimeout = 3 * time.Second
 	dnsCleanupTimeout     = 5 * time.Second
+	minRuntimeRetry       = time.Second
+	maxRuntimeRetry       = 30 * time.Second
+	runtimeRetryReset     = 30 * time.Second
 	minEndpointRefresh    = 20 * time.Second
 	maxEndpointRefresh    = 26 * time.Second
 	relayPreparationPoll  = 5 * time.Second
@@ -244,6 +248,7 @@ type Service struct {
 	hostname             string
 	configuredCandidates pathdiscovery.Set
 	clock                func() time.Time
+	runtimeRetryDelay    func(time.Duration) time.Duration
 	endpointRefreshDelay func() time.Duration
 	newPeerProbeIdentity func() (*peerwire.Identity, error)
 	logger               *slog.Logger
@@ -353,6 +358,7 @@ func New(
 		hostname:             options.Hostname,
 		configuredCandidates: configuredSet,
 		clock:                options.Clock,
+		runtimeRetryDelay:    jitteredRuntimeRetryDelay,
 		endpointRefreshDelay: randomEndpointRefreshDelay,
 		newPeerProbeIdentity: peerwire.NewIdentity,
 		logger:               options.Logger,
@@ -385,6 +391,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 	case <-s.syncSignal:
 	default:
 	}
+	runtimeRetry := minRuntimeRetry
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -538,6 +545,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		var endpointUpdates chan ts2021.EndpointUpdate
 		var refreshDone <-chan error
 		var sessionDiscoverer endpointDiscoverer
+		var synchronizedAt time.Time
 		if discoverer, supported := s.dataPlane.(endpointDiscoverer); supported {
 			sessionDiscoverer = discoverer
 			discoveryRequests = make(chan endpointRefreshRequest, 1)
@@ -569,7 +577,16 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					Candidates:         s.configuredCandidates,
 					EndpointUpdates:    endpointUpdates,
 				},
-				func(callbackCtx context.Context, snapshot networkmap.Snapshot) error {
+				func(callbackCtx context.Context, snapshot networkmap.Snapshot) (callbackErr error) {
+					defer func() {
+						if callbackErr != nil {
+							callbackErr = fmt.Errorf(
+								"%w: %w",
+								errRuntimeRecovery,
+								callbackErr,
+							)
+						}
+					}()
 					if err := callbackCtx.Err(); err != nil {
 						return err
 					}
@@ -693,6 +710,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 						dataPlane:       dataPlaneState,
 						dns:             dnsState,
 					})
+					if synchronizedAt.IsZero() {
+						synchronizedAt = s.clock()
+					}
 
 					return nil
 				},
@@ -710,6 +730,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 
 			return errors.Join(ctx.Err(), cleanupErr)
 		case <-s.syncSignal:
+			runtimeRetry = minRuntimeRetry
 			cancel()
 			<-streamDone
 			if refreshDone != nil {
@@ -735,7 +756,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			pathErr := pathController.Err()
 			dataPlaneState := s.currentDataPlaneState()
 			dnsState := s.currentDNSState()
-			if err := s.stopRuntime(); err != nil {
+			runtimeStopErr := s.stopRuntime()
+			if runtimeStopErr != nil {
 				dataPlaneState = string(dataplane.StateFailed)
 				dnsState = DNSFailed
 			}
@@ -749,15 +771,45 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if dnsState != DNSFailed {
 				dnsState = DNSInactive
 			}
+			recoverable := errors.Is(streamErr, errRuntimeRecovery)
+			controlState := ControlSessionBlocked
+			if recoverable {
+				controlState = ControlSessionConnecting
+			}
 			s.setSyncStatus(syncStatus{
 				profileID: active.ID,
-				state:     ControlSessionBlocked,
+				state:     controlState,
 				dataPlane: dataPlaneState,
 				dns:       dnsState,
 			})
+			if runtimeStopErr != nil {
+				return fmt.Errorf(
+					"stopping runtime after map stream failure: %w",
+					runtimeStopErr,
+				)
+			}
+			if recoverable {
+				runtimeRetry = runtimeRetryAfterSession(
+					runtimeRetry,
+					synchronizedAt,
+					s.clock(),
+				)
+				backoffElapsed, err := s.waitForRuntimeRecovery(ctx, runtimeRetry)
+				if err != nil {
+					return err
+				}
+				if backoffElapsed {
+					runtimeRetry = nextRuntimeRetry(runtimeRetry)
+				} else {
+					runtimeRetry = minRuntimeRetry
+				}
+
+				continue
+			}
 			if err := s.waitForSyncSignal(ctx); err != nil {
 				return err
 			}
+			runtimeRetry = minRuntimeRetry
 		case refreshErr := <-refreshDone:
 			s.logControlSessionFailure("endpoint refresh stopped", refreshErr)
 			cancel()
@@ -768,7 +820,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			pathErr := pathController.Err()
 			dataPlaneState := s.currentDataPlaneState()
 			dnsState := s.currentDNSState()
-			if err := s.stopRuntime(); err != nil {
+			runtimeStopErr := s.stopRuntime()
+			if runtimeStopErr != nil {
 				dataPlaneState = string(dataplane.StateFailed)
 				dnsState = DNSFailed
 			}
@@ -788,6 +841,12 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				dataPlane: dataPlaneState,
 				dns:       dnsState,
 			})
+			if runtimeStopErr != nil {
+				return fmt.Errorf(
+					"stopping runtime after endpoint refresh failure: %w",
+					runtimeStopErr,
+				)
+			}
 			if err := s.waitForSyncSignal(ctx); err != nil {
 				return err
 			}
@@ -1454,7 +1513,14 @@ func (s *Service) completeLogin(ctx context.Context, pollTimeout time.Duration) 
 
 	pollCtx, cancel := context.WithTimeout(ctx, pollTimeout)
 	defer cancel()
-	result, err := s.registerWithRecord(pollCtx, active, record, "", record.PendingAuthURL())
+	result, err := s.registerWithRecord(
+		pollCtx,
+		ctx,
+		active,
+		record,
+		"",
+		record.PendingAuthURL(),
+	)
 	if err != nil {
 		if ctx.Err() != nil {
 			return Login{}, ctx.Err()
@@ -1512,20 +1578,25 @@ func (s *Service) register(ctx context.Context, authKey, followupURL string) (Lo
 		}, nil
 	}
 
-	return s.registerWithRecord(ctx, active, record, authKey, followupURL)
+	return s.registerWithRecord(ctx, ctx, active, record, authKey, followupURL)
 }
 
 func (s *Service) registerWithRecord(
-	ctx context.Context,
+	requestCtx context.Context,
+	stateCtx context.Context,
 	active profile.Profile,
 	record identity.Record,
 	authKey string,
 	followupURL string,
 ) (Login, error) {
+	identityMaterial := record.Material()
+	protocolMaterial := toProtocolMaterial(identityMaterial)
+	clearIdentityMaterial(identityMaterial)
+	defer clearProtocolMaterial(protocolMaterial)
 	result, err := s.prober.Register(
-		ctx,
+		requestCtx,
 		active.ControlURL,
-		toProtocolMaterial(record.Material()),
+		protocolMaterial,
 		ts2021.RegisterOptions{
 			Hostname:          s.hostname,
 			Version:           "meshd/" + s.build.Version,
@@ -1542,14 +1613,14 @@ func (s *Service) registerWithRecord(
 	switch result.State {
 	case ts2021.RegistrationStateAuthorized:
 		login.State = RegistrationRegistered
-		if _, err := s.identities.SetRegistration(ctx, active.ID, "", true); err != nil {
+		if _, err := s.identities.SetRegistration(stateCtx, active.ID, "", true); err != nil {
 			return Login{}, fmt.Errorf("persisting authorized registration: %w", err)
 		}
 		s.signalControlSync()
 	case ts2021.RegistrationStateAuthorizationRequired:
 		login.State = RegistrationPending
 		login.AuthURL = result.AuthURL
-		if _, err := s.identities.SetRegistration(ctx, active.ID, result.AuthURL, false); err != nil {
+		if _, err := s.identities.SetRegistration(stateCtx, active.ID, result.AuthURL, false); err != nil {
 			return Login{}, fmt.Errorf("persisting pending registration: %w", err)
 		}
 	default:
@@ -1628,6 +1699,68 @@ func (s *Service) waitForSyncSignal(ctx context.Context) error {
 	case <-s.syncSignal:
 		return nil
 	}
+}
+
+// waitForRuntimeRecovery bounds retries after a local map consumer failed.
+// A persisted state change interrupts the wait so profile and registration
+// transitions are never delayed behind recovery backoff.
+func (s *Service) waitForRuntimeRecovery(
+	ctx context.Context,
+	base time.Duration,
+) (bool, error) {
+	if s.runtimeRetryDelay == nil {
+		return false, errors.New("daemon: runtime retry delay is unavailable")
+	}
+	delay := s.runtimeRetryDelay(base)
+	if delay < 0 {
+		return false, errors.New("daemon: runtime retry delay is invalid")
+	}
+	timer := time.NewTimer(delay)
+	defer stopRefreshTimer(timer)
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	case <-s.syncSignal:
+		return false, nil
+	case <-timer.C:
+		return true, nil
+	}
+}
+
+func nextRuntimeRetry(current time.Duration) time.Duration {
+	if current < minRuntimeRetry {
+		return minRuntimeRetry
+	}
+	if current >= maxRuntimeRetry || current > maxRuntimeRetry/2 {
+		return maxRuntimeRetry
+	}
+
+	return current * 2
+}
+
+func runtimeRetryAfterSession(
+	current time.Duration,
+	synchronizedAt time.Time,
+	now time.Time,
+) time.Duration {
+	if !synchronizedAt.IsZero() && now.Sub(synchronizedAt) >= runtimeRetryReset {
+		return minRuntimeRetry
+	}
+
+	return current
+}
+
+func jitteredRuntimeRetryDelay(base time.Duration) time.Duration {
+	if base <= time.Nanosecond {
+		return base
+	}
+	half := base / 2
+	random, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(half)))
+	if err != nil {
+		return half
+	}
+
+	return half + time.Duration(random.Int64())
 }
 
 func (s *Service) acquireRegistration(ctx context.Context) (func(), error) {
