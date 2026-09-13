@@ -65,6 +65,19 @@ The `relay` role intentionally does not load or require direct storage settings.
 | `MESHTRANSIT_REDIS_CA_FILE` | none | Absolute path to the trusted CA bundle. |
 | `MESHTRANSIT_REDIS_POOL_SIZE` | `10` | Per-process active-connection cap from 1 through 50. |
 
+The `worker` and `all` roles also load the bounded Network-revision delivery
+settings below. A batch is leased as one ordered unit, so the lease must exceed
+`batch size * 3 * operation timeout`; this preserves enough worst-case budget
+for load/publish/finish work without relying on an unbounded goroutine fan-out.
+
+| Environment variable | Default | Contract |
+| --- | --- | --- |
+| `MESHTRANSIT_NETWORK_REVISION_BATCH_SIZE` | `8` | Ordered claim size from 1 through 256. |
+| `MESHTRANSIT_NETWORK_REVISION_LEASE` | `30s` | Fenced claim lifetime from 1 second through 5 minutes and above the batch operation budget. |
+| `MESHTRANSIT_NETWORK_REVISION_POLL_INTERVAL` | `1s` | Idle polling interval from 100ms through 1 minute. |
+| `MESHTRANSIT_NETWORK_REVISION_RETRY_DELAY` | `5s` | Delay after a failed delivery from 100ms through 24 hours. |
+| `MESHTRANSIT_NETWORK_REVISION_OPERATION_TIMEOUT` | `1s` | Per PostgreSQL or Redis call deadline from 100ms through 30 seconds. |
+
 Passwords are never accepted as direct environment values or DSN fragments.
 Credential and CA files are loaded before listeners open, and file references
 format as redacted values.

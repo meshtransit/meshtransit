@@ -102,6 +102,9 @@ func TestLoadRelayDoesNotRequireOrParseStorage(t *testing.T) {
 	if got.Storage != nil {
 		t.Fatalf("Storage = %v, want nil for relay", got.Storage)
 	}
+	if got.RevisionWorker != nil {
+		t.Fatalf("RevisionWorker = %v, want nil for relay", got.RevisionWorker)
+	}
 }
 
 func TestLoadRequiresOnlySelectedPostgreSQLCredentials(t *testing.T) {

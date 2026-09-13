@@ -48,6 +48,15 @@ func TestLoadDefaults(t *testing.T) {
 	if got.Storage.Redis.PoolSize != defaultRedisPoolSize {
 		t.Fatalf("redis pool size = %d, want %d", got.Storage.Redis.PoolSize, defaultRedisPoolSize)
 	}
+	if got.RevisionWorker == nil || *got.RevisionWorker != (RevisionWorkerConfig{
+		BatchSize:        defaultRevisionWorkerBatchSize,
+		Lease:            defaultRevisionWorkerLease,
+		PollInterval:     defaultRevisionWorkerPollInterval,
+		RetryDelay:       defaultRevisionWorkerRetryDelay,
+		OperationTimeout: defaultRevisionWorkerOperationTimeout,
+	}) {
+		t.Fatalf("revision worker config = %+v, want bounded defaults", got.RevisionWorker)
+	}
 }
 
 func TestLoadExplicitValues(t *testing.T) {
@@ -62,6 +71,11 @@ func TestLoadExplicitValues(t *testing.T) {
 		envDependencyCheckInterval:        "7s",
 		envPostgreSQLWorkerMaxConnections: "17",
 		envRedisPoolSize:                  "19",
+		envRevisionWorkerBatchSize:        "4",
+		envRevisionWorkerLease:            "25s",
+		envRevisionWorkerPollInterval:     "3s",
+		envRevisionWorkerRetryDelay:       "7s",
+		envRevisionWorkerOperationTimeout: "2s",
 	})
 	got, err := Load(mapLookup(values))
 	if err != nil {
@@ -80,6 +94,15 @@ func TestLoadExplicitValues(t *testing.T) {
 	if got.Storage == nil || got.Storage.PostgreSQL.Worker == nil ||
 		got.Storage.PostgreSQL.Worker.MaxConnections != 17 || got.Storage.Redis.PoolSize != 19 {
 		t.Fatalf("storage pool controls were not loaded")
+	}
+	if got.RevisionWorker == nil || *got.RevisionWorker != (RevisionWorkerConfig{
+		BatchSize:        4,
+		Lease:            25 * time.Second,
+		PollInterval:     3 * time.Second,
+		RetryDelay:       7 * time.Second,
+		OperationTimeout: 2 * time.Second,
+	}) {
+		t.Fatalf("revision worker controls = %+v, want explicit values", got.RevisionWorker)
 	}
 }
 

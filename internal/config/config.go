@@ -13,7 +13,7 @@ import (
 
 const (
 	// SchemaVersion identifies the validated environment configuration contract.
-	SchemaVersion = 3
+	SchemaVersion = 4
 
 	envRole            = "MESHTRANSIT_ROLE"
 	envHealthAddress   = "MESHTRANSIT_HEALTH_ADDRESS"
@@ -51,6 +51,7 @@ type Config struct {
 	LogLevel        slog.Level
 	Dependencies    DependencyConfig
 	Storage         *StorageConfig
+	RevisionWorker  *RevisionWorkerConfig
 }
 
 // DependencyConfig bounds startup and periodic infrastructure checks.
@@ -94,12 +95,20 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	var storageConfig *StorageConfig
+	var revisionWorkerConfig *RevisionWorkerConfig
 	if role != app.RoleRelay {
 		loadedStorage, loadErr := loadStorageConfig(lookup, role)
 		if loadErr != nil {
 			return Config{}, loadErr
 		}
 		storageConfig = &loadedStorage
+	}
+	if role == app.RoleAll || role == app.RoleWorker {
+		loadedWorker, loadErr := loadRevisionWorkerConfig(lookup)
+		if loadErr != nil {
+			return Config{}, loadErr
+		}
+		revisionWorkerConfig = &loadedWorker
 	}
 
 	return Config{
@@ -109,6 +118,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		LogLevel:        logLevel,
 		Dependencies:    dependencyConfig,
 		Storage:         storageConfig,
+		RevisionWorker:  revisionWorkerConfig,
 	}, nil
 }
 

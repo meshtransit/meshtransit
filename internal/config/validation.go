@@ -106,14 +106,18 @@ func validateFilePath(path string) error {
 }
 
 func parsePoolSize(value string) (int, error) {
+	return parseIntInRange(value, minPoolSize, maxPoolSize)
+}
+
+func parseIntInRange(value string, minimum, maximum int) (int, error) {
 	if value == "" || strings.TrimSpace(value) != value {
 		return 0, ErrInvalid
 	}
-	poolSize, err := strconv.Atoi(value)
-	if err != nil || poolSize < minPoolSize || poolSize > maxPoolSize {
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < minimum || parsed > maximum {
 		return 0, ErrInvalid
 	}
-	return poolSize, nil
+	return parsed, nil
 }
 
 func parsePostgreSQLMaxConnections(value string) (int32, error) {
