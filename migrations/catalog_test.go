@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 6 {
-		t.Fatalf("len(Catalog()) = %d, want 6", len(catalog))
+	if len(catalog) != 7 {
+		t.Fatalf("len(Catalog()) = %d, want 7", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -212,8 +212,44 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("registration intent hash migration SQL contains unsafe change %q", forbidden)
 		}
 	}
-	if LatestVersion() != 6 {
-		t.Fatalf("LatestVersion() = %d, want 6", LatestVersion())
+	scopeResolver := catalog[6]
+	if scopeResolver.Description != "transaction-local public network scope" {
+		t.Fatalf("migration 7 description = %q, want public network scope", scopeResolver.Description)
+	}
+	for _, required := range []string{
+		"CREATE POLICY workspace_scope_resolution_policy",
+		"CREATE POLICY network_scope_resolution_policy",
+		"'mesh.requested_workspace_public_id'",
+		"'mesh.requested_network_public_id'",
+		"CREATE FUNCTION mesh_ops.set_network_scope",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh, mesh_ops",
+		"pg_catalog.set_config(",
+		"'mesh.workspace_id'",
+		"'mesh.network_id'",
+		"REVOKE ALL ON FUNCTION mesh_ops.set_network_scope",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.set_network_scope",
+	} {
+		if !strings.Contains(scopeResolver.SQL, required) {
+			t.Errorf("network scope migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"USING (TRUE)",
+		"WITH CHECK (TRUE)",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.set_network_scope(UUID, UUID) TO mesh_worker",
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"BYPASSRLS",
+	} {
+		if strings.Contains(scopeResolver.SQL, forbidden) {
+			t.Errorf("network scope migration SQL contains excessive capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 7 {
+		t.Fatalf("LatestVersion() = %d, want 7", LatestVersion())
 	}
 }
 

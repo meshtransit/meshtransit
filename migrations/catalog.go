@@ -13,12 +13,13 @@ const (
 	// this binary. It advances only with a reviewed compatibility change.
 	ApplicationGeneration int64 = 1
 
-	platformFoundationDescription     = "platform migration foundation"
-	authorityFoundationDescription    = "tenancy and address authority foundation"
-	integrityFoundationDescription    = "audit and outbox integrity foundation"
-	outboxDeliveryDescription         = "outbox worker delivery capability"
-	registrationAuthorityDescription  = "node enrollment and registration authority"
-	registrationIntentHashDescription = "registration intent semantic hash"
+	platformFoundationDescription      = "platform migration foundation"
+	authorityFoundationDescription     = "tenancy and address authority foundation"
+	integrityFoundationDescription     = "audit and outbox integrity foundation"
+	outboxDeliveryDescription          = "outbox worker delivery capability"
+	registrationAuthorityDescription   = "node enrollment and registration authority"
+	registrationIntentHashDescription  = "registration intent semantic hash"
+	transactionNetworkScopeDescription = "transaction-local public network scope"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -38,6 +39,9 @@ var registrationAuthoritySQL string
 
 //go:embed 000006_registration_intent_hash.up.sql
 var registrationIntentHashSQL string
+
+//go:embed 000007_transaction_network_scope.up.sql
+var transactionNetworkScopeSQL string
 
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
@@ -60,6 +64,7 @@ func Catalog() []Migration {
 		newMigration(4, outboxDeliveryDescription, outboxDeliverySQL),
 		newMigration(5, registrationAuthorityDescription, registrationAuthoritySQL),
 		newMigration(6, registrationIntentHashDescription, registrationIntentHashSQL),
+		newMigration(7, transactionNetworkScopeDescription, transactionNetworkScopeSQL),
 	}
 }
 

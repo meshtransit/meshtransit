@@ -154,10 +154,13 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		postgresConfig.CAFile,
 		processConfig.Dependencies.CheckTimeout,
 	)
+	assertRuntimePublicNetworkScope(ctx, t, runtimeConnection)
+	assertRuntimeRejectsInvalidPublicNetworkScope(ctx, t, runtimeConnection)
 	assertRuntimeAuthorityIsolation(ctx, t, runtimeConnection)
 	assertRegistrationRuntimeIsolation(ctx, t, runtimeConnection)
 
 	workerConnection := openIntegrationWorkerConnection(ctx, t, adminConfig)
+	assertWorkerCannotSetPublicNetworkScope(ctx, t, workerConnection)
 	assertWorkerOutboxPrivilegeContract(ctx, t, workerConnection)
 	workerPool := openIntegrationWorkerPool(ctx, t, adminConfig)
 	assertWorkerOutboxDelivery(ctx, t, adminConnection, workerPool)
