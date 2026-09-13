@@ -276,8 +276,10 @@ proves end-to-end Network-revision wakeup delivery, transactional retry, and
 lease-expiry replay after a post-publish/pre-completion process failure. The
 gate also launches the real binary as `role=all`, checks every concrete role in
 operator metrics, performs a bounded SIGTERM shutdown, and proves a second
-process reaches readiness against the same durable state. Both containers are
-removed when the test exits.
+process reaches readiness against the same durable state. A negative process
+case proves invalid `role=all` configuration exits with redacted diagnostics
+before starting the operator listener. Both containers are removed when the
+test exits.
 
 ## Container image
 
