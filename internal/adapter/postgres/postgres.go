@@ -1,0 +1,158 @@
+// Package postgres implements the PostgreSQL infrastructure boundary.
+package postgres
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"net"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/meshtransit/meshtransit/internal/app"
+	"github.com/meshtransit/meshtransit/internal/config"
+)
+
+const (
+	maxConnectionLifetime       = 30 * time.Minute
+	maxConnectionLifetimeJitter = 5 * time.Minute
+	maxConnectionIdleTime       = 5 * time.Minute
+	healthCheckPeriod           = 30 * time.Second
+)
+
+var (
+	// ErrInvalidOptions indicates missing or unsafe PostgreSQL settings.
+	ErrInvalidOptions = errors.New("invalid postgres options")
+	// ErrOpen indicates that PostgreSQL pool construction failed.
+	ErrOpen = errors.New("open postgres pool")
+)
+
+// Options contains one validated PostgreSQL pool configuration.
+type Options struct {
+	Address        string
+	Database       string
+	User           string
+	PasswordFile   config.SecretFile
+	CAFile         config.TrustFile
+	MaxConnections int32
+	ConnectTimeout time.Duration
+}
+
+// Pool is the concrete PostgreSQL dependency owned by the composition root.
+type Pool struct {
+	ping           func(context.Context) error
+	checkSchema    func(context.Context) error
+	outboxDatabase outboxDatabase
+	close          func()
+	closeOnce      sync.Once
+}
+
+// Open constructs a lazy, bounded TLS-only PostgreSQL pool. Connectivity is
+// checked synchronously by the application monitor before listeners start.
+func Open(ctx context.Context, options Options) (*Pool, error) {
+	if ctx == nil {
+		return nil, ErrInvalidOptions
+	}
+	password, err := options.PasswordFile.Read()
+	if err != nil {
+		return nil, errors.Join(ErrOpen, err)
+	}
+	caPEM, err := options.CAFile.Read()
+	if err != nil {
+		return nil, errors.Join(ErrOpen, err)
+	}
+	poolConfig, err := buildPoolConfig(options, password, caPEM)
+	if err != nil {
+		return nil, err
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
+	}
+	return &Pool{
+		ping:           pool.Ping,
+		outboxDatabase: pgxOutboxDatabase{pool: pool},
+		checkSchema: func(ctx context.Context) error {
+			return checkRuntimeSchemaCompatibility(ctx, pool, options.User)
+		},
+		close: pool.Close,
+	}, nil
+}
+
+// Component identifies this dependency to the application monitor.
+func (*Pool) Component() app.Component { return app.ComponentPostgreSQL }
+
+// Check verifies a PostgreSQL round trip within the caller's context.
+func (pool *Pool) Check(ctx context.Context) error {
+	if ctx == nil || pool == nil || pool.ping == nil || pool.checkSchema == nil {
+		return ErrInvalidOptions
+	}
+	if err := pool.ping(ctx); err != nil {
+		return fmt.Errorf("ping postgres: %w", err)
+	}
+	if err := pool.checkSchema(ctx); err != nil {
+		return fmt.Errorf("check postgres schema: %w", err)
+	}
+	return nil
+}
+
+// Close releases the pool once. It is safe to call more than once.
+func (pool *Pool) Close() error {
+	if pool == nil || pool.close == nil {
+		return ErrInvalidOptions
+	}
+	pool.closeOnce.Do(pool.close)
+	return nil
+}
+
+func buildPoolConfig(options Options, password string, caPEM []byte) (*pgxpool.Config, error) {
+	host, portValue, err := net.SplitHostPort(options.Address)
+	if err != nil || host == "" || options.Database == "" || options.User == "" || password == "" ||
+		options.MaxConnections <= 0 || options.ConnectTimeout <= 0 {
+		return nil, ErrInvalidOptions
+	}
+	port, err := strconv.ParseUint(portValue, 10, 16)
+	if err != nil || port == 0 {
+		return nil, ErrInvalidOptions
+	}
+
+	rootCAs := x509.NewCertPool()
+	if !rootCAs.AppendCertsFromPEM(caPEM) {
+		return nil, ErrInvalidOptions
+	}
+
+	poolConfig, err := pgxpool.ParseConfig(
+		"host=localhost port=5432 user=placeholder dbname=placeholder sslmode=disable",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("%w: parse safe base config: %w", ErrOpen, err)
+	}
+	poolConfig.ConnConfig.Host = host
+	poolConfig.ConnConfig.Port = uint16(port)
+	poolConfig.ConnConfig.Database = options.Database
+	poolConfig.ConnConfig.User = options.User
+	poolConfig.ConnConfig.Password = password
+	poolConfig.ConnConfig.ConnectTimeout = options.ConnectTimeout
+	poolConfig.ConnConfig.TLSConfig = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    rootCAs,
+		ServerName: host,
+	}
+	poolConfig.ConnConfig.Fallbacks = nil
+	poolConfig.ConnConfig.RequireAuth = "scram-sha-256"
+	poolConfig.ConnConfig.RuntimeParams["application_name"] = "meshcore"
+	poolConfig.MaxConns = options.MaxConnections
+	poolConfig.MinConns = 0
+	poolConfig.MinIdleConns = 0
+	poolConfig.MaxConnLifetime = maxConnectionLifetime
+	poolConfig.MaxConnLifetimeJitter = maxConnectionLifetimeJitter
+	poolConfig.MaxConnIdleTime = maxConnectionIdleTime
+	poolConfig.HealthCheckPeriod = healthCheckPeriod
+	poolConfig.PingTimeout = options.ConnectTimeout
+	return poolConfig, nil
+}

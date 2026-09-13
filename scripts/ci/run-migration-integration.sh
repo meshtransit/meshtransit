@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+postgres_image="${POSTGRES_IMAGE:-postgres:18.6-bookworm}"
+fixture_dir="$(mktemp -d)"
+container_name="meshtransit-migrations-$RANDOM-$$"
+postgres_password="$(openssl rand -hex 24)"
+migration_password="$(openssl rand -hex 24)"
+runtime_password="$(openssl rand -hex 24)"
+worker_password="$(openssl rand -hex 24)"
+
+cleanup() {
+	docker rm --force "${container_name}" >/dev/null 2>&1 || true
+	rm -rf "${fixture_dir}"
+}
+trap cleanup EXIT
+
+openssl req \
+	-x509 \
+	-newkey rsa:2048 \
+	-nodes \
+	-days 1 \
+	-subj "/CN=MeshTransit test CA" \
+	-keyout "${fixture_dir}/ca.key" \
+	-out "${fixture_dir}/ca.crt" \
+	>/dev/null 2>&1
+openssl req \
+	-newkey rsa:2048 \
+	-nodes \
+	-subj "/CN=127.0.0.1" \
+	-keyout "${fixture_dir}/server.key" \
+	-out "${fixture_dir}/server.csr" \
+	>/dev/null 2>&1
+printf '%s\n' \
+	'[server]' \
+	'subjectAltName=IP:127.0.0.1' \
+	'extendedKeyUsage=serverAuth' \
+	>"${fixture_dir}/server.ext"
+openssl x509 \
+	-req \
+	-days 1 \
+	-in "${fixture_dir}/server.csr" \
+	-CA "${fixture_dir}/ca.crt" \
+	-CAkey "${fixture_dir}/ca.key" \
+	-CAcreateserial \
+	-extfile "${fixture_dir}/server.ext" \
+	-extensions server \
+	-out "${fixture_dir}/server.crt" \
+	>/dev/null 2>&1
+printf '%s\n' "${migration_password}" >"${fixture_dir}/migration-password"
+printf '%s\n' "${runtime_password}" >"${fixture_dir}/runtime-password"
+printf '%s\n' "${worker_password}" >"${fixture_dir}/worker-password"
+printf '%s\n' "${postgres_password}" >"${fixture_dir}/postgres-admin-password"
+chmod 0600 "${fixture_dir}/migration-password"
+chmod 0600 "${fixture_dir}/runtime-password"
+chmod 0600 "${fixture_dir}/worker-password"
+chmod 0600 "${fixture_dir}/postgres-admin-password"
+
+docker run \
+	--detach \
+	--name "${container_name}" \
+	--publish 127.0.0.1::5432 \
+	--env "POSTGRES_PASSWORD=${postgres_password}" \
+	--env 'POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256' \
+	"${postgres_image}" \
+	>/dev/null
+
+for _ in $(seq 1 60); do
+	if docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${container_name}" \
+		pg_isready --username postgres --dbname postgres \
+		>/dev/null 2>&1; then
+		break
+	fi
+	sleep 1
+done
+docker exec \
+	--env "PGPASSWORD=${postgres_password}" \
+	"${container_name}" \
+	pg_isready --username postgres --dbname postgres \
+	>/dev/null
+
+docker cp "${fixture_dir}/server.crt" "${container_name}:/tmp/server.crt"
+docker cp "${fixture_dir}/server.key" "${container_name}:/tmp/server.key"
+docker exec --user root "${container_name}" chown postgres:postgres /tmp/server.crt /tmp/server.key
+docker exec --user root "${container_name}" chmod 0600 /tmp/server.key
+docker exec \
+	--env "PGPASSWORD=${postgres_password}" \
+	"${container_name}" \
+	psql --username postgres --dbname postgres --set ON_ERROR_STOP=1 \
+	--command "ALTER SYSTEM SET ssl = 'on'" \
+	--command "ALTER SYSTEM SET ssl_cert_file = '/tmp/server.crt'" \
+	--command "ALTER SYSTEM SET ssl_key_file = '/tmp/server.key'" \
+	>/dev/null
+docker restart "${container_name}" >/dev/null
+
+for _ in $(seq 1 60); do
+	if docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${container_name}" \
+		pg_isready --username postgres --dbname postgres \
+		>/dev/null 2>&1; then
+		break
+	fi
+	sleep 1
+done
+printf \
+	"CREATE ROLE mesh_migrator LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_runtime LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_worker LOGIN PASSWORD '%s' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_audit_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_share_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\nCREATE ROLE mesh_observer LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;\n" \
+	"${migration_password}" \
+	"${runtime_password}" \
+	"${worker_password}" \
+	| docker exec \
+		--interactive \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${container_name}" \
+		psql --username postgres --dbname postgres --set ON_ERROR_STOP=1 \
+		>/dev/null
+docker exec \
+	--env "PGPASSWORD=${postgres_password}" \
+	"${container_name}" \
+	psql --username postgres --dbname postgres --set ON_ERROR_STOP=1 \
+	--command "CREATE DATABASE meshtransit OWNER mesh_migrator" \
+	>/dev/null
+docker exec \
+	--env "PGPASSWORD=${postgres_password}" \
+	"${container_name}" \
+	psql --username postgres --dbname meshtransit --set ON_ERROR_STOP=1 \
+	--command 'CREATE EXTENSION btree_gist' \
+	>/dev/null
+
+published_address="$(docker port "${container_name}" 5432/tcp)"
+export MESHTRANSIT_MIGRATION_INTEGRATION=1
+export MESHTRANSIT_MIGRATION_POSTGRES_ADDRESS="${published_address}"
+export MESHTRANSIT_MIGRATION_POSTGRES_DATABASE=meshtransit
+export MESHTRANSIT_MIGRATION_POSTGRES_USER=mesh_migrator
+export MESHTRANSIT_MIGRATION_POSTGRES_PASSWORD_FILE="${fixture_dir}/migration-password"
+export MESHTRANSIT_MIGRATION_POSTGRES_CA_FILE="${fixture_dir}/ca.crt"
+export MESHTRANSIT_MIGRATION_ACTOR=ci
+export MESHTRANSIT_MIGRATION_CONNECT_TIMEOUT=10s
+export MESHTRANSIT_MIGRATION_LOCK_TIMEOUT=5s
+export MESHTRANSIT_MIGRATION_STATEMENT_TIMEOUT=30s
+export MESHTRANSIT_ROLE=api
+export MESHTRANSIT_POSTGRES_ADDRESS="${published_address}"
+export MESHTRANSIT_POSTGRES_DATABASE=meshtransit
+export MESHTRANSIT_POSTGRES_USER=mesh_runtime
+export MESHTRANSIT_POSTGRES_PASSWORD_FILE="${fixture_dir}/runtime-password"
+export MESHTRANSIT_POSTGRES_CA_FILE="${fixture_dir}/ca.crt"
+export MESHTRANSIT_POSTGRES_MAX_CONNECTIONS=2
+export MESHTRANSIT_REDIS_ADDRESS=127.0.0.1:6379
+export MESHTRANSIT_REDIS_USERNAME=integration-placeholder
+export MESHTRANSIT_REDIS_PASSWORD_FILE="${fixture_dir}/runtime-password"
+export MESHTRANSIT_REDIS_CA_FILE="${fixture_dir}/ca.crt"
+export MESHTRANSIT_REDIS_POOL_SIZE=1
+export MESHTRANSIT_TEST_POSTGRES_ADMIN_PASSWORD_FILE="${fixture_dir}/postgres-admin-password"
+export MESHTRANSIT_TEST_POSTGRES_WORKER_PASSWORD_FILE="${fixture_dir}/worker-password"
+
+go test \
+	-tags=integration \
+	-count=1 \
+	-race \
+	-run '^TestPostgreSQLMigrations$' \
+	-timeout=5m \
+	./internal/integration

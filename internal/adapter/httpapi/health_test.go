@@ -9,8 +9,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/app"
@@ -20,7 +23,7 @@ func TestHealthHandlerReportsLifecycleState(t *testing.T) {
 	t.Parallel()
 
 	state := newRuntimeState(t, app.RoleAPI)
-	handler := newHealthHandler(state, discardLogger())
+	handler := newTestHealthHandler(t, state)
 
 	tests := []struct {
 		name       string
@@ -53,7 +56,7 @@ func TestHealthHandlerReportsReady(t *testing.T) {
 
 	state := newRuntimeState(t, app.RoleControl)
 	state.SetReady(true)
-	handler := newHealthHandler(state, discardLogger())
+	handler := newTestHealthHandler(t, state)
 
 	response := request(t, handler, "/ready")
 	if response.Code != http.StatusOK {
@@ -67,25 +70,51 @@ func TestHealthHandlerReportsReady(t *testing.T) {
 	}
 }
 
+func TestHealthHandlerReportsRedactedDependencyStatus(t *testing.T) {
+	t.Parallel()
+
+	state := newRuntimeState(t, app.RoleAPI)
+	state.SetReady(true)
+	if err := state.SetComponentStatus(app.ComponentRedis, app.ComponentStatusUnavailable); err != nil {
+		t.Fatalf("SetComponentStatus() error = %v", err)
+	}
+	handler := newTestHealthHandler(t, state)
+
+	response := request(t, handler, "/ready")
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+	if got := responseJSONField(t, response, "components"); !reflect.DeepEqual(got, map[string]any{
+		"postgresql": "ready",
+		"redis":      "unavailable",
+	}) {
+		t.Fatalf("components = %v, want stable redacted statuses", got)
+	}
+	if strings.Contains(response.Body.String(), "error") || strings.Contains(response.Body.String(), "address") {
+		t.Fatalf("health response exposed internal detail: %s", response.Body.String())
+	}
+}
+
 func TestHealthServerStartsAndJoinsOwnedGoroutine(t *testing.T) {
 	t.Parallel()
 
-	server, err := NewHealthServer(
-		"127.0.0.1:0",
-		newRuntimeState(t, app.RoleWorker),
-		discardLogger(),
-	)
+	server, err := NewHealthServer(HealthServerOptions{
+		Address: "127.0.0.1:0",
+		State:   newRuntimeState(t, app.RoleWorker),
+		Logger:  discardLogger(),
+		Build:   testBuildInfo(),
+	})
 	if err != nil {
 		t.Fatalf("NewHealthServer() error = %v", err)
 	}
 	listener := newBlockingListener()
-	server.listen = func(_, _ string) (net.Listener, error) {
+	server.listen = func(context.Context, string, string) (net.Listener, error) {
 		return listener, nil
 	}
-	if err := server.Start(); err != nil {
+	if err := server.Start(t.Context()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	if err := server.Start(); !errors.Is(err, ErrHealthServerStarted) {
+	if err := server.Start(t.Context()); !errors.Is(err, ErrHealthServerStarted) {
 		t.Fatalf("second Start() error = %v, want ErrHealthServerStarted", err)
 	}
 
@@ -102,6 +131,104 @@ func TestHealthServerStartsAndJoinsOwnedGoroutine(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("serving goroutine did not join")
+	}
+}
+
+func TestHealthServerShutdownDuringStartPreventsLateListener(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		server, err := NewHealthServer(HealthServerOptions{
+			Address: "127.0.0.1:0",
+			State:   newRuntimeState(t, app.RoleRelay),
+			Logger:  discardLogger(),
+			Build:   testBuildInfo(),
+		})
+		if err != nil {
+			t.Fatalf("NewHealthServer() error = %v", err)
+		}
+
+		listenStarted := make(chan struct{})
+		releaseListen := make(chan struct{})
+		listener := newBlockingListener()
+		server.listen = func(_ context.Context, _, _ string) (net.Listener, error) {
+			close(listenStarted)
+			<-releaseListen
+			return listener, nil
+		}
+
+		startResult := make(chan error, 1)
+		go func() {
+			startResult <- server.Start(t.Context())
+		}()
+		<-listenStarted
+
+		shutdownResult := make(chan error, 1)
+		go func() {
+			shutdownResult <- server.Shutdown(t.Context())
+		}()
+		synctest.Wait()
+		earlyShutdown := false
+		var earlyShutdownErr error
+		select {
+		case shutdownErr := <-shutdownResult:
+			earlyShutdown = true
+			earlyShutdownErr = shutdownErr
+		default:
+		}
+
+		close(releaseListen)
+		synctest.Wait()
+		if earlyShutdown {
+			startErr := <-startResult
+			if startErr == nil {
+				if cleanupErr := server.Shutdown(t.Context()); cleanupErr != nil {
+					t.Fatalf("cleanup Shutdown() error = %v", cleanupErr)
+				}
+				<-server.Done()
+			}
+			t.Fatalf("Shutdown() returned before startup settled: %v", earlyShutdownErr)
+		}
+		if err := <-shutdownResult; err != nil {
+			t.Fatalf("Shutdown() error = %v, want nil", err)
+		}
+		if err := <-startResult; !errors.Is(err, context.Canceled) {
+			t.Fatalf("Start() error = %v, want context canceled", err)
+		}
+		select {
+		case <-listener.closed:
+		default:
+			t.Fatal("listener remained open after shutdown canceled startup")
+		}
+		if server.Done() != nil {
+			t.Fatal("Done() != nil after shutdown canceled startup")
+		}
+	})
+}
+
+func TestHealthServerStartPropagatesCancellation(t *testing.T) {
+	t.Parallel()
+
+	server, err := NewHealthServer(HealthServerOptions{
+		Address: "127.0.0.1:0",
+		State:   newRuntimeState(t, app.RoleRelay),
+		Logger:  discardLogger(),
+		Build:   testBuildInfo(),
+	})
+	if err != nil {
+		t.Fatalf("NewHealthServer() error = %v", err)
+	}
+	server.listen = func(ctx context.Context, _, _ string) (net.Listener, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := server.Start(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Start() error = %v, want context canceled", err)
+	}
+	if server.Done() != nil {
+		t.Fatal("Done() != nil after canceled startup")
 	}
 }
 
@@ -128,12 +255,27 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(io.Discard, nil))
 }
 
+func newTestHealthHandler(t *testing.T, state *app.RuntimeState) http.Handler {
+	t.Helper()
+
+	metrics, err := newOperatorMetrics(state, testBuildInfo())
+	if err != nil {
+		t.Fatalf("newOperatorMetrics() error = %v", err)
+	}
+	return newHealthHandler(state, discardLogger(), metrics)
+}
+
 func newRuntimeState(t *testing.T, roles ...app.Role) *app.RuntimeState {
 	t.Helper()
 
 	state, err := app.NewRuntimeState(roles)
 	if err != nil {
 		t.Fatalf("app.NewRuntimeState() error = %v", err)
+	}
+	for _, component := range state.RequiredComponents() {
+		if err := state.SetComponentStatus(component, app.ComponentStatusReady); err != nil {
+			t.Fatalf("SetComponentStatus(%s) error = %v", component, err)
+		}
 	}
 	return state
 }

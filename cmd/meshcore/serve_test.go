@@ -29,3 +29,21 @@ func TestRunRejectsInvalidConfigurationBeforeListening(t *testing.T) {
 		t.Fatalf("error output exposed invalid configuration value: %s", errorOutput.String())
 	}
 }
+
+func TestRunRelayDoesNotRequireStorage(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	lookup := func(key string) (string, bool) {
+		if key == "MESHTRANSIT_ROLE" {
+			return "relay", true
+		}
+		return "", false
+	}
+	var errorOutput bytes.Buffer
+
+	if exitCode := run(ctx, lookup, &errorOutput); exitCode != 0 {
+		t.Fatalf("run() = %d, want 0; output = %s", exitCode, errorOutput.String())
+	}
+}

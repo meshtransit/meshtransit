@@ -5,9 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
-	"net/netip"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,16 +12,29 @@ import (
 )
 
 const (
+	// SchemaVersion identifies the validated environment configuration contract.
+	SchemaVersion = 2
+
 	envRole            = "MESHTRANSIT_ROLE"
 	envHealthAddress   = "MESHTRANSIT_HEALTH_ADDRESS"
 	envShutdownTimeout = "MESHTRANSIT_SHUTDOWN_TIMEOUT"
 	envLogLevel        = "MESHTRANSIT_LOG_LEVEL"
+
+	envDependencyCheckTimeout  = "MESHTRANSIT_DEPENDENCY_CHECK_TIMEOUT"
+	envDependencyCheckInterval = "MESHTRANSIT_DEPENDENCY_CHECK_INTERVAL"
 
 	defaultRole            = "all"
 	defaultHealthAddress   = "127.0.0.1:8081"
 	defaultShutdownTimeout = 15 * time.Second
 	minShutdownTimeout     = time.Second
 	maxShutdownTimeout     = 5 * time.Minute
+
+	defaultDependencyCheckTimeout  = 2 * time.Second
+	defaultDependencyCheckInterval = 10 * time.Second
+	minDependencyCheckTimeout      = 100 * time.Millisecond
+	maxDependencyCheckTimeout      = 30 * time.Second
+	minDependencyCheckInterval     = time.Second
+	maxDependencyCheckInterval     = 5 * time.Minute
 )
 
 // ErrInvalid indicates that process configuration is unsafe or malformed.
@@ -39,6 +49,14 @@ type Config struct {
 	HealthAddress   string
 	ShutdownTimeout time.Duration
 	LogLevel        slog.Level
+	Dependencies    DependencyConfig
+	Storage         *StorageConfig
+}
+
+// DependencyConfig bounds startup and periodic infrastructure checks.
+type DependencyConfig struct {
+	CheckTimeout  time.Duration
+	CheckInterval time.Duration
 }
 
 // Load reads the allowlisted process settings through lookup and validates all
@@ -70,62 +88,51 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, fmt.Errorf("%w: %s", ErrInvalid, envLogLevel)
 	}
 
+	dependencyConfig, err := loadDependencyConfig(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+
+	var storageConfig *StorageConfig
+	if role != app.RoleRelay {
+		loadedStorage, loadErr := loadStorageConfig(lookup)
+		if loadErr != nil {
+			return Config{}, loadErr
+		}
+		storageConfig = &loadedStorage
+	}
+
 	return Config{
 		Role:            role,
 		HealthAddress:   healthAddress,
 		ShutdownTimeout: shutdownTimeout,
 		LogLevel:        logLevel,
+		Dependencies:    dependencyConfig,
+		Storage:         storageConfig,
 	}, nil
 }
 
-func valueOrDefault(lookup LookupFunc, key, fallback string) string {
-	value, ok := lookup(key)
-	if !ok {
-		return fallback
-	}
-	return value
-}
-
-func validateAddress(address string) error {
-	if address == "" || strings.TrimSpace(address) != address {
-		return ErrInvalid
-	}
-
-	host, portValue, err := net.SplitHostPort(address)
+func loadDependencyConfig(lookup LookupFunc) (DependencyConfig, error) {
+	checkTimeout, err := parseDurationInRange(
+		valueOrDefault(lookup, envDependencyCheckTimeout, defaultDependencyCheckTimeout.String()),
+		minDependencyCheckTimeout,
+		maxDependencyCheckTimeout,
+	)
 	if err != nil {
-		return ErrInvalid
+		return DependencyConfig{}, settingError(envDependencyCheckTimeout)
 	}
-	port, err := strconv.Atoi(portValue)
-	if err != nil || port < 1 || port > 65535 {
-		return ErrInvalid
+	checkInterval, err := parseDurationInRange(
+		valueOrDefault(lookup, envDependencyCheckInterval, defaultDependencyCheckInterval.String()),
+		minDependencyCheckInterval,
+		maxDependencyCheckInterval,
+	)
+	if err != nil {
+		return DependencyConfig{}, settingError(envDependencyCheckInterval)
 	}
-	if host != "" && !validHost(host) {
-		return ErrInvalid
+	if checkTimeout >= checkInterval {
+		return DependencyConfig{}, settingError(envDependencyCheckTimeout)
 	}
-	return nil
-}
-
-func validHost(host string) bool {
-	if _, err := netip.ParseAddr(host); err == nil {
-		return true
-	}
-	if len(host) > 253 {
-		return false
-	}
-
-	for _, label := range strings.Split(host, ".") {
-		if len(label) == 0 || len(label) > 63 {
-			return false
-		}
-		for index, character := range label {
-			isLetter := character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
-			isDigit := character >= '0' && character <= '9'
-			if !isLetter && !isDigit && (character != '-' || index == 0 || index == len(label)-1) {
-				return false
-			}
-		}
-	}
-	return true
+	return DependencyConfig{CheckTimeout: checkTimeout, CheckInterval: checkInterval}, nil
 }
 
 func parseShutdownTimeout(value string) (time.Duration, error) {

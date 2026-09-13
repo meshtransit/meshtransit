@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -16,35 +17,40 @@ func TestNewRejectsInvalidLifecycleInputs(t *testing.T) {
 
 	validOptions := Options{Roles: []Role{RoleAPI}, ShutdownTimeout: time.Second}
 	readiness := &fakeReadiness{updates: make(chan bool, 2)}
+	monitor := newFakeMonitor()
 	service := newFakeService()
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	var typedNilReadiness *fakeReadiness
+	var typedNilMonitor *fakeMonitor
 	var typedNilService *fakeService
 
 	tests := []struct {
 		name      string
 		options   Options
 		readiness Readiness
+		monitor   Monitor
 		service   Service
 		logger    *slog.Logger
 	}{
-		{name: "missing roles", options: Options{ShutdownTimeout: time.Second}, readiness: readiness, service: service, logger: logger},
-		{name: "aggregate role", options: Options{Roles: []Role{RoleAll}, ShutdownTimeout: time.Second}, readiness: readiness, service: service, logger: logger},
-		{name: "unknown role value", options: Options{Roles: []Role{Role(99)}, ShutdownTimeout: time.Second}, readiness: readiness, service: service, logger: logger},
-		{name: "duplicate role", options: Options{Roles: []Role{RoleAPI, RoleAPI}, ShutdownTimeout: time.Second}, readiness: readiness, service: service, logger: logger},
-		{name: "unbounded shutdown", options: Options{Roles: []Role{RoleAPI}}, readiness: readiness, service: service, logger: logger},
-		{name: "missing readiness", options: validOptions, service: service, logger: logger},
-		{name: "typed nil readiness", options: validOptions, readiness: typedNilReadiness, service: service, logger: logger},
-		{name: "missing service", options: validOptions, readiness: readiness, logger: logger},
-		{name: "typed nil service", options: validOptions, readiness: readiness, service: typedNilService, logger: logger},
-		{name: "missing logger", options: validOptions, readiness: readiness, service: service},
+		{name: "missing roles", options: Options{ShutdownTimeout: time.Second}, readiness: readiness, monitor: monitor, service: service, logger: logger},
+		{name: "aggregate role", options: Options{Roles: []Role{RoleAll}, ShutdownTimeout: time.Second}, readiness: readiness, monitor: monitor, service: service, logger: logger},
+		{name: "unknown role value", options: Options{Roles: []Role{Role(99)}, ShutdownTimeout: time.Second}, readiness: readiness, monitor: monitor, service: service, logger: logger},
+		{name: "duplicate role", options: Options{Roles: []Role{RoleAPI, RoleAPI}, ShutdownTimeout: time.Second}, readiness: readiness, monitor: monitor, service: service, logger: logger},
+		{name: "unbounded shutdown", options: Options{Roles: []Role{RoleAPI}}, readiness: readiness, monitor: monitor, service: service, logger: logger},
+		{name: "missing readiness", options: validOptions, monitor: monitor, service: service, logger: logger},
+		{name: "typed nil readiness", options: validOptions, readiness: typedNilReadiness, monitor: monitor, service: service, logger: logger},
+		{name: "missing monitor", options: validOptions, readiness: readiness, service: service, logger: logger},
+		{name: "typed nil monitor", options: validOptions, readiness: readiness, monitor: typedNilMonitor, service: service, logger: logger},
+		{name: "missing service", options: validOptions, readiness: readiness, monitor: monitor, logger: logger},
+		{name: "typed nil service", options: validOptions, readiness: readiness, monitor: monitor, service: typedNilService, logger: logger},
+		{name: "missing logger", options: validOptions, readiness: readiness, monitor: monitor, service: service},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			application, err := New(test.options, test.readiness, test.service, test.logger)
+			application, err := New(test.options, test.readiness, test.monitor, test.service, test.logger)
 			if !errors.Is(err, ErrInvalidApplication) {
 				t.Fatalf("New() error = %v, want ErrInvalidApplication", err)
 			}
@@ -58,35 +64,42 @@ func TestNewRejectsInvalidLifecycleInputs(t *testing.T) {
 func TestApplicationRunOwnsReadinessAndShutdown(t *testing.T) {
 	t.Parallel()
 
-	readiness := &fakeReadiness{updates: make(chan bool, 2)}
-	service := newFakeService()
-	application := mustApplication(t, readiness, service, 100*time.Millisecond)
-	ctx, cancel := context.WithCancel(context.Background())
-	result := make(chan error, 1)
-	go func() {
-		result <- application.Run(ctx)
-	}()
+	synctest.Test(t, func(t *testing.T) {
+		readiness := &fakeReadiness{updates: make(chan bool, 2)}
+		monitor := newFakeMonitor()
+		service := newFakeService()
+		application := mustApplication(t, readiness, monitor, service, 100*time.Millisecond)
+		ctx, cancel := context.WithCancel(t.Context())
+		t.Cleanup(cancel)
+		result := make(chan error, 1)
+		go func() {
+			result <- application.Run(ctx)
+		}()
 
-	<-service.started
-	if ready := <-readiness.updates; !ready {
-		t.Fatal("readiness did not open after service start")
-	}
-	cancel()
+		<-monitor.started
+		<-service.started
+		if ready := <-readiness.updates; !ready {
+			t.Fatal("readiness did not open after service start")
+		}
+		cancel()
+		synctest.Wait()
 
-	select {
-	case <-service.shutdownCalled:
-	case <-time.After(time.Second):
-		t.Fatal("shutdown was not called")
-	}
-	if ready := <-readiness.updates; ready {
-		t.Fatal("readiness did not close before shutdown")
-	}
-	if err := <-result; err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !reflect.DeepEqual(application.roles, []Role{RoleAPI}) {
-		t.Fatalf("application roles = %v, want [api]", application.roles)
-	}
+		<-service.shutdownCalled
+		if ready := <-readiness.updates; ready {
+			t.Fatal("readiness did not close before shutdown")
+		}
+		if err := <-result; err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+		select {
+		case <-monitor.shutdownCalled:
+		default:
+			t.Fatal("dependency monitor shutdown was not called")
+		}
+		if !reflect.DeepEqual(application.roles, []Role{RoleAPI}) {
+			t.Fatalf("application roles = %v, want [api]", application.roles)
+		}
+	})
 }
 
 func TestApplicationRunReturnsStartFailure(t *testing.T) {
@@ -94,9 +107,10 @@ func TestApplicationRunReturnsStartFailure(t *testing.T) {
 
 	startErr := errors.New("bind failed")
 	readiness := &fakeReadiness{updates: make(chan bool, 1)}
+	monitor := newFakeMonitor()
 	service := newFakeService()
 	service.startErr = startErr
-	application := mustApplication(t, readiness, service, time.Second)
+	application := mustApplication(t, readiness, monitor, service, time.Second)
 
 	err := application.Run(context.Background())
 	if !errors.Is(err, startErr) {
@@ -107,6 +121,32 @@ func TestApplicationRunReturnsStartFailure(t *testing.T) {
 		t.Fatalf("unexpected readiness update: %v", update)
 	default:
 	}
+	select {
+	case <-monitor.shutdownCalled:
+	default:
+		t.Fatal("monitor was not cleaned up after service start failure")
+	}
+}
+
+func TestApplicationRunReturnsMonitorStartFailureBeforeServiceStart(t *testing.T) {
+	t.Parallel()
+
+	startErr := errors.New("dependency check failed")
+	readiness := &fakeReadiness{updates: make(chan bool, 1)}
+	monitor := newFakeMonitor()
+	monitor.startErr = startErr
+	service := newFakeService()
+	application := mustApplication(t, readiness, monitor, service, time.Second)
+
+	err := application.Run(context.Background())
+	if !errors.Is(err, startErr) {
+		t.Fatalf("Run() error = %v, want monitor start error", err)
+	}
+	select {
+	case <-service.started:
+		t.Fatal("service started before dependency monitor succeeded")
+	default:
+	}
 }
 
 func TestApplicationRunReturnsUnexpectedServiceFailure(t *testing.T) {
@@ -114,11 +154,14 @@ func TestApplicationRunReturnsUnexpectedServiceFailure(t *testing.T) {
 
 	serviceErr := errors.New("listener failed")
 	readiness := &fakeReadiness{updates: make(chan bool, 2)}
+	monitor := newFakeMonitor()
 	service := newFakeService()
-	application := mustApplication(t, readiness, service, time.Second)
+	application := mustApplication(t, readiness, monitor, service, time.Second)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
 	result := make(chan error, 1)
 	go func() {
-		result <- application.Run(context.Background())
+		result <- application.Run(ctx)
 	}()
 
 	<-service.started
@@ -135,38 +178,78 @@ func TestApplicationRunReturnsUnexpectedServiceFailure(t *testing.T) {
 	}
 }
 
-func TestApplicationRunBoundsShutdown(t *testing.T) {
+func TestApplicationRunCleansServiceAfterUnexpectedMonitorExit(t *testing.T) {
 	t.Parallel()
 
+	monitorErr := errors.New("monitor failed")
 	readiness := &fakeReadiness{updates: make(chan bool, 2)}
+	monitor := newFakeMonitor()
 	service := newFakeService()
-	service.shutdown = func(ctx context.Context) error {
-		<-ctx.Done()
-		return ctx.Err()
-	}
-	application := mustApplication(t, readiness, service, time.Millisecond)
-	ctx, cancel := context.WithCancel(context.Background())
+	application := mustApplication(t, readiness, monitor, service, time.Second)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
 	result := make(chan error, 1)
 	go func() {
 		result <- application.Run(ctx)
 	}()
 
 	<-service.started
-	<-readiness.updates
-	cancel()
+	if ready := <-readiness.updates; !ready {
+		t.Fatal("readiness did not open after service start")
+	}
+	monitor.done <- monitorErr
 
-	err := <-result
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Run() error = %v, want context deadline exceeded", err)
+	if err := <-result; !errors.Is(err, monitorErr) {
+		t.Fatalf("Run() error = %v, want monitor error", err)
 	}
 	if ready := <-readiness.updates; ready {
-		t.Fatal("readiness did not close before bounded shutdown")
+		t.Fatal("readiness did not close after monitor failure")
 	}
+	select {
+	case <-service.shutdownCalled:
+	default:
+		t.Fatal("service was not cleaned up after monitor failure")
+	}
+}
+
+func TestApplicationRunBoundsShutdown(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		readiness := &fakeReadiness{updates: make(chan bool, 2)}
+		monitor := newFakeMonitor()
+		service := newFakeService()
+		service.shutdown = func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		application := mustApplication(t, readiness, monitor, service, time.Millisecond)
+		ctx, cancel := context.WithCancel(t.Context())
+		t.Cleanup(cancel)
+		result := make(chan error, 1)
+		go func() {
+			result <- application.Run(ctx)
+		}()
+
+		<-service.started
+		<-readiness.updates
+		cancel()
+		synctest.Wait()
+
+		err := <-result
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Run() error = %v, want context deadline exceeded", err)
+		}
+		if ready := <-readiness.updates; ready {
+			t.Fatal("readiness did not close before bounded shutdown")
+		}
+	})
 }
 
 func mustApplication(
 	t *testing.T,
 	readiness Readiness,
+	monitor Monitor,
 	service Service,
 	shutdownTimeout time.Duration,
 ) *Application {
@@ -175,6 +258,7 @@ func mustApplication(
 	application, err := New(
 		Options{Roles: []Role{RoleAPI}, ShutdownTimeout: shutdownTimeout},
 		readiness,
+		monitor,
 		service,
 		slog.New(slog.NewJSONHandler(io.Discard, nil)),
 	)
@@ -182,6 +266,49 @@ func mustApplication(
 		t.Fatalf("New() error = %v", err)
 	}
 	return application
+}
+
+type fakeMonitor struct {
+	started        chan struct{}
+	shutdownCalled chan struct{}
+	done           chan error
+	startErr       error
+	shutdown       func(context.Context) error
+	startOnce      sync.Once
+	shutdownOnce   sync.Once
+}
+
+func newFakeMonitor() *fakeMonitor {
+	return &fakeMonitor{
+		started:        make(chan struct{}),
+		shutdownCalled: make(chan struct{}),
+		done:           make(chan error, 1),
+	}
+}
+
+func (monitor *fakeMonitor) Start(context.Context) error {
+	if monitor.startErr != nil {
+		return monitor.startErr
+	}
+	monitor.startOnce.Do(func() { close(monitor.started) })
+	return nil
+}
+
+func (monitor *fakeMonitor) Shutdown(ctx context.Context) error {
+	monitor.shutdownOnce.Do(func() {
+		close(monitor.shutdownCalled)
+		if monitor.shutdown == nil {
+			monitor.done <- nil
+		}
+	})
+	if monitor.shutdown != nil {
+		return monitor.shutdown(ctx)
+	}
+	return nil
+}
+
+func (monitor *fakeMonitor) Done() <-chan error {
+	return monitor.done
 }
 
 type fakeReadiness struct {
@@ -209,7 +336,7 @@ func newFakeService() *fakeService {
 	}
 }
 
-func (service *fakeService) Start() error {
+func (service *fakeService) Start(context.Context) error {
 	if service.startErr != nil {
 		return service.startErr
 	}

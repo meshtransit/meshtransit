@@ -1,0 +1,11 @@
+**
+!go.mod
+!go.sum
+!THIRD_PARTY_NOTICES.md
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+!migrations/
+!migrations/**
+**/*_test.go
