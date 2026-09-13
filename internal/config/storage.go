@@ -1,14 +1,23 @@
 package config
 
-import "strconv"
+import (
+	"strconv"
+
+	"github.com/meshtransit/meshtransit/internal/app"
+)
 
 const (
-	envPostgreSQLAddress        = "MESHTRANSIT_POSTGRES_ADDRESS"
-	envPostgreSQLDatabase       = "MESHTRANSIT_POSTGRES_DATABASE"
-	envPostgreSQLUser           = "MESHTRANSIT_POSTGRES_USER"
-	envPostgreSQLPasswordFile   = "MESHTRANSIT_POSTGRES_PASSWORD_FILE"
-	envPostgreSQLCAFile         = "MESHTRANSIT_POSTGRES_CA_FILE"
-	envPostgreSQLMaxConnections = "MESHTRANSIT_POSTGRES_MAX_CONNECTIONS"
+	envPostgreSQLAddress  = "MESHTRANSIT_POSTGRES_ADDRESS"
+	envPostgreSQLDatabase = "MESHTRANSIT_POSTGRES_DATABASE"
+	envPostgreSQLCAFile   = "MESHTRANSIT_POSTGRES_CA_FILE"
+
+	envPostgreSQLRuntimeUser           = "MESHTRANSIT_POSTGRES_RUNTIME_USER"
+	envPostgreSQLRuntimePasswordFile   = "MESHTRANSIT_POSTGRES_RUNTIME_PASSWORD_FILE"
+	envPostgreSQLRuntimeMaxConnections = "MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS"
+
+	envPostgreSQLWorkerUser           = "MESHTRANSIT_POSTGRES_WORKER_USER"
+	envPostgreSQLWorkerPasswordFile   = "MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE"
+	envPostgreSQLWorkerMaxConnections = "MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS"
 
 	envRedisAddress      = "MESHTRANSIT_REDIS_ADDRESS"
 	envRedisUsername     = "MESHTRANSIT_REDIS_USERNAME"
@@ -31,11 +40,18 @@ type StorageConfig struct {
 
 // PostgreSQLConfig contains validated connection metadata and file references.
 type PostgreSQLConfig struct {
-	Address        string
-	Database       string
+	Address  string
+	Database string
+	CAFile   TrustFile
+	Runtime  *PostgreSQLRoleConfig
+	Worker   *PostgreSQLRoleConfig
+}
+
+// PostgreSQLRoleConfig contains one least-privilege role credential and pool
+// budget. Runtime and worker credentials are never interchangeable.
+type PostgreSQLRoleConfig struct {
 	User           string
 	PasswordFile   SecretFile
-	CAFile         TrustFile
 	MaxConnections int32
 }
 
@@ -48,7 +64,7 @@ type RedisConfig struct {
 	PoolSize     int
 }
 
-func loadStorageConfig(lookup LookupFunc) (StorageConfig, error) {
+func loadStorageConfig(lookup LookupFunc, role app.Role) (StorageConfig, error) {
 	postgresAddress, err := requiredValue(lookup, envPostgreSQLAddress, validateDependencyAddress)
 	if err != nil {
 		return StorageConfig{}, err
@@ -57,23 +73,36 @@ func loadStorageConfig(lookup LookupFunc) (StorageConfig, error) {
 	if err != nil {
 		return StorageConfig{}, err
 	}
-	postgresUser, err := requiredValue(lookup, envPostgreSQLUser, validateIdentifier)
-	if err != nil {
-		return StorageConfig{}, err
-	}
-	postgresPasswordFile, err := requiredFile(lookup, envPostgreSQLPasswordFile)
-	if err != nil {
-		return StorageConfig{}, err
-	}
 	postgresCAFile, err := requiredFile(lookup, envPostgreSQLCAFile)
 	if err != nil {
 		return StorageConfig{}, err
 	}
-	postgresMaxConnections, err := parsePostgreSQLMaxConnections(
-		valueOrDefault(lookup, envPostgreSQLMaxConnections, strconv.Itoa(defaultPostgreSQLMaxConnections)),
-	)
-	if err != nil {
-		return StorageConfig{}, settingError(envPostgreSQLMaxConnections)
+
+	var runtimeConfig *PostgreSQLRoleConfig
+	if role == app.RoleAll || role == app.RoleAPI || role == app.RoleControl {
+		loaded, loadErr := loadPostgreSQLRoleConfig(
+			lookup,
+			envPostgreSQLRuntimeUser,
+			envPostgreSQLRuntimePasswordFile,
+			envPostgreSQLRuntimeMaxConnections,
+		)
+		if loadErr != nil {
+			return StorageConfig{}, loadErr
+		}
+		runtimeConfig = &loaded
+	}
+	var workerConfig *PostgreSQLRoleConfig
+	if role == app.RoleAll || role == app.RoleWorker {
+		loaded, loadErr := loadPostgreSQLRoleConfig(
+			lookup,
+			envPostgreSQLWorkerUser,
+			envPostgreSQLWorkerPasswordFile,
+			envPostgreSQLWorkerMaxConnections,
+		)
+		if loadErr != nil {
+			return StorageConfig{}, loadErr
+		}
+		workerConfig = &loaded
 	}
 
 	redisAddress, err := requiredValue(lookup, envRedisAddress, validateDependencyAddress)
@@ -99,12 +128,11 @@ func loadStorageConfig(lookup LookupFunc) (StorageConfig, error) {
 
 	return StorageConfig{
 		PostgreSQL: PostgreSQLConfig{
-			Address:        postgresAddress,
-			Database:       postgresDatabase,
-			User:           postgresUser,
-			PasswordFile:   SecretFile{path: postgresPasswordFile},
-			CAFile:         TrustFile{path: postgresCAFile},
-			MaxConnections: postgresMaxConnections,
+			Address:  postgresAddress,
+			Database: postgresDatabase,
+			CAFile:   TrustFile{path: postgresCAFile},
+			Runtime:  runtimeConfig,
+			Worker:   workerConfig,
 		},
 		Redis: RedisConfig{
 			Address:      redisAddress,
@@ -113,5 +141,32 @@ func loadStorageConfig(lookup LookupFunc) (StorageConfig, error) {
 			CAFile:       TrustFile{path: redisCAFile},
 			PoolSize:     redisPoolSize,
 		},
+	}, nil
+}
+
+func loadPostgreSQLRoleConfig(
+	lookup LookupFunc,
+	userSetting string,
+	passwordSetting string,
+	maxConnectionsSetting string,
+) (PostgreSQLRoleConfig, error) {
+	user, err := requiredValue(lookup, userSetting, validateIdentifier)
+	if err != nil {
+		return PostgreSQLRoleConfig{}, err
+	}
+	passwordFile, err := requiredFile(lookup, passwordSetting)
+	if err != nil {
+		return PostgreSQLRoleConfig{}, err
+	}
+	maxConnections, err := parsePostgreSQLMaxConnections(
+		valueOrDefault(lookup, maxConnectionsSetting, strconv.Itoa(defaultPostgreSQLMaxConnections)),
+	)
+	if err != nil {
+		return PostgreSQLRoleConfig{}, settingError(maxConnectionsSetting)
+	}
+	return PostgreSQLRoleConfig{
+		User:           user,
+		PasswordFile:   SecretFile{path: passwordFile},
+		MaxConnections: maxConnections,
 	}, nil
 }

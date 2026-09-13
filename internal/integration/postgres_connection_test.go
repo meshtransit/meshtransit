@@ -84,13 +84,17 @@ func openIntegrationWorkerConnection(
 
 	workerConfig := loadIntegrationWorkerConfig(t, adminConfig)
 	postgresConfig := workerConfig.Storage.PostgreSQL
+	if postgresConfig.Worker == nil {
+		t.Fatal("worker integration configuration did not load worker PostgreSQL credentials")
+	}
+	workerRoleConfig := *postgresConfig.Worker
 	return openIntegrationPostgreSQLConnection(
 		t,
 		ctx,
 		postgresConfig.Address,
 		postgresConfig.Database,
-		postgresConfig.User,
-		postgresConfig.PasswordFile,
+		workerRoleConfig.User,
+		workerRoleConfig.PasswordFile,
 		postgresConfig.CAFile,
 		workerConfig.Dependencies.CheckTimeout,
 	)
@@ -105,13 +109,17 @@ func openIntegrationWorkerPool(
 
 	workerConfig := loadIntegrationWorkerConfig(t, adminConfig)
 	postgresConfig := workerConfig.Storage.PostgreSQL
+	if postgresConfig.Worker == nil {
+		t.Fatal("worker integration configuration did not load worker PostgreSQL credentials")
+	}
+	workerRoleConfig := *postgresConfig.Worker
 	pool, err := postgresadapter.Open(ctx, postgresadapter.Options{
 		Address:        postgresConfig.Address,
 		Database:       postgresConfig.Database,
-		User:           postgresConfig.User,
-		PasswordFile:   postgresConfig.PasswordFile,
+		User:           workerRoleConfig.User,
+		PasswordFile:   workerRoleConfig.PasswordFile,
 		CAFile:         postgresConfig.CAFile,
-		MaxConnections: postgresConfig.MaxConnections,
+		MaxConnections: workerRoleConfig.MaxConnections,
 		ConnectTimeout: workerConfig.Dependencies.CheckTimeout,
 	})
 	if err != nil {
@@ -137,13 +145,15 @@ func loadIntegrationWorkerConfig(
 	}
 	workerConfig, err := config.Load(func(key string) (string, bool) {
 		switch key {
+		case "MESHTRANSIT_ROLE":
+			return "worker", true
 		case "MESHTRANSIT_POSTGRES_ADDRESS":
 			return adminConfig.PostgreSQL.Address, true
 		case "MESHTRANSIT_POSTGRES_DATABASE":
 			return adminConfig.PostgreSQL.Database, true
-		case "MESHTRANSIT_POSTGRES_USER":
+		case "MESHTRANSIT_POSTGRES_WORKER_USER":
 			return "mesh_worker", true
-		case "MESHTRANSIT_POSTGRES_PASSWORD_FILE":
+		case "MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE":
 			return workerPasswordFile, true
 		default:
 			return os.LookupEnv(key)

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
-	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	redisadapter "github.com/meshtransit/meshtransit/internal/adapter/redis"
 	"github.com/meshtransit/meshtransit/internal/app"
 	"github.com/meshtransit/meshtransit/internal/buildinfo"
@@ -56,21 +55,22 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 
 	checkers := make([]app.DependencyChecker, 0, len(readiness.RequiredComponents()))
 	if processConfig.Storage != nil {
-		postgresPool, openErr := postgresadapter.Open(ctx, postgresadapter.Options{
-			Address:        processConfig.Storage.PostgreSQL.Address,
-			Database:       processConfig.Storage.PostgreSQL.Database,
-			User:           processConfig.Storage.PostgreSQL.User,
-			PasswordFile:   processConfig.Storage.PostgreSQL.PasswordFile,
-			CAFile:         processConfig.Storage.PostgreSQL.CAFile,
-			MaxConnections: processConfig.Storage.PostgreSQL.MaxConnections,
-			ConnectTimeout: processConfig.Dependencies.CheckTimeout,
-		})
+		postgresPools, openErr := openPostgresPools(
+			ctx,
+			processConfig.Storage.PostgreSQL,
+			processConfig.Dependencies.CheckTimeout,
+			resources,
+		)
 		if openErr != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "postgres_open_failure", "error", openErr)
 			return 1
 		}
-		resources.Add("postgresql", postgresPool.Close)
-		checkers = append(checkers, postgresPool)
+		postgresChecker, checkerErr := postgresPools.healthChecker()
+		if checkerErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "postgres_checker_failure", "error", checkerErr)
+			return 1
+		}
+		checkers = append(checkers, postgresChecker)
 
 		redisClient, openErr := redisadapter.Open(ctx, redisadapter.Options{
 			Address:        processConfig.Storage.Redis.Address,

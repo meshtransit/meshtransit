@@ -29,25 +29,15 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 
-	postgresPool, err := postgresadapter.Open(ctx, postgresadapter.Options{
-		Address:        processConfig.Storage.PostgreSQL.Address,
-		Database:       processConfig.Storage.PostgreSQL.Database,
-		User:           processConfig.Storage.PostgreSQL.User,
-		PasswordFile:   processConfig.Storage.PostgreSQL.PasswordFile,
-		CAFile:         processConfig.Storage.PostgreSQL.CAFile,
-		MaxConnections: processConfig.Storage.PostgreSQL.MaxConnections,
-		ConnectTimeout: processConfig.Dependencies.CheckTimeout,
-	})
+	postgresConfig := processConfig.Storage.PostgreSQL
+	runtimePool := openDependencyRolePool(t, ctx, postgresConfig, postgresConfig.Runtime, processConfig.Dependencies.CheckTimeout)
+	workerPool := openDependencyRolePool(t, ctx, postgresConfig, postgresConfig.Worker, processConfig.Dependencies.CheckTimeout)
+	postgresChecker, err := postgresadapter.NewHealthChecker(runtimePool, workerPool)
 	if err != nil {
-		t.Fatalf("postgres.Open() error = %v", err)
+		t.Fatalf("postgres.NewHealthChecker() error = %v", err)
 	}
-	t.Cleanup(func() {
-		if err := postgresPool.Close(); err != nil {
-			t.Errorf("postgres Close() error = %v", err)
-		}
-	})
-	if err := postgresPool.Check(ctx); err != nil {
-		t.Fatalf("postgres Check() error = %v", err)
+	if err := postgresChecker.Check(ctx); err != nil {
+		t.Fatalf("PostgreSQL HealthChecker.Check() error = %v", err)
 	}
 
 	redisClient, err := redisadapter.Open(ctx, redisadapter.Options{
@@ -105,4 +95,35 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 			wakeup.Number(),
 		)
 	}
+}
+
+func openDependencyRolePool(
+	t *testing.T,
+	ctx context.Context,
+	postgresConfig config.PostgreSQLConfig,
+	roleConfig *config.PostgreSQLRoleConfig,
+	connectTimeout time.Duration,
+) *postgresadapter.Pool {
+	t.Helper()
+	if roleConfig == nil {
+		return nil
+	}
+	pool, err := postgresadapter.Open(ctx, postgresadapter.Options{
+		Address:        postgresConfig.Address,
+		Database:       postgresConfig.Database,
+		User:           roleConfig.User,
+		PasswordFile:   roleConfig.PasswordFile,
+		CAFile:         postgresConfig.CAFile,
+		MaxConnections: roleConfig.MaxConnections,
+		ConnectTimeout: connectTimeout,
+	})
+	if err != nil {
+		t.Fatalf("postgres.Open() role pool error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := pool.Close(); err != nil {
+			t.Errorf("postgres role pool Close() error = %v", err)
+		}
+	})
+	return pool
 }

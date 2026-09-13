@@ -38,8 +38,12 @@ func TestLoadDefaults(t *testing.T) {
 	if got.Storage == nil {
 		t.Fatal("Storage = nil for all role")
 	}
-	if got.Storage.PostgreSQL.MaxConnections != defaultPostgreSQLMaxConnections {
-		t.Fatalf("postgres max connections = %d, want %d", got.Storage.PostgreSQL.MaxConnections, defaultPostgreSQLMaxConnections)
+	if got.Storage.PostgreSQL.Runtime == nil || got.Storage.PostgreSQL.Worker == nil {
+		t.Fatal("all role did not load separate runtime and worker PostgreSQL credentials")
+	}
+	if got.Storage.PostgreSQL.Runtime.MaxConnections != defaultPostgreSQLMaxConnections ||
+		got.Storage.PostgreSQL.Worker.MaxConnections != defaultPostgreSQLMaxConnections {
+		t.Fatalf("postgres max connections did not use bounded defaults")
 	}
 	if got.Storage.Redis.PoolSize != defaultRedisPoolSize {
 		t.Fatalf("redis pool size = %d, want %d", got.Storage.Redis.PoolSize, defaultRedisPoolSize)
@@ -50,14 +54,14 @@ func TestLoadExplicitValues(t *testing.T) {
 	t.Parallel()
 
 	values := validStorageValues(map[string]string{
-		envRole:                     "worker",
-		envHealthAddress:            "[::1]:9090",
-		envShutdownTimeout:          "45s",
-		envLogLevel:                 "debug",
-		envDependencyCheckTimeout:   "2s",
-		envDependencyCheckInterval:  "7s",
-		envPostgreSQLMaxConnections: "17",
-		envRedisPoolSize:            "19",
+		envRole:                           "worker",
+		envHealthAddress:                  "[::1]:9090",
+		envShutdownTimeout:                "45s",
+		envLogLevel:                       "debug",
+		envDependencyCheckTimeout:         "2s",
+		envDependencyCheckInterval:        "7s",
+		envPostgreSQLWorkerMaxConnections: "17",
+		envRedisPoolSize:                  "19",
 	})
 	got, err := Load(mapLookup(values))
 	if err != nil {
@@ -73,7 +77,8 @@ func TestLoadExplicitValues(t *testing.T) {
 	if got.Dependencies.CheckTimeout != 2*time.Second || got.Dependencies.CheckInterval != 7*time.Second {
 		t.Fatalf("dependency controls = (%s, %s), want (2s, 7s)", got.Dependencies.CheckTimeout, got.Dependencies.CheckInterval)
 	}
-	if got.Storage == nil || got.Storage.PostgreSQL.MaxConnections != 17 || got.Storage.Redis.PoolSize != 19 {
+	if got.Storage == nil || got.Storage.PostgreSQL.Worker == nil ||
+		got.Storage.PostgreSQL.Worker.MaxConnections != 17 || got.Storage.Redis.PoolSize != 19 {
 		t.Fatalf("storage pool controls were not loaded")
 	}
 }
@@ -133,15 +138,17 @@ func mapLookup(values map[string]string) LookupFunc {
 func validStorageValues(overrides map[string]string) map[string]string {
 	// #nosec G101 -- these fixtures are file paths, never credential values.
 	values := map[string]string{
-		envPostgreSQLAddress:      "database.internal:5432",
-		envPostgreSQLDatabase:     "meshtransit",
-		envPostgreSQLUser:         "meshcore",
-		envPostgreSQLPasswordFile: "/run/secrets/postgres-password",
-		envPostgreSQLCAFile:       "/run/secrets/postgres-ca.pem",
-		envRedisAddress:           "cache.internal:6379",
-		envRedisUsername:          "meshcore",
-		envRedisPasswordFile:      "/run/secrets/redis-password",
-		envRedisCAFile:            "/run/secrets/redis-ca.pem",
+		envPostgreSQLAddress:             "database.internal:5432",
+		envPostgreSQLDatabase:            "meshtransit",
+		envPostgreSQLRuntimeUser:         "mesh_runtime",
+		envPostgreSQLRuntimePasswordFile: "/run/secrets/postgres-runtime-password",
+		envPostgreSQLWorkerUser:          "mesh_worker",
+		envPostgreSQLWorkerPasswordFile:  "/run/secrets/postgres-worker-password",
+		envPostgreSQLCAFile:              "/run/secrets/postgres-ca.pem",
+		envRedisAddress:                  "cache.internal:6379",
+		envRedisUsername:                 "meshcore",
+		envRedisPasswordFile:             "/run/secrets/redis-password",
+		envRedisCAFile:                   "/run/secrets/redis-ca.pem",
 	}
 	for key, value := range overrides {
 		values[key] = value

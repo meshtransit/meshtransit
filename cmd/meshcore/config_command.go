@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 
-	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	redisadapter "github.com/meshtransit/meshtransit/internal/adapter/redis"
 	"github.com/meshtransit/meshtransit/internal/config"
 	"github.com/meshtransit/meshtransit/internal/observability"
@@ -66,19 +65,15 @@ func validateDependencyConfiguration(ctx context.Context, processConfig config.C
 		returnErr = errors.Join(returnErr, resources.Close())
 	}()
 
-	postgresPool, err := postgresadapter.Open(ctx, postgresadapter.Options{
-		Address:        processConfig.Storage.PostgreSQL.Address,
-		Database:       processConfig.Storage.PostgreSQL.Database,
-		User:           processConfig.Storage.PostgreSQL.User,
-		PasswordFile:   processConfig.Storage.PostgreSQL.PasswordFile,
-		CAFile:         processConfig.Storage.PostgreSQL.CAFile,
-		MaxConnections: processConfig.Storage.PostgreSQL.MaxConnections,
-		ConnectTimeout: processConfig.Dependencies.CheckTimeout,
-	})
+	_, err := openPostgresPools(
+		ctx,
+		processConfig.Storage.PostgreSQL,
+		processConfig.Dependencies.CheckTimeout,
+		resources,
+	)
 	if err != nil {
 		return fmt.Errorf("validate postgresql settings: %w", err)
 	}
-	resources.Add("postgresql", postgresPool.Close)
 
 	redisClient, err := redisadapter.Open(ctx, redisadapter.Options{
 		Address:        processConfig.Storage.Redis.Address,

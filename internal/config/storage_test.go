@@ -12,9 +12,11 @@ func TestLoadRequiresStorageForNonRelayRoles(t *testing.T) {
 	for _, key := range []string{
 		envPostgreSQLAddress,
 		envPostgreSQLDatabase,
-		envPostgreSQLUser,
-		envPostgreSQLPasswordFile,
 		envPostgreSQLCAFile,
+		envPostgreSQLRuntimeUser,
+		envPostgreSQLRuntimePasswordFile,
+		envPostgreSQLWorkerUser,
+		envPostgreSQLWorkerPasswordFile,
 		envRedisAddress,
 		envRedisUsername,
 		envRedisPasswordFile,
@@ -47,11 +49,15 @@ func TestLoadRejectsUnsafeStorageSettingsWithoutEchoingValues(t *testing.T) {
 		{name: "postgres missing host", key: envPostgreSQLAddress, value: ":5432"},
 		{name: "postgres missing port", key: envPostgreSQLAddress, value: "database.internal"},
 		{name: "postgres empty database", key: envPostgreSQLDatabase, value: ""},
-		{name: "postgres user whitespace", key: envPostgreSQLUser, value: "mesh core"},
-		{name: "postgres relative password file", key: envPostgreSQLPasswordFile, value: "secrets/postgres"},
+		{name: "runtime postgres user whitespace", key: envPostgreSQLRuntimeUser, value: "mesh core"},
+		{name: "runtime postgres relative password file", key: envPostgreSQLRuntimePasswordFile, value: "secrets/postgres"},
+		{name: "runtime postgres zero pool", key: envPostgreSQLRuntimeMaxConnections, value: "0"},
+		{name: "runtime postgres oversized pool", key: envPostgreSQLRuntimeMaxConnections, value: "51"},
+		{name: "worker postgres user whitespace", key: envPostgreSQLWorkerUser, value: "mesh core"},
+		{name: "worker postgres relative password file", key: envPostgreSQLWorkerPasswordFile, value: "secrets/postgres"},
+		{name: "worker postgres zero pool", key: envPostgreSQLWorkerMaxConnections, value: "0"},
+		{name: "worker postgres oversized pool", key: envPostgreSQLWorkerMaxConnections, value: "51"},
 		{name: "postgres relative ca file", key: envPostgreSQLCAFile, value: "tls/ca.pem"},
-		{name: "postgres zero pool", key: envPostgreSQLMaxConnections, value: "0"},
-		{name: "postgres oversized pool", key: envPostgreSQLMaxConnections, value: "51"},
 		{name: "redis missing host", key: envRedisAddress, value: ":6379"},
 		{name: "redis empty username", key: envRedisUsername, value: ""},
 		{name: "redis relative password file", key: envRedisPasswordFile, value: "secrets/redis"},
@@ -85,15 +91,70 @@ func TestLoadRelayDoesNotRequireOrParseStorage(t *testing.T) {
 	t.Parallel()
 
 	got, err := Load(mapLookup(map[string]string{
-		envRole:                     "relay",
-		envPostgreSQLAddress:        "not an address",
-		envPostgreSQLPasswordFile:   "relative-secret",
-		envPostgreSQLMaxConnections: "unbounded",
+		envRole:                           "relay",
+		envPostgreSQLAddress:              "not an address",
+		envPostgreSQLRuntimePasswordFile:  "relative-secret",
+		envPostgreSQLWorkerMaxConnections: "unbounded",
 	}))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 	if got.Storage != nil {
 		t.Fatalf("Storage = %v, want nil for relay", got.Storage)
+	}
+}
+
+func TestLoadRequiresOnlySelectedPostgreSQLCredentials(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		role        string
+		removeKeys  []string
+		wantRuntime bool
+		wantWorker  bool
+	}{
+		{
+			name: "api ignores worker credentials",
+			role: "api",
+			removeKeys: []string{
+				envPostgreSQLWorkerUser,
+				envPostgreSQLWorkerPasswordFile,
+			},
+			wantRuntime: true,
+		},
+		{
+			name: "worker ignores runtime credentials",
+			role: "worker",
+			removeKeys: []string{
+				envPostgreSQLRuntimeUser,
+				envPostgreSQLRuntimePasswordFile,
+			},
+			wantWorker: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			values := validStorageValues(map[string]string{envRole: test.role})
+			for _, key := range test.removeKeys {
+				delete(values, key)
+			}
+			got, err := Load(mapLookup(values))
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if got.Storage == nil || (got.Storage.PostgreSQL.Runtime != nil) != test.wantRuntime ||
+				(got.Storage.PostgreSQL.Worker != nil) != test.wantWorker {
+				t.Fatalf(
+					"PostgreSQL role config = (runtime=%t, worker=%t), want (%t, %t)",
+					got.Storage != nil && got.Storage.PostgreSQL.Runtime != nil,
+					got.Storage != nil && got.Storage.PostgreSQL.Worker != nil,
+					test.wantRuntime,
+					test.wantWorker,
+				)
+			}
+		})
 	}
 }

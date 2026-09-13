@@ -84,16 +84,16 @@ func TestExecuteConfigValidateRejectsInvalidCABundleWithoutExposingInputs(t *tes
 		t.Fatalf("os.WriteFile(CA) error = %v", err)
 	}
 	values := map[string]string{
-		"MESHTRANSIT_ROLE":                   "api",
-		"MESHTRANSIT_POSTGRES_ADDRESS":       "database.internal:5432",
-		"MESHTRANSIT_POSTGRES_DATABASE":      "meshtransit",
-		"MESHTRANSIT_POSTGRES_USER":          "meshcore",
-		"MESHTRANSIT_POSTGRES_PASSWORD_FILE": passwordPath,
-		"MESHTRANSIT_POSTGRES_CA_FILE":       caPath,
-		"MESHTRANSIT_REDIS_ADDRESS":          "cache.internal:6379",
-		"MESHTRANSIT_REDIS_USERNAME":         "meshcore",
-		"MESHTRANSIT_REDIS_PASSWORD_FILE":    passwordPath,
-		"MESHTRANSIT_REDIS_CA_FILE":          caPath,
+		"MESHTRANSIT_ROLE":                           "api",
+		"MESHTRANSIT_POSTGRES_ADDRESS":               "database.internal:5432",
+		"MESHTRANSIT_POSTGRES_DATABASE":              "meshtransit",
+		"MESHTRANSIT_POSTGRES_RUNTIME_USER":          "mesh_runtime",
+		"MESHTRANSIT_POSTGRES_RUNTIME_PASSWORD_FILE": passwordPath,
+		"MESHTRANSIT_POSTGRES_CA_FILE":               caPath,
+		"MESHTRANSIT_REDIS_ADDRESS":                  "cache.internal:6379",
+		"MESHTRANSIT_REDIS_USERNAME":                 "meshcore",
+		"MESHTRANSIT_REDIS_PASSWORD_FILE":            passwordPath,
+		"MESHTRANSIT_REDIS_CA_FILE":                  caPath,
 	}
 	lookup := func(key string) (string, bool) {
 		value, ok := values[key]

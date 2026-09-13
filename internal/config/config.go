@@ -13,7 +13,7 @@ import (
 
 const (
 	// SchemaVersion identifies the validated environment configuration contract.
-	SchemaVersion = 2
+	SchemaVersion = 3
 
 	envRole            = "MESHTRANSIT_ROLE"
 	envHealthAddress   = "MESHTRANSIT_HEALTH_ADDRESS"
@@ -95,7 +95,7 @@ func Load(lookup LookupFunc) (Config, error) {
 
 	var storageConfig *StorageConfig
 	if role != app.RoleRelay {
-		loadedStorage, loadErr := loadStorageConfig(lookup)
+		loadedStorage, loadErr := loadStorageConfig(lookup, role)
 		if loadErr != nil {
 			return Config{}, loadErr
 		}

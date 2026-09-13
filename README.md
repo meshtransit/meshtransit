@@ -41,18 +41,24 @@ invalid value stops startup before a listener is opened.
 | `MESHTRANSIT_DEPENDENCY_CHECK_TIMEOUT` | `2s` | Per-dependency check deadline from 100ms through 30s. Must be below the interval. |
 | `MESHTRANSIT_DEPENDENCY_CHECK_INTERVAL` | `10s` | Dependency polling interval from 1 second through 5 minutes. |
 
-The `api`, `control`, and `worker` responsibilities require all settings below.
-The `all` role uses their union. The `relay` role intentionally does not load
-or require direct storage settings.
+The `api`, `control`, and `worker` responsibilities require the shared
+PostgreSQL and Redis settings below. The `api` and `control` roles additionally
+require the runtime PostgreSQL credential; `worker` requires the worker
+credential; and `all` requires both. Runtime and worker credentials open
+separate least-privilege connection pools and are never used interchangeably.
+The `relay` role intentionally does not load or require direct storage settings.
 
 | Environment variable | Default | Contract |
 | --- | --- | --- |
 | `MESHTRANSIT_POSTGRES_ADDRESS` | none | PostgreSQL TLS host and non-zero port. |
 | `MESHTRANSIT_POSTGRES_DATABASE` | none | PostgreSQL database name. |
-| `MESHTRANSIT_POSTGRES_USER` | none | PostgreSQL SCRAM-SHA-256 role. |
-| `MESHTRANSIT_POSTGRES_PASSWORD_FILE` | none | Absolute path to a bounded, single-line credential file. |
 | `MESHTRANSIT_POSTGRES_CA_FILE` | none | Absolute path to the trusted CA bundle. |
-| `MESHTRANSIT_POSTGRES_MAX_CONNECTIONS` | `10` | Per-process pool cap from 1 through 50. |
+| `MESHTRANSIT_POSTGRES_RUNTIME_USER` | none | Least-privilege PostgreSQL role used by `api` and `control`. |
+| `MESHTRANSIT_POSTGRES_RUNTIME_PASSWORD_FILE` | none | Absolute path to the runtime role's bounded, single-line credential file. |
+| `MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS` | `10` | Runtime pool cap from 1 through 50. |
+| `MESHTRANSIT_POSTGRES_WORKER_USER` | none | Least-privilege PostgreSQL role used by `worker`. |
+| `MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE` | none | Absolute path to the worker role's bounded, single-line credential file. |
+| `MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS` | `10` | Worker pool cap from 1 through 50. |
 | `MESHTRANSIT_REDIS_ADDRESS` | none | Redis TLS host and non-zero port. |
 | `MESHTRANSIT_REDIS_USERNAME` | none | Redis ACL username. |
 | `MESHTRANSIT_REDIS_PASSWORD_FILE` | none | Absolute path to a bounded, single-line credential file. |

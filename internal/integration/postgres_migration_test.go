@@ -98,13 +98,17 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if processConfig.Storage == nil {
 		t.Fatal("runtime integration configuration did not load storage")
 	}
-	runtimePostgreSQL := processConfig.Storage.PostgreSQL
+	postgresConfig := processConfig.Storage.PostgreSQL
+	if postgresConfig.Runtime == nil {
+		t.Fatal("runtime integration configuration did not load runtime PostgreSQL credentials")
+	}
+	runtimePostgreSQL := *postgresConfig.Runtime
 	runtimePool, err := postgresadapter.Open(ctx, postgresadapter.Options{
-		Address:        runtimePostgreSQL.Address,
-		Database:       runtimePostgreSQL.Database,
+		Address:        postgresConfig.Address,
+		Database:       postgresConfig.Database,
 		User:           runtimePostgreSQL.User,
 		PasswordFile:   runtimePostgreSQL.PasswordFile,
-		CAFile:         runtimePostgreSQL.CAFile,
+		CAFile:         postgresConfig.CAFile,
 		MaxConnections: runtimePostgreSQL.MaxConnections,
 		ConnectTimeout: processConfig.Dependencies.CheckTimeout,
 	})
@@ -140,11 +144,11 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	runtimeConnection := openIntegrationPostgreSQLConnection(
 		t,
 		ctx,
-		runtimePostgreSQL.Address,
-		runtimePostgreSQL.Database,
+		postgresConfig.Address,
+		postgresConfig.Database,
 		runtimePostgreSQL.User,
 		runtimePostgreSQL.PasswordFile,
-		runtimePostgreSQL.CAFile,
+		postgresConfig.CAFile,
 		processConfig.Dependencies.CheckTimeout,
 	)
 	assertRuntimeAuthorityIsolation(t, ctx, runtimeConnection)

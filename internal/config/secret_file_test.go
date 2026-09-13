@@ -22,8 +22,16 @@ func TestFileReferencesAlwaysFormatAsRedacted(t *testing.T) {
 		}
 	}
 	formattedConfig := fmt.Sprintf("%#v", StorageConfig{
-		PostgreSQL: PostgreSQLConfig{PasswordFile: secret, CAFile: trust},
-		Redis:      RedisConfig{PasswordFile: secret, CAFile: trust},
+		PostgreSQL: PostgreSQLConfig{
+			CAFile: trust,
+			Runtime: &PostgreSQLRoleConfig{
+				PasswordFile: secret,
+			},
+			Worker: &PostgreSQLRoleConfig{
+				PasswordFile: secret,
+			},
+		},
+		Redis: RedisConfig{PasswordFile: secret, CAFile: trust},
 	})
 	if strings.Contains(formattedConfig, "private") {
 		t.Fatalf("nested config formatting exposed file path: %q", formattedConfig)
