@@ -203,6 +203,12 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		runtimePool,
 		openRegistrationCommand,
 	)
+	assertPostgreSQLRegistrationServiceResume(
+		ctx,
+		t,
+		adminConnection,
+		runtimePool,
+	)
 	assertPostgreSQLRegistrationServiceConcurrency(
 		ctx,
 		t,

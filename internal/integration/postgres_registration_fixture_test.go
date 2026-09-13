@@ -73,6 +73,28 @@ func seedConcurrentRegistrationAuthority(
 	})
 }
 
+func seedResumeRegistrationAuthority(
+	ctx context.Context,
+	t *testing.T,
+	connection *pgx.Conn,
+) registrationapp.Command {
+	t.Helper()
+	return seedOpenRegistrationFixture(ctx, t, connection, registrationAuthorityFixture{
+		authorityInternalID:    632,
+		registrationInternalID: 636,
+		authorityPublicID:      "01890f20-0000-7000-8000-000000000632",
+		registrationPublicID:   "01890f20-0000-7000-8000-000000000636",
+		changePublicID:         "01890f21-0000-7000-8000-000000000631",
+		eventPublicID:          "01890f22-0000-7000-8000-000000000631",
+		outboxPublicID:         "01890f23-0000-7000-8000-000000000631",
+		digestLabel:            "integration-registration-resume-v1",
+		hostname:               "node-two-renamed.example",
+		authorityMaterial:      0x51,
+		machineMaterial:        0x31,
+		nodeMaterial:           0x32,
+	})
+}
+
 func seedOpenRegistrationFixture(
 	ctx context.Context,
 	t *testing.T,
