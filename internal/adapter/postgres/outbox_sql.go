@@ -1,5 +1,33 @@
 package postgres
 
+const readNetworkRevisionBacklogSQL = `SELECT
+    pg_catalog.count(*),
+    COALESCE(
+        GREATEST(
+            pg_catalog.floor(
+				pg_catalog.date_part(
+					'epoch',
+					pg_catalog.clock_timestamp() - pg_catalog.min(event.available_at)
+				) * 1000
+            ),
+            0
+        ),
+        0
+    )::BIGINT
+FROM mesh_ops.outbox_event AS event
+WHERE event.completed_at IS NULL
+  AND event.workspace_id IS NOT NULL
+  AND event.network_id IS NOT NULL
+  AND event.network_revision IS NOT NULL
+  AND event.available_at <= pg_catalog.clock_timestamp()
+  AND (
+      event.state = 'pending'
+      OR (
+          event.state = 'claimed'
+          AND event.claim_expires_at <= pg_catalog.clock_timestamp()
+      )
+  )`
+
 const claimNetworkRevisionsSQL = `WITH candidates AS MATERIALIZED (
     SELECT event.id
     FROM mesh_ops.outbox_event AS event

@@ -37,7 +37,11 @@ type operatorMetrics struct {
 	requestDuration *prometheus.HistogramVec
 }
 
-func newOperatorMetrics(state healthState, build BuildInfo) (*operatorMetrics, error) {
+func newOperatorMetrics(
+	state healthState,
+	build BuildInfo,
+	workerTelemetry revisionWorkerTelemetry,
+) (*operatorMetrics, error) {
 	if state == nil || !validBuildInfo(build) {
 		return nil, ErrInvalidMetrics
 	}
@@ -90,6 +94,9 @@ func newOperatorMetrics(state healthState, build BuildInfo) (*operatorMetrics, e
 	}
 	sort.Strings(components)
 	collectorSet = append(collectorSet, newRuntimeMetricsCollector(state, snapshot.Roles, components))
+	if workerTelemetry != nil {
+		collectorSet = append(collectorSet, newRevisionWorkerMetricsCollector(workerTelemetry))
+	}
 
 	for _, collector := range collectorSet {
 		if err := registry.Register(collector); err != nil {

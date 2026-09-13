@@ -9,47 +9,86 @@ import (
 )
 
 func (dispatcher *Dispatcher) dispatchOnce(ctx context.Context) error {
-	claims, err := dispatcher.claim(ctx)
-	if err != nil {
-		return fmt.Errorf("claim revisions: %w", err)
-	}
-	if len(claims) > dispatcher.options.BatchSize {
-		return ErrInvalidClaimBatch
+	var dispatchErrors []error
+	if err := dispatcher.observeBacklog(ctx); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		dispatchErrors = append(dispatchErrors, fmt.Errorf("observe backlog: %w", err))
 	}
 
-	var dispatchErrors []error
+	claims, err := dispatcher.claim(ctx)
+	dispatcher.telemetry.recordClaim(len(claims), err)
+	if err != nil {
+		return errors.Join(
+			append(dispatchErrors, fmt.Errorf("claim revisions: %w", err))...,
+		)
+	}
+	if len(claims) > dispatcher.options.BatchSize {
+		dispatcher.telemetry.recordDelivery(deliveryFailed)
+		return errors.Join(append(dispatchErrors, ErrInvalidClaimBatch)...)
+	}
+
 	for _, claim := range claims {
 		if ctx.Err() != nil {
 			return errors.Join(append(dispatchErrors, ctx.Err())...)
 		}
 		if !claim.IsValid() {
+			dispatcher.telemetry.recordDelivery(deliveryFailed)
 			dispatchErrors = append(dispatchErrors, ErrInvalidClaimBatch)
 			continue
 		}
-		if err := dispatcher.dispatchClaim(ctx, claim); err != nil {
+		outcome, err := dispatcher.dispatchClaim(ctx, claim)
+		dispatcher.telemetry.recordDelivery(outcome)
+		if err != nil {
 			dispatchErrors = append(dispatchErrors, err)
 		}
 	}
 	return errors.Join(dispatchErrors...)
 }
 
-func (dispatcher *Dispatcher) dispatchClaim(ctx context.Context, claim network.RevisionClaim) error {
+func (dispatcher *Dispatcher) dispatchClaim(
+	ctx context.Context,
+	claim network.RevisionClaim,
+) (deliveryOutcome, error) {
 	revision, err := dispatcher.load(ctx, claim)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return deliveryFailed, ctx.Err()
 		}
-		return dispatcher.deferClaim(ctx, claim, errorClassLoadRevision, err)
+		if deferErr := dispatcher.deferClaim(ctx, claim, errorClassLoadRevision, err); deferErr != nil {
+			return deliveryFailed, deferErr
+		}
+		return deliveryDeferred, nil
 	}
 	if err := dispatcher.publish(ctx, revision); err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return deliveryFailed, ctx.Err()
 		}
-		return dispatcher.deferClaim(ctx, claim, errorClassPublishWakeup, err)
+		if deferErr := dispatcher.deferClaim(ctx, claim, errorClassPublishWakeup, err); deferErr != nil {
+			return deliveryFailed, deferErr
+		}
+		return deliveryDeferred, nil
 	}
 	if err := dispatcher.markDelivered(ctx, claim); err != nil {
-		return fmt.Errorf("mark revision delivered: %w", err)
+		return deliveryFailed, fmt.Errorf("mark revision delivered: %w", err)
 	}
+	return deliveryDelivered, nil
+}
+
+func (dispatcher *Dispatcher) observeBacklog(ctx context.Context) error {
+	operationCtx, cancel := context.WithTimeout(ctx, dispatcher.options.OperationTimeout)
+	defer cancel()
+	backlog, err := dispatcher.outbox.ReadNetworkRevisionBacklog(operationCtx)
+	if err != nil {
+		dispatcher.telemetry.recordBacklogError()
+		return err
+	}
+	if !backlog.isValid() {
+		dispatcher.telemetry.recordBacklogError()
+		return ErrInvalidBacklog
+	}
+	dispatcher.telemetry.recordBacklog(backlog)
 	return nil
 }
 

@@ -9,6 +9,7 @@ import (
 
 type outboxDatabase interface {
 	Query(context.Context, string, ...any) (outboxRows, error)
+	QueryRow(context.Context, string, ...any) outboxRow
 	Exec(context.Context, string, ...any) (outboxCommandResult, error)
 	Begin(context.Context, bool) (outboxTransaction, error)
 }
@@ -53,6 +54,14 @@ func (database pgxOutboxDatabase) Exec(
 	arguments ...any,
 ) (outboxCommandResult, error) {
 	return database.pool.Exec(ctx, query, arguments...)
+}
+
+func (database pgxOutboxDatabase) QueryRow(
+	ctx context.Context,
+	query string,
+	arguments ...any,
+) outboxRow {
+	return database.pool.QueryRow(ctx, query, arguments...)
 }
 
 func (database pgxOutboxDatabase) Begin(

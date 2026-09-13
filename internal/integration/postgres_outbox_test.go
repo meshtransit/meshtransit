@@ -24,6 +24,17 @@ func assertWorkerOutboxDelivery(
 	if err != nil {
 		t.Fatalf("postgres.NewOutboxStore() error = %v", err)
 	}
+	backlog, err := store.ReadNetworkRevisionBacklog(ctx)
+	if err != nil {
+		t.Fatalf("OutboxStore.ReadNetworkRevisionBacklog() error = %v", err)
+	}
+	if backlog.Events() != 3 || backlog.OldestAge() < 0 {
+		t.Fatalf(
+			"ready backlog before claim = (%d, %s), want (3, non-negative)",
+			backlog.Events(),
+			backlog.OldestAge(),
+		)
+	}
 	claims, err := store.ClaimNetworkRevisions(ctx, "integration-worker", 10, 30*time.Second)
 	if err != nil {
 		t.Fatalf("OutboxStore.ClaimNetworkRevisions() error = %v", err)
@@ -69,6 +80,17 @@ func assertWorkerOutboxDelivery(
 	retryClass := "integration_retry"
 	assertOutboxOutcome(t, ctx, adminConnection, claims[1].EventID(), "pending", "retry", &retryClass)
 	assertOutboxOutcome(t, ctx, adminConnection, claims[2].EventID(), "delivered", "delivered", nil)
+	backlog, err = store.ReadNetworkRevisionBacklog(ctx)
+	if err != nil {
+		t.Fatalf("OutboxStore.ReadNetworkRevisionBacklog() after delivery error = %v", err)
+	}
+	if backlog.Events() != 0 || backlog.OldestAge() != 0 {
+		t.Fatalf(
+			"ready backlog after delivery = (%d, %s), want empty",
+			backlog.Events(),
+			backlog.OldestAge(),
+		)
+	}
 }
 
 func assertOutboxOutcome(

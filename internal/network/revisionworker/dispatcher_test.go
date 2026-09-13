@@ -42,6 +42,7 @@ func TestNewRejectsInvalidInputs(t *testing.T) {
 		{name: "typed nil outbox", options: validOptions, outbox: nilOutbox, publisher: publisher, logger: logger},
 		{name: "missing publisher", options: validOptions, outbox: outbox, logger: logger},
 		{name: "typed nil publisher", options: validOptions, outbox: outbox, publisher: nilPublisher, logger: logger},
+		{name: "missing telemetry", options: validOptions, outbox: outbox, publisher: publisher, logger: logger},
 		{name: "missing logger", options: validOptions, outbox: outbox, publisher: publisher},
 	}
 
@@ -49,7 +50,11 @@ func TestNewRejectsInvalidInputs(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			dispatcher, err := New(test.options, test.outbox, test.publisher, test.logger)
+			telemetry := NewTelemetry()
+			if test.name == "missing telemetry" {
+				telemetry = nil
+			}
+			dispatcher, err := New(test.options, test.outbox, test.publisher, telemetry, test.logger)
 			if !errors.Is(err, ErrInvalidDispatcher) {
 				t.Fatalf("New() error = %v, want ErrInvalidDispatcher", err)
 			}
@@ -103,6 +108,40 @@ func TestDispatchOncePublishesThenMarksDelivered(t *testing.T) {
 	}
 	if got, want := strings.Join(calls, ","), "claim,load,publish,mark"; got != want {
 		t.Fatalf("call order = %q, want %q", got, want)
+	}
+	snapshot := dispatcher.telemetry.Snapshot()
+	if snapshot.BacklogSuccessTotal != 1 || snapshot.ClaimSuccessTotal != 1 ||
+		snapshot.ClaimedEventsTotal != 1 || snapshot.DeliveredTotal != 1 {
+		t.Fatalf("unexpected successful dispatch telemetry: %+v", snapshot)
+	}
+}
+
+func TestDispatchOnceContinuesWhenBacklogObservationFails(t *testing.T) {
+	t.Parallel()
+
+	observationErr := errors.New("backlog unavailable")
+	claimed := false
+	outbox := &fakeOutbox{
+		backlog: func(context.Context) (Backlog, error) {
+			return Backlog{}, observationErr
+		},
+		claim: func(context.Context, string, int, time.Duration) ([]network.RevisionClaim, error) {
+			claimed = true
+			return nil, nil
+		},
+	}
+	dispatcher := mustDispatcher(t, outbox, &fakePublisher{}, io.Discard)
+
+	err := dispatcher.dispatchOnce(t.Context())
+	if !errors.Is(err, observationErr) {
+		t.Fatalf("dispatchOnce() error = %v, want backlog observation error", err)
+	}
+	if !claimed {
+		t.Fatal("dispatchOnce() did not claim after a metrics-only query failed")
+	}
+	snapshot := dispatcher.telemetry.Snapshot()
+	if snapshot.BacklogErrorTotal != 1 || snapshot.ClaimSuccessTotal != 1 {
+		t.Fatalf("unexpected degraded dispatch telemetry: %+v", snapshot)
 	}
 }
 
@@ -328,7 +367,7 @@ func mustDispatcher(t *testing.T, outbox Outbox, publisher Publisher, output io.
 	if err != nil {
 		t.Fatalf("observability.NewLogger() error = %v", err)
 	}
-	dispatcher, err := New(testOptions(), outbox, publisher, logger)
+	dispatcher, err := New(testOptions(), outbox, publisher, NewTelemetry(), logger)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -365,10 +404,18 @@ func testRevision(t *testing.T) network.RevisionAdvanced {
 }
 
 type fakeOutbox struct {
-	claim func(context.Context, string, int, time.Duration) ([]network.RevisionClaim, error)
-	load  func(context.Context, network.RevisionClaim) (network.RevisionAdvanced, error)
-	mark  func(context.Context, network.RevisionClaim) error
-	retry func(context.Context, network.RevisionClaim, string, time.Duration) error
+	backlog func(context.Context) (Backlog, error)
+	claim   func(context.Context, string, int, time.Duration) ([]network.RevisionClaim, error)
+	load    func(context.Context, network.RevisionClaim) (network.RevisionAdvanced, error)
+	mark    func(context.Context, network.RevisionClaim) error
+	retry   func(context.Context, network.RevisionClaim, string, time.Duration) error
+}
+
+func (outbox *fakeOutbox) ReadNetworkRevisionBacklog(ctx context.Context) (Backlog, error) {
+	if outbox.backlog == nil {
+		return NewBacklog(0, 0)
+	}
+	return outbox.backlog(ctx)
 }
 
 func (outbox *fakeOutbox) ClaimNetworkRevisions(

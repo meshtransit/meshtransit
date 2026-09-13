@@ -205,6 +205,12 @@ The operator listener exposes:
 - `GET /health`: redacted runtime component summary;
 - `GET /metrics`: Prometheus/OpenMetrics runtime and operator telemetry.
 
+Worker and `all` processes additionally expose bounded Network-revision worker
+signals: ready backlog depth, oldest ready-event age, backlog observation and
+claim outcomes, claimed-event count, and delivery outcomes. Outcome labels are
+closed sets (`success`/`error` and `delivered`/`deferred`/`failed`); event,
+Workspace, Network, and worker identifiers are never metric labels.
+
 Readiness opens only after the initial PostgreSQL and Redis checks succeed and
 the listener starts. Periodic bounded checks lower readiness on dependency loss
 and restore it after recovery. Graceful shutdown closes admission before

@@ -15,6 +15,56 @@ const (
 	testNetworkPublicID = "01890f00-0000-7000-8000-000000000201"
 )
 
+func TestOutboxStoreReadsReadyNetworkRevisionBacklog(t *testing.T) {
+	t.Parallel()
+
+	database := &fakeOutboxDatabase{queryRow: fakeOutboxRow{scan: func(destinations ...any) error {
+		*destinations[0].(*int64) = 7
+		*destinations[1].(*int64) = 12_345
+		return nil
+	}}}
+	store := mustTestOutboxStore(t, database)
+
+	backlog, err := store.ReadNetworkRevisionBacklog(t.Context())
+	if err != nil {
+		t.Fatalf("ReadNetworkRevisionBacklog() error = %v", err)
+	}
+	if backlog.Events() != 7 || backlog.OldestAge() != 12_345*time.Millisecond {
+		t.Fatalf(
+			"ReadNetworkRevisionBacklog() = (%d, %s), want (7, 12.345s)",
+			backlog.Events(),
+			backlog.OldestAge(),
+		)
+	}
+	for _, fragment := range []string{
+		"event.available_at <= pg_catalog.clock_timestamp()",
+		"event.state = 'pending'",
+		"event.claim_expires_at <= pg_catalog.clock_timestamp()",
+	} {
+		if !strings.Contains(database.query, fragment) {
+			t.Fatalf("backlog query missing ready-work predicate %q: %s", fragment, database.query)
+		}
+	}
+	if len(database.arguments) != 0 {
+		t.Fatalf("backlog query arguments = %#v, want none", database.arguments)
+	}
+}
+
+func TestOutboxStoreClassifiesBacklogReadFailure(t *testing.T) {
+	t.Parallel()
+
+	readErr := errors.New("backlog unavailable")
+	database := &fakeOutboxDatabase{queryRow: fakeOutboxRow{scan: func(...any) error {
+		return readErr
+	}}}
+	store := mustTestOutboxStore(t, database)
+
+	_, err := store.ReadNetworkRevisionBacklog(t.Context())
+	if !errors.Is(err, ErrReadOutboxBacklog) || !errors.Is(err, readErr) {
+		t.Fatalf("ReadNetworkRevisionBacklog() error = %v, want classified read failure", err)
+	}
+}
+
 func TestOutboxStoreClaimsBoundedNetworkRevisionWork(t *testing.T) {
 	t.Parallel()
 
@@ -155,6 +205,10 @@ func TestOutboxStoreRejectsInvalidInputs(t *testing.T) {
 	}{
 		{name: "nil claim context", call: func() error {
 			_, err := store.ClaimNetworkRevisions(nilContext, "worker-1", 1, time.Second)
+			return err
+		}},
+		{name: "nil backlog context", call: func() error {
+			_, err := store.ReadNetworkRevisionBacklog(nilContext)
 			return err
 		}},
 		{name: "oversized batch", call: func() error {

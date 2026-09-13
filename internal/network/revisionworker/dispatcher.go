@@ -52,6 +52,7 @@ type Dispatcher struct {
 	options   Options
 	outbox    Outbox
 	publisher Publisher
+	telemetry *Telemetry
 	logger    *slog.Logger
 
 	mu       sync.Mutex
@@ -66,16 +67,18 @@ func New(
 	options Options,
 	outbox Outbox,
 	publisher Publisher,
+	telemetry *Telemetry,
 	logger *slog.Logger,
 ) (*Dispatcher, error) {
 	if !validOptions(options) || isNilDependency(outbox) ||
-		isNilDependency(publisher) || logger == nil {
+		isNilDependency(publisher) || telemetry == nil || logger == nil {
 		return nil, ErrInvalidDispatcher
 	}
 	return &Dispatcher{
 		options:   options,
 		outbox:    outbox,
 		publisher: publisher,
+		telemetry: telemetry,
 		logger:    logger,
 	}, nil
 }

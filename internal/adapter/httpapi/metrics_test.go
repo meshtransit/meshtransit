@@ -5,8 +5,10 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/meshtransit/meshtransit/internal/app"
+	"github.com/meshtransit/meshtransit/internal/network/revisionworker"
 )
 
 func TestOperatorMetricsExposeBoundedRuntimeSignals(t *testing.T) {
@@ -14,7 +16,7 @@ func TestOperatorMetricsExposeBoundedRuntimeSignals(t *testing.T) {
 
 	state := newRuntimeState(t, app.RoleAPI)
 	state.SetReady(true)
-	metrics, err := newOperatorMetrics(state, testBuildInfo())
+	metrics, err := newOperatorMetrics(state, testBuildInfo(), nil)
 	if err != nil {
 		t.Fatalf("newOperatorMetrics() error = %v", err)
 	}
@@ -58,7 +60,7 @@ func TestOperatorMetricsDoNotExposeUnknownRequestPaths(t *testing.T) {
 
 	const unknownPath = "/private-host.example/resource-123"
 	state := newRuntimeState(t, app.RoleRelay)
-	metrics, err := newOperatorMetrics(state, testBuildInfo())
+	metrics, err := newOperatorMetrics(state, testBuildInfo(), nil)
 	if err != nil {
 		t.Fatalf("newOperatorMetrics() error = %v", err)
 	}
@@ -96,7 +98,7 @@ func TestNewOperatorMetricsRejectsUnsafeBuildLabels(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := newOperatorMetrics(newRuntimeState(t, app.RoleRelay), test.build); err == nil {
+			if _, err := newOperatorMetrics(newRuntimeState(t, app.RoleRelay), test.build, nil); err == nil {
 				t.Fatal("newOperatorMetrics() error = nil, want invalid build info")
 			}
 		})
@@ -116,7 +118,7 @@ func TestOperatorMetricsUseOneRuntimeSnapshotPerScrape(t *testing.T) {
 			},
 		},
 	}
-	metrics, err := newOperatorMetrics(state, testBuildInfo())
+	metrics, err := newOperatorMetrics(state, testBuildInfo(), nil)
 	if err != nil {
 		t.Fatalf("newOperatorMetrics() error = %v", err)
 	}
@@ -127,6 +129,56 @@ func TestOperatorMetricsUseOneRuntimeSnapshotPerScrape(t *testing.T) {
 	if calls := state.calls.Load(); calls != 2 {
 		t.Fatalf("Snapshot() calls = %d, want 2: one validation and one scrape", calls)
 	}
+}
+
+func TestOperatorMetricsExposeRevisionWorkerTelemetryWithBoundedResults(t *testing.T) {
+	t.Parallel()
+
+	state := newRuntimeState(t, app.RoleWorker)
+	telemetry := fixedRevisionWorkerTelemetry{snapshot: revisionworker.TelemetrySnapshot{
+		ReadyBacklogEvents:  7,
+		OldestReadyEventAge: 3 * time.Second,
+		BacklogSuccessTotal: 11,
+		BacklogErrorTotal:   2,
+		ClaimSuccessTotal:   13,
+		ClaimErrorTotal:     3,
+		ClaimedEventsTotal:  17,
+		DeliveredTotal:      14,
+		DeferredTotal:       2,
+		FailedTotal:         1,
+	}}
+	metrics, err := newOperatorMetrics(state, testBuildInfo(), telemetry)
+	if err != nil {
+		t.Fatalf("newOperatorMetrics() error = %v", err)
+	}
+	response := request(t, metrics.handler, "/metrics")
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET /metrics status = %d, want %d", response.Code, http.StatusOK)
+	}
+	for name, value := range map[string]string{
+		"ready backlog":      `meshtransit_revision_worker_ready_backlog_events 7`,
+		"oldest ready age":   `meshtransit_revision_worker_oldest_ready_event_age_seconds 3`,
+		"backlog success":    `meshtransit_revision_worker_backlog_observations_total{result="success"} 11`,
+		"backlog error":      `meshtransit_revision_worker_backlog_observations_total{result="error"} 2`,
+		"claim success":      `meshtransit_revision_worker_claim_operations_total{result="success"} 13`,
+		"claim error":        `meshtransit_revision_worker_claim_operations_total{result="error"} 3`,
+		"claimed events":     `meshtransit_revision_worker_claimed_events_total 17`,
+		"delivery delivered": `meshtransit_revision_worker_delivery_attempts_total{result="delivered"} 14`,
+		"delivery deferred":  `meshtransit_revision_worker_delivery_attempts_total{result="deferred"} 2`,
+		"delivery failed":    `meshtransit_revision_worker_delivery_attempts_total{result="failed"} 1`,
+	} {
+		if !strings.Contains(response.Body.String(), value) {
+			t.Errorf("metrics missing %s %q", name, value)
+		}
+	}
+}
+
+type fixedRevisionWorkerTelemetry struct {
+	snapshot revisionworker.TelemetrySnapshot
+}
+
+func (telemetry fixedRevisionWorkerTelemetry) Snapshot() revisionworker.TelemetrySnapshot {
+	return telemetry.snapshot
 }
 
 func testBuildInfo() BuildInfo {

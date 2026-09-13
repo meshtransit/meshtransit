@@ -16,9 +16,10 @@ func composeRevisionWorker(
 	workerConfig config.RevisionWorkerConfig,
 	workerPool *postgresadapter.Pool,
 	redisClient *redisadapter.Client,
+	telemetry *revisionworker.Telemetry,
 	logger *slog.Logger,
 ) (*revisionworker.Dispatcher, error) {
-	if workerPool == nil || redisClient == nil || logger == nil {
+	if workerPool == nil || redisClient == nil || telemetry == nil || logger == nil {
 		return nil, errInvalidWorkerComposition
 	}
 	outbox, err := postgresadapter.NewOutboxStore(workerPool)
@@ -40,6 +41,7 @@ func composeRevisionWorker(
 		},
 		outbox,
 		redisClient,
+		telemetry,
 		logger,
 	)
 }

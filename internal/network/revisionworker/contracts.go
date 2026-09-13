@@ -11,6 +11,7 @@ import (
 
 // Outbox is the durable delivery boundary consumed by Dispatcher.
 type Outbox interface {
+	ReadNetworkRevisionBacklog(context.Context) (Backlog, error)
 	ClaimNetworkRevisions(context.Context, string, int, time.Duration) ([]network.RevisionClaim, error)
 	LoadNetworkRevision(context.Context, network.RevisionClaim) (network.RevisionAdvanced, error)
 	MarkRevisionDelivered(context.Context, network.RevisionClaim) error

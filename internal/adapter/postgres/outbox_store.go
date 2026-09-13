@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/meshtransit/meshtransit/internal/network"
+	"github.com/meshtransit/meshtransit/internal/network/revisionworker"
 )
 
 const (
@@ -22,6 +23,8 @@ const (
 var (
 	// ErrInvalidOutboxStore indicates missing dependencies or unsafe inputs.
 	ErrInvalidOutboxStore = errors.New("invalid postgres outbox store")
+	// ErrReadOutboxBacklog classifies failure to observe pending durable work.
+	ErrReadOutboxBacklog = errors.New("read postgres outbox backlog")
 	// ErrClaimOutbox classifies failure to lease pending durable work.
 	ErrClaimOutbox = errors.New("claim postgres outbox work")
 	// ErrLoadOutboxRevision classifies failure to reconcile authoritative state.
@@ -39,6 +42,31 @@ var (
 type OutboxStore struct {
 	database outboxDatabase
 	newToken func() (string, error)
+}
+
+// ReadNetworkRevisionBacklog reports only work currently eligible for claim.
+// It does not expose event identifiers or payload metadata.
+func (store *OutboxStore) ReadNetworkRevisionBacklog(
+	ctx context.Context,
+) (revisionworker.Backlog, error) {
+	if ctx == nil || store == nil || store.database == nil {
+		return revisionworker.Backlog{}, ErrInvalidOutboxStore
+	}
+	var events, oldestAgeMilliseconds int64
+	if err := store.database.QueryRow(ctx, readNetworkRevisionBacklogSQL).Scan(
+		&events,
+		&oldestAgeMilliseconds,
+	); err != nil {
+		return revisionworker.Backlog{}, errors.Join(ErrReadOutboxBacklog, err)
+	}
+	backlog, err := revisionworker.NewBacklog(
+		events,
+		time.Duration(oldestAgeMilliseconds)*time.Millisecond,
+	)
+	if err != nil {
+		return revisionworker.Backlog{}, errors.Join(ErrReadOutboxBacklog, err)
+	}
+	return backlog, nil
 }
 
 // NewOutboxStore constructs the worker adapter from a worker-authenticated pool.

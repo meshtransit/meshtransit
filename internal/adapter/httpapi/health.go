@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/app"
+	"github.com/meshtransit/meshtransit/internal/network/revisionworker"
 )
 
 const (
@@ -51,10 +52,11 @@ type HealthServer struct {
 
 // HealthServerOptions contains the validated dependencies for one operator server.
 type HealthServerOptions struct {
-	Address string
-	State   *app.RuntimeState
-	Logger  *slog.Logger
-	Build   BuildInfo
+	Address                 string
+	State                   *app.RuntimeState
+	Logger                  *slog.Logger
+	Build                   BuildInfo
+	RevisionWorkerTelemetry *revisionworker.Telemetry
 }
 
 // NewHealthServer constructs a bounded operator server without opening a listener.
@@ -62,7 +64,7 @@ func NewHealthServer(options HealthServerOptions) (*HealthServer, error) {
 	if options.Address == "" || options.State == nil || options.Logger == nil {
 		return nil, ErrInvalidHealthServer
 	}
-	metrics, err := newOperatorMetrics(options.State, options.Build)
+	metrics, err := newOperatorMetrics(options.State, options.Build, options.RevisionWorkerTelemetry)
 	if err != nil {
 		return nil, errors.Join(ErrInvalidHealthServer, err)
 	}

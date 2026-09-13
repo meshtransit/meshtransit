@@ -10,6 +10,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/app"
 	"github.com/meshtransit/meshtransit/internal/buildinfo"
 	"github.com/meshtransit/meshtransit/internal/config"
+	"github.com/meshtransit/meshtransit/internal/network/revisionworker"
 	"github.com/meshtransit/meshtransit/internal/observability"
 )
 
@@ -103,6 +104,10 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		return 1
 	}
 	build := buildinfo.Current()
+	var revisionWorkerTelemetry *revisionworker.Telemetry
+	if processConfig.RevisionWorker != nil {
+		revisionWorkerTelemetry = revisionworker.NewTelemetry()
+	}
 	healthServer, err := httpapi.NewHealthServer(httpapi.HealthServerOptions{
 		Address: processConfig.HealthAddress,
 		State:   readiness,
@@ -113,6 +118,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			GoVersion:           build.GoVersion,
 			ConfigSchemaVersion: config.SchemaVersion,
 		},
+		RevisionWorkerTelemetry: revisionWorkerTelemetry,
 	})
 	if err != nil {
 		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_health_server", "error", err)
@@ -124,6 +130,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			*processConfig.RevisionWorker,
 			storagePools.worker,
 			redisClient,
+			revisionWorkerTelemetry,
 			logger,
 		)
 		if composeErr != nil {

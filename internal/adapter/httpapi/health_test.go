@@ -258,7 +258,7 @@ func discardLogger() *slog.Logger {
 func newTestHealthHandler(t *testing.T, state *app.RuntimeState) http.Handler {
 	t.Helper()
 
-	metrics, err := newOperatorMetrics(state, testBuildInfo())
+	metrics, err := newOperatorMetrics(state, testBuildInfo(), nil)
 	if err != nil {
 		t.Fatalf("newOperatorMetrics() error = %v", err)
 	}

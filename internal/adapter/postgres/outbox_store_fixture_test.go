@@ -6,12 +6,23 @@ type fakeOutboxDatabase struct {
 	query        string
 	arguments    []any
 	queryRows    outboxRows
+	queryRow     outboxRow
 	queryErr     error
 	rowsAffected int64
 	execErr      error
 	transaction  outboxTransaction
 	beginErr     error
 	readOnly     bool
+}
+
+func (database *fakeOutboxDatabase) QueryRow(
+	_ context.Context,
+	query string,
+	arguments ...any,
+) outboxRow {
+	database.query = query
+	database.arguments = append([]any(nil), arguments...)
+	return database.queryRow
 }
 
 func (database *fakeOutboxDatabase) Query(
