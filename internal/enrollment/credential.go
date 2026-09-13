@@ -4,6 +4,8 @@ import (
 	"errors"
 	"math"
 	"time"
+
+	"github.com/meshtransit/meshtransit/internal/identity"
 )
 
 var (
@@ -81,6 +83,7 @@ func (limit UseLimit) isValid() bool {
 type CredentialParams struct {
 	ID                  CredentialID
 	ProfileID           ProfileID
+	IssuerID            identity.PrincipalID
 	State               CredentialState
 	UseLimit            UseLimit
 	UsedCount           int64
@@ -94,6 +97,7 @@ type CredentialParams struct {
 type Credential struct {
 	id                  CredentialID
 	profileID           ProfileID
+	issuerID            identity.PrincipalID
 	state               CredentialState
 	useLimit            UseLimit
 	usedCount           int64
@@ -104,7 +108,7 @@ type Credential struct {
 
 // NewCredential validates durable credential state.
 func NewCredential(params CredentialParams) (Credential, error) {
-	if !params.ID.IsValid() || !params.ProfileID.IsValid() ||
+	if !params.ID.IsValid() || !params.ProfileID.IsValid() || !params.IssuerID.IsValid() ||
 		(params.State != CredentialStateActive && params.State != CredentialStateRevoked) ||
 		!params.UseLimit.isValid() || params.UsedCount < 0 || params.IssuedRecoveryEpoch <= 0 ||
 		params.ValidFrom.IsZero() || !params.ExpiresAt.After(params.ValidFrom) {
@@ -116,6 +120,7 @@ func NewCredential(params CredentialParams) (Credential, error) {
 	return Credential{
 		id:                  params.ID,
 		profileID:           params.ProfileID,
+		issuerID:            params.IssuerID,
 		state:               params.State,
 		useLimit:            params.UseLimit,
 		usedCount:           params.UsedCount,
@@ -130,6 +135,9 @@ func (credential Credential) ID() CredentialID { return credential.id }
 
 // ProfileID returns the profile whose authority this credential carries.
 func (credential Credential) ProfileID() ProfileID { return credential.profileID }
+
+// IssuerID returns the principal that issued this credential.
+func (credential Credential) IssuerID() identity.PrincipalID { return credential.issuerID }
 
 // State returns the durable lifecycle state.
 func (credential Credential) State() CredentialState { return credential.state }
@@ -153,7 +161,7 @@ func (credential Credential) ExpiresAt() time.Time { return credential.expiresAt
 
 // IsValid reports whether the credential can be safely evaluated as durable state.
 func (credential Credential) IsValid() bool {
-	if !credential.id.IsValid() || !credential.profileID.IsValid() ||
+	if !credential.id.IsValid() || !credential.profileID.IsValid() || !credential.issuerID.IsValid() ||
 		(credential.state != CredentialStateActive && credential.state != CredentialStateRevoked) ||
 		!credential.useLimit.isValid() || credential.usedCount < 0 ||
 		credential.issuedRecoveryEpoch <= 0 || credential.validFrom.IsZero() ||

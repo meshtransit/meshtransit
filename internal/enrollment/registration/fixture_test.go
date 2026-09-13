@@ -7,6 +7,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/enrollment"
 	registration "github.com/meshtransit/meshtransit/internal/enrollment/registration"
+	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/publicid"
@@ -273,6 +274,7 @@ func mustOpenResolutionWithProfileState(
 	credential, err := enrollment.NewCredential(enrollment.CredentialParams{
 		ID:                  command.CredentialID,
 		ProfileID:           pending.ProfileID(),
+		IssuerID:            mustPrincipalID(t),
 		State:               enrollment.CredentialStateActive,
 		UseLimit:            limit,
 		UsedCount:           0,
@@ -425,6 +427,16 @@ func mustCredentialID(t *testing.T, value string) enrollment.CredentialID {
 	id, err := enrollment.ParseCredentialID(value)
 	if err != nil {
 		t.Fatalf("enrollment.ParseCredentialID() error = %v", err)
+	}
+	return id
+}
+
+func mustPrincipalID(t *testing.T) identity.PrincipalID {
+	t.Helper()
+
+	id, err := identity.ParsePrincipalID("01890f20-0000-7000-8000-000000000006")
+	if err != nil {
+		t.Fatalf("identity.ParsePrincipalID() error = %v", err)
 	}
 	return id
 }

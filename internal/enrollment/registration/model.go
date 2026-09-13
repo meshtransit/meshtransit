@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/enrollment"
+	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 )
@@ -231,6 +232,8 @@ type Change struct {
 	profile      enrollment.Profile
 	credential   enrollment.Credential
 	identity     node.RegistrationIdentity
+	ownerID      identity.PrincipalID
+	custodianID  identity.PrincipalID
 	nodeID       node.ID
 	hostname     node.Hostname
 	disposition  Disposition
@@ -245,6 +248,8 @@ type ChangeParams struct {
 	Profile      enrollment.Profile
 	Credential   enrollment.Credential
 	Identity     node.RegistrationIdentity
+	OwnerID      identity.PrincipalID
+	CustodianID  identity.PrincipalID
 	NodeID       node.ID
 	Hostname     node.Hostname
 	Disposition  Disposition
@@ -259,6 +264,8 @@ func NewChange(params ChangeParams) (Change, error) {
 		profile:      params.Profile,
 		credential:   params.Credential,
 		identity:     params.Identity,
+		ownerID:      params.OwnerID,
+		custodianID:  params.CustodianID,
 		nodeID:       params.NodeID,
 		hostname:     params.Hostname,
 		disposition:  params.Disposition,
@@ -283,6 +290,12 @@ func (change Change) Profile() enrollment.Profile { return change.profile }
 // Identity returns the authenticated machine and Node keys.
 func (change Change) Identity() node.RegistrationIdentity { return change.identity }
 
+// OwnerID returns the principal responsible for Device policy semantics.
+func (change Change) OwnerID() identity.PrincipalID { return change.ownerID }
+
+// CustodianID returns the principal allowed to manage the Device lifecycle.
+func (change Change) CustodianID() identity.PrincipalID { return change.custodianID }
+
 // NodeID returns the logical Node to create or resume.
 func (change Change) NodeID() node.ID { return change.nodeID }
 
@@ -303,12 +316,15 @@ func (change Change) IsValid() bool {
 	registrationNodeID, completed := change.registration.NodeID()
 	return change.registration.IsValid() && completed && change.profile.IsValid() &&
 		change.credential.IsValid() &&
-		change.identity.IsValid() && change.nodeID.IsValid() && change.hostname.IsValid() &&
+		change.identity.IsValid() && change.ownerID.IsValid() && change.custodianID.IsValid() &&
+		change.nodeID.IsValid() && change.hostname.IsValid() &&
 		change.disposition.isValid() && change.mutationIDs.IsValid() && !change.occurredAt.IsZero() &&
 		registrationNodeID == change.nodeID &&
 		change.registration.Scope() == change.profile.Scope() &&
 		change.registration.ProfileID() == change.profile.ID() &&
 		change.registration.ProfileID() == change.credential.ProfileID() &&
+		change.ownerID == change.credential.IssuerID() &&
+		change.custodianID == change.credential.IssuerID() &&
 		change.profile.ValidateCredential(change.credential) == nil &&
 		change.registration.MachineFingerprint() == change.identity.MachineKey().Fingerprint()
 }

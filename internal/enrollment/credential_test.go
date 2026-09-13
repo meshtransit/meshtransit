@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/enrollment"
+	"github.com/meshtransit/meshtransit/internal/identity"
 )
 
 func TestNewCredential(t *testing.T) {
@@ -13,6 +14,7 @@ func TestNewCredential(t *testing.T) {
 
 	credential := mustCredential(t, enrollment.CredentialStateActive, 0, mustBoundedLimit(t, 1))
 	if credential.ID() != mustCredentialID(t) || credential.ProfileID() != mustProfileID(t) ||
+		credential.IssuerID() != mustIssuerID(t) ||
 		credential.State() != enrollment.CredentialStateActive || credential.UsedCount() != 0 ||
 		credential.IssuedRecoveryEpoch() != 7 || !credential.ValidFrom().Equal(testTime()) ||
 		!credential.ExpiresAt().Equal(testTime().Add(time.Hour)) {
@@ -29,6 +31,7 @@ func TestNewCredentialRejectsInvalidState(t *testing.T) {
 	}{
 		{name: "missing credential id", mutate: func(params *enrollment.CredentialParams) { params.ID = enrollment.CredentialID{} }},
 		{name: "missing profile id", mutate: func(params *enrollment.CredentialParams) { params.ProfileID = enrollment.ProfileID{} }},
+		{name: "missing issuer id", mutate: func(params *enrollment.CredentialParams) { params.IssuerID = identity.PrincipalID{} }},
 		{name: "unknown lifecycle", mutate: func(params *enrollment.CredentialParams) { params.State = enrollment.CredentialStateUnknown }},
 		{name: "unknown use policy", mutate: func(params *enrollment.CredentialParams) { params.UseLimit = enrollment.UseLimit{} }},
 		{name: "negative used count", mutate: func(params *enrollment.CredentialParams) { params.UsedCount = -1 }},
@@ -144,6 +147,7 @@ func validCredentialParams(t *testing.T, limit enrollment.UseLimit) enrollment.C
 	return enrollment.CredentialParams{
 		ID:                  mustCredentialID(t),
 		ProfileID:           mustProfileID(t),
+		IssuerID:            mustIssuerID(t),
 		State:               enrollment.CredentialStateActive,
 		UseLimit:            limit,
 		IssuedRecoveryEpoch: 7,
@@ -178,6 +182,16 @@ func mustProfileID(t *testing.T) enrollment.ProfileID {
 	id, err := enrollment.ParseProfileID("01890f00-0000-7000-8000-000000000401")
 	if err != nil {
 		t.Fatalf("ParseProfileID() error = %v", err)
+	}
+	return id
+}
+
+func mustIssuerID(t *testing.T) identity.PrincipalID {
+	t.Helper()
+
+	id, err := identity.ParsePrincipalID("01890f00-0000-7000-8000-000000000011")
+	if err != nil {
+		t.Fatalf("ParsePrincipalID() error = %v", err)
 	}
 	return id
 }

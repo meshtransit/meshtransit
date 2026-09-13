@@ -504,6 +504,8 @@ func mustChange(
 		Profile:      resolution.Profile(),
 		Credential:   credential,
 		Identity:     command.Identity,
+		OwnerID:      credential.IssuerID(),
+		CustodianID:  credential.IssuerID(),
 		NodeID:       nodeID,
 		Hostname:     command.Hostname,
 		Disposition:  disposition,
