@@ -217,6 +217,20 @@ plus command-pool usage, pending requests, pool timeouts, and active
 subscriptions. Pool state is sampled only when metrics are scraped; no
 observability goroutine or unbounded label is introduced.
 
+PostgreSQL metrics use only the fixed `runtime` and `worker` pool roles. They
+cover the currently implemented health and outbox operations, operation
+latency and outcome, current connection usage, acquisition and empty-pool wait,
+and connection churn. SQL text, usernames, addresses, database names, and
+domain identifiers are never metric labels. Pool statistics are read only when
+the endpoint is scraped and do not add a sampler goroutine.
+
+PostgreSQL telemetry is partitioned only by the fixed `runtime` and `worker`
+credential-pool roles. It reports bounded semantic operation outcomes and
+latency, connection usage, acquisition/cancellation counts and wait duration,
+and connection creation/destruction. Pool state is also sampled at scrape time;
+SQL text, usernames, addresses, database names, and domain identifiers are
+never metric labels.
+
 Readiness opens only after the initial PostgreSQL and Redis checks succeed and
 the listener starts. Periodic bounded checks lower readiness on dependency loss
 and restore it after recovery. Graceful shutdown closes admission before

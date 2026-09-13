@@ -33,6 +33,7 @@ var (
 
 // Options contains one validated PostgreSQL pool configuration.
 type Options struct {
+	Role           PoolRole
 	Address        string
 	Database       string
 	User           string
@@ -44,9 +45,11 @@ type Options struct {
 
 // Pool is the concrete PostgreSQL dependency owned by the composition root.
 type Pool struct {
+	role           PoolRole
 	ping           func(context.Context) error
 	checkSchema    func(context.Context) error
 	outboxDatabase outboxDatabase
+	metrics        *postgresPoolMetrics
 	close          func()
 	closeOnce      sync.Once
 }
@@ -54,7 +57,7 @@ type Pool struct {
 // Open constructs a lazy, bounded TLS-only PostgreSQL pool. Connectivity is
 // checked synchronously by the application monitor before listeners start.
 func Open(ctx context.Context, options Options) (*Pool, error) {
-	if ctx == nil {
+	if ctx == nil || !options.Role.valid() {
 		return nil, ErrInvalidOptions
 	}
 	password, err := options.PasswordFile.Read()
@@ -75,11 +78,15 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
 	}
 	return &Pool{
+		role:           options.Role,
 		ping:           pool.Ping,
 		outboxDatabase: pgxOutboxDatabase{pool: pool},
 		checkSchema: func(ctx context.Context) error {
 			return checkRuntimeSchemaCompatibility(ctx, pool, options.User)
 		},
+		metrics: newPostgresPoolMetrics(options.Role, func() postgresPoolStats {
+			return snapshotPostgresPoolStats(pool.Stat())
+		}),
 		close: pool.Close,
 	}, nil
 }
@@ -92,10 +99,16 @@ func (pool *Pool) Check(ctx context.Context) error {
 	if ctx == nil || pool == nil || pool.ping == nil || pool.checkSchema == nil {
 		return ErrInvalidOptions
 	}
-	if err := pool.ping(ctx); err != nil {
+	startedAt := time.Now()
+	err := pool.ping(ctx)
+	pool.metrics.observeOperation(postgresOperationPing, time.Since(startedAt), err)
+	if err != nil {
 		return fmt.Errorf("ping postgres: %w", err)
 	}
-	if err := pool.checkSchema(ctx); err != nil {
+	startedAt = time.Now()
+	err = pool.checkSchema(ctx)
+	pool.metrics.observeOperation(postgresOperationSchemaCheck, time.Since(startedAt), err)
+	if err != nil {
 		return fmt.Errorf("check postgres schema: %w", err)
 	}
 	return nil
@@ -112,7 +125,7 @@ func (pool *Pool) Close() error {
 
 func buildPoolConfig(options Options, password string, caPEM []byte) (*pgxpool.Config, error) {
 	host, portValue, err := net.SplitHostPort(options.Address)
-	if err != nil || host == "" || options.Database == "" || options.User == "" || password == "" ||
+	if err != nil || !options.Role.valid() || host == "" || options.Database == "" || options.User == "" || password == "" ||
 		options.MaxConnections <= 0 || options.ConnectTimeout <= 0 {
 		return nil, ErrInvalidOptions
 	}
@@ -145,7 +158,7 @@ func buildPoolConfig(options Options, password string, caPEM []byte) (*pgxpool.C
 	}
 	poolConfig.ConnConfig.Fallbacks = nil
 	poolConfig.ConnConfig.RequireAuth = "scram-sha-256"
-	poolConfig.ConnConfig.RuntimeParams["application_name"] = "meshcore"
+	poolConfig.ConnConfig.RuntimeParams["application_name"] = options.Role.applicationName()
 	poolConfig.MaxConns = options.MaxConnections
 	poolConfig.MinConns = 0
 	poolConfig.MinIdleConns = 0

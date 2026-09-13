@@ -42,16 +42,21 @@ var (
 type OutboxStore struct {
 	database outboxDatabase
 	newToken func() (string, error)
+	metrics  *postgresPoolMetrics
 }
 
 // ReadNetworkRevisionBacklog reports only work currently eligible for claim.
 // It does not expose event identifiers or payload metadata.
 func (store *OutboxStore) ReadNetworkRevisionBacklog(
 	ctx context.Context,
-) (revisionworker.Backlog, error) {
+) (backlog revisionworker.Backlog, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil {
 		return revisionworker.Backlog{}, ErrInvalidOutboxStore
 	}
+	startedAt := time.Now()
+	defer func() {
+		store.metrics.observeOperation(postgresOperationOutboxBacklog, time.Since(startedAt), resultErr)
+	}()
 	var events, oldestAgeMilliseconds int64
 	if err := store.database.QueryRow(ctx, readNetworkRevisionBacklogSQL).Scan(
 		&events,
@@ -71,20 +76,21 @@ func (store *OutboxStore) ReadNetworkRevisionBacklog(
 
 // NewOutboxStore constructs the worker adapter from a worker-authenticated pool.
 func NewOutboxStore(pool *Pool) (*OutboxStore, error) {
-	if pool == nil || pool.outboxDatabase == nil {
+	if pool == nil || pool.role != PoolRoleWorker || pool.outboxDatabase == nil {
 		return nil, ErrInvalidOutboxStore
 	}
-	return newOutboxStore(pool.outboxDatabase, randomClaimToken)
+	return newOutboxStore(pool.outboxDatabase, randomClaimToken, pool.metrics)
 }
 
 func newOutboxStore(
 	database outboxDatabase,
 	newToken func() (string, error),
+	metrics *postgresPoolMetrics,
 ) (*OutboxStore, error) {
 	if database == nil || newToken == nil {
 		return nil, ErrInvalidOutboxStore
 	}
-	return &OutboxStore{database: database, newToken: newToken}, nil
+	return &OutboxStore{database: database, newToken: newToken, metrics: metrics}, nil
 }
 
 // ClaimNetworkRevisions leases a bounded ordered batch using SKIP LOCKED.
@@ -93,7 +99,7 @@ func (store *OutboxStore) ClaimNetworkRevisions(
 	workerID string,
 	limit int,
 	lease time.Duration,
-) ([]network.RevisionClaim, error) {
+) (claims []network.RevisionClaim, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || store.newToken == nil ||
 		!validOutboxWorkerID(workerID) || limit <= 0 || limit > maxOutboxBatchSize ||
 		lease < time.Millisecond || lease > maxOutboxLease {
@@ -103,6 +109,10 @@ func (store *OutboxStore) ClaimNetworkRevisions(
 	if err != nil {
 		return nil, errors.Join(ErrClaimOutbox, fmt.Errorf("generate claim token: %w", err))
 	}
+	startedAt := time.Now()
+	defer func() {
+		store.metrics.observeOperation(postgresOperationOutboxClaim, time.Since(startedAt), resultErr)
+	}()
 
 	rows, err := store.database.Query(
 		ctx,
@@ -120,7 +130,7 @@ func (store *OutboxStore) ClaimNetworkRevisions(
 	}
 	defer rows.Close()
 
-	claims := make([]network.RevisionClaim, 0, limit)
+	claims = make([]network.RevisionClaim, 0, limit)
 	for rows.Next() {
 		var eventID, workspaceID, networkID, recordedRevision int64
 		var attempt int
@@ -165,6 +175,10 @@ func (store *OutboxStore) LoadNetworkRevision(
 	if ctx == nil || store == nil || store.database == nil || !claim.IsValid() {
 		return network.RevisionAdvanced{}, ErrInvalidOutboxStore
 	}
+	startedAt := time.Now()
+	defer func() {
+		store.metrics.observeOperation(postgresOperationOutboxLoadRevision, time.Since(startedAt), resultErr)
+	}()
 	transaction, err := store.database.Begin(ctx, true)
 	if err != nil {
 		return network.RevisionAdvanced{}, errors.Join(ErrLoadOutboxRevision, err)
@@ -217,7 +231,12 @@ func (store *OutboxStore) MarkRevisionDelivered(
 	if ctx == nil || store == nil || store.database == nil || !claim.IsValid() {
 		return ErrInvalidOutboxStore
 	}
-	return store.finishClaim(ctx, markRevisionDeliveredSQL, claim)
+	return store.finishClaim(
+		ctx,
+		postgresOperationOutboxMarkDelivered,
+		markRevisionDeliveredSQL,
+		claim,
+	)
 }
 
 // RetryNetworkRevision atomically records a typed failed attempt and releases
@@ -235,6 +254,7 @@ func (store *OutboxStore) RetryNetworkRevision(
 	}
 	return store.finishClaim(
 		ctx,
+		postgresOperationOutboxRetry,
 		retryNetworkRevisionSQL,
 		claim,
 		retryDelay.Milliseconds(),
@@ -244,10 +264,15 @@ func (store *OutboxStore) RetryNetworkRevision(
 
 func (store *OutboxStore) finishClaim(
 	ctx context.Context,
+	operation postgresOperation,
 	query string,
 	claim network.RevisionClaim,
 	extraArguments ...any,
-) error {
+) (resultErr error) {
+	startedAt := time.Now()
+	defer func() {
+		store.metrics.observeOperation(operation, time.Since(startedAt), resultErr)
+	}()
 	arguments := []any{
 		claim.EventID(),
 		claim.Token(),

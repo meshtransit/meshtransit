@@ -22,6 +22,7 @@ func TestBuildPoolConfigAppliesSecurityAndPoolBounds(t *testing.T) {
 	t.Parallel()
 
 	poolConfig, err := buildPoolConfig(Options{
+		Role:           PoolRoleRuntime,
 		Address:        "database.internal:5432",
 		Database:       "meshtransit",
 		User:           "meshcore",
@@ -53,12 +54,16 @@ func TestBuildPoolConfigAppliesSecurityAndPoolBounds(t *testing.T) {
 	if poolConfig.ConnConfig.ConnectTimeout != 2*time.Second || poolConfig.PingTimeout != 2*time.Second {
 		t.Fatal("connect and ping timeouts were not bounded")
 	}
+	if got := poolConfig.ConnConfig.RuntimeParams["application_name"]; got != "meshcore-runtime" {
+		t.Fatalf("application_name = %q, want meshcore-runtime", got)
+	}
 }
 
 func TestBuildPoolConfigRejectsUnsafeInputs(t *testing.T) {
 	t.Parallel()
 
 	valid := Options{
+		Role:           PoolRoleRuntime,
 		Address:        "database.internal:5432",
 		Database:       "meshtransit",
 		User:           "meshcore",
@@ -72,6 +77,7 @@ func TestBuildPoolConfigRejectsUnsafeInputs(t *testing.T) {
 		caPEM    []byte
 	}{
 		{name: "missing host", options: withAddress(valid, ":5432"), password: "credential", caPEM: testCAPEM(t)},
+		{name: "missing pool role", options: withPoolRole(valid, ""), password: "credential", caPEM: testCAPEM(t)},
 		{name: "zero pool", options: withMaxConnections(valid, 0), password: "credential", caPEM: testCAPEM(t)},
 		{name: "missing password", options: valid, caPEM: testCAPEM(t)},
 		{name: "invalid ca", options: valid, password: "credential", caPEM: []byte("not a certificate")},
@@ -84,6 +90,14 @@ func TestBuildPoolConfigRejectsUnsafeInputs(t *testing.T) {
 				t.Fatalf("buildPoolConfig() error = %v, want ErrInvalidOptions", err)
 			}
 		})
+	}
+}
+
+func TestOpenRejectsInvalidRoleBeforeReadingCredentialFiles(t *testing.T) {
+	t.Parallel()
+
+	if _, err := Open(t.Context(), Options{}); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("Open() error = %v, want ErrInvalidOptions", err)
 	}
 }
 
@@ -197,6 +211,11 @@ func TestPoolConcurrentCloseRunsOnce(t *testing.T) {
 
 func withAddress(options Options, address string) Options {
 	options.Address = address
+	return options
+}
+
+func withPoolRole(options Options, role PoolRole) Options {
+	options.Role = role
 	return options
 }
 

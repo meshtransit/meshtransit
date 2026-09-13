@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/config"
 )
@@ -26,7 +28,13 @@ func openPostgresPools(
 	}
 	var pools postgresPools
 	if postgresConfig.Runtime != nil {
-		pool, err := openPostgresRolePool(ctx, postgresConfig, *postgresConfig.Runtime, connectTimeout)
+		pool, err := openPostgresRolePool(
+			ctx,
+			postgresadapter.PoolRoleRuntime,
+			postgresConfig,
+			*postgresConfig.Runtime,
+			connectTimeout,
+		)
 		if err != nil {
 			return postgresPools{}, fmt.Errorf("open runtime postgres pool: %w", err)
 		}
@@ -34,7 +42,13 @@ func openPostgresPools(
 		resources.Add("postgresql-runtime", pool.Close)
 	}
 	if postgresConfig.Worker != nil {
-		pool, err := openPostgresRolePool(ctx, postgresConfig, *postgresConfig.Worker, connectTimeout)
+		pool, err := openPostgresRolePool(
+			ctx,
+			postgresadapter.PoolRoleWorker,
+			postgresConfig,
+			*postgresConfig.Worker,
+			connectTimeout,
+		)
 		if err != nil {
 			return postgresPools{}, fmt.Errorf("open worker postgres pool: %w", err)
 		}
@@ -49,11 +63,13 @@ func openPostgresPools(
 
 func openPostgresRolePool(
 	ctx context.Context,
+	poolRole postgresadapter.PoolRole,
 	postgresConfig config.PostgreSQLConfig,
 	roleConfig config.PostgreSQLRoleConfig,
 	connectTimeout time.Duration,
 ) (*postgresadapter.Pool, error) {
 	return postgresadapter.Open(ctx, postgresadapter.Options{
+		Role:           poolRole,
 		Address:        postgresConfig.Address,
 		Database:       postgresConfig.Database,
 		User:           roleConfig.User,
@@ -66,4 +82,15 @@ func openPostgresRolePool(
 
 func (pools postgresPools) healthChecker() (*postgresadapter.HealthChecker, error) {
 	return postgresadapter.NewHealthChecker(pools.runtime, pools.worker)
+}
+
+func (pools postgresPools) metricsCollector() (prometheus.Collector, error) {
+	configured := make([]*postgresadapter.Pool, 0, 2)
+	if pools.runtime != nil {
+		configured = append(configured, pools.runtime)
+	}
+	if pools.worker != nil {
+		configured = append(configured, pools.worker)
+	}
+	return postgresadapter.NewMetricsCollector(configured...)
 }

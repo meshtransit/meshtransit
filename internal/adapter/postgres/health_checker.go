@@ -17,7 +17,9 @@ type HealthChecker struct {
 
 // NewHealthChecker constructs a checker for at least one role pool.
 func NewHealthChecker(runtime, worker *Pool) (*HealthChecker, error) {
-	if runtime == nil && worker == nil {
+	if (runtime == nil && worker == nil) ||
+		(runtime != nil && runtime.role != PoolRoleRuntime) ||
+		(worker != nil && worker.role != PoolRoleWorker) {
 		return nil, ErrInvalidOptions
 	}
 	return &HealthChecker{runtime: runtime, worker: worker}, nil

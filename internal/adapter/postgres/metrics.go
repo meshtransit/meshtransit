@@ -1,0 +1,326 @@
+package postgres
+
+import (
+	"errors"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+type postgresOperation string
+
+const (
+	postgresOperationPing                postgresOperation = "ping"
+	postgresOperationSchemaCheck         postgresOperation = "schema_check"
+	postgresOperationOutboxBacklog       postgresOperation = "outbox_backlog"
+	postgresOperationOutboxClaim         postgresOperation = "outbox_claim"
+	postgresOperationOutboxLoadRevision  postgresOperation = "outbox_load_revision"
+	postgresOperationOutboxMarkDelivered postgresOperation = "outbox_mark_delivered"
+	postgresOperationOutboxRetry         postgresOperation = "outbox_retry"
+)
+
+var (
+	// ErrInvalidMetrics indicates missing, duplicate, or uninitialized pools.
+	ErrInvalidMetrics  = errors.New("invalid postgres metrics")
+	postgresOperations = [...]postgresOperation{
+		postgresOperationPing,
+		postgresOperationSchemaCheck,
+		postgresOperationOutboxBacklog,
+		postgresOperationOutboxClaim,
+		postgresOperationOutboxLoadRevision,
+		postgresOperationOutboxMarkDelivered,
+		postgresOperationOutboxRetry,
+	}
+)
+
+type postgresPoolStats struct {
+	AcquireSuccessTotal  int64
+	AcquireCanceledTotal int64
+	EmptyAcquireTotal    int64
+	AcquireDuration      time.Duration
+	EmptyAcquireWait     time.Duration
+	AcquiredConnections  int32
+	IdleConnections      int32
+	ConstructingConns    int32
+	MaxConnections       int32
+	NewConnectionsTotal  int64
+	IdleDestroyedTotal   int64
+	LifetimeDestroyed    int64
+}
+
+type postgresPoolMetrics struct {
+	role                 PoolRole
+	operationTotal       *prometheus.CounterVec
+	operationDuration    *prometheus.HistogramVec
+	poolStats            func() postgresPoolStats
+	poolConnectionsDesc  *prometheus.Desc
+	poolLimitDesc        *prometheus.Desc
+	poolAcquiresDesc     *prometheus.Desc
+	emptyAcquiresDesc    *prometheus.Desc
+	acquireDurationDesc  *prometheus.Desc
+	emptyAcquireWaitDesc *prometheus.Desc
+	connectionsNewDesc   *prometheus.Desc
+	connectionsGoneDesc  *prometheus.Desc
+}
+
+func newPostgresPoolMetrics(
+	role PoolRole,
+	poolStats func() postgresPoolStats,
+) *postgresPoolMetrics {
+	if !role.valid() || poolStats == nil {
+		return nil
+	}
+	// Dashboard: sum by (pool_role, operation, result) (rate(meshtransit_postgres_operations_total[5m]))
+	// Alert: sum by (pool_role) (rate(meshtransit_postgres_operations_total{result="error"}[5m])) > 0
+	operationTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "meshtransit_postgres_operations_total",
+		Help: "Total PostgreSQL operations by fixed pool role, operation, and result.",
+	}, []string{"pool_role", "operation", "result"})
+	// Dashboard: histogram_quantile(0.99, sum(rate(meshtransit_postgres_operation_duration_seconds_bucket[5m])) by (le, pool_role, operation))
+	// Alert: histogram_quantile(0.99, sum(rate(meshtransit_postgres_operation_duration_seconds_bucket[5m])) by (le, pool_role, operation)) > 1
+	operationDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "meshtransit_postgres_operation_duration_seconds",
+		Help:    "PostgreSQL operation duration in seconds by fixed pool role, operation, and result.",
+		Buckets: []float64{0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+	}, []string{"pool_role", "operation", "result"})
+	for _, operation := range postgresOperations {
+		if !operation.validForRole(role) {
+			continue
+		}
+		for _, result := range [...]string{"success", "error"} {
+			operationTotal.WithLabelValues(string(role), string(operation), result)
+			operationDuration.WithLabelValues(string(role), string(operation), result)
+		}
+	}
+
+	return &postgresPoolMetrics{
+		role:              role,
+		operationTotal:    operationTotal,
+		operationDuration: operationDuration,
+		poolStats:         poolStats,
+		// Dashboard: meshtransit_postgres_pool_connections
+		// Alert: meshtransit_postgres_pool_connections{state="acquired"} / meshtransit_postgres_pool_connections_max > 0.9
+		poolConnectionsDesc: prometheus.NewDesc(
+			"meshtransit_postgres_pool_connections",
+			"Current PostgreSQL pool connections by fixed role and state.",
+			[]string{"pool_role", "state"},
+			nil,
+		),
+		// Dashboard: meshtransit_postgres_pool_connections_max
+		poolLimitDesc: prometheus.NewDesc(
+			"meshtransit_postgres_pool_connections_max",
+			"Configured maximum PostgreSQL pool connections by fixed role.",
+			[]string{"pool_role"},
+			nil,
+		),
+		// Dashboard: sum by (pool_role, result) (rate(meshtransit_postgres_pool_acquires_total[5m]))
+		// Alert: rate(meshtransit_postgres_pool_acquires_total{result="canceled"}[5m]) > 0
+		poolAcquiresDesc: prometheus.NewDesc(
+			"meshtransit_postgres_pool_acquires_total",
+			"Total PostgreSQL pool acquisition attempts by fixed role and result.",
+			[]string{"pool_role", "result"},
+			nil,
+		),
+		// Dashboard: rate(meshtransit_postgres_pool_empty_acquires_total[5m])
+		emptyAcquiresDesc: prometheus.NewDesc(
+			"meshtransit_postgres_pool_empty_acquires_total",
+			"Total successful PostgreSQL acquires that waited on an empty pool.",
+			[]string{"pool_role"},
+			nil,
+		),
+		// Dashboard: rate(meshtransit_postgres_pool_acquire_duration_seconds_total[5m]) / rate(meshtransit_postgres_pool_acquires_total{result="success"}[5m])
+		acquireDurationDesc: prometheus.NewDesc(
+			"meshtransit_postgres_pool_acquire_duration_seconds_total",
+			"Total duration in seconds of successful PostgreSQL pool acquires.",
+			[]string{"pool_role"},
+			nil,
+		),
+		// Dashboard: rate(meshtransit_postgres_pool_empty_acquire_wait_seconds_total[5m]) / rate(meshtransit_postgres_pool_empty_acquires_total[5m])
+		emptyAcquireWaitDesc: prometheus.NewDesc(
+			"meshtransit_postgres_pool_empty_acquire_wait_seconds_total",
+			"Total wait time in seconds for successful acquires from an empty PostgreSQL pool.",
+			[]string{"pool_role"},
+			nil,
+		),
+		// Dashboard: rate(meshtransit_postgres_pool_connections_created_total[5m])
+		connectionsNewDesc: prometheus.NewDesc(
+			"meshtransit_postgres_pool_connections_created_total",
+			"Total PostgreSQL pool connections created by fixed role.",
+			[]string{"pool_role"},
+			nil,
+		),
+		// Dashboard: sum by (pool_role, reason) (rate(meshtransit_postgres_pool_connections_destroyed_total[5m]))
+		connectionsGoneDesc: prometheus.NewDesc(
+			"meshtransit_postgres_pool_connections_destroyed_total",
+			"Total PostgreSQL pool connections destroyed by fixed role and reason.",
+			[]string{"pool_role", "reason"},
+			nil,
+		),
+	}
+}
+
+// NewMetricsCollector combines the configured serving pools into one
+// process-local collector. Each fixed pool role may appear at most once.
+func NewMetricsCollector(pools ...*Pool) (prometheus.Collector, error) {
+	if len(pools) == 0 {
+		return nil, ErrInvalidMetrics
+	}
+	metrics := make([]*postgresPoolMetrics, 0, len(pools))
+	roles := make(map[PoolRole]struct{}, len(pools))
+	for _, pool := range pools {
+		if pool == nil || !pool.role.valid() || pool.metrics == nil ||
+			pool.metrics.role != pool.role {
+			return nil, ErrInvalidMetrics
+		}
+		if _, exists := roles[pool.metrics.role]; exists {
+			return nil, ErrInvalidMetrics
+		}
+		roles[pool.metrics.role] = struct{}{}
+		metrics = append(metrics, pool.metrics)
+	}
+	return &postgresMetricsCollector{pools: metrics}, nil
+}
+
+type postgresMetricsCollector struct {
+	pools []*postgresPoolMetrics
+}
+
+func (collector *postgresMetricsCollector) Describe(descriptions chan<- *prometheus.Desc) {
+	collector.pools[0].describe(descriptions)
+}
+
+func (collector *postgresMetricsCollector) Collect(output chan<- prometheus.Metric) {
+	for _, metrics := range collector.pools {
+		metrics.collect(output)
+	}
+}
+
+func (metrics *postgresPoolMetrics) describe(descriptions chan<- *prometheus.Desc) {
+	metrics.operationTotal.Describe(descriptions)
+	metrics.operationDuration.Describe(descriptions)
+	descriptions <- metrics.poolConnectionsDesc
+	descriptions <- metrics.poolLimitDesc
+	descriptions <- metrics.poolAcquiresDesc
+	descriptions <- metrics.emptyAcquiresDesc
+	descriptions <- metrics.acquireDurationDesc
+	descriptions <- metrics.emptyAcquireWaitDesc
+	descriptions <- metrics.connectionsNewDesc
+	descriptions <- metrics.connectionsGoneDesc
+}
+
+func (metrics *postgresPoolMetrics) collect(output chan<- prometheus.Metric) {
+	metrics.operationTotal.Collect(output)
+	metrics.operationDuration.Collect(output)
+
+	stats := metrics.poolStats()
+	role := string(metrics.role)
+	collectGauge(output, metrics.poolConnectionsDesc, stats.AcquiredConnections, role, "acquired")
+	collectGauge(output, metrics.poolConnectionsDesc, stats.IdleConnections, role, "idle")
+	collectGauge(output, metrics.poolConnectionsDesc, stats.ConstructingConns, role, "constructing")
+	collectGauge(output, metrics.poolLimitDesc, stats.MaxConnections, role)
+	collectCounter(output, metrics.poolAcquiresDesc, stats.AcquireSuccessTotal, role, "success")
+	collectCounter(output, metrics.poolAcquiresDesc, stats.AcquireCanceledTotal, role, "canceled")
+	collectCounter(output, metrics.emptyAcquiresDesc, stats.EmptyAcquireTotal, role)
+	collectDurationCounter(output, metrics.acquireDurationDesc, stats.AcquireDuration, role)
+	collectDurationCounter(output, metrics.emptyAcquireWaitDesc, stats.EmptyAcquireWait, role)
+	collectCounter(output, metrics.connectionsNewDesc, stats.NewConnectionsTotal, role)
+	collectCounter(output, metrics.connectionsGoneDesc, stats.IdleDestroyedTotal, role, "idle")
+	collectCounter(output, metrics.connectionsGoneDesc, stats.LifetimeDestroyed, role, "lifetime")
+}
+
+func (metrics *postgresPoolMetrics) observeOperation(
+	operation postgresOperation,
+	duration time.Duration,
+	err error,
+) {
+	if metrics == nil {
+		return
+	}
+	if !operation.validForRole(metrics.role) {
+		return
+	}
+	result := "success"
+	if err != nil {
+		result = "error"
+	}
+	labels := []string{string(metrics.role), string(operation), result}
+	metrics.operationTotal.WithLabelValues(labels...).Inc()
+	metrics.operationDuration.WithLabelValues(labels...).Observe(max(duration.Seconds(), 0))
+}
+
+func (operation postgresOperation) validForRole(role PoolRole) bool {
+	if operation == postgresOperationPing || operation == postgresOperationSchemaCheck {
+		return role.valid()
+	}
+	if role != PoolRoleWorker {
+		return false
+	}
+	return operation == postgresOperationOutboxBacklog ||
+		operation == postgresOperationOutboxClaim ||
+		operation == postgresOperationOutboxLoadRevision ||
+		operation == postgresOperationOutboxMarkDelivered ||
+		operation == postgresOperationOutboxRetry
+}
+
+func collectGauge(
+	output chan<- prometheus.Metric,
+	description *prometheus.Desc,
+	value int32,
+	labels ...string,
+) {
+	output <- prometheus.MustNewConstMetric(
+		description,
+		prometheus.GaugeValue,
+		float64(max(value, 0)),
+		labels...,
+	)
+}
+
+func collectCounter(
+	output chan<- prometheus.Metric,
+	description *prometheus.Desc,
+	value int64,
+	labels ...string,
+) {
+	output <- prometheus.MustNewConstMetric(
+		description,
+		prometheus.CounterValue,
+		float64(max(value, 0)),
+		labels...,
+	)
+}
+
+func collectDurationCounter(
+	output chan<- prometheus.Metric,
+	description *prometheus.Desc,
+	value time.Duration,
+	labels ...string,
+) {
+	output <- prometheus.MustNewConstMetric(
+		description,
+		prometheus.CounterValue,
+		max(value.Seconds(), 0),
+		labels...,
+	)
+}
+
+func snapshotPostgresPoolStats(stats *pgxpool.Stat) postgresPoolStats {
+	if stats == nil {
+		return postgresPoolStats{}
+	}
+	return postgresPoolStats{
+		AcquireSuccessTotal:  stats.AcquireCount(),
+		AcquireCanceledTotal: stats.CanceledAcquireCount(),
+		EmptyAcquireTotal:    stats.EmptyAcquireCount(),
+		AcquireDuration:      stats.AcquireDuration(),
+		EmptyAcquireWait:     stats.EmptyAcquireWaitTime(),
+		AcquiredConnections:  stats.AcquiredConns(),
+		IdleConnections:      stats.IdleConns(),
+		ConstructingConns:    stats.ConstructingConns(),
+		MaxConnections:       stats.MaxConns(),
+		NewConnectionsTotal:  stats.NewConnsCount(),
+		IdleDestroyedTotal:   stats.MaxIdleDestroyCount(),
+		LifetimeDestroyed:    stats.MaxLifetimeDestroyCount(),
+	}
+}

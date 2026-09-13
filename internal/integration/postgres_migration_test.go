@@ -104,6 +104,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	}
 	runtimePostgreSQL := *postgresConfig.Runtime
 	runtimePool, err := postgresadapter.Open(ctx, postgresadapter.Options{
+		Role:           postgresadapter.PoolRoleRuntime,
 		Address:        postgresConfig.Address,
 		Database:       postgresConfig.Database,
 		User:           runtimePostgreSQL.User,

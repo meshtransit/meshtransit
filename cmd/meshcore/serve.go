@@ -57,6 +57,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 	}()
 
 	checkers := make([]app.DependencyChecker, 0, len(readiness.RequiredComponents()))
+	additionalMetrics := make([]prometheus.Collector, 0, 2)
 	var storagePools postgresPools
 	var redisClient *redisadapter.Client
 	if processConfig.Storage != nil {
@@ -76,6 +77,12 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			return 1
 		}
 		checkers = append(checkers, postgresChecker)
+		postgresMetrics, metricsErr := storagePools.metricsCollector()
+		if metricsErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "postgres_metrics_failure", "error", metricsErr)
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, postgresMetrics)
 
 		redisClient, err = redisadapter.Open(ctx, redisadapter.Options{
 			Address:        processConfig.Storage.Redis.Address,
@@ -91,6 +98,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		}
 		resources.Add("redis", redisClient.Close)
 		checkers = append(checkers, redisClient)
+		additionalMetrics = append(additionalMetrics, redisClient.MetricsCollector())
 	}
 
 	monitor, err := app.NewDependencyMonitor(
@@ -106,10 +114,6 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		return 1
 	}
 	build := buildinfo.Current()
-	additionalMetrics := make([]prometheus.Collector, 0, 1)
-	if redisClient != nil {
-		additionalMetrics = append(additionalMetrics, redisClient.MetricsCollector())
-	}
 	var revisionWorkerTelemetry *revisionworker.Telemetry
 	if processConfig.RevisionWorker != nil {
 		revisionWorkerTelemetry = revisionworker.NewTelemetry()

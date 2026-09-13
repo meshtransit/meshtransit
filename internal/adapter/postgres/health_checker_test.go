@@ -13,8 +13,8 @@ func TestHealthCheckerChecksConfiguredRolePools(t *testing.T) {
 
 	runtimeChecks := 0
 	workerChecks := 0
-	runtimePool := testHealthyPool(func() { runtimeChecks++ })
-	workerPool := testHealthyPool(func() { workerChecks++ })
+	runtimePool := testHealthyPool(PoolRoleRuntime, func() { runtimeChecks++ })
+	workerPool := testHealthyPool(PoolRoleWorker, func() { workerChecks++ })
 	checker, err := NewHealthChecker(runtimePool, workerPool)
 	if err != nil {
 		t.Fatalf("NewHealthChecker() error = %v", err)
@@ -36,8 +36,8 @@ func TestHealthCheckerAggregatesRolePoolFailures(t *testing.T) {
 	runtimeErr := errors.New("runtime unavailable")
 	workerErr := errors.New("worker unavailable")
 	checker, err := NewHealthChecker(
-		testFailingPool(runtimeErr),
-		testFailingPool(workerErr),
+		testFailingPool(PoolRoleRuntime, runtimeErr),
+		testFailingPool(PoolRoleWorker, workerErr),
 	)
 	if err != nil {
 		t.Fatalf("NewHealthChecker() error = %v", err)
@@ -54,7 +54,7 @@ func TestHealthCheckerRejectsMissingPoolsAndContext(t *testing.T) {
 	if _, err := NewHealthChecker(nil, nil); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("NewHealthChecker(nil, nil) error = %v, want ErrInvalidOptions", err)
 	}
-	checker, err := NewHealthChecker(testHealthyPool(func() {}), nil)
+	checker, err := NewHealthChecker(testHealthyPool(PoolRoleRuntime, func() {}), nil)
 	if err != nil {
 		t.Fatalf("NewHealthChecker() error = %v", err)
 	}
@@ -64,8 +64,20 @@ func TestHealthCheckerRejectsMissingPoolsAndContext(t *testing.T) {
 	}
 }
 
-func testHealthyPool(checked func()) *Pool {
+func TestHealthCheckerRejectsSwappedPoolRoles(t *testing.T) {
+	t.Parallel()
+
+	if _, err := NewHealthChecker(
+		testHealthyPool(PoolRoleWorker, func() {}),
+		testHealthyPool(PoolRoleRuntime, func() {}),
+	); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("NewHealthChecker() error = %v, want ErrInvalidOptions", err)
+	}
+}
+
+func testHealthyPool(role PoolRole, checked func()) *Pool {
 	return &Pool{
+		role: role,
 		ping: func(context.Context) error {
 			checked()
 			return nil
@@ -75,8 +87,9 @@ func testHealthyPool(checked func()) *Pool {
 	}
 }
 
-func testFailingPool(checkErr error) *Pool {
+func testFailingPool(role PoolRole, checkErr error) *Pool {
 	return &Pool{
+		role:        role,
 		ping:        func(context.Context) error { return checkErr },
 		checkSchema: func(context.Context) error { return nil },
 		close:       func() {},

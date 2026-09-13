@@ -114,6 +114,7 @@ func openIntegrationWorkerPool(
 	}
 	workerRoleConfig := *postgresConfig.Worker
 	pool, err := postgresadapter.Open(ctx, postgresadapter.Options{
+		Role:           postgresadapter.PoolRoleWorker,
 		Address:        postgresConfig.Address,
 		Database:       postgresConfig.Database,
 		User:           workerRoleConfig.User,

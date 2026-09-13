@@ -240,6 +240,24 @@ func TestOutboxStoreRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestNewOutboxStoreRequiresWorkerPool(t *testing.T) {
+	t.Parallel()
+
+	database := &fakeOutboxDatabase{}
+	if _, err := NewOutboxStore(&Pool{
+		role:           PoolRoleRuntime,
+		outboxDatabase: database,
+	}); !errors.Is(err, ErrInvalidOutboxStore) {
+		t.Fatalf("NewOutboxStore(runtime) error = %v, want ErrInvalidOutboxStore", err)
+	}
+	if _, err := NewOutboxStore(&Pool{
+		role:           PoolRoleWorker,
+		outboxDatabase: database,
+	}); err != nil {
+		t.Fatalf("NewOutboxStore(worker) error = %v", err)
+	}
+}
+
 func TestRandomClaimTokenProducesValidDistinctUUIDs(t *testing.T) {
 	t.Parallel()
 
@@ -279,7 +297,7 @@ func validTestRevisionClaim(t *testing.T) network.RevisionClaim {
 
 func mustTestOutboxStore(t *testing.T, database outboxDatabase) *OutboxStore {
 	t.Helper()
-	store, err := newOutboxStore(database, func() (string, error) { return testClaimID, nil })
+	store, err := newOutboxStore(database, func() (string, error) { return testClaimID, nil }, nil)
 	if err != nil {
 		t.Fatalf("newOutboxStore() error = %v", err)
 	}

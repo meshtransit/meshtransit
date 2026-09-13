@@ -36,14 +36,57 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 	defer cancel()
 
 	postgresConfig := processConfig.Storage.PostgreSQL
-	runtimePool := openDependencyRolePool(t, ctx, postgresConfig, postgresConfig.Runtime, processConfig.Dependencies.CheckTimeout)
-	workerPool := openDependencyRolePool(t, ctx, postgresConfig, postgresConfig.Worker, processConfig.Dependencies.CheckTimeout)
+	runtimePool := openDependencyRolePool(
+		t,
+		ctx,
+		postgresadapter.PoolRoleRuntime,
+		postgresConfig,
+		postgresConfig.Runtime,
+		processConfig.Dependencies.CheckTimeout,
+	)
+	workerPool := openDependencyRolePool(
+		t,
+		ctx,
+		postgresadapter.PoolRoleWorker,
+		postgresConfig,
+		postgresConfig.Worker,
+		processConfig.Dependencies.CheckTimeout,
+	)
 	postgresChecker, err := postgresadapter.NewHealthChecker(runtimePool, workerPool)
 	if err != nil {
 		t.Fatalf("postgres.NewHealthChecker() error = %v", err)
 	}
 	if err := postgresChecker.Check(ctx); err != nil {
 		t.Fatalf("PostgreSQL HealthChecker.Check() error = %v", err)
+	}
+	configuredPools := make([]*postgresadapter.Pool, 0, 2)
+	if runtimePool != nil {
+		configuredPools = append(configuredPools, runtimePool)
+	}
+	if workerPool != nil {
+		configuredPools = append(configuredPools, workerPool)
+	}
+	postgresMetrics, err := postgresadapter.NewMetricsCollector(configuredPools...)
+	if err != nil {
+		t.Fatalf("postgres.NewMetricsCollector() error = %v", err)
+	}
+	postgresMetricsBody := gatherMetrics(t, postgresMetrics)
+	expectedMetrics := map[string]string{
+		"pool usage": `meshtransit_postgres_pool_connections`,
+		"pool wait":  `meshtransit_postgres_pool_empty_acquire_wait_seconds_total`,
+	}
+	if runtimePool != nil {
+		expectedMetrics["runtime ping"] = `meshtransit_postgres_operations_total{operation="ping",pool_role="runtime",result="success"} 1`
+		expectedMetrics["runtime schema"] = `meshtransit_postgres_operations_total{operation="schema_check",pool_role="runtime",result="success"} 1`
+	}
+	if workerPool != nil {
+		expectedMetrics["worker ping"] = `meshtransit_postgres_operations_total{operation="ping",pool_role="worker",result="success"} 1`
+		expectedMetrics["worker schema"] = `meshtransit_postgres_operations_total{operation="schema_check",pool_role="worker",result="success"} 1`
+	}
+	for name, value := range expectedMetrics {
+		if !strings.Contains(postgresMetricsBody, value) {
+			t.Errorf("PostgreSQL metrics missing %s %q", name, value)
+		}
 	}
 
 	redisClient, err := redisadapter.Open(ctx, redisadapter.Options{
@@ -135,6 +178,7 @@ func gatherMetrics(t *testing.T, collector prometheus.Collector) string {
 func openDependencyRolePool(
 	t *testing.T,
 	ctx context.Context,
+	poolRole postgresadapter.PoolRole,
 	postgresConfig config.PostgreSQLConfig,
 	roleConfig *config.PostgreSQLRoleConfig,
 	connectTimeout time.Duration,
@@ -144,6 +188,7 @@ func openDependencyRolePool(
 		return nil
 	}
 	pool, err := postgresadapter.Open(ctx, postgresadapter.Options{
+		Role:           poolRole,
 		Address:        postgresConfig.Address,
 		Database:       postgresConfig.Database,
 		User:           roleConfig.User,
