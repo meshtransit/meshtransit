@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/meshtransit/meshtransit/internal/enrollment"
 	registration "github.com/meshtransit/meshtransit/internal/enrollment/registration"
 	"github.com/meshtransit/meshtransit/internal/node"
 )
@@ -61,6 +62,7 @@ func TestServiceRegisterCreatesNodeAtomically(t *testing.T) {
 	completedNodeID, completed := change.Registration().NodeID()
 	if !change.IsValid() || change.Credential().UsedCount() != 1 || !completed ||
 		completedNodeID != nodeID || change.OccurredAt() != fixtureTime ||
+		!change.Profile().IsValid() ||
 		change.Identity() != command.Identity || change.Hostname() != command.Hostname ||
 		change.MutationIDs() != mutationIDs.ids {
 		t.Fatal("registration change did not preserve the atomic domain decision")
@@ -88,6 +90,35 @@ func TestServiceRegisterResumesExistingNode(t *testing.T) {
 	}
 	if ids.calls != 0 {
 		t.Fatalf("Node ID generator calls = %d, want 0 on resume", ids.calls)
+	}
+}
+
+func TestServiceRegisterRejectsInactiveProfileBeforeCredentialUse(t *testing.T) {
+	t.Parallel()
+
+	command := mustCommand(t)
+	transaction := &fakeTransaction{
+		resolution: mustOpenResolutionWithProfileState(
+			t,
+			command,
+			node.ID{},
+			enrollment.ProfileStateSuspended,
+		),
+	}
+	queue := &transactionQueue{transactions: []*fakeTransaction{transaction}}
+	ids := &fixedNodeIDs{nodeID: mustNodeID(t, "01890f20-0000-7000-8000-000000000015")}
+
+	_, err := mustService(t, queue, ids, &recordedRetry{}).Register(t.Context(), command)
+	if !errors.Is(err, registration.ErrRegistrationFailed) ||
+		!errors.Is(err, enrollment.ErrProfileInactive) {
+		t.Fatalf("Service.Register() error = %v, want ErrProfileInactive", err)
+	}
+	if !slices.Equal(transaction.calls, []string{"resolve", "rollback"}) || ids.calls != 0 {
+		t.Fatalf(
+			"inactive profile calls = %v, Node ID calls = %d; want resolve/rollback and no ID",
+			transaction.calls,
+			ids.calls,
+		)
 	}
 }
 
@@ -470,6 +501,7 @@ func mustChange(
 	}
 	change, err := registration.NewChange(registration.ChangeParams{
 		Registration: state,
+		Profile:      resolution.Profile(),
 		Credential:   credential,
 		Identity:     command.Identity,
 		NodeID:       nodeID,

@@ -117,6 +117,7 @@ func (result Result) IsValid() bool {
 // Resolution is durable registration state read under the required locks.
 type Resolution struct {
 	registration      enrollment.Registration
+	profile           enrollment.Profile
 	credential        enrollment.Credential
 	credentialID      enrollment.CredentialID
 	requestHash       RequestHash
@@ -128,12 +129,14 @@ type Resolution struct {
 // NewOpenResolution constructs locked state that still requires a mutation.
 func NewOpenResolution(
 	registration enrollment.Registration,
+	profile enrollment.Profile,
 	credential enrollment.Credential,
 	existingNode node.ID,
 	requestHash RequestHash,
 ) (Resolution, error) {
 	resolution := Resolution{
 		registration: registration,
+		profile:      profile,
 		credential:   credential,
 		credentialID: credential.ID(),
 		requestHash:  requestHash,
@@ -173,6 +176,9 @@ func (resolution Resolution) Registration() enrollment.Registration { return res
 // Credential returns the locked credential state for an open registration.
 func (resolution Resolution) Credential() enrollment.Credential { return resolution.credential }
 
+// Profile returns the locked profile state for an open registration.
+func (resolution Resolution) Profile() enrollment.Profile { return resolution.profile }
+
 // CredentialID returns the credential bound to this registration intent.
 func (resolution Resolution) CredentialID() enrollment.CredentialID { return resolution.credentialID }
 
@@ -196,8 +202,11 @@ func (resolution Resolution) CompletedIdentity() (node.RegistrationIdentity, boo
 
 func (resolution Resolution) isOpenValid() bool {
 	state := resolution.registration.State()
-	return resolution.registration.IsValid() && resolution.credential.IsValid() &&
+	return resolution.registration.IsValid() && resolution.profile.IsValid() &&
+		resolution.credential.IsValid() &&
 		(state == enrollment.RegistrationStatePending || state == enrollment.RegistrationStateAuthorized) &&
+		resolution.registration.Scope() == resolution.profile.Scope() &&
+		resolution.registration.ProfileID() == resolution.profile.ID() &&
 		resolution.registration.ProfileID() == resolution.credential.ProfileID() &&
 		resolution.credentialID == resolution.credential.ID() && resolution.requestHash.IsValid() &&
 		!resolution.completed.IsValid() &&
@@ -212,12 +221,14 @@ func (resolution Resolution) isCompletedValid() bool {
 		resolution.registration.ID() == resolution.completed.RegistrationID() &&
 		resolution.registration.Scope() == resolution.completed.Scope() &&
 		nodeID == resolution.completed.NodeID() && !resolution.credential.IsValid() &&
+		!resolution.profile.IsValid() &&
 		!resolution.existingNode.IsValid()
 }
 
 // Change contains one fully validated atomic registration mutation.
 type Change struct {
 	registration enrollment.Registration
+	profile      enrollment.Profile
 	credential   enrollment.Credential
 	identity     node.RegistrationIdentity
 	nodeID       node.ID
@@ -231,6 +242,7 @@ type Change struct {
 // registration mutation.
 type ChangeParams struct {
 	Registration enrollment.Registration
+	Profile      enrollment.Profile
 	Credential   enrollment.Credential
 	Identity     node.RegistrationIdentity
 	NodeID       node.ID
@@ -244,6 +256,7 @@ type ChangeParams struct {
 func NewChange(params ChangeParams) (Change, error) {
 	change := Change{
 		registration: params.Registration,
+		profile:      params.Profile,
 		credential:   params.Credential,
 		identity:     params.Identity,
 		nodeID:       params.NodeID,
@@ -263,6 +276,9 @@ func (change Change) Registration() enrollment.Registration { return change.regi
 
 // Credential returns the consumed state to persist.
 func (change Change) Credential() enrollment.Credential { return change.credential }
+
+// Profile returns the locked profile decision applied to this mutation.
+func (change Change) Profile() enrollment.Profile { return change.profile }
 
 // Identity returns the authenticated machine and Node keys.
 func (change Change) Identity() node.RegistrationIdentity { return change.identity }
@@ -285,10 +301,14 @@ func (change Change) OccurredAt() time.Time { return change.occurredAt }
 // IsValid reports whether the atomic change is internally consistent.
 func (change Change) IsValid() bool {
 	registrationNodeID, completed := change.registration.NodeID()
-	return change.registration.IsValid() && completed && change.credential.IsValid() &&
+	return change.registration.IsValid() && completed && change.profile.IsValid() &&
+		change.credential.IsValid() &&
 		change.identity.IsValid() && change.nodeID.IsValid() && change.hostname.IsValid() &&
 		change.disposition.isValid() && change.mutationIDs.IsValid() && !change.occurredAt.IsZero() &&
 		registrationNodeID == change.nodeID &&
+		change.registration.Scope() == change.profile.Scope() &&
+		change.registration.ProfileID() == change.profile.ID() &&
 		change.registration.ProfileID() == change.credential.ProfileID() &&
+		change.profile.ValidateCredential(change.credential) == nil &&
 		change.registration.MachineFingerprint() == change.identity.MachineKey().Fingerprint()
 }

@@ -168,6 +168,10 @@ func (service *Service) attempt(
 		return completed, nil
 	}
 
+	profile := resolution.Profile()
+	if err := profile.ValidateCredential(resolution.Credential()); err != nil {
+		return Result{}, err
+	}
 	credential, err := resolution.Credential().Consume(now, command.RecoveryEpoch)
 	if err != nil {
 		return Result{}, err
@@ -207,6 +211,7 @@ func (service *Service) attempt(
 	}
 	change, err := NewChange(ChangeParams{
 		Registration: registration,
+		Profile:      profile,
 		Credential:   credential,
 		Identity:     command.Identity,
 		NodeID:       nodeID,
@@ -262,7 +267,9 @@ func validateResolution(command Command, resolution Resolution) error {
 		return nil
 	}
 	credential := resolution.Credential()
-	if !credential.IsValid() || credential.ProfileID() != registration.ProfileID() {
+	profile := resolution.Profile()
+	if !credential.IsValid() || !profile.IsValid() || profile.Scope() != command.Scope ||
+		profile.ID() != registration.ProfileID() || credential.ProfileID() != profile.ID() {
 		return ErrInvalidResolution
 	}
 	if credential.ID() != command.CredentialID {

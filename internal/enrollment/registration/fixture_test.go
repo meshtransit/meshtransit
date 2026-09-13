@@ -249,6 +249,22 @@ func mustOpenResolution(
 ) registration.Resolution {
 	t.Helper()
 
+	return mustOpenResolutionWithProfileState(
+		t,
+		command,
+		existingNode,
+		enrollment.ProfileStateActive,
+	)
+}
+
+func mustOpenResolutionWithProfileState(
+	t *testing.T,
+	command registration.Command,
+	existingNode node.ID,
+	profileState enrollment.ProfileState,
+) registration.Resolution {
+	t.Helper()
+
 	pending := mustRegistration(t, command, enrollment.RegistrationStatePending, node.ID{})
 	limit, err := enrollment.NewBoundedUseLimit(2)
 	if err != nil {
@@ -267,11 +283,28 @@ func mustOpenResolution(
 	if err != nil {
 		t.Fatalf("enrollment.NewCredential() error = %v", err)
 	}
+	profile, err := enrollment.NewProfile(enrollment.ProfileParams{
+		ID:                 pending.ProfileID(),
+		Scope:              command.Scope,
+		State:              profileState,
+		NodeLifetime:       time.Hour,
+		EphemeralMode:      enrollment.EphemeralModePersistent,
+		CredentialUseLimit: limit,
+	})
+	if err != nil {
+		t.Fatalf("enrollment.NewProfile() error = %v", err)
+	}
 	requestHash, err := command.RequestHash()
 	if err != nil {
 		t.Fatalf("Command.RequestHash() error = %v", err)
 	}
-	resolution, err := registration.NewOpenResolution(pending, credential, existingNode, requestHash)
+	resolution, err := registration.NewOpenResolution(
+		pending,
+		profile,
+		credential,
+		existingNode,
+		requestHash,
+	)
 	if err != nil {
 		t.Fatalf("registration.NewOpenResolution() error = %v", err)
 	}
