@@ -182,9 +182,25 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertWorkerCannotLockNetworkRevision(ctx, t, workerConnection)
 	assertWorkerCannotLockNetworkAuditStream(ctx, t, workerConnection)
 	assertWorkerCannotAdvanceNetworkInventoryRevision(ctx, t, workerConnection)
+	assertWorkerCannotLockRegistrationResources(ctx, t, workerConnection)
 	assertWorkerOutboxPrivilegeContract(ctx, t, workerConnection)
 	workerPool := openIntegrationWorkerPool(ctx, t, adminConfig)
 	assertWorkerOutboxDelivery(ctx, t, adminConnection, workerPool)
 	assertRevisionDispatcherDelivery(ctx, t, adminConnection, workerPool)
 	assertRevisionDispatcherRecovery(ctx, t, adminConnection, workerPool)
+
+	openRegistrationCommand := seedOpenRegistrationAuthority(ctx, t, adminConnection)
+	assertRegistrationTransactionLockHelpers(
+		ctx,
+		t,
+		runtimeConnection,
+		openRegistrationCommand,
+	)
+	assertPostgreSQLRegistrationTransaction(
+		ctx,
+		t,
+		adminConnection,
+		runtimePool,
+		openRegistrationCommand,
+	)
 }

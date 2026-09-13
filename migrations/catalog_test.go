@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 11 {
-		t.Fatalf("len(Catalog()) = %d, want 11", len(catalog))
+	if len(catalog) != 12 {
+		t.Fatalf("len(Catalog()) = %d, want 12", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -402,8 +402,48 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network revision lock migration SQL contains excessive capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 11 {
-		t.Fatalf("LatestVersion() = %d, want 11", LatestVersion())
+	registrationTransactionLocks := catalog[11]
+	if registrationTransactionLocks.Description != "registration transaction scoped lock helpers" {
+		t.Fatalf(
+			"migration 12 description = %q, want registration transaction lock helpers",
+			registrationTransactionLocks.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.lock_registration_credential",
+		"CREATE FUNCTION mesh_ops.lock_registration_prefixes",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh, mesh_ops",
+		"pg_catalog.current_setting('mesh.workspace_id', TRUE)",
+		"pg_catalog.current_setting('mesh.network_id', TRUE)",
+		"FOR UPDATE OF credential",
+		"pg_catalog.pg_advisory_xact_lock(",
+		"meshtransit:registration_allocator:",
+		"REVOKE ALL ON FUNCTION mesh_ops.lock_registration_credential(UUID) FROM PUBLIC",
+		"REVOKE ALL ON FUNCTION mesh_ops.lock_registration_prefixes(BIGINT) FROM PUBLIC",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.lock_registration_credential(UUID) TO mesh_runtime",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.lock_registration_prefixes(BIGINT) TO mesh_runtime",
+	} {
+		if !strings.Contains(registrationTransactionLocks.SQL, required) {
+			t.Errorf("registration transaction lock migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"FOR UPDATE OF realm, pool, prefix",
+		"TO mesh_worker",
+	} {
+		if strings.Contains(registrationTransactionLocks.SQL, forbidden) {
+			t.Errorf("registration transaction lock migration SQL contains excessive capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 12 {
+		t.Fatalf("LatestVersion() = %d, want 12", LatestVersion())
 	}
 }
 

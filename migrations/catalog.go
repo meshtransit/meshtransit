@@ -13,17 +13,18 @@ const (
 	// this binary. It advances only with a reviewed compatibility change.
 	ApplicationGeneration int64 = 1
 
-	platformFoundationDescription      = "platform migration foundation"
-	authorityFoundationDescription     = "tenancy and address authority foundation"
-	integrityFoundationDescription     = "audit and outbox integrity foundation"
-	outboxDeliveryDescription          = "outbox worker delivery capability"
-	registrationAuthorityDescription   = "node enrollment and registration authority"
-	registrationIntentHashDescription  = "registration intent semantic hash"
-	transactionNetworkScopeDescription = "transaction-local public network scope"
-	networkAuditStreamHeadDescription  = "transaction-local network audit stream head"
-	networkInventoryAdvanceDescription = "transaction-local network inventory revision advance"
-	registrationReplayDescription      = "registration idempotency replay evidence"
-	networkRevisionLockDescription     = "transaction-local network revision lock"
+	platformFoundationDescription           = "platform migration foundation"
+	authorityFoundationDescription          = "tenancy and address authority foundation"
+	integrityFoundationDescription          = "audit and outbox integrity foundation"
+	outboxDeliveryDescription               = "outbox worker delivery capability"
+	registrationAuthorityDescription        = "node enrollment and registration authority"
+	registrationIntentHashDescription       = "registration intent semantic hash"
+	transactionNetworkScopeDescription      = "transaction-local public network scope"
+	networkAuditStreamHeadDescription       = "transaction-local network audit stream head"
+	networkInventoryAdvanceDescription      = "transaction-local network inventory revision advance"
+	registrationReplayDescription           = "registration idempotency replay evidence"
+	networkRevisionLockDescription          = "transaction-local network revision lock"
+	registrationTransactionLocksDescription = "registration transaction scoped lock helpers"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -59,6 +60,9 @@ var registrationReplaySQL string
 //go:embed 000011_network_revision_lock.up.sql
 var networkRevisionLockSQL string
 
+//go:embed 000012_registration_transaction_locks.up.sql
+var registrationTransactionLocksSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -85,6 +89,7 @@ func Catalog() []Migration {
 		newMigration(9, networkInventoryAdvanceDescription, networkInventoryAdvanceSQL),
 		newMigration(10, registrationReplayDescription, registrationReplaySQL),
 		newMigration(11, networkRevisionLockDescription, networkRevisionLockSQL),
+		newMigration(12, registrationTransactionLocksDescription, registrationTransactionLocksSQL),
 	}
 }
 

@@ -11,14 +11,19 @@ import (
 type postgresOperation string
 
 const (
-	postgresOperationPing                postgresOperation = "ping"
-	postgresOperationSchemaCheck         postgresOperation = "schema_check"
-	postgresOperationRegistrationReplay  postgresOperation = "registration_replay"
-	postgresOperationOutboxBacklog       postgresOperation = "outbox_backlog"
-	postgresOperationOutboxClaim         postgresOperation = "outbox_claim"
-	postgresOperationOutboxLoadRevision  postgresOperation = "outbox_load_revision"
-	postgresOperationOutboxMarkDelivered postgresOperation = "outbox_mark_delivered"
-	postgresOperationOutboxRetry         postgresOperation = "outbox_retry"
+	postgresOperationPing                 postgresOperation = "ping"
+	postgresOperationSchemaCheck          postgresOperation = "schema_check"
+	postgresOperationRegistrationReplay   postgresOperation = "registration_replay"
+	postgresOperationRegistrationBegin    postgresOperation = "registration_begin"
+	postgresOperationRegistrationResolve  postgresOperation = "registration_resolve"
+	postgresOperationRegistrationApply    postgresOperation = "registration_apply"
+	postgresOperationRegistrationCommit   postgresOperation = "registration_commit"
+	postgresOperationRegistrationRollback postgresOperation = "registration_rollback"
+	postgresOperationOutboxBacklog        postgresOperation = "outbox_backlog"
+	postgresOperationOutboxClaim          postgresOperation = "outbox_claim"
+	postgresOperationOutboxLoadRevision   postgresOperation = "outbox_load_revision"
+	postgresOperationOutboxMarkDelivered  postgresOperation = "outbox_mark_delivered"
+	postgresOperationOutboxRetry          postgresOperation = "outbox_retry"
 )
 
 var (
@@ -28,6 +33,11 @@ var (
 		postgresOperationPing,
 		postgresOperationSchemaCheck,
 		postgresOperationRegistrationReplay,
+		postgresOperationRegistrationBegin,
+		postgresOperationRegistrationResolve,
+		postgresOperationRegistrationApply,
+		postgresOperationRegistrationCommit,
+		postgresOperationRegistrationRollback,
 		postgresOperationOutboxBacklog,
 		postgresOperationOutboxClaim,
 		postgresOperationOutboxLoadRevision,
@@ -256,7 +266,12 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 		return role.valid()
 	}
 	if role == PoolRoleRuntime {
-		return operation == postgresOperationRegistrationReplay
+		return operation == postgresOperationRegistrationReplay ||
+			operation == postgresOperationRegistrationBegin ||
+			operation == postgresOperationRegistrationResolve ||
+			operation == postgresOperationRegistrationApply ||
+			operation == postgresOperationRegistrationCommit ||
+			operation == postgresOperationRegistrationRollback
 	}
 	if role != PoolRoleWorker {
 		return false
