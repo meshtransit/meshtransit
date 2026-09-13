@@ -20,7 +20,10 @@ import (
 	"time"
 )
 
-const testMeshcoreBinaryEnvironment = "MESHTRANSIT_TEST_MESHCORE_BINARY"
+const (
+	testMeshcoreBinaryEnvironment = "MESHTRANSIT_TEST_MESHCORE_BINARY"
+	integrationResponseLimit      = 1 << 20
+)
 
 func TestRoleAllProcessRestartsAfterGracefulShutdown(t *testing.T) {
 	if os.Getenv("MESHTRANSIT_INTEGRATION") != "1" {
@@ -126,6 +129,10 @@ func (process *integrationProcess) forceStop(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := process.wait(ctx); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return
+		}
 		t.Errorf("join killed integration process: %v", err)
 	}
 }
@@ -215,10 +222,13 @@ func integrationGET(
 	if err != nil {
 		return 0, "", err
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	body, err := io.ReadAll(io.LimitReader(response.Body, integrationResponseLimit+1))
 	closeErr := response.Body.Close()
 	if err := errors.Join(err, closeErr); err != nil {
 		return 0, "", err
+	}
+	if len(body) > integrationResponseLimit {
+		return 0, "", fmt.Errorf("response body exceeds %d bytes", integrationResponseLimit)
 	}
 	return response.StatusCode, string(body), nil
 }
