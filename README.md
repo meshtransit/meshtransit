@@ -249,8 +249,10 @@ verifies that a repeat run is a no-op. It also exercises RLS isolation and the
 audit/outbox commit, rollback, UUID reuse, immutability, sequence, and hash-chain
 invariants, plus real worker claim/reconciliation/delivered/retry behavior.
 Never point this test at a shared or production database.
-`make integration-migrations-container` provisions the same isolated PostgreSQL
-18.6 TLS/SCRAM fixture used by CI and removes it when the test exits.
+`make integration-platform-container` provisions the same isolated PostgreSQL
+18.6 TLS/SCRAM and Redis 8.8.0 TLS/ACL fixtures used by CI. It additionally
+proves end-to-end Network-revision wakeup delivery and transactional retry, then
+removes both containers when the test exits.
 
 ## Container image
 

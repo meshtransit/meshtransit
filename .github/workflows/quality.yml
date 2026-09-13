@@ -30,12 +30,13 @@ jobs:
       - name: Run repository gates
         run: make quality
 
-  migration-integration:
-    name: PostgreSQL migration integration
+  platform-integration:
+    name: PostgreSQL and Redis platform integration
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       POSTGRES_IMAGE: postgres:18.6-bookworm
+      REDIS_IMAGE: redis:8.8.0-trixie
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -46,8 +47,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run migration concurrency and idempotency checks
-        run: make integration-migrations-container
+      - name: Run migration, authority, outbox, and wakeup checks
+        run: make integration-platform-container
 
   container:
     name: Container build and security gates

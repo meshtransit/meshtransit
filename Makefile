@@ -11,7 +11,7 @@ TRIVY_IMAGE_FLAGS ?=
 TEST_TIMEOUT ?= 2m
 INTEGRATION_TEST_TIMEOUT ?= 5m
 
-.PHONY: fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-migrations-container lint vuln workflow-lint quality \
+.PHONY: fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container lint vuln workflow-lint quality \
 	container-build container-build-multiarch container-inspect container-smoke container-scan
 
 fmt:
@@ -39,8 +39,8 @@ integration-deps:
 integration-migrations:
 	$(GO) test -timeout=$(INTEGRATION_TEST_TIMEOUT) -tags=integration -count=1 -run '^TestPostgreSQLMigrations$$' ./internal/integration
 
-integration-migrations-container:
-	bash scripts/ci/run-migration-integration.sh
+integration-platform-container:
+	bash scripts/ci/run-platform-integration.sh
 
 lint:
 	$(GOLANGCI_LINT) run ./...

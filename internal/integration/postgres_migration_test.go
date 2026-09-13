@@ -157,4 +157,5 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertWorkerOutboxPrivilegeContract(t, ctx, workerConnection)
 	workerPool := openIntegrationWorkerPool(t, ctx, adminConfig)
 	assertWorkerOutboxDelivery(t, ctx, adminConnection, workerPool)
+	assertRevisionDispatcherDelivery(t, ctx, adminConnection, workerPool)
 }
