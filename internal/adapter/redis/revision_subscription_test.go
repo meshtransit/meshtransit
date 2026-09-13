@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -92,7 +93,7 @@ func TestRevisionSubscriptionRejectsUnexpectedInput(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			subscription := newRevisionSubscription(test.transport)
+			subscription := newRevisionSubscription(test.transport, nil)
 			if _, err := subscription.Receive(t.Context()); !errors.Is(err, test.wantErr) {
 				t.Fatalf("RevisionSubscription.Receive() error = %v, want %v", err, test.wantErr)
 			}
@@ -119,6 +120,32 @@ func TestClientSubscribeNetworkRevisionAdvancedClassifiesFailure(t *testing.T) {
 	}
 }
 
+func TestClientSubscribeNetworkRevisionAdvancedRejectsNilTransport(t *testing.T) {
+	t.Parallel()
+
+	metrics := newRedisMetrics(1, nil)
+	client := &Client{
+		subscribe: func(context.Context, string) (messageSubscription, error) {
+			return nil, nil
+		},
+		metrics: metrics,
+	}
+	if _, err := client.SubscribeNetworkRevisionAdvanced(t.Context()); !errors.Is(
+		err,
+		ErrSubscribeRevisionWakeup,
+	) {
+		t.Fatalf("SubscribeNetworkRevisionAdvanced() error = %v, want ErrSubscribeRevisionWakeup", err)
+	}
+
+	body := gatherRedisMetrics(t, metrics)
+	if !strings.Contains(
+		body,
+		`meshtransit_redis_commands_total{operation="subscribe",result="error"} 1`,
+	) {
+		t.Fatalf("metrics did not classify nil transport as an error: %s", body)
+	}
+}
+
 func TestRevisionSubscriptionConcurrentCloseRunsOnce(t *testing.T) {
 	t.Parallel()
 
@@ -129,7 +156,9 @@ func TestRevisionSubscriptionConcurrentCloseRunsOnce(t *testing.T) {
 			return nil
 		},
 	}
-	subscription := newRevisionSubscription(transport)
+	metrics := newRedisMetrics(1, nil)
+	metrics.subscriptionOpened()
+	subscription := newRevisionSubscription(transport, metrics)
 	start := make(chan struct{})
 	var callers sync.WaitGroup
 	for range 32 {
@@ -144,6 +173,33 @@ func TestRevisionSubscriptionConcurrentCloseRunsOnce(t *testing.T) {
 	callers.Wait()
 	if got := closeCalls.Load(); got != 1 {
 		t.Fatalf("close calls = %d, want 1", got)
+	}
+	if body := gatherRedisMetrics(t, metrics); !strings.Contains(
+		body,
+		`meshtransit_redis_subscriptions_active 0`,
+	) {
+		t.Fatalf("metrics did not release concurrently closed subscription: %s", body)
+	}
+}
+
+func TestRevisionSubscriptionCloseFailureRemainsObservable(t *testing.T) {
+	t.Parallel()
+
+	closeErr := errors.New("close failed")
+	metrics := newRedisMetrics(1, nil)
+	metrics.subscriptionOpened()
+	subscription := newRevisionSubscription(&fakeMessageSubscription{
+		closeFunc: func() error { return closeErr },
+	}, metrics)
+
+	if err := subscription.Close(); !errors.Is(err, closeErr) {
+		t.Fatalf("RevisionSubscription.Close() error = %v, want close failure", err)
+	}
+	if body := gatherRedisMetrics(t, metrics); !strings.Contains(
+		body,
+		`meshtransit_redis_subscriptions_active 1`,
+	) {
+		t.Fatalf("metrics hid a subscription with uncertain close state: %s", body)
 	}
 }
 

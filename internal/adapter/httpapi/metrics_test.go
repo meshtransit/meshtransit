@@ -1,11 +1,14 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/meshtransit/meshtransit/internal/app"
 	"github.com/meshtransit/meshtransit/internal/network/revisionworker"
@@ -170,6 +173,46 @@ func TestOperatorMetricsExposeRevisionWorkerTelemetryWithBoundedResults(t *testi
 		if !strings.Contains(response.Body.String(), value) {
 			t.Errorf("metrics missing %s %q", name, value)
 		}
+	}
+}
+
+func TestOperatorMetricsRegisterAdditionalProcessCollector(t *testing.T) {
+	t.Parallel()
+
+	dependencyMetric := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "meshtransit_test_dependency_ready",
+		Help: "Test-only dependency signal.",
+	})
+	dependencyMetric.Set(1)
+	metrics, err := newOperatorMetrics(
+		newRuntimeState(t, app.RoleAPI),
+		testBuildInfo(),
+		nil,
+		dependencyMetric,
+	)
+	if err != nil {
+		t.Fatalf("newOperatorMetrics() error = %v", err)
+	}
+
+	response := request(t, metrics.handler, "/metrics")
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET /metrics status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if !strings.Contains(response.Body.String(), `meshtransit_test_dependency_ready 1`) {
+		t.Fatalf("metrics missing additional collector: %s", response.Body.String())
+	}
+}
+
+func TestOperatorMetricsRejectNilAdditionalCollector(t *testing.T) {
+	t.Parallel()
+
+	if _, err := newOperatorMetrics(
+		newRuntimeState(t, app.RoleAPI),
+		testBuildInfo(),
+		nil,
+		nil,
+	); !errors.Is(err, ErrInvalidMetrics) {
+		t.Fatalf("newOperatorMetrics() error = %v, want ErrInvalidMetrics", err)
 	}
 }
 

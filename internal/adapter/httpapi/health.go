@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/meshtransit/meshtransit/internal/app"
 	"github.com/meshtransit/meshtransit/internal/network/revisionworker"
 )
@@ -57,6 +59,7 @@ type HealthServerOptions struct {
 	Logger                  *slog.Logger
 	Build                   BuildInfo
 	RevisionWorkerTelemetry *revisionworker.Telemetry
+	AdditionalMetrics       []prometheus.Collector
 }
 
 // NewHealthServer constructs a bounded operator server without opening a listener.
@@ -64,7 +67,12 @@ func NewHealthServer(options HealthServerOptions) (*HealthServer, error) {
 	if options.Address == "" || options.State == nil || options.Logger == nil {
 		return nil, ErrInvalidHealthServer
 	}
-	metrics, err := newOperatorMetrics(options.State, options.Build, options.RevisionWorkerTelemetry)
+	metrics, err := newOperatorMetrics(
+		options.State,
+		options.Build,
+		options.RevisionWorkerTelemetry,
+		options.AdditionalMetrics...,
+	)
 	if err != nil {
 		return nil, errors.Join(ErrInvalidHealthServer, err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/meshtransit/meshtransit/internal/network"
 	redisclient "github.com/redis/go-redis/v9"
@@ -25,6 +26,7 @@ type messageSubscription interface {
 // It starts no goroutine; the caller owns its receive loop and cancellation.
 type RevisionSubscription struct {
 	transport messageSubscription
+	metrics   *redisMetrics
 
 	closeOnce sync.Once
 	closeErr  error
@@ -35,18 +37,26 @@ func (client *Client) SubscribeNetworkRevisionAdvanced(ctx context.Context) (*Re
 	if ctx == nil || client == nil || client.subscribe == nil {
 		return nil, ErrInvalidOptions
 	}
+	startedAt := time.Now()
 	transport, err := client.subscribe(ctx, networkRevisionAdvancedChannel)
 	if err != nil {
+		client.metrics.observeCommand(redisCommandSubscribe, startedAt, err)
 		return nil, errors.Join(ErrSubscribeRevisionWakeup, err)
 	}
 	if transport == nil {
+		client.metrics.observeCommand(redisCommandSubscribe, startedAt, ErrSubscribeRevisionWakeup)
 		return nil, ErrSubscribeRevisionWakeup
 	}
-	return newRevisionSubscription(transport), nil
+	client.metrics.observeCommand(redisCommandSubscribe, startedAt, nil)
+	client.metrics.subscriptionOpened()
+	return newRevisionSubscription(transport, client.metrics), nil
 }
 
-func newRevisionSubscription(transport messageSubscription) *RevisionSubscription {
-	return &RevisionSubscription{transport: transport}
+func newRevisionSubscription(
+	transport messageSubscription,
+	metrics *redisMetrics,
+) *RevisionSubscription {
+	return &RevisionSubscription{transport: transport, metrics: metrics}
 }
 
 // Receive waits for one wakeup or caller cancellation and validates the exact
@@ -55,7 +65,9 @@ func (subscription *RevisionSubscription) Receive(ctx context.Context) (network.
 	if ctx == nil || subscription == nil || subscription.transport == nil {
 		return network.RevisionAdvanced{}, ErrInvalidOptions
 	}
+	startedAt := time.Now()
 	message, err := subscription.transport.ReceiveMessage(ctx)
+	subscription.metrics.observeCommand(redisCommandReceive, startedAt, err)
 	if err != nil {
 		return network.RevisionAdvanced{}, errors.Join(ErrReceiveRevisionWakeup, err)
 	}
@@ -72,6 +84,9 @@ func (subscription *RevisionSubscription) Close() error {
 	}
 	subscription.closeOnce.Do(func() {
 		subscription.closeErr = subscription.transport.Close()
+		if subscription.closeErr == nil {
+			subscription.metrics.subscriptionClosed()
+		}
 	})
 	return subscription.closeErr
 }

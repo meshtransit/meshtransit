@@ -41,6 +41,7 @@ func newOperatorMetrics(
 	state healthState,
 	build BuildInfo,
 	workerTelemetry revisionWorkerTelemetry,
+	additionalCollectors ...prometheus.Collector,
 ) (*operatorMetrics, error) {
 	if state == nil || !validBuildInfo(build) {
 		return nil, ErrInvalidMetrics
@@ -96,6 +97,12 @@ func newOperatorMetrics(
 	collectorSet = append(collectorSet, newRuntimeMetricsCollector(state, snapshot.Roles, components))
 	if workerTelemetry != nil {
 		collectorSet = append(collectorSet, newRevisionWorkerMetricsCollector(workerTelemetry))
+	}
+	for _, collector := range additionalCollectors {
+		if collector == nil {
+			return nil, ErrInvalidMetrics
+		}
+		collectorSet = append(collectorSet, collector)
 	}
 
 	for _, collector := range collectorSet {

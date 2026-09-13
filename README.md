@@ -211,6 +211,12 @@ claim outcomes, claimed-event count, and delivery outcomes. Outcome labels are
 closed sets (`success`/`error` and `delivered`/`deferred`/`failed`); event,
 Workspace, Network, and worker identifiers are never metric labels.
 
+Processes with storage dependencies also expose Redis command count and
+latency for the fixed `ping`, `publish`, `subscribe`, and `receive` operations,
+plus command-pool usage, pending requests, pool timeouts, and active
+subscriptions. Pool state is sampled only when metrics are scraped; no
+observability goroutine or unbounded label is introduced.
+
 Readiness opens only after the initial PostgreSQL and Redis checks succeed and
 the listener starts. Periodic bounded checks lower readiness on dependency loss
 and restore it after recovery. Graceful shutdown closes admission before

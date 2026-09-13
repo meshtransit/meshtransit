@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"time"
 
 	"github.com/meshtransit/meshtransit/internal/network"
 )
@@ -36,7 +37,10 @@ func (client *Client) PublishNetworkRevisionAdvanced(
 	if err != nil {
 		return err
 	}
-	if err := client.publish(ctx, networkRevisionAdvancedChannel, payload); err != nil {
+	startedAt := time.Now()
+	err = client.publish(ctx, networkRevisionAdvancedChannel, payload)
+	client.metrics.observeCommand(redisCommandPublish, startedAt, err)
+	if err != nil {
 		return errors.Join(ErrPublishRevisionWakeup, err)
 	}
 	return nil

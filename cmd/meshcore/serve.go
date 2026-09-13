@@ -5,6 +5,8 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
 	redisadapter "github.com/meshtransit/meshtransit/internal/adapter/redis"
 	"github.com/meshtransit/meshtransit/internal/app"
@@ -104,6 +106,10 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		return 1
 	}
 	build := buildinfo.Current()
+	additionalMetrics := make([]prometheus.Collector, 0, 1)
+	if redisClient != nil {
+		additionalMetrics = append(additionalMetrics, redisClient.MetricsCollector())
+	}
 	var revisionWorkerTelemetry *revisionworker.Telemetry
 	if processConfig.RevisionWorker != nil {
 		revisionWorkerTelemetry = revisionworker.NewTelemetry()
@@ -119,6 +125,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			ConfigSchemaVersion: config.SchemaVersion,
 		},
 		RevisionWorkerTelemetry: revisionWorkerTelemetry,
+		AdditionalMetrics:       additionalMetrics,
 	})
 	if err != nil {
 		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_health_server", "error", err)

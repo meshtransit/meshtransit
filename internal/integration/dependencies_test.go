@@ -4,9 +4,15 @@ package integration
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	redisadapter "github.com/meshtransit/meshtransit/internal/adapter/redis"
@@ -95,6 +101,35 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 			wakeup.Number(),
 		)
 	}
+	metricsBody := gatherMetrics(t, redisClient.MetricsCollector())
+	for name, value := range map[string]string{
+		"successful ping":      `meshtransit_redis_commands_total{operation="ping",result="success"} 1`,
+		"successful publish":   `meshtransit_redis_commands_total{operation="publish",result="success"} 1`,
+		"successful subscribe": `meshtransit_redis_commands_total{operation="subscribe",result="success"} 1`,
+		"successful receive":   `meshtransit_redis_commands_total{operation="receive",result="success"} 1`,
+		"command-pool state":   `meshtransit_redis_pool_connections`,
+		"active subscriptions": `meshtransit_redis_subscriptions_active 1`,
+	} {
+		if !strings.Contains(metricsBody, value) {
+			t.Errorf("Redis metrics missing %s %q", name, value)
+		}
+	}
+}
+
+func gatherMetrics(t *testing.T, collector prometheus.Collector) string {
+	t.Helper()
+
+	registry := prometheus.NewRegistry()
+	if err := registry.Register(collector); err != nil {
+		t.Fatalf("register integration metrics collector: %v", err)
+	}
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", nil)
+	response := httptest.NewRecorder()
+	promhttp.HandlerFor(registry, promhttp.HandlerOpts{}).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d, want %d", response.Code, http.StatusOK)
+	}
+	return response.Body.String()
 }
 
 func openDependencyRolePool(

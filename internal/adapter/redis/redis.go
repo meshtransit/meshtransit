@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	redisclient "github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/maintnotifications"
 
@@ -47,6 +48,7 @@ type Client struct {
 	ping      func(context.Context) error
 	publish   func(context.Context, string, []byte) error
 	subscribe func(context.Context, string) (messageSubscription, error)
+	metrics   *redisMetrics
 	close     func() error
 	closeOnce sync.Once
 	closeErr  error
@@ -86,7 +88,8 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			}
 			return subscription, nil
 		},
-		close: client.Close,
+		metrics: newRedisMetrics(options.PoolSize, client.PoolStats),
+		close:   client.Close,
 	}, nil
 }
 
@@ -98,10 +101,22 @@ func (client *Client) Check(ctx context.Context) error {
 	if ctx == nil || client == nil || client.ping == nil {
 		return ErrInvalidOptions
 	}
-	if err := client.ping(ctx); err != nil {
+	startedAt := time.Now()
+	err := client.ping(ctx)
+	client.metrics.observeCommand(redisCommandPing, startedAt, err)
+	if err != nil {
 		return fmt.Errorf("ping redis: %w", err)
 	}
 	return nil
+}
+
+// MetricsCollector returns the process-local Redis collector. The composition
+// root owns registration with the operator metrics registry.
+func (client *Client) MetricsCollector() prometheus.Collector {
+	if client == nil || client.metrics == nil {
+		return nil
+	}
+	return client.metrics
 }
 
 // Close releases the client once and returns the stable first close result.
