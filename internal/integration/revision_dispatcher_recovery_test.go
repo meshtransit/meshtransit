@@ -16,19 +16,19 @@ import (
 )
 
 func assertRevisionDispatcherRecovery(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	adminConnection *pgx.Conn,
 	workerPool *postgresadapter.Pool,
 ) {
 	t.Helper()
 
-	eventID := commitIntegrationNetworkRevision(t, ctx, adminConnection, 5, "993")
+	eventID := commitIntegrationNetworkRevision(ctx, t, adminConnection, 5, "993")
 	outbox, err := postgresadapter.NewOutboxStore(workerPool)
 	if err != nil {
 		t.Fatalf("postgres.NewOutboxStore() error = %v", err)
 	}
-	redisClient := openIntegrationRedisClient(t, ctx)
+	redisClient := openIntegrationRedisClient(ctx, t)
 	logger := slog.New(slog.DiscardHandler)
 
 	t.Run("process stops after observable effect before completion", func(t *testing.T) {
@@ -59,7 +59,7 @@ func assertRevisionDispatcherRecovery(
 			t.Fatalf("first revision subscription Receive() error = %v", receiveErr)
 		}
 		assertIntegrationRevision(t, revision, 5)
-		waitForIntegrationOutcome(t, receiveCtx, func() bool {
+		waitForIntegrationOutcome(receiveCtx, t, func() bool {
 			return telemetry.Snapshot().FailedTotal == 1
 		})
 
@@ -74,7 +74,7 @@ WHERE id = $1`, eventID).Scan(&state); err != nil {
 		}
 	})
 
-	waitForIntegrationLeaseExpiry(t, ctx)
+	waitForIntegrationLeaseExpiry(ctx, t)
 
 	t.Run("new process replays effect and completes expired claim", func(t *testing.T) {
 		subscription, subscribeErr := redisClient.SubscribeNetworkRevisionAdvanced(ctx)
@@ -98,11 +98,11 @@ WHERE id = $1`, eventID).Scan(&state); err != nil {
 			t.Fatalf("replayed revision subscription Receive() error = %v", receiveErr)
 		}
 		assertIntegrationRevision(t, revision, 5)
-		waitForIntegrationOutcome(t, receiveCtx, func() bool {
+		waitForIntegrationOutcome(receiveCtx, t, func() bool {
 			return telemetry.Snapshot().DeliveredTotal == 1
 		})
 
-		assertOutboxOutcome(t, ctx, adminConnection, eventID, "delivered", "delivered", nil)
+		assertOutboxOutcome(ctx, t, adminConnection, eventID, "delivered", "delivered", nil)
 		var attemptCount int
 		if err := adminConnection.QueryRow(ctx, `SELECT attempt_count
 FROM mesh_ops.outbox_event
@@ -144,7 +144,7 @@ func newRecoveryDispatcher(
 	return dispatcher
 }
 
-func waitForIntegrationLeaseExpiry(t *testing.T, ctx context.Context) {
+func waitForIntegrationLeaseExpiry(ctx context.Context, t *testing.T) {
 	t.Helper()
 
 	timer := time.NewTimer(2200 * time.Millisecond)

@@ -36,10 +36,10 @@ type authorityEvidenceFixture struct {
 	outboxEventClass       string
 }
 
-func seedAuthorityFixture(t *testing.T, ctx context.Context, connection *pgx.Conn) {
+func seedAuthorityFixture(ctx context.Context, t *testing.T, connection *pgx.Conn) {
 	t.Helper()
 
-	commitAuditedAuthorityFixture(t, ctx, connection, authorityEvidenceFixture{
+	commitAuditedAuthorityFixture(ctx, t, connection, authorityEvidenceFixture{
 		changePublicID:    "01890f01-0000-7000-8000-000000000001",
 		eventPublicID:     "01890f02-0000-7000-8000-000000000001",
 		outboxPublicID:    "01890f03-0000-7000-8000-000000000001",
@@ -81,7 +81,7 @@ func seedAuthorityFixture(t *testing.T, ctx context.Context, connection *pgx.Con
 		}
 	})
 
-	commitAuditedAuthorityFixture(t, ctx, connection, authorityEvidenceFixture{
+	commitAuditedAuthorityFixture(ctx, t, connection, authorityEvidenceFixture{
 		changePublicID:         "01890f01-0000-7000-8000-000000000011",
 		eventPublicID:          "01890f02-0000-7000-8000-000000000011",
 		outboxPublicID:         "01890f03-0000-7000-8000-000000000011",
@@ -112,7 +112,7 @@ func seedAuthorityFixture(t *testing.T, ctx context.Context, connection *pgx.Con
 		}
 	})
 
-	seedWorkspaceAuthority(t, ctx, connection, authorityFixture{
+	seedWorkspaceAuthority(ctx, t, connection, authorityFixture{
 		workspaceID:     101,
 		networkID:       201,
 		addressRealmID:  301,
@@ -121,7 +121,7 @@ func seedAuthorityFixture(t *testing.T, ctx context.Context, connection *pgx.Con
 		publicIDSuffix:  "101",
 		nameSuffix:      "one",
 	})
-	seedWorkspaceAuthority(t, ctx, connection, authorityFixture{
+	seedWorkspaceAuthority(ctx, t, connection, authorityFixture{
 		workspaceID:     102,
 		networkID:       202,
 		addressRealmID:  302,
@@ -133,15 +133,15 @@ func seedAuthorityFixture(t *testing.T, ctx context.Context, connection *pgx.Con
 }
 
 func seedWorkspaceAuthority(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	connection *pgx.Conn,
 	fixture authorityFixture,
 ) {
 	t.Helper()
 
 	publicID := "01890f00-0000-7000-8000-000000000" + strconv.FormatInt(fixture.networkID, 10)
-	commitAuditedAuthorityFixture(t, ctx, connection, authorityEvidenceFixture{
+	commitAuditedAuthorityFixture(ctx, t, connection, authorityEvidenceFixture{
 		changePublicID:         "01890f01-0000-7000-8000-000000000" + fixture.publicIDSuffix,
 		eventPublicID:          "01890f02-0000-7000-8000-000000000" + fixture.publicIDSuffix,
 		outboxPublicID:         "01890f03-0000-7000-8000-000000000" + fixture.publicIDSuffix,
@@ -155,7 +155,7 @@ func seedWorkspaceAuthority(
 		permission:             "system.bootstrap",
 		outboxEventClass:       "network.created",
 	}, func(transaction pgx.Tx) {
-		setIntegrationScope(t, ctx, transaction, fixture.workspaceID, fixture.networkID)
+		setIntegrationScope(ctx, t, transaction, fixture.workspaceID, fixture.networkID)
 
 		statements := []struct {
 			name      string
@@ -247,8 +247,8 @@ VALUES ($1, $2)`,
 }
 
 func commitAuditedAuthorityFixture(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	connection *pgx.Conn,
 	evidence authorityEvidenceFixture,
 	mutate func(pgx.Tx),
@@ -259,8 +259,8 @@ func commitAuditedAuthorityFixture(
 	if err != nil {
 		t.Fatalf("begin audited authority fixture transaction: %v", err)
 	}
-	defer rollbackIntegrationTransaction(t, ctx, transaction)
-	setIntegrationChange(t, ctx, transaction, evidence.changePublicID)
+	defer rollbackIntegrationTransaction(ctx, t, transaction)
+	setIntegrationChange(ctx, t, transaction, evidence.changePublicID)
 	mutate(transaction)
 
 	var expectedSequence int64
@@ -327,8 +327,8 @@ WHERE id = $1`, evidence.streamID).Scan(&expectedSequence, &previousHash); err !
 }
 
 func setIntegrationChange(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	transaction pgx.Tx,
 	changePublicID string,
 ) {

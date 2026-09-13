@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func assertDatabasePrivilegeContract(t *testing.T, ctx context.Context, connection *pgx.Conn) {
+func assertDatabasePrivilegeContract(ctx context.Context, t *testing.T, connection *pgx.Conn) {
 	t.Helper()
 
 	var runtimeConnect, workerConnect, observerConnect bool
@@ -48,7 +48,7 @@ func assertDatabasePrivilegeContract(t *testing.T, ctx context.Context, connecti
 	}
 }
 
-func assertAuthorityConstraints(t *testing.T, ctx context.Context, connection *pgx.Conn) {
+func assertAuthorityConstraints(ctx context.Context, t *testing.T, connection *pgx.Conn) {
 	t.Helper()
 
 	tests := []struct {
@@ -79,8 +79,8 @@ func assertAuthorityConstraints(t *testing.T, ctx context.Context, connection *p
 			if err != nil {
 				t.Fatalf("begin constraint transaction: %v", err)
 			}
-			defer rollbackIntegrationTransaction(t, ctx, transaction)
-			setIntegrationScope(t, ctx, transaction, 101, test.networkID)
+			defer rollbackIntegrationTransaction(ctx, t, transaction)
+			setIntegrationScope(ctx, t, transaction, 101, test.networkID)
 			_, err = transaction.Exec(ctx, `INSERT INTO mesh.network_prefix (
     id, public_id, workspace_id, network_id, address_realm_id, address_pool_id, prefix, family, state
 ) OVERRIDING SYSTEM VALUE VALUES (
@@ -91,14 +91,14 @@ func assertAuthorityConstraints(t *testing.T, ctx context.Context, connection *p
 	}
 }
 
-func assertRuntimeAuthorityIsolation(t *testing.T, ctx context.Context, connection *pgx.Conn) {
+func assertRuntimeAuthorityIsolation(ctx context.Context, t *testing.T, connection *pgx.Conn) {
 	t.Helper()
 
-	assertScopeCounts(t, ctx, connection, "", "", 0, 0, 0, 0)
-	assertScopeCounts(t, ctx, connection, "invalid", "invalid", 0, 0, 0, 0)
-	assertScopeCounts(t, ctx, connection, "101", "201", 1, 1, 1, 1)
-	assertScopeCounts(t, ctx, connection, "101", "202", 1, 0, 0, 0)
-	assertScopeCounts(t, ctx, connection, "102", "202", 1, 1, 1, 1)
+	assertScopeCounts(ctx, t, connection, "", "", 0, 0, 0, 0)
+	assertScopeCounts(ctx, t, connection, "invalid", "invalid", 0, 0, 0, 0)
+	assertScopeCounts(ctx, t, connection, "101", "201", 1, 1, 1, 1)
+	assertScopeCounts(ctx, t, connection, "101", "202", 1, 0, 0, 0)
+	assertScopeCounts(ctx, t, connection, "102", "202", 1, 1, 1, 1)
 
 	var canInsertWorkspace, canReadPrincipal, canCreateSchema bool
 	var canReadOutbox, canInsertOutbox, canReadAudit, canExecuteAuditAppend bool
@@ -158,7 +158,7 @@ func assertRuntimeAuthorityIsolation(t *testing.T, ctx context.Context, connecti
 	assertPostgreSQLCode(t, err, "42501")
 }
 
-func assertWorkerOutboxPrivilegeContract(t *testing.T, ctx context.Context, connection *pgx.Conn) {
+func assertWorkerOutboxPrivilegeContract(ctx context.Context, t *testing.T, connection *pgx.Conn) {
 	t.Helper()
 
 	var selectEventID, selectPayload, updateState, updatePublicID bool
@@ -224,8 +224,8 @@ func assertWorkerOutboxPrivilegeContract(t *testing.T, ctx context.Context, conn
 }
 
 func assertScopeCounts(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	connection *pgx.Conn,
 	workspaceScope string,
 	networkScope string,
@@ -240,7 +240,7 @@ func assertScopeCounts(
 	if err != nil {
 		t.Fatalf("begin runtime scope transaction: %v", err)
 	}
-	defer rollbackIntegrationTransaction(t, ctx, transaction)
+	defer rollbackIntegrationTransaction(ctx, t, transaction)
 	if workspaceScope != "" || networkScope != "" {
 		if _, err := transaction.Exec(ctx, `SELECT
     pg_catalog.set_config('mesh.workspace_id', $1, TRUE),
@@ -271,8 +271,8 @@ func assertScopeCounts(
 }
 
 func setIntegrationScope(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	transaction pgx.Tx,
 	workspaceID int64,
 	networkID int64,

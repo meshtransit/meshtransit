@@ -44,8 +44,8 @@ func loadIntegrationAdminConfig(t *testing.T) config.MigrationConfig {
 }
 
 func openIntegrationMigrationRunner(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	migrationConfig config.MigrationConfig,
 ) *postgresadapter.MigrationRunner {
 	t.Helper()
@@ -76,8 +76,8 @@ func openIntegrationMigrationRunner(
 }
 
 func openIntegrationWorkerConnection(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	adminConfig config.MigrationConfig,
 ) *pgx.Conn {
 	t.Helper()
@@ -89,8 +89,8 @@ func openIntegrationWorkerConnection(
 	}
 	workerRoleConfig := *postgresConfig.Worker
 	return openIntegrationPostgreSQLConnection(
-		t,
 		ctx,
+		t,
 		postgresConfig.Address,
 		postgresConfig.Database,
 		workerRoleConfig.User,
@@ -101,8 +101,8 @@ func openIntegrationWorkerConnection(
 }
 
 func openIntegrationWorkerPool(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	adminConfig config.MigrationConfig,
 ) *postgresadapter.Pool {
 	t.Helper()
@@ -170,8 +170,8 @@ func loadIntegrationWorkerConfig(
 }
 
 func openIntegrationPostgreSQLConnection(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	address string,
 	database string,
 	user string,
@@ -235,7 +235,7 @@ func openIntegrationPostgreSQLConnection(
 	return connection
 }
 
-func rollbackIntegrationTransaction(t *testing.T, ctx context.Context, transaction pgx.Tx) {
+func rollbackIntegrationTransaction(ctx context.Context, t *testing.T, transaction pgx.Tx) {
 	t.Helper()
 
 	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), integrationCleanupTimeout)

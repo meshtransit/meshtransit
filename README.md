@@ -251,9 +251,11 @@ The endpoint inherits the bounded operator-server timeouts and returns
 ## Development gates
 
 Run individual gates with `make fmt-check`, `make tidy-check`, `make vet`,
-`make test`, `make test-race`, `make lint`, and `make vuln`. `make quality` runs
-the complete bootstrap set. The lint and vulnerability commands pin tool
-versions for reproducible execution with the module's Go 1.26.8 baseline.
+`make test`, `make test-race`, `make lint`, `make lint-integration`, and
+`make vuln`. `make quality` runs the complete bootstrap set. The integration
+lint target compiles and analyzes the build-tagged test harness without dialing
+dependencies. The lint and vulnerability commands pin tool versions for
+reproducible execution with the module's Go 1.26.8 baseline.
 
 `make integration-deps` runs the build-tagged TLS/auth dependency test when
 `MESHTRANSIT_INTEGRATION=1` and the required file-backed settings above are

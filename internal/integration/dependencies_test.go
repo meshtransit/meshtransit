@@ -37,16 +37,16 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 
 	postgresConfig := processConfig.Storage.PostgreSQL
 	runtimePool := openDependencyRolePool(
-		t,
 		ctx,
+		t,
 		postgresadapter.PoolRoleRuntime,
 		postgresConfig,
 		postgresConfig.Runtime,
 		processConfig.Dependencies.CheckTimeout,
 	)
 	workerPool := openDependencyRolePool(
-		t,
 		ctx,
+		t,
 		postgresadapter.PoolRoleWorker,
 		postgresConfig,
 		postgresConfig.Worker,
@@ -176,8 +176,8 @@ func gatherMetrics(t *testing.T, collector prometheus.Collector) string {
 }
 
 func openDependencyRolePool(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	poolRole postgresadapter.PoolRole,
 	postgresConfig config.PostgreSQLConfig,
 	roleConfig *config.PostgreSQLRoleConfig,

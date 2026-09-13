@@ -11,7 +11,7 @@ TRIVY_IMAGE_FLAGS ?=
 TEST_TIMEOUT ?= 2m
 INTEGRATION_TEST_TIMEOUT ?= 5m
 
-.PHONY: fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container lint vuln workflow-lint quality \
+.PHONY: fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container lint lint-integration vuln workflow-lint quality \
 	container-build container-build-multiarch container-inspect container-smoke container-scan
 
 fmt:
@@ -45,13 +45,16 @@ integration-platform-container:
 lint:
 	$(GOLANGCI_LINT) run ./...
 
+lint-integration:
+	$(GOLANGCI_LINT) run --build-tags=integration ./internal/integration
+
 vuln:
 	$(GOVULNCHECK) ./...
 
 workflow-lint:
 	$(ACTIONLINT)
 
-quality: fmt-check tidy-check vet test test-race lint vuln workflow-lint
+quality: fmt-check tidy-check vet test test-race lint lint-integration vuln workflow-lint
 
 container-build:
 	docker build \

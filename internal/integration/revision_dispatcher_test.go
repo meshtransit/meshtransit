@@ -23,14 +23,14 @@ import (
 const integrationNetworkPublicID = "01890f00-0000-7000-8000-000000000201"
 
 func assertRevisionDispatcherDelivery(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	adminConnection *pgx.Conn,
 	workerPool *postgresadapter.Pool,
 ) {
 	t.Helper()
 
-	redisClient := openIntegrationRedisClient(t, ctx)
+	redisClient := openIntegrationRedisClient(ctx, t)
 	outbox, err := postgresadapter.NewOutboxStore(workerPool)
 	if err != nil {
 		t.Fatalf("postgres.NewOutboxStore() error = %v", err)
@@ -41,7 +41,7 @@ func assertRevisionDispatcherDelivery(
 	}
 
 	t.Run("publishes committed revision and completes outbox", func(t *testing.T) {
-		eventID := commitIntegrationNetworkRevision(t, ctx, adminConnection, 3, "991")
+		eventID := commitIntegrationNetworkRevision(ctx, t, adminConnection, 3, "991")
 		subscription, subscribeErr := redisClient.SubscribeNetworkRevisionAdvanced(ctx)
 		if subscribeErr != nil {
 			t.Fatalf("redis SubscribeNetworkRevisionAdvanced() error = %v", subscribeErr)
@@ -70,14 +70,14 @@ func assertRevisionDispatcherDelivery(
 				integrationNetworkPublicID,
 			)
 		}
-		waitForIntegrationOutcome(t, receiveCtx, func() bool {
+		waitForIntegrationOutcome(receiveCtx, t, func() bool {
 			return telemetry.Snapshot().DeliveredTotal == 1
 		})
-		assertOutboxOutcome(t, ctx, adminConnection, eventID, "delivered", "delivered", nil)
+		assertOutboxOutcome(ctx, t, adminConnection, eventID, "delivered", "delivered", nil)
 	})
 
 	t.Run("persists retry when publication fails", func(t *testing.T) {
-		eventID := commitIntegrationNetworkRevision(t, ctx, adminConnection, 4, "992")
+		eventID := commitIntegrationNetworkRevision(ctx, t, adminConnection, 4, "992")
 		publishErr := errors.New("controlled publisher failure")
 		telemetry := revisionworker.NewTelemetry()
 		dispatcher := newIntegrationDispatcher(
@@ -91,15 +91,15 @@ func assertRevisionDispatcherDelivery(
 
 		waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		waitForIntegrationOutcome(t, waitCtx, func() bool {
+		waitForIntegrationOutcome(waitCtx, t, func() bool {
 			return telemetry.Snapshot().DeferredTotal == 1
 		})
 		errorClass := "publish_wakeup_failed"
-		assertOutboxOutcome(t, ctx, adminConnection, eventID, "pending", "retry", &errorClass)
+		assertOutboxOutcome(ctx, t, adminConnection, eventID, "pending", "retry", &errorClass)
 	})
 }
 
-func openIntegrationRedisClient(t *testing.T, ctx context.Context) *redisadapter.Client {
+func openIntegrationRedisClient(ctx context.Context, t *testing.T) *redisadapter.Client {
 	t.Helper()
 
 	processConfig, err := config.Load(os.LookupEnv)
@@ -182,7 +182,7 @@ func startIntegrationDispatcher(t *testing.T, dispatcher *revisionworker.Dispatc
 	})
 }
 
-func waitForIntegrationOutcome(t *testing.T, ctx context.Context, ready func() bool) {
+func waitForIntegrationOutcome(ctx context.Context, t *testing.T, ready func() bool) {
 	t.Helper()
 
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -200,8 +200,8 @@ func waitForIntegrationOutcome(t *testing.T, ctx context.Context, ready func() b
 }
 
 func commitIntegrationNetworkRevision(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	connection *pgx.Conn,
 	revision int64,
 	publicIDSuffix string,
@@ -209,7 +209,7 @@ func commitIntegrationNetworkRevision(
 	t.Helper()
 
 	outboxPublicID := "01890f03-0000-7000-8000-000000000" + publicIDSuffix
-	commitAuditedAuthorityFixture(t, ctx, connection, authorityEvidenceFixture{
+	commitAuditedAuthorityFixture(ctx, t, connection, authorityEvidenceFixture{
 		changePublicID:         "01890f01-0000-7000-8000-000000000" + publicIDSuffix,
 		eventPublicID:          "01890f02-0000-7000-8000-000000000" + publicIDSuffix,
 		outboxPublicID:         outboxPublicID,
@@ -223,7 +223,7 @@ func commitIntegrationNetworkRevision(
 		permission:             "network.update",
 		outboxEventClass:       "network.updated",
 	}, func(transaction pgx.Tx) {
-		setIntegrationScope(t, ctx, transaction, 101, 201)
+		setIntegrationScope(ctx, t, transaction, 101, 201)
 		if _, err := transaction.Exec(ctx, `UPDATE mesh.network
 SET display_name = 'Network dispatcher integration', version = version + 1
 WHERE workspace_id = 101 AND id = 201`); err != nil {

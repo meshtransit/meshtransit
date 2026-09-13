@@ -13,8 +13,8 @@ import (
 )
 
 func assertWorkerOutboxDelivery(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	adminConnection *pgx.Conn,
 	workerPool *postgresadapter.Pool,
 ) {
@@ -76,10 +76,10 @@ func assertWorkerOutboxDelivery(
 	if err := store.MarkRevisionDelivered(ctx, claims[2]); err != nil {
 		t.Fatalf("OutboxStore.MarkRevisionDelivered(third claim) error = %v", err)
 	}
-	assertOutboxOutcome(t, ctx, adminConnection, claims[0].EventID(), "delivered", "delivered", nil)
+	assertOutboxOutcome(ctx, t, adminConnection, claims[0].EventID(), "delivered", "delivered", nil)
 	retryClass := "integration_retry"
-	assertOutboxOutcome(t, ctx, adminConnection, claims[1].EventID(), "pending", "retry", &retryClass)
-	assertOutboxOutcome(t, ctx, adminConnection, claims[2].EventID(), "delivered", "delivered", nil)
+	assertOutboxOutcome(ctx, t, adminConnection, claims[1].EventID(), "pending", "retry", &retryClass)
+	assertOutboxOutcome(ctx, t, adminConnection, claims[2].EventID(), "delivered", "delivered", nil)
 	backlog, err = store.ReadNetworkRevisionBacklog(ctx)
 	if err != nil {
 		t.Fatalf("OutboxStore.ReadNetworkRevisionBacklog() after delivery error = %v", err)
@@ -94,8 +94,8 @@ func assertWorkerOutboxDelivery(
 }
 
 func assertOutboxOutcome(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	connection *pgx.Conn,
 	eventID int64,
 	wantState string,

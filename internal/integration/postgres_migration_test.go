@@ -25,7 +25,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 
 	runners := make([]*postgresadapter.MigrationRunner, 2)
 	for index := range runners {
-		runners[index] = openIntegrationMigrationRunner(t, ctx, migrationConfig)
+		runners[index] = openIntegrationMigrationRunner(ctx, t, migrationConfig)
 	}
 	initialStatus, err := runners[0].Status(ctx)
 	if err != nil {
@@ -127,8 +127,8 @@ func TestPostgreSQLMigrations(t *testing.T) {
 
 	adminConfig := loadIntegrationAdminConfig(t)
 	adminConnection := openIntegrationPostgreSQLConnection(
-		t,
 		ctx,
+		t,
 		adminConfig.PostgreSQL.Address,
 		adminConfig.PostgreSQL.Database,
 		adminConfig.PostgreSQL.User,
@@ -136,15 +136,15 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		adminConfig.PostgreSQL.CAFile,
 		adminConfig.ConnectTimeout,
 	)
-	seedAuthorityFixture(t, ctx, adminConnection)
-	assertAuthorityEvidenceFoundation(t, ctx, adminConnection)
-	assertAuthorityMutationAtomicity(t, ctx, adminConnection)
-	assertAuthorityConstraints(t, ctx, adminConnection)
-	assertDatabasePrivilegeContract(t, ctx, adminConnection)
+	seedAuthorityFixture(ctx, t, adminConnection)
+	assertAuthorityEvidenceFoundation(ctx, t, adminConnection)
+	assertAuthorityMutationAtomicity(ctx, t, adminConnection)
+	assertAuthorityConstraints(ctx, t, adminConnection)
+	assertDatabasePrivilegeContract(ctx, t, adminConnection)
 
 	runtimeConnection := openIntegrationPostgreSQLConnection(
-		t,
 		ctx,
+		t,
 		postgresConfig.Address,
 		postgresConfig.Database,
 		runtimePostgreSQL.User,
@@ -152,12 +152,12 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		postgresConfig.CAFile,
 		processConfig.Dependencies.CheckTimeout,
 	)
-	assertRuntimeAuthorityIsolation(t, ctx, runtimeConnection)
+	assertRuntimeAuthorityIsolation(ctx, t, runtimeConnection)
 
-	workerConnection := openIntegrationWorkerConnection(t, ctx, adminConfig)
-	assertWorkerOutboxPrivilegeContract(t, ctx, workerConnection)
-	workerPool := openIntegrationWorkerPool(t, ctx, adminConfig)
-	assertWorkerOutboxDelivery(t, ctx, adminConnection, workerPool)
-	assertRevisionDispatcherDelivery(t, ctx, adminConnection, workerPool)
-	assertRevisionDispatcherRecovery(t, ctx, adminConnection, workerPool)
+	workerConnection := openIntegrationWorkerConnection(ctx, t, adminConfig)
+	assertWorkerOutboxPrivilegeContract(ctx, t, workerConnection)
+	workerPool := openIntegrationWorkerPool(ctx, t, adminConfig)
+	assertWorkerOutboxDelivery(ctx, t, adminConnection, workerPool)
+	assertRevisionDispatcherDelivery(ctx, t, adminConnection, workerPool)
+	assertRevisionDispatcherRecovery(ctx, t, adminConnection, workerPool)
 }

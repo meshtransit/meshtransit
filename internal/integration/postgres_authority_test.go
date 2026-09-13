@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func assertAuthorityEvidenceFoundation(t *testing.T, ctx context.Context, connection *pgx.Conn) {
+func assertAuthorityEvidenceFoundation(ctx context.Context, t *testing.T, connection *pgx.Conn) {
 	t.Helper()
 
 	var mutations, identities, payloads, outboxEvents, streams int64
@@ -111,7 +111,7 @@ func assertAuthorityEvidenceFoundation(t *testing.T, ctx context.Context, connec
 	}
 }
 
-func assertAuthorityMutationAtomicity(t *testing.T, ctx context.Context, connection *pgx.Conn) {
+func assertAuthorityMutationAtomicity(ctx context.Context, t *testing.T, connection *pgx.Conn) {
 	t.Helper()
 
 	t.Run("change context is transaction local", func(t *testing.T) {
@@ -119,7 +119,7 @@ func assertAuthorityMutationAtomicity(t *testing.T, ctx context.Context, connect
 		if err != nil {
 			t.Fatalf("begin missing change context transaction: %v", err)
 		}
-		defer rollbackIntegrationTransaction(t, ctx, transaction)
+		defer rollbackIntegrationTransaction(ctx, t, transaction)
 
 		_, err = transaction.Exec(ctx, `UPDATE mesh.network
 SET display_name = 'Missing context', version = version + 1
@@ -133,8 +133,8 @@ WHERE id = 201`)
 		if err != nil {
 			t.Fatalf("begin incomplete evidence transaction: %v", err)
 		}
-		defer rollbackIntegrationTransaction(t, ctx, transaction)
-		setIntegrationChange(t, ctx, transaction, changePublicID)
+		defer rollbackIntegrationTransaction(ctx, t, transaction)
+		setIntegrationChange(ctx, t, transaction, changePublicID)
 		if _, err := transaction.Exec(ctx, `UPDATE mesh.network
 SET display_name = 'Incomplete evidence', version = version + 1
 WHERE id = 201`); err != nil {
@@ -157,7 +157,7 @@ WHERE id = 201`); err != nil {
 
 	const completedChangePublicID = "01890f01-0000-7000-8000-000000000901"
 	t.Run("domain audit and outbox commit atomically", func(t *testing.T) {
-		commitAuditedAuthorityFixture(t, ctx, connection, authorityEvidenceFixture{
+		commitAuditedAuthorityFixture(ctx, t, connection, authorityEvidenceFixture{
 			changePublicID:         completedChangePublicID,
 			eventPublicID:          "01890f02-0000-7000-8000-000000000901",
 			outboxPublicID:         "01890f03-0000-7000-8000-000000000901",
@@ -171,7 +171,7 @@ WHERE id = 201`); err != nil {
 			permission:             "network.update",
 			outboxEventClass:       "network.updated",
 		}, func(transaction pgx.Tx) {
-			setIntegrationScope(t, ctx, transaction, 101, 201)
+			setIntegrationScope(ctx, t, transaction, 101, 201)
 			if _, err := transaction.Exec(ctx, `UPDATE mesh.network
 SET display_name = 'Network one updated', version = version + 1
 WHERE workspace_id = 101 AND id = 201`); err != nil {
@@ -185,7 +185,7 @@ WHERE workspace_id = 101 AND network_id = 201`); err != nil {
 			}
 		})
 
-		assertCommittedAuthorityChange(t, ctx, connection, completedChangePublicID)
+		assertCommittedAuthorityChange(ctx, t, connection, completedChangePublicID)
 	})
 
 	t.Run("stale audit stream head aborts mutation", func(t *testing.T) {
@@ -194,8 +194,8 @@ WHERE workspace_id = 101 AND network_id = 201`); err != nil {
 		if err != nil {
 			t.Fatalf("begin stale audit head transaction: %v", err)
 		}
-		defer rollbackIntegrationTransaction(t, ctx, transaction)
-		setIntegrationChange(t, ctx, transaction, changePublicID)
+		defer rollbackIntegrationTransaction(ctx, t, transaction)
+		setIntegrationChange(ctx, t, transaction, changePublicID)
 		if _, err := transaction.Exec(ctx, `UPDATE mesh.network
 SET display_name = 'Stale audit head', version = version + 1
 WHERE id = 201`); err != nil {
@@ -247,8 +247,8 @@ WHERE id = 201`); err != nil {
 		if err != nil {
 			t.Fatalf("begin reused change identifier transaction: %v", err)
 		}
-		defer rollbackIntegrationTransaction(t, ctx, transaction)
-		setIntegrationChange(t, ctx, transaction, completedChangePublicID)
+		defer rollbackIntegrationTransaction(ctx, t, transaction)
+		setIntegrationChange(ctx, t, transaction, completedChangePublicID)
 		_, err = transaction.Exec(ctx, `UPDATE mesh.network
 SET display_name = 'Reused change', version = version + 1
 WHERE id = 201`)
@@ -264,8 +264,8 @@ WHERE change_public_id = $1`, completedChangePublicID)
 }
 
 func assertCommittedAuthorityChange(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	connection *pgx.Conn,
 	changePublicID string,
 ) {
