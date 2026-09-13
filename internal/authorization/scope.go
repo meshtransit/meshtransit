@@ -4,7 +4,10 @@ package authorization
 import (
 	"errors"
 
+	"github.com/meshtransit/meshtransit/internal/deployment"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/publicid"
+	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 var (
@@ -14,43 +17,43 @@ var (
 	ErrInvalidScope = errors.New("authorization: invalid scope")
 )
 
-// DeploymentID is a validated opaque UUIDv7 identifying one deployment.
-type DeploymentID publicid.ID
+// DeploymentID is the canonical Deployment domain identifier.
+type DeploymentID = deployment.ID
 
-// WorkspaceID is a validated opaque UUIDv7 identifying one workspace.
-type WorkspaceID publicid.ID
+// WorkspaceID is the canonical Workspace domain identifier.
+type WorkspaceID = workspace.ID
 
-// NetworkID is a validated opaque UUIDv7 identifying one network.
-type NetworkID publicid.ID
+// NetworkID is the canonical Network domain identifier.
+type NetworkID = network.ID
 
 // PrincipalID is a validated opaque UUIDv7 identifying one management principal.
 type PrincipalID publicid.ID
 
 // NewDeploymentID validates and returns an opaque deployment identifier.
 func NewDeploymentID(value [16]byte) (DeploymentID, error) {
-	id, err := publicid.FromBytes(value)
+	id, err := deployment.NewID(value)
 	if err != nil {
 		return DeploymentID{}, ErrInvalidPublicID
 	}
-	return DeploymentID(id), nil
+	return id, nil
 }
 
 // NewWorkspaceID validates and returns an opaque workspace identifier.
 func NewWorkspaceID(value [16]byte) (WorkspaceID, error) {
-	id, err := publicid.FromBytes(value)
+	id, err := workspace.NewID(value)
 	if err != nil {
 		return WorkspaceID{}, ErrInvalidPublicID
 	}
-	return WorkspaceID(id), nil
+	return id, nil
 }
 
 // NewNetworkID validates and returns an opaque network identifier.
 func NewNetworkID(value [16]byte) (NetworkID, error) {
-	id, err := publicid.FromBytes(value)
+	id, err := network.NewID(value)
 	if err != nil {
 		return NetworkID{}, ErrInvalidPublicID
 	}
-	return NetworkID(id), nil
+	return id, nil
 }
 
 // NewPrincipalID validates and returns an opaque principal identifier.
@@ -61,12 +64,6 @@ func NewPrincipalID(value [16]byte) (PrincipalID, error) {
 	}
 	return PrincipalID(id), nil
 }
-
-func (id DeploymentID) isValid() bool { return publicid.ID(id).IsValid() }
-
-func (id WorkspaceID) isValid() bool { return publicid.ID(id).IsValid() }
-
-func (id NetworkID) isValid() bool { return publicid.ID(id).IsValid() }
 
 func (id PrincipalID) isValid() bool { return publicid.ID(id).IsValid() }
 
@@ -94,7 +91,7 @@ type Scope struct {
 
 // NewDeploymentScope constructs an exact deployment scope.
 func NewDeploymentScope(deploymentID DeploymentID) (Scope, error) {
-	if !deploymentID.isValid() {
+	if !deploymentID.IsValid() {
 		return Scope{}, ErrInvalidScope
 	}
 	return Scope{
@@ -105,7 +102,7 @@ func NewDeploymentScope(deploymentID DeploymentID) (Scope, error) {
 
 // NewWorkspaceScope constructs a workspace scope qualified by its deployment.
 func NewWorkspaceScope(deploymentID DeploymentID, workspaceID WorkspaceID) (Scope, error) {
-	if !deploymentID.isValid() || !workspaceID.isValid() {
+	if !deploymentID.IsValid() || !workspaceID.IsValid() {
 		return Scope{}, ErrInvalidScope
 	}
 	return Scope{
@@ -121,7 +118,7 @@ func NewNetworkScope(
 	workspaceID WorkspaceID,
 	networkID NetworkID,
 ) (Scope, error) {
-	if !deploymentID.isValid() || !workspaceID.isValid() || !networkID.isValid() {
+	if !deploymentID.IsValid() || !workspaceID.IsValid() || !networkID.IsValid() {
 		return Scope{}, ErrInvalidScope
 	}
 	return Scope{
@@ -151,13 +148,13 @@ func (s Scope) NetworkID() (NetworkID, bool) {
 func (s Scope) isValid() bool {
 	switch s.kind {
 	case ScopeDeployment:
-		return s.deploymentID.isValid() && s.workspaceID == (WorkspaceID{}) &&
+		return s.deploymentID.IsValid() && s.workspaceID == (WorkspaceID{}) &&
 			s.networkID == (NetworkID{})
 	case ScopeWorkspace:
-		return s.deploymentID.isValid() && s.workspaceID.isValid() &&
+		return s.deploymentID.IsValid() && s.workspaceID.IsValid() &&
 			s.networkID == (NetworkID{})
 	case ScopeNetwork:
-		return s.deploymentID.isValid() && s.workspaceID.isValid() && s.networkID.isValid()
+		return s.deploymentID.IsValid() && s.workspaceID.IsValid() && s.networkID.IsValid()
 	default:
 		return false
 	}
