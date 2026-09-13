@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 8 {
-		t.Fatalf("len(Catalog()) = %d, want 8", len(catalog))
+	if len(catalog) != 9 {
+		t.Fatalf("len(Catalog()) = %d, want 9", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -283,8 +283,50 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network audit stream head migration SQL contains excessive capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 8 {
-		t.Fatalf("LatestVersion() = %d, want 8", LatestVersion())
+	inventoryAdvance := catalog[8]
+	if inventoryAdvance.Description != "transaction-local network inventory revision advance" {
+		t.Fatalf(
+			"migration 9 description = %q, want Network inventory revision advance",
+			inventoryAdvance.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE POLICY network_revision_scoped_read_policy",
+		"FOR SELECT",
+		"CREATE POLICY network_revision_scoped_mutation_policy",
+		"FOR UPDATE",
+		"TO mesh_migrator",
+		"CREATE FUNCTION mesh_ops.advance_network_inventory_revision",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh_ops",
+		"pg_catalog.current_setting('mesh.workspace_id', TRUE)",
+		"pg_catalog.current_setting('mesh.network_id', TRUE)",
+		"UPDATE mesh_ops.network_revision AS revision",
+		"network_revision = revision.network_revision + 1",
+		"inventory_revision = revision.inventory_revision + 1",
+		"REVOKE ALL ON FUNCTION mesh_ops.advance_network_inventory_revision",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.advance_network_inventory_revision() TO mesh_runtime",
+	} {
+		if !strings.Contains(inventoryAdvance.SQL, required) {
+			t.Errorf("Network inventory revision migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"USING (TRUE)",
+		"WITH CHECK (TRUE)",
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"BYPASSRLS",
+		"TO mesh_worker",
+	} {
+		if strings.Contains(inventoryAdvance.SQL, forbidden) {
+			t.Errorf("Network inventory revision migration SQL contains excessive capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 9 {
+		t.Fatalf("LatestVersion() = %d, want 9", LatestVersion())
 	}
 }
 

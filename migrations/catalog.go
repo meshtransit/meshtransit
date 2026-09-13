@@ -21,6 +21,7 @@ const (
 	registrationIntentHashDescription  = "registration intent semantic hash"
 	transactionNetworkScopeDescription = "transaction-local public network scope"
 	networkAuditStreamHeadDescription  = "transaction-local network audit stream head"
+	networkInventoryAdvanceDescription = "transaction-local network inventory revision advance"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -47,6 +48,9 @@ var transactionNetworkScopeSQL string
 //go:embed 000008_network_audit_stream_head.up.sql
 var networkAuditStreamHeadSQL string
 
+//go:embed 000009_network_inventory_revision_advance.up.sql
+var networkInventoryAdvanceSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -70,6 +74,7 @@ func Catalog() []Migration {
 		newMigration(6, registrationIntentHashDescription, registrationIntentHashSQL),
 		newMigration(7, transactionNetworkScopeDescription, transactionNetworkScopeSQL),
 		newMigration(8, networkAuditStreamHeadDescription, networkAuditStreamHeadSQL),
+		newMigration(9, networkInventoryAdvanceDescription, networkInventoryAdvanceSQL),
 	}
 }
 
