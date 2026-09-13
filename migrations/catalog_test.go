@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 7 {
-		t.Fatalf("len(Catalog()) = %d, want 7", len(catalog))
+	if len(catalog) != 8 {
+		t.Fatalf("len(Catalog()) = %d, want 8", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -248,8 +248,43 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("network scope migration SQL contains excessive capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 7 {
-		t.Fatalf("LatestVersion() = %d, want 7", LatestVersion())
+	auditStreamHead := catalog[7]
+	if auditStreamHead.Description != "transaction-local network audit stream head" {
+		t.Fatalf(
+			"migration 8 description = %q, want Network audit stream head",
+			auditStreamHead.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_audit.lock_network_stream_head",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh_audit, mesh_ops",
+		"pg_catalog.current_setting('mesh.workspace_id', TRUE)",
+		"pg_catalog.current_setting('mesh.network_id', TRUE)",
+		"stream.scope_kind = 'network'",
+		"FOR UPDATE",
+		"REVOKE ALL ON FUNCTION mesh_audit.lock_network_stream_head",
+		"GRANT USAGE ON SCHEMA mesh_audit TO mesh_runtime",
+		"GRANT EXECUTE ON FUNCTION mesh_audit.lock_network_stream_head() TO mesh_runtime",
+	} {
+		if !strings.Contains(auditStreamHead.SQL, required) {
+			t.Errorf("Network audit stream head migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"BYPASSRLS",
+		"TO mesh_worker",
+	} {
+		if strings.Contains(auditStreamHead.SQL, forbidden) {
+			t.Errorf("Network audit stream head migration SQL contains excessive capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 8 {
+		t.Fatalf("LatestVersion() = %d, want 8", LatestVersion())
 	}
 }
 

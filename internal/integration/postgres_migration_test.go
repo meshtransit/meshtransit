@@ -154,13 +154,25 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		postgresConfig.CAFile,
 		processConfig.Dependencies.CheckTimeout,
 	)
+	runtimeContenderConnection := openIntegrationPostgreSQLConnection(
+		ctx,
+		t,
+		postgresConfig.Address,
+		postgresConfig.Database,
+		runtimePostgreSQL.User,
+		runtimePostgreSQL.PasswordFile,
+		postgresConfig.CAFile,
+		processConfig.Dependencies.CheckTimeout,
+	)
 	assertRuntimePublicNetworkScope(ctx, t, runtimeConnection)
 	assertRuntimeRejectsInvalidPublicNetworkScope(ctx, t, runtimeConnection)
+	assertRuntimeNetworkAuditStreamHead(ctx, t, runtimeConnection, runtimeContenderConnection)
 	assertRuntimeAuthorityIsolation(ctx, t, runtimeConnection)
 	assertRegistrationRuntimeIsolation(ctx, t, runtimeConnection)
 
 	workerConnection := openIntegrationWorkerConnection(ctx, t, adminConfig)
 	assertWorkerCannotSetPublicNetworkScope(ctx, t, workerConnection)
+	assertWorkerCannotLockNetworkAuditStream(ctx, t, workerConnection)
 	assertWorkerOutboxPrivilegeContract(ctx, t, workerConnection)
 	workerPool := openIntegrationWorkerPool(ctx, t, adminConfig)
 	assertWorkerOutboxDelivery(ctx, t, adminConnection, workerPool)
