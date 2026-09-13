@@ -84,6 +84,13 @@ func TestRuntimeDefaultsProduceValidValues(t *testing.T) {
 	if !nodeID.IsValid() {
 		t.Fatal("PublicNodeIDGenerator.NewNodeID() returned invalid ID")
 	}
+	mutationIDs, err := (PublicMutationIDGenerator{}).NewMutationIDs()
+	if err != nil {
+		t.Fatalf("PublicMutationIDGenerator.NewMutationIDs() error = %v", err)
+	}
+	if !mutationIDs.IsValid() {
+		t.Fatal("PublicMutationIDGenerator.NewMutationIDs() returned invalid IDs")
+	}
 	if _, err := NewExponentialBackoff(time.Millisecond, time.Second); err != nil {
 		t.Fatalf("NewExponentialBackoff() error = %v", err)
 	}

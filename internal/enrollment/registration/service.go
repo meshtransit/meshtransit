@@ -38,38 +38,35 @@ type Options struct {
 type Service struct {
 	options      Options
 	transactions Transactions
-	ids          NodeIDGenerator
+	nodeIDs      NodeIDGenerator
+	mutationIDs  MutationIDGenerator
 	clock        Clock
 	retry        RetryWaiter
 }
 
 // NewService validates and constructs a registration application service.
-func NewService(
-	options Options,
-	transactions Transactions,
-	ids NodeIDGenerator,
-	clock Clock,
-	retry RetryWaiter,
-) (*Service, error) {
-	if transactions == nil || ids == nil || clock == nil || retry == nil ||
+func NewService(options Options, dependencies Dependencies) (*Service, error) {
+	if dependencies.Transactions == nil || dependencies.NodeIDs == nil ||
+		dependencies.MutationIDs == nil || dependencies.Clock == nil || dependencies.Retry == nil ||
 		options.MaxAttempts <= 0 || options.MaxAttempts > maxRegistrationAttempts ||
 		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second {
 		return nil, ErrInvalidService
 	}
 	return &Service{
 		options:      options,
-		transactions: transactions,
-		ids:          ids,
-		clock:        clock,
-		retry:        retry,
+		transactions: dependencies.Transactions,
+		nodeIDs:      dependencies.NodeIDs,
+		mutationIDs:  dependencies.MutationIDs,
+		clock:        dependencies.Clock,
+		retry:        dependencies.Retry,
 	}, nil
 }
 
 // Register creates or resumes one logical Node. Retry replays the entire
-// transaction with the same decision time and generated Node ID.
+// transaction with the same decision time and application-generated IDs.
 func (service *Service) Register(ctx context.Context, command Command) (Result, error) {
-	if ctx == nil || service == nil || service.transactions == nil || service.ids == nil ||
-		service.clock == nil || service.retry == nil || !command.IsValid() {
+	if ctx == nil || service == nil || service.transactions == nil || service.nodeIDs == nil ||
+		service.mutationIDs == nil || service.clock == nil || service.retry == nil || !command.IsValid() {
 		return Result{}, ErrInvalidCommand
 	}
 	if err := ctx.Err(); err != nil {
@@ -81,9 +78,16 @@ func (service *Service) Register(ctx context.Context, command Command) (Result, 
 	}
 
 	var generatedNodeID node.ID
+	var generatedMutationIDs MutationIDs
 	var lastErr error
 	for attempt := 1; attempt <= service.options.MaxAttempts; attempt++ {
-		result, err := service.attempt(ctx, command, now, &generatedNodeID)
+		result, err := service.attempt(
+			ctx,
+			command,
+			now,
+			&generatedNodeID,
+			&generatedMutationIDs,
+		)
 		if err == nil {
 			return result, nil
 		}
@@ -118,6 +122,7 @@ func (service *Service) attempt(
 	command Command,
 	now time.Time,
 	generatedNodeID *node.ID,
+	generatedMutationIDs *MutationIDs,
 ) (result Result, resultErr error) {
 	transaction, err := service.transactions.Begin(ctx, command.Scope)
 	if err != nil {
@@ -176,7 +181,7 @@ func (service *Service) attempt(
 	if !exists {
 		disposition = DispositionCreated
 		if !generatedNodeID.IsValid() {
-			*generatedNodeID, err = service.ids.NewNodeID()
+			*generatedNodeID, err = service.nodeIDs.NewNodeID()
 			if err != nil {
 				return Result{}, fmt.Errorf("generate Node ID: %w", err)
 			}
@@ -187,15 +192,25 @@ func (service *Service) attempt(
 	if err != nil {
 		return Result{}, err
 	}
-	change, err := NewChange(
-		registration,
-		credential,
-		command.Identity,
-		nodeID,
-		command.Hostname,
-		disposition,
-		now,
-	)
+	if !generatedMutationIDs.IsValid() {
+		*generatedMutationIDs, err = service.mutationIDs.NewMutationIDs()
+		if err != nil {
+			return Result{}, fmt.Errorf("generate registration mutation IDs: %w", err)
+		}
+		if !generatedMutationIDs.IsValid() {
+			return Result{}, ErrInvalidMutationIDs
+		}
+	}
+	change, err := NewChange(ChangeParams{
+		Registration: registration,
+		Credential:   credential,
+		Identity:     command.Identity,
+		NodeID:       nodeID,
+		Hostname:     command.Hostname,
+		Disposition:  disposition,
+		MutationIDs:  *generatedMutationIDs,
+		OccurredAt:   now,
+	})
 	if err != nil {
 		return Result{}, err
 	}

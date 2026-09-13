@@ -31,6 +31,12 @@ type NodeIDGenerator interface {
 	NewNodeID() (node.ID, error)
 }
 
+// MutationIDGenerator creates one immutable public-ID set for a replayable
+// registration mutation.
+type MutationIDGenerator interface {
+	NewMutationIDs() (MutationIDs, error)
+}
+
 // Clock supplies one stable decision time for every replayable attempt.
 type Clock interface {
 	Now() time.Time
@@ -39,4 +45,14 @@ type Clock interface {
 // RetryWaiter applies bounded backoff between complete transaction attempts.
 type RetryWaiter interface {
 	Wait(context.Context, int) error
+}
+
+// Dependencies contains the explicit ports required by Service. None may
+// retain request context or start background work.
+type Dependencies struct {
+	Transactions Transactions
+	NodeIDs      NodeIDGenerator
+	MutationIDs  MutationIDGenerator
+	Clock        Clock
+	Retry        RetryWaiter
 }

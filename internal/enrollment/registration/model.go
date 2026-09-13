@@ -223,27 +223,34 @@ type Change struct {
 	nodeID       node.ID
 	hostname     node.Hostname
 	disposition  Disposition
+	mutationIDs  MutationIDs
 	occurredAt   time.Time
 }
 
+// ChangeParams contains the complete application decision for one atomic
+// registration mutation.
+type ChangeParams struct {
+	Registration enrollment.Registration
+	Credential   enrollment.Credential
+	Identity     node.RegistrationIdentity
+	NodeID       node.ID
+	Hostname     node.Hostname
+	Disposition  Disposition
+	MutationIDs  MutationIDs
+	OccurredAt   time.Time
+}
+
 // NewChange validates the application decision passed to persistence.
-func NewChange(
-	registration enrollment.Registration,
-	credential enrollment.Credential,
-	identity node.RegistrationIdentity,
-	nodeID node.ID,
-	hostname node.Hostname,
-	disposition Disposition,
-	occurredAt time.Time,
-) (Change, error) {
+func NewChange(params ChangeParams) (Change, error) {
 	change := Change{
-		registration: registration,
-		credential:   credential,
-		identity:     identity,
-		nodeID:       nodeID,
-		hostname:     hostname,
-		disposition:  disposition,
-		occurredAt:   occurredAt.UTC(),
+		registration: params.Registration,
+		credential:   params.Credential,
+		identity:     params.Identity,
+		nodeID:       params.NodeID,
+		hostname:     params.Hostname,
+		disposition:  params.Disposition,
+		mutationIDs:  params.MutationIDs,
+		occurredAt:   params.OccurredAt.UTC(),
 	}
 	if !change.IsValid() {
 		return Change{}, ErrInvalidChange
@@ -269,6 +276,9 @@ func (change Change) Hostname() node.Hostname { return change.hostname }
 // Disposition returns the requested persistence path.
 func (change Change) Disposition() Disposition { return change.disposition }
 
+// MutationIDs returns the stable public identities reserved for this change.
+func (change Change) MutationIDs() MutationIDs { return change.mutationIDs }
+
 // OccurredAt returns the stable decision time shared across transaction retries.
 func (change Change) OccurredAt() time.Time { return change.occurredAt }
 
@@ -277,7 +287,8 @@ func (change Change) IsValid() bool {
 	registrationNodeID, completed := change.registration.NodeID()
 	return change.registration.IsValid() && completed && change.credential.IsValid() &&
 		change.identity.IsValid() && change.nodeID.IsValid() && change.hostname.IsValid() &&
-		change.disposition.isValid() && !change.occurredAt.IsZero() && registrationNodeID == change.nodeID &&
+		change.disposition.isValid() && change.mutationIDs.IsValid() && !change.occurredAt.IsZero() &&
+		registrationNodeID == change.nodeID &&
 		change.registration.ProfileID() == change.credential.ProfileID() &&
 		change.registration.MachineFingerprint() == change.identity.MachineKey().Fingerprint()
 }

@@ -40,6 +40,36 @@ func (PublicNodeIDGenerator) NewNodeID() (node.ID, error) {
 	return nodeID, nil
 }
 
+// PublicMutationIDGenerator creates the durable UUIDv7 identities for one
+// registration mutation from OS entropy.
+type PublicMutationIDGenerator struct{}
+
+// NewMutationIDs returns a fresh, non-aliased registration mutation ID set.
+func (PublicMutationIDGenerator) NewMutationIDs() (MutationIDs, error) {
+	var generated [8]publicid.ID
+	for index := range generated {
+		id, err := publicid.New()
+		if err != nil {
+			return MutationIDs{}, fmt.Errorf("generate registration mutation public ID: %w", err)
+		}
+		generated[index] = id
+	}
+	ids, err := NewMutationIDs(MutationIDParams{
+		ChangeID:          generated[0],
+		AuditEventID:      generated[1],
+		OutboxEventID:     generated[2],
+		CredentialUseID:   generated[3],
+		MachineKeyEpochID: generated[4],
+		NodeKeyEpochID:    generated[5],
+		IPv4LeaseID:       generated[6],
+		IPv6LeaseID:       generated[7],
+	})
+	if err != nil {
+		return MutationIDs{}, fmt.Errorf("construct registration mutation IDs: %w", err)
+	}
+	return ids, nil
+}
+
 // ExponentialBackoff provides capped exponential delay with 50-100% jitter.
 // Wait owns no goroutine and stops its timer on cancellation.
 type ExponentialBackoff struct {

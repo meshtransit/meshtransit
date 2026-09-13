@@ -24,9 +24,16 @@ func TestServiceRegisterCreatesNodeAtomically(t *testing.T) {
 	}
 	queue := &transactionQueue{transactions: []*fakeTransaction{transaction}}
 	ids := &fixedNodeIDs{nodeID: nodeID}
+	mutationIDs := &fixedMutationIDs{ids: mustMutationIDs(t)}
 	retry := &recordedRetry{}
 
-	result, err := mustService(t, queue, ids, retry).Register(t.Context(), command)
+	result, err := mustServiceWithMutationIDs(
+		t,
+		queue,
+		ids,
+		mutationIDs,
+		retry,
+	).Register(t.Context(), command)
 	if err != nil {
 		t.Fatalf("Service.Register() error = %v", err)
 	}
@@ -34,9 +41,15 @@ func TestServiceRegisterCreatesNodeAtomically(t *testing.T) {
 		result.Disposition() != registration.DispositionCreated || result.NetworkRevision() != 9 {
 		t.Fatalf("Service.Register() result = %+v, want created Node", result)
 	}
-	if ids.calls != 1 || len(retry.calls) != 0 || len(queue.beginScopes) != 1 ||
+	if ids.calls != 1 || mutationIDs.calls != 1 || len(retry.calls) != 0 || len(queue.beginScopes) != 1 ||
 		queue.beginScopes[0] != command.Scope {
-		t.Fatalf("dependency calls: ids=%d retry=%v begin=%d", ids.calls, retry.calls, len(queue.beginScopes))
+		t.Fatalf(
+			"dependency calls: Node IDs=%d mutation IDs=%d retry=%v begin=%d",
+			ids.calls,
+			mutationIDs.calls,
+			retry.calls,
+			len(queue.beginScopes),
+		)
 	}
 	if !slices.Equal(transaction.calls, []string{"resolve", "apply", "commit"}) {
 		t.Fatalf("transaction calls = %v, want resolve/apply/commit", transaction.calls)
@@ -48,7 +61,8 @@ func TestServiceRegisterCreatesNodeAtomically(t *testing.T) {
 	completedNodeID, completed := change.Registration().NodeID()
 	if !change.IsValid() || change.Credential().UsedCount() != 1 || !completed ||
 		completedNodeID != nodeID || change.OccurredAt() != fixtureTime ||
-		change.Identity() != command.Identity || change.Hostname() != command.Hostname {
+		change.Identity() != command.Identity || change.Hostname() != command.Hostname ||
+		change.MutationIDs() != mutationIDs.ids {
 		t.Fatal("registration change did not preserve the atomic domain decision")
 	}
 }
@@ -167,14 +181,28 @@ func TestServiceRegisterRetriesWholeTransactionWithStableDecision(t *testing.T) 
 	}
 	queue := &transactionQueue{transactions: []*fakeTransaction{first, second}}
 	ids := &fixedNodeIDs{nodeID: nodeID}
+	mutationIDs := &fixedMutationIDs{ids: mustMutationIDs(t)}
 	retry := &recordedRetry{}
 
-	result, err := mustService(t, queue, ids, retry).Register(t.Context(), command)
+	result, err := mustServiceWithMutationIDs(
+		t,
+		queue,
+		ids,
+		mutationIDs,
+		retry,
+	).Register(t.Context(), command)
 	if err != nil {
 		t.Fatalf("Service.Register() error = %v", err)
 	}
-	if result.NodeID() != nodeID || ids.calls != 1 || !slices.Equal(retry.calls, []int{1}) {
-		t.Fatalf("retry outcome: Node=%q id calls=%d retry=%v", result.NodeID(), ids.calls, retry.calls)
+	if result.NodeID() != nodeID || ids.calls != 1 || mutationIDs.calls != 1 ||
+		!slices.Equal(retry.calls, []int{1}) {
+		t.Fatalf(
+			"retry outcome: Node=%q Node ID calls=%d mutation ID calls=%d retry=%v",
+			result.NodeID(),
+			ids.calls,
+			mutationIDs.calls,
+			retry.calls,
+		)
 	}
 	if !slices.Equal(first.calls, []string{"resolve", "apply", "rollback"}) ||
 		!slices.Equal(second.calls, []string{"resolve", "apply", "commit"}) {
@@ -182,8 +210,59 @@ func TestServiceRegisterRetriesWholeTransactionWithStableDecision(t *testing.T) 
 	}
 	if len(first.changes) != 1 || len(second.changes) != 1 ||
 		first.changes[0].NodeID() != second.changes[0].NodeID() ||
+		first.changes[0].MutationIDs() != second.changes[0].MutationIDs() ||
 		first.changes[0].OccurredAt() != second.changes[0].OccurredAt() {
-		t.Fatal("whole-transaction retry changed idempotent Node ID or decision time")
+		t.Fatal("whole-transaction retry changed stable IDs or decision time")
+	}
+}
+
+func TestServiceRegisterFailsClosedWhenMutationIDGenerationFails(t *testing.T) {
+	t.Parallel()
+
+	command := mustCommand(t)
+	tests := []struct {
+		name      string
+		generator *fixedMutationIDs
+		wantError error
+	}{
+		{
+			name:      "entropy failure",
+			generator: &fixedMutationIDs{err: errControlled},
+			wantError: errControlled,
+		},
+		{
+			name:      "invalid generated set",
+			generator: &fixedMutationIDs{},
+			wantError: registration.ErrInvalidMutationIDs,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			transaction := &fakeTransaction{resolution: mustOpenResolution(t, command, node.ID{})}
+			queue := &transactionQueue{transactions: []*fakeTransaction{transaction}}
+			service := mustServiceWithMutationIDs(
+				t,
+				queue,
+				&fixedNodeIDs{nodeID: mustNodeID(t, "01890f20-0000-7000-8000-000000000014")},
+				test.generator,
+				&recordedRetry{},
+			)
+
+			_, err := service.Register(t.Context(), command)
+			if !errors.Is(err, registration.ErrRegistrationFailed) ||
+				!errors.Is(err, test.wantError) {
+				t.Fatalf("Service.Register() error = %v, want classified %v", err, test.wantError)
+			}
+			if test.generator.calls != 1 || !slices.Equal(transaction.calls, []string{"resolve", "rollback"}) {
+				t.Fatalf(
+					"mutation ID generation: calls=%d transaction=%v, want one generation and rollback",
+					test.generator.calls,
+					transaction.calls,
+				)
+			}
+		})
 	}
 }
 
@@ -289,32 +368,68 @@ func TestNewServiceAndCommandValidation(t *testing.T) {
 	command := mustCommand(t)
 	queue := &transactionQueue{}
 	ids := &fixedNodeIDs{}
+	mutationIDs := &fixedMutationIDs{}
 	retry := &recordedRetry{}
 	clock := fixedClock{now: fixtureTime}
+	validDependencies := registration.Dependencies{
+		Transactions: queue,
+		NodeIDs:      ids,
+		MutationIDs:  mutationIDs,
+		Clock:        clock,
+		Retry:        retry,
+	}
 
 	tests := []struct {
-		name    string
-		options registration.Options
-		queue   registration.Transactions
-		ids     registration.NodeIDGenerator
-		clock   registration.Clock
-		retry   registration.RetryWaiter
+		name         string
+		options      registration.Options
+		dependencies registration.Dependencies
 	}{
-		{name: "missing transactions", options: validOptions, ids: ids, clock: clock, retry: retry},
-		{name: "missing ids", options: validOptions, queue: queue, clock: clock, retry: retry},
-		{name: "missing clock", options: validOptions, queue: queue, ids: ids, retry: retry},
-		{name: "missing retry", options: validOptions, queue: queue, ids: ids, clock: clock},
-		{name: "zero attempts", options: registration.Options{RollbackTimeout: time.Second}, queue: queue, ids: ids, clock: clock, retry: retry},
-		{name: "too many attempts", options: registration.Options{MaxAttempts: 6, RollbackTimeout: time.Second}, queue: queue, ids: ids, clock: clock, retry: retry},
-		{name: "unbounded rollback", options: registration.Options{MaxAttempts: 1, RollbackTimeout: time.Minute}, queue: queue, ids: ids, clock: clock, retry: retry},
+		{
+			name:    "missing transactions",
+			options: validOptions,
+			dependencies: registration.Dependencies{
+				NodeIDs: ids, MutationIDs: mutationIDs, Clock: clock, Retry: retry,
+			},
+		},
+		{
+			name:    "missing Node IDs",
+			options: validOptions,
+			dependencies: registration.Dependencies{
+				Transactions: queue, MutationIDs: mutationIDs, Clock: clock, Retry: retry,
+			},
+		},
+		{
+			name:    "missing mutation IDs",
+			options: validOptions,
+			dependencies: registration.Dependencies{
+				Transactions: queue, NodeIDs: ids, Clock: clock, Retry: retry,
+			},
+		},
+		{
+			name:    "missing clock",
+			options: validOptions,
+			dependencies: registration.Dependencies{
+				Transactions: queue, NodeIDs: ids, MutationIDs: mutationIDs, Retry: retry,
+			},
+		},
+		{
+			name:    "missing retry",
+			options: validOptions,
+			dependencies: registration.Dependencies{
+				Transactions: queue, NodeIDs: ids, MutationIDs: mutationIDs, Clock: clock,
+			},
+		},
+		{name: "zero attempts", options: registration.Options{RollbackTimeout: time.Second}, dependencies: validDependencies},
+		{name: "too many attempts", options: registration.Options{MaxAttempts: 6, RollbackTimeout: time.Second}, dependencies: validDependencies},
+		{name: "unbounded rollback", options: registration.Options{MaxAttempts: 1, RollbackTimeout: time.Minute}, dependencies: validDependencies},
 	}
 	for _, test := range tests {
-		if _, err := registration.NewService(test.options, test.queue, test.ids, test.clock, test.retry); !errors.Is(err, registration.ErrInvalidService) {
+		if _, err := registration.NewService(test.options, test.dependencies); !errors.Is(err, registration.ErrInvalidService) {
 			t.Fatalf("NewService(%s) error = %v, want ErrInvalidService", test.name, err)
 		}
 	}
 
-	service, err := registration.NewService(validOptions, queue, ids, clock, retry)
+	service, err := registration.NewService(validOptions, validDependencies)
 	if err != nil {
 		t.Fatalf("registration.NewService(valid) error = %v", err)
 	}
@@ -345,15 +460,16 @@ func mustChange(
 	if err != nil {
 		t.Fatalf("Registration.Complete() error = %v", err)
 	}
-	change, err := registration.NewChange(
-		state,
-		credential,
-		command.Identity,
-		nodeID,
-		command.Hostname,
-		disposition,
-		fixtureTime,
-	)
+	change, err := registration.NewChange(registration.ChangeParams{
+		Registration: state,
+		Credential:   credential,
+		Identity:     command.Identity,
+		NodeID:       nodeID,
+		Hostname:     command.Hostname,
+		Disposition:  disposition,
+		MutationIDs:  mustMutationIDs(t),
+		OccurredAt:   fixtureTime,
+	})
 	if err != nil {
 		t.Fatalf("registration.NewChange() error = %v", err)
 	}

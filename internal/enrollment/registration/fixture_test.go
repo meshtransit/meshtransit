@@ -9,6 +9,7 @@ import (
 	registration "github.com/meshtransit/meshtransit/internal/enrollment/registration"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -100,6 +101,17 @@ func (ids *fixedNodeIDs) NewNodeID() (node.ID, error) {
 	return ids.nodeID, ids.err
 }
 
+type fixedMutationIDs struct {
+	ids   registration.MutationIDs
+	err   error
+	calls int
+}
+
+func (generator *fixedMutationIDs) NewMutationIDs() (registration.MutationIDs, error) {
+	generator.calls++
+	return generator.ids, generator.err
+}
+
 type fixedClock struct {
 	now time.Time
 }
@@ -123,18 +135,81 @@ func mustService(
 	retry *recordedRetry,
 ) *registration.Service {
 	t.Helper()
+	return mustServiceWithMutationIDs(
+		t,
+		queue,
+		ids,
+		&fixedMutationIDs{ids: mustMutationIDs(t)},
+		retry,
+	)
+}
+
+func mustServiceWithMutationIDs(
+	t *testing.T,
+	queue *transactionQueue,
+	ids *fixedNodeIDs,
+	mutationIDs *fixedMutationIDs,
+	retry *recordedRetry,
+) *registration.Service {
+	t.Helper()
 
 	service, err := registration.NewService(
 		registration.Options{MaxAttempts: 3, RollbackTimeout: time.Second},
-		queue,
-		ids,
-		fixedClock{now: fixtureTime},
-		retry,
+		registration.Dependencies{
+			Transactions: queue,
+			NodeIDs:      ids,
+			MutationIDs:  mutationIDs,
+			Clock:        fixedClock{now: fixtureTime},
+			Retry:        retry,
+		},
 	)
 	if err != nil {
 		t.Fatalf("registration.NewService() error = %v", err)
 	}
 	return service
+}
+
+func mustMutationIDs(t *testing.T) registration.MutationIDs {
+	t.Helper()
+
+	ids, err := registration.NewMutationIDs(mutationIDParams(t))
+	if err != nil {
+		t.Fatalf("registration.NewMutationIDs() error = %v", err)
+	}
+	return ids
+}
+
+func mutationIDParams(t *testing.T) registration.MutationIDParams {
+	t.Helper()
+
+	values := []string{
+		"01890f30-0000-7000-8000-000000000001",
+		"01890f30-0000-7000-8000-000000000002",
+		"01890f30-0000-7000-8000-000000000003",
+		"01890f30-0000-7000-8000-000000000004",
+		"01890f30-0000-7000-8000-000000000005",
+		"01890f30-0000-7000-8000-000000000006",
+		"01890f30-0000-7000-8000-000000000007",
+		"01890f30-0000-7000-8000-000000000008",
+	}
+	ids := make([]publicid.ID, len(values))
+	for index, value := range values {
+		id, err := publicid.Parse(value)
+		if err != nil {
+			t.Fatalf("publicid.Parse(%q) error = %v", value, err)
+		}
+		ids[index] = id
+	}
+	return registration.MutationIDParams{
+		ChangeID:          ids[0],
+		AuditEventID:      ids[1],
+		OutboxEventID:     ids[2],
+		CredentialUseID:   ids[3],
+		MachineKeyEpochID: ids[4],
+		NodeKeyEpochID:    ids[5],
+		IPv4LeaseID:       ids[6],
+		IPv6LeaseID:       ids[7],
+	}
 }
 
 func mustCommand(t *testing.T) registration.Command {
