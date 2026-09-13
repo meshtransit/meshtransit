@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 9 {
-		t.Fatalf("len(Catalog()) = %d, want 9", len(catalog))
+	if len(catalog) != 10 {
+		t.Fatalf("len(Catalog()) = %d, want 10", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -325,8 +325,49 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network inventory revision migration SQL contains excessive capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 9 {
-		t.Fatalf("LatestVersion() = %d, want 9", LatestVersion())
+	replayEvidence := catalog[9]
+	if replayEvidence.Description != "registration idempotency replay evidence" {
+		t.Fatalf(
+			"migration 10 description = %q, want registration replay evidence",
+			replayEvidence.Description,
+		)
+	}
+	for _, required := range []string{
+		"ADD COLUMN intent_format_version SMALLINT NOT NULL DEFAULT 1",
+		"ALTER COLUMN intent_format_version SET DEFAULT 2",
+		"ADD COLUMN requested_node_key BYTEA",
+		"ADD COLUMN completed_hostname TEXT",
+		"ADD COLUMN completed_disposition TEXT",
+		"ADD COLUMN completed_network_revision BIGINT",
+		"pending_registration_requested_node_key_check",
+		"pg_catalog.octet_length(requested_node_key) = 32",
+		"pending_registration_completion_replay_check",
+		"completed_disposition IN ('created', 'resumed')",
+		"completed_network_revision > 0",
+		"GRANT UPDATE (",
+		"completed_hostname",
+		"completed_disposition",
+		"completed_network_revision",
+		") ON mesh.pending_registration TO mesh_runtime",
+	} {
+		if !strings.Contains(replayEvidence.SQL, required) {
+			t.Errorf("registration replay evidence migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"plaintext",
+		"GRANT DELETE",
+		"GRANT TRUNCATE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"DISABLE ROW LEVEL SECURITY",
+	} {
+		if strings.Contains(replayEvidence.SQL, forbidden) {
+			t.Errorf("registration replay evidence migration SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 10 {
+		t.Fatalf("LatestVersion() = %d, want 10", LatestVersion())
 	}
 }
 

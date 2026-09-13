@@ -200,7 +200,11 @@ func seedRegistrationAuthority(ctx context.Context, t *testing.T, connection *pg
     enrollment_credential_id,
     request_hash,
     machine_key_fingerprint,
+    requested_node_key,
     device_id,
+    completed_hostname,
+    completed_disposition,
+    completed_network_revision,
     expires_at,
     state
 ) OVERRIDING SYSTEM VALUE VALUES (
@@ -213,7 +217,11 @@ func seedRegistrationAuthority(ctx context.Context, t *testing.T, connection *pg
     602,
     pg_catalog.decode(pg_catalog.repeat('61', 32), 'hex'),
     pg_catalog.decode(pg_catalog.repeat('31', 32), 'hex'),
+    pg_catalog.decode(pg_catalog.repeat('22', 32), 'hex'),
     603,
+    'node-one.example',
+    'created',
+    3,
     pg_catalog.now() + INTERVAL '10 minutes',
     'completed'
 )`,
@@ -336,25 +344,43 @@ func assertRegistrationSchemaConstraints(ctx context.Context, t *testing.T, conn
 			query: `INSERT INTO mesh.pending_registration (
     public_id, workspace_id, network_id, enrollment_profile_id,
     authorization_kind, enrollment_credential_id, request_hash, machine_key_fingerprint,
+    requested_node_key,
     expires_at, state
 ) VALUES (
     '01890f10-0000-7000-8000-000000000706', 101, 201, 601,
     'credential', 602, pg_catalog.decode('01', 'hex'),
     pg_catalog.decode(pg_catalog.repeat('46', 32), 'hex'),
+    pg_catalog.decode(pg_catalog.repeat('56', 32), 'hex'),
     pg_catalog.now() + INTERVAL '10 minutes', 'pending'
 )`,
 			wantCode: "23514",
 		},
 		{
-			name: "completed registration requires device",
+			name: "new registration intent requires requested Node key",
 			query: `INSERT INTO mesh.pending_registration (
     public_id, workspace_id, network_id, enrollment_profile_id,
     authorization_kind, enrollment_credential_id, request_hash, machine_key_fingerprint,
     expires_at, state
 ) VALUES (
+    '01890f10-0000-7000-8000-000000000708', 101, 201, 601,
+    'credential', 602, pg_catalog.decode(pg_catalog.repeat('48', 32), 'hex'),
+    pg_catalog.decode(pg_catalog.repeat('58', 32), 'hex'),
+    pg_catalog.now() + INTERVAL '10 minutes', 'pending'
+)`,
+			wantCode: "23514",
+		},
+		{
+			name: "completed registration requires result snapshot",
+			query: `INSERT INTO mesh.pending_registration (
+    public_id, workspace_id, network_id, enrollment_profile_id,
+    authorization_kind, enrollment_credential_id, request_hash, machine_key_fingerprint,
+    requested_node_key,
+    expires_at, state
+) VALUES (
     '01890f10-0000-7000-8000-000000000703', 101, 201, 601,
     'credential', 602, pg_catalog.decode(pg_catalog.repeat('47', 32), 'hex'),
     pg_catalog.decode(pg_catalog.repeat('43', 32), 'hex'),
+    pg_catalog.decode(pg_catalog.repeat('53', 32), 'hex'),
     pg_catalog.now() + INTERVAL '10 minutes', 'completed'
 )`,
 			wantCode: "23514",
@@ -456,6 +482,7 @@ func assertRegistrationRuntimeIsolation(ctx context.Context, t *testing.T, conne
 
 	var canInsertDevice, canUpdateHostname, canUpdateDevicePublicID bool
 	var canUpdateCredentialDigest, canUpdateCredentialUse, canDeleteDevice bool
+	var canUpdateCompletionSnapshot, canUpdateRequestedNodeKey bool
 	if err := connection.QueryRow(ctx, `SELECT
     pg_catalog.has_table_privilege(CURRENT_USER, 'mesh.device', 'INSERT'),
     pg_catalog.has_column_privilege(CURRENT_USER, 'mesh.device', 'hostname', 'UPDATE'),
@@ -467,28 +494,56 @@ func assertRegistrationRuntimeIsolation(ctx context.Context, t *testing.T, conne
         'UPDATE'
     ),
     pg_catalog.has_table_privilege(CURRENT_USER, 'mesh.enrollment_credential_use', 'UPDATE'),
-    pg_catalog.has_table_privilege(CURRENT_USER, 'mesh.device', 'DELETE')`).Scan(
+    pg_catalog.has_table_privilege(CURRENT_USER, 'mesh.device', 'DELETE'),
+    pg_catalog.has_column_privilege(
+        CURRENT_USER,
+        'mesh.pending_registration',
+        'completed_hostname',
+        'UPDATE'
+    ) AND pg_catalog.has_column_privilege(
+        CURRENT_USER,
+        'mesh.pending_registration',
+        'completed_disposition',
+        'UPDATE'
+    ) AND pg_catalog.has_column_privilege(
+        CURRENT_USER,
+        'mesh.pending_registration',
+        'completed_network_revision',
+        'UPDATE'
+    ),
+    pg_catalog.has_column_privilege(
+        CURRENT_USER,
+        'mesh.pending_registration',
+        'requested_node_key',
+        'UPDATE'
+    )`).Scan(
 		&canInsertDevice,
 		&canUpdateHostname,
 		&canUpdateDevicePublicID,
 		&canUpdateCredentialDigest,
 		&canUpdateCredentialUse,
 		&canDeleteDevice,
+		&canUpdateCompletionSnapshot,
+		&canUpdateRequestedNodeKey,
 	); err != nil {
 		t.Fatalf("query registration privilege contract: %v", err)
 	}
 	if !canInsertDevice || !canUpdateHostname || canUpdateDevicePublicID ||
-		canUpdateCredentialDigest || canUpdateCredentialUse || canDeleteDevice {
+		canUpdateCredentialDigest || canUpdateCredentialUse || canDeleteDevice ||
+		!canUpdateCompletionSnapshot || canUpdateRequestedNodeKey {
 		t.Fatalf(
 			"registration privileges: insert device=%t update hostname=%t "+
 				"update device public id=%t update credential digest=%t "+
-				"update credential use=%t delete device=%t",
+				"update credential use=%t delete device=%t "+
+				"update completion snapshot=%t update requested Node key=%t",
 			canInsertDevice,
 			canUpdateHostname,
 			canUpdateDevicePublicID,
 			canUpdateCredentialDigest,
 			canUpdateCredentialUse,
 			canDeleteDevice,
+			canUpdateCompletionSnapshot,
+			canUpdateRequestedNodeKey,
 		)
 	}
 
