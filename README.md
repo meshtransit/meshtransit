@@ -251,8 +251,9 @@ invariants, plus real worker claim/reconciliation/delivered/retry behavior.
 Never point this test at a shared or production database.
 `make integration-platform-container` provisions the same isolated PostgreSQL
 18.6 TLS/SCRAM and Redis 8.8.0 TLS/ACL fixtures used by CI. It additionally
-proves end-to-end Network-revision wakeup delivery and transactional retry, then
-removes both containers when the test exits.
+proves end-to-end Network-revision wakeup delivery, transactional retry, and
+lease-expiry replay after a post-publish/pre-completion process failure. Both
+containers are removed when the test exits.
 
 ## Container image
 

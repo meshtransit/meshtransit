@@ -158,4 +158,5 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	workerPool := openIntegrationWorkerPool(t, ctx, adminConfig)
 	assertWorkerOutboxDelivery(t, ctx, adminConnection, workerPool)
 	assertRevisionDispatcherDelivery(t, ctx, adminConnection, workerPool)
+	assertRevisionDispatcherRecovery(t, ctx, adminConnection, workerPool)
 }
