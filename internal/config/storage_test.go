@@ -161,3 +161,42 @@ func TestLoadRequiresOnlySelectedPostgreSQLCredentials(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadRejectsSharedPostgreSQLCredentialSlots(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		setting     string
+		sharedValue string
+	}{
+		{
+			name:        "shared username",
+			setting:     envPostgreSQLWorkerUser,
+			sharedValue: "mesh_runtime",
+		},
+		{
+			name:        "shared password file",
+			setting:     envPostgreSQLWorkerPasswordFile,
+			sharedValue: "/run/secrets/postgres-runtime-password",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := Load(mapLookup(validStorageValues(map[string]string{
+				test.setting: test.sharedValue,
+			})))
+			if !errors.Is(err, ErrInvalid) {
+				t.Fatalf("Load() error = %v, want ErrInvalid", err)
+			}
+			if !strings.Contains(err.Error(), test.setting) {
+				t.Fatalf("Load() error = %q, want setting name %s", err, test.setting)
+			}
+			if strings.Contains(err.Error(), test.sharedValue) {
+				t.Fatalf("Load() error exposed shared credential reference %q: %v", test.sharedValue, err)
+			}
+		})
+	}
+}

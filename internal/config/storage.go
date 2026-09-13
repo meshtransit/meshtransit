@@ -104,6 +104,14 @@ func loadStorageConfig(lookup LookupFunc, role app.Role) (StorageConfig, error) 
 		}
 		workerConfig = &loaded
 	}
+	if runtimeConfig != nil && workerConfig != nil {
+		if runtimeConfig.User == workerConfig.User {
+			return StorageConfig{}, settingError(envPostgreSQLWorkerUser)
+		}
+		if runtimeConfig.PasswordFile.path == workerConfig.PasswordFile.path {
+			return StorageConfig{}, settingError(envPostgreSQLWorkerPasswordFile)
+		}
+	}
 
 	redisAddress, err := requiredValue(lookup, envRedisAddress, validateDependencyAddress)
 	if err != nil {

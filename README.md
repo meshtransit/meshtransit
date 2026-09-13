@@ -46,6 +46,8 @@ PostgreSQL and Redis settings below. The `api` and `control` roles additionally
 require the runtime PostgreSQL credential; `worker` requires the worker
 credential; and `all` requires both. Runtime and worker credentials open
 separate least-privilege connection pools and are never used interchangeably.
+When both pools are configured, their PostgreSQL usernames and credential-file
+paths must be distinct.
 The `relay` role intentionally does not load or require direct storage settings.
 
 | Environment variable | Default | Contract |
