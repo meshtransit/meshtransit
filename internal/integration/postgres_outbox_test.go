@@ -3,13 +3,16 @@
 package integration
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
+	"github.com/meshtransit/meshtransit/internal/network"
 )
 
 func assertWorkerOutboxDelivery(
@@ -25,6 +28,10 @@ func assertWorkerOutboxDelivery(
 	if err != nil {
 		t.Fatalf("postgres.NewOutboxStore() error = %v", err)
 	}
+	contendingStore, err := postgresadapter.NewOutboxStore(workerPool)
+	if err != nil {
+		t.Fatalf("postgres.NewOutboxStore() contender error = %v", err)
+	}
 	backlog, err := store.ReadNetworkRevisionBacklog(ctx)
 	if err != nil {
 		t.Fatalf("OutboxStore.ReadNetworkRevisionBacklog() error = %v", err)
@@ -37,10 +44,13 @@ func assertWorkerOutboxDelivery(
 			expectedNetworkRevisionEvents,
 		)
 	}
-	claims, err := store.ClaimNetworkRevisions(ctx, "integration-worker", 10, 30*time.Second)
-	if err != nil {
-		t.Fatalf("OutboxStore.ClaimNetworkRevisions() error = %v", err)
-	}
+	claims := claimOutboxAcrossReplicas(
+		ctx,
+		t,
+		store,
+		contendingStore,
+		expectedNetworkRevisionEvents/2,
+	)
 	if len(claims) != expectedNetworkRevisionEvents {
 		t.Fatalf(
 			"len(network revision claims) = %d, want %d committed Network changes",
@@ -101,6 +111,74 @@ func assertWorkerOutboxDelivery(
 			backlog.OldestAge(),
 		)
 	}
+}
+
+func claimOutboxAcrossReplicas(
+	ctx context.Context,
+	t *testing.T,
+	first *postgresadapter.OutboxStore,
+	second *postgresadapter.OutboxStore,
+	batchSize int,
+) []network.RevisionClaim {
+	t.Helper()
+
+	type claimResult struct {
+		workerID string
+		claims   []network.RevisionClaim
+		err      error
+	}
+
+	start := make(chan struct{})
+	results := make(chan claimResult, 2)
+	claim := func(store *postgresadapter.OutboxStore, workerID string) {
+		<-start
+		claims, err := store.ClaimNetworkRevisions(ctx, workerID, batchSize, 30*time.Second)
+		results <- claimResult{workerID: workerID, claims: claims, err: err}
+	}
+	go claim(first, "integration-replica-a")
+	go claim(second, "integration-replica-b")
+	close(start)
+
+	claims := make([]network.RevisionClaim, 0, batchSize*2)
+	seen := make(map[int64]string, batchSize*2)
+	for range 2 {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("OutboxStore.ClaimNetworkRevisions(%s) error = %v", result.workerID, result.err)
+		}
+		if len(result.claims) != batchSize {
+			t.Fatalf(
+				"len(%s claims) = %d, want %d",
+				result.workerID,
+				len(result.claims),
+				batchSize,
+			)
+		}
+		for _, claim := range result.claims {
+			if claim.WorkerID() != result.workerID {
+				t.Fatalf(
+					"claim %d worker = %q, want %q",
+					claim.EventID(),
+					claim.WorkerID(),
+					result.workerID,
+				)
+			}
+			if owner, duplicate := seen[claim.EventID()]; duplicate {
+				t.Fatalf(
+					"event %d claimed by replicas %q and %q",
+					claim.EventID(),
+					owner,
+					result.workerID,
+				)
+			}
+			seen[claim.EventID()] = result.workerID
+			claims = append(claims, claim)
+		}
+	}
+	slices.SortFunc(claims, func(left, right network.RevisionClaim) int {
+		return cmp.Compare(left.EventID(), right.EventID())
+	})
+	return claims
 }
 
 func assertOutboxOutcome(

@@ -334,6 +334,21 @@ func TestDispatcherRejectsShutdownBeforeStart(t *testing.T) {
 	}
 }
 
+func TestDispatcherRejectsCanceledStartWithoutLaunchingWorker(t *testing.T) {
+	t.Parallel()
+
+	dispatcher := mustDispatcher(t, &fakeOutbox{}, &fakePublisher{}, io.Discard)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	if err := dispatcher.Start(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Start() error = %v, want context canceled", err)
+	}
+	if dispatcher.Done() != nil {
+		t.Fatal("Done() != nil after canceled startup")
+	}
+}
+
 func testOptions() Options {
 	return Options{
 		WorkerID:         "revision-worker",
