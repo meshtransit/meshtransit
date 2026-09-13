@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 10 {
-		t.Fatalf("len(Catalog()) = %d, want 10", len(catalog))
+	if len(catalog) != 11 {
+		t.Fatalf("len(Catalog()) = %d, want 11", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -366,8 +366,44 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("registration replay evidence migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 10 {
-		t.Fatalf("LatestVersion() = %d, want 10", LatestVersion())
+	networkRevisionLock := catalog[10]
+	if networkRevisionLock.Description != "transaction-local network revision lock" {
+		t.Fatalf(
+			"migration 11 description = %q, want Network revision lock",
+			networkRevisionLock.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.lock_network_revision",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh_ops",
+		"pg_catalog.current_setting('mesh.workspace_id', TRUE)",
+		"pg_catalog.current_setting('mesh.network_id', TRUE)",
+		"FROM mesh_ops.network_revision AS revision",
+		"FOR UPDATE",
+		"REVOKE ALL ON FUNCTION mesh_ops.lock_network_revision",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.lock_network_revision() TO mesh_runtime",
+	} {
+		if !strings.Contains(networkRevisionLock.SQL, required) {
+			t.Errorf("Network revision lock migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"USING (TRUE)",
+		"WITH CHECK (TRUE)",
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"BYPASSRLS",
+		"TO mesh_worker",
+	} {
+		if strings.Contains(networkRevisionLock.SQL, forbidden) {
+			t.Errorf("Network revision lock migration SQL contains excessive capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 11 {
+		t.Fatalf("LatestVersion() = %d, want 11", LatestVersion())
 	}
 }
 

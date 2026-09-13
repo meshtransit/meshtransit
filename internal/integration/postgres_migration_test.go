@@ -171,6 +171,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	)
 	assertRuntimePublicNetworkScope(ctx, t, runtimeConnection)
 	assertRuntimeRejectsInvalidPublicNetworkScope(ctx, t, runtimeConnection)
+	assertRuntimeNetworkRevisionLock(ctx, t, runtimeConnection, runtimeContenderConnection)
 	assertRuntimeNetworkAuditStreamHead(ctx, t, runtimeConnection, runtimeContenderConnection)
 	assertRuntimeNetworkInventoryRevision(ctx, t, runtimeConnection)
 	assertRuntimeAuthorityIsolation(ctx, t, runtimeConnection)
@@ -178,6 +179,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 
 	workerConnection := openIntegrationWorkerConnection(ctx, t, adminConfig)
 	assertWorkerCannotSetPublicNetworkScope(ctx, t, workerConnection)
+	assertWorkerCannotLockNetworkRevision(ctx, t, workerConnection)
 	assertWorkerCannotLockNetworkAuditStream(ctx, t, workerConnection)
 	assertWorkerCannotAdvanceNetworkInventoryRevision(ctx, t, workerConnection)
 	assertWorkerOutboxPrivilegeContract(ctx, t, workerConnection)
