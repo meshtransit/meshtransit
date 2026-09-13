@@ -1,7 +1,11 @@
 // Package authorization owns management permissions and scoped grant evaluation.
 package authorization
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/meshtransit/meshtransit/internal/publicid"
+)
 
 var (
 	// ErrInvalidPublicID reports an absent or malformed domain public identifier.
@@ -11,60 +15,60 @@ var (
 )
 
 // DeploymentID is a validated opaque UUIDv7 identifying one deployment.
-type DeploymentID [16]byte
+type DeploymentID publicid.ID
 
 // WorkspaceID is a validated opaque UUIDv7 identifying one workspace.
-type WorkspaceID [16]byte
+type WorkspaceID publicid.ID
 
 // NetworkID is a validated opaque UUIDv7 identifying one network.
-type NetworkID [16]byte
+type NetworkID publicid.ID
 
 // PrincipalID is a validated opaque UUIDv7 identifying one management principal.
-type PrincipalID [16]byte
+type PrincipalID publicid.ID
 
 // NewDeploymentID validates and returns an opaque deployment identifier.
 func NewDeploymentID(value [16]byte) (DeploymentID, error) {
-	if !isUUIDv7(value) {
+	id, err := publicid.FromBytes(value)
+	if err != nil {
 		return DeploymentID{}, ErrInvalidPublicID
 	}
-	return DeploymentID(value), nil
+	return DeploymentID(id), nil
 }
 
 // NewWorkspaceID validates and returns an opaque workspace identifier.
 func NewWorkspaceID(value [16]byte) (WorkspaceID, error) {
-	if !isUUIDv7(value) {
+	id, err := publicid.FromBytes(value)
+	if err != nil {
 		return WorkspaceID{}, ErrInvalidPublicID
 	}
-	return WorkspaceID(value), nil
+	return WorkspaceID(id), nil
 }
 
 // NewNetworkID validates and returns an opaque network identifier.
 func NewNetworkID(value [16]byte) (NetworkID, error) {
-	if !isUUIDv7(value) {
+	id, err := publicid.FromBytes(value)
+	if err != nil {
 		return NetworkID{}, ErrInvalidPublicID
 	}
-	return NetworkID(value), nil
+	return NetworkID(id), nil
 }
 
 // NewPrincipalID validates and returns an opaque principal identifier.
 func NewPrincipalID(value [16]byte) (PrincipalID, error) {
-	if !isUUIDv7(value) {
+	id, err := publicid.FromBytes(value)
+	if err != nil {
 		return PrincipalID{}, ErrInvalidPublicID
 	}
-	return PrincipalID(value), nil
+	return PrincipalID(id), nil
 }
 
-func isUUIDv7(value [16]byte) bool {
-	return value[6]>>4 == 7 && value[8]&0xc0 == 0x80
-}
+func (id DeploymentID) isValid() bool { return publicid.ID(id).IsValid() }
 
-func (id DeploymentID) isValid() bool { return isUUIDv7([16]byte(id)) }
+func (id WorkspaceID) isValid() bool { return publicid.ID(id).IsValid() }
 
-func (id WorkspaceID) isValid() bool { return isUUIDv7([16]byte(id)) }
+func (id NetworkID) isValid() bool { return publicid.ID(id).IsValid() }
 
-func (id NetworkID) isValid() bool { return isUUIDv7([16]byte(id)) }
-
-func (id PrincipalID) isValid() bool { return isUUIDv7([16]byte(id)) }
+func (id PrincipalID) isValid() bool { return publicid.ID(id).IsValid() }
 
 // ScopeKind identifies an authorization boundary level.
 type ScopeKind uint8

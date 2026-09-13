@@ -1,7 +1,11 @@
 // Package network owns Network identity and monotonic revision invariants.
 package network
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/meshtransit/meshtransit/internal/publicid"
+)
 
 // ErrInvalidRevision indicates an unusable Network revision fact.
 var ErrInvalidRevision = errors.New("invalid network revision")
@@ -34,23 +38,6 @@ func (revision RevisionAdvanced) IsValid() bool {
 }
 
 func validCanonicalUUIDv7(value string) bool {
-	if len(value) != 36 || value[8] != '-' || value[13] != '-' ||
-		value[18] != '-' || value[23] != '-' || value[14] != '7' {
-		return false
-	}
-	variant := value[19]
-	if variant != '8' && variant != '9' && variant != 'a' && variant != 'b' {
-		return false
-	}
-	for index := range len(value) {
-		switch index {
-		case 8, 13, 18, 23:
-			continue
-		}
-		character := value[index]
-		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
-			return false
-		}
-	}
-	return true
+	_, err := publicid.Parse(value)
+	return err == nil
 }
