@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 4 {
-		t.Fatalf("len(Catalog()) = %d, want 4", len(catalog))
+	if len(catalog) != 5 {
+		t.Fatalf("len(Catalog()) = %d, want 5", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -153,8 +153,44 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("outbox delivery migration SQL contains excessive capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 4 {
-		t.Fatalf("LatestVersion() = %d, want 4", LatestVersion())
+
+	registration := catalog[4]
+	if registration.Description != "node enrollment and registration authority" {
+		t.Fatalf("migration 5 description = %q, want node enrollment authority", registration.Description)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.enrollment_profile",
+		"CREATE TABLE mesh.enrollment_credential",
+		"CREATE TABLE mesh.device",
+		"CREATE TABLE mesh.device_machine_key_epoch",
+		"CREATE TABLE mesh.device_node_key_epoch",
+		"CREATE TABLE mesh.pending_registration",
+		"CREATE TABLE mesh.enrollment_credential_use",
+		"CREATE TABLE mesh.node_address_lease",
+		"ENABLE ROW LEVEL SECURITY",
+		"FORCE ROW LEVEL SECURITY",
+		"CREATE TRIGGER enrollment_credential_authority_mutation",
+		"CREATE TRIGGER device_authority_mutation",
+		"CREATE TRIGGER node_address_lease_authority_mutation",
+		"GRANT EXECUTE ON FUNCTION mesh_audit.append_authority_evidence",
+	} {
+		if !strings.Contains(registration.SQL, required) {
+			t.Errorf("registration migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"plaintext",
+		"GRANT DELETE",
+		"GRANT TRUNCATE",
+		"GRANT ALL",
+		"BYPASSRLS",
+	} {
+		if strings.Contains(registration.SQL, forbidden) {
+			t.Errorf("registration migration SQL contains forbidden capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 5 {
+		t.Fatalf("LatestVersion() = %d, want 5", LatestVersion())
 	}
 }
 

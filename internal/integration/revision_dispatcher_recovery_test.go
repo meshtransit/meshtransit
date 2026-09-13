@@ -23,7 +23,7 @@ func assertRevisionDispatcherRecovery(
 ) {
 	t.Helper()
 
-	eventID := commitIntegrationNetworkRevision(ctx, t, adminConnection, 5, "993")
+	eventID, committedRevision := commitIntegrationNetworkRevision(ctx, t, adminConnection, "993")
 	outbox, err := postgresadapter.NewOutboxStore(workerPool)
 	if err != nil {
 		t.Fatalf("postgres.NewOutboxStore() error = %v", err)
@@ -58,7 +58,7 @@ func assertRevisionDispatcherRecovery(
 		if receiveErr != nil {
 			t.Fatalf("first revision subscription Receive() error = %v", receiveErr)
 		}
-		assertIntegrationRevision(t, revision, 5)
+		assertIntegrationRevision(t, revision, committedRevision)
 		waitForIntegrationOutcome(receiveCtx, t, func() bool {
 			return telemetry.Snapshot().FailedTotal == 1
 		})
@@ -97,7 +97,7 @@ WHERE id = $1`, eventID).Scan(&state); err != nil {
 		if receiveErr != nil {
 			t.Fatalf("replayed revision subscription Receive() error = %v", receiveErr)
 		}
-		assertIntegrationRevision(t, revision, 5)
+		assertIntegrationRevision(t, revision, committedRevision)
 		waitForIntegrationOutcome(receiveCtx, t, func() bool {
 			return telemetry.Snapshot().DeliveredTotal == 1
 		})

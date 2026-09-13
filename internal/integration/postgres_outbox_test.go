@@ -19,6 +19,7 @@ func assertWorkerOutboxDelivery(
 	workerPool *postgresadapter.Pool,
 ) {
 	t.Helper()
+	const expectedNetworkRevisionEvents = 4
 
 	store, err := postgresadapter.NewOutboxStore(workerPool)
 	if err != nil {
@@ -28,19 +29,24 @@ func assertWorkerOutboxDelivery(
 	if err != nil {
 		t.Fatalf("OutboxStore.ReadNetworkRevisionBacklog() error = %v", err)
 	}
-	if backlog.Events() != 3 || backlog.OldestAge() < 0 {
+	if backlog.Events() != expectedNetworkRevisionEvents || backlog.OldestAge() < 0 {
 		t.Fatalf(
-			"ready backlog before claim = (%d, %s), want (3, non-negative)",
+			"ready backlog before claim = (%d, %s), want (%d, non-negative)",
 			backlog.Events(),
 			backlog.OldestAge(),
+			expectedNetworkRevisionEvents,
 		)
 	}
 	claims, err := store.ClaimNetworkRevisions(ctx, "integration-worker", 10, 30*time.Second)
 	if err != nil {
 		t.Fatalf("OutboxStore.ClaimNetworkRevisions() error = %v", err)
 	}
-	if len(claims) != 3 {
-		t.Fatalf("len(network revision claims) = %d, want 3 committed Network changes", len(claims))
+	if len(claims) != expectedNetworkRevisionEvents {
+		t.Fatalf(
+			"len(network revision claims) = %d, want %d committed Network changes",
+			len(claims),
+			expectedNetworkRevisionEvents,
+		)
 	}
 	for index := 1; index < len(claims); index++ {
 		if claims[index-1].EventID() >= claims[index].EventID() {
@@ -73,13 +79,17 @@ func assertWorkerOutboxDelivery(
 	if err := store.RetryNetworkRevision(ctx, claims[1], "integration_retry", time.Hour); err != nil {
 		t.Fatalf("OutboxStore.RetryNetworkRevision() error = %v", err)
 	}
-	if err := store.MarkRevisionDelivered(ctx, claims[2]); err != nil {
-		t.Fatalf("OutboxStore.MarkRevisionDelivered(third claim) error = %v", err)
+	for _, claim := range claims[2:] {
+		if err := store.MarkRevisionDelivered(ctx, claim); err != nil {
+			t.Fatalf("OutboxStore.MarkRevisionDelivered(remaining claim) error = %v", err)
+		}
 	}
 	assertOutboxOutcome(ctx, t, adminConnection, claims[0].EventID(), "delivered", "delivered", nil)
 	retryClass := "integration_retry"
 	assertOutboxOutcome(ctx, t, adminConnection, claims[1].EventID(), "pending", "retry", &retryClass)
-	assertOutboxOutcome(ctx, t, adminConnection, claims[2].EventID(), "delivered", "delivered", nil)
+	for _, claim := range claims[2:] {
+		assertOutboxOutcome(ctx, t, adminConnection, claim.EventID(), "delivered", "delivered", nil)
+	}
 	backlog, err = store.ReadNetworkRevisionBacklog(ctx)
 	if err != nil {
 		t.Fatalf("OutboxStore.ReadNetworkRevisionBacklog() after delivery error = %v", err)

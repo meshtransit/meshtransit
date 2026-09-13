@@ -141,6 +141,8 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertAuthorityMutationAtomicity(ctx, t, adminConnection)
 	assertAuthorityConstraints(ctx, t, adminConnection)
 	assertDatabasePrivilegeContract(ctx, t, adminConnection)
+	seedRegistrationAuthority(ctx, t, adminConnection)
+	assertRegistrationSchemaConstraints(ctx, t, adminConnection)
 
 	runtimeConnection := openIntegrationPostgreSQLConnection(
 		ctx,
@@ -153,6 +155,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		processConfig.Dependencies.CheckTimeout,
 	)
 	assertRuntimeAuthorityIsolation(ctx, t, runtimeConnection)
+	assertRegistrationRuntimeIsolation(ctx, t, runtimeConnection)
 
 	workerConnection := openIntegrationWorkerConnection(ctx, t, adminConfig)
 	assertWorkerOutboxPrivilegeContract(ctx, t, workerConnection)

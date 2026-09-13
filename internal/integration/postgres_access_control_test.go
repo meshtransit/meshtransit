@@ -139,7 +139,7 @@ func assertRuntimeAuthorityIsolation(ctx context.Context, t *testing.T, connecti
 		t.Fatalf("query runtime negative privileges: %v", err)
 	}
 	if canInsertWorkspace || canReadPrincipal || canCreateSchema || canReadOutbox ||
-		canInsertOutbox || canReadAudit || canExecuteAuditAppend {
+		canInsertOutbox || canReadAudit || !canExecuteAuditAppend {
 		t.Fatalf(
 			"runtime excessive privileges: workspace insert=%t principal read=%t schema create=%t "+
 				"outbox read=%t outbox insert=%t audit read=%t audit append=%t",

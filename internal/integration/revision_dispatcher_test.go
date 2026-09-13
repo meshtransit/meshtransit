@@ -41,7 +41,7 @@ func assertRevisionDispatcherDelivery(
 	}
 
 	t.Run("publishes committed revision and completes outbox", func(t *testing.T) {
-		eventID := commitIntegrationNetworkRevision(ctx, t, adminConnection, 3, "991")
+		eventID, committedRevision := commitIntegrationNetworkRevision(ctx, t, adminConnection, "991")
 		subscription, subscribeErr := redisClient.SubscribeNetworkRevisionAdvanced(ctx)
 		if subscribeErr != nil {
 			t.Fatalf("redis SubscribeNetworkRevisionAdvanced() error = %v", subscribeErr)
@@ -62,12 +62,13 @@ func assertRevisionDispatcherDelivery(
 		if receiveErr != nil {
 			t.Fatalf("revision subscription Receive() error = %v", receiveErr)
 		}
-		if revision.NetworkPublicID() != integrationNetworkPublicID || revision.Number() != 3 {
+		if revision.NetworkPublicID() != integrationNetworkPublicID || revision.Number() != committedRevision {
 			t.Fatalf(
-				"published revision = (%q, %d), want (%q, 3)",
+				"published revision = (%q, %d), want (%q, %d)",
 				revision.NetworkPublicID(),
 				revision.Number(),
 				integrationNetworkPublicID,
+				committedRevision,
 			)
 		}
 		waitForIntegrationOutcome(receiveCtx, t, func() bool {
@@ -77,7 +78,7 @@ func assertRevisionDispatcherDelivery(
 	})
 
 	t.Run("persists retry when publication fails", func(t *testing.T) {
-		eventID := commitIntegrationNetworkRevision(ctx, t, adminConnection, 4, "992")
+		eventID, _ := commitIntegrationNetworkRevision(ctx, t, adminConnection, "992")
 		publishErr := errors.New("controlled publisher failure")
 		telemetry := revisionworker.NewTelemetry()
 		dispatcher := newIntegrationDispatcher(
@@ -203,11 +204,17 @@ func commitIntegrationNetworkRevision(
 	ctx context.Context,
 	t *testing.T,
 	connection *pgx.Conn,
-	revision int64,
 	publicIDSuffix string,
-) int64 {
+) (int64, int64) {
 	t.Helper()
 
+	var currentRevision int64
+	if err := connection.QueryRow(ctx, `SELECT network_revision
+FROM mesh_ops.network_revision
+WHERE workspace_id = 101 AND network_id = 201`).Scan(&currentRevision); err != nil {
+		t.Fatalf("read current integration Network revision: %v", err)
+	}
+	committedRevision := currentRevision + 1
 	outboxPublicID := "01890f03-0000-7000-8000-000000000" + publicIDSuffix
 	commitAuditedAuthorityFixture(ctx, t, connection, authorityEvidenceFixture{
 		changePublicID:         "01890f01-0000-7000-8000-000000000" + publicIDSuffix,
@@ -216,8 +223,8 @@ func commitIntegrationNetworkRevision(
 		streamID:               201,
 		aggregateKind:          "network",
 		aggregatePublicID:      integrationNetworkPublicID,
-		aggregateVersion:       revision,
-		networkRevision:        revision,
+		aggregateVersion:       committedRevision,
+		networkRevision:        committedRevision,
 		actorPrincipalPublicID: "01890f00-0000-7000-8000-000000000011",
 		action:                 "network.updated",
 		permission:             "network.update",
@@ -229,11 +236,16 @@ SET display_name = 'Network dispatcher integration', version = version + 1
 WHERE workspace_id = 101 AND id = 201`); err != nil {
 			t.Fatalf("update integration Network: %v", err)
 		}
-		if _, err := transaction.Exec(ctx, `UPDATE mesh_ops.network_revision
-SET network_revision = network_revision + 1,
+		commandTag, err := transaction.Exec(ctx, `UPDATE mesh_ops.network_revision
+SET network_revision = $1,
     updated_at = pg_catalog.clock_timestamp()
-WHERE workspace_id = 101 AND network_id = 201`); err != nil {
+WHERE workspace_id = 101 AND network_id = 201
+  AND network_revision = $2`, committedRevision, currentRevision)
+		if err != nil {
 			t.Fatalf("advance integration Network revision: %v", err)
+		}
+		if commandTag.RowsAffected() != 1 {
+			t.Fatalf("advance integration Network revision affected %d rows, want 1", commandTag.RowsAffected())
 		}
 	})
 
@@ -243,7 +255,7 @@ FROM mesh_ops.outbox_event
 WHERE public_id = $1`, outboxPublicID).Scan(&eventID); err != nil {
 		t.Fatalf("read integration outbox event: %v", err)
 	}
-	return eventID
+	return eventID, committedRevision
 }
 
 type failingRevisionPublisher struct {
