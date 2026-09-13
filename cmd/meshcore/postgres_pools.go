@@ -39,7 +39,12 @@ func openPostgresPools(
 			return postgresPools{}, fmt.Errorf("open runtime postgres pool: %w", err)
 		}
 		pools.runtime = pool
-		resources.Add("postgresql-runtime", pool.Close)
+		if err := resources.Add("postgresql-runtime", pool.Shutdown); err != nil {
+			return postgresPools{}, errors.Join(
+				fmt.Errorf("own runtime postgres pool: %w", err),
+				pool.Shutdown(ctx),
+			)
+		}
 	}
 	if postgresConfig.Worker != nil {
 		pool, err := openPostgresRolePool(
@@ -53,7 +58,12 @@ func openPostgresPools(
 			return postgresPools{}, fmt.Errorf("open worker postgres pool: %w", err)
 		}
 		pools.worker = pool
-		resources.Add("postgresql-worker", pool.Close)
+		if err := resources.Add("postgresql-worker", pool.Shutdown); err != nil {
+			return postgresPools{}, errors.Join(
+				fmt.Errorf("own worker postgres pool: %w", err),
+				pool.Shutdown(ctx),
+			)
+		}
 	}
 	if pools.runtime == nil && pools.worker == nil {
 		return postgresPools{}, errors.New("postgres role pool is required")

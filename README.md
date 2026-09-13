@@ -236,7 +236,11 @@ never metric labels.
 Readiness opens only after the initial PostgreSQL and Redis checks succeed and
 the listener starts. Periodic bounded checks lower readiness on dependency loss
 and restore it after recovery. Graceful shutdown closes admission before
-draining the listener, joining the monitor, and releasing Redis then PostgreSQL.
+draining services in reverse start order, joining the monitor, and releasing
+Redis then PostgreSQL. Those phases share one configured shutdown deadline;
+resource cleanup is not started after that deadline is exhausted. PostgreSQL
+cleanup also refuses to call the pool's blocking close while a connection is
+still acquired, so shutdown never relies on an unowned timeout goroutine.
 `/live` never depends on infrastructure availability. Health responses expose
 only stable component names and `ready`, `unavailable`, or `unknown` states.
 The listener defaults to loopback and should not be exposed on public client

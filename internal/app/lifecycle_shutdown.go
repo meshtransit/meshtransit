@@ -40,6 +40,9 @@ func (application *Application) stopStarted(
 			results = append(results, err)
 		}
 	}
+	if err := application.resources.Close(shutdownCtx); err != nil {
+		results = append(results, fmt.Errorf("close runtime resources: %w", err))
+	}
 	return errors.Join(results...)
 }
 
@@ -55,7 +58,24 @@ func (application *Application) stopMonitor(parent context.Context, monitorDone 
 		shutdownErr = fmt.Errorf("shut down dependency monitor: %w", shutdownErr)
 	}
 	joinErr := joinOwned(shutdownCtx, "dependency monitor", monitorDone)
-	return errors.Join(shutdownErr, joinErr)
+	resourceErr := application.resources.Close(shutdownCtx)
+	if resourceErr != nil {
+		resourceErr = fmt.Errorf("close runtime resources: %w", resourceErr)
+	}
+	return errors.Join(shutdownErr, joinErr, resourceErr)
+}
+
+func (application *Application) closeResources(parent context.Context) error {
+	shutdownCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(parent),
+		application.shutdownTimeout,
+	)
+	defer cancel()
+
+	if err := application.resources.Close(shutdownCtx); err != nil {
+		return fmt.Errorf("close runtime resources: %w", err)
+	}
+	return nil
 }
 
 func joinOwned(ctx context.Context, name string, done <-chan error) error {

@@ -116,7 +116,8 @@ func TestPoolImplementsCheckAndIdempotentClose(t *testing.T) {
 			t.Fatal("schema compatibility checked after failed ping")
 			return nil
 		},
-		close: func() { closeCalls++ },
+		acquired: func() int32 { return 0 },
+		close:    func() { closeCalls++ },
 	}
 	ctx := t.Context()
 	if err := pool.Check(ctx); !errors.Is(err, checkErr) {
@@ -190,6 +191,7 @@ func TestPoolConcurrentCloseRunsOnce(t *testing.T) {
 	pool := &Pool{
 		ping:        func(context.Context) error { return nil },
 		checkSchema: func(context.Context) error { return nil },
+		acquired:    func() int32 { return 0 },
 		close:       func() { closeCalls.Add(1) },
 	}
 	start := make(chan struct{})
@@ -206,6 +208,52 @@ func TestPoolConcurrentCloseRunsOnce(t *testing.T) {
 	callers.Wait()
 	if got := closeCalls.Load(); got != 1 {
 		t.Fatalf("close calls = %d, want 1", got)
+	}
+}
+
+func TestPoolShutdownRefusesToWaitForAcquiredConnections(t *testing.T) {
+	t.Parallel()
+
+	var acquired atomic.Int32
+	acquired.Store(1)
+	closeCalls := 0
+	pool := &Pool{
+		acquired: acquired.Load,
+		close:    func() { closeCalls++ },
+	}
+
+	if err := pool.Shutdown(t.Context()); !errors.Is(err, ErrPoolInUse) {
+		t.Fatalf("Shutdown() error = %v, want ErrPoolInUse", err)
+	}
+	if closeCalls != 0 {
+		t.Fatalf("close calls = %d, want 0 while a connection is acquired", closeCalls)
+	}
+
+	acquired.Store(0)
+	if err := pool.Shutdown(t.Context()); err != nil {
+		t.Fatalf("retry Shutdown() error = %v", err)
+	}
+	if closeCalls != 1 {
+		t.Fatalf("close calls = %d, want 1 after the pool became idle", closeCalls)
+	}
+}
+
+func TestPoolShutdownHonorsCanceledContextBeforeClose(t *testing.T) {
+	t.Parallel()
+
+	closeCalls := 0
+	pool := &Pool{
+		acquired: func() int32 { return 0 },
+		close:    func() { closeCalls++ },
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	if err := pool.Shutdown(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Shutdown() error = %v, want context canceled", err)
+	}
+	if closeCalls != 0 {
+		t.Fatalf("close calls = %d, want 0 after cancellation", closeCalls)
 	}
 }
 

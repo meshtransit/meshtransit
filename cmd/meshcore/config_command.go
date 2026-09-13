@@ -62,7 +62,12 @@ func validateDependencyConfiguration(ctx context.Context, processConfig config.C
 
 	resources := &resourceOwner{}
 	defer func() {
-		returnErr = errors.Join(returnErr, resources.Close())
+		cleanupCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			processConfig.ShutdownTimeout,
+		)
+		defer cancel()
+		returnErr = errors.Join(returnErr, resources.Close(cleanupCtx))
 	}()
 
 	_, err := openPostgresPools(
@@ -86,6 +91,8 @@ func validateDependencyConfiguration(ctx context.Context, processConfig config.C
 	if err != nil {
 		return fmt.Errorf("validate redis settings: %w", err)
 	}
-	resources.Add("redis", redisClient.Close)
+	if err := resources.Add("redis", redisClient.Shutdown); err != nil {
+		return errors.Join(err, redisClient.Shutdown(ctx))
+	}
 	return nil
 }

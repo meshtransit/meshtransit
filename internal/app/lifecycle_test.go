@@ -18,6 +18,7 @@ func TestNewRejectsInvalidLifecycleInputs(t *testing.T) {
 	validOptions := Options{Roles: []Role{RoleAPI}, ShutdownTimeout: time.Second}
 	readiness := &fakeReadiness{updates: make(chan bool, 2)}
 	monitor := newFakeMonitor()
+	resources := newFakeResourceCloser()
 	service := newFakeService()
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	var typedNilReadiness *fakeReadiness
@@ -54,6 +55,7 @@ func TestNewRejectsInvalidLifecycleInputs(t *testing.T) {
 				test.options,
 				test.readiness,
 				test.monitor,
+				resources,
 				test.logger,
 				OwnedService{Name: "health", Service: test.service},
 			)
@@ -73,6 +75,7 @@ func TestNewRejectsInvalidOwnedServices(t *testing.T) {
 	options := Options{Roles: []Role{RoleAPI}, ShutdownTimeout: time.Second}
 	readiness := &fakeReadiness{updates: make(chan bool, 1)}
 	monitor := newFakeMonitor()
+	resources := newFakeResourceCloser()
 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
 	service := newFakeService()
 	var typedNil *fakeService
@@ -99,7 +102,7 @@ func TestNewRejectsInvalidOwnedServices(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			application, err := New(options, readiness, monitor, logger, test.services...)
+			application, err := New(options, readiness, monitor, resources, logger, test.services...)
 			if !errors.Is(err, ErrInvalidApplication) {
 				t.Fatalf("New() error = %v, want ErrInvalidApplication", err)
 			}
@@ -110,14 +113,50 @@ func TestNewRejectsInvalidOwnedServices(t *testing.T) {
 	}
 }
 
+func TestNewRejectsInvalidResourceCloser(t *testing.T) {
+	t.Parallel()
+
+	options := Options{Roles: []Role{RoleAPI}, ShutdownTimeout: time.Second}
+	readiness := &fakeReadiness{updates: make(chan bool, 1)}
+	monitor := newFakeMonitor()
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	service := newFakeService()
+	var typedNil *fakeResourceCloser
+
+	for _, resources := range []ResourceCloser{nil, typedNil} {
+		application, err := New(
+			options,
+			readiness,
+			monitor,
+			resources,
+			logger,
+			OwnedService{Name: "health", Service: service},
+		)
+		if !errors.Is(err, ErrInvalidApplication) {
+			t.Fatalf("New() error = %v, want ErrInvalidApplication", err)
+		}
+		if application != nil {
+			t.Fatalf("New() = %v, want nil", application)
+		}
+	}
+}
+
 func TestApplicationRunOwnsReadinessAndShutdown(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
 		readiness := &fakeReadiness{updates: make(chan bool, 2)}
 		monitor := newFakeMonitor()
+		resources := newFakeResourceCloser()
 		service := newFakeService()
-		application := mustApplication(t, readiness, monitor, service, 100*time.Millisecond)
+		application := mustApplicationWithResources(
+			t,
+			readiness,
+			monitor,
+			resources,
+			service,
+			100*time.Millisecond,
+		)
 		ctx, cancel := context.WithCancel(t.Context())
 		t.Cleanup(cancel)
 		result := make(chan error, 1)
@@ -144,6 +183,11 @@ func TestApplicationRunOwnsReadinessAndShutdown(t *testing.T) {
 		case <-monitor.shutdownCalled:
 		default:
 			t.Fatal("dependency monitor shutdown was not called")
+		}
+		select {
+		case <-resources.closeCalled:
+		default:
+			t.Fatal("runtime resources were not closed")
 		}
 		if !reflect.DeepEqual(application.roles, []Role{RoleAPI}) {
 			t.Fatalf("application roles = %v, want [api]", application.roles)
@@ -176,6 +220,11 @@ func TestApplicationStartsInOrderAndStopsInReverseOrder(t *testing.T) {
 		return nil
 	}
 	monitor := newFakeMonitor()
+	resources := newFakeResourceCloser()
+	resources.close = func(context.Context) error {
+		order = append(order, "close:resources")
+		return nil
+	}
 	monitor.shutdown = func(context.Context) error {
 		order = append(order, "stop:monitor")
 		monitor.done <- nil
@@ -186,6 +235,7 @@ func TestApplicationStartsInOrderAndStopsInReverseOrder(t *testing.T) {
 		Options{Roles: []Role{RoleWorker}, ShutdownTimeout: time.Second},
 		readiness,
 		monitor,
+		resources,
 		slog.New(slog.NewJSONHandler(io.Discard, nil)),
 		OwnedService{Name: "first", Service: first},
 		OwnedService{Name: "second", Service: second},
@@ -206,9 +256,53 @@ func TestApplicationStartsInOrderAndStopsInReverseOrder(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	want := []string{"start:first", "start:second", "stop:second", "stop:first", "stop:monitor"}
+	want := []string{"start:first", "start:second", "stop:second", "stop:first", "stop:monitor", "close:resources"}
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("lifecycle order = %v, want %v", order, want)
+	}
+}
+
+func TestApplicationSharesOneShutdownDeadlineWithResources(t *testing.T) {
+	t.Parallel()
+
+	var serviceDeadline time.Time
+	service := newFakeService()
+	service.shutdown = func(ctx context.Context) error {
+		serviceDeadline, _ = ctx.Deadline()
+		service.done <- nil
+		return nil
+	}
+	var resourceDeadline time.Time
+	resources := newFakeResourceCloser()
+	resources.close = func(ctx context.Context) error {
+		resourceDeadline, _ = ctx.Deadline()
+		return nil
+	}
+	readiness := &fakeReadiness{updates: make(chan bool, 2)}
+	application := mustApplicationWithResources(
+		t,
+		readiness,
+		newFakeMonitor(),
+		resources,
+		service,
+		time.Second,
+	)
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() { result <- application.Run(ctx) }()
+	<-service.started
+	<-readiness.updates
+	cancel()
+
+	if err := <-result; err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if serviceDeadline.IsZero() || !serviceDeadline.Equal(resourceDeadline) {
+		t.Fatalf(
+			"shutdown deadlines = service %v, resources %v; want one shared deadline",
+			serviceDeadline,
+			resourceDeadline,
+		)
 	}
 }
 
@@ -220,11 +314,13 @@ func TestApplicationCleansStartedServicesAfterPartialStartFailure(t *testing.T) 
 	startErr := errors.New("second start failed")
 	second.startErr = startErr
 	monitor := newFakeMonitor()
+	resources := newFakeResourceCloser()
 	readiness := &fakeReadiness{updates: make(chan bool, 1)}
 	application, err := New(
 		Options{Roles: []Role{RoleWorker}, ShutdownTimeout: time.Second},
 		readiness,
 		monitor,
+		resources,
 		slog.New(slog.NewJSONHandler(io.Discard, nil)),
 		OwnedService{Name: "first", Service: first},
 		OwnedService{Name: "second", Service: second},
@@ -251,6 +347,11 @@ func TestApplicationCleansStartedServicesAfterPartialStartFailure(t *testing.T) 
 	case <-monitor.shutdownCalled:
 	default:
 		t.Fatal("monitor was not cleaned up")
+	}
+	select {
+	case <-resources.closeCalled:
+	default:
+		t.Fatal("resources were not cleaned up")
 	}
 	select {
 	case update := <-readiness.updates:
@@ -292,8 +393,9 @@ func TestApplicationRunReturnsMonitorStartFailureBeforeServiceStart(t *testing.T
 	readiness := &fakeReadiness{updates: make(chan bool, 1)}
 	monitor := newFakeMonitor()
 	monitor.startErr = startErr
+	resources := newFakeResourceCloser()
 	service := newFakeService()
-	application := mustApplication(t, readiness, monitor, service, time.Second)
+	application := mustApplicationWithResources(t, readiness, monitor, resources, service, time.Second)
 
 	err := application.Run(context.Background())
 	if !errors.Is(err, startErr) {
@@ -303,6 +405,11 @@ func TestApplicationRunReturnsMonitorStartFailureBeforeServiceStart(t *testing.T
 	case <-service.started:
 		t.Fatal("service started before dependency monitor succeeded")
 	default:
+	}
+	select {
+	case <-resources.closeCalled:
+	default:
+		t.Fatal("resources were not cleaned up after monitor start failure")
 	}
 }
 
@@ -411,11 +518,31 @@ func mustApplication(
 	shutdownTimeout time.Duration,
 ) *Application {
 	t.Helper()
+	return mustApplicationWithResources(
+		t,
+		readiness,
+		monitor,
+		newFakeResourceCloser(),
+		service,
+		shutdownTimeout,
+	)
+}
+
+func mustApplicationWithResources(
+	t *testing.T,
+	readiness Readiness,
+	monitor Monitor,
+	resources ResourceCloser,
+	service Service,
+	shutdownTimeout time.Duration,
+) *Application {
+	t.Helper()
 
 	application, err := New(
 		Options{Roles: []Role{RoleAPI}, ShutdownTimeout: shutdownTimeout},
 		readiness,
 		monitor,
+		resources,
 		slog.New(slog.NewJSONHandler(io.Discard, nil)),
 		OwnedService{Name: "health", Service: service},
 	)
@@ -423,6 +550,24 @@ func mustApplication(
 		t.Fatalf("New() error = %v", err)
 	}
 	return application
+}
+
+type fakeResourceCloser struct {
+	closeCalled chan struct{}
+	close       func(context.Context) error
+	closeOnce   sync.Once
+}
+
+func newFakeResourceCloser() *fakeResourceCloser {
+	return &fakeResourceCloser{closeCalled: make(chan struct{})}
+}
+
+func (resources *fakeResourceCloser) Close(ctx context.Context) error {
+	resources.closeOnce.Do(func() { close(resources.closeCalled) })
+	if resources.close != nil {
+		return resources.close(ctx)
+	}
+	return nil
 }
 
 type fakeMonitor struct {

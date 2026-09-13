@@ -130,6 +130,18 @@ func (client *Client) Close() error {
 	return client.closeErr
 }
 
+// Shutdown closes the client within the application shutdown contract. It
+// never starts cleanup after the caller's budget has been exhausted.
+func (client *Client) Shutdown(ctx context.Context) error {
+	if ctx == nil || client == nil {
+		return ErrInvalidOptions
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return client.Close()
+}
+
 func buildClientOptions(options Options, password string, caPEM []byte) (*redisclient.Options, error) {
 	host, portValue, err := net.SplitHostPort(options.Address)
 	if err != nil || host == "" || options.Username == "" || password == "" ||

@@ -127,6 +127,31 @@ func TestClientImplementsCheckAndIdempotentClose(t *testing.T) {
 	}
 }
 
+func TestClientShutdownHonorsCanceledContextBeforeClose(t *testing.T) {
+	t.Parallel()
+
+	closeCalls := 0
+	client := &Client{close: func() error {
+		closeCalls++
+		return nil
+	}}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	if err := client.Shutdown(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Shutdown() error = %v, want context canceled", err)
+	}
+	if closeCalls != 0 {
+		t.Fatalf("close calls = %d, want 0 after cancellation", closeCalls)
+	}
+	if err := client.Shutdown(t.Context()); err != nil {
+		t.Fatalf("retry Shutdown() error = %v", err)
+	}
+	if closeCalls != 1 {
+		t.Fatalf("close calls = %d, want 1 after retry", closeCalls)
+	}
+}
+
 func TestClientCheckReturnsWhenContextIsCanceled(t *testing.T) {
 	t.Parallel()
 

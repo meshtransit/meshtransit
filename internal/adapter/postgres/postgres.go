@@ -29,6 +29,9 @@ var (
 	ErrInvalidOptions = errors.New("invalid postgres options")
 	// ErrOpen indicates that PostgreSQL pool construction failed.
 	ErrOpen = errors.New("open postgres pool")
+	// ErrPoolInUse indicates that shutdown found an acquired connection. The
+	// owner must join every pool consumer before retrying cleanup.
+	ErrPoolInUse = errors.New("postgres pool still in use")
 )
 
 // Options contains one validated PostgreSQL pool configuration.
@@ -50,8 +53,10 @@ type Pool struct {
 	checkSchema    func(context.Context) error
 	outboxDatabase outboxDatabase
 	metrics        *postgresPoolMetrics
+	acquired       func() int32
 	close          func()
-	closeOnce      sync.Once
+	closeMu        sync.Mutex
+	closed         bool
 }
 
 // Open constructs a lazy, bounded TLS-only PostgreSQL pool. Connectivity is
@@ -87,7 +92,8 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 		metrics: newPostgresPoolMetrics(options.Role, func() postgresPoolStats {
 			return snapshotPostgresPoolStats(pool.Stat())
 		}),
-		close: pool.Close,
+		acquired: func() int32 { return pool.Stat().AcquiredConns() },
+		close:    pool.Close,
 	}, nil
 }
 
@@ -114,13 +120,36 @@ func (pool *Pool) Check(ctx context.Context) error {
 	return nil
 }
 
-// Close releases the pool once. It is safe to call more than once.
-func (pool *Pool) Close() error {
-	if pool == nil || pool.close == nil {
+// Shutdown releases an idle pool without starting an unbounded cleanup
+// goroutine. The application must join every pool consumer before calling it.
+func (pool *Pool) Shutdown(ctx context.Context) error {
+	if ctx == nil || pool == nil || pool.acquired == nil || pool.close == nil {
 		return ErrInvalidOptions
 	}
-	pool.closeOnce.Do(pool.close)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	pool.closeMu.Lock()
+	defer pool.closeMu.Unlock()
+	if pool.closed {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if acquired := pool.acquired(); acquired != 0 {
+		return fmt.Errorf("%w: %d connection(s) acquired", ErrPoolInUse, acquired)
+	}
+	pool.close()
+	pool.closed = true
 	return nil
+}
+
+// Close releases the pool once for callers outside the process lifecycle. It
+// refuses to wait for acquired connections and is safe to call more than once.
+func (pool *Pool) Close() error {
+	return pool.Shutdown(context.Background())
 }
 
 func buildPoolConfig(options Options, password string, caPEM []byte) (*pgxpool.Config, error) {

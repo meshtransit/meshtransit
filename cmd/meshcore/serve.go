@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 
@@ -44,8 +45,17 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 	}
 
 	resources := &resourceOwner{}
+	resourcesOwnedByApplication := false
 	defer func() {
-		if closeErr := resources.Close(); closeErr != nil {
+		if resourcesOwnedByApplication {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			processConfig.ShutdownTimeout,
+		)
+		defer cancel()
+		if closeErr := resources.Close(cleanupCtx); closeErr != nil {
 			logger.ErrorContext(
 				context.WithoutCancel(ctx),
 				"resource cleanup failed",
@@ -96,7 +106,15 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			logger.ErrorContext(ctx, "startup failed", "error_code", "redis_open_failure", "error", err)
 			return 1
 		}
-		resources.Add("redis", redisClient.Close)
+		if ownErr := resources.Add("redis", redisClient.Shutdown); ownErr != nil {
+			logger.ErrorContext(
+				ctx,
+				"startup failed",
+				"error_code", "redis_ownership_failure",
+				"error", errors.Join(ownErr, redisClient.Shutdown(ctx)),
+			)
+			return 1
+		}
 		checkers = append(checkers, redisClient)
 		additionalMetrics = append(additionalMetrics, redisClient.MetricsCollector())
 	}
@@ -157,6 +175,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		},
 		readiness,
 		monitor,
+		resources,
 		logger,
 		services...,
 	)
@@ -164,6 +183,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_application", "error", err)
 		return 1
 	}
+	resourcesOwnedByApplication = true
 
 	if err := application.Run(ctx); err != nil {
 		logger.ErrorContext(

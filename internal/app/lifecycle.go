@@ -29,6 +29,13 @@ type Readiness interface {
 	SetReady(bool)
 }
 
+// ResourceCloser releases process dependencies after every service and the
+// dependency monitor have joined. Close must respect the supplied context and
+// must not start cleanup work that outlives the call.
+type ResourceCloser interface {
+	Close(context.Context) error
+}
+
 // Options contains validated application lifecycle settings.
 type Options struct {
 	Roles           []Role
@@ -42,6 +49,7 @@ type Application struct {
 	shutdownTimeout time.Duration
 	readiness       Readiness
 	monitor         Monitor
+	resources       ResourceCloser
 	services        []OwnedService
 	logger          *slog.Logger
 }
@@ -51,11 +59,13 @@ func New(
 	options Options,
 	readiness Readiness,
 	monitor Monitor,
+	resources ResourceCloser,
 	logger *slog.Logger,
 	services ...OwnedService,
 ) (*Application, error) {
 	if isNilLifecycleDependency(readiness) ||
 		isNilLifecycleDependency(monitor) ||
+		isNilLifecycleDependency(resources) ||
 		logger == nil ||
 		options.ShutdownTimeout <= 0 ||
 		!validOwnedServices(services) {
@@ -70,6 +80,7 @@ func New(
 		shutdownTimeout: options.ShutdownTimeout,
 		readiness:       readiness,
 		monitor:         monitor,
+		resources:       resources,
 		services:        append([]OwnedService(nil), services...),
 		logger:          logger,
 	}, nil
@@ -80,14 +91,20 @@ func New(
 // exit path closes admission before bounded reverse-order cleanup.
 func (application *Application) Run(ctx context.Context) error {
 	if ctx == nil {
-		return ErrInvalidApplication
+		return errors.Join(
+			ErrInvalidApplication,
+			application.closeResources(context.Background()),
+		)
 	}
 	if ctx.Err() != nil {
-		return nil
+		return application.closeResources(ctx)
 	}
 
 	if err := application.monitor.Start(ctx); err != nil {
-		return fmt.Errorf("start dependency monitor: %w", err)
+		return errors.Join(
+			fmt.Errorf("start dependency monitor: %w", err),
+			application.closeResources(ctx),
+		)
 	}
 	monitorDone := application.monitor.Done()
 	if monitorDone == nil {
