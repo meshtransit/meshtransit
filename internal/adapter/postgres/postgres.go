@@ -48,15 +48,16 @@ type Options struct {
 
 // Pool is the concrete PostgreSQL dependency owned by the composition root.
 type Pool struct {
-	role           PoolRole
-	ping           func(context.Context) error
-	checkSchema    func(context.Context) error
-	outboxDatabase outboxDatabase
-	metrics        *postgresPoolMetrics
-	acquired       func() int32
-	close          func()
-	closeMu        sync.Mutex
-	closed         bool
+	role                       PoolRole
+	ping                       func(context.Context) error
+	checkSchema                func(context.Context) error
+	outboxDatabase             outboxDatabase
+	registrationReplayDatabase registrationReplayDatabase
+	metrics                    *postgresPoolMetrics
+	acquired                   func() int32
+	close                      func()
+	closeMu                    sync.Mutex
+	closed                     bool
 }
 
 // Open constructs a lazy, bounded TLS-only PostgreSQL pool. Connectivity is
@@ -83,9 +84,10 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
 	}
 	return &Pool{
-		role:           options.Role,
-		ping:           pool.Ping,
-		outboxDatabase: pgxOutboxDatabase{pool: pool},
+		role:                       options.Role,
+		ping:                       pool.Ping,
+		outboxDatabase:             pgxOutboxDatabase{pool: pool},
+		registrationReplayDatabase: pgxRegistrationReplayDatabase{pool: pool},
 		checkSchema: func(ctx context.Context) error {
 			return checkRuntimeSchemaCompatibility(ctx, pool, options.User)
 		},

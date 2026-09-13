@@ -183,6 +183,38 @@ func TestOutboxMetricsIncludeRowsIterationAndCompletionOutcomes(t *testing.T) {
 	}
 }
 
+func TestRegistrationReplayMetricsUseRuntimePoolRole(t *testing.T) {
+	t.Parallel()
+
+	command := validRegistrationReplayCommand(t)
+	transaction := &fakeRegistrationReplayTransaction{
+		row: fakeRegistrationReplayRow{record: validRegistrationReplayRecord(t, command)},
+	}
+	metrics := newPostgresPoolMetrics(PoolRoleRuntime, func() postgresPoolStats {
+		return postgresPoolStats{MaxConnections: 1}
+	})
+	store, err := newRegistrationReplayStore(
+		&fakeRegistrationReplayDatabase{transaction: transaction},
+		metrics,
+	)
+	if err != nil {
+		t.Fatalf("newRegistrationReplayStore() error = %v", err)
+	}
+	if _, found, err := store.ResolveCommitted(t.Context(), command); err != nil || !found {
+		t.Fatalf("ResolveCommitted() = (found=%t, error=%v), want committed result", found, err)
+	}
+
+	collector, err := NewMetricsCollector(&Pool{role: PoolRoleRuntime, metrics: metrics})
+	if err != nil {
+		t.Fatalf("NewMetricsCollector() error = %v", err)
+	}
+	body := gatherPostgresMetrics(t, collector)
+	want := `meshtransit_postgres_operations_total{operation="registration_replay",pool_role="runtime",result="success"} 1`
+	if !strings.Contains(body, want) {
+		t.Fatalf("metrics missing registration replay outcome %q", want)
+	}
+}
+
 func gatherPostgresMetrics(t *testing.T, collector prometheus.Collector) string {
 	t.Helper()
 

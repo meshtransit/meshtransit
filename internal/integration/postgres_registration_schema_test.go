@@ -7,10 +7,29 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/meshtransit/meshtransit/internal/enrollment"
+	registrationapp "github.com/meshtransit/meshtransit/internal/enrollment/registration"
+	"github.com/meshtransit/meshtransit/internal/network"
+	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
-func seedRegistrationAuthority(ctx context.Context, t *testing.T, connection *pgx.Conn) {
+func seedRegistrationAuthority(
+	ctx context.Context,
+	t *testing.T,
+	connection *pgx.Conn,
+) registrationapp.Command {
 	t.Helper()
+
+	command := registrationReplayCommand(t)
+	requestHash, err := command.RequestHash()
+	if err != nil {
+		t.Fatalf("build integration registration request hash: %v", err)
+	}
+	requestHashBytes := requestHash.Bytes()
+	machineFingerprint := command.Identity.MachineKey().Fingerprint()
+	requestedNodeKey := command.Identity.NodeKey().Bytes()
+	nodeFingerprint := command.Identity.NodeKey().Fingerprint()
 
 	commitAuditedAuthorityFixture(ctx, t, connection, authorityEvidenceFixture{
 		changePublicID:         "01890f11-0000-7000-8000-000000000601",
@@ -29,8 +48,9 @@ func seedRegistrationAuthority(ctx context.Context, t *testing.T, connection *pg
 		setIntegrationScope(ctx, t, transaction, 101, 201)
 
 		statements := []struct {
-			name  string
-			query string
+			name      string
+			query     string
+			arguments []any
 		}{
 			{
 				name: "enrollment profile",
@@ -157,10 +177,11 @@ func seedRegistrationAuthority(ctx context.Context, t *testing.T, connection *pg
     603,
     1,
     pg_catalog.decode(pg_catalog.repeat('21', 32), 'hex'),
-    pg_catalog.decode(pg_catalog.repeat('31', 32), 'hex'),
+    $1::BYTEA,
     pg_catalog.now(),
     'active'
 )`,
+				arguments: []any{machineFingerprint[:]},
 			},
 			{
 				name: "node key epoch",
@@ -183,10 +204,11 @@ func seedRegistrationAuthority(ctx context.Context, t *testing.T, connection *pg
     603,
     1,
     pg_catalog.decode(pg_catalog.repeat('22', 32), 'hex'),
-    pg_catalog.decode(pg_catalog.repeat('32', 32), 'hex'),
+    $1::BYTEA,
     pg_catalog.now(),
     'active'
 )`,
+				arguments: []any{nodeFingerprint[:]},
 			},
 			{
 				name: "completed registration",
@@ -215,9 +237,9 @@ func seedRegistrationAuthority(ctx context.Context, t *testing.T, connection *pg
     601,
     'credential',
     602,
-    pg_catalog.decode(pg_catalog.repeat('61', 32), 'hex'),
-    pg_catalog.decode(pg_catalog.repeat('31', 32), 'hex'),
-    pg_catalog.decode(pg_catalog.repeat('22', 32), 'hex'),
+    $1::BYTEA,
+    $2::BYTEA,
+    $3::BYTEA,
     603,
     'node-one.example',
     'created',
@@ -225,6 +247,11 @@ func seedRegistrationAuthority(ctx context.Context, t *testing.T, connection *pg
     pg_catalog.now() + INTERVAL '10 minutes',
     'completed'
 )`,
+				arguments: []any{
+					requestHashBytes[:],
+					machineFingerprint[:],
+					requestedNodeKey[:],
+				},
 			},
 			{
 				name: "credential use",
@@ -247,10 +274,11 @@ func seedRegistrationAuthority(ctx context.Context, t *testing.T, connection *pg
     602,
     606,
     603,
-    pg_catalog.decode(pg_catalog.repeat('31', 32), 'hex'),
+    $1::BYTEA,
     'created',
     pg_catalog.now()
 )`,
+				arguments: []any{machineFingerprint[:]},
 			},
 			{
 				name: "node address lease",
@@ -295,11 +323,73 @@ WHERE workspace_id = 101 AND network_id = 201`,
 		}
 
 		for _, statement := range statements {
-			if _, err := transaction.Exec(ctx, statement.query); err != nil {
+			if _, err := transaction.Exec(ctx, statement.query, statement.arguments...); err != nil {
 				t.Fatalf("insert integration %s: %v", statement.name, err)
 			}
 		}
 	})
+	return command
+}
+
+func registrationReplayCommand(t *testing.T) registrationapp.Command {
+	t.Helper()
+
+	workspaceID, err := workspace.ParseID(firstWorkspacePublicID)
+	if err != nil {
+		t.Fatalf("parse integration Workspace ID: %v", err)
+	}
+	networkID, err := network.ParseID(firstNetworkPublicID)
+	if err != nil {
+		t.Fatalf("parse integration Network ID: %v", err)
+	}
+	scope, err := network.NewScope(workspaceID, networkID)
+	if err != nil {
+		t.Fatalf("construct integration Network scope: %v", err)
+	}
+	registrationID, err := enrollment.ParseRegistrationID(
+		"01890f10-0000-7000-8000-000000000606",
+	)
+	if err != nil {
+		t.Fatalf("parse integration Registration ID: %v", err)
+	}
+	credentialID, err := enrollment.ParseCredentialID(
+		"01890f10-0000-7000-8000-000000000602",
+	)
+	if err != nil {
+		t.Fatalf("parse integration Credential ID: %v", err)
+	}
+	machineKey, err := node.NewMachineKey(filledIntegrationKey(0x21))
+	if err != nil {
+		t.Fatalf("construct integration machine key: %v", err)
+	}
+	nodeKey, err := node.NewKey(filledIntegrationKey(0x22))
+	if err != nil {
+		t.Fatalf("construct integration Node key: %v", err)
+	}
+	identity, err := node.NewRegistrationIdentity(machineKey, nodeKey)
+	if err != nil {
+		t.Fatalf("construct integration registration identity: %v", err)
+	}
+	hostname, err := node.ParseHostname("node-one.example")
+	if err != nil {
+		t.Fatalf("parse integration hostname: %v", err)
+	}
+	return registrationapp.Command{
+		RegistrationID: registrationID,
+		Scope:          scope,
+		CredentialID:   credentialID,
+		Identity:       identity,
+		Hostname:       hostname,
+		RecoveryEpoch:  1,
+	}
+}
+
+func filledIntegrationKey(value byte) [32]byte {
+	var key [32]byte
+	for index := range key {
+		key[index] = value
+	}
+	return key
 }
 
 func assertRegistrationSchemaConstraints(ctx context.Context, t *testing.T, connection *pgx.Conn) {

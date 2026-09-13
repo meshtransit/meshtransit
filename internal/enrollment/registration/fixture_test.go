@@ -156,11 +156,12 @@ func mustServiceWithMutationIDs(
 	service, err := registration.NewService(
 		registration.Options{MaxAttempts: 3, RollbackTimeout: time.Second},
 		registration.Dependencies{
-			Transactions: queue,
-			NodeIDs:      ids,
-			MutationIDs:  mutationIDs,
-			Clock:        fixedClock{now: fixtureTime},
-			Retry:        retry,
+			Transactions:     queue,
+			CommittedResults: queue,
+			NodeIDs:          ids,
+			MutationIDs:      mutationIDs,
+			Clock:            fixedClock{now: fixtureTime},
+			Retry:            retry,
 		},
 	)
 	if err != nil {

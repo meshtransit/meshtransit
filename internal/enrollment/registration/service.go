@@ -38,6 +38,7 @@ type Options struct {
 type Service struct {
 	options      Options
 	transactions Transactions
+	committed    CommittedResultResolver
 	nodeIDs      NodeIDGenerator
 	mutationIDs  MutationIDGenerator
 	clock        Clock
@@ -46,7 +47,8 @@ type Service struct {
 
 // NewService validates and constructs a registration application service.
 func NewService(options Options, dependencies Dependencies) (*Service, error) {
-	if dependencies.Transactions == nil || dependencies.NodeIDs == nil ||
+	if dependencies.Transactions == nil || dependencies.CommittedResults == nil ||
+		dependencies.NodeIDs == nil ||
 		dependencies.MutationIDs == nil || dependencies.Clock == nil || dependencies.Retry == nil ||
 		options.MaxAttempts <= 0 || options.MaxAttempts > maxRegistrationAttempts ||
 		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second {
@@ -55,6 +57,7 @@ func NewService(options Options, dependencies Dependencies) (*Service, error) {
 	return &Service{
 		options:      options,
 		transactions: dependencies.Transactions,
+		committed:    dependencies.CommittedResults,
 		nodeIDs:      dependencies.NodeIDs,
 		mutationIDs:  dependencies.MutationIDs,
 		clock:        dependencies.Clock,
@@ -65,7 +68,8 @@ func NewService(options Options, dependencies Dependencies) (*Service, error) {
 // Register creates or resumes one logical Node. Retry replays the entire
 // transaction with the same decision time and application-generated IDs.
 func (service *Service) Register(ctx context.Context, command Command) (Result, error) {
-	if ctx == nil || service == nil || service.transactions == nil || service.nodeIDs == nil ||
+	if ctx == nil || service == nil || service.transactions == nil || service.committed == nil ||
+		service.nodeIDs == nil ||
 		service.mutationIDs == nil || service.clock == nil || service.retry == nil || !command.IsValid() {
 		return Result{}, ErrInvalidCommand
 	}
@@ -94,7 +98,7 @@ func (service *Service) Register(ctx context.Context, command Command) (Result, 
 		lastErr = err
 
 		if errors.Is(err, ErrCommitOutcomeUnknown) {
-			resolved, found, resolveErr := service.transactions.ResolveCommitted(ctx, command)
+			resolved, found, resolveErr := service.committed.ResolveCommitted(ctx, command)
 			if resolveErr == nil && found {
 				if !resultMatchesCommand(resolved, command) {
 					return Result{}, errors.Join(ErrRegistrationFailed, ErrInvalidResult)

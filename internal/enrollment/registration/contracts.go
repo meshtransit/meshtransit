@@ -9,10 +9,14 @@ import (
 	"github.com/meshtransit/meshtransit/internal/node"
 )
 
-// Transactions starts explicit registration units of work and resolves an
-// uncertain commit against authoritative storage.
+// Transactions starts explicit registration units of work.
 type Transactions interface {
 	Begin(context.Context, network.Scope) (Transaction, error)
+}
+
+// CommittedResultResolver resolves an uncertain commit against authoritative
+// idempotency evidence without acquiring mutation locks.
+type CommittedResultResolver interface {
 	ResolveCommitted(context.Context, Command) (Result, bool, error)
 }
 
@@ -50,9 +54,10 @@ type RetryWaiter interface {
 // Dependencies contains the explicit ports required by Service. None may
 // retain request context or start background work.
 type Dependencies struct {
-	Transactions Transactions
-	NodeIDs      NodeIDGenerator
-	MutationIDs  MutationIDGenerator
-	Clock        Clock
-	Retry        RetryWaiter
+	Transactions     Transactions
+	CommittedResults CommittedResultResolver
+	NodeIDs          NodeIDGenerator
+	MutationIDs      MutationIDGenerator
+	Clock            Clock
+	Retry            RetryWaiter
 }

@@ -13,6 +13,7 @@ type postgresOperation string
 const (
 	postgresOperationPing                postgresOperation = "ping"
 	postgresOperationSchemaCheck         postgresOperation = "schema_check"
+	postgresOperationRegistrationReplay  postgresOperation = "registration_replay"
 	postgresOperationOutboxBacklog       postgresOperation = "outbox_backlog"
 	postgresOperationOutboxClaim         postgresOperation = "outbox_claim"
 	postgresOperationOutboxLoadRevision  postgresOperation = "outbox_load_revision"
@@ -26,6 +27,7 @@ var (
 	postgresOperations = [...]postgresOperation{
 		postgresOperationPing,
 		postgresOperationSchemaCheck,
+		postgresOperationRegistrationReplay,
 		postgresOperationOutboxBacklog,
 		postgresOperationOutboxClaim,
 		postgresOperationOutboxLoadRevision,
@@ -252,6 +254,9 @@ func (metrics *postgresPoolMetrics) observeOperation(
 func (operation postgresOperation) validForRole(role PoolRole) bool {
 	if operation == postgresOperationPing || operation == postgresOperationSchemaCheck {
 		return role.valid()
+	}
+	if role == PoolRoleRuntime {
+		return operation == postgresOperationRegistrationReplay
 	}
 	if role != PoolRoleWorker {
 		return false
