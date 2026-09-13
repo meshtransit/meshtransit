@@ -220,10 +220,17 @@ go test \
 	-timeout=5m \
 	./internal/integration
 
+export MESHTRANSIT_ROLE=all
+export MESHTRANSIT_POSTGRES_WORKER_USER=mesh_worker
+export MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE="${fixture_dir}/worker-password"
+export MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS=2
+export MESHTRANSIT_TEST_MESHCORE_BINARY="${fixture_dir}/meshcore"
+go build -trimpath -o "${MESHTRANSIT_TEST_MESHCORE_BINARY}" ./cmd/meshcore
+
 go test \
 	-tags=integration \
 	-count=1 \
 	-race \
-	-run '^TestTLSAuthenticatedDependencies$' \
+	-run '^(TestTLSAuthenticatedDependencies|TestRoleAllProcessRestartsAfterGracefulShutdown)$' \
 	-timeout=5m \
 	./internal/integration

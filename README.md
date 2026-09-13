@@ -219,13 +219,6 @@ plus command-pool usage, pending requests, pool timeouts, and active
 subscriptions. Pool state is sampled only when metrics are scraped; no
 observability goroutine or unbounded label is introduced.
 
-PostgreSQL metrics use only the fixed `runtime` and `worker` pool roles. They
-cover the currently implemented health and outbox operations, operation
-latency and outcome, current connection usage, acquisition and empty-pool wait,
-and connection churn. SQL text, usernames, addresses, database names, and
-domain identifiers are never metric labels. Pool statistics are read only when
-the endpoint is scraped and do not add a sampler goroutine.
-
 PostgreSQL telemetry is partitioned only by the fixed `runtime` and `worker`
 credential-pool roles. It reports bounded semantic operation outcomes and
 latency, connection usage, acquisition/cancellation counts and wait duration,
@@ -278,8 +271,11 @@ Never point this test at a shared or production database.
 `make integration-platform-container` provisions the same isolated PostgreSQL
 18.6 TLS/SCRAM and Redis 8.8.0 TLS/ACL fixtures used by CI. It additionally
 proves end-to-end Network-revision wakeup delivery, transactional retry, and
-lease-expiry replay after a post-publish/pre-completion process failure. Both
-containers are removed when the test exits.
+lease-expiry replay after a post-publish/pre-completion process failure. The
+gate also launches the real binary as `role=all`, checks every concrete role in
+operator metrics, performs a bounded SIGTERM shutdown, and proves a second
+process reaches readiness against the same durable state. Both containers are
+removed when the test exits.
 
 ## Container image
 
