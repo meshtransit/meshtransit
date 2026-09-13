@@ -9,8 +9,12 @@ import (
 
 type outboxDatabase interface {
 	Query(context.Context, string, ...any) (outboxRows, error)
-	QueryRow(context.Context, string, ...any) outboxRow
+	Exec(context.Context, string, ...any) (outboxCommandResult, error)
 	Begin(context.Context, bool) (outboxTransaction, error)
+}
+
+type outboxCommandResult interface {
+	RowsAffected() int64
 }
 
 type outboxTransaction interface {
@@ -43,12 +47,12 @@ func (database pgxOutboxDatabase) Query(
 	return database.pool.Query(ctx, query, arguments...)
 }
 
-func (database pgxOutboxDatabase) QueryRow(
+func (database pgxOutboxDatabase) Exec(
 	ctx context.Context,
 	query string,
 	arguments ...any,
-) outboxRow {
-	return database.pool.QueryRow(ctx, query, arguments...)
+) (outboxCommandResult, error) {
+	return database.pool.Exec(ctx, query, arguments...)
 }
 
 func (database pgxOutboxDatabase) Begin(

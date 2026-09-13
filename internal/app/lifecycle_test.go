@@ -50,7 +50,56 @@ func TestNewRejectsInvalidLifecycleInputs(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			application, err := New(test.options, test.readiness, test.monitor, test.service, test.logger)
+			application, err := New(
+				test.options,
+				test.readiness,
+				test.monitor,
+				test.logger,
+				OwnedService{Name: "health", Service: test.service},
+			)
+			if !errors.Is(err, ErrInvalidApplication) {
+				t.Fatalf("New() error = %v, want ErrInvalidApplication", err)
+			}
+			if application != nil {
+				t.Fatalf("New() = %v, want nil", application)
+			}
+		})
+	}
+}
+
+func TestNewRejectsInvalidOwnedServices(t *testing.T) {
+	t.Parallel()
+
+	options := Options{Roles: []Role{RoleAPI}, ShutdownTimeout: time.Second}
+	readiness := &fakeReadiness{updates: make(chan bool, 1)}
+	monitor := newFakeMonitor()
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	service := newFakeService()
+	var typedNil *fakeService
+
+	tests := []struct {
+		name     string
+		services []OwnedService
+	}{
+		{name: "missing services"},
+		{name: "missing name", services: []OwnedService{{Service: service}}},
+		{name: "unsafe name", services: []OwnedService{{Name: "Health Server", Service: service}}},
+		{name: "missing service", services: []OwnedService{{Name: "health"}}},
+		{name: "typed nil service", services: []OwnedService{{Name: "health", Service: typedNil}}},
+		{
+			name: "duplicate name",
+			services: []OwnedService{
+				{Name: "health", Service: service},
+				{Name: "health", Service: newFakeService()},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			application, err := New(options, readiness, monitor, logger, test.services...)
 			if !errors.Is(err, ErrInvalidApplication) {
 				t.Fatalf("New() error = %v, want ErrInvalidApplication", err)
 			}
@@ -100,6 +149,114 @@ func TestApplicationRunOwnsReadinessAndShutdown(t *testing.T) {
 			t.Fatalf("application roles = %v, want [api]", application.roles)
 		}
 	})
+}
+
+func TestApplicationStartsInOrderAndStopsInReverseOrder(t *testing.T) {
+	t.Parallel()
+
+	var order []string
+	first := newFakeService()
+	first.start = func(context.Context) error {
+		order = append(order, "start:first")
+		return nil
+	}
+	first.shutdown = func(context.Context) error {
+		order = append(order, "stop:first")
+		first.done <- nil
+		return nil
+	}
+	second := newFakeService()
+	second.start = func(context.Context) error {
+		order = append(order, "start:second")
+		return nil
+	}
+	second.shutdown = func(context.Context) error {
+		order = append(order, "stop:second")
+		second.done <- nil
+		return nil
+	}
+	monitor := newFakeMonitor()
+	monitor.shutdown = func(context.Context) error {
+		order = append(order, "stop:monitor")
+		monitor.done <- nil
+		return nil
+	}
+	readiness := &fakeReadiness{updates: make(chan bool, 2)}
+	application, err := New(
+		Options{Roles: []Role{RoleWorker}, ShutdownTimeout: time.Second},
+		readiness,
+		monitor,
+		slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		OwnedService{Name: "first", Service: first},
+		OwnedService{Name: "second", Service: second},
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() { result <- application.Run(ctx) }()
+	<-second.started
+	if ready := <-readiness.updates; !ready {
+		t.Fatal("readiness did not open after every service started")
+	}
+	cancel()
+	if err := <-result; err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []string{"start:first", "start:second", "stop:second", "stop:first", "stop:monitor"}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("lifecycle order = %v, want %v", order, want)
+	}
+}
+
+func TestApplicationCleansStartedServicesAfterPartialStartFailure(t *testing.T) {
+	t.Parallel()
+
+	first := newFakeService()
+	second := newFakeService()
+	startErr := errors.New("second start failed")
+	second.startErr = startErr
+	monitor := newFakeMonitor()
+	readiness := &fakeReadiness{updates: make(chan bool, 1)}
+	application, err := New(
+		Options{Roles: []Role{RoleWorker}, ShutdownTimeout: time.Second},
+		readiness,
+		monitor,
+		slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		OwnedService{Name: "first", Service: first},
+		OwnedService{Name: "second", Service: second},
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	err = application.Run(t.Context())
+	if !errors.Is(err, startErr) {
+		t.Fatalf("Run() error = %v, want second start failure", err)
+	}
+	select {
+	case <-first.shutdownCalled:
+	default:
+		t.Fatal("first service was not cleaned up")
+	}
+	select {
+	case <-second.shutdownCalled:
+		t.Fatal("service whose start failed was shut down")
+	default:
+	}
+	select {
+	case <-monitor.shutdownCalled:
+	default:
+		t.Fatal("monitor was not cleaned up")
+	}
+	select {
+	case update := <-readiness.updates:
+		t.Fatalf("unexpected readiness update: %v", update)
+	default:
+	}
 }
 
 func TestApplicationRunReturnsStartFailure(t *testing.T) {
@@ -259,8 +416,8 @@ func mustApplication(
 		Options{Roles: []Role{RoleAPI}, ShutdownTimeout: shutdownTimeout},
 		readiness,
 		monitor,
-		service,
 		slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		OwnedService{Name: "health", Service: service},
 	)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -325,6 +482,7 @@ type fakeService struct {
 	shutdownCalled chan struct{}
 	done           chan error
 	startErr       error
+	start          func(context.Context) error
 	shutdown       func(context.Context) error
 }
 
@@ -336,9 +494,14 @@ func newFakeService() *fakeService {
 	}
 }
 
-func (service *fakeService) Start(context.Context) error {
+func (service *fakeService) Start(ctx context.Context) error {
 	if service.startErr != nil {
 		return service.startErr
+	}
+	if service.start != nil {
+		if err := service.start(ctx); err != nil {
+			return err
+		}
 	}
 	close(service.started)
 	return nil

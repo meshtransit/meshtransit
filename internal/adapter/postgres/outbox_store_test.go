@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/meshtransit/meshtransit/internal/network"
 )
 
@@ -115,12 +114,7 @@ func TestOutboxStoreRecordsDeliveredAndRetryAtomically(t *testing.T) {
 	t.Parallel()
 
 	claim := validTestRevisionClaim(t)
-	database := &fakeOutboxDatabase{
-		queryRow: fakeOutboxRow{scan: func(destinations ...any) error {
-			*destinations[0].(*int64) = claim.EventID()
-			return nil
-		}},
-	}
+	database := &fakeOutboxDatabase{rowsAffected: 1}
 	store := mustTestOutboxStore(t, database)
 
 	if err := store.MarkRevisionDelivered(t.Context(), claim); err != nil {
@@ -143,7 +137,7 @@ func TestOutboxStoreRecordsDeliveredAndRetryAtomically(t *testing.T) {
 func TestOutboxStoreClassifiesLostClaim(t *testing.T) {
 	t.Parallel()
 
-	database := &fakeOutboxDatabase{queryRow: fakeOutboxRow{scan: func(...any) error { return pgx.ErrNoRows }}}
+	database := &fakeOutboxDatabase{}
 	store := mustTestOutboxStore(t, database)
 	if err := store.MarkRevisionDelivered(t.Context(), validTestRevisionClaim(t)); !errors.Is(err, ErrOutboxClaimLost) {
 		t.Fatalf("MarkRevisionDelivered() error = %v, want ErrOutboxClaimLost", err)

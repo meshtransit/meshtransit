@@ -54,25 +54,27 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 	}()
 
 	checkers := make([]app.DependencyChecker, 0, len(readiness.RequiredComponents()))
+	var storagePools postgresPools
+	var redisClient *redisadapter.Client
 	if processConfig.Storage != nil {
-		postgresPools, openErr := openPostgresPools(
+		storagePools, err = openPostgresPools(
 			ctx,
 			processConfig.Storage.PostgreSQL,
 			processConfig.Dependencies.CheckTimeout,
 			resources,
 		)
-		if openErr != nil {
-			logger.ErrorContext(ctx, "startup failed", "error_code", "postgres_open_failure", "error", openErr)
+		if err != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "postgres_open_failure", "error", err)
 			return 1
 		}
-		postgresChecker, checkerErr := postgresPools.healthChecker()
+		postgresChecker, checkerErr := storagePools.healthChecker()
 		if checkerErr != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "postgres_checker_failure", "error", checkerErr)
 			return 1
 		}
 		checkers = append(checkers, postgresChecker)
 
-		redisClient, openErr := redisadapter.Open(ctx, redisadapter.Options{
+		redisClient, err = redisadapter.Open(ctx, redisadapter.Options{
 			Address:        processConfig.Storage.Redis.Address,
 			Username:       processConfig.Storage.Redis.Username,
 			PasswordFile:   processConfig.Storage.Redis.PasswordFile,
@@ -80,8 +82,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			PoolSize:       processConfig.Storage.Redis.PoolSize,
 			RequestTimeout: processConfig.Dependencies.CheckTimeout,
 		})
-		if openErr != nil {
-			logger.ErrorContext(ctx, "startup failed", "error_code", "redis_open_failure", "error", openErr)
+		if err != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "redis_open_failure", "error", err)
 			return 1
 		}
 		resources.Add("redis", redisClient.Close)
@@ -116,6 +118,20 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_health_server", "error", err)
 		return 1
 	}
+	services := []app.OwnedService{{Name: "health", Service: healthServer}}
+	if processConfig.RevisionWorker != nil {
+		workerService, composeErr := composeRevisionWorker(
+			*processConfig.RevisionWorker,
+			storagePools.worker,
+			redisClient,
+			logger,
+		)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "worker_composition_failure", "error", composeErr)
+			return 1
+		}
+		services = append(services, app.OwnedService{Name: "network-revision-worker", Service: workerService})
+	}
 	application, err := app.New(
 		app.Options{
 			Roles:           roles,
@@ -123,8 +139,8 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		},
 		readiness,
 		monitor,
-		healthServer,
 		logger,
+		services...,
 	)
 	if err != nil {
 		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_application", "error", err)

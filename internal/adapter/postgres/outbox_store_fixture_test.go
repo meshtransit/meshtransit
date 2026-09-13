@@ -3,14 +3,15 @@ package postgres
 import "context"
 
 type fakeOutboxDatabase struct {
-	query       string
-	arguments   []any
-	queryRows   outboxRows
-	queryErr    error
-	queryRow    outboxRow
-	transaction outboxTransaction
-	beginErr    error
-	readOnly    bool
+	query        string
+	arguments    []any
+	queryRows    outboxRows
+	queryErr     error
+	rowsAffected int64
+	execErr      error
+	transaction  outboxTransaction
+	beginErr     error
+	readOnly     bool
 }
 
 func (database *fakeOutboxDatabase) Query(
@@ -23,15 +24,19 @@ func (database *fakeOutboxDatabase) Query(
 	return database.queryRows, database.queryErr
 }
 
-func (database *fakeOutboxDatabase) QueryRow(
+func (database *fakeOutboxDatabase) Exec(
 	_ context.Context,
 	query string,
 	arguments ...any,
-) outboxRow {
+) (outboxCommandResult, error) {
 	database.query = query
 	database.arguments = append([]any(nil), arguments...)
-	return database.queryRow
+	return fakeOutboxCommandResult(database.rowsAffected), database.execErr
 }
+
+type fakeOutboxCommandResult int64
+
+func (result fakeOutboxCommandResult) RowsAffected() int64 { return int64(result) }
 
 func (database *fakeOutboxDatabase) Begin(
 	_ context.Context,

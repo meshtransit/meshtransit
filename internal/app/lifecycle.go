@@ -12,17 +12,9 @@ import (
 var (
 	// ErrInvalidApplication indicates missing or inconsistent lifecycle inputs.
 	ErrInvalidApplication = errors.New("invalid application")
-	// ErrUnexpectedServiceStop indicates that the process listener exited before shutdown.
+	// ErrUnexpectedServiceStop indicates that an owned component exited before shutdown.
 	ErrUnexpectedServiceStop = errors.New("service stopped unexpectedly")
 )
-
-// Service is the process-owned boundary for a stoppable, joinable listener.
-// Done must return a non-nil join channel after Start succeeds.
-type Service interface {
-	Start(context.Context) error
-	Shutdown(context.Context) error
-	Done() <-chan error
-}
 
 // Monitor is the process-owned boundary for dependency checks. Start performs
 // its initial check synchronously and starts its owned goroutine on success.
@@ -43,13 +35,14 @@ type Options struct {
 	ShutdownTimeout time.Duration
 }
 
-// Application coordinates admission, listener ownership, and bounded shutdown.
+// Application owns dependency monitoring, process services, admission, and
+// their bounded reverse-order shutdown.
 type Application struct {
 	roles           []Role
 	shutdownTimeout time.Duration
 	readiness       Readiness
 	monitor         Monitor
-	service         Service
+	services        []OwnedService
 	logger          *slog.Logger
 }
 
@@ -58,14 +51,14 @@ func New(
 	options Options,
 	readiness Readiness,
 	monitor Monitor,
-	service Service,
 	logger *slog.Logger,
+	services ...OwnedService,
 ) (*Application, error) {
 	if isNilLifecycleDependency(readiness) ||
 		isNilLifecycleDependency(monitor) ||
-		isNilLifecycleDependency(service) ||
 		logger == nil ||
-		options.ShutdownTimeout <= 0 {
+		options.ShutdownTimeout <= 0 ||
+		!validOwnedServices(services) {
 		return nil, ErrInvalidApplication
 	}
 	if err := validateActiveRoles(options.Roles); err != nil {
@@ -77,14 +70,14 @@ func New(
 		shutdownTimeout: options.ShutdownTimeout,
 		readiness:       readiness,
 		monitor:         monitor,
-		service:         service,
+		services:        append([]OwnedService(nil), services...),
 		logger:          logger,
 	}, nil
 }
 
-// Run checks and monitors dependencies before starting the process listener,
-// then opens admission and blocks until cancellation or an owned component
-// exits. Every exit path closes admission before bounded reverse-order cleanup.
+// Run checks dependencies, starts services in declaration order, opens
+// admission, and blocks until cancellation or an owned component exits. Every
+// exit path closes admission before bounded reverse-order cleanup.
 func (application *Application) Run(ctx context.Context) error {
 	if ctx == nil {
 		return ErrInvalidApplication
@@ -96,46 +89,39 @@ func (application *Application) Run(ctx context.Context) error {
 	if err := application.monitor.Start(ctx); err != nil {
 		return fmt.Errorf("start dependency monitor: %w", err)
 	}
-	if application.monitor.Done() == nil {
+	monitorDone := application.monitor.Done()
+	if monitorDone == nil {
 		return errors.Join(
 			ErrUnexpectedServiceStop,
-			application.stopMonitor(context.WithoutCancel(ctx)),
+			application.stopMonitor(context.WithoutCancel(ctx), monitorDone),
 		)
 	}
 
-	if err := application.service.Start(ctx); err != nil {
-		cleanupErr := application.stopMonitor(context.WithoutCancel(ctx))
-		return errors.Join(fmt.Errorf("start process service: %w", err), cleanupErr)
-	}
-	if application.service.Done() == nil {
-		application.readiness.SetReady(false)
-		return errors.Join(
-			ErrUnexpectedServiceStop,
-			application.shutdown(ctx, false, false),
+	startedServices, startErr := application.startServices(ctx)
+	if startErr != nil {
+		cleanupErr := application.stopStarted(
+			ctx,
+			startedServices,
+			monitorDone,
+			noExitedService,
+			false,
 		)
+		return errors.Join(startErr, cleanupErr)
 	}
 
 	application.readiness.SetReady(true)
 	application.logger.InfoContext(ctx, "runtime ready", "roles", roleNames(application.roles))
 
-	var (
-		runErr        error
-		serviceExited bool
-		monitorExited bool
-	)
-	select {
-	case serviceErr, ok := <-application.service.Done():
-		serviceExited = true
-		runErr = unexpectedExit("process service", serviceErr, ok)
-	case monitorErr, ok := <-application.monitor.Done():
-		monitorExited = true
-		runErr = unexpectedExit("dependency monitor", monitorErr, ok)
-	case <-ctx.Done():
-	}
-
+	exit := application.wait(ctx, monitorDone, startedServices)
 	application.readiness.SetReady(false)
-	cleanupErr := application.shutdown(ctx, serviceExited, monitorExited)
-	result := errors.Join(runErr, cleanupErr)
+	cleanupErr := application.stopStarted(
+		ctx,
+		startedServices,
+		monitorDone,
+		exit.serviceIndex,
+		exit.monitor,
+	)
+	result := errors.Join(exit.err, cleanupErr)
 	if result == nil {
 		application.logger.InfoContext(
 			context.WithoutCancel(ctx),
@@ -146,108 +132,79 @@ func (application *Application) Run(ctx context.Context) error {
 	return result
 }
 
+func (application *Application) startServices(ctx context.Context) ([]startedService, error) {
+	started := make([]startedService, 0, len(application.services))
+	for _, owned := range application.services {
+		if err := owned.Service.Start(ctx); err != nil {
+			return started, fmt.Errorf("start %s: %w", owned.Name, err)
+		}
+		service := startedService{
+			name:    owned.Name,
+			service: owned.Service,
+			done:    owned.Service.Done(),
+		}
+		started = append(started, service)
+		if service.done == nil {
+			return started, fmt.Errorf("%w: %s", ErrUnexpectedServiceStop, owned.Name)
+		}
+	}
+	return started, nil
+}
+
+const noExitedService = -1
+
+type lifecycleExit struct {
+	serviceIndex int
+	monitor      bool
+	err          error
+}
+
+func (application *Application) wait(
+	ctx context.Context,
+	monitorDone <-chan error,
+	services []startedService,
+) lifecycleExit {
+	cases := make([]reflect.SelectCase, 0, len(services)+2)
+	cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())})
+	cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(monitorDone)})
+	for _, service := range services {
+		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(service.done)})
+	}
+
+	chosen, value, ok := reflect.Select(cases)
+	switch chosen {
+	case 0:
+		return lifecycleExit{serviceIndex: noExitedService}
+	case 1:
+		return lifecycleExit{
+			serviceIndex: noExitedService,
+			monitor:      true,
+			err:          unexpectedExit("dependency monitor", receivedError(value, ok), ok),
+		}
+	default:
+		serviceIndex := chosen - 2
+		return lifecycleExit{
+			serviceIndex: serviceIndex,
+			err: unexpectedExit(
+				services[serviceIndex].name,
+				receivedError(value, ok),
+				ok,
+			),
+		}
+	}
+}
+
+func receivedError(value reflect.Value, ok bool) error {
+	if !ok || value.IsNil() {
+		return nil
+	}
+	componentErr, _ := value.Interface().(error)
+	return componentErr
+}
+
 func unexpectedExit(name string, componentErr error, ok bool) error {
 	if !ok || componentErr == nil {
 		return fmt.Errorf("%w: %s", ErrUnexpectedServiceStop, name)
 	}
 	return fmt.Errorf("%w: %s: %w", ErrUnexpectedServiceStop, name, componentErr)
-}
-
-func (application *Application) shutdown(
-	parent context.Context,
-	serviceExited bool,
-	monitorExited bool,
-) error {
-	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), application.shutdownTimeout)
-	defer cancel()
-
-	var results []error
-	serviceShutdownErr := application.service.Shutdown(shutdownCtx)
-	if serviceShutdownErr != nil {
-		results = append(results, fmt.Errorf("shut down process service: %w", serviceShutdownErr))
-	}
-	if !serviceExited {
-		if err := joinOwned(shutdownCtx, "process service", application.service.Done()); err != nil {
-			results = append(results, err)
-		}
-	}
-
-	monitorShutdownErr := application.monitor.Shutdown(shutdownCtx)
-	if monitorShutdownErr != nil {
-		results = append(results, fmt.Errorf("shut down dependency monitor: %w", monitorShutdownErr))
-	}
-	if !monitorExited {
-		if err := joinOwned(shutdownCtx, "dependency monitor", application.monitor.Done()); err != nil {
-			results = append(results, err)
-		}
-	}
-	return errors.Join(results...)
-}
-
-func (application *Application) stopMonitor(parent context.Context) error {
-	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), application.shutdownTimeout)
-	defer cancel()
-
-	shutdownErr := application.monitor.Shutdown(shutdownCtx)
-	if shutdownErr != nil {
-		shutdownErr = fmt.Errorf("shut down dependency monitor: %w", shutdownErr)
-	}
-	joinErr := joinOwned(shutdownCtx, "dependency monitor", application.monitor.Done())
-	return errors.Join(shutdownErr, joinErr)
-}
-
-func joinOwned(ctx context.Context, name string, done <-chan error) error {
-	if done == nil {
-		return fmt.Errorf("join %s: %w", name, ErrUnexpectedServiceStop)
-	}
-	select {
-	case componentErr, ok := <-done:
-		if ok && componentErr != nil {
-			return fmt.Errorf("join %s: %w", name, componentErr)
-		}
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("join %s: %w", name, ctx.Err())
-	}
-}
-
-func validateActiveRoles(roles []Role) error {
-	if len(roles) == 0 {
-		return ErrInvalidApplication
-	}
-	seen := make(map[Role]struct{}, len(roles))
-	for _, role := range roles {
-		switch role {
-		case RoleAPI, RoleControl, RoleWorker, RoleRelay:
-		default:
-			return ErrInvalidApplication
-		}
-		if _, exists := seen[role]; exists {
-			return ErrInvalidApplication
-		}
-		seen[role] = struct{}{}
-	}
-	return nil
-}
-
-func roleNames(roles []Role) []string {
-	names := make([]string, len(roles))
-	for index, role := range roles {
-		names[index] = role.String()
-	}
-	return names
-}
-
-func isNilLifecycleDependency(dependency any) bool {
-	if dependency == nil {
-		return true
-	}
-
-	value := reflect.ValueOf(dependency)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Slice:
-		return value.IsNil()
-	default:
-		return false
-	}
 }

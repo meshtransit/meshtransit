@@ -28,8 +28,17 @@ func assertWorkerOutboxDelivery(
 	if err != nil {
 		t.Fatalf("OutboxStore.ClaimNetworkRevisions() error = %v", err)
 	}
-	if len(claims) != 2 {
-		t.Fatalf("len(network revision claims) = %d, want 2", len(claims))
+	if len(claims) != 3 {
+		t.Fatalf("len(network revision claims) = %d, want 3 committed Network changes", len(claims))
+	}
+	for index := 1; index < len(claims); index++ {
+		if claims[index-1].EventID() >= claims[index].EventID() {
+			t.Fatalf(
+				"network revision claim order = %d before %d, want increasing event order",
+				claims[index-1].EventID(),
+				claims[index].EventID(),
+			)
+		}
 	}
 
 	firstRevision, err := store.LoadNetworkRevision(ctx, claims[0])
@@ -53,9 +62,13 @@ func assertWorkerOutboxDelivery(
 	if err := store.RetryNetworkRevision(ctx, claims[1], "integration_retry", time.Hour); err != nil {
 		t.Fatalf("OutboxStore.RetryNetworkRevision() error = %v", err)
 	}
+	if err := store.MarkRevisionDelivered(ctx, claims[2]); err != nil {
+		t.Fatalf("OutboxStore.MarkRevisionDelivered(third claim) error = %v", err)
+	}
 	assertOutboxOutcome(t, ctx, adminConnection, claims[0].EventID(), "delivered", "delivered", nil)
 	retryClass := "integration_retry"
 	assertOutboxOutcome(t, ctx, adminConnection, claims[1].EventID(), "pending", "retry", &retryClass)
+	assertOutboxOutcome(t, ctx, adminConnection, claims[2].EventID(), "delivered", "delivered", nil)
 }
 
 func assertOutboxOutcome(

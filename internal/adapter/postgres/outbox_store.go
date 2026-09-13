@@ -227,15 +227,11 @@ func (store *OutboxStore) finishClaim(
 		claim.ClaimedAt(),
 	}
 	arguments = append(arguments, extraArguments...)
-	var eventID int64
-	err := store.database.QueryRow(ctx, query, arguments...).Scan(&eventID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return errors.Join(ErrFinishOutbox, ErrOutboxClaimLost)
-	}
+	result, err := store.database.Exec(ctx, query, arguments...)
 	if err != nil {
 		return errors.Join(ErrFinishOutbox, err)
 	}
-	if eventID != claim.EventID() {
+	if result == nil || result.RowsAffected() != 1 {
 		return errors.Join(ErrFinishOutbox, ErrOutboxClaimLost)
 	}
 	return nil

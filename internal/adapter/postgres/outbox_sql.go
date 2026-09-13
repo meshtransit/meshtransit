@@ -85,7 +85,7 @@ SELECT
     NULL,
     NULL
 FROM delivered
-RETURNING outbox_event_id`
+`
 
 const retryNetworkRevisionSQL = `WITH retried AS MATERIALIZED (
     UPDATE mesh_ops.outbox_event AS event
@@ -125,4 +125,4 @@ SELECT
     $6,
     retried.available_at
 FROM retried
-RETURNING outbox_event_id`
+`

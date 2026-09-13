@@ -160,9 +160,11 @@ Tenant reads for serving roles are protected by forced row-level security using 
 `mesh.workspace_id` and `mesh.network_id` settings; missing, malformed, or
 cross-paired scope fails closed. Runtime readiness also rejects an elevated,
 object-owning, member role or a connection whose authenticated user differs
-from configuration. Authorization-aware serving mutations and the owned worker
-dispatch loop are intentionally deferred to later vertical slices; the current
-worker adapter starts no goroutine by itself.
+from configuration. The process lifecycle owns the revision dispatcher only for
+the `worker` and `all` roles. It starts exactly one polling goroutine, processes
+bounded claims sequentially, cancels in-flight I/O during shutdown, and joins
+before Redis and PostgreSQL are closed. Authorization-aware serving mutations
+remain deferred to later vertical slices.
 
 `all` expands to the `api`, `control`, `worker`, and `relay` responsibilities.
 This slice deliberately does not implement their business protocols yet; role
