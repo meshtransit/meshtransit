@@ -198,6 +198,7 @@ func seedRegistrationAuthority(ctx context.Context, t *testing.T, connection *pg
     enrollment_profile_id,
     authorization_kind,
     enrollment_credential_id,
+    request_hash,
     machine_key_fingerprint,
     device_id,
     expires_at,
@@ -210,6 +211,7 @@ func seedRegistrationAuthority(ctx context.Context, t *testing.T, connection *pg
     601,
     'credential',
     602,
+    pg_catalog.decode(pg_catalog.repeat('61', 32), 'hex'),
     pg_catalog.decode(pg_catalog.repeat('31', 32), 'hex'),
     603,
     pg_catalog.now() + INTERVAL '10 minutes',
@@ -330,14 +332,29 @@ func assertRegistrationSchemaConstraints(ctx context.Context, t *testing.T, conn
 			wantCode: "23503",
 		},
 		{
+			name: "registration request hash has fixed width",
+			query: `INSERT INTO mesh.pending_registration (
+    public_id, workspace_id, network_id, enrollment_profile_id,
+    authorization_kind, enrollment_credential_id, request_hash, machine_key_fingerprint,
+    expires_at, state
+) VALUES (
+    '01890f10-0000-7000-8000-000000000706', 101, 201, 601,
+    'credential', 602, pg_catalog.decode('01', 'hex'),
+    pg_catalog.decode(pg_catalog.repeat('46', 32), 'hex'),
+    pg_catalog.now() + INTERVAL '10 minutes', 'pending'
+)`,
+			wantCode: "23514",
+		},
+		{
 			name: "completed registration requires device",
 			query: `INSERT INTO mesh.pending_registration (
     public_id, workspace_id, network_id, enrollment_profile_id,
-    authorization_kind, enrollment_credential_id, machine_key_fingerprint,
+    authorization_kind, enrollment_credential_id, request_hash, machine_key_fingerprint,
     expires_at, state
 ) VALUES (
     '01890f10-0000-7000-8000-000000000703', 101, 201, 601,
-    'credential', 602, pg_catalog.decode(pg_catalog.repeat('43', 32), 'hex'),
+    'credential', 602, pg_catalog.decode(pg_catalog.repeat('47', 32), 'hex'),
+    pg_catalog.decode(pg_catalog.repeat('43', 32), 'hex'),
     pg_catalog.now() + INTERVAL '10 minutes', 'completed'
 )`,
 			wantCode: "23514",

@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 5 {
-		t.Fatalf("len(Catalog()) = %d, want 5", len(catalog))
+	if len(catalog) != 6 {
+		t.Fatalf("len(Catalog()) = %d, want 6", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -189,8 +189,31 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("registration migration SQL contains forbidden capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 5 {
-		t.Fatalf("LatestVersion() = %d, want 5", LatestVersion())
+	intentHash := catalog[5]
+	if intentHash.Description != "registration intent semantic hash" {
+		t.Fatalf("migration 6 description = %q, want registration intent semantic hash", intentHash.Description)
+	}
+	for _, required := range []string{
+		"ADD COLUMN request_hash BYTEA",
+		"uuid_send(public_id) || pg_catalog.uuid_send(public_id)",
+		"ALTER COLUMN request_hash SET NOT NULL",
+		"pending_registration_request_hash_check",
+	} {
+		if !strings.Contains(intentHash.SQL, required) {
+			t.Errorf("registration intent hash migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT UPDATE",
+		"DROP COLUMN",
+		"DISABLE ROW LEVEL SECURITY",
+	} {
+		if strings.Contains(intentHash.SQL, forbidden) {
+			t.Errorf("registration intent hash migration SQL contains unsafe change %q", forbidden)
+		}
+	}
+	if LatestVersion() != 6 {
+		t.Fatalf("LatestVersion() = %d, want 6", LatestVersion())
 	}
 }
 

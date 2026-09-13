@@ -34,5 +34,8 @@ func ParseID(value string) (ID, error) {
 // String returns the lowercase canonical UUID representation.
 func (id ID) String() string { return publicid.ID(id).String() }
 
+// Bytes returns a copy of the binary UUID representation.
+func (id ID) Bytes() [16]byte { return publicid.ID(id).Bytes() }
+
 // IsValid reports whether the ID satisfies the Workspace identity contract.
 func (id ID) IsValid() bool { return publicid.ID(id).IsValid() }

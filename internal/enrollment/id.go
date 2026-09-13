@@ -55,6 +55,9 @@ func (id ProfileID) IsValid() bool { return publicid.ID(id).IsValid() }
 // String returns the canonical Credential ID.
 func (id CredentialID) String() string { return publicid.ID(id).String() }
 
+// Bytes returns a copy of the binary UUID representation.
+func (id CredentialID) Bytes() [16]byte { return publicid.ID(id).Bytes() }
+
 // IsValid reports whether the Credential ID is valid.
 func (id CredentialID) IsValid() bool { return publicid.ID(id).IsValid() }
 

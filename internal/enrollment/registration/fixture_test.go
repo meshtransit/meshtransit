@@ -191,7 +191,11 @@ func mustOpenResolution(
 	if err != nil {
 		t.Fatalf("enrollment.NewCredential() error = %v", err)
 	}
-	resolution, err := registration.NewOpenResolution(pending, credential, existingNode)
+	requestHash, err := command.RequestHash()
+	if err != nil {
+		t.Fatalf("Command.RequestHash() error = %v", err)
+	}
+	resolution, err := registration.NewOpenResolution(pending, credential, existingNode, requestHash)
 	if err != nil {
 		t.Fatalf("registration.NewOpenResolution() error = %v", err)
 	}
@@ -206,10 +210,15 @@ func mustCompletedResolution(
 	t.Helper()
 
 	completed := mustRegistration(t, command, enrollment.RegistrationStateCompleted, result.NodeID())
+	requestHash, err := command.RequestHash()
+	if err != nil {
+		t.Fatalf("Command.RequestHash() error = %v", err)
+	}
 	resolution, err := registration.NewCompletedResolution(
 		completed,
 		command.CredentialID,
 		command.Identity,
+		requestHash,
 		result,
 	)
 	if err != nil {

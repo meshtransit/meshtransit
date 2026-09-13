@@ -222,6 +222,13 @@ func validateResolution(command Command, resolution Resolution) error {
 	if registration.MachineFingerprint() != command.Identity.MachineKey().Fingerprint() {
 		return ErrIntentConflict
 	}
+	requestHash, err := command.RequestHash()
+	if err != nil {
+		return ErrInvalidCommand
+	}
+	if resolution.RequestHash() != requestHash {
+		return ErrIntentConflict
+	}
 	if completed, ok := resolution.CompletedResult(); ok {
 		identity, identityOK := resolution.CompletedIdentity()
 		if !identityOK {

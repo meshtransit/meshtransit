@@ -119,6 +119,7 @@ type Resolution struct {
 	registration      enrollment.Registration
 	credential        enrollment.Credential
 	credentialID      enrollment.CredentialID
+	requestHash       RequestHash
 	existingNode      node.ID
 	completed         Result
 	completedIdentity node.RegistrationIdentity
@@ -129,11 +130,13 @@ func NewOpenResolution(
 	registration enrollment.Registration,
 	credential enrollment.Credential,
 	existingNode node.ID,
+	requestHash RequestHash,
 ) (Resolution, error) {
 	resolution := Resolution{
 		registration: registration,
 		credential:   credential,
 		credentialID: credential.ID(),
+		requestHash:  requestHash,
 		existingNode: existingNode,
 	}
 	if !resolution.isOpenValid() {
@@ -148,11 +151,13 @@ func NewCompletedResolution(
 	registration enrollment.Registration,
 	credentialID enrollment.CredentialID,
 	identity node.RegistrationIdentity,
+	requestHash RequestHash,
 	result Result,
 ) (Resolution, error) {
 	resolution := Resolution{
 		registration:      registration,
 		credentialID:      credentialID,
+		requestHash:       requestHash,
 		completed:         result,
 		completedIdentity: identity,
 	}
@@ -170,6 +175,9 @@ func (resolution Resolution) Credential() enrollment.Credential { return resolut
 
 // CredentialID returns the credential bound to this registration intent.
 func (resolution Resolution) CredentialID() enrollment.CredentialID { return resolution.credentialID }
+
+// RequestHash returns the durable semantic hash bound to the intent ID.
+func (resolution Resolution) RequestHash() RequestHash { return resolution.requestHash }
 
 // ExistingNodeID returns a resumable Node and whether one exists.
 func (resolution Resolution) ExistingNodeID() (node.ID, bool) {
@@ -191,14 +199,16 @@ func (resolution Resolution) isOpenValid() bool {
 	return resolution.registration.IsValid() && resolution.credential.IsValid() &&
 		(state == enrollment.RegistrationStatePending || state == enrollment.RegistrationStateAuthorized) &&
 		resolution.registration.ProfileID() == resolution.credential.ProfileID() &&
-		resolution.credentialID == resolution.credential.ID() && !resolution.completed.IsValid() &&
+		resolution.credentialID == resolution.credential.ID() && resolution.requestHash.IsValid() &&
+		!resolution.completed.IsValid() &&
 		!resolution.completedIdentity.IsValid()
 }
 
 func (resolution Resolution) isCompletedValid() bool {
 	nodeID, completed := resolution.registration.NodeID()
 	return resolution.registration.IsValid() && completed && resolution.completed.IsValid() &&
-		resolution.credentialID.IsValid() && resolution.completedIdentity.IsValid() &&
+		resolution.credentialID.IsValid() && resolution.requestHash.IsValid() &&
+		resolution.completedIdentity.IsValid() &&
 		resolution.registration.ID() == resolution.completed.RegistrationID() &&
 		resolution.registration.Scope() == resolution.completed.Scope() &&
 		nodeID == resolution.completed.NodeID() && !resolution.credential.IsValid() &&
