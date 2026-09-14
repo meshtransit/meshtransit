@@ -5,8 +5,57 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/meshtransit/meshtransit/internal/enrollment"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 )
+
+func TestPublicRegistrationIDGeneratorIsSafeForConcurrentUse(t *testing.T) {
+	t.Parallel()
+
+	const generationCount = 64
+	results := make([]enrollment.RegistrationID, generationCount)
+	resultErrors := make([]error, generationCount)
+	var group sync.WaitGroup
+	for index := range generationCount {
+		group.Go(func() {
+			results[index], resultErrors[index] = (PublicRegistrationIDGenerator{}).NewRegistrationID()
+		})
+	}
+	group.Wait()
+
+	seen := make(map[enrollment.RegistrationID]struct{}, generationCount)
+	for index, id := range results {
+		if resultErrors[index] != nil {
+			t.Fatalf("PublicRegistrationIDGenerator.NewRegistrationID() error = %v", resultErrors[index])
+		}
+		if !id.IsValid() {
+			t.Fatal("PublicRegistrationIDGenerator.NewRegistrationID() returned an invalid ID")
+		}
+		if _, exists := seen[id]; exists {
+			t.Fatalf("PublicRegistrationIDGenerator.NewRegistrationID() returned duplicate ID %s", id)
+		}
+		seen[id] = struct{}{}
+	}
+}
+
+func TestGenerateRegistrationIDRejectsInvalidFactoryResult(t *testing.T) {
+	t.Parallel()
+
+	if _, err := generateRegistrationID(nil); !errors.Is(err, enrollment.ErrInvalidID) {
+		t.Fatalf("generateRegistrationID(nil) error = %v, want enrollment.ErrInvalidID", err)
+	}
+	if _, err := generateRegistrationID(func() (publicid.ID, error) {
+		return publicid.ID{}, nil
+	}); !errors.Is(err, enrollment.ErrInvalidID) {
+		t.Fatalf("generateRegistrationID(zero) error = %v, want enrollment.ErrInvalidID", err)
+	}
+	wantErr := errors.New("entropy unavailable")
+	if _, err := generateRegistrationID(func() (publicid.ID, error) {
+		return publicid.ID{}, wantErr
+	}); !errors.Is(err, wantErr) {
+		t.Fatalf("generateRegistrationID(error) = %v, want wrapped entropy error", err)
+	}
+}
 
 func TestPublicEvidenceIDGeneratorIsSafeForConcurrentUse(t *testing.T) {
 	t.Parallel()

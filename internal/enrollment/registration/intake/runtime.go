@@ -3,8 +3,33 @@ package intake
 import (
 	"fmt"
 
+	"github.com/meshtransit/meshtransit/internal/enrollment"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 )
+
+// PublicRegistrationIDGenerator creates UUIDv7 registration intent IDs from
+// operating-system entropy. It owns no mutable state and starts no goroutines.
+type PublicRegistrationIDGenerator struct{}
+
+// NewRegistrationID returns one fresh server-owned registration intent ID.
+func (PublicRegistrationIDGenerator) NewRegistrationID() (enrollment.RegistrationID, error) {
+	return generateRegistrationID(publicid.New)
+}
+
+func generateRegistrationID(newID func() (publicid.ID, error)) (enrollment.RegistrationID, error) {
+	if newID == nil {
+		return enrollment.RegistrationID{}, enrollment.ErrInvalidID
+	}
+	id, err := newID()
+	if err != nil {
+		return enrollment.RegistrationID{}, fmt.Errorf("generate registration intent id: %w", err)
+	}
+	registrationID := enrollment.RegistrationID(id)
+	if !registrationID.IsValid() {
+		return enrollment.RegistrationID{}, enrollment.ErrInvalidID
+	}
+	return registrationID, nil
+}
 
 // PublicEvidenceIDGenerator creates durable audit and outbox identities from
 // operating-system entropy. It owns no mutable state and starts no goroutines.
