@@ -14,8 +14,10 @@ and authenticated one-shot and streaming full-map snapshots. Every stream
 starts with the authoritative self Node, an explicit empty peer set, and an
 explicit empty packet filter. Long-lived streams use generation-fenced Redis
 presence, bounded keepalives, exact release, a process-owned Network revision
-feed, and periodic PostgreSQL resync. Peer projection, policy evaluation,
-endpoint persistence, and relay behavior are not implemented. Redis exposes
+feed, and periodic PostgreSQL resync. One-shot map calls validate and record a
+canonical, generation-fenced endpoint set in Redis; streaming calls are
+read-only and cannot mutate endpoint state. Peer projection, policy evaluation,
+durable endpoint history, and relay behavior are not implemented. Redis exposes
 the bounded, versioned `NetworkRevisionAdvanced` wakeup transport. A control
 replica holds one subscription and fans wakeups into bounded, coalescing
 Network-local channels; PostgreSQL remains the source of every emitted map.
@@ -110,8 +112,8 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_MAP_REQUEST_TIMEOUT` | `10s` | Total application deadline for one authenticated map snapshot, from 100ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MAP_STATEMENT_TIMEOUT` | `3s` | PostgreSQL statement timeout for one authenticated map snapshot, from 1ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MAP_TRANSACTION_IDLE_LIMIT` | `5s` | PostgreSQL idle-in-transaction limit for one map snapshot, from 1ms through 1 minute. |
-| `MESHTRANSIT_CONTROL_MAP_PRESENCE_TTL` | `30s` | Generation-fenced Redis presence TTL from 3 seconds through 5 minutes. |
-| `MESHTRANSIT_CONTROL_MAP_COORDINATION_TIMEOUT` | `2s` | Redis claim/renew/release deadline from 100ms through 30 seconds and below one third of the presence TTL. |
+| `MESHTRANSIT_CONTROL_MAP_PRESENCE_TTL` | `30s` | Generation-fenced Redis presence and endpoint-observation TTL from 3 seconds through 5 minutes. |
+| `MESHTRANSIT_CONTROL_MAP_COORDINATION_TIMEOUT` | `2s` | Redis presence and endpoint-operation deadline from 100ms through 30 seconds and below one third of the presence TTL. |
 | `MESHTRANSIT_CONTROL_MAP_KEEPALIVE_INTERVAL` | `1m` | Silent-stream keepalive interval from 1 second through 90 seconds. |
 | `MESHTRANSIT_CONTROL_MAP_RECONCILE_INTERVAL` | `30s` | Authoritative PostgreSQL resync interval from 1 second through 5 minutes. |
 
@@ -293,10 +295,11 @@ closed sets (`success`/`error` and `delivered`/`deferred`/`failed`); event,
 Workspace, Network, and worker identifiers are never metric labels.
 
 Processes with storage dependencies also expose Redis command count and
-latency for the fixed `ping`, `publish`, `subscribe`, and `receive` operations,
+latency for the fixed connection, wakeup, presence, and endpoint operations,
 plus command-pool usage, pending requests, pool timeouts, and active
-subscriptions. Pool state is sampled only when metrics are scraped; no
-observability goroutine or unbounded label is introduced.
+subscriptions. Operation and result labels are closed sets; Node IDs, endpoint
+values, and discovery keys are never labels. Pool state is sampled only when
+metrics are scraped; no observability goroutine or unbounded label is introduced.
 
 Control and `all` processes expose the revision-feed subscriber state, active
 watchers, received wakeups, and bounded `delivered`/`coalesced` fan-out results.

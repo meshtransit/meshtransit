@@ -31,7 +31,11 @@ func assertPostgreSQLMapSessionSnapshot(
 	if err != nil {
 		t.Fatalf("postgres.NewMapSessionStore() error = %v", err)
 	}
-	service, err := mapsession.NewService(store)
+	service, err := mapsession.NewService(
+		store,
+		unusedEndpointObserver{},
+		mapsession.ServiceOptions{EndpointTTL: 30 * time.Second, EndpointTimeout: time.Second},
+	)
 	if err != nil {
 		t.Fatalf("mapsession.NewService() error = %v", err)
 	}
@@ -85,6 +89,15 @@ func assertPostgreSQLMapSessionSnapshot(
 	if _, err := service.Open(ctx, machine, unknownNodeRequest); !errors.Is(err, mapsession.ErrUnauthorized) {
 		t.Fatalf("unknown Node key Open() error = %v, want mapsession.ErrUnauthorized", err)
 	}
+}
+
+type unusedEndpointObserver struct{}
+
+func (unusedEndpointObserver) ObserveEndpoints(
+	context.Context,
+	node.EndpointObservation,
+) (bool, error) {
+	return false, errors.New("unused endpoint observer called")
 }
 
 func assertWorkerCannotResolveMapSessionScope(

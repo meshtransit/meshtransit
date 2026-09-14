@@ -1,9 +1,6 @@
 package mapsession
 
-import (
-	"reflect"
-	"time"
-)
+import "time"
 
 const (
 	minimumStreamOperationTimeout = time.Millisecond
@@ -24,17 +21,4 @@ func validStreamOptions(options StreamOptions) bool {
 		options.KeepAliveInterval <= maximumStreamInterval &&
 		options.ReconcileInterval >= minimumStreamInterval &&
 		options.ReconcileInterval <= maximumStreamInterval
-}
-
-func isNilStreamDependency(dependency any) bool {
-	if dependency == nil {
-		return true
-	}
-	value := reflect.ValueOf(dependency)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Slice:
-		return value.IsNil()
-	default:
-		return false
-	}
 }

@@ -62,12 +62,15 @@ func (client *Client) requestMap(
 		return nil, ErrInvalidClient
 	}
 	payload, err := json.Marshal(tailcfg.MapRequest{
-		Version:   testCapabilityVersion,
-		Compress:  "zstd",
-		KeepAlive: true,
-		NodeKey:   client.nodeKey.Public(),
-		Stream:    streaming,
-		Hostinfo:  &tailcfg.Hostinfo{Hostname: client.hostname},
+		Version:       testCapabilityVersion,
+		Compress:      "zstd",
+		KeepAlive:     true,
+		NodeKey:       client.nodeKey.Public(),
+		DiscoKey:      client.discoveryKey.Public(),
+		Endpoints:     slices.Clone(client.connectivity.Endpoints),
+		EndpointTypes: []tailcfg.EndpointType{tailcfg.EndpointSTUN},
+		Stream:        streaming,
+		Hostinfo:      &tailcfg.Hostinfo{Hostname: client.hostname},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode map request: %w", err)

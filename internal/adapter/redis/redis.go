@@ -45,15 +45,17 @@ type Options struct {
 
 // Client is the concrete Redis dependency owned by the composition root.
 type Client struct {
-	ping            func(context.Context) error
-	publish         func(context.Context, string, []byte) error
-	subscribe       func(context.Context, string) (messageSubscription, error)
-	claimPresence   presenceClaimFunc
-	releasePresence presenceReleaseFunc
-	metrics         *redisMetrics
-	close           func() error
-	closeOnce       sync.Once
-	closeErr        error
+	ping             func(context.Context) error
+	publish          func(context.Context, string, []byte) error
+	subscribe        func(context.Context, string) (messageSubscription, error)
+	claimPresence    presenceClaimFunc
+	releasePresence  presenceReleaseFunc
+	observeEndpoints observeEndpointsFunc
+	loadEndpoints    loadEndpointsFunc
+	metrics          *redisMetrics
+	close            func() error
+	closeOnce        sync.Once
+	closeErr         error
 }
 
 // Open constructs a lazy, bounded TLS-only Redis client. Connectivity is
@@ -92,7 +94,8 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 		},
 		claimPresence: func(
 			claimCtx context.Context,
-			key string,
+			presenceKey string,
+			endpointKey string,
 			generation int64,
 			replicaID string,
 			ttl time.Duration,
@@ -100,7 +103,7 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			return claimPresenceScript.Run(
 				claimCtx,
 				client,
-				[]string{key},
+				[]string{presenceKey, endpointKey},
 				generation,
 				replicaID,
 				ttl.Milliseconds(),
@@ -108,17 +111,51 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 		},
 		releasePresence: func(
 			releaseCtx context.Context,
-			key string,
+			presenceKey string,
+			endpointKey string,
 			generation int64,
 			replicaID string,
 		) (int64, error) {
 			return releasePresenceScript.Run(
 				releaseCtx,
 				client,
-				[]string{key},
+				[]string{presenceKey, endpointKey},
 				generation,
 				replicaID,
 			).Int64()
+		},
+		observeEndpoints: func(
+			observeCtx context.Context,
+			endpointKey string,
+			presenceKey string,
+			generation int64,
+			payload []byte,
+			ttl time.Duration,
+		) (int64, error) {
+			return observeEndpointsScript.Run(
+				observeCtx,
+				client,
+				[]string{endpointKey, presenceKey},
+				generation,
+				payload,
+				ttl.Milliseconds(),
+			).Int64()
+		},
+		loadEndpoints: func(
+			loadCtx context.Context,
+			endpointKey string,
+			generation int64,
+		) ([]byte, error) {
+			payload, err := loadEndpointsScript.Run(
+				loadCtx,
+				client,
+				[]string{endpointKey},
+				generation,
+			).Text()
+			if errors.Is(err, redisclient.Nil) {
+				return nil, nil
+			}
+			return []byte(payload), err
 		},
 		metrics: newRedisMetrics(options.PoolSize, client.PoolStats),
 		close:   client.Close,

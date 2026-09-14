@@ -5,8 +5,10 @@ package integration
 import (
 	"context"
 	"net/http"
+	"net/netip"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/meshtransit/meshtransit/internal/adapter/legacyts2021/protocoltest"
 	"github.com/meshtransit/meshtransit/internal/config"
+	"github.com/meshtransit/meshtransit/internal/node"
 )
 
 func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
@@ -52,6 +55,7 @@ func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 	}
 	cancelRegister()
 	firstMap := fetchProcessFullMap(ctx, t, first, client)
+	assertProcessEndpointObservation(ctx, t, firstMap.StableNodeID, client.Connectivity())
 	firstStreamMap := fetchProcessInitialStreamMap(ctx, t, first, client)
 	if !reflect.DeepEqual(firstStreamMap, firstMap) {
 		first.process.forceStop(t)
@@ -91,6 +95,38 @@ func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 	third := startReadyRoleAllProcess(t, binary, controlAddress)
 	assertProcessRevisionWakeup(ctx, t, third, client, adminConnection)
 	stopIntegrationProcess(t, third.process)
+}
+
+func assertProcessEndpointObservation(
+	ctx context.Context,
+	t *testing.T,
+	stableNodeID string,
+	want protocoltest.Connectivity,
+) {
+	t.Helper()
+	nodeID, err := node.ParseID(stableNodeID)
+	if err != nil {
+		t.Fatalf("parse process endpoint Node ID: %v", err)
+	}
+	client := openIntegrationRedisClient(ctx, t)
+	set, found, err := client.LoadEndpoints(ctx, nodeID, 1)
+	if err != nil || !found {
+		t.Fatalf("load process endpoint observation = (%+v, %t, %v), want found", set, found, err)
+	}
+	if set.DiscoveryKey().Bytes() != want.DiscoveryKey {
+		t.Fatal("process endpoint observation discovery key differs from client report")
+	}
+	gotEndpoints := set.Endpoints()
+	gotAddresses := make([]netip.AddrPort, len(gotEndpoints))
+	for index, endpoint := range gotEndpoints {
+		gotAddresses[index] = endpoint.Address()
+		if endpoint.Source() != node.EndpointSourceSTUN {
+			t.Fatalf("process endpoint source = %v, want STUN", endpoint.Source())
+		}
+	}
+	if !slices.Equal(gotAddresses, want.Endpoints) {
+		t.Fatalf("process endpoint addresses = %v, want %v", gotAddresses, want.Endpoints)
+	}
 }
 
 func assertProcessRevisionWakeup(
@@ -242,6 +278,7 @@ func assertControlClientMetrics(t *testing.T, running readyRoleAllProcess) {
 		`meshtransit_control_map_requests_total{result="stream_closed"} 1`,
 		`meshtransit_redis_commands_total{operation="presence_claim",result="success"} 1`,
 		`meshtransit_redis_commands_total{operation="presence_release",result="success"} 1`,
+		`meshtransit_redis_commands_total{operation="endpoints_observe",result="success"} 1`,
 		"meshtransit_control_registrations_active 0",
 		"meshtransit_control_authenticated_sessions_active 0",
 		"meshtransit_control_map_streams_active 0",

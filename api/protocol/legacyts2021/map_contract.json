@@ -1,5 +1,5 @@
 {
-  "contract_version": 1,
+  "contract_version": 2,
   "profile": "legacy-ts2021-cap142-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
@@ -20,7 +20,16 @@
       "network_id",
       "tenant_id",
       "account_id"
-    ]
+    ],
+    "endpoint_update": {
+      "mode": "one-shot-only",
+      "maximum_endpoints": 64,
+      "requires_discovery_key": true,
+      "requires_parallel_endpoint_types": true,
+      "omit_peers": "accepted-only-with-endpoint-report",
+      "storage": "redis-ttl-generation-fenced",
+      "authority": "non-authoritative"
+    }
   },
   "response": {
     "framing": "uint32-little-endian-length",

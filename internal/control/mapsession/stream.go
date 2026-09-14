@@ -84,8 +84,8 @@ func NewStreamService(
 	revisions RevisionWatcher,
 	options StreamOptions,
 ) (*StreamService, error) {
-	if isNilStreamDependency(snapshots) || isNilStreamDependency(presence) ||
-		isNilStreamDependency(revisions) || !validStreamOptions(options) {
+	if isNilDependency(snapshots) || isNilDependency(presence) ||
+		isNilDependency(revisions) || !validStreamOptions(options) {
 		return nil, ErrInvalidStreamService
 	}
 	return &StreamService{
@@ -106,10 +106,10 @@ func (service *StreamService) Serve(
 	request Request,
 	sink StreamSink,
 ) (resultErr error) {
-	if ctx == nil || service == nil || isNilStreamDependency(service.snapshots) ||
-		isNilStreamDependency(service.presence) || isNilStreamDependency(service.revisions) ||
+	if ctx == nil || service == nil || isNilDependency(service.snapshots) ||
+		isNilDependency(service.presence) || isNilDependency(service.revisions) ||
 		!validStreamOptions(service.options) || !machine.IsValid() || !request.IsValid() ||
-		isNilStreamDependency(sink) {
+		isNilDependency(sink) {
 		return ErrInvalidStreamService
 	}
 	if err := ctx.Err(); err != nil {

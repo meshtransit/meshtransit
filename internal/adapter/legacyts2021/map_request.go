@@ -76,19 +76,26 @@ func decodeMapRequest(body io.Reader) (mapsession.Request, bool, error) {
 	if err != nil {
 		return mapsession.Request{}, false, ErrInvalidMapRequest
 	}
+	endpointSet, hasEndpointSet, err := decodeEndpointSet(wire)
+	if err != nil || wire.OmitPeers && (wire.Stream || !hasEndpointSet) {
+		return mapsession.Request{}, false, ErrInvalidMapRequest
+	}
+	if hasEndpointSet && !wire.Stream {
+		request, err = request.WithEndpointSet(endpointSet)
+		if err != nil {
+			return mapsession.Request{}, false, ErrInvalidMapRequest
+		}
+	}
 	return request, wire.Stream, nil
 }
 
 func validMapRequest(request tailcfg.MapRequest) bool {
 	if request.Version != supportedCapabilityVersion || request.Compress != "zstd" ||
-		request.NodeKey.IsZero() || request.OmitPeers ||
+		request.NodeKey.IsZero() ||
 		request.MapSessionHandle != "" || request.MapSessionSeq != 0 || request.TKAHead != "" ||
 		!request.HardwareAttestationKey.IsZero() ||
 		len(request.HardwareAttestationKeySignature) != 0 ||
 		!request.HardwareAttestationKeySignatureTimestamp.IsZero() {
-		return false
-	}
-	if len(request.EndpointTypes) != 0 && len(request.EndpointTypes) != len(request.Endpoints) {
 		return false
 	}
 	if request.Hostinfo != nil && (len(request.Hostinfo.RoutableIPs) != 0 ||

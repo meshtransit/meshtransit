@@ -14,7 +14,7 @@ func TestClientClaimsAndReleasesExactPresenceLease(t *testing.T) {
 
 	lease := testPresenceLease(t, 7, "control-a")
 	ctx := t.Context()
-	var claimKey, releaseKey string
+	var claimKey, releaseKey, claimEndpointKey, releaseEndpointKey string
 	var claimGeneration, releaseGeneration int64
 	var claimReplica, releaseReplica string
 	var claimTTL time.Duration
@@ -22,6 +22,7 @@ func TestClientClaimsAndReleasesExactPresenceLease(t *testing.T) {
 		claimPresence: func(
 			gotContext context.Context,
 			key string,
+			gotEndpointKey string,
 			generation int64,
 			replicaID string,
 			ttl time.Duration,
@@ -29,19 +30,22 @@ func TestClientClaimsAndReleasesExactPresenceLease(t *testing.T) {
 			if gotContext != ctx {
 				t.Fatal("ClaimPresence() did not propagate context")
 			}
-			claimKey, claimGeneration, claimReplica, claimTTL = key, generation, replicaID, ttl
+			claimKey, claimEndpointKey = key, gotEndpointKey
+			claimGeneration, claimReplica, claimTTL = generation, replicaID, ttl
 			return 1, nil
 		},
 		releasePresence: func(
 			gotContext context.Context,
 			key string,
+			gotEndpointKey string,
 			generation int64,
 			replicaID string,
 		) (int64, error) {
 			if gotContext != ctx {
 				t.Fatal("ReleasePresence() did not propagate context")
 			}
-			releaseKey, releaseGeneration, releaseReplica = key, generation, replicaID
+			releaseKey, releaseEndpointKey = key, gotEndpointKey
+			releaseGeneration, releaseReplica = generation, replicaID
 			return 1, nil
 		},
 	}
@@ -54,7 +58,9 @@ func TestClientClaimsAndReleasesExactPresenceLease(t *testing.T) {
 		t.Fatalf("ReleasePresence() = (%t, %v), want true", released, err)
 	}
 	wantKey := presenceKeyPrefix + lease.NodeID().String()
+	wantEndpointKey := endpointKeyPrefix + lease.NodeID().String()
 	if claimKey != wantKey || releaseKey != wantKey ||
+		claimEndpointKey != wantEndpointKey || releaseEndpointKey != wantEndpointKey ||
 		claimGeneration != 7 || releaseGeneration != 7 ||
 		claimReplica != "control-a" || releaseReplica != "control-a" ||
 		claimTTL != 30*time.Second {
@@ -75,10 +81,10 @@ func TestClientTreatsPresenceFenceRejectionAsSuccessfulResult(t *testing.T) {
 	t.Parallel()
 
 	client := &Client{
-		claimPresence: func(context.Context, string, int64, string, time.Duration) (int64, error) {
+		claimPresence: func(context.Context, string, string, int64, string, time.Duration) (int64, error) {
 			return 0, nil
 		},
-		releasePresence: func(context.Context, string, int64, string) (int64, error) {
+		releasePresence: func(context.Context, string, string, int64, string) (int64, error) {
 			return 0, nil
 		},
 	}
@@ -111,6 +117,7 @@ func TestClientRejectsMalformedPresenceResultsAndTransportErrors(t *testing.T) {
 			client := &Client{claimPresence: func(
 				context.Context,
 				string,
+				string,
 				int64,
 				string,
 				time.Duration,
@@ -130,6 +137,7 @@ func TestClientRejectsInvalidPresenceLeaseBeforeRedis(t *testing.T) {
 	calls := 0
 	client := &Client{claimPresence: func(
 		context.Context,
+		string,
 		string,
 		int64,
 		string,

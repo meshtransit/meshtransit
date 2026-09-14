@@ -3,7 +3,9 @@ package mapsession
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/meshtransit/meshtransit/internal/control"
 	"github.com/meshtransit/meshtransit/internal/node"
@@ -12,10 +14,8 @@ import (
 func TestServiceLoadsSnapshotForBoundIdentity(t *testing.T) {
 	snapshot := snapshotFixture(t)
 	store := &recordingSnapshotStore{snapshot: snapshot}
-	service, err := NewService(store)
-	if err != nil {
-		t.Fatalf("NewService() error = %v", err)
-	}
+	endpoints := &recordingEndpointObserver{}
+	service := newServiceFixture(t, store, endpoints)
 	machine, request := authenticatedRequestFixture(t, snapshot)
 
 	got, err := service.Open(context.Background(), machine, request)
@@ -29,6 +29,51 @@ func TestServiceLoadsSnapshotForBoundIdentity(t *testing.T) {
 		store.identity.MachineFingerprint() != snapshot.MachineKey().Fingerprint() {
 		t.Fatalf("store identity was not bound to authenticated request")
 	}
+	if endpoints.calls != 0 {
+		t.Fatalf("endpoint observer calls = %d, want zero without a report", endpoints.calls)
+	}
+}
+
+func TestServiceObservesEndpointsAfterAuthoritativeIdentityBinding(t *testing.T) {
+	snapshot := snapshotFixture(t)
+	store := &recordingSnapshotStore{snapshot: snapshot}
+	observer := &recordingEndpointObserver{accepted: true}
+	service := newServiceFixture(t, store, observer)
+	machine, request := authenticatedRequestFixture(t, snapshot)
+	request = withEndpointSetFixture(t, request)
+
+	if _, err := service.Open(t.Context(), machine, request); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if observer.calls != 1 || !observer.observation.IsValid() ||
+		observer.observation.NodeID() != snapshot.NodeID() ||
+		observer.observation.Generation() != snapshot.SessionGeneration() ||
+		observer.observation.TTL() != 30*time.Second {
+		t.Fatalf("endpoint observation = %+v after %d calls, want bound snapshot observation", observer.observation, observer.calls)
+	}
+}
+
+func TestServiceFailsClosedWhenEndpointObservationIsUnavailableOrStale(t *testing.T) {
+	snapshot := snapshotFixture(t)
+	machine, request := authenticatedRequestFixture(t, snapshot)
+	request = withEndpointSetFixture(t, request)
+	wantErr := errors.New("redis unavailable")
+	for _, test := range []struct {
+		name     string
+		observer *recordingEndpointObserver
+		want     error
+	}{
+		{name: "unavailable", observer: &recordingEndpointObserver{err: wantErr}, want: wantErr},
+		{name: "stale", observer: &recordingEndpointObserver{}, want: ErrEndpointObservationRejected},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := newServiceFixture(t, &recordingSnapshotStore{snapshot: snapshot}, test.observer)
+			if _, err := service.Open(t.Context(), machine, request); !errors.Is(err, test.want) ||
+				!errors.Is(err, ErrOpen) {
+				t.Fatalf("Open() error = %v, want ErrOpen and %v", err, test.want)
+			}
+		})
+	}
 }
 
 func TestServiceFailsClosedOnMismatchedSnapshot(t *testing.T) {
@@ -39,25 +84,26 @@ func TestServiceFailsClosedOnMismatchedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSnapshot() error = %v", err)
 	}
-	service, err := NewService(&recordingSnapshotStore{snapshot: mismatched})
-	if err != nil {
-		t.Fatalf("NewService() error = %v", err)
-	}
+	observer := &recordingEndpointObserver{accepted: true}
+	service := newServiceFixture(t, &recordingSnapshotStore{snapshot: mismatched}, observer)
 	machine, request := authenticatedRequestFixture(t, snapshot)
+	request = withEndpointSetFixture(t, request)
 
 	if _, err := service.Open(context.Background(), machine, request); !errors.Is(err, ErrOpen) {
 		t.Fatalf("Open() error = %v, want ErrOpen", err)
+	}
+	if observer.calls != 0 {
+		t.Fatalf("endpoint observer calls = %d, want zero before snapshot validation", observer.calls)
 	}
 }
 
 func TestServicePropagatesCancellationWithoutStorageCall(t *testing.T) {
 	snapshot := snapshotFixture(t)
 	store := &recordingSnapshotStore{snapshot: snapshot}
-	service, err := NewService(store)
-	if err != nil {
-		t.Fatalf("NewService() error = %v", err)
-	}
+	observer := &recordingEndpointObserver{accepted: true}
+	service := newServiceFixture(t, store, observer)
 	machine, request := authenticatedRequestFixture(t, snapshot)
+	request = withEndpointSetFixture(t, request)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -66,6 +112,27 @@ func TestServicePropagatesCancellationWithoutStorageCall(t *testing.T) {
 	}
 	if store.calls != 0 {
 		t.Fatalf("storage calls = %d, want zero", store.calls)
+	}
+	if observer.calls != 0 {
+		t.Fatalf("endpoint observer calls = %d, want zero", observer.calls)
+	}
+}
+
+func TestNewServiceRejectsInvalidComposition(t *testing.T) {
+	t.Parallel()
+
+	validOptions := ServiceOptions{EndpointTTL: 30 * time.Second, EndpointTimeout: time.Second}
+	if _, err := NewService(nil, &recordingEndpointObserver{}, validOptions); !errors.Is(err, ErrInvalidService) {
+		t.Fatalf("NewService(nil store) error = %v, want ErrInvalidService", err)
+	}
+	if _, err := NewService(&recordingSnapshotStore{}, nil, validOptions); !errors.Is(err, ErrInvalidService) {
+		t.Fatalf("NewService(nil observer) error = %v, want ErrInvalidService", err)
+	}
+	if _, err := NewService(&recordingSnapshotStore{}, &recordingEndpointObserver{}, ServiceOptions{}); !errors.Is(
+		err,
+		ErrInvalidService,
+	) {
+		t.Fatalf("NewService(zero options) error = %v, want ErrInvalidService", err)
 	}
 }
 
@@ -85,11 +152,67 @@ func authenticatedRequestFixture(
 	return machine, request
 }
 
+func withEndpointSetFixture(t testing.TB, request Request) Request {
+	t.Helper()
+	discoveryKey, err := node.NewDiscoveryKey([32]byte{3})
+	if err != nil {
+		t.Fatalf("node.NewDiscoveryKey() error = %v", err)
+	}
+	endpoint, err := node.NewEndpoint(
+		netip.MustParseAddrPort("192.0.2.10:41641"),
+		node.EndpointSourceSTUN,
+	)
+	if err != nil {
+		t.Fatalf("node.NewEndpoint() error = %v", err)
+	}
+	set, err := node.NewEndpointSet(discoveryKey, []node.Endpoint{endpoint})
+	if err != nil {
+		t.Fatalf("node.NewEndpointSet() error = %v", err)
+	}
+	request, err = request.WithEndpointSet(set)
+	if err != nil {
+		t.Fatalf("Request.WithEndpointSet() error = %v", err)
+	}
+	return request
+}
+
+func newServiceFixture(
+	t testing.TB,
+	store SnapshotStore,
+	endpoints EndpointObserver,
+) *Service {
+	t.Helper()
+	service, err := NewService(store, endpoints, ServiceOptions{
+		EndpointTTL:     30 * time.Second,
+		EndpointTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	return service
+}
+
 type recordingSnapshotStore struct {
 	snapshot Snapshot
 	err      error
 	identity control.AuthenticatedNode
 	calls    int
+}
+
+type recordingEndpointObserver struct {
+	accepted    bool
+	err         error
+	observation node.EndpointObservation
+	calls       int
+}
+
+func (observer *recordingEndpointObserver) ObserveEndpoints(
+	_ context.Context,
+	observation node.EndpointObservation,
+) (bool, error) {
+	observer.calls++
+	observer.observation = observation
+	return observer.accepted, observer.err
 }
 
 func (store *recordingSnapshotStore) Load(

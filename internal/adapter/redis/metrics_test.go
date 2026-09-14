@@ -50,11 +50,17 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 		subscribe: func(context.Context, string) (messageSubscription, error) {
 			return transport, nil
 		},
-		claimPresence: func(context.Context, string, int64, string, time.Duration) (int64, error) {
+		claimPresence: func(context.Context, string, string, int64, string, time.Duration) (int64, error) {
 			return 1, nil
 		},
-		releasePresence: func(context.Context, string, int64, string) (int64, error) {
+		releasePresence: func(context.Context, string, string, int64, string) (int64, error) {
 			return 1, nil
+		},
+		observeEndpoints: func(context.Context, string, string, int64, []byte, time.Duration) (int64, error) {
+			return 1, nil
+		},
+		loadEndpoints: func(context.Context, string, int64) ([]byte, error) {
+			return encodeEndpointSet(testEndpointObservation(t, 7).Set())
 		},
 		metrics: metrics,
 	}
@@ -79,6 +85,13 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 	if released, err := client.ReleasePresence(t.Context(), lease); err != nil || !released {
 		t.Fatalf("ReleasePresence() = (%t, %v), want true", released, err)
 	}
+	observation := testEndpointObservation(t, 7)
+	if accepted, err := client.ObserveEndpoints(t.Context(), observation); err != nil || !accepted {
+		t.Fatalf("ObserveEndpoints() = (%t, %v), want true", accepted, err)
+	}
+	if _, found, err := client.LoadEndpoints(t.Context(), observation.NodeID(), 7); err != nil || !found {
+		t.Fatalf("LoadEndpoints() = (_, %t, %v), want found", found, err)
+	}
 
 	body := gatherRedisMetrics(t, client.MetricsCollector())
 	for name, value := range map[string]string{
@@ -88,6 +101,8 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 		"receive success":      `meshtransit_redis_commands_total{operation="receive",result="success"} 1`,
 		"presence claim":       `meshtransit_redis_commands_total{operation="presence_claim",result="success"} 1`,
 		"presence release":     `meshtransit_redis_commands_total{operation="presence_release",result="success"} 1`,
+		"endpoint observe":     `meshtransit_redis_commands_total{operation="endpoints_observe",result="success"} 1`,
+		"endpoint load":        `meshtransit_redis_commands_total{operation="endpoints_load",result="success"} 1`,
 		"ping latency count":   `meshtransit_redis_command_duration_seconds_count{operation="ping",result="error"} 1`,
 		"active connections":   `meshtransit_redis_pool_connections{state="active"} 5`,
 		"idle connections":     `meshtransit_redis_pool_connections{state="idle"} 3`,

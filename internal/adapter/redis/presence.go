@@ -24,6 +24,9 @@ local current_replica = redis.call('HGET', KEYS[1], 'replica')
 if current_generation == false and current_replica == false then
     redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'replica', ARGV[2])
     redis.call('PEXPIRE', KEYS[1], ARGV[3])
+    if redis.call('HGET', KEYS[2], 'generation') == ARGV[1] then
+        redis.call('PEXPIRE', KEYS[2], ARGV[3])
+    end
     return 1
 end
 
@@ -46,20 +49,27 @@ end
 
 redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'replica', ARGV[2])
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
+if redis.call('HGET', KEYS[2], 'generation') == ARGV[1] then
+    redis.call('PEXPIRE', KEYS[2], ARGV[3])
+end
 return 1
 `)
 	releasePresenceScript = redisclient.NewScript(`
 local current_generation = redis.call('HGET', KEYS[1], 'generation')
 local current_replica = redis.call('HGET', KEYS[1], 'replica')
 if current_generation == ARGV[1] and current_replica == ARGV[2] then
-    return redis.call('DEL', KEYS[1])
+    local deleted = redis.call('DEL', KEYS[1])
+    if redis.call('HGET', KEYS[2], 'generation') == ARGV[1] then
+        redis.call('DEL', KEYS[2])
+    end
+    return deleted
 end
 return 0
 `)
 )
 
-type presenceClaimFunc func(context.Context, string, int64, string, time.Duration) (int64, error)
-type presenceReleaseFunc func(context.Context, string, int64, string) (int64, error)
+type presenceClaimFunc func(context.Context, string, string, int64, string, time.Duration) (int64, error)
+type presenceReleaseFunc func(context.Context, string, string, int64, string) (int64, error)
 
 // ClaimPresence creates, renews, or generation-fences an ephemeral Node lease.
 // A false result is a successful rejection of a stale or foreign owner.
@@ -71,6 +81,7 @@ func (client *Client) ClaimPresence(ctx context.Context, lease node.PresenceLeas
 	result, err := client.claimPresence(
 		ctx,
 		presenceKey(lease),
+		endpointKey(lease.NodeID()),
 		lease.Generation(),
 		lease.ReplicaID(),
 		lease.TTL(),
@@ -97,6 +108,7 @@ func (client *Client) ReleasePresence(ctx context.Context, lease node.PresenceLe
 	result, err := client.releasePresence(
 		ctx,
 		presenceKey(lease),
+		endpointKey(lease.NodeID()),
 		lease.Generation(),
 		lease.ReplicaID(),
 	)
@@ -113,5 +125,7 @@ func (client *Client) ReleasePresence(ctx context.Context, lease node.PresenceLe
 }
 
 func presenceKey(lease node.PresenceLease) string {
-	return presenceKeyPrefix + lease.NodeID().String()
+	return presenceKeyForNode(lease.NodeID())
 }
+
+func presenceKeyForNode(nodeID node.ID) string { return presenceKeyPrefix + nodeID.String() }

@@ -18,6 +18,8 @@ var ErrInvalidRequest = errors.New("map session: invalid request")
 type Request struct {
 	nodeKey           node.Key
 	capabilityVersion int
+	endpointSet       node.EndpointSet
+	hasEndpointSet    bool
 }
 
 // NewRequest validates an untrusted Node key and bounded compatibility version.
@@ -35,8 +37,28 @@ func (request Request) NodeKey() node.Key { return request.nodeKey }
 // CapabilityVersion returns the positive bounded client compatibility version.
 func (request Request) CapabilityVersion() int { return request.capabilityVersion }
 
+// WithEndpointSet returns a validated request carrying one transient client
+// connectivity report. The original request remains unchanged.
+func (request Request) WithEndpointSet(set node.EndpointSet) (Request, error) {
+	request.endpointSet = set
+	request.hasEndpointSet = true
+	if !request.IsValid() {
+		return Request{}, ErrInvalidRequest
+	}
+	return request, nil
+}
+
+// EndpointSet returns the client connectivity report when this request is an
+// endpoint update. The returned set is immutable and protocol independent.
+func (request Request) EndpointSet() (node.EndpointSet, bool) {
+	return request.endpointSet, request.hasEndpointSet
+}
+
 // IsValid reports whether the request is safe to authorize.
 func (request Request) IsValid() bool {
-	return request.nodeKey.IsValid() && request.capabilityVersion > 0 &&
-		request.capabilityVersion <= maximumCapabilityVersion
+	if !request.nodeKey.IsValid() || request.capabilityVersion <= 0 ||
+		request.capabilityVersion > maximumCapabilityVersion {
+		return false
+	}
+	return !request.hasEndpointSet || request.endpointSet.IsValid()
 }

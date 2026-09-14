@@ -202,6 +202,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		mapSessionService, composeErr := composeMapSession(
 			processConfig.Control.Map,
 			storagePools.runtime,
+			redisClient,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(

@@ -17,10 +17,27 @@ import (
 func TestNewMapSessionServiceValidatesComposition(t *testing.T) {
 	t.Parallel()
 
-	if _, err := newMapSessionService(nil); !errors.Is(err, errInvalidMapSessionComposition) {
-		t.Fatalf("newMapSessionService(nil) error = %v, want composition error", err)
+	mapConfig := config.ControlMapConfig{
+		PresenceTTL:         30 * time.Second,
+		CoordinationTimeout: time.Second,
 	}
-	service, err := newMapSessionService(mapSnapshotStoreFixture{})
+	if _, err := newMapSessionService(mapConfig, nil, mapEndpointObserverFixture{}); !errors.Is(
+		err,
+		errInvalidMapSessionComposition,
+	) {
+		t.Fatalf("newMapSessionService(nil store) error = %v, want composition error", err)
+	}
+	if _, err := newMapSessionService(mapConfig, mapSnapshotStoreFixture{}, nil); !errors.Is(
+		err,
+		errInvalidMapSessionComposition,
+	) {
+		t.Fatalf("newMapSessionService(nil observer) error = %v, want composition error", err)
+	}
+	service, err := newMapSessionService(
+		mapConfig,
+		mapSnapshotStoreFixture{},
+		mapEndpointObserverFixture{},
+	)
 	if err != nil {
 		t.Fatalf("newMapSessionService() error = %v", err)
 	}
@@ -83,6 +100,15 @@ func (mapSnapshotOpenerFixture) Open(
 	mapsession.Request,
 ) (mapsession.Snapshot, error) {
 	return mapsession.Snapshot{}, errors.New("composition fixture must not be called")
+}
+
+type mapEndpointObserverFixture struct{}
+
+func (mapEndpointObserverFixture) ObserveEndpoints(
+	context.Context,
+	node.EndpointObservation,
+) (bool, error) {
+	return false, errors.New("composition fixture must not be called")
 }
 
 type mapPresenceStoreFixture struct{}

@@ -28,6 +28,15 @@ type mapContract struct {
 		Stream                       bool     `json:"stream"`
 		AuthenticatedPayloadBindings []string `json:"authenticated_payload_bindings"`
 		ForbiddenPayloadAuthority    []string `json:"forbidden_payload_authority"`
+		EndpointUpdate               struct {
+			Mode                          string `json:"mode"`
+			MaximumEndpoints              int    `json:"maximum_endpoints"`
+			RequiresDiscoveryKey          bool   `json:"requires_discovery_key"`
+			RequiresParallelEndpointTypes bool   `json:"requires_parallel_endpoint_types"`
+			OmitPeers                     string `json:"omit_peers"`
+			Storage                       string `json:"storage"`
+			Authority                     string `json:"authority"`
+		} `json:"endpoint_update"`
 	} `json:"request"`
 	Response struct {
 		Framing                    string   `json:"framing"`
@@ -51,8 +60,8 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 1 || contract.Profile != "legacy-ts2021-cap142-v1" {
-		t.Fatalf("contract identity = (%d, %q), want version 1 legacy profile", contract.ContractVersion, contract.Profile)
+	if contract.ContractVersion != 2 || contract.Profile != "legacy-ts2021-cap142-v1" {
+		t.Fatalf("contract identity = (%d, %q), want version 2 legacy profile", contract.ContractVersion, contract.Profile)
 	}
 	if contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
 		contract.ClientEvidence.Revision != "78cb5130400bc003974f7730b319350fed129bbe" {
@@ -70,6 +79,14 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 	wantForbidden := []string{"workspace_id", "network_id", "tenant_id", "account_id"}
 	if !slices.Equal(request.ForbiddenPayloadAuthority, wantForbidden) {
 		t.Fatalf("forbidden payload authority = %v, want %v", request.ForbiddenPayloadAuthority, wantForbidden)
+	}
+	endpointUpdate := request.EndpointUpdate
+	if endpointUpdate.Mode != "one-shot-only" || endpointUpdate.MaximumEndpoints != 64 ||
+		!endpointUpdate.RequiresDiscoveryKey || !endpointUpdate.RequiresParallelEndpointTypes ||
+		endpointUpdate.OmitPeers != "accepted-only-with-endpoint-report" ||
+		endpointUpdate.Storage != "redis-ttl-generation-fenced" ||
+		endpointUpdate.Authority != "non-authoritative" {
+		t.Fatalf("endpoint update contract = %+v, want bounded transient contract", endpointUpdate)
 	}
 	response := contract.Response
 	if response.Framing != "uint32-little-endian-length" || response.Compression != "zstd" ||

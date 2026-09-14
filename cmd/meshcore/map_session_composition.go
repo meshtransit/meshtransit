@@ -14,8 +14,9 @@ var errInvalidMapSessionComposition = errors.New("invalid map session compositio
 func composeMapSession(
 	mapConfig config.ControlMapConfig,
 	runtimePool *postgresadapter.Pool,
+	endpoints mapsession.EndpointObserver,
 ) (*mapsession.Service, error) {
-	if runtimePool == nil {
+	if runtimePool == nil || endpoints == nil {
 		return nil, errInvalidMapSessionComposition
 	}
 	store, err := postgresadapter.NewMapSessionStore(
@@ -28,7 +29,7 @@ func composeMapSession(
 	if err != nil {
 		return nil, errors.Join(errInvalidMapSessionComposition, err)
 	}
-	return newMapSessionService(store)
+	return newMapSessionService(mapConfig, store, endpoints)
 }
 
 func composeMapStream(
@@ -70,11 +71,18 @@ func newMapStreamService(
 	return service, nil
 }
 
-func newMapSessionService(store mapsession.SnapshotStore) (*mapsession.Service, error) {
-	if store == nil {
+func newMapSessionService(
+	mapConfig config.ControlMapConfig,
+	store mapsession.SnapshotStore,
+	endpoints mapsession.EndpointObserver,
+) (*mapsession.Service, error) {
+	if store == nil || endpoints == nil {
 		return nil, errInvalidMapSessionComposition
 	}
-	service, err := mapsession.NewService(store)
+	service, err := mapsession.NewService(store, endpoints, mapsession.ServiceOptions{
+		EndpointTTL:     mapConfig.PresenceTTL,
+		EndpointTimeout: mapConfig.CoordinationTimeout,
+	})
 	if err != nil {
 		return nil, errors.Join(errInvalidMapSessionComposition, err)
 	}

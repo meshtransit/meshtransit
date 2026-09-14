@@ -193,6 +193,7 @@ docker exec --detach --user redis "${redis_container}" redis-server \
 	"+ping" "+publish" "+subscribe" "+eval" "+evalsha" \
 	"+hget" "+hset" "+pexpire" "+del" \
 	"~meshtransit:v1:presence:node:*" \
+	"~meshtransit:v1:endpoints:node:*" \
 	"&meshtransit:v1:wakeup:network_revision_advanced"
 
 for _ in $(seq 1 60); do

@@ -11,6 +11,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"net"
+	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -46,6 +48,12 @@ type Identity struct {
 	NodeKey    [32]byte
 }
 
+// Connectivity is the synthetic non-authoritative report sent by map calls.
+type Connectivity struct {
+	DiscoveryKey [32]byte
+	Endpoints    []netip.AddrPort
+}
+
 // Client performs one bounded registration exchange per call and retains only
 // the synthetic machine and Node private keys needed to exercise replay.
 type Client struct {
@@ -55,7 +63,9 @@ type Client struct {
 	tlsConfig      *tls.Config
 	machineKey     key.MachinePrivate
 	nodeKey        key.NodePrivate
+	discoveryKey   key.DiscoPrivate
 	identity       Identity
+	connectivity   Connectivity
 }
 
 // NewClient validates a synthetic origin, builds an isolated trust store, and
@@ -78,6 +88,12 @@ func NewClient(options Options) (*Client, error) {
 	if err != nil {
 		return nil, ErrInvalidClient
 	}
+	discoveryKey := key.NewDisco()
+	discoveryPublic, err := rawDiscoveryPublic(discoveryKey.Public())
+	if err != nil {
+		return nil, ErrInvalidClient
+	}
+	endpoint := netip.MustParseAddrPort("192.0.2.10:41641")
 	return &Client{
 		controlAddress: options.ControlAddress,
 		tlsServerName:  options.TLSServerName,
@@ -88,11 +104,16 @@ func NewClient(options Options) (*Client, error) {
 			ServerName: options.TLSServerName,
 			NextProtos: []string{"http/1.1"},
 		},
-		machineKey: machineKey,
-		nodeKey:    nodeKey,
+		machineKey:   machineKey,
+		nodeKey:      nodeKey,
+		discoveryKey: discoveryKey,
 		identity: Identity{
 			MachineKey: machinePublic,
 			NodeKey:    nodePublic,
+		},
+		connectivity: Connectivity{
+			DiscoveryKey: discoveryPublic,
+			Endpoints:    []netip.AddrPort{endpoint},
 		},
 	}, nil
 }
@@ -103,6 +124,17 @@ func (client *Client) Identity() Identity {
 		return Identity{}
 	}
 	return client.identity
+}
+
+// Connectivity returns a caller-owned copy of the synthetic endpoint report.
+func (client *Client) Connectivity() Connectivity {
+	if client == nil {
+		return Connectivity{}
+	}
+	return Connectivity{
+		DiscoveryKey: client.connectivity.DiscoveryKey,
+		Endpoints:    slices.Clone(client.connectivity.Endpoints),
+	}
 }
 
 // Register discovers the control key, establishes a fresh authenticated
@@ -188,6 +220,15 @@ func rawNodePublic(publicKey key.NodePublic) ([32]byte, error) {
 	}
 	defer clear(encoded)
 	return decodeTypedPublicKey(encoded, "nodekey:")
+}
+
+func rawDiscoveryPublic(publicKey key.DiscoPublic) ([32]byte, error) {
+	encoded, err := publicKey.MarshalText()
+	if err != nil {
+		return [32]byte{}, err
+	}
+	defer clear(encoded)
+	return decodeTypedPublicKey(encoded, "discokey:")
 }
 
 func decodeTypedPublicKey(encoded []byte, prefix string) ([32]byte, error) {

@@ -11,12 +11,14 @@ import (
 type redisCommand string
 
 const (
-	redisCommandPing      redisCommand = "ping"
-	redisCommandPublish   redisCommand = "publish"
-	redisCommandSubscribe redisCommand = "subscribe"
-	redisCommandReceive   redisCommand = "receive"
-	redisCommandClaim     redisCommand = "presence_claim"
-	redisCommandRelease   redisCommand = "presence_release"
+	redisCommandPing             redisCommand = "ping"
+	redisCommandPublish          redisCommand = "publish"
+	redisCommandSubscribe        redisCommand = "subscribe"
+	redisCommandReceive          redisCommand = "receive"
+	redisCommandClaim            redisCommand = "presence_claim"
+	redisCommandRelease          redisCommand = "presence_release"
+	redisCommandObserveEndpoints redisCommand = "endpoints_observe"
+	redisCommandLoadEndpoints    redisCommand = "endpoints_load"
 )
 
 var redisCommands = [...]redisCommand{
@@ -26,6 +28,8 @@ var redisCommands = [...]redisCommand{
 	redisCommandReceive,
 	redisCommandClaim,
 	redisCommandRelease,
+	redisCommandObserveEndpoints,
+	redisCommandLoadEndpoints,
 }
 
 type redisMetrics struct {
