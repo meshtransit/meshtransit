@@ -134,7 +134,7 @@ func TestLoadIgnoresEnrollmentConfigOutsideControlRoles(t *testing.T) {
 				envEnrollmentDigestActiveKeyFile:   "relative/key",
 				envEnrollmentDigestPreviousKeyID:   "also invalid",
 				envEnrollmentDigestPreviousKeyFile: "relative/previous",
-				envRegistrationIntakeMaxAttempts:   "unbounded",
+				envRegistrationMaxAttempts:         "unbounded",
 			})
 			got, err := Load(mapLookup(values))
 			if err != nil {

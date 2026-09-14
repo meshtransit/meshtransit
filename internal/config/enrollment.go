@@ -15,8 +15,8 @@ const (
 
 // EnrollmentConfig contains control-plane credential verification settings.
 type EnrollmentConfig struct {
-	CredentialDigest   CredentialDigestConfig
-	RegistrationIntake RegistrationIntakeConfig
+	CredentialDigest CredentialDigestConfig
+	Registration     RegistrationConfig
 }
 
 // CredentialDigestConfig defines an active key and an optional previous key
@@ -55,7 +55,7 @@ func loadEnrollmentConfig(lookup LookupFunc, shutdownTimeout time.Duration) (Enr
 			return EnrollmentConfig{}, settingError(envEnrollmentDigestPreviousKeyFile)
 		}
 	}
-	registrationIntake, err := loadRegistrationIntakeConfig(lookup, shutdownTimeout)
+	registration, err := loadRegistrationConfig(lookup, shutdownTimeout)
 	if err != nil {
 		return EnrollmentConfig{}, err
 	}
@@ -65,7 +65,7 @@ func loadEnrollmentConfig(lookup LookupFunc, shutdownTimeout time.Duration) (Enr
 			Active:   active,
 			Previous: previous,
 		},
-		RegistrationIntake: registrationIntake,
+		Registration: registration,
 	}, nil
 }
 

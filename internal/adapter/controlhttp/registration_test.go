@@ -16,7 +16,9 @@ import (
 	"github.com/meshtransit/meshtransit/internal/enrollment"
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration"
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration/intake"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 const registrationRequestBody = `{
@@ -34,7 +36,7 @@ const registrationRequestBody = `{
 func TestCredentialRegistrationHandlerAuthorizesBoundRequest(t *testing.T) {
 	t.Parallel()
 
-	service := &recordingRegistrationService{}
+	service := newRecordingRegistrationService(t)
 	ids := &fixedRegistrationIDGenerator{id: parseRegistrationID(t)}
 	handler := newCredentialRegistrationHandler(t, service, ids)
 	authenticated := authenticatedHandler(t, handler)
@@ -50,6 +52,43 @@ func TestCredentialRegistrationHandlerAuthorizesBoundRequest(t *testing.T) {
 	}
 	if service.calls.Load() != 1 || ids.calls.Load() != 1 || !service.sawValid.Load() {
 		t.Fatal("credential registration did not generate and bind exactly one valid request")
+	}
+}
+
+func TestCredentialRegistrationHandlerRejectsUnrelatedCommittedResult(t *testing.T) {
+	t.Parallel()
+
+	service := newRecordingRegistrationService(t)
+	otherID, err := enrollment.ParseRegistrationID("01890f90-0000-7000-8000-000000000006")
+	if err != nil {
+		t.Fatalf("enrollment.ParseRegistrationID() error = %v", err)
+	}
+	service.result, err = registration.NewResult(
+		otherID,
+		service.result.Scope(),
+		service.result.NodeID(),
+		service.result.Hostname(),
+		service.result.Disposition(),
+		service.result.NetworkRevision(),
+	)
+	if err != nil {
+		t.Fatalf("registration.NewResult() error = %v", err)
+	}
+	handler := newCredentialRegistrationHandler(
+		t,
+		service,
+		&fixedRegistrationIDGenerator{id: parseRegistrationID(t)},
+	)
+	response := serveRegistration(
+		t,
+		authenticatedHandler(t, handler),
+		http.MethodPost,
+		credentialRegistrationPath,
+		registrationRequestBody,
+	)
+	if response.Code != http.StatusServiceUnavailable ||
+		strings.Contains(response.Body.String(), "MachineAuthorized") {
+		t.Fatalf("unrelated result response = (%d, %q)", response.Code, response.Body.String())
 	}
 }
 
@@ -111,7 +150,7 @@ func TestCredentialRegistrationHandlerRejectsInvalidHTTPBoundary(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			service := &recordingRegistrationService{}
+			service := newRecordingRegistrationService(t)
 			ids := &fixedRegistrationIDGenerator{id: parseRegistrationID(t)}
 			handler := newCredentialRegistrationHandler(t, service, ids)
 			authenticated := authenticatedHandler(t, handler)
@@ -154,7 +193,8 @@ func TestCredentialRegistrationHandlerMapsServiceFailures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			service := &recordingRegistrationService{err: test.serviceErr}
+			service := newRecordingRegistrationService(t)
+			service.err = test.serviceErr
 			handler := newCredentialRegistrationHandler(
 				t,
 				service,
@@ -180,7 +220,7 @@ func TestCredentialRegistrationHandlerMapsServiceFailures(t *testing.T) {
 func TestCredentialRegistrationHandlerFailsClosed(t *testing.T) {
 	t.Parallel()
 
-	service := &recordingRegistrationService{}
+	service := newRecordingRegistrationService(t)
 	ids := &fixedRegistrationIDGenerator{id: parseRegistrationID(t)}
 	if _, err := NewCredentialRegistrationHandler(CredentialRegistrationHandlerOptions{}); !errors.Is(
 		err,
@@ -213,13 +253,31 @@ func TestCredentialRegistrationHandlerFailsClosed(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable || service.calls.Load() != 0 {
 		t.Fatalf("id failure response = %d with %d service calls", response.Code, service.calls.Load())
 	}
+
+	ids.err = nil
+	service.result = registration.Result{}
+	response = serveRegistration(
+		t,
+		authenticatedHandler(t, handler),
+		http.MethodPost,
+		credentialRegistrationPath,
+		registrationRequestBody,
+	)
+	if response.Code != http.StatusServiceUnavailable || service.calls.Load() != 1 ||
+		strings.Contains(response.Body.String(), "MachineAuthorized") {
+		t.Fatalf("invalid result response = (%d, %q) with %d service calls", response.Code, response.Body.String(), service.calls.Load())
+	}
 }
 
 func TestCredentialRegistrationHandlerIsSafeForConcurrentUse(t *testing.T) {
 	t.Parallel()
 
-	service := &recordingRegistrationService{}
-	handler := newCredentialRegistrationHandler(t, service, intake.PublicRegistrationIDGenerator{})
+	service := newRecordingRegistrationService(t)
+	handler := newCredentialRegistrationHandler(
+		t,
+		service,
+		&fixedRegistrationIDGenerator{id: parseRegistrationID(t)},
+	)
 	authenticated := authenticatedHandler(t, handler)
 
 	const requestCount = 32
@@ -251,6 +309,7 @@ func TestCredentialRegistrationHandlerIsSafeForConcurrentUse(t *testing.T) {
 type recordingRegistrationService struct {
 	calls    atomic.Int64
 	sawValid atomic.Bool
+	result   registration.Result
 	err      error
 }
 
@@ -258,12 +317,49 @@ func (service *recordingRegistrationService) Register(
 	_ context.Context,
 	machine control.AuthenticatedMachine,
 	request control.RegistrationRequest,
-) (registration.Command, error) {
+) (registration.Result, error) {
 	service.calls.Add(1)
 	if machine.IsValid() && request.IsValid() {
 		service.sawValid.Store(true)
 	}
-	return registration.Command{}, service.err
+	return service.result, service.err
+}
+
+func newRecordingRegistrationService(t *testing.T) *recordingRegistrationService {
+	t.Helper()
+
+	workspaceID, err := workspace.ParseID("01890f90-0000-7000-8000-000000000003")
+	if err != nil {
+		t.Fatalf("workspace.ParseID() error = %v", err)
+	}
+	networkID, err := network.ParseID("01890f90-0000-7000-8000-000000000004")
+	if err != nil {
+		t.Fatalf("network.ParseID() error = %v", err)
+	}
+	scope, err := network.NewScope(workspaceID, networkID)
+	if err != nil {
+		t.Fatalf("network.NewScope() error = %v", err)
+	}
+	nodeID, err := node.ParseID("01890f90-0000-7000-8000-000000000005")
+	if err != nil {
+		t.Fatalf("node.ParseID() error = %v", err)
+	}
+	hostname, err := node.ParseHostname("node-one.example")
+	if err != nil {
+		t.Fatalf("node.ParseHostname() error = %v", err)
+	}
+	result, err := registration.NewResult(
+		parseRegistrationID(t),
+		scope,
+		nodeID,
+		hostname,
+		registration.DispositionCreated,
+		1,
+	)
+	if err != nil {
+		t.Fatalf("registration.NewResult() error = %v", err)
+	}
+	return &recordingRegistrationService{result: result}
 }
 
 type fixedRegistrationIDGenerator struct {

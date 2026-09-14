@@ -29,7 +29,7 @@ type RegistrationService interface {
 		context.Context,
 		control.AuthenticatedMachine,
 		control.RegistrationRequest,
-	) (registration.Command, error)
+	) (registration.Result, error)
 }
 
 // RegistrationIDGenerator creates server-owned idempotency identities.
@@ -116,13 +116,19 @@ func (handler *CredentialRegistrationHandler) serveAuthenticated(
 		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
-	if _, err := handler.service.Register(request.Context(), machine, registrationRequest); err != nil {
+	result, err := handler.service.Register(request.Context(), machine, registrationRequest)
+	if err != nil {
 		statusCode := registrationFailureStatus(err)
 		if statusCode == http.StatusServiceUnavailable && !errors.Is(err, context.Canceled) &&
 			!errors.Is(err, context.DeadlineExceeded) {
 			handler.logger.ErrorContext(request.Context(), "credential registration failed", "error", err)
 		}
 		http.Error(response, http.StatusText(statusCode), statusCode)
+		return
+	}
+	if !result.IsValid() || result.RegistrationID() != registrationID {
+		handler.logger.ErrorContext(request.Context(), "credential registration returned invalid result")
+		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		return
 	}
 
