@@ -17,8 +17,7 @@ var ErrInvalidRegistrationRequest = errors.New("control: invalid registration re
 // payload. Scope authority is deliberately impossible to represent here.
 type RegistrationRequestParams struct {
 	RegistrationID enrollment.RegistrationID
-	CredentialID   enrollment.CredentialID
-	Token          enrollment.CredentialToken
+	Credential     enrollment.CredentialPresentation
 	NodeKey        node.Key
 	Hostname       node.Hostname
 }
@@ -38,8 +37,7 @@ func (RegistrationRequestParams) LogValue() slog.Value { return slog.StringValue
 // authenticated transport machine.
 type RegistrationRequest struct {
 	registrationID enrollment.RegistrationID
-	credentialID   enrollment.CredentialID
-	token          enrollment.CredentialToken
+	credential     enrollment.CredentialPresentation
 	nodeKey        node.Key
 	hostname       node.Hostname
 }
@@ -48,8 +46,7 @@ type RegistrationRequest struct {
 func NewRegistrationRequest(params RegistrationRequestParams) (RegistrationRequest, error) {
 	request := RegistrationRequest{
 		registrationID: params.RegistrationID,
-		credentialID:   params.CredentialID,
-		token:          params.Token,
+		credential:     params.Credential,
 		nodeKey:        params.NodeKey,
 		hostname:       params.Hostname,
 	}
@@ -73,8 +70,8 @@ func (machine AuthenticatedMachine) BindRegistration(
 	}
 	bound := intake.Request{
 		RegistrationID: request.registrationID,
-		CredentialID:   request.credentialID,
-		Token:          request.token,
+		CredentialID:   request.credential.CredentialID(),
+		Token:          request.credential.Token(),
 		Identity:       identity,
 		Hostname:       request.hostname,
 	}
@@ -86,8 +83,8 @@ func (machine AuthenticatedMachine) BindRegistration(
 
 // IsValid reports whether every allowlisted untrusted field is structurally valid.
 func (request RegistrationRequest) IsValid() bool {
-	return request.registrationID.IsValid() && request.credentialID.IsValid() &&
-		request.token.IsValid() && request.nodeKey.IsValid() && request.hostname.IsValid()
+	return request.registrationID.IsValid() && request.credential.IsValid() &&
+		request.nodeKey.IsValid() && request.hostname.IsValid()
 }
 
 // String prevents registration identity and bearer proof from entering ordinary logs.

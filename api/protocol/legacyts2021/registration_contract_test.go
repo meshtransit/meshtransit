@@ -20,6 +20,7 @@ type registrationContract struct {
 		Revision   string `json:"revision"`
 	} `json:"client_evidence"`
 	Request struct {
+		CredentialFormat             string   `json:"credential_format"`
 		AuthenticatedTransportFields []string `json:"authenticated_transport_fields"`
 		PayloadSemantics             []string `json:"payload_semantics"`
 		ForbiddenPayloadAuthority    []string `json:"forbidden_payload_authority"`
@@ -38,8 +39,8 @@ func TestRegistrationContractPinsObservedClientBoundary(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 1 || contract.Profile != "legacy-ts2021-cap142-v1" {
-		t.Fatalf("contract identity = (%d, %q), want version 1 legacy profile", contract.ContractVersion, contract.Profile)
+	if contract.ContractVersion != 2 || contract.Profile != "legacy-ts2021-cap142-v1" {
+		t.Fatalf("contract identity = (%d, %q), want version 2 legacy profile", contract.ContractVersion, contract.Profile)
 	}
 	if contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
 		contract.ClientEvidence.Revision != "78cb5130400bc003974f7730b319350fed129bbe" {
@@ -50,6 +51,9 @@ func TestRegistrationContractPinsObservedClientBoundary(t *testing.T) {
 			"authenticated transport fields = %v, want machine key only",
 			contract.Request.AuthenticatedTransportFields,
 		)
+	}
+	if contract.Request.CredentialFormat != "mtc1.<credential-uuid>.<base64url-32-byte-token>" {
+		t.Fatalf("credential format = %q, want canonical mtc1 format", contract.Request.CredentialFormat)
 	}
 	wantPayload := []string{"version", "node_key", "host_info", "followup", "credential"}
 	if !slices.Equal(contract.Request.PayloadSemantics, wantPayload) {

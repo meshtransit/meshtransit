@@ -80,6 +80,11 @@ unpadded base64url encoding of exactly 32 non-zero random bytes.
 | `MESHTRANSIT_ENROLLMENT_DIGEST_PREVIOUS_KEY_ID` | none | Optional public version identifier accepted during bounded key rotation. |
 | `MESHTRANSIT_ENROLLMENT_DIGEST_PREVIOUS_KEY_FILE` | none | Absolute path to the optional previous credential-digest key file. |
 
+Enrollment credentials use the canonical transport grammar
+`mtc1.<credential-uuid>.<base64url-32-byte-token>`. The complete value is a
+bearer secret: it is disclosed only when issued, never persisted in plaintext,
+and must not appear in configuration, errors, or logs.
+
 Registration intake for the same roles uses bounded transaction, retry, and
 pending-intent settings. The lock timeout cannot exceed the statement timeout,
 the retry maximum cannot be below its initial delay, and rollback must fit

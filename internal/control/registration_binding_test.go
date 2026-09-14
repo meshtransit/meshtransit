@@ -35,8 +35,9 @@ func TestAuthenticatedMachineBindsRegistrationIdentity(t *testing.T) {
 		bound.Identity.NodeKey() != nodeKey {
 		t.Fatal("BindRegistration() did not preserve the authenticated machine and requested Node key")
 	}
-	if bound.RegistrationID != params.RegistrationID || bound.CredentialID != params.CredentialID ||
-		bound.Token != params.Token || bound.Hostname != params.Hostname {
+	if bound.RegistrationID != params.RegistrationID ||
+		bound.CredentialID != params.Credential.CredentialID() ||
+		bound.Token != params.Credential.Token() || bound.Hostname != params.Hostname {
 		t.Fatal("BindRegistration() changed validated registration semantics")
 	}
 }
@@ -45,7 +46,7 @@ func TestRegistrationRequestShapeCannotCarryScopeAuthority(t *testing.T) {
 	t.Parallel()
 
 	typeOfParams := reflect.TypeFor[control.RegistrationRequestParams]()
-	wantFields := []string{"RegistrationID", "CredentialID", "Token", "NodeKey", "Hostname"}
+	wantFields := []string{"RegistrationID", "Credential", "NodeKey", "Hostname"}
 	if typeOfParams.NumField() != len(wantFields) {
 		t.Fatalf("RegistrationRequestParams has %d fields, want %d", typeOfParams.NumField(), len(wantFields))
 	}
@@ -67,11 +68,8 @@ func TestRegistrationBindingRejectsInvalidInput(t *testing.T) {
 		{name: "missing registration id", mutate: func(params *control.RegistrationRequestParams) {
 			params.RegistrationID = enrollment.RegistrationID{}
 		}},
-		{name: "missing credential id", mutate: func(params *control.RegistrationRequestParams) {
-			params.CredentialID = enrollment.CredentialID{}
-		}},
-		{name: "missing token", mutate: func(params *control.RegistrationRequestParams) {
-			params.Token = enrollment.CredentialToken{}
+		{name: "missing credential", mutate: func(params *control.RegistrationRequestParams) {
+			params.Credential = enrollment.CredentialPresentation{}
 		}},
 		{name: "missing node key", mutate: func(params *control.RegistrationRequestParams) {
 			params.NodeKey = node.Key{}
@@ -165,14 +163,17 @@ func validRegistrationRequestParams(t *testing.T) control.RegistrationRequestPar
 	if err != nil {
 		t.Fatalf("NewCredentialToken() error = %v", err)
 	}
+	credential, err := enrollment.NewCredentialPresentation(credentialID, token)
+	if err != nil {
+		t.Fatalf("NewCredentialPresentation() error = %v", err)
+	}
 	hostname, err := node.ParseHostname("node-one.example")
 	if err != nil {
 		t.Fatalf("ParseHostname() error = %v", err)
 	}
 	return control.RegistrationRequestParams{
 		RegistrationID: registrationID,
-		CredentialID:   credentialID,
-		Token:          token,
+		Credential:     credential,
 		NodeKey:        registrationNodeKey(t, 0x22),
 		Hostname:       hostname,
 	}

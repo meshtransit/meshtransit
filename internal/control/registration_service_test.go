@@ -165,7 +165,7 @@ func validRegistrationCommand(
 	return registration.Command{
 		RegistrationID: params.RegistrationID,
 		Scope:          scope,
-		CredentialID:   params.CredentialID,
+		CredentialID:   params.Credential.CredentialID(),
 		Identity:       identity,
 		Hostname:       params.Hostname,
 		RecoveryEpoch:  1,
