@@ -1,6 +1,10 @@
 package config
 
-import "github.com/meshtransit/meshtransit/internal/enrollment"
+import (
+	"time"
+
+	"github.com/meshtransit/meshtransit/internal/enrollment"
+)
 
 const (
 	envEnrollmentDigestActiveKeyID     = "MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_ID"
@@ -11,7 +15,8 @@ const (
 
 // EnrollmentConfig contains control-plane credential verification settings.
 type EnrollmentConfig struct {
-	CredentialDigest CredentialDigestConfig
+	CredentialDigest   CredentialDigestConfig
+	RegistrationIntake RegistrationIntakeConfig
 }
 
 // CredentialDigestConfig defines an active key and an optional previous key
@@ -28,7 +33,7 @@ type CredentialDigestKeyConfig struct {
 	MaterialFile SecretFile
 }
 
-func loadEnrollmentConfig(lookup LookupFunc) (EnrollmentConfig, error) {
+func loadEnrollmentConfig(lookup LookupFunc, shutdownTimeout time.Duration) (EnrollmentConfig, error) {
 	active, err := loadCredentialDigestKeyConfig(
 		lookup,
 		envEnrollmentDigestActiveKeyID,
@@ -50,12 +55,17 @@ func loadEnrollmentConfig(lookup LookupFunc) (EnrollmentConfig, error) {
 			return EnrollmentConfig{}, settingError(envEnrollmentDigestPreviousKeyFile)
 		}
 	}
+	registrationIntake, err := loadRegistrationIntakeConfig(lookup, shutdownTimeout)
+	if err != nil {
+		return EnrollmentConfig{}, err
+	}
 
 	return EnrollmentConfig{
 		CredentialDigest: CredentialDigestConfig{
 			Active:   active,
 			Previous: previous,
 		},
+		RegistrationIntake: registrationIntake,
 	}, nil
 }
 

@@ -13,7 +13,7 @@ import (
 
 const (
 	// SchemaVersion identifies the validated environment configuration contract.
-	SchemaVersion = 6
+	SchemaVersion = 7
 
 	envRole            = "MESHTRANSIT_ROLE"
 	envHealthAddress   = "MESHTRANSIT_HEALTH_ADDRESS"
@@ -106,7 +106,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		storageConfig = &loadedStorage
 	}
 	if role == app.RoleAll || role == app.RoleControl {
-		loadedEnrollment, loadErr := loadEnrollmentConfig(lookup)
+		loadedEnrollment, loadErr := loadEnrollmentConfig(lookup, shutdownTimeout)
 		if loadErr != nil {
 			return Config{}, loadErr
 		}
