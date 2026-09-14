@@ -25,7 +25,7 @@ func TestLoadRequiresStorageForNonRelayRoles(t *testing.T) {
 		t.Run(key, func(t *testing.T) {
 			t.Parallel()
 
-			values := validStorageValues(nil)
+			values := validProcessValues(nil)
 			delete(values, key)
 			_, err := Load(mapLookup(values))
 			if !errors.Is(err, ErrInvalid) {
@@ -75,7 +75,7 @@ func TestLoadRejectsUnsafeStorageSettingsWithoutEchoingValues(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			values := validStorageValues(map[string]string{test.key: test.value})
+			values := validProcessValues(map[string]string{test.key: test.value})
 			_, err := Load(mapLookup(values))
 			if !errors.Is(err, ErrInvalid) {
 				t.Fatalf("Load() error = %v, want ErrInvalid", err)
@@ -140,7 +140,7 @@ func TestLoadRequiresOnlySelectedPostgreSQLCredentials(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			values := validStorageValues(map[string]string{envRole: test.role})
+			values := validProcessValues(map[string]string{envRole: test.role})
 			for _, key := range test.removeKeys {
 				delete(values, key)
 			}
@@ -185,7 +185,7 @@ func TestLoadRejectsSharedPostgreSQLCredentialSlots(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := Load(mapLookup(validStorageValues(map[string]string{
+			_, err := Load(mapLookup(validProcessValues(map[string]string{
 				test.setting: test.sharedValue,
 			})))
 			if !errors.Is(err, ErrInvalid) {

@@ -31,7 +31,7 @@ func TestLoadRevisionWorkerRejectsUnsafeBounds(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			values := validStorageValues(map[string]string{test.key: test.value})
+			values := validProcessValues(map[string]string{test.key: test.value})
 			_, err := Load(mapLookup(values))
 			if !errors.Is(err, ErrInvalid) {
 				t.Fatalf("Load() error = %v, want ErrInvalid", err)
@@ -46,7 +46,7 @@ func TestLoadRevisionWorkerRejectsUnsafeBounds(t *testing.T) {
 func TestLoadNonWorkerRoleIgnoresRevisionWorkerSettings(t *testing.T) {
 	t.Parallel()
 
-	values := validStorageValues(map[string]string{
+	values := validProcessValues(map[string]string{
 		envRole:                    "api",
 		envRevisionWorkerBatchSize: "not-an-integer",
 	})

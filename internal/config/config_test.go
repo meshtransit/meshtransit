@@ -12,7 +12,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	t.Parallel()
 
-	got, err := Load(mapLookup(validStorageValues(nil)))
+	got, err := Load(mapLookup(validProcessValues(nil)))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -48,6 +48,10 @@ func TestLoadDefaults(t *testing.T) {
 	if got.Storage.Redis.PoolSize != defaultRedisPoolSize {
 		t.Fatalf("redis pool size = %d, want %d", got.Storage.Redis.PoolSize, defaultRedisPoolSize)
 	}
+	if got.Enrollment == nil || got.Enrollment.CredentialDigest.Active.ID.String() != "active-v1" ||
+		got.Enrollment.CredentialDigest.Previous != nil {
+		t.Fatalf("enrollment config = %+v, want active key only", got.Enrollment)
+	}
 	if got.RevisionWorker == nil || *got.RevisionWorker != (RevisionWorkerConfig{
 		BatchSize:        defaultRevisionWorkerBatchSize,
 		Lease:            defaultRevisionWorkerLease,
@@ -62,7 +66,7 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadExplicitValues(t *testing.T) {
 	t.Parallel()
 
-	values := validStorageValues(map[string]string{
+	values := validProcessValues(map[string]string{
 		envRole:                           "worker",
 		envHealthAddress:                  "[::1]:9090",
 		envShutdownTimeout:                "45s",
@@ -89,7 +93,11 @@ func TestLoadExplicitValues(t *testing.T) {
 		t.Fatalf("process controls = (%s, %s), want (45s, debug)", got.ShutdownTimeout, got.LogLevel)
 	}
 	if got.Dependencies.CheckTimeout != 2*time.Second || got.Dependencies.CheckInterval != 7*time.Second {
-		t.Fatalf("dependency controls = (%s, %s), want (2s, 7s)", got.Dependencies.CheckTimeout, got.Dependencies.CheckInterval)
+		t.Fatalf(
+			"dependency controls = (%s, %s), want (2s, 7s)",
+			got.Dependencies.CheckTimeout,
+			got.Dependencies.CheckInterval,
+		)
 	}
 	if got.Storage == nil || got.Storage.PostgreSQL.Worker == nil ||
 		got.Storage.PostgreSQL.Worker.MaxConnections != 17 || got.Storage.Redis.PoolSize != 19 {
@@ -133,7 +141,7 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			values := validStorageValues(map[string]string{test.key: test.value})
+			values := validProcessValues(map[string]string{test.key: test.value})
 			_, err := Load(mapLookup(values))
 			if !errors.Is(err, ErrInvalid) {
 				t.Fatalf("Load() error = %v, want ErrInvalid", err)
@@ -158,7 +166,7 @@ func mapLookup(values map[string]string) LookupFunc {
 	}
 }
 
-func validStorageValues(overrides map[string]string) map[string]string {
+func validProcessValues(overrides map[string]string) map[string]string {
 	// #nosec G101 -- these fixtures are file paths, never credential values.
 	values := map[string]string{
 		envPostgreSQLAddress:             "database.internal:5432",
@@ -172,6 +180,8 @@ func validStorageValues(overrides map[string]string) map[string]string {
 		envRedisUsername:                 "meshcore",
 		envRedisPasswordFile:             "/run/secrets/redis-password",
 		envRedisCAFile:                   "/run/secrets/redis-ca.pem",
+		envEnrollmentDigestActiveKeyID:   "active-v1",
+		envEnrollmentDigestActiveKeyFile: "/run/secrets/enrollment-digest-active-key",
 	}
 	for key, value := range overrides {
 		values[key] = value
