@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 
 const (
 	maxCredentialBytes = 4 * 1024
+	maxPrivateKeyBytes = 64 * 1024
 	maxTrustBytes      = 1024 * 1024
 	redactedValue      = "[REDACTED]"
 )
@@ -23,6 +25,12 @@ type SecretFile struct {
 // TrustFile is an opaque validated CA bundle file reference. All formatting is
 // redacted.
 type TrustFile struct {
+	path string
+}
+
+// PrivateKeyFile is an opaque validated multiline private-key file reference.
+// All formatting is redacted.
+type PrivateKeyFile struct {
 	path string
 }
 
@@ -52,6 +60,16 @@ func (file TrustFile) Read() ([]byte, error) {
 	return contents, nil
 }
 
+// Read returns one bounded private-key document without transforming its bytes.
+func (file PrivateKeyFile) Read() ([]byte, error) {
+	contents, err := readBoundedRegularFile(file.path, maxPrivateKeyBytes)
+	if err != nil || len(contents) == 0 || bytes.IndexByte(contents, 0) >= 0 {
+		clear(contents)
+		return nil, errors.Join(ErrInvalid, errors.New("private key file unavailable"))
+	}
+	return contents, nil
+}
+
 // String implements fmt.Stringer without revealing the referenced path.
 func (SecretFile) String() string { return redactedValue }
 
@@ -69,6 +87,15 @@ func (TrustFile) GoString() string { return redactedValue }
 
 // LogValue implements slog.LogValuer without revealing the referenced path.
 func (TrustFile) LogValue() slog.Value { return slog.StringValue(redactedValue) }
+
+// String implements fmt.Stringer without revealing the referenced path.
+func (PrivateKeyFile) String() string { return redactedValue }
+
+// GoString implements fmt.GoStringer without revealing the referenced path.
+func (PrivateKeyFile) GoString() string { return redactedValue }
+
+// LogValue implements slog.LogValuer without revealing the referenced path.
+func (PrivateKeyFile) LogValue() slog.Value { return slog.StringValue(redactedValue) }
 
 func readBoundedRegularFile(path string, limit int64) ([]byte, error) {
 	// #nosec G304 -- path is a validated absolute operator-supplied file reference.

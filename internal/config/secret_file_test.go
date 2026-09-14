@@ -15,7 +15,12 @@ func TestFileReferencesAlwaysFormatAsRedacted(t *testing.T) {
 
 	secret := SecretFile{path: "/private/secret-value"}
 	trust := TrustFile{path: "/private/trust-value"}
-	for name, value := range map[string]any{"secret": secret, "trust": trust} {
+	privateKey := PrivateKeyFile{path: "/private/key-value"}
+	for name, value := range map[string]any{
+		"secret":      secret,
+		"trust":       trust,
+		"private_key": privateKey,
+	} {
 		formatted := fmt.Sprintf("%v %#v", value, value)
 		if strings.Contains(formatted, "private") || !strings.Contains(formatted, "REDACTED") {
 			t.Fatalf("%s formatting = %q, want redacted", name, formatted)
@@ -35,6 +40,40 @@ func TestFileReferencesAlwaysFormatAsRedacted(t *testing.T) {
 	})
 	if strings.Contains(formattedConfig, "private") {
 		t.Fatalf("nested config formatting exposed file path: %q", formattedConfig)
+	}
+}
+
+func TestPrivateKeyFileReadIsBoundedAndPreservesPEM(t *testing.T) {
+	t.Parallel()
+
+	directory := t.TempDir()
+	keyPath := filepath.Join(directory, "server-key.pem")
+	want := []byte("-----BEGIN PRIVATE KEY-----\nkey material\n-----END PRIVATE KEY-----\n")
+	if err := os.WriteFile(keyPath, want, 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+	got, err := (PrivateKeyFile{path: keyPath}).Read()
+	if err != nil {
+		t.Fatalf("PrivateKeyFile.Read() error = %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("PrivateKeyFile.Read() = %q, want exact PEM", got)
+	}
+
+	for name, content := range map[string][]byte{
+		"empty":     nil,
+		"nul":       []byte("private\x00key"),
+		"oversized": bytes.Repeat([]byte("x"), maxPrivateKeyBytes+1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(directory, name)
+			if err := os.WriteFile(path, content, 0o600); err != nil {
+				t.Fatalf("os.WriteFile() error = %v", err)
+			}
+			if _, err := (PrivateKeyFile{path: path}).Read(); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("PrivateKeyFile.Read() error = %v, want ErrInvalid", err)
+			}
+		})
 	}
 }
 

@@ -3,12 +3,15 @@
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,
 runtime role selection, bounded lifecycle management, safe JSON logging,
-health/readiness endpoints, and TLS-only PostgreSQL and Redis dependency
-adapters. It also contains the forward-only PostgreSQL migration foundation and
+health/readiness endpoints, TLS-only PostgreSQL and Redis dependency adapters,
+and a bounded TLS plus authenticated Noise client-control ingress. It also
+contains the forward-only PostgreSQL migration foundation and
 the first canonical authority schema for tenancy, network identity, address
 realms, address pools, prefixes, and revision state. Authority changes are
-guarded by an atomic audit/outbox integrity foundation. The repository does not
-contain serving mutations or product protocol implementations yet. Redis
+guarded by an atomic audit/outbox integrity foundation. The current client
+protocol slice exposes only control-key discovery and credential-backed
+registration; policy, map streaming, and relay behavior are not implemented.
+Redis
 already exposes the bounded, versioned `NetworkRevisionAdvanced` wakeup
 transport, and the worker PostgreSQL adapter can lease, reconcile, and complete
 the matching durable outbox work without treating Redis as authority.
@@ -79,6 +82,25 @@ unpadded base64url encoding of exactly 32 non-zero random bytes.
 | `MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_FILE` | none | Absolute path to the active credential-digest key file. |
 | `MESHTRANSIT_ENROLLMENT_DIGEST_PREVIOUS_KEY_ID` | none | Optional public version identifier accepted during bounded key rotation. |
 | `MESHTRANSIT_ENROLLMENT_DIGEST_PREVIOUS_KEY_FILE` | none | Absolute path to the optional previous credential-digest key file. |
+
+Those roles also expose the public client-control listener. It accepts TLS only;
+the client session inside TLS must then authenticate with the pinned Noise
+capability. Port `8443` is the non-root container default; a load balancer or
+Kubernetes Service may publish it as port `443`, but must preserve HTTP upgrade
+semantics. TLS, Noise, and enrollment private-key files must be purpose-separated.
+
+| Environment variable | Default | Contract |
+| --- | --- | --- |
+| `MESHTRANSIT_CONTROL_ADDRESS` | `0.0.0.0:8443` | TCP host and non-zero port for public client control traffic. |
+| `MESHTRANSIT_CONTROL_TLS_CERTIFICATE_FILE` | none | Absolute path to the TLS certificate-chain PEM. |
+| `MESHTRANSIT_CONTROL_TLS_PRIVATE_KEY_FILE` | none | Absolute path to the bounded TLS private-key PEM. |
+| `MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE` | none | Absolute path to the canonical, single-line Noise machine private key. |
+| `MESHTRANSIT_CONTROL_MAX_SESSIONS` | `1024` | Per-process connection and session admission cap from 1 through 4096. |
+| `MESHTRANSIT_CONTROL_MAX_STREAMS_PER_SESSION` | `8` | HTTP/2 stream cap per authenticated session from 1 through 64. |
+| `MESHTRANSIT_CONTROL_HANDSHAKE_TIMEOUT` | `5s` | TLS, header, and Noise handshake deadline from 100ms through 30 seconds. |
+| `MESHTRANSIT_CONTROL_READ_IDLE_TIMEOUT` | `1m` | Authenticated session read-idle probe interval from 100ms through 5 minutes. |
+| `MESHTRANSIT_CONTROL_PING_TIMEOUT` | `15s` | Probe-response deadline from 100ms through the read-idle timeout. |
+| `MESHTRANSIT_CONTROL_WRITE_TIMEOUT` | `15s` | Authenticated session write deadline from 100ms through 5 minutes. |
 
 Enrollment credentials use the canonical transport grammar
 `mtc1.<credential-uuid>.<base64url-32-byte-token>`. The complete value is a

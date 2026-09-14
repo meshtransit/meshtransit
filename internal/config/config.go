@@ -13,7 +13,7 @@ import (
 
 const (
 	// SchemaVersion identifies the validated environment configuration contract.
-	SchemaVersion = 8
+	SchemaVersion = 9
 
 	envRole            = "MESHTRANSIT_ROLE"
 	envHealthAddress   = "MESHTRANSIT_HEALTH_ADDRESS"
@@ -51,6 +51,7 @@ type Config struct {
 	LogLevel        slog.Level
 	Dependencies    DependencyConfig
 	Storage         *StorageConfig
+	Control         *ControlConfig
 	Enrollment      *EnrollmentConfig
 	RevisionWorker  *RevisionWorkerConfig
 }
@@ -96,6 +97,7 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	var storageConfig *StorageConfig
+	var controlConfig *ControlConfig
 	var enrollmentConfig *EnrollmentConfig
 	var revisionWorkerConfig *RevisionWorkerConfig
 	if role != app.RoleRelay {
@@ -106,10 +108,18 @@ func Load(lookup LookupFunc) (Config, error) {
 		storageConfig = &loadedStorage
 	}
 	if role == app.RoleAll || role == app.RoleControl {
+		loadedControl, loadErr := loadControlConfig(lookup)
+		if loadErr != nil {
+			return Config{}, loadErr
+		}
 		loadedEnrollment, loadErr := loadEnrollmentConfig(lookup, shutdownTimeout)
 		if loadErr != nil {
 			return Config{}, loadErr
 		}
+		if loadErr := validateControlSecretOwnership(loadedControl, loadedEnrollment); loadErr != nil {
+			return Config{}, loadErr
+		}
+		controlConfig = &loadedControl
 		enrollmentConfig = &loadedEnrollment
 	}
 	if role == app.RoleAll || role == app.RoleWorker {
@@ -127,6 +137,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		LogLevel:        logLevel,
 		Dependencies:    dependencyConfig,
 		Storage:         storageConfig,
+		Control:         controlConfig,
 		Enrollment:      enrollmentConfig,
 		RevisionWorker:  revisionWorkerConfig,
 	}, nil

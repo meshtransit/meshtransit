@@ -52,6 +52,11 @@ func TestLoadDefaults(t *testing.T) {
 		got.Enrollment.CredentialDigest.Previous != nil {
 		t.Fatalf("enrollment config = %+v, want active key only", got.Enrollment)
 	}
+	if got.Control == nil || got.Control.Address != defaultControlAddress ||
+		got.Control.MaxSessions != defaultControlMaxSessions ||
+		got.Control.MaxStreamsPerSession != defaultControlMaxStreams {
+		t.Fatalf("control config = %+v, want bounded defaults", got.Control)
+	}
 	if got.RevisionWorker == nil || *got.RevisionWorker != (RevisionWorkerConfig{
 		BatchSize:        defaultRevisionWorkerBatchSize,
 		Lease:            defaultRevisionWorkerLease,
@@ -182,6 +187,9 @@ func validProcessValues(overrides map[string]string) map[string]string {
 		envRedisCAFile:                   "/run/secrets/redis-ca.pem",
 		envEnrollmentDigestActiveKeyID:   "active-v1",
 		envEnrollmentDigestActiveKeyFile: "/run/secrets/enrollment-digest-active-key",
+		envControlTLSCertificateFile:     "/run/secrets/control-tls-certificate.pem",
+		envControlTLSPrivateKeyFile:      "/run/secrets/control-tls-private-key.pem",
+		envControlNoisePrivateKeyFile:    "/run/secrets/control-noise-private-key",
 	}
 	for key, value := range overrides {
 		values[key] = value
