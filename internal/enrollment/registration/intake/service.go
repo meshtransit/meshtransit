@@ -94,6 +94,7 @@ func (service *Service) Prepare(ctx context.Context, request Request) (registrat
 		RegistrationID:     request.RegistrationID,
 		CredentialID:       request.CredentialID,
 		MachineFingerprint: request.Identity.MachineKey().Fingerprint(),
+		RequestedNodeKey:   request.Identity.NodeKey().Bytes(),
 	}
 	if !lookup.IsValid() {
 		return registration.Command{}, ErrInvalidRequest
@@ -198,9 +199,6 @@ func (service *Service) attempt(
 	if err := authority.Profile().ValidateCredential(authority.Credential()); err != nil {
 		return registration.Command{}, ErrAuthenticationFailed
 	}
-	if _, err := authority.Credential().Consume(now, authority.RecoveryEpoch()); err != nil {
-		return registration.Command{}, ErrAuthenticationFailed
-	}
 
 	intentID := request.RegistrationID
 	existingID, existingHash, exists := resolution.ExistingIntent()
@@ -223,7 +221,14 @@ func (service *Service) attempt(
 		if requestHash != existingHash {
 			return registration.Command{}, registration.ErrIntentConflict
 		}
+		if _, err := authority.Credential().Consume(now, authority.RecoveryEpoch()); err != nil &&
+			!errors.Is(err, enrollment.ErrCredentialExhausted) {
+			return registration.Command{}, ErrAuthenticationFailed
+		}
 		return command, nil
+	}
+	if _, err := authority.Credential().Consume(now, authority.RecoveryEpoch()); err != nil {
+		return registration.Command{}, ErrAuthenticationFailed
 	}
 
 	if !evidenceIDs.IsValid() {

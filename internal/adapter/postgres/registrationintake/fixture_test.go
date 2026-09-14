@@ -336,6 +336,7 @@ func validLookup(t *testing.T) appintake.Lookup {
 		RegistrationID:     mustRegistrationID(t, testIntentID),
 		CredentialID:       mustCredentialID(t, testCredentialID),
 		MachineFingerprint: identityValue.MachineKey().Fingerprint(),
+		RequestedNodeKey:   identityValue.NodeKey().Bytes(),
 	}
 }
 

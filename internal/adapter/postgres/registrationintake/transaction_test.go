@@ -68,6 +68,15 @@ func TestTransactionCreatesPendingIntentWithAuditAndOutbox(t *testing.T) {
 	if !reflect.DeepEqual(scopeCall.arguments, []any{lookup.CredentialID.String()}) {
 		t.Fatalf("scope resolution arguments = %#v, want credential public ID only", scopeCall.arguments)
 	}
+	intentCall := findCall(t, databaseTransaction.calls, lockIntentsSQL)
+	if !reflect.DeepEqual(intentCall.arguments, []any{
+		lookup.RegistrationID.String(),
+		lookup.MachineFingerprint[:],
+		lookup.CredentialID.String(),
+		lookup.RequestedNodeKey[:],
+	}) {
+		t.Fatalf("intent replay lookup arguments = %#v, want exact semantic identity", intentCall.arguments)
+	}
 	insert := findCall(t, databaseTransaction.calls, insertIntentSQL)
 	if len(insert.arguments) != 12 || insert.arguments[0] != lookup.RegistrationID.String() ||
 		insert.arguments[4] != "credential" || insert.arguments[10] == nil {

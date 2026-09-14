@@ -26,14 +26,31 @@ const lockIntentsSQL = `SELECT
     registration.state,
     registration.version
 FROM mesh.pending_registration AS registration
+JOIN mesh.enrollment_credential AS credential
+  ON credential.workspace_id = registration.workspace_id
+ AND credential.network_id = registration.network_id
+ AND credential.id = registration.enrollment_credential_id
 WHERE registration.public_id = $1::UUID
    OR (
        registration.machine_key_fingerprint = $2::BYTEA
-       AND registration.state IN ('pending', 'authorized')
+       AND (
+           registration.state IN ('pending', 'authorized')
+           OR (
+               registration.state = 'completed'
+               AND credential.public_id = $3::UUID
+               AND registration.requested_node_key = $4::BYTEA
+           )
+       )
    )
-ORDER BY registration.id
+ORDER BY
+    CASE
+        WHEN registration.public_id = $1::UUID THEN 0
+        WHEN registration.state IN ('pending', 'authorized') THEN 1
+        ELSE 2
+    END,
+    registration.id DESC
 LIMIT 3
-FOR UPDATE`
+FOR UPDATE OF registration`
 
 const lockRevisionSQL = `SELECT *
 FROM mesh_ops.lock_network_revision()`

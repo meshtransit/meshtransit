@@ -143,6 +143,77 @@ func TestServiceReplaysCanonicalPendingIntentWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestServiceReplaysCommittedIntentAfterCredentialQuotaConsumed(t *testing.T) {
+	t.Parallel()
+
+	request := validRequest(t)
+	authority := authorityWithUsedCount(t, 5)
+	canonicalID := mustRegistrationID(t, "01890f50-0000-7000-8000-000000000099")
+	canonical := commandFromRequest(request, authority, canonicalID)
+	hash, err := canonical.RequestHash()
+	if err != nil {
+		t.Fatalf("Command.RequestHash() error = %v", err)
+	}
+	resolution, err := intake.NewExistingResolution(authority, canonicalID, hash)
+	if err != nil {
+		t.Fatalf("NewExistingResolution() error = %v", err)
+	}
+	transaction := &fakeTransaction{resolution: resolution}
+	service, ids := newService(
+		t,
+		&transactionQueue{transactions: []*fakeTransaction{transaction}},
+		validVerifier{accept: true},
+	)
+
+	command, err := service.Prepare(t.Context(), request)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if command != canonical {
+		t.Fatalf("Prepare() command = %+v, want committed canonical command", command)
+	}
+	if got, want := transaction.calls, []string{"resolve", "rollback"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("transaction calls = %v, want %v", got, want)
+	}
+	if ids.calls != 0 || len(transaction.changes) != 0 {
+		t.Fatalf("committed replay generated IDs or mutation: ids=%d changes=%d", ids.calls, len(transaction.changes))
+	}
+}
+
+func TestServiceDoesNotReplayCommittedIntentWithRevokedCredential(t *testing.T) {
+	t.Parallel()
+
+	request := validRequest(t)
+	authority := authorityWithCredentialState(t, enrollment.CredentialStateRevoked, 5)
+	canonicalID := mustRegistrationID(t, "01890f50-0000-7000-8000-000000000099")
+	canonical := commandFromRequest(request, authority, canonicalID)
+	hash, err := canonical.RequestHash()
+	if err != nil {
+		t.Fatalf("Command.RequestHash() error = %v", err)
+	}
+	resolution, err := intake.NewExistingResolution(authority, canonicalID, hash)
+	if err != nil {
+		t.Fatalf("NewExistingResolution() error = %v", err)
+	}
+	transaction := &fakeTransaction{resolution: resolution}
+	service, ids := newService(
+		t,
+		&transactionQueue{transactions: []*fakeTransaction{transaction}},
+		validVerifier{accept: true},
+	)
+
+	_, err = service.Prepare(t.Context(), request)
+	if !errors.Is(err, intake.ErrAuthenticationFailed) {
+		t.Fatalf("Prepare() error = %v, want authentication failure", err)
+	}
+	if got, want := transaction.calls, []string{"resolve", "rollback"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("transaction calls = %v, want %v", got, want)
+	}
+	if ids.calls != 0 || len(transaction.changes) != 0 {
+		t.Fatalf("revoked replay generated IDs or mutation: ids=%d changes=%d", ids.calls, len(transaction.changes))
+	}
+}
+
 func TestServiceRejectsConflictingPendingIntent(t *testing.T) {
 	t.Parallel()
 

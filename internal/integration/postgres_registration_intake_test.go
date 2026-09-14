@@ -142,6 +142,7 @@ func assertRegistrationIntakeAuthority(
 		RegistrationID:     fixture.request.RegistrationID,
 		CredentialID:       fixture.request.CredentialID,
 		MachineFingerprint: fixture.request.Identity.MachineKey().Fingerprint(),
+		RequestedNodeKey:   fixture.request.Identity.NodeKey().Bytes(),
 	}
 	transaction, err := transactions.Begin(ctx, lookup)
 	if err != nil {

@@ -33,10 +33,11 @@ type Lookup struct {
 	RegistrationID     enrollment.RegistrationID
 	CredentialID       enrollment.CredentialID
 	MachineFingerprint [32]byte
+	RequestedNodeKey   [32]byte
 }
 
 // IsValid reports whether the lookup is bounded and complete.
 func (lookup Lookup) IsValid() bool {
 	return lookup.RegistrationID.IsValid() && lookup.CredentialID.IsValid() &&
-		lookup.MachineFingerprint != ([32]byte{})
+		lookup.MachineFingerprint != ([32]byte{}) && lookup.RequestedNodeKey != ([32]byte{})
 }

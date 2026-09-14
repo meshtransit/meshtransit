@@ -196,6 +196,20 @@ func validRequest(t *testing.T) intake.Request {
 
 func validAuthority(t *testing.T) intake.Authority {
 	t.Helper()
+	return authorityWithUsedCount(t, 0)
+}
+
+func authorityWithUsedCount(t *testing.T, usedCount int64) intake.Authority {
+	t.Helper()
+	return authorityWithCredentialState(t, enrollment.CredentialStateActive, usedCount)
+}
+
+func authorityWithCredentialState(
+	t *testing.T,
+	state enrollment.CredentialState,
+	usedCount int64,
+) intake.Authority {
+	t.Helper()
 	scope := mustScope(t)
 	profileID := mustProfileID(t, "01890f50-0000-7000-8000-000000000003")
 	useLimit, err := enrollment.NewBoundedUseLimit(5)
@@ -221,8 +235,9 @@ func validAuthority(t *testing.T) intake.Authority {
 		ID:                  mustCredentialID(t, "01890f50-0000-7000-8000-000000000002"),
 		ProfileID:           profileID,
 		IssuerID:            issuerID,
-		State:               enrollment.CredentialStateActive,
+		State:               state,
 		UseLimit:            useLimit,
+		UsedCount:           usedCount,
 		IssuedRecoveryEpoch: 7,
 		ValidFrom:           intakeTime.Add(-time.Hour),
 		ExpiresAt:           intakeTime.Add(5 * time.Minute),

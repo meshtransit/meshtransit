@@ -32,6 +32,8 @@ func (transaction *transaction) lockIntents(
 		lockIntentsSQL,
 		lookup.RegistrationID.String(),
 		lookup.MachineFingerprint[:],
+		lookup.CredentialID.String(),
+		lookup.RequestedNodeKey[:],
 	)
 	if err != nil {
 		return intentRecord{}, fmt.Errorf("lock pending registration intents: %w", err)
@@ -50,12 +52,18 @@ func (transaction *transaction) lockIntents(
 			return intentRecord{}, err
 		}
 		isExactID := record.registrationID == lookup.RegistrationID
-		isActiveMachine := (record.state == "pending" || record.state == "authorized") &&
-			subtle.ConstantTimeCompare(
-				record.machineFingerprint[:],
-				lookup.MachineFingerprint[:],
-			) == 1
-		if !isExactID && !isActiveMachine {
+		sameMachine := subtle.ConstantTimeCompare(
+			record.machineFingerprint[:],
+			lookup.MachineFingerprint[:],
+		) == 1
+		isActiveMachine := sameMachine &&
+			(record.state == "pending" || record.state == "authorized")
+		sameNodeKey := subtle.ConstantTimeCompare(
+			record.nodeKey[:],
+			lookup.RequestedNodeKey[:],
+		) == 1
+		isCompletedReplay := sameMachine && sameNodeKey && record.state == "completed"
+		if !isExactID && !isActiveMachine && !isCompletedReplay {
 			return intentRecord{}, ErrEvidence
 		}
 		if !selected.exists || isExactID {
