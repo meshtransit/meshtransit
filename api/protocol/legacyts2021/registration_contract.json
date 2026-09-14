@@ -1,0 +1,26 @@
+{
+  "contract_version": 1,
+  "profile": "legacy-ts2021-cap142-v1",
+  "client_evidence": {
+    "repository": "https://github.com/meshtransit/meshd.git",
+    "revision": "78cb5130400bc003974f7730b319350fed129bbe"
+  },
+  "registration_request": {
+    "authenticated_transport_fields": [
+      "machine_key"
+    ],
+    "payload_semantics": [
+      "version",
+      "node_key",
+      "host_info",
+      "followup",
+      "credential"
+    ],
+    "forbidden_payload_authority": [
+      "workspace_id",
+      "network_id",
+      "tenant_id",
+      "account_id"
+    ]
+  }
+}

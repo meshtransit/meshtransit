@@ -6,6 +6,7 @@ import (
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	postgresintake "github.com/meshtransit/meshtransit/internal/adapter/postgres/registrationintake"
 	"github.com/meshtransit/meshtransit/internal/config"
+	"github.com/meshtransit/meshtransit/internal/control"
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration"
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration/intake"
 )
@@ -20,7 +21,7 @@ type registrationIntakeStore interface {
 func composeRegistrationIntake(
 	enrollmentConfig config.EnrollmentConfig,
 	runtimePool *postgresadapter.Pool,
-) (*intake.Service, error) {
+) (*control.RegistrationService, error) {
 	if runtimePool == nil {
 		return nil, errInvalidRegistrationIntakeComposition
 	}
@@ -40,7 +41,15 @@ func composeRegistrationIntake(
 	if err != nil {
 		return nil, errors.Join(errInvalidRegistrationIntakeComposition, err)
 	}
-	return newRegistrationIntakeService(intakeConfig, store, verifier)
+	intakeService, err := newRegistrationIntakeService(intakeConfig, store, verifier)
+	if err != nil {
+		return nil, err
+	}
+	service, err := control.NewRegistrationService(intakeService)
+	if err != nil {
+		return nil, errors.Join(errInvalidRegistrationIntakeComposition, err)
+	}
+	return service, nil
 }
 
 func newRegistrationIntakeService(
