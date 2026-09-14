@@ -1,9 +1,18 @@
 {
-  "contract_version": 2,
+  "contract_version": 3,
   "profile": "legacy-ts2021-cap142-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
     "revision": "78cb5130400bc003974f7730b319350fed129bbe"
+  },
+  "trust_establishment": {
+    "capability": 142,
+    "key_method": "GET",
+    "key_path": "/key?v=142",
+    "upgrade_method": "POST",
+    "upgrade_path": "/ts2021",
+    "session_protocol": "noise-http2",
+    "machine_identity_source": "noise_peer_key"
   },
   "registration_request": {
     "credential_format": "mtc1.<credential-uuid>.<base64url-32-byte-token>",

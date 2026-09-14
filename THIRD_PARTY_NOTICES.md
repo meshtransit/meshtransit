@@ -10,8 +10,11 @@ resolved by `go.mod` and `go.sum`.
 | `github.com/prometheus/client_golang` | `v1.24.1` | Apache-2.0 |
 | `github.com/redis/go-redis/v9` | `v9.22.0` | BSD-2-Clause |
 | `go.uber.org/goleak` (test only) | `v1.3.0` | MIT |
+| `golang.org/x/net` | `v0.58.0` | BSD-3-Clause |
+| `tailscale.com` | `v1.102.3` | BSD-3-Clause |
 | `github.com/beorn7/perks` | `v1.0.1` | MIT |
 | `github.com/cespare/xxhash/v2` | `v2.3.0` | MIT |
+| `github.com/go-json-experiment/json` | `v0.0.0-20260214004413-d219187c3433` | BSD-3-Clause |
 | `github.com/jackc/pgpassfile` | `v1.0.0` | MIT |
 | `github.com/jackc/pgservicefile` | `v0.0.0-20240606120523-5a60cdf6a761` | MIT |
 | `github.com/jackc/puddle/v2` | `v2.2.2` | MIT |
@@ -20,10 +23,30 @@ resolved by `go.mod` and `go.sum`.
 | `github.com/prometheus/common` | `v0.70.1` | Apache-2.0 |
 | `github.com/prometheus/procfs` | `v0.21.1` | Apache-2.0 |
 | `go.uber.org/atomic` | `v1.11.0` | MIT |
+| `go4.org/mem` | `v0.0.0-20240501181205-ae6ca9944745` | Apache-2.0 |
+| `golang.org/x/crypto` | `v0.55.0` | BSD-3-Clause |
+| `golang.org/x/exp` | `v0.0.0-20260410095643-746e56fc9e2f` | BSD-3-Clause |
 | `golang.org/x/sync` | `v0.22.0` | BSD-3-Clause |
 | `golang.org/x/sys` | `v0.47.0` | BSD-3-Clause |
-| `golang.org/x/text` | `v0.40.0` | BSD-3-Clause |
+| `golang.org/x/text` | `v0.41.0` | BSD-3-Clause |
 | `google.golang.org/protobuf` | `v1.36.11` | BSD-3-Clause |
+
+## Compatibility dependency review
+
+`tailscale.com` is pinned to `v1.102.3`, the exact module version used by the
+pinned MeshTransit client evidence. Core imports only its Noise handshake and
+machine-key packages, exclusively inside `internal/adapter/legacyts2021`; no
+domain, application, storage, or public API type depends on that module. The
+module is actively maintained and BSD-3-Clause licensed. Every update requires
+protocol conformance, race, license, and vulnerability gates. Removing it
+requires an independently specified and audited Noise codec behind the same
+adapter boundary, without changing product-owned commands.
+
+`golang.org/x/net` is pinned to `v0.58.0` for its supported HTTP/2 `ServeConn`
+implementation over an already authenticated Noise connection. It is an
+official Go subrepository under BSD-3-Clause. The standard library does not
+currently expose an equivalent blocking single-connection server API; removal
+becomes practical when it does, with the adapter's conformance tests preserved.
 
 ## MIT-licensed components
 
@@ -80,6 +103,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ## BSD-3-Clause components
 
 Copyright 2009 The Go Authors.
+Copyright (c) 2020 Tailscale Inc & contributors.
 Copyright (c) 2011 Open Knowledge Foundation Ltd.
 Copyright (c) 2018 The Go Authors.
 
@@ -110,6 +134,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Prometheus instrumentation library for Go applications  
 Copyright 2012-2015 The Prometheus Authors
+
+go4.org/mem  
+Copyright 2020 The Go4 AUTHORS
 
 This product includes software developed at SoundCloud Ltd.
 

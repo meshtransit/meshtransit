@@ -19,6 +19,15 @@ type registrationContract struct {
 		Repository string `json:"repository"`
 		Revision   string `json:"revision"`
 	} `json:"client_evidence"`
+	TrustEstablishment struct {
+		Capability            int    `json:"capability"`
+		KeyMethod             string `json:"key_method"`
+		KeyPath               string `json:"key_path"`
+		UpgradeMethod         string `json:"upgrade_method"`
+		UpgradePath           string `json:"upgrade_path"`
+		SessionProtocol       string `json:"session_protocol"`
+		MachineIdentitySource string `json:"machine_identity_source"`
+	} `json:"trust_establishment"`
 	Request struct {
 		CredentialFormat             string   `json:"credential_format"`
 		AuthenticatedTransportFields []string `json:"authenticated_transport_fields"`
@@ -39,12 +48,19 @@ func TestRegistrationContractPinsObservedClientBoundary(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 2 || contract.Profile != "legacy-ts2021-cap142-v1" {
-		t.Fatalf("contract identity = (%d, %q), want version 2 legacy profile", contract.ContractVersion, contract.Profile)
+	if contract.ContractVersion != 3 || contract.Profile != "legacy-ts2021-cap142-v1" {
+		t.Fatalf("contract identity = (%d, %q), want version 3 legacy profile", contract.ContractVersion, contract.Profile)
 	}
 	if contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
 		contract.ClientEvidence.Revision != "78cb5130400bc003974f7730b319350fed129bbe" {
 		t.Fatalf("client evidence = %+v, want pinned meshd revision", contract.ClientEvidence)
+	}
+	trust := contract.TrustEstablishment
+	if trust.Capability != 142 || trust.KeyMethod != "GET" || trust.KeyPath != "/key?v=142" ||
+		trust.UpgradeMethod != "POST" || trust.UpgradePath != "/ts2021" ||
+		trust.SessionProtocol != "noise-http2" ||
+		trust.MachineIdentitySource != "noise_peer_key" {
+		t.Fatalf("trust establishment = %+v, want pinned authenticated transport", trust)
 	}
 	if !slices.Equal(contract.Request.AuthenticatedTransportFields, []string{"machine_key"}) {
 		t.Fatalf(
