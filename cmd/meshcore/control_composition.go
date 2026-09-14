@@ -35,10 +35,18 @@ func composeControlListener(
 	if err != nil {
 		return nil, err
 	}
+	telemetry, err := legacyts2021.NewControlTelemetry(
+		controlConfig.MaxSessions,
+		controlConfig.MaxSessions,
+	)
+	if err != nil {
+		return nil, errors.Join(errInvalidControlComposition, err)
+	}
 	sessions, err := legacyts2021.NewControlServer(legacyts2021.ControlServerOptions{
 		PrivateKey:           privateKey,
 		Sessions:             handler,
 		Logger:               logger,
+		Telemetry:            telemetry,
 		MaxSessions:          controlConfig.MaxSessions,
 		MaxConcurrentStreams: controlConfig.MaxStreamsPerSession,
 		HandshakeTimeout:     controlConfig.HandshakeTimeout,
@@ -53,6 +61,7 @@ func composeControlListener(
 		Address:          controlConfig.Address,
 		Certificate:      certificate,
 		Sessions:         sessions,
+		Telemetry:        telemetry,
 		MaxConnections:   controlConfig.MaxSessions,
 		HandshakeTimeout: controlConfig.HandshakeTimeout,
 		IdleTimeout:      controlConfig.ReadIdleTimeout,

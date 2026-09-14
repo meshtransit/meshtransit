@@ -159,6 +159,17 @@ func TestControlServerBindsNoisePeerToHTTP2Session(t *testing.T) {
 		t.Fatalf("control session did not stop: %v", ctx.Err())
 	}
 	handlers.Wait()
+	metrics := gatherControlMetrics(t, server.telemetry)
+	for _, value := range []string{
+		`meshtransit_control_session_attempts_total{result="established"} 1`,
+		`meshtransit_control_noise_handshake_duration_seconds_count{result="success"} 1`,
+		`meshtransit_control_session_slots_active 0`,
+		`meshtransit_control_authenticated_sessions_active 0`,
+	} {
+		if !strings.Contains(metrics, value) {
+			t.Fatalf("established session metrics missing %q: %s", value, metrics)
+		}
+	}
 }
 
 func TestControlServerRejectsUnsupportedNoiseCapability(t *testing.T) {
@@ -221,5 +232,12 @@ func TestControlServerRejectsUnsupportedNoiseCapability(t *testing.T) {
 	case <-machines:
 		t.Fatal("unsupported capability reached authenticated session handler")
 	default:
+	}
+	metrics := gatherControlMetrics(t, server.telemetry)
+	if !strings.Contains(
+		metrics,
+		`meshtransit_control_session_attempts_total{result="capability_failure"} 1`,
+	) {
+		t.Fatalf("unsupported capability metrics missing bounded result: %s", metrics)
 	}
 }

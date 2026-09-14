@@ -34,6 +34,7 @@ type ControlListenerOptions struct {
 	Address          string
 	Certificate      tls.Certificate
 	Sessions         ControlSessionServer
+	Telemetry        *ControlTelemetry
 	MaxConnections   int
 	HandshakeTimeout time.Duration
 	IdleTimeout      time.Duration
@@ -45,6 +46,7 @@ type ControlListener struct {
 	mu          sync.Mutex
 	server      *http.Server
 	sessions    ControlSessionServer
+	telemetry   *ControlTelemetry
 	tlsConfig   *tls.Config
 	address     string
 	connections int
@@ -60,7 +62,8 @@ type ControlListener struct {
 // NewControlListener constructs a TLS-only public listener without opening a socket.
 func NewControlListener(options ControlListenerOptions) (*ControlListener, error) {
 	if options.Address == "" || len(options.Certificate.Certificate) == 0 ||
-		options.Certificate.PrivateKey == nil || options.Sessions == nil ||
+		options.Certificate.PrivateKey == nil || options.Sessions == nil || options.Telemetry == nil ||
+		options.Telemetry.connectionCapacity != options.MaxConnections ||
 		options.MaxConnections < 1 || options.MaxConnections > maxControlSessions ||
 		options.HandshakeTimeout < minControlTimeout ||
 		options.HandshakeTimeout > maxControlHandshake ||
@@ -80,7 +83,8 @@ func NewControlListener(options ControlListenerOptions) (*ControlListener, error
 			MaxHeaderBytes:    maxControlHeaderBytes,
 			ErrorLog:          log.New(io.Discard, "", 0),
 		},
-		sessions: options.Sessions,
+		sessions:  options.Sessions,
+		telemetry: options.Telemetry,
 		tlsConfig: &tls.Config{
 			MinVersion:   tls.VersionTLS12,
 			Certificates: []tls.Certificate{options.Certificate},
@@ -135,7 +139,7 @@ func (listener *ControlListener) Start(ctx context.Context) error {
 	listener.startDone = nil
 	listener.server.BaseContext = func(net.Listener) context.Context { return ctx }
 	done := listener.done
-	bounded := newBoundedListener(rawListener, listener.connections)
+	bounded := newBoundedListener(rawListener, listener.connections, listener.telemetry)
 	tlsListener := tls.NewListener(bounded, listener.tlsConfig)
 	go serveControl(listener.server, tlsListener, done)
 	close(startDone)

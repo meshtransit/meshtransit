@@ -57,10 +57,15 @@ func controlServerOptionsFixture(
 	t.Helper()
 
 	privateKey, _ := newControlPrivateKeyFixture(t)
+	telemetry, err := NewControlTelemetry(2, 2)
+	if err != nil {
+		t.Fatalf("NewControlTelemetry() error = %v", err)
+	}
 	return ControlServerOptions{
 		PrivateKey:           privateKey,
 		Sessions:             sessions,
 		Logger:               slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		Telemetry:            telemetry,
 		MaxSessions:          2,
 		MaxConcurrentStreams: 4,
 		HandshakeTimeout:     2 * time.Second,

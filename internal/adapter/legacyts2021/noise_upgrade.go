@@ -30,21 +30,30 @@ func (server *ControlServer) serveNoiseUpgrade(
 ) {
 	setResponseHeaders(response)
 	if request.Method != http.MethodPost {
+		server.telemetry.recordSessionAttempt(sessionAttemptInvalidRequest)
 		response.Header().Set("Allow", http.MethodPost)
 		http.Error(response, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
 	if err := validateNoiseUpgradeRequest(request); err != nil {
+		server.telemetry.recordSessionAttempt(sessionAttemptInvalidRequest)
 		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 	initial, err := decodeNoiseInitiation(request.Header.Values(noiseHandshakeHeader))
 	if err != nil {
+		server.telemetry.recordSessionAttempt(sessionAttemptInvalidRequest)
 		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 	defer clear(initial)
-	if !server.beginSession() {
+	admission := server.beginSession()
+	if admission != sessionAdmissionAccepted {
+		result := sessionAttemptShutdown
+		if admission == sessionAdmissionCapacity {
+			result = sessionAttemptCapacity
+		}
+		server.rejectSession(request.Context(), result)
 		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		return
 	}
@@ -52,14 +61,17 @@ func (server *ControlServer) serveNoiseUpgrade(
 
 	hijacker, ok := response.(http.Hijacker)
 	if !ok {
+		server.rejectSession(request.Context(), sessionAttemptTransportFailure)
 		http.Error(response, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	connection, buffered, err := hijacker.Hijack()
 	if err != nil {
+		server.rejectSession(request.Context(), sessionAttemptTransportFailure)
 		return
 	}
 	if !server.trackConnection(connection) {
+		server.rejectSession(request.Context(), sessionAttemptShutdown)
 		_ = connection.Close()
 		return
 	}
@@ -67,40 +79,45 @@ func (server *ControlServer) serveNoiseUpgrade(
 	defer func() { _ = connection.Close() }()
 
 	if err := writeUpgradeResponse(buffered); err != nil {
-		server.logRejectedSession(request.Context(), "upgrade_response_failure")
+		server.rejectSession(request.Context(), sessionAttemptTransportFailure)
 		return
 	}
 	handshakeCtx, cancel := context.WithTimeout(request.Context(), server.handshakeTimeout)
 	defer cancel()
+	handshakeStarted := time.Now()
 	secureConnection, err := controlbase.Server(
 		handshakeCtx,
 		&bufferedReadConn{Conn: connection, reader: buffered.Reader},
 		server.privateKey.value,
 		initial,
 	)
+	server.telemetry.recordHandshake(time.Since(handshakeStarted), err == nil)
 	if err != nil {
-		server.logRejectedSession(request.Context(), "noise_handshake_failure")
+		server.rejectSession(request.Context(), sessionAttemptHandshakeFailure)
 		return
 	}
 	defer func() { _ = secureConnection.Close() }()
 	if err := secureConnection.SetDeadline(time.Time{}); err != nil {
-		server.logRejectedSession(request.Context(), "noise_deadline_failure")
+		server.rejectSession(request.Context(), sessionAttemptTransportFailure)
 		return
 	}
 	if secureConnection.ProtocolVersion() != supportedCapabilityVersion {
-		server.logRejectedSession(request.Context(), "unsupported_capability")
+		server.rejectSession(request.Context(), sessionAttemptCapabilityFailure)
 		return
 	}
 	machine, err := authenticatedMachineFromNoise(secureConnection)
 	if err != nil {
-		server.logRejectedSession(request.Context(), "noise_identity_failure")
+		server.rejectSession(request.Context(), sessionAttemptIdentityFailure)
 		return
 	}
 	handler, err := server.sessions.Handler(machine)
 	if err != nil || handler == nil {
-		server.logRejectedSession(request.Context(), "session_handler_failure")
+		server.rejectSession(request.Context(), sessionAttemptHandlerFailure)
 		return
 	}
+	server.telemetry.recordSessionAttempt(sessionAttemptEstablished)
+	sessionStarted := server.telemetry.authenticatedSessionOpened()
+	defer server.telemetry.authenticatedSessionClosed(sessionStarted)
 	server.http2Server.ServeConn(secureConnection, &http2.ServeConnOpts{
 		Context: request.Context(),
 		BaseConfig: &http.Server{
@@ -169,8 +186,9 @@ func authenticatedMachineFromNoise(connection *controlbase.Conn) (control.Authen
 	return control.NewAuthenticatedMachine(machineKey)
 }
 
-func (server *ControlServer) logRejectedSession(ctx context.Context, code string) {
-	server.logger.DebugContext(ctx, "control session rejected", "error_code", code)
+func (server *ControlServer) rejectSession(ctx context.Context, result sessionAttemptResult) {
+	server.telemetry.recordSessionAttempt(result)
+	server.logger.DebugContext(ctx, "control session rejected", "error_code", result.label())
 }
 
 func headerContainsToken(values []string, token string) bool {

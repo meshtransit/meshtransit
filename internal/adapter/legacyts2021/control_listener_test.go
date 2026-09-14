@@ -159,6 +159,7 @@ func TestControlListenerRejectsInvalidOptions(t *testing.T) {
 		Address:          "127.0.0.1:8443",
 		Certificate:      testTLSCertificate(t),
 		Sessions:         &fakeControlSessionServer{},
+		Telemetry:        controlTelemetryFixture(t),
 		MaxConnections:   2,
 		HandshakeTimeout: time.Second,
 		IdleTimeout:      time.Minute,
@@ -167,6 +168,10 @@ func TestControlListenerRejectsInvalidOptions(t *testing.T) {
 		"address":     func(options *ControlListenerOptions) { options.Address = "" },
 		"certificate": func(options *ControlListenerOptions) { options.Certificate = tls.Certificate{} },
 		"sessions":    func(options *ControlListenerOptions) { options.Sessions = nil },
+		"telemetry":   func(options *ControlListenerOptions) { options.Telemetry = nil },
+		"telemetry limit": func(options *ControlListenerOptions) {
+			options.MaxConnections++
+		},
 		"connections": func(options *ControlListenerOptions) { options.MaxConnections = 0 },
 		"handshake":   func(options *ControlListenerOptions) { options.HandshakeTimeout = 0 },
 		"idle":        func(options *ControlListenerOptions) { options.IdleTimeout = 0 },
@@ -190,10 +195,12 @@ func newControlListenerFixture(
 	sessions ControlSessionServer,
 ) *ControlListener {
 	t.Helper()
+	telemetry := controlTelemetryFixture(t)
 	listener, err := NewControlListener(ControlListenerOptions{
 		Address:          "127.0.0.1:8443",
 		Certificate:      certificate,
 		Sessions:         sessions,
+		Telemetry:        telemetry,
 		MaxConnections:   2,
 		HandshakeTimeout: 2 * time.Second,
 		IdleTimeout:      time.Minute,
@@ -209,6 +216,15 @@ func testTLSCertificate(t testing.TB) tls.Certificate {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	server.Close()
 	return server.TLS.Certificates[0]
+}
+
+func controlTelemetryFixture(t testing.TB) *ControlTelemetry {
+	t.Helper()
+	telemetry, err := NewControlTelemetry(2, 2)
+	if err != nil {
+		t.Fatalf("NewControlTelemetry() error = %v", err)
+	}
+	return telemetry
 }
 
 type fakeControlSessionServer struct {

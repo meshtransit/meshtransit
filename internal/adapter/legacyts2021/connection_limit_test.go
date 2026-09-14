@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -13,7 +14,8 @@ func TestBoundedListenerRejectsExcessSocketsAndReleasesCapacity(t *testing.T) {
 	t.Parallel()
 
 	socket := newQueuedListener()
-	listener := newBoundedListener(socket, 1)
+	telemetry := controlTelemetryFixture(t)
+	listener := newBoundedListener(socket, 1, telemetry)
 	firstServer, firstClient := net.Pipe()
 	t.Cleanup(func() { _ = firstClient.Close() })
 	go func() { socket.connections <- firstServer }()
@@ -34,7 +36,8 @@ func TestBoundedListenerRejectsExcessSocketsAndReleasesCapacity(t *testing.T) {
 	}()
 	secondServer, secondClient := net.Pipe()
 	go func() { socket.connections <- secondServer }()
-	if err := secondClient.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+	if err := secondClient.SetReadDeadline(time.Now().Add(time.Second)); err != nil &&
+		!errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("second SetReadDeadline() error = %v", err)
 	}
 	if _, err := secondClient.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
@@ -63,6 +66,11 @@ func TestBoundedListenerRejectsExcessSocketsAndReleasesCapacity(t *testing.T) {
 	}
 	if err := socket.Close(); err != nil {
 		t.Fatalf("socket Close() error = %v", err)
+	}
+	body := gatherControlMetrics(t, telemetry)
+	if !strings.Contains(body, `meshtransit_control_connection_rejections_total 1`) ||
+		!strings.Contains(body, `meshtransit_control_connections_active 0`) {
+		t.Fatalf("connection metrics do not match bounded listener state: %s", body)
 	}
 }
 

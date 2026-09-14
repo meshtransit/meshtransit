@@ -67,7 +67,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 	}()
 
 	checkers := make([]app.DependencyChecker, 0, len(readiness.RequiredComponents()))
-	additionalMetrics := make([]prometheus.Collector, 0, 2)
+	additionalMetrics := make([]prometheus.Collector, 0, 3)
 	var storagePools postgresPools
 	var redisClient *redisadapter.Client
 	if processConfig.Storage != nil {
@@ -131,30 +131,10 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_dependency_monitor", "error", err)
 		return 1
 	}
-	build := buildinfo.Current()
 	var revisionWorkerTelemetry *revisionworker.Telemetry
+	roleServices := make([]app.OwnedService, 0, 2)
 	if processConfig.RevisionWorker != nil {
 		revisionWorkerTelemetry = revisionworker.NewTelemetry()
-	}
-	healthServer, err := httpapi.NewHealthServer(httpapi.HealthServerOptions{
-		Address: processConfig.HealthAddress,
-		State:   readiness,
-		Logger:  logger,
-		Build: httpapi.BuildInfo{
-			Version:             build.Version,
-			Revision:            build.Revision,
-			GoVersion:           build.GoVersion,
-			ConfigSchemaVersion: config.SchemaVersion,
-		},
-		RevisionWorkerTelemetry: revisionWorkerTelemetry,
-		AdditionalMetrics:       additionalMetrics,
-	})
-	if err != nil {
-		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_health_server", "error", err)
-		return 1
-	}
-	services := []app.OwnedService{{Name: "health", Service: healthServer}}
-	if processConfig.RevisionWorker != nil {
 		workerService, composeErr := composeRevisionWorker(
 			*processConfig.RevisionWorker,
 			storagePools.worker,
@@ -166,7 +146,10 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			logger.ErrorContext(ctx, "startup failed", "error_code", "worker_composition_failure", "error", composeErr)
 			return 1
 		}
-		services = append(services, app.OwnedService{Name: "network-revision-worker", Service: workerService})
+		roleServices = append(
+			roleServices,
+			app.OwnedService{Name: "network-revision-worker", Service: workerService},
+		)
 	}
 	if processConfig.Control != nil {
 		if processConfig.Enrollment == nil {
@@ -200,8 +183,31 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			)
 			return 1
 		}
-		services = append(services, app.OwnedService{Name: "control", Service: controlListener})
+		additionalMetrics = append(additionalMetrics, controlListener.MetricsCollector())
+		roleServices = append(roleServices, app.OwnedService{Name: "control", Service: controlListener})
 	}
+
+	build := buildinfo.Current()
+	healthServer, err := httpapi.NewHealthServer(httpapi.HealthServerOptions{
+		Address: processConfig.HealthAddress,
+		State:   readiness,
+		Logger:  logger,
+		Build: httpapi.BuildInfo{
+			Version:             build.Version,
+			Revision:            build.Revision,
+			GoVersion:           build.GoVersion,
+			ConfigSchemaVersion: config.SchemaVersion,
+		},
+		RevisionWorkerTelemetry: revisionWorkerTelemetry,
+		AdditionalMetrics:       additionalMetrics,
+	})
+	if err != nil {
+		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_health_server", "error", err)
+		return 1
+	}
+	services := make([]app.OwnedService, 0, len(roleServices)+1)
+	services = append(services, app.OwnedService{Name: "health", Service: healthServer})
+	services = append(services, roleServices...)
 	application, err := app.New(
 		app.Options{
 			Roles:           roles,

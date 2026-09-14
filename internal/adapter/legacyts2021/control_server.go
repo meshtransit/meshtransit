@@ -43,6 +43,7 @@ type ControlServerOptions struct {
 	PrivateKey           ControlPrivateKey
 	Sessions             AuthenticatedHandlerFactory
 	Logger               *slog.Logger
+	Telemetry            *ControlTelemetry
 	MaxSessions          int
 	MaxConcurrentStreams uint32
 	HandshakeTimeout     time.Duration
@@ -59,6 +60,7 @@ type ControlServer struct {
 	publicKey        string
 	sessions         AuthenticatedHandlerFactory
 	logger           *slog.Logger
+	telemetry        *ControlTelemetry
 	handshakeTimeout time.Duration
 	http2Server      *http2.Server
 	slots            chan struct{}
@@ -86,6 +88,7 @@ func NewControlServer(options ControlServerOptions) (*ControlServer, error) {
 		publicKey:        string(publicKey),
 		sessions:         options.Sessions,
 		logger:           options.Logger,
+		telemetry:        options.Telemetry,
 		handshakeTimeout: options.HandshakeTimeout,
 		http2Server: &http2.Server{
 			MaxConcurrentStreams:         options.MaxConcurrentStreams,
@@ -108,11 +111,17 @@ func NewControlServer(options ControlServerOptions) (*ControlServer, error) {
 
 // ServeHTTP exposes only the pinned key-discovery and Noise-upgrade paths.
 func (server *ControlServer) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	if server == nil || response == nil || request == nil || request.URL == nil ||
-		server.isClosing() {
+	if server == nil || response == nil || request == nil || request.URL == nil {
 		if response != nil {
 			http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		}
+		return
+	}
+	if server.isClosing() {
+		if request.URL.Path == noiseUpgradePath {
+			server.telemetry.recordSessionAttempt(sessionAttemptShutdown)
+		}
+		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		return
 	}
 	switch request.URL.Path {
@@ -127,6 +136,7 @@ func (server *ControlServer) ServeHTTP(response http.ResponseWriter, request *ht
 
 func validControlServerOptions(options ControlServerOptions) bool {
 	return options.PrivateKey.IsValid() && options.Sessions != nil && options.Logger != nil &&
+		options.Telemetry != nil && options.Telemetry.sessionCapacity == options.MaxSessions &&
 		options.MaxSessions > 0 && options.MaxSessions <= maxControlSessions &&
 		options.MaxConcurrentStreams > 0 &&
 		options.MaxConcurrentStreams <= maxControlSessionStreams &&

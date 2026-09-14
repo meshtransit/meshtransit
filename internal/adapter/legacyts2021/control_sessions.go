@@ -6,6 +6,14 @@ import (
 	"net"
 )
 
+type sessionAdmission uint8
+
+const (
+	sessionAdmissionAccepted sessionAdmission = iota
+	sessionAdmissionCapacity
+	sessionAdmissionShutdown
+)
+
 // Shutdown stops session admission, closes every hijacked connection, and
 // waits until all synchronous session handlers have returned or ctx expires.
 func (server *ControlServer) Shutdown(ctx context.Context) error {
@@ -40,33 +48,35 @@ func (server *ControlServer) Shutdown(ctx context.Context) error {
 	}
 }
 
-func (server *ControlServer) beginSession() bool {
+func (server *ControlServer) beginSession() sessionAdmission {
 	select {
 	case server.slots <- struct{}{}:
 	default:
-		return false
+		return sessionAdmissionCapacity
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	if server.closing {
 		<-server.slots
-		return false
+		return sessionAdmissionShutdown
 	}
 	if server.active == 0 {
 		server.drained = make(chan struct{})
 	}
 	server.active++
-	return true
+	server.telemetry.sessionSlotOpened()
+	return sessionAdmissionAccepted
 }
 
 func (server *ControlServer) endSession() {
 	server.mu.Lock()
+	defer server.mu.Unlock()
 	server.active--
+	<-server.slots
+	server.telemetry.sessionSlotClosed()
 	if server.active == 0 {
 		close(server.drained)
 	}
-	server.mu.Unlock()
-	<-server.slots
 }
 
 func (server *ControlServer) trackConnection(connection net.Conn) bool {

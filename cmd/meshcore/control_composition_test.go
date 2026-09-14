@@ -39,6 +39,9 @@ func TestComposeControlListenerLoadsTLSAndNoiseIdentity(t *testing.T) {
 	if listener == nil {
 		t.Fatal("composeControlListener() returned nil listener")
 	}
+	if listener.MetricsCollector() == nil {
+		t.Fatal("composeControlListener() returned listener without telemetry")
+	}
 }
 
 func TestComposeControlListenerRejectsInvalidDependencies(t *testing.T) {

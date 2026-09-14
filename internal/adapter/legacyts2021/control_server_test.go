@@ -63,6 +63,12 @@ func TestNewControlServerRejectsUnsafeOptions(t *testing.T) {
 		{name: "missing logger", mutate: func(options *ControlServerOptions) {
 			options.Logger = nil
 		}},
+		{name: "missing telemetry", mutate: func(options *ControlServerOptions) {
+			options.Telemetry = nil
+		}},
+		{name: "telemetry session limit mismatch", mutate: func(options *ControlServerOptions) {
+			options.MaxSessions++
+		}},
 		{name: "zero sessions", mutate: func(options *ControlServerOptions) {
 			options.MaxSessions = 0
 		}},
