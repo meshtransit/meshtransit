@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -49,6 +50,12 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 		subscribe: func(context.Context, string) (messageSubscription, error) {
 			return transport, nil
 		},
+		claimPresence: func(context.Context, string, int64, string, time.Duration) (int64, error) {
+			return 1, nil
+		},
+		releasePresence: func(context.Context, string, int64, string) (int64, error) {
+			return 1, nil
+		},
 		metrics: metrics,
 	}
 
@@ -65,6 +72,13 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 	if _, err := subscription.Receive(t.Context()); err != nil {
 		t.Fatalf("RevisionSubscription.Receive() error = %v", err)
 	}
+	lease := testPresenceLease(t, 7, "control-a")
+	if claimed, err := client.ClaimPresence(t.Context(), lease); err != nil || !claimed {
+		t.Fatalf("ClaimPresence() = (%t, %v), want true", claimed, err)
+	}
+	if released, err := client.ReleasePresence(t.Context(), lease); err != nil || !released {
+		t.Fatalf("ReleasePresence() = (%t, %v), want true", released, err)
+	}
 
 	body := gatherRedisMetrics(t, client.MetricsCollector())
 	for name, value := range map[string]string{
@@ -72,6 +86,8 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 		"publish success":      `meshtransit_redis_commands_total{operation="publish",result="success"} 1`,
 		"subscribe success":    `meshtransit_redis_commands_total{operation="subscribe",result="success"} 1`,
 		"receive success":      `meshtransit_redis_commands_total{operation="receive",result="success"} 1`,
+		"presence claim":       `meshtransit_redis_commands_total{operation="presence_claim",result="success"} 1`,
+		"presence release":     `meshtransit_redis_commands_total{operation="presence_release",result="success"} 1`,
 		"ping latency count":   `meshtransit_redis_command_duration_seconds_count{operation="ping",result="error"} 1`,
 		"active connections":   `meshtransit_redis_pool_connections{state="active"} 5`,
 		"idle connections":     `meshtransit_redis_pool_connections{state="idle"} 3`,

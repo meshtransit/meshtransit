@@ -108,6 +108,7 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 	if err := redisClient.Check(ctx); err != nil {
 		t.Fatalf("redis Check() error = %v", err)
 	}
+	assertRedisPresenceLeaseFencing(ctx, t, redisClient)
 
 	wakeup, err := network.NewRevisionAdvanced(
 		"01890f00-0000-7000-8000-000000000201",
@@ -150,6 +151,8 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 		"successful publish":   `meshtransit_redis_commands_total{operation="publish",result="success"} 1`,
 		"successful subscribe": `meshtransit_redis_commands_total{operation="subscribe",result="success"} 1`,
 		"successful receive":   `meshtransit_redis_commands_total{operation="receive",result="success"} 1`,
+		"presence claims":      `meshtransit_redis_commands_total{operation="presence_claim",result="success"} 5`,
+		"presence releases":    `meshtransit_redis_commands_total{operation="presence_release",result="success"} 3`,
 		"command-pool state":   `meshtransit_redis_pool_connections`,
 		"active subscriptions": `meshtransit_redis_subscriptions_active 1`,
 	} {

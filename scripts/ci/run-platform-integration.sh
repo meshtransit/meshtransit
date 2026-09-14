@@ -160,7 +160,10 @@ docker exec --detach --user redis "${redis_container}" redis-server \
 	--tls-auth-clients no \
 	--user default off \
 	--user mesh_worker on ">redis-${redis_password}" resetkeys resetchannels \
-	"+ping" "+publish" "+subscribe" "&meshtransit:v1:wakeup:network_revision_advanced"
+	"+ping" "+publish" "+subscribe" "+eval" "+evalsha" \
+	"+hget" "+hset" "+pexpire" "+del" \
+	"~meshtransit:v1:presence:node:*" \
+	"&meshtransit:v1:wakeup:network_revision_advanced"
 
 for _ in $(seq 1 60); do
 	if docker exec "${redis_container}" redis-cli \

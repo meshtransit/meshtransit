@@ -45,13 +45,15 @@ type Options struct {
 
 // Client is the concrete Redis dependency owned by the composition root.
 type Client struct {
-	ping      func(context.Context) error
-	publish   func(context.Context, string, []byte) error
-	subscribe func(context.Context, string) (messageSubscription, error)
-	metrics   *redisMetrics
-	close     func() error
-	closeOnce sync.Once
-	closeErr  error
+	ping            func(context.Context) error
+	publish         func(context.Context, string, []byte) error
+	subscribe       func(context.Context, string) (messageSubscription, error)
+	claimPresence   presenceClaimFunc
+	releasePresence presenceReleaseFunc
+	metrics         *redisMetrics
+	close           func() error
+	closeOnce       sync.Once
+	closeErr        error
 }
 
 // Open constructs a lazy, bounded TLS-only Redis client. Connectivity is
@@ -87,6 +89,36 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 				return nil, errors.Join(err, subscription.Close())
 			}
 			return subscription, nil
+		},
+		claimPresence: func(
+			claimCtx context.Context,
+			key string,
+			generation int64,
+			replicaID string,
+			ttl time.Duration,
+		) (int64, error) {
+			return claimPresenceScript.Run(
+				claimCtx,
+				client,
+				[]string{key},
+				generation,
+				replicaID,
+				ttl.Milliseconds(),
+			).Int64()
+		},
+		releasePresence: func(
+			releaseCtx context.Context,
+			key string,
+			generation int64,
+			replicaID string,
+		) (int64, error) {
+			return releasePresenceScript.Run(
+				releaseCtx,
+				client,
+				[]string{key},
+				generation,
+				replicaID,
+			).Int64()
 		},
 		metrics: newRedisMetrics(options.PoolSize, client.PoolStats),
 		close:   client.Close,

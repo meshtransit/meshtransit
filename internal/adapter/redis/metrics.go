@@ -15,6 +15,8 @@ const (
 	redisCommandPublish   redisCommand = "publish"
 	redisCommandSubscribe redisCommand = "subscribe"
 	redisCommandReceive   redisCommand = "receive"
+	redisCommandClaim     redisCommand = "presence_claim"
+	redisCommandRelease   redisCommand = "presence_release"
 )
 
 var redisCommands = [...]redisCommand{
@@ -22,6 +24,8 @@ var redisCommands = [...]redisCommand{
 	redisCommandPublish,
 	redisCommandSubscribe,
 	redisCommandReceive,
+	redisCommandClaim,
+	redisCommandRelease,
 }
 
 type redisMetrics struct {
