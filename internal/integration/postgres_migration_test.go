@@ -148,6 +148,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		t.Fatalf("postgres.NewRegistrationReplayStore() error = %v", err)
 	}
 	assertPostgreSQLRegistrationReplay(ctx, t, registrationReplayStore, registrationReplayCommand)
+	assertPostgreSQLMapSessionSnapshot(ctx, t, runtimePool, registrationReplayCommand)
 
 	runtimeConnection := openIntegrationPostgreSQLConnection(
 		ctx,
@@ -184,6 +185,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertWorkerCannotAdvanceNetworkInventoryRevision(ctx, t, workerConnection)
 	assertWorkerCannotLockRegistrationResources(ctx, t, workerConnection)
 	assertWorkerCannotResolveRegistrationIntakeScope(ctx, t, workerConnection)
+	assertWorkerCannotResolveMapSessionScope(ctx, t, workerConnection)
 	assertWorkerOutboxPrivilegeContract(ctx, t, workerConnection)
 	workerPool := openIntegrationWorkerPool(ctx, t, adminConfig)
 	assertWorkerOutboxDelivery(ctx, t, adminConnection, workerPool)

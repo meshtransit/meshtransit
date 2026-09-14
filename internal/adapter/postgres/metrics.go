@@ -25,6 +25,7 @@ const (
 	postgresOperationIntakeCommit         postgresOperation = "registration_intake_commit"
 	postgresOperationIntakeRollback       postgresOperation = "registration_intake_rollback"
 	postgresOperationIntakeReplay         postgresOperation = "registration_intake_replay"
+	postgresOperationMapSessionSnapshot   postgresOperation = "map_session_snapshot"
 	postgresOperationOutboxBacklog        postgresOperation = "outbox_backlog"
 	postgresOperationOutboxClaim          postgresOperation = "outbox_claim"
 	postgresOperationOutboxLoadRevision   postgresOperation = "outbox_load_revision"
@@ -50,6 +51,7 @@ var (
 		postgresOperationIntakeCommit,
 		postgresOperationIntakeRollback,
 		postgresOperationIntakeReplay,
+		postgresOperationMapSessionSnapshot,
 		postgresOperationOutboxBacklog,
 		postgresOperationOutboxClaim,
 		postgresOperationOutboxLoadRevision,
@@ -289,7 +291,8 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationIntakeApply ||
 			operation == postgresOperationIntakeCommit ||
 			operation == postgresOperationIntakeRollback ||
-			operation == postgresOperationIntakeReplay
+			operation == postgresOperationIntakeReplay ||
+			operation == postgresOperationMapSessionSnapshot
 	}
 	if role != PoolRoleWorker {
 		return false

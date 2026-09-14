@@ -1,0 +1,123 @@
+package mapsession
+
+import (
+	"net/netip"
+	"time"
+
+	appmapsession "github.com/meshtransit/meshtransit/internal/control/mapsession"
+	"github.com/meshtransit/meshtransit/internal/network"
+	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/workspace"
+)
+
+type snapshotRecord struct {
+	numericNodeID     int64
+	numericOwnerID    int64
+	nodeID            string
+	hostname          string
+	machineKey        []byte
+	nodeKey           []byte
+	sessionGeneration int64
+	createdAt         time.Time
+	keyExpiry         time.Time
+	networkRevision   int64
+	addresses         []string
+}
+
+func (record snapshotRecord) snapshot(
+	workspaceValue string,
+	networkValue string,
+	recoveryEpoch int64,
+) (appmapsession.Snapshot, error) {
+	workspaceID, err := workspace.ParseID(workspaceValue)
+	if err != nil {
+		return appmapsession.Snapshot{}, ErrSnapshotEvidence
+	}
+	networkID, err := network.ParseID(networkValue)
+	if err != nil {
+		return appmapsession.Snapshot{}, ErrSnapshotEvidence
+	}
+	scope, err := network.NewScope(workspaceID, networkID)
+	if err != nil {
+		return appmapsession.Snapshot{}, ErrSnapshotEvidence
+	}
+	nodeID, err := node.ParseID(record.nodeID)
+	if err != nil {
+		return appmapsession.Snapshot{}, ErrSnapshotEvidence
+	}
+	hostname, err := node.ParseHostname(record.hostname)
+	if err != nil {
+		return appmapsession.Snapshot{}, ErrSnapshotEvidence
+	}
+	machineKey, err := machineKeyFromBytes(record.machineKey)
+	if err != nil {
+		return appmapsession.Snapshot{}, err
+	}
+	nodeKey, err := nodeKeyFromBytes(record.nodeKey)
+	if err != nil {
+		return appmapsession.Snapshot{}, err
+	}
+	addresses, err := addressesFromText(record.addresses)
+	if err != nil {
+		return appmapsession.Snapshot{}, err
+	}
+	snapshot, err := appmapsession.NewSnapshot(appmapsession.SnapshotParams{
+		Scope:             scope,
+		NetworkRevision:   record.networkRevision,
+		RecoveryEpoch:     recoveryEpoch,
+		SessionGeneration: record.sessionGeneration,
+		NumericNodeID:     record.numericNodeID,
+		NumericOwnerID:    record.numericOwnerID,
+		NodeID:            nodeID,
+		Hostname:          hostname,
+		MachineKey:        machineKey,
+		NodeKey:           nodeKey,
+		Addresses:         addresses,
+		CreatedAt:         record.createdAt,
+		KeyExpiry:         record.keyExpiry,
+	})
+	if err != nil {
+		return appmapsession.Snapshot{}, ErrSnapshotEvidence
+	}
+	return snapshot, nil
+}
+
+func machineKeyFromBytes(value []byte) (node.MachineKey, error) {
+	if len(value) != 32 {
+		return node.MachineKey{}, ErrSnapshotEvidence
+	}
+	var raw [32]byte
+	copy(raw[:], value)
+	key, err := node.NewMachineKey(raw)
+	clear(raw[:])
+	if err != nil {
+		return node.MachineKey{}, ErrSnapshotEvidence
+	}
+	return key, nil
+}
+
+func nodeKeyFromBytes(value []byte) (node.Key, error) {
+	if len(value) != 32 {
+		return node.Key{}, ErrSnapshotEvidence
+	}
+	var raw [32]byte
+	copy(raw[:], value)
+	key, err := node.NewKey(raw)
+	clear(raw[:])
+	if err != nil {
+		return node.Key{}, ErrSnapshotEvidence
+	}
+	return key, nil
+}
+
+func addressesFromText(values []string) ([]netip.Prefix, error) {
+	addresses := make([]netip.Prefix, len(values))
+	for index, value := range values {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return nil, ErrSnapshotEvidence
+		}
+		addresses[index] = prefix
+	}
+	return addresses, nil
+}

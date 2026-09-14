@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 14 {
-		t.Fatalf("len(Catalog()) = %d, want 14", len(catalog))
+	if len(catalog) != 15 {
+		t.Fatalf("len(Catalog()) = %d, want 15", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -521,8 +521,56 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("registration intake scope-query migration SQL contains excessive capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 14 {
-		t.Fatalf("LatestVersion() = %d, want 14", LatestVersion())
+	mapSessionScope := catalog[14]
+	if mapSessionScope.Description != "map session scope resolution" {
+		t.Fatalf(
+			"migration 15 description = %q, want map session scope resolution",
+			mapSessionScope.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE POLICY workspace_map_session_scope_policy",
+		"CREATE POLICY network_map_session_scope_policy",
+		"TO mesh_migrator",
+		"mesh.map_session_workspace_id",
+		"mesh.map_session_network_id",
+		"CREATE FUNCTION mesh_ops.resolve_map_session_scope",
+		"p_machine_key_fingerprint BYTEA",
+		"p_node_key BYTEA",
+		"RETURNS TABLE (",
+		"workspace_public_id UUID",
+		"network_public_id UUID",
+		"recovery_epoch BIGINT",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh, mesh_ops",
+		"machine.fingerprint = p_machine_key_fingerprint",
+		"node_key.public_key = p_node_key",
+		"machine.epoch = device.current_machine_key_epoch",
+		"node_key.epoch = device.current_node_key_epoch",
+		"deployment.recovery_state = 'verified'",
+		"device.expires_at > pg_catalog.transaction_timestamp()",
+		"REVOKE ALL ON FUNCTION mesh_ops.resolve_map_session_scope(BYTEA, BYTEA) FROM PUBLIC",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.resolve_map_session_scope(BYTEA, BYTEA) TO mesh_runtime",
+	} {
+		if !strings.Contains(mapSessionScope.SQL, required) {
+			t.Errorf("map session scope migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"TO mesh_worker",
+	} {
+		if strings.Contains(mapSessionScope.SQL, forbidden) {
+			t.Errorf("map session scope migration SQL contains excessive capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 15 {
+		t.Fatalf("LatestVersion() = %d, want 15", LatestVersion())
 	}
 }
 

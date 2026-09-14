@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	postgresmapsession "github.com/meshtransit/meshtransit/internal/adapter/postgres/mapsession"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -212,6 +213,25 @@ func TestRegistrationReplayMetricsUseRuntimePoolRole(t *testing.T) {
 	want := `meshtransit_postgres_operations_total{operation="registration_replay",pool_role="runtime",result="success"} 1`
 	if !strings.Contains(body, want) {
 		t.Fatalf("metrics missing registration replay outcome %q", want)
+	}
+}
+
+func TestMapSessionMetricsUseRuntimePoolRole(t *testing.T) {
+	t.Parallel()
+
+	metrics := newPostgresPoolMetrics(PoolRoleRuntime, func() postgresPoolStats {
+		return postgresPoolStats{MaxConnections: 1}
+	})
+	metrics.ObserveMapSession(postgresmapsession.OperationLoad, time.Millisecond, nil)
+
+	collector, err := NewMetricsCollector(&Pool{role: PoolRoleRuntime, metrics: metrics})
+	if err != nil {
+		t.Fatalf("NewMetricsCollector() error = %v", err)
+	}
+	body := gatherPostgresMetrics(t, collector)
+	want := `meshtransit_postgres_operations_total{operation="map_session_snapshot",pool_role="runtime",result="success"} 1`
+	if !strings.Contains(body, want) {
+		t.Fatalf("metrics missing map session snapshot outcome %q", want)
 	}
 }
 

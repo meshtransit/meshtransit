@@ -27,6 +27,7 @@ const (
 	registrationTransactionLocksDescription = "registration transaction scoped lock helpers"
 	registrationIntakeScopeDescription      = "registration intake scope resolution"
 	registrationIntakeScopeQueryDescription = "registration intake scope query correction"
+	mapSessionScopeDescription              = "map session scope resolution"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -71,6 +72,9 @@ var registrationIntakeScopeSQL string
 //go:embed 000014_registration_intake_scope_query.up.sql
 var registrationIntakeScopeQuerySQL string
 
+//go:embed 000015_map_session_scope.up.sql
+var mapSessionScopeSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -100,6 +104,7 @@ func Catalog() []Migration {
 		newMigration(12, registrationTransactionLocksDescription, registrationTransactionLocksSQL),
 		newMigration(13, registrationIntakeScopeDescription, registrationIntakeScopeSQL),
 		newMigration(14, registrationIntakeScopeQueryDescription, registrationIntakeScopeQuerySQL),
+		newMigration(15, mapSessionScopeDescription, mapSessionScopeSQL),
 	}
 }
 

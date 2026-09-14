@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	postgresmapsession "github.com/meshtransit/meshtransit/internal/adapter/postgres/mapsession"
 	"github.com/meshtransit/meshtransit/internal/adapter/postgres/registrationintake"
 	"github.com/meshtransit/meshtransit/internal/app"
 	"github.com/meshtransit/meshtransit/internal/config"
@@ -55,7 +56,10 @@ type Pool struct {
 	outboxDatabase                  outboxDatabase
 	registrationReplayDatabase      registrationReplayDatabase
 	registrationTransactionDatabase registrationTransactionDatabase
-	registrationIntake              func(
+	mapSessionStore                 func(
+		postgresmapsession.Options,
+	) (*postgresmapsession.Store, error)
+	registrationIntake func(
 		registrationintake.Options,
 	) (*registrationintake.Transactions, error)
 	metrics  *postgresPoolMetrics
@@ -97,6 +101,11 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 		outboxDatabase:                  pgxOutboxDatabase{pool: pool},
 		registrationReplayDatabase:      pgxRegistrationReplayDatabase{pool: pool},
 		registrationTransactionDatabase: pgxRegistrationTransactionDatabase{pool: pool},
+		mapSessionStore: func(
+			options postgresmapsession.Options,
+		) (*postgresmapsession.Store, error) {
+			return postgresmapsession.NewStore(pool, options, metrics)
+		},
 		registrationIntake: func(
 			options registrationintake.Options,
 		) (*registrationintake.Transactions, error) {
