@@ -182,10 +182,25 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			)
 			return 1
 		}
+		mapStreamService, composeErr := composeMapStream(
+			processConfig.Control.Map,
+			mapSessionService,
+			redisClient,
+		)
+		if composeErr != nil {
+			logger.ErrorContext(
+				ctx,
+				"startup failed",
+				"error_code", "map_stream_composition_failure",
+				"error", composeErr,
+			)
+			return 1
+		}
 		controlListener, composeErr := composeControlListener(
 			*processConfig.Control,
 			registrationService,
 			mapSessionService,
+			mapStreamService,
 			logger,
 		)
 		if composeErr != nil {

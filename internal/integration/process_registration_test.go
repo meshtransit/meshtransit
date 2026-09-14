@@ -50,6 +50,11 @@ func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 	}
 	cancelRegister()
 	firstMap := fetchProcessFullMap(ctx, t, first, client)
+	firstStreamMap := fetchProcessInitialStreamMap(ctx, t, first, client)
+	if !reflect.DeepEqual(firstStreamMap, firstMap) {
+		first.process.forceStop(t)
+		t.Fatalf("first stream map differs from one-shot map: one-shot=%+v stream=%+v", firstMap, firstStreamMap)
+	}
 	assertControlClientMetrics(t, first)
 	stopIntegrationProcess(t, first.process)
 	firstEvidence := readProcessRegistrationEvidence(ctx, t, adminConnection, client.Identity())
@@ -65,6 +70,11 @@ func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 	}
 	cancelReplay()
 	secondMap := fetchProcessFullMap(ctx, t, second, client)
+	secondStreamMap := fetchProcessInitialStreamMap(ctx, t, second, client)
+	if !reflect.DeepEqual(secondStreamMap, secondMap) {
+		second.process.forceStop(t)
+		t.Fatalf("restarted stream map differs from one-shot map: one-shot=%+v stream=%+v", secondMap, secondStreamMap)
+	}
 	assertControlClientMetrics(t, second)
 	stopIntegrationProcess(t, second.process)
 	secondEvidence := readProcessRegistrationEvidence(ctx, t, adminConnection, client.Identity())
@@ -129,6 +139,23 @@ func fetchProcessFullMap(
 	return result
 }
 
+func fetchProcessInitialStreamMap(
+	ctx context.Context,
+	t *testing.T,
+	running readyRoleAllProcess,
+	client *protocoltest.Client,
+) protocoltest.FullMap {
+	t.Helper()
+	mapCtx, cancelMap := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelMap()
+	result, err := client.FetchInitialStreamMap(mapCtx)
+	if err != nil {
+		running.process.forceStop(t)
+		t.Fatalf("fetch process initial stream map: %v; stderr: %s", err, running.process.stderr.String())
+	}
+	return result
+}
+
 func assertProcessFullMap(
 	t *testing.T,
 	result protocoltest.FullMap,
@@ -157,22 +184,47 @@ func assertControlClientMetrics(t *testing.T, running readyRoleAllProcess) {
 	defer cancel()
 	client := integrationHTTPClient()
 	defer client.CloseIdleConnections()
-	status, body, err := integrationGET(ctx, client, running.healthAddress, "/metrics")
-	if err != nil {
-		t.Fatalf("read process registration metrics: %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("process registration metrics status = %d, want %d", status, http.StatusOK)
-	}
-	for _, metric := range []string{
-		`meshtransit_control_session_attempts_total{result="established"} 2`,
+	want := []string{
+		`meshtransit_control_session_attempts_total{result="established"} 3`,
 		`meshtransit_control_registration_requests_total{result="authorized"} 1`,
 		`meshtransit_control_map_requests_total{result="authorized"} 1`,
+		`meshtransit_control_map_requests_total{result="stream_closed"} 1`,
+		`meshtransit_redis_commands_total{operation="presence_claim",result="success"} 1`,
+		`meshtransit_redis_commands_total{operation="presence_release",result="success"} 1`,
 		"meshtransit_control_registrations_active 0",
 		"meshtransit_control_authenticated_sessions_active 0",
-	} {
-		if !strings.Contains(body, metric) {
-			t.Fatalf("process registration metrics missing %q", metric)
+		"meshtransit_control_map_streams_active 0",
+	}
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		status, body, err := integrationGET(ctx, client, running.healthAddress, "/metrics")
+		if err == nil && status == http.StatusOK && containsEveryMetric(body, want) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			if err != nil {
+				t.Fatalf("read process control metrics: %v", err)
+			}
+			if status != http.StatusOK {
+				t.Fatalf("process control metrics status = %d, want %d", status, http.StatusOK)
+			}
+			for _, metric := range want {
+				if !strings.Contains(body, metric) {
+					t.Fatalf("process control metrics missing %q", metric)
+				}
+			}
+		case <-ticker.C:
 		}
 	}
+}
+
+func containsEveryMetric(body string, metrics []string) bool {
+	for _, metric := range metrics {
+		if !strings.Contains(body, metric) {
+			return false
+		}
+	}
+	return true
 }

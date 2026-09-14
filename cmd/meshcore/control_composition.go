@@ -17,9 +17,10 @@ func composeControlListener(
 	controlConfig config.ControlConfig,
 	registrationService legacyts2021.RegistrationService,
 	mapSessionService legacyts2021.MapSessionService,
+	mapStreamService legacyts2021.MapStreamService,
 	logger *slog.Logger,
 ) (*legacyts2021.ControlListener, error) {
-	if registrationService == nil || mapSessionService == nil || logger == nil {
+	if registrationService == nil || mapSessionService == nil || mapStreamService == nil || logger == nil {
 		return nil, errInvalidControlComposition
 	}
 	telemetry, err := legacyts2021.NewControlTelemetry(
@@ -43,6 +44,7 @@ func composeControlListener(
 	mapHandler, err := legacyts2021.NewMapSessionHandler(
 		legacyts2021.MapSessionHandlerOptions{
 			Service:   mapSessionService,
+			Streams:   mapStreamService,
 			Logger:    logger,
 			Telemetry: telemetry,
 			Timeout:   controlConfig.Map.RequestTimeout,
@@ -91,6 +93,7 @@ func composeControlListener(
 }
 
 var _ legacyts2021.MapSessionService = (*mapsession.Service)(nil)
+var _ legacyts2021.MapStreamService = (*mapsession.StreamService)(nil)
 
 func loadControlIdentity(
 	controlConfig config.ControlConfig,

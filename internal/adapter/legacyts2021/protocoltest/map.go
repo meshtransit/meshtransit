@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -38,17 +39,62 @@ type FullMap struct {
 }
 
 func (client *Client) fetchFullMap(ctx context.Context, session *session) (FullMap, error) {
+	response, err := client.requestMap(ctx, session, false)
+	if err != nil {
+		return FullMap{}, err
+	}
+	body, err := readResponse(response)
+	if err != nil {
+		return FullMap{}, fmt.Errorf("read map response: %w", err)
+	}
+	defer clear(body)
+	if err := validateMapResponse(response); err != nil {
+		return FullMap{}, err
+	}
+	return decodeFullMap(body)
+}
+
+func (client *Client) fetchInitialStreamMap(
+	ctx context.Context,
+	session *session,
+) (_ FullMap, resultErr error) {
+	response, err := client.requestMap(ctx, session, true)
+	if err != nil {
+		return FullMap{}, err
+	}
+	if err := validateMapResponse(response); err != nil {
+		_ = response.Body.Close()
+		return FullMap{}, err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, response.Body.Close())
+	}()
+	frame, err := readMapFrame(response.Body)
+	if err != nil {
+		return FullMap{}, fmt.Errorf("read initial stream map: %w", err)
+	}
+	defer clear(frame)
+	return decodeFullMap(frame)
+}
+
+func (client *Client) requestMap(
+	ctx context.Context,
+	session *session,
+	streaming bool,
+) (*http.Response, error) {
 	if session == nil || session.connection == nil {
-		return FullMap{}, ErrInvalidClient
+		return nil, ErrInvalidClient
 	}
 	payload, err := json.Marshal(tailcfg.MapRequest{
-		Version:  testCapabilityVersion,
-		Compress: "zstd",
-		NodeKey:  client.nodeKey.Public(),
-		Hostinfo: &tailcfg.Hostinfo{Hostname: client.hostname},
+		Version:   testCapabilityVersion,
+		Compress:  "zstd",
+		KeepAlive: true,
+		NodeKey:   client.nodeKey.Public(),
+		Stream:    streaming,
+		Hostinfo:  &tailcfg.Hostinfo{Hostname: client.hostname},
 	})
 	if err != nil {
-		return FullMap{}, fmt.Errorf("encode map request: %w", err)
+		return nil, fmt.Errorf("encode map request: %w", err)
 	}
 	defer clear(payload)
 	request, err := http.NewRequestWithContext(
@@ -58,25 +104,51 @@ func (client *Client) fetchFullMap(ctx context.Context, session *session) (FullM
 		bytes.NewReader(payload),
 	)
 	if err != nil {
-		return FullMap{}, fmt.Errorf("build map request: %w", err)
+		return nil, fmt.Errorf("build map request: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := session.connection.RoundTrip(request)
 	if err != nil {
-		return FullMap{}, fmt.Errorf("submit map request: %w", err)
+		return nil, fmt.Errorf("submit map request: %w", err)
 	}
-	body, err := readResponse(response)
-	if err != nil {
-		return FullMap{}, fmt.Errorf("read map response: %w", err)
+	return response, nil
+}
+
+func validateMapResponse(response *http.Response) error {
+	if response == nil {
+		return ErrInvalidClient
 	}
-	defer clear(body)
 	if response.StatusCode != http.StatusOK || !isMediaType(
 		response.Header.Get("Content-Type"),
 		"application/octet-stream",
 	) {
-		return FullMap{}, fmt.Errorf("%w: status %d", ErrMap, response.StatusCode)
+		return fmt.Errorf("%w: status %d", ErrMap, response.StatusCode)
 	}
-	return decodeFullMap(body)
+	return nil
+}
+
+func readMapFrame(reader io.Reader) ([]byte, error) {
+	if reader == nil {
+		return nil, ErrInvalidClient
+	}
+	var header [4]byte
+	if _, err := io.ReadFull(reader, header[:]); err != nil {
+		return nil, err
+	}
+	length := int(header[0]) |
+		int(header[1])<<8 |
+		int(header[2])<<16 |
+		int(header[3])<<24
+	if length <= 0 || length > testResponseLimit-4 {
+		return nil, ErrInvalidClient
+	}
+	frame := make([]byte, len(header)+length)
+	copy(frame, header[:])
+	if _, err := io.ReadFull(reader, frame[len(header):]); err != nil {
+		clear(frame)
+		return nil, err
+	}
+	return frame, nil
 }
 
 func decodeFullMap(frame []byte) (FullMap, error) {

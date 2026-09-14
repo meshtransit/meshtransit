@@ -19,6 +19,19 @@ func TestDecodeFullMapRequest(t *testing.T) {
 	}
 }
 
+func TestDecodeMapRequestPreservesStreamingMode(t *testing.T) {
+	t.Parallel()
+
+	body := strings.Replace(mapRequestBody, `"Stream":false`, `"Stream":true`, 1)
+	request, streaming, err := DecodeMapRequest(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("DecodeMapRequest() error = %v", err)
+	}
+	if !request.IsValid() || !streaming {
+		t.Fatalf("DecodeMapRequest() = (%+v, %t), want valid streaming request", request, streaming)
+	}
+}
+
 func TestDecodeFullMapRequestRejectsUnsupportedOrAmbiguousInput(t *testing.T) {
 	t.Parallel()
 

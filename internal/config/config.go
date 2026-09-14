@@ -13,7 +13,7 @@ import (
 
 const (
 	// SchemaVersion identifies the validated environment configuration contract.
-	SchemaVersion = 11
+	SchemaVersion = 12
 
 	envRole            = "MESHTRANSIT_ROLE"
 	envHealthAddress   = "MESHTRANSIT_HEALTH_ADDRESS"

@@ -33,6 +33,7 @@ func TestComposeControlListenerLoadsTLSAndNoiseIdentity(t *testing.T) {
 		controlConfig,
 		controlRegistrationServiceFixture{},
 		controlMapSessionServiceFixture{},
+		controlMapStreamServiceFixture{},
 		discardCompositionLogger(),
 	)
 	if err != nil {
@@ -54,13 +55,16 @@ func TestComposeControlListenerRejectsInvalidDependencies(t *testing.T) {
 		name            string
 		service         controlRegistrationServiceFixture
 		mapService      controlMapSessionServiceFixture
+		streamService   controlMapStreamServiceFixture
 		nilRegistration bool
 		nilMap          bool
+		nilStream       bool
 		nilLog          bool
 	}{
-		{name: "registration service", nilRegistration: true, mapService: controlMapSessionServiceFixture{}},
-		{name: "map service", service: controlRegistrationServiceFixture{}, nilMap: true},
-		{name: "logger", service: controlRegistrationServiceFixture{}, mapService: controlMapSessionServiceFixture{}, nilLog: true},
+		{name: "registration service", nilRegistration: true, mapService: controlMapSessionServiceFixture{}, streamService: controlMapStreamServiceFixture{}},
+		{name: "map service", service: controlRegistrationServiceFixture{}, nilMap: true, streamService: controlMapStreamServiceFixture{}},
+		{name: "stream service", service: controlRegistrationServiceFixture{}, mapService: controlMapSessionServiceFixture{}, nilStream: true},
+		{name: "logger", service: controlRegistrationServiceFixture{}, mapService: controlMapSessionServiceFixture{}, streamService: controlMapStreamServiceFixture{}, nilLog: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -74,11 +78,21 @@ func TestComposeControlListenerRejectsInvalidDependencies(t *testing.T) {
 			if test.nilMap {
 				mapService = nil
 			}
+			var streamService legacyts2021.MapStreamService = test.streamService
+			if test.nilStream {
+				streamService = nil
+			}
 			logger := discardCompositionLogger()
 			if test.nilLog {
 				logger = nil
 			}
-			_, err := composeControlListener(controlConfig, service, mapService, logger)
+			_, err := composeControlListener(
+				controlConfig,
+				service,
+				mapService,
+				streamService,
+				logger,
+			)
 			if !errors.Is(err, errInvalidControlComposition) {
 				t.Fatalf("composeControlListener() error = %v, want composition error", err)
 			}
@@ -136,6 +150,17 @@ func (controlMapSessionServiceFixture) Open(
 	mapsession.Request,
 ) (mapsession.Snapshot, error) {
 	return mapsession.Snapshot{}, errors.New("composition fixture must not be called")
+}
+
+type controlMapStreamServiceFixture struct{}
+
+func (controlMapStreamServiceFixture) Serve(
+	context.Context,
+	control.AuthenticatedMachine,
+	mapsession.Request,
+	mapsession.StreamSink,
+) error {
+	return errors.New("composition fixture must not be called")
 }
 
 func discardCompositionLogger() *slog.Logger {

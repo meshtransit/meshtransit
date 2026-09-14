@@ -154,6 +154,30 @@ func (client *Client) FetchFullMap(ctx context.Context) (_ FullMap, resultErr er
 	return result, nil
 }
 
+// FetchInitialStreamMap opens a streaming request, validates its first full
+// snapshot, then closes both the HTTP/2 stream and authenticated session.
+func (client *Client) FetchInitialStreamMap(ctx context.Context) (_ FullMap, resultErr error) {
+	if ctx == nil || client == nil || client.tlsConfig == nil {
+		return FullMap{}, ErrInvalidClient
+	}
+	controlKey, err := client.discoverControlKey(ctx)
+	if err != nil {
+		return FullMap{}, errors.Join(ErrMap, err)
+	}
+	session, err := client.openSession(ctx, controlKey)
+	if err != nil {
+		return FullMap{}, errors.Join(ErrMap, err)
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, session.Close())
+	}()
+	result, err := client.fetchInitialStreamMap(ctx, session)
+	if err != nil {
+		return FullMap{}, errors.Join(ErrMap, err)
+	}
+	return result, nil
+}
+
 func validOptions(options Options) bool {
 	host, port, err := net.SplitHostPort(options.ControlAddress)
 	if err != nil || host == "" || port == "" {

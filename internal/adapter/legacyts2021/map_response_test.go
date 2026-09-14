@@ -56,3 +56,26 @@ func TestEncodeFullMapResponseRejectsInvalidInput(t *testing.T) {
 		t.Fatal("EncodeFullMapResponse(zero capability) error = nil")
 	}
 }
+
+func TestEncodeKeepAliveMapResponseIsNonEmptyFramedMessage(t *testing.T) {
+	t.Parallel()
+
+	encoded, err := EncodeKeepAliveMapResponse()
+	if err != nil {
+		t.Fatalf("EncodeKeepAliveMapResponse() error = %v", err)
+	}
+	if len(encoded) < 5 || int(binary.LittleEndian.Uint32(encoded[:4])) != len(encoded)-4 {
+		t.Fatalf("encoded keepalive frame length = %d", len(encoded))
+	}
+	document, err := zstdframe.AppendDecode(nil, encoded[4:], zstdframe.MaxDecodedSize(maxMapResponseBytes))
+	if err != nil {
+		t.Fatalf("decode zstd keepalive: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(document, &fields); err != nil {
+		t.Fatalf("decode keepalive fields: %v", err)
+	}
+	if len(fields) != 1 || string(fields["KeepAlive"]) != "true" {
+		t.Fatalf("keepalive document = %s, want only KeepAlive=true", document)
+	}
+}

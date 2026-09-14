@@ -10,10 +10,12 @@ the first canonical authority schema for tenancy, network identity, address
 realms, address pools, prefixes, and revision state. Authority changes are
 guarded by an atomic audit/outbox integrity foundation. The current client
 protocol slice exposes control-key discovery, credential-backed registration,
-and an authenticated one-shot full-map snapshot. The map returns the
-authoritative self Node, an explicit empty peer set, and an explicit empty
-packet filter; peer projection, policy evaluation, map streaming, presence,
-and relay behavior are not implemented.
+and authenticated one-shot and streaming full-map snapshots. Every stream
+starts with the authoritative self Node, an explicit empty peer set, and an
+explicit empty packet filter. Long-lived streams use generation-fenced Redis
+presence, bounded keepalives, exact release, and periodic PostgreSQL resync;
+peer projection, policy evaluation, endpoint persistence, revision wakeup
+delivery, and relay behavior are not implemented.
 Redis
 already exposes the bounded, versioned `NetworkRevisionAdvanced` wakeup
 transport, and the worker PostgreSQL adapter can lease, reconcile, and complete
@@ -107,6 +109,10 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_MAP_REQUEST_TIMEOUT` | `10s` | Total application deadline for one authenticated map snapshot, from 100ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MAP_STATEMENT_TIMEOUT` | `3s` | PostgreSQL statement timeout for one authenticated map snapshot, from 1ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MAP_TRANSACTION_IDLE_LIMIT` | `5s` | PostgreSQL idle-in-transaction limit for one map snapshot, from 1ms through 1 minute. |
+| `MESHTRANSIT_CONTROL_MAP_PRESENCE_TTL` | `30s` | Generation-fenced Redis presence TTL from 3 seconds through 5 minutes. |
+| `MESHTRANSIT_CONTROL_MAP_COORDINATION_TIMEOUT` | `2s` | Redis claim/renew/release deadline from 100ms through 30 seconds and below one third of the presence TTL. |
+| `MESHTRANSIT_CONTROL_MAP_KEEPALIVE_INTERVAL` | `1m` | Silent-stream keepalive interval from 1 second through 90 seconds. |
+| `MESHTRANSIT_CONTROL_MAP_RECONCILE_INTERVAL` | `30s` | Authoritative PostgreSQL resync interval from 1 second through 5 minutes. |
 
 Control connection saturation, session admission results, Noise handshake
 duration, authenticated-session duration, registration results/duration, and

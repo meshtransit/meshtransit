@@ -11,6 +11,9 @@ type mapResult uint8
 const (
 	mapResultUnknown mapResult = iota
 	mapAuthorized
+	mapStreamClosed
+	mapAuthorityChanged
+	mapCoordinationLost
 	mapInvalidRequest
 	mapAuthenticationFailed
 	mapCanceled
@@ -21,6 +24,7 @@ type mapMetrics struct {
 	active   prometheus.Gauge
 	requests *prometheus.CounterVec
 	duration *prometheus.HistogramVec
+	streams  prometheus.Gauge
 }
 
 func newMapMetrics() mapMetrics {
@@ -37,16 +41,20 @@ func newMapMetrics() mapMetrics {
 		Help:    "Authenticated map request duration by bounded terminal result.",
 		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
 	}, []string{"result"})
+	streams := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "meshtransit_control_map_streams_active",
+		Help: "Number of active authenticated map streams owned by this replica.",
+	})
 	for _, result := range allMapResults() {
 		label := result.label()
 		requests.WithLabelValues(label)
 		duration.WithLabelValues(label)
 	}
-	return mapMetrics{active: active, requests: requests, duration: duration}
+	return mapMetrics{active: active, requests: requests, duration: duration, streams: streams}
 }
 
-func (metrics mapMetrics) collectors() [3]prometheus.Collector {
-	return [3]prometheus.Collector{metrics.active, metrics.requests, metrics.duration}
+func (metrics mapMetrics) collectors() [4]prometheus.Collector {
+	return [4]prometheus.Collector{metrics.active, metrics.requests, metrics.duration, metrics.streams}
 }
 
 func (metrics mapMetrics) start() time.Time {
@@ -61,9 +69,16 @@ func (metrics mapMetrics) finish(startedAt time.Time, result mapResult) {
 	metrics.duration.WithLabelValues(label).Observe(time.Since(startedAt).Seconds())
 }
 
-func allMapResults() [5]mapResult {
-	return [5]mapResult{
+func (metrics mapMetrics) streamOpened() { metrics.streams.Inc() }
+
+func (metrics mapMetrics) streamClosed() { metrics.streams.Dec() }
+
+func allMapResults() [8]mapResult {
+	return [8]mapResult{
 		mapAuthorized,
+		mapStreamClosed,
+		mapAuthorityChanged,
+		mapCoordinationLost,
 		mapInvalidRequest,
 		mapAuthenticationFailed,
 		mapCanceled,
@@ -75,6 +90,12 @@ func (result mapResult) label() string {
 	switch result {
 	case mapAuthorized:
 		return "authorized"
+	case mapStreamClosed:
+		return "stream_closed"
+	case mapAuthorityChanged:
+		return "authority_changed"
+	case mapCoordinationLost:
+		return "coordination_lost"
 	case mapInvalidRequest:
 		return "invalid_request"
 	case mapAuthenticationFailed:

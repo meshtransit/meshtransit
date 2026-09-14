@@ -136,12 +136,22 @@ func (service *recordingMapSessionService) Open(
 
 func newMapSessionHandler(t *testing.T, service MapSessionService) *MapSessionHandler {
 	t.Helper()
+	return newMapSessionHandlerWithStreams(t, service, unusedMapStreamService{})
+}
+
+func newMapSessionHandlerWithStreams(
+	t *testing.T,
+	service MapSessionService,
+	streams MapStreamService,
+) *MapSessionHandler {
+	t.Helper()
 	telemetry, err := NewControlTelemetry(8, 8)
 	if err != nil {
 		t.Fatalf("NewControlTelemetry() error = %v", err)
 	}
 	handler, err := NewMapSessionHandler(MapSessionHandlerOptions{
 		Service:   service,
+		Streams:   streams,
 		Logger:    slog.New(slog.NewJSONHandler(io.Discard, nil)),
 		Telemetry: telemetry,
 		Timeout:   10 * time.Second,
@@ -150,6 +160,17 @@ func newMapSessionHandler(t *testing.T, service MapSessionService) *MapSessionHa
 		t.Fatalf("NewMapSessionHandler() error = %v", err)
 	}
 	return handler
+}
+
+type unusedMapStreamService struct{}
+
+func (unusedMapStreamService) Serve(
+	context.Context,
+	control.AuthenticatedMachine,
+	mapsession.Request,
+	mapsession.StreamSink,
+) error {
+	return errors.New("unused stream service called")
 }
 
 func serveMap(t *testing.T, handler http.Handler, body string) *httptest.ResponseRecorder {

@@ -26,6 +26,10 @@ func TestLoadControlConfigForControlRoles(t *testing.T) {
 				envControlMapRequestTimeout:       "9s",
 				envControlMapStatementTimeout:     "4s",
 				envControlMapTransactionIdleLimit: "6s",
+				envControlMapPresenceTTL:          "45s",
+				envControlMapCoordinationTimeout:  "4s",
+				envControlMapKeepAliveInterval:    "70s",
+				envControlMapReconcileInterval:    "20s",
 			})))
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
@@ -48,6 +52,10 @@ func TestLoadControlConfigForControlRoles(t *testing.T) {
 					RequestTimeout:       9 * time.Second,
 					StatementTimeout:     4 * time.Second,
 					TransactionIdleLimit: 6 * time.Second,
+					PresenceTTL:          45 * time.Second,
+					CoordinationTimeout:  4 * time.Second,
+					KeepAliveInterval:    70 * time.Second,
+					ReconcileInterval:    20 * time.Second,
 				},
 			}
 			if *got.Control != want {

@@ -6,6 +6,7 @@ import (
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/config"
 	"github.com/meshtransit/meshtransit/internal/control/mapsession"
+	"github.com/meshtransit/meshtransit/internal/publicid"
 )
 
 var errInvalidMapSessionComposition = errors.New("invalid map session composition")
@@ -28,6 +29,42 @@ func composeMapSession(
 		return nil, errors.Join(errInvalidMapSessionComposition, err)
 	}
 	return newMapSessionService(store)
+}
+
+func composeMapStream(
+	mapConfig config.ControlMapConfig,
+	snapshots mapsession.SnapshotOpener,
+	presence mapsession.PresenceStore,
+) (*mapsession.StreamService, error) {
+	replicaID, err := publicid.New()
+	if err != nil {
+		return nil, errors.Join(errInvalidMapSessionComposition, err)
+	}
+	return newMapStreamService(mapConfig, snapshots, presence, replicaID)
+}
+
+func newMapStreamService(
+	mapConfig config.ControlMapConfig,
+	snapshots mapsession.SnapshotOpener,
+	presence mapsession.PresenceStore,
+	replicaID publicid.ID,
+) (*mapsession.StreamService, error) {
+	service, err := mapsession.NewStreamService(
+		snapshots,
+		presence,
+		mapsession.StreamOptions{
+			ReplicaID:           replicaID,
+			SnapshotTimeout:     mapConfig.RequestTimeout,
+			PresenceTTL:         mapConfig.PresenceTTL,
+			CoordinationTimeout: mapConfig.CoordinationTimeout,
+			KeepAliveInterval:   mapConfig.KeepAliveInterval,
+			ReconcileInterval:   mapConfig.ReconcileInterval,
+		},
+	)
+	if err != nil {
+		return nil, errors.Join(errInvalidMapSessionComposition, err)
+	}
+	return service, nil
 }
 
 func newMapSessionService(store mapsession.SnapshotStore) (*mapsession.Service, error) {

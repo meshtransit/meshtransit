@@ -33,9 +33,20 @@ type MapSessionService interface {
 	) (mapsession.Snapshot, error)
 }
 
+// MapStreamService is the caller-owned streaming application capability.
+type MapStreamService interface {
+	Serve(
+		context.Context,
+		control.AuthenticatedMachine,
+		mapsession.Request,
+		mapsession.StreamSink,
+	) error
+}
+
 // MapSessionHandlerOptions contains immutable endpoint dependencies.
 type MapSessionHandlerOptions struct {
 	Service   MapSessionService
+	Streams   MapStreamService
 	Logger    *slog.Logger
 	Telemetry *ControlTelemetry
 	Timeout   time.Duration
@@ -45,6 +56,7 @@ type MapSessionHandlerOptions struct {
 // It starts no goroutines and retains no request or snapshot state.
 type MapSessionHandler struct {
 	service   MapSessionService
+	streams   MapStreamService
 	logger    *slog.Logger
 	telemetry *ControlTelemetry
 	timeout   time.Duration
@@ -52,12 +64,14 @@ type MapSessionHandler struct {
 
 // NewMapSessionHandler validates and constructs the map endpoint adapter.
 func NewMapSessionHandler(options MapSessionHandlerOptions) (*MapSessionHandler, error) {
-	if options.Service == nil || options.Logger == nil || options.Telemetry == nil ||
+	if options.Service == nil || options.Streams == nil || options.Logger == nil ||
+		options.Telemetry == nil ||
 		options.Timeout < minimumMapOperationTimeout || options.Timeout > maximumMapOperationTimeout {
 		return nil, ErrInvalidMapSessionHandler
 	}
 	return &MapSessionHandler{
 		service:   options.Service,
+		streams:   options.Streams,
 		logger:    options.Logger,
 		telemetry: options.Telemetry,
 		timeout:   options.Timeout,
@@ -68,7 +82,7 @@ func NewMapSessionHandler(options MapSessionHandlerOptions) (*MapSessionHandler,
 func (handler *MapSessionHandler) Handler(
 	machine control.AuthenticatedMachine,
 ) (http.Handler, error) {
-	if handler == nil || handler.service == nil || handler.logger == nil ||
+	if handler == nil || handler.service == nil || handler.streams == nil || handler.logger == nil ||
 		handler.telemetry == nil || handler.timeout < minimumMapOperationTimeout ||
 		handler.timeout > maximumMapOperationTimeout || !machine.IsValid() {
 		return nil, ErrInvalidMapSessionHandler
@@ -105,9 +119,15 @@ func (handler *MapSessionHandler) serveAuthenticated(
 		http.Error(response, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
 		return
 	}
-	mapRequest, err := DecodeFullMapRequest(request.Body)
+	mapRequest, streaming, err := DecodeMapRequest(request.Body)
 	if err != nil {
 		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	if streaming {
+		handler.telemetry.maps.streamOpened()
+		defer handler.telemetry.maps.streamClosed()
+		telemetryResult = handler.serveStream(response, request, machine, mapRequest)
 		return
 	}
 	operationCtx, cancel := context.WithTimeout(request.Context(), handler.timeout)
@@ -146,6 +166,30 @@ func (handler *MapSessionHandler) serveAuthenticated(
 	telemetryResult = mapAuthorized
 }
 
+func (handler *MapSessionHandler) serveStream(
+	response http.ResponseWriter,
+	request *http.Request,
+	machine control.AuthenticatedMachine,
+	mapRequest mapsession.Request,
+) mapResult {
+	sink := newMapStreamSink(response, mapRequest.CapabilityVersion())
+	err := handler.streams.Serve(request.Context(), machine, mapRequest, sink)
+	result := classifyMapStreamResult(err, sink.started())
+	if !sink.started() {
+		failure := classifyMapFailure(err)
+		http.Error(response, http.StatusText(failure.status), failure.status)
+		return result
+	}
+	if result == mapStreamClosed || result == mapAuthorityChanged {
+		return result
+	}
+	if err == nil {
+		err = mapsession.ErrStreamUnavailable
+	}
+	handler.logger.ErrorContext(request.Context(), "map stream terminated", "error", err)
+	return result
+}
+
 type mapFailure struct {
 	status int
 	result mapResult
@@ -161,5 +205,28 @@ func classifyMapFailure(err error) mapFailure {
 		return mapFailure{status: http.StatusServiceUnavailable, result: mapCanceled}
 	default:
 		return mapFailure{status: http.StatusServiceUnavailable, result: mapUnavailable}
+	}
+}
+
+func classifyMapStreamResult(err error, started bool) mapResult {
+	switch {
+	case errors.Is(err, mapsession.ErrUnauthorized),
+		errors.Is(err, control.ErrInvalidAuthenticatedNode):
+		return mapAuthenticationFailed
+	case errors.Is(err, mapsession.ErrInvalidRequest):
+		return mapInvalidRequest
+	case errors.Is(err, mapsession.ErrPresenceConflict),
+		errors.Is(err, mapsession.ErrPresenceLost),
+		errors.Is(err, mapsession.ErrStreamUnavailable):
+		return mapCoordinationLost
+	case errors.Is(err, mapsession.ErrAuthorizationExpired),
+		errors.Is(err, mapsession.ErrStreamDiscontinuity):
+		return mapAuthorityChanged
+	case started && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)):
+		return mapStreamClosed
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return mapCanceled
+	default:
+		return mapUnavailable
 	}
 }

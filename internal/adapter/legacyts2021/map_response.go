@@ -47,12 +47,30 @@ func EncodeFullMapResponse(
 		Peers:        make([]*tailcfg.Node, 0),
 		PacketFilter: make([]tailcfg.FilterRule, 0),
 	})
-	if err != nil || len(document) == 0 || len(document) > maxMapResponseBytes {
+	if err != nil {
 		clear(document)
 		return nil, ErrMapResponse
 	}
+	return encodeMapDocument(document)
+}
+
+// EncodeKeepAliveMapResponse encodes one non-empty transport keepalive frame.
+func EncodeKeepAliveMapResponse() ([]byte, error) {
+	document, err := json.Marshal(struct {
+		KeepAlive bool `json:"KeepAlive"`
+	}{KeepAlive: true})
+	if err != nil {
+		return nil, ErrMapResponse
+	}
+	return encodeMapDocument(document)
+}
+
+func encodeMapDocument(document []byte) ([]byte, error) {
+	defer clear(document)
+	if len(document) == 0 || len(document) > maxMapResponseBytes {
+		return nil, ErrMapResponse
+	}
 	compressed := zstdframe.AppendEncode(nil, document, zstdframe.FastestCompression)
-	clear(document)
 	if len(compressed) == 0 || len(compressed) > maxMapResponseBytes {
 		clear(compressed)
 		return nil, ErrMapResponse

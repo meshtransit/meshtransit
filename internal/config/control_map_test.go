@@ -21,6 +21,10 @@ func TestLoadControlMapDefaults(t *testing.T) {
 		RequestTimeout:       defaultControlMapRequestTimeout,
 		StatementTimeout:     defaultControlMapStatementTimeout,
 		TransactionIdleLimit: defaultControlMapIdleLimit,
+		PresenceTTL:          defaultControlMapPresenceTTL,
+		CoordinationTimeout:  defaultControlMapCoordination,
+		KeepAliveInterval:    defaultControlMapKeepAlive,
+		ReconcileInterval:    defaultControlMapReconcile,
 	}
 	if got.Control.Map != want {
 		t.Fatalf("Control.Map = %+v, want %+v", got.Control.Map, want)
@@ -35,6 +39,10 @@ func TestLoadControlMapExplicitValues(t *testing.T) {
 		envControlMapRequestTimeout:       "13s",
 		envControlMapStatementTimeout:     "7s",
 		envControlMapTransactionIdleLimit: "11s",
+		envControlMapPresenceTTL:          "45s",
+		envControlMapCoordinationTimeout:  "4s",
+		envControlMapKeepAliveInterval:    "70s",
+		envControlMapReconcileInterval:    "20s",
 	})))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -43,6 +51,10 @@ func TestLoadControlMapExplicitValues(t *testing.T) {
 		RequestTimeout:       13 * time.Second,
 		StatementTimeout:     7 * time.Second,
 		TransactionIdleLimit: 11 * time.Second,
+		PresenceTTL:          45 * time.Second,
+		CoordinationTimeout:  4 * time.Second,
+		KeepAliveInterval:    70 * time.Second,
+		ReconcileInterval:    20 * time.Second,
 	}) {
 		t.Fatalf("Control.Map = %+v, want explicit values", got.Control)
 	}
@@ -62,6 +74,15 @@ func TestLoadControlMapRejectsUnsafeBoundsWithoutEchoingValues(t *testing.T) {
 		{name: "excess statement timeout", setting: envControlMapStatementTimeout, value: "61s"},
 		{name: "zero idle limit", setting: envControlMapTransactionIdleLimit, value: "0s"},
 		{name: "excess idle limit", setting: envControlMapTransactionIdleLimit, value: "61s"},
+		{name: "short presence ttl", setting: envControlMapPresenceTTL, value: "2s"},
+		{name: "excess presence ttl", setting: envControlMapPresenceTTL, value: "301s"},
+		{name: "short coordination timeout", setting: envControlMapCoordinationTimeout, value: "99ms"},
+		{name: "excess coordination timeout", setting: envControlMapCoordinationTimeout, value: "31s"},
+		{name: "coordination consumes renewal window", setting: envControlMapCoordinationTimeout, value: "10s"},
+		{name: "short keepalive", setting: envControlMapKeepAliveInterval, value: "999ms"},
+		{name: "excess keepalive", setting: envControlMapKeepAliveInterval, value: "91s"},
+		{name: "short reconcile", setting: envControlMapReconcileInterval, value: "999ms"},
+		{name: "excess reconcile", setting: envControlMapReconcileInterval, value: "301s"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
