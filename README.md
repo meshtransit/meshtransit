@@ -103,9 +103,10 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_WRITE_TIMEOUT` | `15s` | Authenticated session write deadline from 100ms through 5 minutes. |
 
 Control connection saturation, session admission results, Noise handshake
-duration, and authenticated-session duration are exported only through the
-private operator `/metrics` endpoint. Result labels come from a fixed internal
-set and never contain machine identity, endpoint, credential, or request data.
+duration, authenticated-session duration, and registration results/duration
+are exported only through the private operator `/metrics` endpoint. Result
+labels come from fixed internal sets and never contain machine identity,
+endpoint, credential, or request data.
 
 Enrollment credentials use the canonical transport grammar
 `mtc1.<credential-uuid>.<base64url-32-byte-token>`. The complete value is a

@@ -36,30 +36,33 @@ type RegistrationIDGenerator interface {
 
 // CredentialRegistrationHandlerOptions contains immutable endpoint dependencies.
 type CredentialRegistrationHandlerOptions struct {
-	Service RegistrationService
-	IDs     RegistrationIDGenerator
-	Logger  *slog.Logger
+	Service   RegistrationService
+	IDs       RegistrationIDGenerator
+	Logger    *slog.Logger
+	Telemetry *ControlTelemetry
 }
 
 // CredentialRegistrationHandler handles only the credential-enrollment subset
 // of the pinned client profile. It starts no goroutines and retains no request state.
 type CredentialRegistrationHandler struct {
-	service RegistrationService
-	ids     RegistrationIDGenerator
-	logger  *slog.Logger
+	service   RegistrationService
+	ids       RegistrationIDGenerator
+	logger    *slog.Logger
+	telemetry *ControlTelemetry
 }
 
 // NewCredentialRegistrationHandler validates and constructs the endpoint adapter.
 func NewCredentialRegistrationHandler(
 	options CredentialRegistrationHandlerOptions,
 ) (*CredentialRegistrationHandler, error) {
-	if options.Service == nil || options.IDs == nil || options.Logger == nil {
+	if options.Service == nil || options.IDs == nil || options.Logger == nil || options.Telemetry == nil {
 		return nil, ErrInvalidCredentialRegistrationHandler
 	}
 	return &CredentialRegistrationHandler{
-		service: options.Service,
-		ids:     options.IDs,
-		logger:  options.Logger,
+		service:   options.Service,
+		ids:       options.IDs,
+		logger:    options.Logger,
+		telemetry: options.Telemetry,
 	}, nil
 }
 
@@ -70,7 +73,7 @@ func (handler *CredentialRegistrationHandler) Handler(
 	machine control.AuthenticatedMachine,
 ) (http.Handler, error) {
 	if handler == nil || handler.service == nil || handler.ids == nil ||
-		handler.logger == nil || !machine.IsValid() {
+		handler.logger == nil || handler.telemetry == nil || !machine.IsValid() {
 		return nil, ErrInvalidCredentialRegistrationHandler
 	}
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -88,6 +91,11 @@ func (handler *CredentialRegistrationHandler) serveAuthenticated(
 		http.NotFound(response, request)
 		return
 	}
+	startedAt := handler.telemetry.registrations.start()
+	telemetryResult := registrationInvalidRequest
+	defer func() {
+		handler.telemetry.registrations.finish(startedAt, telemetryResult)
+	}()
 	if request.Method != http.MethodPost {
 		response.Header().Set("Allow", http.MethodPost)
 		http.Error(response, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
@@ -104,6 +112,7 @@ func (handler *CredentialRegistrationHandler) serveAuthenticated(
 	}
 	registrationID, err := handler.ids.NewRegistrationID()
 	if err != nil || !registrationID.IsValid() {
+		telemetryResult = registrationUnavailable
 		handler.logger.ErrorContext(request.Context(), "registration id generation failed", "error", err)
 		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		return
@@ -115,37 +124,47 @@ func (handler *CredentialRegistrationHandler) serveAuthenticated(
 	}
 	result, err := handler.service.Register(request.Context(), machine, registrationRequest)
 	if err != nil {
-		statusCode := registrationFailureStatus(err)
-		if statusCode == http.StatusServiceUnavailable && !errors.Is(err, context.Canceled) &&
+		failure := classifyRegistrationFailure(err)
+		telemetryResult = failure.result
+		if failure.status == http.StatusServiceUnavailable && !errors.Is(err, context.Canceled) &&
 			!errors.Is(err, context.DeadlineExceeded) {
 			handler.logger.ErrorContext(request.Context(), "credential registration failed", "error", err)
 		}
-		http.Error(response, http.StatusText(statusCode), statusCode)
+		http.Error(response, http.StatusText(failure.status), failure.status)
 		return
 	}
 	if !result.IsValid() || result.RegistrationID() != registrationID {
+		telemetryResult = registrationUnavailable
 		handler.logger.ErrorContext(request.Context(), "credential registration returned invalid result")
 		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		return
 	}
 
 	response.Header().Set("Content-Type", "application/json")
+	telemetryResult = registrationAuthorized
 	response.WriteHeader(http.StatusOK)
 	if err := WriteAuthorizedRegistrationResponse(response); err != nil {
 		handler.logger.DebugContext(request.Context(), "registration response write failed", "error", err)
 	}
 }
 
-func registrationFailureStatus(err error) int {
+type registrationFailure struct {
+	status int
+	result registrationResult
+}
+
+func classifyRegistrationFailure(err error) registrationFailure {
 	switch {
 	case errors.Is(err, control.ErrInvalidRegistrationRequest):
-		return http.StatusBadRequest
+		return registrationFailure{status: http.StatusBadRequest, result: registrationInvalidRequest}
 	case errors.Is(err, intake.ErrAuthenticationFailed):
-		return http.StatusUnauthorized
+		return registrationFailure{status: http.StatusUnauthorized, result: registrationAuthenticationFailed}
 	case errors.Is(err, registration.ErrIntentConflict):
-		return http.StatusConflict
+		return registrationFailure{status: http.StatusConflict, result: registrationConflict}
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return registrationFailure{status: http.StatusServiceUnavailable, result: registrationCanceled}
 	default:
-		return http.StatusServiceUnavailable
+		return registrationFailure{status: http.StatusServiceUnavailable, result: registrationUnavailable}
 	}
 }
 

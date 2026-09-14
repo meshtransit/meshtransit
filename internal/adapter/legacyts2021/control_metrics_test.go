@@ -44,6 +44,8 @@ func TestControlTelemetryExposesBoundedIngressSignals(t *testing.T) {
 		"handshake success":    `meshtransit_control_noise_handshake_duration_seconds_count{result="success"} 1`,
 		"handshake failed":     `meshtransit_control_noise_handshake_duration_seconds_count{result="failure"} 1`,
 		"session duration":     `meshtransit_control_authenticated_session_duration_seconds_count 1`,
+		"registration active":  `meshtransit_control_registrations_active 0`,
+		"registration zero":    `meshtransit_control_registration_requests_total{result="authorized"} 0`,
 	} {
 		if !strings.Contains(body, value) {
 			t.Errorf("metrics missing %s %q", name, value)

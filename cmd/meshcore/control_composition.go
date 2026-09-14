@@ -20,11 +20,19 @@ func composeControlListener(
 	if registrationService == nil || logger == nil {
 		return nil, errInvalidControlComposition
 	}
+	telemetry, err := legacyts2021.NewControlTelemetry(
+		controlConfig.MaxSessions,
+		controlConfig.MaxSessions,
+	)
+	if err != nil {
+		return nil, errors.Join(errInvalidControlComposition, err)
+	}
 	handler, err := legacyts2021.NewCredentialRegistrationHandler(
 		legacyts2021.CredentialRegistrationHandlerOptions{
-			Service: registrationService,
-			IDs:     intake.PublicRegistrationIDGenerator{},
-			Logger:  logger,
+			Service:   registrationService,
+			IDs:       intake.PublicRegistrationIDGenerator{},
+			Logger:    logger,
+			Telemetry: telemetry,
 		},
 	)
 	if err != nil {
@@ -34,13 +42,6 @@ func composeControlListener(
 	privateKey, certificate, err := loadControlIdentity(controlConfig)
 	if err != nil {
 		return nil, err
-	}
-	telemetry, err := legacyts2021.NewControlTelemetry(
-		controlConfig.MaxSessions,
-		controlConfig.MaxSessions,
-	)
-	if err != nil {
-		return nil, errors.Join(errInvalidControlComposition, err)
 	}
 	sessions, err := legacyts2021.NewControlServer(legacyts2021.ControlServerOptions{
 		PrivateKey:           privateKey,

@@ -53,6 +53,17 @@ func TestCredentialRegistrationHandlerAuthorizesBoundRequest(t *testing.T) {
 	if service.calls.Load() != 1 || ids.calls.Load() != 1 || !service.sawValid.Load() {
 		t.Fatal("credential registration did not generate and bind exactly one valid request")
 	}
+	metrics := gatherControlMetrics(t, handler.telemetry)
+	if !strings.Contains(
+		metrics,
+		`meshtransit_control_registration_requests_total{result="authorized"} 1`,
+	) || !strings.Contains(metrics, `meshtransit_control_registrations_active 0`) ||
+		!strings.Contains(
+			metrics,
+			`meshtransit_control_registration_duration_seconds_count{result="authorized"} 1`,
+		) {
+		t.Fatalf("authorized registration metrics are incomplete: %s", metrics)
+	}
 }
 
 func TestCredentialRegistrationHandlerRejectsUnrelatedCommittedResult(t *testing.T) {
@@ -177,16 +188,43 @@ func TestCredentialRegistrationHandlerMapsServiceFailures(t *testing.T) {
 		name       string
 		serviceErr error
 		wantStatus int
+		wantResult string
 	}{
-		{name: "invalid binding", serviceErr: control.ErrInvalidRegistrationRequest, wantStatus: http.StatusBadRequest},
-		{name: "credential rejected", serviceErr: intake.ErrAuthenticationFailed, wantStatus: http.StatusUnauthorized},
-		{name: "intent conflict", serviceErr: registration.ErrIntentConflict, wantStatus: http.StatusConflict},
-		{name: "request canceled", serviceErr: context.Canceled, wantStatus: http.StatusServiceUnavailable},
-		{name: "request deadline", serviceErr: context.DeadlineExceeded, wantStatus: http.StatusServiceUnavailable},
+		{
+			name:       "invalid binding",
+			serviceErr: control.ErrInvalidRegistrationRequest,
+			wantStatus: http.StatusBadRequest,
+			wantResult: "invalid_request",
+		},
+		{
+			name:       "credential rejected",
+			serviceErr: intake.ErrAuthenticationFailed,
+			wantStatus: http.StatusUnauthorized,
+			wantResult: "authentication_failed",
+		},
+		{
+			name:       "intent conflict",
+			serviceErr: registration.ErrIntentConflict,
+			wantStatus: http.StatusConflict,
+			wantResult: "conflict",
+		},
+		{
+			name:       "request canceled",
+			serviceErr: context.Canceled,
+			wantStatus: http.StatusServiceUnavailable,
+			wantResult: "canceled",
+		},
+		{
+			name:       "request deadline",
+			serviceErr: context.DeadlineExceeded,
+			wantStatus: http.StatusServiceUnavailable,
+			wantResult: "canceled",
+		},
 		{
 			name:       "internal failure",
 			serviceErr: errors.New("controlled service failure"),
 			wantStatus: http.StatusServiceUnavailable,
+			wantResult: "unavailable",
 		},
 	}
 	for _, test := range tests {
@@ -212,6 +250,12 @@ func TestCredentialRegistrationHandlerMapsServiceFailures(t *testing.T) {
 			}
 			if strings.Contains(response.Body.String(), test.serviceErr.Error()) {
 				t.Fatal("registration response disclosed internal service error")
+			}
+			metrics := gatherControlMetrics(t, handler.telemetry)
+			wantMetric := `meshtransit_control_registration_requests_total{result="` +
+				test.wantResult + `"} 1`
+			if !strings.Contains(metrics, wantMetric) {
+				t.Fatalf("registration metrics missing %q: %s", wantMetric, metrics)
 			}
 		})
 	}
@@ -304,6 +348,12 @@ func TestCredentialRegistrationHandlerIsSafeForConcurrentUse(t *testing.T) {
 	if service.calls.Load() != requestCount {
 		t.Fatalf("service calls = %d, want %d", service.calls.Load(), requestCount)
 	}
+	metrics := gatherControlMetrics(t, handler.telemetry)
+	wantMetric := `meshtransit_control_registration_requests_total{result="authorized"} 32`
+	if !strings.Contains(metrics, wantMetric) ||
+		!strings.Contains(metrics, `meshtransit_control_registrations_active 0`) {
+		t.Fatalf("concurrent registration metrics are incomplete: %s", metrics)
+	}
 }
 
 type recordingRegistrationService struct {
@@ -381,9 +431,10 @@ func newCredentialRegistrationHandler(
 	t.Helper()
 
 	handler, err := NewCredentialRegistrationHandler(CredentialRegistrationHandlerOptions{
-		Service: service,
-		IDs:     ids,
-		Logger:  slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		Service:   service,
+		IDs:       ids,
+		Logger:    slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		Telemetry: controlTelemetryFixture(t),
 	})
 	if err != nil {
 		t.Fatalf("NewCredentialRegistrationHandler() error = %v", err)

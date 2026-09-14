@@ -214,6 +214,8 @@ func assertRoleAllMetrics(ctx context.Context, address string) error {
 		"meshtransit_control_connections_limit 8",
 		"meshtransit_control_sessions_limit 8",
 		`meshtransit_control_session_attempts_total{result="established"} 0`,
+		"meshtransit_control_registrations_active 0",
+		`meshtransit_control_registration_requests_total{result="authorized"} 0`,
 	} {
 		if !strings.Contains(body, metric) {
 			return fmt.Errorf("metrics missing %q", metric)

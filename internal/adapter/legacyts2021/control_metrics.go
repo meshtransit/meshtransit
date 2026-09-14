@@ -39,6 +39,7 @@ type ControlTelemetry struct {
 	sessionAttempts       *prometheus.CounterVec
 	handshakeDuration     *prometheus.HistogramVec
 	authenticatedDuration prometheus.Histogram
+	registrations         registrationMetrics
 }
 
 // NewControlTelemetry constructs isolated metrics without using the default registry.
@@ -104,6 +105,7 @@ func NewControlTelemetry(connectionLimit, sessionLimit int) (*ControlTelemetry, 
 		Help:    "Duration of established transport-authenticated control sessions.",
 		Buckets: []float64{0.1, 0.5, 1, 5, 15, 30, 60, 300, 900, 3600},
 	})
+	registrations := newRegistrationMetrics()
 
 	telemetry := &ControlTelemetry{
 		connectionCapacity:    connectionLimit,
@@ -117,6 +119,7 @@ func NewControlTelemetry(connectionLimit, sessionLimit int) (*ControlTelemetry, 
 		sessionAttempts:       sessionAttempts,
 		handshakeDuration:     handshakeDuration,
 		authenticatedDuration: authenticatedDuration,
+		registrations:         registrations,
 	}
 	telemetry.collectors = []prometheus.Collector{
 		telemetry.connectionsActive,
@@ -129,6 +132,8 @@ func NewControlTelemetry(connectionLimit, sessionLimit int) (*ControlTelemetry, 
 		telemetry.handshakeDuration,
 		telemetry.authenticatedDuration,
 	}
+	registrationCollectors := registrations.collectors()
+	telemetry.collectors = append(telemetry.collectors, registrationCollectors[:]...)
 	return telemetry, nil
 }
 
