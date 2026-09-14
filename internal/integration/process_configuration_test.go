@@ -33,7 +33,10 @@ func TestRoleAllProcessRejectsInvalidConfigurationBeforeListening(t *testing.T) 
 	if runtimeUser == "" {
 		t.Fatal("MESHTRANSIT_POSTGRES_RUNTIME_USER is required")
 	}
-	environment := integrationProcessEnvironment(listener.Addr().String())
+	environment := integrationProcessEnvironment(
+		listener.Addr().String(),
+		reserveLoopbackAddress(t),
+	)
 	environment = setEnvironmentValue(
 		environment,
 		"MESHTRANSIT_POSTGRES_WORKER_USER",

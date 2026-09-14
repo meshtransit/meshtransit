@@ -236,6 +236,9 @@ func credentialDigestTestValues(activePath string) map[string]string {
 		"MESHTRANSIT_REDIS_CA_FILE":                     "/run/secrets/redis-ca.pem",
 		"MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_ID":   "active-v1",
 		"MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_FILE": activePath,
+		"MESHTRANSIT_CONTROL_TLS_CERTIFICATE_FILE":      "/run/secrets/control-tls-certificate.pem",
+		"MESHTRANSIT_CONTROL_TLS_PRIVATE_KEY_FILE":      "/run/secrets/control-tls-private-key.pem",
+		"MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE":    "/run/secrets/control-noise-private-key",
 	}
 }
 

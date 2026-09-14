@@ -12,6 +12,8 @@ migration_password="$(openssl rand -hex 24)"
 runtime_password="$(openssl rand -hex 24)"
 worker_password="$(openssl rand -hex 24)"
 redis_password="$(openssl rand -hex 24)"
+enrollment_digest_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
+noise_private_key="privkey:$(openssl rand -hex 32)"
 
 cleanup() {
 	docker rm --force "${redis_container}" >/dev/null 2>&1 || true
@@ -52,16 +54,44 @@ openssl x509 \
 	-extensions server \
 	-out "${fixture_dir}/server.crt" \
 	>/dev/null 2>&1
+openssl req \
+	-newkey rsa:2048 \
+	-nodes \
+	-subj "/CN=example.com" \
+	-keyout "${fixture_dir}/control-server.key" \
+	-out "${fixture_dir}/control-server.csr" \
+	>/dev/null 2>&1
+printf '%s\n' \
+	'[server]' \
+	'subjectAltName=DNS:example.com' \
+	'extendedKeyUsage=serverAuth' \
+	>"${fixture_dir}/control-server.ext"
+openssl x509 \
+	-req \
+	-days 1 \
+	-in "${fixture_dir}/control-server.csr" \
+	-CA "${fixture_dir}/ca.crt" \
+	-CAkey "${fixture_dir}/ca.key" \
+	-CAcreateserial \
+	-extfile "${fixture_dir}/control-server.ext" \
+	-extensions server \
+	-out "${fixture_dir}/control-server.crt" \
+	>/dev/null 2>&1
 printf '%s\n' "${migration_password}" >"${fixture_dir}/migration-password"
 printf '%s\n' "${runtime_password}" >"${fixture_dir}/runtime-password"
 printf '%s\n' "${worker_password}" >"${fixture_dir}/worker-password"
 printf '%s\n' "${postgres_password}" >"${fixture_dir}/postgres-admin-password"
 printf 'redis-%s\n' "${redis_password}" >"${fixture_dir}/redis-password"
+printf '%s\n' "${enrollment_digest_key}" >"${fixture_dir}/enrollment-digest-key"
+printf '%s\n' "${noise_private_key}" >"${fixture_dir}/control-noise-private-key"
 chmod 0600 "${fixture_dir}/migration-password"
 chmod 0600 "${fixture_dir}/runtime-password"
 chmod 0600 "${fixture_dir}/worker-password"
 chmod 0600 "${fixture_dir}/postgres-admin-password"
 chmod 0600 "${fixture_dir}/redis-password"
+chmod 0600 "${fixture_dir}/enrollment-digest-key"
+chmod 0600 "${fixture_dir}/control-noise-private-key"
+chmod 0600 "${fixture_dir}/control-server.key"
 
 docker run \
 	--detach \
@@ -212,6 +242,13 @@ export MESHTRANSIT_REDIS_USERNAME=mesh_worker
 export MESHTRANSIT_REDIS_PASSWORD_FILE="${fixture_dir}/redis-password"
 export MESHTRANSIT_REDIS_CA_FILE="${fixture_dir}/ca.crt"
 export MESHTRANSIT_REDIS_POOL_SIZE=1
+export MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_ID=integration-v1
+export MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_FILE="${fixture_dir}/enrollment-digest-key"
+export MESHTRANSIT_CONTROL_TLS_CERTIFICATE_FILE="${fixture_dir}/control-server.crt"
+export MESHTRANSIT_CONTROL_TLS_PRIVATE_KEY_FILE="${fixture_dir}/control-server.key"
+export MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE="${fixture_dir}/control-noise-private-key"
+export MESHTRANSIT_CONTROL_MAX_SESSIONS=8
+export MESHTRANSIT_CONTROL_MAX_STREAMS_PER_SESSION=2
 export MESHTRANSIT_TEST_POSTGRES_ADMIN_PASSWORD_FILE="${fixture_dir}/postgres-admin-password"
 export MESHTRANSIT_TEST_POSTGRES_WORKER_PASSWORD_FILE="${fixture_dir}/worker-password"
 

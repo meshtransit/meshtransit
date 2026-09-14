@@ -41,20 +41,25 @@ func TestRoleAllProcessRestartsAfterGracefulShutdown(t *testing.T) {
 func assertRoleAllProcessCycle(t *testing.T, binary string) {
 	t.Helper()
 
-	address := reserveLoopbackAddress(t)
-	process := startIntegrationProcess(t, binary, integrationProcessEnvironment(address))
+	healthAddress := reserveLoopbackAddress(t)
+	controlAddress := reserveLoopbackAddress(t)
+	process := startIntegrationProcess(
+		t,
+		binary,
+		integrationProcessEnvironment(healthAddress, controlAddress),
+	)
 	t.Cleanup(func() { process.forceStop(t) })
 
 	startCtx, cancelStart := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancelStart()
-	if err := waitForReady(startCtx, process, address); err != nil {
+	if err := waitForReady(startCtx, process, healthAddress); err != nil {
 		process.forceStop(t)
 		t.Fatalf("wait for role=all readiness: %v; stderr: %s", err, process.stderr.String())
 	}
 
 	metricsCtx, cancelMetrics := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancelMetrics()
-	if err := assertRoleAllMetrics(metricsCtx, address); err != nil {
+	if err := assertRoleAllMetrics(metricsCtx, healthAddress); err != nil {
 		process.forceStop(t)
 		t.Fatalf("verify role=all metrics: %v; stderr: %s", err, process.stderr.String())
 	}
@@ -272,10 +277,11 @@ func validateTestBinary(t *testing.T, value string) string {
 	return binary
 }
 
-func integrationProcessEnvironment(address string) []string {
+func integrationProcessEnvironment(healthAddress, controlAddress string) []string {
 	overrides := map[string]string{
 		"MESHTRANSIT_ROLE":                               "all",
-		"MESHTRANSIT_HEALTH_ADDRESS":                     address,
+		"MESHTRANSIT_HEALTH_ADDRESS":                     healthAddress,
+		"MESHTRANSIT_CONTROL_ADDRESS":                    controlAddress,
 		"MESHTRANSIT_SHUTDOWN_TIMEOUT":                   "3s",
 		"MESHTRANSIT_DEPENDENCY_CHECK_TIMEOUT":           "1s",
 		"MESHTRANSIT_DEPENDENCY_CHECK_INTERVAL":          "2s",

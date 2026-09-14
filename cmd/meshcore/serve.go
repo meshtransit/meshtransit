@@ -168,6 +168,40 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		}
 		services = append(services, app.OwnedService{Name: "network-revision-worker", Service: workerService})
 	}
+	if processConfig.Control != nil {
+		if processConfig.Enrollment == nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "control_configuration_failure")
+			return 1
+		}
+		registrationService, composeErr := composeRegistration(
+			*processConfig.Enrollment,
+			storagePools.runtime,
+		)
+		if composeErr != nil {
+			logger.ErrorContext(
+				ctx,
+				"startup failed",
+				"error_code", "registration_composition_failure",
+				"error", composeErr,
+			)
+			return 1
+		}
+		controlListener, composeErr := composeControlListener(
+			*processConfig.Control,
+			registrationService,
+			logger,
+		)
+		if composeErr != nil {
+			logger.ErrorContext(
+				ctx,
+				"startup failed",
+				"error_code", "control_composition_failure",
+				"error", composeErr,
+			)
+			return 1
+		}
+		services = append(services, app.OwnedService{Name: "control", Service: controlListener})
+	}
 	application, err := app.New(
 		app.Options{
 			Roles:           roles,
