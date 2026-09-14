@@ -19,6 +19,12 @@ const (
 	postgresOperationRegistrationApply    postgresOperation = "registration_apply"
 	postgresOperationRegistrationCommit   postgresOperation = "registration_commit"
 	postgresOperationRegistrationRollback postgresOperation = "registration_rollback"
+	postgresOperationIntakeBegin          postgresOperation = "registration_intake_begin"
+	postgresOperationIntakeResolve        postgresOperation = "registration_intake_resolve"
+	postgresOperationIntakeApply          postgresOperation = "registration_intake_apply"
+	postgresOperationIntakeCommit         postgresOperation = "registration_intake_commit"
+	postgresOperationIntakeRollback       postgresOperation = "registration_intake_rollback"
+	postgresOperationIntakeReplay         postgresOperation = "registration_intake_replay"
 	postgresOperationOutboxBacklog        postgresOperation = "outbox_backlog"
 	postgresOperationOutboxClaim          postgresOperation = "outbox_claim"
 	postgresOperationOutboxLoadRevision   postgresOperation = "outbox_load_revision"
@@ -38,6 +44,12 @@ var (
 		postgresOperationRegistrationApply,
 		postgresOperationRegistrationCommit,
 		postgresOperationRegistrationRollback,
+		postgresOperationIntakeBegin,
+		postgresOperationIntakeResolve,
+		postgresOperationIntakeApply,
+		postgresOperationIntakeCommit,
+		postgresOperationIntakeRollback,
+		postgresOperationIntakeReplay,
 		postgresOperationOutboxBacklog,
 		postgresOperationOutboxClaim,
 		postgresOperationOutboxLoadRevision,
@@ -271,7 +283,13 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationRegistrationResolve ||
 			operation == postgresOperationRegistrationApply ||
 			operation == postgresOperationRegistrationCommit ||
-			operation == postgresOperationRegistrationRollback
+			operation == postgresOperationRegistrationRollback ||
+			operation == postgresOperationIntakeBegin ||
+			operation == postgresOperationIntakeResolve ||
+			operation == postgresOperationIntakeApply ||
+			operation == postgresOperationIntakeCommit ||
+			operation == postgresOperationIntakeRollback ||
+			operation == postgresOperationIntakeReplay
 	}
 	if role != PoolRoleWorker {
 		return false

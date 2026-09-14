@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/meshtransit/meshtransit/internal/adapter/postgres/registrationintake"
 	"github.com/meshtransit/meshtransit/internal/app"
 	"github.com/meshtransit/meshtransit/internal/config"
 )
@@ -54,11 +55,14 @@ type Pool struct {
 	outboxDatabase                  outboxDatabase
 	registrationReplayDatabase      registrationReplayDatabase
 	registrationTransactionDatabase registrationTransactionDatabase
-	metrics                         *postgresPoolMetrics
-	acquired                        func() int32
-	close                           func()
-	closeMu                         sync.Mutex
-	closed                          bool
+	registrationIntake              func(
+		registrationintake.Options,
+	) (*registrationintake.Transactions, error)
+	metrics  *postgresPoolMetrics
+	acquired func() int32
+	close    func()
+	closeMu  sync.Mutex
+	closed   bool
 }
 
 // Open constructs a lazy, bounded TLS-only PostgreSQL pool. Connectivity is
@@ -84,18 +88,28 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrOpen, err)
 	}
+	metrics := newPostgresPoolMetrics(options.Role, func() postgresPoolStats {
+		return snapshotPostgresPoolStats(pool.Stat())
+	})
 	return &Pool{
 		role:                            options.Role,
 		ping:                            pool.Ping,
 		outboxDatabase:                  pgxOutboxDatabase{pool: pool},
 		registrationReplayDatabase:      pgxRegistrationReplayDatabase{pool: pool},
 		registrationTransactionDatabase: pgxRegistrationTransactionDatabase{pool: pool},
+		registrationIntake: func(
+			options registrationintake.Options,
+		) (*registrationintake.Transactions, error) {
+			return registrationintake.NewTransactions(
+				pool,
+				options,
+				metrics,
+			)
+		},
 		checkSchema: func(ctx context.Context) error {
 			return checkRuntimeSchemaCompatibility(ctx, pool, options.User)
 		},
-		metrics: newPostgresPoolMetrics(options.Role, func() postgresPoolStats {
-			return snapshotPostgresPoolStats(pool.Stat())
-		}),
+		metrics:  metrics,
 		acquired: func() int32 { return pool.Stat().AcquiredConns() },
 		close:    pool.Close,
 	}, nil

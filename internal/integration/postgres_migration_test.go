@@ -183,6 +183,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertWorkerCannotLockNetworkAuditStream(ctx, t, workerConnection)
 	assertWorkerCannotAdvanceNetworkInventoryRevision(ctx, t, workerConnection)
 	assertWorkerCannotLockRegistrationResources(ctx, t, workerConnection)
+	assertWorkerCannotResolveRegistrationIntakeScope(ctx, t, workerConnection)
 	assertWorkerOutboxPrivilegeContract(ctx, t, workerConnection)
 	workerPool := openIntegrationWorkerPool(ctx, t, adminConfig)
 	assertWorkerOutboxDelivery(ctx, t, adminConnection, workerPool)
@@ -215,4 +216,5 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		adminConnection,
 		runtimePool,
 	)
+	assertPostgreSQLRegistrationIntake(ctx, t, adminConnection, runtimePool)
 }
