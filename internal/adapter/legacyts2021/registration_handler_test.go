@@ -1,4 +1,4 @@
-package controlhttp
+package legacyts2021
 
 import (
 	"context"
@@ -429,16 +429,6 @@ func serveRegistration(
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
-}
-
-func parseRegistrationID(t testing.TB) enrollment.RegistrationID {
-	t.Helper()
-
-	id, err := enrollment.ParseRegistrationID("01890f90-0000-7000-8000-000000000002")
-	if err != nil {
-		t.Fatalf("enrollment.ParseRegistrationID() error = %v", err)
-	}
-	return id
 }
 
 var (

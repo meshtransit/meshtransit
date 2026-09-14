@@ -1,6 +1,4 @@
-// Package controlhttp exposes authenticated, bounded HTTP adapters for the
-// MeshTransit client control surface.
-package controlhttp
+package legacyts2021
 
 import (
 	"context"
@@ -9,7 +7,6 @@ import (
 	"mime"
 	"net/http"
 
-	"github.com/meshtransit/meshtransit/api/protocol/legacyts2021"
 	"github.com/meshtransit/meshtransit/internal/control"
 	"github.com/meshtransit/meshtransit/internal/enrollment"
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration"
@@ -111,7 +108,7 @@ func (handler *CredentialRegistrationHandler) serveAuthenticated(
 		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		return
 	}
-	registrationRequest, err := legacyts2021.DecodeCredentialRegistration(request.Body, registrationID)
+	registrationRequest, err := DecodeCredentialRegistration(request.Body, registrationID)
 	if err != nil {
 		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
@@ -134,7 +131,7 @@ func (handler *CredentialRegistrationHandler) serveAuthenticated(
 
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(http.StatusOK)
-	if err := legacyts2021.WriteAuthorizedRegistrationResponse(response); err != nil {
+	if err := WriteAuthorizedRegistrationResponse(response); err != nil {
 		handler.logger.DebugContext(request.Context(), "registration response write failed", "error", err)
 	}
 }
