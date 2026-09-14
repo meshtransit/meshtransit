@@ -18,6 +18,7 @@ func TestLoadControlMapDefaults(t *testing.T) {
 		t.Fatal("Control = nil for control role")
 	}
 	want := ControlMapConfig{
+		RequestTimeout:       defaultControlMapRequestTimeout,
 		StatementTimeout:     defaultControlMapStatementTimeout,
 		TransactionIdleLimit: defaultControlMapIdleLimit,
 	}
@@ -31,6 +32,7 @@ func TestLoadControlMapExplicitValues(t *testing.T) {
 
 	got, err := Load(mapLookup(validProcessValues(map[string]string{
 		envRole:                           "control",
+		envControlMapRequestTimeout:       "13s",
 		envControlMapStatementTimeout:     "7s",
 		envControlMapTransactionIdleLimit: "11s",
 	})))
@@ -38,6 +40,7 @@ func TestLoadControlMapExplicitValues(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 	if got.Control == nil || got.Control.Map != (ControlMapConfig{
+		RequestTimeout:       13 * time.Second,
 		StatementTimeout:     7 * time.Second,
 		TransactionIdleLimit: 11 * time.Second,
 	}) {
@@ -53,6 +56,8 @@ func TestLoadControlMapRejectsUnsafeBoundsWithoutEchoingValues(t *testing.T) {
 		setting string
 		value   string
 	}{
+		{name: "short request timeout", setting: envControlMapRequestTimeout, value: "99ms"},
+		{name: "excess request timeout", setting: envControlMapRequestTimeout, value: "61s"},
 		{name: "zero statement timeout", setting: envControlMapStatementTimeout, value: "0s"},
 		{name: "excess statement timeout", setting: envControlMapStatementTimeout, value: "61s"},
 		{name: "zero idle limit", setting: envControlMapTransactionIdleLimit, value: "0s"},

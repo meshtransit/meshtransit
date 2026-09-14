@@ -7,6 +7,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/adapter/legacyts2021"
 	"github.com/meshtransit/meshtransit/internal/config"
+	"github.com/meshtransit/meshtransit/internal/control/mapsession"
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration/intake"
 )
 
@@ -15,9 +16,10 @@ var errInvalidControlComposition = errors.New("invalid control composition")
 func composeControlListener(
 	controlConfig config.ControlConfig,
 	registrationService legacyts2021.RegistrationService,
+	mapSessionService legacyts2021.MapSessionService,
 	logger *slog.Logger,
 ) (*legacyts2021.ControlListener, error) {
-	if registrationService == nil || logger == nil {
+	if registrationService == nil || mapSessionService == nil || logger == nil {
 		return nil, errInvalidControlComposition
 	}
 	telemetry, err := legacyts2021.NewControlTelemetry(
@@ -38,6 +40,21 @@ func composeControlListener(
 	if err != nil {
 		return nil, errors.Join(errInvalidControlComposition, err)
 	}
+	mapHandler, err := legacyts2021.NewMapSessionHandler(
+		legacyts2021.MapSessionHandlerOptions{
+			Service:   mapSessionService,
+			Logger:    logger,
+			Telemetry: telemetry,
+			Timeout:   controlConfig.Map.RequestTimeout,
+		},
+	)
+	if err != nil {
+		return nil, errors.Join(errInvalidControlComposition, err)
+	}
+	sessionRoutes, err := legacyts2021.NewAuthenticatedRoutes(handler, mapHandler)
+	if err != nil {
+		return nil, errors.Join(errInvalidControlComposition, err)
+	}
 
 	privateKey, certificate, err := loadControlIdentity(controlConfig)
 	if err != nil {
@@ -45,7 +62,7 @@ func composeControlListener(
 	}
 	sessions, err := legacyts2021.NewControlServer(legacyts2021.ControlServerOptions{
 		PrivateKey:           privateKey,
-		Sessions:             handler,
+		Sessions:             sessionRoutes,
 		Logger:               logger,
 		Telemetry:            telemetry,
 		MaxSessions:          controlConfig.MaxSessions,
@@ -72,6 +89,8 @@ func composeControlListener(
 	}
 	return listener, nil
 }
+
+var _ legacyts2021.MapSessionService = (*mapsession.Service)(nil)
 
 func loadControlIdentity(
 	controlConfig config.ControlConfig,

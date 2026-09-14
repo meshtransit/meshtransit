@@ -1,0 +1,37 @@
+{
+  "contract_version": 1,
+  "profile": "legacy-ts2021-cap142-v1",
+  "client_evidence": {
+    "repository": "https://github.com/meshtransit/meshd.git",
+    "revision": "78cb5130400bc003974f7730b319350fed129bbe"
+  },
+  "request": {
+    "method": "POST",
+    "path": "/machine/map",
+    "session_protocol": "noise-http2",
+    "capability": 142,
+    "compression": "zstd",
+    "stream": false,
+    "authenticated_payload_bindings": [
+      "node_key"
+    ],
+    "forbidden_payload_authority": [
+      "workspace_id",
+      "network_id",
+      "tenant_id",
+      "account_id"
+    ]
+  },
+  "response": {
+    "framing": "uint32-little-endian-length",
+    "compression": "zstd",
+    "maximum_decoded_bytes": 65536,
+    "required_fields": [
+      "Node",
+      "Peers",
+      "PacketFilter"
+    ],
+    "empty_peers_semantics": "replace-complete-set-with-empty",
+    "empty_packet_filter_semantics": "deny-all"
+  }
+}

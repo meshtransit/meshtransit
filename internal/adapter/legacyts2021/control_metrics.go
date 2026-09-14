@@ -40,6 +40,7 @@ type ControlTelemetry struct {
 	handshakeDuration     *prometheus.HistogramVec
 	authenticatedDuration prometheus.Histogram
 	registrations         registrationMetrics
+	maps                  mapMetrics
 }
 
 // NewControlTelemetry constructs isolated metrics without using the default registry.
@@ -106,6 +107,7 @@ func NewControlTelemetry(connectionLimit, sessionLimit int) (*ControlTelemetry, 
 		Buckets: []float64{0.1, 0.5, 1, 5, 15, 30, 60, 300, 900, 3600},
 	})
 	registrations := newRegistrationMetrics()
+	maps := newMapMetrics()
 
 	telemetry := &ControlTelemetry{
 		connectionCapacity:    connectionLimit,
@@ -120,6 +122,7 @@ func NewControlTelemetry(connectionLimit, sessionLimit int) (*ControlTelemetry, 
 		handshakeDuration:     handshakeDuration,
 		authenticatedDuration: authenticatedDuration,
 		registrations:         registrations,
+		maps:                  maps,
 	}
 	telemetry.collectors = []prometheus.Collector{
 		telemetry.connectionsActive,
@@ -134,6 +137,8 @@ func NewControlTelemetry(connectionLimit, sessionLimit int) (*ControlTelemetry, 
 	}
 	registrationCollectors := registrations.collectors()
 	telemetry.collectors = append(telemetry.collectors, registrationCollectors[:]...)
+	mapCollectors := maps.collectors()
+	telemetry.collectors = append(telemetry.collectors, mapCollectors[:]...)
 	return telemetry, nil
 }
 

@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"net"
 	"net/http"
 	"strings"
@@ -229,8 +228,7 @@ func readResponse(response *http.Response) ([]byte, error) {
 }
 
 func isJSON(value string) bool {
-	mediaType, _, err := mime.ParseMediaType(value)
-	return err == nil && mediaType == "application/json"
+	return isMediaType(value, "application/json")
 }
 
 func headerContainsToken(values []string, token string) bool {

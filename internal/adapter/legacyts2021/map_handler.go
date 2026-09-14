@@ -1,0 +1,165 @@
+package legacyts2021
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"mime"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/meshtransit/meshtransit/internal/control"
+	"github.com/meshtransit/meshtransit/internal/control/mapsession"
+)
+
+const mapSessionPath = "/machine/map"
+
+const (
+	minimumMapOperationTimeout = 100 * time.Millisecond
+	maximumMapOperationTimeout = time.Minute
+)
+
+// ErrInvalidMapSessionHandler reports missing dependencies or transport identity.
+var ErrInvalidMapSessionHandler = errors.New("control http: invalid map session handler")
+
+// MapSessionService is the authenticated application capability consumed by the map endpoint.
+type MapSessionService interface {
+	Open(
+		context.Context,
+		control.AuthenticatedMachine,
+		mapsession.Request,
+	) (mapsession.Snapshot, error)
+}
+
+// MapSessionHandlerOptions contains immutable endpoint dependencies.
+type MapSessionHandlerOptions struct {
+	Service   MapSessionService
+	Logger    *slog.Logger
+	Telemetry *ControlTelemetry
+	Timeout   time.Duration
+}
+
+// MapSessionHandler serves the one-shot full-map subset of the pinned profile.
+// It starts no goroutines and retains no request or snapshot state.
+type MapSessionHandler struct {
+	service   MapSessionService
+	logger    *slog.Logger
+	telemetry *ControlTelemetry
+	timeout   time.Duration
+}
+
+// NewMapSessionHandler validates and constructs the map endpoint adapter.
+func NewMapSessionHandler(options MapSessionHandlerOptions) (*MapSessionHandler, error) {
+	if options.Service == nil || options.Logger == nil || options.Telemetry == nil ||
+		options.Timeout < minimumMapOperationTimeout || options.Timeout > maximumMapOperationTimeout {
+		return nil, ErrInvalidMapSessionHandler
+	}
+	return &MapSessionHandler{
+		service:   options.Service,
+		logger:    options.Logger,
+		telemetry: options.Telemetry,
+		timeout:   options.Timeout,
+	}, nil
+}
+
+// Handler binds one transport-authenticated machine to the map endpoint.
+func (handler *MapSessionHandler) Handler(
+	machine control.AuthenticatedMachine,
+) (http.Handler, error) {
+	if handler == nil || handler.service == nil || handler.logger == nil ||
+		handler.telemetry == nil || handler.timeout < minimumMapOperationTimeout ||
+		handler.timeout > maximumMapOperationTimeout || !machine.IsValid() {
+		return nil, ErrInvalidMapSessionHandler
+	}
+	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		handler.serveAuthenticated(response, request, machine)
+	}), nil
+}
+
+func (handler *MapSessionHandler) serveAuthenticated(
+	response http.ResponseWriter,
+	request *http.Request,
+	machine control.AuthenticatedMachine,
+) {
+	setResponseHeaders(response)
+	if request.URL == nil || request.URL.Path != mapSessionPath {
+		http.NotFound(response, request)
+		return
+	}
+	startedAt := handler.telemetry.maps.start()
+	telemetryResult := mapInvalidRequest
+	defer func() { handler.telemetry.maps.finish(startedAt, telemetryResult) }()
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+	if request.URL.RawQuery != "" {
+		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		http.Error(response, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
+		return
+	}
+	mapRequest, err := DecodeFullMapRequest(request.Body)
+	if err != nil {
+		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	operationCtx, cancel := context.WithTimeout(request.Context(), handler.timeout)
+	defer cancel()
+	snapshot, err := handler.service.Open(operationCtx, machine, mapRequest)
+	if err != nil {
+		failure := classifyMapFailure(err)
+		telemetryResult = failure.result
+		if failure.status == http.StatusServiceUnavailable && !errors.Is(err, context.Canceled) &&
+			!errors.Is(err, context.DeadlineExceeded) {
+			handler.logger.ErrorContext(request.Context(), "map snapshot failed", "error", err)
+		}
+		http.Error(response, http.StatusText(failure.status), failure.status)
+		return
+	}
+	encoded, err := EncodeFullMapResponse(snapshot, mapRequest.CapabilityVersion())
+	if err != nil {
+		telemetryResult = mapUnavailable
+		handler.logger.ErrorContext(request.Context(), "map response encoding failed", "error", err)
+		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		return
+	}
+	defer clear(encoded)
+	response.Header().Set("Content-Type", mapResponseContentType)
+	response.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
+	response.WriteHeader(http.StatusOK)
+	written, err := response.Write(encoded)
+	if err != nil || written != len(encoded) {
+		telemetryResult = mapUnavailable
+		if err == nil {
+			err = io.ErrShortWrite
+		}
+		handler.logger.DebugContext(request.Context(), "map response write failed", "error", err)
+		return
+	}
+	telemetryResult = mapAuthorized
+}
+
+type mapFailure struct {
+	status int
+	result mapResult
+}
+
+func classifyMapFailure(err error) mapFailure {
+	switch {
+	case errors.Is(err, mapsession.ErrUnauthorized), errors.Is(err, control.ErrInvalidAuthenticatedNode):
+		return mapFailure{status: http.StatusUnauthorized, result: mapAuthenticationFailed}
+	case errors.Is(err, mapsession.ErrInvalidRequest):
+		return mapFailure{status: http.StatusBadRequest, result: mapInvalidRequest}
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return mapFailure{status: http.StatusServiceUnavailable, result: mapCanceled}
+	default:
+		return mapFailure{status: http.StatusServiceUnavailable, result: mapUnavailable}
+	}
+}

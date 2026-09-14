@@ -28,6 +28,8 @@ var (
 	ErrInvalidClient = errors.New("protocol test: invalid client")
 	// ErrRegistration reports a failed or rejected black-box registration.
 	ErrRegistration = errors.New("protocol test: registration failed")
+	// ErrMap reports a failed or rejected black-box map exchange.
+	ErrMap = errors.New("protocol test: map exchange failed")
 )
 
 // Options contains one synthetic control origin and its trust material.
@@ -126,6 +128,30 @@ func (client *Client) Register(ctx context.Context, credential string) (resultEr
 		return errors.Join(ErrRegistration, err)
 	}
 	return nil
+}
+
+// FetchFullMap discovers the control key, establishes a fresh authenticated
+// session, and fetches one complete fail-closed map snapshot.
+func (client *Client) FetchFullMap(ctx context.Context) (_ FullMap, resultErr error) {
+	if ctx == nil || client == nil || client.tlsConfig == nil {
+		return FullMap{}, ErrInvalidClient
+	}
+	controlKey, err := client.discoverControlKey(ctx)
+	if err != nil {
+		return FullMap{}, errors.Join(ErrMap, err)
+	}
+	session, err := client.openSession(ctx, controlKey)
+	if err != nil {
+		return FullMap{}, errors.Join(ErrMap, err)
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, session.Close())
+	}()
+	result, err := client.fetchFullMap(ctx, session)
+	if err != nil {
+		return FullMap{}, errors.Join(ErrMap, err)
+	}
+	return result, nil
 }
 
 func validOptions(options Options) bool {

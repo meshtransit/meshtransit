@@ -9,8 +9,11 @@ contains the forward-only PostgreSQL migration foundation and
 the first canonical authority schema for tenancy, network identity, address
 realms, address pools, prefixes, and revision state. Authority changes are
 guarded by an atomic audit/outbox integrity foundation. The current client
-protocol slice exposes only control-key discovery and credential-backed
-registration; policy, map streaming, and relay behavior are not implemented.
+protocol slice exposes control-key discovery, credential-backed registration,
+and an authenticated one-shot full-map snapshot. The map returns the
+authoritative self Node, an explicit empty peer set, and an explicit empty
+packet filter; peer projection, policy evaluation, map streaming, presence,
+and relay behavior are not implemented.
 Redis
 already exposes the bounded, versioned `NetworkRevisionAdvanced` wakeup
 transport, and the worker PostgreSQL adapter can lease, reconcile, and complete
@@ -101,14 +104,15 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_READ_IDLE_TIMEOUT` | `1m` | Authenticated session read-idle probe interval from 100ms through 5 minutes. |
 | `MESHTRANSIT_CONTROL_PING_TIMEOUT` | `15s` | Probe-response deadline from 100ms through the read-idle timeout. |
 | `MESHTRANSIT_CONTROL_WRITE_TIMEOUT` | `15s` | Authenticated session write deadline from 100ms through 5 minutes. |
+| `MESHTRANSIT_CONTROL_MAP_REQUEST_TIMEOUT` | `10s` | Total application deadline for one authenticated map snapshot, from 100ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MAP_STATEMENT_TIMEOUT` | `3s` | PostgreSQL statement timeout for one authenticated map snapshot, from 1ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MAP_TRANSACTION_IDLE_LIMIT` | `5s` | PostgreSQL idle-in-transaction limit for one map snapshot, from 1ms through 1 minute. |
 
 Control connection saturation, session admission results, Noise handshake
-duration, authenticated-session duration, and registration results/duration
-are exported only through the private operator `/metrics` endpoint. Result
-labels come from fixed internal sets and never contain machine identity,
-endpoint, credential, or request data.
+duration, authenticated-session duration, registration results/duration, and
+map snapshot results/duration are exported only through the private operator
+`/metrics` endpoint. Result labels come from fixed internal sets and never
+contain machine identity, endpoint, credential, or request data.
 
 Enrollment credentials use the canonical transport grammar
 `mtc1.<credential-uuid>.<base64url-32-byte-token>`. The complete value is a

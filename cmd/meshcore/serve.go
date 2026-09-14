@@ -169,9 +169,23 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			)
 			return 1
 		}
+		mapSessionService, composeErr := composeMapSession(
+			processConfig.Control.Map,
+			storagePools.runtime,
+		)
+		if composeErr != nil {
+			logger.ErrorContext(
+				ctx,
+				"startup failed",
+				"error_code", "map_session_composition_failure",
+				"error", composeErr,
+			)
+			return 1
+		}
 		controlListener, composeErr := composeControlListener(
 			*processConfig.Control,
 			registrationService,
+			mapSessionService,
 			logger,
 		)
 		if composeErr != nil {

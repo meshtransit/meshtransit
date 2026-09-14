@@ -6,10 +6,12 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/meshtransit/meshtransit/internal/adapter/legacyts2021/protocoltest"
 	"github.com/meshtransit/meshtransit/internal/config"
 )
 
@@ -47,10 +49,12 @@ func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 		t.Fatalf("first process registration: %v; stderr: %s", err, first.process.stderr.String())
 	}
 	cancelRegister()
-	assertControlRegistrationMetrics(t, first)
+	firstMap := fetchProcessFullMap(ctx, t, first, client)
+	assertControlClientMetrics(t, first)
 	stopIntegrationProcess(t, first.process)
 	firstEvidence := readProcessRegistrationEvidence(ctx, t, adminConnection, client.Identity())
 	assertProcessRegistrationEvidence(t, firstEvidence)
+	assertProcessFullMap(t, firstMap, firstEvidence, client.Identity())
 
 	second := startReadyRoleAllProcess(t, binary, controlAddress)
 	replayCtx, cancelReplay := context.WithTimeout(ctx, 10*time.Second)
@@ -60,11 +64,15 @@ func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 		t.Fatalf("restarted process registration replay: %v; stderr: %s", err, second.process.stderr.String())
 	}
 	cancelReplay()
-	assertControlRegistrationMetrics(t, second)
+	secondMap := fetchProcessFullMap(ctx, t, second, client)
+	assertControlClientMetrics(t, second)
 	stopIntegrationProcess(t, second.process)
 	secondEvidence := readProcessRegistrationEvidence(ctx, t, adminConnection, client.Identity())
 	if secondEvidence != firstEvidence {
 		t.Fatalf("registration replay changed authority: before=%+v after=%+v", firstEvidence, secondEvidence)
+	}
+	if !reflect.DeepEqual(secondMap, firstMap) {
+		t.Fatalf("map changed across restart: before=%+v after=%+v", firstMap, secondMap)
 	}
 }
 
@@ -104,7 +112,43 @@ type readyRoleAllProcess struct {
 	healthAddress string
 }
 
-func assertControlRegistrationMetrics(t *testing.T, running readyRoleAllProcess) {
+func fetchProcessFullMap(
+	ctx context.Context,
+	t *testing.T,
+	running readyRoleAllProcess,
+	client *protocoltest.Client,
+) protocoltest.FullMap {
+	t.Helper()
+	mapCtx, cancelMap := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelMap()
+	result, err := client.FetchFullMap(mapCtx)
+	if err != nil {
+		running.process.forceStop(t)
+		t.Fatalf("fetch process full map: %v; stderr: %s", err, running.process.stderr.String())
+	}
+	return result
+}
+
+func assertProcessFullMap(
+	t *testing.T,
+	result protocoltest.FullMap,
+	evidence processRegistrationEvidence,
+	identity protocoltest.Identity,
+) {
+	t.Helper()
+	if result.NodeID <= 0 || result.OwnerID <= 0 ||
+		result.StableNodeID != evidence.nodePublicID ||
+		result.Name != evidence.hostname+"." || result.ComputedName != evidence.hostname ||
+		result.MachineKey != identity.MachineKey || result.NodeKey != identity.NodeKey ||
+		len(result.Addresses) != 1 || result.Addresses[0].String() != evidence.primaryAddress ||
+		len(result.AllowedIPs) != 1 || result.AllowedIPs[0] != result.Addresses[0] ||
+		result.CapabilityVersion != 142 || !result.MachineAuthorized ||
+		result.PeerCount != 0 || !result.DenyAll {
+		t.Fatalf("process full map is incomplete or unsafe: %+v", result)
+	}
+}
+
+func assertControlClientMetrics(t *testing.T, running readyRoleAllProcess) {
 	t.Helper()
 	if running.process == nil || running.healthAddress == "" {
 		t.Fatal("integration process is required")
@@ -121,8 +165,9 @@ func assertControlRegistrationMetrics(t *testing.T, running readyRoleAllProcess)
 		t.Fatalf("process registration metrics status = %d, want %d", status, http.StatusOK)
 	}
 	for _, metric := range []string{
-		`meshtransit_control_session_attempts_total{result="established"} 1`,
+		`meshtransit_control_session_attempts_total{result="established"} 2`,
 		`meshtransit_control_registration_requests_total{result="authorized"} 1`,
+		`meshtransit_control_map_requests_total{result="authorized"} 1`,
 		"meshtransit_control_registrations_active 0",
 		"meshtransit_control_authenticated_sessions_active 0",
 	} {
