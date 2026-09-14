@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 13 {
-		t.Fatalf("len(Catalog()) = %d, want 13", len(catalog))
+	if len(catalog) != 14 {
+		t.Fatalf("len(Catalog()) = %d, want 14", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -483,8 +483,46 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("registration intake scope migration SQL contains excessive capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 13 {
-		t.Fatalf("LatestVersion() = %d, want 13", LatestVersion())
+	intakeScopeQuery := catalog[13]
+	if intakeScopeQuery.Description != "registration intake scope query correction" {
+		t.Fatalf(
+			"migration 14 description = %q, want registration intake scope query correction",
+			intakeScopeQuery.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE POLICY workspace_registration_intake_scope_policy",
+		"CREATE POLICY network_registration_intake_scope_policy",
+		"TO mesh_migrator",
+		"credential.workspace_id = workspace.id",
+		"credential.network_id = network.id",
+		"CREATE OR REPLACE FUNCTION mesh_ops.resolve_registration_intake_scope",
+		"LANGUAGE plpgsql",
+		"SECURITY DEFINER",
+		"mesh.registration_intake_credential_public_id",
+		"credential.public_id = p_credential_public_id",
+		"REVOKE ALL ON FUNCTION mesh_ops.resolve_registration_intake_scope(UUID) FROM PUBLIC",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.resolve_registration_intake_scope(UUID) TO mesh_runtime",
+	} {
+		if !strings.Contains(intakeScopeQuery.SQL, required) {
+			t.Errorf("registration intake scope-query migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"TO mesh_worker",
+	} {
+		if strings.Contains(intakeScopeQuery.SQL, forbidden) {
+			t.Errorf("registration intake scope-query migration SQL contains excessive capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 14 {
+		t.Fatalf("LatestVersion() = %d, want 14", LatestVersion())
 	}
 }
 
