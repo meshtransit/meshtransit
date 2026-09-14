@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 12 {
-		t.Fatalf("len(Catalog()) = %d, want 12", len(catalog))
+	if len(catalog) != 13 {
+		t.Fatalf("len(Catalog()) = %d, want 13", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -442,8 +442,49 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("registration transaction lock migration SQL contains excessive capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 12 {
-		t.Fatalf("LatestVersion() = %d, want 12", LatestVersion())
+	intakeScope := catalog[12]
+	if intakeScope.Description != "registration intake scope resolution" {
+		t.Fatalf(
+			"migration 13 description = %q, want registration intake scope resolution",
+			intakeScope.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.resolve_registration_intake_scope",
+		"RETURNS TABLE (",
+		"deployment_public_id UUID",
+		"workspace_public_id UUID",
+		"network_public_id UUID",
+		"recovery_epoch BIGINT",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh, mesh_ops",
+		"credential.public_id = p_credential_public_id",
+		"deployment.state = 'active'",
+		"deployment.recovery_state = 'verified'",
+		"workspace.state = 'active'",
+		"network.state = 'active'",
+		"REVOKE ALL ON FUNCTION mesh_ops.resolve_registration_intake_scope(UUID) FROM PUBLIC",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.resolve_registration_intake_scope(UUID) TO mesh_runtime",
+	} {
+		if !strings.Contains(intakeScope.SQL, required) {
+			t.Errorf("registration intake scope migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"TO mesh_worker",
+	} {
+		if strings.Contains(intakeScope.SQL, forbidden) {
+			t.Errorf("registration intake scope migration SQL contains excessive capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 13 {
+		t.Fatalf("LatestVersion() = %d, want 13", LatestVersion())
 	}
 }
 
