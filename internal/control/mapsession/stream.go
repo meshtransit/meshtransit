@@ -8,15 +8,9 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/control"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/publicid"
-)
-
-const (
-	minimumStreamOperationTimeout = time.Millisecond
-	maximumStreamOperationTimeout = time.Minute
-	minimumStreamInterval         = time.Second
-	maximumStreamInterval         = 5 * time.Minute
 )
 
 var (
@@ -54,6 +48,12 @@ type StreamSink interface {
 	SendKeepAlive(context.Context) error
 }
 
+// RevisionWatcher provides a bounded local wakeup channel for one Network.
+// The release function is caller-owned and must be idempotent.
+type RevisionWatcher interface {
+	WatchNetwork(network.ID) (<-chan network.RevisionAdvanced, func(), error)
+}
+
 // StreamOptions bounds one caller-owned map stream lifecycle.
 type StreamOptions struct {
 	ReplicaID           publicid.ID
@@ -70,6 +70,7 @@ type StreamOptions struct {
 type StreamService struct {
 	snapshots SnapshotOpener
 	presence  PresenceStore
+	revisions RevisionWatcher
 	options   StreamOptions
 
 	activeMu sync.Mutex
@@ -80,14 +81,17 @@ type StreamService struct {
 func NewStreamService(
 	snapshots SnapshotOpener,
 	presence PresenceStore,
+	revisions RevisionWatcher,
 	options StreamOptions,
 ) (*StreamService, error) {
-	if snapshots == nil || presence == nil || !validStreamOptions(options) {
+	if isNilStreamDependency(snapshots) || isNilStreamDependency(presence) ||
+		isNilStreamDependency(revisions) || !validStreamOptions(options) {
 		return nil, ErrInvalidStreamService
 	}
 	return &StreamService{
 		snapshots: snapshots,
 		presence:  presence,
+		revisions: revisions,
 		options:   options,
 		active:    make(map[node.ID]struct{}),
 	}, nil
@@ -102,8 +106,10 @@ func (service *StreamService) Serve(
 	request Request,
 	sink StreamSink,
 ) (resultErr error) {
-	if ctx == nil || service == nil || service.snapshots == nil || service.presence == nil ||
-		!validStreamOptions(service.options) || !machine.IsValid() || !request.IsValid() || sink == nil {
+	if ctx == nil || service == nil || isNilStreamDependency(service.snapshots) ||
+		isNilStreamDependency(service.presence) || isNilStreamDependency(service.revisions) ||
+		!validStreamOptions(service.options) || !machine.IsValid() || !request.IsValid() ||
+		isNilStreamDependency(sink) {
 		return ErrInvalidStreamService
 	}
 	if err := ctx.Err(); err != nil {
@@ -121,6 +127,17 @@ func (service *StreamService) Serve(
 		return ErrPresenceConflict
 	}
 	defer service.release(snapshot.NodeID())
+	updates, stopWatching, err := service.revisions.WatchNetwork(snapshot.Scope().NetworkID())
+	if err != nil {
+		return errors.Join(ErrStreamUnavailable, err)
+	}
+	if updates == nil || stopWatching == nil {
+		if stopWatching != nil {
+			stopWatching()
+		}
+		return ErrStreamUnavailable
+	}
+	defer stopWatching()
 	lease, err := node.NewPresenceLease(
 		snapshot.NodeID(),
 		snapshot.SessionGeneration(),
@@ -144,7 +161,7 @@ func (service *StreamService) Serve(
 	if err := sink.SendSnapshot(ctx, snapshot); err != nil {
 		return errors.Join(ErrStreamWrite, err)
 	}
-	return service.run(ctx, machine, request, sink, lease, snapshot)
+	return service.run(ctx, machine, request, sink, lease, snapshot, updates)
 }
 
 func (service *StreamService) admit(nodeID node.ID) bool {
@@ -170,6 +187,7 @@ func (service *StreamService) run(
 	sink StreamSink,
 	lease node.PresenceLease,
 	initial Snapshot,
+	updates <-chan network.RevisionAdvanced,
 ) error {
 	renewal := time.NewTicker(service.options.PresenceTTL / 3)
 	defer renewal.Stop()
@@ -199,22 +217,52 @@ func (service *StreamService) run(
 			if err := sink.SendKeepAlive(ctx); err != nil {
 				return errors.Join(ErrStreamWrite, err)
 			}
-		case <-reconcile.C:
-			next, err := service.openSnapshot(ctx, machine, request)
-			if err != nil {
-				return errors.Join(ErrStreamUnavailable, err)
+		case revision, open := <-updates:
+			if !open {
+				return ErrStreamUnavailable
 			}
-			if !streamCanAdvance(current, next) {
+			if !revision.IsValid() || revision.NetworkID() != current.Scope().NetworkID() {
 				return ErrStreamDiscontinuity
 			}
-			if next.NetworkRevision() > current.NetworkRevision() {
-				if err := sink.SendSnapshot(ctx, next); err != nil {
-					return errors.Join(ErrStreamWrite, err)
-				}
-				current = next
+			if revision.Number() <= current.NetworkRevision() {
+				continue
 			}
+			next, err := service.refresh(ctx, machine, request, sink, current)
+			if err != nil {
+				return err
+			}
+			current = next
+		case <-reconcile.C:
+			next, err := service.refresh(ctx, machine, request, sink, current)
+			if err != nil {
+				return err
+			}
+			current = next
 		}
 	}
+}
+
+func (service *StreamService) refresh(
+	ctx context.Context,
+	machine control.AuthenticatedMachine,
+	request Request,
+	sink StreamSink,
+	current Snapshot,
+) (Snapshot, error) {
+	next, err := service.openSnapshot(ctx, machine, request)
+	if err != nil {
+		return Snapshot{}, errors.Join(ErrStreamUnavailable, err)
+	}
+	if !streamCanAdvance(current, next) {
+		return Snapshot{}, ErrStreamDiscontinuity
+	}
+	if next.NetworkRevision() == current.NetworkRevision() {
+		return current, nil
+	}
+	if err := sink.SendSnapshot(ctx, next); err != nil {
+		return Snapshot{}, errors.Join(ErrStreamWrite, err)
+	}
+	return next, nil
 }
 
 func (service *StreamService) openSnapshot(
@@ -253,18 +301,4 @@ func (service *StreamService) releasePresence(
 		return errors.Join(ErrStreamUnavailable, fmt.Errorf("release presence: %w", err))
 	}
 	return nil
-}
-
-func validStreamOptions(options StreamOptions) bool {
-	return options.ReplicaID.IsValid() &&
-		options.SnapshotTimeout >= minimumStreamOperationTimeout &&
-		options.SnapshotTimeout <= maximumStreamOperationTimeout &&
-		options.PresenceTTL >= minimumStreamInterval &&
-		options.PresenceTTL <= maximumStreamInterval &&
-		options.CoordinationTimeout >= minimumStreamOperationTimeout &&
-		options.CoordinationTimeout < options.PresenceTTL/3 &&
-		options.KeepAliveInterval >= minimumStreamInterval &&
-		options.KeepAliveInterval <= maximumStreamInterval &&
-		options.ReconcileInterval >= minimumStreamInterval &&
-		options.ReconcileInterval <= maximumStreamInterval
 }

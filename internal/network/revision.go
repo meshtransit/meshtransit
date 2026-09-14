@@ -28,6 +28,9 @@ func NewRevisionAdvanced(networkPublicID string, number int64) (RevisionAdvanced
 // NetworkPublicID returns the opaque public Network identifier.
 func (revision RevisionAdvanced) NetworkPublicID() string { return revision.networkID.String() }
 
+// NetworkID returns the validated Network identity carried by this fact.
+func (revision RevisionAdvanced) NetworkID() ID { return revision.networkID }
+
 // Number returns the observed authoritative Network revision.
 func (revision RevisionAdvanced) Number() int64 { return revision.number }
 

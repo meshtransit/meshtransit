@@ -40,7 +40,9 @@ func TestNewRevisionAdvanced(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewRevisionAdvanced() error = %v", err)
 			}
-			if revision.NetworkPublicID() != test.networkPublicID || revision.Number() != test.revision {
+			if revision.NetworkPublicID() != test.networkPublicID ||
+				revision.NetworkID().String() != test.networkPublicID ||
+				revision.Number() != test.revision {
 				t.Fatalf(
 					"NewRevisionAdvanced() = (%q, %d), want (%q, %d)",
 					revision.NetworkPublicID(),

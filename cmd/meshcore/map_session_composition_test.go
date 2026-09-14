@@ -9,6 +9,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/config"
 	"github.com/meshtransit/meshtransit/internal/control"
 	"github.com/meshtransit/meshtransit/internal/control/mapsession"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 )
@@ -48,6 +49,7 @@ func TestNewMapStreamServiceValidatesComposition(t *testing.T) {
 		mapConfig,
 		nil,
 		mapPresenceStoreFixture{},
+		mapRevisionWatcherFixture{},
 		replicaID,
 	); !errors.Is(err, errInvalidMapSessionComposition) {
 		t.Fatalf("newMapStreamService(nil) error = %v, want composition error", err)
@@ -56,6 +58,7 @@ func TestNewMapStreamServiceValidatesComposition(t *testing.T) {
 		mapConfig,
 		mapSnapshotOpenerFixture{},
 		mapPresenceStoreFixture{},
+		mapRevisionWatcherFixture{},
 		replicaID,
 	)
 	if err != nil || service == nil {
@@ -96,4 +99,12 @@ func (mapPresenceStoreFixture) ReleasePresence(
 	node.PresenceLease,
 ) (bool, error) {
 	return false, errors.New("composition fixture must not be called")
+}
+
+type mapRevisionWatcherFixture struct{}
+
+func (mapRevisionWatcherFixture) WatchNetwork(
+	network.ID,
+) (<-chan network.RevisionAdvanced, func(), error) {
+	return nil, nil, errors.New("composition fixture must not be called")
 }

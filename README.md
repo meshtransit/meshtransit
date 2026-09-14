@@ -13,13 +13,14 @@ protocol slice exposes control-key discovery, credential-backed registration,
 and authenticated one-shot and streaming full-map snapshots. Every stream
 starts with the authoritative self Node, an explicit empty peer set, and an
 explicit empty packet filter. Long-lived streams use generation-fenced Redis
-presence, bounded keepalives, exact release, and periodic PostgreSQL resync;
-peer projection, policy evaluation, endpoint persistence, revision wakeup
-delivery, and relay behavior are not implemented.
-Redis
-already exposes the bounded, versioned `NetworkRevisionAdvanced` wakeup
-transport, and the worker PostgreSQL adapter can lease, reconcile, and complete
-the matching durable outbox work without treating Redis as authority.
+presence, bounded keepalives, exact release, a process-owned Network revision
+feed, and periodic PostgreSQL resync. Peer projection, policy evaluation,
+endpoint persistence, and relay behavior are not implemented. Redis exposes
+the bounded, versioned `NetworkRevisionAdvanced` wakeup transport. A control
+replica holds one subscription and fans wakeups into bounded, coalescing
+Network-local channels; PostgreSQL remains the source of every emitted map.
+The worker PostgreSQL adapter leases, reconciles, and completes the matching
+durable outbox work without treating Redis as authority.
 
 The module path is `github.com/meshtransit/meshtransit`; the process binary
 is `meshcore`. Development and security gates run with Go 1.26.8.
@@ -239,10 +240,12 @@ Tenant reads for serving roles are protected by forced row-level security using 
 cross-paired scope fails closed. Runtime readiness also rejects an elevated,
 object-owning, member role or a connection whose authenticated user differs
 from configuration. The process lifecycle owns the revision dispatcher only for
-the `worker` and `all` roles. It starts exactly one polling goroutine, processes
-bounded claims sequentially, cancels in-flight I/O during shutdown, and joins
-before Redis and PostgreSQL are closed. Authorization-aware serving mutations
-remain deferred to later vertical slices.
+the `worker` and `all` roles, and the revision feed only for the `control` and
+`all` roles. Each starts exactly one owned goroutine. The worker processes
+bounded claims sequentially; the feed uses one Redis subscription and bounded
+local fan-out. Both cancel in-flight I/O during shutdown and join before Redis
+and PostgreSQL are closed. Authorization-aware serving mutations remain
+deferred to later vertical slices.
 
 `all` expands to the `api`, `control`, `worker`, and `relay` responsibilities.
 This slice deliberately does not implement their business protocols yet; role
@@ -295,6 +298,12 @@ plus command-pool usage, pending requests, pool timeouts, and active
 subscriptions. Pool state is sampled only when metrics are scraped; no
 observability goroutine or unbounded label is introduced.
 
+Control and `all` processes expose the revision-feed subscriber state, active
+watchers, received wakeups, and bounded `delivered`/`coalesced` fan-out results.
+Workspace, Network, Node, session, and replica identities are never metric
+labels. One process-owned subscriber serves all local map streams; no client
+creates its own Redis connection or goroutine.
+
 PostgreSQL telemetry is partitioned only by the fixed `runtime` and `worker`
 credential-pool roles. It reports bounded semantic operation outcomes and
 latency, connection usage, acquisition/cancellation counts and wait duration,
@@ -302,12 +311,14 @@ and connection creation/destruction. Pool state is also sampled at scrape time;
 SQL text, usernames, addresses, database names, and domain identifiers are
 never metric labels.
 
-Readiness opens only after the initial PostgreSQL and Redis checks succeed and
-the listener starts. Periodic bounded checks lower readiness on dependency loss
-and restore it after recovery. Graceful shutdown closes admission before
-draining services in reverse start order, joining the monitor, and releasing
-Redis then PostgreSQL. Those phases share one configured shutdown deadline;
-resource cleanup is not started after that deadline is exhausted. PostgreSQL
+Readiness opens only after the initial required dependency checks succeed and
+all role services start. For `control` and `all`, revision-feed subscription
+must succeed before the control listener starts. Periodic bounded checks lower
+readiness on dependency loss and restore it after recovery. Graceful shutdown
+closes admission before draining control streams, stopping and joining the
+revision feed, joining the monitor, and releasing Redis then PostgreSQL. Those
+phases share one configured shutdown deadline; resource cleanup is not started
+after that deadline is exhausted. PostgreSQL
 cleanup also refuses to call the pool's blocking close while a connection is
 still acquired, so shutdown never relies on an unowned timeout goroutine.
 `/live` never depends on infrastructure availability. Health responses expose

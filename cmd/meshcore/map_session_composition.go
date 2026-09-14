@@ -35,23 +35,26 @@ func composeMapStream(
 	mapConfig config.ControlMapConfig,
 	snapshots mapsession.SnapshotOpener,
 	presence mapsession.PresenceStore,
+	revisions mapsession.RevisionWatcher,
 ) (*mapsession.StreamService, error) {
 	replicaID, err := publicid.New()
 	if err != nil {
 		return nil, errors.Join(errInvalidMapSessionComposition, err)
 	}
-	return newMapStreamService(mapConfig, snapshots, presence, replicaID)
+	return newMapStreamService(mapConfig, snapshots, presence, revisions, replicaID)
 }
 
 func newMapStreamService(
 	mapConfig config.ControlMapConfig,
 	snapshots mapsession.SnapshotOpener,
 	presence mapsession.PresenceStore,
+	revisions mapsession.RevisionWatcher,
 	replicaID publicid.ID,
 ) (*mapsession.StreamService, error) {
 	service, err := mapsession.NewStreamService(
 		snapshots,
 		presence,
+		revisions,
 		mapsession.StreamOptions{
 			ReplicaID:           replicaID,
 			SnapshotTimeout:     mapConfig.RequestTimeout,

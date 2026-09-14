@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/control"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 )
@@ -78,6 +79,71 @@ func TestStreamServiceOwnsBoundedPresenceLifecycle(t *testing.T) {
 		presenceState = presence.state()
 		if presenceState.releases != 1 || !presenceState.sawReleaseDeadline {
 			t.Fatalf("presence releases = (%d,%t), want one bounded release", presenceState.releases, presenceState.sawReleaseDeadline)
+		}
+	})
+}
+
+func TestStreamServiceReconcilesImmediatelyOnRevisionWakeup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		initial := snapshotFixture(t)
+		advanced := advancedStreamSnapshot(t, initial)
+		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial, advanced}}
+		revisions := newStreamRevisionWatcher()
+		service := newStreamServiceWithRevisionsFixture(
+			t,
+			opener,
+			&streamPresenceStore{},
+			revisions,
+		)
+		machine, request := authenticatedRequestFixture(t, initial)
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan error, 1)
+		go func() { result <- service.Serve(ctx, machine, request, &recordingStreamSink{}) }()
+
+		synctest.Wait()
+		wakeup, err := network.NewRevisionAdvanced(
+			initial.Scope().NetworkID().String(),
+			advanced.NetworkRevision(),
+		)
+		if err != nil {
+			t.Fatalf("network.NewRevisionAdvanced() error = %v", err)
+		}
+		revisions.send(t, wakeup)
+		synctest.Wait()
+		if calls, _ := opener.state(); calls != 2 {
+			t.Fatalf("snapshot opens after wakeup = %d, want 2", calls)
+		}
+
+		cancel()
+		synctest.Wait()
+		if err := <-result; !errors.Is(err, context.Canceled) {
+			t.Fatalf("Serve() error = %v, want context cancellation", err)
+		}
+		if watches, releases := revisions.state(); watches != 1 || releases != 1 {
+			t.Fatalf("revision watches = (%d, %d), want one owned lifecycle", watches, releases)
+		}
+	})
+}
+
+func TestStreamServiceFailsClosedWhenRevisionFeedStops(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		snapshot := snapshotFixture(t)
+		revisions := newStreamRevisionWatcher()
+		service := newStreamServiceWithRevisionsFixture(
+			t,
+			&streamSnapshotOpener{snapshots: []Snapshot{snapshot}},
+			&streamPresenceStore{},
+			revisions,
+		)
+		machine, request := authenticatedRequestFixture(t, snapshot)
+		result := make(chan error, 1)
+		go func() { result <- service.Serve(t.Context(), machine, request, &recordingStreamSink{}) }()
+
+		synctest.Wait()
+		revisions.closeUpdates()
+		synctest.Wait()
+		if err := <-result; !errors.Is(err, ErrStreamUnavailable) {
+			t.Fatalf("Serve() error = %v, want ErrStreamUnavailable", err)
 		}
 	})
 }
@@ -189,14 +255,29 @@ func TestNewStreamServiceRejectsUnsafeComposition(t *testing.T) {
 	t.Parallel()
 
 	options := streamOptionsFixture(t)
-	if _, err := NewStreamService(nil, &streamPresenceStore{}, options); !errors.Is(
+	revisions := newStreamRevisionWatcher()
+	var nilRevisions *streamRevisionWatcher
+	if _, err := NewStreamService(
+		&streamSnapshotOpener{},
+		&streamPresenceStore{},
+		nilRevisions,
+		options,
+	); !errors.Is(err, ErrInvalidStreamService) {
+		t.Fatalf("NewStreamService(typed nil) error = %v, want ErrInvalidStreamService", err)
+	}
+	if _, err := NewStreamService(nil, &streamPresenceStore{}, revisions, options); !errors.Is(
 		err,
 		ErrInvalidStreamService,
 	) {
 		t.Fatalf("NewStreamService(nil) error = %v, want ErrInvalidStreamService", err)
 	}
 	options.CoordinationTimeout = options.PresenceTTL / 3
-	if _, err := NewStreamService(&streamSnapshotOpener{}, &streamPresenceStore{}, options); !errors.Is(
+	if _, err := NewStreamService(
+		&streamSnapshotOpener{},
+		&streamPresenceStore{},
+		revisions,
+		options,
+	); !errors.Is(
 		err,
 		ErrInvalidStreamService,
 	) {
@@ -210,7 +291,22 @@ func newStreamServiceFixture(
 	presence PresenceStore,
 ) *StreamService {
 	t.Helper()
-	service, err := NewStreamService(opener, presence, streamOptionsFixture(t))
+	return newStreamServiceWithRevisionsFixture(
+		t,
+		opener,
+		presence,
+		newStreamRevisionWatcher(),
+	)
+}
+
+func newStreamServiceWithRevisionsFixture(
+	t *testing.T,
+	opener SnapshotOpener,
+	presence PresenceStore,
+	revisions RevisionWatcher,
+) *StreamService {
+	t.Helper()
+	service, err := NewStreamService(opener, presence, revisions, streamOptionsFixture(t))
 	if err != nil {
 		t.Fatalf("NewStreamService() error = %v", err)
 	}
@@ -357,4 +453,48 @@ func (sink *recordingStreamSink) state() ([]Snapshot, int) {
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
 	return slices.Clone(sink.snapshots), sink.keepAlives
+}
+
+type streamRevisionWatcher struct {
+	mu       sync.Mutex
+	updates  chan network.RevisionAdvanced
+	watches  int
+	releases int
+}
+
+func newStreamRevisionWatcher() *streamRevisionWatcher {
+	return &streamRevisionWatcher{updates: make(chan network.RevisionAdvanced, 1)}
+}
+
+func (watcher *streamRevisionWatcher) WatchNetwork(
+	network.ID,
+) (<-chan network.RevisionAdvanced, func(), error) {
+	watcher.mu.Lock()
+	watcher.watches++
+	watcher.mu.Unlock()
+	var releaseOnce sync.Once
+	return watcher.updates, func() {
+		releaseOnce.Do(func() {
+			watcher.mu.Lock()
+			watcher.releases++
+			watcher.mu.Unlock()
+		})
+	}, nil
+}
+
+func (watcher *streamRevisionWatcher) send(t *testing.T, revision network.RevisionAdvanced) {
+	t.Helper()
+	select {
+	case watcher.updates <- revision:
+	case <-t.Context().Done():
+		t.Fatalf("send revision wakeup: %v", t.Context().Err())
+	}
+}
+
+func (watcher *streamRevisionWatcher) closeUpdates() { close(watcher.updates) }
+
+func (watcher *streamRevisionWatcher) state() (int, int) {
+	watcher.mu.Lock()
+	defer watcher.mu.Unlock()
+	return watcher.watches, watcher.releases
 }

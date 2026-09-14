@@ -67,7 +67,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 	}()
 
 	checkers := make([]app.DependencyChecker, 0, len(readiness.RequiredComponents()))
-	additionalMetrics := make([]prometheus.Collector, 0, 3)
+	additionalMetrics := make([]prometheus.Collector, 0, 4)
 	var storagePools postgresPools
 	var redisClient *redisadapter.Client
 	if processConfig.Storage != nil {
@@ -132,7 +132,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		return 1
 	}
 	var revisionWorkerTelemetry *revisionworker.Telemetry
-	roleServices := make([]app.OwnedService, 0, 2)
+	roleServices := make([]app.OwnedService, 0, 3)
 	if processConfig.RevisionWorker != nil {
 		revisionWorkerTelemetry = revisionworker.NewTelemetry()
 		workerService, composeErr := composeRevisionWorker(
@@ -156,6 +156,36 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			logger.ErrorContext(ctx, "startup failed", "error_code", "control_configuration_failure")
 			return 1
 		}
+		revisionFeed, revisionFeedTelemetry, composeErr := composeRevisionFeed(
+			*processConfig.Control,
+			redisClient,
+		)
+		if composeErr != nil {
+			logger.ErrorContext(
+				ctx,
+				"startup failed",
+				"error_code", "revision_feed_composition_failure",
+				"error", composeErr,
+			)
+			return 1
+		}
+		revisionFeedMetrics, metricsErr := httpapi.NewRevisionFeedMetricsCollector(
+			revisionFeedTelemetry,
+		)
+		if metricsErr != nil {
+			logger.ErrorContext(
+				ctx,
+				"startup failed",
+				"error_code", "revision_feed_metrics_failure",
+				"error", metricsErr,
+			)
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, revisionFeedMetrics)
+		roleServices = append(
+			roleServices,
+			app.OwnedService{Name: "network-revision-feed", Service: revisionFeed},
+		)
 		registrationService, composeErr := composeRegistration(
 			*processConfig.Enrollment,
 			storagePools.runtime,
@@ -186,6 +216,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			processConfig.Control.Map,
 			mapSessionService,
 			redisClient,
+			revisionFeed,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(

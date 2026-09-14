@@ -34,6 +34,7 @@ type mapStreamContract struct {
 		PresenceAuthority  string   `json:"presence_authority"`
 		PresenceFence      []string `json:"presence_fence"`
 		RedisLoss          string   `json:"redis_loss"`
+		RevisionWakeup     string   `json:"revision_wakeup"`
 		MissedWakeupRepair string   `json:"missed_wakeup_repair"`
 		Reconnect          string   `json:"reconnect"`
 	} `json:"lifecycle"`
@@ -68,6 +69,7 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 		lifecycle.PresenceAuthority != "non-authoritative" ||
 		!slices.Equal(lifecycle.PresenceFence, []string{"node_id", "session_generation", "replica_id"}) ||
 		lifecycle.RedisLoss != "terminate-stream" ||
+		lifecycle.RevisionWakeup != "network-revision-advanced" ||
 		lifecycle.MissedWakeupRepair != "postgresql-reconciliation" ||
 		lifecycle.Reconnect != "fresh-authenticated-snapshot" {
 		t.Fatalf("stream lifecycle contract = %+v", lifecycle)

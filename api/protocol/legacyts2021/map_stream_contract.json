@@ -24,6 +24,7 @@
       "replica_id"
     ],
     "redis_loss": "terminate-stream",
+    "revision_wakeup": "network-revision-advanced",
     "missed_wakeup_repair": "postgresql-reconciliation",
     "reconnect": "fresh-authenticated-snapshot"
   }

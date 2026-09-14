@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -54,29 +53,6 @@ func (client *Client) fetchFullMap(ctx context.Context, session *session) (FullM
 	return decodeFullMap(body)
 }
 
-func (client *Client) fetchInitialStreamMap(
-	ctx context.Context,
-	session *session,
-) (_ FullMap, resultErr error) {
-	response, err := client.requestMap(ctx, session, true)
-	if err != nil {
-		return FullMap{}, err
-	}
-	if err := validateMapResponse(response); err != nil {
-		_ = response.Body.Close()
-		return FullMap{}, err
-	}
-	defer func() {
-		resultErr = errors.Join(resultErr, response.Body.Close())
-	}()
-	frame, err := readMapFrame(response.Body)
-	if err != nil {
-		return FullMap{}, fmt.Errorf("read initial stream map: %w", err)
-	}
-	defer clear(frame)
-	return decodeFullMap(frame)
-}
-
 func (client *Client) requestMap(
 	ctx context.Context,
 	session *session,
@@ -115,7 +91,7 @@ func (client *Client) requestMap(
 }
 
 func validateMapResponse(response *http.Response) error {
-	if response == nil {
+	if response == nil || response.Body == nil {
 		return ErrInvalidClient
 	}
 	if response.StatusCode != http.StatusOK || !isMediaType(

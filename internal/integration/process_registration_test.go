@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/meshtransit/meshtransit/internal/adapter/legacyts2021/protocoltest"
 	"github.com/meshtransit/meshtransit/internal/config"
 )
@@ -55,11 +57,12 @@ func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 		first.process.forceStop(t)
 		t.Fatalf("first stream map differs from one-shot map: one-shot=%+v stream=%+v", firstMap, firstStreamMap)
 	}
-	assertControlClientMetrics(t, first)
-	stopIntegrationProcess(t, first.process)
 	firstEvidence := readProcessRegistrationEvidence(ctx, t, adminConnection, client.Identity())
 	assertProcessRegistrationEvidence(t, firstEvidence)
 	assertProcessFullMap(t, firstMap, firstEvidence, client.Identity())
+	assertControlClientMetrics(t, first)
+	waitForProcessRevisionDelivery(ctx, t, first, adminConnection, firstEvidence.nodePublicID)
+	stopIntegrationProcess(t, first.process)
 
 	second := startReadyRoleAllProcess(t, binary, controlAddress)
 	replayCtx, cancelReplay := context.WithTimeout(ctx, 10*time.Second)
@@ -84,6 +87,54 @@ func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 	if !reflect.DeepEqual(secondMap, firstMap) {
 		t.Fatalf("map changed across restart: before=%+v after=%+v", firstMap, secondMap)
 	}
+
+	third := startReadyRoleAllProcess(t, binary, controlAddress)
+	assertProcessRevisionWakeup(ctx, t, third, client, adminConnection)
+	stopIntegrationProcess(t, third.process)
+}
+
+func assertProcessRevisionWakeup(
+	ctx context.Context,
+	t *testing.T,
+	running readyRoleAllProcess,
+	client *protocoltest.Client,
+	adminConnection *pgx.Conn,
+) {
+	t.Helper()
+	baseline := fetchProcessFullMap(ctx, t, running, client)
+	streamCtx, cancelStream := context.WithTimeout(ctx, 10*time.Second)
+	stream, initial, err := client.OpenMapStream(streamCtx)
+	if err != nil {
+		cancelStream()
+		running.process.forceStop(t)
+		t.Fatalf("open process map stream: %v; stderr: %s", err, running.process.stderr.String())
+	}
+	if !reflect.DeepEqual(initial, baseline) {
+		_ = stream.Close()
+		cancelStream()
+		running.process.forceStop(t)
+		t.Fatalf("initial revision stream map differs from baseline: baseline=%+v stream=%+v", baseline, initial)
+	}
+	feedBefore := waitForProcessRevisionFeedMetrics(t, running, func(metrics processRevisionFeedMetrics) bool {
+		return metrics.connected && metrics.activeWatchers == 1
+	})
+	commitIntegrationNetworkRevision(streamCtx, t, adminConnection, "994")
+	advanced, err := stream.NextFullMap()
+	closeErr := stream.Close()
+	cancelStream()
+	if err != nil || closeErr != nil {
+		running.process.forceStop(t)
+		t.Fatalf("receive process revision wakeup: read=%v close=%v; stderr: %s", err, closeErr, running.process.stderr.String())
+	}
+	if !reflect.DeepEqual(advanced, baseline) {
+		running.process.forceStop(t)
+		t.Fatalf("revision-only change altered map projection: baseline=%+v advanced=%+v", baseline, advanced)
+	}
+	waitForProcessRevisionFeedMetrics(t, running, func(metrics processRevisionFeedMetrics) bool {
+		return metrics.connected && metrics.activeWatchers == 0 &&
+			metrics.wakeups >= feedBefore.wakeups+1 &&
+			metrics.delivered >= feedBefore.delivered+1
+	})
 }
 
 func startReadyRoleAllProcess(
@@ -194,6 +245,8 @@ func assertControlClientMetrics(t *testing.T, running readyRoleAllProcess) {
 		"meshtransit_control_registrations_active 0",
 		"meshtransit_control_authenticated_sessions_active 0",
 		"meshtransit_control_map_streams_active 0",
+		"meshtransit_revision_feed_subscriber_connected 1",
+		"meshtransit_revision_feed_watchers_active 0",
 	}
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
@@ -215,6 +268,120 @@ func assertControlClientMetrics(t *testing.T, running readyRoleAllProcess) {
 					t.Fatalf("process control metrics missing %q", metric)
 				}
 			}
+		case <-ticker.C:
+		}
+	}
+}
+
+type processRevisionFeedMetrics struct {
+	connected      bool
+	activeWatchers uint64
+	wakeups        uint64
+	delivered      uint64
+	coalesced      uint64
+}
+
+func waitForProcessRevisionFeedMetrics(
+	t *testing.T,
+	running readyRoleAllProcess,
+	ready func(processRevisionFeedMetrics) bool,
+) processRevisionFeedMetrics {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	client := integrationHTTPClient()
+	defer client.CloseIdleConnections()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	var latest processRevisionFeedMetrics
+	var body string
+	for {
+		status, responseBody, err := integrationGET(ctx, client, running.healthAddress, "/metrics")
+		body = responseBody
+		if err == nil && status == http.StatusOK {
+			if parsed, ok := parseProcessRevisionFeedMetrics(body); ok {
+				latest = parsed
+				if ready(parsed) {
+					return parsed
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			if err != nil {
+				t.Fatalf("read process revision-feed metrics: %v", err)
+			}
+			t.Fatalf("process revision-feed metrics did not converge: latest=%+v body=%s", latest, body)
+		case <-ticker.C:
+		}
+	}
+}
+
+func parseProcessRevisionFeedMetrics(body string) (processRevisionFeedMetrics, bool) {
+	connected, connectedOK := parseProcessMetric(body, "meshtransit_revision_feed_subscriber_connected")
+	watchers, watchersOK := parseProcessMetric(body, "meshtransit_revision_feed_watchers_active")
+	wakeups, wakeupsOK := parseProcessMetric(body, "meshtransit_revision_feed_wakeups_received_total")
+	delivered, deliveredOK := parseProcessMetric(
+		body,
+		`meshtransit_revision_feed_fanout_total{result="delivered"}`,
+	)
+	coalesced, coalescedOK := parseProcessMetric(
+		body,
+		`meshtransit_revision_feed_fanout_total{result="coalesced"}`,
+	)
+	return processRevisionFeedMetrics{
+		connected:      connected == 1,
+		activeWatchers: watchers,
+		wakeups:        wakeups,
+		delivered:      delivered,
+		coalesced:      coalesced,
+	}, connectedOK && connected <= 1 && watchersOK && wakeupsOK && deliveredOK && coalescedOK
+}
+
+func parseProcessMetric(body, name string) (uint64, bool) {
+	for line := range strings.SplitSeq(body, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[0] != name {
+			continue
+		}
+		value, err := strconv.ParseUint(fields[1], 10, 64)
+		return value, err == nil
+	}
+	return 0, false
+}
+
+func waitForProcessRevisionDelivery(
+	parent context.Context,
+	t *testing.T,
+	running readyRoleAllProcess,
+	adminConnection *pgx.Conn,
+	nodePublicID string,
+) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var pending int64
+		err := adminConnection.QueryRow(ctx, `SELECT pg_catalog.count(*)
+FROM mesh_ops.outbox_event
+WHERE workspace_id = 101
+  AND network_id = 201
+  AND aggregate_kind = 'device'
+  AND aggregate_public_id = $1::UUID
+  AND network_revision IS NOT NULL
+  AND completed_at IS NULL`, nodePublicID).Scan(&pending)
+		if err == nil && pending == 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			running.process.forceStop(t)
+			if err != nil {
+				t.Fatalf("read process revision delivery state: %v", err)
+			}
+			t.Fatalf("process left %d Network revision events undelivered", pending)
 		case <-ticker.C:
 		}
 	}
