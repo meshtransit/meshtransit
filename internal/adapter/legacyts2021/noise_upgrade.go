@@ -97,12 +97,12 @@ func (server *ControlServer) serveNoiseUpgrade(
 		return
 	}
 	defer func() { _ = secureConnection.Close() }()
-	if err := secureConnection.SetDeadline(time.Time{}); err != nil {
-		server.rejectSession(request.Context(), sessionAttemptTransportFailure)
-		return
-	}
 	if secureConnection.ProtocolVersion() != supportedCapabilityVersion {
 		server.rejectSession(request.Context(), sessionAttemptCapabilityFailure)
+		return
+	}
+	if err := secureConnection.SetDeadline(time.Time{}); err != nil {
+		server.rejectSession(request.Context(), sessionAttemptTransportFailure)
 		return
 	}
 	machine, err := authenticatedMachineFromNoise(secureConnection)

@@ -20,7 +20,8 @@ const credentialRegistrationPath = "/machine/register"
 var ErrInvalidCredentialRegistrationHandler = errors.New("control http: invalid credential registration handler")
 
 // RegistrationService is the authenticated application capability consumed by
-// the credential registration endpoint.
+// the credential registration endpoint. A valid result is application-checked
+// committed evidence and may carry a canonical ID from an earlier replay.
 type RegistrationService interface {
 	Register(
 		context.Context,
@@ -29,7 +30,8 @@ type RegistrationService interface {
 	) (registration.Result, error)
 }
 
-// RegistrationIDGenerator creates server-owned idempotency identities.
+// RegistrationIDGenerator proposes server-owned idempotency identities. The
+// application may converge a retry onto an earlier canonical identity.
 type RegistrationIDGenerator interface {
 	NewRegistrationID() (enrollment.RegistrationID, error)
 }
@@ -133,7 +135,7 @@ func (handler *CredentialRegistrationHandler) serveAuthenticated(
 		http.Error(response, http.StatusText(failure.status), failure.status)
 		return
 	}
-	if !result.IsValid() || result.RegistrationID() != registrationID {
+	if !result.IsValid() {
 		telemetryResult = registrationUnavailable
 		handler.logger.ErrorContext(request.Context(), "credential registration returned invalid result")
 		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)

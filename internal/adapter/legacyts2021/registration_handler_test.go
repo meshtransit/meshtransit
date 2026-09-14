@@ -66,7 +66,7 @@ func TestCredentialRegistrationHandlerAuthorizesBoundRequest(t *testing.T) {
 	}
 }
 
-func TestCredentialRegistrationHandlerRejectsUnrelatedCommittedResult(t *testing.T) {
+func TestCredentialRegistrationHandlerAuthorizesCanonicalCommittedReplay(t *testing.T) {
 	t.Parallel()
 
 	service := newRecordingRegistrationService(t)
@@ -97,9 +97,8 @@ func TestCredentialRegistrationHandlerRejectsUnrelatedCommittedResult(t *testing
 		credentialRegistrationPath,
 		registrationRequestBody,
 	)
-	if response.Code != http.StatusServiceUnavailable ||
-		strings.Contains(response.Body.String(), "MachineAuthorized") {
-		t.Fatalf("unrelated result response = (%d, %q)", response.Code, response.Body.String())
+	if response.Code != http.StatusOK || response.Body.String() != "{\"MachineAuthorized\":true}\n" {
+		t.Fatalf("canonical replay response = (%d, %q), want authorized", response.Code, response.Body.String())
 	}
 }
 

@@ -34,7 +34,8 @@ test-race:
 	$(GO) test -timeout=$(TEST_TIMEOUT) -race -shuffle=on ./...
 
 integration-deps:
-	$(GO) test -timeout=$(INTEGRATION_TEST_TIMEOUT) -tags=integration -count=1 ./internal/integration
+	$(GO) test -timeout=$(INTEGRATION_TEST_TIMEOUT) -tags=integration -count=1 \
+		-run '^TestTLSAuthenticatedDependencies$$' ./internal/integration
 
 integration-migrations:
 	$(GO) test -timeout=$(INTEGRATION_TEST_TIMEOUT) -tags=integration -count=1 -run '^TestPostgreSQLMigrations$$' ./internal/integration
@@ -46,7 +47,9 @@ lint:
 	$(GOLANGCI_LINT) run ./...
 
 lint-integration:
-	$(GOLANGCI_LINT) run --build-tags=integration ./internal/integration
+	$(GOLANGCI_LINT) run --build-tags=integration \
+		./internal/adapter/legacyts2021/protocoltest \
+		./internal/integration
 
 vuln:
 	$(GOVULNCHECK) ./...

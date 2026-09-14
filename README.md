@@ -342,8 +342,13 @@ gate also launches the real binary as `role=all`, checks every concrete role in
 operator metrics, performs a bounded SIGTERM shutdown, and proves a second
 process reaches readiness against the same durable state. A negative process
 case proves invalid `role=all` configuration exits with redacted diagnostics
-before starting the operator listener. Both containers are removed when the
-test exits.
+before starting the operator listener. The same gate also discovers the
+control key over validated TLS, establishes Noise plus HTTP/2, registers a
+synthetic one-off credential, and verifies the committed Node, key epochs,
+primary address, revision, audit, and outbox evidence. Repeating that exchange
+after process restart must replay the canonical result without consuming or
+creating any additional authority. Both containers are removed when the test
+exits.
 
 ## Container image
 
