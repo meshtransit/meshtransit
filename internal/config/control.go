@@ -42,6 +42,7 @@ type ControlConfig struct {
 	ReadIdleTimeout      time.Duration
 	PingTimeout          time.Duration
 	WriteTimeout         time.Duration
+	Map                  ControlMapConfig
 }
 
 func loadControlConfig(lookup LookupFunc) (ControlConfig, error) {
@@ -113,6 +114,10 @@ func loadControlConfig(lookup LookupFunc) (ControlConfig, error) {
 	if err != nil {
 		return ControlConfig{}, settingError(envControlWriteTimeout)
 	}
+	mapConfig, err := loadControlMapConfig(lookup)
+	if err != nil {
+		return ControlConfig{}, err
+	}
 
 	return ControlConfig{
 		Address:             address,
@@ -126,6 +131,7 @@ func loadControlConfig(lookup LookupFunc) (ControlConfig, error) {
 		ReadIdleTimeout:      readIdleTimeout,
 		PingTimeout:          pingTimeout,
 		WriteTimeout:         writeTimeout,
+		Map:                  mapConfig,
 	}, nil
 }
 
