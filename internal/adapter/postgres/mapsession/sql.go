@@ -68,3 +68,41 @@ const loadPeerCandidatesSQL = `SELECT
     key_expiry,
     addresses
 FROM mesh_ops.load_map_peer_candidates($1::BYTEA, $2::BYTEA, $3::INTEGER)`
+
+const loadPacketPolicySQL = `SELECT
+    release.policy_revision,
+    rule.access_rule_public_id::TEXT,
+    source.public_id::TEXT,
+    destination.public_id::TEXT,
+    rule.protocol,
+    ARRAY(
+        SELECT pg_catalog.lower(port_range)::INTEGER
+        FROM pg_catalog.unnest(rule.destination_ports) AS port_range
+        ORDER BY pg_catalog.lower(port_range), pg_catalog.upper(port_range)
+    ),
+    ARRAY(
+        SELECT (pg_catalog.upper(port_range) - 1)::INTEGER
+        FROM pg_catalog.unnest(rule.destination_ports) AS port_range
+        ORDER BY pg_catalog.lower(port_range), pg_catalog.upper(port_range)
+    )
+FROM mesh.policy_release AS release
+LEFT JOIN mesh.compiled_policy_rule AS rule
+  ON rule.workspace_id = release.workspace_id
+ AND rule.network_id = release.network_id
+ AND rule.policy_release_id = release.id
+ AND rule.policy_revision = release.policy_revision
+ AND (rule.source_device_id = $1::BIGINT OR rule.destination_device_id = $1::BIGINT)
+LEFT JOIN mesh.device AS source
+  ON source.workspace_id = rule.workspace_id
+ AND source.network_id = rule.network_id
+ AND source.id = rule.source_device_id
+LEFT JOIN mesh.device AS destination
+  ON destination.workspace_id = rule.workspace_id
+ AND destination.network_id = rule.network_id
+ AND destination.id = rule.destination_device_id
+WHERE release.workspace_id = mesh_ops.current_workspace_id()
+  AND release.network_id = mesh_ops.current_network_id()
+  AND release.policy_revision = $2::BIGINT
+  AND release.state = 'active'
+ORDER BY rule.access_rule_public_id, rule.source_device_id, rule.destination_device_id, rule.id
+LIMIT $3::INTEGER`

@@ -62,6 +62,32 @@ func TestSnapshotRejectsDuplicateAndExcessRules(t *testing.T) {
 	}
 }
 
+func TestSnapshotAllowsOneAccessRuleToExpandToDistinctNodePairs(t *testing.T) {
+	t.Parallel()
+
+	firstSource := policyNodeFixture(t, "000000000701")
+	secondSource := policyNodeFixture(t, "000000000702")
+	destination := policyNodeFixture(t, "000000000703")
+	first := policyRuleFixture(t, "000000000801", firstSource, destination, ProtocolICMP, nil)
+	second := policyRuleFixture(t, "000000000801", secondSource, destination, ProtocolICMP, nil)
+
+	snapshot, err := NewSnapshot(SnapshotParams{
+		Scope:    policyScopeFixture(t),
+		Revision: 2,
+		Rules:    []Rule{second, first},
+	})
+	if err != nil {
+		t.Fatalf("NewSnapshot() error = %v", err)
+	}
+	if got := len(snapshot.Rules()); got != 2 {
+		t.Fatalf("len(Rules()) = %d, want 2 expanded edges", got)
+	}
+	if !snapshot.AllowsPeer(firstSource, destination) ||
+		!snapshot.AllowsPeer(secondSource, destination) {
+		t.Fatal("snapshot dropped a selector-expanded edge sharing one Access Rule identity")
+	}
+}
+
 func TestSnapshotPeerVisibilityRequiresExplicitDirectionalRule(t *testing.T) {
 	t.Parallel()
 

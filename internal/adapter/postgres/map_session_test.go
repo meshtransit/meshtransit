@@ -13,6 +13,7 @@ func TestNewMapSessionStoreRequiresRuntimePool(t *testing.T) {
 		StatementTimeout:   time.Second,
 		IdleTimeout:        2 * time.Second,
 		PeerCandidateLimit: 100,
+		PolicyRuleLimit:    100,
 	}
 	for _, pool := range []*Pool{
 		nil,
@@ -31,6 +32,7 @@ func TestNewMapSessionStoreDelegatesValidatedConstruction(t *testing.T) {
 		StatementTimeout:   3 * time.Second,
 		IdleTimeout:        5 * time.Second,
 		PeerCandidateLimit: 100,
+		PolicyRuleLimit:    100,
 	}
 	var gotOptions MapSessionOptions
 	pool := &Pool{

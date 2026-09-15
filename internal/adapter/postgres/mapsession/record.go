@@ -44,6 +44,7 @@ func (record snapshotRecord) snapshot(
 	networkValue string,
 	recoveryEpoch int64,
 	peerCandidates []appmapsession.PeerCandidate,
+	packetPolicy policy.Snapshot,
 ) (appmapsession.Snapshot, error) {
 	scope, err := scopeFromText(workspaceValue, networkValue)
 	if err != nil {
@@ -68,14 +69,6 @@ func (record snapshotRecord) snapshot(
 	addresses, err := addressesFromText(record.addresses)
 	if err != nil {
 		return appmapsession.Snapshot{}, err
-	}
-	packetPolicy, err := policy.NewSnapshot(policy.SnapshotParams{
-		Scope:    scope,
-		Revision: record.policyRevision,
-		Rules:    nil,
-	})
-	if err != nil {
-		return appmapsession.Snapshot{}, ErrSnapshotEvidence
 	}
 	snapshot, err := appmapsession.NewSnapshot(appmapsession.SnapshotParams{
 		Scope:             scope,

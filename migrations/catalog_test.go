@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 19 {
-		t.Fatalf("len(Catalog()) = %d, want 19", len(catalog))
+	if len(catalog) != 20 {
+		t.Fatalf("len(Catalog()) = %d, want 20", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -767,8 +767,54 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("human authentication migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 19 {
-		t.Fatalf("LatestVersion() = %d, want 19", LatestVersion())
+	compiledPacketPolicy := catalog[19]
+	if compiledPacketPolicy.Description != "compiled packet policy authority" {
+		t.Fatalf(
+			"migration 20 description = %q, want compiled packet policy authority",
+			compiledPacketPolicy.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.policy_release",
+		"CREATE TABLE mesh.compiled_policy_rule",
+		"INT4MULTIRANGE",
+		"policy_release_active_uidx",
+		"compiled_policy_rule_release_scope_fk",
+		"compiled_policy_rule_source_device_scope_fk",
+		"compiled_policy_rule_destination_device_scope_fk",
+		"compiled_policy_rule_edge_unique",
+		"CREATE FUNCTION mesh_ops.advance_network_policy_revision",
+		"network_revision = revision.network_revision + 1",
+		"policy_revision = revision.policy_revision + 1",
+		"ENABLE ROW LEVEL SECURITY",
+		"FORCE ROW LEVEL SECURITY",
+		"CREATE POLICY policy_release_exact_scope_policy",
+		"CREATE POLICY compiled_policy_rule_exact_scope_policy",
+		"CREATE TRIGGER policy_release_authority_mutation",
+		"CREATE TRIGGER compiled_policy_rule_authority_mutation",
+		"CREATE TRIGGER compiled_policy_rule_immutable",
+		"GRANT SELECT ON",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(compiledPacketPolicy.SQL, required) {
+			t.Errorf("compiled packet policy migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT INSERT ON",
+		"GRANT UPDATE ON",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"TO mesh_worker",
+		"TO mesh_observer",
+	} {
+		if strings.Contains(compiledPacketPolicy.SQL, forbidden) {
+			t.Errorf("compiled packet policy migration SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 20 {
+		t.Fatalf("LatestVersion() = %d, want 20", LatestVersion())
 	}
 }
 

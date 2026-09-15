@@ -146,7 +146,36 @@ func validRuleParams(params RuleParams, ports []PortRange) bool {
 }
 
 func compareRules(first, second Rule) int {
-	return strings.Compare(first.id.String(), second.id.String())
+	if comparison := strings.Compare(first.id.String(), second.id.String()); comparison != 0 {
+		return comparison
+	}
+	if comparison := strings.Compare(first.sourceNodeID.String(), second.sourceNodeID.String()); comparison != 0 {
+		return comparison
+	}
+	if comparison := strings.Compare(first.destinationNodeID.String(), second.destinationNodeID.String()); comparison != 0 {
+		return comparison
+	}
+	if first.protocol < second.protocol {
+		return -1
+	}
+	if first.protocol > second.protocol {
+		return 1
+	}
+	for index := range min(len(first.destinationPortRanges), len(second.destinationPortRanges)) {
+		if comparison := comparePortRanges(
+			first.destinationPortRanges[index],
+			second.destinationPortRanges[index],
+		); comparison != 0 {
+			return comparison
+		}
+	}
+	if len(first.destinationPortRanges) < len(second.destinationPortRanges) {
+		return -1
+	}
+	if len(first.destinationPortRanges) > len(second.destinationPortRanges) {
+		return 1
+	}
+	return 0
 }
 
 func equalRules(first, second Rule) bool {

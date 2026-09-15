@@ -28,6 +28,7 @@ func assertPostgreSQLMapSessionSnapshot(
 		StatementTimeout:   3 * time.Second,
 		IdleTimeout:        5 * time.Second,
 		PeerCandidateLimit: mapsession.MaximumPeerCandidates,
+		PolicyRuleLimit:    mapsession.MaximumPacketPolicyRules,
 	})
 	if err != nil {
 		t.Fatalf("postgres.NewMapSessionStore() error = %v", err)

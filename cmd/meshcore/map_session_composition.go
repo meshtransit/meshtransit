@@ -25,6 +25,7 @@ func composeMapSession(
 			StatementTimeout:   mapConfig.StatementTimeout,
 			IdleTimeout:        mapConfig.TransactionIdleLimit,
 			PeerCandidateLimit: mapsession.MaximumPeerCandidates,
+			PolicyRuleLimit:    mapsession.MaximumPacketPolicyRules,
 		},
 	)
 	if err != nil {

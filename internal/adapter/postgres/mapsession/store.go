@@ -12,6 +12,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/control"
 	appmapsession "github.com/meshtransit/meshtransit/internal/control/mapsession"
 	"github.com/meshtransit/meshtransit/internal/network"
+	"github.com/meshtransit/meshtransit/internal/policy"
 )
 
 const (
@@ -34,6 +35,7 @@ type Options struct {
 	StatementTimeout   time.Duration
 	IdleTimeout        time.Duration
 	PeerCandidateLimit int
+	PolicyRuleLimit    int
 }
 
 // Store loads exact-scope snapshots in read-only repeatable-read transactions.
@@ -164,7 +166,23 @@ func (store *Store) Load(
 	if err != nil {
 		return appmapsession.Snapshot{}, err
 	}
-	snapshot, err = record.snapshot(workspaceValue, networkValue, recoveryEpoch, peerCandidates)
+	packetPolicy, err := store.loadPacketPolicy(
+		ctx,
+		transaction,
+		scope,
+		record.numericNodeID,
+		record.policyRevision,
+	)
+	if err != nil {
+		return appmapsession.Snapshot{}, err
+	}
+	snapshot, err = record.snapshot(
+		workspaceValue,
+		networkValue,
+		recoveryEpoch,
+		peerCandidates,
+		packetPolicy,
+	)
 	if err != nil {
 		return appmapsession.Snapshot{}, err
 	}
@@ -172,6 +190,90 @@ func (store *Store) Load(
 		return appmapsession.Snapshot{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("commit read snapshot: %w", err))
 	}
 	committed = true
+	return snapshot, nil
+}
+
+func (store *Store) loadPacketPolicy(
+	ctx context.Context,
+	transaction databaseTransaction,
+	scope network.Scope,
+	numericNodeID int64,
+	policyRevision int64,
+) (policy.Snapshot, error) {
+	rows, err := transaction.Query(
+		ctx,
+		loadPacketPolicySQL,
+		numericNodeID,
+		policyRevision,
+		store.options.PolicyRuleLimit+1,
+	)
+	if err != nil || rows == nil {
+		if err == nil {
+			err = ErrSnapshotEvidence
+		}
+		return policy.Snapshot{}, errors.Join(
+			ErrLoadSnapshot,
+			fmt.Errorf("read packet policy: %w", err),
+		)
+	}
+	defer rows.Close()
+	rules := make([]policy.Rule, 0, min(store.options.PolicyRuleLimit, 64))
+	releaseFound := false
+	for rows.Next() {
+		var record policyRuleRecord
+		if err := rows.Scan(
+			&record.policyRevision,
+			&record.ruleID,
+			&record.sourceNodeID,
+			&record.destinationNodeID,
+			&record.protocol,
+			&record.portRangeFirst,
+			&record.portRangeLast,
+		); err != nil {
+			return policy.Snapshot{}, errors.Join(
+				ErrLoadSnapshot,
+				fmt.Errorf("scan packet policy: %w", err),
+			)
+		}
+		if record.policyRevision != policyRevision {
+			return policy.Snapshot{}, ErrSnapshotEvidence
+		}
+		releaseFound = true
+		if record.ruleID == nil {
+			if !record.isEmptyRelease() {
+				return policy.Snapshot{}, ErrSnapshotEvidence
+			}
+			continue
+		}
+		if len(rules) == store.options.PolicyRuleLimit {
+			return policy.Snapshot{}, errors.Join(
+				ErrLoadSnapshot,
+				appmapsession.ErrPacketPolicyLimit,
+			)
+		}
+		rule, err := record.rule(scope)
+		if err != nil {
+			return policy.Snapshot{}, err
+		}
+		rules = append(rules, rule)
+	}
+	if err := rows.Err(); err != nil {
+		return policy.Snapshot{}, errors.Join(
+			ErrLoadSnapshot,
+			fmt.Errorf("iterate packet policy: %w", err),
+		)
+	}
+	if !releaseFound && policyRevision != 1 {
+		return policy.Snapshot{}, ErrSnapshotEvidence
+	}
+	snapshot, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope:    scope,
+		Revision: policyRevision,
+		Rules:    rules,
+	})
+	if err != nil {
+		return policy.Snapshot{}, errors.Join(ErrSnapshotEvidence, err)
+	}
 	return snapshot, nil
 }
 
@@ -248,7 +350,9 @@ func validOptions(options Options) bool {
 		options.StatementTimeout <= maximumStatementTimeout &&
 		options.IdleTimeout >= time.Millisecond && options.IdleTimeout <= maximumIdleTimeout &&
 		options.PeerCandidateLimit > 0 &&
-		options.PeerCandidateLimit <= appmapsession.MaximumPeerCandidates
+		options.PeerCandidateLimit <= appmapsession.MaximumPeerCandidates &&
+		options.PolicyRuleLimit > 0 &&
+		options.PolicyRuleLimit <= appmapsession.MaximumPacketPolicyRules
 }
 
 func postgresTimeout(value time.Duration) string {

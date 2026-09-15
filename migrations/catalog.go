@@ -32,6 +32,7 @@ const (
 	identityProviderAuthorityDescription    = "identity provider authority foundation"
 	accountIdentityPermissionDescription    = "account identity and permission catalog foundation"
 	humanAuthenticationSessionDescription   = "human authentication and account session authority"
+	compiledPacketPolicyDescription         = "compiled packet policy authority"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -91,6 +92,9 @@ var accountIdentityPermissionSQL string
 //go:embed 000019_human_authentication_session_authority.up.sql
 var humanAuthenticationSessionSQL string
 
+//go:embed 000020_compiled_packet_policy_authority.up.sql
+var compiledPacketPolicySQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -125,6 +129,7 @@ func Catalog() []Migration {
 		newMigration(17, identityProviderAuthorityDescription, identityProviderAuthoritySQL),
 		newMigration(18, accountIdentityPermissionDescription, accountIdentityPermissionSQL),
 		newMigration(19, humanAuthenticationSessionDescription, humanAuthenticationSessionSQL),
+		newMigration(20, compiledPacketPolicyDescription, compiledPacketPolicySQL),
 	}
 }
 

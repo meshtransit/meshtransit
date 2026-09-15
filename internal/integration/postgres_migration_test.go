@@ -141,6 +141,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertAuthorityMutationAtomicity(ctx, t, adminConnection)
 	assertAuthorityConstraints(ctx, t, adminConnection)
 	assertDatabasePrivilegeContract(ctx, t, adminConnection)
+	assertCompiledPacketPolicyPrivilegeContract(ctx, t, adminConnection)
 	registrationReplayCommand := seedRegistrationAuthority(ctx, t, adminConnection)
 	assertRegistrationSchemaConstraints(ctx, t, adminConnection)
 	registrationReplayStore, err := postgresadapter.NewRegistrationReplayStore(runtimePool)
@@ -237,6 +238,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		adminContenderConnection,
 		runtimePool,
 	)
+	assertCompiledPacketPolicyRuleImmutability(ctx, t, adminConnection)
 	assertIdentityProviderSchemaFoundation(ctx, t, adminConnection, runtimeConnection)
 	assertAccountIdentityPermissionFoundation(ctx, t, adminConnection, runtimeConnection)
 	assertHumanAuthenticationSessionAuthority(

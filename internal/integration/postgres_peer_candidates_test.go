@@ -38,6 +38,7 @@ func assertPostgreSQLPeerCandidateProjection(
 ) {
 	t.Helper()
 	identity := seedPeerCandidateProjection(ctx, t, adminConnection)
+	seedCompiledPacketPolicy(ctx, t, adminConnection)
 	store := newPeerCandidateStore(t, runtimePool, 8)
 
 	snapshot, err := store.Load(ctx, identity)
@@ -58,6 +59,21 @@ func assertPostgreSQLPeerCandidateProjection(
 			t.Fatalf("peer candidate %d = %+v, want Node %s in self scope", index, candidates[index], wantNodeID)
 		}
 	}
+	if snapshot.NetworkRevision() != 3 || snapshot.PacketPolicy().Revision() != 2 ||
+		len(snapshot.PacketPolicy().Rules()) != 2 {
+		t.Fatalf(
+			"policy revisions/rules = (%d, %d, %d), want (3, 2, 2)",
+			snapshot.NetworkRevision(),
+			snapshot.PacketPolicy().Revision(),
+			len(snapshot.PacketPolicy().Rules()),
+		)
+	}
+	authorizedPeers := snapshot.AuthorizedPeers()
+	if len(authorizedPeers) != 2 ||
+		authorizedPeers[0].NodeID().String() != wantNodeIDs[0] ||
+		authorizedPeers[1].NodeID().String() != wantNodeIDs[1] {
+		t.Fatalf("authorized peers = %+v, want both explicitly connected Nodes", authorizedPeers)
+	}
 
 	boundedStore := newPeerCandidateStore(t, runtimePool, 1)
 	if _, err := boundedStore.Load(ctx, identity); !errors.Is(err, mapsession.ErrPeerCandidateLimit) {
@@ -75,6 +91,124 @@ func assertPostgreSQLPeerCandidateProjection(
 	)
 }
 
+func seedCompiledPacketPolicy(ctx context.Context, t *testing.T, connection *pgx.Conn) {
+	t.Helper()
+	releasePublicID := integrationPublicID("01890f50-0000-7000-8000-", 203)
+	commitAuditedAuthorityFixture(ctx, t, connection, authorityEvidenceFixture{
+		changePublicID:         integrationPublicID("01890f51-0000-7000-8000-", 203),
+		eventPublicID:          integrationPublicID("01890f52-0000-7000-8000-", 203),
+		outboxPublicID:         integrationPublicID("01890f53-0000-7000-8000-", 203),
+		streamID:               203,
+		aggregateKind:          "policy_release",
+		aggregatePublicID:      releasePublicID,
+		aggregateVersion:       1,
+		networkRevision:        int64(3),
+		actorPrincipalPublicID: integrationPublicID("01890f00-0000-7000-8000-", 11),
+		action:                 "policy.published",
+		permission:             "policy.publish",
+		outboxEventClass:       "network.revision.advanced",
+	}, func(transaction pgx.Tx) {
+		setIntegrationScope(ctx, t, transaction, 103, 203)
+		var networkRevision, policyRevision int64
+		if err := transaction.QueryRow(
+			ctx,
+			`SELECT network_revision, policy_revision
+FROM mesh_ops.advance_network_policy_revision()`,
+		).Scan(&networkRevision, &policyRevision); err != nil {
+			t.Fatalf("advance compiled packet policy revision: %v", err)
+		}
+		if networkRevision != 3 || policyRevision != 2 {
+			t.Fatalf(
+				"advanced policy revisions = (%d, %d), want (3, 2)",
+				networkRevision,
+				policyRevision,
+			)
+		}
+		var releaseID int64
+		if err := transaction.QueryRow(ctx, `INSERT INTO mesh.policy_release (
+    public_id,
+    workspace_id,
+    network_id,
+    policy_revision,
+    semantic_hash,
+    compiler_format_version,
+    state
+) VALUES (
+    $1::UUID,
+    103,
+    203,
+    $2::BIGINT,
+    pg_catalog.decode(pg_catalog.repeat('a5', 32), 'hex'),
+    1,
+    'active'
+)
+RETURNING id`, releasePublicID, policyRevision).Scan(&releaseID); err != nil {
+			t.Fatalf("insert compiled packet policy release: %v", err)
+		}
+		rules := []struct {
+			projectionID  string
+			accessRuleID  string
+			sourceID      int64
+			destinationID int64
+			protocol      string
+			ports         string
+		}{
+			{
+				projectionID:  integrationPublicID("01890f54-0000-7000-8000-", 1),
+				accessRuleID:  integrationPublicID("01890f55-0000-7000-8000-", 1),
+				sourceID:      910,
+				destinationID: 920,
+				protocol:      "tcp",
+				ports:         "{[80,82),[443,444)}",
+			},
+			{
+				projectionID:  integrationPublicID("01890f54-0000-7000-8000-", 2),
+				accessRuleID:  integrationPublicID("01890f55-0000-7000-8000-", 2),
+				sourceID:      930,
+				destinationID: 910,
+				protocol:      "icmp",
+				ports:         "{}",
+			},
+		}
+		for _, rule := range rules {
+			if _, err := transaction.Exec(ctx, `INSERT INTO mesh.compiled_policy_rule (
+    public_id,
+    access_rule_public_id,
+    workspace_id,
+    network_id,
+    policy_release_id,
+    policy_revision,
+    source_device_id,
+    destination_device_id,
+    protocol,
+    destination_ports
+) VALUES (
+    $1::UUID,
+    $2::UUID,
+    103,
+    203,
+    $3::BIGINT,
+    $4::BIGINT,
+    $5::BIGINT,
+    $6::BIGINT,
+    $7::TEXT,
+    $8::INT4MULTIRANGE
+)`,
+				rule.projectionID,
+				rule.accessRuleID,
+				releaseID,
+				policyRevision,
+				rule.sourceID,
+				rule.destinationID,
+				rule.protocol,
+				rule.ports,
+			); err != nil {
+				t.Fatalf("insert compiled packet policy rule: %v", err)
+			}
+		}
+	})
+}
+
 func newPeerCandidateStore(
 	t *testing.T,
 	pool *postgresadapter.Pool,
@@ -85,6 +219,7 @@ func newPeerCandidateStore(
 		StatementTimeout:   5 * time.Second,
 		IdleTimeout:        5 * time.Second,
 		PeerCandidateLimit: limit,
+		PolicyRuleLimit:    mapsession.MaximumPacketPolicyRules,
 	})
 	if err != nil {
 		t.Fatalf("postgres.NewMapSessionStore() error = %v", err)

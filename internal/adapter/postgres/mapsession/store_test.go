@@ -21,8 +21,20 @@ func TestStoreLoadsConsistentScopedSnapshot(t *testing.T) {
 	if !snapshot.IsValid() || snapshot.Scope().WorkspaceID().String() != testWorkspaceID ||
 		snapshot.Scope().NetworkID().String() != testNetworkID || snapshot.RecoveryEpoch() != 2 ||
 		snapshot.NetworkRevision() != 7 || snapshot.PacketPolicy().Revision() != 5 ||
-		len(snapshot.Addresses()) != 2 || len(snapshot.AuthorizedPeers()) != 0 {
+		len(snapshot.Addresses()) != 2 || len(snapshot.AuthorizedPeers()) != 1 {
 		t.Fatalf("Load() snapshot = %+v, want complete authority evidence", snapshot)
+	}
+	rules := snapshot.PacketPolicy().Rules()
+	if len(rules) != 1 || rules[0].ID().String() != testRuleID ||
+		rules[0].SourceNodeID().String() != testNodeID ||
+		rules[0].DestinationNodeID().String() != testPeerNodeID ||
+		rules[0].Protocol().String() != "tcp" {
+		t.Fatalf("packet policy rules = %+v, want exact compiled rule", rules)
+	}
+	ports := rules[0].DestinationPortRanges()
+	if len(ports) != 2 || ports[0].First() != 80 || ports[0].Last() != 81 ||
+		ports[1].First() != 443 || ports[1].Last() != 443 {
+		t.Fatalf("packet policy ports = %+v, want [80-81, 443]", ports)
 	}
 	if database.beginCalls != 1 || !transaction.committed || transaction.rollbackCalls != 0 {
 		t.Fatalf(
@@ -38,6 +50,7 @@ func TestStoreLoadsConsistentScopedSnapshot(t *testing.T) {
 		setScopeSQL,
 		loadSnapshotSQL,
 		loadPeerCandidatesSQL,
+		loadPacketPolicySQL,
 	}
 	if !reflect.DeepEqual(transaction.queries, wantQueries) {
 		t.Fatalf("queries = %v, want %v", transaction.queries, wantQueries)
@@ -50,6 +63,9 @@ func TestStoreLoadsConsistentScopedSnapshot(t *testing.T) {
 	}
 	if !reflect.DeepEqual(transaction.arguments[4], []any{fingerprint[:], nodeKey[:], 101}) {
 		t.Fatalf("candidate arguments did not bind authenticated keys and limit+1")
+	}
+	if !reflect.DeepEqual(transaction.arguments[5], []any{int64(701), int64(5), 101}) {
+		t.Fatalf("policy arguments did not bind self Node, exact revision, and limit+1")
 	}
 	candidates := snapshot.PeerCandidates()
 	if len(candidates) != 1 || candidates[0].NodeID().String() != testPeerNodeID {
@@ -113,6 +129,7 @@ func TestStoreRejectsMissingTransaction(t *testing.T) {
 			StatementTimeout:   time.Second,
 			IdleTimeout:        2 * time.Second,
 			PeerCandidateLimit: 100,
+			PolicyRuleLimit:    100,
 		},
 		observer,
 	)
@@ -131,6 +148,7 @@ func TestStoreRejectsUnsafeConstruction(t *testing.T) {
 		StatementTimeout:   time.Second,
 		IdleTimeout:        2 * time.Second,
 		PeerCandidateLimit: 100,
+		PolicyRuleLimit:    100,
 	}
 	for _, test := range []struct {
 		name     string
@@ -144,12 +162,83 @@ func TestStoreRejectsUnsafeConstruction(t *testing.T) {
 		{name: "excess idle timeout", database: &fakeDatabase{}, options: Options{StatementTimeout: time.Second, IdleTimeout: maximumIdleTimeout + 1}, observer: observer},
 		{name: "zero candidate limit", database: &fakeDatabase{}, options: Options{StatementTimeout: time.Second, IdleTimeout: time.Second}, observer: observer},
 		{name: "excess candidate limit", database: &fakeDatabase{}, options: Options{StatementTimeout: time.Second, IdleTimeout: time.Second, PeerCandidateLimit: appmapsession.MaximumPeerCandidates + 1}, observer: observer},
+		{name: "zero policy limit", database: &fakeDatabase{}, options: Options{StatementTimeout: time.Second, IdleTimeout: time.Second, PeerCandidateLimit: 1}, observer: observer},
+		{name: "excess policy limit", database: &fakeDatabase{}, options: Options{StatementTimeout: time.Second, IdleTimeout: time.Second, PeerCandidateLimit: 1, PolicyRuleLimit: 10001}, observer: observer},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := newStore(test.database, test.options, test.observer); !errors.Is(err, ErrInvalidStore) {
 				t.Fatalf("newStore() error = %v, want ErrInvalidStore", err)
 			}
 		})
+	}
+}
+
+func TestStoreRejectsMalformedPacketPolicyEvidence(t *testing.T) {
+	store, _, transaction, _, identity := validStoreFixture(t)
+	record := validPolicyRuleRecord()
+	unknownProtocol := "any"
+	record.protocol = &unknownProtocol
+	transaction.policyRows = &policyRuleRows{records: []policyRuleRecord{record}}
+
+	if _, err := store.Load(t.Context(), identity); !errors.Is(err, ErrSnapshotEvidence) {
+		t.Fatalf("Load() error = %v, want ErrSnapshotEvidence", err)
+	}
+	if transaction.committed || transaction.rollbackCalls != 1 {
+		t.Fatalf("transaction committed=%t rollbacks=%d, want false/1", transaction.committed, transaction.rollbackCalls)
+	}
+}
+
+func TestStoreRejectsMissingActivePacketPolicyRelease(t *testing.T) {
+	store, _, transaction, _, identity := validStoreFixture(t)
+	transaction.policyRows = &policyRuleRows{}
+
+	if _, err := store.Load(t.Context(), identity); !errors.Is(err, ErrSnapshotEvidence) {
+		t.Fatalf("Load() error = %v, want ErrSnapshotEvidence", err)
+	}
+	if transaction.committed || transaction.rollbackCalls != 1 {
+		t.Fatalf(
+			"transaction committed=%t rollbacks=%d, want false/1",
+			transaction.committed,
+			transaction.rollbackCalls,
+		)
+	}
+}
+
+func TestStoreLoadsExplicitEmptyPacketPolicyReleaseAsDefaultDeny(t *testing.T) {
+	store, _, transaction, _, identity := validStoreFixture(t)
+	transaction.policyRows = &policyRuleRows{records: []policyRuleRecord{{policyRevision: 5}}}
+
+	snapshot, err := store.Load(t.Context(), identity)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !snapshot.IsValid() || len(snapshot.PacketPolicy().Rules()) != 0 ||
+		len(snapshot.AuthorizedPeers()) != 0 {
+		t.Fatalf("Load() snapshot = %+v, want valid explicit default-deny release", snapshot)
+	}
+	if !transaction.committed || transaction.rollbackCalls != 0 {
+		t.Fatalf(
+			"transaction committed=%t rollbacks=%d, want true/0",
+			transaction.committed,
+			transaction.rollbackCalls,
+		)
+	}
+}
+
+func TestStoreFailsClosedWhenPolicyRuleBoundIsExceeded(t *testing.T) {
+	store, _, transaction, _, identity := validStoreFixture(t)
+	store.options.PolicyRuleLimit = 1
+	first := validPolicyRuleRecord()
+	second := validPolicyRuleRecord()
+	secondRuleID := "01890f00-0000-7000-8000-000000000802"
+	second.ruleID = &secondRuleID
+	transaction.policyRows = &policyRuleRows{records: []policyRuleRecord{first, second}}
+
+	if _, err := store.Load(t.Context(), identity); !errors.Is(err, appmapsession.ErrPacketPolicyLimit) {
+		t.Fatalf("Load() error = %v, want ErrPacketPolicyLimit", err)
+	}
+	if transaction.committed || transaction.rollbackCalls != 1 {
+		t.Fatalf("transaction committed=%t rollbacks=%d, want false/1", transaction.committed, transaction.rollbackCalls)
 	}
 }
 

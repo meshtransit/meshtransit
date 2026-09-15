@@ -11,10 +11,18 @@ import (
 	"github.com/meshtransit/meshtransit/internal/policy"
 )
 
-const maximumSafeNumericID int64 = 1<<53 - 1
+const (
+	maximumSafeNumericID int64 = 1<<53 - 1
+	// MaximumPacketPolicyRules bounds one Node-reduced policy projection.
+	MaximumPacketPolicyRules = policy.MaximumRules
+)
 
-// ErrInvalidSnapshot reports incomplete, stale, or unsafe authority evidence.
-var ErrInvalidSnapshot = errors.New("map session: invalid snapshot")
+var (
+	// ErrInvalidSnapshot reports incomplete, stale, or unsafe authority evidence.
+	ErrInvalidSnapshot = errors.New("map session: invalid snapshot")
+	// ErrPacketPolicyLimit reports a Node projection above its configured bound.
+	ErrPacketPolicyLimit = errors.New("map session: packet policy limit exceeded")
+)
 
 // SnapshotParams contains authoritative facts read in one consistent database snapshot.
 type SnapshotParams struct {

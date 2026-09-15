@@ -18,6 +18,7 @@ const (
 	testNetworkID   = "01890f00-0000-7000-8000-000000000201"
 	testNodeID      = "01890f00-0000-7000-8000-000000000701"
 	testPeerNodeID  = "01890f00-0000-7000-8000-000000000702"
+	testRuleID      = "01890f00-0000-7000-8000-000000000801"
 )
 
 type fakeDatabase struct {
@@ -44,6 +45,7 @@ type fakeTransaction struct {
 	committed     bool
 	rollbackCalls int
 	candidateRows *peerCandidateRows
+	policyRows    *policyRuleRows
 }
 
 func (transaction *fakeTransaction) Exec(
@@ -75,10 +77,20 @@ func (transaction *fakeTransaction) Query(
 	arguments ...any,
 ) (databaseRows, error) {
 	transaction.record(query, arguments)
-	if transaction.candidateRows == nil {
-		return &peerCandidateRows{}, nil
+	switch query {
+	case loadPeerCandidatesSQL:
+		if transaction.candidateRows == nil {
+			return &peerCandidateRows{}, nil
+		}
+		return transaction.candidateRows, nil
+	case loadPacketPolicySQL:
+		if transaction.policyRows == nil {
+			return &policyRuleRows{}, nil
+		}
+		return transaction.policyRows, nil
+	default:
+		return nil, errors.New("unexpected query")
 	}
-	return transaction.candidateRows, nil
 }
 
 func (transaction *fakeTransaction) Commit(context.Context) error {
@@ -181,6 +193,48 @@ func (rows *peerCandidateRows) Err() error { return rows.err }
 
 func (rows *peerCandidateRows) Close() { rows.closed = true }
 
+type policyRuleRows struct {
+	records []policyRuleRecord
+	index   int
+	err     error
+	closed  bool
+}
+
+func (rows *policyRuleRows) Next() bool {
+	if rows.index >= len(rows.records) {
+		return false
+	}
+	rows.index++
+	return true
+}
+
+func (rows *policyRuleRows) Scan(destinations ...any) error {
+	if rows.index == 0 || rows.index > len(rows.records) {
+		return errors.New("scan without current row")
+	}
+	record := rows.records[rows.index-1]
+	*destinations[0].(*int64) = record.policyRevision
+	*destinations[1].(**string) = cloneStringPointer(record.ruleID)
+	*destinations[2].(**string) = cloneStringPointer(record.sourceNodeID)
+	*destinations[3].(**string) = cloneStringPointer(record.destinationNodeID)
+	*destinations[4].(**string) = cloneStringPointer(record.protocol)
+	*destinations[5].(*[]int32) = append([]int32{}, record.portRangeFirst...)
+	*destinations[6].(*[]int32) = append([]int32{}, record.portRangeLast...)
+	return nil
+}
+
+func (rows *policyRuleRows) Err() error { return rows.err }
+
+func (rows *policyRuleRows) Close() { rows.closed = true }
+
+func cloneStringPointer(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
 type recordingObserver struct {
 	operation Operation
 	err       error
@@ -247,18 +301,38 @@ func validStoreFixture(
 		scopeRow{workspaceID: testWorkspaceID, networkID: testNetworkID, recoveryEpoch: 2},
 		internalScopeRow{workspaceID: 101, networkID: 201},
 		snapshotRow{record: validSnapshotRecord(t, identity)},
-	}, candidateRows: &peerCandidateRows{records: []peerCandidateRecord{validPeerCandidateRecord(2)}}}
+	},
+		candidateRows: &peerCandidateRows{records: []peerCandidateRecord{validPeerCandidateRecord(2)}},
+		policyRows:    &policyRuleRows{records: []policyRuleRecord{validPolicyRuleRecord()}},
+	}
 	database := &fakeDatabase{transaction: transaction}
 	observer := &recordingObserver{}
 	store, err := newStore(database, Options{
 		StatementTimeout:   3 * time.Second,
 		IdleTimeout:        5 * time.Second,
 		PeerCandidateLimit: 100,
+		PolicyRuleLimit:    100,
 	}, observer)
 	if err != nil {
 		t.Fatalf("newStore() error = %v", err)
 	}
 	return store, database, transaction, observer, identity
+}
+
+func validPolicyRuleRecord() policyRuleRecord {
+	ruleID := testRuleID
+	sourceNodeID := testNodeID
+	destinationNodeID := testPeerNodeID
+	protocol := "tcp"
+	return policyRuleRecord{
+		policyRevision:    5,
+		ruleID:            &ruleID,
+		sourceNodeID:      &sourceNodeID,
+		destinationNodeID: &destinationNodeID,
+		protocol:          &protocol,
+		portRangeFirst:    []int32{80, 443},
+		portRangeLast:     []int32{81, 443},
+	}
 }
 
 func validPeerCandidateRecord(marker byte) peerCandidateRecord {
