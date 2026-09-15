@@ -2,6 +2,7 @@ package revisionfeed
 
 import (
 	"errors"
+	"runtime"
 	"testing"
 
 	"github.com/meshtransit/meshtransit/internal/network"
@@ -38,8 +39,8 @@ func TestFeedFansOutByNetworkAndCoalescesBackpressure(t *testing.T) {
 	publishRevision(t, subscription, testNetworkA, 3)
 	publishRevision(t, subscription, testNetworkB, 4)
 	assertRevision(t, updatesB, testNetworkB, 4)
-	assertRevision(t, updatesA1, testNetworkA, 2)
-	assertRevision(t, updatesA2, testNetworkA, 2)
+	assertRevision(t, updatesA1, testNetworkA, 3)
+	assertRevision(t, updatesA2, testNetworkA, 3)
 
 	snapshot := feed.telemetry.Snapshot()
 	if !snapshot.Connected || snapshot.ActiveWatchers != 3 || snapshot.WakeupsTotal != 4 ||
@@ -54,6 +55,39 @@ func TestFeedFansOutByNetworkAndCoalescesBackpressure(t *testing.T) {
 	}
 	if active := feed.telemetry.Snapshot().ActiveWatchers; active != 2 {
 		t.Fatalf("active watchers = %d, want 2", active)
+	}
+}
+
+func TestFeedKeepsHighestPendingRevision(t *testing.T) {
+	t.Parallel()
+
+	subscription := newFakeSubscription()
+	feed := mustFeed(t, 1, subscription)
+	updates, release := mustWatch(t, feed, parseNetworkID(t, testNetworkA))
+	defer release()
+
+	publishRevision(t, subscription, testNetworkA, 5)
+	publishRevision(t, subscription, testNetworkA, 4)
+	assertWakeupCount(t, feed, 2)
+	assertRevision(t, updates, testNetworkA, 5)
+	assertNoRevision(t, updates)
+
+	snapshot := feed.telemetry.Snapshot()
+	if snapshot.WakeupsTotal != 2 || snapshot.DeliveredTotal != 1 ||
+		snapshot.CoalescedTotal != 1 {
+		t.Fatalf("latest-wins telemetry = %+v", snapshot)
+	}
+}
+
+func assertWakeupCount(t *testing.T, feed *Feed, want uint64) {
+	t.Helper()
+	for feed.telemetry.Snapshot().WakeupsTotal < want {
+		select {
+		case <-t.Context().Done():
+			t.Fatalf("wait for %d wakeups: %v", want, t.Context().Err())
+		default:
+			runtime.Gosched()
+		}
 	}
 }
 

@@ -56,15 +56,38 @@ func (feed *Feed) dispatch(revision network.RevisionAdvanced) {
 	var delivered, coalesced uint64
 	feed.mu.Lock()
 	for _, updates := range feed.watchers[revision.NetworkID()] {
-		select {
-		case updates <- revision:
+		if offerLatestRevision(updates, revision) {
 			delivered++
-		default:
+		} else {
 			coalesced++
 		}
 	}
 	feed.mu.Unlock()
 	feed.telemetry.recordWakeup(delivered, coalesced)
+}
+
+// offerLatestRevision keeps one bounded, latest-wins mailbox per watcher. The
+// feed mutex guarantees this is the only sender and prevents concurrent close.
+func offerLatestRevision(
+	updates chan network.RevisionAdvanced,
+	revision network.RevisionAdvanced,
+) bool {
+	select {
+	case updates <- revision:
+		return true
+	default:
+	}
+
+	select {
+	case pending := <-updates:
+		if pending.Number() > revision.Number() {
+			revision = pending
+		}
+	default:
+		// The consumer drained the mailbox after the first send attempt.
+	}
+	updates <- revision
+	return false
 }
 
 func (feed *Feed) stopWatching() {
