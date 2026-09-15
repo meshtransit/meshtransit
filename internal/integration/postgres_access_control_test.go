@@ -297,3 +297,16 @@ func assertPostgreSQLCode(t *testing.T, err error, wantCode string) {
 		t.Fatalf("PostgreSQL error = %v, want SQLSTATE %s", err, wantCode)
 	}
 }
+
+func assertPostgreSQLConstraint(t *testing.T, err error, wantConstraint string) {
+	t.Helper()
+
+	postgresError, ok := errors.AsType[*pgconn.PgError](err)
+	if !ok || postgresError.ConstraintName != wantConstraint {
+		t.Fatalf(
+			"PostgreSQL error = %v, want constraint %s",
+			err,
+			wantConstraint,
+		)
+	}
+}

@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 16 {
-		t.Fatalf("len(Catalog()) = %d, want 16", len(catalog))
+	if len(catalog) != 19 {
+		t.Fatalf("len(Catalog()) = %d, want 19", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -619,8 +619,156 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("map peer candidate migration SQL contains excessive capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 16 {
-		t.Fatalf("LatestVersion() = %d, want 16", LatestVersion())
+	identityProviderAuthority := catalog[16]
+	if identityProviderAuthority.Description != "identity provider authority foundation" {
+		t.Fatalf(
+			"migration 17 description = %q, want identity provider authority foundation",
+			identityProviderAuthority.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.identity_provider",
+		"CREATE TABLE mesh.identity_provider_generation",
+		"CREATE TABLE mesh.identity_provider_client",
+		"CREATE TABLE mesh.workspace_identity_provider",
+		"identity_provider_current_generation_fk",
+		"CREATE CONSTRAINT TRIGGER identity_provider_current_generation_state_check",
+		"CREATE CONSTRAINT TRIGGER identity_provider_generation_current_check",
+		"workspace_identity_provider_workspace_fk",
+		"workspace_identity_provider_client_fk",
+		"ENABLE ROW LEVEL SECURITY",
+		"FORCE ROW LEVEL SECURITY",
+		"CREATE POLICY workspace_identity_provider_exact_scope_policy",
+		"CREATE TRIGGER identity_provider_authority_mutation",
+		"CREATE TRIGGER identity_provider_generation_authority_mutation",
+		"CREATE TRIGGER identity_provider_client_authority_mutation",
+		"CREATE TRIGGER workspace_identity_provider_authority_mutation",
+		"REVOKE ALL ON",
+	} {
+		if !strings.Contains(identityProviderAuthority.SQL, required) {
+			t.Errorf("identity provider migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"client_secret TEXT",
+		"provider_token",
+		"refresh_token",
+		"raw_subject",
+		"GRANT SELECT ON",
+		"GRANT INSERT ON",
+		"GRANT UPDATE ON",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"TO mesh_worker",
+	} {
+		if strings.Contains(identityProviderAuthority.SQL, forbidden) {
+			t.Errorf("identity provider migration SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	accountIdentityPermission := catalog[17]
+	if accountIdentityPermission.Description != "account identity and permission catalog foundation" {
+		t.Fatalf(
+			"migration 18 description = %q, want account identity and permission catalog foundation",
+			accountIdentityPermission.Description,
+		)
+	}
+	for _, required := range []string{
+		"ADD CONSTRAINT principal_deployment_id_kind_unique",
+		"CREATE TABLE mesh.account",
+		"account_principal_scope_fk",
+		"CREATE TABLE mesh.identity_subject",
+		"identity_subject_provider_scope_fk",
+		"identity_subject_account_scope_fk",
+		"subject_digest_algorithm = 'hmac-sha256-v1'",
+		"CREATE TABLE mesh.permission",
+		"permission_immutable",
+		"catalog_version",
+		"CREATE TRIGGER account_authority_mutation",
+		"CREATE TRIGGER identity_subject_authority_mutation",
+		"REVOKE ALL ON",
+	} {
+		if !strings.Contains(accountIdentityPermission.SQL, required) {
+			t.Errorf("account identity migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"raw_subject",
+		"subject TEXT",
+		"email TEXT",
+		"provider_token",
+		"refresh_token",
+		"GRANT SELECT ON",
+		"GRANT INSERT ON",
+		"GRANT UPDATE ON",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"TO mesh_worker",
+	} {
+		if strings.Contains(accountIdentityPermission.SQL, forbidden) {
+			t.Errorf("account identity migration SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	humanAuthenticationSession := catalog[18]
+	if humanAuthenticationSession.Description != "human authentication and account session authority" {
+		t.Fatalf(
+			"migration 19 description = %q, want human authentication and account session authority",
+			humanAuthenticationSession.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.auth_transaction",
+		"CREATE TABLE mesh.account_session",
+		"CREATE TABLE mesh.identity_link_request",
+		"CREATE TABLE mesh.oidc_logout_replay",
+		"identity_subject_provider_principal_id_unique",
+		"auth_transaction_provider_generation_fk",
+		"account_session_subject_scope_fk",
+		"identity_link_request_current_proof_fk",
+		"oidc_logout_replay_provider_client_fk",
+		"CREATE FUNCTION mesh_ops.enforce_human_auth_state_transition",
+		"CREATE FUNCTION mesh_ops.resolve_account_session",
+		"CREATE FUNCTION mesh_ops.revoke_account_session",
+		"pg_catalog.set_config(",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh, mesh_ops",
+		"CREATE TRIGGER auth_transaction_authority_mutation",
+		"CREATE TRIGGER account_session_authority_mutation",
+		"CREATE TRIGGER identity_link_request_authority_mutation",
+		"CREATE TRIGGER oidc_logout_replay_authority_mutation",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.resolve_account_session",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.revoke_account_session",
+	} {
+		if !strings.Contains(humanAuthenticationSession.SQL, required) {
+			t.Errorf("human authentication migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"state_token",
+		"nonce TEXT",
+		"pkce_verifier TEXT",
+		"session_token TEXT",
+		"provider_token",
+		"refresh_token",
+		"raw_subject",
+		"email TEXT",
+		"USING (TRUE)",
+		"WITH CHECK (TRUE)",
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"TO mesh_worker",
+	} {
+		if strings.Contains(humanAuthenticationSession.SQL, forbidden) {
+			t.Errorf("human authentication migration SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 19 {
+		t.Fatalf("LatestVersion() = %d, want 19", LatestVersion())
 	}
 }
 

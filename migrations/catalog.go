@@ -29,6 +29,9 @@ const (
 	registrationIntakeScopeQueryDescription = "registration intake scope query correction"
 	mapSessionScopeDescription              = "map session scope resolution"
 	mapSessionPeerCandidatesDescription     = "bounded map session peer candidate projection"
+	identityProviderAuthorityDescription    = "identity provider authority foundation"
+	accountIdentityPermissionDescription    = "account identity and permission catalog foundation"
+	humanAuthenticationSessionDescription   = "human authentication and account session authority"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -79,6 +82,15 @@ var mapSessionScopeSQL string
 //go:embed 000016_map_session_peer_candidates.up.sql
 var mapSessionPeerCandidatesSQL string
 
+//go:embed 000017_identity_provider_authority.up.sql
+var identityProviderAuthoritySQL string
+
+//go:embed 000018_account_identity_permission_catalog.up.sql
+var accountIdentityPermissionSQL string
+
+//go:embed 000019_human_authentication_session_authority.up.sql
+var humanAuthenticationSessionSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -110,6 +122,9 @@ func Catalog() []Migration {
 		newMigration(14, registrationIntakeScopeQueryDescription, registrationIntakeScopeQuerySQL),
 		newMigration(15, mapSessionScopeDescription, mapSessionScopeSQL),
 		newMigration(16, mapSessionPeerCandidatesDescription, mapSessionPeerCandidatesSQL),
+		newMigration(17, identityProviderAuthorityDescription, identityProviderAuthoritySQL),
+		newMigration(18, accountIdentityPermissionDescription, accountIdentityPermissionSQL),
+		newMigration(19, humanAuthenticationSessionDescription, humanAuthenticationSessionSQL),
 	}
 }
 

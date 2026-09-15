@@ -262,6 +262,19 @@ func commitAuditedAuthorityFixture(
 	defer rollbackIntegrationTransaction(ctx, t, transaction)
 	setIntegrationChange(ctx, t, transaction, evidence.changePublicID)
 	mutate(transaction)
+	appendIntegrationAuthorityEvidence(ctx, t, transaction, evidence)
+	if err := transaction.Commit(ctx); err != nil {
+		t.Fatalf("commit audited authority fixture transaction: %v", err)
+	}
+}
+
+func appendIntegrationAuthorityEvidence(
+	ctx context.Context,
+	t *testing.T,
+	transaction pgx.Tx,
+	evidence authorityEvidenceFixture,
+) {
+	t.Helper()
 
 	var expectedSequence int64
 	var previousHash []byte
@@ -320,9 +333,6 @@ WHERE id = $1`, evidence.streamID).Scan(&expectedSequence, &previousHash); err !
 			appendedSequence,
 			expectedSequence,
 		)
-	}
-	if err := transaction.Commit(ctx); err != nil {
-		t.Fatalf("commit audited authority fixture transaction: %v", err)
 	}
 }
 
