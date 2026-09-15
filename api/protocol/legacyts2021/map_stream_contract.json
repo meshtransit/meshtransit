@@ -1,5 +1,5 @@
 {
-  "contract_version": 1,
+  "contract_version": 2,
   "profile": "legacy-ts2021-cap142-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
@@ -25,7 +25,10 @@
     ],
     "redis_loss": "terminate-stream",
     "revision_wakeup": "network-revision-advanced",
-    "missed_wakeup_repair": "postgresql-reconciliation",
+    "connectivity_wakeup": "network-scoped-connectivity-changed",
+    "connectivity_coalescing": "latest-wins-full-projection-refresh",
+    "same_revision_connectivity_refresh": true,
+    "missed_wakeup_repair": "postgresql-and-redis-reconciliation",
     "reconnect": "fresh-authenticated-snapshot"
   }
 }

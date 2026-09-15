@@ -28,15 +28,18 @@ type mapStreamContract struct {
 		Stream          bool   `json:"stream"`
 	} `json:"request"`
 	Lifecycle struct {
-		FirstMessage       string   `json:"first_message"`
-		KeepAlive          string   `json:"keepalive"`
-		MaximumSilence     int      `json:"maximum_silence_seconds"`
-		PresenceAuthority  string   `json:"presence_authority"`
-		PresenceFence      []string `json:"presence_fence"`
-		RedisLoss          string   `json:"redis_loss"`
-		RevisionWakeup     string   `json:"revision_wakeup"`
-		MissedWakeupRepair string   `json:"missed_wakeup_repair"`
-		Reconnect          string   `json:"reconnect"`
+		FirstMessage                    string   `json:"first_message"`
+		KeepAlive                       string   `json:"keepalive"`
+		MaximumSilence                  int      `json:"maximum_silence_seconds"`
+		PresenceAuthority               string   `json:"presence_authority"`
+		PresenceFence                   []string `json:"presence_fence"`
+		RedisLoss                       string   `json:"redis_loss"`
+		RevisionWakeup                  string   `json:"revision_wakeup"`
+		ConnectivityWakeup              string   `json:"connectivity_wakeup"`
+		ConnectivityCoalescing          string   `json:"connectivity_coalescing"`
+		SameRevisionConnectivityRefresh bool     `json:"same_revision_connectivity_refresh"`
+		MissedWakeupRepair              string   `json:"missed_wakeup_repair"`
+		Reconnect                       string   `json:"reconnect"`
 	} `json:"lifecycle"`
 }
 
@@ -52,7 +55,7 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 1 || contract.Profile != "legacy-ts2021-cap142-v1" ||
+	if contract.ContractVersion != 2 || contract.Profile != "legacy-ts2021-cap142-v1" ||
 		contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
 		contract.ClientEvidence.Revision != "78cb5130400bc003974f7730b319350fed129bbe" {
 		t.Fatalf("stream contract identity = %+v", contract)
@@ -70,7 +73,10 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 		!slices.Equal(lifecycle.PresenceFence, []string{"node_id", "session_generation", "replica_id"}) ||
 		lifecycle.RedisLoss != "terminate-stream" ||
 		lifecycle.RevisionWakeup != "network-revision-advanced" ||
-		lifecycle.MissedWakeupRepair != "postgresql-reconciliation" ||
+		lifecycle.ConnectivityWakeup != "network-scoped-connectivity-changed" ||
+		lifecycle.ConnectivityCoalescing != "latest-wins-full-projection-refresh" ||
+		!lifecycle.SameRevisionConnectivityRefresh ||
+		lifecycle.MissedWakeupRepair != "postgresql-and-redis-reconciliation" ||
 		lifecycle.Reconnect != "fresh-authenticated-snapshot" {
 		t.Fatalf("stream lifecycle contract = %+v", lifecycle)
 	}

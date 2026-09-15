@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/netip"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/network"
@@ -41,6 +42,7 @@ type SnapshotParams struct {
 	KeyExpiry         time.Time
 	PeerCandidates    []PeerCandidate
 	PacketPolicy      policy.Snapshot
+	Connectivity      []Connectivity
 }
 
 // Snapshot is immutable authorization evidence for the first response of a map session.
@@ -60,6 +62,7 @@ type Snapshot struct {
 	keyExpiry         time.Time
 	peerCandidates    []PeerCandidate
 	packetPolicy      policy.Snapshot
+	connectivity      []Connectivity
 }
 
 // NewSnapshot validates and copies one authoritative map snapshot.
@@ -68,6 +71,7 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		return Snapshot{}, errors.Join(ErrInvalidSnapshot, ErrPeerCandidateLimit)
 	}
 	params.PeerCandidates = canonicalPeerCandidates(params.PeerCandidates)
+	params.Connectivity = canonicalConnectivity(params.Connectivity)
 	if !validSnapshotParams(params) {
 		return Snapshot{}, ErrInvalidSnapshot
 	}
@@ -87,6 +91,7 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		keyExpiry:         params.KeyExpiry,
 		peerCandidates:    params.PeerCandidates,
 		packetPolicy:      params.PacketPolicy,
+		connectivity:      params.Connectivity,
 	}, nil
 }
 
@@ -138,6 +143,30 @@ func (snapshot Snapshot) PeerCandidates() []PeerCandidate {
 // PacketPolicy returns the immutable exact-revision product policy snapshot.
 func (snapshot Snapshot) PacketPolicy() policy.Snapshot { return snapshot.packetPolicy }
 
+// ConnectivityFor returns transient state only for self or a policy-authorized
+// peer in this exact snapshot. A miss is normal and grants no routing authority.
+func (snapshot Snapshot) ConnectivityFor(nodeID node.ID) (Connectivity, bool) {
+	index, found := slices.BinarySearchFunc(
+		snapshot.connectivity,
+		nodeID,
+		func(value Connectivity, target node.ID) int {
+			return strings.Compare(value.key.nodeID.String(), target.String())
+		},
+	)
+	if !found {
+		return Connectivity{}, false
+	}
+	return snapshot.connectivity[index], true
+}
+
+// WithConnectivity validates and returns a copy with non-authoritative routing
+// state attached. Durable authority fields remain unchanged.
+func (snapshot Snapshot) WithConnectivity(values []Connectivity) (Snapshot, error) {
+	params := snapshot.params()
+	params.Connectivity = values
+	return NewSnapshot(params)
+}
+
 // AuthorizedPeers returns only candidates required by an explicit packet rule
 // in either direction. Candidate inventory and same-Network membership alone
 // never grant visibility.
@@ -174,6 +203,7 @@ func (snapshot Snapshot) params() SnapshotParams {
 		KeyExpiry:         snapshot.keyExpiry,
 		PeerCandidates:    slices.Clone(snapshot.peerCandidates),
 		PacketPolicy:      snapshot.packetPolicy,
+		Connectivity:      slices.Clone(snapshot.connectivity),
 	}
 }
 
@@ -190,7 +220,27 @@ func validSnapshotParams(params SnapshotParams) bool {
 		params.NumericNodeID,
 		params.MachineKey,
 		params.NodeKey,
-	) && params.PacketPolicy.IsValid() && params.PacketPolicy.Scope() == params.Scope
+	) && params.PacketPolicy.IsValid() && params.PacketPolicy.Scope() == params.Scope &&
+		validSnapshotConnectivity(params)
+}
+
+func validSnapshotConnectivity(params SnapshotParams) bool {
+	if params.Connectivity == nil || len(params.Connectivity) > len(params.PeerCandidates)+1 {
+		return params.Connectivity == nil
+	}
+	allowed := map[node.ID]int64{params.NodeID: params.SessionGeneration}
+	for _, candidate := range params.PeerCandidates {
+		if params.PacketPolicy.AllowsPeer(params.NodeID, candidate.NodeID()) {
+			allowed[candidate.NodeID()] = candidate.SessionGeneration()
+		}
+	}
+	for index, connectivity := range params.Connectivity {
+		if !connectivity.IsValid() || allowed[connectivity.key.nodeID] != connectivity.key.generation ||
+			index > 0 && params.Connectivity[index-1].key.nodeID.String() >= connectivity.key.nodeID.String() {
+			return false
+		}
+	}
+	return true
 }
 
 func validNumericID(value int64) bool { return value > 0 && value <= maximumSafeNumericID }

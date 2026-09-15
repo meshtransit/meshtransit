@@ -33,6 +33,8 @@ type FullMap struct {
 	AllowedIPs        []netip.Prefix
 	CapabilityVersion int
 	MachineAuthorized bool
+	DiscoveryKey      [32]byte
+	Endpoints         []netip.AddrPort
 	PeerCount         int
 	DenyAll           bool
 }
@@ -163,6 +165,13 @@ func decodeFullMap(frame []byte) (FullMap, error) {
 	if err != nil {
 		return FullMap{}, fmt.Errorf("decode map node identity: %w", err)
 	}
+	var discoveryKey [32]byte
+	if !response.Node.DiscoKey.IsZero() {
+		discoveryKey, err = rawDiscoveryPublic(response.Node.DiscoKey)
+		if err != nil {
+			return FullMap{}, fmt.Errorf("decode map discovery identity: %w", err)
+		}
+	}
 	return FullMap{
 		NodeID:            int64(response.Node.ID),
 		OwnerID:           int64(response.Node.User),
@@ -175,6 +184,8 @@ func decodeFullMap(frame []byte) (FullMap, error) {
 		AllowedIPs:        slices.Clone(response.Node.AllowedIPs),
 		CapabilityVersion: int(response.Node.Cap),
 		MachineAuthorized: response.Node.MachineAuthorized,
+		DiscoveryKey:      discoveryKey,
+		Endpoints:         slices.Clone(response.Node.Endpoints),
 		PeerCount:         len(response.Peers),
 		DenyAll:           len(response.PacketFilter) == 0,
 	}, nil

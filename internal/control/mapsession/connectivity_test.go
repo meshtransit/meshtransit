@@ -1,0 +1,183 @@
+package mapsession
+
+import (
+	"errors"
+	"net/netip"
+	"testing"
+
+	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/policy"
+)
+
+func TestSnapshotOwnsCanonicalAuthorizedConnectivity(t *testing.T) {
+	t.Parallel()
+
+	snapshot, peer := snapshotWithAuthorizedPeerFixture(t)
+	selfConnectivity := connectivityFixture(
+		t,
+		snapshot.NodeID(),
+		snapshot.SessionGeneration(),
+		3,
+		"198.51.100.1:41641",
+		true,
+	)
+	peerConnectivity := connectivityFixture(
+		t,
+		peer.NodeID(),
+		peer.SessionGeneration(),
+		4,
+		"198.51.100.2:41641",
+		true,
+	)
+	enriched, err := snapshot.WithConnectivity([]Connectivity{peerConnectivity, selfConnectivity})
+	if err != nil {
+		t.Fatalf("WithConnectivity() error = %v", err)
+	}
+	for key, want := range map[node.ID]Connectivity{
+		snapshot.NodeID(): selfConnectivity,
+		peer.NodeID():     peerConnectivity,
+	} {
+		got, found := enriched.ConnectivityFor(key)
+		if !found || !got.equal(want) {
+			t.Fatalf("ConnectivityFor(%s) = (%+v, %t), want exact projection", key, got, found)
+		}
+	}
+}
+
+func TestSnapshotRejectsUnauthorizedOrUnfencedConnectivity(t *testing.T) {
+	t.Parallel()
+
+	snapshot, peer := snapshotWithAuthorizedPeerFixture(t)
+	denied := peerCandidateFixture(
+		t,
+		snapshot,
+		"01890f00-0000-7000-8000-000000000703",
+		3,
+	)
+	for _, test := range []struct {
+		name         string
+		connectivity Connectivity
+	}{
+		{
+			name: "wrong self generation",
+			connectivity: connectivityFixture(
+				t,
+				snapshot.NodeID(),
+				snapshot.SessionGeneration()+1,
+				3,
+				"198.51.100.1:41641",
+				true,
+			),
+		},
+		{
+			name: "unauthorized peer",
+			connectivity: connectivityFixture(
+				t,
+				denied.NodeID(),
+				denied.SessionGeneration(),
+				5,
+				"198.51.100.3:41641",
+				true,
+			),
+		},
+		{
+			name: "wrong peer generation",
+			connectivity: connectivityFixture(
+				t,
+				peer.NodeID(),
+				peer.SessionGeneration()+1,
+				4,
+				"198.51.100.2:41641",
+				true,
+			),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := snapshot.WithConnectivity([]Connectivity{test.connectivity}); !errors.Is(err, ErrInvalidSnapshot) {
+				t.Fatalf("WithConnectivity() error = %v, want ErrInvalidSnapshot", err)
+			}
+		})
+	}
+}
+
+func snapshotWithAuthorizedPeerFixture(t *testing.T) (Snapshot, PeerCandidate) {
+	t.Helper()
+	snapshot := snapshotFixture(t)
+	peer := peerCandidateFixture(
+		t,
+		snapshot,
+		"01890f00-0000-7000-8000-000000000702",
+		2,
+	)
+	ruleID, err := policy.ParseRuleID("01890f00-0000-7000-8000-000000000801")
+	if err != nil {
+		t.Fatalf("policy.ParseRuleID() error = %v", err)
+	}
+	rule, err := policy.NewRule(policy.RuleParams{
+		ID:                ruleID,
+		Scope:             snapshot.Scope(),
+		SourceNodeID:      snapshot.NodeID(),
+		DestinationNodeID: peer.NodeID(),
+		Protocol:          policy.ProtocolICMP,
+	})
+	if err != nil {
+		t.Fatalf("policy.NewRule() error = %v", err)
+	}
+	packetPolicy, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope:    snapshot.Scope(),
+		Revision: snapshot.PacketPolicy().Revision(),
+		Rules:    []policy.Rule{rule},
+	})
+	if err != nil {
+		t.Fatalf("policy.NewSnapshot() error = %v", err)
+	}
+	params := snapshot.params()
+	params.PeerCandidates = []PeerCandidate{peer}
+	params.PacketPolicy = packetPolicy
+	snapshot, err = NewSnapshot(params)
+	if err != nil {
+		t.Fatalf("NewSnapshot() error = %v", err)
+	}
+	return snapshot, peer
+}
+
+func connectivityFixture(
+	t testing.TB,
+	nodeID node.ID,
+	generation int64,
+	keyByte byte,
+	address string,
+	online bool,
+) Connectivity {
+	t.Helper()
+	key, err := NewConnectivityKey(nodeID, generation)
+	if err != nil {
+		t.Fatalf("NewConnectivityKey() error = %v", err)
+	}
+	discoveryKey, err := node.NewDiscoveryKey([32]byte{keyByte})
+	if err != nil {
+		t.Fatalf("node.NewDiscoveryKey() error = %v", err)
+	}
+	endpoint, err := node.NewEndpoint(
+		netip.MustParseAddrPort(address),
+		node.EndpointSourceSTUN,
+	)
+	if err != nil {
+		t.Fatalf("node.NewEndpoint() error = %v", err)
+	}
+	set, err := node.NewEndpointSet(discoveryKey, []node.Endpoint{endpoint})
+	if err != nil {
+		t.Fatalf("node.NewEndpointSet() error = %v", err)
+	}
+	connectivity, err := NewConnectivity(ConnectivityParams{
+		Key:                key,
+		EndpointSet:        set,
+		EndpointSetPresent: true,
+		Online:             online,
+	})
+	if err != nil {
+		t.Fatalf("NewConnectivity() error = %v", err)
+	}
+	return connectivity
+}

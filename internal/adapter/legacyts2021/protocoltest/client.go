@@ -137,6 +137,19 @@ func (client *Client) Connectivity() Connectivity {
 	}
 }
 
+// UpdateEndpoint replaces the synthetic report used by later one-shot map
+// calls. Existing streams keep their already-marshaled request.
+func (client *Client) UpdateEndpoint(endpoint netip.AddrPort) error {
+	if client == nil || !endpoint.IsValid() || endpoint.Port() == 0 ||
+		endpoint.Addr().Zone() != "" || endpoint.Addr() != endpoint.Addr().Unmap() ||
+		!endpoint.Addr().IsGlobalUnicast() || endpoint.Addr().IsLoopback() ||
+		endpoint.Addr().IsLinkLocalUnicast() || endpoint.Addr().IsMulticast() {
+		return ErrInvalidClient
+	}
+	client.connectivity.Endpoints = []netip.AddrPort{endpoint}
+	return nil
+}
+
 // Register discovers the control key, establishes a fresh authenticated
 // session, and submits one credential registration request.
 func (client *Client) Register(ctx context.Context, credential string) (resultErr error) {

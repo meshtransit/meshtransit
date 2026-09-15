@@ -14,6 +14,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/control"
 	"github.com/meshtransit/meshtransit/internal/control/mapsession"
 	registrationapp "github.com/meshtransit/meshtransit/internal/enrollment/registration"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 )
 
@@ -36,6 +37,7 @@ func assertPostgreSQLMapSessionSnapshot(
 	service, err := mapsession.NewService(
 		store,
 		unusedEndpointObserver{},
+		unusedConnectivityStore{},
 		mapsession.ServiceOptions{EndpointTTL: 30 * time.Second, EndpointTimeout: time.Second},
 	)
 	if err != nil {
@@ -130,9 +132,27 @@ type unusedEndpointObserver struct{}
 
 func (unusedEndpointObserver) ObserveEndpoints(
 	context.Context,
+	network.Scope,
 	node.EndpointObservation,
 ) (bool, error) {
 	return false, errors.New("unused endpoint observer called")
+}
+
+type unusedConnectivityStore struct{}
+
+func (unusedConnectivityStore) LoadConnectivity(
+	_ context.Context,
+	keys []mapsession.ConnectivityKey,
+) ([]mapsession.Connectivity, error) {
+	values := make([]mapsession.Connectivity, len(keys))
+	for index, key := range keys {
+		var err error
+		values[index], err = mapsession.NewConnectivity(mapsession.ConnectivityParams{Key: key})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return values, nil
 }
 
 func assertWorkerCannotResolveMapSessionScope(

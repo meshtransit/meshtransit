@@ -63,7 +63,13 @@ func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 	}
 	firstEvidence := readProcessRegistrationEvidence(ctx, t, adminConnection, client.Identity())
 	assertProcessRegistrationEvidence(t, firstEvidence)
-	assertProcessFullMap(t, firstMap, firstEvidence, client.Identity())
+	assertProcessFullMap(
+		t,
+		firstMap,
+		firstEvidence,
+		client.Identity(),
+		client.Connectivity(),
+	)
 	assertControlClientMetrics(t, first)
 	waitForProcessRevisionDelivery(ctx, t, first, adminConnection, firstEvidence.nodePublicID)
 	stopIntegrationProcess(t, first.process)
@@ -93,6 +99,7 @@ func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 	}
 
 	third := startReadyRoleAllProcess(t, binary, controlAddress)
+	assertProcessConnectivityWakeup(ctx, t, third, client)
 	assertProcessRevisionWakeup(ctx, t, third, client, adminConnection)
 	stopIntegrationProcess(t, third.process)
 }
@@ -173,6 +180,51 @@ func assertProcessRevisionWakeup(
 	})
 }
 
+func assertProcessConnectivityWakeup(
+	ctx context.Context,
+	t *testing.T,
+	running readyRoleAllProcess,
+	client *protocoltest.Client,
+) {
+	t.Helper()
+	baseline := fetchProcessFullMap(ctx, t, running, client)
+	streamCtx, cancelStream := context.WithTimeout(ctx, 10*time.Second)
+	stream, initial, err := client.OpenMapStream(streamCtx)
+	if err != nil {
+		cancelStream()
+		running.process.forceStop(t)
+		t.Fatalf("open connectivity map stream: %v; stderr: %s", err, running.process.stderr.String())
+	}
+	if !reflect.DeepEqual(initial, baseline) {
+		_ = stream.Close()
+		cancelStream()
+		running.process.forceStop(t)
+		t.Fatalf("initial connectivity stream differs from baseline: baseline=%+v stream=%+v", baseline, initial)
+	}
+
+	endpoint := netip.MustParseAddrPort("198.51.100.20:41641")
+	if err := client.UpdateEndpoint(endpoint); err != nil {
+		_ = stream.Close()
+		cancelStream()
+		t.Fatalf("update protocol-test endpoint: %v", err)
+	}
+	expected := baseline
+	expected.Endpoints = []netip.AddrPort{endpoint}
+	updated := fetchProcessFullMap(ctx, t, running, client)
+	advanced, readErr := stream.NextFullMap()
+	closeErr := stream.Close()
+	cancelStream()
+	if readErr != nil || closeErr != nil {
+		running.process.forceStop(t)
+		t.Fatalf("receive connectivity wakeup: read=%v close=%v; stderr: %s", readErr, closeErr, running.process.stderr.String())
+	}
+	if !reflect.DeepEqual(updated, expected) || !reflect.DeepEqual(advanced, expected) ||
+		advanced.DiscoveryKey != baseline.DiscoveryKey {
+		running.process.forceStop(t)
+		t.Fatalf("connectivity projection did not converge: baseline=%+v one-shot=%+v stream=%+v", baseline, updated, advanced)
+	}
+}
+
 func startReadyRoleAllProcess(
 	t *testing.T,
 	binary string,
@@ -248,6 +300,7 @@ func assertProcessFullMap(
 	result protocoltest.FullMap,
 	evidence processRegistrationEvidence,
 	identity protocoltest.Identity,
+	connectivity protocoltest.Connectivity,
 ) {
 	t.Helper()
 	if result.NodeID <= 0 || result.OwnerID <= 0 ||
@@ -257,6 +310,8 @@ func assertProcessFullMap(
 		len(result.Addresses) != 1 || result.Addresses[0].String() != evidence.primaryAddress ||
 		len(result.AllowedIPs) != 1 || result.AllowedIPs[0] != result.Addresses[0] ||
 		result.CapabilityVersion != 142 || !result.MachineAuthorized ||
+		result.DiscoveryKey != connectivity.DiscoveryKey ||
+		!slices.Equal(result.Endpoints, connectivity.Endpoints) ||
 		result.PeerCount != 0 || !result.DenyAll {
 		t.Fatalf("process full map is incomplete or unsafe: %+v", result)
 	}
@@ -284,24 +339,33 @@ func assertControlClientMetrics(t *testing.T, running readyRoleAllProcess) {
 		"meshtransit_control_map_streams_active 0",
 		"meshtransit_revision_feed_subscriber_connected 1",
 		"meshtransit_revision_feed_watchers_active 0",
+		"meshtransit_connectivity_feed_subscriber_connected 1",
+		"meshtransit_connectivity_feed_watchers_active 0",
+		`meshtransit_redis_commands_total{operation="connectivity_load",result="success"}`,
 	}
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
+	lastStatus := 0
+	lastBody := ""
 	for {
 		status, body, err := integrationGET(ctx, client, running.healthAddress, "/metrics")
+		if err == nil {
+			lastStatus = status
+			lastBody = body
+		}
 		if err == nil && status == http.StatusOK && containsEveryMetric(body, want) {
 			return
 		}
 		select {
 		case <-ctx.Done():
-			if err != nil {
+			if lastBody == "" && err != nil {
 				t.Fatalf("read process control metrics: %v", err)
 			}
-			if status != http.StatusOK {
-				t.Fatalf("process control metrics status = %d, want %d", status, http.StatusOK)
+			if lastStatus != http.StatusOK {
+				t.Fatalf("process control metrics status = %d, want %d", lastStatus, http.StatusOK)
 			}
 			for _, metric := range want {
-				if !strings.Contains(body, metric) {
+				if !strings.Contains(lastBody, metric) {
 					t.Fatalf("process control metrics missing %q", metric)
 				}
 			}

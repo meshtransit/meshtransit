@@ -3,12 +3,16 @@ package redis
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/meshtransit/meshtransit/internal/control/mapsession"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 func TestEndpointSetPayloadRoundTrip(t *testing.T) {
@@ -38,6 +42,8 @@ func TestClientObservesAndLoadsGenerationFencedEndpoints(t *testing.T) {
 	var observedGeneration, loadedGeneration int64
 	var observedTTL time.Duration
 	var observedPayload []byte
+	var observedChannel string
+	var observedWakeup []byte
 	client := &Client{
 		observeEndpoints: func(
 			gotContext context.Context,
@@ -46,6 +52,8 @@ func TestClientObservesAndLoadsGenerationFencedEndpoints(t *testing.T) {
 			generation int64,
 			payload []byte,
 			ttl time.Duration,
+			channel string,
+			wakeup []byte,
 		) (int64, error) {
 			if gotContext != ctx {
 				t.Fatal("ObserveEndpoints() did not propagate context")
@@ -53,6 +61,8 @@ func TestClientObservesAndLoadsGenerationFencedEndpoints(t *testing.T) {
 			observedEndpointKey, observedPresenceKey = endpointKey, presenceKey
 			observedGeneration, observedTTL = generation, ttl
 			observedPayload = append([]byte(nil), payload...)
+			observedChannel = channel
+			observedWakeup = append([]byte(nil), wakeup...)
 			return 1, nil
 		},
 		loadEndpoints: func(
@@ -67,7 +77,8 @@ func TestClientObservesAndLoadsGenerationFencedEndpoints(t *testing.T) {
 			return append([]byte(nil), observedPayload...), nil
 		},
 	}
-	accepted, err := client.ObserveEndpoints(ctx, observation)
+	scope := testNetworkScope(t)
+	accepted, err := client.ObserveEndpoints(ctx, scope, observation)
 	if err != nil || !accepted {
 		t.Fatalf("ObserveEndpoints() = (%t, %v), want accepted", accepted, err)
 	}
@@ -80,8 +91,16 @@ func TestClientObservesAndLoadsGenerationFencedEndpoints(t *testing.T) {
 	if observedEndpointKey != wantEndpointKey || loadedKey != wantEndpointKey ||
 		observedPresenceKey != wantPresenceKey || observedGeneration != 7 || loadedGeneration != 7 ||
 		observedTTL != 30*time.Second || set.DiscoveryKey() != observation.Set().DiscoveryKey() ||
-		!slices.Equal(set.Endpoints(), observation.Set().Endpoints()) {
+		!slices.Equal(set.Endpoints(), observation.Set().Endpoints()) ||
+		observedChannel != connectivityChangedChannel {
 		t.Fatalf("endpoint arguments or round trip did not preserve observation")
+	}
+	change, err := decodeConnectivityWakeup(observedWakeup)
+	if err != nil || change.NetworkID() != scope.NetworkID() ||
+		change.Key().NodeID() != observation.NodeID() ||
+		change.Key().Generation() != observation.Generation() ||
+		change.Kind() != mapsession.ConnectivityChangeEndpoints {
+		t.Fatalf("endpoint wakeup = (%+v, %v), want observation-bound hint", change, err)
 	}
 }
 
@@ -90,18 +109,142 @@ func TestClientTreatsStaleAndMissingEndpointsAsCleanResults(t *testing.T) {
 
 	observation := testEndpointObservation(t, 7)
 	client := &Client{
-		observeEndpoints: func(context.Context, string, string, int64, []byte, time.Duration) (int64, error) {
+		observeEndpoints: func(
+			context.Context,
+			string,
+			string,
+			int64,
+			[]byte,
+			time.Duration,
+			string,
+			[]byte,
+		) (int64, error) {
 			return 0, nil
 		},
 		loadEndpoints: func(context.Context, string, int64) ([]byte, error) {
 			return nil, nil
 		},
 	}
-	if accepted, err := client.ObserveEndpoints(t.Context(), observation); err != nil || accepted {
+	if accepted, err := client.ObserveEndpoints(
+		t.Context(),
+		testNetworkScope(t),
+		observation,
+	); err != nil || accepted {
 		t.Fatalf("ObserveEndpoints() = (%t, %v), want clean rejection", accepted, err)
 	}
 	if _, found, err := client.LoadEndpoints(t.Context(), observation.NodeID(), 8); err != nil || found {
 		t.Fatalf("LoadEndpoints() = (_, %t, %v), want clean miss", found, err)
+	}
+}
+
+func TestClientLoadsBoundedGenerationFencedConnectivity(t *testing.T) {
+	t.Parallel()
+
+	observation := testEndpointObservation(t, 7)
+	first, err := mapsession.NewConnectivityKey(observation.NodeID(), 7)
+	if err != nil {
+		t.Fatalf("mapsession.NewConnectivityKey(first) error = %v", err)
+	}
+	secondNodeID, err := node.ParseID("01890f00-0000-7000-8000-000000000702")
+	if err != nil {
+		t.Fatalf("node.ParseID(second) error = %v", err)
+	}
+	second, err := mapsession.NewConnectivityKey(secondNodeID, 8)
+	if err != nil {
+		t.Fatalf("mapsession.NewConnectivityKey(second) error = %v", err)
+	}
+	payload, err := encodeEndpointSet(observation.Set())
+	if err != nil {
+		t.Fatalf("encodeEndpointSet() error = %v", err)
+	}
+	client := &Client{loadConnectivity: func(
+		ctx context.Context,
+		keys []string,
+		generations []int64,
+	) ([]any, error) {
+		if ctx != t.Context() || len(keys) != 4 ||
+			!slices.Equal(generations, []int64{7, 8}) ||
+			keys[0] != endpointKey(first.NodeID()) || keys[1] != presenceKeyForNode(first.NodeID()) ||
+			keys[2] != endpointKey(second.NodeID()) || keys[3] != presenceKeyForNode(second.NodeID()) {
+			t.Fatalf("LoadConnectivity() Redis input = (%v, %v)", keys, generations)
+		}
+		return []any{string(payload), int64(1), nil, int64(0)}, nil
+	}}
+	values, err := client.LoadConnectivity(t.Context(), []mapsession.ConnectivityKey{first, second})
+	if err != nil {
+		t.Fatalf("LoadConnectivity() error = %v", err)
+	}
+	set, found := values[0].EndpointSet()
+	if len(values) != 2 || values[0].Key() != first || !values[0].Online() || !found ||
+		!set.Equal(observation.Set()) || values[1].Key() != second || values[1].Online() {
+		t.Fatalf("LoadConnectivity() = %+v, want online report then clean offline miss", values)
+	}
+	if _, found := values[1].EndpointSet(); found {
+		t.Fatal("LoadConnectivity() cache miss exposed an endpoint set")
+	}
+}
+
+func TestClientChunksConnectivityProjectionLoads(t *testing.T) {
+	t.Parallel()
+
+	keys := make([]mapsession.ConnectivityKey, maximumConnectivityLoadBatch+1)
+	for index := range keys {
+		nodeID, err := node.ParseID(fmt.Sprintf(
+			"01890f00-0000-7000-8000-%012d",
+			index+1,
+		))
+		if err != nil {
+			t.Fatalf("node.ParseID(%d) error = %v", index, err)
+		}
+		keys[index], err = mapsession.NewConnectivityKey(nodeID, int64(index+1))
+		if err != nil {
+			t.Fatalf("mapsession.NewConnectivityKey(%d) error = %v", index, err)
+		}
+	}
+	calls := 0
+	client := &Client{loadConnectivity: func(
+		_ context.Context,
+		redisKeys []string,
+		generations []int64,
+	) ([]any, error) {
+		calls++
+		if len(redisKeys) != len(generations)*2 || len(generations) > maximumConnectivityLoadBatch {
+			t.Fatalf("connectivity batch = %d keys for %d generations", len(redisKeys), len(generations))
+		}
+		result := make([]any, len(generations)*2)
+		for index := range generations {
+			result[index*2+1] = int64(0)
+		}
+		return result, nil
+	}}
+	values, err := client.LoadConnectivity(t.Context(), keys)
+	if err != nil || len(values) != len(keys) || calls != 2 {
+		t.Fatalf("LoadConnectivity() = (%d values, %v) after %d calls, want 129 values in 2 batches", len(values), err, calls)
+	}
+}
+
+func TestClientRejectsCorruptConnectivityProjection(t *testing.T) {
+	t.Parallel()
+
+	observation := testEndpointObservation(t, 7)
+	key, err := mapsession.NewConnectivityKey(observation.NodeID(), 7)
+	if err != nil {
+		t.Fatalf("mapsession.NewConnectivityKey() error = %v", err)
+	}
+	for _, result := range [][]any{
+		{nil},
+		{nil, "online"},
+		{[]byte("{}"), int64(1)},
+	} {
+		client := &Client{loadConnectivity: func(context.Context, []string, []int64) ([]any, error) {
+			return result, nil
+		}}
+		if _, err := client.LoadConnectivity(
+			t.Context(),
+			[]mapsession.ConnectivityKey{key},
+		); !errors.Is(err, ErrLoadConnectivity) {
+			t.Fatalf("LoadConnectivity(%v) error = %v, want ErrLoadConnectivity", result, err)
+		}
 	}
 }
 
@@ -128,17 +271,32 @@ func TestClientRejectsInvalidEndpointInputsAndResults(t *testing.T) {
 				int64,
 				[]byte,
 				time.Duration,
+				string,
+				[]byte,
 			) (int64, error) {
 				return test.result, test.err
 			}}
-			if _, err := client.ObserveEndpoints(t.Context(), observation); !errors.Is(err, test.want) {
+			if _, err := client.ObserveEndpoints(
+				t.Context(),
+				testNetworkScope(t),
+				observation,
+			); !errors.Is(err, test.want) {
 				t.Fatalf("ObserveEndpoints() error = %v, want %v", err, test.want)
 			}
 		})
 	}
 
 	client := &Client{
-		observeEndpoints: func(context.Context, string, string, int64, []byte, time.Duration) (int64, error) {
+		observeEndpoints: func(
+			context.Context,
+			string,
+			string,
+			int64,
+			[]byte,
+			time.Duration,
+			string,
+			[]byte,
+		) (int64, error) {
 			t.Fatal("ObserveEndpoints() called for invalid observation")
 			return 0, nil
 		},
@@ -147,12 +305,33 @@ func TestClientRejectsInvalidEndpointInputsAndResults(t *testing.T) {
 			return nil, nil
 		},
 	}
-	if _, err := client.ObserveEndpoints(t.Context(), node.EndpointObservation{}); !errors.Is(err, ErrInvalidOptions) {
+	if _, err := client.ObserveEndpoints(
+		t.Context(),
+		testNetworkScope(t),
+		node.EndpointObservation{},
+	); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("ObserveEndpoints(zero) error = %v, want ErrInvalidOptions", err)
 	}
 	if _, _, err := client.LoadEndpoints(t.Context(), node.ID{}, 7); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("LoadEndpoints(zero id) error = %v, want ErrInvalidOptions", err)
 	}
+}
+
+func testNetworkScope(t testing.TB) network.Scope {
+	t.Helper()
+	workspaceID, err := workspace.ParseID("01890f00-0000-7000-8000-000000000101")
+	if err != nil {
+		t.Fatalf("workspace.ParseID() error = %v", err)
+	}
+	networkID, err := network.ParseID("01890f00-0000-7000-8000-000000000201")
+	if err != nil {
+		t.Fatalf("network.ParseID() error = %v", err)
+	}
+	scope, err := network.NewScope(workspaceID, networkID)
+	if err != nil {
+		t.Fatalf("network.NewScope() error = %v", err)
+	}
+	return scope
 }
 
 func TestDecodeEndpointSetRejectsCorruptPayload(t *testing.T) {

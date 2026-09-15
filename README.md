@@ -10,17 +10,20 @@ the first canonical authority schema for tenancy, network identity, address
 realms, address pools, prefixes, and revision state. Authority changes are
 guarded by an atomic audit/outbox integrity foundation. The current client
 protocol slice exposes control-key discovery, credential-backed registration,
-and authenticated one-shot and streaming full-map snapshots. Every stream
-starts with the authoritative self Node, an explicit empty peer set, and an
-explicit empty packet filter. Long-lived streams use generation-fenced Redis
-presence, bounded keepalives, exact release, a process-owned Network revision
-feed, and periodic PostgreSQL resync. One-shot map calls validate and record a
-canonical, generation-fenced endpoint set in Redis; streaming calls are
-read-only and cannot mutate endpoint state. Peer projection, policy evaluation,
-durable endpoint history, and relay behavior are not implemented. Redis exposes
-the bounded, versioned `NetworkRevisionAdvanced` wakeup transport. A control
-replica holds one subscription and fans wakeups into bounded, coalescing
-Network-local channels; PostgreSQL remains the source of every emitted map.
+and authenticated one-shot and streaming full-map snapshots. Every snapshot
+contains the authoritative self Node, only packet-policy-authorized peers, and
+the Node-reduced inbound packet filter; explicit empty collections clear prior
+client state. Long-lived streams use generation-fenced Redis presence, bounded
+keepalives, exact release, process-owned revision and connectivity feeds, and
+periodic PostgreSQL plus Redis resync. One-shot endpoint updates validate and
+record canonical generation-fenced discovery keys and endpoint sets in Redis.
+Maps project exact-generation endpoint and online observations only after
+PostgreSQL membership and packet policy authorize the peer. Redis exposes
+bounded, versioned `NetworkRevisionAdvanced` and connectivity-change wakeup
+transports. A control replica holds one subscription for each feed and fans
+wakeups into bounded, coalescing Network-local channels. PostgreSQL remains the
+source of peer visibility and packet authority; Redis loss never widens access.
+Delta maps, durable endpoint history, and relay behavior are not implemented.
 The worker PostgreSQL adapter leases, reconciles, and completes the matching
 durable outbox work without treating Redis as authority.
 
@@ -77,6 +80,14 @@ The `relay` role intentionally does not load or require direct storage settings.
 | `MESHTRANSIT_REDIS_PASSWORD_FILE` | none | Absolute path to a bounded, single-line credential file. |
 | `MESHTRANSIT_REDIS_CA_FILE` | none | Absolute path to the trusted CA bundle. |
 | `MESHTRANSIT_REDIS_POOL_SIZE` | `10` | Per-process active-connection cap from 1 through 50. |
+
+The Redis ACL user must be limited to the presence and endpoint key patterns,
+the fixed `PING`, hash, expiry, delete, script, publish, and subscribe commands,
+and exactly these Pub/Sub channels:
+`meshtransit:v1:wakeup:network_revision_advanced` and
+`meshtransit:v1:wakeup:connectivity_changed`. `resetchannels` without both
+explicit channel grants prevents `control` and `all` startup and endpoint or
+presence updates; wildcard channel access is not required.
 
 The `control` and `all` roles require an enrollment credential-digest key. A
 rotation window contains exactly one active key and at most one previous key.
@@ -242,12 +253,12 @@ Tenant reads for serving roles are protected by forced row-level security using 
 cross-paired scope fails closed. Runtime readiness also rejects an elevated,
 object-owning, member role or a connection whose authenticated user differs
 from configuration. The process lifecycle owns the revision dispatcher only for
-the `worker` and `all` roles, and the revision feed only for the `control` and
-`all` roles. Each starts exactly one owned goroutine. The worker processes
-bounded claims sequentially; the feed uses one Redis subscription and bounded
-local fan-out. Both cancel in-flight I/O during shutdown and join before Redis
-and PostgreSQL are closed. Authorization-aware serving mutations remain
-deferred to later vertical slices.
+the `worker` and `all` roles, and the revision and connectivity feeds only for
+the `control` and `all` roles. Each service starts exactly one owned goroutine.
+The worker processes bounded claims sequentially; each feed uses one Redis
+subscription and bounded local fan-out. All cancel in-flight I/O during shutdown
+and join before Redis and PostgreSQL are closed. Broader management-plane
+mutations remain deferred to later vertical slices.
 
 `all` expands to the `api`, `control`, `worker`, and `relay` responsibilities.
 This slice deliberately does not implement their business protocols yet; role
@@ -295,17 +306,19 @@ closed sets (`success`/`error` and `delivered`/`deferred`/`failed`); event,
 Workspace, Network, and worker identifiers are never metric labels.
 
 Processes with storage dependencies also expose Redis command count and
-latency for the fixed connection, wakeup, presence, and endpoint operations,
+latency for the fixed connection, wakeup, presence, endpoint, and connectivity
+projection operations,
 plus command-pool usage, pending requests, pool timeouts, and active
 subscriptions. Operation and result labels are closed sets; Node IDs, endpoint
 values, and discovery keys are never labels. Pool state is sampled only when
 metrics are scraped; no observability goroutine or unbounded label is introduced.
 
-Control and `all` processes expose the revision-feed subscriber state, active
-watchers, received wakeups, and bounded `delivered`/`coalesced` fan-out results.
+Control and `all` processes expose revision-feed and connectivity-feed subscriber
+state, active watchers, received wakeups, and bounded `delivered`/`coalesced`
+fan-out results.
 Workspace, Network, Node, session, and replica identities are never metric
-labels. One process-owned subscriber serves all local map streams; no client
-creates its own Redis connection or goroutine.
+labels. Each process-owned feed subscriber serves all local map streams; no
+client creates its own Redis connection or goroutine.
 
 PostgreSQL telemetry is partitioned only by the fixed `runtime` and `worker`
 credential-pool roles. It reports bounded semantic operation outcomes and
@@ -315,11 +328,11 @@ SQL text, usernames, addresses, database names, and domain identifiers are
 never metric labels.
 
 Readiness opens only after the initial required dependency checks succeed and
-all role services start. For `control` and `all`, revision-feed subscription
+all role services start. For `control` and `all`, both wakeup-feed subscriptions
 must succeed before the control listener starts. Periodic bounded checks lower
 readiness on dependency loss and restore it after recovery. Graceful shutdown
-closes admission before draining control streams, stopping and joining the
-revision feed, joining the monitor, and releasing Redis then PostgreSQL. Those
+closes admission before draining control streams, stopping and joining both
+wakeup feeds, joining the monitor, and releasing Redis then PostgreSQL. Those
 phases share one configured shutdown deadline; resource cleanup is not started
 after that deadline is exhausted. PostgreSQL
 cleanup also refuses to call the pool's blocking close while a connection is

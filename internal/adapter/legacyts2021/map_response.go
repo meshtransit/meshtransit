@@ -73,7 +73,8 @@ func fullMapPeers(
 	peers := make([]*tailcfg.Node, 0, len(authorized))
 	candidates := make(map[node.ID]mapsession.PeerCandidate, len(authorized))
 	for _, candidate := range authorized {
-		peer, err := fullMapPeer(candidate, capabilityVersion)
+		connectivity, found := snapshot.ConnectivityFor(candidate.NodeID())
+		peer, err := fullMapPeer(candidate, connectivity, found, capabilityVersion)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -95,6 +96,8 @@ func fullMapPeers(
 
 func fullMapPeer(
 	candidate mapsession.PeerCandidate,
+	connectivity mapsession.Connectivity,
+	hasConnectivity bool,
 	capabilityVersion int,
 ) (*tailcfg.Node, error) {
 	machineKey, err := machinePublicKey(candidate.MachineKey())
@@ -106,7 +109,7 @@ func fullMapPeer(
 		return nil, err
 	}
 	addresses := candidate.Addresses()
-	return &tailcfg.Node{
+	result := &tailcfg.Node{
 		ID:                tailcfg.NodeID(candidate.NumericNodeID()),
 		StableID:          tailcfg.StableNodeID(candidate.NodeID().String()),
 		Name:              candidate.Hostname().String() + ".",
@@ -120,7 +123,13 @@ func fullMapPeer(
 		Cap:               tailcfg.CapabilityVersion(capabilityVersion),
 		MachineAuthorized: true,
 		ComputedName:      candidate.Hostname().String(),
-	}, nil
+	}
+	if hasConnectivity {
+		if err := applyConnectivity(result, connectivity, false); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }
 
 func fullMapPacketFilter(
@@ -248,7 +257,7 @@ func fullMapNode(snapshot mapsession.Snapshot, capabilityVersion int) (*tailcfg.
 		return nil, err
 	}
 	addresses := snapshot.Addresses()
-	return &tailcfg.Node{
+	result := &tailcfg.Node{
 		ID:                tailcfg.NodeID(snapshot.NumericNodeID()),
 		StableID:          tailcfg.StableNodeID(snapshot.NodeID().String()),
 		Name:              snapshot.Hostname().String() + ".",
@@ -262,7 +271,40 @@ func fullMapNode(snapshot mapsession.Snapshot, capabilityVersion int) (*tailcfg.
 		Cap:               tailcfg.CapabilityVersion(capabilityVersion),
 		MachineAuthorized: true,
 		ComputedName:      snapshot.Hostname().String(),
-	}, nil
+	}
+	if connectivity, found := snapshot.ConnectivityFor(snapshot.NodeID()); found {
+		if err := applyConnectivity(result, connectivity, true); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func applyConnectivity(
+	result *tailcfg.Node,
+	connectivity mapsession.Connectivity,
+	self bool,
+) error {
+	if result == nil || !connectivity.IsValid() {
+		return ErrMapResponse
+	}
+	if set, present := connectivity.EndpointSet(); present {
+		discoveryKey, err := discoveryPublicKey(set.DiscoveryKey())
+		if err != nil {
+			return err
+		}
+		endpoints := set.Endpoints()
+		result.DiscoKey = discoveryKey
+		result.Endpoints = make([]netip.AddrPort, len(endpoints))
+		for index, endpoint := range endpoints {
+			result.Endpoints[index] = endpoint.Address()
+		}
+	}
+	if !self {
+		online := connectivity.Online()
+		result.Online = &online
+	}
+	return nil
 }
 
 func machinePublicKey(value node.MachineKey) (key.MachinePublic, error) {
@@ -277,6 +319,14 @@ func nodePublicKey(value node.Key) (key.NodePublic, error) {
 	var result key.NodePublic
 	if err := unmarshalTypedPublicKey(&result, nodeKeyPrefix, value.Bytes()); err != nil {
 		return key.NodePublic{}, err
+	}
+	return result, nil
+}
+
+func discoveryPublicKey(value node.DiscoveryKey) (key.DiscoPublic, error) {
+	var result key.DiscoPublic
+	if err := unmarshalTypedPublicKey(&result, discoveryKeyPrefix, value.Bytes()); err != nil {
+		return key.DiscoPublic{}, err
 	}
 	return result, nil
 }

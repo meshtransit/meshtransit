@@ -35,6 +35,7 @@ type mapContract struct {
 			RequiresParallelEndpointTypes bool   `json:"requires_parallel_endpoint_types"`
 			OmitPeers                     string `json:"omit_peers"`
 			Storage                       string `json:"storage"`
+			Wakeup                        string `json:"wakeup"`
 			Authority                     string `json:"authority"`
 		} `json:"endpoint_update"`
 	} `json:"request"`
@@ -47,6 +48,9 @@ type mapContract struct {
 		PeerOrder                  string   `json:"peer_order"`
 		PacketFilterProjection     string   `json:"packet_filter_projection"`
 		PeerPolicyAtomicity        string   `json:"peer_policy_atomicity"`
+		ConnectivityProjection     string   `json:"connectivity_projection"`
+		ConnectivityFields         []string `json:"connectivity_fields"`
+		ConnectivityAuthority      string   `json:"connectivity_authority"`
 		EmptyPeersSemantics        string   `json:"empty_peers_semantics"`
 		EmptyPacketFilterSemantics string   `json:"empty_packet_filter_semantics"`
 	} `json:"response"`
@@ -64,8 +68,8 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 3 || contract.Profile != "legacy-ts2021-cap142-v1" {
-		t.Fatalf("contract identity = (%d, %q), want version 3 legacy profile", contract.ContractVersion, contract.Profile)
+	if contract.ContractVersion != 4 || contract.Profile != "legacy-ts2021-cap142-v1" {
+		t.Fatalf("contract identity = (%d, %q), want version 4 legacy profile", contract.ContractVersion, contract.Profile)
 	}
 	if contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
 		contract.ClientEvidence.Revision != "78cb5130400bc003974f7730b319350fed129bbe" {
@@ -89,6 +93,7 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 		!endpointUpdate.RequiresDiscoveryKey || !endpointUpdate.RequiresParallelEndpointTypes ||
 		endpointUpdate.OmitPeers != "accepted-only-with-endpoint-report" ||
 		endpointUpdate.Storage != "redis-ttl-generation-fenced" ||
+		endpointUpdate.Wakeup != "connectivity-changed" ||
 		endpointUpdate.Authority != "non-authoritative" {
 		t.Fatalf("endpoint update contract = %+v, want bounded transient contract", endpointUpdate)
 	}
@@ -100,6 +105,9 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 		response.PeerOrder != "numeric-node-id" ||
 		response.PacketFilterProjection != "inbound-to-self-only" ||
 		response.PeerPolicyAtomicity != "same-map-response" ||
+		response.ConnectivityProjection != "redis-exact-generation-self-and-authorized-peers" ||
+		!slices.Equal(response.ConnectivityFields, []string{"DiscoKey", "Endpoints", "Online"}) ||
+		response.ConnectivityAuthority != "non-authoritative" ||
 		response.EmptyPeersSemantics != "replace-complete-set-with-empty" ||
 		response.EmptyPacketFilterSemantics != "deny-all" {
 		t.Fatalf("map response contract = %+v, want bounded fail-closed first response", response)

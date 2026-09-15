@@ -3,6 +3,7 @@ package legacyts2021
 import (
 	"encoding/binary"
 	"encoding/json"
+	"net/netip"
 	"reflect"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"tailscale.com/util/zstdframe"
 
 	"github.com/meshtransit/meshtransit/internal/control/mapsession"
+	"github.com/meshtransit/meshtransit/internal/node"
 )
 
 func TestEncodeFullMapResponseClearsInheritedAuthority(t *testing.T) {
@@ -79,6 +81,50 @@ func TestEncodeFullMapResponseProjectsAuthorizedPeerWithoutInboundAuthority(t *t
 			"map response PacketFilter = %+v, want no inbound authority from outbound-only rule",
 			response.PacketFilter,
 		)
+	}
+}
+
+func TestEncodeFullMapResponseProjectsGenerationFencedConnectivity(t *testing.T) {
+	t.Parallel()
+
+	snapshot := mapSnapshotWithAuthorizedCandidateFixture(t)
+	peers := snapshot.AuthorizedPeers()
+	if len(peers) != 1 {
+		t.Fatalf("AuthorizedPeers() = %+v, want one fixture peer", peers)
+	}
+	self := mapConnectivityFixture(
+		t,
+		snapshot.NodeID(),
+		snapshot.SessionGeneration(),
+		3,
+		"198.51.100.1:41641",
+		true,
+	)
+	peer := mapConnectivityFixture(
+		t,
+		peers[0].NodeID(),
+		peers[0].SessionGeneration(),
+		4,
+		"198.51.100.2:41641",
+		true,
+	)
+	enriched, err := snapshot.WithConnectivity([]mapsession.Connectivity{peer, self})
+	if err != nil {
+		t.Fatalf("WithConnectivity() error = %v", err)
+	}
+	response := decodeFullMapResponseFixture(t, enriched)
+	if response.Node == nil || response.Node.DiscoKey.IsZero() ||
+		!reflect.DeepEqual(response.Node.Endpoints, []netip.AddrPort{
+			netip.MustParseAddrPort("198.51.100.1:41641"),
+		}) {
+		t.Fatalf("self connectivity = %+v, want discovery key and endpoint", response.Node)
+	}
+	if len(response.Peers) != 1 || response.Peers[0].DiscoKey.IsZero() ||
+		response.Peers[0].Online == nil || !*response.Peers[0].Online ||
+		!reflect.DeepEqual(response.Peers[0].Endpoints, []netip.AddrPort{
+			netip.MustParseAddrPort("198.51.100.2:41641"),
+		}) {
+		t.Fatalf("peer connectivity = %+v, want online discovery endpoint", response.Peers)
 	}
 }
 
@@ -153,4 +199,44 @@ func TestEncodeKeepAliveMapResponseIsNonEmptyFramedMessage(t *testing.T) {
 	if len(fields) != 1 || string(fields["KeepAlive"]) != "true" {
 		t.Fatalf("keepalive document = %s, want only KeepAlive=true", document)
 	}
+}
+
+func mapConnectivityFixture(
+	t testing.TB,
+	nodeID node.ID,
+	generation int64,
+	keyByte byte,
+	address string,
+	online bool,
+) mapsession.Connectivity {
+	t.Helper()
+	key, err := mapsession.NewConnectivityKey(nodeID, generation)
+	if err != nil {
+		t.Fatalf("mapsession.NewConnectivityKey() error = %v", err)
+	}
+	discoveryKey, err := node.NewDiscoveryKey([32]byte{keyByte})
+	if err != nil {
+		t.Fatalf("node.NewDiscoveryKey() error = %v", err)
+	}
+	endpoint, err := node.NewEndpoint(
+		netip.MustParseAddrPort(address),
+		node.EndpointSourceSTUN,
+	)
+	if err != nil {
+		t.Fatalf("node.NewEndpoint() error = %v", err)
+	}
+	set, err := node.NewEndpointSet(discoveryKey, []node.Endpoint{endpoint})
+	if err != nil {
+		t.Fatalf("node.NewEndpointSet() error = %v", err)
+	}
+	connectivity, err := mapsession.NewConnectivity(mapsession.ConnectivityParams{
+		Key:                key,
+		EndpointSet:        set,
+		EndpointSetPresent: true,
+		Online:             online,
+	})
+	if err != nil {
+		t.Fatalf("mapsession.NewConnectivity() error = %v", err)
+	}
+	return connectivity
 }

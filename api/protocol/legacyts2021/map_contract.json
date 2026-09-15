@@ -1,5 +1,5 @@
 {
-  "contract_version": 3,
+  "contract_version": 4,
   "profile": "legacy-ts2021-cap142-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
@@ -28,6 +28,7 @@
       "requires_parallel_endpoint_types": true,
       "omit_peers": "accepted-only-with-endpoint-report",
       "storage": "redis-ttl-generation-fenced",
+      "wakeup": "connectivity-changed",
       "authority": "non-authoritative"
     }
   },
@@ -44,6 +45,13 @@
     "peer_order": "numeric-node-id",
     "packet_filter_projection": "inbound-to-self-only",
     "peer_policy_atomicity": "same-map-response",
+    "connectivity_projection": "redis-exact-generation-self-and-authorized-peers",
+    "connectivity_fields": [
+      "DiscoKey",
+      "Endpoints",
+      "Online"
+    ],
+    "connectivity_authority": "non-authoritative",
     "empty_peers_semantics": "replace-complete-set-with-empty",
     "empty_packet_filter_semantics": "deny-all"
   }

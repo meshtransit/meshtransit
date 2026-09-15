@@ -52,6 +52,7 @@ type Client struct {
 	releasePresence  presenceReleaseFunc
 	observeEndpoints observeEndpointsFunc
 	loadEndpoints    loadEndpointsFunc
+	loadConnectivity loadConnectivityFunc
 	metrics          *redisMetrics
 	close            func() error
 	closeOnce        sync.Once
@@ -99,6 +100,8 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			generation int64,
 			replicaID string,
 			ttl time.Duration,
+			channel string,
+			wakeup []byte,
 		) (int64, error) {
 			return claimPresenceScript.Run(
 				claimCtx,
@@ -107,6 +110,8 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 				generation,
 				replicaID,
 				ttl.Milliseconds(),
+				channel,
+				wakeup,
 			).Int64()
 		},
 		releasePresence: func(
@@ -115,6 +120,8 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			endpointKey string,
 			generation int64,
 			replicaID string,
+			channel string,
+			wakeup []byte,
 		) (int64, error) {
 			return releasePresenceScript.Run(
 				releaseCtx,
@@ -122,6 +129,8 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 				[]string{presenceKey, endpointKey},
 				generation,
 				replicaID,
+				channel,
+				wakeup,
 			).Int64()
 		},
 		observeEndpoints: func(
@@ -131,6 +140,8 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			generation int64,
 			payload []byte,
 			ttl time.Duration,
+			channel string,
+			wakeup []byte,
 		) (int64, error) {
 			return observeEndpointsScript.Run(
 				observeCtx,
@@ -139,6 +150,8 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 				generation,
 				payload,
 				ttl.Milliseconds(),
+				channel,
+				wakeup,
 			).Int64()
 		},
 		loadEndpoints: func(
@@ -156,6 +169,17 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 				return nil, nil
 			}
 			return []byte(payload), err
+		},
+		loadConnectivity: func(
+			loadCtx context.Context,
+			keys []string,
+			generations []int64,
+		) ([]any, error) {
+			arguments := make([]any, len(generations))
+			for index, generation := range generations {
+				arguments[index] = generation
+			}
+			return loadConnectivityScript.Run(loadCtx, client, keys, arguments...).Slice()
 		},
 		metrics: newRedisMetrics(options.PoolSize, client.PoolStats),
 		close:   client.Close,

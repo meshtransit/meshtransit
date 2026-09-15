@@ -194,7 +194,8 @@ docker exec --detach --user redis "${redis_container}" redis-server \
 	"+hget" "+hset" "+pexpire" "+del" \
 	"~meshtransit:v1:presence:node:*" \
 	"~meshtransit:v1:endpoints:node:*" \
-	"&meshtransit:v1:wakeup:network_revision_advanced"
+	"&meshtransit:v1:wakeup:network_revision_advanced" \
+	"&meshtransit:v1:wakeup:connectivity_changed"
 
 for _ in $(seq 1 60); do
 	if docker exec "${redis_container}" redis-cli \

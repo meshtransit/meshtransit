@@ -150,12 +150,13 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 	for name, value := range map[string]string{
 		"successful ping":       `meshtransit_redis_commands_total{operation="ping",result="success"} 1`,
 		"successful publish":    `meshtransit_redis_commands_total{operation="publish",result="success"} 1`,
-		"successful subscribe":  `meshtransit_redis_commands_total{operation="subscribe",result="success"} 1`,
-		"successful receive":    `meshtransit_redis_commands_total{operation="receive",result="success"} 1`,
+		"successful subscribe":  `meshtransit_redis_commands_total{operation="subscribe",result="success"} 2`,
+		"successful receive":    `meshtransit_redis_commands_total{operation="receive",result="success"} 2`,
 		"presence claims":       `meshtransit_redis_commands_total{operation="presence_claim",result="success"} 6`,
 		"presence releases":     `meshtransit_redis_commands_total{operation="presence_release",result="success"} 4`,
 		"endpoint observations": `meshtransit_redis_commands_total{operation="endpoints_observe",result="success"} 3`,
 		"endpoint loads":        `meshtransit_redis_commands_total{operation="endpoints_load",result="success"} 4`,
+		"connectivity loads":    `meshtransit_redis_commands_total{operation="connectivity_load",result="success"} 2`,
 		"command-pool state":    `meshtransit_redis_pool_connections`,
 		"active subscriptions":  `meshtransit_redis_subscriptions_active 1`,
 	} {

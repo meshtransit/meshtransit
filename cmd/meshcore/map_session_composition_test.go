@@ -21,13 +21,23 @@ func TestNewMapSessionServiceValidatesComposition(t *testing.T) {
 		PresenceTTL:         30 * time.Second,
 		CoordinationTimeout: time.Second,
 	}
-	if _, err := newMapSessionService(mapConfig, nil, mapEndpointObserverFixture{}); !errors.Is(
+	if _, err := newMapSessionService(
+		mapConfig,
+		nil,
+		mapEndpointObserverFixture{},
+		mapConnectivityStoreFixture{},
+	); !errors.Is(
 		err,
 		errInvalidMapSessionComposition,
 	) {
 		t.Fatalf("newMapSessionService(nil store) error = %v, want composition error", err)
 	}
-	if _, err := newMapSessionService(mapConfig, mapSnapshotStoreFixture{}, nil); !errors.Is(
+	if _, err := newMapSessionService(
+		mapConfig,
+		mapSnapshotStoreFixture{},
+		nil,
+		mapConnectivityStoreFixture{},
+	); !errors.Is(
 		err,
 		errInvalidMapSessionComposition,
 	) {
@@ -37,6 +47,7 @@ func TestNewMapSessionServiceValidatesComposition(t *testing.T) {
 		mapConfig,
 		mapSnapshotStoreFixture{},
 		mapEndpointObserverFixture{},
+		mapConnectivityStoreFixture{},
 	)
 	if err != nil {
 		t.Fatalf("newMapSessionService() error = %v", err)
@@ -67,6 +78,7 @@ func TestNewMapStreamServiceValidatesComposition(t *testing.T) {
 		nil,
 		mapPresenceStoreFixture{},
 		mapRevisionWatcherFixture{},
+		mapConnectivityWatcherFixture{},
 		replicaID,
 	); !errors.Is(err, errInvalidMapSessionComposition) {
 		t.Fatalf("newMapStreamService(nil) error = %v, want composition error", err)
@@ -76,6 +88,7 @@ func TestNewMapStreamServiceValidatesComposition(t *testing.T) {
 		mapSnapshotOpenerFixture{},
 		mapPresenceStoreFixture{},
 		mapRevisionWatcherFixture{},
+		mapConnectivityWatcherFixture{},
 		replicaID,
 	)
 	if err != nil || service == nil {
@@ -106,6 +119,7 @@ type mapEndpointObserverFixture struct{}
 
 func (mapEndpointObserverFixture) ObserveEndpoints(
 	context.Context,
+	network.Scope,
 	node.EndpointObservation,
 ) (bool, error) {
 	return false, errors.New("composition fixture must not be called")
@@ -115,6 +129,7 @@ type mapPresenceStoreFixture struct{}
 
 func (mapPresenceStoreFixture) ClaimPresence(
 	context.Context,
+	network.Scope,
 	node.PresenceLease,
 ) (bool, error) {
 	return false, errors.New("composition fixture must not be called")
@@ -122,9 +137,19 @@ func (mapPresenceStoreFixture) ClaimPresence(
 
 func (mapPresenceStoreFixture) ReleasePresence(
 	context.Context,
+	network.Scope,
 	node.PresenceLease,
 ) (bool, error) {
 	return false, errors.New("composition fixture must not be called")
+}
+
+type mapConnectivityStoreFixture struct{}
+
+func (mapConnectivityStoreFixture) LoadConnectivity(
+	context.Context,
+	[]mapsession.ConnectivityKey,
+) ([]mapsession.Connectivity, error) {
+	return nil, errors.New("composition fixture must not be called")
 }
 
 type mapRevisionWatcherFixture struct{}
@@ -132,5 +157,13 @@ type mapRevisionWatcherFixture struct{}
 func (mapRevisionWatcherFixture) WatchNetwork(
 	network.ID,
 ) (<-chan network.RevisionAdvanced, func(), error) {
+	return nil, nil, errors.New("composition fixture must not be called")
+}
+
+type mapConnectivityWatcherFixture struct{}
+
+func (mapConnectivityWatcherFixture) WatchNetwork(
+	network.ID,
+) (<-chan mapsession.ConnectivityChanged, func(), error) {
 	return nil, nil, errors.New("composition fixture must not be called")
 }

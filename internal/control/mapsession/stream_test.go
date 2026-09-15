@@ -126,6 +126,90 @@ func TestStreamServiceReconcilesImmediatelyOnRevisionWakeup(t *testing.T) {
 	})
 }
 
+func TestStreamServiceReconcilesImmediatelyOnConnectivityWakeup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		base, peer := snapshotWithAuthorizedPeerFixture(t)
+		selfKey, err := NewConnectivityKey(base.NodeID(), base.SessionGeneration())
+		if err != nil {
+			t.Fatalf("NewConnectivityKey(self) error = %v", err)
+		}
+		peerKey, err := NewConnectivityKey(peer.NodeID(), peer.SessionGeneration())
+		if err != nil {
+			t.Fatalf("NewConnectivityKey(peer) error = %v", err)
+		}
+		self, err := NewConnectivity(ConnectivityParams{Key: selfKey})
+		if err != nil {
+			t.Fatalf("NewConnectivity(self) error = %v", err)
+		}
+		offline, err := NewConnectivity(ConnectivityParams{Key: peerKey})
+		if err != nil {
+			t.Fatalf("NewConnectivity(peer offline) error = %v", err)
+		}
+		initial, err := base.WithConnectivity([]Connectivity{self, offline})
+		if err != nil {
+			t.Fatalf("WithConnectivity(initial) error = %v", err)
+		}
+		online := connectivityFixture(
+			t,
+			peer.NodeID(),
+			peer.SessionGeneration(),
+			4,
+			"198.51.100.2:41641",
+			true,
+		)
+		advanced, err := base.WithConnectivity([]Connectivity{self, online})
+		if err != nil {
+			t.Fatalf("WithConnectivity(advanced) error = %v", err)
+		}
+
+		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial, advanced}}
+		connectivity := newStreamConnectivityWatcher()
+		service := newStreamServiceWithWatchersFixture(
+			t,
+			opener,
+			&streamPresenceStore{},
+			newStreamRevisionWatcher(),
+			connectivity,
+		)
+		machine, request := authenticatedRequestFixture(t, initial)
+		sink := &recordingStreamSink{}
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan error, 1)
+		go func() { result <- service.Serve(ctx, machine, request, sink) }()
+
+		synctest.Wait()
+		change, err := NewConnectivityChanged(
+			initial.Scope().NetworkID(),
+			peer.NodeID(),
+			peer.SessionGeneration(),
+			ConnectivityChangeEndpoints,
+		)
+		if err != nil {
+			t.Fatalf("NewConnectivityChanged() error = %v", err)
+		}
+		connectivity.send(t, change)
+		synctest.Wait()
+		snapshots, _ := sink.state()
+		if calls, _ := opener.state(); calls != 2 || len(snapshots) != 2 ||
+			snapshots[1].NetworkRevision() != initial.NetworkRevision() {
+			t.Fatalf("connectivity refresh = opener %d snapshots %+v", calls, snapshots)
+		}
+		projected, found := snapshots[1].ConnectivityFor(peer.NodeID())
+		if !found || !projected.Online() {
+			t.Fatalf("refreshed peer connectivity = (%+v, %t), want online", projected, found)
+		}
+
+		cancel()
+		synctest.Wait()
+		if err := <-result; !errors.Is(err, context.Canceled) {
+			t.Fatalf("Serve() error = %v, want context cancellation", err)
+		}
+		if watches, releases := connectivity.state(); watches != 1 || releases != 1 {
+			t.Fatalf("connectivity watches = (%d, %d), want one owned lifecycle", watches, releases)
+		}
+	})
+}
+
 func TestStreamServiceFailsClosedWhenRevisionFeedStops(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		snapshot := snapshotFixture(t)
@@ -303,6 +387,75 @@ func TestStreamSnapshotRequiresStablePacketPolicyAtSameRevision(t *testing.T) {
 	}
 }
 
+func TestStreamTracksOnlyRelevantConnectivityChanges(t *testing.T) {
+	t.Parallel()
+
+	snapshot, peer := snapshotWithAuthorizedPeerFixture(t)
+	change := func(
+		nodeID node.ID,
+		generation int64,
+		kind ConnectivityChangeKind,
+	) ConnectivityChanged {
+		result, err := NewConnectivityChanged(
+			snapshot.Scope().NetworkID(),
+			nodeID,
+			generation,
+			kind,
+		)
+		if err != nil {
+			t.Fatalf("NewConnectivityChanged() error = %v", err)
+		}
+		return result
+	}
+	for _, test := range []struct {
+		name   string
+		change ConnectivityChanged
+		want   bool
+	}{
+		{
+			name: "self endpoint",
+			change: change(
+				snapshot.NodeID(),
+				snapshot.SessionGeneration(),
+				ConnectivityChangeEndpoints,
+			),
+			want: true,
+		},
+		{
+			name: "self presence ignored",
+			change: change(
+				snapshot.NodeID(),
+				snapshot.SessionGeneration(),
+				ConnectivityChangePresence,
+			),
+		},
+		{
+			name: "peer presence",
+			change: change(
+				peer.NodeID(),
+				peer.SessionGeneration(),
+				ConnectivityChangePresence,
+			),
+			want: true,
+		},
+		{
+			name: "stale peer generation",
+			change: change(
+				peer.NodeID(),
+				peer.SessionGeneration()-1,
+				ConnectivityChangeEndpoints,
+			),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := streamTracksConnectivity(snapshot, test.change); got != test.want {
+				t.Fatalf("streamTracksConnectivity() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func TestStreamServiceStopsAtAuthorizationExpiry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		params := snapshotFixture(t).params()
@@ -340,11 +493,18 @@ func TestNewStreamServiceRejectsUnsafeComposition(t *testing.T) {
 		&streamSnapshotOpener{},
 		&streamPresenceStore{},
 		nilRevisions,
+		newStreamConnectivityWatcher(),
 		options,
 	); !errors.Is(err, ErrInvalidStreamService) {
 		t.Fatalf("NewStreamService(typed nil) error = %v, want ErrInvalidStreamService", err)
 	}
-	if _, err := NewStreamService(nil, &streamPresenceStore{}, revisions, options); !errors.Is(
+	if _, err := NewStreamService(
+		nil,
+		&streamPresenceStore{},
+		revisions,
+		newStreamConnectivityWatcher(),
+		options,
+	); !errors.Is(
 		err,
 		ErrInvalidStreamService,
 	) {
@@ -355,6 +515,7 @@ func TestNewStreamServiceRejectsUnsafeComposition(t *testing.T) {
 		&streamSnapshotOpener{},
 		&streamPresenceStore{},
 		revisions,
+		newStreamConnectivityWatcher(),
 		options,
 	); !errors.Is(
 		err,
@@ -385,7 +546,30 @@ func newStreamServiceWithRevisionsFixture(
 	revisions RevisionWatcher,
 ) *StreamService {
 	t.Helper()
-	service, err := NewStreamService(opener, presence, revisions, streamOptionsFixture(t))
+	return newStreamServiceWithWatchersFixture(
+		t,
+		opener,
+		presence,
+		revisions,
+		newStreamConnectivityWatcher(),
+	)
+}
+
+func newStreamServiceWithWatchersFixture(
+	t *testing.T,
+	opener SnapshotOpener,
+	presence PresenceStore,
+	revisions RevisionWatcher,
+	connectivity ConnectivityWatcher,
+) *StreamService {
+	t.Helper()
+	service, err := NewStreamService(
+		opener,
+		presence,
+		revisions,
+		connectivity,
+		streamOptionsFixture(t),
+	)
 	if err != nil {
 		t.Fatalf("NewStreamService() error = %v", err)
 	}
@@ -466,6 +650,7 @@ type streamPresenceStore struct {
 
 func (store *streamPresenceStore) ClaimPresence(
 	ctx context.Context,
+	_ network.Scope,
 	lease node.PresenceLease,
 ) (bool, error) {
 	store.mu.Lock()
@@ -478,6 +663,7 @@ func (store *streamPresenceStore) ClaimPresence(
 
 func (store *streamPresenceStore) ReleasePresence(
 	ctx context.Context,
+	_ network.Scope,
 	lease node.PresenceLease,
 ) (bool, error) {
 	store.mu.Lock()
@@ -573,6 +759,48 @@ func (watcher *streamRevisionWatcher) send(t *testing.T, revision network.Revisi
 func (watcher *streamRevisionWatcher) closeUpdates() { close(watcher.updates) }
 
 func (watcher *streamRevisionWatcher) state() (int, int) {
+	watcher.mu.Lock()
+	defer watcher.mu.Unlock()
+	return watcher.watches, watcher.releases
+}
+
+type streamConnectivityWatcher struct {
+	mu       sync.Mutex
+	updates  chan ConnectivityChanged
+	watches  int
+	releases int
+}
+
+func newStreamConnectivityWatcher() *streamConnectivityWatcher {
+	return &streamConnectivityWatcher{updates: make(chan ConnectivityChanged, 1)}
+}
+
+func (watcher *streamConnectivityWatcher) WatchNetwork(
+	network.ID,
+) (<-chan ConnectivityChanged, func(), error) {
+	watcher.mu.Lock()
+	watcher.watches++
+	watcher.mu.Unlock()
+	var releaseOnce sync.Once
+	return watcher.updates, func() {
+		releaseOnce.Do(func() {
+			watcher.mu.Lock()
+			watcher.releases++
+			watcher.mu.Unlock()
+		})
+	}, nil
+}
+
+func (watcher *streamConnectivityWatcher) send(t *testing.T, change ConnectivityChanged) {
+	t.Helper()
+	select {
+	case watcher.updates <- change:
+	case <-t.Context().Done():
+		t.Fatalf("send connectivity wakeup: %v", t.Context().Err())
+	}
+}
+
+func (watcher *streamConnectivityWatcher) state() (int, int) {
 	watcher.mu.Lock()
 	defer watcher.mu.Unlock()
 	return watcher.watches, watcher.releases

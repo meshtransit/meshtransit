@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	redisclient "github.com/redis/go-redis/v9"
 
+	"github.com/meshtransit/meshtransit/internal/control/mapsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 )
 
@@ -50,17 +51,46 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 		subscribe: func(context.Context, string) (messageSubscription, error) {
 			return transport, nil
 		},
-		claimPresence: func(context.Context, string, string, int64, string, time.Duration) (int64, error) {
+		claimPresence: func(
+			context.Context,
+			string,
+			string,
+			int64,
+			string,
+			time.Duration,
+			string,
+			[]byte,
+		) (int64, error) {
 			return 1, nil
 		},
-		releasePresence: func(context.Context, string, string, int64, string) (int64, error) {
+		releasePresence: func(
+			context.Context,
+			string,
+			string,
+			int64,
+			string,
+			string,
+			[]byte,
+		) (int64, error) {
 			return 1, nil
 		},
-		observeEndpoints: func(context.Context, string, string, int64, []byte, time.Duration) (int64, error) {
+		observeEndpoints: func(
+			context.Context,
+			string,
+			string,
+			int64,
+			[]byte,
+			time.Duration,
+			string,
+			[]byte,
+		) (int64, error) {
 			return 1, nil
 		},
 		loadEndpoints: func(context.Context, string, int64) ([]byte, error) {
 			return encodeEndpointSet(testEndpointObservation(t, 7).Set())
+		},
+		loadConnectivity: func(context.Context, []string, []int64) ([]any, error) {
+			return []any{nil, int64(0)}, nil
 		},
 		metrics: metrics,
 	}
@@ -79,18 +109,26 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 		t.Fatalf("RevisionSubscription.Receive() error = %v", err)
 	}
 	lease := testPresenceLease(t, 7, "control-a")
-	if claimed, err := client.ClaimPresence(t.Context(), lease); err != nil || !claimed {
+	scope := testNetworkScope(t)
+	if claimed, err := client.ClaimPresence(t.Context(), scope, lease); err != nil || !claimed {
 		t.Fatalf("ClaimPresence() = (%t, %v), want true", claimed, err)
 	}
-	if released, err := client.ReleasePresence(t.Context(), lease); err != nil || !released {
+	if released, err := client.ReleasePresence(t.Context(), scope, lease); err != nil || !released {
 		t.Fatalf("ReleasePresence() = (%t, %v), want true", released, err)
 	}
 	observation := testEndpointObservation(t, 7)
-	if accepted, err := client.ObserveEndpoints(t.Context(), observation); err != nil || !accepted {
+	if accepted, err := client.ObserveEndpoints(t.Context(), scope, observation); err != nil || !accepted {
 		t.Fatalf("ObserveEndpoints() = (%t, %v), want true", accepted, err)
 	}
 	if _, found, err := client.LoadEndpoints(t.Context(), observation.NodeID(), 7); err != nil || !found {
 		t.Fatalf("LoadEndpoints() = (_, %t, %v), want found", found, err)
+	}
+	key, err := mapsession.NewConnectivityKey(observation.NodeID(), 7)
+	if err != nil {
+		t.Fatalf("mapsession.NewConnectivityKey() error = %v", err)
+	}
+	if values, err := client.LoadConnectivity(t.Context(), []mapsession.ConnectivityKey{key}); err != nil || len(values) != 1 {
+		t.Fatalf("LoadConnectivity() = (%+v, %v), want one result", values, err)
 	}
 
 	body := gatherRedisMetrics(t, client.MetricsCollector())
@@ -103,6 +141,7 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 		"presence release":     `meshtransit_redis_commands_total{operation="presence_release",result="success"} 1`,
 		"endpoint observe":     `meshtransit_redis_commands_total{operation="endpoints_observe",result="success"} 1`,
 		"endpoint load":        `meshtransit_redis_commands_total{operation="endpoints_load",result="success"} 1`,
+		"connectivity load":    `meshtransit_redis_commands_total{operation="connectivity_load",result="success"} 1`,
 		"ping latency count":   `meshtransit_redis_command_duration_seconds_count{operation="ping",result="error"} 1`,
 		"active connections":   `meshtransit_redis_pool_connections{state="active"} 5`,
 		"idle connections":     `meshtransit_redis_pool_connections{state="idle"} 3`,

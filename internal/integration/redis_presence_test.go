@@ -8,8 +8,10 @@ import (
 	"time"
 
 	redisadapter "github.com/meshtransit/meshtransit/internal/adapter/redis"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/publicid"
+	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 func assertRedisPresenceLeaseFencing(
@@ -64,7 +66,7 @@ func assertPresenceClaim(
 	want bool,
 ) {
 	t.Helper()
-	claimed, err := client.ClaimPresence(ctx, lease)
+	claimed, err := client.ClaimPresence(ctx, redisIntegrationScope(t), lease)
 	if err != nil {
 		t.Fatalf("Redis ClaimPresence() error = %v", err)
 	}
@@ -81,11 +83,28 @@ func assertPresenceRelease(
 	want bool,
 ) {
 	t.Helper()
-	released, err := client.ReleasePresence(ctx, lease)
+	released, err := client.ReleasePresence(ctx, redisIntegrationScope(t), lease)
 	if err != nil {
 		t.Fatalf("Redis ReleasePresence() error = %v", err)
 	}
 	if released != want {
 		t.Fatalf("Redis ReleasePresence() = %t, want %t", released, want)
 	}
+}
+
+func redisIntegrationScope(t testing.TB) network.Scope {
+	t.Helper()
+	workspaceID, err := workspace.ParseID("01890f70-0000-7000-8000-000000000101")
+	if err != nil {
+		t.Fatalf("parse Redis integration Workspace ID: %v", err)
+	}
+	networkID, err := network.ParseID("01890f70-0000-7000-8000-000000000201")
+	if err != nil {
+		t.Fatalf("parse Redis integration Network ID: %v", err)
+	}
+	scope, err := network.NewScope(workspaceID, networkID)
+	if err != nil {
+		t.Fatalf("construct Redis integration scope: %v", err)
+	}
+	return scope
 }

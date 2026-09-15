@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/meshtransit/meshtransit/internal/control"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 )
 
@@ -27,27 +28,41 @@ type SnapshotStore interface {
 
 // EndpointObserver records only generation-fenced transient connectivity.
 type EndpointObserver interface {
-	ObserveEndpoints(context.Context, node.EndpointObservation) (bool, error)
+	ObserveEndpoints(context.Context, network.Scope, node.EndpointObservation) (bool, error)
+}
+
+// ConnectivityStore loads only exact-generation transient state for keys that
+// this service already authorized through PostgreSQL and packet policy.
+type ConnectivityStore interface {
+	LoadConnectivity(context.Context, []ConnectivityKey) ([]Connectivity, error)
 }
 
 // Service authorizes an authenticated Node and opens its map snapshot. It owns
 // no goroutines and retains no request or snapshot state.
 type Service struct {
-	store     SnapshotStore
-	endpoints EndpointObserver
-	options   ServiceOptions
+	store        SnapshotStore
+	endpoints    EndpointObserver
+	connectivity ConnectivityStore
+	options      ServiceOptions
 }
 
 // NewService constructs a map-session application service.
 func NewService(
 	store SnapshotStore,
 	endpoints EndpointObserver,
+	connectivity ConnectivityStore,
 	options ServiceOptions,
 ) (*Service, error) {
-	if isNilDependency(store) || isNilDependency(endpoints) || !options.isValid() {
+	if isNilDependency(store) || isNilDependency(endpoints) ||
+		isNilDependency(connectivity) || !options.isValid() {
 		return nil, ErrInvalidService
 	}
-	return &Service{store: store, endpoints: endpoints, options: options}, nil
+	return &Service{
+		store:        store,
+		endpoints:    endpoints,
+		connectivity: connectivity,
+		options:      options,
+	}, nil
 }
 
 // Open binds the request Node key to the transport-authenticated machine and
@@ -58,7 +73,8 @@ func (service *Service) Open(
 	request Request,
 ) (Snapshot, error) {
 	if ctx == nil || service == nil || isNilDependency(service.store) ||
-		isNilDependency(service.endpoints) || !service.options.isValid() || !request.IsValid() {
+		isNilDependency(service.endpoints) || isNilDependency(service.connectivity) ||
+		!service.options.isValid() || !request.IsValid() {
 		return Snapshot{}, ErrInvalidService
 	}
 	if err := ctx.Err(); err != nil {
@@ -79,7 +95,7 @@ func (service *Service) Open(
 	if err := service.observeEndpoints(ctx, snapshot, request); err != nil {
 		return Snapshot{}, err
 	}
-	return snapshot, nil
+	return service.loadConnectivity(ctx, snapshot)
 }
 
 func (service *Service) observeEndpoints(
@@ -102,7 +118,11 @@ func (service *Service) observeEndpoints(
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, service.options.EndpointTimeout)
 	defer cancel()
-	accepted, err := service.endpoints.ObserveEndpoints(operationCtx, observation)
+	accepted, err := service.endpoints.ObserveEndpoints(
+		operationCtx,
+		snapshot.Scope(),
+		observation,
+	)
 	if err != nil {
 		return fmt.Errorf("%w: observe transient endpoints: %w", ErrOpen, err)
 	}
@@ -110,4 +130,40 @@ func (service *Service) observeEndpoints(
 		return errors.Join(ErrOpen, ErrEndpointObservationRejected)
 	}
 	return nil
+}
+
+func (service *Service) loadConnectivity(ctx context.Context, snapshot Snapshot) (Snapshot, error) {
+	peers := snapshot.AuthorizedPeers()
+	keys := make([]ConnectivityKey, 0, len(peers)+1)
+	self, err := NewConnectivityKey(snapshot.NodeID(), snapshot.SessionGeneration())
+	if err != nil {
+		return Snapshot{}, errors.Join(ErrOpen, err)
+	}
+	keys = append(keys, self)
+	for _, peer := range peers {
+		key, keyErr := NewConnectivityKey(peer.NodeID(), peer.SessionGeneration())
+		if keyErr != nil {
+			return Snapshot{}, errors.Join(ErrOpen, keyErr)
+		}
+		keys = append(keys, key)
+	}
+	operationCtx, cancel := context.WithTimeout(ctx, service.options.EndpointTimeout)
+	defer cancel()
+	values, err := service.connectivity.LoadConnectivity(operationCtx, keys)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("%w: load transient connectivity: %w", ErrOpen, err)
+	}
+	if len(values) != len(keys) {
+		return Snapshot{}, ErrOpen
+	}
+	for index := range keys {
+		if !values[index].IsValid() || values[index].Key() != keys[index] {
+			return Snapshot{}, ErrOpen
+		}
+	}
+	enriched, err := snapshot.WithConnectivity(values)
+	if err != nil {
+		return Snapshot{}, errors.Join(ErrOpen, err)
+	}
+	return enriched, nil
 }

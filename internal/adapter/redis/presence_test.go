@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/meshtransit/meshtransit/internal/control/mapsession"
 	"github.com/meshtransit/meshtransit/internal/node"
 )
 
@@ -18,6 +19,8 @@ func TestClientClaimsAndReleasesExactPresenceLease(t *testing.T) {
 	var claimGeneration, releaseGeneration int64
 	var claimReplica, releaseReplica string
 	var claimTTL time.Duration
+	var claimChannel, releaseChannel string
+	var claimWakeup, releaseWakeup []byte
 	client := &Client{
 		claimPresence: func(
 			gotContext context.Context,
@@ -26,12 +29,15 @@ func TestClientClaimsAndReleasesExactPresenceLease(t *testing.T) {
 			generation int64,
 			replicaID string,
 			ttl time.Duration,
+			channel string,
+			wakeup []byte,
 		) (int64, error) {
 			if gotContext != ctx {
 				t.Fatal("ClaimPresence() did not propagate context")
 			}
 			claimKey, claimEndpointKey = key, gotEndpointKey
 			claimGeneration, claimReplica, claimTTL = generation, replicaID, ttl
+			claimChannel, claimWakeup = channel, append([]byte(nil), wakeup...)
 			return 1, nil
 		},
 		releasePresence: func(
@@ -40,20 +46,24 @@ func TestClientClaimsAndReleasesExactPresenceLease(t *testing.T) {
 			gotEndpointKey string,
 			generation int64,
 			replicaID string,
+			channel string,
+			wakeup []byte,
 		) (int64, error) {
 			if gotContext != ctx {
 				t.Fatal("ReleasePresence() did not propagate context")
 			}
 			releaseKey, releaseEndpointKey = key, gotEndpointKey
 			releaseGeneration, releaseReplica = generation, replicaID
+			releaseChannel, releaseWakeup = channel, append([]byte(nil), wakeup...)
 			return 1, nil
 		},
 	}
-	claimed, err := client.ClaimPresence(ctx, lease)
+	scope := testNetworkScope(t)
+	claimed, err := client.ClaimPresence(ctx, scope, lease)
 	if err != nil || !claimed {
 		t.Fatalf("ClaimPresence() = (%t, %v), want true", claimed, err)
 	}
-	released, err := client.ReleasePresence(ctx, lease)
+	released, err := client.ReleasePresence(ctx, scope, lease)
 	if err != nil || !released {
 		t.Fatalf("ReleasePresence() = (%t, %v), want true", released, err)
 	}
@@ -63,7 +73,8 @@ func TestClientClaimsAndReleasesExactPresenceLease(t *testing.T) {
 		claimEndpointKey != wantEndpointKey || releaseEndpointKey != wantEndpointKey ||
 		claimGeneration != 7 || releaseGeneration != 7 ||
 		claimReplica != "control-a" || releaseReplica != "control-a" ||
-		claimTTL != 30*time.Second {
+		claimTTL != 30*time.Second || claimChannel != connectivityChangedChannel ||
+		releaseChannel != connectivityChangedChannel {
 		t.Fatalf(
 			"presence arguments = claim(%q,%d,%q,%s) release(%q,%d,%q)",
 			claimKey,
@@ -75,24 +86,51 @@ func TestClientClaimsAndReleasesExactPresenceLease(t *testing.T) {
 			releaseReplica,
 		)
 	}
+	for name, payload := range map[string][]byte{"claim": claimWakeup, "release": releaseWakeup} {
+		change, err := decodeConnectivityWakeup(payload)
+		if err != nil || change.NetworkID() != scope.NetworkID() ||
+			change.Key().NodeID() != lease.NodeID() ||
+			change.Key().Generation() != lease.Generation() ||
+			change.Kind() != mapsession.ConnectivityChangePresence {
+			t.Fatalf("%s wakeup = (%+v, %v), want lease-bound hint", name, change, err)
+		}
+	}
 }
 
 func TestClientTreatsPresenceFenceRejectionAsSuccessfulResult(t *testing.T) {
 	t.Parallel()
 
 	client := &Client{
-		claimPresence: func(context.Context, string, string, int64, string, time.Duration) (int64, error) {
+		claimPresence: func(
+			context.Context,
+			string,
+			string,
+			int64,
+			string,
+			time.Duration,
+			string,
+			[]byte,
+		) (int64, error) {
 			return 0, nil
 		},
-		releasePresence: func(context.Context, string, string, int64, string) (int64, error) {
+		releasePresence: func(
+			context.Context,
+			string,
+			string,
+			int64,
+			string,
+			string,
+			[]byte,
+		) (int64, error) {
 			return 0, nil
 		},
 	}
 	lease := testPresenceLease(t, 7, "control-a")
-	if claimed, err := client.ClaimPresence(t.Context(), lease); err != nil || claimed {
+	scope := testNetworkScope(t)
+	if claimed, err := client.ClaimPresence(t.Context(), scope, lease); err != nil || claimed {
 		t.Fatalf("ClaimPresence() = (%t, %v), want clean rejection", claimed, err)
 	}
-	if released, err := client.ReleasePresence(t.Context(), lease); err != nil || released {
+	if released, err := client.ReleasePresence(t.Context(), scope, lease); err != nil || released {
 		t.Fatalf("ReleasePresence() = (%t, %v), want clean rejection", released, err)
 	}
 }
@@ -121,10 +159,16 @@ func TestClientRejectsMalformedPresenceResultsAndTransportErrors(t *testing.T) {
 				int64,
 				string,
 				time.Duration,
+				string,
+				[]byte,
 			) (int64, error) {
 				return test.result, test.err
 			}}
-			if _, err := client.ClaimPresence(t.Context(), lease); !errors.Is(err, test.want) {
+			if _, err := client.ClaimPresence(
+				t.Context(),
+				testNetworkScope(t),
+				lease,
+			); !errors.Is(err, test.want) {
 				t.Fatalf("ClaimPresence() error = %v, want %v", err, test.want)
 			}
 		})
@@ -142,11 +186,17 @@ func TestClientRejectsInvalidPresenceLeaseBeforeRedis(t *testing.T) {
 		int64,
 		string,
 		time.Duration,
+		string,
+		[]byte,
 	) (int64, error) {
 		calls++
 		return 1, nil
 	}}
-	if _, err := client.ClaimPresence(t.Context(), node.PresenceLease{}); !errors.Is(
+	if _, err := client.ClaimPresence(
+		t.Context(),
+		testNetworkScope(t),
+		node.PresenceLease{},
+	); !errors.Is(
 		err,
 		ErrInvalidOptions,
 	) {

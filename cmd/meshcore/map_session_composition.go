@@ -15,8 +15,9 @@ func composeMapSession(
 	mapConfig config.ControlMapConfig,
 	runtimePool *postgresadapter.Pool,
 	endpoints mapsession.EndpointObserver,
+	connectivity mapsession.ConnectivityStore,
 ) (*mapsession.Service, error) {
-	if runtimePool == nil || endpoints == nil {
+	if runtimePool == nil || endpoints == nil || connectivity == nil {
 		return nil, errInvalidMapSessionComposition
 	}
 	store, err := postgresadapter.NewMapSessionStore(
@@ -31,7 +32,7 @@ func composeMapSession(
 	if err != nil {
 		return nil, errors.Join(errInvalidMapSessionComposition, err)
 	}
-	return newMapSessionService(mapConfig, store, endpoints)
+	return newMapSessionService(mapConfig, store, endpoints, connectivity)
 }
 
 func composeMapStream(
@@ -39,12 +40,20 @@ func composeMapStream(
 	snapshots mapsession.SnapshotOpener,
 	presence mapsession.PresenceStore,
 	revisions mapsession.RevisionWatcher,
+	connectivity mapsession.ConnectivityWatcher,
 ) (*mapsession.StreamService, error) {
 	replicaID, err := publicid.New()
 	if err != nil {
 		return nil, errors.Join(errInvalidMapSessionComposition, err)
 	}
-	return newMapStreamService(mapConfig, snapshots, presence, revisions, replicaID)
+	return newMapStreamService(
+		mapConfig,
+		snapshots,
+		presence,
+		revisions,
+		connectivity,
+		replicaID,
+	)
 }
 
 func newMapStreamService(
@@ -52,12 +61,14 @@ func newMapStreamService(
 	snapshots mapsession.SnapshotOpener,
 	presence mapsession.PresenceStore,
 	revisions mapsession.RevisionWatcher,
+	connectivity mapsession.ConnectivityWatcher,
 	replicaID publicid.ID,
 ) (*mapsession.StreamService, error) {
 	service, err := mapsession.NewStreamService(
 		snapshots,
 		presence,
 		revisions,
+		connectivity,
 		mapsession.StreamOptions{
 			ReplicaID:           replicaID,
 			SnapshotTimeout:     mapConfig.RequestTimeout,
@@ -77,11 +88,12 @@ func newMapSessionService(
 	mapConfig config.ControlMapConfig,
 	store mapsession.SnapshotStore,
 	endpoints mapsession.EndpointObserver,
+	connectivity mapsession.ConnectivityStore,
 ) (*mapsession.Service, error) {
-	if store == nil || endpoints == nil {
+	if store == nil || endpoints == nil || connectivity == nil {
 		return nil, errInvalidMapSessionComposition
 	}
-	service, err := mapsession.NewService(store, endpoints, mapsession.ServiceOptions{
+	service, err := mapsession.NewService(store, endpoints, connectivity, mapsession.ServiceOptions{
 		EndpointTTL:     mapConfig.PresenceTTL,
 		EndpointTimeout: mapConfig.CoordinationTimeout,
 	})

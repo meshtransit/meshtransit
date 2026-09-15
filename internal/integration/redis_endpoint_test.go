@@ -10,6 +10,7 @@ import (
 	"time"
 
 	redisadapter "github.com/meshtransit/meshtransit/internal/adapter/redis"
+	"github.com/meshtransit/meshtransit/internal/control/mapsession"
 	"github.com/meshtransit/meshtransit/internal/node"
 )
 
@@ -24,8 +25,24 @@ func assertRedisEndpointObservationFencing(
 		t.Fatalf("parse endpoint-observation Node ID: %v", err)
 	}
 	generationTwo := integrationEndpointObservation(t, nodeID, 2, "192.0.2.10:41641")
-	if accepted, err := client.ObserveEndpoints(ctx, generationTwo); err != nil || !accepted {
+	scope := redisIntegrationScope(t)
+	subscription, err := client.SubscribeConnectivityChanged(ctx)
+	if err != nil {
+		t.Fatalf("Redis SubscribeConnectivityChanged() error = %v", err)
+	}
+	defer func() {
+		if err := subscription.Close(); err != nil {
+			t.Errorf("Redis ConnectivitySubscription.Close() error = %v", err)
+		}
+	}()
+	if accepted, err := client.ObserveEndpoints(ctx, scope, generationTwo); err != nil || !accepted {
 		t.Fatalf("Redis ObserveEndpoints(generation 2) = (%t, %v), want accepted", accepted, err)
+	}
+	received, err := subscription.Receive(ctx)
+	if err != nil || received.NetworkID() != scope.NetworkID() ||
+		received.Key().NodeID() != nodeID || received.Key().Generation() != 2 ||
+		received.Kind() != mapsession.ConnectivityChangeEndpoints {
+		t.Fatalf("Redis connectivity wakeup = (%+v, %v), want exact endpoint change", received, err)
 	}
 	set, found, err := client.LoadEndpoints(ctx, nodeID, 2)
 	if err != nil || !found || set.DiscoveryKey() != generationTwo.Set().DiscoveryKey() ||
@@ -38,12 +55,27 @@ func assertRedisEndpointObservationFencing(
 
 	newOwner := integrationPresenceLease(t, nodeID, 3, "control-b")
 	assertPresenceClaim(ctx, t, client, newOwner, true)
-	if accepted, err := client.ObserveEndpoints(ctx, generationTwo); err != nil || accepted {
+	if accepted, err := client.ObserveEndpoints(ctx, scope, generationTwo); err != nil || accepted {
 		t.Fatalf("Redis ObserveEndpoints(stale generation) = (%t, %v), want rejection", accepted, err)
 	}
 	generationThree := integrationEndpointObservation(t, nodeID, 3, "198.51.100.20:41641")
-	if accepted, err := client.ObserveEndpoints(ctx, generationThree); err != nil || !accepted {
+	if accepted, err := client.ObserveEndpoints(ctx, scope, generationThree); err != nil || !accepted {
 		t.Fatalf("Redis ObserveEndpoints(generation 3) = (%t, %v), want accepted", accepted, err)
+	}
+	connectivityKey, err := mapsession.NewConnectivityKey(nodeID, 3)
+	if err != nil {
+		t.Fatalf("construct integration connectivity key: %v", err)
+	}
+	connectivity, err := client.LoadConnectivity(
+		ctx,
+		[]mapsession.ConnectivityKey{connectivityKey},
+	)
+	if err != nil || len(connectivity) != 1 || !connectivity[0].Online() {
+		t.Fatalf("Redis LoadConnectivity(online) = (%+v, %v)", connectivity, err)
+	}
+	projected, present := connectivity[0].EndpointSet()
+	if !present || !projected.Equal(generationThree.Set()) {
+		t.Fatalf("Redis connectivity endpoint set = (%+v, %t), want generation 3", projected, present)
 	}
 	set, found, err = client.LoadEndpoints(ctx, nodeID, 3)
 	if err != nil || !found || !slices.Equal(set.Endpoints(), generationThree.Set().Endpoints()) {
@@ -52,6 +84,16 @@ func assertRedisEndpointObservationFencing(
 	assertPresenceRelease(ctx, t, client, newOwner, true)
 	if _, found, err := client.LoadEndpoints(ctx, nodeID, 3); err != nil || found {
 		t.Fatalf("Redis LoadEndpoints(released generation) = (_, %t, %v), want miss", found, err)
+	}
+	connectivity, err = client.LoadConnectivity(
+		ctx,
+		[]mapsession.ConnectivityKey{connectivityKey},
+	)
+	if err != nil || len(connectivity) != 1 || connectivity[0].Online() {
+		t.Fatalf("Redis LoadConnectivity(released) = (%+v, %v), want offline", connectivity, err)
+	}
+	if _, present := connectivity[0].EndpointSet(); present {
+		t.Fatal("Redis released connectivity retained endpoint set")
 	}
 }
 

@@ -19,6 +19,7 @@ const (
 	redisCommandRelease          redisCommand = "presence_release"
 	redisCommandObserveEndpoints redisCommand = "endpoints_observe"
 	redisCommandLoadEndpoints    redisCommand = "endpoints_load"
+	redisCommandLoadConnectivity redisCommand = "connectivity_load"
 )
 
 var redisCommands = [...]redisCommand{
@@ -30,6 +31,7 @@ var redisCommands = [...]redisCommand{
 	redisCommandRelease,
 	redisCommandObserveEndpoints,
 	redisCommandLoadEndpoints,
+	redisCommandLoadConnectivity,
 }
 
 type redisMetrics struct {

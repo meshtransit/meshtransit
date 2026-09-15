@@ -132,7 +132,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		return 1
 	}
 	var revisionWorkerTelemetry *revisionworker.Telemetry
-	roleServices := make([]app.OwnedService, 0, 3)
+	roleServices := make([]app.OwnedService, 0, 4)
 	if processConfig.RevisionWorker != nil {
 		revisionWorkerTelemetry = revisionworker.NewTelemetry()
 		workerService, composeErr := composeRevisionWorker(
@@ -186,6 +186,36 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			roleServices,
 			app.OwnedService{Name: "network-revision-feed", Service: revisionFeed},
 		)
+		connectivityFeed, connectivityFeedTelemetry, composeErr := composeConnectivityFeed(
+			*processConfig.Control,
+			redisClient,
+		)
+		if composeErr != nil {
+			logger.ErrorContext(
+				ctx,
+				"startup failed",
+				"error_code", "connectivity_feed_composition_failure",
+				"error", composeErr,
+			)
+			return 1
+		}
+		connectivityFeedMetrics, metricsErr := httpapi.NewConnectivityFeedMetricsCollector(
+			connectivityFeedTelemetry,
+		)
+		if metricsErr != nil {
+			logger.ErrorContext(
+				ctx,
+				"startup failed",
+				"error_code", "connectivity_feed_metrics_failure",
+				"error", metricsErr,
+			)
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, connectivityFeedMetrics)
+		roleServices = append(
+			roleServices,
+			app.OwnedService{Name: "connectivity-feed", Service: connectivityFeed},
+		)
 		registrationService, composeErr := composeRegistration(
 			*processConfig.Enrollment,
 			storagePools.runtime,
@@ -203,6 +233,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			processConfig.Control.Map,
 			storagePools.runtime,
 			redisClient,
+			redisClient,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(
@@ -218,6 +249,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			mapSessionService,
 			redisClient,
 			revisionFeed,
+			connectivityFeed,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(

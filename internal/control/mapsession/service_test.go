@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/control"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 )
 
@@ -34,6 +36,35 @@ func TestServiceLoadsSnapshotForBoundIdentity(t *testing.T) {
 	}
 }
 
+func TestServiceLoadsConnectivityOnlyForSelfAndAuthorizedPeers(t *testing.T) {
+	t.Parallel()
+
+	snapshot, peer := snapshotWithAuthorizedPeerFixture(t)
+	connectivity := &recordingConnectivityStore{}
+	service, err := NewService(
+		&recordingSnapshotStore{snapshot: snapshot},
+		&recordingEndpointObserver{},
+		connectivity,
+		ServiceOptions{EndpointTTL: 30 * time.Second, EndpointTimeout: time.Second},
+	)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	machine, request := authenticatedRequestFixture(t, snapshot)
+	result, err := service.Open(t.Context(), machine, request)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if connectivity.calls != 1 || len(connectivity.keys) != 2 ||
+		connectivity.keys[0].NodeID() != snapshot.NodeID() ||
+		connectivity.keys[1].NodeID() != peer.NodeID() {
+		t.Fatalf("LoadConnectivity() keys = %+v after %d calls, want self then authorized peer", connectivity.keys, connectivity.calls)
+	}
+	if _, found := result.ConnectivityFor(peer.NodeID()); !found {
+		t.Fatal("Open() omitted authorized peer connectivity projection")
+	}
+}
+
 func TestServiceObservesEndpointsAfterAuthoritativeIdentityBinding(t *testing.T) {
 	snapshot := snapshotFixture(t)
 	store := &recordingSnapshotStore{snapshot: snapshot}
@@ -46,6 +77,7 @@ func TestServiceObservesEndpointsAfterAuthoritativeIdentityBinding(t *testing.T)
 		t.Fatalf("Open() error = %v", err)
 	}
 	if observer.calls != 1 || !observer.observation.IsValid() ||
+		observer.scope != snapshot.Scope() ||
 		observer.observation.NodeID() != snapshot.NodeID() ||
 		observer.observation.Generation() != snapshot.SessionGeneration() ||
 		observer.observation.TTL() != 30*time.Second {
@@ -122,13 +154,22 @@ func TestNewServiceRejectsInvalidComposition(t *testing.T) {
 	t.Parallel()
 
 	validOptions := ServiceOptions{EndpointTTL: 30 * time.Second, EndpointTimeout: time.Second}
-	if _, err := NewService(nil, &recordingEndpointObserver{}, validOptions); !errors.Is(err, ErrInvalidService) {
+	connectivity := &recordingConnectivityStore{}
+	if _, err := NewService(nil, &recordingEndpointObserver{}, connectivity, validOptions); !errors.Is(err, ErrInvalidService) {
 		t.Fatalf("NewService(nil store) error = %v, want ErrInvalidService", err)
 	}
-	if _, err := NewService(&recordingSnapshotStore{}, nil, validOptions); !errors.Is(err, ErrInvalidService) {
+	if _, err := NewService(&recordingSnapshotStore{}, nil, connectivity, validOptions); !errors.Is(err, ErrInvalidService) {
 		t.Fatalf("NewService(nil observer) error = %v, want ErrInvalidService", err)
 	}
-	if _, err := NewService(&recordingSnapshotStore{}, &recordingEndpointObserver{}, ServiceOptions{}); !errors.Is(
+	if _, err := NewService(
+		&recordingSnapshotStore{},
+		&recordingEndpointObserver{},
+		nil,
+		validOptions,
+	); !errors.Is(err, ErrInvalidService) {
+		t.Fatalf("NewService(nil connectivity) error = %v, want ErrInvalidService", err)
+	}
+	if _, err := NewService(&recordingSnapshotStore{}, &recordingEndpointObserver{}, connectivity, ServiceOptions{}); !errors.Is(
 		err,
 		ErrInvalidService,
 	) {
@@ -182,7 +223,7 @@ func newServiceFixture(
 	endpoints EndpointObserver,
 ) *Service {
 	t.Helper()
-	service, err := NewService(store, endpoints, ServiceOptions{
+	service, err := NewService(store, endpoints, &recordingConnectivityStore{}, ServiceOptions{
 		EndpointTTL:     30 * time.Second,
 		EndpointTimeout: time.Second,
 	})
@@ -203,16 +244,45 @@ type recordingEndpointObserver struct {
 	accepted    bool
 	err         error
 	observation node.EndpointObservation
+	scope       network.Scope
 	calls       int
 }
 
 func (observer *recordingEndpointObserver) ObserveEndpoints(
 	_ context.Context,
+	scope network.Scope,
 	observation node.EndpointObservation,
 ) (bool, error) {
 	observer.calls++
+	observer.scope = scope
 	observer.observation = observation
 	return observer.accepted, observer.err
+}
+
+type recordingConnectivityStore struct {
+	keys  []ConnectivityKey
+	calls int
+	err   error
+}
+
+func (store *recordingConnectivityStore) LoadConnectivity(
+	_ context.Context,
+	keys []ConnectivityKey,
+) ([]Connectivity, error) {
+	store.calls++
+	store.keys = slices.Clone(keys)
+	if store.err != nil {
+		return nil, store.err
+	}
+	values := make([]Connectivity, len(keys))
+	for index, key := range keys {
+		var err error
+		values[index], err = NewConnectivity(ConnectivityParams{Key: key})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return values, nil
 }
 
 func (store *recordingSnapshotStore) Load(

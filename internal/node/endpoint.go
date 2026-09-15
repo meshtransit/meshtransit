@@ -111,9 +111,19 @@ func (set EndpointSet) IsValid() bool {
 	return true
 }
 
+// Equal reports whether both immutable reports contain the same discovery key
+// and canonical endpoint sequence.
+func (set EndpointSet) Equal(other EndpointSet) bool {
+	return set.discoveryKey == other.discoveryKey && slices.Equal(set.endpoints, other.endpoints)
+}
+
 func validEndpointAddress(address netip.AddrPort) bool {
-	return address.IsValid() && address.Port() != 0 && address.Addr().Zone() == "" &&
-		!address.Addr().IsUnspecified() && !address.Addr().IsMulticast()
+	endpointAddress := address.Addr()
+	return address.IsValid() && address.Port() != 0 && endpointAddress.IsValid() &&
+		endpointAddress.Zone() == "" && endpointAddress == endpointAddress.Unmap() &&
+		endpointAddress.IsGlobalUnicast() && !endpointAddress.IsUnspecified() &&
+		!endpointAddress.IsMulticast() && !endpointAddress.IsLoopback() &&
+		!endpointAddress.IsLinkLocalUnicast()
 }
 
 func compareEndpoints(left, right Endpoint) int {

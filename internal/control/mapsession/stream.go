@@ -37,8 +37,8 @@ type SnapshotOpener interface {
 
 // PresenceStore owns only ephemeral, generation-fenced stream observations.
 type PresenceStore interface {
-	ClaimPresence(context.Context, node.PresenceLease) (bool, error)
-	ReleasePresence(context.Context, node.PresenceLease) (bool, error)
+	ClaimPresence(context.Context, network.Scope, node.PresenceLease) (bool, error)
+	ReleasePresence(context.Context, network.Scope, node.PresenceLease) (bool, error)
 }
 
 // StreamSink serially delivers product snapshots and transport keepalives.
@@ -52,6 +52,12 @@ type StreamSink interface {
 // The release function is caller-owned and must be idempotent.
 type RevisionWatcher interface {
 	WatchNetwork(network.ID) (<-chan network.RevisionAdvanced, func(), error)
+}
+
+// ConnectivityWatcher provides bounded wakeups for non-authoritative endpoint
+// and presence changes. The release function must be idempotent.
+type ConnectivityWatcher interface {
+	WatchNetwork(network.ID) (<-chan ConnectivityChanged, func(), error)
 }
 
 // StreamOptions bounds one caller-owned map stream lifecycle.
@@ -68,10 +74,11 @@ type StreamOptions struct {
 // goroutines or authority cache; its mutex protects only local live ownership
 // and is never held across PostgreSQL, Redis, or sink I/O.
 type StreamService struct {
-	snapshots SnapshotOpener
-	presence  PresenceStore
-	revisions RevisionWatcher
-	options   StreamOptions
+	snapshots    SnapshotOpener
+	presence     PresenceStore
+	revisions    RevisionWatcher
+	connectivity ConnectivityWatcher
+	options      StreamOptions
 
 	activeMu sync.Mutex
 	active   map[node.ID]struct{}
@@ -82,18 +89,21 @@ func NewStreamService(
 	snapshots SnapshotOpener,
 	presence PresenceStore,
 	revisions RevisionWatcher,
+	connectivity ConnectivityWatcher,
 	options StreamOptions,
 ) (*StreamService, error) {
 	if isNilDependency(snapshots) || isNilDependency(presence) ||
-		isNilDependency(revisions) || !validStreamOptions(options) {
+		isNilDependency(revisions) || isNilDependency(connectivity) ||
+		!validStreamOptions(options) {
 		return nil, ErrInvalidStreamService
 	}
 	return &StreamService{
-		snapshots: snapshots,
-		presence:  presence,
-		revisions: revisions,
-		options:   options,
-		active:    make(map[node.ID]struct{}),
+		snapshots:    snapshots,
+		presence:     presence,
+		revisions:    revisions,
+		connectivity: connectivity,
+		options:      options,
+		active:       make(map[node.ID]struct{}),
 	}, nil
 }
 
@@ -108,6 +118,7 @@ func (service *StreamService) Serve(
 ) (resultErr error) {
 	if ctx == nil || service == nil || isNilDependency(service.snapshots) ||
 		isNilDependency(service.presence) || isNilDependency(service.revisions) ||
+		isNilDependency(service.connectivity) ||
 		!validStreamOptions(service.options) || !machine.IsValid() || !request.IsValid() ||
 		isNilDependency(sink) {
 		return ErrInvalidStreamService
@@ -138,6 +149,19 @@ func (service *StreamService) Serve(
 		return ErrStreamUnavailable
 	}
 	defer stopWatching()
+	connectivityUpdates, stopConnectivity, err := service.connectivity.WatchNetwork(
+		snapshot.Scope().NetworkID(),
+	)
+	if err != nil {
+		return errors.Join(ErrStreamUnavailable, err)
+	}
+	if connectivityUpdates == nil || stopConnectivity == nil {
+		if stopConnectivity != nil {
+			stopConnectivity()
+		}
+		return ErrStreamUnavailable
+	}
+	defer stopConnectivity()
 	lease, err := node.NewPresenceLease(
 		snapshot.NodeID(),
 		snapshot.SessionGeneration(),
@@ -147,7 +171,7 @@ func (service *StreamService) Serve(
 	if err != nil {
 		return errors.Join(ErrInvalidStreamService, err)
 	}
-	claimed, err := service.claimPresence(ctx, lease)
+	claimed, err := service.claimPresence(ctx, snapshot.Scope(), lease)
 	if err != nil {
 		return errors.Join(ErrStreamUnavailable, err)
 	}
@@ -155,13 +179,25 @@ func (service *StreamService) Serve(
 		return ErrPresenceConflict
 	}
 	defer func() {
-		resultErr = errors.Join(resultErr, service.releasePresence(ctx, lease))
+		resultErr = errors.Join(
+			resultErr,
+			service.releasePresence(ctx, snapshot.Scope(), lease),
+		)
 	}()
 
 	if err := sink.SendSnapshot(ctx, snapshot); err != nil {
 		return errors.Join(ErrStreamWrite, err)
 	}
-	return service.run(ctx, machine, request, sink, lease, snapshot, updates)
+	return service.run(
+		ctx,
+		machine,
+		request,
+		sink,
+		lease,
+		snapshot,
+		updates,
+		connectivityUpdates,
+	)
 }
 
 func (service *StreamService) admit(nodeID node.ID) bool {
@@ -188,6 +224,7 @@ func (service *StreamService) run(
 	lease node.PresenceLease,
 	initial Snapshot,
 	updates <-chan network.RevisionAdvanced,
+	connectivityUpdates <-chan ConnectivityChanged,
 ) error {
 	renewal := time.NewTicker(service.options.PresenceTTL / 3)
 	defer renewal.Stop()
@@ -206,7 +243,7 @@ func (service *StreamService) run(
 		case <-authorityExpiry.C:
 			return ErrAuthorizationExpired
 		case <-renewal.C:
-			claimed, err := service.claimPresence(ctx, lease)
+			claimed, err := service.claimPresence(ctx, current.Scope(), lease)
 			if err != nil {
 				return errors.Join(ErrPresenceLost, err)
 			}
@@ -225,6 +262,21 @@ func (service *StreamService) run(
 				return ErrStreamDiscontinuity
 			}
 			if revision.Number() <= current.NetworkRevision() {
+				continue
+			}
+			next, err := service.refresh(ctx, machine, request, sink, current)
+			if err != nil {
+				return err
+			}
+			current = next
+		case change, open := <-connectivityUpdates:
+			if !open {
+				return ErrStreamUnavailable
+			}
+			if !change.IsValid() || change.NetworkID() != current.Scope().NetworkID() {
+				return ErrStreamDiscontinuity
+			}
+			if !streamTracksConnectivity(current, change) {
 				continue
 			}
 			next, err := service.refresh(ctx, machine, request, sink, current)
@@ -256,7 +308,7 @@ func (service *StreamService) refresh(
 	if !streamCanAdvance(current, next) {
 		return Snapshot{}, ErrStreamDiscontinuity
 	}
-	if next.NetworkRevision() == current.NetworkRevision() {
+	if !streamSnapshotChanged(current, next) {
 		return current, nil
 	}
 	if err := sink.SendSnapshot(ctx, next); err != nil {
@@ -277,11 +329,12 @@ func (service *StreamService) openSnapshot(
 
 func (service *StreamService) claimPresence(
 	ctx context.Context,
+	scope network.Scope,
 	lease node.PresenceLease,
 ) (bool, error) {
 	operationCtx, cancel := context.WithTimeout(ctx, service.options.CoordinationTimeout)
 	defer cancel()
-	claimed, err := service.presence.ClaimPresence(operationCtx, lease)
+	claimed, err := service.presence.ClaimPresence(operationCtx, scope, lease)
 	if err != nil {
 		return false, fmt.Errorf("claim presence: %w", err)
 	}
@@ -290,6 +343,7 @@ func (service *StreamService) claimPresence(
 
 func (service *StreamService) releasePresence(
 	requestCtx context.Context,
+	scope network.Scope,
 	lease node.PresenceLease,
 ) error {
 	cleanupCtx, cancel := context.WithTimeout(
@@ -297,7 +351,7 @@ func (service *StreamService) releasePresence(
 		service.options.CoordinationTimeout,
 	)
 	defer cancel()
-	if _, err := service.presence.ReleasePresence(cleanupCtx, lease); err != nil {
+	if _, err := service.presence.ReleasePresence(cleanupCtx, scope, lease); err != nil {
 		return errors.Join(ErrStreamUnavailable, fmt.Errorf("release presence: %w", err))
 	}
 	return nil
