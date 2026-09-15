@@ -22,6 +22,7 @@ const (
 	qualificationJWKSURI      = qualificationIssuer + "/jwks"
 
 	deviceManagePermission = "device.manage"
+	maximumFixtureSessions = 16
 )
 
 type seedScope struct {
@@ -134,9 +135,12 @@ func executeSeed(
 	if err != nil {
 		return seedOutput{}, err
 	}
-	material, err := newSeedIdentityMaterial(entropy)
-	if err != nil {
-		return seedOutput{}, err
+	var material seedIdentityMaterial
+	if !spec.renewExpiredFixture {
+		material, err = newSeedIdentityMaterial(entropy)
+		if err != nil {
+			return seedOutput{}, err
+		}
 	}
 	_, digest, bearerFile, err := prepareBearer(
 		spec,
@@ -187,35 +191,101 @@ func executeSeed(
 	if err != nil {
 		return seedOutput{}, err
 	}
-	if !counts.isPristine() {
+	if spec.renewExpiredFixture && !counts.isRenewable() {
+		return seedOutput{}, errors.New("qualification identity authority is not renewable")
+	}
+	if !spec.renewExpiredFixture && !counts.isPristine() {
 		return seedOutput{}, errors.New("qualification identity authority is not pristine")
+	}
+	var fixture renewalFixture
+	var evaluatedAt time.Time
+	if spec.renewExpiredFixture {
+		fixture, evaluatedAt, err = loadRenewalFixture(
+			operationCtx,
+			transaction,
+			lockedScope,
+			spec,
+			database,
+		)
+		if err != nil {
+			return seedOutput{}, err
+		}
 	}
 	if _, err := transaction.Exec(operationCtx, setSeedChangeSQL, ids.change.String()); err != nil {
 		return seedOutput{}, fmt.Errorf("set qualification authority change: %w", err)
 	}
 	digestBytes := digest.Bytes()
-	expiresAt, err := insertSeedAuthority(
-		operationCtx,
-		transaction,
-		spec,
-		database,
-		lockedScope,
-		ids,
-		digestBytes,
-		material,
-	)
-	if err != nil {
-		return seedOutput{}, err
-	}
-	if err := appendSeedEvidence(
-		operationCtx,
-		transaction,
-		spec,
-		lockedScope,
-		ids,
-		expiresAt,
-	); err != nil {
-		return seedOutput{}, err
+	var result seedOutput
+	if spec.renewExpiredFixture {
+		renewal, renewalErr := renewFixtureAuthority(
+			operationCtx,
+			transaction,
+			spec,
+			database,
+			lockedScope,
+			fixture,
+			ids.session,
+			digestBytes,
+			evaluatedAt,
+		)
+		if renewalErr != nil {
+			return seedOutput{}, renewalErr
+		}
+		if renewalErr := appendRenewalEvidence(
+			operationCtx,
+			transaction,
+			spec,
+			lockedScope,
+			ids,
+			fixture,
+			renewal,
+		); renewalErr != nil {
+			return seedOutput{}, renewalErr
+		}
+		result = seedOutput{
+			Operation:         "renewed",
+			SessionID:         ids.session.String(),
+			IdentitySubjectID: fixture.subjectPublicID.String(),
+			MembershipID:      fixture.membershipPublicID.String(),
+			RoleDefinitionID:  fixture.roleDefinitionPublicID.String(),
+			RoleBindingID:     fixture.bindingPublicID.String(),
+			ExpiresAt:         renewal.expiresAt,
+			Permission:        deviceManagePermission,
+		}
+	} else {
+		expiresAt, insertErr := insertSeedAuthority(
+			operationCtx,
+			transaction,
+			spec,
+			database,
+			lockedScope,
+			ids,
+			digestBytes,
+			material,
+		)
+		if insertErr != nil {
+			return seedOutput{}, insertErr
+		}
+		if evidenceErr := appendSeedEvidence(
+			operationCtx,
+			transaction,
+			spec,
+			lockedScope,
+			ids,
+			expiresAt,
+		); evidenceErr != nil {
+			return seedOutput{}, evidenceErr
+		}
+		result = seedOutput{
+			Operation:         "seeded",
+			SessionID:         ids.session.String(),
+			IdentitySubjectID: ids.subject.String(),
+			MembershipID:      ids.membership.String(),
+			RoleDefinitionID:  ids.roleDefinition.String(),
+			RoleBindingID:     ids.roleBinding.String(),
+			ExpiresAt:         expiresAt.UTC(),
+			Permission:        deviceManagePermission,
+		}
 	}
 	if err := transaction.Commit(operationCtx); err != nil {
 		return seedOutput{}, fmt.Errorf("commit qualification seed: %w", err)
@@ -225,15 +295,7 @@ func executeSeed(
 		return seedOutput{}, fmt.Errorf("retain bearer output: %w", err)
 	}
 	keepBearer = true
-	return seedOutput{
-		SessionID:         ids.session.String(),
-		IdentitySubjectID: ids.subject.String(),
-		MembershipID:      ids.membership.String(),
-		RoleDefinitionID:  ids.roleDefinition.String(),
-		RoleBindingID:     ids.roleBinding.String(),
-		ExpiresAt:         expiresAt.UTC(),
-		Permission:        deviceManagePermission,
-	}, nil
+	return result, nil
 }
 
 type seedRowQuerier interface {
@@ -333,6 +395,15 @@ func (counts seedAuthorityCounts) isPristine() bool {
 	return counts == seedAuthorityCounts{}
 }
 
+func (counts seedAuthorityCounts) isRenewable() bool {
+	return counts.account == 1 && counts.provider == 1 &&
+		counts.providerGeneration == 1 && counts.providerClient == 1 &&
+		counts.subject == 1 && counts.session >= 1 &&
+		counts.session <= maximumFixtureSessions && counts.membership == 1 &&
+		counts.roleDefinition == 1 && counts.rolePermission == 1 &&
+		counts.roleBinding == 1
+}
+
 func newSeedIDs(generator publicIDGenerator) (seedIDs, error) {
 	if generator == nil {
 		return seedIDs{}, errInvalidInput
@@ -374,13 +445,17 @@ func newSeedIdentityMaterial(entropy io.Reader) (seedIdentityMaterial, error) {
 	}
 	issuerDigest := qualificationHMAC(key, "issuer", qualificationIssuer)
 	subjectDigest := qualificationHMAC(key, "subject", "qualification-subject")
-	trustHash := sha256.Sum256([]byte(
-		qualificationIssuer + "\x00" + qualificationDiscoveryURI + "\x00" +
-			qualificationJWKSURI + "\x00meshtransit-qualification",
-	))
+	trustHash := qualificationTrustHash()
 	return seedIdentityMaterial{
 		issuerDigest: issuerDigest, subjectDigest: subjectDigest, trustHash: trustHash,
 	}, nil
+}
+
+func qualificationTrustHash() [sha256.Size]byte {
+	return sha256.Sum256([]byte(
+		qualificationIssuer + "\x00" + qualificationDiscoveryURI + "\x00" +
+			qualificationJWKSURI + "\x00meshtransit-qualification",
+	))
 }
 
 func qualificationHMAC(key []byte, purpose, value string) []byte {

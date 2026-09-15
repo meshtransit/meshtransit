@@ -54,6 +54,29 @@ func TestParseSeedSpecRejectsFractionalExpiryAndExistingArguments(t *testing.T) 
 	}
 }
 
+func TestParseSeedSpecRequiresExplicitRenewalConfirmation(t *testing.T) {
+	t.Parallel()
+	environment := testEnvironment()
+	arguments := append(testArguments("/tmp/meshtransit-token"), "-renew-expired-fixture")
+	if _, err := parseSeedSpec(arguments, mapLookup(environment)); !errors.Is(err, errInvalidInput) {
+		t.Fatalf("parseSeedSpec() renewal without confirmation error = %v, want invalid input", err)
+	}
+
+	environment[envRenewalConfirmation] = "wrong"
+	if _, err := parseSeedSpec(arguments, mapLookup(environment)); !errors.Is(err, errInvalidInput) {
+		t.Fatalf("parseSeedSpec() wrong renewal confirmation error = %v, want invalid input", err)
+	}
+
+	environment[envRenewalConfirmation] = renewalConfirmation
+	spec, err := parseSeedSpec(arguments, mapLookup(environment))
+	if err != nil {
+		t.Fatalf("parseSeedSpec() renewal error = %v", err)
+	}
+	if !spec.isValid() || !spec.renewExpiredFixture {
+		t.Fatalf("parseSeedSpec() = %#v, want explicit renewal", spec)
+	}
+}
+
 func TestLoadDatabaseSettingsRejectsRuntimeRoles(t *testing.T) {
 	t.Parallel()
 	for _, role := range []string{"mesh_runtime", "mesh_worker", "mesh_migrator"} {

@@ -25,6 +25,27 @@ Safety properties:
 - writes the bearer once to a new absolute path with mode `0600`; the bearer is
   never written to stdout, stderr, logs, or command arguments.
 
+Renewal is disabled by default. It exists only to repeat qualification against
+the exact synthetic graph created by this command. Wait for the previous
+session, membership, and binding to expire, set
+`MESHTRANSIT_QUALIFICATION_CONFIRM_EXPIRED_FIXTURE_RENEWAL=expired-exact-fixture-only`,
+and pass `-renew-expired-fixture`. The command then:
+
+- rejects a live, revoked, modified, additional, or provenance-incomplete
+  identity/RBAC graph;
+- rejects generation or recovery-epoch drift and more than sixteen historical
+  qualification sessions;
+- preserves the original synthetic authentication time, creates one new
+  Account Session, and extends only the expired membership and binding;
+- increments membership and binding version/generation with compare-and-swap;
+- records the three mutations and one immutable audit/outbox event in the same
+  serializable transaction without advancing the Network revision.
+
+If commit outcome or final bearer-file retention is uncertain, the command
+fails and removes the local bearer. Authority may remain live for at most the
+requested fifteen-minute lifetime but is unavailable to the caller; wait for
+expiry before retrying.
+
 Supply PostgreSQL TLS/admin settings and the same active Account Session digest
 key ID/file used by MeshCore. Pass `-h` locally to inspect the bounded flags.
 Delete the bearer file immediately after the qualification request. The

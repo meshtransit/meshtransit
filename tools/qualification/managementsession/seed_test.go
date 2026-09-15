@@ -25,6 +25,23 @@ func TestSeedScopeAndCountsValidation(t *testing.T) {
 	if (seedAuthorityCounts{session: 1}).isPristine() {
 		t.Fatal("existing Account Session was treated as pristine")
 	}
+	renewable := seedAuthorityCounts{
+		account: 1, provider: 1, providerGeneration: 1, providerClient: 1,
+		subject: 1, session: 1, membership: 1, roleDefinition: 1,
+		rolePermission: 1, roleBinding: 1,
+	}
+	if !renewable.isRenewable() {
+		t.Fatal("exact qualification authority was not renewable")
+	}
+	renewable.session = maximumFixtureSessions + 1
+	if renewable.isRenewable() {
+		t.Fatal("unbounded qualification session history was renewable")
+	}
+	renewable.session = 1
+	renewable.roleBinding = 2
+	if renewable.isRenewable() {
+		t.Fatal("unexpected additional RoleBinding was renewable")
+	}
 }
 
 func TestNewSeedIDsRequiresDistinctUUIDv7Values(t *testing.T) {

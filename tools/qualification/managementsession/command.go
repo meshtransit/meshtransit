@@ -24,8 +24,9 @@ import (
 )
 
 const (
-	envConfirmation = "MESHTRANSIT_QUALIFICATION_CONFIRM_AUTH_SCOPE"
-	envEnable       = "MESHTRANSIT_QUALIFICATION_ENABLE_SYNTHETIC_IDENTITY"
+	envConfirmation        = "MESHTRANSIT_QUALIFICATION_CONFIRM_AUTH_SCOPE"
+	envEnable              = "MESHTRANSIT_QUALIFICATION_ENABLE_SYNTHETIC_IDENTITY"
+	envRenewalConfirmation = "MESHTRANSIT_QUALIFICATION_CONFIRM_EXPIRED_FIXTURE_RENEWAL"
 
 	envPostgreSQLAddress      = "MESHTRANSIT_POSTGRES_ADDRESS"
 	envPostgreSQLDatabase     = "MESHTRANSIT_POSTGRES_DATABASE"
@@ -36,7 +37,8 @@ const (
 	envSessionDigestKeyID   = "MESHTRANSIT_API_ACCOUNT_SESSION_DIGEST_ACTIVE_KEY_ID"
 	envSessionDigestKeyFile = "MESHTRANSIT_API_ACCOUNT_SESSION_DIGEST_ACTIVE_KEY_FILE"
 
-	enableConfirmation = "qualification-only"
+	enableConfirmation  = "qualification-only"
+	renewalConfirmation = "expired-exact-fixture-only"
 
 	minimumExpiry = time.Minute
 	maximumExpiry = 15 * time.Minute
@@ -52,22 +54,24 @@ const (
 var errInvalidInput = errors.New("management session qualification: invalid input")
 
 type rawOptions struct {
-	deploymentID string
-	workspaceID  string
-	networkID    string
-	principalID  string
-	tokenOutput  string
-	expiresIn    time.Duration
-	auditReason  string
+	deploymentID        string
+	workspaceID         string
+	networkID           string
+	principalID         string
+	tokenOutput         string
+	expiresIn           time.Duration
+	auditReason         string
+	renewExpiredFixture bool
 }
 
 type seedSpec struct {
-	deploymentID deployment.ID
-	scope        network.Scope
-	principalID  identity.PrincipalID
-	tokenOutput  string
-	expiresIn    time.Duration
-	auditReason  string
+	deploymentID        deployment.ID
+	scope               network.Scope
+	principalID         identity.PrincipalID
+	tokenOutput         string
+	expiresIn           time.Duration
+	auditReason         string
+	renewExpiredFixture bool
 }
 
 type databaseSettings struct {
@@ -81,6 +85,7 @@ type databaseSettings struct {
 }
 
 type seedOutput struct {
+	Operation         string    `json:"operation"`
 	SessionID         string    `json:"session_id"`
 	IdentitySubjectID string    `json:"identity_subject_id"`
 	MembershipID      string    `json:"membership_id"`
@@ -145,6 +150,12 @@ func parseSeedSpec(args []string, lookup config.LookupFunc) (seedSpec, error) {
 	flags.StringVar(&options.tokenOutput, "token-output-file", "", "new absolute bearer-token file")
 	flags.DurationVar(&options.expiresIn, "expires-in", 0, "short fixture lifetime")
 	flags.StringVar(&options.auditReason, "audit-reason", "", "bounded qualification reason")
+	flags.BoolVar(
+		&options.renewExpiredFixture,
+		"renew-expired-fixture",
+		false,
+		"renew one exact expired synthetic fixture",
+	)
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		return seedSpec{}, errInvalidInput
 	}
@@ -188,14 +199,21 @@ func validateRawOptions(options rawOptions, lookup config.LookupFunc) (seedSpec,
 		enabled != enableConfirmation {
 		return seedSpec{}, errInvalidInput
 	}
+	if options.renewExpiredFixture {
+		renewal, found := lookup(envRenewalConfirmation)
+		if !found || renewal != renewalConfirmation {
+			return seedSpec{}, errInvalidInput
+		}
+	}
 
 	return seedSpec{
-		deploymentID: deploymentID,
-		scope:        scope,
-		principalID:  principalID,
-		tokenOutput:  options.tokenOutput,
-		expiresIn:    options.expiresIn,
-		auditReason:  options.auditReason,
+		deploymentID:        deploymentID,
+		scope:               scope,
+		principalID:         principalID,
+		tokenOutput:         options.tokenOutput,
+		expiresIn:           options.expiresIn,
+		auditReason:         options.auditReason,
+		renewExpiredFixture: options.renewExpiredFixture,
 	}, nil
 }
 
