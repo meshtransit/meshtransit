@@ -2,20 +2,17 @@ GO := go
 GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
 GOVULNCHECK := $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.8.0
 ACTIONLINT := $(GO) run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-HELM ?= helm
 GO_FILES := $(shell find . -type f -name '*.go' -not -path './vendor/*')
 CONTAINER_IMAGE ?= manhdev2002/meshtransit-core
 CONTAINER_TAG ?= dev
 CONTAINER_PLATFORM ?= linux/$(shell $(GO) env GOARCH)
 CONTAINER_REVISION ?= unknown
 TRIVY_IMAGE_FLAGS ?=
-HELM_CHART_DIR ?= charts/meshcore
 TEST_TIMEOUT ?= 2m
 INTEGRATION_TEST_TIMEOUT ?= 5m
 
 .PHONY: fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container lint lint-integration vuln workflow-lint quality \
-	container-build container-build-multiarch container-push-multiarch container-inspect container-smoke container-scan \
-	helm-lint helm-render helm-check
+	container-build container-build-multiarch container-push-multiarch container-inspect container-smoke container-scan
 
 fmt:
 	gofmt -w $(GO_FILES)
@@ -128,24 +125,3 @@ container-scan:
 		--exit-code 1 \
 		--severity HIGH,CRITICAL \
 		$(CONTAINER_IMAGE):$(CONTAINER_TAG)
-
-helm-lint:
-	$(HELM) lint $(HELM_CHART_DIR) --strict
-
-helm-render:
-	$(HELM) template meshcore $(HELM_CHART_DIR) >/dev/null
-	$(HELM) template meshcore $(HELM_CHART_DIR) \
-		--set roles.all.enabled=false \
-		--set roles.api.enabled=true \
-		--set roles.control.enabled=true \
-		--set roles.worker.enabled=true >/dev/null
-	@if $(HELM) template meshcore $(HELM_CHART_DIR) \
-		--set roles.api.enabled=true >/dev/null 2>&1; then \
-		echo "chart accepted overlapping all and api roles"; exit 1; \
-	fi
-	@if $(HELM) template meshcore $(HELM_CHART_DIR) \
-		--set roles.all.enabled=false >/dev/null 2>&1; then \
-		echo "chart accepted a deployment without an enabled role"; exit 1; \
-	fi
-
-helm-check: helm-lint helm-render

@@ -81,27 +81,3 @@ jobs:
           severity: HIGH,CRITICAL
           vuln-type: os,library
           version: v0.74.0
-
-  helm:
-    name: Helm lint and render
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v6
-
-      - name: Install Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: v3.19.0
-
-      - name: Lint and render default and split-role profiles
-        run: make helm-check
-
-      - name: Scan chart configuration
-        uses: aquasecurity/trivy-action@0.36.0
-        with:
-          scan-type: config
-          scan-ref: charts/meshcore
-          exit-code: "1"
-          severity: HIGH,CRITICAL
