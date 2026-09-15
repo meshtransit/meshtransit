@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 20 {
-		t.Fatalf("len(Catalog()) = %d, want 20", len(catalog))
+	if len(catalog) != 21 {
+		t.Fatalf("len(Catalog()) = %d, want 21", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -813,8 +813,46 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("compiled packet policy migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 20 {
-		t.Fatalf("LatestVersion() = %d, want 20", LatestVersion())
+	policyPublication := catalog[20]
+	if policyPublication.Description != "atomic packet policy publication" {
+		t.Fatalf(
+			"migration 21 description = %q, want atomic packet policy publication",
+			policyPublication.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.lock_active_policy_release",
+		"CREATE FUNCTION mesh_ops.publish_compiled_policy",
+		"p_expected_policy_revision",
+		"FOR UPDATE",
+		"MT001",
+		"jsonb_to_recordset",
+		"advance_network_policy_revision",
+		"activated_network_revision",
+		"compiled policy rule count mismatch",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.publish_compiled_policy",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.lock_active_policy_release",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(policyPublication.SQL, required) {
+			t.Errorf("policy publication migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT INSERT ON",
+		"GRANT UPDATE ON",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"TO mesh_worker",
+		"TO mesh_observer",
+	} {
+		if strings.Contains(policyPublication.SQL, forbidden) {
+			t.Errorf("policy publication migration SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 21 {
+		t.Fatalf("LatestVersion() = %d, want 21", LatestVersion())
 	}
 }
 

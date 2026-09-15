@@ -18,6 +18,7 @@ func assertCompiledPacketPolicyPrivilegeContract(
 
 	var runtimeReleaseRead, runtimeRuleRead, runtimeReleaseWrite, runtimeRuleWrite bool
 	var workerReleaseAccess, workerRuleAccess, runtimeAdvance, workerAdvance bool
+	var runtimePublish, workerPublish, runtimeLockRelease, workerLockRelease bool
 	if err := connection.QueryRow(ctx, `SELECT
     pg_catalog.has_table_privilege('mesh_runtime', 'mesh.policy_release', 'SELECT'),
     pg_catalog.has_table_privilege('mesh_runtime', 'mesh.compiled_policy_rule', 'SELECT'),
@@ -44,6 +45,26 @@ func assertCompiledPacketPolicyPrivilegeContract(
         'mesh_worker',
         'mesh_ops.advance_network_policy_revision()',
         'EXECUTE'
+    ),
+    pg_catalog.has_function_privilege(
+        'mesh_runtime',
+        'mesh_ops.publish_compiled_policy(UUID,BIGINT,BYTEA,INTEGER,TIMESTAMPTZ,JSONB)',
+        'EXECUTE'
+    ),
+    pg_catalog.has_function_privilege(
+        'mesh_worker',
+        'mesh_ops.publish_compiled_policy(UUID,BIGINT,BYTEA,INTEGER,TIMESTAMPTZ,JSONB)',
+        'EXECUTE'
+    ),
+    pg_catalog.has_function_privilege(
+        'mesh_runtime',
+        'mesh_ops.lock_active_policy_release()',
+        'EXECUTE'
+    ),
+    pg_catalog.has_function_privilege(
+        'mesh_worker',
+        'mesh_ops.lock_active_policy_release()',
+        'EXECUTE'
     )`).Scan(
 		&runtimeReleaseRead,
 		&runtimeRuleRead,
@@ -53,14 +74,20 @@ func assertCompiledPacketPolicyPrivilegeContract(
 		&workerRuleAccess,
 		&runtimeAdvance,
 		&workerAdvance,
+		&runtimePublish,
+		&workerPublish,
+		&runtimeLockRelease,
+		&workerLockRelease,
 	); err != nil {
 		t.Fatalf("query compiled packet policy privilege contract: %v", err)
 	}
 	if !runtimeReleaseRead || !runtimeRuleRead || runtimeReleaseWrite || runtimeRuleWrite ||
-		workerReleaseAccess || workerRuleAccess || !runtimeAdvance || workerAdvance {
+		workerReleaseAccess || workerRuleAccess || !runtimeAdvance || workerAdvance ||
+		!runtimePublish || workerPublish || !runtimeLockRelease || workerLockRelease {
 		t.Fatalf(
 			"compiled policy privileges: runtime read=%t/%t write=%t/%t "+
-				"worker access=%t/%t revision execute=%t/%t",
+				"worker access=%t/%t revision execute=%t/%t publish execute=%t/%t "+
+				"release lock execute=%t/%t",
 			runtimeReleaseRead,
 			runtimeRuleRead,
 			runtimeReleaseWrite,
@@ -69,6 +96,10 @@ func assertCompiledPacketPolicyPrivilegeContract(
 			workerRuleAccess,
 			runtimeAdvance,
 			workerAdvance,
+			runtimePublish,
+			workerPublish,
+			runtimeLockRelease,
+			workerLockRelease,
 		)
 	}
 }

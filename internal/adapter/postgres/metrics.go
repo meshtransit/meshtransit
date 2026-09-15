@@ -11,26 +11,32 @@ import (
 type postgresOperation string
 
 const (
-	postgresOperationPing                 postgresOperation = "ping"
-	postgresOperationSchemaCheck          postgresOperation = "schema_check"
-	postgresOperationRegistrationReplay   postgresOperation = "registration_replay"
-	postgresOperationRegistrationBegin    postgresOperation = "registration_begin"
-	postgresOperationRegistrationResolve  postgresOperation = "registration_resolve"
-	postgresOperationRegistrationApply    postgresOperation = "registration_apply"
-	postgresOperationRegistrationCommit   postgresOperation = "registration_commit"
-	postgresOperationRegistrationRollback postgresOperation = "registration_rollback"
-	postgresOperationIntakeBegin          postgresOperation = "registration_intake_begin"
-	postgresOperationIntakeResolve        postgresOperation = "registration_intake_resolve"
-	postgresOperationIntakeApply          postgresOperation = "registration_intake_apply"
-	postgresOperationIntakeCommit         postgresOperation = "registration_intake_commit"
-	postgresOperationIntakeRollback       postgresOperation = "registration_intake_rollback"
-	postgresOperationIntakeReplay         postgresOperation = "registration_intake_replay"
-	postgresOperationMapSessionSnapshot   postgresOperation = "map_session_snapshot"
-	postgresOperationOutboxBacklog        postgresOperation = "outbox_backlog"
-	postgresOperationOutboxClaim          postgresOperation = "outbox_claim"
-	postgresOperationOutboxLoadRevision   postgresOperation = "outbox_load_revision"
-	postgresOperationOutboxMarkDelivered  postgresOperation = "outbox_mark_delivered"
-	postgresOperationOutboxRetry          postgresOperation = "outbox_retry"
+	postgresOperationPing                      postgresOperation = "ping"
+	postgresOperationSchemaCheck               postgresOperation = "schema_check"
+	postgresOperationRegistrationReplay        postgresOperation = "registration_replay"
+	postgresOperationRegistrationBegin         postgresOperation = "registration_begin"
+	postgresOperationRegistrationResolve       postgresOperation = "registration_resolve"
+	postgresOperationRegistrationApply         postgresOperation = "registration_apply"
+	postgresOperationRegistrationCommit        postgresOperation = "registration_commit"
+	postgresOperationRegistrationRollback      postgresOperation = "registration_rollback"
+	postgresOperationIntakeBegin               postgresOperation = "registration_intake_begin"
+	postgresOperationIntakeResolve             postgresOperation = "registration_intake_resolve"
+	postgresOperationIntakeApply               postgresOperation = "registration_intake_apply"
+	postgresOperationIntakeCommit              postgresOperation = "registration_intake_commit"
+	postgresOperationIntakeRollback            postgresOperation = "registration_intake_rollback"
+	postgresOperationIntakeReplay              postgresOperation = "registration_intake_replay"
+	postgresOperationMapSessionSnapshot        postgresOperation = "map_session_snapshot"
+	postgresOperationPolicyPublicationBegin    postgresOperation = "policy_publication_begin"
+	postgresOperationPolicyPublicationResolve  postgresOperation = "policy_publication_resolve"
+	postgresOperationPolicyPublicationApply    postgresOperation = "policy_publication_apply"
+	postgresOperationPolicyPublicationCommit   postgresOperation = "policy_publication_commit"
+	postgresOperationPolicyPublicationRollback postgresOperation = "policy_publication_rollback"
+	postgresOperationPolicyPublicationReplay   postgresOperation = "policy_publication_replay"
+	postgresOperationOutboxBacklog             postgresOperation = "outbox_backlog"
+	postgresOperationOutboxClaim               postgresOperation = "outbox_claim"
+	postgresOperationOutboxLoadRevision        postgresOperation = "outbox_load_revision"
+	postgresOperationOutboxMarkDelivered       postgresOperation = "outbox_mark_delivered"
+	postgresOperationOutboxRetry               postgresOperation = "outbox_retry"
 )
 
 var (
@@ -52,6 +58,12 @@ var (
 		postgresOperationIntakeRollback,
 		postgresOperationIntakeReplay,
 		postgresOperationMapSessionSnapshot,
+		postgresOperationPolicyPublicationBegin,
+		postgresOperationPolicyPublicationResolve,
+		postgresOperationPolicyPublicationApply,
+		postgresOperationPolicyPublicationCommit,
+		postgresOperationPolicyPublicationRollback,
+		postgresOperationPolicyPublicationReplay,
 		postgresOperationOutboxBacklog,
 		postgresOperationOutboxClaim,
 		postgresOperationOutboxLoadRevision,
@@ -292,7 +304,13 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationIntakeCommit ||
 			operation == postgresOperationIntakeRollback ||
 			operation == postgresOperationIntakeReplay ||
-			operation == postgresOperationMapSessionSnapshot
+			operation == postgresOperationMapSessionSnapshot ||
+			operation == postgresOperationPolicyPublicationBegin ||
+			operation == postgresOperationPolicyPublicationResolve ||
+			operation == postgresOperationPolicyPublicationApply ||
+			operation == postgresOperationPolicyPublicationCommit ||
+			operation == postgresOperationPolicyPublicationRollback ||
+			operation == postgresOperationPolicyPublicationReplay
 	}
 	if role != PoolRoleWorker {
 		return false

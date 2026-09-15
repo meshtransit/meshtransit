@@ -13,26 +13,27 @@ const (
 	// this binary. It advances only with a reviewed compatibility change.
 	ApplicationGeneration int64 = 1
 
-	platformFoundationDescription           = "platform migration foundation"
-	authorityFoundationDescription          = "tenancy and address authority foundation"
-	integrityFoundationDescription          = "audit and outbox integrity foundation"
-	outboxDeliveryDescription               = "outbox worker delivery capability"
-	registrationAuthorityDescription        = "node enrollment and registration authority"
-	registrationIntentHashDescription       = "registration intent semantic hash"
-	transactionNetworkScopeDescription      = "transaction-local public network scope"
-	networkAuditStreamHeadDescription       = "transaction-local network audit stream head"
-	networkInventoryAdvanceDescription      = "transaction-local network inventory revision advance"
-	registrationReplayDescription           = "registration idempotency replay evidence"
-	networkRevisionLockDescription          = "transaction-local network revision lock"
-	registrationTransactionLocksDescription = "registration transaction scoped lock helpers"
-	registrationIntakeScopeDescription      = "registration intake scope resolution"
-	registrationIntakeScopeQueryDescription = "registration intake scope query correction"
-	mapSessionScopeDescription              = "map session scope resolution"
-	mapSessionPeerCandidatesDescription     = "bounded map session peer candidate projection"
-	identityProviderAuthorityDescription    = "identity provider authority foundation"
-	accountIdentityPermissionDescription    = "account identity and permission catalog foundation"
-	humanAuthenticationSessionDescription   = "human authentication and account session authority"
-	compiledPacketPolicyDescription         = "compiled packet policy authority"
+	platformFoundationDescription            = "platform migration foundation"
+	authorityFoundationDescription           = "tenancy and address authority foundation"
+	integrityFoundationDescription           = "audit and outbox integrity foundation"
+	outboxDeliveryDescription                = "outbox worker delivery capability"
+	registrationAuthorityDescription         = "node enrollment and registration authority"
+	registrationIntentHashDescription        = "registration intent semantic hash"
+	transactionNetworkScopeDescription       = "transaction-local public network scope"
+	networkAuditStreamHeadDescription        = "transaction-local network audit stream head"
+	networkInventoryAdvanceDescription       = "transaction-local network inventory revision advance"
+	registrationReplayDescription            = "registration idempotency replay evidence"
+	networkRevisionLockDescription           = "transaction-local network revision lock"
+	registrationTransactionLocksDescription  = "registration transaction scoped lock helpers"
+	registrationIntakeScopeDescription       = "registration intake scope resolution"
+	registrationIntakeScopeQueryDescription  = "registration intake scope query correction"
+	mapSessionScopeDescription               = "map session scope resolution"
+	mapSessionPeerCandidatesDescription      = "bounded map session peer candidate projection"
+	identityProviderAuthorityDescription     = "identity provider authority foundation"
+	accountIdentityPermissionDescription     = "account identity and permission catalog foundation"
+	humanAuthenticationSessionDescription    = "human authentication and account session authority"
+	compiledPacketPolicyDescription          = "compiled packet policy authority"
+	atomicPacketPolicyPublicationDescription = "atomic packet policy publication"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -95,6 +96,9 @@ var humanAuthenticationSessionSQL string
 //go:embed 000020_compiled_packet_policy_authority.up.sql
 var compiledPacketPolicySQL string
 
+//go:embed 000021_atomic_packet_policy_publication.up.sql
+var atomicPacketPolicyPublicationSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -130,6 +134,7 @@ func Catalog() []Migration {
 		newMigration(18, accountIdentityPermissionDescription, accountIdentityPermissionSQL),
 		newMigration(19, humanAuthenticationSessionDescription, humanAuthenticationSessionSQL),
 		newMigration(20, compiledPacketPolicyDescription, compiledPacketPolicySQL),
+		newMigration(21, atomicPacketPolicyPublicationDescription, atomicPacketPolicyPublicationSQL),
 	}
 }
 

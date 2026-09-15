@@ -1,0 +1,154 @@
+package postgres
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+
+	"github.com/meshtransit/meshtransit/internal/audit"
+	publication "github.com/meshtransit/meshtransit/internal/policy/publication"
+	"github.com/meshtransit/meshtransit/internal/publicid"
+)
+
+const policyPublicationOutboxEventClass = "network.revision.advanced"
+
+type policyPublicationRulePayload struct {
+	ProjectionPublicID      string `json:"projection_public_id"`
+	AccessRulePublicID      string `json:"access_rule_public_id"`
+	SourceNodePublicID      string `json:"source_node_public_id"`
+	DestinationNodePublicID string `json:"destination_node_public_id"`
+	Protocol                string `json:"protocol"`
+	PortRangeFirst          []int  `json:"port_range_first"`
+	PortRangeLast           []int  `json:"port_range_last"`
+}
+
+type policyPublicationAuditPayload struct {
+	AuditReason           string `json:"audit_reason"`
+	BasePolicyRevision    int64  `json:"base_policy_revision"`
+	CompilerFormatVersion int    `json:"compiler_format_version"`
+	RuleCount             int    `json:"rule_count"`
+}
+
+type policyPublicationOutboxPayload struct {
+	NetworkRevision int64 `json:"network_revision"`
+	PolicyRevision  int64 `json:"policy_revision"`
+}
+
+func encodePolicyPublicationRules(change publication.Change) ([]byte, error) {
+	rules := change.Command().Candidate().Snapshot().Rules()
+	projectionIDs := change.MutationIDs().ProjectionIDs()
+	if len(projectionIDs) != len(rules) {
+		return nil, ErrPolicyPublicationEvidence
+	}
+	payload := make([]policyPublicationRulePayload, len(rules))
+	for index, rule := range rules {
+		portRanges := rule.DestinationPortRanges()
+		first := make([]int, len(portRanges))
+		last := make([]int, len(portRanges))
+		for portIndex, portRange := range portRanges {
+			first[portIndex] = int(portRange.First())
+			last[portIndex] = int(portRange.Last())
+		}
+		payload[index] = policyPublicationRulePayload{
+			ProjectionPublicID:      projectionIDs[index].String(),
+			AccessRulePublicID:      rule.ID().String(),
+			SourceNodePublicID:      rule.SourceNodeID().String(),
+			DestinationNodePublicID: rule.DestinationNodeID().String(),
+			Protocol:                rule.Protocol().String(),
+			PortRangeFirst:          first,
+			PortRangeLast:           last,
+		}
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode compiled policy rules: %w", err)
+	}
+	return encoded, nil
+}
+
+func (transaction *policyPublicationTransaction) appendPolicyPublicationEvidence(
+	ctx context.Context,
+	change publication.Change,
+	releaseVersion int64,
+	networkRevision int64,
+) error {
+	command := change.Command()
+	policyRevision := command.Candidate().Snapshot().Revision()
+	auditPayload, err := json.Marshal(policyPublicationAuditPayload{
+		AuditReason:           command.AuditReason().String(),
+		BasePolicyRevision:    command.BasePolicyRevision(),
+		CompilerFormatVersion: command.Candidate().CompilerFormatVersion(),
+		RuleCount:             len(command.Candidate().Snapshot().Rules()),
+	})
+	if err != nil {
+		return fmt.Errorf("encode policy publication audit payload: %w", err)
+	}
+	outboxPayload, err := json.Marshal(policyPublicationOutboxPayload{
+		NetworkRevision: networkRevision,
+		PolicyRevision:  policyRevision,
+	})
+	if err != nil {
+		return fmt.Errorf("encode policy publication outbox payload: %w", err)
+	}
+	auditPayloadHash := sha256.Sum256(auditPayload)
+	outboxPayloadHash := sha256.Sum256(outboxPayload)
+	afterSemanticHash := command.Candidate().SemanticHash().Bytes()
+	var beforeSemanticHash [sha256.Size]byte
+	if _, hash, found := transaction.resolution.ActiveRelease(); found {
+		beforeSemanticHash = hash.Bytes()
+	}
+	eventHash, err := audit.HashEvent(audit.EventHashMaterial{
+		PreviousHash:       transaction.audit.previousHash,
+		EventID:            change.MutationIDs().AuditEventID(),
+		ChangeID:           change.MutationIDs().ChangeID(),
+		AggregateKind:      "policy_release",
+		AggregateID:        publicid.ID(change.MutationIDs().ReleaseID()),
+		AggregateVersion:   releaseVersion,
+		NetworkRevision:    networkRevision,
+		ActorPrincipalID:   publicid.ID(command.ActorPrincipalID()),
+		Action:             "policy.published",
+		Permission:         "policy.publish",
+		CorrelationID:      publicid.ID(change.MutationIDs().ReleaseID()),
+		BeforeSemanticHash: beforeSemanticHash,
+		AfterSemanticHash:  afterSemanticHash,
+		AuditPayloadHash:   auditPayloadHash,
+		OutboxEventClass:   policyPublicationOutboxEventClass,
+		OutboxPayloadHash:  outboxPayloadHash,
+	})
+	if err != nil {
+		return fmt.Errorf("hash policy publication audit event: %w", err)
+	}
+
+	var beforeSemanticHashArgument any
+	if beforeSemanticHash != ([sha256.Size]byte{}) {
+		beforeSemanticHashArgument = beforeSemanticHash[:]
+	}
+	var appendedSequence int64
+	if err := transaction.database.QueryRow(
+		ctx,
+		appendPolicyPublicationEvidenceSQL,
+		transaction.audit.streamInternalID,
+		change.MutationIDs().AuditEventID().String(),
+		change.MutationIDs().OutboxEventID().String(),
+		transaction.audit.nextSequence,
+		transaction.audit.previousHash[:],
+		eventHash[:],
+		change.MutationIDs().ReleaseID().String(),
+		releaseVersion,
+		networkRevision,
+		command.ActorPrincipalID().String(),
+		"policy.published",
+		change.MutationIDs().ReleaseID().String(),
+		beforeSemanticHashArgument,
+		afterSemanticHash[:],
+		auditPayload,
+		outboxPayload,
+	).Scan(&appendedSequence); err != nil {
+		return fmt.Errorf("append policy publication audit and outbox evidence: %w", err)
+	}
+	if appendedSequence != transaction.audit.nextSequence {
+		return ErrPolicyPublicationEvidence
+	}
+	return nil
+}

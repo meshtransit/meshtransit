@@ -231,7 +231,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		adminConfig.PostgreSQL.CAFile,
 		adminConfig.ConnectTimeout,
 	)
-	assertPostgreSQLPeerCandidateProjection(
+	peerIdentity := assertPostgreSQLPeerCandidateProjection(
 		ctx,
 		t,
 		adminConnection,
@@ -239,6 +239,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		runtimePool,
 	)
 	assertCompiledPacketPolicyRuleImmutability(ctx, t, adminConnection)
+	assertPostgreSQLPolicyPublication(ctx, t, adminConnection, runtimePool, peerIdentity)
 	assertIdentityProviderSchemaFoundation(ctx, t, adminConnection, runtimeConnection)
 	assertAccountIdentityPermissionFoundation(ctx, t, adminConnection, runtimeConnection)
 	assertHumanAuthenticationSessionAuthority(

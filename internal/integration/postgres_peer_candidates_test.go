@@ -35,7 +35,7 @@ func assertPostgreSQLPeerCandidateProjection(
 	adminConnection *pgx.Conn,
 	blockerConnection *pgx.Conn,
 	runtimePool *postgresadapter.Pool,
-) {
+) control.AuthenticatedNode {
 	t.Helper()
 	identity := seedPeerCandidateProjection(ctx, t, adminConnection)
 	seedCompiledPacketPolicy(ctx, t, adminConnection)
@@ -89,6 +89,7 @@ func assertPostgreSQLPeerCandidateProjection(
 		identity,
 		wantNodeIDs[0],
 	)
+	return identity
 }
 
 func seedCompiledPacketPolicy(ctx context.Context, t *testing.T, connection *pgx.Conn) {
