@@ -49,6 +49,9 @@ var (
 	ErrNetmapInvalid = errors.New("ts2021: invalid netmap update")
 	// ErrNetmapConsumer indicates that the product consumer rejected a snapshot.
 	ErrNetmapConsumer = errors.New("ts2021: netmap consumer failed")
+	// ErrNetmapAuthorityRevoked indicates that an authenticated control stream
+	// explicitly withdrew the active session's authority.
+	ErrNetmapAuthorityRevoked = errors.New("ts2021: netmap authority revoked")
 	// ErrEndpointUpdate indicates that a candidate publication did not complete.
 	ErrEndpointUpdate = errors.New("ts2021: endpoint update failed")
 )
@@ -911,6 +914,7 @@ func isPermanentNetmapError(err error) bool {
 		errors.Is(err, ErrControlKeyChanged) ||
 		errors.Is(err, ErrNetmapRejected) ||
 		errors.Is(err, ErrNetmapInvalid) ||
+		errors.Is(err, ErrNetmapAuthorityRevoked) ||
 		errors.Is(err, ErrNetmapConsumer) ||
 		errors.Is(err, networkmap.ErrInvalid)
 }
@@ -974,6 +978,9 @@ func (a *mapAccumulator) apply(
 			"%w: initial response omitted self node",
 			ErrNetmapInvalid,
 		)
+	}
+	if a.isAuthorityRevocation(response) {
+		return networkmap.Snapshot{}, false, ErrNetmapAuthorityRevoked
 	}
 
 	candidate := a.clone()
@@ -1130,6 +1137,15 @@ func (a *mapAccumulator) apply(
 	*a = *candidate
 
 	return validated, true, nil
+}
+
+func (a *mapAccumulator) isAuthorityRevocation(response tailcfg.MapResponse) bool {
+	return a.initialized && response.Node != nil &&
+		uint64(response.Node.ID) == a.self.ID &&
+		response.Node.Key.String() == a.self.PublicKey &&
+		response.Node.Expired && !response.Node.MachineAuthorized &&
+		response.Peers != nil && len(response.Peers) == 0 &&
+		response.PacketFilter != nil && len(response.PacketFilter) == 0
 }
 
 func (a *mapAccumulator) applyPeerPatch(patch *tailcfg.PeerChange) {

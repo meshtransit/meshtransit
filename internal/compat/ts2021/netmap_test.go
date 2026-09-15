@@ -523,6 +523,109 @@ func TestMapAccumulator_EquivalentReconnectPublishesNewGeneration(t *testing.T) 
 	}
 }
 
+func TestMapAccumulator_AuthorityRevocationIsTerminalAndAtomic(t *testing.T) {
+	t.Parallel()
+
+	self := testWireNode(1, 1)
+	peer := testWireNode(2, 2)
+	accumulator := newMapAccumulator()
+	initial, changed, err := accumulator.apply(tailcfg.MapResponse{
+		Node:  self,
+		Peers: []*tailcfg.Node{peer},
+		PacketFilter: []tailcfg.FilterRule{{
+			SrcIPs: []string{"100.64.0.2"},
+			DstPorts: []tailcfg.NetPortRange{{
+				IP:    "100.64.0.1",
+				Ports: tailcfg.PortRange{First: 22, Last: 22},
+			}},
+		}},
+	}, time.Now())
+	if err != nil || !changed {
+		t.Fatalf("initial apply() = changed %t, error %v", changed, err)
+	}
+
+	revoked := *self
+	revoked.Expired = true
+	revoked.MachineAuthorized = false
+	if _, changed, err := accumulator.apply(tailcfg.MapResponse{
+		Node:         &revoked,
+		Peers:        []*tailcfg.Node{},
+		PacketFilter: []tailcfg.FilterRule{},
+	}, time.Now()); !errors.Is(err, ErrNetmapAuthorityRevoked) || changed {
+		t.Fatalf("revocation apply() = changed %t, error %v", changed, err)
+	}
+	if accumulator.revision != initial.Revision || accumulator.self.Expired ||
+		!accumulator.self.MachineAuthorized || len(accumulator.peers) != 1 ||
+		len(accumulator.namedPolicies["base"]) != 1 {
+		t.Fatalf("accumulator mutated after revocation: %#v", accumulator)
+	}
+}
+
+func TestMapAccumulator_RejectsMalformedAuthorityRevocation(t *testing.T) {
+	t.Parallel()
+
+	self := testWireNode(1, 1)
+	tests := []struct {
+		name   string
+		mutate func(*tailcfg.MapResponse)
+	}{
+		{
+			name: "wrong self id",
+			mutate: func(response *tailcfg.MapResponse) {
+				response.Node.ID++
+			},
+		},
+		{
+			name: "wrong self key",
+			mutate: func(response *tailcfg.MapResponse) {
+				response.Node.Key = key.NewNode().Public()
+			},
+		},
+		{
+			name: "peers omitted",
+			mutate: func(response *tailcfg.MapResponse) {
+				response.Peers = nil
+			},
+		},
+		{
+			name: "policy omitted",
+			mutate: func(response *tailcfg.MapResponse) {
+				response.PacketFilter = nil
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			accumulator := newMapAccumulator()
+			if _, _, err := accumulator.apply(tailcfg.MapResponse{
+				Node:  self,
+				Peers: []*tailcfg.Node{testWireNode(2, 2)},
+			}, time.Now()); err != nil {
+				t.Fatalf("initial apply() error = %v", err)
+			}
+			revoked := *self
+			revoked.Expired = true
+			revoked.MachineAuthorized = false
+			response := tailcfg.MapResponse{
+				Node:         &revoked,
+				Peers:        []*tailcfg.Node{},
+				PacketFilter: []tailcfg.FilterRule{},
+			}
+			test.mutate(&response)
+
+			if _, changed, err := accumulator.apply(response, time.Now()); !errors.Is(err, ErrNetmapInvalid) ||
+				errors.Is(err, ErrNetmapAuthorityRevoked) || changed {
+				t.Fatalf("malformed revocation apply() = changed %t, error %v", changed, err)
+			}
+			if accumulator.revision != 1 || len(accumulator.peers) != 1 {
+				t.Fatalf("accumulator mutated after malformed revocation: %#v", accumulator)
+			}
+		})
+	}
+}
+
 func TestMapAccumulator_EquivalentDeltaRevalidatesExpiry(t *testing.T) {
 	t.Parallel()
 
@@ -881,6 +984,34 @@ func TestRunNetmapReconnectLoop_CancelsReconnectWait(t *testing.T) {
 	}
 	if waits != 1 {
 		t.Fatalf("reconnect wait calls = %d, want 1", waits)
+	}
+}
+
+func TestRunNetmapReconnectLoop_DoesNotRetryAuthorityRevocation(t *testing.T) {
+	t.Parallel()
+
+	polls := 0
+	waits := 0
+	err := runNetmapReconnectLoop(
+		t.Context(),
+		func(context.Context) (bool, error) {
+			polls++
+
+			return true, ErrNetmapAuthorityRevoked
+		},
+		time.Now,
+		func(delay time.Duration) time.Duration { return delay },
+		func(context.Context, time.Duration) error {
+			waits++
+
+			return nil
+		},
+	)
+	if !errors.Is(err, ErrNetmapAuthorityRevoked) {
+		t.Fatalf("runNetmapReconnectLoop() error = %v, want ErrNetmapAuthorityRevoked", err)
+	}
+	if polls != 1 || waits != 0 {
+		t.Fatalf("reconnect calls = polls %d waits %d, want 1 and 0", polls, waits)
 	}
 }
 

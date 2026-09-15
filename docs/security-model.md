@@ -94,6 +94,14 @@ Packet payloads are not an observability asset and must not be collected.
 - Reconnect uses bounded jittered exponential backoff, resets that backoff only
   after thirty seconds of stable stream lifetime, and requires a new validated
   full snapshot before accepting deltas.
+- An established stream recognizes authority withdrawal only when an
+  authenticated frame repeats the active self ID and node key, marks the self
+  expired and unauthorized, and explicitly replaces both peers and packet
+  filters with empty sets. This terminal error bypasses reconnect delay and
+  makes the daemon remove the active runtime. A terminal-shaped frame before a
+  full map, with mismatched identity, or with ambiguous omitted replacements
+  fails as an invalid map instead of mutating accumulated state. Ordinary
+  transport and coordination-dependency failures do not synthesize revocation.
 - A temporary local consumer failure cannot reuse partially applied state. The
   daemon cancels and joins the map session, detaches peer probes, destroys the
   session discovery identity, reverts DNS, and closes the data plane before an
