@@ -32,6 +32,12 @@ const (
 	postgresOperationPolicyPublicationCommit   postgresOperation = "policy_publication_commit"
 	postgresOperationPolicyPublicationRollback postgresOperation = "policy_publication_rollback"
 	postgresOperationPolicyPublicationReplay   postgresOperation = "policy_publication_replay"
+	postgresOperationDeviceRevocationBegin     postgresOperation = "device_revocation_begin"
+	postgresOperationDeviceRevocationResolve   postgresOperation = "device_revocation_resolve"
+	postgresOperationDeviceRevocationApply     postgresOperation = "device_revocation_apply"
+	postgresOperationDeviceRevocationCommit    postgresOperation = "device_revocation_commit"
+	postgresOperationDeviceRevocationRollback  postgresOperation = "device_revocation_rollback"
+	postgresOperationDeviceRevocationReplay    postgresOperation = "device_revocation_replay"
 	postgresOperationOutboxBacklog             postgresOperation = "outbox_backlog"
 	postgresOperationOutboxClaim               postgresOperation = "outbox_claim"
 	postgresOperationOutboxLoadRevision        postgresOperation = "outbox_load_revision"
@@ -64,6 +70,12 @@ var (
 		postgresOperationPolicyPublicationCommit,
 		postgresOperationPolicyPublicationRollback,
 		postgresOperationPolicyPublicationReplay,
+		postgresOperationDeviceRevocationBegin,
+		postgresOperationDeviceRevocationResolve,
+		postgresOperationDeviceRevocationApply,
+		postgresOperationDeviceRevocationCommit,
+		postgresOperationDeviceRevocationRollback,
+		postgresOperationDeviceRevocationReplay,
 		postgresOperationOutboxBacklog,
 		postgresOperationOutboxClaim,
 		postgresOperationOutboxLoadRevision,
@@ -310,7 +322,13 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationPolicyPublicationApply ||
 			operation == postgresOperationPolicyPublicationCommit ||
 			operation == postgresOperationPolicyPublicationRollback ||
-			operation == postgresOperationPolicyPublicationReplay
+			operation == postgresOperationPolicyPublicationReplay ||
+			operation == postgresOperationDeviceRevocationBegin ||
+			operation == postgresOperationDeviceRevocationResolve ||
+			operation == postgresOperationDeviceRevocationApply ||
+			operation == postgresOperationDeviceRevocationCommit ||
+			operation == postgresOperationDeviceRevocationRollback ||
+			operation == postgresOperationDeviceRevocationReplay
 	}
 	if role != PoolRoleWorker {
 		return false

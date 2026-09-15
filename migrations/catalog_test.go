@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 22 {
-		t.Fatalf("len(Catalog()) = %d, want 22", len(catalog))
+	if len(catalog) != 23 {
+		t.Fatalf("len(Catalog()) = %d, want 23", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -888,8 +888,53 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("map peer protocol identity migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 22 {
-		t.Fatalf("LatestVersion() = %d, want 22", LatestVersion())
+	networkIdempotency := catalog[22]
+	if networkIdempotency.Description != "network idempotency record foundation" {
+		t.Fatalf(
+			"migration 23 description = %q, want Network idempotency record foundation",
+			networkIdempotency.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh_ops.idempotency_record",
+		"hmac-sha256-v1",
+		"UNIQUE NULLS NOT DISTINCT",
+		"idempotency_record_outbox_unique UNIQUE",
+		"CREATE FUNCTION mesh_ops.enforce_idempotency_record_transition",
+		"CREATE FUNCTION mesh_ops.enforce_idempotency_record_completion",
+		"CREATE FUNCTION mesh_ops.claim_network_idempotency",
+		"CREATE FUNCTION mesh_ops.load_network_idempotency",
+		"CREATE FUNCTION mesh_ops.complete_network_idempotency",
+		"CREATE CONSTRAINT TRIGGER idempotency_record_completion",
+		"ENABLE ROW LEVEL SECURITY",
+		"FORCE ROW LEVEL SECURITY",
+		"CREATE POLICY idempotency_record_exact_scope_policy",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.claim_network_idempotency",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_network_idempotency",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.complete_network_idempotency",
+	} {
+		if !strings.Contains(networkIdempotency.SQL, required) {
+			t.Errorf("Network idempotency migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"plaintext",
+		"GRANT SELECT ON mesh_ops.idempotency_record TO mesh_runtime",
+		"GRANT INSERT (",
+		"GRANT UPDATE (",
+		"GRANT DELETE",
+		"GRANT TRUNCATE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"TO mesh_worker",
+		"TO mesh_observer",
+	} {
+		if strings.Contains(networkIdempotency.SQL, forbidden) {
+			t.Errorf("Network idempotency migration SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 23 {
+		t.Fatalf("LatestVersion() = %d, want 23", LatestVersion())
 	}
 }
 
