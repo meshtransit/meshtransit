@@ -101,6 +101,108 @@ func TestSnapshotRejectsUnauthorizedOrUnfencedConnectivity(t *testing.T) {
 	}
 }
 
+func TestNewConnectivityDeltaSelectsOnlyWireVisibleChanges(t *testing.T) {
+	t.Parallel()
+
+	base, peer := snapshotWithAuthorizedPeerFixture(t)
+	self := connectivityFixture(
+		t,
+		base.NodeID(),
+		base.SessionGeneration(),
+		3,
+		"198.51.100.1:41641",
+		true,
+	)
+	peerBefore := connectivityFixture(
+		t,
+		peer.NodeID(),
+		peer.SessionGeneration(),
+		4,
+		"198.51.100.2:41641",
+		false,
+	)
+	peerAfter := connectivityFixture(
+		t,
+		peer.NodeID(),
+		peer.SessionGeneration(),
+		4,
+		"198.51.100.3:41641",
+		true,
+	)
+	current, err := base.WithConnectivity([]Connectivity{self, peerBefore})
+	if err != nil {
+		t.Fatalf("WithConnectivity(current) error = %v", err)
+	}
+	next, err := base.WithConnectivity([]Connectivity{self, peerAfter})
+	if err != nil {
+		t.Fatalf("WithConnectivity(next) error = %v", err)
+	}
+
+	delta, err := NewConnectivityDelta(current, next)
+	if err != nil {
+		t.Fatalf("NewConnectivityDelta() error = %v", err)
+	}
+	changedPeers := delta.ChangedPeers()
+	if !delta.IsValid() || delta.SelfChanged() || len(changedPeers) != 1 ||
+		changedPeers[0].NodeID() != peer.NodeID() || delta.Snapshot().NodeID() != base.NodeID() {
+		t.Fatalf("ConnectivityDelta = %+v peers=%+v, want only changed peer", delta, changedPeers)
+	}
+	changedPeers[0] = PeerCandidate{}
+	if delta.ChangedPeers()[0].NodeID() != peer.NodeID() {
+		t.Fatal("ConnectivityDelta exposed mutable peer storage")
+	}
+}
+
+func TestNewConnectivityDeltaRejectsAuthorityChangeOrEmptyUpdate(t *testing.T) {
+	t.Parallel()
+
+	base, peer := snapshotWithAuthorizedPeerFixture(t)
+	self := connectivityFixture(
+		t,
+		base.NodeID(),
+		base.SessionGeneration(),
+		3,
+		"198.51.100.1:41641",
+		true,
+	)
+	peerConnectivity := connectivityFixture(
+		t,
+		peer.NodeID(),
+		peer.SessionGeneration(),
+		4,
+		"198.51.100.2:41641",
+		true,
+	)
+	current, err := base.WithConnectivity([]Connectivity{self, peerConnectivity})
+	if err != nil {
+		t.Fatalf("WithConnectivity() error = %v", err)
+	}
+	advancedParams := current.params()
+	advancedParams.NetworkRevision++
+	advanced, err := NewSnapshot(advancedParams)
+	if err != nil {
+		t.Fatalf("NewSnapshot(advanced) error = %v", err)
+	}
+
+	for _, test := range []struct {
+		name string
+		next Snapshot
+	}{
+		{name: "unchanged", next: current},
+		{name: "authority revision", next: advanced},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := NewConnectivityDelta(current, test.next); !errors.Is(
+				err,
+				ErrInvalidConnectivityDelta,
+			) {
+				t.Fatalf("NewConnectivityDelta() error = %v, want ErrInvalidConnectivityDelta", err)
+			}
+		})
+	}
+}
+
 func snapshotWithAuthorizedPeerFixture(t *testing.T) (Snapshot, PeerCandidate) {
 	t.Helper()
 	snapshot := snapshotFixture(t)

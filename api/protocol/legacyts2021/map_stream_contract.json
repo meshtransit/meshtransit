@@ -1,5 +1,5 @@
 {
-  "contract_version": 2,
+  "contract_version": 3,
   "profile": "legacy-ts2021-cap142-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
@@ -26,9 +26,21 @@
     "redis_loss": "terminate-stream",
     "revision_wakeup": "network-revision-advanced",
     "connectivity_wakeup": "network-scoped-connectivity-changed",
-    "connectivity_coalescing": "latest-wins-full-projection-refresh",
+    "connectivity_coalescing": "latest-wins-full-state-reload",
     "same_revision_connectivity_refresh": true,
     "missed_wakeup_repair": "postgresql-and-redis-reconciliation",
     "reconnect": "fresh-authenticated-snapshot"
+  },
+  "connectivity_delta": {
+    "selection": "same-authority-revision-connectivity-only",
+    "self_encoding": "Node-complete-replacement",
+    "peer_encoding": "PeersChanged-complete-replacement",
+    "endpoint_withdrawal": "replacement-node-with-no-endpoints",
+    "peer_online": "explicit-boolean",
+    "peer_order": "numeric-node-id",
+    "forbidden_fields": [
+      "Peers",
+      "PacketFilter"
+    ]
   }
 }

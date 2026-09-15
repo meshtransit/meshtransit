@@ -78,6 +78,19 @@ func (stream *MapStream) NextFullMap() (FullMap, error) {
 	return decodeFullMap(frame)
 }
 
+// NextConnectivityDelta reads and validates one connectivity-only framed update.
+func (stream *MapStream) NextConnectivityDelta() (ConnectivityDelta, error) {
+	if stream == nil || stream.body == nil || stream.session == nil {
+		return ConnectivityDelta{}, ErrInvalidClient
+	}
+	frame, err := readMapFrame(stream.body)
+	if err != nil {
+		return ConnectivityDelta{}, fmt.Errorf("read stream delta: %w", err)
+	}
+	defer clear(frame)
+	return decodeConnectivityDelta(frame)
+}
+
 // Close releases the response body and authenticated session exactly once.
 func (stream *MapStream) Close() error {
 	if stream == nil {

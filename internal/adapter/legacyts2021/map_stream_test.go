@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -89,6 +90,55 @@ func TestMapSessionHandlerStreamsPeerAndPolicyAtomicallyAfterSnapshotAdvance(t *
 	}
 }
 
+func TestMapSessionHandlerStreamsSameRevisionConnectivityDelta(t *testing.T) {
+	t.Parallel()
+
+	initial, next, _ := mapConnectivityDeltaSnapshotsFixture(t)
+	delta, err := mapsession.NewConnectivityDelta(initial, next)
+	if err != nil {
+		t.Fatalf("mapsession.NewConnectivityDelta() error = %v", err)
+	}
+	streams := &connectivityDeltaMapStreamService{initial: initial, delta: delta}
+	handler := newMapSessionHandlerWithStreams(
+		t,
+		&recordingMapSessionService{snapshot: initial},
+		streams,
+	)
+	authenticated, err := handler.Handler(authenticatedMachine(t))
+	if err != nil {
+		t.Fatalf("Handler() error = %v", err)
+	}
+	body := strings.Replace(mapRequestBody, `"Stream":false`, `"Stream":true`, 1)
+	response := serveMap(t, authenticated, body)
+	frames := decodeMapStreamFrames(t, response.Body.Bytes())
+	if len(frames) != 2 || frames[0].Node == nil || len(frames[0].Peers) != 1 ||
+		frames[1].Node != nil || frames[1].Peers != nil || frames[1].PacketFilter != nil ||
+		len(frames[1].PeersChanged) != 1 || frames[1].PeersChanged[0].ID != 702 {
+		t.Fatalf(
+			"stream frames = %+v, want full initial snapshot then peer connectivity delta",
+			frames,
+		)
+	}
+}
+
+func TestMapStreamSinkRejectsDeltaBeforeInitialSnapshot(t *testing.T) {
+	t.Parallel()
+
+	current, next, _ := mapConnectivityDeltaSnapshotsFixture(t)
+	delta, err := mapsession.NewConnectivityDelta(current, next)
+	if err != nil {
+		t.Fatalf("mapsession.NewConnectivityDelta() error = %v", err)
+	}
+	response := httptest.NewRecorder()
+	sink := newMapStreamSink(response, 142)
+	if err := sink.SendConnectivityDelta(t.Context(), delta); !errors.Is(err, ErrMapStreamWrite) {
+		t.Fatalf("SendConnectivityDelta(before snapshot) error = %v, want ErrMapStreamWrite", err)
+	}
+	if sink.started() || response.Body.Len() != 0 {
+		t.Fatal("rejected initial delta committed an HTTP response")
+	}
+}
+
 func decodeMapStreamFrames(t *testing.T, encoded []byte) []tailcfg.MapResponse {
 	t.Helper()
 	frames := make([]tailcfg.MapResponse, 0, 2)
@@ -134,6 +184,11 @@ type advancingMapStreamService struct {
 	snapshots []mapsession.Snapshot
 }
 
+type connectivityDeltaMapStreamService struct {
+	initial mapsession.Snapshot
+	delta   mapsession.ConnectivityDelta
+}
+
 func (service *advancingMapStreamService) Serve(
 	ctx context.Context,
 	_ control.AuthenticatedMachine,
@@ -144,6 +199,21 @@ func (service *advancingMapStreamService) Serve(
 		if err := sink.SendSnapshot(ctx, snapshot); err != nil {
 			return err
 		}
+	}
+	return context.Canceled
+}
+
+func (service *connectivityDeltaMapStreamService) Serve(
+	ctx context.Context,
+	_ control.AuthenticatedMachine,
+	_ mapsession.Request,
+	sink mapsession.StreamSink,
+) error {
+	if err := sink.SendSnapshot(ctx, service.initial); err != nil {
+		return err
+	}
+	if err := sink.SendConnectivityDelta(ctx, service.delta); err != nil {
+		return err
 	}
 	return context.Canceled
 }

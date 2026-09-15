@@ -45,6 +45,7 @@ type PresenceStore interface {
 // The caller owns the sink for the duration of one Serve call.
 type StreamSink interface {
 	SendSnapshot(context.Context, Snapshot) error
+	SendConnectivityDelta(context.Context, ConnectivityDelta) error
 	SendKeepAlive(context.Context) error
 }
 
@@ -310,6 +311,16 @@ func (service *StreamService) refresh(
 	}
 	if !streamSnapshotChanged(current, next) {
 		return current, nil
+	}
+	if current.NetworkRevision() == next.NetworkRevision() {
+		delta, deltaErr := NewConnectivityDelta(current, next)
+		if deltaErr != nil {
+			return Snapshot{}, errors.Join(ErrStreamDiscontinuity, deltaErr)
+		}
+		if err := sink.SendConnectivityDelta(ctx, delta); err != nil {
+			return Snapshot{}, errors.Join(ErrStreamWrite, err)
+		}
+		return next, nil
 	}
 	if err := sink.SendSnapshot(ctx, next); err != nil {
 		return Snapshot{}, errors.Join(ErrStreamWrite, err)

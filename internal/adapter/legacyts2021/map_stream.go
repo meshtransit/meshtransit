@@ -16,6 +16,7 @@ type mapStreamSink struct {
 	response          http.ResponseWriter
 	capabilityVersion int
 	responseStarted   bool
+	hasSnapshot       bool
 }
 
 func newMapStreamSink(response http.ResponseWriter, capabilityVersion int) *mapStreamSink {
@@ -31,12 +32,37 @@ func (sink *mapStreamSink) SendSnapshot(ctx context.Context, snapshot mapsession
 		return err
 	}
 	defer clear(encoded)
+	if err := sink.write(encoded); err != nil {
+		return err
+	}
+	sink.hasSnapshot = true
+	return nil
+}
+
+func (sink *mapStreamSink) SendConnectivityDelta(
+	ctx context.Context,
+	delta mapsession.ConnectivityDelta,
+) error {
+	if err := sink.validate(ctx); err != nil {
+		return err
+	}
+	if !sink.hasSnapshot {
+		return ErrMapStreamWrite
+	}
+	encoded, err := EncodeConnectivityDeltaMapResponse(delta, sink.capabilityVersion)
+	if err != nil {
+		return err
+	}
+	defer clear(encoded)
 	return sink.write(encoded)
 }
 
 func (sink *mapStreamSink) SendKeepAlive(ctx context.Context) error {
 	if err := sink.validate(ctx); err != nil {
 		return err
+	}
+	if !sink.hasSnapshot {
+		return ErrMapStreamWrite
 	}
 	encoded, err := EncodeKeepAliveMapResponse()
 	if err != nil {

@@ -211,15 +211,18 @@ func assertProcessConnectivityWakeup(
 	expected := baseline
 	expected.Endpoints = []netip.AddrPort{endpoint}
 	updated := fetchProcessFullMap(ctx, t, running, client)
-	advanced, readErr := stream.NextFullMap()
+	advanced, readErr := stream.NextConnectivityDelta()
 	closeErr := stream.Close()
 	cancelStream()
 	if readErr != nil || closeErr != nil {
 		running.process.forceStop(t)
 		t.Fatalf("receive connectivity wakeup: read=%v close=%v; stderr: %s", readErr, closeErr, running.process.stderr.String())
 	}
-	if !reflect.DeepEqual(updated, expected) || !reflect.DeepEqual(advanced, expected) ||
-		advanced.DiscoveryKey != baseline.DiscoveryKey {
+	if !reflect.DeepEqual(updated, expected) || !advanced.SelfChanged ||
+		advanced.SelfNodeID != baseline.NodeID ||
+		advanced.DiscoveryKey != baseline.DiscoveryKey ||
+		!slices.Equal(advanced.Endpoints, []netip.AddrPort{endpoint}) ||
+		len(advanced.PeersChanged) != 0 {
 		running.process.forceStop(t)
 		t.Fatalf("connectivity projection did not converge: baseline=%+v one-shot=%+v stream=%+v", baseline, updated, advanced)
 	}

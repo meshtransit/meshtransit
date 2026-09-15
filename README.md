@@ -23,7 +23,9 @@ bounded, versioned `NetworkRevisionAdvanced` and connectivity-change wakeup
 transports. A control replica holds one subscription for each feed and fans
 wakeups into bounded, coalescing Network-local channels. PostgreSQL remains the
 source of peer visibility and packet authority; Redis loss never widens access.
-Delta maps, durable endpoint history, and relay behavior are not implemented.
+Same-revision endpoint and online changes use bounded complete-node deltas;
+authority, DNS, and relay deltas, durable endpoint history, and relay behavior
+are not implemented.
 The worker PostgreSQL adapter leases, reconciles, and completes the matching
 durable outbox work without treating Redis as authority.
 

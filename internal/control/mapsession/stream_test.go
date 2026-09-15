@@ -68,7 +68,8 @@ func TestStreamServiceOwnsBoundedPresenceLifecycle(t *testing.T) {
 		openerCalls, _ = opener.state()
 		snapshots, _ = sink.state()
 		if openerCalls != 2 || len(snapshots) != 2 ||
-			snapshots[1].NetworkRevision() != advanced.NetworkRevision() {
+			snapshots[1].NetworkRevision() != advanced.NetworkRevision() ||
+			len(sink.connectivityDeltas()) != 0 {
 			t.Fatalf("reconciled stream = opener %d snapshots %+v", openerCalls, snapshots)
 		}
 
@@ -190,11 +191,17 @@ func TestStreamServiceReconcilesImmediatelyOnConnectivityWakeup(t *testing.T) {
 		connectivity.send(t, change)
 		synctest.Wait()
 		snapshots, _ := sink.state()
-		if calls, _ := opener.state(); calls != 2 || len(snapshots) != 2 ||
-			snapshots[1].NetworkRevision() != initial.NetworkRevision() {
-			t.Fatalf("connectivity refresh = opener %d snapshots %+v", calls, snapshots)
+		deltas := sink.connectivityDeltas()
+		if calls, _ := opener.state(); calls != 2 || len(snapshots) != 1 ||
+			len(deltas) != 1 || deltas[0].Snapshot().NetworkRevision() != initial.NetworkRevision() {
+			t.Fatalf(
+				"connectivity refresh = opener %d snapshots %+v deltas %+v",
+				calls,
+				snapshots,
+				deltas,
+			)
 		}
-		projected, found := snapshots[1].ConnectivityFor(peer.NodeID())
+		projected, found := deltas[0].Snapshot().ConnectivityFor(peer.NodeID())
 		if !found || !projected.Online() {
 			t.Fatalf("refreshed peer connectivity = (%+v, %t), want online", projected, found)
 		}
@@ -697,6 +704,7 @@ func (store *streamPresenceStore) state() streamPresenceState {
 type recordingStreamSink struct {
 	mu         sync.Mutex
 	snapshots  []Snapshot
+	deltas     []ConnectivityDelta
 	keepAlives int
 }
 
@@ -704,6 +712,16 @@ func (sink *recordingStreamSink) SendSnapshot(_ context.Context, snapshot Snapsh
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
 	sink.snapshots = append(sink.snapshots, snapshot)
+	return nil
+}
+
+func (sink *recordingStreamSink) SendConnectivityDelta(
+	_ context.Context,
+	delta ConnectivityDelta,
+) error {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	sink.deltas = append(sink.deltas, delta)
 	return nil
 }
 
@@ -718,6 +736,12 @@ func (sink *recordingStreamSink) state() ([]Snapshot, int) {
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
 	return slices.Clone(sink.snapshots), sink.keepAlives
+}
+
+func (sink *recordingStreamSink) connectivityDeltas() []ConnectivityDelta {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	return slices.Clone(sink.deltas)
 }
 
 type streamRevisionWatcher struct {

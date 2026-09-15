@@ -41,6 +41,15 @@ type mapStreamContract struct {
 		MissedWakeupRepair              string   `json:"missed_wakeup_repair"`
 		Reconnect                       string   `json:"reconnect"`
 	} `json:"lifecycle"`
+	ConnectivityDelta struct {
+		Selection          string   `json:"selection"`
+		SelfEncoding       string   `json:"self_encoding"`
+		PeerEncoding       string   `json:"peer_encoding"`
+		EndpointWithdrawal string   `json:"endpoint_withdrawal"`
+		PeerOnline         string   `json:"peer_online"`
+		PeerOrder          string   `json:"peer_order"`
+		ForbiddenFields    []string `json:"forbidden_fields"`
+	} `json:"connectivity_delta"`
 }
 
 func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
@@ -55,7 +64,7 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 2 || contract.Profile != "legacy-ts2021-cap142-v1" ||
+	if contract.ContractVersion != 3 || contract.Profile != "legacy-ts2021-cap142-v1" ||
 		contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
 		contract.ClientEvidence.Revision != "78cb5130400bc003974f7730b319350fed129bbe" {
 		t.Fatalf("stream contract identity = %+v", contract)
@@ -74,10 +83,19 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 		lifecycle.RedisLoss != "terminate-stream" ||
 		lifecycle.RevisionWakeup != "network-revision-advanced" ||
 		lifecycle.ConnectivityWakeup != "network-scoped-connectivity-changed" ||
-		lifecycle.ConnectivityCoalescing != "latest-wins-full-projection-refresh" ||
+		lifecycle.ConnectivityCoalescing != "latest-wins-full-state-reload" ||
 		!lifecycle.SameRevisionConnectivityRefresh ||
 		lifecycle.MissedWakeupRepair != "postgresql-and-redis-reconciliation" ||
 		lifecycle.Reconnect != "fresh-authenticated-snapshot" {
 		t.Fatalf("stream lifecycle contract = %+v", lifecycle)
+	}
+	delta := contract.ConnectivityDelta
+	if delta.Selection != "same-authority-revision-connectivity-only" ||
+		delta.SelfEncoding != "Node-complete-replacement" ||
+		delta.PeerEncoding != "PeersChanged-complete-replacement" ||
+		delta.EndpointWithdrawal != "replacement-node-with-no-endpoints" ||
+		delta.PeerOnline != "explicit-boolean" || delta.PeerOrder != "numeric-node-id" ||
+		!slices.Equal(delta.ForbiddenFields, []string{"Peers", "PacketFilter"}) {
+		t.Fatalf("stream connectivity delta contract = %+v", delta)
 	}
 }
