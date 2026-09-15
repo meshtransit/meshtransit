@@ -43,6 +43,46 @@ func TestFileReferencesAlwaysFormatAsRedacted(t *testing.T) {
 	}
 }
 
+func TestNewFileReferencesValidatePaths(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "empty", path: ""},
+		{name: "relative", path: "credential"},
+		{name: "unclean", path: "/run/secrets/../credential"},
+		{name: "root", path: "/"},
+		{name: "nul byte", path: "/run/secrets/credential\x00suffix"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := NewSecretFile(test.path); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("NewSecretFile() error = %v, want ErrInvalid", err)
+			}
+			if _, err := NewTrustFile(test.path); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("NewTrustFile() error = %v, want ErrInvalid", err)
+			}
+		})
+	}
+
+	secret, err := NewSecretFile("/run/secrets/postgres-password")
+	if err != nil {
+		t.Fatalf("NewSecretFile() error = %v", err)
+	}
+	trust, err := NewTrustFile("/run/trust/postgres-ca.pem")
+	if err != nil {
+		t.Fatalf("NewTrustFile() error = %v", err)
+	}
+	formatted := fmt.Sprintf("%v %v", secret, trust)
+	if strings.Contains(formatted, "/run/") || !strings.Contains(formatted, "REDACTED") {
+		t.Fatalf("constructed references formatted as %q, want redacted", formatted)
+	}
+}
+
 func TestPrivateKeyFileReadIsBoundedAndPreservesPEM(t *testing.T) {
 	t.Parallel()
 

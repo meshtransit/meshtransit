@@ -34,6 +34,24 @@ type PrivateKeyFile struct {
 	path string
 }
 
+// NewSecretFile validates an absolute credential-file reference without
+// reading its contents. The referenced file is revalidated when Read is called.
+func NewSecretFile(path string) (SecretFile, error) {
+	if err := validateFilePath(path); err != nil {
+		return SecretFile{}, ErrInvalid
+	}
+	return SecretFile{path: path}, nil
+}
+
+// NewTrustFile validates an absolute trust-bundle reference without reading
+// its contents. The referenced file is revalidated when Read is called.
+func NewTrustFile(path string) (TrustFile, error) {
+	if err := validateFilePath(path); err != nil {
+		return TrustFile{}, ErrInvalid
+	}
+	return TrustFile{path: path}, nil
+}
+
 // Read reads one bounded credential file and removes only its terminal line
 // ending. Empty or multiline credentials are rejected.
 func (file SecretFile) Read() (string, error) {
