@@ -56,6 +56,39 @@ func TestMapSessionHandlerStreamsInitialSnapshotAndKeepAlive(t *testing.T) {
 	}
 }
 
+func TestMapSessionHandlerStreamsPeerAndPolicyAtomicallyAfterSnapshotAdvance(t *testing.T) {
+	t.Parallel()
+
+	initial := mapSnapshotFixture(t)
+	advanced := mapSnapshotWithInboundPolicyFixture(t)
+	advancedParams := mapSnapshotParams(advanced)
+	advancedParams.NetworkRevision = initial.NetworkRevision() + 1
+	advanced, err := mapsession.NewSnapshot(advancedParams)
+	if err != nil {
+		t.Fatalf("mapsession.NewSnapshot(advanced) error = %v", err)
+	}
+	streams := &advancingMapStreamService{snapshots: []mapsession.Snapshot{initial, advanced}}
+	handler := newMapSessionHandlerWithStreams(
+		t,
+		&recordingMapSessionService{snapshot: initial},
+		streams,
+	)
+	authenticated, err := handler.Handler(authenticatedMachine(t))
+	if err != nil {
+		t.Fatalf("Handler() error = %v", err)
+	}
+	body := strings.Replace(mapRequestBody, `"Stream":false`, `"Stream":true`, 1)
+	response := serveMap(t, authenticated, body)
+	frames := decodeMapStreamFrames(t, response.Body.Bytes())
+	if len(frames) != 2 || len(frames[0].Peers) != 0 || len(frames[0].PacketFilter) != 0 ||
+		len(frames[1].Peers) != 1 || len(frames[1].PacketFilter) != 2 {
+		t.Fatalf(
+			"stream frames = %+v, want empty initial authority then atomic peer+policy projection",
+			frames,
+		)
+	}
+}
+
 func decodeMapStreamFrames(t *testing.T, encoded []byte) []tailcfg.MapResponse {
 	t.Helper()
 	frames := make([]tailcfg.MapResponse, 0, 2)
@@ -95,6 +128,24 @@ type recordingMapStreamService struct {
 	calls    int
 	sawValid bool
 	sawSink  bool
+}
+
+type advancingMapStreamService struct {
+	snapshots []mapsession.Snapshot
+}
+
+func (service *advancingMapStreamService) Serve(
+	ctx context.Context,
+	_ control.AuthenticatedMachine,
+	_ mapsession.Request,
+	sink mapsession.StreamSink,
+) error {
+	for _, snapshot := range service.snapshots {
+		if err := sink.SendSnapshot(ctx, snapshot); err != nil {
+			return err
+		}
+	}
+	return context.Canceled
 }
 
 func (service *recordingMapStreamService) Serve(

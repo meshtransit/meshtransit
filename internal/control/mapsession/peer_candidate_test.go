@@ -32,6 +32,10 @@ func TestPeerCandidateRejectsIncompleteDurableEvidence(t *testing.T) {
 		name   string
 		mutate func(*PeerCandidateParams)
 	}{
+		{name: "numeric Node ID", mutate: func(value *PeerCandidateParams) { value.NumericNodeID = 0 }},
+		{name: "unsafe numeric Node ID", mutate: func(value *PeerCandidateParams) { value.NumericNodeID = maximumSafeNumericID + 1 }},
+		{name: "numeric owner ID", mutate: func(value *PeerCandidateParams) { value.NumericOwnerID = 0 }},
+		{name: "unsafe numeric owner ID", mutate: func(value *PeerCandidateParams) { value.NumericOwnerID = maximumSafeNumericID + 1 }},
 		{name: "scope", mutate: func(value *PeerCandidateParams) { value.Scope = network.Scope{} }},
 		{name: "Node ID", mutate: func(value *PeerCandidateParams) { value.NodeID = node.ID{} }},
 		{name: "owner", mutate: func(value *PeerCandidateParams) { value.OwnerID = identity.PrincipalID{} }},
@@ -97,6 +101,8 @@ func peerCandidateParamsFixture(
 	}
 	createdAt := snapshot.CreatedAt().Add(time.Duration(marker) * time.Minute)
 	return PeerCandidateParams{
+		NumericNodeID:     int64(700) + int64(marker),
+		NumericOwnerID:    11,
 		Scope:             snapshot.Scope(),
 		NodeID:            nodeID,
 		OwnerID:           ownerID,

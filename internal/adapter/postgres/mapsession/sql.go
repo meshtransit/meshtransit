@@ -58,6 +58,8 @@ WHERE machine.fingerprint = $1::BYTEA
   AND device.expires_at > pg_catalog.transaction_timestamp()`
 
 const loadPeerCandidatesSQL = `SELECT
+    numeric_node_id,
+    numeric_owner_id,
     node_public_id::TEXT,
     owner_public_id::TEXT,
     hostname,
@@ -67,7 +69,7 @@ const loadPeerCandidatesSQL = `SELECT
     created_at,
     key_expiry,
     addresses
-FROM mesh_ops.load_map_peer_candidates($1::BYTEA, $2::BYTEA, $3::INTEGER)`
+FROM mesh_ops.load_map_peer_candidates_v2($1::BYTEA, $2::BYTEA, $3::INTEGER)`
 
 const loadPacketPolicySQL = `SELECT
     release.policy_revision,

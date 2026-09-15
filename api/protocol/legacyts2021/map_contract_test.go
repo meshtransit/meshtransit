@@ -43,6 +43,10 @@ type mapContract struct {
 		Compression                string   `json:"compression"`
 		MaximumDecodedBytes        int      `json:"maximum_decoded_bytes"`
 		RequiredFields             []string `json:"required_fields"`
+		PeerProjection             string   `json:"peer_projection"`
+		PeerOrder                  string   `json:"peer_order"`
+		PacketFilterProjection     string   `json:"packet_filter_projection"`
+		PeerPolicyAtomicity        string   `json:"peer_policy_atomicity"`
 		EmptyPeersSemantics        string   `json:"empty_peers_semantics"`
 		EmptyPacketFilterSemantics string   `json:"empty_packet_filter_semantics"`
 	} `json:"response"`
@@ -60,8 +64,8 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 2 || contract.Profile != "legacy-ts2021-cap142-v1" {
-		t.Fatalf("contract identity = (%d, %q), want version 2 legacy profile", contract.ContractVersion, contract.Profile)
+	if contract.ContractVersion != 3 || contract.Profile != "legacy-ts2021-cap142-v1" {
+		t.Fatalf("contract identity = (%d, %q), want version 3 legacy profile", contract.ContractVersion, contract.Profile)
 	}
 	if contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
 		contract.ClientEvidence.Revision != "78cb5130400bc003974f7730b319350fed129bbe" {
@@ -92,6 +96,10 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 	if response.Framing != "uint32-little-endian-length" || response.Compression != "zstd" ||
 		response.MaximumDecodedBytes != 64<<10 ||
 		!slices.Equal(response.RequiredFields, []string{"Node", "Peers", "PacketFilter"}) ||
+		response.PeerProjection != "explicit-policy-edge-either-direction" ||
+		response.PeerOrder != "numeric-node-id" ||
+		response.PacketFilterProjection != "inbound-to-self-only" ||
+		response.PeerPolicyAtomicity != "same-map-response" ||
 		response.EmptyPeersSemantics != "replace-complete-set-with-empty" ||
 		response.EmptyPacketFilterSemantics != "deny-all" {
 		t.Fatalf("map response contract = %+v, want bounded fail-closed first response", response)

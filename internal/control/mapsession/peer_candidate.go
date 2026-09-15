@@ -28,6 +28,8 @@ var (
 // PeerCandidateParams contains durable, protocol-independent facts for one
 // same-Network Node that may be considered by a later policy decision.
 type PeerCandidateParams struct {
+	NumericNodeID     int64
+	NumericOwnerID    int64
 	Scope             network.Scope
 	NodeID            node.ID
 	OwnerID           identity.PrincipalID
@@ -43,6 +45,8 @@ type PeerCandidateParams struct {
 // PeerCandidate is immutable durable inventory, not an authorization grant.
 // Presence, endpoints, routes, and packet visibility are deliberately absent.
 type PeerCandidate struct {
+	numericNodeID     int64
+	numericOwnerID    int64
 	scope             network.Scope
 	nodeID            node.ID
 	ownerID           identity.PrincipalID
@@ -61,6 +65,8 @@ func NewPeerCandidate(params PeerCandidateParams) (PeerCandidate, error) {
 		return PeerCandidate{}, ErrInvalidPeerCandidate
 	}
 	return PeerCandidate{
+		numericNodeID:     params.NumericNodeID,
+		numericOwnerID:    params.NumericOwnerID,
 		scope:             params.Scope,
 		nodeID:            params.NodeID,
 		ownerID:           params.OwnerID,
@@ -73,6 +79,12 @@ func NewPeerCandidate(params PeerCandidateParams) (PeerCandidate, error) {
 		keyExpiry:         params.KeyExpiry,
 	}, nil
 }
+
+// NumericNodeID returns the stable numeric control-protocol Node identifier.
+func (candidate PeerCandidate) NumericNodeID() int64 { return candidate.numericNodeID }
+
+// NumericOwnerID returns the stable numeric control-protocol owner identifier.
+func (candidate PeerCandidate) NumericOwnerID() int64 { return candidate.numericOwnerID }
 
 // Scope returns the exact Workspace-qualified Network scope.
 func (candidate PeerCandidate) Scope() network.Scope { return candidate.scope }
@@ -111,6 +123,8 @@ func (candidate PeerCandidate) IsValid() bool {
 
 func (candidate PeerCandidate) params() PeerCandidateParams {
 	return PeerCandidateParams{
+		NumericNodeID:     candidate.numericNodeID,
+		NumericOwnerID:    candidate.numericOwnerID,
 		Scope:             candidate.scope,
 		NodeID:            candidate.nodeID,
 		OwnerID:           candidate.ownerID,
@@ -125,7 +139,8 @@ func (candidate PeerCandidate) params() PeerCandidateParams {
 }
 
 func validPeerCandidateParams(params PeerCandidateParams) bool {
-	return params.Scope.IsValid() && params.NodeID.IsValid() && params.OwnerID.IsValid() &&
+	return validNumericID(params.NumericNodeID) && validNumericID(params.NumericOwnerID) &&
+		params.Scope.IsValid() && params.NodeID.IsValid() && params.OwnerID.IsValid() &&
 		params.Hostname.IsValid() && params.MachineKey.IsValid() && params.NodeKey.IsValid() &&
 		params.SessionGeneration > 0 && validSnapshotAddresses(params.Addresses) &&
 		!params.CreatedAt.IsZero() && params.KeyExpiry.After(params.CreatedAt)
@@ -146,6 +161,7 @@ func validSnapshotPeerCandidates(
 	candidates []PeerCandidate,
 	scope network.Scope,
 	selfNodeID node.ID,
+	selfNumericNodeID int64,
 	selfMachineKey node.MachineKey,
 	selfNodeKey node.Key,
 ) bool {
@@ -153,15 +169,20 @@ func validSnapshotPeerCandidates(
 		return false
 	}
 	seenNodeIDs := make(map[node.ID]struct{}, len(candidates))
+	seenNumericNodeIDs := make(map[int64]struct{}, len(candidates))
 	seenMachineKeys := make(map[node.MachineKey]struct{}, len(candidates))
 	seenNodeKeys := make(map[node.Key]struct{}, len(candidates))
 	for index, candidate := range candidates {
 		if !candidate.IsValid() || candidate.scope != scope || candidate.nodeID == selfNodeID ||
+			candidate.numericNodeID == selfNumericNodeID ||
 			candidate.machineKey == selfMachineKey || candidate.nodeKey == selfNodeKey ||
 			index > 0 && comparePeerCandidates(candidates[index-1], candidate) >= 0 {
 			return false
 		}
 		if _, exists := seenNodeIDs[candidate.nodeID]; exists {
+			return false
+		}
+		if _, exists := seenNumericNodeIDs[candidate.numericNodeID]; exists {
 			return false
 		}
 		if _, exists := seenMachineKeys[candidate.machineKey]; exists {
@@ -171,6 +192,7 @@ func validSnapshotPeerCandidates(
 			return false
 		}
 		seenNodeIDs[candidate.nodeID] = struct{}{}
+		seenNumericNodeIDs[candidate.numericNodeID] = struct{}{}
 		seenMachineKeys[candidate.machineKey] = struct{}{}
 		seenNodeKeys[candidate.nodeKey] = struct{}{}
 	}
@@ -179,7 +201,9 @@ func validSnapshotPeerCandidates(
 
 func equalPeerCandidates(first, second []PeerCandidate) bool {
 	return slices.EqualFunc(first, second, func(left, right PeerCandidate) bool {
-		return left.scope == right.scope && left.nodeID == right.nodeID &&
+		return left.numericNodeID == right.numericNodeID &&
+			left.numericOwnerID == right.numericOwnerID &&
+			left.scope == right.scope && left.nodeID == right.nodeID &&
 			left.ownerID == right.ownerID && left.hostname == right.hostname &&
 			left.machineKey == right.machineKey && left.nodeKey == right.nodeKey &&
 			left.sessionGeneration == right.sessionGeneration &&

@@ -177,15 +177,17 @@ func (rows *peerCandidateRows) Scan(destinations ...any) error {
 		return errors.New("scan without current row")
 	}
 	record := rows.records[rows.index-1]
-	*destinations[0].(*string) = record.nodeID
-	*destinations[1].(*string) = record.ownerID
-	*destinations[2].(*string) = record.hostname
-	*destinations[3].(*[]byte) = append([]byte(nil), record.machineKey...)
-	*destinations[4].(*[]byte) = append([]byte(nil), record.nodeKey...)
-	*destinations[5].(*int64) = record.sessionGeneration
-	*destinations[6].(*time.Time) = record.createdAt
-	*destinations[7].(*time.Time) = record.keyExpiry
-	*destinations[8].(*[]string) = append([]string(nil), record.addresses...)
+	*destinations[0].(*int64) = record.numericNodeID
+	*destinations[1].(*int64) = record.numericOwnerID
+	*destinations[2].(*string) = record.nodeID
+	*destinations[3].(*string) = record.ownerID
+	*destinations[4].(*string) = record.hostname
+	*destinations[5].(*[]byte) = append([]byte(nil), record.machineKey...)
+	*destinations[6].(*[]byte) = append([]byte(nil), record.nodeKey...)
+	*destinations[7].(*int64) = record.sessionGeneration
+	*destinations[8].(*time.Time) = record.createdAt
+	*destinations[9].(*time.Time) = record.keyExpiry
+	*destinations[10].(*[]string) = append([]string(nil), record.addresses...)
 	return nil
 }
 
@@ -340,6 +342,8 @@ func validPeerCandidateRecord(marker byte) peerCandidateRecord {
 	machineKey := filledBytes(marker)
 	nodeKey := filledBytes(marker + 100)
 	return peerCandidateRecord{
+		numericNodeID:     int64(700) + int64(marker),
+		numericOwnerID:    11,
 		nodeID:            fmt.Sprintf("01890f00-0000-7000-8000-%012d", 700+int(marker)),
 		ownerID:           "01890f00-0000-7000-8000-000000000011",
 		hostname:          fmt.Sprintf("node-%d.example", marker),

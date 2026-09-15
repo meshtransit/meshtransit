@@ -28,6 +28,8 @@ type snapshotRecord struct {
 }
 
 type peerCandidateRecord struct {
+	numericNodeID     int64
+	numericOwnerID    int64
 	nodeID            string
 	ownerID           string
 	hostname          string
@@ -121,6 +123,8 @@ func (record peerCandidateRecord) candidate(
 		return appmapsession.PeerCandidate{}, err
 	}
 	candidate, err := appmapsession.NewPeerCandidate(appmapsession.PeerCandidateParams{
+		NumericNodeID:     record.numericNodeID,
+		NumericOwnerID:    record.numericOwnerID,
 		Scope:             scope,
 		NodeID:            nodeID,
 		OwnerID:           ownerID,

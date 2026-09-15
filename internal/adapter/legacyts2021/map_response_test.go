@@ -3,10 +3,13 @@ package legacyts2021
 import (
 	"encoding/binary"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"tailscale.com/tailcfg"
 	"tailscale.com/util/zstdframe"
+
+	"github.com/meshtransit/meshtransit/internal/control/mapsession"
 )
 
 func TestEncodeFullMapResponseClearsInheritedAuthority(t *testing.T) {
@@ -55,9 +58,78 @@ func TestEncodeFullMapResponseRejectsInvalidInput(t *testing.T) {
 	if _, err := EncodeFullMapResponse(mapSnapshotFixture(t), 0); err == nil {
 		t.Fatal("EncodeFullMapResponse(zero capability) error = nil")
 	}
-	if _, err := EncodeFullMapResponse(mapSnapshotWithAuthorizedCandidateFixture(t), 142); err == nil {
-		t.Fatal("EncodeFullMapResponse(authorized peer without wire policy) error = nil")
+}
+
+func TestEncodeFullMapResponseProjectsAuthorizedPeerWithoutInboundAuthority(t *testing.T) {
+	t.Parallel()
+
+	response := decodeFullMapResponseFixture(
+		t,
+		mapSnapshotWithAuthorizedCandidateFixture(t),
+	)
+	if len(response.Peers) != 1 || response.Peers[0].ID != 702 ||
+		string(response.Peers[0].StableID) != "01890f00-0000-7000-8000-000000000702" ||
+		response.Peers[0].Name != "node-two.example." || response.Peers[0].User != 11 ||
+		!response.Peers[0].MachineAuthorized || len(response.Peers[0].Addresses) != 1 ||
+		len(response.Peers[0].AllowedIPs) != 1 {
+		t.Fatalf("map response Peers = %+v, want one complete authorized peer", response.Peers)
 	}
+	if len(response.PacketFilter) != 0 {
+		t.Fatalf(
+			"map response PacketFilter = %+v, want no inbound authority from outbound-only rule",
+			response.PacketFilter,
+		)
+	}
+}
+
+func TestEncodeFullMapResponseProjectsOnlyNodeReducedInboundPolicy(t *testing.T) {
+	t.Parallel()
+
+	response := decodeFullMapResponseFixture(t, mapSnapshotWithInboundPolicyFixture(t))
+	if len(response.Peers) != 1 {
+		t.Fatalf("map response Peers = %+v, want one authorized peer", response.Peers)
+	}
+	if len(response.PacketFilter) != 2 {
+		t.Fatalf(
+			"map response PacketFilter = %+v, want TCP and ICMP inbound rules",
+			response.PacketFilter,
+		)
+	}
+	tcp := response.PacketFilter[0]
+	if !reflect.DeepEqual(tcp.SrcIPs, []string{"100.64.0.2"}) ||
+		!reflect.DeepEqual(tcp.IPProto, []int{6}) || len(tcp.DstPorts) != 2 ||
+		tcp.DstPorts[0].IP != "100.64.0.1" || tcp.DstPorts[0].Ports.First != 80 ||
+		tcp.DstPorts[0].Ports.Last != 81 || tcp.DstPorts[1].IP != "100.64.0.1" ||
+		tcp.DstPorts[1].Ports.First != 443 || tcp.DstPorts[1].Ports.Last != 443 {
+		t.Fatalf("TCP packet filter = %+v, want peer-to-self ports 80-81 and 443", tcp)
+	}
+	icmp := response.PacketFilter[1]
+	if !reflect.DeepEqual(icmp.SrcIPs, []string{"100.64.0.2"}) ||
+		!reflect.DeepEqual(icmp.IPProto, []int{1}) || len(icmp.DstPorts) != 1 ||
+		icmp.DstPorts[0].IP != "100.64.0.1" || icmp.DstPorts[0].Ports != tailcfg.PortRangeAny {
+		t.Fatalf("ICMP packet filter = %+v, want bounded IPv4 peer-to-self rule", icmp)
+	}
+}
+
+func decodeFullMapResponseFixture(t *testing.T, snapshot mapsession.Snapshot) tailcfg.MapResponse {
+	t.Helper()
+	encoded, err := EncodeFullMapResponse(snapshot, 142)
+	if err != nil {
+		t.Fatalf("EncodeFullMapResponse() error = %v", err)
+	}
+	document, err := zstdframe.AppendDecode(
+		nil,
+		encoded[4:],
+		zstdframe.MaxDecodedSize(maxMapResponseBytes),
+	)
+	if err != nil {
+		t.Fatalf("decode zstd map response: %v", err)
+	}
+	var response tailcfg.MapResponse
+	if err := json.Unmarshal(document, &response); err != nil {
+		t.Fatalf("decode typed map response: %v", err)
+	}
+	return response
 }
 
 func TestEncodeKeepAliveMapResponseIsNonEmptyFramedMessage(t *testing.T) {

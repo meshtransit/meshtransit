@@ -309,6 +309,8 @@ func (store *Store) loadPeerCandidates(
 		}
 		var record peerCandidateRecord
 		if err := rows.Scan(
+			&record.numericNodeID,
+			&record.numericOwnerID,
 			&record.nodeID,
 			&record.ownerID,
 			&record.hostname,

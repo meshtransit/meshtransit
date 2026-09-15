@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
+	"slices"
 
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/control/mapsession"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/policy"
 )
 
 const (
@@ -38,26 +41,169 @@ func EncodeFullMapResponse(
 	if !snapshot.IsValid() || capabilityVersion != supportedCapabilityVersion {
 		return nil, ErrMapResponse
 	}
-	// Until the legacy adapter can encode both an authorized peer and its exact
-	// packet filter atomically, fail closed instead of emitting peer identity
-	// with an empty or incomplete policy.
-	if len(snapshot.AuthorizedPeers()) != 0 {
-		return nil, ErrMapResponse
-	}
 	self, err := fullMapNode(snapshot, capabilityVersion)
+	if err != nil {
+		return nil, err
+	}
+	peers, candidates, err := fullMapPeers(snapshot, capabilityVersion)
+	if err != nil {
+		return nil, err
+	}
+	packetFilter, err := fullMapPacketFilter(snapshot, candidates)
 	if err != nil {
 		return nil, err
 	}
 	document, err := json.Marshal(fullMapResponseWire{
 		Node:         self,
-		Peers:        make([]*tailcfg.Node, 0),
-		PacketFilter: make([]tailcfg.FilterRule, 0),
+		Peers:        peers,
+		PacketFilter: packetFilter,
 	})
 	if err != nil {
 		clear(document)
 		return nil, ErrMapResponse
 	}
 	return encodeMapDocument(document)
+}
+
+func fullMapPeers(
+	snapshot mapsession.Snapshot,
+	capabilityVersion int,
+) ([]*tailcfg.Node, map[node.ID]mapsession.PeerCandidate, error) {
+	authorized := snapshot.AuthorizedPeers()
+	peers := make([]*tailcfg.Node, 0, len(authorized))
+	candidates := make(map[node.ID]mapsession.PeerCandidate, len(authorized))
+	for _, candidate := range authorized {
+		peer, err := fullMapPeer(candidate, capabilityVersion)
+		if err != nil {
+			return nil, nil, err
+		}
+		peers = append(peers, peer)
+		candidates[candidate.NodeID()] = candidate
+	}
+	slices.SortFunc(peers, func(first, second *tailcfg.Node) int {
+		switch {
+		case first.ID < second.ID:
+			return -1
+		case first.ID > second.ID:
+			return 1
+		default:
+			return 0
+		}
+	})
+	return peers, candidates, nil
+}
+
+func fullMapPeer(
+	candidate mapsession.PeerCandidate,
+	capabilityVersion int,
+) (*tailcfg.Node, error) {
+	machineKey, err := machinePublicKey(candidate.MachineKey())
+	if err != nil {
+		return nil, err
+	}
+	nodeKey, err := nodePublicKey(candidate.NodeKey())
+	if err != nil {
+		return nil, err
+	}
+	addresses := candidate.Addresses()
+	return &tailcfg.Node{
+		ID:                tailcfg.NodeID(candidate.NumericNodeID()),
+		StableID:          tailcfg.StableNodeID(candidate.NodeID().String()),
+		Name:              candidate.Hostname().String() + ".",
+		User:              tailcfg.UserID(candidate.NumericOwnerID()),
+		Key:               nodeKey,
+		KeyExpiry:         candidate.KeyExpiry(),
+		Machine:           machineKey,
+		Addresses:         addresses,
+		AllowedIPs:        append(addresses[:0:0], addresses...),
+		Created:           candidate.CreatedAt(),
+		Cap:               tailcfg.CapabilityVersion(capabilityVersion),
+		MachineAuthorized: true,
+		ComputedName:      candidate.Hostname().String(),
+	}, nil
+}
+
+func fullMapPacketFilter(
+	snapshot mapsession.Snapshot,
+	candidates map[node.ID]mapsession.PeerCandidate,
+) ([]tailcfg.FilterRule, error) {
+	rules := make([]tailcfg.FilterRule, 0)
+	for _, rule := range snapshot.PacketPolicy().Rules() {
+		if rule.DestinationNodeID() != snapshot.NodeID() {
+			continue
+		}
+		candidate, ok := candidates[rule.SourceNodeID()]
+		if !ok {
+			return nil, ErrMapResponse
+		}
+		sources := candidate.Addresses()
+		sourceIPs := make([]string, 0, len(sources))
+		for _, source := range sources {
+			sourceIPs = append(sourceIPs, source.Addr().String())
+		}
+		destinations, protocols, err := fullMapDestinations(
+			snapshot.Addresses(),
+			rule,
+		)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, tailcfg.FilterRule{
+			SrcIPs:   sourceIPs,
+			DstPorts: destinations,
+			IPProto:  protocols,
+		})
+	}
+	return rules, nil
+}
+
+func fullMapDestinations(
+	addresses []netip.Prefix,
+	rule policy.Rule,
+) ([]tailcfg.NetPortRange, []int, error) {
+	portRanges := rule.DestinationPortRanges()
+	protocols := make([]int, 0, 2)
+	switch rule.Protocol() {
+	case policy.ProtocolTCP:
+		protocols = append(protocols, 6)
+	case policy.ProtocolUDP:
+		protocols = append(protocols, 17)
+	case policy.ProtocolICMP:
+		portRanges = nil
+		for _, address := range addresses {
+			if address.Addr().Is4() && !slices.Contains(protocols, 1) {
+				protocols = append(protocols, 1)
+			}
+			if address.Addr().Is6() && !slices.Contains(protocols, 58) {
+				protocols = append(protocols, 58)
+			}
+		}
+	default:
+		return nil, nil, ErrMapResponse
+	}
+	destinations := make([]tailcfg.NetPortRange, 0, len(addresses)*max(1, len(portRanges)))
+	for _, address := range addresses {
+		if rule.Protocol() == policy.ProtocolICMP {
+			destinations = append(destinations, tailcfg.NetPortRange{
+				IP:    address.Addr().String(),
+				Ports: tailcfg.PortRangeAny,
+			})
+			continue
+		}
+		for _, portRange := range portRanges {
+			destinations = append(destinations, tailcfg.NetPortRange{
+				IP: address.Addr().String(),
+				Ports: tailcfg.PortRange{
+					First: portRange.First(),
+					Last:  portRange.Last(),
+				},
+			})
+		}
+	}
+	if len(destinations) == 0 || len(protocols) == 0 {
+		return nil, nil, ErrMapResponse
+	}
+	return destinations, protocols, nil
 }
 
 // EncodeKeepAliveMapResponse encodes one non-empty transport keepalive frame.

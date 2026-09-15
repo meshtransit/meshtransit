@@ -109,7 +109,7 @@ func assertWorkerCannotLoadMapPeerCandidates(
 	var canLoad bool
 	if err := workerConnection.QueryRow(ctx, `SELECT pg_catalog.has_function_privilege(
     CURRENT_USER,
-    'mesh_ops.load_map_peer_candidates(bytea,bytea,integer)',
+	'mesh_ops.load_map_peer_candidates_v2(bytea,bytea,integer)',
     'EXECUTE'
 )`).Scan(&canLoad); err != nil {
 		t.Fatalf("query worker map peer candidate privilege: %v", err)
@@ -118,7 +118,7 @@ func assertWorkerCannotLoadMapPeerCandidates(
 		t.Fatal("worker can load map peer candidates, want false")
 	}
 	err := workerConnection.QueryRow(ctx, `SELECT node_public_id
-FROM mesh_ops.load_map_peer_candidates(
+FROM mesh_ops.load_map_peer_candidates_v2(
     pg_catalog.decode(pg_catalog.repeat('11', 32), 'hex'),
     pg_catalog.decode(pg_catalog.repeat('22', 32), 'hex'),
     1

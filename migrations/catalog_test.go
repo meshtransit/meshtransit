@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 21 {
-		t.Fatalf("len(Catalog()) = %d, want 21", len(catalog))
+	if len(catalog) != 22 {
+		t.Fatalf("len(Catalog()) = %d, want 22", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -851,8 +851,45 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("policy publication migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 21 {
-		t.Fatalf("LatestVersion() = %d, want 21", LatestVersion())
+	mapPeerProtocolIdentity := catalog[21]
+	if mapPeerProtocolIdentity.Description != "map peer protocol identity projection" {
+		t.Fatalf(
+			"migration 22 description = %q, want map peer protocol identity projection",
+			mapPeerProtocolIdentity.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.load_map_peer_candidates_v2",
+		"numeric_node_id BIGINT",
+		"numeric_owner_id BIGINT",
+		"mesh_ops.load_map_peer_candidates(",
+		"candidate.public_id = projected.node_public_id",
+		"owner.public_id = projected.owner_public_id",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh, mesh_ops",
+		"REVOKE ALL ON FUNCTION mesh_ops.load_map_peer_candidates_v2",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_peer_candidates_v2",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(mapPeerProtocolIdentity.SQL, required) {
+			t.Errorf("map peer protocol identity migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"TO mesh_worker",
+	} {
+		if strings.Contains(mapPeerProtocolIdentity.SQL, forbidden) {
+			t.Errorf("map peer protocol identity migration SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 22 {
+		t.Fatalf("LatestVersion() = %d, want 22", LatestVersion())
 	}
 }
 

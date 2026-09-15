@@ -1,5 +1,5 @@
 {
-  "contract_version": 2,
+  "contract_version": 3,
   "profile": "legacy-ts2021-cap142-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
@@ -40,6 +40,10 @@
       "Peers",
       "PacketFilter"
     ],
+    "peer_projection": "explicit-policy-edge-either-direction",
+    "peer_order": "numeric-node-id",
+    "packet_filter_projection": "inbound-to-self-only",
+    "peer_policy_atomicity": "same-map-response",
     "empty_peers_semantics": "replace-complete-set-with-empty",
     "empty_packet_filter_semantics": "deny-all"
   }

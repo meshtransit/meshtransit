@@ -187,6 +187,7 @@ func validSnapshotParams(params SnapshotParams) bool {
 		params.PeerCandidates,
 		params.Scope,
 		params.NodeID,
+		params.NumericNodeID,
 		params.MachineKey,
 		params.NodeKey,
 	) && params.PacketPolicy.IsValid() && params.PacketPolicy.Scope() == params.Scope

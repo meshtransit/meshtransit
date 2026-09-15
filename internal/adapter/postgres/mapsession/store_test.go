@@ -68,7 +68,8 @@ func TestStoreLoadsConsistentScopedSnapshot(t *testing.T) {
 		t.Fatalf("policy arguments did not bind self Node, exact revision, and limit+1")
 	}
 	candidates := snapshot.PeerCandidates()
-	if len(candidates) != 1 || candidates[0].NodeID().String() != testPeerNodeID {
+	if len(candidates) != 1 || candidates[0].NodeID().String() != testPeerNodeID ||
+		candidates[0].NumericNodeID() != 702 || candidates[0].NumericOwnerID() != 11 {
 		t.Fatalf("PeerCandidates() = %+v, want one decoded candidate", candidates)
 	}
 	if observer.calls != 1 || observer.operation != OperationLoad || observer.err != nil {

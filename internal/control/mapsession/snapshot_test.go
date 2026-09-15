@@ -94,6 +94,12 @@ func TestSnapshotRejectsUnsafePeerCandidateSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPeerCandidate(self Node) error = %v", err)
 	}
+	selfNumericNodeParams := valid.params()
+	selfNumericNodeParams.NumericNodeID = base.NumericNodeID()
+	selfNumericNode, err := NewPeerCandidate(selfNumericNodeParams)
+	if err != nil {
+		t.Fatalf("NewPeerCandidate(self numeric Node) error = %v", err)
+	}
 	selfMachineParams := valid.params()
 	selfMachineParams.MachineKey = base.MachineKey()
 	selfMachine, err := NewPeerCandidate(selfMachineParams)
@@ -126,15 +132,28 @@ func TestSnapshotRejectsUnsafePeerCandidateSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPeerCandidate(duplicate Node ID) error = %v", err)
 	}
+	duplicateNumericParams := peerCandidateParamsFixture(
+		t,
+		base,
+		"01890f00-0000-7000-8000-000000000703",
+		3,
+	)
+	duplicateNumericParams.NumericNodeID = valid.NumericNodeID()
+	duplicateNumeric, err := NewPeerCandidate(duplicateNumericParams)
+	if err != nil {
+		t.Fatalf("NewPeerCandidate(duplicate numeric Node ID) error = %v", err)
+	}
 
 	for _, test := range []struct {
 		name       string
 		candidates []PeerCandidate
 	}{
 		{name: "self Node", candidates: []PeerCandidate{selfNode}},
+		{name: "self numeric Node", candidates: []PeerCandidate{selfNumericNode}},
 		{name: "self machine", candidates: []PeerCandidate{selfMachine}},
 		{name: "other scope", candidates: []PeerCandidate{otherScope}},
 		{name: "duplicate Node", candidates: []PeerCandidate{valid, duplicate}},
+		{name: "duplicate numeric Node", candidates: []PeerCandidate{valid, duplicateNumeric}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			params := base.params()
