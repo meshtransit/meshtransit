@@ -37,6 +37,22 @@ func validateAddress(address string) error {
 	return nil
 }
 
+func addressesConflict(left, right string) bool {
+	leftHost, leftPort, leftErr := net.SplitHostPort(left)
+	rightHost, rightPort, rightErr := net.SplitHostPort(right)
+	if leftErr != nil || rightErr != nil || leftPort != rightPort {
+		return false
+	}
+	if leftHost == rightHost {
+		return true
+	}
+	return isWildcardHost(leftHost) || isWildcardHost(rightHost)
+}
+
+func isWildcardHost(host string) bool {
+	return host == "" || host == "0.0.0.0" || host == "::"
+}
+
 func validHost(host string) bool {
 	if _, err := netip.ParseAddr(host); err == nil {
 		return true

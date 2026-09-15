@@ -1,0 +1,388 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "MeshTransit Management API",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://control.dev.meshtransit.net"
+    }
+  ],
+  "paths": {
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/revoke": {
+      "post": {
+        "operationId": "revokeDevice",
+        "summary": "Terminally revoke a Device and its current key epochs",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "$ref": "#/components/parameters/DeviceID"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeDeviceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Device is revoked, or the identical committed action is replayed.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/DeviceETag"
+              },
+              "X-Correlation-ID": {
+                "$ref": "#/components/headers/CorrelationID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeDeviceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "accountSessionBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque MeshTransit Account Session"
+      }
+    },
+    "parameters": {
+      "WorkspaceID": {
+        "name": "workspace_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/PublicID"
+        }
+      },
+      "NetworkID": {
+        "name": "network_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/PublicID"
+        }
+      },
+      "DeviceID": {
+        "name": "device_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/PublicID"
+        }
+      },
+      "IfMatch": {
+        "name": "If-Match",
+        "in": "header",
+        "required": true,
+        "description": "One strong quoted decimal Device version. Wildcard and weak validators are forbidden.",
+        "schema": {
+          "type": "string",
+          "pattern": "^\\\"[1-9][0-9]*\\\"$"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "description": "A caller-generated opaque key. Core retains only a versioned HMAC digest.",
+        "schema": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:~-]+$"
+        }
+      }
+    },
+    "headers": {
+      "DeviceETag": {
+        "description": "The strong quoted decimal terminal Device version.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "CorrelationID": {
+        "description": "A server-generated UUIDv7 used to correlate the safe response and operational log.",
+        "schema": {
+          "$ref": "#/components/schemas/PublicID"
+        }
+      }
+    },
+    "schemas": {
+      "PublicID": {
+        "type": "string",
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+      },
+      "RevokeDeviceRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "RevokeDeviceResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "correlation_id"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RevokedDevice"
+          },
+          "correlation_id": {
+            "$ref": "#/components/schemas/PublicID"
+          }
+        }
+      },
+      "RevokedDevice": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "device_id",
+          "state",
+          "device_version",
+          "session_generation",
+          "network_revision",
+          "inventory_revision"
+        ],
+        "properties": {
+          "device_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "state": {
+            "const": "revoked"
+          },
+          "device_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 2
+          },
+          "session_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 2
+          },
+          "network_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 2
+          },
+          "inventory_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 2
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/APIError"
+          }
+        }
+      },
+      "APIError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message",
+          "correlation_id",
+          "retryable"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "correlation_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "responses": {
+      "InvalidRequest": {
+        "description": "Malformed or unsupported request.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Unauthenticated": {
+        "description": "Missing, malformed, expired, revoked, or stale Account Session.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "The authenticated principal lacks current exact-scope authority.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The target is unavailable in the authorized scope.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "MethodNotAllowed": {
+        "description": "The resource exists but does not accept this request method.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "Idempotency intent conflict or incompatible terminal state.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "PreconditionFailed": {
+        "description": "The strong Device version precondition is stale.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "PreconditionRequired": {
+        "description": "If-Match is required.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Unavailable": {
+        "description": "Authoritative dependencies or bounded request capacity are unavailable.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Timeout": {
+        "description": "The bounded server-side operation deadline expired.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    }
+  }
+}

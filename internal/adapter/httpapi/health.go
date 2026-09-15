@@ -1,5 +1,4 @@
-// Package httpapi implements bounded HTTP adapters for operator and management
-// surfaces. The current slice contains only the private operator surface.
+// Package httpapi implements bounded HTTP adapters for operator and management surfaces.
 package httpapi
 
 import (

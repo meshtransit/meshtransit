@@ -26,6 +26,12 @@ source of peer visibility and packet authority; Redis loss never widens access.
 Same-revision endpoint and online changes use bounded complete-node deltas;
 authority, DNS, and relay deltas, durable endpoint history, and relay behavior
 are not implemented.
+The first versioned management HTTPS route authenticates an opaque Account
+Session and atomically revokes one exact Device under `device.manage`, strong
+ETag, and HMAC-protected idempotency constraints. A committed revocation
+advances the Network revision and writes its outbox event in the same
+transaction; the worker publishes that wakeup and live control streams resync
+immediately, while periodic reconciliation remains the recovery path.
 The worker PostgreSQL adapter leases, reconciles, and completes the matching
 durable outbox work without treating Redis as authority.
 
@@ -103,6 +109,48 @@ unpadded base64url encoding of exactly 32 non-zero random bytes.
 | `MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_FILE` | none | Absolute path to the active credential-digest key file. |
 | `MESHTRANSIT_ENROLLMENT_DIGEST_PREVIOUS_KEY_ID` | none | Optional public version identifier accepted during bounded key rotation. |
 | `MESHTRANSIT_ENROLLMENT_DIGEST_PREVIOUS_KEY_FILE` | none | Absolute path to the optional previous credential-digest key file. |
+
+The `api` and `all` roles expose a separate TLS-only management listener on
+port `8444`. It accepts HTTP/1.1 and bounds connections, headers, request
+bodies, concurrent work, and duration. Browser cookies are never accepted as
+authentication. Account Session and idempotency key files must contain the
+canonical unpadded base64url encoding of exactly 32 non-zero random bytes. The
+Account Session verifier accepts one active key and at most one previous key.
+The management TLS pair may be shared with the control listener, but HMAC,
+enrollment, Noise, and TLS private-key material must remain purpose-separated.
+
+| Environment variable | Default | Contract |
+| --- | --- | --- |
+| `MESHTRANSIT_API_ADDRESS` | `0.0.0.0:8444` | TCP host and non-zero port distinct from health and control listeners. |
+| `MESHTRANSIT_API_TLS_CERTIFICATE_FILE` | none | Absolute path to the management TLS certificate-chain PEM. |
+| `MESHTRANSIT_API_TLS_PRIVATE_KEY_FILE` | none | Absolute path to the bounded management TLS private-key PEM. |
+| `MESHTRANSIT_API_ACCOUNT_SESSION_DIGEST_ACTIVE_KEY_ID` | none | Public version identifier for the active Account Session HMAC key. |
+| `MESHTRANSIT_API_ACCOUNT_SESSION_DIGEST_ACTIVE_KEY_FILE` | none | Absolute path to the active Account Session HMAC key. |
+| `MESHTRANSIT_API_ACCOUNT_SESSION_DIGEST_PREVIOUS_KEY_ID` | none | Optional previous Account Session HMAC key identifier. |
+| `MESHTRANSIT_API_ACCOUNT_SESSION_DIGEST_PREVIOUS_KEY_FILE` | none | Absolute path to the optional previous Account Session HMAC key. |
+| `MESHTRANSIT_API_IDEMPOTENCY_DIGEST_KEY_ID` | none | Public version identifier for management idempotency HMACs. |
+| `MESHTRANSIT_API_IDEMPOTENCY_DIGEST_KEY_FILE` | none | Absolute path to the idempotency HMAC key. |
+| `MESHTRANSIT_API_REQUEST_TIMEOUT` | `10s` | Whole-request deadline from 100ms through 30 seconds. |
+| `MESHTRANSIT_API_MAX_CONNECTIONS` | `256` | TLS connection cap from 1 through 4096. |
+| `MESHTRANSIT_API_MAX_CONCURRENT_REQUESTS` | `128` | Admitted-request cap from 1 through the connection cap. |
+
+The first endpoint is:
+
+```text
+POST /api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/revoke
+Authorization: Bearer <opaque Account Session>
+If-Match: "<current Device version>"
+Idempotency-Key: <16..128 canonical characters>
+Content-Type: application/json
+
+{"reason":"operator supplied reason"}
+```
+
+Success returns `200`, a new strong `ETag`, Device/session/Network/inventory
+revisions, and a correlation ID. Errors use one stable JSON envelope without
+authority, database, token, or raw idempotency-key detail. The machine-readable
+contract is `api/openapi/management_v1.json`. Login and Account Session
+issuance are not exposed yet, so this slice cannot mint a new management bearer.
 
 Those roles also expose the public client-control listener. It accepts TLS only;
 the client session inside TLS must then authenticate with the pinned Noise
@@ -289,7 +337,8 @@ An allowed scoped-grant decision is one step in the authorization pipeline, not
 a final mutation approval. Authentication, active membership, delegation
 ceiling, operation invariants, Approval Policy, step-up evidence, ETag/CAS, and
 the atomic audit/outbox transaction remain mandatory. Approval persistence and
-management HTTP endpoints remain deliberately deferred.
+management mutations beyond the explicitly exposed Device-revoke route remain
+deliberately deferred.
 
 ## Network management RBAC authority
 
@@ -313,8 +362,9 @@ authority generations.
 
 This first storage slice intentionally supports direct Principal bindings at
 exact Network scope. Identity-group subjects, inherited Deployment/Workspace
-bindings, delegation ceilings, approval policy, and the management HTTPS API
-remain fail-closed until their dedicated vertical slices land.
+bindings, delegation ceilings, and approval policy remain fail-closed until
+their dedicated vertical slices land. The first management HTTPS route exposes
+only exact-Network Device revocation.
 
 ## Account Session authentication
 
@@ -336,11 +386,12 @@ generations. Serving roles retain no direct Account Session table privileges.
 The PostgreSQL adapter uses a bounded read-only transaction and rejects
 malformed or mismatched durable evidence. Authentication performs at most two
 lookups for key rotation and maps absent, expired, stale-generation, or
-cross-Deployment authority to one generic unauthenticated result. This slice
-does not expose a management route. Account Session authentication and atomic
-`device.manage` reauthorization are now available to that future HTTP trust
-boundary, but request parsing, response mapping, and OpenAPI remain to be
-implemented.
+cross-Deployment authority to one generic unauthenticated result. The
+management HTTP boundary uses this authenticator as an opaque bearer verifier.
+It validates route, method, media type, bounded JSON, strong `If-Match`,
+HMAC-destroyed idempotency evidence, and exact result evidence before returning
+public JSON. Login, OIDC callbacks, and Account Session issuance remain future
+slices.
 
 ## Health surface
 

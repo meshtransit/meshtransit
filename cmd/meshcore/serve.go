@@ -132,7 +132,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		return 1
 	}
 	var revisionWorkerTelemetry *revisionworker.Telemetry
-	roleServices := make([]app.OwnedService, 0, 4)
+	roleServices := make([]app.OwnedService, 0, 5)
 	if processConfig.RevisionWorker != nil {
 		revisionWorkerTelemetry = revisionworker.NewTelemetry()
 		workerService, composeErr := composeRevisionWorker(
@@ -149,6 +149,27 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		roleServices = append(
 			roleServices,
 			app.OwnedService{Name: "network-revision-worker", Service: workerService},
+		)
+	}
+	if processConfig.API != nil {
+		managementServer, managementMetrics, composeErr := composeManagementAPI(
+			*processConfig.API,
+			storagePools.runtime,
+			logger,
+		)
+		if composeErr != nil {
+			logger.ErrorContext(
+				ctx,
+				"startup failed",
+				"error_code", "management_api_composition_failure",
+				"error", composeErr,
+			)
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, managementMetrics)
+		roleServices = append(
+			roleServices,
+			app.OwnedService{Name: "management-api", Service: managementServer},
 		)
 	}
 	if processConfig.Control != nil {

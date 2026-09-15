@@ -3,18 +3,26 @@
 package integration
 
 import (
+	"bytes"
 	"context"
-	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/control"
 	"github.com/meshtransit/meshtransit/internal/control/mapsession"
 	"github.com/meshtransit/meshtransit/internal/idempotency"
+	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
@@ -38,10 +46,11 @@ func assertPostgreSQLDeviceRevocation(
 	)
 	command := deviceRevocationIntegrationCommand(t, 203, 930, 1, 1, "compromised peer")
 	service := newIntegrationDeviceRevocationService(t, runtimePool)
+	revokeDeviceOverHTTP(ctx, t, runtimePool, service, command, 1)
 
 	result, err := service.Revoke(ctx, command)
 	if err != nil {
-		t.Fatalf("revoke Device: %v", err)
+		t.Fatalf("replay HTTP Device revocation: %v", err)
 	}
 	if !result.IsValid() || result.Scope() != command.Scope() ||
 		result.NodeID() != command.NodeID() || result.DeviceVersion() != 2 ||
@@ -207,8 +216,9 @@ func deviceRevocationIntegrationCommand(
 	if err != nil {
 		t.Fatalf("construct Device revocation reason: %v", err)
 	}
-	digest := sha256.Sum256([]byte{0x6d, 0x74, digestDiscriminator})
-	proof, err := idempotency.NewProof("integration-v1", digest)
+	proof, err := integrationDeviceRevocationDigester(t).Proof(
+		integrationDeviceRevocationIdempotencyKey(digestDiscriminator),
+	)
 	if err != nil {
 		t.Fatalf("construct Device revocation idempotency proof: %v", err)
 	}
@@ -224,6 +234,100 @@ func deviceRevocationIntegrationCommand(
 		t.Fatalf("construct Device revocation command: %v", err)
 	}
 	return command
+}
+
+func revokeDeviceOverHTTP(
+	ctx context.Context,
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+	service *revocation.Service,
+	command revocation.Command,
+	idempotencyDiscriminator byte,
+) {
+	t.Helper()
+	accountSessionStore, err := postgresadapter.NewAccountSessionStore(
+		runtimePool,
+		postgresadapter.AccountSessionOptions{
+			StatementTimeout: 5 * time.Second,
+			IdleTimeout:      10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("postgres.NewAccountSessionStore() error = %v", err)
+	}
+	keyring, _, rawToken := integrationManagementAccountSessionSecurity(t)
+	sessions, err := accountsession.NewService(keyring, accountSessionStore, accountsession.SystemClock{})
+	if err != nil {
+		t.Fatalf("accountsession.NewService() error = %v", err)
+	}
+	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
+		Sessions:              sessions,
+		Revocations:           service,
+		Idempotency:           integrationDeviceRevocationDigester(t),
+		CorrelationIDs:        httpapi.PublicCorrelationIDGenerator{},
+		Logger:                slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		RequestTimeout:        10 * time.Second,
+		MaxConcurrentRequests: 2,
+	})
+	if err != nil {
+		t.Fatalf("httpapi.NewManagementHandler() error = %v", err)
+	}
+	path := fmt.Sprintf(
+		"/api/v1/workspaces/%s/networks/%s/devices/%s/actions/revoke",
+		command.Scope().WorkspaceID().String(),
+		command.Scope().NetworkID().String(),
+		command.NodeID().String(),
+	)
+	request := httptest.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		path,
+		bytes.NewBufferString(`{"reason":"compromised peer"}`),
+	)
+	request.Header.Set("Authorization", "Bearer "+rawToken)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("If-Match", fmt.Sprintf(`"%d"`, command.ExpectedVersion()))
+	request.Header.Set(
+		"Idempotency-Key",
+		integrationDeviceRevocationIdempotencyKey(idempotencyDiscriminator),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("management HTTP status = %d, want 200; body = %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			DeviceID      string `json:"device_id"`
+			State         string `json:"state"`
+			DeviceVersion int64  `json:"device_version"`
+		} `json:"data"`
+		CorrelationID string `json:"correlation_id"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode management HTTP response: %v", err)
+	}
+	if payload.Data.DeviceID != command.NodeID().String() || payload.Data.State != "revoked" ||
+		payload.Data.DeviceVersion != command.ExpectedVersion()+1 || payload.CorrelationID == "" {
+		t.Fatalf("management HTTP response = %+v, want committed Device revocation", payload)
+	}
+}
+
+func integrationDeviceRevocationDigester(t *testing.T) *idempotency.Digester {
+	t.Helper()
+	keyID, err := idempotency.NewDigestKeyID("integration-v1")
+	if err != nil {
+		t.Fatalf("idempotency.NewDigestKeyID() error = %v", err)
+	}
+	digester, err := idempotency.NewDigester(keyID, bytes.Repeat([]byte{0x78}, 32))
+	if err != nil {
+		t.Fatalf("idempotency.NewDigester() error = %v", err)
+	}
+	return digester
+}
+
+func integrationDeviceRevocationIdempotencyKey(discriminator byte) string {
+	return fmt.Sprintf("integration-request-%04d", discriminator)
 }
 
 func loadDeviceRevocationRevisions(

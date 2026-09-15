@@ -52,6 +52,14 @@ func TestLoadDefaults(t *testing.T) {
 		got.Enrollment.CredentialDigest.Previous != nil {
 		t.Fatalf("enrollment config = %+v, want active key only", got.Enrollment)
 	}
+	if got.API == nil || got.API.Address != defaultAPIAddress ||
+		got.API.AccountSessionDigest.Active.ID.String() != "session-v1" ||
+		got.API.IdempotencyDigest.ID.String() != "idempotency-v1" ||
+		got.API.RequestTimeout != defaultAPIRequestTimeout ||
+		got.API.MaxConnections != defaultAPIMaxConnections ||
+		got.API.MaxConcurrentRequests != defaultAPIMaxConcurrentRequests {
+		t.Fatalf("api config = %+v, want bounded defaults", got.API)
+	}
 	if got.Control == nil || got.Control.Address != defaultControlAddress ||
 		got.Control.MaxSessions != defaultControlMaxSessions ||
 		got.Control.MaxStreamsPerSession != defaultControlMaxStreams {
@@ -174,22 +182,28 @@ func mapLookup(values map[string]string) LookupFunc {
 func validProcessValues(overrides map[string]string) map[string]string {
 	// #nosec G101 -- these fixtures are file paths, never credential values.
 	values := map[string]string{
-		envPostgreSQLAddress:             "database.internal:5432",
-		envPostgreSQLDatabase:            "meshtransit",
-		envPostgreSQLRuntimeUser:         "mesh_runtime",
-		envPostgreSQLRuntimePasswordFile: "/run/secrets/postgres-runtime-password",
-		envPostgreSQLWorkerUser:          "mesh_worker",
-		envPostgreSQLWorkerPasswordFile:  "/run/secrets/postgres-worker-password",
-		envPostgreSQLCAFile:              "/run/secrets/postgres-ca.pem",
-		envRedisAddress:                  "cache.internal:6379",
-		envRedisUsername:                 "meshcore",
-		envRedisPasswordFile:             "/run/secrets/redis-password",
-		envRedisCAFile:                   "/run/secrets/redis-ca.pem",
-		envEnrollmentDigestActiveKeyID:   "active-v1",
-		envEnrollmentDigestActiveKeyFile: "/run/secrets/enrollment-digest-active-key",
-		envControlTLSCertificateFile:     "/run/secrets/control-tls-certificate.pem",
-		envControlTLSPrivateKeyFile:      "/run/secrets/control-tls-private-key.pem",
-		envControlNoisePrivateKeyFile:    "/run/secrets/control-noise-private-key",
+		envPostgreSQLAddress:                    "database.internal:5432",
+		envPostgreSQLDatabase:                   "meshtransit",
+		envPostgreSQLRuntimeUser:                "mesh_runtime",
+		envPostgreSQLRuntimePasswordFile:        "/run/secrets/postgres-runtime-password",
+		envPostgreSQLWorkerUser:                 "mesh_worker",
+		envPostgreSQLWorkerPasswordFile:         "/run/secrets/postgres-worker-password",
+		envPostgreSQLCAFile:                     "/run/secrets/postgres-ca.pem",
+		envRedisAddress:                         "cache.internal:6379",
+		envRedisUsername:                        "meshcore",
+		envRedisPasswordFile:                    "/run/secrets/redis-password",
+		envRedisCAFile:                          "/run/secrets/redis-ca.pem",
+		envEnrollmentDigestActiveKeyID:          "active-v1",
+		envEnrollmentDigestActiveKeyFile:        "/run/secrets/enrollment-digest-active-key",
+		envControlTLSCertificateFile:            "/run/secrets/control-tls-certificate.pem",
+		envControlTLSPrivateKeyFile:             "/run/secrets/control-tls-private-key.pem",
+		envControlNoisePrivateKeyFile:           "/run/secrets/control-noise-private-key",
+		envAPITLSCertificateFile:                "/run/secrets/control-tls-certificate.pem",
+		envAPITLSPrivateKeyFile:                 "/run/secrets/control-tls-private-key.pem",
+		envAPIAccountSessionDigestActiveKeyID:   "session-v1",
+		envAPIAccountSessionDigestActiveKeyFile: "/run/secrets/account-session-digest-active-key",
+		envAPIIdempotencyDigestKeyID:            "idempotency-v1",
+		envAPIIdempotencyDigestKeyFile:          "/run/secrets/idempotency-digest-key",
 	}
 	for key, value := range overrides {
 		values[key] = value

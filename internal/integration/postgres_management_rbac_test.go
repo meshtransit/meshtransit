@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -199,6 +200,12 @@ func seedNetworkManagementRBACAuthority(
 	connection *pgx.Conn,
 ) {
 	t.Helper()
+	keyring, token, _ := integrationManagementAccountSessionSecurity(t)
+	digests, err := keyring.Digests(token)
+	if err != nil || len(digests) != 1 {
+		t.Fatalf("derive management Account Session digest: %v", err)
+	}
+	tokenDigest := digests[0].Bytes()
 	var networkRevision int64
 	if err := connection.QueryRow(ctx, `SELECT network_revision
 FROM mesh_ops.network_revision
@@ -220,8 +227,9 @@ WHERE workspace_id = 103 AND network_id = 203`).Scan(&networkRevision); err != n
 		outboxEventClass:       "management_rbac.seeded",
 	}, func(transaction pgx.Tx) {
 		statements := []struct {
-			name  string
-			query string
+			name      string
+			query     string
+			arguments []any
 		}{
 			{
 				name: "management Account Session",
@@ -235,14 +243,14 @@ WHERE workspace_id = 103 AND network_id = 203`).Scan(&networkRevision); err != n
     absolute_expires_at, state
 ) OVERRIDING SYSTEM VALUE VALUES (
     812, '01890f00-0000-7000-8000-000000000812', 1, 11, 601, 711, 621, 103,
-    'hmac-sha256-v1', 'integration-v1',
-    pg_catalog.decode(pg_catalog.repeat('ad', 32), 'hex'), 1,
+    'hmac-sha256-v1', 'integration-v1', $1::BYTEA, 1,
     pg_catalog.transaction_timestamp() - INTERVAL '1 minute',
     'urn:meshtransit:assurance:mfa', ARRAY['pwd', 'mfa'], 1, 2, 1,
     pg_catalog.transaction_timestamp(), pg_catalog.transaction_timestamp(),
     pg_catalog.transaction_timestamp() + INTERVAL '30 minutes',
     pg_catalog.transaction_timestamp() + INTERVAL '8 hours', 'active'
 )`,
+				arguments: []any{tokenDigest[:]},
 			},
 			{
 				name: "Workspace membership",
@@ -297,11 +305,36 @@ WHERE permission.permission_key = 'device.manage'`,
 			},
 		}
 		for _, statement := range statements {
-			if _, err := transaction.Exec(ctx, statement.query); err != nil {
+			if _, err := transaction.Exec(ctx, statement.query, statement.arguments...); err != nil {
 				t.Fatalf("insert integration %s: %v", statement.name, err)
 			}
 		}
 	})
+}
+
+func integrationManagementAccountSessionSecurity(
+	t *testing.T,
+) (*accountsession.Keyring, accountsession.Token, string) {
+	t.Helper()
+	// #nosec G101 -- generated-format bearer fixture scoped to an ephemeral integration database.
+	rawToken := "mtas1.01890f00-0000-7000-8000-000000000001.1.AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
+	token, err := accountsession.ParseToken(rawToken)
+	if err != nil {
+		t.Fatalf("parse management Account Session token: %v", err)
+	}
+	keyID, err := accountsession.NewDigestKeyID("integration-v1")
+	if err != nil {
+		t.Fatalf("construct management Account Session key ID: %v", err)
+	}
+	key, err := accountsession.NewDigestKey(keyID, bytes.Repeat([]byte{0x77}, 32))
+	if err != nil {
+		t.Fatalf("construct management Account Session key: %v", err)
+	}
+	keyring, err := accountsession.NewKeyring(key)
+	if err != nil {
+		t.Fatalf("construct management Account Session keyring: %v", err)
+	}
+	return keyring, token, rawToken
 }
 
 func assertNetworkManagementRBACPrivileges(

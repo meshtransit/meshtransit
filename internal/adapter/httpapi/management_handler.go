@@ -1,0 +1,394 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"math"
+	"mime"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/meshtransit/meshtransit/internal/idempotency"
+	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/network"
+	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/node/revocation"
+	"github.com/meshtransit/meshtransit/internal/publicid"
+	"github.com/meshtransit/meshtransit/internal/workspace"
+)
+
+const (
+	deviceRevokeOperation      = "device_revoke"
+	unknownManagementOperation = "unknown"
+	maximumManagementBodyBytes = 4 * 1024
+	maximumManagementRequests  = 4096
+	minimumManagementTimeout   = 100 * time.Millisecond
+	maximumManagementTimeout   = 30 * time.Second
+)
+
+var (
+	// ErrInvalidManagementHandler reports missing dependencies or unsafe limits.
+	ErrInvalidManagementHandler = errors.New("invalid management handler")
+)
+
+// AccountSessionAuthenticator authenticates one opaque Core Account Session bearer.
+type AccountSessionAuthenticator interface {
+	Authenticate(context.Context, accountsession.Token) (accountsession.Session, error)
+}
+
+// DeviceRevoker performs one exact-scope Device revocation command.
+type DeviceRevoker interface {
+	Revoke(context.Context, revocation.Command) (revocation.Result, error)
+}
+
+// IdempotencyProver derives durable evidence without exposing the raw request key.
+type IdempotencyProver interface {
+	Proof(string) (idempotency.Proof, error)
+}
+
+// PublicIDGenerator supplies server-owned correlation identities.
+type PublicIDGenerator interface {
+	NewID() (publicid.ID, error)
+}
+
+// ManagementHandlerOptions contains immutable management-boundary dependencies.
+type ManagementHandlerOptions struct {
+	Sessions              AccountSessionAuthenticator
+	Revocations           DeviceRevoker
+	Idempotency           IdempotencyProver
+	CorrelationIDs        PublicIDGenerator
+	Logger                *slog.Logger
+	RequestTimeout        time.Duration
+	MaxConcurrentRequests int
+}
+
+// ManagementHandler validates public management requests before application use cases.
+type ManagementHandler struct {
+	sessions       AccountSessionAuthenticator
+	revocations    DeviceRevoker
+	idempotency    IdempotencyProver
+	correlationIDs PublicIDGenerator
+	logger         *slog.Logger
+	timeout        time.Duration
+	slots          chan struct{}
+	telemetry      *ManagementTelemetry
+}
+
+// NewManagementHandler constructs a bounded, fail-closed management API handler.
+func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler, error) {
+	if options.Sessions == nil || options.Revocations == nil || options.Idempotency == nil ||
+		options.CorrelationIDs == nil || options.Logger == nil ||
+		options.RequestTimeout < minimumManagementTimeout ||
+		options.RequestTimeout > maximumManagementTimeout ||
+		options.MaxConcurrentRequests <= 0 ||
+		options.MaxConcurrentRequests > maximumManagementRequests {
+		return nil, ErrInvalidManagementHandler
+	}
+	telemetry, err := NewManagementTelemetry(options.MaxConcurrentRequests)
+	if err != nil {
+		return nil, errors.Join(ErrInvalidManagementHandler, err)
+	}
+	return &ManagementHandler{
+		sessions:       options.Sessions,
+		revocations:    options.Revocations,
+		idempotency:    options.Idempotency,
+		correlationIDs: options.CorrelationIDs,
+		logger:         options.Logger,
+		timeout:        options.RequestTimeout,
+		slots:          make(chan struct{}, options.MaxConcurrentRequests),
+		telemetry:      telemetry,
+	}, nil
+}
+
+// ServeHTTP exposes the versioned management API without accepting browser cookies.
+func (handler *ManagementHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	if handler == nil || response == nil || request == nil || request.URL == nil ||
+		handler.sessions == nil || handler.revocations == nil || handler.idempotency == nil ||
+		handler.correlationIDs == nil || handler.logger == nil || handler.telemetry == nil {
+		if response != nil {
+			http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		}
+		return
+	}
+	correlationID, err := handler.correlationIDs.NewID()
+	if err != nil || !correlationID.IsValid() {
+		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		return
+	}
+	setManagementSecurityHeaders(response.Header(), correlationID)
+	operation := unknownManagementOperation
+	resultCode := "internal_failure"
+	startedAt := time.Now()
+	defer func() {
+		handler.telemetry.observe(operation, resultCode, time.Since(startedAt))
+		handler.logger.InfoContext(
+			request.Context(),
+			"management request completed",
+			"operation", operation,
+			"result", resultCode,
+			"correlation_id", correlationID.String(),
+			"duration_ms", time.Since(startedAt).Milliseconds(),
+		)
+	}()
+
+	select {
+	case handler.slots <- struct{}{}:
+		handler.telemetry.requestOpened()
+		defer func() {
+			<-handler.slots
+			handler.telemetry.requestClosed()
+		}()
+	default:
+		resultCode = "capacity_unavailable"
+		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
+			Status: http.StatusServiceUnavailable, Code: resultCode,
+			Message: "request capacity is temporarily unavailable", Retryable: true,
+		})
+		return
+	}
+
+	path, matched := parseDeviceRevokePath(request)
+	if !matched {
+		resultCode = "not_found"
+		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
+			Status: http.StatusNotFound, Code: resultCode,
+			Message: "the requested resource is unavailable",
+		})
+		return
+	}
+	operation = deviceRevokeOperation
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		resultCode = "method_not_allowed"
+		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
+			Status: http.StatusMethodNotAllowed, Code: resultCode,
+			Message: "the request method is not allowed",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(request.Context(), handler.timeout)
+	defer cancel()
+	request = request.WithContext(ctx)
+	session, authenticationErr := handler.authenticate(ctx, request)
+	if authenticationErr != nil {
+		classified := classifyAuthenticationError(authenticationErr)
+		resultCode = classified.Code
+		writeManagementError(ctx, handler.logger, response, correlationID, classified)
+		return
+	}
+	command, commandErr := handler.decodeDeviceRevokeCommand(response, request, path, session)
+	if commandErr != nil {
+		resultCode = commandErr.Code
+		writeManagementError(ctx, handler.logger, response, correlationID, *commandErr)
+		return
+	}
+	result, revokeErr := handler.revocations.Revoke(ctx, command)
+	if revokeErr != nil {
+		classified := classifyRevocationError(revokeErr)
+		resultCode = classified.Code
+		writeManagementError(ctx, handler.logger, response, correlationID, classified)
+		return
+	}
+	if !resultMatchesManagementCommand(result, command) {
+		resultCode = "internal_failure"
+		writeManagementError(ctx, handler.logger, response, correlationID, managementError{
+			Status: http.StatusInternalServerError, Code: resultCode,
+			Message: "the request could not be completed",
+		})
+		return
+	}
+
+	resultCode = "success"
+	response.Header().Set("ETag", strongVersionETag(result.DeviceVersion()))
+	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, revokeDeviceResponse{
+		Data: revokedDevice{
+			DeviceID:          result.NodeID().String(),
+			State:             "revoked",
+			DeviceVersion:     result.DeviceVersion(),
+			SessionGeneration: result.SessionGeneration(),
+			NetworkRevision:   result.NetworkRevision(),
+			InventoryRevision: result.InventoryRevision(),
+		},
+		CorrelationID: correlationID.String(),
+	})
+}
+
+func (handler *ManagementHandler) authenticate(
+	ctx context.Context,
+	request *http.Request,
+) (accountsession.Session, error) {
+	values := request.Header.Values("Authorization")
+	if len(values) != 1 || !strings.HasPrefix(values[0], "Bearer ") ||
+		len(values[0]) <= len("Bearer ") || strings.TrimSpace(values[0]) != values[0] {
+		return accountsession.Session{}, accountsession.ErrUnauthenticated
+	}
+	token, err := accountsession.ParseToken(strings.TrimPrefix(values[0], "Bearer "))
+	if err != nil {
+		return accountsession.Session{}, accountsession.ErrUnauthenticated
+	}
+	return handler.sessions.Authenticate(ctx, token)
+}
+
+func (handler *ManagementHandler) decodeDeviceRevokeCommand(
+	response http.ResponseWriter,
+	request *http.Request,
+	path deviceRevokePath,
+	session accountsession.Session,
+) (revocation.Command, *managementError) {
+	workspaceID, err := workspace.ParseID(path.workspaceID)
+	if err != nil {
+		return revocation.Command{}, invalidManagementRequest()
+	}
+	networkID, err := network.ParseID(path.networkID)
+	if err != nil {
+		return revocation.Command{}, invalidManagementRequest()
+	}
+	scope, err := network.NewScope(workspaceID, networkID)
+	if err != nil {
+		return revocation.Command{}, invalidManagementRequest()
+	}
+	deviceID, err := node.ParseID(path.deviceID)
+	if err != nil {
+		return revocation.Command{}, invalidManagementRequest()
+	}
+	expectedVersion, preconditionErr := parseIfMatch(request.Header.Values("If-Match"))
+	if preconditionErr != nil {
+		return revocation.Command{}, preconditionErr
+	}
+	rawIdempotencyKey := singleHeader(request.Header, "Idempotency-Key")
+	if rawIdempotencyKey == "" {
+		return revocation.Command{}, invalidManagementRequest()
+	}
+	proof, err := handler.idempotency.Proof(rawIdempotencyKey)
+	if err != nil {
+		return revocation.Command{}, invalidManagementRequest()
+	}
+	if request.Body == nil || !validJSONContentType(singleHeader(request.Header, "Content-Type")) {
+		return revocation.Command{}, invalidManagementRequest()
+	}
+	var body revokeDeviceRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, maximumManagementBodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return revocation.Command{}, invalidManagementRequest()
+	}
+	if err := ensureJSONEnd(decoder); err != nil {
+		return revocation.Command{}, invalidManagementRequest()
+	}
+	reason, err := revocation.NewReason(body.Reason)
+	if err != nil {
+		return revocation.Command{}, invalidManagementRequest()
+	}
+	command, err := revocation.NewCommand(revocation.CommandParams{
+		Scope: scope, NodeID: deviceID, ExpectedVersion: expectedVersion,
+		AccountSession: session, Reason: reason, IdempotencyEvidence: proof,
+	})
+	if err != nil {
+		return revocation.Command{}, invalidManagementRequest()
+	}
+	return command, nil
+}
+
+type deviceRevokePath struct {
+	workspaceID string
+	networkID   string
+	deviceID    string
+}
+
+func parseDeviceRevokePath(request *http.Request) (deviceRevokePath, bool) {
+	if request == nil || request.URL == nil || request.URL.RawQuery != "" || request.URL.RawPath != "" {
+		return deviceRevokePath{}, false
+	}
+	segments := strings.Split(strings.TrimPrefix(request.URL.Path, "/"), "/")
+	if len(segments) != 10 || segments[0] != "api" || segments[1] != "v1" ||
+		segments[2] != "workspaces" || segments[4] != "networks" ||
+		segments[6] != "devices" || segments[8] != "actions" || segments[9] != "revoke" {
+		return deviceRevokePath{}, false
+	}
+	return deviceRevokePath{
+		workspaceID: segments[3], networkID: segments[5], deviceID: segments[7],
+	}, true
+}
+
+func parseIfMatch(values []string) (int64, *managementError) {
+	if len(values) == 0 {
+		return 0, &managementError{
+			Status: http.StatusPreconditionRequired, Code: "precondition_required",
+			Message: "a strong Device version precondition is required",
+		}
+	}
+	if len(values) != 1 || len(values[0]) < 3 || values[0][0] != '"' ||
+		values[0][len(values[0])-1] != '"' {
+		return 0, invalidManagementRequest()
+	}
+	value := values[0][1 : len(values[0])-1]
+	version, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || version <= 0 || version == math.MaxInt64 ||
+		values[0] != strongVersionETag(version) {
+		return 0, invalidManagementRequest()
+	}
+	return version, nil
+}
+
+func strongVersionETag(version int64) string { return `"` + strconv.FormatInt(version, 10) + `"` }
+
+func singleHeader(header http.Header, name string) string {
+	values := header.Values(name)
+	if len(values) != 1 {
+		return ""
+	}
+	return values[0]
+}
+
+func validJSONContentType(value string) bool {
+	mediaType, parameters, err := mime.ParseMediaType(value)
+	if err != nil || mediaType != "application/json" {
+		return false
+	}
+	for name, parameter := range parameters {
+		if name != "charset" || !strings.EqualFold(parameter, "utf-8") {
+			return false
+		}
+	}
+	return true
+}
+
+func ensureJSONEnd(decoder *json.Decoder) error {
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return errors.New("management request contains trailing data")
+	}
+	return nil
+}
+
+func resultMatchesManagementCommand(result revocation.Result, command revocation.Command) bool {
+	return result.IsValid() && result.Scope() == command.Scope() &&
+		result.NodeID() == command.NodeID() &&
+		result.DeviceVersion() == command.ExpectedVersion()+1
+}
+
+func invalidManagementRequest() *managementError {
+	return &managementError{
+		Status: http.StatusBadRequest, Code: "invalid_request",
+		Message: "the request is invalid",
+	}
+}
+
+// PublicCorrelationIDGenerator creates UUIDv7 correlation identities using OS entropy.
+type PublicCorrelationIDGenerator struct{}
+
+// NewID returns one server-owned correlation identity.
+func (PublicCorrelationIDGenerator) NewID() (publicid.ID, error) {
+	id, err := publicid.New()
+	if err != nil {
+		return publicid.ID{}, fmt.Errorf("generate management correlation id: %w", err)
+	}
+	return id, nil
+}

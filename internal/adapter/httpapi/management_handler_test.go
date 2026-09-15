@@ -1,0 +1,331 @@
+package httpapi
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/meshtransit/meshtransit/internal/deployment"
+	"github.com/meshtransit/meshtransit/internal/idempotency"
+	"github.com/meshtransit/meshtransit/internal/identity"
+	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/node/revocation"
+	"github.com/meshtransit/meshtransit/internal/publicid"
+	"github.com/meshtransit/meshtransit/internal/workspace"
+)
+
+// #nosec G101 -- canonical token grammar fixture; it has no authority outside this test.
+const managementTokenFixture = "mtas1.01890f00-0000-7000-8000-000000000001.7.AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
+
+func TestManagementHandlerRevokesDevice(t *testing.T) {
+	t.Parallel()
+
+	session := managementSessionFixture(t)
+	var captured revocation.Command
+	handler := managementHandlerFixture(t, managementHandlerFixtureOptions{
+		session: session,
+		revoke: func(_ context.Context, command revocation.Command) (revocation.Result, error) {
+			captured = command
+			return managementResultFixture(t, command), nil
+		},
+	})
+	request := newManagementRequest(t, http.MethodPost, validManagementPath(), `{"reason":" compromised device "}`)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if captured.Scope().WorkspaceID().String() != managementWorkspaceID() ||
+		captured.Scope().NetworkID().String() != managementNetworkID() ||
+		captured.NodeID().String() != managementDeviceID() || captured.ExpectedVersion() != 1 ||
+		captured.AccountSession().ID() != session.ID() || captured.Reason().String() != "compromised device" ||
+		!captured.IdempotencyEvidence().IsValid() {
+		t.Fatalf("captured command = %+v, want exact authenticated request", captured)
+	}
+	if response.Header().Get("ETag") != `"2"` ||
+		response.Header().Get("X-Correlation-ID") != managementCorrelationID() ||
+		response.Header().Get("Cache-Control") != "no-store" ||
+		response.Header().Get("X-Content-Type-Options") != "nosniff" ||
+		response.Header().Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("response headers = %+v", response.Header())
+	}
+	var body struct {
+		Data struct {
+			DeviceID          string `json:"device_id"`
+			State             string `json:"state"`
+			DeviceVersion     int64  `json:"device_version"`
+			SessionGeneration int64  `json:"session_generation"`
+			NetworkRevision   int64  `json:"network_revision"`
+			InventoryRevision int64  `json:"inventory_revision"`
+		} `json:"data"`
+		CorrelationID string `json:"correlation_id"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v; body = %s", err, response.Body.String())
+	}
+	if body.Data.DeviceID != managementDeviceID() || body.Data.State != "revoked" ||
+		body.Data.DeviceVersion != 2 || body.Data.SessionGeneration != 4 ||
+		body.Data.NetworkRevision != 8 || body.Data.InventoryRevision != 6 ||
+		body.CorrelationID != managementCorrelationID() {
+		t.Fatalf("response body = %+v", body)
+	}
+}
+
+func TestManagementHandlerFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		method           string
+		path             string
+		body             string
+		mutate           func(*http.Request)
+		authErr          error
+		revokeErr        error
+		status           int
+		code             string
+		retryable        bool
+		wantAuthenticate bool
+		wantRevoke       bool
+	}{
+		{name: "wrong method", method: http.MethodGet, path: validManagementPath(), status: http.StatusMethodNotAllowed, code: "method_not_allowed"},
+		{name: "unknown route", method: http.MethodPost, path: "/api/v1/unknown", status: http.StatusNotFound, code: "not_found"},
+		{name: "missing bearer", method: http.MethodPost, path: validManagementPath(), mutate: func(request *http.Request) { request.Header.Del("Authorization") }, status: http.StatusUnauthorized, code: "unauthenticated"},
+		{name: "malformed bearer", method: http.MethodPost, path: validManagementPath(), mutate: func(request *http.Request) { request.Header.Set("Authorization", "Bearer invalid") }, status: http.StatusUnauthorized, code: "unauthenticated"},
+		{name: "revoked session", method: http.MethodPost, path: validManagementPath(), authErr: accountsession.ErrUnauthenticated, status: http.StatusUnauthorized, code: "unauthenticated", wantAuthenticate: true},
+		{name: "session authority unavailable", method: http.MethodPost, path: validManagementPath(), authErr: accountsession.ErrAuthenticationUnavailable, status: http.StatusServiceUnavailable, code: "authentication_unavailable", retryable: true, wantAuthenticate: true},
+		{name: "missing precondition", method: http.MethodPost, path: validManagementPath(), mutate: func(request *http.Request) { request.Header.Del("If-Match") }, status: http.StatusPreconditionRequired, code: "precondition_required", wantAuthenticate: true},
+		{name: "weak precondition", method: http.MethodPost, path: validManagementPath(), mutate: func(request *http.Request) { request.Header.Set("If-Match", `W/"1"`) }, status: http.StatusBadRequest, code: "invalid_request", wantAuthenticate: true},
+		{name: "missing idempotency", method: http.MethodPost, path: validManagementPath(), mutate: func(request *http.Request) { request.Header.Del("Idempotency-Key") }, status: http.StatusBadRequest, code: "invalid_request", wantAuthenticate: true},
+		{name: "duplicate content type", method: http.MethodPost, path: validManagementPath(), mutate: func(request *http.Request) { request.Header.Add("Content-Type", "application/json") }, status: http.StatusBadRequest, code: "invalid_request", wantAuthenticate: true},
+		{name: "unknown json field", method: http.MethodPost, path: validManagementPath(), body: `{"reason":"compromised","unexpected":true}`, status: http.StatusBadRequest, code: "invalid_request", wantAuthenticate: true},
+		{name: "forbidden", method: http.MethodPost, path: validManagementPath(), revokeErr: revocation.ErrForbidden, status: http.StatusForbidden, code: "forbidden", wantAuthenticate: true, wantRevoke: true},
+		{name: "hidden target", method: http.MethodPost, path: validManagementPath(), revokeErr: revocation.ErrNotFound, status: http.StatusNotFound, code: "not_found", wantAuthenticate: true, wantRevoke: true},
+		{name: "stale version", method: http.MethodPost, path: validManagementPath(), revokeErr: revocation.ErrConflict, status: http.StatusPreconditionFailed, code: "precondition_failed", wantAuthenticate: true, wantRevoke: true},
+		{name: "idempotency conflict", method: http.MethodPost, path: validManagementPath(), revokeErr: revocation.ErrIntentConflict, status: http.StatusConflict, code: "idempotency_conflict", wantAuthenticate: true, wantRevoke: true},
+		{name: "already revoked", method: http.MethodPost, path: validManagementPath(), revokeErr: revocation.ErrAlreadyRevoked, status: http.StatusConflict, code: "device_already_revoked", wantAuthenticate: true, wantRevoke: true},
+		{name: "dependency unavailable", method: http.MethodPost, path: validManagementPath(), revokeErr: revocation.ErrRetryExhausted, status: http.StatusServiceUnavailable, code: "operation_unavailable", retryable: true, wantAuthenticate: true, wantRevoke: true},
+		{name: "deadline", method: http.MethodPost, path: validManagementPath(), revokeErr: context.DeadlineExceeded, status: http.StatusGatewayTimeout, code: "request_timeout", retryable: true, wantAuthenticate: true, wantRevoke: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var authenticated, revoked bool
+			handler := managementHandlerFixture(t, managementHandlerFixtureOptions{
+				authenticate: func(context.Context, accountsession.Token) (accountsession.Session, error) {
+					authenticated = true
+					return managementSessionFixture(t), test.authErr
+				},
+				revoke: func(_ context.Context, command revocation.Command) (revocation.Result, error) {
+					revoked = true
+					if test.revokeErr != nil {
+						return revocation.Result{}, errors.Join(revocation.ErrRevocationFailed, test.revokeErr, errors.New("private database detail"))
+					}
+					return managementResultFixture(t, command), nil
+				},
+			})
+			body := test.body
+			if body == "" {
+				body = `{"reason":"compromised device"}`
+			}
+			request := newManagementRequest(t, test.method, test.path, body)
+			if test.mutate != nil {
+				test.mutate(request)
+			}
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d; body = %s", response.Code, test.status, response.Body.String())
+			}
+			var envelope struct {
+				Error struct {
+					Code          string `json:"code"`
+					Message       string `json:"message"`
+					CorrelationID string `json:"correlation_id"`
+					Retryable     bool   `json:"retryable"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+				t.Fatalf("json.Unmarshal() error = %v; body = %s", err, response.Body.String())
+			}
+			if envelope.Error.Code != test.code || envelope.Error.CorrelationID != managementCorrelationID() ||
+				envelope.Error.Retryable != test.retryable || envelope.Error.Message == "" {
+				t.Fatalf("error envelope = %+v", envelope.Error)
+			}
+			if authenticated != test.wantAuthenticate || revoked != test.wantRevoke {
+				t.Fatalf("authenticate/revoke = %t/%t, want %t/%t", authenticated, revoked, test.wantAuthenticate, test.wantRevoke)
+			}
+			for _, secret := range []string{managementTokenFixture, "request-key-0001", "private database detail"} {
+				if strings.Contains(response.Body.String(), secret) {
+					t.Fatalf("response disclosed %q: %s", secret, response.Body.String())
+				}
+			}
+		})
+	}
+}
+
+func TestNewManagementHandlerRejectsInvalidDependencies(t *testing.T) {
+	t.Parallel()
+
+	options := validManagementHandlerOptions(t)
+	for _, mutate := range []func(*ManagementHandlerOptions){
+		func(options *ManagementHandlerOptions) { options.Sessions = nil },
+		func(options *ManagementHandlerOptions) { options.Revocations = nil },
+		func(options *ManagementHandlerOptions) { options.Idempotency = nil },
+		func(options *ManagementHandlerOptions) { options.CorrelationIDs = nil },
+		func(options *ManagementHandlerOptions) { options.Logger = nil },
+		func(options *ManagementHandlerOptions) { options.RequestTimeout = 0 },
+		func(options *ManagementHandlerOptions) { options.MaxConcurrentRequests = 0 },
+	} {
+		invalid := options
+		mutate(&invalid)
+		if _, err := NewManagementHandler(invalid); !errors.Is(err, ErrInvalidManagementHandler) {
+			t.Fatalf("NewManagementHandler() error = %v, want ErrInvalidManagementHandler", err)
+		}
+	}
+}
+
+type managementHandlerFixtureOptions struct {
+	session      accountsession.Session
+	authenticate func(context.Context, accountsession.Token) (accountsession.Session, error)
+	revoke       func(context.Context, revocation.Command) (revocation.Result, error)
+}
+
+func managementHandlerFixture(t *testing.T, fixture managementHandlerFixtureOptions) http.Handler {
+	t.Helper()
+	options := validManagementHandlerOptions(t)
+	if fixture.authenticate != nil {
+		options.Sessions = managementSessionAuthenticatorFunc(fixture.authenticate)
+	} else if fixture.session.IsValid() {
+		options.Sessions = managementSessionAuthenticatorFunc(func(context.Context, accountsession.Token) (accountsession.Session, error) {
+			return fixture.session, nil
+		})
+	}
+	if fixture.revoke != nil {
+		options.Revocations = managementDeviceRevokerFunc(fixture.revoke)
+	}
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatalf("NewManagementHandler() error = %v", err)
+	}
+	return handler
+}
+
+func validManagementHandlerOptions(t *testing.T) ManagementHandlerOptions {
+	t.Helper()
+	proof, err := idempotency.NewProof("management-v1", [32]byte{31: 1})
+	if err != nil {
+		t.Fatalf("idempotency.NewProof() error = %v", err)
+	}
+	correlationID, err := publicid.Parse(managementCorrelationID())
+	if err != nil {
+		t.Fatalf("publicid.Parse() error = %v", err)
+	}
+	return ManagementHandlerOptions{
+		Sessions: managementSessionAuthenticatorFunc(func(context.Context, accountsession.Token) (accountsession.Session, error) {
+			return managementSessionFixture(t), nil
+		}),
+		Revocations: managementDeviceRevokerFunc(func(_ context.Context, command revocation.Command) (revocation.Result, error) {
+			return managementResultFixture(t, command), nil
+		}),
+		Idempotency: managementIdempotencyProverFunc(func(string) (idempotency.Proof, error) {
+			return proof, nil
+		}),
+		CorrelationIDs: managementPublicIDGeneratorFunc(func() (publicid.ID, error) {
+			return correlationID, nil
+		}),
+		Logger:                slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		RequestTimeout:        time.Second,
+		MaxConcurrentRequests: 2,
+	}
+}
+
+type managementSessionAuthenticatorFunc func(context.Context, accountsession.Token) (accountsession.Session, error)
+
+func (function managementSessionAuthenticatorFunc) Authenticate(ctx context.Context, token accountsession.Token) (accountsession.Session, error) {
+	return function(ctx, token)
+}
+
+type managementDeviceRevokerFunc func(context.Context, revocation.Command) (revocation.Result, error)
+
+func (function managementDeviceRevokerFunc) Revoke(ctx context.Context, command revocation.Command) (revocation.Result, error) {
+	return function(ctx, command)
+}
+
+type managementIdempotencyProverFunc func(string) (idempotency.Proof, error)
+
+func (function managementIdempotencyProverFunc) Proof(value string) (idempotency.Proof, error) {
+	return function(value)
+}
+
+type managementPublicIDGeneratorFunc func() (publicid.ID, error)
+
+func (function managementPublicIDGeneratorFunc) NewID() (publicid.ID, error) { return function() }
+
+func newManagementRequest(t *testing.T, method, path, body string) *http.Request {
+	t.Helper()
+	request := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewBufferString(body))
+	request.Header.Set("Authorization", "Bearer "+managementTokenFixture)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("If-Match", `"1"`)
+	request.Header.Set("Idempotency-Key", "request-key-0001")
+	return request
+}
+
+func validManagementPath() string {
+	return "/api/v1/workspaces/" + managementWorkspaceID() + "/networks/" + managementNetworkID() +
+		"/devices/" + managementDeviceID() + "/actions/revoke"
+}
+
+func managementWorkspaceID() string   { return "01890f00-0000-7000-8000-000000000101" }
+func managementNetworkID() string     { return "01890f00-0000-7000-8000-000000000201" }
+func managementDeviceID() string      { return "01890f00-0000-7000-8000-000000000301" }
+func managementCorrelationID() string { return "01890f00-0000-7000-8000-000000000901" }
+
+func managementSessionFixture(t *testing.T) accountsession.Session {
+	t.Helper()
+	deploymentID, _ := deployment.ParseID("01890f00-0000-7000-8000-000000000001")
+	principalID, _ := identity.ParsePrincipalID("01890f00-0000-7000-8000-000000000401")
+	sessionID, _ := accountsession.ParseID("01890f00-0000-7000-8000-000000000811")
+	subjectID, _ := accountsession.ParseIdentitySubjectID("01890f00-0000-7000-8000-000000000611")
+	workspaceID, _ := workspace.ParseID(managementWorkspaceID())
+	now := time.Date(2026, time.September, 16, 0, 0, 0, 0, time.UTC)
+	session, err := accountsession.NewSession(accountsession.Params{
+		ID: sessionID, DeploymentID: deploymentID, PrincipalID: principalID,
+		IdentitySubjectID: subjectID, LoginWorkspaceID: workspaceID, HasLoginWorkspace: true,
+		AuthenticationTime: now.Add(-time.Hour), ACR: "urn:meshtransit:test", AMR: []string{"pwd"},
+		Version: 1, PrincipalAuthorityGeneration: 1, AccountSessionGeneration: 1,
+		ProviderGeneration: 1, DeploymentRecoveryEpoch: 7,
+		IdleExpiresAt: now.Add(time.Hour), AbsoluteExpiresAt: now.Add(2 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("accountsession.NewSession() error = %v", err)
+	}
+	return session
+}
+
+func managementResultFixture(t *testing.T, command revocation.Command) revocation.Result {
+	t.Helper()
+	recordID, _ := publicid.Parse("01890f00-0000-7000-8000-000000000402")
+	result, err := revocation.NewResult(revocation.ResultParams{
+		IdempotencyRecordID: recordID,
+		Scope:               command.Scope(), NodeID: command.NodeID(), DeviceVersion: 2,
+		SessionGeneration: 4, NetworkRevision: 8, InventoryRevision: 6,
+	})
+	if err != nil {
+		t.Fatalf("revocation.NewResult() error = %v", err)
+	}
+	return result
+}

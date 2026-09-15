@@ -13,7 +13,7 @@ import (
 
 const (
 	// SchemaVersion identifies the validated environment configuration contract.
-	SchemaVersion = 12
+	SchemaVersion = 13
 
 	envRole            = "MESHTRANSIT_ROLE"
 	envHealthAddress   = "MESHTRANSIT_HEALTH_ADDRESS"
@@ -51,6 +51,7 @@ type Config struct {
 	LogLevel        slog.Level
 	Dependencies    DependencyConfig
 	Storage         *StorageConfig
+	API             *APIConfig
 	Control         *ControlConfig
 	Enrollment      *EnrollmentConfig
 	RevisionWorker  *RevisionWorkerConfig
@@ -97,6 +98,7 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	var storageConfig *StorageConfig
+	var apiConfig *APIConfig
 	var controlConfig *ControlConfig
 	var enrollmentConfig *EnrollmentConfig
 	var revisionWorkerConfig *RevisionWorkerConfig
@@ -122,6 +124,20 @@ func Load(lookup LookupFunc) (Config, error) {
 		controlConfig = &loadedControl
 		enrollmentConfig = &loadedEnrollment
 	}
+	if role == app.RoleAll || role == app.RoleAPI {
+		loadedAPI, loadErr := loadAPIConfig(lookup)
+		if loadErr != nil {
+			return Config{}, loadErr
+		}
+		if addressesConflict(healthAddress, loadedAPI.Address) ||
+			controlConfig != nil && addressesConflict(controlConfig.Address, loadedAPI.Address) {
+			return Config{}, settingError(envAPIAddress)
+		}
+		if loadErr := validateAPIExternalSecretOwnership(loadedAPI, controlConfig, enrollmentConfig); loadErr != nil {
+			return Config{}, loadErr
+		}
+		apiConfig = &loadedAPI
+	}
 	if role == app.RoleAll || role == app.RoleWorker {
 		loadedWorker, loadErr := loadRevisionWorkerConfig(lookup)
 		if loadErr != nil {
@@ -137,6 +153,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		LogLevel:        logLevel,
 		Dependencies:    dependencyConfig,
 		Storage:         storageConfig,
+		API:             apiConfig,
 		Control:         controlConfig,
 		Enrollment:      enrollmentConfig,
 		RevisionWorker:  revisionWorkerConfig,
