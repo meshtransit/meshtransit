@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/control/mapsession"
+	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/workspace"
@@ -22,6 +23,55 @@ const mapRequestBody = `{
 }`
 
 func mapSnapshotFixture(t *testing.T) mapsession.Snapshot {
+	t.Helper()
+	return mapSnapshotFixtureWithCandidates(t, nil)
+}
+
+func mapSnapshotWithCandidateFixture(t *testing.T) mapsession.Snapshot {
+	t.Helper()
+	base := mapSnapshotFixture(t)
+	peerNodeID, err := node.ParseID("01890f00-0000-7000-8000-000000000702")
+	if err != nil {
+		t.Fatalf("node.ParseID(peer) error = %v", err)
+	}
+	ownerID, err := identity.ParsePrincipalID("01890f00-0000-7000-8000-000000000011")
+	if err != nil {
+		t.Fatalf("identity.ParsePrincipalID() error = %v", err)
+	}
+	hostname, err := node.ParseHostname("node-two.example")
+	if err != nil {
+		t.Fatalf("node.ParseHostname(peer) error = %v", err)
+	}
+	machineKey, err := node.NewMachineKey([32]byte{2})
+	if err != nil {
+		t.Fatalf("node.NewMachineKey(peer) error = %v", err)
+	}
+	nodeKey, err := node.NewKey([32]byte{3})
+	if err != nil {
+		t.Fatalf("node.NewKey(peer) error = %v", err)
+	}
+	candidate, err := mapsession.NewPeerCandidate(mapsession.PeerCandidateParams{
+		Scope:             base.Scope(),
+		NodeID:            peerNodeID,
+		OwnerID:           ownerID,
+		Hostname:          hostname,
+		MachineKey:        machineKey,
+		NodeKey:           nodeKey,
+		SessionGeneration: 1,
+		Addresses:         []netip.Prefix{netip.MustParsePrefix("100.64.0.2/32")},
+		CreatedAt:         base.CreatedAt(),
+		KeyExpiry:         base.KeyExpiry(),
+	})
+	if err != nil {
+		t.Fatalf("mapsession.NewPeerCandidate() error = %v", err)
+	}
+	return mapSnapshotFixtureWithCandidates(t, []mapsession.PeerCandidate{candidate})
+}
+
+func mapSnapshotFixtureWithCandidates(
+	t *testing.T,
+	peerCandidates []mapsession.PeerCandidate,
+) mapsession.Snapshot {
 	t.Helper()
 	workspaceID, err := workspace.ParseID("01890f00-0000-7000-8000-000000000101")
 	if err != nil {
@@ -70,6 +120,7 @@ func mapSnapshotFixture(t *testing.T) mapsession.Snapshot {
 		Addresses:         []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
 		CreatedAt:         createdAt,
 		KeyExpiry:         createdAt.Add(24 * time.Hour),
+		PeerCandidates:    peerCandidates,
 	})
 	if err != nil {
 		t.Fatalf("mapsession.NewSnapshot() error = %v", err)

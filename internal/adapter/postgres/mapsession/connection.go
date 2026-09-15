@@ -14,9 +14,17 @@ type database interface {
 
 type databaseTransaction interface {
 	Exec(context.Context, string, ...any) error
+	Query(context.Context, string, ...any) (databaseRows, error)
 	QueryRow(context.Context, string, ...any) databaseRow
 	Commit(context.Context) error
 	Rollback(context.Context) error
+}
+
+type databaseRows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+	Close()
 }
 
 type databaseRow interface {
@@ -64,6 +72,14 @@ func (transaction pgxDatabaseTransaction) QueryRow(
 	arguments ...any,
 ) databaseRow {
 	return transaction.transaction.QueryRow(ctx, query, arguments...)
+}
+
+func (transaction pgxDatabaseTransaction) Query(
+	ctx context.Context,
+	query string,
+	arguments ...any,
+) (databaseRows, error) {
+	return transaction.transaction.Query(ctx, query, arguments...)
 }
 
 func (transaction pgxDatabaseTransaction) Commit(ctx context.Context) error {

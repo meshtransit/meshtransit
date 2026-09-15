@@ -5,6 +5,7 @@ import (
 	"time"
 
 	appmapsession "github.com/meshtransit/meshtransit/internal/control/mapsession"
+	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/workspace"
@@ -24,20 +25,25 @@ type snapshotRecord struct {
 	addresses         []string
 }
 
+type peerCandidateRecord struct {
+	nodeID            string
+	ownerID           string
+	hostname          string
+	machineKey        []byte
+	nodeKey           []byte
+	sessionGeneration int64
+	createdAt         time.Time
+	keyExpiry         time.Time
+	addresses         []string
+}
+
 func (record snapshotRecord) snapshot(
 	workspaceValue string,
 	networkValue string,
 	recoveryEpoch int64,
+	peerCandidates []appmapsession.PeerCandidate,
 ) (appmapsession.Snapshot, error) {
-	workspaceID, err := workspace.ParseID(workspaceValue)
-	if err != nil {
-		return appmapsession.Snapshot{}, ErrSnapshotEvidence
-	}
-	networkID, err := network.ParseID(networkValue)
-	if err != nil {
-		return appmapsession.Snapshot{}, ErrSnapshotEvidence
-	}
-	scope, err := network.NewScope(workspaceID, networkID)
+	scope, err := scopeFromText(workspaceValue, networkValue)
 	if err != nil {
 		return appmapsession.Snapshot{}, ErrSnapshotEvidence
 	}
@@ -75,11 +81,73 @@ func (record snapshotRecord) snapshot(
 		Addresses:         addresses,
 		CreatedAt:         record.createdAt,
 		KeyExpiry:         record.keyExpiry,
+		PeerCandidates:    peerCandidates,
 	})
 	if err != nil {
 		return appmapsession.Snapshot{}, ErrSnapshotEvidence
 	}
 	return snapshot, nil
+}
+
+func (record peerCandidateRecord) candidate(
+	scope network.Scope,
+) (appmapsession.PeerCandidate, error) {
+	nodeID, err := node.ParseID(record.nodeID)
+	if err != nil {
+		return appmapsession.PeerCandidate{}, ErrSnapshotEvidence
+	}
+	ownerID, err := identity.ParsePrincipalID(record.ownerID)
+	if err != nil {
+		return appmapsession.PeerCandidate{}, ErrSnapshotEvidence
+	}
+	hostname, err := node.ParseHostname(record.hostname)
+	if err != nil {
+		return appmapsession.PeerCandidate{}, ErrSnapshotEvidence
+	}
+	machineKey, err := machineKeyFromBytes(record.machineKey)
+	if err != nil {
+		return appmapsession.PeerCandidate{}, err
+	}
+	nodeKey, err := nodeKeyFromBytes(record.nodeKey)
+	if err != nil {
+		return appmapsession.PeerCandidate{}, err
+	}
+	addresses, err := addressesFromText(record.addresses)
+	if err != nil {
+		return appmapsession.PeerCandidate{}, err
+	}
+	candidate, err := appmapsession.NewPeerCandidate(appmapsession.PeerCandidateParams{
+		Scope:             scope,
+		NodeID:            nodeID,
+		OwnerID:           ownerID,
+		Hostname:          hostname,
+		MachineKey:        machineKey,
+		NodeKey:           nodeKey,
+		SessionGeneration: record.sessionGeneration,
+		Addresses:         addresses,
+		CreatedAt:         record.createdAt,
+		KeyExpiry:         record.keyExpiry,
+	})
+	if err != nil {
+		return appmapsession.PeerCandidate{}, ErrSnapshotEvidence
+	}
+	return candidate, nil
+}
+
+func scopeFromText(workspaceValue, networkValue string) (network.Scope, error) {
+	workspaceID, err := workspace.ParseID(workspaceValue)
+	if err != nil {
+		return network.Scope{}, ErrSnapshotEvidence
+	}
+	networkID, err := network.ParseID(networkValue)
+	if err != nil {
+		return network.Scope{}, ErrSnapshotEvidence
+	}
+	scope, err := network.NewScope(workspaceID, networkID)
+	if err != nil {
+		return network.Scope{}, ErrSnapshotEvidence
+	}
+	return scope, nil
 }
 
 func machineKeyFromBytes(value []byte) (node.MachineKey, error) {

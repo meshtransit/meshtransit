@@ -31,7 +31,13 @@ func TestStoreLoadsConsistentScopedSnapshot(t *testing.T) {
 			transaction.rollbackCalls,
 		)
 	}
-	wantQueries := []string{configureTransactionSQL, resolveScopeSQL, setScopeSQL, loadSnapshotSQL}
+	wantQueries := []string{
+		configureTransactionSQL,
+		resolveScopeSQL,
+		setScopeSQL,
+		loadSnapshotSQL,
+		loadPeerCandidatesSQL,
+	}
 	if !reflect.DeepEqual(transaction.queries, wantQueries) {
 		t.Fatalf("queries = %v, want %v", transaction.queries, wantQueries)
 	}
@@ -40,6 +46,13 @@ func TestStoreLoadsConsistentScopedSnapshot(t *testing.T) {
 	if !reflect.DeepEqual(transaction.arguments[1], []any{fingerprint[:], nodeKey[:]}) ||
 		!reflect.DeepEqual(transaction.arguments[3], []any{fingerprint[:], nodeKey[:]}) {
 		t.Fatalf("identity arguments were not pinned to the authenticated Node")
+	}
+	if !reflect.DeepEqual(transaction.arguments[4], []any{fingerprint[:], nodeKey[:], 101}) {
+		t.Fatalf("candidate arguments did not bind authenticated keys and limit+1")
+	}
+	candidates := snapshot.PeerCandidates()
+	if len(candidates) != 1 || candidates[0].NodeID().String() != testPeerNodeID {
+		t.Fatalf("PeerCandidates() = %+v, want one decoded candidate", candidates)
 	}
 	if observer.calls != 1 || observer.operation != OperationLoad || observer.err != nil {
 		t.Fatalf("observer = %+v, want one successful load", observer)
@@ -95,7 +108,11 @@ func TestStoreRejectsMissingTransaction(t *testing.T) {
 	observer := &recordingObserver{}
 	store, err := newStore(
 		&fakeDatabase{},
-		Options{StatementTimeout: time.Second, IdleTimeout: 2 * time.Second},
+		Options{
+			StatementTimeout:   time.Second,
+			IdleTimeout:        2 * time.Second,
+			PeerCandidateLimit: 100,
+		},
 		observer,
 	)
 	if err != nil {
@@ -109,7 +126,11 @@ func TestStoreRejectsMissingTransaction(t *testing.T) {
 
 func TestStoreRejectsUnsafeConstruction(t *testing.T) {
 	observer := &recordingObserver{}
-	validOptions := Options{StatementTimeout: time.Second, IdleTimeout: 2 * time.Second}
+	validOptions := Options{
+		StatementTimeout:   time.Second,
+		IdleTimeout:        2 * time.Second,
+		PeerCandidateLimit: 100,
+	}
 	for _, test := range []struct {
 		name     string
 		database database
@@ -120,11 +141,29 @@ func TestStoreRejectsUnsafeConstruction(t *testing.T) {
 		{name: "missing observer", database: &fakeDatabase{}, options: validOptions},
 		{name: "zero statement timeout", database: &fakeDatabase{}, options: Options{IdleTimeout: time.Second}, observer: observer},
 		{name: "excess idle timeout", database: &fakeDatabase{}, options: Options{StatementTimeout: time.Second, IdleTimeout: maximumIdleTimeout + 1}, observer: observer},
+		{name: "zero candidate limit", database: &fakeDatabase{}, options: Options{StatementTimeout: time.Second, IdleTimeout: time.Second}, observer: observer},
+		{name: "excess candidate limit", database: &fakeDatabase{}, options: Options{StatementTimeout: time.Second, IdleTimeout: time.Second, PeerCandidateLimit: appmapsession.MaximumPeerCandidates + 1}, observer: observer},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := newStore(test.database, test.options, test.observer); !errors.Is(err, ErrInvalidStore) {
 				t.Fatalf("newStore() error = %v, want ErrInvalidStore", err)
 			}
 		})
+	}
+}
+
+func TestStoreFailsClosedWhenPeerCandidateBoundIsExceeded(t *testing.T) {
+	store, _, transaction, _, identity := validStoreFixture(t)
+	store.options.PeerCandidateLimit = 1
+	transaction.candidateRows = &peerCandidateRows{records: []peerCandidateRecord{
+		validPeerCandidateRecord(2),
+		validPeerCandidateRecord(3),
+	}}
+
+	if _, err := store.Load(t.Context(), identity); !errors.Is(err, appmapsession.ErrPeerCandidateLimit) {
+		t.Fatalf("Load() error = %v, want ErrPeerCandidateLimit", err)
+	}
+	if transaction.committed || transaction.rollbackCalls != 1 {
+		t.Fatalf("transaction committed=%t rollbacks=%d, want false/1", transaction.committed, transaction.rollbackCalls)
 	}
 }

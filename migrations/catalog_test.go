@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 15 {
-		t.Fatalf("len(Catalog()) = %d, want 15", len(catalog))
+	if len(catalog) != 16 {
+		t.Fatalf("len(Catalog()) = %d, want 16", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -569,8 +569,58 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("map session scope migration SQL contains excessive capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 15 {
-		t.Fatalf("LatestVersion() = %d, want 15", LatestVersion())
+	peerCandidates := catalog[15]
+	if peerCandidates.Description != "bounded map session peer candidate projection" {
+		t.Fatalf(
+			"migration 16 description = %q, want map peer candidates",
+			peerCandidates.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE POLICY workspace_map_peer_candidate_scope_policy",
+		"CREATE POLICY network_map_peer_candidate_scope_policy",
+		"TO mesh_migrator",
+		"CREATE FUNCTION mesh_ops.load_map_peer_candidates",
+		"p_machine_key_fingerprint BYTEA",
+		"p_node_key BYTEA",
+		"p_limit INTEGER",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh, mesh_ops",
+		"candidate.workspace_id = scoped_workspace_id",
+		"candidate.network_id = scoped_network_id",
+		"candidate.id <> authenticated_device_id",
+		"candidate.state = 'active'",
+		"candidate.expires_at > pg_catalog.transaction_timestamp()",
+		"machine.state = 'active'",
+		"current_node_key.state = 'active'",
+		"owner.state = 'active'",
+		"lease.state = 'active'",
+		"ORDER BY candidate.created_at DESC, candidate.id DESC",
+		"LIMIT p_limit",
+		"REVOKE ALL ON FUNCTION mesh_ops.load_map_peer_candidates",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_peer_candidates(BYTEA, BYTEA, INTEGER)",
+	} {
+		if !strings.Contains(peerCandidates.SQL, required) {
+			t.Errorf("map peer candidate migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"USING (TRUE)",
+		"WITH CHECK (TRUE)",
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"TO mesh_worker",
+	} {
+		if strings.Contains(peerCandidates.SQL, forbidden) {
+			t.Errorf("map peer candidate migration SQL contains excessive capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 16 {
+		t.Fatalf("LatestVersion() = %d, want 16", LatestVersion())
 	}
 }
 

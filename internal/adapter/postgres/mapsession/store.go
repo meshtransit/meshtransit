@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/meshtransit/meshtransit/internal/control"
 	appmapsession "github.com/meshtransit/meshtransit/internal/control/mapsession"
+	"github.com/meshtransit/meshtransit/internal/network"
 )
 
 const (
@@ -30,8 +31,9 @@ var (
 
 // Options bounds database work owned by one map snapshot load.
 type Options struct {
-	StatementTimeout time.Duration
-	IdleTimeout      time.Duration
+	StatementTimeout   time.Duration
+	IdleTimeout        time.Duration
+	PeerCandidateLimit int
 }
 
 // Store loads exact-scope snapshots in read-only repeatable-read transactions.
@@ -124,6 +126,10 @@ func (store *Store) Load(
 	if workspaceInternalID <= 0 || networkInternalID <= 0 || recoveryEpoch <= 0 {
 		return appmapsession.Snapshot{}, ErrSnapshotEvidence
 	}
+	scope, err := scopeFromText(workspaceValue, networkValue)
+	if err != nil {
+		return appmapsession.Snapshot{}, err
+	}
 
 	var record snapshotRecord
 	if err := transaction.QueryRow(ctx, loadSnapshotSQL, fingerprint[:], nodeKey[:]).Scan(
@@ -147,7 +153,17 @@ func (store *Store) Load(
 			fmt.Errorf("read scoped snapshot: %w", err),
 		)
 	}
-	snapshot, err = record.snapshot(workspaceValue, networkValue, recoveryEpoch)
+	peerCandidates, err := store.loadPeerCandidates(
+		ctx,
+		transaction,
+		scope,
+		fingerprint[:],
+		nodeKey[:],
+	)
+	if err != nil {
+		return appmapsession.Snapshot{}, err
+	}
+	snapshot, err = record.snapshot(workspaceValue, networkValue, recoveryEpoch, peerCandidates)
 	if err != nil {
 		return appmapsession.Snapshot{}, err
 	}
@@ -156,6 +172,62 @@ func (store *Store) Load(
 	}
 	committed = true
 	return snapshot, nil
+}
+
+func (store *Store) loadPeerCandidates(
+	ctx context.Context,
+	transaction databaseTransaction,
+	scope network.Scope,
+	machineFingerprint []byte,
+	nodeKey []byte,
+) ([]appmapsession.PeerCandidate, error) {
+	rows, err := transaction.Query(
+		ctx,
+		loadPeerCandidatesSQL,
+		machineFingerprint,
+		nodeKey,
+		store.options.PeerCandidateLimit+1,
+	)
+	if err != nil || rows == nil {
+		if err == nil {
+			err = ErrSnapshotEvidence
+		}
+		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("read peer candidates: %w", err))
+	}
+	defer rows.Close()
+	candidates := make(
+		[]appmapsession.PeerCandidate,
+		0,
+		min(store.options.PeerCandidateLimit, 64),
+	)
+	for rows.Next() {
+		if len(candidates) == store.options.PeerCandidateLimit {
+			return nil, errors.Join(ErrLoadSnapshot, appmapsession.ErrPeerCandidateLimit)
+		}
+		var record peerCandidateRecord
+		if err := rows.Scan(
+			&record.nodeID,
+			&record.ownerID,
+			&record.hostname,
+			&record.machineKey,
+			&record.nodeKey,
+			&record.sessionGeneration,
+			&record.createdAt,
+			&record.keyExpiry,
+			&record.addresses,
+		); err != nil {
+			return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan peer candidate: %w", err))
+		}
+		candidate, err := record.candidate(scope)
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.Join(ErrLoadSnapshot, fmt.Errorf("iterate peer candidates: %w", err))
+	}
+	return candidates, nil
 }
 
 func configure(ctx context.Context, transaction databaseTransaction, options Options) error {
@@ -173,7 +245,9 @@ func configure(ctx context.Context, transaction databaseTransaction, options Opt
 func validOptions(options Options) bool {
 	return options.StatementTimeout >= time.Millisecond &&
 		options.StatementTimeout <= maximumStatementTimeout &&
-		options.IdleTimeout >= time.Millisecond && options.IdleTimeout <= maximumIdleTimeout
+		options.IdleTimeout >= time.Millisecond && options.IdleTimeout <= maximumIdleTimeout &&
+		options.PeerCandidateLimit > 0 &&
+		options.PeerCandidateLimit <= appmapsession.MaximumPeerCandidates
 }
 
 func postgresTimeout(value time.Duration) string {

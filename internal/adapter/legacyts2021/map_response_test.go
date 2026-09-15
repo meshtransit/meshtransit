@@ -12,7 +12,7 @@ import (
 func TestEncodeFullMapResponseClearsInheritedAuthority(t *testing.T) {
 	t.Parallel()
 
-	encoded, err := EncodeFullMapResponse(mapSnapshotFixture(t), 142)
+	encoded, err := EncodeFullMapResponse(mapSnapshotWithCandidateFixture(t), 142)
 	if err != nil {
 		t.Fatalf("EncodeFullMapResponse() error = %v", err)
 	}

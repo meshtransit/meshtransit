@@ -186,6 +186,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertWorkerCannotLockRegistrationResources(ctx, t, workerConnection)
 	assertWorkerCannotResolveRegistrationIntakeScope(ctx, t, workerConnection)
 	assertWorkerCannotResolveMapSessionScope(ctx, t, workerConnection)
+	assertWorkerCannotLoadMapPeerCandidates(ctx, t, workerConnection)
 	assertWorkerOutboxPrivilegeContract(ctx, t, workerConnection)
 	workerPool := openIntegrationWorkerPool(ctx, t, adminConfig)
 	assertWorkerOutboxDelivery(ctx, t, adminConnection, workerPool)
@@ -219,4 +220,21 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		runtimePool,
 	)
 	assertPostgreSQLRegistrationIntake(ctx, t, adminConnection, runtimePool)
+	adminContenderConnection := openIntegrationPostgreSQLConnection(
+		ctx,
+		t,
+		adminConfig.PostgreSQL.Address,
+		adminConfig.PostgreSQL.Database,
+		adminConfig.PostgreSQL.User,
+		adminConfig.PostgreSQL.PasswordFile,
+		adminConfig.PostgreSQL.CAFile,
+		adminConfig.ConnectTimeout,
+	)
+	assertPostgreSQLPeerCandidateProjection(
+		ctx,
+		t,
+		adminConnection,
+		adminContenderConnection,
+		runtimePool,
+	)
 }

@@ -30,6 +30,7 @@ type SnapshotParams struct {
 	Addresses         []netip.Prefix
 	CreatedAt         time.Time
 	KeyExpiry         time.Time
+	PeerCandidates    []PeerCandidate
 }
 
 // Snapshot is immutable authorization evidence for the first response of a map session.
@@ -47,10 +48,15 @@ type Snapshot struct {
 	addresses         []netip.Prefix
 	createdAt         time.Time
 	keyExpiry         time.Time
+	peerCandidates    []PeerCandidate
 }
 
 // NewSnapshot validates and copies one authoritative map snapshot.
 func NewSnapshot(params SnapshotParams) (Snapshot, error) {
+	if len(params.PeerCandidates) > MaximumPeerCandidates {
+		return Snapshot{}, errors.Join(ErrInvalidSnapshot, ErrPeerCandidateLimit)
+	}
+	params.PeerCandidates = canonicalPeerCandidates(params.PeerCandidates)
 	if !validSnapshotParams(params) {
 		return Snapshot{}, ErrInvalidSnapshot
 	}
@@ -68,6 +74,7 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		addresses:         slices.Clone(params.Addresses),
 		createdAt:         params.CreatedAt,
 		keyExpiry:         params.KeyExpiry,
+		peerCandidates:    params.PeerCandidates,
 	}, nil
 }
 
@@ -110,6 +117,12 @@ func (snapshot Snapshot) CreatedAt() time.Time { return snapshot.createdAt }
 // KeyExpiry returns the authority validity deadline for this Node key.
 func (snapshot Snapshot) KeyExpiry() time.Time { return snapshot.keyExpiry }
 
+// PeerCandidates returns a caller-owned, deterministically ordered copy of
+// same-Network inventory. Candidates are not authorized peers.
+func (snapshot Snapshot) PeerCandidates() []PeerCandidate {
+	return slices.Clone(snapshot.peerCandidates)
+}
+
 // IsValid reports whether the snapshot contains complete authority evidence.
 func (snapshot Snapshot) IsValid() bool { return validSnapshotParams(snapshot.params()) }
 
@@ -128,6 +141,7 @@ func (snapshot Snapshot) params() SnapshotParams {
 		Addresses:         slices.Clone(snapshot.addresses),
 		CreatedAt:         snapshot.createdAt,
 		KeyExpiry:         snapshot.keyExpiry,
+		PeerCandidates:    slices.Clone(snapshot.peerCandidates),
 	}
 }
 
@@ -137,7 +151,13 @@ func validSnapshotParams(params SnapshotParams) bool {
 		validNumericID(params.NumericOwnerID) && params.NodeID.IsValid() &&
 		params.Hostname.IsValid() && params.MachineKey.IsValid() && params.NodeKey.IsValid() &&
 		validSnapshotAddresses(params.Addresses) && !params.CreatedAt.IsZero() &&
-		params.KeyExpiry.After(params.CreatedAt)
+		params.KeyExpiry.After(params.CreatedAt) && validSnapshotPeerCandidates(
+		params.PeerCandidates,
+		params.Scope,
+		params.NodeID,
+		params.MachineKey,
+		params.NodeKey,
+	)
 }
 
 func validNumericID(value int64) bool { return value > 0 && value <= maximumSafeNumericID }

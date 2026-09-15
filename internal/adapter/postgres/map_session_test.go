@@ -9,7 +9,11 @@ import (
 )
 
 func TestNewMapSessionStoreRequiresRuntimePool(t *testing.T) {
-	options := MapSessionOptions{StatementTimeout: time.Second, IdleTimeout: 2 * time.Second}
+	options := MapSessionOptions{
+		StatementTimeout:   time.Second,
+		IdleTimeout:        2 * time.Second,
+		PeerCandidateLimit: 100,
+	}
 	for _, pool := range []*Pool{
 		nil,
 		{role: PoolRoleWorker},
@@ -23,7 +27,11 @@ func TestNewMapSessionStoreRequiresRuntimePool(t *testing.T) {
 
 func TestNewMapSessionStoreDelegatesValidatedConstruction(t *testing.T) {
 	want := &postgresmapsession.Store{}
-	wantOptions := MapSessionOptions{StatementTimeout: 3 * time.Second, IdleTimeout: 5 * time.Second}
+	wantOptions := MapSessionOptions{
+		StatementTimeout:   3 * time.Second,
+		IdleTimeout:        5 * time.Second,
+		PeerCandidateLimit: 100,
+	}
 	var gotOptions MapSessionOptions
 	pool := &Pool{
 		role: PoolRoleRuntime,

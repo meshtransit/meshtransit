@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/meshtransit/meshtransit/internal/network"
+	"github.com/meshtransit/meshtransit/internal/node"
 )
 
 func TestSnapshotOwnsAddressCollection(t *testing.T) {
@@ -14,6 +15,98 @@ func TestSnapshotOwnsAddressCollection(t *testing.T) {
 	addresses[0] = netip.MustParsePrefix("100.64.0.99/32")
 	if got := snapshot.Addresses()[0]; got != netip.MustParsePrefix("100.64.0.1/32") {
 		t.Fatalf("snapshot address = %v after caller mutation", got)
+	}
+}
+
+func TestSnapshotCanonicalizesAndOwnsPeerCandidates(t *testing.T) {
+	base := snapshotFixture(t)
+	first := peerCandidateFixture(t, base, "01890f00-0000-7000-8000-000000000702", 2)
+	second := peerCandidateFixture(t, base, "01890f00-0000-7000-8000-000000000703", 3)
+	params := base.params()
+	params.PeerCandidates = []PeerCandidate{second, first}
+	snapshot, err := NewSnapshot(params)
+	if err != nil {
+		t.Fatalf("NewSnapshot() error = %v", err)
+	}
+	params.PeerCandidates[0] = first
+	candidates := snapshot.PeerCandidates()
+	if len(candidates) != 2 || candidates[0].NodeID() != first.NodeID() ||
+		candidates[1].NodeID() != second.NodeID() {
+		t.Fatalf("PeerCandidates() = %+v, want canonical Node ID order", candidates)
+	}
+	candidates[0] = second
+	if got := snapshot.PeerCandidates()[0].NodeID(); got != first.NodeID() {
+		t.Fatalf("snapshot first candidate = %v after caller mutation", got)
+	}
+}
+
+func TestSnapshotRejectsUnsafePeerCandidateSet(t *testing.T) {
+	base := snapshotFixture(t)
+	valid := peerCandidateFixture(t, base, "01890f00-0000-7000-8000-000000000702", 2)
+	selfNodeParams := valid.params()
+	selfNodeParams.NodeID = base.NodeID()
+	selfNode, err := NewPeerCandidate(selfNodeParams)
+	if err != nil {
+		t.Fatalf("NewPeerCandidate(self Node) error = %v", err)
+	}
+	selfMachineParams := valid.params()
+	selfMachineParams.MachineKey = base.MachineKey()
+	selfMachine, err := NewPeerCandidate(selfMachineParams)
+	if err != nil {
+		t.Fatalf("NewPeerCandidate(self machine) error = %v", err)
+	}
+	otherScopeParams := valid.params()
+	otherNetworkID, err := network.ParseID("01890f00-0000-7000-8000-000000000202")
+	if err != nil {
+		t.Fatalf("network.ParseID() error = %v", err)
+	}
+	otherScopeParams.Scope, err = network.NewScope(base.Scope().WorkspaceID(), otherNetworkID)
+	if err != nil {
+		t.Fatalf("network.NewScope() error = %v", err)
+	}
+	otherScope, err := NewPeerCandidate(otherScopeParams)
+	if err != nil {
+		t.Fatalf("NewPeerCandidate(other scope) error = %v", err)
+	}
+	duplicateParams := valid.params()
+	duplicateParams.MachineKey, err = node.NewMachineKey([32]byte{9})
+	if err != nil {
+		t.Fatalf("node.NewMachineKey() error = %v", err)
+	}
+	duplicateParams.NodeKey, err = node.NewKey([32]byte{109})
+	if err != nil {
+		t.Fatalf("node.NewKey() error = %v", err)
+	}
+	duplicate, err := NewPeerCandidate(duplicateParams)
+	if err != nil {
+		t.Fatalf("NewPeerCandidate(duplicate Node ID) error = %v", err)
+	}
+
+	for _, test := range []struct {
+		name       string
+		candidates []PeerCandidate
+	}{
+		{name: "self Node", candidates: []PeerCandidate{selfNode}},
+		{name: "self machine", candidates: []PeerCandidate{selfMachine}},
+		{name: "other scope", candidates: []PeerCandidate{otherScope}},
+		{name: "duplicate Node", candidates: []PeerCandidate{valid, duplicate}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			params := base.params()
+			params.PeerCandidates = test.candidates
+			if _, err := NewSnapshot(params); !errors.Is(err, ErrInvalidSnapshot) {
+				t.Fatalf("NewSnapshot() error = %v, want ErrInvalidSnapshot", err)
+			}
+		})
+	}
+}
+
+func TestSnapshotFailsClosedAboveAbsolutePeerCandidateLimit(t *testing.T) {
+	params := snapshotFixture(t).params()
+	params.PeerCandidates = make([]PeerCandidate, MaximumPeerCandidates+1)
+	_, err := NewSnapshot(params)
+	if !errors.Is(err, ErrInvalidSnapshot) || !errors.Is(err, ErrPeerCandidateLimit) {
+		t.Fatalf("NewSnapshot() error = %v, want invalid snapshot and peer limit", err)
 	}
 }
 

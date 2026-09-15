@@ -55,3 +55,15 @@ WHERE machine.fingerprint = $1::BYTEA
   AND device.state = 'active'
   AND device.deleted_at IS NULL
   AND device.expires_at > pg_catalog.transaction_timestamp()`
+
+const loadPeerCandidatesSQL = `SELECT
+    node_public_id::TEXT,
+    owner_public_id::TEXT,
+    hostname,
+    machine_key,
+    node_key,
+    session_generation,
+    created_at,
+    key_expiry,
+    addresses
+FROM mesh_ops.load_map_peer_candidates($1::BYTEA, $2::BYTEA, $3::INTEGER)`

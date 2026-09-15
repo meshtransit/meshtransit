@@ -25,8 +25,9 @@ func assertPostgreSQLMapSessionSnapshot(
 ) {
 	t.Helper()
 	store, err := postgresadapter.NewMapSessionStore(pool, postgresadapter.MapSessionOptions{
-		StatementTimeout: 3 * time.Second,
-		IdleTimeout:      5 * time.Second,
+		StatementTimeout:   3 * time.Second,
+		IdleTimeout:        5 * time.Second,
+		PeerCandidateLimit: mapsession.MaximumPeerCandidates,
 	})
 	if err != nil {
 		t.Fatalf("postgres.NewMapSessionStore() error = %v", err)
@@ -65,6 +66,9 @@ func assertPostgreSQLMapSessionSnapshot(
 	if addresses := snapshot.Addresses(); len(addresses) != 1 || addresses[0] != wantAddress {
 		t.Fatalf("map session addresses = %v, want [%v]", addresses, wantAddress)
 	}
+	if candidates := snapshot.PeerCandidates(); len(candidates) != 0 {
+		t.Fatalf("initial map session candidates = %+v, want none", candidates)
+	}
 
 	unknownMachineKey, err := node.NewMachineKey(filledIntegrationKey(0x71))
 	if err != nil {
@@ -89,6 +93,32 @@ func assertPostgreSQLMapSessionSnapshot(
 	if _, err := service.Open(ctx, machine, unknownNodeRequest); !errors.Is(err, mapsession.ErrUnauthorized) {
 		t.Fatalf("unknown Node key Open() error = %v, want mapsession.ErrUnauthorized", err)
 	}
+}
+
+func assertWorkerCannotLoadMapPeerCandidates(
+	ctx context.Context,
+	t *testing.T,
+	workerConnection *pgx.Conn,
+) {
+	t.Helper()
+	var canLoad bool
+	if err := workerConnection.QueryRow(ctx, `SELECT pg_catalog.has_function_privilege(
+    CURRENT_USER,
+    'mesh_ops.load_map_peer_candidates(bytea,bytea,integer)',
+    'EXECUTE'
+)`).Scan(&canLoad); err != nil {
+		t.Fatalf("query worker map peer candidate privilege: %v", err)
+	}
+	if canLoad {
+		t.Fatal("worker can load map peer candidates, want false")
+	}
+	err := workerConnection.QueryRow(ctx, `SELECT node_public_id
+FROM mesh_ops.load_map_peer_candidates(
+    pg_catalog.decode(pg_catalog.repeat('11', 32), 'hex'),
+    pg_catalog.decode(pg_catalog.repeat('22', 32), 'hex'),
+    1
+)`).Scan(new(string))
+	assertPostgreSQLCode(t, err, "42501")
 }
 
 type unusedEndpointObserver struct{}

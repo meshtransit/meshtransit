@@ -224,6 +224,37 @@ func TestStreamServiceRejectsAuthorityDiscontinuity(t *testing.T) {
 	})
 }
 
+func TestStreamSnapshotRequiresStableCandidatesAtSameRevision(t *testing.T) {
+	currentParams := snapshotFixture(t).params()
+	currentParams.PeerCandidates = []PeerCandidate{peerCandidateFixture(
+		t,
+		snapshotFixture(t),
+		"01890f00-0000-7000-8000-000000000702",
+		2,
+	)}
+	current, err := NewSnapshot(currentParams)
+	if err != nil {
+		t.Fatalf("NewSnapshot(current) error = %v", err)
+	}
+	nextParams := current.params()
+	nextParams.PeerCandidates = nil
+	next, err := NewSnapshot(nextParams)
+	if err != nil {
+		t.Fatalf("NewSnapshot(next) error = %v", err)
+	}
+	if streamCanAdvance(current, next) {
+		t.Fatal("streamCanAdvance() = true for changed candidates at the same revision")
+	}
+	nextParams.NetworkRevision++
+	next, err = NewSnapshot(nextParams)
+	if err != nil {
+		t.Fatalf("NewSnapshot(advanced) error = %v", err)
+	}
+	if !streamCanAdvance(current, next) {
+		t.Fatal("streamCanAdvance() = false after an authoritative revision advance")
+	}
+}
+
 func TestStreamServiceStopsAtAuthorizationExpiry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		params := snapshotFixture(t).params()
