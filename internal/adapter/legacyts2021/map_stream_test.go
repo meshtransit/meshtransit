@@ -73,7 +73,7 @@ func TestMapSessionHandlerStreamsUncompressedFramesForMeshD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handler() error = %v", err)
 	}
-	// meshd@78cb513 omits Compress and reads each framed payload as JSON.
+	// meshd@659d9e7 omits Compress and reads each framed payload as JSON.
 	body := strings.Replace(mapRequestBody, `  "Compress":"zstd",`+"\n", "", 1)
 	body = strings.Replace(body, `"Stream":false`, `"Stream":true`, 1)
 	response := serveMap(t, authenticated, body)
@@ -106,7 +106,7 @@ func TestMapSessionHandlerStreamsPeerAndPolicyAtomicallyAfterSnapshotAdvance(t *
 	if err != nil {
 		t.Fatalf("Handler() error = %v", err)
 	}
-	// meshd@78cb513 omits Compress and atomically applies PeersChanged plus
+	// meshd@659d9e7 omits Compress and atomically applies PeersChanged plus
 	// PacketFilter from one JSON frame through its candidate accumulator.
 	body := strings.Replace(mapRequestBody, `  "Compress":"zstd",`+"\n", "", 1)
 	body = strings.Replace(body, `"Stream":false`, `"Stream":true`, 1)
@@ -126,7 +126,7 @@ func TestMapSessionHandlerStreamsPeerAndPolicyAtomicallyAfterSnapshotAdvance(t *
 func TestMapSessionHandlerStreamsNetworkNameAfterRevisionAdvance(t *testing.T) {
 	t.Parallel()
 
-	// meshd@78cb513 applies MapResponse.Domain and increments its semantic
+	// meshd@659d9e7 applies MapResponse.Domain and increments its semantic
 	// netmap revision only when that client-visible value changes.
 	initial := mapSnapshotFixture(t)
 	advancedParams := mapSnapshotParams(initial)
@@ -195,6 +195,41 @@ func TestMapSessionHandlerStreamsSameRevisionConnectivityDelta(t *testing.T) {
 	}
 }
 
+func TestMapSessionHandlerStreamsTerminalAuthorityWithdrawal(t *testing.T) {
+	t.Parallel()
+
+	snapshot := mapSnapshotWithCandidateFixture(t)
+	streams := &authorityWithdrawalMapStreamService{snapshot: snapshot}
+	handler := newMapSessionHandlerWithStreams(
+		t,
+		&recordingMapSessionService{snapshot: snapshot},
+		streams,
+	)
+	authenticated, err := handler.Handler(authenticatedMachine(t))
+	if err != nil {
+		t.Fatalf("Handler() error = %v", err)
+	}
+	body := strings.Replace(mapRequestBody, `  "Compress":"zstd",`+"\n", "", 1)
+	body = strings.Replace(body, `"Stream":false`, `"Stream":true`, 1)
+	response := serveMap(t, authenticated, body)
+	frames := decodeUncompressedMapStreamFrames(t, response.Body.Bytes())
+	if response.Code != http.StatusOK || len(frames) != 2 || frames[0].Node == nil ||
+		frames[1].Node == nil || frames[1].Node.ID != frames[0].Node.ID ||
+		frames[1].Node.Key != frames[0].Node.Key || !frames[1].Node.Expired ||
+		frames[1].Node.MachineAuthorized || frames[1].Peers == nil ||
+		len(frames[1].Peers) != 0 || frames[1].PacketFilter == nil ||
+		len(frames[1].PacketFilter) != 0 {
+		t.Fatalf("stream frames = %+v, want snapshot then terminal withdrawal", frames)
+	}
+	metrics := gatherControlMetrics(t, handler.telemetry)
+	if !strings.Contains(
+		metrics,
+		`meshtransit_control_map_requests_total{result="authority_changed"} 1`,
+	) {
+		t.Fatalf("authority withdrawal metrics are incomplete: %s", metrics)
+	}
+}
+
 func TestMapStreamSinkRejectsDeltaBeforeInitialSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -228,6 +263,22 @@ func TestMapStreamSinkRejectsAuthorityDeltaBeforeInitialSnapshot(t *testing.T) {
 	}
 	if sink.started() || response.Body.Len() != 0 {
 		t.Fatal("rejected initial authority delta committed an HTTP response")
+	}
+}
+
+func TestMapStreamSinkRejectsAuthorityWithdrawalBeforeInitialSnapshot(t *testing.T) {
+	t.Parallel()
+
+	response := httptest.NewRecorder()
+	sink := newMapStreamSink(response, 142, mapResponseCompressionZstd)
+	if err := sink.SendAuthorityWithdrawal(
+		t.Context(),
+		mapSnapshotFixture(t),
+	); !errors.Is(err, ErrMapStreamWrite) {
+		t.Fatalf("SendAuthorityWithdrawal(before snapshot) error = %v, want ErrMapStreamWrite", err)
+	}
+	if sink.started() || response.Body.Len() != 0 {
+		t.Fatal("rejected initial authority withdrawal committed an HTTP response")
 	}
 }
 
@@ -309,6 +360,10 @@ type authorityDeltaMapStreamService struct {
 	delta   mapsession.AuthorityDelta
 }
 
+type authorityWithdrawalMapStreamService struct {
+	snapshot mapsession.Snapshot
+}
+
 func (service *advancingMapStreamService) Serve(
 	ctx context.Context,
 	_ control.AuthenticatedMachine,
@@ -351,6 +406,21 @@ func (service *authorityDeltaMapStreamService) Serve(
 		return err
 	}
 	return context.Canceled
+}
+
+func (service *authorityWithdrawalMapStreamService) Serve(
+	ctx context.Context,
+	_ control.AuthenticatedMachine,
+	_ mapsession.Request,
+	sink mapsession.StreamSink,
+) error {
+	if err := sink.SendSnapshot(ctx, service.snapshot); err != nil {
+		return err
+	}
+	if err := sink.SendAuthorityWithdrawal(ctx, service.snapshot); err != nil {
+		return err
+	}
+	return mapsession.ErrUnauthorized
 }
 
 func (service *recordingMapStreamService) Serve(

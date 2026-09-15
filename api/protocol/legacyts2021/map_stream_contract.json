@@ -1,9 +1,9 @@
 {
-  "contract_version": 5,
+  "contract_version": 6,
   "profile": "legacy-ts2021-cap142-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
-    "revision": "78cb5130400bc003974f7730b319350fed129bbe"
+    "revision": "659d9e76d1ddf36a86abb70109fbab527c2bccd1"
   },
   "request": {
     "method": "POST",
@@ -63,5 +63,19 @@
       "Peers",
       "Domain"
     ]
+  },
+  "terminal_authority": {
+    "selection": "established-stream-self-authority-loss",
+    "causes": [
+      "device-or-node-key-revoked",
+      "node-key-expired",
+      "session-generation-or-recovery-epoch-changed",
+      "authority-snapshot-discontinuity"
+    ],
+    "self_encoding": "same-self-complete-node-expired-and-machine-unauthorized",
+    "peers": "explicit-empty-complete-replacement",
+    "packet_filter": "explicit-empty-complete-replacement",
+    "client_behavior": "permanent-stop-and-runtime-teardown-without-reconnect",
+    "transient_exclusion": "redis-presence-or-transport-loss-no-terminal-withdrawal"
   }
 }

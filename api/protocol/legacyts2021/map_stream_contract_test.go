@@ -62,6 +62,15 @@ type mapStreamContract struct {
 		FullSnapshotFallback   []string `json:"full_snapshot_fallback"`
 		ForbiddenFields        []string `json:"forbidden_fields"`
 	} `json:"authority_delta"`
+	TerminalAuthority struct {
+		Selection          string   `json:"selection"`
+		Causes             []string `json:"causes"`
+		SelfEncoding       string   `json:"self_encoding"`
+		Peers              string   `json:"peers"`
+		PacketFilter       string   `json:"packet_filter"`
+		ClientBehavior     string   `json:"client_behavior"`
+		TransientExclusion string   `json:"transient_exclusion"`
+	} `json:"terminal_authority"`
 }
 
 func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
@@ -76,9 +85,9 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 5 || contract.Profile != "legacy-ts2021-cap142-v1" ||
+	if contract.ContractVersion != 6 || contract.Profile != "legacy-ts2021-cap142-v1" ||
 		contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
-		contract.ClientEvidence.Revision != "78cb5130400bc003974f7730b319350fed129bbe" {
+		contract.ClientEvidence.Revision != "659d9e76d1ddf36a86abb70109fbab527c2bccd1" {
 		t.Fatalf("stream contract identity = %+v", contract)
 	}
 	request := contract.Request
@@ -127,5 +136,20 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 			"ambiguous-peer-id-transition",
 		}) || !slices.Equal(authorityDelta.ForbiddenFields, []string{"Peers", "Domain"}) {
 		t.Fatalf("stream authority delta contract = %+v", authorityDelta)
+	}
+	terminal := contract.TerminalAuthority
+	if terminal.Selection != "established-stream-self-authority-loss" ||
+		!slices.Equal(terminal.Causes, []string{
+			"device-or-node-key-revoked",
+			"node-key-expired",
+			"session-generation-or-recovery-epoch-changed",
+			"authority-snapshot-discontinuity",
+		}) ||
+		terminal.SelfEncoding != "same-self-complete-node-expired-and-machine-unauthorized" ||
+		terminal.Peers != "explicit-empty-complete-replacement" ||
+		terminal.PacketFilter != "explicit-empty-complete-replacement" ||
+		terminal.ClientBehavior != "permanent-stop-and-runtime-teardown-without-reconnect" ||
+		terminal.TransientExclusion != "redis-presence-or-transport-loss-no-terminal-withdrawal" {
+		t.Fatalf("stream terminal authority contract = %+v", terminal)
 	}
 }

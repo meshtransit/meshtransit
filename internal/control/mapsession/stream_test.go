@@ -358,6 +358,7 @@ func TestStreamServiceFailsClosedWhenRevisionFeedStops(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		snapshot := snapshotFixture(t)
 		revisions := newStreamRevisionWatcher()
+		sink := &recordingStreamSink{}
 		service := newStreamServiceWithRevisionsFixture(
 			t,
 			&streamSnapshotOpener{snapshots: []Snapshot{snapshot}},
@@ -366,13 +367,16 @@ func TestStreamServiceFailsClosedWhenRevisionFeedStops(t *testing.T) {
 		)
 		machine, request := authenticatedRequestFixture(t, snapshot)
 		result := make(chan error, 1)
-		go func() { result <- service.Serve(t.Context(), machine, request, &recordingStreamSink{}) }()
+		go func() { result <- service.Serve(t.Context(), machine, request, sink) }()
 
 		synctest.Wait()
 		revisions.closeUpdates()
 		synctest.Wait()
 		if err := <-result; !errors.Is(err, ErrStreamUnavailable) {
 			t.Fatalf("Serve() error = %v, want ErrStreamUnavailable", err)
+		}
+		if withdrawals := sink.authorityWithdrawals(); len(withdrawals) != 0 {
+			t.Fatalf("revision feed loss sent %d authority withdrawals, want 0", len(withdrawals))
 		}
 	})
 }
@@ -382,10 +386,11 @@ func TestStreamServiceFailsClosedWhenPresenceIsLost(t *testing.T) {
 		snapshot := snapshotFixture(t)
 		opener := &streamSnapshotOpener{snapshots: []Snapshot{snapshot}}
 		presence := &streamPresenceStore{rejectClaim: 2}
+		sink := &recordingStreamSink{}
 		service := newStreamServiceFixture(t, opener, presence)
 		machine, request := authenticatedRequestFixture(t, snapshot)
 		result := make(chan error, 1)
-		go func() { result <- service.Serve(t.Context(), machine, request, &recordingStreamSink{}) }()
+		go func() { result <- service.Serve(t.Context(), machine, request, sink) }()
 
 		synctest.Wait()
 		time.Sleep(3 * time.Second)
@@ -395,6 +400,9 @@ func TestStreamServiceFailsClosedWhenPresenceIsLost(t *testing.T) {
 		}
 		if releases := presence.state().releases; releases != 1 {
 			t.Fatalf("presence releases = %d, want one exact cleanup attempt", releases)
+		}
+		if withdrawals := sink.authorityWithdrawals(); len(withdrawals) != 0 {
+			t.Fatalf("presence loss sent %d authority withdrawals, want 0", len(withdrawals))
 		}
 	})
 }
@@ -441,14 +449,49 @@ func TestStreamServiceRejectsAuthorityDiscontinuity(t *testing.T) {
 		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial, discontinuous}}
 		service := newStreamServiceFixture(t, opener, &streamPresenceStore{})
 		machine, request := authenticatedRequestFixture(t, initial)
+		sink := &recordingStreamSink{}
 		result := make(chan error, 1)
-		go func() { result <- service.Serve(t.Context(), machine, request, &recordingStreamSink{}) }()
+		go func() { result <- service.Serve(t.Context(), machine, request, sink) }()
 
 		synctest.Wait()
 		time.Sleep(5 * time.Second)
 		synctest.Wait()
 		if err := <-result; !errors.Is(err, ErrStreamDiscontinuity) {
 			t.Fatalf("Serve() error = %v, want ErrStreamDiscontinuity", err)
+		}
+		withdrawals := sink.authorityWithdrawals()
+		if len(withdrawals) != 1 || withdrawals[0].NodeID() != initial.NodeID() ||
+			withdrawals[0].NodeKey() != initial.NodeKey() {
+			t.Fatalf("authority withdrawals = %+v, want current snapshot", withdrawals)
+		}
+	})
+}
+
+func TestStreamServiceWithdrawsAuthorityWhenRefreshIsUnauthorized(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		initial := snapshotFixture(t)
+		opener := &streamSnapshotOpener{
+			snapshots: []Snapshot{initial},
+			failures:  []error{nil, ErrUnauthorized},
+		}
+		sink := &recordingStreamSink{}
+		service := newStreamServiceFixture(t, opener, &streamPresenceStore{})
+		machine, request := authenticatedRequestFixture(t, initial)
+		result := make(chan error, 1)
+		go func() { result <- service.Serve(t.Context(), machine, request, sink) }()
+
+		synctest.Wait()
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		if err := <-result; !errors.Is(err, ErrUnauthorized) ||
+			!errors.Is(err, ErrStreamUnavailable) {
+			t.Fatalf("Serve() error = %v, want unauthorized stream failure", err)
+		}
+		withdrawals := sink.authorityWithdrawals()
+		if len(withdrawals) != 1 || withdrawals[0].NodeID() != initial.NodeID() ||
+			len(sink.authorityDeltaSnapshots()) != 0 ||
+			len(sink.connectivityDeltas()) != 0 {
+			t.Fatalf("unauthorized refresh sink state = withdrawals %+v", withdrawals)
 		}
 	})
 }
@@ -667,14 +710,19 @@ func TestStreamServiceStopsAtAuthorizationExpiry(t *testing.T) {
 			&streamPresenceStore{},
 		)
 		machine, request := authenticatedRequestFixture(t, snapshot)
+		sink := &recordingStreamSink{}
 		result := make(chan error, 1)
-		go func() { result <- service.Serve(t.Context(), machine, request, &recordingStreamSink{}) }()
+		go func() { result <- service.Serve(t.Context(), machine, request, sink) }()
 
 		synctest.Wait()
 		time.Sleep(2 * time.Second)
 		synctest.Wait()
 		if err := <-result; !errors.Is(err, ErrAuthorizationExpired) {
 			t.Fatalf("Serve() error = %v, want ErrAuthorizationExpired", err)
+		}
+		withdrawals := sink.authorityWithdrawals()
+		if len(withdrawals) != 1 || withdrawals[0].NodeID() != snapshot.NodeID() {
+			t.Fatalf("authority withdrawals = %+v, want expiring snapshot", withdrawals)
 		}
 	})
 }
@@ -807,6 +855,7 @@ func advancedStreamSnapshot(t *testing.T, initial Snapshot) Snapshot {
 type streamSnapshotOpener struct {
 	mu          sync.Mutex
 	snapshots   []Snapshot
+	failures    []error
 	calls       int
 	sawDeadline bool
 }
@@ -821,6 +870,9 @@ func (opener *streamSnapshotOpener) Open(
 	opener.calls++
 	_, hasDeadline := ctx.Deadline()
 	opener.sawDeadline = opener.sawDeadline || hasDeadline
+	if index := opener.calls - 1; index < len(opener.failures) && opener.failures[index] != nil {
+		return Snapshot{}, opener.failures[index]
+	}
 	if len(opener.snapshots) == 0 {
 		return Snapshot{}, errors.New("controlled snapshot failure")
 	}
@@ -895,6 +947,7 @@ type recordingStreamSink struct {
 	snapshots       []Snapshot
 	authorityDeltas []AuthorityDelta
 	deltas          []ConnectivityDelta
+	withdrawals     []Snapshot
 	keepAlives      int
 }
 
@@ -925,6 +978,16 @@ func (sink *recordingStreamSink) SendAuthorityDelta(
 	return nil
 }
 
+func (sink *recordingStreamSink) SendAuthorityWithdrawal(
+	_ context.Context,
+	snapshot Snapshot,
+) error {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	sink.withdrawals = append(sink.withdrawals, snapshot)
+	return nil
+}
+
 func (sink *recordingStreamSink) SendKeepAlive(context.Context) error {
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
@@ -948,6 +1011,12 @@ func (sink *recordingStreamSink) authorityDeltaSnapshots() []AuthorityDelta {
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
 	return slices.Clone(sink.authorityDeltas)
+}
+
+func (sink *recordingStreamSink) authorityWithdrawals() []Snapshot {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	return slices.Clone(sink.withdrawals)
 }
 
 type streamRevisionWatcher struct {

@@ -3,6 +3,7 @@ package legacyts2021
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"net/netip"
 	"reflect"
 	"testing"
@@ -62,6 +63,63 @@ func TestEncodeFullMapResponseRejectsInvalidInput(t *testing.T) {
 
 	if _, err := EncodeFullMapResponse(mapSnapshotFixture(t), 0); err == nil {
 		t.Fatal("EncodeFullMapResponse(zero capability) error = nil")
+	}
+}
+
+func TestEncodeAuthorityWithdrawalClearsRuntimeAuthority(t *testing.T) {
+	t.Parallel()
+
+	snapshot := mapSnapshotWithCandidateFixture(t)
+	encoded, err := encodeAuthorityWithdrawalMapResponse(
+		snapshot,
+		142,
+		mapResponseCompressionZstd,
+	)
+	if err != nil {
+		t.Fatalf("encodeAuthorityWithdrawalMapResponse() error = %v", err)
+	}
+	document, err := zstdframe.AppendDecode(
+		nil,
+		encoded[4:],
+		zstdframe.MaxDecodedSize(maxMapResponseBytes),
+	)
+	if err != nil {
+		t.Fatalf("decode authority withdrawal: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(document, &fields); err != nil {
+		t.Fatalf("decode authority withdrawal fields: %v", err)
+	}
+	if len(fields) != 3 || string(fields["Peers"]) != "[]" ||
+		string(fields["PacketFilter"]) != "[]" {
+		t.Fatalf("authority withdrawal fields = %s", document)
+	}
+	var response tailcfg.MapResponse
+	if err := json.Unmarshal(document, &response); err != nil {
+		t.Fatalf("decode typed authority withdrawal: %v", err)
+	}
+	if response.Node == nil || response.Node.ID != tailcfg.NodeID(snapshot.NumericNodeID()) ||
+		!response.Node.Expired || response.Node.MachineAuthorized ||
+		!response.Node.DiscoKey.IsZero() || len(response.Node.Endpoints) != 0 ||
+		response.Peers == nil || len(response.Peers) != 0 ||
+		response.PacketFilter == nil || len(response.PacketFilter) != 0 {
+		t.Fatalf("authority withdrawal = %+v", response)
+	}
+	full := decodeFullMapResponseFixture(t, snapshot)
+	if response.Node.Key != full.Node.Key {
+		t.Fatalf("withdrawal self key = %s, want %s", response.Node.Key, full.Node.Key)
+	}
+}
+
+func TestEncodeAuthorityWithdrawalRejectsInvalidInput(t *testing.T) {
+	t.Parallel()
+
+	if _, err := encodeAuthorityWithdrawalMapResponse(
+		mapSnapshotFixture(t),
+		0,
+		mapResponseCompressionZstd,
+	); !errors.Is(err, ErrMapResponse) {
+		t.Fatalf("encodeAuthorityWithdrawalMapResponse() error = %v, want ErrMapResponse", err)
 	}
 }
 

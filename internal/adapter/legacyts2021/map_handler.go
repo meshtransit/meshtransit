@@ -225,6 +225,8 @@ func classifyMapFailure(err error) mapFailure {
 
 func classifyMapStreamResult(err error, started bool) mapResult {
 	switch {
+	case started && errors.Is(err, mapsession.ErrUnauthorized):
+		return mapAuthorityChanged
 	case errors.Is(err, mapsession.ErrUnauthorized),
 		errors.Is(err, control.ErrInvalidAuthenticatedNode):
 		return mapAuthenticationFailed

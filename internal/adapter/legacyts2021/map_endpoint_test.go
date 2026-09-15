@@ -65,7 +65,7 @@ func TestDecodeMapRequestAcceptsEndpointOnlyUpdateMode(t *testing.T) {
 func TestDecodeMapRequestAcceptsMeshDUncompressedEndpointUpdate(t *testing.T) {
 	t.Parallel()
 
-	// meshd@78cb513 intentionally omits Compress and consumes uncompressed map
+	// meshd@659d9e7 intentionally omits Compress and consumes uncompressed map
 	// frames. Keep this synthetic fixture aligned with that pinned wire contract.
 	body := strings.Replace(mapRequestBody, `  "Compress":"zstd",`+"\n", "", 1)
 	body = strings.Replace(body, `  "Stream":false,`, mapEndpointFields+`  "Stream":false,`, 1)

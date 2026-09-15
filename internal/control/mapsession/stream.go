@@ -26,7 +26,7 @@ var (
 	ErrStreamDiscontinuity = errors.New("map session: authority discontinuity")
 	// ErrAuthorizationExpired reports that the stream reached its initial authority deadline.
 	ErrAuthorizationExpired = errors.New("map session: authorization expired")
-	// ErrStreamWrite reports a failed snapshot or keepalive delivery.
+	// ErrStreamWrite reports a failed snapshot, delta, withdrawal, or keepalive delivery.
 	ErrStreamWrite = errors.New("map session: stream write failed")
 )
 
@@ -41,12 +41,14 @@ type PresenceStore interface {
 	ReleasePresence(context.Context, network.Scope, node.PresenceLease) (bool, error)
 }
 
-// StreamSink serially delivers product snapshots and transport keepalives.
-// The caller owns the sink for the duration of one Serve call.
+// StreamSink serially delivers product snapshots, terminal authority
+// withdrawal, and transport keepalives. The caller owns the sink for the
+// duration of one Serve call.
 type StreamSink interface {
 	SendSnapshot(context.Context, Snapshot) error
 	SendAuthorityDelta(context.Context, AuthorityDelta) error
 	SendConnectivityDelta(context.Context, ConnectivityDelta) error
+	SendAuthorityWithdrawal(context.Context, Snapshot) error
 	SendKeepAlive(context.Context) error
 }
 
@@ -243,7 +245,7 @@ func (service *StreamService) run(
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-authorityExpiry.C:
-			return ErrAuthorizationExpired
+			return withdrawAuthority(ctx, sink, current, ErrAuthorizationExpired)
 		case <-renewal.C:
 			claimed, err := service.claimPresence(ctx, current.Scope(), lease)
 			if err != nil {
@@ -305,10 +307,14 @@ func (service *StreamService) refresh(
 ) (Snapshot, error) {
 	next, err := service.openSnapshot(ctx, machine, request)
 	if err != nil {
-		return Snapshot{}, errors.Join(ErrStreamUnavailable, err)
+		cause := errors.Join(ErrStreamUnavailable, err)
+		if errors.Is(err, ErrUnauthorized) {
+			return Snapshot{}, withdrawAuthority(ctx, sink, current, cause)
+		}
+		return Snapshot{}, cause
 	}
 	if !streamCanAdvance(current, next) {
-		return Snapshot{}, ErrStreamDiscontinuity
+		return Snapshot{}, withdrawAuthority(ctx, sink, current, ErrStreamDiscontinuity)
 	}
 	if !streamSnapshotChanged(current, next) {
 		return current, nil
@@ -316,7 +322,8 @@ func (service *StreamService) refresh(
 	if current.NetworkRevision() == next.NetworkRevision() {
 		delta, deltaErr := NewConnectivityDelta(current, next)
 		if deltaErr != nil {
-			return Snapshot{}, errors.Join(ErrStreamDiscontinuity, deltaErr)
+			cause := errors.Join(ErrStreamDiscontinuity, deltaErr)
+			return Snapshot{}, withdrawAuthority(ctx, sink, current, cause)
 		}
 		if err := sink.SendConnectivityDelta(ctx, delta); err != nil {
 			return Snapshot{}, errors.Join(ErrStreamWrite, err)
@@ -336,6 +343,18 @@ func (service *StreamService) refresh(
 		return Snapshot{}, errors.Join(ErrStreamWrite, err)
 	}
 	return next, nil
+}
+
+func withdrawAuthority(
+	ctx context.Context,
+	sink StreamSink,
+	current Snapshot,
+	cause error,
+) error {
+	if err := sink.SendAuthorityWithdrawal(ctx, current); err != nil {
+		return errors.Join(cause, ErrStreamWrite, err)
+	}
+	return cause
 }
 
 func (service *StreamService) openSnapshot(

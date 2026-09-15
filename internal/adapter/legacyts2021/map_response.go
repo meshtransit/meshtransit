@@ -33,6 +33,12 @@ type fullMapResponseWire struct {
 	PacketFilter []tailcfg.FilterRule `json:"PacketFilter"`
 }
 
+type authorityWithdrawalMapResponseWire struct {
+	Node         *tailcfg.Node        `json:"Node"`
+	Peers        []*tailcfg.Node      `json:"Peers"`
+	PacketFilter []tailcfg.FilterRule `json:"PacketFilter"`
+}
+
 // EncodeFullMapResponse encodes one zstd-compressed length-delimited full map.
 // Empty peers and packet filter remain explicit to clear any prior client state.
 func EncodeFullMapResponse(
@@ -71,6 +77,35 @@ func encodeFullMapResponse(
 		Node:         self,
 		Peers:        peers,
 		PacketFilter: packetFilter,
+	})
+	if err != nil {
+		clear(document)
+		return nil, ErrMapResponse
+	}
+	return encodeMapDocument(document, compression)
+}
+
+func encodeAuthorityWithdrawalMapResponse(
+	snapshot mapsession.Snapshot,
+	capabilityVersion int,
+	compression mapResponseCompression,
+) ([]byte, error) {
+	if !snapshot.IsValid() || capabilityVersion != supportedCapabilityVersion {
+		return nil, ErrMapResponse
+	}
+	self, err := fullMapNode(snapshot, capabilityVersion)
+	if err != nil {
+		return nil, err
+	}
+	self.Expired = true
+	self.MachineAuthorized = false
+	self.DiscoKey = key.DiscoPublic{}
+	self.Endpoints = nil
+	self.Online = nil
+	document, err := json.Marshal(authorityWithdrawalMapResponseWire{
+		Node:         self,
+		Peers:        []*tailcfg.Node{},
+		PacketFilter: []tailcfg.FilterRule{},
 	})
 	if err != nil {
 		clear(document)
