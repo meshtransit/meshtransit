@@ -14,6 +14,7 @@ import (
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/config"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/ratelimit"
 )
 
 // #nosec G101 -- canonical token grammar fixture; it has no authority outside this test.
@@ -35,7 +36,12 @@ func TestComposeManagementAPIBuildsBoundedServer(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = runtimePool.Shutdown(context.Background()) })
 
-	server, metrics, err := composeManagementAPI(*processConfig.API, runtimePool, discardCompositionLogger())
+	server, metrics, err := composeManagementAPI(
+		*processConfig.API,
+		runtimePool,
+		managementCompositionRateLimiter{},
+		discardCompositionLogger(),
+	)
 	if err != nil {
 		t.Fatalf("composeManagementAPI() error = %v", err)
 	}
@@ -89,6 +95,13 @@ func TestManagementCompositionRejectsSecretContentsWithoutDisclosure(t *testing.
 			},
 		},
 		{
+			name: "rate limit key", pathKey: "rate-limit",
+			compose: func(apiConfig config.APIConfig) error {
+				_, err := composeRateLimitDigester(apiConfig.RateLimitDigest)
+				return err
+			},
+		},
+		{
 			name: "TLS private key", pathKey: "tls-key",
 			compose: func(apiConfig config.APIConfig) error {
 				_, err := loadManagementTLSCertificate(apiConfig)
@@ -127,6 +140,7 @@ func managementProcessConfigFixture(
 		"tls-key":     controlPaths["tls.key"],
 		"session":     filepath.Join(directory, "session.key"),
 		"idempotency": filepath.Join(directory, "idempotency.key"),
+		"rate-limit":  filepath.Join(directory, "rate-limit.key"),
 		"password":    filepath.Join(directory, "password"),
 	}
 	writeCredentialDigestTestKey(
@@ -138,6 +152,11 @@ func managementProcessConfigFixture(
 		t,
 		paths["idempotency"],
 		base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x66}, 32)),
+	)
+	writeCredentialDigestTestKey(
+		t,
+		paths["rate-limit"],
+		base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x77}, 32)),
 	)
 	writeCredentialDigestTestKey(t, paths["password"], "test-password")
 	values := map[string]string{
@@ -157,6 +176,8 @@ func managementProcessConfigFixture(
 		"MESHTRANSIT_API_ACCOUNT_SESSION_DIGEST_ACTIVE_KEY_FILE": paths["session"],
 		"MESHTRANSIT_API_IDEMPOTENCY_DIGEST_KEY_ID":              "idempotency-v1",
 		"MESHTRANSIT_API_IDEMPOTENCY_DIGEST_KEY_FILE":            paths["idempotency"],
+		"MESHTRANSIT_API_RATE_LIMIT_DIGEST_KEY_ID":               "rate-limit-v1",
+		"MESHTRANSIT_API_RATE_LIMIT_DIGEST_KEY_FILE":             paths["rate-limit"],
 	}
 	if withPrevious {
 		paths["previous"] = filepath.Join(directory, "previous-session.key")
@@ -176,4 +197,14 @@ func managementProcessConfigFixture(
 		t.Fatalf("config.Load() error = %v", err)
 	}
 	return processConfig, paths
+}
+
+type managementCompositionRateLimiter struct{}
+
+func (managementCompositionRateLimiter) Allow(
+	context.Context,
+	ratelimit.Subject,
+	ratelimit.Policy,
+) (ratelimit.Decision, error) {
+	return ratelimit.NewDecision(true, 1, 0, 0)
 }

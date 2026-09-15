@@ -204,6 +204,8 @@ func validProcessValues(overrides map[string]string) map[string]string {
 		envAPIAccountSessionDigestActiveKeyFile: "/run/secrets/account-session-digest-active-key",
 		envAPIIdempotencyDigestKeyID:            "idempotency-v1",
 		envAPIIdempotencyDigestKeyFile:          "/run/secrets/idempotency-digest-key",
+		envAPIRateLimitDigestKeyID:              "rate-limit-v1",
+		envAPIRateLimitDigestKeyFile:            "/run/secrets/rate-limit-digest-key",
 	}
 	for key, value := range overrides {
 		values[key] = value

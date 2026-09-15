@@ -139,7 +139,9 @@ func writeManagementError(
 		response.Header().Set("WWW-Authenticate", `Bearer realm="meshtransit", error="invalid_token"`)
 	}
 	if apiError.Retryable {
-		response.Header().Set("Retry-After", "1")
+		if response.Header().Get("Retry-After") == "" {
+			response.Header().Set("Retry-After", "1")
+		}
 	}
 	writeManagementJSON(ctx, logger, response, apiError.Status, managementErrorResponse{
 		Error: managementErrorBody{

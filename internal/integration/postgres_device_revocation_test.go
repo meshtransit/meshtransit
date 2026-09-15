@@ -26,6 +26,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
+	"github.com/meshtransit/meshtransit/internal/ratelimit"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -260,10 +261,26 @@ func revokeDeviceOverHTTP(
 	if err != nil {
 		t.Fatalf("accountsession.NewService() error = %v", err)
 	}
+	rateLimitKeyID, err := ratelimit.NewDigestKeyID("integration-v1")
+	if err != nil {
+		t.Fatalf("ratelimit.NewDigestKeyID() error = %v", err)
+	}
+	rateLimitDigester, err := ratelimit.NewDigester(rateLimitKeyID, bytes.Repeat([]byte{0x71}, 32))
+	if err != nil {
+		t.Fatalf("ratelimit.NewDigester() error = %v", err)
+	}
+	rateLimitPolicy, err := ratelimit.NewPolicy(100, time.Second)
+	if err != nil {
+		t.Fatalf("ratelimit.NewPolicy() error = %v", err)
+	}
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions:              sessions,
 		Revocations:           service,
 		Idempotency:           integrationDeviceRevocationDigester(t),
+		RateLimitSubjects:     rateLimitDigester,
+		RateLimiter:           integrationAllowAllRateLimiter{},
+		SourceRateLimit:       rateLimitPolicy,
+		SessionRateLimit:      rateLimitPolicy,
 		CorrelationIDs:        httpapi.PublicCorrelationIDGenerator{},
 		Logger:                slog.New(slog.NewJSONHandler(io.Discard, nil)),
 		RequestTimeout:        10 * time.Second,
@@ -311,6 +328,16 @@ func revokeDeviceOverHTTP(
 		payload.Data.DeviceVersion != command.ExpectedVersion()+1 || payload.CorrelationID == "" {
 		t.Fatalf("management HTTP response = %+v, want committed Device revocation", payload)
 	}
+}
+
+type integrationAllowAllRateLimiter struct{}
+
+func (integrationAllowAllRateLimiter) Allow(
+	_ context.Context,
+	_ ratelimit.Subject,
+	policy ratelimit.Policy,
+) (ratelimit.Decision, error) {
+	return ratelimit.NewDecision(true, policy.Capacity(), policy.Capacity()-1, 0)
 }
 
 func integrationDeviceRevocationDigester(t *testing.T) *idempotency.Digester {

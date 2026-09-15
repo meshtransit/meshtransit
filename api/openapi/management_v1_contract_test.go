@@ -43,7 +43,7 @@ func TestManagementV1DeviceRevocationContract(t *testing.T) {
 	if _, ok := operation.Post.Security[0]["accountSessionBearer"]; !ok {
 		t.Fatal("Device revoke operation does not require Account Session bearer authentication")
 	}
-	for _, status := range []string{"200", "400", "401", "403", "404", "405", "409", "412", "428", "503", "504"} {
+	for _, status := range []string{"200", "400", "401", "403", "404", "405", "409", "412", "428", "429", "503", "504"} {
 		if _, ok := operation.Post.Responses[status]; !ok {
 			t.Fatalf("Device revoke responses omit status %s", status)
 		}

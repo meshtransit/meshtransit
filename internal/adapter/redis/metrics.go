@@ -20,6 +20,7 @@ const (
 	redisCommandObserveEndpoints redisCommand = "endpoints_observe"
 	redisCommandLoadEndpoints    redisCommand = "endpoints_load"
 	redisCommandLoadConnectivity redisCommand = "connectivity_load"
+	redisCommandRateLimit        redisCommand = "rate_limit"
 )
 
 var redisCommands = [...]redisCommand{
@@ -32,6 +33,7 @@ var redisCommands = [...]redisCommand{
 	redisCommandObserveEndpoints,
 	redisCommandLoadEndpoints,
 	redisCommandLoadConnectivity,
+	redisCommandRateLimit,
 }
 
 type redisMetrics struct {

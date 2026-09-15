@@ -10,6 +10,7 @@ import (
 	"math"
 	"mime"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
 	"github.com/meshtransit/meshtransit/internal/publicid"
+	"github.com/meshtransit/meshtransit/internal/ratelimit"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -52,6 +54,16 @@ type IdempotencyProver interface {
 	Proof(string) (idempotency.Proof, error)
 }
 
+// RateLimitSubjectDigester destroys raw source and session identities.
+type RateLimitSubjectDigester interface {
+	Subject(ratelimit.SubjectKind, string) (ratelimit.Subject, error)
+}
+
+// ManagementRateLimiter consumes one token from a distributed limiter.
+type ManagementRateLimiter interface {
+	Allow(context.Context, ratelimit.Subject, ratelimit.Policy) (ratelimit.Decision, error)
+}
+
 // PublicIDGenerator supplies server-owned correlation identities.
 type PublicIDGenerator interface {
 	NewID() (publicid.ID, error)
@@ -62,6 +74,11 @@ type ManagementHandlerOptions struct {
 	Sessions              AccountSessionAuthenticator
 	Revocations           DeviceRevoker
 	Idempotency           IdempotencyProver
+	RateLimitSubjects     RateLimitSubjectDigester
+	RateLimiter           ManagementRateLimiter
+	TrustedProxyPrefixes  []netip.Prefix
+	SourceRateLimit       ratelimit.Policy
+	SessionRateLimit      ratelimit.Policy
 	CorrelationIDs        PublicIDGenerator
 	Logger                *slog.Logger
 	RequestTimeout        time.Duration
@@ -73,6 +90,11 @@ type ManagementHandler struct {
 	sessions       AccountSessionAuthenticator
 	revocations    DeviceRevoker
 	idempotency    IdempotencyProver
+	rateSubjects   RateLimitSubjectDigester
+	rateLimiter    ManagementRateLimiter
+	clientIPs      clientIPResolver
+	sourcePolicy   ratelimit.Policy
+	sessionPolicy  ratelimit.Policy
 	correlationIDs PublicIDGenerator
 	logger         *slog.Logger
 	timeout        time.Duration
@@ -83,12 +105,18 @@ type ManagementHandler struct {
 // NewManagementHandler constructs a bounded, fail-closed management API handler.
 func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler, error) {
 	if options.Sessions == nil || options.Revocations == nil || options.Idempotency == nil ||
+		options.RateLimitSubjects == nil || options.RateLimiter == nil ||
+		!options.SourceRateLimit.IsValid() || !options.SessionRateLimit.IsValid() ||
 		options.CorrelationIDs == nil || options.Logger == nil ||
 		options.RequestTimeout < minimumManagementTimeout ||
 		options.RequestTimeout > maximumManagementTimeout ||
 		options.MaxConcurrentRequests <= 0 ||
 		options.MaxConcurrentRequests > maximumManagementRequests {
 		return nil, ErrInvalidManagementHandler
+	}
+	clientIPs, err := newClientIPResolver(options.TrustedProxyPrefixes)
+	if err != nil {
+		return nil, errors.Join(ErrInvalidManagementHandler, err)
 	}
 	telemetry, err := NewManagementTelemetry(options.MaxConcurrentRequests)
 	if err != nil {
@@ -98,6 +126,11 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		sessions:       options.Sessions,
 		revocations:    options.Revocations,
 		idempotency:    options.Idempotency,
+		rateSubjects:   options.RateLimitSubjects,
+		rateLimiter:    options.RateLimiter,
+		clientIPs:      clientIPs,
+		sourcePolicy:   options.SourceRateLimit,
+		sessionPolicy:  options.SessionRateLimit,
 		correlationIDs: options.CorrelationIDs,
 		logger:         options.Logger,
 		timeout:        options.RequestTimeout,
@@ -110,6 +143,8 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 func (handler *ManagementHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	if handler == nil || response == nil || request == nil || request.URL == nil ||
 		handler.sessions == nil || handler.revocations == nil || handler.idempotency == nil ||
+		handler.rateSubjects == nil || handler.rateLimiter == nil ||
+		!handler.sourcePolicy.IsValid() || !handler.sessionPolicy.IsValid() ||
 		handler.correlationIDs == nil || handler.logger == nil || handler.telemetry == nil {
 		if response != nil {
 			http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
@@ -176,11 +211,39 @@ func (handler *ManagementHandler) ServeHTTP(response http.ResponseWriter, reques
 	ctx, cancel := context.WithTimeout(request.Context(), handler.timeout)
 	defer cancel()
 	request = request.WithContext(ctx)
+	source, sourceErr := handler.clientIPs.Resolve(request)
+	if sourceErr != nil {
+		resultCode = "invalid_request"
+		writeManagementError(ctx, handler.logger, response, correlationID, *invalidManagementRequest())
+		return
+	}
+	if limitErr := handler.enforceRateLimit(
+		ctx,
+		response,
+		ratelimit.SubjectSource,
+		source.String(),
+		handler.sourcePolicy,
+	); limitErr != nil {
+		resultCode = limitErr.Code
+		writeManagementError(ctx, handler.logger, response, correlationID, *limitErr)
+		return
+	}
 	session, authenticationErr := handler.authenticate(ctx, request)
 	if authenticationErr != nil {
 		classified := classifyAuthenticationError(authenticationErr)
 		resultCode = classified.Code
 		writeManagementError(ctx, handler.logger, response, correlationID, classified)
+		return
+	}
+	if limitErr := handler.enforceRateLimit(
+		ctx,
+		response,
+		ratelimit.SubjectAccountSession,
+		session.ID().String(),
+		handler.sessionPolicy,
+	); limitErr != nil {
+		resultCode = limitErr.Code
+		writeManagementError(ctx, handler.logger, response, correlationID, *limitErr)
 		return
 	}
 	command, commandErr := handler.decodeDeviceRevokeCommand(response, request, path, session)
@@ -218,6 +281,49 @@ func (handler *ManagementHandler) ServeHTTP(response http.ResponseWriter, reques
 		},
 		CorrelationID: correlationID.String(),
 	})
+}
+
+func (handler *ManagementHandler) enforceRateLimit(
+	ctx context.Context,
+	response http.ResponseWriter,
+	kind ratelimit.SubjectKind,
+	rawSubject string,
+	policy ratelimit.Policy,
+) *managementError {
+	subject, err := handler.rateSubjects.Subject(kind, rawSubject)
+	if err != nil {
+		return &managementError{
+			Status: http.StatusInternalServerError, Code: "internal_failure",
+			Message: "the request could not be completed",
+		}
+	}
+	decision, err := handler.rateLimiter.Allow(ctx, subject, policy)
+	if err != nil || !decision.IsValid() {
+		return &managementError{
+			Status: http.StatusServiceUnavailable, Code: "rate_limit_unavailable",
+			Message: "request admission is temporarily unavailable", Retryable: true,
+		}
+	}
+	setRateLimitHeaders(response.Header(), decision)
+	if decision.Allowed() {
+		return nil
+	}
+	return &managementError{
+		Status: http.StatusTooManyRequests, Code: "rate_limited",
+		Message: "too many requests", Retryable: true,
+	}
+}
+
+func setRateLimitHeaders(header http.Header, decision ratelimit.Decision) {
+	header.Set("RateLimit-Limit", strconv.FormatInt(decision.Limit(), 10))
+	header.Set("RateLimit-Remaining", strconv.FormatInt(decision.Remaining(), 10))
+	if decision.RetryAfter() <= 0 {
+		header.Del("RateLimit-Reset")
+		return
+	}
+	retrySeconds := int64(math.Ceil(decision.RetryAfter().Seconds()))
+	header.Set("RateLimit-Reset", strconv.FormatInt(retrySeconds, 10))
+	header.Set("Retry-After", strconv.FormatInt(retrySeconds, 10))
 }
 
 func (handler *ManagementHandler) authenticate(

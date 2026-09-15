@@ -19,6 +19,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
 	"github.com/meshtransit/meshtransit/internal/publicid"
+	"github.com/meshtransit/meshtransit/internal/ratelimit"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -176,6 +177,104 @@ func TestManagementHandlerFailsClosed(t *testing.T) {
 	}
 }
 
+func TestManagementHandlerRateLimitsBeforeAuthorityMutation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		denyKind         ratelimit.SubjectKind
+		limitErr         error
+		status           int
+		code             string
+		wantAuthenticate bool
+		wantCalls        int
+		wantHeaders      bool
+	}{
+		{
+			name: "source denied", denyKind: ratelimit.SubjectSource,
+			status: http.StatusTooManyRequests, code: "rate_limited",
+			wantCalls: 1, wantHeaders: true,
+		},
+		{
+			name: "source limiter unavailable", limitErr: errors.New("redis unavailable"),
+			status: http.StatusServiceUnavailable, code: "rate_limit_unavailable",
+			wantCalls: 1,
+		},
+		{
+			name: "session denied", denyKind: ratelimit.SubjectAccountSession,
+			status: http.StatusTooManyRequests, code: "rate_limited",
+			wantAuthenticate: true, wantCalls: 2, wantHeaders: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var authenticated, revoked bool
+			calls := 0
+			handler := managementHandlerFixture(t, managementHandlerFixtureOptions{
+				authenticate: func(context.Context, accountsession.Token) (accountsession.Session, error) {
+					authenticated = true
+					return managementSessionFixture(t), nil
+				},
+				revoke: func(_ context.Context, command revocation.Command) (revocation.Result, error) {
+					revoked = true
+					return managementResultFixture(t, command), nil
+				},
+				limit: func(
+					_ context.Context,
+					subject ratelimit.Subject,
+					policy ratelimit.Policy,
+				) (ratelimit.Decision, error) {
+					calls++
+					if test.limitErr != nil {
+						return ratelimit.Decision{}, test.limitErr
+					}
+					if subject.Kind() == test.denyKind {
+						return ratelimit.NewDecision(false, policy.Capacity(), 0, 1500*time.Millisecond)
+					}
+					return ratelimit.NewDecision(true, policy.Capacity(), policy.Capacity()-1, 0)
+				},
+			})
+			request := newManagementRequest(
+				t,
+				http.MethodPost,
+				validManagementPath(),
+				`{"reason":"compromised device"}`,
+			)
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d; body = %s", response.Code, test.status, response.Body.String())
+			}
+			var envelope managementErrorResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil ||
+				envelope.Error.Code != test.code {
+				t.Fatalf("error envelope = (%+v, %v)", envelope, err)
+			}
+			if authenticated != test.wantAuthenticate || revoked || calls != test.wantCalls {
+				t.Fatalf(
+					"authenticate/revoke/calls = %t/%t/%d, want %t/false/%d",
+					authenticated,
+					revoked,
+					calls,
+					test.wantAuthenticate,
+					test.wantCalls,
+				)
+			}
+			if test.wantHeaders {
+				if response.Header().Get("RateLimit-Limit") != "5" ||
+					response.Header().Get("RateLimit-Remaining") != "0" ||
+					response.Header().Get("RateLimit-Reset") != "2" ||
+					response.Header().Get("Retry-After") != "2" {
+					t.Fatalf("rate limit headers = %+v", response.Header())
+				}
+			}
+		})
+	}
+}
+
 func TestNewManagementHandlerRejectsInvalidDependencies(t *testing.T) {
 	t.Parallel()
 
@@ -184,6 +283,10 @@ func TestNewManagementHandlerRejectsInvalidDependencies(t *testing.T) {
 		func(options *ManagementHandlerOptions) { options.Sessions = nil },
 		func(options *ManagementHandlerOptions) { options.Revocations = nil },
 		func(options *ManagementHandlerOptions) { options.Idempotency = nil },
+		func(options *ManagementHandlerOptions) { options.RateLimitSubjects = nil },
+		func(options *ManagementHandlerOptions) { options.RateLimiter = nil },
+		func(options *ManagementHandlerOptions) { options.SourceRateLimit = ratelimit.Policy{} },
+		func(options *ManagementHandlerOptions) { options.SessionRateLimit = ratelimit.Policy{} },
 		func(options *ManagementHandlerOptions) { options.CorrelationIDs = nil },
 		func(options *ManagementHandlerOptions) { options.Logger = nil },
 		func(options *ManagementHandlerOptions) { options.RequestTimeout = 0 },
@@ -201,6 +304,7 @@ type managementHandlerFixtureOptions struct {
 	session      accountsession.Session
 	authenticate func(context.Context, accountsession.Token) (accountsession.Session, error)
 	revoke       func(context.Context, revocation.Command) (revocation.Result, error)
+	limit        func(context.Context, ratelimit.Subject, ratelimit.Policy) (ratelimit.Decision, error)
 }
 
 func managementHandlerFixture(t *testing.T, fixture managementHandlerFixtureOptions) http.Handler {
@@ -215,6 +319,9 @@ func managementHandlerFixture(t *testing.T, fixture managementHandlerFixtureOpti
 	}
 	if fixture.revoke != nil {
 		options.Revocations = managementDeviceRevokerFunc(fixture.revoke)
+	}
+	if fixture.limit != nil {
+		options.RateLimiter = managementRateLimiterFunc(fixture.limit)
 	}
 	handler, err := NewManagementHandler(options)
 	if err != nil {
@@ -233,6 +340,7 @@ func validManagementHandlerOptions(t *testing.T) ManagementHandlerOptions {
 	if err != nil {
 		t.Fatalf("publicid.Parse() error = %v", err)
 	}
+	rateDigester, ratePolicy := managementRateLimitFixture(t)
 	return ManagementHandlerOptions{
 		Sessions: managementSessionAuthenticatorFunc(func(context.Context, accountsession.Token) (accountsession.Session, error) {
 			return managementSessionFixture(t), nil
@@ -243,6 +351,16 @@ func validManagementHandlerOptions(t *testing.T) ManagementHandlerOptions {
 		Idempotency: managementIdempotencyProverFunc(func(string) (idempotency.Proof, error) {
 			return proof, nil
 		}),
+		RateLimitSubjects: rateDigester,
+		RateLimiter: managementRateLimiterFunc(func(
+			_ context.Context,
+			_ ratelimit.Subject,
+			policy ratelimit.Policy,
+		) (ratelimit.Decision, error) {
+			return ratelimit.NewDecision(true, policy.Capacity(), policy.Capacity()-1, 0)
+		}),
+		SourceRateLimit:  ratePolicy,
+		SessionRateLimit: ratePolicy,
 		CorrelationIDs: managementPublicIDGeneratorFunc(func() (publicid.ID, error) {
 			return correlationID, nil
 		}),
@@ -250,6 +368,25 @@ func validManagementHandlerOptions(t *testing.T) ManagementHandlerOptions {
 		RequestTimeout:        time.Second,
 		MaxConcurrentRequests: 2,
 	}
+}
+
+func managementRateLimitFixture(t *testing.T) (*ratelimit.Digester, ratelimit.Policy) {
+	t.Helper()
+	keyID, err := ratelimit.NewDigestKeyID("management-v1")
+	if err != nil {
+		t.Fatalf("ratelimit.NewDigestKeyID() error = %v", err)
+	}
+	material := make([]byte, 32)
+	material[31] = 1
+	digester, err := ratelimit.NewDigester(keyID, material)
+	if err != nil {
+		t.Fatalf("ratelimit.NewDigester() error = %v", err)
+	}
+	policy, err := ratelimit.NewPolicy(5, time.Second)
+	if err != nil {
+		t.Fatalf("ratelimit.NewPolicy() error = %v", err)
+	}
+	return digester, policy
 }
 
 type managementSessionAuthenticatorFunc func(context.Context, accountsession.Token) (accountsession.Session, error)
@@ -268,6 +405,20 @@ type managementIdempotencyProverFunc func(string) (idempotency.Proof, error)
 
 func (function managementIdempotencyProverFunc) Proof(value string) (idempotency.Proof, error) {
 	return function(value)
+}
+
+type managementRateLimiterFunc func(
+	context.Context,
+	ratelimit.Subject,
+	ratelimit.Policy,
+) (ratelimit.Decision, error)
+
+func (function managementRateLimiterFunc) Allow(
+	ctx context.Context,
+	subject ratelimit.Subject,
+	policy ratelimit.Policy,
+) (ratelimit.Decision, error) {
+	return function(ctx, subject, policy)
 }
 
 type managementPublicIDGeneratorFunc func() (publicid.ID, error)

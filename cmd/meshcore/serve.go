@@ -155,6 +155,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		managementServer, managementMetrics, composeErr := composeManagementAPI(
 			*processConfig.API,
 			storagePools.runtime,
+			redisClient,
 			logger,
 		)
 		if composeErr != nil {

@@ -110,6 +110,7 @@ func TestTLSAuthenticatedDependencies(t *testing.T) {
 	}
 	assertRedisPresenceLeaseFencing(ctx, t, redisClient)
 	assertRedisEndpointObservationFencing(ctx, t, redisClient)
+	assertRedisRateLimit(ctx, t, redisClient)
 
 	wakeup, err := network.NewRevisionAdvanced(
 		"01890f00-0000-7000-8000-000000000201",

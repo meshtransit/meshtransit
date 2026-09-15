@@ -53,6 +53,7 @@ type Client struct {
 	observeEndpoints observeEndpointsFunc
 	loadEndpoints    loadEndpointsFunc
 	loadConnectivity loadConnectivityFunc
+	applyRateLimit   rateLimitFunc
 	metrics          *redisMetrics
 	close            func() error
 	closeOnce        sync.Once
@@ -180,6 +181,14 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 				arguments[index] = generation
 			}
 			return loadConnectivityScript.Run(loadCtx, client, keys, arguments...).Slice()
+		},
+		applyRateLimit: func(
+			rateLimitCtx context.Context,
+			key string,
+			capacity int64,
+			refillInterval time.Duration,
+		) ([]int64, error) {
+			return runRateLimitScript(rateLimitCtx, client, key, capacity, refillInterval)
 		},
 		metrics: newRedisMetrics(options.PoolSize, client.PoolStats),
 		close:   client.Close,

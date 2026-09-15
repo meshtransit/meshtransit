@@ -89,6 +89,9 @@
           "428": {
             "$ref": "#/components/responses/PreconditionRequired"
           },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
           "503": {
             "$ref": "#/components/responses/Unavailable"
           },
@@ -166,6 +169,34 @@
         "description": "A server-generated UUIDv7 used to correlate the safe response and operational log.",
         "schema": {
           "$ref": "#/components/schemas/PublicID"
+        }
+      },
+      "RateLimitLimit": {
+        "description": "The burst capacity for the limiter that made the decision.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "RateLimitRemaining": {
+        "description": "Tokens immediately available after the decision.",
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "RateLimitReset": {
+        "description": "Whole seconds until one request can be admitted.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "RetryAfter": {
+        "description": "Whole seconds before the caller should retry.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1
         }
       }
     },
@@ -363,8 +394,32 @@
           }
         }
       },
+      "RateLimited": {
+        "description": "The source or authenticated Account Session exhausted its distributed request budget.",
+        "headers": {
+          "RateLimit-Limit": {
+            "$ref": "#/components/headers/RateLimitLimit"
+          },
+          "RateLimit-Remaining": {
+            "$ref": "#/components/headers/RateLimitRemaining"
+          },
+          "RateLimit-Reset": {
+            "$ref": "#/components/headers/RateLimitReset"
+          },
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
       "Unavailable": {
-        "description": "Authoritative dependencies or bounded request capacity are unavailable.",
+		"description": "Authoritative dependencies, distributed request admission, or bounded process capacity are unavailable.",
         "content": {
           "application/json": {
             "schema": {

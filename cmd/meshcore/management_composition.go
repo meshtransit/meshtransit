@@ -15,6 +15,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/idempotency"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
+	"github.com/meshtransit/meshtransit/internal/ratelimit"
 )
 
 const (
@@ -32,9 +33,10 @@ var errInvalidManagementComposition = errors.New("invalid management API composi
 func composeManagementAPI(
 	apiConfig config.APIConfig,
 	runtimePool *postgresadapter.Pool,
+	rateLimiter httpapi.ManagementRateLimiter,
 	logger *slog.Logger,
 ) (*httpapi.ManagementServer, prometheus.Collector, error) {
-	if runtimePool == nil || logger == nil {
+	if runtimePool == nil || rateLimiter == nil || logger == nil {
 		return nil, nil, errInvalidManagementComposition
 	}
 	certificate, err := loadManagementTLSCertificate(apiConfig)
@@ -46,6 +48,10 @@ func composeManagementAPI(
 		return nil, nil, err
 	}
 	idempotencyDigester, err := composeIdempotencyDigester(apiConfig.IdempotencyDigest)
+	if err != nil {
+		return nil, nil, err
+	}
+	rateLimitDigester, err := composeRateLimitDigester(apiConfig.RateLimitDigest)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -94,6 +100,9 @@ func composeManagementAPI(
 	}
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions: sessions, Revocations: revocations, Idempotency: idempotencyDigester,
+		RateLimitSubjects: rateLimitDigester, RateLimiter: rateLimiter,
+		TrustedProxyPrefixes: apiConfig.TrustedProxyPrefixes,
+		SourceRateLimit:      apiConfig.SourceRateLimit, SessionRateLimit: apiConfig.SessionRateLimit,
 		CorrelationIDs: httpapi.PublicCorrelationIDGenerator{}, Logger: logger,
 		RequestTimeout:        apiConfig.RequestTimeout,
 		MaxConcurrentRequests: apiConfig.MaxConcurrentRequests,
@@ -109,6 +118,21 @@ func composeManagementAPI(
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
 	return server, handler.MetricsCollector(), nil
+}
+
+func composeRateLimitDigester(
+	digestConfig config.RateLimitDigestConfig,
+) (*ratelimit.Digester, error) {
+	material, err := readManagementKeyMaterial(digestConfig.MaterialFile)
+	if err != nil {
+		return nil, errors.Join(errInvalidManagementComposition, errors.New("rate limit key rejected"))
+	}
+	defer clear(material)
+	digester, err := ratelimit.NewDigester(digestConfig.ID, material)
+	if err != nil {
+		return nil, errors.Join(errInvalidManagementComposition, errors.New("rate limit key rejected"))
+	}
+	return digester, nil
 }
 
 func composeAccountSessionKeyring(

@@ -32,6 +32,9 @@ ETag, and HMAC-protected idempotency constraints. A committed revocation
 advances the Network revision and writes its outbox event in the same
 transaction; the worker publishes that wakeup and live control streams resync
 immediately, while periodic reconciliation remains the recovery path.
+Source and authenticated-session request budgets are enforced atomically in
+Redis before authority mutation. Counter identities are purpose-separated
+HMACs; Redis failure closes management admission rather than bypassing it.
 The worker PostgreSQL adapter leases, reconciles, and completes the matching
 durable outbox work without treating Redis as authority.
 
@@ -89,8 +92,9 @@ The `relay` role intentionally does not load or require direct storage settings.
 | `MESHTRANSIT_REDIS_CA_FILE` | none | Absolute path to the trusted CA bundle. |
 | `MESHTRANSIT_REDIS_POOL_SIZE` | `10` | Per-process active-connection cap from 1 through 50. |
 
-The Redis ACL user must be limited to the presence and endpoint key patterns,
-the fixed `PING`, hash, expiry, delete, script, publish, and subscribe commands,
+The Redis ACL user must be limited to the presence, endpoint, and
+`meshtransit:v1:ratelimit:management:*` key patterns, the fixed `PING`, `GET`,
+`SET`, `TIME`, hash, expiry, delete, script, publish, and subscribe commands,
 and exactly these Pub/Sub channels:
 `meshtransit:v1:wakeup:network_revision_advanced` and
 `meshtransit:v1:wakeup:connectivity_changed`. `resetchannels` without both
@@ -130,6 +134,13 @@ enrollment, Noise, and TLS private-key material must remain purpose-separated.
 | `MESHTRANSIT_API_ACCOUNT_SESSION_DIGEST_PREVIOUS_KEY_FILE` | none | Absolute path to the optional previous Account Session HMAC key. |
 | `MESHTRANSIT_API_IDEMPOTENCY_DIGEST_KEY_ID` | none | Public version identifier for management idempotency HMACs. |
 | `MESHTRANSIT_API_IDEMPOTENCY_DIGEST_KEY_FILE` | none | Absolute path to the idempotency HMAC key. |
+| `MESHTRANSIT_API_RATE_LIMIT_DIGEST_KEY_ID` | none | Public version identifier for rate-limit subject HMACs. |
+| `MESHTRANSIT_API_RATE_LIMIT_DIGEST_KEY_FILE` | none | Absolute path to the purpose-separated rate-limit HMAC key. |
+| `MESHTRANSIT_API_TRUSTED_PROXY_CIDRS` | empty | Comma-separated canonical CIDRs allowed to supply `X-Forwarded-For`; all other peers' forwarding headers are ignored. |
+| `MESHTRANSIT_API_SOURCE_RATE_LIMIT_CAPACITY` | `30` | Maximum per-source burst from 1 through 100000 requests. |
+| `MESHTRANSIT_API_SOURCE_RATE_LIMIT_REFILL_INTERVAL` | `1s` | Time to restore one per-source token, from 10ms through 1 hour. |
+| `MESHTRANSIT_API_SESSION_RATE_LIMIT_CAPACITY` | `60` | Maximum per-Account-Session burst from 1 through 100000 requests. |
+| `MESHTRANSIT_API_SESSION_RATE_LIMIT_REFILL_INTERVAL` | `500ms` | Time to restore one per-session token, from 10ms through 1 hour. |
 | `MESHTRANSIT_API_REQUEST_TIMEOUT` | `10s` | Whole-request deadline from 100ms through 30 seconds. |
 | `MESHTRANSIT_API_MAX_CONNECTIONS` | `256` | TLS connection cap from 1 through 4096. |
 | `MESHTRANSIT_API_MAX_CONCURRENT_REQUESTS` | `128` | Admitted-request cap from 1 through the connection cap. |
@@ -151,6 +162,9 @@ revisions, and a correlation ID. Errors use one stable JSON envelope without
 authority, database, token, or raw idempotency-key detail. The machine-readable
 contract is `api/openapi/management_v1.json`. Login and Account Session
 issuance are not exposed yet, so this slice cannot mint a new management bearer.
+Exhausted request budgets return `429` with bounded `RateLimit-*` and
+`Retry-After` headers. Redis admission failure returns retryable `503` before
+authentication or PostgreSQL mutation.
 
 Those roles also expose the public client-control listener. It accepts TLS only;
 the client session inside TLS must then authenticate with the pinned Noise
@@ -409,7 +423,8 @@ closed sets (`success`/`error` and `delivered`/`deferred`/`failed`); event,
 Workspace, Network, and worker identifiers are never metric labels.
 
 Processes with storage dependencies also expose Redis command count and
-latency for the fixed connection, wakeup, presence, endpoint, and connectivity
+latency for the fixed connection, wakeup, presence, endpoint, connectivity, and
+rate-limit
 projection operations,
 plus command-pool usage, pending requests, pool timeouts, and active
 subscriptions. Operation and result labels are closed sets; Node IDs, endpoint

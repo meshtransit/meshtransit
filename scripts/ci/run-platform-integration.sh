@@ -15,6 +15,7 @@ redis_password="$(openssl rand -hex 24)"
 enrollment_digest_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
 account_session_digest_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
 idempotency_digest_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
+rate_limit_digest_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
 noise_private_key="privkey:$(openssl rand -hex 32)"
 
 cleanup() {
@@ -87,6 +88,7 @@ printf 'redis-%s\n' "${redis_password}" >"${fixture_dir}/redis-password"
 printf '%s\n' "${enrollment_digest_key}" >"${fixture_dir}/enrollment-digest-key"
 printf '%s\n' "${account_session_digest_key}" >"${fixture_dir}/account-session-digest-key"
 printf '%s\n' "${idempotency_digest_key}" >"${fixture_dir}/idempotency-digest-key"
+printf '%s\n' "${rate_limit_digest_key}" >"${fixture_dir}/rate-limit-digest-key"
 printf '%s\n' "${noise_private_key}" >"${fixture_dir}/control-noise-private-key"
 chmod 0600 "${fixture_dir}/migration-password"
 chmod 0600 "${fixture_dir}/runtime-password"
@@ -96,6 +98,7 @@ chmod 0600 "${fixture_dir}/redis-password"
 chmod 0600 "${fixture_dir}/enrollment-digest-key"
 chmod 0600 "${fixture_dir}/account-session-digest-key"
 chmod 0600 "${fixture_dir}/idempotency-digest-key"
+chmod 0600 "${fixture_dir}/rate-limit-digest-key"
 chmod 0600 "${fixture_dir}/control-noise-private-key"
 chmod 0600 "${fixture_dir}/control-server.key"
 
@@ -198,8 +201,10 @@ docker exec --detach --user redis "${redis_container}" redis-server \
 	--user mesh_worker on ">redis-${redis_password}" resetkeys resetchannels \
 	"+ping" "+publish" "+subscribe" "+eval" "+evalsha" \
 	"+hget" "+hset" "+pexpire" "+del" \
+	"+get" "+set" "+time" \
 	"~meshtransit:v1:presence:node:*" \
 	"~meshtransit:v1:endpoints:node:*" \
+	"~meshtransit:v1:ratelimit:management:*" \
 	"&meshtransit:v1:wakeup:network_revision_advanced" \
 	"&meshtransit:v1:wakeup:connectivity_changed"
 
@@ -263,6 +268,8 @@ export MESHTRANSIT_API_ACCOUNT_SESSION_DIGEST_ACTIVE_KEY_ID=integration-v1
 export MESHTRANSIT_API_ACCOUNT_SESSION_DIGEST_ACTIVE_KEY_FILE="${fixture_dir}/account-session-digest-key"
 export MESHTRANSIT_API_IDEMPOTENCY_DIGEST_KEY_ID=integration-v1
 export MESHTRANSIT_API_IDEMPOTENCY_DIGEST_KEY_FILE="${fixture_dir}/idempotency-digest-key"
+export MESHTRANSIT_API_RATE_LIMIT_DIGEST_KEY_ID=integration-v1
+export MESHTRANSIT_API_RATE_LIMIT_DIGEST_KEY_FILE="${fixture_dir}/rate-limit-digest-key"
 export MESHTRANSIT_API_MAX_CONNECTIONS=8
 export MESHTRANSIT_API_MAX_CONCURRENT_REQUESTS=4
 export MESHTRANSIT_TEST_POSTGRES_ADMIN_PASSWORD_FILE="${fixture_dir}/postgres-admin-password"

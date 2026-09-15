@@ -21,6 +21,11 @@ func TestLoadAPIConfigForAPIRoles(t *testing.T) {
 				envAPIRequestTimeout:                      "7s",
 				envAPIMaxConnections:                      "17",
 				envAPIMaxConcurrentRequests:               "9",
+				envAPITrustedProxyCIDRs:                   "10.108.0.0/16,2001:db8::/32",
+				envAPISourceRateLimitCapacity:             "19",
+				envAPISourceRateLimitRefillInterval:       "2s",
+				envAPISessionRateLimitCapacity:            "29",
+				envAPISessionRateLimitRefillInterval:      "250ms",
 			})))
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
@@ -33,7 +38,13 @@ func TestLoadAPIConfigForAPIRoles(t *testing.T) {
 				got.API.AccountSessionDigest.Active.ID.String() != "session-v1" ||
 				got.API.AccountSessionDigest.Previous == nil ||
 				got.API.AccountSessionDigest.Previous.ID.String() != "session-v0" ||
-				got.API.IdempotencyDigest.ID.String() != "idempotency-v1" {
+				got.API.IdempotencyDigest.ID.String() != "idempotency-v1" ||
+				got.API.RateLimitDigest.ID.String() != "rate-limit-v1" ||
+				len(got.API.TrustedProxyPrefixes) != 2 ||
+				got.API.SourceRateLimit.Capacity() != 19 ||
+				got.API.SourceRateLimit.RefillInterval() != 2*time.Second ||
+				got.API.SessionRateLimit.Capacity() != 29 ||
+				got.API.SessionRateLimit.RefillInterval() != 250*time.Millisecond {
 				t.Fatalf("API = %+v, want explicit bounded values", *got.API)
 			}
 		})
@@ -50,6 +61,8 @@ func TestLoadAPIConfigRequiresFilesAndKeyIDs(t *testing.T) {
 		envAPIAccountSessionDigestActiveKeyFile,
 		envAPIIdempotencyDigestKeyID,
 		envAPIIdempotencyDigestKeyFile,
+		envAPIRateLimitDigestKeyID,
+		envAPIRateLimitDigestKeyFile,
 	} {
 		t.Run(setting, func(t *testing.T) {
 			t.Parallel()
@@ -75,6 +88,12 @@ func TestLoadAPIConfigRejectsUnsafeValuesWithoutEchoingThem(t *testing.T) {
 		{name: "relative certificate", setting: envAPITLSCertificateFile, rejected: "relative.pem"},
 		{name: "invalid session key id", setting: envAPIAccountSessionDigestActiveKeyID, rejected: " session key"},
 		{name: "invalid idempotency key id", setting: envAPIIdempotencyDigestKeyID, rejected: "idempotency key"},
+		{name: "invalid rate limit key id", setting: envAPIRateLimitDigestKeyID, rejected: "rate limit key"},
+		{name: "invalid trusted proxies", setting: envAPITrustedProxyCIDRs, rejected: "10.0.0.1/8"},
+		{name: "zero source limit", setting: envAPISourceRateLimitCapacity, rejected: "0"},
+		{name: "short source refill", setting: envAPISourceRateLimitRefillInterval, rejected: "9ms"},
+		{name: "zero session limit", setting: envAPISessionRateLimitCapacity, rejected: "0"},
+		{name: "fractional session refill", setting: envAPISessionRateLimitRefillInterval, rejected: "10.5ms"},
 		{name: "short request timeout", setting: envAPIRequestTimeout, rejected: "99ms"},
 		{name: "long request timeout", setting: envAPIRequestTimeout, rejected: "31s"},
 		{name: "zero connections", setting: envAPIMaxConnections, rejected: "0"},
@@ -144,6 +163,9 @@ func TestLoadAPIConfigRejectsSharedSecretFiles(t *testing.T) {
 		},
 		"session and tls": {
 			envAPIAccountSessionDigestActiveKeyFile: "/run/secrets/control-tls-private-key.pem",
+		},
+		"rate limit and idempotency": {
+			envAPIRateLimitDigestKeyFile: "/run/secrets/idempotency-digest-key",
 		},
 		"idempotency and enrollment": {
 			envAPIIdempotencyDigestKeyFile: "/run/secrets/enrollment-digest-active-key",
