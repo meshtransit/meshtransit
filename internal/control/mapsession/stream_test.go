@@ -394,6 +394,34 @@ func TestStreamSnapshotRequiresStablePacketPolicyAtSameRevision(t *testing.T) {
 	}
 }
 
+func TestStreamSnapshotRequiresNetworkRevisionForNameChange(t *testing.T) {
+	t.Parallel()
+
+	current := snapshotFixture(t)
+	nextParams := current.params()
+	nextName, err := network.ParseDisplayName("Development Mesh Live")
+	if err != nil {
+		t.Fatalf("network.ParseDisplayName() error = %v", err)
+	}
+	nextParams.NetworkName = nextName
+	next, err := NewSnapshot(nextParams)
+	if err != nil {
+		t.Fatalf("NewSnapshot(next) error = %v", err)
+	}
+	if streamCanAdvance(current, next) {
+		t.Fatal("streamCanAdvance() = true for changed Network name at the same revision")
+	}
+
+	nextParams.NetworkRevision++
+	next, err = NewSnapshot(nextParams)
+	if err != nil {
+		t.Fatalf("NewSnapshot(advanced) error = %v", err)
+	}
+	if !streamCanAdvance(current, next) {
+		t.Fatal("streamCanAdvance() = false for revisioned Network name change")
+	}
+}
+
 func TestStreamTracksOnlyRelevantConnectivityChanges(t *testing.T) {
 	t.Parallel()
 

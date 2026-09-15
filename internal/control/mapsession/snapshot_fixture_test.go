@@ -25,6 +25,10 @@ func snapshotFixture(t *testing.T) Snapshot {
 	if err != nil {
 		t.Fatalf("network.NewScope() error = %v", err)
 	}
+	networkName, err := network.ParseDisplayName("Development Mesh")
+	if err != nil {
+		t.Fatalf("network.ParseDisplayName() error = %v", err)
+	}
 	nodeID, err := node.ParseID("01890f00-0000-7000-8000-000000000701")
 	if err != nil {
 		t.Fatalf("node.ParseID() error = %v", err)
@@ -52,6 +56,7 @@ func snapshotFixture(t *testing.T) Snapshot {
 	}
 	snapshot, err := NewSnapshot(SnapshotParams{
 		Scope:             scope,
+		NetworkName:       networkName,
 		NetworkRevision:   7,
 		RecoveryEpoch:     2,
 		SessionGeneration: 3,

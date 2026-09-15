@@ -137,6 +137,7 @@ func (store *Store) Load(
 	if err := transaction.QueryRow(ctx, loadSnapshotSQL, fingerprint[:], nodeKey[:]).Scan(
 		&record.numericNodeID,
 		&record.numericOwnerID,
+		&record.networkName,
 		&record.nodeID,
 		&record.hostname,
 		&record.machineKey,

@@ -99,6 +99,7 @@ func mapSnapshotWithAuthorizedCandidateFixture(t *testing.T) mapsession.Snapshot
 	}
 	params := mapsession.SnapshotParams{
 		Scope:             base.Scope(),
+		NetworkName:       base.NetworkName(),
 		NetworkRevision:   base.NetworkRevision(),
 		RecoveryEpoch:     base.RecoveryEpoch(),
 		SessionGeneration: base.SessionGeneration(),
@@ -195,6 +196,7 @@ func mapPortRangeFixture(t *testing.T, first, last uint16) policy.PortRange {
 func mapSnapshotParams(base mapsession.Snapshot) mapsession.SnapshotParams {
 	return mapsession.SnapshotParams{
 		Scope:             base.Scope(),
+		NetworkName:       base.NetworkName(),
 		NetworkRevision:   base.NetworkRevision(),
 		RecoveryEpoch:     base.RecoveryEpoch(),
 		SessionGeneration: base.SessionGeneration(),
@@ -229,6 +231,10 @@ func mapSnapshotFixtureWithCandidates(
 	if err != nil {
 		t.Fatalf("network.NewScope() error = %v", err)
 	}
+	networkName, err := network.ParseDisplayName("Development Mesh")
+	if err != nil {
+		t.Fatalf("network.ParseDisplayName() error = %v", err)
+	}
 	nodeID, err := node.ParseID("01890f00-0000-7000-8000-000000000701")
 	if err != nil {
 		t.Fatalf("node.ParseID() error = %v", err)
@@ -260,6 +266,7 @@ func mapSnapshotFixtureWithCandidates(
 	}
 	snapshot, err := mapsession.NewSnapshot(mapsession.SnapshotParams{
 		Scope:             scope,
+		NetworkName:       networkName,
 		NetworkRevision:   7,
 		RecoveryEpoch:     2,
 		SessionGeneration: 3,

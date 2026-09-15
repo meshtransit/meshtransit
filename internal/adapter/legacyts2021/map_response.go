@@ -27,6 +27,7 @@ const (
 var ErrMapResponse = errors.New("legacyts2021: map response failed")
 
 type fullMapResponseWire struct {
+	Domain       string               `json:"Domain"`
 	Node         *tailcfg.Node        `json:"Node"`
 	Peers        []*tailcfg.Node      `json:"Peers"`
 	PacketFilter []tailcfg.FilterRule `json:"PacketFilter"`
@@ -66,6 +67,7 @@ func encodeFullMapResponse(
 		return nil, err
 	}
 	document, err := json.Marshal(fullMapResponseWire{
+		Domain:       snapshot.NetworkName().String(),
 		Node:         self,
 		Peers:        peers,
 		PacketFilter: packetFilter,

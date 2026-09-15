@@ -32,7 +32,7 @@ func TestEncodeFullMapResponseClearsInheritedAuthority(t *testing.T) {
 	if err := json.Unmarshal(document, &fields); err != nil {
 		t.Fatalf("decode map response fields: %v", err)
 	}
-	for _, name := range []string{"Node", "Peers", "PacketFilter"} {
+	for _, name := range []string{"Domain", "Node", "Peers", "PacketFilter"} {
 		if _, ok := fields[name]; !ok {
 			t.Fatalf("map response omitted required field %q: %s", name, document)
 		}
@@ -44,6 +44,9 @@ func TestEncodeFullMapResponseClearsInheritedAuthority(t *testing.T) {
 	var response tailcfg.MapResponse
 	if err := json.Unmarshal(document, &response); err != nil {
 		t.Fatalf("decode typed map response: %v", err)
+	}
+	if response.Domain != "Development Mesh" {
+		t.Fatalf("map response Domain = %q, want %q", response.Domain, "Development Mesh")
 	}
 	if response.Node == nil || response.Node.ID != 701 ||
 		string(response.Node.StableID) != "01890f00-0000-7000-8000-000000000701" ||

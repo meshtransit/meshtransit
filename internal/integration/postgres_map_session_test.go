@@ -59,6 +59,7 @@ func assertPostgreSQLMapSessionSnapshot(
 	if snapshot.NumericNodeID() != 603 || snapshot.NumericOwnerID() != 11 ||
 		snapshot.NodeID().String() != "01890f10-0000-7000-8000-000000000603" ||
 		snapshot.Hostname().String() != "node-one.example" ||
+		snapshot.NetworkName().String() != "Network one updated" ||
 		snapshot.Scope() != command.Scope || snapshot.RecoveryEpoch() != 1 ||
 		snapshot.SessionGeneration() != 1 || snapshot.NetworkRevision() <= 0 ||
 		snapshot.PacketPolicy().Revision() <= 0 ||

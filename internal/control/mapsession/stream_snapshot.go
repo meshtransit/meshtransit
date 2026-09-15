@@ -22,6 +22,7 @@ func streamCanAdvance(current, next Snapshot) bool {
 		return true
 	}
 	return next.NumericOwnerID() == current.NumericOwnerID() &&
+		next.NetworkName() == current.NetworkName() &&
 		next.Hostname() == current.Hostname() &&
 		slices.Equal(next.Addresses(), current.Addresses()) &&
 		equalPeerCandidates(next.peerCandidates, current.peerCandidates) &&

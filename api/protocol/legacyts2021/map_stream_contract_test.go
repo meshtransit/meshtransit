@@ -35,6 +35,7 @@ type mapStreamContract struct {
 		PresenceFence                   []string `json:"presence_fence"`
 		RedisLoss                       string   `json:"redis_loss"`
 		RevisionWakeup                  string   `json:"revision_wakeup"`
+		NetworkNameChange               string   `json:"network_name_change"`
 		ConnectivityWakeup              string   `json:"connectivity_wakeup"`
 		ConnectivityCoalescing          string   `json:"connectivity_coalescing"`
 		SameRevisionConnectivityRefresh bool     `json:"same_revision_connectivity_refresh"`
@@ -64,7 +65,7 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 3 || contract.Profile != "legacy-ts2021-cap142-v1" ||
+	if contract.ContractVersion != 4 || contract.Profile != "legacy-ts2021-cap142-v1" ||
 		contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
 		contract.ClientEvidence.Revision != "78cb5130400bc003974f7730b319350fed129bbe" {
 		t.Fatalf("stream contract identity = %+v", contract)
@@ -82,6 +83,7 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 		!slices.Equal(lifecycle.PresenceFence, []string{"node_id", "session_generation", "replica_id"}) ||
 		lifecycle.RedisLoss != "terminate-stream" ||
 		lifecycle.RevisionWakeup != "network-revision-advanced" ||
+		lifecycle.NetworkNameChange != "full-snapshot-after-network-revision" ||
 		lifecycle.ConnectivityWakeup != "network-scoped-connectivity-changed" ||
 		lifecycle.ConnectivityCoalescing != "latest-wins-full-state-reload" ||
 		!lifecycle.SameRevisionConnectivityRefresh ||

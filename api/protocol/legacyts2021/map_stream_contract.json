@@ -1,5 +1,5 @@
 {
-  "contract_version": 3,
+  "contract_version": 4,
   "profile": "legacy-ts2021-cap142-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
@@ -25,6 +25,7 @@
     ],
     "redis_loss": "terminate-stream",
     "revision_wakeup": "network-revision-advanced",
+    "network_name_change": "full-snapshot-after-network-revision",
     "connectivity_wakeup": "network-scoped-connectivity-changed",
     "connectivity_coalescing": "latest-wins-full-state-reload",
     "same_revision_connectivity_refresh": true,

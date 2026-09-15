@@ -1,5 +1,5 @@
 {
-  "contract_version": 4,
+  "contract_version": 5,
   "profile": "legacy-ts2021-cap142-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
@@ -37,10 +37,14 @@
     "compression": "zstd",
     "maximum_decoded_bytes": 65536,
     "required_fields": [
+      "Domain",
       "Node",
       "Peers",
       "PacketFilter"
     ],
+    "network_name_field": "Domain",
+    "network_name_source": "authorized-network-display-name",
+    "network_name_authority": "presentation-only",
     "peer_projection": "explicit-policy-edge-either-direction",
     "peer_order": "numeric-node-id",
     "packet_filter_projection": "inbound-to-self-only",

@@ -16,6 +16,7 @@ FROM mesh_ops.set_network_scope($1::UUID, $2::UUID)`
 const loadSnapshotSQL = `SELECT
     device.id,
     device.owner_principal_id,
+    network.display_name,
     device.public_id::TEXT,
     device.hostname,
     machine.public_key,
@@ -36,6 +37,9 @@ const loadSnapshotSQL = `SELECT
         ORDER BY lease.family, lease.address, lease.id
     )
 FROM mesh.device AS device
+JOIN mesh.network AS network
+  ON network.workspace_id = device.workspace_id
+ AND network.id = device.network_id
 JOIN mesh.device_machine_key_epoch AS machine
   ON machine.workspace_id = device.workspace_id
  AND machine.network_id = device.network_id
@@ -53,6 +57,8 @@ WHERE machine.fingerprint = $1::BYTEA
   AND node_key.public_key = $2::BYTEA
   AND node_key.state = 'active'
   AND node_key.epoch = device.current_node_key_epoch
+  AND network.state = 'active'
+  AND network.deleted_at IS NULL
   AND device.state = 'active'
   AND device.deleted_at IS NULL
   AND device.expires_at > pg_catalog.transaction_timestamp()`

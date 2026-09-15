@@ -15,6 +15,7 @@ import (
 type snapshotRecord struct {
 	numericNodeID     int64
 	numericOwnerID    int64
+	networkName       string
 	nodeID            string
 	hostname          string
 	machineKey        []byte
@@ -52,6 +53,10 @@ func (record snapshotRecord) snapshot(
 	if err != nil {
 		return appmapsession.Snapshot{}, ErrSnapshotEvidence
 	}
+	networkName, err := network.ParseDisplayName(record.networkName)
+	if err != nil {
+		return appmapsession.Snapshot{}, ErrSnapshotEvidence
+	}
 	nodeID, err := node.ParseID(record.nodeID)
 	if err != nil {
 		return appmapsession.Snapshot{}, ErrSnapshotEvidence
@@ -74,6 +79,7 @@ func (record snapshotRecord) snapshot(
 	}
 	snapshot, err := appmapsession.NewSnapshot(appmapsession.SnapshotParams{
 		Scope:             scope,
+		NetworkName:       networkName,
 		NetworkRevision:   record.networkRevision,
 		RecoveryEpoch:     recoveryEpoch,
 		SessionGeneration: record.sessionGeneration,

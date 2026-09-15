@@ -44,6 +44,9 @@ type mapContract struct {
 		Compression                string   `json:"compression"`
 		MaximumDecodedBytes        int      `json:"maximum_decoded_bytes"`
 		RequiredFields             []string `json:"required_fields"`
+		NetworkNameField           string   `json:"network_name_field"`
+		NetworkNameSource          string   `json:"network_name_source"`
+		NetworkNameAuthority       string   `json:"network_name_authority"`
 		PeerProjection             string   `json:"peer_projection"`
 		PeerOrder                  string   `json:"peer_order"`
 		PacketFilterProjection     string   `json:"packet_filter_projection"`
@@ -68,8 +71,8 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 4 || contract.Profile != "legacy-ts2021-cap142-v1" {
-		t.Fatalf("contract identity = (%d, %q), want version 4 legacy profile", contract.ContractVersion, contract.Profile)
+	if contract.ContractVersion != 5 || contract.Profile != "legacy-ts2021-cap142-v1" {
+		t.Fatalf("contract identity = (%d, %q), want version 5 legacy profile", contract.ContractVersion, contract.Profile)
 	}
 	if contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
 		contract.ClientEvidence.Revision != "78cb5130400bc003974f7730b319350fed129bbe" {
@@ -100,7 +103,10 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 	response := contract.Response
 	if response.Framing != "uint32-little-endian-length" || response.Compression != "zstd" ||
 		response.MaximumDecodedBytes != 64<<10 ||
-		!slices.Equal(response.RequiredFields, []string{"Node", "Peers", "PacketFilter"}) ||
+		!slices.Equal(response.RequiredFields, []string{"Domain", "Node", "Peers", "PacketFilter"}) ||
+		response.NetworkNameField != "Domain" ||
+		response.NetworkNameSource != "authorized-network-display-name" ||
+		response.NetworkNameAuthority != "presentation-only" ||
 		response.PeerProjection != "explicit-policy-edge-either-direction" ||
 		response.PeerOrder != "numeric-node-id" ||
 		response.PacketFilterProjection != "inbound-to-self-only" ||

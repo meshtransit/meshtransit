@@ -16,6 +16,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/control"
 	"github.com/meshtransit/meshtransit/internal/control/mapsession"
+	"github.com/meshtransit/meshtransit/internal/network"
 )
 
 func TestMapSessionHandlerStreamsInitialSnapshotAndKeepAlive(t *testing.T) {
@@ -115,6 +116,47 @@ func TestMapSessionHandlerStreamsPeerAndPolicyAtomicallyAfterSnapshotAdvance(t *
 		len(frames[1].Peers) != 1 || len(frames[1].PacketFilter) != 2 {
 		t.Fatalf(
 			"stream frames = %+v, want empty initial authority then atomic peer+policy projection",
+			frames,
+		)
+	}
+}
+
+func TestMapSessionHandlerStreamsNetworkNameAfterRevisionAdvance(t *testing.T) {
+	t.Parallel()
+
+	// meshd@78cb513 applies MapResponse.Domain and increments its semantic
+	// netmap revision only when that client-visible value changes.
+	initial := mapSnapshotFixture(t)
+	advancedParams := mapSnapshotParams(initial)
+	advancedParams.NetworkRevision++
+	advancedName, err := network.ParseDisplayName("Development Mesh Live")
+	if err != nil {
+		t.Fatalf("network.ParseDisplayName() error = %v", err)
+	}
+	advancedParams.NetworkName = advancedName
+	advanced, err := mapsession.NewSnapshot(advancedParams)
+	if err != nil {
+		t.Fatalf("mapsession.NewSnapshot(advanced) error = %v", err)
+	}
+	streams := &advancingMapStreamService{snapshots: []mapsession.Snapshot{initial, advanced}}
+	handler := newMapSessionHandlerWithStreams(
+		t,
+		&recordingMapSessionService{snapshot: initial},
+		streams,
+	)
+	authenticated, err := handler.Handler(authenticatedMachine(t))
+	if err != nil {
+		t.Fatalf("Handler() error = %v", err)
+	}
+	body := strings.Replace(mapRequestBody, `  "Compress":"zstd",`+"\n", "", 1)
+	body = strings.Replace(body, `"Stream":false`, `"Stream":true`, 1)
+	response := serveMap(t, authenticated, body)
+	frames := decodeUncompressedMapStreamFrames(t, response.Body.Bytes())
+	if response.Code != http.StatusOK || len(frames) != 2 ||
+		frames[0].Domain != "Development Mesh" || frames[1].Domain != "Development Mesh Live" {
+		t.Fatalf(
+			"network names = (status=%d, frames=%+v), want ordered full projections",
+			response.Code,
 			frames,
 		)
 	}

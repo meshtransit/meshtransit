@@ -20,6 +20,7 @@ func TestStoreLoadsConsistentScopedSnapshot(t *testing.T) {
 	}
 	if !snapshot.IsValid() || snapshot.Scope().WorkspaceID().String() != testWorkspaceID ||
 		snapshot.Scope().NetworkID().String() != testNetworkID || snapshot.RecoveryEpoch() != 2 ||
+		snapshot.NetworkName().String() != "Development Mesh" ||
 		snapshot.NetworkRevision() != 7 || snapshot.PacketPolicy().Revision() != 5 ||
 		len(snapshot.Addresses()) != 2 || len(snapshot.AuthorizedPeers()) != 1 {
 		t.Fatalf("Load() snapshot = %+v, want complete authority evidence", snapshot)

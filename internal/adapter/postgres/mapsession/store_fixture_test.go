@@ -140,16 +140,17 @@ func (row snapshotRow) Scan(destinations ...any) error {
 	record := row.record
 	*destinations[0].(*int64) = record.numericNodeID
 	*destinations[1].(*int64) = record.numericOwnerID
-	*destinations[2].(*string) = record.nodeID
-	*destinations[3].(*string) = record.hostname
-	*destinations[4].(*[]byte) = append([]byte(nil), record.machineKey...)
-	*destinations[5].(*[]byte) = append([]byte(nil), record.nodeKey...)
-	*destinations[6].(*int64) = record.sessionGeneration
-	*destinations[7].(*time.Time) = record.createdAt
-	*destinations[8].(*time.Time) = record.keyExpiry
-	*destinations[9].(*int64) = record.networkRevision
-	*destinations[10].(*int64) = record.policyRevision
-	*destinations[11].(*[]string) = append([]string(nil), record.addresses...)
+	*destinations[2].(*string) = record.networkName
+	*destinations[3].(*string) = record.nodeID
+	*destinations[4].(*string) = record.hostname
+	*destinations[5].(*[]byte) = append([]byte(nil), record.machineKey...)
+	*destinations[6].(*[]byte) = append([]byte(nil), record.nodeKey...)
+	*destinations[7].(*int64) = record.sessionGeneration
+	*destinations[8].(*time.Time) = record.createdAt
+	*destinations[9].(*time.Time) = record.keyExpiry
+	*destinations[10].(*int64) = record.networkRevision
+	*destinations[11].(*int64) = record.policyRevision
+	*destinations[12].(*[]string) = append([]string(nil), record.addresses...)
 	return nil
 }
 
@@ -281,6 +282,7 @@ func validSnapshotRecord(t *testing.T, identity control.AuthenticatedNode) snaps
 	return snapshotRecord{
 		numericNodeID:     701,
 		numericOwnerID:    11,
+		networkName:       "Development Mesh",
 		nodeID:            testNodeID,
 		hostname:          "node-1.example",
 		machineKey:        machineKey[:],

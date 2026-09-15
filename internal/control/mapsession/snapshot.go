@@ -28,6 +28,7 @@ var (
 // SnapshotParams contains authoritative facts read in one consistent database snapshot.
 type SnapshotParams struct {
 	Scope             network.Scope
+	NetworkName       network.DisplayName
 	NetworkRevision   int64
 	RecoveryEpoch     int64
 	SessionGeneration int64
@@ -48,6 +49,7 @@ type SnapshotParams struct {
 // Snapshot is immutable authorization evidence for the first response of a map session.
 type Snapshot struct {
 	scope             network.Scope
+	networkName       network.DisplayName
 	networkRevision   int64
 	recoveryEpoch     int64
 	sessionGeneration int64
@@ -77,6 +79,7 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 	}
 	return Snapshot{
 		scope:             params.Scope,
+		networkName:       params.NetworkName,
 		networkRevision:   params.NetworkRevision,
 		recoveryEpoch:     params.RecoveryEpoch,
 		sessionGeneration: params.SessionGeneration,
@@ -97,6 +100,9 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 
 // Scope returns the exact Workspace-qualified Network scope.
 func (snapshot Snapshot) Scope() network.Scope { return snapshot.scope }
+
+// NetworkName returns the presentation-only name of the authorized Network.
+func (snapshot Snapshot) NetworkName() network.DisplayName { return snapshot.networkName }
 
 // NetworkRevision returns the authoritative revision used to build this snapshot.
 func (snapshot Snapshot) NetworkRevision() int64 { return snapshot.networkRevision }
@@ -189,6 +195,7 @@ func (snapshot Snapshot) IsValid() bool { return validSnapshotParams(snapshot.pa
 func (snapshot Snapshot) params() SnapshotParams {
 	return SnapshotParams{
 		Scope:             snapshot.scope,
+		NetworkName:       snapshot.networkName,
 		NetworkRevision:   snapshot.networkRevision,
 		RecoveryEpoch:     snapshot.recoveryEpoch,
 		SessionGeneration: snapshot.sessionGeneration,
@@ -208,7 +215,8 @@ func (snapshot Snapshot) params() SnapshotParams {
 }
 
 func validSnapshotParams(params SnapshotParams) bool {
-	return params.Scope.IsValid() && params.NetworkRevision > 0 && params.RecoveryEpoch > 0 &&
+	return params.Scope.IsValid() && params.NetworkName.IsValid() && params.NetworkRevision > 0 &&
+		params.RecoveryEpoch > 0 &&
 		params.SessionGeneration > 0 && validNumericID(params.NumericNodeID) &&
 		validNumericID(params.NumericOwnerID) && params.NodeID.IsValid() &&
 		params.Hostname.IsValid() && params.MachineKey.IsValid() && params.NodeKey.IsValid() &&

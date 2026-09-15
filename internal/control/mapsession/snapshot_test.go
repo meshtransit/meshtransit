@@ -182,6 +182,7 @@ func TestSnapshotRejectsUnsafeAuthorityState(t *testing.T) {
 		mutate func(*SnapshotParams)
 	}{
 		{name: "missing scope", mutate: func(value *SnapshotParams) { value.Scope = network.Scope{} }},
+		{name: "missing Network name", mutate: func(value *SnapshotParams) { value.NetworkName = network.DisplayName{} }},
 		{name: "missing packet policy", mutate: func(value *SnapshotParams) { value.PacketPolicy = policy.Snapshot{} }},
 		{name: "zero revision", mutate: func(value *SnapshotParams) { value.NetworkRevision = 0 }},
 		{name: "zero recovery epoch", mutate: func(value *SnapshotParams) { value.RecoveryEpoch = 0 }},
