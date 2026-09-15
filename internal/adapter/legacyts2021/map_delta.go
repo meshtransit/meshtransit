@@ -21,6 +21,18 @@ func EncodeConnectivityDeltaMapResponse(
 	delta mapsession.ConnectivityDelta,
 	capabilityVersion int,
 ) ([]byte, error) {
+	return encodeConnectivityDeltaMapResponse(
+		delta,
+		capabilityVersion,
+		mapResponseCompressionZstd,
+	)
+}
+
+func encodeConnectivityDeltaMapResponse(
+	delta mapsession.ConnectivityDelta,
+	capabilityVersion int,
+	compression mapResponseCompression,
+) ([]byte, error) {
 	if !delta.IsValid() || capabilityVersion != supportedCapabilityVersion {
 		return nil, ErrMapResponse
 	}
@@ -69,5 +81,5 @@ func EncodeConnectivityDeltaMapResponse(
 		clear(document)
 		return nil, ErrMapResponse
 	}
-	return encodeMapDocument(document)
+	return encodeMapDocument(document, compression)
 }

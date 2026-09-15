@@ -38,6 +38,18 @@ func EncodeFullMapResponse(
 	snapshot mapsession.Snapshot,
 	capabilityVersion int,
 ) ([]byte, error) {
+	return encodeFullMapResponse(
+		snapshot,
+		capabilityVersion,
+		mapResponseCompressionZstd,
+	)
+}
+
+func encodeFullMapResponse(
+	snapshot mapsession.Snapshot,
+	capabilityVersion int,
+	compression mapResponseCompression,
+) ([]byte, error) {
 	if !snapshot.IsValid() || capabilityVersion != supportedCapabilityVersion {
 		return nil, ErrMapResponse
 	}
@@ -62,7 +74,7 @@ func EncodeFullMapResponse(
 		clear(document)
 		return nil, ErrMapResponse
 	}
-	return encodeMapDocument(document)
+	return encodeMapDocument(document, compression)
 }
 
 func fullMapPeers(
@@ -217,33 +229,51 @@ func fullMapDestinations(
 
 // EncodeKeepAliveMapResponse encodes one non-empty transport keepalive frame.
 func EncodeKeepAliveMapResponse() ([]byte, error) {
+	return encodeKeepAliveMapResponse(mapResponseCompressionZstd)
+}
+
+func encodeKeepAliveMapResponse(compression mapResponseCompression) ([]byte, error) {
 	document, err := json.Marshal(struct {
 		KeepAlive bool `json:"KeepAlive"`
 	}{KeepAlive: true})
 	if err != nil {
 		return nil, ErrMapResponse
 	}
-	return encodeMapDocument(document)
+	return encodeMapDocument(document, compression)
 }
 
-func encodeMapDocument(document []byte) ([]byte, error) {
+func encodeMapDocument(
+	document []byte,
+	compression mapResponseCompression,
+) ([]byte, error) {
 	defer clear(document)
 	if len(document) == 0 || len(document) > maxMapResponseBytes {
 		return nil, ErrMapResponse
 	}
-	compressed := zstdframe.AppendEncode(nil, document, zstdframe.FastestCompression)
-	if len(compressed) == 0 || len(compressed) > maxMapResponseBytes {
-		clear(compressed)
+	payload := document
+	switch compression {
+	case mapResponseCompressionNone:
+	case mapResponseCompressionZstd:
+		payload = zstdframe.AppendEncode(nil, document, zstdframe.FastestCompression)
+	default:
+		return nil, ErrMapResponse
+	}
+	if len(payload) == 0 || len(payload) > maxMapResponseBytes {
+		if compression == mapResponseCompressionZstd {
+			clear(payload)
+		}
 		return nil, ErrMapResponse
 	}
 	// The response bound is smaller than uint32. Encode through the wider form
 	// and retain its low four little-endian bytes without a narrowing cast.
 	var encodedLength [8]byte
-	binary.LittleEndian.PutUint64(encodedLength[:], uint64(len(compressed)))
-	framed := make([]byte, 4, len(compressed)+4)
+	binary.LittleEndian.PutUint64(encodedLength[:], uint64(len(payload)))
+	framed := make([]byte, 4, len(payload)+4)
 	copy(framed, encodedLength[:4])
-	framed = append(framed, compressed...)
-	clear(compressed)
+	framed = append(framed, payload...)
+	if compression == mapResponseCompressionZstd {
+		clear(payload)
+	}
 	return framed, nil
 }
 

@@ -41,7 +41,7 @@ func TestDecodeFullMapRequestRejectsUnsupportedOrAmbiguousInput(t *testing.T) {
 	}{
 		{name: "empty", body: ""},
 		{name: "wrong capability", body: strings.Replace(mapRequestBody, `"Version":142`, `"Version":141`, 1)},
-		{name: "missing compression", body: strings.Replace(mapRequestBody, `"Compress":"zstd",`, "", 1)},
+		{name: "unsupported compression", body: strings.Replace(mapRequestBody, `"Compress":"zstd"`, `"Compress":"gzip"`, 1)},
 		{name: "streaming", body: strings.Replace(mapRequestBody, `"Stream":false`, `"Stream":true`, 1)},
 		{name: "omit peers", body: strings.Replace(mapRequestBody, `"OmitPeers":false`, `"OmitPeers":true`, 1)},
 		{name: "session handle", body: strings.Replace(mapRequestBody, `"Stream":false`, `"Stream":false,"MapSessionHandle":"opaque"`, 1)},

@@ -3,6 +3,7 @@ package legacyts2021
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -54,6 +55,35 @@ func TestMapSessionHandlerStreamsInitialSnapshotAndKeepAlive(t *testing.T) {
 		if !strings.Contains(metrics, metric) {
 			t.Fatalf("stream metrics missing %q: %s", metric, metrics)
 		}
+	}
+}
+
+func TestMapSessionHandlerStreamsUncompressedFramesForMeshD(t *testing.T) {
+	t.Parallel()
+
+	snapshot := mapSnapshotFixture(t)
+	streams := &recordingMapStreamService{snapshot: snapshot}
+	handler := newMapSessionHandlerWithStreams(
+		t,
+		&recordingMapSessionService{snapshot: snapshot},
+		streams,
+	)
+	authenticated, err := handler.Handler(authenticatedMachine(t))
+	if err != nil {
+		t.Fatalf("Handler() error = %v", err)
+	}
+	// meshd@78cb513 omits Compress and reads each framed payload as JSON.
+	body := strings.Replace(mapRequestBody, `  "Compress":"zstd",`+"\n", "", 1)
+	body = strings.Replace(body, `"Stream":false`, `"Stream":true`, 1)
+	response := serveMap(t, authenticated, body)
+	frames := decodeUncompressedMapStreamFrames(t, response.Body.Bytes())
+	if response.Code != http.StatusOK || len(frames) != 2 || frames[0].Node == nil ||
+		frames[0].KeepAlive || !frames[1].KeepAlive || frames[1].Node != nil {
+		t.Fatalf(
+			"uncompressed stream = (status=%d, frames=%+v), want snapshot then keepalive",
+			response.Code,
+			frames,
+		)
 	}
 }
 
@@ -130,7 +160,7 @@ func TestMapStreamSinkRejectsDeltaBeforeInitialSnapshot(t *testing.T) {
 		t.Fatalf("mapsession.NewConnectivityDelta() error = %v", err)
 	}
 	response := httptest.NewRecorder()
-	sink := newMapStreamSink(response, 142)
+	sink := newMapStreamSink(response, 142, mapResponseCompressionZstd)
 	if err := sink.SendConnectivityDelta(t.Context(), delta); !errors.Is(err, ErrMapStreamWrite) {
 		t.Fatalf("SendConnectivityDelta(before snapshot) error = %v, want ErrMapStreamWrite", err)
 	}
@@ -166,6 +196,29 @@ func decodeMapStreamFrames(t *testing.T, encoded []byte) []tailcfg.MapResponse {
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&response); err != nil {
 			t.Fatalf("decode map stream document: %v", err)
+		}
+		frames = append(frames, response)
+		encoded = encoded[4+length:]
+	}
+	return frames
+}
+
+func decodeUncompressedMapStreamFrames(t *testing.T, encoded []byte) []tailcfg.MapResponse {
+	t.Helper()
+	frames := make([]tailcfg.MapResponse, 0, 2)
+	for len(encoded) > 0 {
+		if len(encoded) < 5 {
+			t.Fatalf("map stream has truncated frame header: %d bytes", len(encoded))
+		}
+		length := int(binary.LittleEndian.Uint32(encoded[:4]))
+		if length <= 0 || length > len(encoded)-4 {
+			t.Fatalf("map stream frame length = %d with %d available", length, len(encoded)-4)
+		}
+		var response tailcfg.MapResponse
+		decoder := json.NewDecoder(bytes.NewReader(encoded[4 : 4+length]))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&response); err != nil {
+			t.Fatalf("decode uncompressed map stream document: %v", err)
 		}
 		frames = append(frames, response)
 		encoded = encoded[4+length:]

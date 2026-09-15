@@ -62,6 +62,27 @@ func TestDecodeMapRequestAcceptsEndpointOnlyUpdateMode(t *testing.T) {
 	}
 }
 
+func TestDecodeMapRequestAcceptsMeshDUncompressedEndpointUpdate(t *testing.T) {
+	t.Parallel()
+
+	// meshd@78cb513 intentionally omits Compress and consumes uncompressed map
+	// frames. Keep this synthetic fixture aligned with that pinned wire contract.
+	body := strings.Replace(mapRequestBody, `  "Compress":"zstd",`+"\n", "", 1)
+	body = strings.Replace(body, `  "Stream":false,`, mapEndpointFields+`  "Stream":false,`, 1)
+	body = strings.Replace(body, `"OmitPeers":false`, `"OmitPeers":true`, 1)
+	request, streaming, err := DecodeMapRequest(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("DecodeMapRequest() error = %v", err)
+	}
+	if _, present := request.EndpointSet(); streaming || !present {
+		t.Fatalf(
+			"DecodeMapRequest() endpoint presence = %t, streaming = %t; want meshd endpoint update",
+			present,
+			streaming,
+		)
+	}
+}
+
 func TestDecodeMapRequestRejectsInvalidEndpointReports(t *testing.T) {
 	t.Parallel()
 

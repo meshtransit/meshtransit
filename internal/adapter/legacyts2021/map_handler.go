@@ -119,7 +119,7 @@ func (handler *MapSessionHandler) serveAuthenticated(
 		http.Error(response, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
 		return
 	}
-	mapRequest, streaming, err := DecodeMapRequest(request.Body)
+	mapRequest, streaming, compression, err := decodeMapRequest(request.Body)
 	if err != nil {
 		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
@@ -127,7 +127,13 @@ func (handler *MapSessionHandler) serveAuthenticated(
 	if streaming {
 		handler.telemetry.maps.streamOpened()
 		defer handler.telemetry.maps.streamClosed()
-		telemetryResult = handler.serveStream(response, request, machine, mapRequest)
+		telemetryResult = handler.serveStream(
+			response,
+			request,
+			machine,
+			mapRequest,
+			compression,
+		)
 		return
 	}
 	operationCtx, cancel := context.WithTimeout(request.Context(), handler.timeout)
@@ -143,7 +149,11 @@ func (handler *MapSessionHandler) serveAuthenticated(
 		http.Error(response, http.StatusText(failure.status), failure.status)
 		return
 	}
-	encoded, err := EncodeFullMapResponse(snapshot, mapRequest.CapabilityVersion())
+	encoded, err := encodeFullMapResponse(
+		snapshot,
+		mapRequest.CapabilityVersion(),
+		compression,
+	)
 	if err != nil {
 		telemetryResult = mapUnavailable
 		handler.logger.ErrorContext(request.Context(), "map response encoding failed", "error", err)
@@ -171,8 +181,13 @@ func (handler *MapSessionHandler) serveStream(
 	request *http.Request,
 	machine control.AuthenticatedMachine,
 	mapRequest mapsession.Request,
+	compression mapResponseCompression,
 ) mapResult {
-	sink := newMapStreamSink(response, mapRequest.CapabilityVersion())
+	sink := newMapStreamSink(
+		response,
+		mapRequest.CapabilityVersion(),
+		compression,
+	)
 	err := handler.streams.Serve(request.Context(), machine, mapRequest, sink)
 	result := classifyMapStreamResult(err, sink.started())
 	if !sink.started() {

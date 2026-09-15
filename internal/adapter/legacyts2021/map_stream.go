@@ -15,19 +15,32 @@ var ErrMapStreamWrite = errors.New("legacyts2021: map stream write failed")
 type mapStreamSink struct {
 	response          http.ResponseWriter
 	capabilityVersion int
+	compression       mapResponseCompression
 	responseStarted   bool
 	hasSnapshot       bool
 }
 
-func newMapStreamSink(response http.ResponseWriter, capabilityVersion int) *mapStreamSink {
-	return &mapStreamSink{response: response, capabilityVersion: capabilityVersion}
+func newMapStreamSink(
+	response http.ResponseWriter,
+	capabilityVersion int,
+	compression mapResponseCompression,
+) *mapStreamSink {
+	return &mapStreamSink{
+		response:          response,
+		capabilityVersion: capabilityVersion,
+		compression:       compression,
+	}
 }
 
 func (sink *mapStreamSink) SendSnapshot(ctx context.Context, snapshot mapsession.Snapshot) error {
 	if err := sink.validate(ctx); err != nil {
 		return err
 	}
-	encoded, err := EncodeFullMapResponse(snapshot, sink.capabilityVersion)
+	encoded, err := encodeFullMapResponse(
+		snapshot,
+		sink.capabilityVersion,
+		sink.compression,
+	)
 	if err != nil {
 		return err
 	}
@@ -49,7 +62,11 @@ func (sink *mapStreamSink) SendConnectivityDelta(
 	if !sink.hasSnapshot {
 		return ErrMapStreamWrite
 	}
-	encoded, err := EncodeConnectivityDeltaMapResponse(delta, sink.capabilityVersion)
+	encoded, err := encodeConnectivityDeltaMapResponse(
+		delta,
+		sink.capabilityVersion,
+		sink.compression,
+	)
 	if err != nil {
 		return err
 	}
@@ -64,7 +81,7 @@ func (sink *mapStreamSink) SendKeepAlive(ctx context.Context) error {
 	if !sink.hasSnapshot {
 		return ErrMapStreamWrite
 	}
-	encoded, err := EncodeKeepAliveMapResponse()
+	encoded, err := encodeKeepAliveMapResponse(sink.compression)
 	if err != nil {
 		return err
 	}
@@ -74,7 +91,8 @@ func (sink *mapStreamSink) SendKeepAlive(ctx context.Context) error {
 
 func (sink *mapStreamSink) validate(ctx context.Context) error {
 	if ctx == nil || sink == nil || sink.response == nil ||
-		sink.capabilityVersion != supportedCapabilityVersion {
+		sink.capabilityVersion != supportedCapabilityVersion ||
+		sink.compression == mapResponseCompressionInvalid {
 		return ErrMapStreamWrite
 	}
 	if err := ctx.Err(); err != nil {
