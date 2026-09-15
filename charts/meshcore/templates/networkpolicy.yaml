@@ -13,8 +13,10 @@ spec:
     - Ingress
     - Egress
   ingress:
-    - from:
+    - {{- with .Values.networkPolicy.controlIngressFrom }}
+      from:
         {{- toYaml .Values.networkPolicy.controlIngressFrom | nindent 8 }}
+      {{- end }}
       ports:
         - port: 8443
           protocol: TCP

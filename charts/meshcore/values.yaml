@@ -210,8 +210,7 @@ podDisruptionBudget:
 
 networkPolicy:
   enabled: true
-  controlIngressFrom:
-    - {}
+  controlIngressFrom: []
   operatorIngressFrom:
     - podSelector: {}
   allowSameNamespaceStorage: true
