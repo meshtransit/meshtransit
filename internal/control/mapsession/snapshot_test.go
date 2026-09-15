@@ -7,6 +7,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/policy"
 )
 
 func TestSnapshotOwnsAddressCollection(t *testing.T) {
@@ -37,6 +38,50 @@ func TestSnapshotCanonicalizesAndOwnsPeerCandidates(t *testing.T) {
 	candidates[0] = second
 	if got := snapshot.PeerCandidates()[0].NodeID(); got != first.NodeID() {
 		t.Fatalf("snapshot first candidate = %v after caller mutation", got)
+	}
+}
+
+func TestSnapshotProjectsOnlyExplicitlyAuthorizedPeerCandidates(t *testing.T) {
+	base := snapshotFixture(t)
+	allowed := peerCandidateFixture(t, base, "01890f00-0000-7000-8000-000000000702", 2)
+	denied := peerCandidateFixture(t, base, "01890f00-0000-7000-8000-000000000703", 3)
+	ruleID, err := policy.ParseRuleID("01890f00-0000-7000-8000-000000000801")
+	if err != nil {
+		t.Fatalf("policy.ParseRuleID() error = %v", err)
+	}
+	rule, err := policy.NewRule(policy.RuleParams{
+		ID:                ruleID,
+		Scope:             base.Scope(),
+		SourceNodeID:      allowed.NodeID(),
+		DestinationNodeID: base.NodeID(),
+		Protocol:          policy.ProtocolICMP,
+	})
+	if err != nil {
+		t.Fatalf("policy.NewRule() error = %v", err)
+	}
+	packetPolicy, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope:    base.Scope(),
+		Revision: base.PacketPolicy().Revision(),
+		Rules:    []policy.Rule{rule},
+	})
+	if err != nil {
+		t.Fatalf("policy.NewSnapshot() error = %v", err)
+	}
+	params := base.params()
+	params.PeerCandidates = []PeerCandidate{denied, allowed}
+	params.PacketPolicy = packetPolicy
+	snapshot, err := NewSnapshot(params)
+	if err != nil {
+		t.Fatalf("NewSnapshot() error = %v", err)
+	}
+
+	peers := snapshot.AuthorizedPeers()
+	if len(peers) != 1 || peers[0].NodeID() != allowed.NodeID() {
+		t.Fatalf("AuthorizedPeers() = %+v, want only explicitly authorized peer", peers)
+	}
+	peers[0] = denied
+	if got := snapshot.AuthorizedPeers(); len(got) != 1 || got[0].NodeID() != allowed.NodeID() {
+		t.Fatal("snapshot exposed mutable authorized peer storage")
 	}
 }
 
@@ -118,6 +163,7 @@ func TestSnapshotRejectsUnsafeAuthorityState(t *testing.T) {
 		mutate func(*SnapshotParams)
 	}{
 		{name: "missing scope", mutate: func(value *SnapshotParams) { value.Scope = network.Scope{} }},
+		{name: "missing packet policy", mutate: func(value *SnapshotParams) { value.PacketPolicy = policy.Snapshot{} }},
 		{name: "zero revision", mutate: func(value *SnapshotParams) { value.NetworkRevision = 0 }},
 		{name: "zero recovery epoch", mutate: func(value *SnapshotParams) { value.RecoveryEpoch = 0 }},
 		{name: "zero session generation", mutate: func(value *SnapshotParams) { value.SessionGeneration = 0 }},

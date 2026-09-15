@@ -22,9 +22,10 @@ const loadSnapshotSQL = `SELECT
     node_key.public_key,
     device.session_generation,
     device.created_at,
-    device.expires_at,
-    revision.network_revision,
-    ARRAY(
+	device.expires_at,
+	revision.network_revision,
+	revision.policy_revision,
+	ARRAY(
         SELECT lease.address::TEXT
         FROM mesh.node_address_lease AS lease
         WHERE lease.workspace_id = device.workspace_id

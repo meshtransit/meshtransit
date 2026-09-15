@@ -143,6 +143,7 @@ func (store *Store) Load(
 		&record.createdAt,
 		&record.keyExpiry,
 		&record.networkRevision,
+		&record.policyRevision,
 		&record.addresses,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

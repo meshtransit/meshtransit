@@ -136,7 +136,8 @@ func (row snapshotRow) Scan(destinations ...any) error {
 	*destinations[7].(*time.Time) = record.createdAt
 	*destinations[8].(*time.Time) = record.keyExpiry
 	*destinations[9].(*int64) = record.networkRevision
-	*destinations[10].(*[]string) = append([]string(nil), record.addresses...)
+	*destinations[10].(*int64) = record.policyRevision
+	*destinations[11].(*[]string) = append([]string(nil), record.addresses...)
 	return nil
 }
 
@@ -232,6 +233,7 @@ func validSnapshotRecord(t *testing.T, identity control.AuthenticatedNode) snaps
 		createdAt:         time.Date(2026, time.September, 14, 3, 0, 0, 0, time.UTC),
 		keyExpiry:         time.Date(2026, time.September, 15, 3, 0, 0, 0, time.UTC),
 		networkRevision:   7,
+		policyRevision:    5,
 		addresses:         []string{"100.64.0.1/32", "fd7a:115c:a1e0::1/128"},
 	}
 }

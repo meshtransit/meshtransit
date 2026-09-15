@@ -7,6 +7,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -41,6 +42,14 @@ func snapshotFixture(t *testing.T) Snapshot {
 		t.Fatalf("node.NewKey() error = %v", err)
 	}
 	createdAt := time.Date(2026, time.September, 14, 3, 0, 0, 0, time.UTC)
+	packetPolicy, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope:    scope,
+		Revision: 5,
+		Rules:    nil,
+	})
+	if err != nil {
+		t.Fatalf("policy.NewSnapshot() error = %v", err)
+	}
 	snapshot, err := NewSnapshot(SnapshotParams{
 		Scope:             scope,
 		NetworkRevision:   7,
@@ -55,6 +64,7 @@ func snapshotFixture(t *testing.T) Snapshot {
 		Addresses:         []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
 		CreatedAt:         createdAt,
 		KeyExpiry:         createdAt.Add(24 * time.Hour),
+		PacketPolicy:      packetPolicy,
 	})
 	if err != nil {
 		t.Fatalf("NewSnapshot() error = %v", err)

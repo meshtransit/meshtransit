@@ -55,6 +55,9 @@ func TestEncodeFullMapResponseRejectsInvalidInput(t *testing.T) {
 	if _, err := EncodeFullMapResponse(mapSnapshotFixture(t), 0); err == nil {
 		t.Fatal("EncodeFullMapResponse(zero capability) error = nil")
 	}
+	if _, err := EncodeFullMapResponse(mapSnapshotWithAuthorizedCandidateFixture(t), 142); err == nil {
+		t.Fatal("EncodeFullMapResponse(authorized peer without wire policy) error = nil")
+	}
 }
 
 func TestEncodeKeepAliveMapResponseIsNonEmptyFramedMessage(t *testing.T) {

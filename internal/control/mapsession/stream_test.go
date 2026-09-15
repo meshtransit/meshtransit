@@ -12,6 +12,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/control"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 )
 
@@ -252,6 +253,53 @@ func TestStreamSnapshotRequiresStableCandidatesAtSameRevision(t *testing.T) {
 	}
 	if !streamCanAdvance(current, next) {
 		t.Fatal("streamCanAdvance() = false after an authoritative revision advance")
+	}
+}
+
+func TestStreamSnapshotRequiresStablePacketPolicyAtSameRevision(t *testing.T) {
+	current := snapshotFixture(t)
+	candidate := peerCandidateFixture(
+		t,
+		current,
+		"01890f00-0000-7000-8000-000000000702",
+		2,
+	)
+	currentParams := current.params()
+	currentParams.PeerCandidates = []PeerCandidate{candidate}
+	current, err := NewSnapshot(currentParams)
+	if err != nil {
+		t.Fatalf("NewSnapshot(current) error = %v", err)
+	}
+	ruleID, err := policy.ParseRuleID("01890f00-0000-7000-8000-000000000801")
+	if err != nil {
+		t.Fatalf("policy.ParseRuleID() error = %v", err)
+	}
+	rule, err := policy.NewRule(policy.RuleParams{
+		ID:                ruleID,
+		Scope:             current.Scope(),
+		SourceNodeID:      current.NodeID(),
+		DestinationNodeID: candidate.NodeID(),
+		Protocol:          policy.ProtocolICMP,
+	})
+	if err != nil {
+		t.Fatalf("policy.NewRule() error = %v", err)
+	}
+	packetPolicy, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope:    current.Scope(),
+		Revision: current.PacketPolicy().Revision(),
+		Rules:    []policy.Rule{rule},
+	})
+	if err != nil {
+		t.Fatalf("policy.NewSnapshot() error = %v", err)
+	}
+	nextParams := current.params()
+	nextParams.PacketPolicy = packetPolicy
+	next, err := NewSnapshot(nextParams)
+	if err != nil {
+		t.Fatalf("NewSnapshot(next) error = %v", err)
+	}
+	if streamCanAdvance(current, next) {
+		t.Fatal("streamCanAdvance() = true for changed packet policy at the same revision")
 	}
 }
 

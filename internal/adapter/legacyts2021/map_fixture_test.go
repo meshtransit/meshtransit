@@ -9,6 +9,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -68,6 +69,56 @@ func mapSnapshotWithCandidateFixture(t *testing.T) mapsession.Snapshot {
 	return mapSnapshotFixtureWithCandidates(t, []mapsession.PeerCandidate{candidate})
 }
 
+func mapSnapshotWithAuthorizedCandidateFixture(t *testing.T) mapsession.Snapshot {
+	t.Helper()
+	base := mapSnapshotWithCandidateFixture(t)
+	candidate := base.PeerCandidates()[0]
+	ruleID, err := policy.ParseRuleID("01890f00-0000-7000-8000-000000000801")
+	if err != nil {
+		t.Fatalf("policy.ParseRuleID() error = %v", err)
+	}
+	rule, err := policy.NewRule(policy.RuleParams{
+		ID:                ruleID,
+		Scope:             base.Scope(),
+		SourceNodeID:      base.NodeID(),
+		DestinationNodeID: candidate.NodeID(),
+		Protocol:          policy.ProtocolICMP,
+	})
+	if err != nil {
+		t.Fatalf("policy.NewRule() error = %v", err)
+	}
+	packetPolicy, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope:    base.Scope(),
+		Revision: base.PacketPolicy().Revision(),
+		Rules:    []policy.Rule{rule},
+	})
+	if err != nil {
+		t.Fatalf("policy.NewSnapshot() error = %v", err)
+	}
+	params := mapsession.SnapshotParams{
+		Scope:             base.Scope(),
+		NetworkRevision:   base.NetworkRevision(),
+		RecoveryEpoch:     base.RecoveryEpoch(),
+		SessionGeneration: base.SessionGeneration(),
+		NumericNodeID:     base.NumericNodeID(),
+		NumericOwnerID:    base.NumericOwnerID(),
+		NodeID:            base.NodeID(),
+		Hostname:          base.Hostname(),
+		MachineKey:        base.MachineKey(),
+		NodeKey:           base.NodeKey(),
+		Addresses:         base.Addresses(),
+		CreatedAt:         base.CreatedAt(),
+		KeyExpiry:         base.KeyExpiry(),
+		PeerCandidates:    base.PeerCandidates(),
+		PacketPolicy:      packetPolicy,
+	}
+	snapshot, err := mapsession.NewSnapshot(params)
+	if err != nil {
+		t.Fatalf("mapsession.NewSnapshot() error = %v", err)
+	}
+	return snapshot
+}
+
 func mapSnapshotFixtureWithCandidates(
 	t *testing.T,
 	peerCandidates []mapsession.PeerCandidate,
@@ -106,6 +157,14 @@ func mapSnapshotFixtureWithCandidates(
 		t.Fatalf("node.NewKey() error = %v", err)
 	}
 	createdAt := time.Date(2026, time.September, 14, 3, 0, 0, 0, time.UTC)
+	packetPolicy, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope:    scope,
+		Revision: 5,
+		Rules:    nil,
+	})
+	if err != nil {
+		t.Fatalf("policy.NewSnapshot() error = %v", err)
+	}
 	snapshot, err := mapsession.NewSnapshot(mapsession.SnapshotParams{
 		Scope:             scope,
 		NetworkRevision:   7,
@@ -121,6 +180,7 @@ func mapSnapshotFixtureWithCandidates(
 		CreatedAt:         createdAt,
 		KeyExpiry:         createdAt.Add(24 * time.Hour),
 		PeerCandidates:    peerCandidates,
+		PacketPolicy:      packetPolicy,
 	})
 	if err != nil {
 		t.Fatalf("mapsession.NewSnapshot() error = %v", err)

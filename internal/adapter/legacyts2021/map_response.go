@@ -38,6 +38,12 @@ func EncodeFullMapResponse(
 	if !snapshot.IsValid() || capabilityVersion != supportedCapabilityVersion {
 		return nil, ErrMapResponse
 	}
+	// Until the legacy adapter can encode both an authorized peer and its exact
+	// packet filter atomically, fail closed instead of emitting peer identity
+	// with an empty or incomplete policy.
+	if len(snapshot.AuthorizedPeers()) != 0 {
+		return nil, ErrMapResponse
+	}
 	self, err := fullMapNode(snapshot, capabilityVersion)
 	if err != nil {
 		return nil, err

@@ -58,6 +58,7 @@ func assertPostgreSQLMapSessionSnapshot(
 		snapshot.Hostname().String() != "node-one.example" ||
 		snapshot.Scope() != command.Scope || snapshot.RecoveryEpoch() != 1 ||
 		snapshot.SessionGeneration() != 1 || snapshot.NetworkRevision() <= 0 ||
+		snapshot.PacketPolicy().Revision() <= 0 ||
 		snapshot.MachineKey() != command.Identity.MachineKey() ||
 		snapshot.NodeKey() != command.Identity.NodeKey() {
 		t.Fatalf("map session snapshot = %+v, want seeded authoritative Node", snapshot)
@@ -68,6 +69,9 @@ func assertPostgreSQLMapSessionSnapshot(
 	}
 	if candidates := snapshot.PeerCandidates(); len(candidates) != 0 {
 		t.Fatalf("initial map session candidates = %+v, want none", candidates)
+	}
+	if peers := snapshot.AuthorizedPeers(); len(peers) != 0 {
+		t.Fatalf("initial authorized peers = %+v, want default deny", peers)
 	}
 
 	unknownMachineKey, err := node.NewMachineKey(filledIntegrationKey(0x71))

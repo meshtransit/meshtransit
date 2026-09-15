@@ -8,6 +8,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -22,6 +23,7 @@ type snapshotRecord struct {
 	createdAt         time.Time
 	keyExpiry         time.Time
 	networkRevision   int64
+	policyRevision    int64
 	addresses         []string
 }
 
@@ -67,6 +69,14 @@ func (record snapshotRecord) snapshot(
 	if err != nil {
 		return appmapsession.Snapshot{}, err
 	}
+	packetPolicy, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope:    scope,
+		Revision: record.policyRevision,
+		Rules:    nil,
+	})
+	if err != nil {
+		return appmapsession.Snapshot{}, ErrSnapshotEvidence
+	}
 	snapshot, err := appmapsession.NewSnapshot(appmapsession.SnapshotParams{
 		Scope:             scope,
 		NetworkRevision:   record.networkRevision,
@@ -82,6 +92,7 @@ func (record snapshotRecord) snapshot(
 		CreatedAt:         record.createdAt,
 		KeyExpiry:         record.keyExpiry,
 		PeerCandidates:    peerCandidates,
+		PacketPolicy:      packetPolicy,
 	})
 	if err != nil {
 		return appmapsession.Snapshot{}, ErrSnapshotEvidence

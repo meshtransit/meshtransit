@@ -8,6 +8,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/policy"
 )
 
 const maximumSafeNumericID int64 = 1<<53 - 1
@@ -31,6 +32,7 @@ type SnapshotParams struct {
 	CreatedAt         time.Time
 	KeyExpiry         time.Time
 	PeerCandidates    []PeerCandidate
+	PacketPolicy      policy.Snapshot
 }
 
 // Snapshot is immutable authorization evidence for the first response of a map session.
@@ -49,6 +51,7 @@ type Snapshot struct {
 	createdAt         time.Time
 	keyExpiry         time.Time
 	peerCandidates    []PeerCandidate
+	packetPolicy      policy.Snapshot
 }
 
 // NewSnapshot validates and copies one authoritative map snapshot.
@@ -75,6 +78,7 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		createdAt:         params.CreatedAt,
 		keyExpiry:         params.KeyExpiry,
 		peerCandidates:    params.PeerCandidates,
+		packetPolicy:      params.PacketPolicy,
 	}, nil
 }
 
@@ -123,6 +127,25 @@ func (snapshot Snapshot) PeerCandidates() []PeerCandidate {
 	return slices.Clone(snapshot.peerCandidates)
 }
 
+// PacketPolicy returns the immutable exact-revision product policy snapshot.
+func (snapshot Snapshot) PacketPolicy() policy.Snapshot { return snapshot.packetPolicy }
+
+// AuthorizedPeers returns only candidates required by an explicit packet rule
+// in either direction. Candidate inventory and same-Network membership alone
+// never grant visibility.
+func (snapshot Snapshot) AuthorizedPeers() []PeerCandidate {
+	if !snapshot.IsValid() {
+		return []PeerCandidate{}
+	}
+	peers := make([]PeerCandidate, 0, min(len(snapshot.peerCandidates), 64))
+	for _, candidate := range snapshot.peerCandidates {
+		if snapshot.packetPolicy.AllowsPeer(snapshot.nodeID, candidate.nodeID) {
+			peers = append(peers, candidate)
+		}
+	}
+	return peers
+}
+
 // IsValid reports whether the snapshot contains complete authority evidence.
 func (snapshot Snapshot) IsValid() bool { return validSnapshotParams(snapshot.params()) }
 
@@ -142,6 +165,7 @@ func (snapshot Snapshot) params() SnapshotParams {
 		CreatedAt:         snapshot.createdAt,
 		KeyExpiry:         snapshot.keyExpiry,
 		PeerCandidates:    slices.Clone(snapshot.peerCandidates),
+		PacketPolicy:      snapshot.packetPolicy,
 	}
 }
 
@@ -157,7 +181,7 @@ func validSnapshotParams(params SnapshotParams) bool {
 		params.NodeID,
 		params.MachineKey,
 		params.NodeKey,
-	)
+	) && params.PacketPolicy.IsValid() && params.PacketPolicy.Scope() == params.Scope
 }
 
 func validNumericID(value int64) bool { return value > 0 && value <= maximumSafeNumericID }
