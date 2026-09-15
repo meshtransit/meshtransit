@@ -51,6 +51,17 @@ type mapStreamContract struct {
 		PeerOrder          string   `json:"peer_order"`
 		ForbiddenFields    []string `json:"forbidden_fields"`
 	} `json:"connectivity_delta"`
+	AuthorityDelta struct {
+		Selection              string   `json:"selection"`
+		Atomicity              string   `json:"atomicity"`
+		PeerEncoding           string   `json:"peer_encoding"`
+		PeerRemoval            string   `json:"peer_removal"`
+		PolicyEncoding         string   `json:"policy_encoding"`
+		CoincidentConnectivity string   `json:"coincident_connectivity"`
+		PeerOrder              string   `json:"peer_order"`
+		FullSnapshotFallback   []string `json:"full_snapshot_fallback"`
+		ForbiddenFields        []string `json:"forbidden_fields"`
+	} `json:"authority_delta"`
 }
 
 func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
@@ -65,7 +76,7 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 4 || contract.Profile != "legacy-ts2021-cap142-v1" ||
+	if contract.ContractVersion != 5 || contract.Profile != "legacy-ts2021-cap142-v1" ||
 		contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
 		contract.ClientEvidence.Revision != "78cb5130400bc003974f7730b319350fed129bbe" {
 		t.Fatalf("stream contract identity = %+v", contract)
@@ -99,5 +110,22 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 		delta.PeerOnline != "explicit-boolean" || delta.PeerOrder != "numeric-node-id" ||
 		!slices.Equal(delta.ForbiddenFields, []string{"Peers", "PacketFilter"}) {
 		t.Fatalf("stream connectivity delta contract = %+v", delta)
+	}
+	authorityDelta := contract.AuthorityDelta
+	if authorityDelta.Selection != "contiguous-network-revision-stable-self-authority" ||
+		authorityDelta.Atomicity != "single-map-response-frame" ||
+		authorityDelta.PeerEncoding != "PeersChanged-complete-replacement" ||
+		authorityDelta.PeerRemoval != "PeersRemoved-numeric-node-id" ||
+		authorityDelta.PolicyEncoding != "PacketFilter-complete-replacement-explicit-empty" ||
+		authorityDelta.CoincidentConnectivity != "Node-and-PeersChanged-complete-replacement" ||
+		authorityDelta.PeerOrder != "numeric-node-id" ||
+		!slices.Equal(authorityDelta.FullSnapshotFallback, []string{
+			"first-message",
+			"reconnect",
+			"revision-gap",
+			"self-authority-change",
+			"ambiguous-peer-id-transition",
+		}) || !slices.Equal(authorityDelta.ForbiddenFields, []string{"Peers", "Domain"}) {
+		t.Fatalf("stream authority delta contract = %+v", authorityDelta)
 	}
 }

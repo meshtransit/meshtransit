@@ -9,6 +9,7 @@ import (
 func streamCanAdvance(current, next Snapshot) bool {
 	if !current.IsValid() || !next.IsValid() ||
 		next.NetworkRevision() < current.NetworkRevision() ||
+		next.PacketPolicy().Revision() < current.PacketPolicy().Revision() ||
 		next.Scope() != current.Scope() || next.NodeID() != current.NodeID() ||
 		next.NumericNodeID() != current.NumericNodeID() ||
 		next.MachineKey() != current.MachineKey() || next.NodeKey() != current.NodeKey() ||

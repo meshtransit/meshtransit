@@ -127,6 +127,143 @@ func TestStreamServiceReconcilesImmediatelyOnRevisionWakeup(t *testing.T) {
 	})
 }
 
+func TestStreamServiceUsesAuthorityDeltaForContiguousRevision(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		initial, advanced, peer := authorityDeltaSnapshotsFixture(t)
+		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial, advanced}}
+		revisions := newStreamRevisionWatcher()
+		service := newStreamServiceWithRevisionsFixture(
+			t,
+			opener,
+			&streamPresenceStore{},
+			revisions,
+		)
+		machine, request := authenticatedRequestFixture(t, initial)
+		sink := &recordingStreamSink{}
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan error, 1)
+		go func() { result <- service.Serve(ctx, machine, request, sink) }()
+
+		synctest.Wait()
+		wakeup, err := network.NewRevisionAdvanced(
+			initial.Scope().NetworkID().String(),
+			advanced.NetworkRevision(),
+		)
+		if err != nil {
+			t.Fatalf("network.NewRevisionAdvanced() error = %v", err)
+		}
+		revisions.send(t, wakeup)
+		synctest.Wait()
+
+		snapshots, _ := sink.state()
+		deltas := sink.authorityDeltaSnapshots()
+		if len(snapshots) != 1 || len(deltas) != 1 || len(sink.connectivityDeltas()) != 0 ||
+			deltas[0].Snapshot().NetworkRevision() != advanced.NetworkRevision() ||
+			len(deltas[0].ChangedPeers()) != 1 ||
+			deltas[0].ChangedPeers()[0].NodeID() != peer.NodeID() {
+			t.Fatalf(
+				"contiguous refresh = snapshots %+v authority deltas %+v",
+				snapshots,
+				deltas,
+			)
+		}
+
+		cancel()
+		synctest.Wait()
+		if err := <-result; !errors.Is(err, context.Canceled) {
+			t.Fatalf("Serve() error = %v, want context cancellation", err)
+		}
+	})
+}
+
+func TestStreamServiceUsesFullSnapshotAfterRevisionGap(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		initial, advanced, _ := authorityDeltaSnapshotsFixture(t)
+		gapParams := advanced.params()
+		gapParams.NetworkRevision++
+		gap, err := NewSnapshot(gapParams)
+		if err != nil {
+			t.Fatalf("NewSnapshot(gap) error = %v", err)
+		}
+		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial, gap}}
+		revisions := newStreamRevisionWatcher()
+		service := newStreamServiceWithRevisionsFixture(
+			t,
+			opener,
+			&streamPresenceStore{},
+			revisions,
+		)
+		machine, request := authenticatedRequestFixture(t, initial)
+		sink := &recordingStreamSink{}
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan error, 1)
+		go func() { result <- service.Serve(ctx, machine, request, sink) }()
+
+		synctest.Wait()
+		wakeup, err := network.NewRevisionAdvanced(
+			initial.Scope().NetworkID().String(),
+			gap.NetworkRevision(),
+		)
+		if err != nil {
+			t.Fatalf("network.NewRevisionAdvanced() error = %v", err)
+		}
+		revisions.send(t, wakeup)
+		synctest.Wait()
+
+		snapshots, _ := sink.state()
+		if len(snapshots) != 2 || len(sink.authorityDeltaSnapshots()) != 0 ||
+			snapshots[1].NetworkRevision() != gap.NetworkRevision() {
+			t.Fatalf("gap refresh snapshots = %+v, want full replacement", snapshots)
+		}
+
+		cancel()
+		synctest.Wait()
+		if err := <-result; !errors.Is(err, context.Canceled) {
+			t.Fatalf("Serve() error = %v, want context cancellation", err)
+		}
+	})
+}
+
+func TestStreamServiceIgnoresStaleRevisionWakeup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		initial := snapshotFixture(t)
+		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial}}
+		revisions := newStreamRevisionWatcher()
+		service := newStreamServiceWithRevisionsFixture(
+			t,
+			opener,
+			&streamPresenceStore{},
+			revisions,
+		)
+		machine, request := authenticatedRequestFixture(t, initial)
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan error, 1)
+		go func() {
+			result <- service.Serve(ctx, machine, request, &recordingStreamSink{})
+		}()
+
+		synctest.Wait()
+		wakeup, err := network.NewRevisionAdvanced(
+			initial.Scope().NetworkID().String(),
+			initial.NetworkRevision(),
+		)
+		if err != nil {
+			t.Fatalf("network.NewRevisionAdvanced() error = %v", err)
+		}
+		revisions.send(t, wakeup)
+		synctest.Wait()
+		if calls, _ := opener.state(); calls != 1 {
+			t.Fatalf("snapshot opens after stale wakeup = %d, want 1", calls)
+		}
+
+		cancel()
+		synctest.Wait()
+		if err := <-result; !errors.Is(err, context.Canceled) {
+			t.Fatalf("Serve() error = %v, want context cancellation", err)
+		}
+	})
+}
+
 func TestStreamServiceReconcilesImmediatelyOnConnectivityWakeup(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		base, peer := snapshotWithAuthorizedPeerFixture(t)
@@ -391,6 +528,30 @@ func TestStreamSnapshotRequiresStablePacketPolicyAtSameRevision(t *testing.T) {
 	}
 	if streamCanAdvance(current, next) {
 		t.Fatal("streamCanAdvance() = true for changed packet policy at the same revision")
+	}
+}
+
+func TestStreamSnapshotRejectsRegressedPacketPolicyRevision(t *testing.T) {
+	t.Parallel()
+
+	current := snapshotFixture(t)
+	regressedPolicy, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope:    current.Scope(),
+		Revision: current.PacketPolicy().Revision() - 1,
+		Rules:    current.PacketPolicy().Rules(),
+	})
+	if err != nil {
+		t.Fatalf("policy.NewSnapshot() error = %v", err)
+	}
+	nextParams := current.params()
+	nextParams.NetworkRevision++
+	nextParams.PacketPolicy = regressedPolicy
+	next, err := NewSnapshot(nextParams)
+	if err != nil {
+		t.Fatalf("NewSnapshot() error = %v", err)
+	}
+	if streamCanAdvance(current, next) {
+		t.Fatal("streamCanAdvance() = true for regressed packet-policy revision")
 	}
 }
 
@@ -730,10 +891,11 @@ func (store *streamPresenceStore) state() streamPresenceState {
 }
 
 type recordingStreamSink struct {
-	mu         sync.Mutex
-	snapshots  []Snapshot
-	deltas     []ConnectivityDelta
-	keepAlives int
+	mu              sync.Mutex
+	snapshots       []Snapshot
+	authorityDeltas []AuthorityDelta
+	deltas          []ConnectivityDelta
+	keepAlives      int
 }
 
 func (sink *recordingStreamSink) SendSnapshot(_ context.Context, snapshot Snapshot) error {
@@ -750,6 +912,16 @@ func (sink *recordingStreamSink) SendConnectivityDelta(
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
 	sink.deltas = append(sink.deltas, delta)
+	return nil
+}
+
+func (sink *recordingStreamSink) SendAuthorityDelta(
+	_ context.Context,
+	delta AuthorityDelta,
+) error {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	sink.authorityDeltas = append(sink.authorityDeltas, delta)
 	return nil
 }
 
@@ -770,6 +942,12 @@ func (sink *recordingStreamSink) connectivityDeltas() []ConnectivityDelta {
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
 	return slices.Clone(sink.deltas)
+}
+
+func (sink *recordingStreamSink) authorityDeltaSnapshots() []AuthorityDelta {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	return slices.Clone(sink.authorityDeltas)
 }
 
 type streamRevisionWatcher struct {

@@ -91,15 +91,12 @@ func TestMapSessionHandlerStreamsUncompressedFramesForMeshD(t *testing.T) {
 func TestMapSessionHandlerStreamsPeerAndPolicyAtomicallyAfterSnapshotAdvance(t *testing.T) {
 	t.Parallel()
 
-	initial := mapSnapshotFixture(t)
-	advanced := mapSnapshotWithInboundPolicyFixture(t)
-	advancedParams := mapSnapshotParams(advanced)
-	advancedParams.NetworkRevision = initial.NetworkRevision() + 1
-	advanced, err := mapsession.NewSnapshot(advancedParams)
+	initial, advanced, peer := mapAuthorityDeltaSnapshotsFixture(t)
+	delta, err := mapsession.NewAuthorityDelta(initial, advanced)
 	if err != nil {
-		t.Fatalf("mapsession.NewSnapshot(advanced) error = %v", err)
+		t.Fatalf("mapsession.NewAuthorityDelta() error = %v", err)
 	}
-	streams := &advancingMapStreamService{snapshots: []mapsession.Snapshot{initial, advanced}}
+	streams := &authorityDeltaMapStreamService{initial: initial, delta: delta}
 	handler := newMapSessionHandlerWithStreams(
 		t,
 		&recordingMapSessionService{snapshot: initial},
@@ -109,13 +106,18 @@ func TestMapSessionHandlerStreamsPeerAndPolicyAtomicallyAfterSnapshotAdvance(t *
 	if err != nil {
 		t.Fatalf("Handler() error = %v", err)
 	}
-	body := strings.Replace(mapRequestBody, `"Stream":false`, `"Stream":true`, 1)
+	// meshd@78cb513 omits Compress and atomically applies PeersChanged plus
+	// PacketFilter from one JSON frame through its candidate accumulator.
+	body := strings.Replace(mapRequestBody, `  "Compress":"zstd",`+"\n", "", 1)
+	body = strings.Replace(body, `"Stream":false`, `"Stream":true`, 1)
 	response := serveMap(t, authenticated, body)
-	frames := decodeMapStreamFrames(t, response.Body.Bytes())
+	frames := decodeUncompressedMapStreamFrames(t, response.Body.Bytes())
 	if len(frames) != 2 || len(frames[0].Peers) != 0 || len(frames[0].PacketFilter) != 0 ||
-		len(frames[1].Peers) != 1 || len(frames[1].PacketFilter) != 2 {
+		frames[1].Peers != nil || len(frames[1].PeersChanged) != 1 ||
+		frames[1].PeersChanged[0].ID != tailcfg.NodeID(peer.NumericNodeID()) ||
+		len(frames[1].PacketFilter) != 2 || frames[1].PeersRemoved != nil {
 		t.Fatalf(
-			"stream frames = %+v, want empty initial authority then atomic peer+policy projection",
+			"stream frames = %+v, want full initial state then atomic peer+policy delta",
 			frames,
 		)
 	}
@@ -211,6 +213,24 @@ func TestMapStreamSinkRejectsDeltaBeforeInitialSnapshot(t *testing.T) {
 	}
 }
 
+func TestMapStreamSinkRejectsAuthorityDeltaBeforeInitialSnapshot(t *testing.T) {
+	t.Parallel()
+
+	current, next, _ := mapAuthorityDeltaSnapshotsFixture(t)
+	delta, err := mapsession.NewAuthorityDelta(current, next)
+	if err != nil {
+		t.Fatalf("mapsession.NewAuthorityDelta() error = %v", err)
+	}
+	response := httptest.NewRecorder()
+	sink := newMapStreamSink(response, 142, mapResponseCompressionZstd)
+	if err := sink.SendAuthorityDelta(t.Context(), delta); !errors.Is(err, ErrMapStreamWrite) {
+		t.Fatalf("SendAuthorityDelta(before snapshot) error = %v, want ErrMapStreamWrite", err)
+	}
+	if sink.started() || response.Body.Len() != 0 {
+		t.Fatal("rejected initial authority delta committed an HTTP response")
+	}
+}
+
 func decodeMapStreamFrames(t *testing.T, encoded []byte) []tailcfg.MapResponse {
 	t.Helper()
 	frames := make([]tailcfg.MapResponse, 0, 2)
@@ -284,6 +304,11 @@ type connectivityDeltaMapStreamService struct {
 	delta   mapsession.ConnectivityDelta
 }
 
+type authorityDeltaMapStreamService struct {
+	initial mapsession.Snapshot
+	delta   mapsession.AuthorityDelta
+}
+
 func (service *advancingMapStreamService) Serve(
 	ctx context.Context,
 	_ control.AuthenticatedMachine,
@@ -308,6 +333,21 @@ func (service *connectivityDeltaMapStreamService) Serve(
 		return err
 	}
 	if err := sink.SendConnectivityDelta(ctx, service.delta); err != nil {
+		return err
+	}
+	return context.Canceled
+}
+
+func (service *authorityDeltaMapStreamService) Serve(
+	ctx context.Context,
+	_ control.AuthenticatedMachine,
+	_ mapsession.Request,
+	sink mapsession.StreamSink,
+) error {
+	if err := sink.SendSnapshot(ctx, service.initial); err != nil {
+		return err
+	}
+	if err := sink.SendAuthorityDelta(ctx, service.delta); err != nil {
 		return err
 	}
 	return context.Canceled

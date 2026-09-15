@@ -1,5 +1,5 @@
 {
-  "contract_version": 4,
+  "contract_version": 5,
   "profile": "legacy-ts2021-cap142-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
@@ -42,6 +42,26 @@
     "forbidden_fields": [
       "Peers",
       "PacketFilter"
+    ]
+  },
+  "authority_delta": {
+    "selection": "contiguous-network-revision-stable-self-authority",
+    "atomicity": "single-map-response-frame",
+    "peer_encoding": "PeersChanged-complete-replacement",
+    "peer_removal": "PeersRemoved-numeric-node-id",
+    "policy_encoding": "PacketFilter-complete-replacement-explicit-empty",
+    "coincident_connectivity": "Node-and-PeersChanged-complete-replacement",
+    "peer_order": "numeric-node-id",
+    "full_snapshot_fallback": [
+      "first-message",
+      "reconnect",
+      "revision-gap",
+      "self-authority-change",
+      "ambiguous-peer-id-transition"
+    ],
+    "forbidden_fields": [
+      "Peers",
+      "Domain"
     ]
   }
 }

@@ -74,6 +74,28 @@ func (sink *mapStreamSink) SendConnectivityDelta(
 	return sink.write(encoded)
 }
 
+func (sink *mapStreamSink) SendAuthorityDelta(
+	ctx context.Context,
+	delta mapsession.AuthorityDelta,
+) error {
+	if err := sink.validate(ctx); err != nil {
+		return err
+	}
+	if !sink.hasSnapshot {
+		return ErrMapStreamWrite
+	}
+	encoded, err := encodeAuthorityDeltaMapResponse(
+		delta,
+		sink.capabilityVersion,
+		sink.compression,
+	)
+	if err != nil {
+		return err
+	}
+	defer clear(encoded)
+	return sink.write(encoded)
+}
+
 func (sink *mapStreamSink) SendKeepAlive(ctx context.Context) error {
 	if err := sink.validate(ctx); err != nil {
 		return err
