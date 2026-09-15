@@ -292,6 +292,31 @@ the atomic audit/outbox transaction remain mandatory. Built-in/custom roles,
 bindings, approval persistence, and management HTTP endpoints are deliberately
 deferred until their storage and authentication slices are implemented.
 
+## Account Session authentication
+
+The `internal/identity/accountsession` package now owns the first human-session
+authentication slice. A presented token uses one canonical versioned envelope
+with 256 bits of bearer entropy and explicit Deployment/recovery qualifiers.
+The raw token, HMAC key, and verifier all redact default, detailed, and
+structured-log formatting. The immutable keyring evaluates exactly one active
+and at most one previous HMAC-SHA-256 generation.
+
+Migration `000024` adds a narrow `mesh_runtime`-only Account Session resolution
+function. Resolution must match the token's exact Deployment public ID,
+Deployment recovery epoch, HMAC algorithm, key ID, and digest before it returns
+the current session, Principal, identity-subject, login-Workspace, assurance,
+generation, and expiry evidence. The function rechecks active Deployment,
+Principal, Account, subject, provider, client, Workspace, recovery, and session
+generations. Serving roles retain no direct Account Session table privileges.
+
+The PostgreSQL adapter uses a bounded read-only transaction and rejects
+malformed or mismatched durable evidence. Authentication performs at most two
+lookups for key rotation and maps absent, expired, stale-generation, or
+cross-Deployment authority to one generic unauthenticated result. This slice
+does not expose a management route: durable Role Definitions/Bindings and an
+atomic `device.manage` authorization recheck are required before Device
+revocation can cross the HTTP trust boundary.
+
 ## Health surface
 
 The operator listener exposes:

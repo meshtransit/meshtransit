@@ -36,6 +36,7 @@ const (
 	atomicPacketPolicyPublicationDescription = "atomic packet policy publication"
 	mapPeerProtocolIdentityDescription       = "map peer protocol identity projection"
 	networkIdempotencyDescription            = "network idempotency record foundation"
+	accountSessionResolutionDescription      = "deployment-bound account session resolution"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -107,6 +108,9 @@ var mapPeerProtocolIdentitySQL string
 //go:embed 000023_network_idempotency_foundation.up.sql
 var networkIdempotencySQL string
 
+//go:embed 000024_account_session_resolution_v2.up.sql
+var accountSessionResolutionSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -145,6 +149,7 @@ func Catalog() []Migration {
 		newMigration(21, atomicPacketPolicyPublicationDescription, atomicPacketPolicyPublicationSQL),
 		newMigration(22, mapPeerProtocolIdentityDescription, mapPeerProtocolIdentitySQL),
 		newMigration(23, networkIdempotencyDescription, networkIdempotencySQL),
+		newMigration(24, accountSessionResolutionDescription, accountSessionResolutionSQL),
 	}
 }
 

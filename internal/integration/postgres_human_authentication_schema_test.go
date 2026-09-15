@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
+	"github.com/meshtransit/meshtransit/internal/deployment"
+	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 )
 
 const (
@@ -23,12 +26,14 @@ func assertHumanAuthenticationSessionAuthority(
 	adminConnection *pgx.Conn,
 	adminContenderConnection *pgx.Conn,
 	runtimeConnection *pgx.Conn,
+	runtimePool *postgresadapter.Pool,
 ) {
 	t.Helper()
 
 	seedHumanAuthenticationAuthority(ctx, t, adminConnection)
 	assertHumanAuthenticationRows(ctx, t, adminConnection)
 	assertHumanAuthenticationConstraints(ctx, t, adminConnection)
+	assertRuntimeAccountSessionResolutionV2(ctx, t, runtimePool)
 	assertRuntimeAccountSessionResolution(ctx, t, adminConnection, runtimeConnection)
 	assertConcurrentAccountSessionRevocation(
 		ctx,
@@ -37,6 +42,87 @@ func assertHumanAuthenticationSessionAuthority(
 		adminContenderConnection,
 	)
 	assertHumanAuthenticationPrivilegeContract(ctx, t, adminConnection, runtimeConnection)
+}
+
+func assertRuntimeAccountSessionResolutionV2(
+	ctx context.Context,
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+) {
+	t.Helper()
+
+	store, err := postgresadapter.NewAccountSessionStore(
+		runtimePool,
+		postgresadapter.AccountSessionOptions{
+			StatementTimeout: 5 * time.Second,
+			IdleTimeout:      10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("postgres.NewAccountSessionStore() error = %v", err)
+	}
+	deploymentID, err := deployment.ParseID("01890f00-0000-7000-8000-000000000001")
+	if err != nil {
+		t.Fatalf("parse integration Deployment: %v", err)
+	}
+	keyID, err := accountsession.NewDigestKeyID("integration-v1")
+	if err != nil {
+		t.Fatalf("parse integration Account Session digest key: %v", err)
+	}
+	var digestBytes [32]byte
+	for index := range digestBytes {
+		digestBytes[index] = 0xaa
+	}
+	digest, err := accountsession.NewDigest(keyID, digestBytes)
+	if err != nil {
+		t.Fatalf("construct integration Account Session digest: %v", err)
+	}
+	session, found, err := store.Resolve(ctx, deploymentID, 1, digest)
+	if err != nil {
+		t.Fatalf("resolve deployment-bound Account Session: %v", err)
+	}
+	workspaceID, hasWorkspace := session.LoginWorkspaceID()
+	if !found || !session.IsValid() ||
+		session.ID().String() != integrationAccountSessionPublicID ||
+		session.DeploymentID() != deploymentID ||
+		session.PrincipalID().String() != "01890f00-0000-7000-8000-000000000011" ||
+		session.IdentitySubjectID().String() != integrationIdentitySubjectPublicID ||
+		!hasWorkspace ||
+		workspaceID.String() != "01890f00-0000-7000-8000-000000000101" ||
+		session.DeploymentRecoveryEpoch() != 1 {
+		t.Fatalf("deployment-bound Account Session = %+v, want exact active authority", session)
+	}
+
+	otherDeploymentID, err := deployment.ParseID(
+		"01890f00-0000-7000-8000-000000000002",
+	)
+	if err != nil {
+		t.Fatalf("parse alternate integration Deployment: %v", err)
+	}
+	for name, candidate := range map[string]struct {
+		deploymentID  deployment.ID
+		recoveryEpoch int64
+	}{
+		"wrong deployment":     {deploymentID: otherDeploymentID, recoveryEpoch: 1},
+		"wrong recovery epoch": {deploymentID: deploymentID, recoveryEpoch: 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resolved, resolvedFound, resolveErr := store.Resolve(
+				ctx,
+				candidate.deploymentID,
+				candidate.recoveryEpoch,
+				digest,
+			)
+			if resolveErr != nil || resolvedFound || resolved.IsValid() {
+				t.Fatalf(
+					"Resolve() = (%+v, %t, %v), want hidden mismatch",
+					resolved,
+					resolvedFound,
+					resolveErr,
+				)
+			}
+		})
+	}
 }
 
 func seedHumanAuthenticationAuthority(ctx context.Context, t *testing.T, connection *pgx.Conn) {
@@ -753,6 +839,28 @@ func assertHumanAuthenticationPrivilegeContract(
 	runtimeConnection *pgx.Conn,
 ) {
 	t.Helper()
+
+	var runtimeCanResolveV2, workerCanResolveV2 bool
+	if err := adminConnection.QueryRow(ctx, `SELECT
+    pg_catalog.has_function_privilege(
+        'mesh_runtime',
+        'mesh_ops.resolve_account_session_v2(uuid,bigint,text,text,bytea)',
+        'EXECUTE'
+    ),
+    pg_catalog.has_function_privilege(
+        'mesh_worker',
+        'mesh_ops.resolve_account_session_v2(uuid,bigint,text,text,bytea)',
+        'EXECUTE'
+    )`).Scan(&runtimeCanResolveV2, &workerCanResolveV2); err != nil {
+		t.Fatalf("query Account Session v2 privilege contract: %v", err)
+	}
+	if !runtimeCanResolveV2 || workerCanResolveV2 {
+		t.Fatalf(
+			"Account Session v2 privileges runtime=%t worker=%t, want true/false",
+			runtimeCanResolveV2,
+			workerCanResolveV2,
+		)
+	}
 
 	var runtimeHasTableAccess, workerHasTableAccess, observerHasTableAccess bool
 	var runtimeCanResolve, runtimeCanRevoke, workerCanResolve, workerCanRevoke bool

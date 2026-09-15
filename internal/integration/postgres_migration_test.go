@@ -248,6 +248,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		adminConnection,
 		adminContenderConnection,
 		runtimeConnection,
+		runtimePool,
 	)
 	assertPostgreSQLDeviceRevocation(
 		ctx,

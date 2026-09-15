@@ -38,6 +38,7 @@ const (
 	postgresOperationDeviceRevocationCommit    postgresOperation = "device_revocation_commit"
 	postgresOperationDeviceRevocationRollback  postgresOperation = "device_revocation_rollback"
 	postgresOperationDeviceRevocationReplay    postgresOperation = "device_revocation_replay"
+	postgresOperationAccountSessionResolve     postgresOperation = "account_session_resolve"
 	postgresOperationOutboxBacklog             postgresOperation = "outbox_backlog"
 	postgresOperationOutboxClaim               postgresOperation = "outbox_claim"
 	postgresOperationOutboxLoadRevision        postgresOperation = "outbox_load_revision"
@@ -76,6 +77,7 @@ var (
 		postgresOperationDeviceRevocationCommit,
 		postgresOperationDeviceRevocationRollback,
 		postgresOperationDeviceRevocationReplay,
+		postgresOperationAccountSessionResolve,
 		postgresOperationOutboxBacklog,
 		postgresOperationOutboxClaim,
 		postgresOperationOutboxLoadRevision,
@@ -328,7 +330,8 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationDeviceRevocationApply ||
 			operation == postgresOperationDeviceRevocationCommit ||
 			operation == postgresOperationDeviceRevocationRollback ||
-			operation == postgresOperationDeviceRevocationReplay
+			operation == postgresOperationDeviceRevocationReplay ||
+			operation == postgresOperationAccountSessionResolve
 	}
 	if role != PoolRoleWorker {
 		return false

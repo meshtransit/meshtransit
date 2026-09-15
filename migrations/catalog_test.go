@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 23 {
-		t.Fatalf("len(Catalog()) = %d, want 23", len(catalog))
+	if len(catalog) != 24 {
+		t.Fatalf("len(Catalog()) = %d, want 24", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -933,8 +933,45 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network idempotency migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 23 {
-		t.Fatalf("LatestVersion() = %d, want 23", LatestVersion())
+	accountSessionResolution := catalog[23]
+	if accountSessionResolution.Description != "deployment-bound account session resolution" {
+		t.Fatalf(
+			"migration 24 description = %q, want deployment-bound account session resolution",
+			accountSessionResolution.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.resolve_account_session_v2",
+		"p_expected_deployment_public_id UUID",
+		"p_expected_recovery_epoch BIGINT",
+		"deployment.installation_public_id = p_expected_deployment_public_id",
+		"deployment.recovery_epoch = p_expected_recovery_epoch",
+		"session.deployment_recovery_epoch = p_expected_recovery_epoch",
+		"session.principal_authority_generation",
+		"session.account_session_generation",
+		"session.provider_generation",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.resolve_account_session_v2",
+	} {
+		if !strings.Contains(accountSessionResolution.SQL, required) {
+			t.Errorf("Account Session resolution migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"TO mesh_worker",
+		"TO mesh_observer",
+	} {
+		if strings.Contains(accountSessionResolution.SQL, forbidden) {
+			t.Errorf("Account Session resolution migration SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 24 {
+		t.Fatalf("LatestVersion() = %d, want 24", LatestVersion())
 	}
 }
 
