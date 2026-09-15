@@ -1,7 +1,7 @@
 image:
   repository: manhdev2002/meshtransit-core
-  tag: dev
-  digest: ""
+  tag: git-6d6ad85
+  digest: sha256:9d583c3f61cc92646ed00fc584d2500ab088a7a6c4e4a7b7d5b4695dcb1f333f
   pullPolicy: IfNotPresent
   pullSecrets: []
 

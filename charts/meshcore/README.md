@@ -30,9 +30,10 @@ secret values in Helm values, command arguments, or repository files.
 
 ## Install
 
+The chart default is pinned to its qualified multi-architecture image digest.
 Copy non-secret overrides into an operator-owned values file, including the
-PostgreSQL and Redis addresses and the published image digest. Then lint,
-render, and install:
+PostgreSQL and Redis addresses. Pin any replacement image by digest as well.
+Then lint, render, and install:
 
 ```text
 helm lint ./charts/meshcore --strict -f /secure/path/meshcore-values.yaml
