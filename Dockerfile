@@ -49,6 +49,6 @@ COPY --chown=65532:65532 THIRD_PARTY_NOTICES.md /licenses/THIRD_PARTY_NOTICES.md
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 USER 65532:65532
-EXPOSE 8081/tcp
+EXPOSE 8081/tcp 8443/tcp
 
 ENTRYPOINT ["/meshcore"]

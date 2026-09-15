@@ -400,7 +400,9 @@ non-root identity and fixed entrypoint, `make container-smoke` exercises the
 relay health surface under a read-only filesystem with all Linux capabilities
 dropped, and `make container-scan` rejects High or Critical findings. Use
 `make container-build-multiarch` to compile both Linux amd64 and arm64 images
-without publishing them.
+without publishing them. An explicitly authorized release can use
+`make container-push-multiarch` to publish both platforms with BuildKit SBOM
+and provenance attestations.
 
 The image uses a digest-pinned Go 1.26.8 builder and a `scratch` runtime. It has
 no shell or package manager, contains only the static binary, public CA bundle,
@@ -416,3 +418,20 @@ never pushes it. Publishing is a separate, explicitly authorized release
 operation and should use an immutable version tag plus the resulting digest.
 Release automation should pass the source commit through `CONTAINER_REVISION`;
 the workflow already records its Git commit in the OCI image metadata.
+
+## Kubernetes and Helm
+
+The repository-owned chart is under `charts/meshcore`. Run `make helm-check` to
+strict-lint it and render both the default single-`all` deployment and a
+split-role HA topology. Defaults enforce a numeric non-root identity, read-only
+root filesystem, dropped capabilities, RuntimeDefault seccomp, disabled
+service-account token mounting, resource bounds, startup/readiness/liveness
+probes, topology spreading, PodDisruptionBudgets, and a default-deny
+NetworkPolicy with explicit DNS and same-namespace storage egress.
+
+The chart consumes only existing Secrets and CA ConfigMaps. It runs role-aware
+configuration preflight Jobs followed by a separately credentialed migration
+Job before install or upgrade; serving Pods never migrate implicitly. The image
+may be selected by tag for local iteration, but deployments should set
+`image.digest` to the published immutable digest. See
+`charts/meshcore/README.md` for required object keys and installation guidance.

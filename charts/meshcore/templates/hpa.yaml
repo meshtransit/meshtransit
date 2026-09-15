@@ -1,0 +1,36 @@
+{{- range $role, $settings := .Values.roles }}
+{{- if and $settings.enabled $settings.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "meshcore.roleFullname" (dict "root" $ "role" $role) }}
+  labels:
+    {{- include "meshcore.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $role }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "meshcore.roleFullname" (dict "root" $ "role" $role) }}
+  minReplicas: {{ $settings.autoscaling.minReplicas }}
+  maxReplicas: {{ $settings.autoscaling.maxReplicas }}
+  metrics:
+    {{- with $settings.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ . }}
+    {{- end }}
+    {{- with $settings.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ . }}
+    {{- end }}
+{{- end }}
+{{- end }}

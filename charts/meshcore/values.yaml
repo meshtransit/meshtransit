@@ -1,0 +1,229 @@
+image:
+  repository: manhdev2002/meshtransit-core
+  tag: dev
+  digest: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+roles:
+  all:
+    enabled: true
+    replicaCount: 1
+    autoscaling:
+      enabled: false
+      minReplicas: 1
+      maxReplicas: 3
+      targetCPUUtilizationPercentage: 70
+      targetMemoryUtilizationPercentage: 80
+  api:
+    enabled: false
+    replicaCount: 2
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 6
+      targetCPUUtilizationPercentage: 70
+      targetMemoryUtilizationPercentage: 80
+  control:
+    enabled: false
+    replicaCount: 2
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 10
+      targetCPUUtilizationPercentage: 70
+      targetMemoryUtilizationPercentage: 80
+  worker:
+    enabled: false
+    replicaCount: 2
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 6
+      targetCPUUtilizationPercentage: 70
+      targetMemoryUtilizationPercentage: 80
+  relay:
+    enabled: false
+    replicaCount: 1
+    autoscaling:
+      enabled: false
+      minReplicas: 1
+      maxReplicas: 4
+      targetCPUUtilizationPercentage: 70
+      targetMemoryUtilizationPercentage: 80
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+config:
+  logLevel: info
+  shutdownTimeout: 15s
+  dependencyCheckTimeout: 2s
+  dependencyCheckInterval: 10s
+  postgres:
+    address: postgres.default.svc.cluster.local:5432
+    database: meshtransit
+    runtimeUser: mesh_runtime
+    runtimeMaxConnections: 10
+    workerUser: mesh_worker
+    workerMaxConnections: 10
+    caConfigMap: meshcore-trust
+    caKey: postgres-ca.pem
+  redis:
+    address: redis.default.svc.cluster.local:6379
+    username: meshcore
+    poolSize: 10
+    caConfigMap: meshcore-trust
+    caKey: redis-ca.pem
+  enrollment:
+    activeKeyID: active-v1
+    previousKeyID: ""
+  control:
+    maxSessions: 1024
+    maxStreamsPerSession: 8
+    handshakeTimeout: 5s
+    readIdleTimeout: 1m
+    pingTimeout: 15s
+    writeTimeout: 15s
+    mapRequestTimeout: 10s
+    mapStatementTimeout: 3s
+    mapTransactionIdleLimit: 5s
+    mapPresenceTTL: 30s
+    mapCoordinationTimeout: 2s
+    mapKeepaliveInterval: 1m
+    mapReconcileInterval: 30s
+  registration:
+    maxAttempts: 3
+    rollbackTimeout: 1s
+    pendingTTL: 10m
+    addressCandidateLimit: 256
+    statementTimeout: 5s
+    lockTimeout: 1s
+    idleTimeout: 10s
+    retryInitial: 10ms
+    retryMaximum: 250ms
+  worker:
+    batchSize: 8
+    lease: 30s
+    pollInterval: 1s
+    retryDelay: 5s
+    operationTimeout: 1s
+
+runtimeSecret:
+  name: meshcore-runtime
+  keys:
+    postgresRuntimePassword: postgres-runtime-password
+    postgresWorkerPassword: postgres-worker-password
+    redisPassword: redis-password
+    enrollmentDigestActiveKey: enrollment-digest-active-key
+    enrollmentDigestPreviousKey: enrollment-digest-previous-key
+    controlNoisePrivateKey: control-noise-private-key
+
+controlTLS:
+  secretName: meshcore-control-tls
+  certificateKey: tls.crt
+  privateKeyKey: tls.key
+
+migration:
+  enabled: true
+  activeDeadlineSeconds: 600
+  actor: helm
+  postgres:
+    address: postgres.default.svc.cluster.local:5432
+    database: meshtransit
+    user: mesh_migrator
+    caConfigMap: meshcore-trust
+    caKey: postgres-ca.pem
+  secretName: meshcore-migration
+  passwordKey: postgres-password
+  connectTimeout: 5s
+  lockTimeout: 5s
+  statementTimeout: 30s
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 500m
+      memory: 128Mi
+
+service:
+  type: ClusterIP
+  port: 443
+  annotations: {}
+  externalTrafficPolicy: ""
+  loadBalancerSourceRanges: []
+  sessionAffinity: None
+
+operatorService:
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+startupProbe:
+  failureThreshold: 30
+  periodSeconds: 2
+  timeoutSeconds: 1
+livenessProbe:
+  failureThreshold: 3
+  periodSeconds: 10
+  timeoutSeconds: 2
+readinessProbe:
+  failureThreshold: 3
+  periodSeconds: 5
+  timeoutSeconds: 2
+
+terminationGracePeriodSeconds: 30
+revisionHistoryLimit: 3
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+networkPolicy:
+  enabled: true
+  controlIngressFrom:
+    - {}
+  operatorIngressFrom:
+    - podSelector: {}
+  allowSameNamespaceStorage: true
+  extraEgress: []
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  additionalLabels: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
