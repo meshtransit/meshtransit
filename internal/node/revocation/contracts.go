@@ -22,7 +22,7 @@ type Transaction interface {
 
 // CommittedResultResolver resolves an uncertain commit from durable idempotency evidence.
 type CommittedResultResolver interface {
-	ResolveCommitted(context.Context, Command) (Result, bool, error)
+	ResolveCommitted(context.Context, Command, Attempt) (Result, bool, error)
 }
 
 // MutationIDGenerator creates stable public IDs once for all retry attempts.

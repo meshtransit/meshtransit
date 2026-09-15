@@ -250,6 +250,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		runtimeConnection,
 		runtimePool,
 	)
+	assertNetworkManagementRBACAuthority(ctx, t, adminConnection, runtimeConnection)
 	assertPostgreSQLDeviceRevocation(
 		ctx,
 		t,

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/meshtransit/meshtransit/internal/authorization"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
 	"github.com/meshtransit/meshtransit/internal/publicid"
@@ -91,6 +92,15 @@ func (transaction *deviceRevocationTransaction) resolveLocked(
 	requestHash, err := command.RequestHash()
 	if err != nil {
 		return revocation.Resolution{}, revocation.ErrInvalidCommand
+	}
+	authorizationEvidence, err := resolveDeviceRevocationAuthorization(
+		ctx,
+		transaction.database,
+		command,
+		attempt.OccurredAt(),
+	)
+	if err != nil {
+		return revocation.Resolution{}, err
 	}
 	proof := command.IdempotencyEvidence()
 	digest := proof.Digest()
@@ -209,6 +219,7 @@ func (transaction *deviceRevocationTransaction) resolveLocked(
 	resolution, err := revocation.NewOpenResolution(revocation.OpenResolutionParams{
 		IdempotencyRecordID: recordID,
 		RequestHash:         requestHash,
+		Authorization:       authorizationEvidence,
 		Scope:               transaction.scope,
 		NodeID:              command.NodeID(),
 		NetworkRevision:     networkRevision,
@@ -229,6 +240,106 @@ func (transaction *deviceRevocationTransaction) resolveLocked(
 		return revocation.Resolution{}, ErrDeviceRevocationEvidence
 	}
 	return resolution, nil
+}
+
+func resolveDeviceRevocationAuthorization(
+	ctx context.Context,
+	database deviceRevocationDatabaseTransaction,
+	command revocation.Command,
+	evaluatedAt time.Time,
+) (revocation.AuthorizationEvidence, error) {
+	session := command.AccountSession()
+	var bindingIDValue, roleIDValue string
+	var scopeGeneration, membershipGeneration, bindingGeneration, roleGeneration int64
+	var hasExpiry bool
+	var expiresAt time.Time
+	err := database.QueryRow(
+		ctx,
+		authorizeDeviceRevocationSQL,
+		session.ID().String(),
+		session.DeploymentID().String(),
+		session.PrincipalID().String(),
+		session.IdentitySubjectID().String(),
+		session.Version(),
+		session.PrincipalAuthorityGeneration(),
+		session.AccountSessionGeneration(),
+		session.ProviderGeneration(),
+		session.DeploymentRecoveryEpoch(),
+		command.Scope().WorkspaceID().String(),
+		command.Scope().NetworkID().String(),
+		string(authorization.PermissionDeviceManage),
+		evaluatedAt,
+	).Scan(
+		&bindingIDValue,
+		&roleIDValue,
+		&scopeGeneration,
+		&membershipGeneration,
+		&bindingGeneration,
+		&roleGeneration,
+		&hasExpiry,
+		&expiresAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return revocation.AuthorizationEvidence{}, revocation.ErrForbidden
+	}
+	if err != nil {
+		return revocation.AuthorizationEvidence{}, fmt.Errorf("authorize device.manage: %w", err)
+	}
+	bindingID, err := publicid.Parse(bindingIDValue)
+	if err != nil {
+		return revocation.AuthorizationEvidence{}, ErrDeviceRevocationEvidence
+	}
+	roleID, err := publicid.Parse(roleIDValue)
+	if err != nil || scopeGeneration <= 0 || membershipGeneration <= 0 ||
+		bindingGeneration <= 0 || roleGeneration <= 0 {
+		return revocation.AuthorizationEvidence{}, ErrDeviceRevocationEvidence
+	}
+	target, err := authorization.NewNetworkScope(
+		session.DeploymentID(),
+		command.Scope().WorkspaceID(),
+		command.Scope().NetworkID(),
+	)
+	if err != nil {
+		return revocation.AuthorizationEvidence{}, ErrDeviceRevocationEvidence
+	}
+	expiry := time.Time{}
+	if hasExpiry {
+		expiry = expiresAt
+	}
+	grant, err := authorization.NewGrant(authorization.GrantOptions{
+		PrincipalID:         authorization.PrincipalID(session.PrincipalID()),
+		Permission:          authorization.PermissionDeviceManage,
+		Scope:               target,
+		AuthorityGeneration: authorization.AuthorityGeneration(scopeGeneration),
+		State:               authorization.GrantActive,
+		ExpiresAt:           expiry,
+	})
+	if err != nil {
+		return revocation.AuthorizationEvidence{}, ErrDeviceRevocationEvidence
+	}
+	request, err := authorization.NewRequest(authorization.RequestOptions{
+		PrincipalID:         authorization.PrincipalID(session.PrincipalID()),
+		Permission:          authorization.PermissionDeviceManage,
+		Target:              target,
+		AuthorityGeneration: authorization.AuthorityGeneration(scopeGeneration),
+		EvaluatedAt:         evaluatedAt,
+	})
+	if err != nil || !authorization.Evaluate(request, []authorization.Grant{grant}).IsAllowed() {
+		return revocation.AuthorizationEvidence{}, revocation.ErrForbidden
+	}
+	evidence, err := revocation.NewAuthorizationEvidence(revocation.AuthorizationEvidenceParams{
+		AccountSessionID:              session.ID(),
+		RoleBindingID:                 bindingID,
+		RoleDefinitionID:              roleID,
+		ScopeAuthorityGeneration:      authorization.AuthorityGeneration(scopeGeneration),
+		MembershipAuthorityGeneration: authorization.AuthorityGeneration(membershipGeneration),
+		BindingAuthorityGeneration:    authorization.AuthorityGeneration(bindingGeneration),
+		RoleAuthorityGeneration:       authorization.AuthorityGeneration(roleGeneration),
+	})
+	if err != nil {
+		return revocation.AuthorizationEvidence{}, ErrDeviceRevocationEvidence
+	}
+	return evidence, nil
 }
 
 func (transaction *deviceRevocationTransaction) Apply(

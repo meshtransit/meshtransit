@@ -288,9 +288,33 @@ would disclose hidden authority.
 An allowed scoped-grant decision is one step in the authorization pipeline, not
 a final mutation approval. Authentication, active membership, delegation
 ceiling, operation invariants, Approval Policy, step-up evidence, ETag/CAS, and
-the atomic audit/outbox transaction remain mandatory. Built-in/custom roles,
-bindings, approval persistence, and management HTTP endpoints are deliberately
-deferred until their storage and authentication slices are implemented.
+the atomic audit/outbox transaction remain mandatory. Approval persistence and
+management HTTP endpoints remain deliberately deferred.
+
+## Network management RBAC authority
+
+Migration `000025` adds durable Workspace memberships, Workspace-scoped Role
+Definitions and RolePermissions, and direct-Principal RoleBindings at an exact
+Network scope. Every authority row is tenant-qualified, forced through RLS,
+versioned, lifecycle constrained, and covered by the existing mandatory
+authority-mutation plus audit/outbox evidence contract. Runtime processes keep
+no direct table privileges; only `mesh_runtime` may call the purpose-built
+Network permission resolver.
+
+The resolver rechecks the exact deployment-bound Account Session, Principal,
+Account, identity subject, provider/client, Workspace, Network, membership,
+RoleBinding, RoleDefinition, RolePermission, permission, generations, and
+exclusive expiries. Mutable authority rows are locked in the same short
+transaction as the protected mutation. Device revocation now requires this
+resolver for exact `device.manage` authority before idempotency claim or Device
+locks, and an uncertain-commit replay is reauthorized too. Its audit payload
+binds the Account Session, RoleBinding, RoleDefinition, and all resolved
+authority generations.
+
+This first storage slice intentionally supports direct Principal bindings at
+exact Network scope. Identity-group subjects, inherited Deployment/Workspace
+bindings, delegation ceilings, approval policy, and the management HTTPS API
+remain fail-closed until their dedicated vertical slices land.
 
 ## Account Session authentication
 
@@ -313,9 +337,10 @@ The PostgreSQL adapter uses a bounded read-only transaction and rejects
 malformed or mismatched durable evidence. Authentication performs at most two
 lookups for key rotation and maps absent, expired, stale-generation, or
 cross-Deployment authority to one generic unauthenticated result. This slice
-does not expose a management route: durable Role Definitions/Bindings and an
-atomic `device.manage` authorization recheck are required before Device
-revocation can cross the HTTP trust boundary.
+does not expose a management route. Account Session authentication and atomic
+`device.manage` reauthorization are now available to that future HTTP trust
+boundary, but request parsing, response mapping, and OpenAPI remain to be
+implemented.
 
 ## Health surface
 

@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 24 {
-		t.Fatalf("len(Catalog()) = %d, want 24", len(catalog))
+	if len(catalog) != 25 {
+		t.Fatalf("len(Catalog()) = %d, want 25", len(catalog))
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -970,8 +970,49 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Account Session resolution migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 24 {
-		t.Fatalf("LatestVersion() = %d, want 24", LatestVersion())
+	networkManagementRBAC := catalog[24]
+	if networkManagementRBAC.Description != "network management RBAC authority" {
+		t.Fatalf(
+			"migration 25 description = %q, want Network management RBAC authority",
+			networkManagementRBAC.Description,
+		)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.workspace_membership",
+		"CREATE TABLE mesh.role_definition",
+		"CREATE TABLE mesh.role_permission",
+		"CREATE TABLE mesh.role_binding",
+		"CREATE FUNCTION mesh_ops.resolve_network_permission_v1",
+		"p_session_public_id UUID",
+		"session.principal_authority_generation = p_principal_authority_generation",
+		"membership.state = 'active'",
+		"binding.state = 'active'",
+		"permission.permission_key = p_permission_key",
+		"FOR SHARE OF session",
+		"FORCE ROW LEVEL SECURITY",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.resolve_network_permission_v1",
+	} {
+		if !strings.Contains(networkManagementRBAC.SQL, required) {
+			t.Errorf("Network management RBAC migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT ON mesh.workspace_membership TO mesh_runtime",
+		"GRANT SELECT ON mesh.role_binding TO mesh_runtime",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"TO mesh_worker",
+		"TO mesh_observer",
+	} {
+		if strings.Contains(networkManagementRBAC.SQL, forbidden) {
+			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	if LatestVersion() != 25 {
+		t.Fatalf("LatestVersion() = %d, want 25", LatestVersion())
 	}
 }
 

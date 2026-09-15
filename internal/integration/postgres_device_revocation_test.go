@@ -15,7 +15,6 @@ import (
 	"github.com/meshtransit/meshtransit/internal/control"
 	"github.com/meshtransit/meshtransit/internal/control/mapsession"
 	"github.com/meshtransit/meshtransit/internal/idempotency"
-	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
@@ -82,6 +81,7 @@ func assertPostgreSQLDeviceRevocation(
 	assertRevokedDeviceExcludedFromMap(ctx, t, runtimePool, selfIdentity, result.NetworkRevision())
 	assertRevokedDeviceCannotResumeMap(ctx, t, runtimePool)
 	assertConcurrentDeviceRevocationReplay(ctx, t, adminConnection, runtimePool)
+	assertRoleBindingRevocationDeniesReplay(ctx, t, adminConnection, service, command)
 }
 
 func assertConcurrentDeviceRevocationReplay(
@@ -203,12 +203,6 @@ func deviceRevocationIntegrationCommand(
 	if err != nil {
 		t.Fatalf("parse revoked Node ID: %v", err)
 	}
-	actorID, err := identity.ParsePrincipalID(
-		integrationPublicID("01890f00-0000-7000-8000-", 11),
-	)
-	if err != nil {
-		t.Fatalf("parse Device revocation actor: %v", err)
-	}
 	reason, err := revocation.NewReason(reasonValue)
 	if err != nil {
 		t.Fatalf("construct Device revocation reason: %v", err)
@@ -222,7 +216,7 @@ func deviceRevocationIntegrationCommand(
 		Scope:               scope,
 		NodeID:              nodeID,
 		ExpectedVersion:     expectedVersion,
-		ActorPrincipalID:    actorID,
+		AccountSession:      managementRBACAccountSessionFixture(t),
 		Reason:              reason,
 		IdempotencyEvidence: proof,
 	})
@@ -260,6 +254,10 @@ func assertCommittedDeviceRevocation(
 	networkInternalID int64,
 ) {
 	t.Helper()
+	expectedRoleBindingPublicID := integrationRoleBinding203PublicID
+	if networkInternalID == 204 {
+		expectedRoleBindingPublicID = integrationRoleBinding204PublicID
+	}
 	var deviceCount, machineKeyCount, nodeKeyCount, auditCount, outboxCount, replayCount int
 	if err := connection.QueryRow(ctx, `SELECT
     (SELECT pg_catalog.count(*)::INTEGER
@@ -286,7 +284,14 @@ func assertCommittedDeviceRevocation(
      WHERE workspace_id = 103 AND network_id = $8::BIGINT
        AND target_kind = 'device' AND target_public_id = $1::UUID
        AND action = 'device.revoked' AND permission = 'device.manage'
-       AND correlation_public_id = $5::UUID),
+       AND correlation_public_id = $5::UUID
+       AND payload ->> 'account_session_public_id' = $9::TEXT
+       AND payload ->> 'role_binding_public_id' = $10::TEXT
+       AND payload ->> 'role_definition_public_id' = $11::TEXT
+       AND (payload ->> 'scope_authority_generation')::BIGINT = 1
+       AND (payload ->> 'membership_authority_generation')::BIGINT = 1
+       AND (payload ->> 'binding_authority_generation')::BIGINT = 1
+       AND (payload ->> 'role_authority_generation')::BIGINT = 1),
     (SELECT pg_catalog.count(*)::INTEGER
      FROM mesh_ops.outbox_event
      WHERE workspace_id = 103 AND network_id = $8::BIGINT
@@ -318,6 +323,9 @@ func assertCommittedDeviceRevocation(
 		result.NetworkRevision(),
 		result.InventoryRevision(),
 		networkInternalID,
+		integrationManagementSessionPublicID,
+		expectedRoleBindingPublicID,
+		integrationRoleDefinitionPublicID,
 	).Scan(
 		&deviceCount,
 		&machineKeyCount,
@@ -339,6 +347,49 @@ func assertCommittedDeviceRevocation(
 			outboxCount,
 			replayCount,
 		)
+	}
+}
+
+func assertRoleBindingRevocationDeniesReplay(
+	ctx context.Context,
+	t *testing.T,
+	adminConnection *pgx.Conn,
+	service *revocation.Service,
+	command revocation.Command,
+) {
+	t.Helper()
+	var networkRevision int64
+	if err := adminConnection.QueryRow(ctx, `SELECT network_revision
+FROM mesh_ops.network_revision
+WHERE workspace_id = 103 AND network_id = 203`).Scan(&networkRevision); err != nil {
+		t.Fatalf("query Network revision before RoleBinding revocation: %v", err)
+	}
+	commitAuditedAuthorityFixture(ctx, t, adminConnection, authorityEvidenceFixture{
+		changePublicID:         "01890f01-0000-7000-8000-000000000846",
+		eventPublicID:          "01890f02-0000-7000-8000-000000000846",
+		outboxPublicID:         "01890f03-0000-7000-8000-000000000846",
+		streamID:               203,
+		aggregateKind:          "role_binding",
+		aggregatePublicID:      integrationRoleBinding203PublicID,
+		aggregateVersion:       2,
+		networkRevision:        networkRevision,
+		actorPrincipalPublicID: "01890f00-0000-7000-8000-000000000011",
+		action:                 "role_binding.revoked",
+		permission:             "role_binding.manage",
+		outboxEventClass:       "role_binding.revoked",
+	}, func(transaction pgx.Tx) {
+		if _, err := transaction.Exec(ctx, `UPDATE mesh.role_binding
+SET state = 'revoked',
+    authority_generation = authority_generation + 1,
+    version = version + 1,
+    updated_at = pg_catalog.transaction_timestamp()
+WHERE public_id = $1::UUID`, integrationRoleBinding203PublicID); err != nil {
+			t.Fatalf("revoke integration RoleBinding: %v", err)
+		}
+	})
+
+	if _, err := service.Revoke(ctx, command); !errors.Is(err, revocation.ErrForbidden) {
+		t.Fatalf("replay after RoleBinding revocation error = %v, want ErrForbidden", err)
 	}
 }
 

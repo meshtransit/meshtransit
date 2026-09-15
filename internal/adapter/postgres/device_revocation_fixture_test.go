@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/idempotency"
 	"github.com/meshtransit/meshtransit/internal/identity"
+	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
@@ -175,6 +177,7 @@ func enqueueNewDeviceRevocationResolution(
 	if err != nil {
 		t.Fatalf("Command.RequestHash() error = %v", err)
 	}
+	enqueueDeviceRevocationAuthorization(transaction, attempt.OccurredAt())
 	transaction.enqueueRow(claimDeviceRevocationIdempotencySQL, deviceRevocationTestRow{
 		scan: func(destinations ...any) error {
 			*destinations[0].(*string) = attempt.MutationIDs().IdempotencyRecordID().String()
@@ -341,7 +344,7 @@ func deviceRevocationCommandFixture(t *testing.T) revocation.Command {
 		Scope:               scope,
 		NodeID:              nodeID,
 		ExpectedVersion:     1,
-		ActorPrincipalID:    actorID,
+		AccountSession:      deviceRevocationAccountSessionFixture(t, actorID, workspaceID),
 		Reason:              reason,
 		IdempotencyEvidence: proof,
 	})
@@ -349,6 +352,69 @@ func deviceRevocationCommandFixture(t *testing.T) revocation.Command {
 		t.Fatalf("revocation.NewCommand() error = %v", err)
 	}
 	return command
+}
+
+func enqueueDeviceRevocationAuthorization(
+	transaction *fakeDeviceRevocationTransaction,
+	evaluatedAt time.Time,
+) {
+	transaction.enqueueRow(authorizeDeviceRevocationSQL, deviceRevocationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*string) = "01890f00-0000-7000-8000-000000000821"
+			*destinations[1].(*string) = "01890f00-0000-7000-8000-000000000822"
+			for index := 2; index <= 5; index++ {
+				*destinations[index].(*int64) = 1
+			}
+			*destinations[6].(*bool) = false
+			*destinations[7].(*time.Time) = evaluatedAt
+			return nil
+		},
+	})
+}
+
+func deviceRevocationAccountSessionFixture(
+	t *testing.T,
+	principalID identity.PrincipalID,
+	workspaceID workspace.ID,
+) accountsession.Session {
+	t.Helper()
+	deploymentID, err := deployment.ParseID("01890f00-0000-7000-8000-000000000001")
+	if err != nil {
+		t.Fatalf("deployment.ParseID() error = %v", err)
+	}
+	sessionID, err := accountsession.ParseID("01890f00-0000-7000-8000-000000000811")
+	if err != nil {
+		t.Fatalf("accountsession.ParseID() error = %v", err)
+	}
+	subjectID, err := accountsession.ParseIdentitySubjectID(
+		"01890f00-0000-7000-8000-000000000611",
+	)
+	if err != nil {
+		t.Fatalf("accountsession.ParseIdentitySubjectID() error = %v", err)
+	}
+	decisionTime := time.Date(2026, time.September, 16, 2, 0, 0, 0, time.UTC)
+	session, err := accountsession.NewSession(accountsession.Params{
+		ID:                           sessionID,
+		DeploymentID:                 deploymentID,
+		PrincipalID:                  principalID,
+		IdentitySubjectID:            subjectID,
+		LoginWorkspaceID:             workspaceID,
+		HasLoginWorkspace:            true,
+		AuthenticationTime:           decisionTime.Add(-time.Hour),
+		ACR:                          "urn:meshtransit:test",
+		AMR:                          []string{"pwd"},
+		Version:                      1,
+		PrincipalAuthorityGeneration: 1,
+		AccountSessionGeneration:     1,
+		ProviderGeneration:           1,
+		DeploymentRecoveryEpoch:      1,
+		IdleExpiresAt:                decisionTime.Add(time.Hour),
+		AbsoluteExpiresAt:            decisionTime.Add(2 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("accountsession.NewSession() error = %v", err)
+	}
+	return session
 }
 
 func deviceRevocationAttemptFixture(t *testing.T) revocation.Attempt {

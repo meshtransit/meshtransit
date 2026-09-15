@@ -14,13 +14,20 @@ import (
 const deviceRevocationOutboxEventClass = "network.revision.advanced"
 
 type deviceRevocationAuditPayload struct {
-	AuditReason               string `json:"audit_reason"`
-	PreviousDeviceVersion     int64  `json:"previous_device_version"`
-	DeviceVersion             int64  `json:"device_version"`
-	PreviousSessionGeneration int64  `json:"previous_session_generation"`
-	SessionGeneration         int64  `json:"session_generation"`
-	MachineKeyEpoch           int64  `json:"machine_key_epoch"`
-	NodeKeyEpoch              int64  `json:"node_key_epoch"`
+	AuditReason                   string `json:"audit_reason"`
+	AccountSessionPublicID        string `json:"account_session_public_id"`
+	RoleBindingPublicID           string `json:"role_binding_public_id"`
+	RoleDefinitionPublicID        string `json:"role_definition_public_id"`
+	ScopeAuthorityGeneration      uint64 `json:"scope_authority_generation"`
+	MembershipAuthorityGeneration uint64 `json:"membership_authority_generation"`
+	BindingAuthorityGeneration    uint64 `json:"binding_authority_generation"`
+	RoleAuthorityGeneration       uint64 `json:"role_authority_generation"`
+	PreviousDeviceVersion         int64  `json:"previous_device_version"`
+	DeviceVersion                 int64  `json:"device_version"`
+	PreviousSessionGeneration     int64  `json:"previous_session_generation"`
+	SessionGeneration             int64  `json:"session_generation"`
+	MachineKeyEpoch               int64  `json:"machine_key_epoch"`
+	NodeKeyEpoch                  int64  `json:"node_key_epoch"`
 }
 
 func (transaction *deviceRevocationTransaction) appendDeviceRevocationEvidence(
@@ -33,14 +40,22 @@ func (transaction *deviceRevocationTransaction) appendDeviceRevocationEvidence(
 ) error {
 	command := change.Command()
 	resolution := change.Resolution()
+	authorizationEvidence := resolution.Authorization()
 	auditPayload, err := json.Marshal(deviceRevocationAuditPayload{
-		AuditReason:               command.Reason().String(),
-		PreviousDeviceVersion:     resolution.DeviceVersion(),
-		DeviceVersion:             deviceVersion,
-		PreviousSessionGeneration: resolution.SessionGeneration(),
-		SessionGeneration:         sessionGeneration,
-		MachineKeyEpoch:           resolution.MachineKeyEpoch(),
-		NodeKeyEpoch:              resolution.NodeKeyEpoch(),
+		AuditReason:                   command.Reason().String(),
+		AccountSessionPublicID:        authorizationEvidence.AccountSessionID().String(),
+		RoleBindingPublicID:           authorizationEvidence.RoleBindingID().String(),
+		RoleDefinitionPublicID:        authorizationEvidence.RoleDefinitionID().String(),
+		ScopeAuthorityGeneration:      uint64(authorizationEvidence.ScopeAuthorityGeneration()),
+		MembershipAuthorityGeneration: uint64(authorizationEvidence.MembershipAuthorityGeneration()),
+		BindingAuthorityGeneration:    uint64(authorizationEvidence.BindingAuthorityGeneration()),
+		RoleAuthorityGeneration:       uint64(authorizationEvidence.RoleAuthorityGeneration()),
+		PreviousDeviceVersion:         resolution.DeviceVersion(),
+		DeviceVersion:                 deviceVersion,
+		PreviousSessionGeneration:     resolution.SessionGeneration(),
+		SessionGeneration:             sessionGeneration,
+		MachineKeyEpoch:               resolution.MachineKeyEpoch(),
+		NodeKeyEpoch:                  resolution.NodeKeyEpoch(),
 	})
 	if err != nil {
 		return fmt.Errorf("encode Device revocation audit payload: %w", err)

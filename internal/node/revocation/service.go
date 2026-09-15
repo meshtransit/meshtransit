@@ -81,6 +81,9 @@ func (service *Service) Revoke(ctx context.Context, command Command) (Result, er
 	if now.IsZero() {
 		return Result{}, ErrInvalidService
 	}
+	if !command.AccountSession().IsActiveAt(now) {
+		return Result{}, errors.Join(ErrRevocationFailed, ErrForbidden)
+	}
 	mutationIDs, err := service.mutationIDs.NewMutationIDs()
 	if err != nil || !mutationIDs.IsValid() {
 		return Result{}, errors.Join(ErrRevocationFailed, ErrInvalidMutationIDs, err)
@@ -98,7 +101,7 @@ func (service *Service) Revoke(ctx context.Context, command Command) (Result, er
 		}
 		lastErr = attemptErr
 		if errors.Is(attemptErr, ErrCommitOutcomeUnknown) {
-			resolved, found, resolveErr := service.committed.ResolveCommitted(ctx, command)
+			resolved, found, resolveErr := service.committed.ResolveCommitted(ctx, command, attempt)
 			if resolveErr == nil && found {
 				if !resultMatchesCommand(resolved, command) {
 					return Result{}, errors.Join(ErrRevocationFailed, ErrInvalidResult)

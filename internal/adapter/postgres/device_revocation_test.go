@@ -59,6 +59,7 @@ func TestDeviceRevocationTransactionPersistsAtomicTerminalEvidence(t *testing.T)
 	wantQueries := []string{
 		configureDeviceRevocationTransactionSQL,
 		setDeviceRevocationScopeSQL,
+		authorizeDeviceRevocationSQL,
 		claimDeviceRevocationIdempotencySQL,
 		lockDeviceRevocationRevisionSQL,
 		lockDeviceRevocationTargetSQL,
@@ -91,6 +92,7 @@ func TestDeviceRevocationResolveReturnsCompletedReplayWithoutAuthorityLocks(t *t
 	attempt := deviceRevocationAttemptFixture(t)
 	databaseTransaction := newFakeDeviceRevocationTransaction()
 	enqueueDeviceRevocationSetup(databaseTransaction)
+	enqueueDeviceRevocationAuthorization(databaseTransaction, attempt.OccurredAt())
 	enqueueCompletedDeviceRevocationRecord(
 		t,
 		databaseTransaction,
@@ -120,6 +122,7 @@ func TestDeviceRevocationResolveReturnsCompletedReplayWithoutAuthorityLocks(t *t
 	wantQueries := []string{
 		configureDeviceRevocationTransactionSQL,
 		setDeviceRevocationScopeSQL,
+		authorizeDeviceRevocationSQL,
 		claimDeviceRevocationIdempotencySQL,
 	}
 	if got := deviceRevocationCallQueries(databaseTransaction.calls); !reflect.DeepEqual(got, wantQueries) {
@@ -134,6 +137,7 @@ func TestDeviceRevocationResolveRejectsIdempotencyIntentConflict(t *testing.T) {
 	attempt := deviceRevocationAttemptFixture(t)
 	databaseTransaction := newFakeDeviceRevocationTransaction()
 	enqueueDeviceRevocationSetup(databaseTransaction)
+	enqueueDeviceRevocationAuthorization(databaseTransaction, attempt.OccurredAt())
 	databaseTransaction.enqueueRow(claimDeviceRevocationIdempotencySQL, deviceRevocationTestRow{
 		scan: func(destinations ...any) error {
 			*destinations[0].(*string) = attempt.MutationIDs().IdempotencyRecordID().String()
@@ -171,6 +175,7 @@ func TestDeviceRevocationResolveHidesMissingTarget(t *testing.T) {
 	attempt := deviceRevocationAttemptFixture(t)
 	databaseTransaction := newFakeDeviceRevocationTransaction()
 	enqueueDeviceRevocationSetup(databaseTransaction)
+	enqueueDeviceRevocationAuthorization(databaseTransaction, attempt.OccurredAt())
 	requestHash, err := command.RequestHash()
 	if err != nil {
 		t.Fatalf("Command.RequestHash() error = %v", err)
@@ -217,20 +222,22 @@ func TestDeviceRevocationResolveHidesMissingTarget(t *testing.T) {
 	}
 }
 
-func TestDeviceRevocationStoreResolveCommittedUsesReadOnlyScopedTransaction(t *testing.T) {
+func TestDeviceRevocationStoreResolveCommittedReauthorizesInScopedTransaction(t *testing.T) {
 	t.Parallel()
 
 	command := deviceRevocationCommandFixture(t)
+	attempt := deviceRevocationAttemptFixture(t)
 	recordID := deviceRevocationPublicIDFixture(t, "000000000901")
 	databaseTransaction := newFakeDeviceRevocationTransaction()
 	enqueueDeviceRevocationSetup(databaseTransaction)
+	enqueueDeviceRevocationAuthorization(databaseTransaction, attempt.OccurredAt())
 	enqueueCompletedDeviceRevocationRecord(
 		t,
 		databaseTransaction,
 		loadDeviceRevocationIdempotencySQL,
 		command,
 		recordID,
-		time.Now().UTC().Add(time.Hour),
+		attempt.ExpiresAt(),
 		false,
 	)
 	database := &fakeDeviceRevocationDatabase{
@@ -241,19 +248,55 @@ func TestDeviceRevocationStoreResolveCommittedUsesReadOnlyScopedTransaction(t *t
 		t.Fatalf("newDeviceRevocationStore() error = %v", err)
 	}
 
-	result, found, err := store.ResolveCommitted(context.Background(), command)
+	result, found, err := store.ResolveCommitted(context.Background(), command, attempt)
 	if err != nil {
 		t.Fatalf("ResolveCommitted() error = %v", err)
 	}
 	if !found || result.IdempotencyRecordID() != recordID {
 		t.Fatalf("ResolveCommitted() = %#v, %t, want record %s", result, found, recordID)
 	}
-	if !reflect.DeepEqual(database.readOnly, []bool{true}) || databaseTransaction.commitCalls != 1 {
+	if !reflect.DeepEqual(database.readOnly, []bool{false}) || databaseTransaction.commitCalls != 1 {
 		t.Fatalf(
-			"readOnly/commit = %#v/%d, want [true]/1",
+			"readOnly/commit = %#v/%d, want [false]/1",
 			database.readOnly,
 			databaseTransaction.commitCalls,
 		)
+	}
+}
+
+func TestDeviceRevocationResolveDeniesBeforeIdempotencyClaim(t *testing.T) {
+	t.Parallel()
+
+	command := deviceRevocationCommandFixture(t)
+	attempt := deviceRevocationAttemptFixture(t)
+	databaseTransaction := newFakeDeviceRevocationTransaction()
+	enqueueDeviceRevocationSetup(databaseTransaction)
+	databaseTransaction.enqueueRow(
+		authorizeDeviceRevocationSQL,
+		deviceRevocationTestRow{err: pgx.ErrNoRows},
+	)
+	store := beginTestDeviceRevocationStore(t, databaseTransaction)
+
+	transaction, err := store.Begin(context.Background(), command.Scope())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	if _, err := transaction.Resolve(context.Background(), command, attempt); !errors.Is(
+		err,
+		revocation.ErrForbidden,
+	) {
+		t.Fatalf("Resolve() error = %v, want ErrForbidden", err)
+	}
+	if err := transaction.Rollback(context.Background()); err != nil {
+		t.Fatalf("Rollback() error = %v", err)
+	}
+	wantQueries := []string{
+		configureDeviceRevocationTransactionSQL,
+		setDeviceRevocationScopeSQL,
+		authorizeDeviceRevocationSQL,
+	}
+	if got := deviceRevocationCallQueries(databaseTransaction.calls); !reflect.DeepEqual(got, wantQueries) {
+		t.Fatalf("denied query order = %#v, want %#v", got, wantQueries)
 	}
 }
 

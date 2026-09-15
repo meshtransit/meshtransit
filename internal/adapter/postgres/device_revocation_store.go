@@ -131,17 +131,18 @@ func (store *DeviceRevocationStore) Begin(
 func (store *DeviceRevocationStore) ResolveCommitted(
 	ctx context.Context,
 	command revocation.Command,
+	attempt revocation.Attempt,
 ) (_ revocation.Result, found bool, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
 		store.observe(postgresOperationDeviceRevocationReplay, startedAt, resultErr)
 	}()
 
-	if ctx == nil || store == nil || store.database == nil || !command.IsValid() ||
+	if ctx == nil || store == nil || store.database == nil || !command.IsValid() || !attempt.IsValid() ||
 		!validDeviceRevocationOptions(store.options) {
 		return revocation.Result{}, false, ErrInvalidDeviceRevocationStore
 	}
-	databaseTransaction, err := store.database.Begin(ctx, true)
+	databaseTransaction, err := store.database.Begin(ctx, false)
 	if err != nil {
 		return revocation.Result{}, false, errors.Join(
 			ErrResolveCommittedDeviceRevocation,
@@ -160,6 +161,14 @@ func (store *DeviceRevocationStore) ResolveCommitted(
 		ctx,
 		databaseTransaction,
 		command.Scope(),
+	); err != nil {
+		return revocation.Result{}, false, errors.Join(ErrResolveCommittedDeviceRevocation, err)
+	}
+	if _, err := resolveDeviceRevocationAuthorization(
+		ctx,
+		databaseTransaction,
+		command,
+		attempt.OccurredAt(),
 	); err != nil {
 		return revocation.Result{}, false, errors.Join(ErrResolveCommittedDeviceRevocation, err)
 	}
@@ -192,7 +201,7 @@ func (store *DeviceRevocationStore) ResolveCommitted(
 			classifyDeviceRevocationDatabaseError(ctx, err),
 		)
 	}
-	result, found, err := deviceRevocationCommittedRecord(record, command, time.Now().UTC())
+	result, found, err := deviceRevocationCommittedRecord(record, command, attempt.OccurredAt())
 	if err != nil {
 		return revocation.Result{}, false, errors.Join(ErrResolveCommittedDeviceRevocation, err)
 	}

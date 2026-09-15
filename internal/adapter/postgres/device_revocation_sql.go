@@ -8,6 +8,22 @@ const configureDeviceRevocationTransactionSQL = `SELECT
 const setDeviceRevocationScopeSQL = `SELECT workspace_internal_id, network_internal_id
 FROM mesh_ops.set_network_scope($1::UUID, $2::UUID)`
 
+const authorizeDeviceRevocationSQL = `SELECT
+    role_binding_public_id::TEXT,
+    role_definition_public_id::TEXT,
+    scope_authority_generation,
+    membership_authority_generation,
+    binding_authority_generation,
+    role_authority_generation,
+    binding_expires_at IS NOT NULL,
+    COALESCE(binding_expires_at, $13::TIMESTAMPTZ)
+FROM mesh_ops.resolve_network_permission_v1(
+    $1::UUID, $2::UUID, $3::UUID, $4::UUID,
+    $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
+    $10::UUID, $11::UUID, $12::TEXT, $13::TIMESTAMPTZ
+)
+LIMIT 1`
+
 const claimDeviceRevocationIdempotencySQL = `SELECT
     record_public_id::TEXT,
     stored_request_semantic_hash,

@@ -6,8 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/meshtransit/meshtransit/internal/authorization"
+	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/idempotency"
 	"github.com/meshtransit/meshtransit/internal/identity"
+	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
@@ -41,6 +44,63 @@ func TestServiceRevokesActiveDevice(t *testing.T) {
 	if transaction.attempt.MutationIDs() != fixedRevocationMutationIDs(t) ||
 		!transaction.attempt.OccurredAt().Equal(revocationDecisionTime()) {
 		t.Fatal("Revoke() did not preserve stable attempt identity and time")
+	}
+}
+
+func TestServiceRejectsExpiredAccountSessionBeforeTransaction(t *testing.T) {
+	t.Parallel()
+
+	base := revocationCommandFixture(t)
+	session := base.AccountSession()
+	loginWorkspaceID, hasLoginWorkspace := session.LoginWorkspaceID()
+	expiredSession, err := accountsession.NewSession(accountsession.Params{
+		ID:                           session.ID(),
+		DeploymentID:                 session.DeploymentID(),
+		PrincipalID:                  session.PrincipalID(),
+		IdentitySubjectID:            session.IdentitySubjectID(),
+		LoginWorkspaceID:             loginWorkspaceID,
+		HasLoginWorkspace:            hasLoginWorkspace,
+		AuthenticationTime:           session.AuthenticationTime(),
+		ACR:                          session.ACR(),
+		AMR:                          session.AMR(),
+		Version:                      session.Version(),
+		PrincipalAuthorityGeneration: session.PrincipalAuthorityGeneration(),
+		AccountSessionGeneration:     session.AccountSessionGeneration(),
+		ProviderGeneration:           session.ProviderGeneration(),
+		DeploymentRecoveryEpoch:      session.DeploymentRecoveryEpoch(),
+		IdleExpiresAt:                revocationDecisionTime().Add(-time.Second),
+		AbsoluteExpiresAt:            session.AbsoluteExpiresAt(),
+	})
+	if err != nil {
+		t.Fatalf("construct expired Account Session: %v", err)
+	}
+	command, err := revocation.NewCommand(revocation.CommandParams{
+		Scope:               base.Scope(),
+		NodeID:              base.NodeID(),
+		ExpectedVersion:     base.ExpectedVersion(),
+		AccountSession:      expiredSession,
+		Reason:              base.Reason(),
+		IdempotencyEvidence: base.IdempotencyEvidence(),
+	})
+	if err != nil {
+		t.Fatalf("construct expired-session command: %v", err)
+	}
+	transactions := &fakeRevocationTransactions{}
+	service := newRevocationServiceFixture(
+		t,
+		transactions,
+		&fakeCommittedRevocationResolver{},
+		fixedRevocationMutationIDs(t),
+	)
+
+	if _, err := service.Revoke(context.Background(), command); !errors.Is(
+		err,
+		revocation.ErrForbidden,
+	) {
+		t.Fatalf("Revoke() error = %v, want ErrForbidden", err)
+	}
+	if transactions.beginCalls != 0 {
+		t.Fatalf("transaction begins = %d, want 0", transactions.beginCalls)
 	}
 }
 
@@ -210,7 +270,7 @@ func TestCommandHashBindsRevocationSemantics(t *testing.T) {
 		Scope:               command.Scope(),
 		NodeID:              command.NodeID(),
 		ExpectedVersion:     command.ExpectedVersion(),
-		ActorPrincipalID:    command.ActorPrincipalID(),
+		AccountSession:      command.AccountSession(),
 		Reason:              reason,
 		IdempotencyEvidence: command.IdempotencyEvidence(),
 	})
@@ -312,6 +372,7 @@ type fakeCommittedRevocationResolver struct {
 func (resolver *fakeCommittedRevocationResolver) ResolveCommitted(
 	context.Context,
 	revocation.Command,
+	revocation.Attempt,
 ) (revocation.Result, bool, error) {
 	resolver.calls++
 	return resolver.result, resolver.found, resolver.err
@@ -412,7 +473,7 @@ func revocationCommandFixture(t *testing.T) revocation.Command {
 		Scope:               scope,
 		NodeID:              nodeID,
 		ExpectedVersion:     1,
-		ActorPrincipalID:    actorID,
+		AccountSession:      revocationAccountSessionFixture(t, actorID, workspaceID),
 		Reason:              reason,
 		IdempotencyEvidence: proof,
 	})
@@ -446,6 +507,7 @@ func openRevocationResolutionParamsFixture(
 	return revocation.OpenResolutionParams{
 		IdempotencyRecordID: fixedRevocationMutationIDs(t).IdempotencyRecordID(),
 		RequestHash:         hash,
+		Authorization:       revocationAuthorizationEvidenceFixture(t, command),
 		Scope:               command.Scope(),
 		NodeID:              command.NodeID(),
 		NetworkRevision:     7,
@@ -462,6 +524,78 @@ func openRevocationResolutionParamsFixture(
 		NodeKeyState:        revocation.KeyStateActive,
 		NodeKeyValidFrom:    revocationDecisionTime().Add(-time.Hour),
 	}
+}
+
+func revocationAccountSessionFixture(
+	t *testing.T,
+	principalID identity.PrincipalID,
+	workspaceID workspace.ID,
+) accountsession.Session {
+	t.Helper()
+	deploymentID, err := deployment.ParseID("01890f00-0000-7000-8000-000000000001")
+	if err != nil {
+		t.Fatalf("parse Deployment ID: %v", err)
+	}
+	sessionID, err := accountsession.ParseID("01890f00-0000-7000-8000-000000000811")
+	if err != nil {
+		t.Fatalf("parse Account Session ID: %v", err)
+	}
+	subjectID, err := accountsession.ParseIdentitySubjectID(
+		"01890f00-0000-7000-8000-000000000611",
+	)
+	if err != nil {
+		t.Fatalf("parse identity subject ID: %v", err)
+	}
+	session, err := accountsession.NewSession(accountsession.Params{
+		ID:                           sessionID,
+		DeploymentID:                 deploymentID,
+		PrincipalID:                  principalID,
+		IdentitySubjectID:            subjectID,
+		LoginWorkspaceID:             workspaceID,
+		HasLoginWorkspace:            true,
+		AuthenticationTime:           revocationDecisionTime().Add(-time.Hour),
+		ACR:                          "urn:meshtransit:test",
+		AMR:                          []string{"pwd"},
+		Version:                      1,
+		PrincipalAuthorityGeneration: 1,
+		AccountSessionGeneration:     1,
+		ProviderGeneration:           1,
+		DeploymentRecoveryEpoch:      1,
+		IdleExpiresAt:                revocationDecisionTime().Add(time.Hour),
+		AbsoluteExpiresAt:            revocationDecisionTime().Add(2 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("construct Account Session: %v", err)
+	}
+	return session
+}
+
+func revocationAuthorizationEvidenceFixture(
+	t *testing.T,
+	command revocation.Command,
+) revocation.AuthorizationEvidence {
+	t.Helper()
+	bindingID, err := publicid.Parse("01890f00-0000-7000-8000-000000000821")
+	if err != nil {
+		t.Fatalf("parse RoleBinding ID: %v", err)
+	}
+	roleID, err := publicid.Parse("01890f00-0000-7000-8000-000000000822")
+	if err != nil {
+		t.Fatalf("parse RoleDefinition ID: %v", err)
+	}
+	evidence, err := revocation.NewAuthorizationEvidence(revocation.AuthorizationEvidenceParams{
+		AccountSessionID:              command.AccountSession().ID(),
+		RoleBindingID:                 bindingID,
+		RoleDefinitionID:              roleID,
+		ScopeAuthorityGeneration:      authorization.AuthorityGeneration(1),
+		MembershipAuthorityGeneration: authorization.AuthorityGeneration(1),
+		BindingAuthorityGeneration:    authorization.AuthorityGeneration(1),
+		RoleAuthorityGeneration:       authorization.AuthorityGeneration(1),
+	})
+	if err != nil {
+		t.Fatalf("construct authorization evidence: %v", err)
+	}
+	return evidence
 }
 
 func revocationResultFixture(t *testing.T, resolution revocation.Resolution) revocation.Result {

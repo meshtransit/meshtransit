@@ -37,6 +37,7 @@ const (
 	mapPeerProtocolIdentityDescription       = "map peer protocol identity projection"
 	networkIdempotencyDescription            = "network idempotency record foundation"
 	accountSessionResolutionDescription      = "deployment-bound account session resolution"
+	networkManagementRBACDescription         = "network management RBAC authority"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -111,6 +112,9 @@ var networkIdempotencySQL string
 //go:embed 000024_account_session_resolution_v2.up.sql
 var accountSessionResolutionSQL string
 
+//go:embed 000025_network_management_rbac_authority.up.sql
+var networkManagementRBACSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -150,6 +154,7 @@ func Catalog() []Migration {
 		newMigration(22, mapPeerProtocolIdentityDescription, mapPeerProtocolIdentitySQL),
 		newMigration(23, networkIdempotencyDescription, networkIdempotencySQL),
 		newMigration(24, accountSessionResolutionDescription, accountSessionResolutionSQL),
+		newMigration(25, networkManagementRBACDescription, networkManagementRBACSQL),
 	}
 }
 

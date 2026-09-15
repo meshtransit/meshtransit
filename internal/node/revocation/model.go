@@ -11,6 +11,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/idempotency"
 	"github.com/meshtransit/meshtransit/internal/identity"
+	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/publicid"
@@ -37,6 +38,8 @@ var (
 	ErrInvalidResult = errors.New("device revocation: invalid result")
 	// ErrNotFound hides whether a Device exists outside the authorized Network.
 	ErrNotFound = errors.New("device revocation: target unavailable")
+	// ErrForbidden hides which current Account Session or RBAC authority check failed.
+	ErrForbidden = errors.New("device revocation: forbidden")
 	// ErrConflict reports a stale expected Device version.
 	ErrConflict = errors.New("device revocation: stale device version")
 	// ErrIntentConflict reports idempotency-key reuse with different semantics.
@@ -75,7 +78,7 @@ type CommandParams struct {
 	Scope               network.Scope
 	NodeID              node.ID
 	ExpectedVersion     int64
-	ActorPrincipalID    identity.PrincipalID
+	AccountSession      accountsession.Session
 	Reason              Reason
 	IdempotencyEvidence idempotency.Proof
 }
@@ -85,7 +88,7 @@ type Command struct {
 	scope               network.Scope
 	nodeID              node.ID
 	expectedVersion     int64
-	actorPrincipalID    identity.PrincipalID
+	accountSession      accountsession.Session
 	reason              Reason
 	idempotencyEvidence idempotency.Proof
 }
@@ -96,7 +99,7 @@ func NewCommand(params CommandParams) (Command, error) {
 		scope:               params.Scope,
 		nodeID:              params.NodeID,
 		expectedVersion:     params.ExpectedVersion,
-		actorPrincipalID:    params.ActorPrincipalID,
+		accountSession:      params.AccountSession,
 		reason:              params.Reason,
 		idempotencyEvidence: params.IdempotencyEvidence,
 	}
@@ -115,8 +118,13 @@ func (command Command) NodeID() node.ID { return command.nodeID }
 // ExpectedVersion returns the strong Device version precondition.
 func (command Command) ExpectedVersion() int64 { return command.expectedVersion }
 
-// ActorPrincipalID returns the already-authorized human or service principal.
-func (command Command) ActorPrincipalID() identity.PrincipalID { return command.actorPrincipalID }
+// AccountSession returns the authenticated human session bound to this command.
+func (command Command) AccountSession() accountsession.Session { return command.accountSession }
+
+// ActorPrincipalID returns the authenticated Account Session principal.
+func (command Command) ActorPrincipalID() identity.PrincipalID {
+	return command.accountSession.PrincipalID()
+}
 
 // Reason returns the bounded audit explanation.
 func (command Command) Reason() Reason { return command.reason }
@@ -130,7 +138,7 @@ func (command Command) IdempotencyEvidence() idempotency.Proof {
 func (command Command) IsValid() bool {
 	return command.scope.IsValid() && command.nodeID.IsValid() &&
 		command.expectedVersion > 0 && command.expectedVersion < maxInt64 &&
-		command.actorPrincipalID.IsValid() && command.reason.IsValid() &&
+		command.accountSession.IsValid() && command.reason.IsValid() &&
 		command.idempotencyEvidence.IsValid()
 }
 
@@ -145,7 +153,8 @@ func (command Command) RequestHash() (RequestHash, error) {
 		command.scope.WorkspaceID().String(),
 		command.scope.NetworkID().String(),
 		command.nodeID.String(),
-		command.actorPrincipalID.String(),
+		command.accountSession.ID().String(),
+		command.ActorPrincipalID().String(),
 		command.reason.String(),
 	} {
 		material = strconv.AppendInt(material, int64(len(value)), 10)
@@ -217,6 +226,7 @@ func (state KeyState) isValid() bool {
 type OpenResolutionParams struct {
 	IdempotencyRecordID publicid.ID
 	RequestHash         RequestHash
+	Authorization       AuthorizationEvidence
 	Scope               network.Scope
 	NodeID              node.ID
 	NetworkRevision     int64
@@ -238,6 +248,7 @@ type OpenResolutionParams struct {
 type Resolution struct {
 	idempotencyRecordID publicid.ID
 	requestHash         RequestHash
+	authorization       AuthorizationEvidence
 	scope               network.Scope
 	nodeID              node.ID
 	networkRevision     int64
@@ -261,6 +272,7 @@ func NewOpenResolution(params OpenResolutionParams) (Resolution, error) {
 	resolution := Resolution{
 		idempotencyRecordID: params.IdempotencyRecordID,
 		requestHash:         params.RequestHash,
+		authorization:       params.Authorization,
 		scope:               params.Scope,
 		nodeID:              params.NodeID,
 		networkRevision:     params.NetworkRevision,
@@ -303,6 +315,11 @@ func (resolution Resolution) IdempotencyRecordID() publicid.ID {
 
 // RequestHash returns the command semantics stored with the replay key.
 func (resolution Resolution) RequestHash() RequestHash { return resolution.requestHash }
+
+// Authorization returns the locked Account Session and RBAC decision evidence.
+func (resolution Resolution) Authorization() AuthorizationEvidence {
+	return resolution.authorization
+}
 
 // Scope returns the locked Network scope.
 func (resolution Resolution) Scope() network.Scope { return resolution.scope }
@@ -361,6 +378,7 @@ func (resolution Resolution) IsValid() bool {
 
 func (resolution Resolution) isOpenValid() bool {
 	return resolution.idempotencyRecordID.IsValid() && resolution.requestHash.IsValid() &&
+		resolution.authorization.IsValid() &&
 		resolution.scope.IsValid() && resolution.nodeID.IsValid() &&
 		resolution.networkRevision > 0 && resolution.networkRevision < maxInt64 &&
 		resolution.inventoryRevision > 0 && resolution.inventoryRevision < maxInt64 &&
@@ -378,7 +396,7 @@ func (resolution Resolution) isCompletedValid() bool {
 	return resolution.idempotencyRecordID.IsValid() && resolution.requestHash.IsValid() &&
 		resolution.completed.IsValid() &&
 		resolution.completed.IdempotencyRecordID() == resolution.idempotencyRecordID &&
-		!resolution.scope.IsValid() && !resolution.nodeID.IsValid()
+		!resolution.authorization.IsValid() && !resolution.scope.IsValid() && !resolution.nodeID.IsValid()
 }
 
 // ResultParams contains the safe committed result of terminal revocation.
@@ -516,6 +534,7 @@ func (change Change) IsValid() bool {
 		change.attempt.IsValid() && change.resolution.requestHash == hash &&
 		change.resolution.scope == change.command.scope &&
 		change.resolution.nodeID == change.command.nodeID &&
+		change.resolution.authorization.AccountSessionID() == change.command.accountSession.ID() &&
 		change.resolution.deviceVersion == change.command.expectedVersion &&
 		change.resolution.deviceState == DeviceStateActive &&
 		change.resolution.machineKeyState == KeyStateActive &&
