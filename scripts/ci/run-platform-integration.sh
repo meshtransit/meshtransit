@@ -13,14 +13,15 @@ postgres_image="${POSTGRES_IMAGE:-postgres:18.6-bookworm}"
 redis_image="${REDIS_IMAGE:-redis:8.8.0-trixie}"
 fixture_dir="$(mktemp -d)"
 runner_dir=''
+module_dir=''
 fixture_network="meshtransit-platform-$RANDOM-$$"
 runner_container="meshtransit-platform-go-$RANDOM-$$"
 postgres_container="meshtransit-postgres-$RANDOM-$$"
 redis_container="meshtransit-redis-$RANDOM-$$"
 # Keep arrays nonempty under macOS Bash 3.2's nounset behavior. Native-host
 # fixtures retain Docker's ordinary default bridge; only Linux uses its owned one.
-postgres_network=(--network bridge)
-redis_network=(--network bridge)
+postgres_network=(--network bridge --publish 127.0.0.1::5432)
+redis_network=(--network bridge --publish 127.0.0.1::6379)
 postgres_password="$(openssl rand -hex 24)"
 migration_password="$(openssl rand -hex 24)"
 runtime_password="$(openssl rand -hex 24)"
@@ -49,7 +50,9 @@ trap cleanup EXIT
 if [[ "${go_runner}" == container ]]; then
 	runner_dir="$(mktemp -d)"
 	mkdir -p "${runner_dir}/tmp"
-	docker network create "${fixture_network}" >/dev/null
+	module_dir="$(go env GOMODCACHE)"
+	[[ -d "${module_dir}" ]] || { printf '%s\n' 'Missing offline module cache.' >&2; exit 2; }
+	docker network create --internal "${fixture_network}" >/dev/null
 	postgres_network=(--network "${fixture_network}" --network-alias meshtransit-postgres)
 	redis_network=(--network "${fixture_network}" --network-alias meshtransit-redis)
 fi
@@ -70,6 +73,7 @@ run_go() {
 		--read-only \
 		--tmpfs /tmp:rw,nosuid,nodev \
 		--mount "type=bind,source=${source_dir},target=/src,readonly" \
+		--mount "type=bind,source=${module_dir},target=/modules,readonly" \
 		--mount "type=bind,source=${fixture_dir},target=${fixture_dir}" \
 		--mount "type=bind,source=${runner_dir},target=/runner" \
 		--workdir /src \
@@ -77,7 +81,8 @@ run_go() {
 		--env GOENV=off \
 		--env 'GOFLAGS=-mod=readonly -buildvcs=false' \
 		--env GOCACHE=/runner/build \
-		--env GOMODCACHE=/runner/modules \
+		--env GOMODCACHE=/modules \
+		--env GOPROXY=off \
 		--env GOPATH=/runner/gopath \
 		--env GOTMPDIR=/runner/tmp \
 		--env MESHTRANSIT_MIGRATION_INTEGRATION \
@@ -126,6 +131,11 @@ run_go() {
 		--env MESHTRANSIT_TEST_POSTGRES_ADMIN_PASSWORD_FILE \
 		--env MESHTRANSIT_TEST_POSTGRES_WORKER_PASSWORD_FILE \
 		--env MESHTRANSIT_TEST_MESHCORE_BINARY \
+		--env MESHTRANSIT_PRIVATE_FACTORY_INTEGRATION \
+		--env MESHTRANSIT_TEST_OIDC_TLS_CERTIFICATE_FILE \
+		--env MESHTRANSIT_TEST_OIDC_TLS_PRIVATE_KEY_FILE \
+		--env SSL_CERT_FILE \
+		--env SSL_CERT_DIR \
 		"${go_runner_image}" go "$@"
 }
 
@@ -210,7 +220,6 @@ docker run \
 	--detach \
 	--name "${postgres_container}" \
 	"${postgres_network[@]}" \
-	--publish 127.0.0.1::5432 \
 	--env "POSTGRES_PASSWORD=${postgres_password}" \
 	--env 'POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256' \
 	"${postgres_image}" \
@@ -284,7 +293,6 @@ docker run \
 	--detach \
 	--name "${redis_container}" \
 	"${redis_network[@]}" \
-	--publish 127.0.0.1::6379 \
 	--entrypoint sh \
 	"${redis_image}" \
 	-c 'while :; do sleep 3600; done' \
@@ -336,11 +344,12 @@ docker exec "${redis_container}" redis-cli \
 	ping \
 	>/dev/null
 
-postgres_address="$(docker port "${postgres_container}" 5432/tcp)"
-redis_address="$(docker port "${redis_container}" 6379/tcp)"
 if [[ "${go_runner}" == container ]]; then
 	postgres_address='meshtransit-postgres:5432'
 	redis_address='meshtransit-redis:6379'
+else
+	postgres_address="$(docker port "${postgres_container}" 5432/tcp)"
+	redis_address="$(docker port "${redis_container}" 6379/tcp)"
 fi
 export MESHTRANSIT_MIGRATION_INTEGRATION=1
 export MESHTRANSIT_INTEGRATION=1
@@ -392,6 +401,38 @@ run_go test \
 	-run '^TestPostgreSQLMigrations$' \
 	-timeout=5m \
 	./internal/integration
+
+# The concrete private factory has no injected trust/clock/transport. Qualify its
+# initiation separately on a cold owned database and explicit Linux startup roots.
+# Native-host clock/trust qualification remains an independent gate.
+if [[ "${go_runner}" == container ]]; then
+	docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname postgres --set ON_ERROR_STOP=1 \
+		--command 'CREATE DATABASE meshtransit_private_factory OWNER mesh_migrator' \
+		>/dev/null
+	docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname meshtransit_private_factory --set ON_ERROR_STOP=1 \
+		--command 'CREATE EXTENSION btree_gist' \
+		>/dev/null
+	mkdir "${fixture_dir}/empty-roots"
+	export MESHTRANSIT_PRIVATE_FACTORY_INTEGRATION=1
+	export MESHTRANSIT_MIGRATION_POSTGRES_DATABASE=meshtransit_private_factory
+	export MESHTRANSIT_POSTGRES_DATABASE=meshtransit_private_factory
+	export MESHTRANSIT_TEST_OIDC_TLS_CERTIFICATE_FILE="${fixture_dir}/server.crt"
+	export MESHTRANSIT_TEST_OIDC_TLS_PRIVATE_KEY_FILE="${fixture_dir}/server.key"
+	export SSL_CERT_FILE="${fixture_dir}/ca.crt"
+	export SSL_CERT_DIR="${fixture_dir}/empty-roots"
+	run_go test -tags=integration -count=1 -race -shuffle=on -v \
+		-run '^TestPrivateIdentityFactoryInitiationIntegration$' -timeout=5m ./cmd/meshcore
+	unset MESHTRANSIT_PRIVATE_FACTORY_INTEGRATION
+	unset SSL_CERT_FILE SSL_CERT_DIR
+	export MESHTRANSIT_MIGRATION_POSTGRES_DATABASE=meshtransit
+	export MESHTRANSIT_POSTGRES_DATABASE=meshtransit
+fi
 
 export MESHTRANSIT_ROLE=all
 export MESHTRANSIT_POSTGRES_WORKER_USER=mesh_worker

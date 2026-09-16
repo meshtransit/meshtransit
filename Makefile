@@ -49,7 +49,8 @@ lint:
 lint-integration:
 	$(GOLANGCI_LINT) run --build-tags=integration \
 		./internal/adapter/legacyts2021/protocoltest \
-		./internal/integration
+		./internal/integration \
+		./cmd/meshcore
 
 vuln:
 	$(GOVULNCHECK) ./...

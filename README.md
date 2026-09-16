@@ -1618,6 +1618,76 @@ the unchanged renderer below, not a historical commit/artifact, native clock,
 durable/provider traffic, live Google/browser/client/HA, remote CI or release
 artifact. Those gates remain open; public SSO remains disabled.
 
+### Concrete private factory initiation integration
+
+`SSO-PRIVATE-FACTORY-INITIATION-INTEGRATION-001` adds an integration-tag gate for
+the actual compile-time private factory and dispatcher, with no injected clock,
+transport or effect ports. It uses a separate cold `meshtransit_private_factory`
+database on disposable PostgreSQL, all released migrations, audited privileged
+fixture seeds and distinct least-privilege runtime credentials. Verified-TLS
+SCRAM PostgreSQL and TLS/ACL Redis are checked before requests; initialized
+storage is refused before writes. Existing platform/process gates remain intact.
+
+Five sequential independent cases cover prepare/start pending creation, exact
+metadata mismatch, discovery redirect, untrusted provider TLS and a closed
+borrowed Redis client. Prepare grants no authority and contacts no provider.
+Successful start persists one anonymous pending/version-1 auth transaction and
+one mutation/audit/outbox event, with resident-key nonce/state, encrypted PKCE and
+browser-cookie binding verified from durable reads. Failures release neither an
+authorization URL nor login cookies. Principal/Account/Session/subject/membership/RBAC and
+Network/revision counts cannot change. Token/JWKS/redirect-trap calls remain zero;
+repeated factory Close leaves healthy borrowed PostgreSQL/Redis usable. Checked
+cleanup, race and joined goroutine-leak verification cover owned fixture resources.
+
+The explicit Linux platform lane now uses an internal-only owned Docker network,
+read-only source and existing host module cache, offline module resolution,
+non-root host UID/GID, no capabilities, host credentials or Docker socket, and
+only owned fixture/scratch writes. A fixture-process startup OS-root environment
+trusts its disposable HTTPS provider; production resolver TLS/no-proxy/no-redirect
+behavior and runtime configuration remain unchanged. Missing offline modules
+fail, never trigger Internet fallback. Integration-tag lint now additionally
+covers `cmd/meshcore`; no old test/guard/constraint/schema/grant/dependency gate is
+weakened. Canonical docs 13/17/18/26 were updated locally before code; this README
+is their versioned mirror, not a commit of the non-Git sibling tree.
+
+This gate qualifies initiation source behavior only, not signed callback or
+Session issuance. Next add signed-provider callback, exact-subject/membership
+denial, nonce/token failure and single-use replay qualification through this same
+factory. Query custody, expiry/recovery, native/cross-host clocks, real Google
+through Keycloak, browser/client/HA, remote CI and immutable release artifacts
+remain open. No deployment, public listener or SSO activation; meshd/meshctl wire
+compatibility is unchanged.
+
+Source qualification (2026-09-17): final full `make quality` passes formatting,
+module/vet, shuffled unit/race, pinned regular and expanded integration-tag lint,
+symbol-vulnerability and workflow gates. Govulncheck reports zero affected
+symbols/imported-package vulnerabilities and three non-called required-module
+advisories; no zero-advisory dependency/container claim. Scoped pinned autofix
+and read-only lint make no fixes; both new-file texts and all 38 cmd Go hashes
+remain unchanged. Bounded DB review fixes give every seed SQL its owned context
+and add Principal census. Final uncached host private-identity race contracts
+pass (2.306s), not host storage integration. Existing dispatcher-routing fuzz
+passes 55,251 executions over ten seconds with two workers. Shell syntax and
+invalid-mode rejection pass; redacted tree/all-127-pre-commit-history secret scans
+pass without new baselines/exclusions.
+
+Final fresh Linux source execution passes the complete released-migration suite
+(15.478s), all five named initiation cases without Skip (cmd race package
+1.434s), joined leak checks, and unchanged dependency/process restart/expiry
+suites (6.277s). Go uses the existing exact Dockerfile image digest; PostgreSQL
+18.6 and Redis 8.8.0 use observed manifest digests
+`1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af` and
+`234c902a2db49461a129e2d4aeff85b28cf20187ed274a67f6e50995fa713c7b`.
+Missing named references resolved via the exact pulls, not alternative images/
+mount profiles. An initial internal-network run failed before Go at the obsolete
+host-port lookup; Linux now uses owned DNS with no published ports, while native
+mode preserves loopback bindings. The first full quality run exposed an int-to-
+byte fixture conversion; typed table values resolve it without suppression.
+All disposable resources are removed on exit. No production Go, old oracle/guard,
+schema/grant/constraint, dependency or freshness rule change. This is current
+initiation source evidence, not signed callback/Session issuance, native clocks,
+Google/browser/client/HA, remote CI or an immutable artifact. Public SSO stays off.
+
 ### Private browser login document and dispatcher
 
 `SSO-LOGIN-ROUTE-CONTRACT-001` and `SSO-PRIVATE-LOGIN-DISPATCHER-001` prepare
