@@ -112,13 +112,23 @@ func assertPostgreSQLBrowserClaim(ctx context.Context, t *testing.T, admin, runt
 
 func integrationClaimVerified(ctx context.Context, t *testing.T, store *postgresadapter.AuthTransactionStore, suffix string) oidcauth.VerifiedBrowser {
 	t.Helper()
+	return integrationClaimVerifiedRemaining(ctx, t, store, suffix, 0)
+}
+
+func integrationClaimVerifiedRemaining(ctx context.Context, t *testing.T, store *postgresadapter.AuthTransactionStore, suffix string, remaining time.Duration) oidcauth.VerifiedBrowser {
+	t.Helper()
 	template := integrationAuthTransactionPending(t, integrationAuthRouteParams{providerGeneration: 1, recoveryEpoch: 1, workspacePublicID: "01890f00-0000-7000-8000-000000000101"}, [4]string{
 		"01890f00-0000-7000-8000-000000000" + suffix, "01890f01-0000-7000-8000-000000000" + suffix,
 		"01890f02-0000-7000-8000-000000000" + suffix, "01890f03-0000-7000-8000-000000000" + suffix,
 	})
 	transactions := &integrationAuthStartTransactions{store: store}
 	dependencies := integrationAuthStartDependencies(t, template, store, transactions)
-	start, err := oidcauth.NewStartService(oidcauth.StartOptions{RequestTimeout: 10 * time.Second, PendingLifetime: 5 * time.Minute, RollbackTimeout: 2 * time.Second, ResolveTimeout: 2 * time.Second}, dependencies)
+	lifetime := 5 * time.Minute
+	if remaining > 0 {
+		lifetime = time.Minute
+		dependencies.Clock = integrationFailureStartClock{time.Now().UTC().Add(-time.Minute + remaining)}
+	}
+	start, err := oidcauth.NewStartService(oidcauth.StartOptions{RequestTimeout: 10 * time.Second, PendingLifetime: lifetime, RollbackTimeout: 2 * time.Second, ResolveTimeout: 2 * time.Second}, dependencies)
 	if err != nil {
 		t.Fatal(err)
 	}

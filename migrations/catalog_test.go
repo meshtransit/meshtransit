@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 30 {
-		t.Fatalf("len(Catalog()) = %d, want 30", len(catalog))
+	if len(catalog) != 31 {
+		t.Fatalf("len(Catalog()) = %d, want 31", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 30 {
-		t.Fatalf("LatestVersion() = %d, want 30", LatestVersion())
+	if LatestVersion() != 31 {
+		t.Fatalf("LatestVersion() = %d, want 31", LatestVersion())
 	}
 }
 
@@ -1188,6 +1188,29 @@ func TestBrowserClaimMigrationPreservesBindingAndExplicitLockOrder(t *testing.T)
 	for _, forbidden := range []string{"GRANT SELECT", "GRANT UPDATE", "GRANT ALL", "BYPASSRLS", "binding_semantic_hash = observed", "pkce_verifier_ciphertext =", "INSERT INTO", "DELETE FROM", "DROP ", "transaction_timestamp()"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("claim SQL excessive or stale capability %q", forbidden)
+		}
+	}
+}
+
+func TestBrowserFailureMigrationNarrowErasureAndLiveClock(t *testing.T) {
+	t.Parallel()
+	sql := Catalog()[30].SQL
+	for _, required := range []string{"CREATE FUNCTION mesh_ops.fail_oidc_browser_v1", "SECURITY DEFINER", "SET search_path = pg_catalog, mesh, mesh_ops", "auth.version = p_expected_version", "auth.binding_semantic_hash = p_binding_hash", "auth.consumed_at = p_consumed_at", "EXCEPTION WHEN OTHERS", "pkce_verifier_encryption_algorithm = NULL", "pkce_verifier_encryption_key_id = NULL", "pkce_verifier_ciphertext = NULL", "TO mesh_runtime;", "FROM PUBLIC, mesh_worker, mesh_observer"} {
+		if !strings.Contains(sql, required) {
+			t.Errorf("terminal SQL missing %q", required)
+		}
+	}
+	previous := -1
+	for _, required := range []string{"FOR UPDATE OF auth", "FROM mesh_audit.lock_deployment_stream_head", "finished_at := pg_catalog.clock_timestamp()", "UPDATE mesh.auth_transaction AS auth"} {
+		position := strings.Index(sql, required)
+		if position <= previous {
+			t.Errorf("terminal lock/clock order %q", required)
+		}
+		previous = position
+	}
+	for _, forbidden := range []string{"admit_oidc_login_route", "FOR SHARE", "transaction_timestamp()", "INSERT INTO", "GRANT SELECT", "GRANT UPDATE", "GRANT ALL", "UPDATE mesh.account", "state = 'succeeded'", "provider.state =", "workspace.state ="} {
+		if strings.Contains(sql, forbidden) {
+			t.Errorf("terminal excessive capability %q", forbidden)
 		}
 	}
 }

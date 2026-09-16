@@ -662,6 +662,40 @@ erasure/expiry, abuse controls and Google/HA acceptance. This slice does not cha
 the wire contract; compatibility reference pins remain `meshd` `87a3dd2` and
 `meshctl` `ce2a856` (not a new claim of live client or Google qualification).
 
+`FailureService` now terminalizes a confirmed consuming claim through forward
+migration 31's runtime-only `mesh_ops.fail_oidc_browser_v1`. Receipt copies share
+one non-queuing failure attempt; starting failure burns unused exchange capability
+before effects. It does not undo an already running provider exchange or grant a
+session; successful issuance must later CAS the consuming row independently.
+
+Only immutable exact scope, original version-two binding hash and claim time are
+used for cleanup. Provider/Workspace revocation cannot strand browser proof.
+Auth-row lock precedes Deployment audit head; fresh `clock_timestamp()` after
+both locks selects failed/authentication_failed or expired/deadline_expired.
+Version three preserves original consumed_at, binding/digests/scope and erases
+all three PKCE algorithm/key/ciphertext columns, with fresh atomic mutation/audit/
+outbox and terminal lifecycle hashes. No Account Session, Principal, membership,
+role or Network revision is created. Bounded joined rollback releases resources;
+unknown Commit returns zero receipt, with no resolver or retry.
+
+Private pool metrics add only fixed `auth_failure_{begin,apply,commit,rollback}`
+operations and reuse bounded success/error, latency and pool-saturation signals.
+Disposable PostgreSQL/TLS tests cover exact scope/CAS, independent SQL contenders,
+missing-evidence rollback including erasure, provider/Workspace revocation,
+expiry during audit-lock wait and a hidden ACK after real durable Commit. The
+existing Deployment audit helper still requires active/verified Deployment;
+quarantine recovery cleanup and bounded workers for abandoned pending/consuming
+rows remain unfinished. Successful identity reconciliation/session issuance,
+public callback composition, abuse controls and Google/HA/client acceptance
+remain release gates. Released migrations, application generation 1 and client
+wire contracts are unchanged; this is source qualification, not a live rollout.
+
+Secret scanning for this slice uses pinned Gitleaks v8.30.1 with 100% redaction,
+default rules and no blanket test/history exclusions: full Git history and the
+working source tree. No report, secret, dependency change or history rewrite is
+committed. This scan does not replace remaining SBOM/image/provenance and target
+release qualification gates.
+
 Vulnerability qualification remains reachability-specific: the current Go 1.26.8
 scan reports zero imported-package/reachable vulnerabilities, but retains three
 module-only `golang.org/x/crypto` advisories: GO-2026-6354, GO-2026-6355 (SSH,

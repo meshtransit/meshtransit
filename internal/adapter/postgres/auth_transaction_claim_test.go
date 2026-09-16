@@ -141,6 +141,20 @@ func TestBrowserClaimUnitAppendsExactLifecycleEvidenceAndNeverRetriesCommit(t *t
 
 func authClaimCommandFixture(t *testing.T) oidcauth.ClaimCommand {
 	t.Helper()
+	verified := authClaimVerifiedFixture(t)
+	ids, err := (oidcauth.SystemClaimIDs{}).NewClaimIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := oidcauth.NewClaimCommand(verified, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return command
+}
+
+func authClaimVerifiedFixture(t *testing.T) oidcauth.VerifiedBrowser {
+	t.Helper()
 	pending, secrets := authTransactionBrowserFixture(t)
 	snapshot, err := oidcauth.NewPendingSnapshot(oidcauth.PendingSnapshotParams{
 		TransactionID: pending.TransactionID(), Route: pending.Route(), Version: 1, State: "pending", FlowKind: "browser_authorization_code", OperationKind: "login",
@@ -174,15 +188,7 @@ func authClaimCommandFixture(t *testing.T) oidcauth.ClaimCommand {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ids, err := (oidcauth.SystemClaimIDs{}).NewClaimIDs()
-	if err != nil {
-		t.Fatal(err)
-	}
-	command, err := oidcauth.NewClaimCommand(verified, ids)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return command
+	return verified
 }
 
 type authClaimLoader struct{ snapshot oidcauth.PendingSnapshot }

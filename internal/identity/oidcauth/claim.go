@@ -248,20 +248,21 @@ func (service *ClaimService) ClaimBrowser(ctx context.Context, verified Verified
 	if now.Before(claimed.ConsumedAt()) || !livePendingSnapshot(verified.snapshot, now) || ctx.Err() != nil {
 		return result, errors.Join(ErrClaimFailed, ctx.Err())
 	}
-	return ClaimResult{claimed: claimed, exchangeAttempt: &atomic.Bool{}}, nil
+	return ClaimResult{claimed: claimed, exchangeAttempt: &atomic.Bool{}, failureAttempt: &atomic.Bool{}}, nil
 }
 
-// ClaimResult is confirmed consumption evidence with one private exchange attempt.
-// Copies share its non-queuing gate; a restart cannot recreate the capability.
+// ClaimResult is confirmed consumption evidence with private exchange/failure attempts.
+// Copies share non-queuing gates; a restart cannot recreate either capability.
 // It releases no plaintext verifier, provider credential, identity, or session.
 type ClaimResult struct {
 	claimed         Claimed
 	exchangeAttempt *atomic.Bool
+	failureAttempt  *atomic.Bool
 }
 
 // IsValid checks whether the service released confirmed consuming evidence.
 func (result ClaimResult) IsValid() bool {
-	return result.claimed.IsValid() && result.exchangeAttempt != nil
+	return result.claimed.IsValid() && result.exchangeAttempt != nil && result.failureAttempt != nil
 }
 
 // Claimed returns safe immutable transition evidence, not exchange material.
