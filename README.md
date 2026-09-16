@@ -453,8 +453,9 @@ Deployment-scoped events have no Network revision.
 
 No public listener exposes browser login yet. Bounded pre-session HTTP start and
 durable route admission are implemented as foundation adapters; callback claim/
-exchange, ID-token validation, Account reconciliation, and Account Session
-issuance remain required before public composition.
+exchange and ID-token validation foundations are described below. Account
+reconciliation, Account Session issuance, terminal lifecycle and public callback
+wiring remain required before public composition.
 
 `oidcauth.StartService` now owns the application boundary: bounded discovery and
 one secret/ID preparation before Begin, exact creation-evidence validation,
@@ -468,7 +469,7 @@ provides isolated active/count/histogram metrics with only closed result labels.
 It must be wired to the private operator registry when browser HTTP admission is
 implemented. A bounded HTTP prepare/start adapter now enforces the pre-session
 CSRF contract below. `AuthTransactionStore.Admit` implements its mandatory
-durable route admission seam, but public runtime composition, callback claiming,
+durable route admission seam, but public runtime composition/callback wiring,
 and Account Session issuance remain unimplemented.
 No supported Mesh Client wire contract changed.
 
@@ -625,10 +626,49 @@ Commit retry, and cannot reclaim consuming state. Disposable PostgreSQL/TLS
 tests exercise independent concurrent callbacks, real committed-but-lost ACK,
 unchanged ciphertext/binding, exact lifecycle mutation/audit/outbox, stale
 authority after proof, and hardened scope/privileges. Public callback/listeners
-remain disabled. Token validation, Core-session rotation, terminal expiry/erasure,
-abuse controls, and HA/Google-through-Keycloak acceptance are still required.
+remain disabled. Core-session rotation, terminal expiry/erasure, abuse controls,
+and HA/Google-through-Keycloak acceptance are still required.
 Released migrations 27/28/29, application generation 1, SSO-only policy, and Mesh
 Client wire contracts remain unchanged.
+
+`ExchangeService` now gives copies of one confirmed claim receipt a shared,
+non-queuing single-attempt gate. It burns that attempt before opening the original
+browser AEAD proof, recovers only the original PKCE verifier, and uses a bounded
+trusted `TokenAuthenticator` port. After provider verification Core independently
+checks the nonce HMAC, claim expiry and cancellation. The opaque result preserves
+exact issuer/case-sensitive subject and optional assurance/sid; it is not a Core
+session, membership or role grant. Failed attempts cannot retry the provider POST.
+
+The OIDC adapter supports confidential `client_secret_basic` with one POST and
+at most two independently configured JWKS GETs (one extra only for unknown kid).
+Owned TLS transport disables proxy, redirects and compression; joined body Close,
+bounded parsing, static errors and redacted types prevent unsafe result release
+and accidental secret formatting. RS256/PS256/ES256 use standard Go crypto, exact
+declared JWK signing use/algorithm, bounded 2048–8192-bit RSA or checked P-256,
+strict compact base64url and duplicate-name/Unicode validation. Issuer, singleton
+client audience, present authorized party, nonce, strict expiration and bounded
+issue/not-before/authentication times are checked. Additional audiences reject
+until explicit trust configuration exists; absent assurance never implies MFA.
+
+The complete budget is at most 30 seconds, with a fail-fast 1–256 exchange cap;
+JWT/header/claims limits are 32/1/16 KiB and each JWKS is at most 256 KiB/64 keys.
+There is no process signing-key cache, provider bearer credential persistence,
+new dependency or SQL mutation in this exchange slice. Tests cover real TLS with
+separate trusted token/JWKS origins, malformed/forged claims and keys, rotation,
+receipt-copy replay, no POST retry, cancellation, cleanup and parser fuzz seeds.
+`private_key_jwt`, step-up and Organization flows remain fail-closed. Public login
+is still disabled pending Account reconciliation/session issuance, atomic terminal
+erasure/expiry, abuse controls and Google/HA acceptance. This slice does not change
+the wire contract; compatibility reference pins remain `meshd` `87a3dd2` and
+`meshctl` `ce2a856` (not a new claim of live client or Google qualification).
+
+Vulnerability qualification remains reachability-specific: the current Go 1.26.8
+scan reports zero imported-package/reachable vulnerabilities, but retains three
+module-only `golang.org/x/crypto` advisories: GO-2026-6354, GO-2026-6355 (SSH,
+fixed in v0.56.0), and GO-2026-5932 (unmaintained OpenPGP, no fix). This exchange
+adds no dependency or SSH/OpenPGP imports. Do not label the dependency graph or
+production release advisory-free; dependency remediation and target-platform
+release scans remain separate release work.
 
 The boundary threat model is fail-closed:
 

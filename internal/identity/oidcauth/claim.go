@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/publicid"
@@ -247,15 +248,21 @@ func (service *ClaimService) ClaimBrowser(ctx context.Context, verified Verified
 	if now.Before(claimed.ConsumedAt()) || !livePendingSnapshot(verified.snapshot, now) || ctx.Err() != nil {
 		return result, errors.Join(ErrClaimFailed, ctx.Err())
 	}
-	return ClaimResult{claimed: claimed}, nil
+	return ClaimResult{claimed: claimed, exchangeAttempt: &atomic.Bool{}}, nil
 }
 
-// ClaimResult is confirmed consumption evidence, not a reusable exchange API.
+// ClaimResult is confirmed consumption evidence with one private exchange attempt.
+// Copies share its non-queuing gate; a restart cannot recreate the capability.
 // It releases no plaintext verifier, provider credential, identity, or session.
-type ClaimResult struct{ claimed Claimed }
+type ClaimResult struct {
+	claimed         Claimed
+	exchangeAttempt *atomic.Bool
+}
 
 // IsValid checks whether the service released confirmed consuming evidence.
-func (result ClaimResult) IsValid() bool { return result.claimed.IsValid() }
+func (result ClaimResult) IsValid() bool {
+	return result.claimed.IsValid() && result.exchangeAttempt != nil
+}
 
 // Claimed returns safe immutable transition evidence, not exchange material.
 func (result ClaimResult) Claimed() Claimed { return result.claimed }
