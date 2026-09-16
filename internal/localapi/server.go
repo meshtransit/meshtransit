@@ -37,6 +37,7 @@ type service interface {
 	TrustControl(context.Context, string) (daemon.ControlTrust, error)
 	StartLogin(context.Context, string) (daemon.Login, error)
 	CompleteLogin(context.Context) (daemon.Login, error)
+	RotateNodeKey(context.Context) (daemon.NodeKeyRotation, error)
 }
 
 // Server serves the local control API with bounded HTTP resources.
@@ -153,6 +154,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/v1/control/trust", s.handleControlTrust)
 	mux.HandleFunc("/v1/login", s.handleLogin)
 	mux.HandleFunc("/v1/login/complete", s.handleLoginComplete)
+	mux.HandleFunc("/v1/identity/node-key/rotate", s.handleNodeKeyRotation)
 
 	bounded := http.MaxBytesHandler(mux, maxRequestBodyBytes)
 
@@ -233,6 +235,31 @@ func (s *Server) handleLoginComplete(writer http.ResponseWriter, request *http.R
 	}
 
 	s.writeLogin(writer, login)
+}
+
+func (s *Server) handleNodeKeyRotation(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		s.writeMethodNotAllowed(writer, http.MethodPost)
+
+		return
+	}
+	if request.ContentLength > 0 {
+		s.writeError(writer, http.StatusBadRequest, "unexpected_body", "request body must be empty")
+
+		return
+	}
+
+	rotated, err := s.service.RotateNodeKey(request.Context())
+	if err != nil {
+		s.writeServiceError(writer, err)
+
+		return
+	}
+	s.writeJSON(writer, http.StatusOK, nodeKeyRotationResponse{
+		APIVersion: apiVersion,
+		ProfileID:  rotated.ProfileID,
+		State:      rotated.State,
+	})
 }
 
 func (s *Server) writeLogin(writer http.ResponseWriter, login daemon.Login) {
@@ -514,6 +541,13 @@ func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 		s.writeError(writer, http.StatusConflict, "no_pending_authorization", "no browser authorization is pending")
 	case errors.Is(err, ts2021.ErrNodeKeyExpired):
 		s.writeError(writer, http.StatusConflict, "node_key_expired", "node key rotation is required")
+	case errors.Is(err, daemon.ErrNodeKeyRotation) &&
+		errors.Is(err, ts2021.ErrRegistrationTemporary):
+		s.logger.Warn("node key rotation is temporarily unavailable", "error", err)
+		s.writeError(writer, http.StatusServiceUnavailable, "node_key_rotation_unavailable", "node key rotation is temporarily unavailable")
+	case errors.Is(err, daemon.ErrNodeKeyRotation):
+		s.logger.Warn("node key rotation failed", "error", err)
+		s.writeError(writer, http.StatusBadGateway, "node_key_rotation_failed", "node key rotation failed")
 	case errors.Is(err, daemon.ErrControlProbe):
 		s.logger.Warn("control compatibility probe failed", "error", err)
 		s.writeError(writer, http.StatusBadGateway, "control_probe_failed", "control compatibility probe failed")

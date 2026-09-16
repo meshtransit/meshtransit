@@ -576,6 +576,12 @@ func TestMapAccumulator_RejectsMalformedAuthorityRevocation(t *testing.T) {
 			},
 		},
 		{
+			name: "negative self id",
+			mutate: func(response *tailcfg.MapResponse) {
+				response.Node.ID = -1
+			},
+		},
+		{
 			name: "wrong self key",
 			mutate: func(response *tailcfg.MapResponse) {
 				response.Node.Key = key.NewNode().Public()

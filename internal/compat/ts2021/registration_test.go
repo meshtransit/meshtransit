@@ -120,6 +120,49 @@ func TestNewRegisterRequest_OmitsNetworkSelector(t *testing.T) {
 	}
 }
 
+func TestNewNodeKeyRotationRequestBindsExactOldAndNewKeys(t *testing.T) {
+	t.Parallel()
+
+	oldNodeKey := key.NewNode()
+	newNodeKey := key.NewNode()
+	request := newNodeKeyRotationRequest(oldNodeKey, newNodeKey, RegisterOptions{
+		Hostname:          "node-a",
+		Version:           "meshd/dev",
+		PinnedFingerprint: "sha256:" + strings.Repeat("a", 64),
+	})
+	if request.OldNodeKey != oldNodeKey.Public() || request.NodeKey != newNodeKey.Public() {
+		t.Fatal("Node-key rotation request did not bind exact old/new public keys")
+	}
+	if request.Auth != nil || request.Followup != "" {
+		t.Fatal("Node-key rotation request carried login authority")
+	}
+}
+
+func TestGenerateNodePrivateKeyProducesValidDistinctKeys(t *testing.T) {
+	t.Parallel()
+
+	first, err := GenerateNodePrivateKey()
+	if err != nil {
+		t.Fatalf("GenerateNodePrivateKey(first) error = %v", err)
+	}
+	defer clear(first)
+	second, err := GenerateNodePrivateKey()
+	if err != nil {
+		t.Fatalf("GenerateNodePrivateKey(second) error = %v", err)
+	}
+	defer clear(second)
+	var firstKey, secondKey key.NodePrivate
+	if err := firstKey.UnmarshalText(first); err != nil || firstKey.IsZero() {
+		t.Fatalf("generated first Node key is invalid: %v", err)
+	}
+	if err := secondKey.UnmarshalText(second); err != nil || secondKey.IsZero() {
+		t.Fatalf("generated second Node key is invalid: %v", err)
+	}
+	if firstKey.Public() == secondKey.Public() {
+		t.Fatal("generated Node keys are identical")
+	}
+}
+
 func TestDecodeRegistrationResponse(t *testing.T) {
 	t.Parallel()
 

@@ -11,7 +11,8 @@ import (
 )
 
 const (
-	recordVersion       = 1
+	recordVersion       = 2
+	legacyRecordVersion = 1
 	profileIDLength     = 32
 	maxKeyTextBytes     = 128
 	maxFingerprintBytes = 71
@@ -53,6 +54,7 @@ type Record struct {
 	profileID             string
 	machinePrivateKey     string
 	nodePrivateKey        string
+	pendingNodePrivateKey string
 	controlPublicKey      string
 	controlKeyFingerprint string
 	pendingAuthURL        string
@@ -99,6 +101,12 @@ func (r Record) Material() Material {
 	}
 }
 
+// PendingNodePrivateKey returns a defensive copy of a durably staged rotation
+// key. Callers must clear the returned bytes after use.
+func (r Record) PendingNodePrivateKey() []byte {
+	return []byte(r.pendingNodePrivateKey)
+}
+
 // PendingAuthURL returns the pending browser registration URL. Treat the value
 // as a short-lived secret because its path contains an authorization handle.
 func (r Record) PendingAuthURL() string { return r.pendingAuthURL }
@@ -109,14 +117,18 @@ func (r Record) IsRegistered() bool { return r.isRegistered }
 // HasPendingAuth reports whether browser authorization still needs completion.
 func (r Record) HasPendingAuth() bool { return r.pendingAuthURL != "" }
 
+// HasPendingNodeKeyRotation reports whether a crash-safe rotation must resume.
+func (r Record) HasPendingNodeKeyRotation() bool { return r.pendingNodePrivateKey != "" }
+
 // String deliberately excludes all key and browser authorization material.
 func (r Record) String() string {
 	return fmt.Sprintf(
-		"identity.Record{profileID:%q, fingerprint:%q, registered:%t, pending:%t}",
+		"identity.Record{profileID:%q, fingerprint:%q, registered:%t, pending:%t, rotationPending:%t}",
 		r.profileID,
 		r.controlKeyFingerprint,
 		r.isRegistered,
 		r.pendingAuthURL != "",
+		r.pendingNodePrivateKey != "",
 	)
 }
 
@@ -134,6 +146,13 @@ func validateRecord(record Record) error {
 	} {
 		if value == "" || len(value) > maxKeyTextBytes || strings.TrimSpace(value) != value {
 			return fmt.Errorf("%w: %s encoding is invalid", ErrInvalid, name)
+		}
+	}
+	if record.pendingNodePrivateKey != "" {
+		if len(record.pendingNodePrivateKey) > maxKeyTextBytes ||
+			strings.TrimSpace(record.pendingNodePrivateKey) != record.pendingNodePrivateKey ||
+			record.pendingNodePrivateKey == record.nodePrivateKey {
+			return fmt.Errorf("%w: pending node private key encoding is invalid", ErrInvalid)
 		}
 	}
 	if len(record.controlKeyFingerprint) != maxFingerprintBytes ||
@@ -157,6 +176,9 @@ func validateRecord(record Record) error {
 	}
 	if record.isRegistered && record.pendingAuthURL != "" {
 		return fmt.Errorf("%w: registered identity cannot have pending authorization", ErrInvalid)
+	}
+	if record.pendingNodePrivateKey != "" && (!record.isRegistered || record.pendingAuthURL != "") {
+		return fmt.Errorf("%w: pending node key rotation requires registered identity", ErrInvalid)
 	}
 	if record.createdAt.IsZero() || record.updatedAt.IsZero() {
 		return fmt.Errorf("%w: identity timestamps cannot be zero", ErrInvalid)

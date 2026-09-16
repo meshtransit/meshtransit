@@ -1141,6 +1141,7 @@ func (a *mapAccumulator) apply(
 
 func (a *mapAccumulator) isAuthorityRevocation(response tailcfg.MapResponse) bool {
 	return a.initialized && response.Node != nil &&
+		response.Node.ID > 0 &&
 		uint64(response.Node.ID) == a.self.ID &&
 		response.Node.Key.String() == a.self.PublicKey &&
 		response.Node.Expired && !response.Node.MachineAuthorized &&

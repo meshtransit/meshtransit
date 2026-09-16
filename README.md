@@ -95,8 +95,10 @@ Non-Linux development currently lacks a verified peer-credential implementation 
 - Persisted browser follow-up state, serialized and cancellable registration
   completion, throttled pending polls and temporary transport/server recovery,
   durable handling of verified responses at the poll-deadline boundary,
-  restart registration, and fail-closed handling for key change or required key
-  rotation.
+  and restart registration.
+- Authenticated Node-key rotation that stages the replacement key durably before
+  the remote request, retries the exact old/new key pair after interruption, and
+  promotes it locally only after an authoritative control response.
 - Long-lived, pinned Noise/HTTP2 control-map stream with a two-minute watchdog
   and jittered exponential reconnect that resets only after a stable session.
 - Single-owner control supervision that rejects duplicate runners before they

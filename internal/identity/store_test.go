@@ -3,6 +3,7 @@ package identity
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,6 +88,116 @@ func TestStore_CreateGetAndUpdate(t *testing.T) {
 		if bytes.Contains(encoded, []byte(secret)) {
 			t.Fatalf("protected identity contains plaintext %q", secret)
 		}
+	}
+}
+
+func TestStore_NodeKeyRotationStagesBeforeAtomicPromotion(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.September, 16, 7, 8, 9, 0, time.UTC)
+	store, err := openWith(
+		t.TempDir(),
+		func() time.Time { return now },
+		testProtector(t, 0x18),
+	)
+	if err != nil {
+		t.Fatalf("openWith() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	record := testRecord(t, now)
+	record.isRegistered = true
+	if err := store.Create(t.Context(), record); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	pendingKey := []byte("pending-node-secret")
+	staged, err := store.BeginNodeKeyRotation(t.Context(), testProfileID, pendingKey)
+	if err != nil {
+		t.Fatalf("BeginNodeKeyRotation() error = %v", err)
+	}
+	if !staged.HasPendingNodeKeyRotation() ||
+		string(staged.PendingNodePrivateKey()) != string(pendingKey) ||
+		string(staged.Material().NodePrivateKey) != "node-secret" {
+		t.Fatal("staged rotation replaced active key before remote commit")
+	}
+	if _, err := store.BeginNodeKeyRotation(
+		t.Context(),
+		testProfileID,
+		pendingKey,
+	); err != nil {
+		t.Fatalf("idempotent BeginNodeKeyRotation() error = %v", err)
+	}
+	if _, err := store.BeginNodeKeyRotation(
+		t.Context(),
+		testProfileID,
+		[]byte("different-node-secret"),
+	); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("conflicting BeginNodeKeyRotation() error = %v, want ErrInvalid", err)
+	}
+
+	completed, err := store.CompleteNodeKeyRotation(t.Context(), testProfileID, pendingKey)
+	if err != nil {
+		t.Fatalf("CompleteNodeKeyRotation() error = %v", err)
+	}
+	if completed.HasPendingNodeKeyRotation() ||
+		string(completed.Material().NodePrivateKey) != string(pendingKey) {
+		t.Fatal("completed rotation did not atomically promote staged key")
+	}
+}
+
+func TestStore_UpgradesProtectedVersionOneRecord(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.September, 16, 8, 9, 10, 0, time.UTC)
+	store, err := openWith(
+		t.TempDir(),
+		func() time.Time { return now },
+		testProtector(t, 0x19),
+	)
+	if err != nil {
+		t.Fatalf("openWith() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	record := testRecord(t, now)
+	legacy := toPersisted(record)
+	legacy.Version = legacyRecordVersion
+	plaintext, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("json.Marshal(legacy) error = %v", err)
+	}
+	protected, err := store.protector.Seal(
+		t.Context(),
+		plaintext,
+		recordAdditionalData(testProfileID),
+	)
+	clear(plaintext)
+	if err != nil {
+		t.Fatalf("Seal(legacy) error = %v", err)
+	}
+	envelope := persistedEnvelope{
+		Format:    envelopeFormat,
+		Version:   envelopeVersion,
+		ProfileID: testProfileID,
+		Algorithm: envelopeAlgorithm,
+		Payload:   base64.RawStdEncoding.EncodeToString(protected),
+	}
+	clear(protected)
+	path := filepath.Join(store.dir, recordFileName(testProfileID))
+	writeEnvelope(t, path, envelope)
+	before := readIdentityFilePath(t, path)
+
+	loaded, err := store.Get(t.Context(), testProfileID)
+	if err != nil {
+		t.Fatalf("Get(version one) error = %v", err)
+	}
+	if !sameRecord(loaded, record) {
+		t.Fatal("upgraded version-one identity changed record")
+	}
+	after := readIdentityFilePath(t, path)
+	if bytes.Equal(after, before) {
+		t.Fatal("version-one protected identity was not rewritten")
+	}
+	if err := store.VerifyAllCurrent(t.Context()); err != nil {
+		t.Fatalf("VerifyAllCurrent() error = %v", err)
 	}
 }
 

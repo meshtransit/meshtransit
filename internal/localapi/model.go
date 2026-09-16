@@ -139,6 +139,12 @@ type loginResponse struct {
 	AuthURL    string `json:"auth_url,omitempty"`
 }
 
+type nodeKeyRotationResponse struct {
+	APIVersion string `json:"api_version"`
+	ProfileID  string `json:"profile_id"`
+	State      string `json:"state"`
+}
+
 type errorResponse struct {
 	APIVersion string `json:"api_version"`
 	Code       string `json:"code"`

@@ -264,6 +264,23 @@ func TestServer_ControlTrustAndLogin(t *testing.T) {
 		status.ControlFingerprint != fingerprint {
 		t.Fatalf("status = %#v, want pinned and registered", status)
 	}
+
+	rotation := performRequest(
+		t,
+		server,
+		http.MethodPost,
+		"/v1/identity/node-key/rotate",
+		"",
+		nil,
+	)
+	if rotation.Code != http.StatusOK {
+		t.Fatalf("rotation status = %d, want 200; body=%s", rotation.Code, rotation.Body.String())
+	}
+	rotated := decodeResponse[nodeKeyRotationResponse](t, rotation)
+	if rotated.APIVersion != apiVersion || rotated.ProfileID != firstProfileID(t, server) ||
+		rotated.State != "rotated" {
+		t.Fatalf("rotation response = %#v, want committed rotation", rotated)
+	}
 }
 
 func TestServer_RequestValidation(t *testing.T) {
@@ -320,6 +337,20 @@ func TestServer_RequestValidation(t *testing.T) {
 			method:   http.MethodPost,
 			path:     "/v1/profiles/not-an-id/delete",
 			expected: http.StatusNotFound,
+		},
+		{
+			name:     "rotation wrong method",
+			method:   http.MethodGet,
+			path:     "/v1/identity/node-key/rotate",
+			expected: http.StatusMethodNotAllowed,
+		},
+		{
+			name:        "rotation rejects body",
+			method:      http.MethodPost,
+			path:        "/v1/identity/node-key/rotate",
+			contentType: "application/json",
+			body:        []byte(`{}`),
+			expected:    http.StatusBadRequest,
 		},
 	}
 
@@ -496,6 +527,19 @@ func (fakeProber) Register(
 	}, nil
 }
 
+func (fakeProber) RotateNodeKey(
+	_ context.Context,
+	_ string,
+	_ ts2021.KeyMaterial,
+	_ []byte,
+	_ ts2021.RegisterOptions,
+) (ts2021.RegistrationResult, error) {
+	return ts2021.RegistrationResult{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}, nil
+}
+
 func (fakeProber) StreamNetmap(
 	ctx context.Context,
 	_ string,
@@ -535,6 +579,18 @@ func createProfile(t *testing.T, server *Server, name, controlURL string) profil
 	}
 
 	return decodeResponse[profileResponse](t, response)
+}
+
+func firstProfileID(t *testing.T, server *Server) string {
+	t.Helper()
+
+	response := performRequest(t, server, http.MethodGet, "/v1/profiles", "", nil)
+	profiles := decodeResponse[profilesResponse](t, response)
+	if len(profiles.Profiles) == 0 {
+		t.Fatal("profile list is empty")
+	}
+
+	return profiles.Profiles[0].ID
 }
 
 func performRequest(

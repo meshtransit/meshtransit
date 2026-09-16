@@ -184,6 +184,76 @@ func (c *Client) Register(
 	if err := validateRegisterOptions(controlURL, options); err != nil {
 		return RegistrationResult{}, err
 	}
+
+	return c.sendRegistrationRequest(
+		ctx,
+		controlURL,
+		machineKey,
+		pinnedControlKey,
+		nodeKey,
+		options,
+		newRegisterRequest(nodeKey, options),
+	)
+}
+
+// GenerateNodePrivateKey creates one fresh serialized WireGuard Node private
+// key for durable staging before a rotation request.
+func GenerateNodePrivateKey() ([]byte, error) {
+	nodeKey := key.NewNode()
+	encoded, err := nodeKey.MarshalText()
+	if err != nil {
+		return nil, fmt.Errorf("ts2021: encoding generated node private key: %w", err)
+	}
+
+	return encoded, nil
+}
+
+// RotateNodeKey sends one exact old/new Node-key transition over the existing
+// machine-authenticated Noise identity. The caller owns durable key staging.
+func (c *Client) RotateNodeKey(
+	ctx context.Context,
+	controlURL string,
+	material KeyMaterial,
+	newNodePrivateKey []byte,
+	options RegisterOptions,
+) (RegistrationResult, error) {
+	machineKey, oldNodeKey, pinnedControlKey, err := parseMaterial(material)
+	if err != nil {
+		return RegistrationResult{}, err
+	}
+	if err := validateRegisterOptions(controlURL, options); err != nil {
+		return RegistrationResult{}, err
+	}
+	if options.AuthKey != "" || options.FollowupURL != "" {
+		return RegistrationResult{}, errors.New("ts2021: node key rotation cannot carry login authority")
+	}
+	var newNodeKey key.NodePrivate
+	if err := newNodeKey.UnmarshalText(newNodePrivateKey); err != nil || newNodeKey.IsZero() ||
+		newNodeKey.Public() == oldNodeKey.Public() {
+		return RegistrationResult{}, ErrInvalidMaterial
+	}
+	registerRequest := newNodeKeyRotationRequest(oldNodeKey, newNodeKey, options)
+
+	return c.sendRegistrationRequest(
+		ctx,
+		controlURL,
+		machineKey,
+		pinnedControlKey,
+		newNodeKey,
+		options,
+		registerRequest,
+	)
+}
+
+func (c *Client) sendRegistrationRequest(
+	ctx context.Context,
+	controlURL string,
+	machineKey key.MachinePrivate,
+	pinnedControlKey key.MachinePublic,
+	requestNodeKey key.NodePrivate,
+	options RegisterOptions,
+	registerRequest tailcfg.RegisterRequest,
+) (RegistrationResult, error) {
 	operationCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	discovered, err := c.discoverControlKey(operationCtx, controlURL)
@@ -208,7 +278,6 @@ func (c *Client) Register(
 		return RegistrationResult{}, ErrControlKeyChanged
 	}
 
-	registerRequest := newRegisterRequest(nodeKey, options)
 	encoded, err := json.Marshal(registerRequest)
 	if err != nil {
 		return RegistrationResult{}, fmt.Errorf("ts2021: encoding registration request: %w", err)
@@ -227,7 +296,7 @@ func (c *Client) Register(
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("User-Agent", "meshd")
-	request.Header.Set(tailcfg.LBHeader, nodeKey.Public().String())
+	request.Header.Set(tailcfg.LBHeader, requestNodeKey.Public().String())
 
 	expectedAddress := net.JoinHostPort(endpoint.Hostname(), "443")
 	protocols := new(http.Protocols)
@@ -310,6 +379,18 @@ func newRegisterRequest(
 	}
 
 	return registerRequest
+}
+
+func newNodeKeyRotationRequest(
+	oldNodeKey key.NodePrivate,
+	newNodeKey key.NodePrivate,
+	options RegisterOptions,
+) tailcfg.RegisterRequest {
+	request := newRegisterRequest(newNodeKey, options)
+	request.Auth = nil
+	request.OldNodeKey = oldNodeKey.Public()
+
+	return request
 }
 
 func marshalMaterial(

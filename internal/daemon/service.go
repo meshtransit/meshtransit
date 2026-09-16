@@ -37,6 +37,8 @@ var (
 	ErrControlNotTrusted = errors.New("daemon: control key is not trusted")
 	// ErrRegistration indicates that node registration failed.
 	ErrRegistration = errors.New("daemon: registration failed")
+	// ErrNodeKeyRotation indicates that an authenticated Node-key transition failed.
+	ErrNodeKeyRotation = errors.New("daemon: node key rotation failed")
 	// ErrAuthorizationPending indicates that browser authorization is not complete yet.
 	ErrAuthorizationPending = errors.New("daemon: browser authorization is pending")
 	// ErrNoPendingAuthorization indicates that there is no browser flow to complete.
@@ -79,15 +81,16 @@ const (
 	// ControlSessionSynchronized means a validated snapshot has been published.
 	ControlSessionSynchronized = "synchronized"
 	// ControlSessionBlocked means a permanent trust, registration, or map error stopped sync.
-	ControlSessionBlocked = "blocked"
-	completionPollTimeout = 3 * time.Second
-	dnsCleanupTimeout     = 5 * time.Second
-	minRuntimeRetry       = time.Second
-	maxRuntimeRetry       = 30 * time.Second
-	runtimeRetryReset     = 30 * time.Second
-	minEndpointRefresh    = 20 * time.Second
-	maxEndpointRefresh    = 26 * time.Second
-	relayPreparationPoll  = 5 * time.Second
+	ControlSessionBlocked  = "blocked"
+	completionPollTimeout  = 3 * time.Second
+	rotationPersistTimeout = 5 * time.Second
+	dnsCleanupTimeout      = 5 * time.Second
+	minRuntimeRetry        = time.Second
+	maxRuntimeRetry        = 30 * time.Second
+	runtimeRetryReset      = 30 * time.Second
+	minEndpointRefresh     = 20 * time.Second
+	maxEndpointRefresh     = 26 * time.Second
+	relayPreparationPoll   = 5 * time.Second
 )
 
 // Status is the daemon-owned status model before it is mapped to a wire format.
@@ -154,6 +157,14 @@ type Login struct {
 	AuthURL   string
 }
 
+// NodeKeyRotation is the non-secret result of a committed key transition.
+type NodeKeyRotation struct {
+	ProfileID string
+	State     string
+}
+
+const nodeKeyRotationCompleted = "rotated"
+
 type controlProber interface {
 	Probe(context.Context, string) (ts2021.Result, error)
 	BootstrapTrust(context.Context, string, string) (ts2021.TrustResult, error)
@@ -162,6 +173,13 @@ type controlProber interface {
 		context.Context,
 		string,
 		ts2021.KeyMaterial,
+		ts2021.RegisterOptions,
+	) (ts2021.RegistrationResult, error)
+	RotateNodeKey(
+		context.Context,
+		string,
+		ts2021.KeyMaterial,
+		[]byte,
 		ts2021.RegisterOptions,
 	) (ts2021.RegistrationResult, error)
 	StreamNetmap(
@@ -445,6 +463,49 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		}
 		if err != nil {
 			return fmt.Errorf("reading identity for control sync: %w", err)
+		}
+		if record.HasPendingNodeKeyRotation() {
+			resumed, rotationErr := s.resumeNodeKeyRotation(ctx)
+			if rotationErr == nil && resumed {
+				runtimeRetry = minRuntimeRetry
+
+				continue
+			}
+			if rotationErr != nil {
+				s.logControlSessionFailure("node key rotation resume failed", rotationErr)
+				recoverable := errors.Is(rotationErr, ts2021.ErrRegistrationTemporary)
+				controlState := ControlSessionBlocked
+				if recoverable {
+					controlState = ControlSessionConnecting
+				}
+				s.setSyncStatus(syncStatus{
+					profileID: active.ID,
+					state:     controlState,
+					dataPlane: s.defaultDataPlaneState(),
+					dns:       DNSInactive,
+				})
+				if recoverable {
+					s.runtimeFailures.Add(1)
+					s.runtimePending.Store(true)
+					backoffElapsed, waitErr := s.waitForRuntimeRecovery(ctx, runtimeRetry)
+					if waitErr != nil {
+						return waitErr
+					}
+					if backoffElapsed {
+						runtimeRetry = nextRuntimeRetry(runtimeRetry)
+					} else {
+						runtimeRetry = minRuntimeRetry
+					}
+
+					continue
+				}
+				if err := s.waitForSyncSignal(ctx); err != nil {
+					return err
+				}
+				runtimeRetry = minRuntimeRetry
+
+				continue
+			}
 		}
 		identityMaterial := record.Material()
 		protocolMaterial := toProtocolMaterial(identityMaterial)
@@ -1512,6 +1573,119 @@ func (s *Service) StartLogin(ctx context.Context, authKey string) (Login, error)
 // CompleteLogin performs a short follow-up poll using the persisted browser URL.
 func (s *Service) CompleteLogin(ctx context.Context) (Login, error) {
 	return s.completeLogin(ctx, completionPollTimeout)
+}
+
+// RotateNodeKey stages a fresh key durably, requests one authenticated remote
+// transition, then promotes the staged key only after remote success.
+func (s *Service) RotateNodeKey(ctx context.Context) (NodeKeyRotation, error) {
+	release, err := s.acquireRegistration(ctx)
+	if err != nil {
+		return NodeKeyRotation{}, err
+	}
+	defer release()
+
+	result, rotated, err := s.rotateNodeKeyLocked(ctx, true)
+	if err != nil {
+		return NodeKeyRotation{}, err
+	}
+	if !rotated {
+		return NodeKeyRotation{}, ErrNodeKeyRotation
+	}
+	s.signalControlSync()
+
+	return result, nil
+}
+
+func (s *Service) resumeNodeKeyRotation(ctx context.Context) (bool, error) {
+	release, err := s.acquireRegistration(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+
+	_, rotated, err := s.rotateNodeKeyLocked(ctx, false)
+	if err != nil {
+		return false, err
+	}
+
+	return rotated, nil
+}
+
+func (s *Service) rotateNodeKeyLocked(
+	ctx context.Context,
+	createPending bool,
+) (NodeKeyRotation, bool, error) {
+	active, err := s.profiles.Active(ctx)
+	if err != nil {
+		return NodeKeyRotation{}, false, err
+	}
+	record, err := s.identities.Get(ctx, active.ID)
+	if errors.Is(err, identity.ErrNotFound) {
+		return NodeKeyRotation{}, false, ErrControlNotTrusted
+	}
+	if err != nil {
+		return NodeKeyRotation{}, false, fmt.Errorf("%w: reading identity: %w", ErrNodeKeyRotation, err)
+	}
+	if !record.IsRegistered() || record.HasPendingAuth() {
+		return NodeKeyRotation{}, false, fmt.Errorf("%w: node is not registered", ErrNodeKeyRotation)
+	}
+	pendingNodePrivateKey := record.PendingNodePrivateKey()
+	if len(pendingNodePrivateKey) == 0 {
+		if !createPending {
+			return NodeKeyRotation{}, false, nil
+		}
+		pendingNodePrivateKey, err = ts2021.GenerateNodePrivateKey()
+		if err != nil {
+			return NodeKeyRotation{}, false, fmt.Errorf("%w: %w", ErrNodeKeyRotation, err)
+		}
+		record, err = s.identities.BeginNodeKeyRotation(
+			ctx,
+			active.ID,
+			pendingNodePrivateKey,
+		)
+		if err != nil {
+			clear(pendingNodePrivateKey)
+
+			return NodeKeyRotation{}, false, fmt.Errorf("%w: staging new key: %w", ErrNodeKeyRotation, err)
+		}
+	}
+	defer clear(pendingNodePrivateKey)
+
+	identityMaterial := record.Material()
+	protocolMaterial := toProtocolMaterial(identityMaterial)
+	clearIdentityMaterial(identityMaterial)
+	defer clearProtocolMaterial(protocolMaterial)
+	result, err := s.prober.RotateNodeKey(
+		ctx,
+		active.ControlURL,
+		protocolMaterial,
+		pendingNodePrivateKey,
+		ts2021.RegisterOptions{
+			Hostname:          s.hostname,
+			Version:           "meshd/" + s.build.Version,
+			PinnedFingerprint: record.ControlKeyFingerprint(),
+		},
+	)
+	if err != nil {
+		return NodeKeyRotation{}, false, fmt.Errorf("%w: %w", ErrNodeKeyRotation, err)
+	}
+	if result.State != ts2021.RegistrationStateAuthorized || !result.MachineAuthorized {
+		return NodeKeyRotation{}, false, fmt.Errorf("%w: control returned non-authoritative result", ErrNodeKeyRotation)
+	}
+	persistCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		rotationPersistTimeout,
+	)
+	defer cancel()
+	if _, err := s.identities.CompleteNodeKeyRotation(
+		persistCtx,
+		active.ID,
+		pendingNodePrivateKey,
+	); err != nil {
+		return NodeKeyRotation{}, false, fmt.Errorf("%w: promoting confirmed key: %w", ErrNodeKeyRotation, err)
+	}
+
+	return NodeKeyRotation{ProfileID: active.ID, State: nodeKeyRotationCompleted}, true, nil
 }
 
 func (s *Service) completeLogin(ctx context.Context, pollTimeout time.Duration) (Login, error) {

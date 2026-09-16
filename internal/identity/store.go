@@ -36,6 +36,7 @@ type persistedRecord struct {
 	ProfileID             string    `json:"profile_id"`
 	MachinePrivateKey     string    `json:"machine_private_key"`
 	NodePrivateKey        string    `json:"node_private_key"`
+	PendingNodePrivateKey string    `json:"pending_node_private_key,omitempty"`
 	ControlPublicKey      string    `json:"control_public_key"`
 	ControlKeyFingerprint string    `json:"control_key_fingerprint"`
 	PendingAuthURL        string    `json:"pending_auth_url,omitempty"`
@@ -327,6 +328,91 @@ func (s *Store) SetRegistration(
 	return record, nil
 }
 
+// BeginNodeKeyRotation durably stages one new private key before any remote
+// mutation. Repeating the exact staged key is idempotent.
+func (s *Store) BeginNodeKeyRotation(
+	ctx context.Context,
+	profileID string,
+	pendingNodePrivateKey []byte,
+) (Record, error) {
+	if err := ctx.Err(); err != nil {
+		return Record{}, fmt.Errorf("staging node key rotation: %w", err)
+	}
+	if !isProfileID(profileID) {
+		return Record{}, ErrNotFound
+	}
+	if s == nil || s.root == nil || s.protector == nil {
+		return Record{}, errors.New("identity store is not initialized")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record, _, err := s.loadLocked(ctx, profileID)
+	if err != nil {
+		return Record{}, err
+	}
+	pending := string(pendingNodePrivateKey)
+	if record.pendingNodePrivateKey != "" {
+		if record.pendingNodePrivateKey == pending {
+			return record, nil
+		}
+
+		return Record{}, fmt.Errorf("%w: another node key rotation is pending", ErrInvalid)
+	}
+	record.pendingNodePrivateKey = pending
+	record.updatedAt = s.clock().UTC()
+	if err := validateRecord(record); err != nil {
+		return Record{}, err
+	}
+	if err := s.persistLocked(ctx, record, true); err != nil {
+		return Record{}, err
+	}
+
+	return record, nil
+}
+
+// CompleteNodeKeyRotation atomically promotes the exact staged key and clears
+// pending state only after remote authority confirms success.
+func (s *Store) CompleteNodeKeyRotation(
+	ctx context.Context,
+	profileID string,
+	expectedPendingNodePrivateKey []byte,
+) (Record, error) {
+	if err := ctx.Err(); err != nil {
+		return Record{}, fmt.Errorf("completing node key rotation: %w", err)
+	}
+	if !isProfileID(profileID) {
+		return Record{}, ErrNotFound
+	}
+	if s == nil || s.root == nil || s.protector == nil {
+		return Record{}, errors.New("identity store is not initialized")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record, _, err := s.loadLocked(ctx, profileID)
+	if err != nil {
+		return Record{}, err
+	}
+	expected := string(expectedPendingNodePrivateKey)
+	if expected == "" || record.pendingNodePrivateKey != expected {
+		return Record{}, fmt.Errorf("%w: pending node key rotation changed", ErrInvalid)
+	}
+	record.nodePrivateKey = record.pendingNodePrivateKey
+	record.pendingNodePrivateKey = ""
+	record.updatedAt = s.clock().UTC()
+	if err := validateRecord(record); err != nil {
+		return Record{}, err
+	}
+	if err := s.persistLocked(ctx, record, true); err != nil {
+		return Record{}, err
+	}
+
+	return record, nil
+}
+
 func (s *Store) loadLocked(
 	ctx context.Context,
 	profileID string,
@@ -375,7 +461,7 @@ func (s *Store) decodeRecord(
 		return Record{}, false, fmt.Errorf("%w: record is not valid json", ErrCorrupt)
 	}
 	if header.Format == "" {
-		record, err := decodePlaintextRecord(encoded, profileID)
+		record, _, err := decodePlaintextRecord(encoded, profileID)
 
 		return record, true, err
 	}
@@ -419,12 +505,12 @@ func (s *Store) decodeRecord(
 	}
 	defer clear(plaintext)
 
-	record, err := decodePlaintextRecord(plaintext, profileID)
+	record, needsUpgrade, err := decodePlaintextRecord(plaintext, profileID)
 	if err != nil {
 		return Record{}, false, err
 	}
 
-	return record, needsRotation, nil
+	return record, needsRotation || needsUpgrade, nil
 }
 
 func (s *Store) persistLocked(ctx context.Context, record Record, replace bool) error {
@@ -536,27 +622,30 @@ func (s *Store) encodeRecord(ctx context.Context, record Record) ([]byte, error)
 	return append(encoded, '\n'), nil
 }
 
-func decodePlaintextRecord(encoded []byte, profileID string) (Record, error) {
+func decodePlaintextRecord(encoded []byte, profileID string) (Record, bool, error) {
 	if len(encoded) > maxPlaintextBytes {
-		return Record{}, fmt.Errorf("%w: identity plaintext size", ErrCorrupt)
+		return Record{}, false, fmt.Errorf("%w: identity plaintext size", ErrCorrupt)
 	}
 	persisted := persistedRecord{}
 	if err := decodeStrict(encoded, &persisted); err != nil {
-		return Record{}, fmt.Errorf("%w: decoding identity plaintext", ErrCorrupt)
+		return Record{}, false, fmt.Errorf("%w: decoding identity plaintext", ErrCorrupt)
 	}
-	if persisted.Version != recordVersion {
-		return Record{}, fmt.Errorf("%w: identity record version", ErrUnsupported)
+	if persisted.Version != recordVersion && persisted.Version != legacyRecordVersion {
+		return Record{}, false, fmt.Errorf("%w: identity record version", ErrUnsupported)
+	}
+	if persisted.Version == legacyRecordVersion && persisted.PendingNodePrivateKey != "" {
+		return Record{}, false, fmt.Errorf("%w: legacy identity rotation state", ErrCorrupt)
 	}
 
 	record := fromPersisted(persisted)
 	if record.profileID != profileID {
-		return Record{}, fmt.Errorf("%w: record profile binding", ErrCorrupt)
+		return Record{}, false, fmt.Errorf("%w: record profile binding", ErrCorrupt)
 	}
 	if err := validateRecord(record); err != nil {
-		return Record{}, fmt.Errorf("%w: validating identity record", ErrCorrupt)
+		return Record{}, false, fmt.Errorf("%w: validating identity record", ErrCorrupt)
 	}
 
-	return record, nil
+	return record, persisted.Version != recordVersion, nil
 }
 
 func decodeStrict(encoded []byte, destination any) error {
@@ -591,6 +680,7 @@ func sameRecord(left, right Record) bool {
 	return left.profileID == right.profileID &&
 		left.machinePrivateKey == right.machinePrivateKey &&
 		left.nodePrivateKey == right.nodePrivateKey &&
+		left.pendingNodePrivateKey == right.pendingNodePrivateKey &&
 		left.controlPublicKey == right.controlPublicKey &&
 		left.controlKeyFingerprint == right.controlKeyFingerprint &&
 		left.pendingAuthURL == right.pendingAuthURL &&
@@ -605,6 +695,7 @@ func toPersisted(record Record) persistedRecord {
 		ProfileID:             record.profileID,
 		MachinePrivateKey:     record.machinePrivateKey,
 		NodePrivateKey:        record.nodePrivateKey,
+		PendingNodePrivateKey: record.pendingNodePrivateKey,
 		ControlPublicKey:      record.controlPublicKey,
 		ControlKeyFingerprint: record.controlKeyFingerprint,
 		PendingAuthURL:        record.pendingAuthURL,
@@ -619,6 +710,7 @@ func fromPersisted(record persistedRecord) Record {
 		profileID:             record.ProfileID,
 		machinePrivateKey:     record.MachinePrivateKey,
 		nodePrivateKey:        record.NodePrivateKey,
+		pendingNodePrivateKey: record.PendingNodePrivateKey,
 		controlPublicKey:      record.ControlPublicKey,
 		controlKeyFingerprint: record.ControlKeyFingerprint,
 		pendingAuthURL:        record.PendingAuthURL,

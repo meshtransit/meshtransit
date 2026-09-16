@@ -209,6 +209,7 @@ The API is versioned under `/v1` and is served only on a Unix socket. On Linux, 
 - `POST /v1/control/trust`
 - `POST /v1/login`
 - `POST /v1/login/complete`
+- `POST /v1/identity/node-key/rotate`
 - `POST /v1/doctor/control`
 
 Unknown JSON fields are rejected. A create request contains only a display name and HTTPS control URL; it has no network field.
@@ -240,13 +241,23 @@ bounded local soak qualification and never feed control or packet-path state.
 
 Each profile has distinct machine and node private keys plus an independent control-key pin. Identity creation is create-only so two enrollment attempts cannot silently overwrite each other. Repeating the trust command verifies the saved key and fingerprint against the live server; it never rotates either value.
 
-The registration request deliberately omits any network selector. An auth key is accepted only through the local request, held in memory for that call, and never persisted. Registration transitions are serialized inside the service; a competing local request waits with its own cancellable context and re-reads persisted state only after acquiring ownership. The complete discovery, Noise, response-header, and response-body exchange has a fifteen-second deadline. Browser completion uses a shorter three-second poll window. A still-pending response consumes the remainder of that window. Bounded network timeouts, truncated exchanges, HTTP 408/425/429, and HTTP 5xx also preserve pending state and consume the remainder before another local retry; caller cancellation remains immediate. Browser registration persists only a same-origin HTTPS follow-up URL, treats it as secret state, and clears it after authorization. A changed control key, malformed response, authorization rejection, or expired node key fails closed; explicit key-rotation and node-renewal protocols remain future work.
+The registration request deliberately omits any network selector. An auth key is accepted only through the local request, held in memory for that call, and never persisted. Registration transitions are serialized inside the service; a competing local request waits with its own cancellable context and re-reads persisted state only after acquiring ownership. The complete discovery, Noise, response-header, and response-body exchange has a fifteen-second deadline. Browser completion uses a shorter three-second poll window. A still-pending response consumes the remainder of that window. Bounded network timeouts, truncated exchanges, HTTP 408/425/429, and HTTP 5xx also preserve pending state and consume the remainder before another local retry; caller cancellation remains immediate. Browser registration persists only a same-origin HTTPS follow-up URL, treats it as secret state, and clears it after authorization. A changed control key, malformed response, authorization rejection, or expired node key fails closed; automatic expiry-triggered renewal remains future work.
 
 The short poll context bounds only the remote completion exchange. Once an
 authenticated response has returned, identity-state persistence uses the
 original caller context so a deadline racing that response cannot erase its
 `ProfileID`, authorization URL, or authorized state. Temporary machine, node,
 and control key copies used by registration are cleared when the call returns.
+
+Explicit Node-key rotation uses the registered machine identity and active old
+Node key to authenticate one old-to-new transition; it carries no login auth
+key, browser URL, or client-selected scope. The replacement private key is
+atomically persisted as pending before the remote call. A temporary failure,
+caller cancellation, or process crash therefore leaves the active old key and
+the exact pending key available for idempotent retry. Daemon startup resumes
+that transition before opening a map stream. After an authoritative response,
+promotion uses a short cancellation-independent persistence window so a lost
+local response cannot discard a remotely committed key.
 
 ## Network-map lifecycle
 

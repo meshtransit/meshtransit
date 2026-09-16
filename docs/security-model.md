@@ -86,6 +86,12 @@ Packet payloads are not an observability asset and must not be collected.
 - Registration transitions have one context-aware owner, preventing concurrent
   local callers from replaying the same pending browser follow-up or racing
   identity persistence.
+- Explicit Node-key rotation is authenticated by the registered machine key and
+  active old Node key and carries no login credential or scope selector. The
+  replacement private key is atomically staged before the remote request,
+  retained unchanged across temporary failures and restarts, and promoted only
+  after an authoritative response. Startup resumes a pending transition before
+  opening the map stream; temporary key copies are cleared after use.
 - One daemon service can own only one control supervisor at a time. A duplicate
   runner is rejected before session keys, endpoint workers, or a map stream are
   created, and ownership remains held through fail-closed runtime cleanup.
@@ -168,7 +174,9 @@ Packet payloads are not an observability asset and must not be collected.
 - Session-handle resume is not implemented; reconnect requests a complete new snapshot. Linux has an opt-in `systemd-resolved` backend, while macOS, Windows, Android, iOS, and non-resolved Linux DNS backends are not implemented.
 - Capability grants are retained outside network permissions and are not implemented for general application authorization. Host-level TCP/UDP ports and ICMP are enforced; capability selectors, subnet/exit forwarding policy, fragment reassembly, and narrow port semantics for other transports remain fail closed.
 - The initial fingerprint must be obtained through an independent trusted channel. A fingerprint printed by `doctor control` on the same potentially compromised path provides only trust on first use.
-- Expired node keys and changed control keys fail closed. A continuity-preserving rotation and renewal protocol is not implemented.
+- Expired node keys and changed control keys fail closed. Explicit
+  continuity-preserving Node-key rotation is implemented; automatic
+  expiry-triggered renewal and authenticated control-key rotation are not.
 - Privilege separation, pool-confined host-route transactions, Linux DNS activation, packet encryption, bounded relay transport, endpoint discovery/publication, health-gated home-relay reporting, live authenticated probe transport, and authenticated direct-path switching are implemented but remain release-ineligible until the native candidate gates pass. Traffic-aware probe suppression, IPv6-only underlay certification, subnet/exit route transactions, firewall enforcement, and rollback after abrupt kernel or process termination remain production gaps.
 - A packet-parser fuzz target, bounded malformed/fragment tests, deterministic adversarial relay tests, and one bounded live two-node policy matrix are present. Extended fuzz campaigns, long-duration relay saturation tests, repeated policy matrices from immutable candidate artifacts, and cross-platform policy qualification remain release gates.
 - Flow delivery has scoped HMAC authentication and bounded memory, but durable client WAL, credential rotation, application-level encryption, retention/deletion policy, per-tenant query authorization, and tamper-evident storage are not implemented.

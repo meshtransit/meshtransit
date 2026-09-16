@@ -87,6 +87,211 @@ func TestService_TrustAndBrowserRegistration(t *testing.T) {
 	}
 }
 
+func TestService_RotateNodeKeyCommitsConfirmedKey(t *testing.T) {
+	t.Parallel()
+
+	service, identities, control, profileID, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	before, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() before rotation error = %v", err)
+	}
+	oldMaterial := before.Material()
+	defer clearIdentityMaterial(oldMaterial)
+	oldNodePrivateKey := bytes.Clone(oldMaterial.NodePrivateKey)
+	defer clear(oldNodePrivateKey)
+
+	control.rotationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	rotated, err := service.RotateNodeKey(t.Context())
+	if err != nil {
+		t.Fatalf("RotateNodeKey() error = %v", err)
+	}
+	if rotated.ProfileID != profileID || rotated.State != nodeKeyRotationCompleted {
+		t.Fatalf("RotateNodeKey() = %#v, want committed rotation", rotated)
+	}
+	after, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() after rotation error = %v", err)
+	}
+	if after.HasPendingNodeKeyRotation() {
+		t.Fatal("confirmed rotation retained pending key")
+	}
+	newMaterial := after.Material()
+	defer clearIdentityMaterial(newMaterial)
+	if bytes.Equal(newMaterial.NodePrivateKey, oldNodePrivateKey) {
+		t.Fatal("confirmed rotation did not replace active Node private key")
+	}
+
+	control.mu.Lock()
+	rotationKeys := cloneByteSlices(control.rotationKeys)
+	rotationMaterials := cloneProtocolMaterials(control.rotationMaterials)
+	control.mu.Unlock()
+	defer clearByteSlices(rotationKeys)
+	defer clearProtocolMaterials(rotationMaterials)
+	if len(rotationKeys) != 1 || len(rotationMaterials) != 1 {
+		t.Fatalf("rotation calls = %d/%d, want 1/1", len(rotationKeys), len(rotationMaterials))
+	}
+	if !bytes.Equal(rotationMaterials[0].NodePrivateKey, oldNodePrivateKey) {
+		t.Fatal("rotation request was not authenticated with active old Node key")
+	}
+	if !bytes.Equal(rotationKeys[0], newMaterial.NodePrivateKey) {
+		t.Fatal("persisted Node key differs from the key confirmed by control")
+	}
+}
+
+func TestService_RotateNodeKeyRetriesSameStagedKey(t *testing.T) {
+	t.Parallel()
+
+	service, identities, control, profileID, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	before, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() before rotation error = %v", err)
+	}
+	oldMaterial := before.Material()
+	defer clearIdentityMaterial(oldMaterial)
+
+	rotationCall := 0
+	control.rotateFunc = func(
+		_ context.Context,
+		_ []byte,
+	) (ts2021.RegistrationResult, error) {
+		rotationCall++
+		if rotationCall == 1 {
+			return ts2021.RegistrationResult{}, fmt.Errorf(
+				"%w: injected transport failure",
+				ts2021.ErrRegistrationTemporary,
+			)
+		}
+
+		return ts2021.RegistrationResult{
+			State:             ts2021.RegistrationStateAuthorized,
+			MachineAuthorized: true,
+		}, nil
+	}
+	if _, err := service.RotateNodeKey(t.Context()); !errors.Is(err, ts2021.ErrRegistrationTemporary) ||
+		!errors.Is(err, ErrNodeKeyRotation) {
+		t.Fatalf("first RotateNodeKey() error = %v, want temporary rotation error", err)
+	}
+	pendingRecord, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() pending rotation error = %v", err)
+	}
+	pendingNodePrivateKey := pendingRecord.PendingNodePrivateKey()
+	defer clear(pendingNodePrivateKey)
+	if len(pendingNodePrivateKey) == 0 {
+		t.Fatal("temporary failure did not retain staged Node key")
+	}
+	pendingMaterial := pendingRecord.Material()
+	defer clearIdentityMaterial(pendingMaterial)
+	if !bytes.Equal(pendingMaterial.NodePrivateKey, oldMaterial.NodePrivateKey) {
+		t.Fatal("temporary failure changed active Node key")
+	}
+
+	if _, err := service.RotateNodeKey(t.Context()); err != nil {
+		t.Fatalf("second RotateNodeKey() error = %v", err)
+	}
+	after, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() after retry error = %v", err)
+	}
+	afterMaterial := after.Material()
+	defer clearIdentityMaterial(afterMaterial)
+	if after.HasPendingNodeKeyRotation() ||
+		!bytes.Equal(afterMaterial.NodePrivateKey, pendingNodePrivateKey) {
+		t.Fatalf("retry did not promote exact staged key: %s", after)
+	}
+
+	control.mu.Lock()
+	rotationKeys := cloneByteSlices(control.rotationKeys)
+	control.mu.Unlock()
+	defer clearByteSlices(rotationKeys)
+	if len(rotationKeys) != 2 ||
+		!bytes.Equal(rotationKeys[0], pendingNodePrivateKey) ||
+		!bytes.Equal(rotationKeys[1], pendingNodePrivateKey) {
+		t.Fatal("rotation retry did not reuse the exact staged Node key")
+	}
+}
+
+func TestService_RunResumesPendingNodeKeyRotation(t *testing.T) {
+	t.Parallel()
+
+	service, identities, control, profileID, _ := newTestService(t)
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	pendingNodePrivateKey, err := ts2021.GenerateNodePrivateKey()
+	if err != nil {
+		t.Fatalf("GenerateNodePrivateKey() error = %v", err)
+	}
+	defer clear(pendingNodePrivateKey)
+	if _, err := identities.BeginNodeKeyRotation(
+		t.Context(),
+		profileID,
+		pendingNodePrivateKey,
+	); err != nil {
+		t.Fatalf("BeginNodeKeyRotation() error = %v", err)
+	}
+	control.rotationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	runResult := make(chan error, 1)
+	go func() { runResult <- service.Run(ctx) }()
+	waitForStreamStart(t, control)
+	cancel()
+	if err := <-runResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context cancellation", err)
+	}
+	after, err := identities.Get(t.Context(), profileID)
+	if err != nil {
+		t.Fatalf("identity Get() after resume error = %v", err)
+	}
+	afterMaterial := after.Material()
+	defer clearIdentityMaterial(afterMaterial)
+	if after.HasPendingNodeKeyRotation() ||
+		!bytes.Equal(afterMaterial.NodePrivateKey, pendingNodePrivateKey) {
+		t.Fatalf("Run() did not promote the staged Node key: %s", after)
+	}
+	control.mu.Lock()
+	rotationKeys := cloneByteSlices(control.rotationKeys)
+	control.mu.Unlock()
+	defer clearByteSlices(rotationKeys)
+	if len(rotationKeys) != 1 || !bytes.Equal(rotationKeys[0], pendingNodePrivateKey) {
+		t.Fatal("Run() did not resume the exact pending Node-key transition")
+	}
+}
+
 func TestService_CompleteLoginSerializesPendingAuthorization(t *testing.T) {
 	t.Parallel()
 
@@ -1910,7 +2115,14 @@ type fakeControl struct {
 	registrationResults []ts2021.RegistrationResult
 	registerOptions     []ts2021.RegisterOptions
 	registerMaterial    ts2021.KeyMaterial
-	registerFunc        func(
+	rotationKeys        [][]byte
+	rotationMaterials   []ts2021.KeyMaterial
+	rotationResults     []ts2021.RegistrationResult
+	rotateFunc          func(
+		context.Context,
+		[]byte,
+	) (ts2021.RegistrationResult, error)
+	registerFunc func(
 		context.Context,
 		ts2021.RegisterOptions,
 	) (ts2021.RegistrationResult, error)
@@ -2040,6 +2252,38 @@ func (f *fakeControl) Register(
 	}
 	result := f.registrationResults[0]
 	f.registrationResults = f.registrationResults[1:]
+	f.mu.Unlock()
+
+	return result, nil
+}
+
+func (f *fakeControl) RotateNodeKey(
+	ctx context.Context,
+	_ string,
+	material ts2021.KeyMaterial,
+	newNodePrivateKey []byte,
+	_ ts2021.RegisterOptions,
+) (ts2021.RegistrationResult, error) {
+	f.mu.Lock()
+	f.rotationKeys = append(f.rotationKeys, append([]byte(nil), newNodePrivateKey...))
+	f.rotationMaterials = append(f.rotationMaterials, ts2021.KeyMaterial{
+		MachinePrivateKey: append([]byte(nil), material.MachinePrivateKey...),
+		NodePrivateKey:    append([]byte(nil), material.NodePrivateKey...),
+		ControlPublicKey:  append([]byte(nil), material.ControlPublicKey...),
+	})
+	rotateFunc := f.rotateFunc
+	if rotateFunc != nil {
+		f.mu.Unlock()
+
+		return rotateFunc(ctx, append([]byte(nil), newNodePrivateKey...))
+	}
+	if len(f.rotationResults) == 0 {
+		f.mu.Unlock()
+
+		return ts2021.RegistrationResult{}, errors.New("unexpected Node-key rotation call")
+	}
+	result := f.rotationResults[0]
+	f.rotationResults = f.rotationResults[1:]
 	f.mu.Unlock()
 
 	return result, nil
@@ -2340,6 +2584,40 @@ func waitForControlSession(t *testing.T, service *Service, want string) {
 			)
 		case <-ticker.C:
 		}
+	}
+}
+
+func cloneByteSlices(values [][]byte) [][]byte {
+	cloned := make([][]byte, len(values))
+	for index, value := range values {
+		cloned[index] = bytes.Clone(value)
+	}
+
+	return cloned
+}
+
+func clearByteSlices(values [][]byte) {
+	for _, value := range values {
+		clear(value)
+	}
+}
+
+func cloneProtocolMaterials(values []ts2021.KeyMaterial) []ts2021.KeyMaterial {
+	cloned := make([]ts2021.KeyMaterial, len(values))
+	for index, value := range values {
+		cloned[index] = ts2021.KeyMaterial{
+			MachinePrivateKey: bytes.Clone(value.MachinePrivateKey),
+			NodePrivateKey:    bytes.Clone(value.NodePrivateKey),
+			ControlPublicKey:  bytes.Clone(value.ControlPublicKey),
+		}
+	}
+
+	return cloned
+}
+
+func clearProtocolMaterials(values []ts2021.KeyMaterial) {
+	for index := range values {
+		clearProtocolMaterial(values[index])
 	}
 }
 
