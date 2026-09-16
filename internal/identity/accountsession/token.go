@@ -2,6 +2,7 @@
 package accountsession
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -28,6 +29,33 @@ type Token struct {
 	deploymentID  deployment.ID
 	recoveryEpoch int64
 	secret        [tokenSecretBytes]byte
+}
+
+// GenerateToken prepares fresh OS-CSPRNG bearer material before a write unit.
+func GenerateToken(id deployment.ID, epoch int64) (Token, error) {
+	if !id.IsValid() || epoch <= 0 {
+		return Token{}, ErrInvalidToken
+	}
+	var secret [tokenSecretBytes]byte
+	if _, err := rand.Read(secret[:]); err != nil {
+		return Token{}, ErrInvalidToken
+	}
+	token := Token{deploymentID: id, recoveryEpoch: epoch, secret: secret}
+	if !token.IsValid() {
+		return Token{}, ErrInvalidToken
+	}
+	return token, nil
+}
+
+// Encoded explicitly releases a bearer only at a trusted confirmed boundary.
+// Formatting/JSON/logging never invokes this accessor automatically.
+func (token Token) Encoded() string {
+	if !token.IsValid() {
+		return ""
+	}
+	return tokenPrefix + "." + token.deploymentID.String() + "." +
+		strconv.FormatInt(token.recoveryEpoch, 10) + "." +
+		base64.RawURLEncoding.EncodeToString(token.secret[:])
 }
 
 // ParseToken validates the versioned Account Session token envelope.

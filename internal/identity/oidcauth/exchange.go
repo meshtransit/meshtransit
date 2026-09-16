@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"errors"
 	"log/slog"
+	"sync/atomic"
 	"time"
 )
 
@@ -165,7 +166,7 @@ func (service *ExchangeService) ExchangeBrowser(ctx context.Context, receipt Cla
 	if ctx.Err() != nil || !liveClaim(claimed, now) || !now.Before(evidence.ExpiresAt()) {
 		return ExchangeResult{}, errors.Join(ErrExchangeRejected, ctx.Err())
 	}
-	return ExchangeResult{claimed: claimed, identity: evidence.identity}, nil
+	return ExchangeResult{claimed: claimed, identity: evidence.identity, issuanceAttempt: &atomic.Bool{}}, nil
 }
 func liveClaim(claimed Claimed, now time.Time) bool {
 	return !now.Before(claimed.ConsumedAt()) && livePendingSnapshot(claimed.snapshot, now)
@@ -173,13 +174,14 @@ func liveClaim(claimed Claimed, now time.Time) bool {
 
 // ExchangeResult is opaque validated authentication, not session/admission authority.
 type ExchangeResult struct {
-	claimed  Claimed
-	identity ExternalIdentity
+	claimed         Claimed
+	identity        ExternalIdentity
+	issuanceAttempt *atomic.Bool
 }
 
 // IsValid checks immutable result shape, not current provider/membership authority.
 func (result ExchangeResult) IsValid() bool {
-	return result.claimed.IsValid() && result.identity.IsValid()
+	return result.claimed.IsValid() && result.identity.IsValid() && result.issuanceAttempt != nil
 }
 
 // Identity explicitly releases exact validated subject evidence for Core resolution.

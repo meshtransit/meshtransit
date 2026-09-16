@@ -29,6 +29,10 @@ func TestKeyringDigestsStableRotationCandidates(t *testing.T) {
 		t.Fatalf("digest candidates = %+v, want active then previous", digests)
 	}
 	activeBytes := digests[0].Bytes()
+	issued, err := keyring.ActiveDigest(token)
+	if err != nil || issued != digests[0] {
+		t.Fatal("issuance digest changed active verifier protocol")
+	}
 	if got := hex.EncodeToString(activeBytes[:]); got != "20feb2552dc2c4ddb617da7bdc4e808f2c9d398df1af75654af8128da35750a5" {
 		t.Fatalf("active digest = %s, want stable protocol vector", got)
 	}
@@ -46,6 +50,9 @@ func TestKeyringRejectsUnsafeRotation(t *testing.T) {
 	active := mustDigestKey(t, "active-v1", 0x11)
 	if _, err := accountsession.NewKeyring(active, active); err == nil {
 		t.Fatal("NewKeyring() accepted duplicate key IDs")
+	}
+	if _, err := accountsession.NewKeyring(active, mustDigestKey(t, "alias-v1", 0x11)); err == nil {
+		t.Fatal("NewKeyring() accepted reused material under another ID")
 	}
 	id, err := accountsession.NewDigestKeyID("active-v1")
 	if err != nil {

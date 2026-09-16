@@ -141,12 +141,28 @@ func NewKeyring(active DigestKey, previous ...DigestKey) (*Keyring, error) {
 	if len(previous) == 0 {
 		return keyring, nil
 	}
-	if !previous[0].isValid() || previous[0].id == active.id {
+	if !previous[0].isValid() || previous[0].id == active.id ||
+		hmac.Equal(previous[0].material[:], active.material[:]) {
 		return nil, ErrInvalidKeyring
 	}
 	keyring.previous = previous[0]
 	keyring.hasPrevious = true
 	return keyring, nil
+}
+
+// IsValid checks the bounded resident verifier window without secret I/O.
+func (keyring *Keyring) IsValid() bool {
+	return keyring != nil && keyring.active.isValid() && (!keyring.hasPrevious ||
+		(keyring.previous.isValid() && keyring.previous.id != keyring.active.id &&
+			!hmac.Equal(keyring.previous.material[:], keyring.active.material[:])))
+}
+
+// ActiveDigest creates issuance evidence only under the active resident key.
+func (keyring *Keyring) ActiveDigest(token Token) (Digest, error) {
+	if !keyring.IsValid() {
+		return Digest{}, ErrInvalidKeyring
+	}
+	return digestToken(keyring.active, token)
 }
 
 // Digests returns active then previous verifier candidates for one token.

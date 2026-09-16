@@ -258,6 +258,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	)
 	assertNetworkManagementRBACAuthority(ctx, t, adminConnection, runtimeConnection)
 	assertPostgreSQLLoginSubjectResolution(ctx, t, adminConnection, runtimeConnection, runtimePool)
+	assertPostgreSQLSessionIssuance(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLManagementPolicyPublication(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLNodeKeyRotation(
 		ctx,

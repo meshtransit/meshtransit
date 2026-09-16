@@ -454,8 +454,9 @@ Deployment-scoped events have no Network revision.
 No public listener exposes browser login yet. Bounded pre-session HTTP start and
 durable route admission are implemented as foundation adapters; callback claim/
 exchange and ID-token validation foundations are described below. Account
-reconciliation, Account Session issuance, terminal lifecycle and public callback
-wiring remain required before public composition.
+reconciliation/JIT/linking, abandoned-row expiry and public callback wiring
+remain required before public composition. Existing-subject issuance and
+confirmed-claim failure foundations are described below.
 
 `oidcauth.StartService` now owns the application boundary: bounded discovery and
 one secret/ID preparation before Begin, exact creation-evidence validation,
@@ -469,8 +470,9 @@ provides isolated active/count/histogram metrics with only closed result labels.
 It must be wired to the private operator registry when browser HTTP admission is
 implemented. A bounded HTTP prepare/start adapter now enforces the pre-session
 CSRF contract below. `AuthTransactionStore.Admit` implements its mandatory
-durable route admission seam, but public runtime composition/callback wiring,
-and Account Session issuance remain unimplemented.
+durable route admission seam, but public runtime composition/callback wiring
+remains unimplemented. Existing-subject Account Session issuance now has the
+separate application/database foundation described below.
 No supported Mesh Client wire contract changed.
 
 The first live SSO qualification is planned for Google through the Keycloak
@@ -657,8 +659,8 @@ new dependency or SQL mutation in this exchange slice. Tests cover real TLS with
 separate trusted token/JWKS origins, malformed/forged claims and keys, rotation,
 receipt-copy replay, no POST retry, cancellation, cleanup and parser fuzz seeds.
 `private_key_jwt`, step-up and Organization flows remain fail-closed. Public login
-is still disabled pending Account reconciliation/session issuance, atomic terminal
-erasure/expiry, abuse controls and Google/HA acceptance. This slice does not change
+is still disabled pending public callback composition, abandoned-row expiry,
+abuse controls and Google/HA acceptance. JIT/linking is not implemented. This slice does not change
 the wire contract; compatibility reference pins remain `meshd` `87a3dd2` and
 `meshctl` `ce2a856` (not a new claim of live client or Google qualification).
 
@@ -666,7 +668,7 @@ the wire contract; compatibility reference pins remain `meshd` `87a3dd2` and
 migration 31's runtime-only `mesh_ops.fail_oidc_browser_v1`. Receipt copies share
 one non-queuing failure attempt; starting failure burns unused exchange capability
 before effects. It does not undo an already running provider exchange or grant a
-session; successful issuance must later CAS the consuming row independently.
+session; the separate successful issuance unit CASes the consuming row independently.
 
 Only immutable exact scope, original version-two binding hash and claim time are
 used for cleanup. Provider/Workspace revocation cannot strand browser proof.
@@ -685,8 +687,8 @@ missing-evidence rollback including erasure, provider/Workspace revocation,
 expiry during audit-lock wait and a hidden ACK after real durable Commit. The
 existing Deployment audit helper still requires active/verified Deployment;
 quarantine recovery cleanup and bounded workers for abandoned pending/consuming
-rows remain unfinished. Successful identity reconciliation/session issuance,
-public callback composition, abuse controls and Google/HA/client acceptance
+rows remain unfinished. Identity JIT/linking, public callback composition,
+abuse controls and Google/HA/client acceptance
 remain release gates. Released migrations, application generation 1 and client
 wire contracts are unchanged; this is source qualification, not a live rollout.
 
@@ -729,13 +731,70 @@ previous-key lookup/ambiguity, all SQL inputs, revocation, terminal claims and
 live expiry past frozen transaction Begin. This is not live Keycloak/Google or
 client/deployment acceptance.
 
-The result is a snapshot, never Session issuance authority: the next write must
-independently lock/recheck current subject, Account, membership, route and CAS,
-and atomically commit Session plus successful terminal erasure/audit/outbox
-before releasing a fresh Core handle. Provider `auth_time` can currently be
-absent while the released Session schema/domain requires it. Do not fabricate
-authentication_time from iat/Now; reconcile the issuance profile/storage contract
-and qualify it before enabling issuance. Public browser login stays disabled.
+The result is a snapshot, never Session issuance authority: the separate
+`IssueService` write independently locks/rechecks current subject, Account,
+membership, route and CAS before releasing a fresh Core handle. Plain provider
+evidence may omit `auth_time`; initial issuance instead requires signed validated
+`auth_time`, preserving the released mandatory Session schema/domain. Never
+fabricate authentication_time from iat/Now. Public browser login stays disabled.
+
+### Atomic existing-subject Account Session issuance
+
+`IssueService` prepares a fresh 256-bit Core bearer, the existing `mtas1` envelope,
+active-key-only verifier HMAC, six distinct UUIDv7 mutation/evidence IDs and an
+optional purpose-separated upstream SID HMAC before opening the write unit.
+Copies of validated exchange evidence share one non-queuing issuance attempt.
+Missing signed `auth_time`, expired membership, invalid preparation and overload
+cannot enter a write unit. No provider refresh, re-exchange, secret lookup or
+randomness occurs inside the database transaction.
+
+Forward migration 33 exposes only runtime EXECUTE on
+`mesh_ops.issue_oidc_existing_subject_v1`, without broad table grants or released
+schema/generation changes. The short READ COMMITTED unit takes an explicit
+identity-subject SHARE relation barrier before deterministic authority row locks
+and the Deployment audit head. It rechecks exact current subject/Account/member,
+route, versions, generations, original consuming claim and exclusive deadlines
+with fresh DB time after lock waits. The relation barrier also blocks a previously
+nonmatching subject changing only its digest into a candidate. Compatible issuers
+remain allowed, but subject writes across providers temporarily wait under finite
+SQL budgets; future binding writers must take their relation lock before parent
+or audit locks. A finer scoped guard requires separate qualification.
+
+One active/version-one Session and consuming -> succeeded/version-three transition,
+exact Session result reference, complete PKCE erasure and two chained audit/outbox
+events commit atomically under one change ID, without a Network revision or role
+grant. DB issue time anchors configured whole-second idle/absolute ceilings, both
+intersected with finite membership expiry. Configured minimum assurance is exact
+opaque ACR equality, never an inferred hierarchy or AMR-as-MFA alias. Absent SID
+stores an all-NULL triple; present SID preserves exact UTF-8 bytes in a separate
+Deployment/provider/key-version HMAC namespace. Default/detailed/structured
+formatting and operational labels never disclose bearer, SID, subject or proof.
+
+Only exact validated metadata, confirmed Commit and fresh live/cancellation checks
+release the new bearer. Any partial audit/outbox failure rolls everything back.
+Unknown Commit returns no handle and never resolves, retries or exchanges again;
+it can leave a committed but undisclosed Session bounded by normal expiry/revocation.
+Request/cleanup ceilings are 30/5 seconds with fail-fast concurrency at most 256.
+Private issuance metrics have fixed names/closed outcome labels; database metrics
+add only `auth_issue_{begin,apply,commit,rollback}` operations.
+
+Source qualification covers real verified-TLS PostgreSQL start/verify/claim,
+controlled trusted provider-port exchange, lookup, issuance and authentication of
+the new bearer by the current Account Session verifier. Cases include absent
+auth_time/SID, exact ACR rejection, membership lifetime intersection, rollback on
+the second outbox append, hidden ACK after real durable Commit, complete event
+semantics/hash chaining and two independent durable contenders. Independent DB
+connections also prove INSERT/digest-only UPDATE exclusion and barrier cleanup.
+Unit/race tests cover preparation failures, copied/burned attempts, malformed
+metadata, joined cleanup, closed metrics and non-queued method overlap. Cross-language
+HMAC vectors preserve both the existing verifier and new SID encoding.
+
+This foundation neither exposes a public callback/Set-Cookie route nor qualifies
+live Keycloak/Google, client deployment, operational HA/failover or Phase 1 completion.
+Keycloak remains the reference authority and Google through its broker remains
+the first live SSO target. Abandoned-row expiry/quarantine cleanup, bounded public
+composition/abuse controls and exact target acceptance are the next release gates.
+Supported Mesh Client wire contracts are unchanged.
 
 Vulnerability qualification remains reachability-specific: the current Go 1.26.8
 scan reports zero imported-package/reachable vulnerabilities, but retains three
@@ -786,9 +845,8 @@ cross-Deployment authority to one generic unauthenticated result. The
 management HTTP boundary uses this authenticator as an opaque bearer verifier.
 It validates route, method, media type, bounded JSON, strong `If-Match`,
 HMAC-destroyed idempotency evidence, and exact result evidence before returning
-public JSON. Login, OIDC callbacks, and Account Session issuance remain future
-slices; the cryptographic transaction and strict discovery foundation described
-above is now complete.
+public JSON. Public login and OIDC callback composition remain future slices;
+the existing-subject issuance foundation described above is now implemented.
 
 ## Node-key rotation threat model
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -240,7 +241,7 @@ func subjectExchangeFixture(t *testing.T) ExchangeResult {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ExchangeResult{claimed: claimed, identity: subjectIdentityFixture(t, claimed.snapshot.Route().Issuer(), " Case-é ")}
+	return ExchangeResult{claimed: claimed, identity: subjectIdentityFixture(t, claimed.snapshot.Route().Issuer(), " Case-é "), issuanceAttempt: &atomic.Bool{}}
 }
 
 func subjectSnapshotParamsFixture(t *testing.T, query SubjectLookup, at time.Time) LoginSubjectParams {

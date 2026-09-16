@@ -94,8 +94,12 @@ func assertPostgreSQLLoginSubjectResolution(ctx context.Context, t *testing.T, a
 }
 
 func integrationSubjectExchange(ctx context.Context, t *testing.T, store *postgresadapter.AuthTransactionStore) (oidcauth.ExchangeResult, oidcauth.Route) {
+	return integrationSubjectExchangeWithProfile(ctx, t, store, "fa2", integrationSubjectProfile{})
+}
+
+func integrationSubjectExchangeWithProfile(ctx context.Context, t *testing.T, store *postgresadapter.AuthTransactionStore, suffix string, profile integrationSubjectProfile) (oidcauth.ExchangeResult, oidcauth.Route) {
 	t.Helper()
-	verified, nonce := integrationClaimVerifiedWithNonce(ctx, t, store, "fa2", 0)
+	verified, nonce := integrationClaimVerifiedWithNonce(ctx, t, store, suffix, 0)
 	claim, err := oidcauth.NewClaimService(oidcauth.ClaimOptions{RequestTimeout: 10 * time.Second, RollbackTimeout: 2 * time.Second}, oidcauth.ClaimDependencies{Transactions: store, IDs: oidcauth.SystemClaimIDs{}, Clock: oidcauth.SystemStartClock{}})
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +123,7 @@ func integrationSubjectExchange(ctx context.Context, t *testing.T, store *postgr
 	})
 	deps := integrationAuthStartDependencies(t, template, store, &integrationAuthStartTransactions{store: store})
 	service, err := oidcauth.NewExchangeService(oidcauth.ExchangeOptions{RequestTimeout: 10 * time.Second, MaxConcurrent: 1}, oidcauth.ExchangeDependencies{
-		Provider: integrationSubjectProvider{nonce: nonce}, Cipher: deps.VerifierCipher, DigestKey: deps.DigestKey, Clock: oidcauth.SystemStartClock{},
+		Provider: integrationSubjectProvider{nonce: nonce, profile: profile}, Cipher: deps.VerifierCipher, DigestKey: deps.DigestKey, Clock: oidcauth.SystemStartClock{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -136,12 +140,25 @@ func integrationSubjectExchange(ctx context.Context, t *testing.T, store *postgr
 }
 
 // Controlled trusted-port evidence, not live Google/Keycloak signature evidence.
-type integrationSubjectProvider struct{ nonce oidcauth.Nonce }
+type integrationSubjectProfile struct {
+	authTime bool
+	sid, acr string
+	amr      []string
+}
+type integrationSubjectProvider struct {
+	nonce   oidcauth.Nonce
+	profile integrationSubjectProfile
+}
 
 func (provider integrationSubjectProvider) Authenticate(_ context.Context, request oidcauth.ExchangeRequest) (oidcauth.TokenEvidence, error) {
 	now := time.Now().UTC().Truncate(time.Second)
+	var authTime time.Time
+	if provider.profile.authTime {
+		authTime = now.Add(-time.Minute)
+	}
 	return oidcauth.NewTokenEvidence(oidcauth.TokenEvidenceParams{
 		Issuer: request.Route().Issuer(), Subject: " Exact-é ", Nonce: provider.nonce, IssuedAt: now, ExpiresAt: now.Add(5 * time.Minute),
+		AuthTime: authTime, SessionID: provider.profile.sid, ACR: provider.profile.acr, AMR: provider.profile.amr,
 	})
 }
 
