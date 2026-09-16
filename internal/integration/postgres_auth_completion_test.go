@@ -216,18 +216,6 @@ func integrationBrowserCompletion(
 			adapteroidc.LoginCallbackCookieName+"="+cookies[0].Value+"; "+httpapi.AccountSessionCookieName+"=old-synthetic-session")
 		return request
 	}
-	prepare := &integrationCompletionWriter{ResponseRecorder: httptest.NewRecorder()}
-	if err := gate.Prepare(prepare, post(httpapi.LoginContinuationPreparePath)); err != nil {
-		t.Fatal(err)
-	}
-	var proof struct {
-		Token string `json:"csrf_token"`
-	}
-	if err := json.Unmarshal(prepare.Body.Bytes(), &proof); err != nil {
-		t.Fatal(err)
-	}
-	request = post(httpapi.LoginCallbackContinuePath)
-	request.Header.Set(adapteroidc.LoginCSRFHeader, proof.Token)
 	port := &integrationCompletionCallback{service: options.service, override: override}
 	port.after = func(result oidcauth.CallbackResult) {
 		switch scenario {
@@ -252,6 +240,51 @@ func integrationBrowserCompletion(
 	if err != nil {
 		t.Fatal(err)
 	}
+	landing, err := httpapi.NewLoginContinuationLanding(httpapi.LoginContinuationLandingOptions{
+		Completion: completion, Observer: httpapi.NewLoginLandingTelemetry(),
+		RequestTimeout: 5 * time.Second, MaxConcurrent: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		clean := httptest.NewRequestWithContext(
+			ctx,
+			method,
+			httpapi.LoginCallbackContinuePath,
+			nil,
+		)
+		clean.Host, clean.TLS = callbackURL.Host, request.TLS
+		clean.Header.Set("Cookie", post(httpapi.LoginCallbackContinuePath).Header.Get("Cookie"))
+		presented := &integrationCompletionWriter{ResponseRecorder: httptest.NewRecorder()}
+		if err := landing.Present(presented, clean); err != nil {
+			t.Fatal("clean static landing rejected", err)
+		}
+		if port.calls != 0 || presented.statusWrites != 1 || presented.Code != http.StatusOK ||
+			presented.Header().Get("Set-Cookie") != "" || presented.Header().Get("Location") != "" {
+			t.Fatal("GET/HEAD landing touched callback authority/cookies")
+		}
+		if method == http.MethodHead && presented.Body.Len() != 0 {
+			t.Fatal("HEAD landing released active content")
+		}
+		for _, secret := range []string{params.State.Encoded(), params.PreAuthCookie.Encoded(), cookies[0].Value} {
+			if strings.Contains(presented.Body.String(), secret) {
+				t.Fatal("landing reflected callback custody")
+			}
+		}
+	}
+	prepare := &integrationCompletionWriter{ResponseRecorder: httptest.NewRecorder()}
+	if err := gate.Prepare(prepare, post(httpapi.LoginContinuationPreparePath)); err != nil {
+		t.Fatal(err)
+	}
+	var proof struct {
+		Token string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal(prepare.Body.Bytes(), &proof); err != nil {
+		t.Fatal(err)
+	}
+	request = post(httpapi.LoginCallbackContinuePath)
+	request.Header.Set(adapteroidc.LoginCSRFHeader, proof.Token)
 	writer := &integrationCompletionWriter{ResponseRecorder: httptest.NewRecorder(), writeMode: scenario}
 	if scenario == "response header budget after commit" {
 		writer.Header().Set("X-Controlled-Padding", strings.Repeat("x", 15590))

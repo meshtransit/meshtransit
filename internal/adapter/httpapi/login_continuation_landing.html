@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Continue sign-in | MeshTransit</title>
+<style>
+:root { color-scheme: light; --foreground: #171717; --background: #fff; --muted: #475569; --focus: #2563eb; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 2rem 1rem; background: var(--background); color: var(--foreground); font: 1rem/1.5 system-ui, sans-serif; }
+main { max-width: 32rem; margin: 8vh auto; }
+h1 { font-size: 1.75rem; line-height: 1.25; }
+p { color: var(--muted); }
+button { min-height: 44px; padding: .75rem 1.25rem; border: 2px solid var(--foreground); border-radius: .5rem; background: var(--foreground); color: var(--background); font: inherit; font-weight: 600; cursor: pointer; }
+button:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; }
+button:disabled { cursor: default; }
+#login-status { min-height: 3rem; margin-top: 1.5rem; }
+</style>
+</head>
+<body>
+<main id="login-panel" aria-busy="false">
+<h1>Continue sign-in</h1>
+<p>Confirm to finish signing in to MeshTransit. This page does not grant access by itself.</p>
+<button id="login-confirm" type="button" disabled data-return-path="{{.ReturnPath}}">Continue sign-in</button>
+<p id="login-status" role="status" aria-live="polite" aria-atomic="true">Loading secure confirmation.</p>
+<noscript><p>JavaScript is required. Close this page and restart sign-in in a supported browser.</p></noscript>
+</main>
+<script>
+"use strict";
+(() => {
+  const cleanPath = "/auth/v1/login/continue";
+  const button = document.getElementById("login-confirm");
+  const status = document.getElementById("login-status");
+  const panel = document.getElementById("login-panel");
+  const failure = "Sign-in could not be completed. Close this page and restart sign-in.";
+  let started = false;
+  let controller;
+
+  function localPath(path) {
+    if (typeof path !== "string" || path.length > 256 || !/^\/[A-Za-z0-9/._~-]*$/.test(path)) return false;
+    if (path === "/") return true;
+    if (path.endsWith("/") || path.includes("//") || path === "/auth" || path.startsWith("/auth/")) return false;
+    return !path.split("/").some(part => part === "." || part === "..");
+  }
+
+  function exactObject(value, keys) {
+    return value !== null && typeof value === "object" && !Array.isArray(value) &&
+      Object.keys(value).sort().join(",") === keys.slice().sort().join(",");
+  }
+
+  async function readJSON(response) {
+    if (response.status !== 200 || response.redirected || response.type !== "basic" ||
+        response.headers.get("content-type") !== "application/json" || !response.body) throw new Error("rejected");
+    const reader = response.body.getReader();
+    const chunks = [];
+    let size = 0;
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        if (chunk.value.byteLength === 0) throw new Error("rejected");
+        size += chunk.value.byteLength;
+        if (size > 1024) throw new Error("rejected");
+        chunks.push(chunk.value);
+      }
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      // Accept only the two Core-owned canonical encodings; duplicates/aliases
+      // and unrelated fields cannot be silently normalized by JSON.parse.
+      const canonical = /^\{"csrf_token":"[A-Za-z0-9_-]{1,512}","expires_in":[1-9][0-9]{0,2}\}$/.test(text) ||
+        /^\{"return_path":"\/[A-Za-z0-9/._~-]{0,255}"\}$/.test(text);
+      if (!canonical) throw new Error("rejected");
+      return JSON.parse(text);
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  function post(path, token) {
+    const headers = { "Content-Type": "application/json", "X-MeshTransit-Login": "v1" };
+    if (token) headers["X-MeshTransit-CSRF"] = token;
+    return fetch(path, { method: "POST", mode: "same-origin", credentials: "same-origin", redirect: "error",
+      cache: "no-store", referrerPolicy: "no-referrer", headers, body: "{}", signal: controller.signal });
+  }
+
+  function hide() {
+    started = true;
+    button.disabled = true;
+    if (controller) controller.abort();
+    panel.setAttribute("aria-busy", "false");
+    status.textContent = failure;
+  }
+
+  try {
+    // Scrub even an inherited fragment without reading any query/fragment material.
+    window.history.replaceState(null, "", cleanPath);
+    const expectedPath = button.dataset.returnPath;
+    if (!localPath(expectedPath) || typeof AbortController !== "function" ||
+        typeof TextDecoder !== "function" || typeof fetch !== "function") throw new Error("rejected");
+    window.addEventListener("pagehide", hide, { once: true });
+    button.disabled = false;
+    status.textContent = "Ready to confirm sign-in.";
+    button.addEventListener("click", async () => {
+      if (started) return;
+      started = true;
+      button.disabled = true;
+      panel.setAttribute("aria-busy", "true");
+      status.textContent = "Completing sign-in. Please wait.";
+      controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
+      let token = "";
+      try {
+        const prepared = await readJSON(await post(cleanPath + "/prepare", ""));
+        if (!exactObject(prepared, ["csrf_token", "expires_in"]) ||
+            typeof prepared.csrf_token !== "string" || !/^[A-Za-z0-9_-]{1,512}$/.test(prepared.csrf_token) ||
+            !Number.isInteger(prepared.expires_in) || prepared.expires_in < 1 || prepared.expires_in > 120) {
+          throw new Error("rejected");
+        }
+        token = prepared.csrf_token;
+        const completed = await readJSON(await post(cleanPath, token));
+        if (!exactObject(completed, ["return_path"]) || completed.return_path !== expectedPath ||
+            controller.signal.aborted) throw new Error("rejected");
+        window.location.replace(expectedPath);
+      } catch {
+        status.textContent = failure;
+      } finally {
+        token = "";
+        clearTimeout(timer);
+        controller.abort();
+        window.removeEventListener("pagehide", hide);
+        panel.setAttribute("aria-busy", "false");
+      }
+    });
+  } catch {
+    button.disabled = true;
+    status.textContent = failure;
+  }
+})();
+</script>
+</body>
+</html>

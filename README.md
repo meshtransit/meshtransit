@@ -1111,8 +1111,8 @@ callback active/count/duration metrics have only a closed result label; no
 global/public registration or raw error/identity/credential data.
 
 No wire, schema, configuration or disabled public-login default changes.
-The private confirmed browser completion profile below addresses cookie/response
-composition. Safe read-only BFF landing, runtime
+The private completion and clean landing profiles below address cookie/response
+and read-only page source composition. Public runtime
 metrics/tracing, query-log suppression, intended expiry/clock/recovery coverage,
 and pinned Google-through-Keycloak/client/HA acceptance remain separate gates.
 
@@ -1193,10 +1193,69 @@ delivery cases cover partial/short writes and suppression after real confirmed
 issuance for expired continuation while Session remains live, backward clock,
 subsecond cookie lifetime, cancellation, complete-route substitution and combined
 header budget. The already documented native-host clock failure is not waived.
-Public runtime/routes, the safe read-only landing, authenticated management
+Public runtime/routes and browser landing acceptance, authenticated management
 cookie-CSRF, proxy/query-log suppression, intended expiry/clock/recovery coverage
 and pinned Google-through-Keycloak/client/HA acceptance remain separate gates.
 No wire, schema, dependency, configuration or disabled public-login default changes.
+
+### Clean read-only continuation landing
+
+`SSO-CONTINUATION-LANDING-001` privately presents exact clean origin-form GET/HEAD
+on /auth/v1/login/continue, completed direct TLS 1.2+ and the configured Host.
+No query/fragment/encoded/foreign URL, body, ambiguous credential/routing header
+or incoherent navigation metadata may reach active content. Optional Origin is
+exact. The constructor extracts immutable origin/local return mapping from
+validated private completion; it never retains or invokes an application port.
+GET/HEAD neither parse/open cookies nor mint proof, consume budgets, call DB/OIDC,
+claim, exchange or issue authority. Missing cookies receive the same static page.
+
+Pre-render <=16384-byte embedded HTML/script/style before requests. Escape only
+the Core-owned local mapping; no request material participates in rendering.
+No-store/no-referrer/framing protections and hash-only script/style CSP permit
+self-only fetch, never unsafe-inline/eval, CDN, analytics, forms or external
+assets. Reject middleware navigation/encoding/reporting/authentication headers;
+HEAD has identical bounded safe headers with no body. Scrub browser history to
+the fixed clean path without reading query/fragment/cookies/storage.
+
+An accessible explicit button starts one fixed same-origin POST prepare/continue
+chain. Only {} / application/json / X-MeshTransit-Login: v1 and the fresh
+continuation CSRF header are sent. Credentials are same-origin; redirects reject;
+cache/referrer are no-store/no-referrer. Proof exists only in function memory,
+never DOM/storage/URL. Read <=1024 bytes of successful JSON with exact Core-owned
+canonical encodings/schemas, reject duplicates/aliases/unknown fields/empty chunks,
+and navigate only if return_path equals the exact configured local mapping.
+One <=30-second browser abort budget includes fetch and response reads, with
+pagehide/reader/timer/listener cleanup. No automatic POST, retry or button re-enable.
+Generic failure never claims non-commit; server claim, not UI state, owns single
+use. Uncertain committed Sessions retain ordinary expiry/revocation semantics.
+
+HTTP presentation owns a non-queuing 1–128-slot cap through delivery and one
+caller-clamped <=30-second context with mandatory read/write deadlines. Always
+deliver through ResponseWriter.Write, never a promoted StringWriter bypass.
+Partial/short delivery has a distinct closed error: never rewrite/retry. Isolated
+private browser_landing active/count/duration metrics expose only a closed result
+label, no topology, request, credential or identity. No queue, goroutine, listener
+or per-browser server memory is created.
+
+Source tests cover strict admission, zero authority/reflection, HEAD, exact CSP
+bytes, finite deadlines/cancellation/capacity/leak-free delivery, verified test-CA
+HTTPS and closed telemetry. Bounded Go HTTP fuzz and the deterministic embedded
+script harness qualify source behavior, not a browser engine/CSP/rendered UI or
+live Google signatures. Run script checks separately from Go quality gates:
+
+```sh
+node --test internal/adapter/httpapi/login_continuation_landing_test.mjs
+```
+
+The harness uses only Node built-ins, no packages/network. This source lane is
+qualified with Node 22.20.0; Node is not a build/runtime dependency of meshcore.
+The disposable PostgreSQL fixture also presents GET/HEAD before the existing
+18 protected durable completion scenarios, with controlled provider/budget ports.
+Public runtime/config/routes, private metrics/tracing registration, authenticated
+management cookie-CSRF, edge/BFF query-log suppression, native-host clock,
+intended expiry/recovery and pinned Google-through-Keycloak/client/HA acceptance
+remain separate gates. No schema, Go-module, client wire, configuration or
+disabled public-login default changes.
 
 ## Account Session authentication
 
