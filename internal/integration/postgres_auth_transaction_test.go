@@ -203,6 +203,7 @@ WHERE auth.public_id = $1::UUID`,
 			rollbackAuthTransactionIntegration(ctx, t, staleTransaction)
 		})
 	}
+	assertPostgreSQLAuthStart(ctx, t, adminConnection, store)
 }
 
 func assertOIDCAuthRouteLifecycleLock(

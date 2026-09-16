@@ -38,7 +38,7 @@ var (
 	// ErrCommitAuthTransaction classifies commit failure.
 	ErrCommitAuthTransaction = errors.New("commit postgres auth transaction")
 	// ErrAuthTransactionCommitOutcomeUnknown reports an uncertain commit outcome.
-	ErrAuthTransactionCommitOutcomeUnknown = errors.New("postgres auth transaction commit outcome is unknown")
+	ErrAuthTransactionCommitOutcomeUnknown = oidcauth.ErrCommitOutcomeUnknown
 	// ErrRollbackAuthTransaction classifies rollback failure.
 	ErrRollbackAuthTransaction = errors.New("rollback postgres auth transaction")
 	// ErrResolveCommittedAuthTransaction classifies exact creation replay failure.

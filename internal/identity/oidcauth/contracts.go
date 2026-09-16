@@ -1,6 +1,12 @@
 package oidcauth
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrCommitOutcomeUnknown requires exact durable lookup, not another creation.
+var ErrCommitOutcomeUnknown = errors.New("oidc auth: commit outcome unknown")
 
 // Transactions starts explicit short AuthTransaction creation units of work.
 type Transactions interface {

@@ -454,6 +454,20 @@ This slice intentionally does not expose a login route yet. The browser start
 endpoint and host-only pre-authentication cookie are next, followed by callback
 exchange, ID-token validation, Account reconciliation, and Account Session issuance.
 
+`oidcauth.StartService` now owns the application boundary: bounded discovery and
+one secret/ID preparation before Begin, exact creation-evidence validation,
+explicit audit/outbox Commit, and a live release-time check before returning a
+redacted redirect result. An uncertain commit triggers one bounded read-only
+lookup using the original transaction ID and binding hash; it never retries
+creation. Missing, mismatched, canceled, expired, or cleanup-failed evidence
+returns no redirect. Request budgets are capped at 30 seconds, with separate
+rollback/resolution budgets capped at 5 seconds each. `oidc.StartTelemetry`
+provides isolated active/count/histogram metrics with only closed result labels.
+It must be wired to the private operator registry when browser HTTP admission is
+implemented. Public HTTP login, pre-auth cookie binding/CSRF, callback claiming,
+and Account Session issuance remain unimplemented; the service is not enabled in
+runtime composition yet. No supported Mesh Client wire contract changed.
+
 The boundary threat model is fail-closed:
 
 - Spoofing and mix-up: exact issuer, discovery, authorization, token, JWKS,
