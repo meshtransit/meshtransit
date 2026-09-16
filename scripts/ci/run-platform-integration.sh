@@ -294,6 +294,6 @@ go test \
 	-tags=integration \
 	-count=1 \
 	-race \
-	-run '^(TestTLSAuthenticatedDependencies|TestRoleAllProcessRegistrationConvergesAcrossRestart|TestRoleAllProcessRestartsAfterGracefulShutdown|TestRoleAllProcessRejectsInvalidConfigurationBeforeListening)$' \
+	-run '^(TestTLSAuthenticatedDependencies|TestRoleAllProcessRegistrationConvergesAcrossRestart|TestRoleAllProcessRestartsAfterGracefulShutdown|TestRoleAllProcessRejectsInvalidConfigurationBeforeListening|TestRoleAllProcessExpiryConvergesAcrossRestart)$' \
 	-timeout=5m \
 	./internal/integration

@@ -71,7 +71,11 @@ func (store *AuthExpiryStore) begin(
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), authTransactionSetupRollbackWindow)
 		defer cancel()
 		if err := database.Rollback(cleanup); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-			resultErr = errors.Join(resultErr, ErrRollbackAuthTransaction, classifyAuthExpiryError(cleanup, err))
+			resultErr = errors.Join(resultErr, oidcauth.ErrExpiryCleanupFailed,
+				ErrRollbackAuthTransaction, classifyAuthExpiryError(cleanup, err))
+		}
+		if cleanup.Err() != nil {
+			resultErr = errors.Join(resultErr, oidcauth.ErrExpiryCleanupFailed)
 		}
 		resultErr = errors.Join(resultErr, cleanup.Err(), ctx.Err())
 	}()
@@ -115,10 +119,11 @@ func (store *AuthExpiryStore) ListDue(
 		cleanup, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), authTransactionSetupRollbackWindow)
 		defer cleanupCancel()
 		if err := database.Rollback(cleanup); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-			result, resultErr = nil, errors.Join(resultErr, ErrRollbackAuthTransaction, classifyAuthExpiryError(cleanup, err))
+			result, resultErr = nil, errors.Join(resultErr, oidcauth.ErrExpiryCleanupFailed,
+				ErrRollbackAuthTransaction, classifyAuthExpiryError(cleanup, err))
 		}
 		if cleanup.Err() != nil {
-			result, resultErr = nil, errors.Join(resultErr, cleanup.Err())
+			result, resultErr = nil, errors.Join(resultErr, oidcauth.ErrExpiryCleanupFailed, cleanup.Err())
 		}
 	}()
 	var raw []byte

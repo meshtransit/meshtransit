@@ -324,7 +324,7 @@ func (service *ExpiryService) Sweep(ctx context.Context, dep deployment.ID) (Exp
 	}
 	batch, err := service.dependencies.Candidates.ListDue(ctx, dep, service.options.BatchSize)
 	if err != nil || len(batch) > service.options.BatchSize || ctx.Err() != nil {
-		return ExpiryPass{}, errors.Join(ErrExpiryFailed, ctx.Err())
+		return ExpiryPass{}, errors.Join(ErrExpiryFailed, expiryDependencyClass(err), ctx.Err())
 	}
 	seen := make(map[TransactionID]struct{}, len(batch))
 	for _, snapshot := range batch {
@@ -384,7 +384,7 @@ func (service *ExpiryService) Expire(
 		}()
 	}
 	if beginErr != nil || nilExpiryDependency(unit) || ctx.Err() != nil {
-		return result, errors.Join(ErrExpiryFailed, ctx.Err())
+		return result, errors.Join(ErrExpiryFailed, expiryDependencyClass(beginErr), ctx.Err())
 	}
 	terminal, err := unit.Expire(ctx, command)
 	if err != nil || !terminal.IsValid() || terminal.Snapshot().Params() != snapshot.Params() ||
@@ -402,6 +402,18 @@ func (service *ExpiryService) Expire(
 		return result, errors.Join(ErrExpiryFailed, ctx.Err())
 	}
 	return ExpiryResult{terminal: terminal}, nil
+}
+
+// expiryDependencyClass preserves only closed ownership/cancellation categories.
+// It cannot retain the dependency error chain or its potentially private text.
+func expiryDependencyClass(err error) error {
+	var classified error
+	for _, category := range []error{ErrExpiryCleanupFailed, context.Canceled, context.DeadlineExceeded} {
+		if errors.Is(err, category) {
+			classified = errors.Join(classified, category)
+		}
+	}
+	return classified
 }
 
 // ExpiryResult is confirmed no-grant terminal evidence, never a browser or Session handle.

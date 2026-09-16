@@ -53,7 +53,7 @@ The module path is `github.com/meshtransit/meshtransit`; the process binary
 is `meshcore`. Development and security gates run with Go 1.26.8.
 
 Run `meshcore version` for machine-readable build, revision, Go, and
-configuration-schema versions. Run `meshcore config validate` to validate the
+configuration-schema versions (currently 15). Run `meshcore config validate` to validate the
 selected role, bounded values, secret files, and CA bundles without dialing a
 dependency or opening a listener. The process serves normally with either no
 arguments or the explicit `meshcore serve` command.
@@ -792,8 +792,8 @@ HMAC vectors preserve both the existing verifier and new SID encoding.
 This foundation neither exposes a public callback/Set-Cookie route nor qualifies
 live Keycloak/Google, client deployment, operational HA/failover or Phase 1 completion.
 Keycloak remains the reference authority and Google through its broker remains
-the first live SSO target. Abandoned-row expiry polling/configuration, bounded public
-composition/abuse controls and exact target acceptance are the next release gates.
+the first live SSO target. Exact-target abandoned-row expiry coverage, bounded public
+composition/abuse controls and target acceptance remain release gates.
 Supported Mesh Client wire contracts are unchanged.
 
 Vulnerability qualification remains reachability-specific: the current Go 1.26.8
@@ -848,9 +848,48 @@ tests cover bounded passes, preparation/cleanup failure, malformed metadata,
 nonqueued unit ownership, typed-nil safety and no-data labels; bounded parser fuzz
 and independent Ruby-generated hash vectors pin encoding.
 
-This is an explicit pass engine, NOT a started background worker or public login.
-Next: owned bounded poller, opt-in Deployment assignment/configuration and coverage
-telemetry; then protected BFF callback/abuse controls and exact target acceptance.
+An opt-in owned poller now composes this engine on `all` and `worker`, using only
+the worker PostgreSQL pool. Configuration schema 15 adds the settings below.
+It starts one sequential loop, runs the first pass immediately, then waits the
+poll interval after each completed pass. Shutdown cancels and joins the current
+pass and independent cleanup before shared storage is closed. Unresolved cleanup
+is fatal, including selector/setup rollback failure; ordinary errors end the pass
+without replay. Dependency error text and Deployment/Auth IDs never enter worker
+logs or metric labels.
+
+| Environment variable | Default | Contract |
+| --- | --- | --- |
+| `MESHTRANSIT_AUTH_EXPIRY_ENABLED` | `false` | Exact `true`/`false`; opt-in only on `all`/`worker`. |
+| `MESHTRANSIT_AUTH_EXPIRY_DEPLOYMENT_PUBLIC_ID` | None | Required canonical UUIDv7 installation assignment when enabled; trusted configuration, not a request scope. |
+| `MESHTRANSIT_AUTH_EXPIRY_BATCH_SIZE` | `8` | 1–128 candidates per pass. |
+| `MESHTRANSIT_AUTH_EXPIRY_POLL_INTERVAL` | `1s` | 100ms–1m; no overlapping passes. |
+| `MESHTRANSIT_AUTH_EXPIRY_SWEEP_TIMEOUT` | `10s` | 100ms–30s pass deadline. |
+| `MESHTRANSIT_AUTH_EXPIRY_UNIT_TIMEOUT` | `1s` | 100ms–30s, no greater than sweep timeout. |
+| `MESHTRANSIT_AUTH_EXPIRY_ROLLBACK_TIMEOUT` | `1s` | 100ms–5s independent joined cleanup. |
+
+When disabled, unset every other expiry setting: latent assignments/limits fail
+validation. Shutdown timeout must be strictly greater than
+`max(2s, rollback timeout) + 1s` to reserve adapter-owned cleanup and owner join.
+Changing this configuration requires a process restart; it is not client policy.
+
+Private health metrics use `meshtransit_oidc_expiry_` with only closed `result`
+labels: worker_running, passes_active, last_success_timestamp_seconds,
+passes_total, pass_duration_seconds, units_attempted_total, units_confirmed_total
+and batch_limit_reached_total. Running/last-success do NOT prove intended target
+coverage. Confirmed units count released receipts, not hidden durable commits;
+reaching the batch limit does not prove remaining backlog. Adapter comments pin
+operator query/alert intent, not installed dashboard or alert resources.
+
+Worker unit/race tests cover immediate sequential polling, lifecycle misuse,
+cancel-and-join, bounded deadlines, unknown Commit followed by fresh selection,
+fatal cleanup, malformed counts, typed-nil ports and secret-free telemetry.
+Disposable verified-TLS process tests exercise pending and consuming rows on both
+roles, exact audit/outbox evidence, unchanged Network/Session authority, and a
+same-assignment restart without terminal mutation replay.
+
+This does not enable public login. Next: protected BFF callback/abuse controls,
+exact-target coverage (including legacy exclusions and restore lineage), then
+live Google/Keycloak/client and operational HA/recovery acceptance.
 Keycloak and SSO-only remain unchanged; first live login is Google through its
 broker. Supported Mesh Client wire contracts are unchanged. No live deployment,
 operational HA/failover or Phase 1 completion is claimed.

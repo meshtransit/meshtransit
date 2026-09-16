@@ -214,6 +214,9 @@ func TestAuthExpiryListCompletesReadBeforeRelease(t *testing.T) {
 			} else if err == nil || len(batch) != 0 || database.rollbackCalls != 1 || strings.Contains(err.Error(), "private-detail") {
 				t.Fatal("failed read leaked metadata/ownership")
 			}
+			if name == "cleanup error" && !errors.Is(err, oidcauth.ErrExpiryCleanupFailed) {
+				t.Fatal("failed selector cleanup lost fatal worker category")
+			}
 			if len(owner.readOnly) != 1 || !owner.readOnly[0] {
 				t.Fatal("selector read was not read-only")
 			}

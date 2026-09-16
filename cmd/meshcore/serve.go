@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
+	oidcadapter "github.com/meshtransit/meshtransit/internal/adapter/oidc"
 	redisadapter "github.com/meshtransit/meshtransit/internal/adapter/redis"
 	"github.com/meshtransit/meshtransit/internal/app"
 	"github.com/meshtransit/meshtransit/internal/buildinfo"
@@ -67,7 +68,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 	}()
 
 	checkers := make([]app.DependencyChecker, 0, len(readiness.RequiredComponents()))
-	additionalMetrics := make([]prometheus.Collector, 0, 4)
+	additionalMetrics := make([]prometheus.Collector, 0, 5)
 	var storagePools postgresPools
 	var redisClient *redisadapter.Client
 	if processConfig.Storage != nil {
@@ -132,7 +133,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		return 1
 	}
 	var revisionWorkerTelemetry *revisionworker.Telemetry
-	roleServices := make([]app.OwnedService, 0, 5)
+	roleServices := make([]app.OwnedService, 0, 6)
 	if processConfig.RevisionWorker != nil {
 		revisionWorkerTelemetry = revisionworker.NewTelemetry()
 		workerService, composeErr := composeRevisionWorker(
@@ -300,6 +301,23 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		}
 		additionalMetrics = append(additionalMetrics, controlListener.MetricsCollector())
 		roleServices = append(roleServices, app.OwnedService{Name: "control", Service: controlListener})
+	}
+
+	// Last service: reverse shutdown cancels and joins expiry before drains/storage.
+	if processConfig.AuthExpiry != nil {
+		telemetry := oidcadapter.NewExpiryTelemetry()
+		worker, composeErr := composeAuthExpiry(
+			*processConfig.AuthExpiry,
+			storagePools.worker,
+			telemetry,
+			logger,
+		)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "browser_expiry_composition_failure")
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, telemetry)
+		roleServices = append(roleServices, app.OwnedService{Name: "browser-auth-expiry-worker", Service: worker})
 	}
 
 	build := buildinfo.Current()

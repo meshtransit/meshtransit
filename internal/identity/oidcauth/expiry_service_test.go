@@ -144,6 +144,29 @@ func TestExpiryPassValidatesWholeBatchAndStopsOnUnknown(t *testing.T) {
 	}
 }
 
+func TestExpiryPassPreservesClosedCleanupFailureFromListAndSetup(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"list", "begin"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+			snapshot := expirySnapshotFixture(t, false)
+			owner := &expiryTestStore{batch: []ExpirySnapshot{snapshot}}
+			failure := errors.Join(ErrExpiryCleanupFailed, errors.New("private-detail"))
+			if phase == "list" {
+				owner.listErr = failure
+			} else {
+				owner.beginErr = failure
+			}
+			service := expiryServiceFixture(t, owner, SystemClaimIDs{}, snapshot.ExpiresAt())
+			pass, err := service.Sweep(t.Context(), snapshot.DeploymentID())
+			if !errors.Is(err, ErrExpiryCleanupFailed) || pass.Confirmed != 0 ||
+				strings.Contains(err.Error(), "private-detail") {
+				t.Fatal("cleanup ownership class lost or dependency text exposed")
+			}
+		})
+	}
+}
+
 func TestExpiryPassTimeoutIsFinite(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -229,6 +252,7 @@ type expiryTestStore struct {
 	unit     *expiryTestUnit
 	batch    []ExpirySnapshot
 	beginErr error
+	listErr  error
 	begins   int
 	onList   func(context.Context)
 }
@@ -240,7 +264,7 @@ func (store *expiryTestStore) ListDue(ctx context.Context, _ deployment.ID, _ in
 	if store.onList != nil {
 		store.onList(ctx)
 	}
-	return store.batch, ctx.Err()
+	return store.batch, errors.Join(store.listErr, ctx.Err())
 }
 func (store *expiryTestStore) BeginExpiry(ctx context.Context, _ deployment.ID) (ExpiryTransaction, error) {
 	if _, ok := ctx.Deadline(); !ok {
