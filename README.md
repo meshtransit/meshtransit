@@ -792,7 +792,7 @@ HMAC vectors preserve both the existing verifier and new SID encoding.
 This foundation neither exposes a public callback/Set-Cookie route nor qualifies
 live Keycloak/Google, client deployment, operational HA/failover or Phase 1 completion.
 Keycloak remains the reference authority and Google through its broker remains
-the first live SSO target. Abandoned-row expiry/quarantine cleanup, bounded public
+the first live SSO target. Abandoned-row expiry polling/configuration, bounded public
 composition/abuse controls and exact target acceptance are the next release gates.
 Supported Mesh Client wire contracts are unchanged.
 
@@ -803,6 +803,57 @@ fixed in v0.56.0), and GO-2026-5932 (unmaintained OpenPGP, no fix). This exchang
 adds no dependency or SSH/OpenPGP imports. Do not label the dependency graph or
 production release advisory-free; dependency remediation and target-platform
 release scans remain separate release work.
+
+### Bounded abandoned browser-login expiry engine
+
+`ExpiryService` now runs an explicit Deployment-assigned, bounded no-grant pass.
+Forward migration 34 registers three worker-only capabilities: bounded original
+lifecycle selection, exact expiry and purpose-restricted evidence append. No
+auth/session table, generic audit/head or login/issuance grant is added to worker.
+No Workspace/provider join or broad FORCE-RLS policy is needed. Legacy NULL/zero
+creation hashes are explicitly excluded, not fabricated or silently repaired.
+
+One Auth per short owned unit locks the exact original pending1/consuming2 row
+before its existing Deployment audit head, even through quarantine/deletion, then
+uses fresh DB time after all waits. Deadline equality expires. Pending becomes
+expired2 with consumed_at equal to terminal time (a tombstone, NOT a browser
+claim); consuming becomes expired3 retaining original claim time. Immutable
+bindings remain; all three PKCE columns are erased atomically with
+deadline_expired, one fixed actor-NULL expiry audit/outbox pair and no Network
+revision, Session, Principal or role change. Existing issued Sessions are untouched.
+
+The new expiry function requires a fresh change and no other authority mutation
+in the current transaction before any row/head locks, including another change
+ID. An explicit transaction_id ledger index bounds this ownership guard; the
+existing Auth open-expiry index is reused. The evidence wrapper rejects unrelated
+mutations/scopes/payload fields, duplicate pairs and NULL/malformed head CAS inputs.
+The existing generic active/verified Deployment helper remains unchanged.
+
+The app prepares three fresh evidence UUIDv7 IDs before Begin and owns
+Expire/Commit plus separately bounded joined Rollback. Methods reject overlap
+without queuing. Only confirmed Commit releases opaque no-grant terminal evidence.
+Unknown Commit releases zero receipt and ends the current pass, never resolving
+or replaying that attempt. A later pass may reread durable open rows and use fresh
+IDs for new cleanup, not login/exchange retry. Batch/pass/unit/cleanup ceilings
+are 128/30s/30s/5s. PG metrics add only worker
+auth_expiry_{list,begin,apply,commit,rollback}, with fixed labels and sanitized errors.
+
+Source qualification covers real verified-TLS PostgreSQL pending/consuming expiry,
+revoked provider/Workspace, quarantined/deleted Deployment, stale metadata CAS,
+missing evidence rollback, hidden ACK after real durable Commit, duplicate and
+borrowed same/fresh-change evidence rejection, NULL head expectations, unchanged
+issued Sessions, canonical lifecycle/audit hash checks, two independent durable
+contenders and an actual audit-head wait with post-wait DB decision time. Unit/race
+tests cover bounded passes, preparation/cleanup failure, malformed metadata,
+nonqueued unit ownership, typed-nil safety and no-data labels; bounded parser fuzz
+and independent Ruby-generated hash vectors pin encoding.
+
+This is an explicit pass engine, NOT a started background worker or public login.
+Next: owned bounded poller, opt-in Deployment assignment/configuration and coverage
+telemetry; then protected BFF callback/abuse controls and exact target acceptance.
+Keycloak and SSO-only remain unchanged; first live login is Google through its
+broker. Supported Mesh Client wire contracts are unchanged. No live deployment,
+operational HA/failover or Phase 1 completion is claimed.
 
 The boundary threat model is fail-closed:
 

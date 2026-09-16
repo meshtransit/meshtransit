@@ -58,6 +58,11 @@ const (
 	postgresOperationAuthIssueApply            postgresOperation = "auth_issue_apply"
 	postgresOperationAuthIssueCommit           postgresOperation = "auth_issue_commit"
 	postgresOperationAuthIssueRollback         postgresOperation = "auth_issue_rollback"
+	postgresOperationAuthExpiryList            postgresOperation = "auth_expiry_list"
+	postgresOperationAuthExpiryBegin           postgresOperation = "auth_expiry_begin"
+	postgresOperationAuthExpiryApply           postgresOperation = "auth_expiry_apply"
+	postgresOperationAuthExpiryCommit          postgresOperation = "auth_expiry_commit"
+	postgresOperationAuthExpiryRollback        postgresOperation = "auth_expiry_rollback"
 	postgresOperationNodeKeyRotationBegin      postgresOperation = "node_key_rotation_begin"
 	postgresOperationNodeKeyRotationResolve    postgresOperation = "node_key_rotation_resolve"
 	postgresOperationNodeKeyRotationApply      postgresOperation = "node_key_rotation_apply"
@@ -122,6 +127,11 @@ var (
 		postgresOperationAuthIssueApply,
 		postgresOperationAuthIssueCommit,
 		postgresOperationAuthIssueRollback,
+		postgresOperationAuthExpiryList,
+		postgresOperationAuthExpiryBegin,
+		postgresOperationAuthExpiryApply,
+		postgresOperationAuthExpiryCommit,
+		postgresOperationAuthExpiryRollback,
 		postgresOperationNodeKeyRotationBegin,
 		postgresOperationNodeKeyRotationResolve,
 		postgresOperationNodeKeyRotationApply,
@@ -411,7 +421,12 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 	if role != PoolRoleWorker {
 		return false
 	}
-	return operation == postgresOperationOutboxBacklog ||
+	return operation == postgresOperationAuthExpiryList ||
+		operation == postgresOperationAuthExpiryBegin ||
+		operation == postgresOperationAuthExpiryApply ||
+		operation == postgresOperationAuthExpiryCommit ||
+		operation == postgresOperationAuthExpiryRollback ||
+		operation == postgresOperationOutboxBacklog ||
 		operation == postgresOperationOutboxClaim ||
 		operation == postgresOperationOutboxLoadRevision ||
 		operation == postgresOperationOutboxMarkDelivered ||

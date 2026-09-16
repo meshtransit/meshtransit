@@ -46,6 +46,7 @@ const (
 	oidcBrowserFailureDescription             = "OIDC browser failure terminal proof erasure"
 	oidcLoginSubjectResolutionDescription     = "read-only exact OIDC login subject resolution"
 	oidcSessionIssuanceDescription            = "atomic existing-subject OIDC session issuance"
+	oidcBrowserExpiryDescription              = "bounded abandoned OIDC browser expiry"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -147,6 +148,9 @@ var oidcLoginSubjectResolutionSQL string
 //go:embed 000033_oidc_existing_subject_session_issuance.up.sql
 var oidcSessionIssuanceSQL string
 
+//go:embed 000034_oidc_abandoned_browser_expiry.up.sql
+var oidcBrowserExpirySQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -199,6 +203,7 @@ func Catalog() []Migration {
 		newMigration(31, oidcBrowserFailureDescription, oidcBrowserFailureSQL),
 		newMigration(32, oidcLoginSubjectResolutionDescription, oidcLoginSubjectResolutionSQL),
 		newMigration(33, oidcSessionIssuanceDescription, oidcSessionIssuanceSQL),
+		newMigration(34, oidcBrowserExpiryDescription, oidcBrowserExpirySQL),
 	}
 }
 

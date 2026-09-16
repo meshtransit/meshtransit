@@ -235,6 +235,31 @@ func TestMapSessionMetricsUseRuntimePoolRole(t *testing.T) {
 	}
 }
 
+func TestExpiryMetricsAreWorkerOnlyClosedLabels(t *testing.T) {
+	t.Parallel()
+	metrics := newPostgresPoolMetrics(PoolRoleWorker, func() postgresPoolStats { return postgresPoolStats{} })
+	for _, operation := range []postgresOperation{
+		postgresOperationAuthExpiryList, postgresOperationAuthExpiryBegin, postgresOperationAuthExpiryApply,
+		postgresOperationAuthExpiryCommit, postgresOperationAuthExpiryRollback,
+	} {
+		if !operation.validForRole(PoolRoleWorker) || operation.validForRole(PoolRoleRuntime) {
+			t.Fatal("expiry role metrics widened")
+		}
+		metrics.observeOperation(operation, time.Millisecond, errors.New("private-subject-cookie-ciphertext"))
+	}
+	collector, err := NewMetricsCollector(&Pool{role: PoolRoleWorker, metrics: metrics})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := gatherPostgresMetrics(t, collector)
+	if strings.Contains(body, "private-subject-cookie-ciphertext") || strings.Contains(body, `operation="auth_issue_apply"`) {
+		t.Fatal("expiry telemetry disclosed private data or serving operation")
+	}
+	if !strings.Contains(body, `operation="auth_expiry_apply",pool_role="worker",result="error"} 1`) {
+		t.Fatal("worker expiry fixed operation metric missing")
+	}
+}
+
 func gatherPostgresMetrics(t *testing.T, collector prometheus.Collector) string {
 	t.Helper()
 
