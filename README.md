@@ -583,6 +583,39 @@ terminal expiry/erasure, layered abuse controls, and HA composition must pass
 before enabling browser login. Keycloak remains the reference IdP; SSO-only
 login and Mesh Client wire contracts are unchanged.
 
+Pending browser verification now uses a separate owned READ COMMITTED, READ ONLY
+unit and forward migration 29's runtime-only
+`mesh_ops.load_oidc_pending_browser_v1`. It selects only current version-one
+pending browser login evidence by the purpose-separated state HMAC and exact
+Core-owned route, including redirect/return labels. Requested Workspace scope
+is cleared on every path; runtime keeps no AuthTransaction table grants.
+Typed scanning validates raw algorithms and exact lengths, then recomputes the
+unchanged creation binding hash from original ciphertext and canonical times.
+It neither reseals nor backfills legacy evidence. The complete database unit has
+a 30-second maximum deadline and separately bounded joined cleanup. Missing,
+malformed, canceled, completion-failed, or cleanup-failed reads release no proof.
+Private pool metrics add only the fixed `auth_transaction_pending` operation.
+
+`BrowserVerificationService` opens browser AEAD and checks constant-time state/
+cookie HMACs only after read resources close, using exact resident key generations
+without fallback. Fresh time and cancellation checks precede opaque
+`VerifiedBrowser` release. That value contains no plaintext PKCE verifier and has
+no verifier accessor. Disposable PostgreSQL/TLS integration round-trips real
+StartService evidence, checks route/lifecycle/generation/epoch and privilege/
+scope boundaries, rejects URL-only possession, and confirms reads do not change
+authority, audit, outbox, or Network revision. Equivalent verification instances
+need no sticky routing, but verification can succeed more than once: it is not a
+single-use claim, exchange grant, session, or revocation lease.
+
+The next callback slice must atomically claim `pending -> consuming` with current
+authority locks and audit/outbox, checking live expiry after lock waits. Only
+confirmed claim commit may release exchange material; uncertain completion must
+fail closed without creation resolution or reclaim. Public callback/listeners
+remain disabled. Token validation, Core-session rotation, terminal expiry/erasure,
+abuse controls, and HA/Google-through-Keycloak acceptance are still required.
+Released migrations 27/28, application generation 1, SSO-only policy, and Mesh
+Client wire contracts remain unchanged.
+
 The boundary threat model is fail-closed:
 
 - Spoofing and mix-up: exact issuer, discovery, authorization, token, JWKS,

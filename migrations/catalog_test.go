@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 28 {
-		t.Fatalf("len(Catalog()) = %d, want 28", len(catalog))
+	if len(catalog) != 29 {
+		t.Fatalf("len(Catalog()) = %d, want 29", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 28 {
-		t.Fatalf("LatestVersion() = %d, want 28", LatestVersion())
+	if LatestVersion() != 29 {
+		t.Fatalf("LatestVersion() = %d, want 29", LatestVersion())
 	}
 }
 
@@ -1121,6 +1121,36 @@ func TestOIDCLoginRouteAdmissionIsNarrowReadOnlyCapability(t *testing.T) {
 	} {
 		if strings.Contains(admission.SQL, forbidden) {
 			t.Errorf("route admission SQL contains excessive capability %q", forbidden)
+		}
+	}
+}
+
+func TestOIDCPendingBrowserEvidenceIsReadOnlyAndNotAClaim(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[28]
+	if migration.Description != "read-only OIDC pending browser evidence" {
+		t.Fatal("incorrect migration 29 description")
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.load_oidc_pending_browser_v1", "SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh, mesh_ops", "mesh_ops.admit_oidc_login_route_v1",
+		"p_workspace_public_id::TEXT", "EXCEPTION WHEN OTHERS", "pg_catalog.clock_timestamp()",
+		"auth.state = 'pending' AND auth.version = 1", "auth.binding_semantic_hash IS NOT NULL",
+		"auth.state_digest = p_state_digest", "auth.return_route_id = p_return_route_id",
+		"auth.expires_at > observed_at", "provider.current_generation = p_provider_generation",
+		"client.allowed_scopes = p_scopes", "client.allowed_algorithms = p_allowed_algorithms",
+		"FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer", "TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("pending browser SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT UPDATE", "GRANT INSERT", "GRANT DELETE", "GRANT ALL", "BYPASSRLS",
+		"INSERT INTO", "UPDATE mesh.", "DELETE FROM", "ALTER TABLE", "FOR SHARE", "FOR UPDATE", "DROP ",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("pending browser SQL excessive capability %q", forbidden)
 		}
 	}
 }
