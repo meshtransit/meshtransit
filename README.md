@@ -926,12 +926,53 @@ transport/metadata/cookie ambiguity, cancellation, immutable input, redaction an
 fixed telemetry labels; bounded fuzz smoke qualifies adversarial query input.
 No schema/configuration version, client protocol or public login default changes.
 
-GET/HEAD authority remains read-only. Next: no-grant encrypted host-cookie capture
-and clean local redirect before active content, then a protected same-origin POST
+GET/HEAD authority remains read-only. The encrypted host-cookie capture and clean
+redirect primitive below is now present; next is a protected same-origin POST
 continuation with shared abuse budgets and fresh durable proof/claim/exchange/
 issuance. Before public deployment, suppress callback query logging/tracing at
 both edge and BFF and prove exact-target expiry/recovery coverage. These are
 still gates, not implemented public Google/Keycloak or client acceptance.
+
+### Encrypted no-grant callback capture
+
+`LoginCallbackCapsuleCodec` seals reader input under a separately resident
+AES-256-GCM key, fresh OS-CSPRNG nonce and authenticated version/key ID. Its AAD
+binds every ordered fixed Route parameter, generations/recovery epoch, cookie
+purpose, clean destination and the current independent pre-auth cookie. Replacing
+route/key/cookie invalidates capture; no old-key, verifier or sticky-session fallback.
+Operators must rotate before 2^32 aggregate seals per key across replicas/restarts,
+as required by the [GCM random-nonce budget](https://pkg.go.dev/crypto/cipher#NewGCMWithRandomNonce).
+No process-local counter proves that deployment-wide limit.
+
+The canonical bounded plaintext contains issued/expiry seconds, the closed kind,
+state and exact length-prefixed code or generic provider-error disposition. Strict
+30–120-second TTL, no future/skew/expiry-equality grace, initial code bound 2048
+bytes, base64url value bound 3800 bytes and full Set-Cookie <4096 bytes reject
+oversize/ambiguous input without compression, splitting or URL/storage spillover.
+This temporary deadline is not the durable AuthTransaction's authority deadline.
+Pinned Keycloak code lengths and actual browser/proxy behavior still need proof.
+
+`LoginCallbackCapture.WriteRedirect` releases only a checked live encrypted
+`__Host-mt_login_callback` Secure/HttpOnly/Lax/Path=/ cookie, no Domain, and a
+fixed clean `/auth/v1/login/continue` 303 with zero body/query and no-store/CSP/
+framing/referrer protections. No active content or original query is emitted.
+Open returns untrusted typed input only: replayable within TTL, never verified
+browser possession, claim, exchange or Session authority. Clear expires only
+this cookie scope; it does not erase durable proof or revoke Sessions.
+
+Unit/shuffled race tests cover both variants, byte tamper, every route dimension,
+key/cookie replacement, expiry/cancellation, entropy failure, bounds, defensive
+key ownership, redaction and clean redirect. Separate bounded fuzz targets cover
+the envelope, authenticated payload parser and cookie parser. Isolated private
+capsule count/duration metrics have only closed operation/result labels; accepted
+is not authentication or HTTP delivery. No public metric registration is added.
+
+This source primitive opens no listener and changes no schema/config version or
+supported client wire. Next: protected same-origin POST/CSRF composition with
+shared abuse budgets, fresh durable verification, single-use claim, exchange,
+exact-subject issuance and fresh session rotation. Before any public login,
+qualify edge/BFF query-log/trace suppression, nonce/key operational limits,
+exact-target expiry/recovery and Google-through-Keycloak/client acceptance.
 
 The boundary threat model is fail-closed:
 
