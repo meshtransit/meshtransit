@@ -77,6 +77,35 @@ func (result CallbackResult) Issued() IssueResult { return result.issued }
 // Failure returns confirmed no-grant erasure; zero for an issued Session result.
 func (result CallbackResult) Failure() FailureResult { return result.failure }
 
+// Route returns the original confirmed route, never request-selected scope.
+// A zero or ambiguous result has no route. Metadata alone grants no authority.
+func (result CallbackResult) Route() Route {
+	if !result.IsValid() {
+		return Route{}
+	}
+	if result.issued.IsValid() {
+		return result.issued.issued.command.lookup.Snapshot().Route()
+	}
+	return result.failure.terminal.claimed.snapshot.Route()
+}
+
+// IsLiveAt checks response-release time, not current durable authority or RBAC.
+// It cannot renew evidence or authorize a later request without authentication.
+func (result CallbackResult) IsLiveAt(now time.Time) bool {
+	if !result.IsValid() || now.IsZero() {
+		return false
+	}
+	if result.issued.IsValid() {
+		issued := result.issued.issued
+		command := issued.command
+		ordered := !now.Before(issued.at) && !now.Before(command.subject.EvaluatedAt())
+		liveEvidence := liveClaim(command.lookup.Claimed(), now) && now.Before(command.providerExpiresAt)
+		return ordered && liveEvidence && issued.session.IsActiveAt(now)
+	}
+	terminal := result.failure.terminal
+	return !now.Before(terminal.at) && liveClaim(terminal.claimed, now)
+}
+
 // String prevents accidental callback result credential disclosure.
 func (CallbackResult) String() string { return "[REDACTED]" }
 

@@ -1111,7 +1111,8 @@ callback active/count/duration metrics have only a closed result label; no
 global/public registration or raw error/identity/credential data.
 
 No wire, schema, configuration or disabled public-login default changes.
-Session-cookie rotation, safe read-only BFF/HTTP response composition, runtime
+The private confirmed browser completion profile below addresses cookie/response
+composition. Safe read-only BFF landing, runtime
 metrics/tracing, query-log suppression, intended expiry/clock/recovery coverage,
 and pinned Google-through-Keycloak/client/HA acceptance remain separate gates.
 
@@ -1131,6 +1132,71 @@ The boundary threat model is fail-closed:
 - Elevation of privilege: provider roles, groups, Organization, email, and
   mutable claims are absent from authorization construction and cannot create
   Core membership or RBAC.
+
+### Confirmed browser completion response
+
+`SSO-BROWSER-COMPLETION-001` privately composes protected continuation admission,
+callback orchestration and response delivery. `LoginCompletion.Complete` owns one
+request-derived <=30-second context and non-queuing 1–128-slot capacity through
+joined cleanup and delivery; it creates no goroutine, route or per-browser state.
+It rejects invalid/typed-nil dependencies, unsafe return mappings and dirty
+credential/redirect/length/transfer response headers before effects. It bounds
+HTTP input before copying headers. The gate's shorter child context/deadlines
+never replace the whole request: restore transport deadlines before provider/
+database work, and clamp to an earlier caller deadline.
+
+Only an opaque confirmed fresh callback result matching the entire configured
+Route can reach delivery. `CallbackResult.Route/IsLiveAt` preserve original
+binding and exclusive claim/provider/Session expiry plus DB issue/subject-read
+time; these are release checks, NOT a current RBAC or revocation decision.
+Continuation CSRF/capsule checks remain fresh after provider/DB waits. Fixed
+Core-owned ReturnRouteID maps to a canonical local ASCII return_path <=256 bytes;
+no request-selected URL, query, fragment, encoding, backslash, dot/double-slash
+path or auth loop is allowed.
+
+Successful AJAX POST returns 200 JSON with only return_path. Bearer material
+exists only in one __Host-mt_session Set-Cookie: Secure, HttpOnly, SameSite=Lax,
+Path=/, no Domain. Expires/Max-Age round DOWN to the earlier idle/absolute expiry,
+require at least one remaining second and never exceed 24h. No new lifetime or
+refresh is implied. Incoming Session/pre-auth/capture/intent material never
+becomes the new CSPRNG bearer. A private bounded complete header candidate passes
+encoding/cancellation checks before touching the writer; each full cookie <4096
+bytes, combined headers retain the existing 16384-byte/64-field/128-value bounds.
+
+Success replaces the Session and expires the exact pre-auth, callback capture and
+login-init cookie scopes. Confirmed provider error returns generic 403 JSON and
+expires only those three transient scopes, never a retained Session. Other
+failures release no status/body/cookies; closed errors preserve only safe
+cancellation/unknown-Commit classifications for the future caller. No arbitrary
+dependency diagnostics or credential/identity/header material enters metrics,
+logs, body, URL or redirects. Security/no-store headers remain mandatory.
+
+`ErrLoginCompletionDelivery` means response delivery began and may be partial.
+Never rewrite/retry it or infer non-commit; no post-issuance failure/resolver is
+called. Write success does not acknowledge browser receipt. An undisclosed
+committed Session uses normal expiry/revocation. Isolated private
+meshtransit_browser_completion_requests_active, requests_total and
+duration_seconds metrics have only a closed result label; duration includes
+joined cleanup/delivery. Runtime tracing/metrics registration is a separate gate.
+
+Unit/race tests target typed-nil construction, clean local paths, HTTP/CSRF
+admission, response-header ownership, parent/transport deadlines, zero-output
+unknown commits, fail-fast whole-request capacity/leak-free joins and closed
+telemetry. Fuzz targets local return-path parsing. Disposable verified-TLS
+PostgreSQL fixtures exercise the complete reader/capture/continuation/application/
+cookie pipeline with a controlled trusted provider and budget port; they are
+not live Google signatures, Redis failover or public browser acceptance.
+All 18 durable completion scenarios and the full platform gate pass in the
+explicit pinned Linux lane. They retain exact Session/anonymous-operation,
+audit/outbox/proof-erasure and no-JIT/role/membership/Network assertions. Additional
+delivery cases cover partial/short writes and suppression after real confirmed
+issuance for expired continuation while Session remains live, backward clock,
+subsecond cookie lifetime, cancellation, complete-route substitution and combined
+header budget. The already documented native-host clock failure is not waived.
+Public runtime/routes, the safe read-only landing, authenticated management
+cookie-CSRF, proxy/query-log suppression, intended expiry/clock/recovery coverage
+and pinned Google-through-Keycloak/client/HA acceptance remain separate gates.
+No wire, schema, dependency, configuration or disabled public-login default changes.
 
 ## Account Session authentication
 

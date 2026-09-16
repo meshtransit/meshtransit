@@ -49,14 +49,18 @@ func assertPostgreSQLBrowserCallback(
 	for index, scenario := range []string{
 		"confirmed", "provider error", "provider failure", "missing subject", "missing auth time",
 		"unknown claim commit", "unknown issue commit", "canceled after issue commit",
-		"issue evidence failure", "unknown failure commit",
+		"issue evidence failure", "unknown failure commit", "delivery failure", "short write",
+		"continuation expired after commit", "backward clock after commit", "cookie subsecond after commit",
+		"canceled before response", "wrong response route after commit",
+		"response header budget after commit",
 	} {
 		t.Run("callback "+scenario, func(t *testing.T) {
 			params, nonce, startDeps := integrationCallbackStart(
 				ctx,
 				t,
 				store,
-				[]string{"ee0", "ee1", "ee2", "ee3", "ee4", "ee5", "ee6", "ee7", "ee8", "ee9"}[index],
+				[]string{"ee0", "ee1", "ee2", "ee3", "ee4", "ee5", "ee6", "ee7", "ee8", "ee9", "eea", "eeb",
+					"eec", "eed", "eee", "eef", "ef0", "ef1"}[index],
 			)
 			if scenario == "provider error" || scenario == "unknown failure commit" {
 				params.Kind, params.Code = oidcauth.CallbackProviderErrorReceived, oidcauth.Code{}
@@ -83,15 +87,23 @@ func assertPostgreSQLBrowserCallback(
 			provider := &integrationCallbackProvider{
 				claims: claims, nonce: nonce, fault: scenario,
 			}
+			clock := &integrationCompletionClock{}
+			idleLifetime := time.Minute
+			if scenario == "continuation expired after commit" {
+				idleLifetime = 5 * time.Minute
+			}
+			if scenario == "cookie subsecond after commit" {
+				idleLifetime = 5 * time.Second
+			}
 			service, err := oidcauth.NewCallbackService(oidcauth.CallbackOptions{
 				RequestTimeout: 20 * time.Second, FailureTimeout: 5 * time.Second, RollbackTimeout: 2 * time.Second,
-				IdleLifetime: time.Minute, AbsoluteLifetime: time.Hour, MaxConcurrent: 2,
+				IdleLifetime: idleLifetime, AbsoluteLifetime: time.Hour, MaxConcurrent: 2,
 			}, oidcauth.CallbackDependencies{
 				Pending: store, Claims: claims, Failures: failures, Issues: issuePort,
 				IDs: oidcauth.SystemClaimIDs{}, Material: oidcauth.SystemIssueMaterial{},
 				Provider: provider, Subjects: store, DigestKey: startDeps.DigestKey,
 				VerifierCipher: startDeps.VerifierCipher, SubjectKeys: subjects, SessionKeys: sessions,
-				ProviderSessions: sid, Clock: oidcauth.SystemStartClock{}, Observer: adapteroidc.NewCallbackTelemetry(),
+				ProviderSessions: sid, Clock: clock, Observer: adapteroidc.NewCallbackTelemetry(),
 				SubjectObserver: adapteroidc.NewSubjectTelemetry(), IssueObserver: adapteroidc.NewIssueTelemetry(),
 			})
 			if err != nil {
@@ -99,11 +111,22 @@ func assertPostgreSQLBrowserCallback(
 			}
 			before := authAdmissionAuthorityCounts(ctx, t, admin)
 			identityBefore := integrationCallbackIdentityCounts(ctx, t, admin)
-			result, callbackErr := service.CompleteBrowser(request, command)
-			issued := scenario == "confirmed" || scenario == "unknown issue commit" || scenario == "canceled after issue commit"
+			port, writer, completionErr := integrationBrowserCompletion(request, t, integrationCompletionOptions{
+				params: params, service: service, scenario: scenario, clock: clock, cancel: cancel,
+			})
+			assertBrowserCompletionResponse(t, port, writer, completionErr, scenario)
+			if scenario == "canceled before response" && !errors.Is(completionErr, context.Canceled) {
+				t.Fatal("HTTP post-commit cancellation category lost")
+			}
+			result, callbackErr := port.result, port.err
+			responseSuppressed := scenario == "continuation expired after commit" || scenario == "backward clock after commit" ||
+				scenario == "cookie subsecond after commit" || scenario == "canceled before response" ||
+				scenario == "wrong response route after commit" || scenario == "response header budget after commit"
+			confirmedIssue := scenario == "confirmed" || scenario == "delivery failure" || scenario == "short write" || responseSuppressed
+			issued := confirmedIssue || scenario == "unknown issue commit" || scenario == "canceled after issue commit"
 			terminal := scenario == "provider error" || scenario == "provider failure" || scenario == "missing subject" ||
 				scenario == "unknown failure commit"
-			if scenario == "confirmed" {
+			if confirmedIssue {
 				if callbackErr != nil || !result.Issued().IsValid() || result.Failure().IsValid() {
 					t.Fatalf("whole callback issuance failed: %v", callbackErr)
 				}
