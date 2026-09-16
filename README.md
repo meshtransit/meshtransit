@@ -1198,6 +1198,49 @@ cookie-CSRF, proxy/query-log suppression, intended expiry/clock/recovery coverag
 and pinned Google-through-Keycloak/client/HA acceptance remain separate gates.
 No wire, schema, dependency, configuration or disabled public-login default changes.
 
+### Private browser composition recipe
+
+`SSO-BROWSER-COMPOSITION-001` constructs private initiation, callback
+reader/capture, continuation, confirmed completion and clean landing from one
+Core-owned Route/Origin/local return mapping and a shared live clock. Explicit
+application and shared-budget ports reject nil/typed-nil before effects. Three
+resident 256-bit keys require distinct IDs and nonzero distinct material;
+transaction, Session and rate-limit keys must remain separate too. Constructors
+copy resident keys and bounded proxy inputs; caller owns input erasure. At most
+16 canonical distinct proxy prefixes, never /0 or IPv4-mapped prefixes. No
+provider/database/budget/entropy/listener effect occurs during construction.
+Seven component collectors register only in a new isolated private registry;
+the root must explicitly register its combined collector on private telemetry.
+
+Callback GET Capture owns its complete <=30-second caller-clamped context,
+mandatory read/write deadlines and non-queuing 1–128-slot capacity through
+submission. Strict reader admission (plus rejection of Authorization custody)
+precedes purpose-separated shared source/state budgets and OS entropy. It never
+verifies durable possession, claims, exchanges or issues authority. Prepare
+the complete redirect headers privately, reject credential/navigation/encoding/
+reporting middleware, check combined header limits and fresh time/cancellation,
+then submit exactly one encrypted host-cookie/zero-body 303 to the fixed clean
+path. Pre-release errors change no caller header/status/body; no retry or rewrite.
+Closed capture active/count/duration metrics mean submission, not browser receipt
+or authentication. Other components retain independent documented capacities
+and deadlines; admission/capture and whole-completion timeouts are explicit and
+separate. The durable fixture retains 5-second admission/25-second completion.
+
+Named source/race tests cover invalid profiles/key-purpose reuse, immutable keys
+and observable source/state budget bindings, initiation-only behavior, protected
+continuation, fail-closed budget/transport/time/header boundaries, joined capacity,
+redaction, closed telemetry and verified test-CA HTTPS. Bounded capture HTTP fuzz
+checks no GET authority/reflection. The existing 18 durable completion scenarios
+now run through the recipe/capture and read-only GET/HEAD landing without changing
+authority oracles; provider/budget ports remain controlled, not live acceptance.
+
+This recipe is not public runtime/config wiring: no environment flag, secret
+loader, public dispatcher or listener is added. Management cookie authentication/
+CSRF, private runtime metrics/tracing, edge/BFF query-log suppression, native-host
+clock, intended expiry/recovery, Google-through-Keycloak/client/HA and artifact
+acceptance remain separate gates. No schema, client wire, dependencies,
+configuration or disabled public-login default changes.
+
 ### Clean read-only continuation landing
 
 `SSO-CONTINUATION-LANDING-001` privately presents exact clean origin-form GET/HEAD

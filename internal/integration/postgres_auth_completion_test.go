@@ -31,7 +31,10 @@ type integrationCompletionCallback struct {
 	override oidcauth.CallbackCommand
 }
 
-func (port *integrationCompletionCallback) CompleteBrowser(ctx context.Context, command oidcauth.CallbackCommand) (oidcauth.CallbackResult, error) {
+func (port *integrationCompletionCallback) CompleteBrowser(
+	ctx context.Context,
+	command oidcauth.CallbackCommand,
+) (oidcauth.CallbackResult, error) {
 	port.calls++
 	if port.override.IsValid() {
 		command = port.override
@@ -69,8 +72,30 @@ func (writer *integrationCompletionWriter) Write(body []byte) (int, error) {
 // durable callback/issuance and response-cookie authority are the scope of this fixture.
 type integrationCompletionBudget struct{}
 
-func (integrationCompletionBudget) Allow(_ context.Context, _ ratelimit.Subject, policy ratelimit.Policy) (ratelimit.Decision, error) {
-	return ratelimit.NewDecision(true, policy.Capacity(), policy.Capacity()-1, 0)
+func (integrationCompletionBudget) Allow(
+	_ context.Context,
+	_ ratelimit.Subject,
+	policy ratelimit.Policy,
+) (ratelimit.Decision, error) {
+	return ratelimit.NewDecision(
+		true,
+		policy.Capacity(),
+		policy.Capacity()-1,
+		0,
+	)
+}
+
+// Callback qualification must never invoke login initiation or transaction creation.
+type integrationCompletionInitiation struct{ test *testing.T }
+
+func (port integrationCompletionInitiation) Admit(context.Context, oidcauth.Route) error {
+	port.test.Error("callback fixture invoked initiation admission")
+	return errors.New("unexpected fixture initiation")
+}
+
+func (port integrationCompletionInitiation) Start(context.Context, oidcauth.Route) (oidcauth.StartResult, error) {
+	port.test.Error("callback fixture invoked transaction creation")
+	return oidcauth.StartResult{}, errors.New("unexpected fixture initiation")
 }
 
 type integrationCompletionClock struct {
@@ -138,51 +163,16 @@ func integrationBrowserCompletion(
 	} else {
 		query.Set("code", params.Code.Encoded())
 	}
-	request := httptest.NewRequestWithContext(ctx, http.MethodGet, callbackURL.Path+"?"+query.Encode(), nil)
+	request := httptest.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		callbackURL.Path+"?"+query.Encode(),
+		nil,
+	)
 	request.Host = callbackURL.Host
 	request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, HandshakeComplete: true}
 	request.Header.Set("Cookie", adapteroidc.PreAuthCookieName+"="+params.PreAuthCookie.Encoded())
-	reader, err := httpapi.NewLoginCallbackReader(httpapi.LoginCallbackReaderOptions{
-		Route: params.Route, Observer: httpapi.NewLoginCallbackTelemetry(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	input, err := reader.Read(ctx, request)
-	if err != nil {
-		t.Fatal("synthetic callback transport rejected", err)
-	}
-	codec, err := httpapi.NewLoginCallbackCapsuleCodec(httpapi.LoginCallbackCapsuleOptions{
-		Route: params.Route, KeyID: "integration-capture-v1", KeyMaterial: bytes.Repeat([]byte{0x71}, 32),
-		Lifetime: time.Minute, Observer: httpapi.NewLoginCapsuleTelemetry(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	capture, err := codec.Capture(ctx, input, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	captured := httptest.NewRecorder()
-	if err := capture.WriteRedirect(ctx, captured, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	capturedResponse := captured.Result()
-	cookies := capturedResponse.Cookies()
-	if err := capturedResponse.Body.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if len(cookies) != 1 {
-		t.Fatal("capture cookie missing")
-	}
 	origin := "https://" + callbackURL.Host
-	guard, err := adapteroidc.NewLoginContinuationGuard(adapteroidc.LoginContinuationOptions{
-		Route: params.Route, Origin: origin, KeyID: "integration-continuation-v1",
-		KeyMaterial: bytes.Repeat([]byte{0x72}, 32), Lifetime: time.Minute,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	rateKeyID, err := ratelimit.NewDigestKeyID("integration-completion-rate-v1")
 	if err != nil {
 		t.Fatal(err)
@@ -194,27 +184,6 @@ func integrationBrowserCompletion(
 	policy, err := ratelimit.NewPolicy(20, time.Second)
 	if err != nil {
 		t.Fatal(err)
-	}
-	gate, err := httpapi.NewLoginContinuationGate(httpapi.LoginContinuationGateOptions{
-		CSRF: guard, Capsule: codec, RateLimitSubjects: digester, RateLimiter: integrationCompletionBudget{},
-		SourceRateLimit: policy, StateRateLimit: policy, Clock: options.clock,
-		Observer: httpapi.NewLoginContinuationTelemetry(), RequestTimeout: 5 * time.Second, MaxConcurrentRequests: 2,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	post := func(path string) *http.Request {
-		request := httptest.NewRequestWithContext(ctx, http.MethodPost, path, strings.NewReader("{}"))
-		request.Host, request.RemoteAddr = callbackURL.Host, "192.0.2.10:12345"
-		request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, HandshakeComplete: true}
-		request.Header.Set("Origin", origin)
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("X-Meshtransit-Login", "v1")
-		// A previously stored cookie is syntactic input only. It must never become
-		// the new bearer, be validated as provider proof, or be erased on errors.
-		request.Header.Set("Cookie", adapteroidc.PreAuthCookieName+"="+params.PreAuthCookie.Encoded()+"; "+
-			adapteroidc.LoginCallbackCookieName+"="+cookies[0].Value+"; "+httpapi.AccountSessionCookieName+"=old-synthetic-session")
-		return request
 	}
 	port := &integrationCompletionCallback{service: options.service, override: override}
 	port.after = func(result oidcauth.CallbackResult) {
@@ -233,19 +202,58 @@ func integrationBrowserCompletion(
 			options.cancel()
 		}
 	}
-	completion, err := httpapi.NewLoginCompletion(httpapi.LoginCompletionOptions{
-		Admission: gate, Callback: port, ReturnRouteID: params.Route.ReturnRouteID(), ReturnPath: "/console",
-		Observer: httpapi.NewLoginCompletionTelemetry(), RequestTimeout: 25 * time.Second, MaxConcurrent: 2,
+	browser, err := httpapi.NewBrowserLogin(httpapi.BrowserLoginOptions{
+		Route: params.Route, Origin: origin, ReturnPath: "/console",
+		InitiationKey:   httpapi.BrowserLoginKey{ID: "integration-initiation-v1", Material: bytes.Repeat([]byte{0x76}, 32)},
+		CaptureKey:      httpapi.BrowserLoginKey{ID: "integration-capture-v1", Material: bytes.Repeat([]byte{0x71}, 32)},
+		ContinuationKey: httpapi.BrowserLoginKey{ID: "integration-continuation-v1", Material: bytes.Repeat([]byte{0x72}, 32)},
+		IntentLifetime:  time.Minute, CaptureLifetime: time.Minute, ContinuationLifetime: time.Minute,
+		Admission: integrationCompletionInitiation{test: t}, Starter: integrationCompletionInitiation{test: t},
+		Callback:          port,
+		RateLimitSubjects: digester, RateLimiter: integrationCompletionBudget{},
+		SourceRateLimit: policy, StateRateLimit: policy, Clock: options.clock,
+		RequestTimeout: 5 * time.Second, CompletionTimeout: 25 * time.Second, MaxConcurrent: 2,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	landing, err := httpapi.NewLoginContinuationLanding(httpapi.LoginContinuationLandingOptions{
-		Completion: completion, Observer: httpapi.NewLoginLandingTelemetry(),
-		RequestTimeout: 5 * time.Second, MaxConcurrent: 2,
-	})
-	if err != nil {
+	captured := &integrationCompletionWriter{ResponseRecorder: httptest.NewRecorder()}
+	if err := browser.Capture(captured, request); err != nil {
+		t.Fatal("private recipe callback capture rejected", err)
+	}
+	unexpectedCaptureEffects := port.calls != 0 || captured.statusWrites != 1
+	invalidCaptureResponse := captured.Code != http.StatusSeeOther || captured.Body.Len() != 0 ||
+		captured.Header().Get("Location") != httpapi.LoginCallbackContinuePath
+	if unexpectedCaptureEffects || invalidCaptureResponse {
+		t.Fatal("callback GET invoked authority or failed clean zero-body redirect")
+	}
+	capturedResponse := captured.Result()
+	cookies := capturedResponse.Cookies()
+	if err := capturedResponse.Body.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if len(cookies) != 1 || cookies[0].Name != adapteroidc.LoginCallbackCookieName {
+		t.Fatal("capture cookie missing or Session issued on GET")
+	}
+	gate, completion, landing := browser.Continuation(), browser.Completion(), browser.Landing()
+	post := func(path string) *http.Request {
+		request := httptest.NewRequestWithContext(
+			ctx,
+			http.MethodPost,
+			path,
+			strings.NewReader("{}"),
+		)
+		request.Host, request.RemoteAddr = callbackURL.Host, "192.0.2.10:12345"
+		request.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, HandshakeComplete: true}
+		request.Header.Set("Origin", origin)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Meshtransit-Login", "v1")
+		// A retained Session is syntax only, never new issuance or provider proof.
+		retainedCookies := adapteroidc.PreAuthCookieName + "=" + params.PreAuthCookie.Encoded() + "; " +
+			adapteroidc.LoginCallbackCookieName + "=" + cookies[0].Value + "; " +
+			httpapi.AccountSessionCookieName + "=old-synthetic-session"
+		request.Header.Set("Cookie", retainedCookies)
+		return request
 	}
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		clean := httptest.NewRequestWithContext(
@@ -260,8 +268,10 @@ func integrationBrowserCompletion(
 		if err := landing.Present(presented, clean); err != nil {
 			t.Fatal("clean static landing rejected", err)
 		}
-		if port.calls != 0 || presented.statusWrites != 1 || presented.Code != http.StatusOK ||
-			presented.Header().Get("Set-Cookie") != "" || presented.Header().Get("Location") != "" {
+		unexpectedLandingEffects := port.calls != 0 || presented.statusWrites != 1
+		invalidLandingResponse := presented.Code != http.StatusOK || presented.Header().Get("Set-Cookie") != "" ||
+			presented.Header().Get("Location") != ""
+		if unexpectedLandingEffects || invalidLandingResponse {
 			t.Fatal("GET/HEAD landing touched callback authority/cookies")
 		}
 		if method == http.MethodHead && presented.Body.Len() != 0 {
@@ -305,15 +315,19 @@ func assertBrowserCompletionResponse(
 	if port.calls != 1 {
 		t.Fatal("HTTP completion did not invoke exactly one callback")
 	}
-	if scenario != "confirmed" && scenario != "provider error" && scenario != "delivery failure" && scenario != "short write" {
-		if err == nil || writer.statusWrites != 0 || writer.Body.Len() != 0 || writer.Header().Get("Set-Cookie") != "" {
+	confirmedResponse := scenario == "confirmed" || scenario == "provider error"
+	partialResponse := scenario == "delivery failure" || scenario == "short write"
+	if !confirmedResponse && !partialResponse {
+		unexpectedDelivery := writer.statusWrites != 0 || writer.Body.Len() != 0
+		if err == nil || unexpectedDelivery || writer.Header().Get("Set-Cookie") != "" {
 			t.Fatal("failed/unknown callback wrote credentials or response")
 		}
 		return
 	}
 	if scenario == "delivery failure" || scenario == "short write" {
-		if !errors.Is(err, httpapi.ErrLoginCompletionDelivery) || port.err != nil || !port.result.Issued().IsValid() ||
-			writer.statusWrites != 1 || strings.Contains(err.Error(), "private writer diagnostic") {
+		invalidDelivery := !errors.Is(err, httpapi.ErrLoginCompletionDelivery) || port.err != nil
+		invalidEvidence := !port.result.Issued().IsValid() || writer.statusWrites != 1
+		if invalidDelivery || invalidEvidence || strings.Contains(err.Error(), "private writer diagnostic") {
 			t.Fatal("partial response inferred non-commit or hid delivery failure")
 		}
 	} else if err != nil {
@@ -330,18 +344,23 @@ func assertBrowserCompletionResponse(
 	if scenario == "provider error" {
 		wantCookies = 3
 	}
-	if len(cookies) != wantCookies || writer.Header().Get("Location") != "" || writer.Header().Get("Cache-Control") != "no-store" {
+	invalidResponseHeaders := writer.Header().Get("Location") != "" ||
+		writer.Header().Get("Cache-Control") != "no-store"
+	if len(cookies) != wantCookies || invalidResponseHeaders {
 		t.Fatal("cookie scopes, clean response or no-store lost")
 	}
 	for _, cookie := range cookies {
-		if cookie.Domain != "" || cookie.Path != "/" || !cookie.Secure || !cookie.HttpOnly || len(cookie.String()) >= 4096 {
+		invalidScope := cookie.Domain != "" || cookie.Path != "/"
+		invalidFlags := !cookie.Secure || !cookie.HttpOnly
+		if invalidScope || invalidFlags || len(cookie.String()) >= 4096 {
 			t.Fatal("unsafe cookie scope/flags/budget")
 		}
 		if cookie.Name == httpapi.AccountSessionCookieName {
 			session := port.result.Issued().Session()
-			if cookie.Value != port.result.Issued().Token().Encoded() || cookie.Value == "old-synthetic-session" ||
-				cookie.SameSite != http.SameSiteLaxMode || cookie.MaxAge < 1 || cookie.MaxAge > 60 ||
-				cookie.Expires.After(session.IdleExpiresAt()) || cookie.Expires.After(session.AbsoluteExpiresAt()) {
+			invalidToken := cookie.Value != port.result.Issued().Token().Encoded() || cookie.Value == "old-synthetic-session"
+			invalidLifetime := cookie.MaxAge < 1 || cookie.MaxAge > 60 ||
+				cookie.Expires.After(session.IdleExpiresAt()) || cookie.Expires.After(session.AbsoluteExpiresAt())
+			if invalidToken || cookie.SameSite != http.SameSiteLaxMode || invalidLifetime {
 				t.Fatal("Session fixation or expiry/flags widening")
 			}
 		} else {
@@ -354,7 +373,9 @@ func assertBrowserCompletionResponse(
 			if cookie.Name == adapteroidc.LoginInitiationCookieName {
 				expectedSameSite = http.SameSiteStrictMode
 			}
-			if cookie.MaxAge != -1 || cookie.Value != "" || cookie.SameSite != expectedSameSite || !cookie.Expires.Before(time.Now()) {
+			invalidRemoval := cookie.MaxAge != -1 || cookie.Value != ""
+			invalidExpiry := cookie.SameSite != expectedSameSite || !cookie.Expires.Before(time.Now())
+			if invalidRemoval || invalidExpiry {
 				t.Fatal("transient cookie scope not expired")
 			}
 		}
@@ -362,7 +383,8 @@ func assertBrowserCompletionResponse(
 	if scenario == "confirmed" && (writer.Code != http.StatusOK || writer.Body.String() != `{"return_path":"/console"}`) {
 		t.Fatal("BFF response exposed more than fixed local return path")
 	}
-	if scenario == "provider error" && (writer.Code != http.StatusForbidden || strings.Contains(writer.Body.String(), "access_denied")) {
+	if scenario == "provider error" &&
+		(writer.Code != http.StatusForbidden || strings.Contains(writer.Body.String(), "access_denied")) {
 		t.Fatal("provider diagnostic or Session escaped no-grant response")
 	}
 	if token := port.result.Issued().Token().Encoded(); token != "" && strings.Contains(writer.Body.String(), token) {
