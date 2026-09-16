@@ -1,0 +1,166 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "MeshTransit private browser login source contract",
+    "version": "1.0.0-private",
+    "description": "Private source only, not a deployed documentation endpoint or SSO enablement. Completed direct TLS 1.2+, exact configured Host and canonical origin-form targets are mandatory. POST requires exact HTTPS Origin, X-MeshTransit-Login: v1 and literal empty JSON object within 32 bytes. Authorization custody, Referer/CORS/provider/local-login fallback, encoded/alternate routing and query outside callback GET are forbidden. Total headers retain 16384-byte/64-field/128-value and existing cookie parser bounds. Each component owns finite caller-clamped transport deadlines and non-queuing capacity. Proof/cookie transport never substitutes for fresh durable Core authority; only protected completion may claim/exchange/issue. The reserved server is illustrative, never an operator or provider default."
+  },
+  "servers": [{ "url": "https://console.example.test" }],
+  "x-meshtransit-auth-profile": "console-cookie-csrf-private-v1",
+  "x-meshtransit-runtime-status": "private-source-only",
+  "paths": {
+    "/auth/v1/login/prepare": {
+      "post": {
+        "operationId": "prepareBrowserLogin",
+        "summary": "Prepare browser intent without creating authority",
+        "description": "Shared source budget and current durable route admission precede fresh independent cookie/proof entropy. Issue only __Host-mt_login_init, Secure/HttpOnly/SameSite=Strict/Path=/, no Domain. Cookie handle never enters JSON/JavaScript. Intent lasts 60-300 whole seconds, not a Session or single-use durable claim.",
+        "security": [],
+        "parameters": [{ "$ref": "#/components/parameters/LoginOrigin" }, { "$ref": "#/components/parameters/LoginChannel" }],
+        "requestBody": { "required": true, "x-meshtransit-max-bytes": 32, "content": { "application/json": { "schema": { "type": "object", "maxProperties": 0, "additionalProperties": false } } } },
+        "responses": {
+          "200": {
+            "description": "No-grant independent intent proof and remaining whole seconds. Exactly one fresh initiation cookie; no provider token or identity.",
+            "headers": { "Cache-Control": { "$ref": "#/components/headers/LoginNoStore" }, "Set-Cookie": { "schema": { "type": "string", "maxLength": 4095 }, "description": "Only host-only initiation intent, never a Core Session." } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginIntentPrepared" } } }
+          },
+          "400": { "$ref": "#/components/responses/LoginHTTPDenied" },
+          "403": { "$ref": "#/components/responses/LoginHTTPDenied" },
+          "429": { "$ref": "#/components/responses/LoginHTTPLimited" },
+          "503": { "$ref": "#/components/responses/LoginHTTPDenied" },
+          "default": { "$ref": "#/components/responses/LoginDispatchFailure" }
+        }
+      }
+    },
+    "/auth/v1/login/start": {
+      "post": {
+        "operationId": "startBrowserLogin",
+        "summary": "Release an authorization URL only after confirmed creation",
+        "description": "Require initiation cookie AND fresh dedicated intent proof, rechecked after route admission and before release. Shared source budget, exact discovery and locked durable creation checks remain mandatory. Atomically create/audit/outbox before release; unconfirmed outcomes release no authorization URL or pre-auth cookie. Return JSON for explicit browser navigation, never an AJAX-followed redirect. Set a fresh host-only __Host-mt_pre_auth, Secure/HttpOnly/SameSite=Lax/Path=/, no Domain; expire initiation cookie. No Account/Principal/Session/membership grant.",
+        "security": [{ "loginInitiationCookie": [], "loginIntentProof": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/LoginOrigin" }, { "$ref": "#/components/parameters/LoginChannel" }],
+        "requestBody": { "required": true, "x-meshtransit-max-bytes": 32, "content": { "application/json": { "schema": { "type": "object", "maxProperties": 0, "additionalProperties": false } } } },
+        "responses": {
+          "200": {
+            "description": "Confirmed pending AuthTransaction only, not successful login. Authorization URL is sensitive transient transport, not a durable client credential.",
+            "headers": { "Cache-Control": { "$ref": "#/components/headers/LoginNoStore" }, "Set-Cookie": { "schema": { "type": "string", "maxLength": 4095 }, "description": "Fresh host-only pre-auth handle and expired initiation cookie only; multiple Set-Cookie fields." } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginStarted" } } }
+          },
+          "400": { "$ref": "#/components/responses/LoginHTTPDenied" },
+          "403": { "$ref": "#/components/responses/LoginHTTPDenied" },
+          "429": { "$ref": "#/components/responses/LoginHTTPLimited" },
+          "503": { "$ref": "#/components/responses/LoginHTTPDenied" },
+          "default": { "$ref": "#/components/responses/LoginDispatchFailure" }
+        }
+      }
+    },
+    "/auth/v1/login/callback": {
+      "get": {
+        "operationId": "captureBrowserLoginCallback",
+        "summary": "Capture transient callback custody and redirect to the clean path",
+        "description": "The process replaces this template path with the SAME validated dispatcher callback, never a query selector. No body. Query <=8192 bytes and <=8 unique bounded pairs; malformed/aliased names and provider token fields reject. Require exact RFC 9207 issuer, canonical 256-bit state and pre-auth cookie, and exactly one nonempty code (<=2048 bytes for capture) or bounded provider error. Error description/URI may accompany error but are discarded, never followed or echoed. Optional bounded session_state and other bounded provider diagnostics are discarded, never authentication. No code/state/query reaches active content, referrer, logs, metrics, traces or continuation location. Shared source/state budgets precede encrypted host-cookie capture. Capture is no-grant input, not possession verification, claim, exchange or Session issuance. Edge/BFF query suppression is a separate mandatory public-activation gate.",
+        "security": [{ "preAuthCookie": [] }],
+        "parameters": [
+          { "name": "iss", "in": "query", "required": true, "description": "Exact configured issuer. Never a fetched endpoint or trust selector.", "schema": { "type": "string", "minLength": 1, "maxLength": 2048 } },
+          { "name": "state", "in": "query", "required": true, "schema": { "type": "string", "minLength": 43, "maxLength": 43, "pattern": "^[A-Za-z0-9_-]{43}$" } },
+          { "name": "code", "in": "query", "required": false, "description": "Exactly one of code/error; duplicates, empty values and both/neither reject.", "schema": { "type": "string", "minLength": 1, "maxLength": 2048 } },
+          { "name": "error", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 128 } },
+          { "name": "error_description", "in": "query", "required": false, "description": "Error-only bounded diagnostic, discarded without reflection.", "schema": { "type": "string", "maxLength": 512 } },
+          { "name": "error_uri", "in": "query", "required": false, "description": "Error-only bounded diagnostic, discarded and never fetched.", "schema": { "type": "string", "maxLength": 2048 } },
+          { "name": "session_state", "in": "query", "required": false, "description": "Discarded; never provider Session authority.", "schema": { "type": "string", "maxLength": 1024 } }
+        ],
+        "responses": {
+          "303": {
+            "description": "One zero-body clean redirect with encrypted transient callback cookie only. No authentication or browser receipt is acknowledged.",
+            "headers": {
+              "Location": { "required": true, "schema": { "type": "string", "const": "/auth/v1/login/continue" } },
+              "Content-Length": { "schema": { "type": "string", "const": "0" } },
+              "Cache-Control": { "$ref": "#/components/headers/LoginNoStore" },
+              "Set-Cookie": { "schema": { "type": "string", "maxLength": 4095 }, "description": "Only encrypted __Host-mt_login_callback, Secure/HttpOnly/SameSite=Lax/Path=/, no Domain; 30-120 whole seconds." }
+            }
+          },
+          "default": { "$ref": "#/components/responses/LoginPrivateFailure" }
+        }
+      }
+    },
+    "/auth/v1/login/continue/prepare": {
+      "post": {
+        "operationId": "prepareBrowserLoginContinuation",
+        "summary": "Prepare intent bound to current pre-auth and encrypted callback cookies",
+        "description": "Require BOTH cookies and exact same-origin channel input; no proof that does not yet exist. Shared source/state budgets and live capsule opening precede independent OS entropy. Return csrf_token/expires_in only. No Set-Cookie, claim, exchange or grant. Dedicated continuation intent is bound to the exact complete route/origin/current cookie pair and 30-120 whole-second lifetime; it is not initiation proof or authenticated browser possession. Safe security/budget headers may be staged before a closed failure; no blanket HTTP mapper is enabled.",
+        "security": [{ "preAuthCookie": [], "capturedCallbackCookie": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/LoginOrigin" }, { "$ref": "#/components/parameters/LoginChannel" }],
+        "requestBody": { "required": true, "x-meshtransit-max-bytes": 32, "content": { "application/json": { "schema": { "type": "object", "maxProperties": 0, "additionalProperties": false } } } },
+        "responses": {
+          "200": { "description": "No-grant fresh cookie-bound continuation intent; cookies are neither set nor renewed.", "headers": { "Cache-Control": { "$ref": "#/components/headers/LoginNoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginContinuationPrepared" } } } },
+          "default": { "$ref": "#/components/responses/LoginContinuationPrepareFailure" }
+        }
+      }
+    },
+    "/auth/v1/login/continue": {
+      "get": {
+        "operationId": "presentBrowserLoginContinuation",
+        "summary": "Present a static clean read-only continuation page",
+        "description": "No credentials required or opened; no proof, budget, provider/DB, claim or grant effect. Exact clean GET only, no query/fragment/body. Restrictive hash CSP permits only the embedded script/style and self-only fetch; no CDN, analytics/RUM, storage or dynamic HTML. History is replaced with the fixed clean path. One explicit accessible user activation performs exactly one protected prepare then complete POST; no automatic retry or navigation to a request/response-selected alternate path. Source script checks are not browser-engine/CSP acceptance.",
+        "security": [],
+        "responses": {
+          "200": { "description": "Static <=16384-byte page only, never authentication.", "headers": { "Cache-Control": { "$ref": "#/components/headers/LoginNoStore" }, "Content-Security-Policy": { "schema": { "type": "string" }, "description": "Exact embedded script/style SHA-256 hashes; never unsafe-inline/eval." } }, "content": { "text/html": { "schema": { "type": "string", "maxLength": 16384 } } } },
+          "default": { "$ref": "#/components/responses/LoginPrivateFailure" }
+        }
+      },
+      "head": {
+        "operationId": "headBrowserLoginContinuation",
+        "summary": "Return static continuation headers without body or effects",
+        "description": "Same exact clean transport/navigation and safe headers as GET. No credential access, proof, budget, claim, exchange, Session or body. HEAD callback and HEAD other operations are not aliases.",
+        "security": [],
+        "responses": {
+          "200": { "description": "GET-equivalent static safe headers only, zero response body.", "headers": { "Cache-Control": { "$ref": "#/components/headers/LoginNoStore" } } },
+          "default": { "$ref": "#/components/responses/LoginPrivateFailure" }
+        }
+      },
+      "post": {
+        "operationId": "completeBrowserLogin",
+        "summary": "Revalidate and single-use claim before confirmed Session completion",
+        "description": "Require pre-auth AND encrypted callback cookies AND dedicated fresh continuation intent. Delegate the complete joined pipeline, never syntax gate alone. Reverify durable state/browser possession and atomically single-use claim before one no-redirect/proxy TLS token attempt with original PKCE. Fresh exact issuer/subject, route/authority/provider/recovery/session generations and expiry precede audited atomic existing-subject Session issuance. No JIT/linking/email/IdP-role authority. Recheck original capsule/proof/result expiry immediately before response. A successful new bearer exists ONLY in host-only __Host-mt_session, Secure/HttpOnly/SameSite=Lax/Path=/, no Domain, with rounded-down intersected expiry. Clear exactly pre-auth, callback and initiation cookies. No refresh or retry after ambiguous delivery.",
+        "security": [{ "preAuthCookie": [], "capturedCallbackCookie": [], "continuationIntentProof": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/LoginOrigin" }, { "$ref": "#/components/parameters/LoginChannel" }],
+        "requestBody": { "required": true, "x-meshtransit-max-bytes": 32, "content": { "application/json": { "schema": { "type": "object", "maxProperties": 0, "additionalProperties": false } } } },
+        "responses": {
+          "200": { "description": "Confirmed fresh Core Session only. JSON has fixed local return_path, never bearer/provider/identity data. Multiple Set-Cookie fields replace Session and clear three transient scopes.", "headers": { "Cache-Control": { "$ref": "#/components/headers/LoginNoStore" }, "Set-Cookie": { "schema": { "type": "string", "maxLength": 4095 }, "description": "Confirmed new Session and exactly three expired transient cookies; each field <4096 bytes." } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginCompleted" } } } },
+          "403": { "description": "Confirmed generic provider denial, no new Session. Clear exactly three transient cookies; never erase an existing Session.", "headers": { "Cache-Control": { "$ref": "#/components/headers/LoginNoStore" }, "Set-Cookie": { "schema": { "type": "string", "maxLength": 4095 }, "description": "Only expired pre-auth/callback/initiation cookies." } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginDenied" } } } },
+          "default": { "$ref": "#/components/responses/LoginPrivateFailure" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "loginInitiationCookie": { "type": "apiKey", "in": "cookie", "name": "__Host-mt_login_init", "description": "One canonical independent nonzero 256-bit handle. Intent only, never state, identity or Session." },
+      "loginIntentProof": { "type": "apiKey", "in": "header", "name": "X-MeshTransit-CSRF", "description": "One canonical bounded raw base64url initiation envelope, purpose-separated exact cookie/route/origin/key/time HMAC. Must accompany initiation cookie; never a grant or continuation proof." },
+      "preAuthCookie": { "type": "apiKey", "in": "cookie", "name": "__Host-mt_pre_auth", "description": "One canonical independent 256-bit pending browser handle. Shape alone is not authenticated possession; durable digest revalidation is mandatory at completion." },
+      "capturedCallbackCookie": { "type": "apiKey", "in": "cookie", "name": "__Host-mt_login_callback", "description": "One canonical <=3800-byte AES-256-GCM encrypted transient callback envelope bound to exact route/key/epoch/current pre-auth cookie and live expiry. Replayable no-grant custody until durable single-use claim." },
+      "continuationIntentProof": { "type": "apiKey", "in": "header", "name": "X-MeshTransit-CSRF", "description": "One canonical bounded raw base64url continuation envelope. Independent purpose/key from initiation; exact current cookie pair/route/origin/time HMAC. Require with BOTH cookies, never an OR alternative or authenticated grant." }
+    },
+    "parameters": {
+      "LoginOrigin": { "name": "Origin", "in": "header", "required": true, "description": "One exact configured HTTPS Origin. Missing/null/foreign or duplicate Origin fails; forwarded values/Referer never replace it.", "schema": { "type": "string", "minLength": 8, "maxLength": 255, "pattern": "^https://" } },
+      "LoginChannel": { "name": "X-MeshTransit-Login", "in": "header", "required": true, "schema": { "type": "string", "const": "v1" } }
+    },
+    "headers": {
+      "LoginNoStore": { "schema": { "type": "string", "const": "no-store" } }
+    },
+    "schemas": {
+      "LoginIntentProof": { "type": "string", "minLength": 1, "maxLength": 280, "pattern": "^[A-Za-z0-9_-]+$", "description": "Encoding shape only, not a MAC/time/cookie verification. Initiation and continuation use distinct independently bound purposes." },
+      "LoginIntentPrepared": { "type": "object", "additionalProperties": false, "required": ["csrf_token", "expires_in"], "properties": { "csrf_token": { "$ref": "#/components/schemas/LoginIntentProof" }, "expires_in": { "type": "integer", "minimum": 1, "maximum": 300 } } },
+      "LoginContinuationPrepared": { "type": "object", "additionalProperties": false, "required": ["csrf_token", "expires_in"], "properties": { "csrf_token": { "$ref": "#/components/schemas/LoginIntentProof" }, "expires_in": { "type": "integer", "minimum": 1, "maximum": 120 } } },
+      "LoginStarted": { "type": "object", "additionalProperties": false, "required": ["authorization_url"], "properties": { "authorization_url": { "type": "string", "format": "uri", "minLength": 8, "maxLength": 8192, "pattern": "^https://", "description": "Transient exact allowlisted provider authorization URL; never store/log/trace or treat as a Session." } } },
+      "LoginCompleted": { "type": "object", "additionalProperties": false, "required": ["return_path"], "properties": { "return_path": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^/", "description": "Exact canonical Core-owned local mapping, no auth loop/query/fragment/encoding/backslash/external authority. Browser navigates only when it equals its embedded mapping." } } },
+      "LoginDenied": { "type": "object", "additionalProperties": false, "required": ["error"], "properties": { "error": { "type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": { "code": { "type": "string", "const": "login_unavailable" }, "message": { "type": "string", "const": "login could not be completed" } } } } }
+    },
+    "responses": {
+      "LoginHTTPDenied": { "description": "Existing initiation owner's generic HTTP denial. No raw dependency/input diagnostic, authorization URL or new credential. Delivery failure may occur after partial output; never rewrite or retry.", "headers": { "Cache-Control": { "$ref": "#/components/headers/LoginNoStore" } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginDenied" } } } },
+      "LoginHTTPLimited": { "description": "Existing shared source budget denial; no authority or provider/creation effect.", "headers": { "Cache-Control": { "$ref": "#/components/headers/LoginNoStore" }, "Retry-After": { "schema": { "type": "string", "pattern": "^[0-9]+$" }, "description": "Bounded whole seconds supplied by a valid shared decision." } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginDenied" } } } },
+      "LoginDispatchFailure": { "description": "Private dispatch rejects malformed/unknown method/target or cancellation before delegation without response mutation. No blanket mapper is enabled. A normally returning initiation delegate may already have produced a generic HTTP error, not successful login or receipt. Never append/replace/retry an uncertain response." },
+      "LoginPrivateFailure": { "description": "Preserve the component's closed pre-release failure with no invented status/body/cookie or error mapper. Existing safe security/budget headers may have been staged by subordinate admission. Once submission begins, error/short write can follow partial delivery; never infer non-commit, roll back, retry or rewrite. A committed undisclosed Session follows ordinary expiry/revocation." },
+      "LoginContinuationPrepareFailure": { "description": "Closed prepare failure may stage safe security/budget headers before returning, but no blanket HTTP status/body/cookie mapper is enabled. A write failure may follow partial proof delivery. Never retry, rewrite, reflect private error text or infer an authentication/commit result." }
+    }
+  }
+}

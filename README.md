@@ -1618,6 +1618,96 @@ the unchanged renderer below, not a historical commit/artifact, native clock,
 durable/provider traffic, live Google/browser/client/HA, remote CI or release
 artifact. Those gates remain open; public SSO remains disabled.
 
+### Private browser login document and dispatcher
+
+`SSO-LOGIN-ROUTE-CONTRACT-001` and `SSO-PRIVATE-LOGIN-DISPATCHER-001` prepare
+source contracts, not public admission. The private root now constructs one
+`httpapi.LoginDispatcher` from its complete `BrowserLogin` graph and renders
+`openapi.LoginDocument` from that SAME callback path. Construction releases both
+or nothing without I/O, authority, budget, entropy, clock or listener effects.
+Only explicit `console-cookie-csrf-private-v1` is supported for login; zero,
+unknown and management Bearer profile selections fail without document bytes.
+Both existing management documents retain their exact contract/byte oracles.
+
+The reviewed, embedded OpenAPI 3.1.0 asset is a separate, bounded login document,
+not an operator JSON patch, runtime provider discovery or documentation endpoint.
+Rendering is deterministic with independently owned bytes and a 128 KiB cap.
+Callback remapping permits only canonical ASCII paths within `/auth/`, at most
+256 bytes, without encoded/dot/double/trailing-slash aliases or overlap with the
+four fixed login paths or management Session preparation. This narrower private
+profile does not change the standalone browser component's path contract.
+
+Exactly seven operation pairs are supported:
+
+- POST `/auth/v1/login/prepare` and POST `/auth/v1/login/start`.
+- GET the graph-selected callback path, capture only, never Session issuance.
+- POST `/auth/v1/login/continue/prepare` for the protected continuation proof.
+- GET and HEAD `/auth/v1/login/continue` for read-only clean presentation.
+- POST `/auth/v1/login/continue` for the complete confirmed-Session pipeline.
+
+Each operation has explicit security: anonymous preparation/clean presentation
+cannot inherit a global grant; start requires initiation cookie AND its intent
+proof; capture requires pre-auth cookie; continuation preparation requires both
+pre-auth and captured-callback cookies; completion requires both cookies AND the
+distinct continuation proof. No OR alternative, authenticated browser Session,
+Bearer, provider token or query-selected authentication profile is introduced.
+Success JSON stays closed: initiation/continuation proof plus expiry,
+authorization URL, or a fixed local return path. Confirmed Session delivery stays
+cookie-only; OpenAPI's HEAD response has no body contract. Response ownership,
+generic denials, bounded query/capsule/body limits and partial-delivery uncertainty
+are explicit. Local references/shape/security tests are not a formal full-schema
+validator, real browser CSP execution or provider qualification.
+
+`Handle` delegates the ORIGINAL request, context and writer to exactly one owner.
+Require completed direct TLS, exact Host, bounded canonical headers, a pristine
+response, coherent origin-form target and no Authorization field. Only callback
+GET may carry a query. Reject unknown paths/methods and aliases before body reads,
+delegation or response changes. No ServeMux, redirect, URL cleaning, middleware
+error mapper, retry or alternate service/profile is added. Existing owners retain
+their work/transport deadlines, budgets, source checks, audit and transaction
+semantics. Canceled admission fails closed; delegated closed errors and uncertain
+partial output are preserved. Nil means normal dispatch return, NOT a grant,
+confirmed commit, delivery acknowledgement or successful login.
+
+Private root telemetry adds active/total/duration collectors only to its fresh
+registry. Operation/result labels are fixed enums, never a path, provider URL,
+principal, cookie or token. Normal delegation can still be a generic HTTP denial;
+metrics never infer a Session. No public metrics endpoint, auth RUM/request logger,
+raw traces or global collector registration is added. Operational dashboards and
+alerts remain activation gates, as recorded in the canonical observability doc.
+
+Canonical API, identity, STRIDE, observability and ADR documents were updated
+locally before implementation; this README is the versioned mirror of that
+non-Git sibling tree. No main/config/default/listener activation, deployment,
+migration/schema/query, dependency, management/client wire or meshd/meshctl change.
+Keycloak remains SSO-only, Google through Keycloak first; public SSO stays disabled.
+Next qualify the concrete private factory with durable/provider fixtures, then
+end-to-end query custody, native clocks, intended expiry/recovery and live Google/
+Keycloak/browser/client/HA. Remote CI and immutable release artifacts remain open.
+
+Source qualification (2026-09-17): unchanged full `make quality` passes shuffled
+unit/race, vet, format/module, pinned regular/integration-tag lint and workflow
+gates. Govulncheck reports zero affected symbols/imported-package vulnerabilities
+and three non-called required-module advisories, not zero advisories. Final
+uncached host OpenAPI/httpapi/cmd race passes (1.588s/1.415s/1.928s). Exact pinned
+Go 1.26.8 Linux uncached race/shuffle passes OpenAPI/httpapi/cmd/config
+(1.242s/1.257s/1.138s/1.042s), UID/GID 65532, read-only source/modules, no network,
+capabilities, credentials or Docker socket; only isolated scratch is writable.
+The approved exact image reference was missing and resolved by an exact-digest
+pull reporting up-to-date. Two-worker ten-second document/dispatch fuzz passes
+147653/31787 executions; 49 unchanged deterministic landing-script checks pass,
+not browser-engine/CSP acceptance. Scoped pinned autofix/read-only lint passes
+with no fixes and exact before/after Go snapshots unchanged. Contract review
+corrected the NEW asset's Origin maximum to the existing 255-byte guard; a new
+regression pins it, success bounds and zero-body HEAD/capture. No prior test,
+guard, oracle, config, dependency or gate changed. Redacted tree and complete
+126-pre-commit-history secret scans pass without a new baseline/exclusion.
+Pipeline tests use actual private services with synthetic ports/clock/provider
+input, not durable/provider integration: cover no-grant GET, confirmed-result
+cookie-only delivery, single-use replay, method aliases and preserved finite
+deadline/partial-delivery errors. No live PostgreSQL/Redis/Google/browser/client/
+HA or native-clock qualification. Public SSO stays disabled.
+
 ### Private management OpenAPI authentication profiles
 
 `SSO-MANAGEMENT-AUTH-PROFILE-001` adds pure compile-time document composition,

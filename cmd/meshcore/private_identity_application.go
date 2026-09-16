@@ -10,6 +10,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/meshtransit/meshtransit/api/openapi"
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
 	"github.com/meshtransit/meshtransit/internal/adapter/oidc"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
@@ -69,15 +70,17 @@ type privateIdentityPorts struct {
 	Logger             *slog.Logger
 }
 
-// A complete private graph has explicit ownership. It implements no dispatcher,
-// listener, readiness, global registration or main/runtime configuration binding.
+// A complete private graph has explicit source dispatch/document ownership, but
+// no listener, readiness, global registration or main/runtime configuration binding.
 type privateIdentity struct {
-	start      *oidcauth.StartService
-	callback   *oidcauth.CallbackService
-	sessions   *accountsession.Service
-	login      *httpapi.BrowserLogin
-	management *httpapi.BrowserManagement
-	metrics    *prometheus.Registry
+	start         *oidcauth.StartService
+	callback      *oidcauth.CallbackService
+	sessions      *accountsession.Service
+	login         *httpapi.BrowserLogin
+	dispatcher    *httpapi.LoginDispatcher
+	loginDocument []byte
+	management    *httpapi.BrowserManagement
+	metrics       *prometheus.Registry
 }
 
 // composePrivateIdentity uses only the resident bundle prepared by
@@ -142,6 +145,14 @@ func composePrivateIdentity(
 		return nil, errInvalidPrivateIdentityComposition
 	}
 	managementOptions := options.Management
+	dispatcher, err := httpapi.NewLoginDispatcher(login)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	loginDocument, err := openapi.LoginDocument(openapi.ManagementProfileConsoleCookiePrivateV1, dispatcher.CallbackPath())
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	resources, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions: sessions, Revocations: ports.Revocations, PolicyPublications: ports.PolicyPublications,
 		Idempotency: keys.idempotency, RateLimitSubjects: keys.rateLimit, RateLimiter: ports.RateLimiter,
@@ -162,7 +173,7 @@ func composePrivateIdentity(
 	registry := prometheus.NewPedanticRegistry()
 	for _, collector := range []prometheus.Collector{
 		startMetrics, callbackMetrics, subjectMetrics, issueMetrics, login.MetricsCollector(),
-		resources.MetricsCollector(), management.MetricsCollector(),
+		resources.MetricsCollector(), management.MetricsCollector(), dispatcher.MetricsCollector(),
 	} {
 		if err := registry.Register(collector); err != nil {
 			return nil, errInvalidPrivateIdentityComposition
@@ -172,7 +183,7 @@ func composePrivateIdentity(
 		return nil, errInvalidPrivateIdentityComposition
 	}
 	return &privateIdentity{start: start, callback: callback, sessions: sessions,
-		login: login, management: management, metrics: registry}, nil
+		login: login, dispatcher: dispatcher, loginDocument: loginDocument, management: management, metrics: registry}, nil
 }
 
 func completePrivateIdentityKeys(keys *privateIdentityKeys) bool {
