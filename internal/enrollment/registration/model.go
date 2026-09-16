@@ -52,10 +52,13 @@ const (
 	DispositionCreated
 	// DispositionResumed means an authenticated existing Node was retained.
 	DispositionResumed
+	// DispositionRotated means an authenticated existing Node advanced its Node-key epoch.
+	DispositionRotated
 )
 
 func (disposition Disposition) isValid() bool {
-	return disposition == DispositionCreated || disposition == DispositionResumed
+	return disposition == DispositionCreated || disposition == DispositionResumed ||
+		disposition == DispositionRotated
 }
 
 // Result is the safe committed outcome returned by registration and replay.

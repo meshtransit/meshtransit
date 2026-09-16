@@ -46,7 +46,7 @@ func TestRegistrationRequestShapeCannotCarryScopeAuthority(t *testing.T) {
 	t.Parallel()
 
 	typeOfParams := reflect.TypeFor[control.RegistrationRequestParams]()
-	wantFields := []string{"RegistrationID", "Credential", "NodeKey", "Hostname"}
+	wantFields := []string{"RegistrationID", "Credential", "NodeKey", "OldNodeKey", "Hostname"}
 	if typeOfParams.NumField() != len(wantFields) {
 		t.Fatalf("RegistrationRequestParams has %d fields, want %d", typeOfParams.NumField(), len(wantFields))
 	}

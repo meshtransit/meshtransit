@@ -11,8 +11,41 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 25 {
-		t.Fatalf("len(Catalog()) = %d, want 25", len(catalog))
+	if len(catalog) != 26 {
+		t.Fatalf("len(Catalog()) = %d, want 26", len(catalog))
+	}
+
+	rotation := catalog[25]
+	if rotation.Description != "authenticated Node-key rotation authority" {
+		t.Fatalf("migration 26 description = %q, want Node-key rotation authority", rotation.Description)
+	}
+	for _, required := range []string{
+		"device_node_key_epoch_key_history_uidx",
+		"workspace_node_key_rotation_scope_policy",
+		"network_node_key_rotation_scope_policy",
+		"CREATE FUNCTION mesh_ops.resolve_node_key_rotation_scope",
+		"p_old_node_key = p_new_node_key THEN",
+		"node_key.public_key IN (p_old_node_key, p_new_node_key)",
+		"mesh.node_key_rotation_workspace_id",
+		"COALESCE(previous_workspace_id, '')",
+		"SECURITY DEFINER",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.resolve_node_key_rotation_scope",
+	} {
+		if !strings.Contains(rotation.SQL, required) {
+			t.Errorf("Node-key rotation migration SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"BYPASSRLS",
+		"DROP ",
+	} {
+		if strings.Contains(rotation.SQL, forbidden) {
+			t.Errorf("Node-key rotation migration SQL contains excessive capability %q", forbidden)
+		}
 	}
 	for index, migration := range catalog {
 		if migration.Version != int64(index+1) {
@@ -1011,8 +1044,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 25 {
-		t.Fatalf("LatestVersion() = %d, want 25", LatestVersion())
+	if LatestVersion() != 26 {
+		t.Fatalf("LatestVersion() = %d, want 26", LatestVersion())
 	}
 }
 

@@ -73,6 +73,36 @@ func TestDecodeCredentialRegistration(t *testing.T) {
 	}
 }
 
+func TestDecodeCredentialRegistrationAcceptsAuthenticatedNodeKeyRotation(t *testing.T) {
+	t.Parallel()
+
+	wire := validRegistrationWire(t)
+	wire.Auth = nil
+	wire.OldNodeKey = nodeKeyPrefix +
+		"1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30"
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	request, err := DecodeCredentialRegistration(
+		bytes.NewReader(encoded),
+		parseRegistrationID(t),
+	)
+	if err != nil {
+		t.Fatalf("DecodeCredentialRegistration() error = %v", err)
+	}
+	if !request.IsNodeKeyRotation() {
+		t.Fatal("decoded request is not classified as a Node-key rotation")
+	}
+	rotation, err := authenticatedMachine(t).BindNodeKeyRotation(request)
+	if err != nil {
+		t.Fatalf("AuthenticatedMachine.BindNodeKeyRotation() error = %v", err)
+	}
+	if !rotation.IsValid() || rotation.OldNodeKey() == rotation.NewNodeKey() {
+		t.Fatal("decoded rotation did not preserve distinct old and new Node keys")
+	}
+}
+
 func TestDecodeCredentialRegistrationRejectsUnsupportedSemantics(t *testing.T) {
 	t.Parallel()
 

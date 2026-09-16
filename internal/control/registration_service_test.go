@@ -11,6 +11,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration/intake"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/node/keyrotation"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -198,6 +199,54 @@ func TestRegistrationServiceFailsClosed(t *testing.T) {
 	})
 }
 
+func TestRegistrationServiceRoutesAuthenticatedNodeKeyRotation(t *testing.T) {
+	t.Parallel()
+
+	params := validRegistrationRequestParams(t)
+	params.Credential = enrollment.CredentialPresentation{}
+	params.OldNodeKey = registrationNodeKey(t, 0x21)
+	request, err := control.NewRegistrationRequest(params)
+	if err != nil {
+		t.Fatalf("NewRegistrationRequest() error = %v", err)
+	}
+	machineKey := registrationMachineKey(t, 0x11)
+	machine, err := control.NewAuthenticatedMachine(machineKey)
+	if err != nil {
+		t.Fatalf("NewAuthenticatedMachine() error = %v", err)
+	}
+	command, err := keyrotation.NewCommand(keyrotation.CommandParams{
+		OperationID: params.RegistrationID,
+		MachineKey:  machineKey,
+		OldNodeKey:  params.OldNodeKey,
+		NewNodeKey:  params.NodeKey,
+	})
+	if err != nil {
+		t.Fatalf("keyrotation.NewCommand() error = %v", err)
+	}
+	want := validNodeKeyRotationResult(t, command, params.Hostname)
+	rotator := &recordingNodeKeyRotator{result: want}
+	preparer := &recordingRegistrationPreparer{}
+	executor := &recordingRegistrationExecutor{}
+	service, err := control.NewRegistrationServiceWithNodeKeyRotation(
+		preparer,
+		executor,
+		rotator,
+	)
+	if err != nil {
+		t.Fatalf("NewRegistrationServiceWithNodeKeyRotation() error = %v", err)
+	}
+
+	result, err := service.Register(t.Context(), machine, request)
+	if err != nil {
+		t.Fatalf("RegistrationService.Register(rotation) error = %v", err)
+	}
+	if rotator.calls != 1 || rotator.command != command || preparer.calls != 0 || executor.calls != 0 ||
+		result.Disposition() != registration.DispositionRotated ||
+		result.NodeID() != want.NodeID() || result.NetworkRevision() != want.NetworkRevision() {
+		t.Fatal("RegistrationService.Register(rotation) did not route exact authenticated transition")
+	}
+}
+
 type recordingRegistrationPreparer struct {
 	request intake.Request
 	command registration.Command
@@ -219,6 +268,22 @@ type recordingRegistrationExecutor struct {
 	result  registration.Result
 	err     error
 	calls   int
+}
+
+type recordingNodeKeyRotator struct {
+	command keyrotation.Command
+	result  keyrotation.Result
+	err     error
+	calls   int
+}
+
+func (rotator *recordingNodeKeyRotator) Rotate(
+	_ context.Context,
+	command keyrotation.Command,
+) (keyrotation.Result, error) {
+	rotator.command = command
+	rotator.calls++
+	return rotator.result, rotator.err
 }
 
 func (executor *recordingRegistrationExecutor) Register(
@@ -283,6 +348,46 @@ func validRegistrationResult(
 	)
 	if err != nil {
 		t.Fatalf("registration.NewResult() error = %v", err)
+	}
+	return result
+}
+
+func validNodeKeyRotationResult(
+	t *testing.T,
+	command keyrotation.Command,
+	hostname node.Hostname,
+) keyrotation.Result {
+	t.Helper()
+
+	workspaceID, err := workspace.ParseID("01890f80-0000-7000-8000-000000000003")
+	if err != nil {
+		t.Fatalf("workspace.ParseID() error = %v", err)
+	}
+	networkID, err := network.ParseID("01890f80-0000-7000-8000-000000000004")
+	if err != nil {
+		t.Fatalf("network.ParseID() error = %v", err)
+	}
+	scope, err := network.NewScope(workspaceID, networkID)
+	if err != nil {
+		t.Fatalf("network.NewScope() error = %v", err)
+	}
+	nodeID, err := node.ParseID("01890f80-0000-7000-8000-000000000005")
+	if err != nil {
+		t.Fatalf("node.ParseID() error = %v", err)
+	}
+	result, err := keyrotation.NewResult(keyrotation.ResultParams{
+		OperationID:       command.OperationID(),
+		Scope:             scope,
+		NodeID:            nodeID,
+		Hostname:          hostname,
+		DeviceVersion:     2,
+		NodeKeyEpoch:      2,
+		SessionGeneration: 2,
+		NetworkRevision:   2,
+		InventoryRevision: 2,
+	})
+	if err != nil {
+		t.Fatalf("keyrotation.NewResult() error = %v", err)
 	}
 	return result
 }

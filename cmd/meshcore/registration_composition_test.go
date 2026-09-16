@@ -12,6 +12,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration"
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration/intake"
 	"github.com/meshtransit/meshtransit/internal/network"
+	"github.com/meshtransit/meshtransit/internal/node/keyrotation"
 )
 
 func TestNewRegistrationIntakeServiceComposesRuntimeDependencies(t *testing.T) {
@@ -135,6 +136,47 @@ func TestComposeRegistrationRejectsMissingRuntimePool(t *testing.T) {
 	}
 }
 
+func TestNewNodeKeyRotationServiceComposesRuntimeDependencies(t *testing.T) {
+	t.Parallel()
+
+	service, err := newNodeKeyRotationService(
+		validRegistrationConfig(),
+		nodeKeyRotationCompositionStore{},
+	)
+	if err != nil {
+		t.Fatalf("newNodeKeyRotationService() error = %v", err)
+	}
+	if service == nil {
+		t.Fatal("newNodeKeyRotationService() returned nil service")
+	}
+}
+
+func TestNewNodeKeyRotationServiceRejectsInvalidComposition(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		config       config.RegistrationConfig
+		transactions keyrotation.Transactions
+	}{
+		{name: "missing transactions", config: validRegistrationConfig()},
+		{
+			name:         "unsafe options",
+			transactions: nodeKeyRotationCompositionStore{},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := newNodeKeyRotationService(test.config, test.transactions)
+			if !errors.Is(err, errInvalidRegistrationComposition) {
+				t.Fatalf("newNodeKeyRotationService() error = %v, want composition error", err)
+			}
+		})
+	}
+}
+
 func validRegistrationConfig() config.RegistrationConfig {
 	return config.RegistrationConfig{
 		MaxAttempts:           3,
@@ -194,4 +236,13 @@ func (registrationMutationCompositionStore) ResolveCommitted(
 	registration.Command,
 ) (registration.Result, bool, error) {
 	return registration.Result{}, false, errors.New("composition fixture must not be called")
+}
+
+type nodeKeyRotationCompositionStore struct{}
+
+func (nodeKeyRotationCompositionStore) Begin(
+	context.Context,
+	keyrotation.Command,
+) (keyrotation.Transaction, error) {
+	return nil, errors.New("composition fixture must not be called")
 }

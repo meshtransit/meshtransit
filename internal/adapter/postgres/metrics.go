@@ -38,6 +38,11 @@ const (
 	postgresOperationDeviceRevocationCommit    postgresOperation = "device_revocation_commit"
 	postgresOperationDeviceRevocationRollback  postgresOperation = "device_revocation_rollback"
 	postgresOperationDeviceRevocationReplay    postgresOperation = "device_revocation_replay"
+	postgresOperationNodeKeyRotationBegin      postgresOperation = "node_key_rotation_begin"
+	postgresOperationNodeKeyRotationResolve    postgresOperation = "node_key_rotation_resolve"
+	postgresOperationNodeKeyRotationApply      postgresOperation = "node_key_rotation_apply"
+	postgresOperationNodeKeyRotationCommit     postgresOperation = "node_key_rotation_commit"
+	postgresOperationNodeKeyRotationRollback   postgresOperation = "node_key_rotation_rollback"
 	postgresOperationAccountSessionResolve     postgresOperation = "account_session_resolve"
 	postgresOperationOutboxBacklog             postgresOperation = "outbox_backlog"
 	postgresOperationOutboxClaim               postgresOperation = "outbox_claim"
@@ -77,6 +82,11 @@ var (
 		postgresOperationDeviceRevocationCommit,
 		postgresOperationDeviceRevocationRollback,
 		postgresOperationDeviceRevocationReplay,
+		postgresOperationNodeKeyRotationBegin,
+		postgresOperationNodeKeyRotationResolve,
+		postgresOperationNodeKeyRotationApply,
+		postgresOperationNodeKeyRotationCommit,
+		postgresOperationNodeKeyRotationRollback,
 		postgresOperationAccountSessionResolve,
 		postgresOperationOutboxBacklog,
 		postgresOperationOutboxClaim,
@@ -331,6 +341,11 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationDeviceRevocationCommit ||
 			operation == postgresOperationDeviceRevocationRollback ||
 			operation == postgresOperationDeviceRevocationReplay ||
+			operation == postgresOperationNodeKeyRotationBegin ||
+			operation == postgresOperationNodeKeyRotationResolve ||
+			operation == postgresOperationNodeKeyRotationApply ||
+			operation == postgresOperationNodeKeyRotationCommit ||
+			operation == postgresOperationNodeKeyRotationRollback ||
 			operation == postgresOperationAccountSessionResolve
 	}
 	if role != PoolRoleWorker {

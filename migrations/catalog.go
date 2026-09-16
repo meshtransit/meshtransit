@@ -38,6 +38,7 @@ const (
 	networkIdempotencyDescription            = "network idempotency record foundation"
 	accountSessionResolutionDescription      = "deployment-bound account session resolution"
 	networkManagementRBACDescription         = "network management RBAC authority"
+	nodeKeyRotationAuthorityDescription      = "authenticated Node-key rotation authority"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -115,6 +116,9 @@ var accountSessionResolutionSQL string
 //go:embed 000025_network_management_rbac_authority.up.sql
 var networkManagementRBACSQL string
 
+//go:embed 000026_node_key_rotation_authority.up.sql
+var nodeKeyRotationAuthoritySQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -155,6 +159,7 @@ func Catalog() []Migration {
 		newMigration(23, networkIdempotencyDescription, networkIdempotencySQL),
 		newMigration(24, accountSessionResolutionDescription, accountSessionResolutionSQL),
 		newMigration(25, networkManagementRBACDescription, networkManagementRBACSQL),
+		newMigration(26, nodeKeyRotationAuthorityDescription, nodeKeyRotationAuthoritySQL),
 	}
 }
 

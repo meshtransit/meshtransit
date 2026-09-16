@@ -18,6 +18,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration/intake"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/node/keyrotation"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -204,6 +205,18 @@ func TestCredentialRegistrationHandlerMapsServiceFailures(t *testing.T) {
 		{
 			name:       "intent conflict",
 			serviceErr: registration.ErrIntentConflict,
+			wantStatus: http.StatusConflict,
+			wantResult: "conflict",
+		},
+		{
+			name:       "rotation target unavailable",
+			serviceErr: keyrotation.ErrNotFound,
+			wantStatus: http.StatusUnauthorized,
+			wantResult: "authentication_failed",
+		},
+		{
+			name:       "stale rotation key",
+			serviceErr: keyrotation.ErrConflict,
 			wantStatus: http.StatusConflict,
 			wantResult: "conflict",
 		},

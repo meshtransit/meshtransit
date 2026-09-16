@@ -7,6 +7,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/enrollment"
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration/intake"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/node/keyrotation"
 )
 
 // ErrInvalidRegistrationRequest reports malformed, incomplete, or unbound
@@ -19,6 +20,7 @@ type RegistrationRequestParams struct {
 	RegistrationID enrollment.RegistrationID
 	Credential     enrollment.CredentialPresentation
 	NodeKey        node.Key
+	OldNodeKey     node.Key
 	Hostname       node.Hostname
 }
 
@@ -39,6 +41,7 @@ type RegistrationRequest struct {
 	registrationID enrollment.RegistrationID
 	credential     enrollment.CredentialPresentation
 	nodeKey        node.Key
+	oldNodeKey     node.Key
 	hostname       node.Hostname
 }
 
@@ -48,6 +51,7 @@ func NewRegistrationRequest(params RegistrationRequestParams) (RegistrationReque
 		registrationID: params.RegistrationID,
 		credential:     params.Credential,
 		nodeKey:        params.NodeKey,
+		oldNodeKey:     params.OldNodeKey,
 		hostname:       params.Hostname,
 	}
 	if !request.IsValid() {
@@ -61,7 +65,7 @@ func NewRegistrationRequest(params RegistrationRequestParams) (RegistrationReque
 func (machine AuthenticatedMachine) BindRegistration(
 	request RegistrationRequest,
 ) (intake.Request, error) {
-	if !machine.IsValid() || !request.IsValid() {
+	if !machine.IsValid() || !request.IsCredentialRegistration() {
 		return intake.Request{}, ErrInvalidRegistrationRequest
 	}
 	identity, err := node.NewRegistrationIdentity(machine.key, request.nodeKey)
@@ -81,10 +85,44 @@ func (machine AuthenticatedMachine) BindRegistration(
 	return bound, nil
 }
 
+// BindNodeKeyRotation binds the exact old/new key transition to the machine
+// identity proven by the enclosing Noise session.
+func (machine AuthenticatedMachine) BindNodeKeyRotation(
+	request RegistrationRequest,
+) (keyrotation.Command, error) {
+	if !machine.IsValid() || !request.IsNodeKeyRotation() {
+		return keyrotation.Command{}, ErrInvalidRegistrationRequest
+	}
+	command, err := keyrotation.NewCommand(keyrotation.CommandParams{
+		OperationID: request.registrationID,
+		MachineKey:  machine.key,
+		OldNodeKey:  request.oldNodeKey,
+		NewNodeKey:  request.nodeKey,
+	})
+	if err != nil {
+		return keyrotation.Command{}, ErrInvalidRegistrationRequest
+	}
+	return command, nil
+}
+
+// IsCredentialRegistration reports whether the request carries exactly one
+// enrollment credential and no old Node-key authority.
+func (request RegistrationRequest) IsCredentialRegistration() bool {
+	return request.registrationID.IsValid() && request.credential.IsValid() &&
+		request.nodeKey.IsValid() && !request.oldNodeKey.IsValid() && request.hostname.IsValid()
+}
+
+// IsNodeKeyRotation reports whether the request carries an exact old/new key
+// transition and no enrollment credential.
+func (request RegistrationRequest) IsNodeKeyRotation() bool {
+	return request.registrationID.IsValid() && !request.credential.IsValid() &&
+		request.nodeKey.IsValid() && request.oldNodeKey.IsValid() &&
+		request.nodeKey != request.oldNodeKey && request.hostname.IsValid()
+}
+
 // IsValid reports whether every allowlisted untrusted field is structurally valid.
 func (request RegistrationRequest) IsValid() bool {
-	return request.registrationID.IsValid() && request.credential.IsValid() &&
-		request.nodeKey.IsValid() && request.hostname.IsValid()
+	return request.IsCredentialRegistration() || request.IsNodeKeyRotation()
 }
 
 // String prevents registration identity and bearer proof from entering ordinary logs.

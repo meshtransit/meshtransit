@@ -187,6 +187,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertWorkerCannotLockRegistrationResources(ctx, t, workerConnection)
 	assertWorkerCannotResolveRegistrationIntakeScope(ctx, t, workerConnection)
 	assertWorkerCannotResolveMapSessionScope(ctx, t, workerConnection)
+	assertWorkerCannotResolveNodeKeyRotationScope(ctx, t, workerConnection)
 	assertWorkerCannotLoadMapPeerCandidates(ctx, t, workerConnection)
 	assertWorkerOutboxPrivilegeContract(ctx, t, workerConnection)
 	workerPool := openIntegrationWorkerPool(ctx, t, adminConfig)
@@ -251,6 +252,13 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		runtimePool,
 	)
 	assertNetworkManagementRBACAuthority(ctx, t, adminConnection, runtimeConnection)
+	assertPostgreSQLNodeKeyRotation(
+		ctx,
+		t,
+		adminConnection,
+		runtimePool,
+		registrationReplayCommand,
+	)
 	assertPostgreSQLDeviceRevocation(
 		ctx,
 		t,

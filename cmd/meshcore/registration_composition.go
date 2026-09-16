@@ -9,6 +9,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/control"
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration"
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration/intake"
+	"github.com/meshtransit/meshtransit/internal/node/keyrotation"
 )
 
 var errInvalidRegistrationComposition = errors.New("invalid registration composition")
@@ -70,7 +71,58 @@ func composeRegistration(
 	if err != nil {
 		return nil, err
 	}
-	service, err := control.NewRegistrationService(preparer, executor)
+	rotationStore, err := postgresadapter.NewNodeKeyRotationStore(
+		runtimePool,
+		postgresadapter.NodeKeyRotationOptions{
+			StatementTimeout: registrationConfig.Database.StatementTimeout,
+			LockTimeout:      registrationConfig.Database.LockTimeout,
+			IdleTimeout:      registrationConfig.Database.IdleTimeout,
+		},
+	)
+	if err != nil {
+		return nil, errors.Join(errInvalidRegistrationComposition, err)
+	}
+	rotator, err := newNodeKeyRotationService(registrationConfig, rotationStore)
+	if err != nil {
+		return nil, err
+	}
+	service, err := control.NewRegistrationServiceWithNodeKeyRotation(
+		preparer,
+		executor,
+		rotator,
+	)
+	if err != nil {
+		return nil, errors.Join(errInvalidRegistrationComposition, err)
+	}
+	return service, nil
+}
+
+func newNodeKeyRotationService(
+	registrationConfig config.RegistrationConfig,
+	transactions keyrotation.Transactions,
+) (*keyrotation.Service, error) {
+	if transactions == nil {
+		return nil, errInvalidRegistrationComposition
+	}
+	retry, err := registration.NewExponentialBackoff(
+		registrationConfig.Retry.Initial,
+		registrationConfig.Retry.Maximum,
+	)
+	if err != nil {
+		return nil, errors.Join(errInvalidRegistrationComposition, err)
+	}
+	service, err := keyrotation.NewService(
+		keyrotation.Options{
+			MaxAttempts:     registrationConfig.MaxAttempts,
+			RollbackTimeout: registrationConfig.RollbackTimeout,
+		},
+		keyrotation.Dependencies{
+			Transactions: transactions,
+			MutationIDs:  keyrotation.PublicMutationIDGenerator{},
+			Clock:        registration.SystemClock{},
+			Retry:        retry,
+		},
+	)
 	if err != nil {
 		return nil, errors.Join(errInvalidRegistrationComposition, err)
 	}

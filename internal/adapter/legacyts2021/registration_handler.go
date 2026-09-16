@@ -11,6 +11,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/enrollment"
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration"
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration/intake"
+	"github.com/meshtransit/meshtransit/internal/node/keyrotation"
 )
 
 const credentialRegistrationPath = "/machine/register"
@@ -44,8 +45,9 @@ type CredentialRegistrationHandlerOptions struct {
 	Telemetry *ControlTelemetry
 }
 
-// CredentialRegistrationHandler handles only the credential-enrollment subset
-// of the pinned client profile. It starts no goroutines and retains no request state.
+// CredentialRegistrationHandler handles credential enrollment and
+// machine-authenticated Node-key rotation. It starts no goroutines and retains
+// no request state.
 type CredentialRegistrationHandler struct {
 	service   RegistrationService
 	ids       RegistrationIDGenerator
@@ -161,7 +163,9 @@ func classifyRegistrationFailure(err error) registrationFailure {
 		return registrationFailure{status: http.StatusBadRequest, result: registrationInvalidRequest}
 	case errors.Is(err, intake.ErrAuthenticationFailed):
 		return registrationFailure{status: http.StatusUnauthorized, result: registrationAuthenticationFailed}
-	case errors.Is(err, registration.ErrIntentConflict):
+	case errors.Is(err, keyrotation.ErrNotFound):
+		return registrationFailure{status: http.StatusUnauthorized, result: registrationAuthenticationFailed}
+	case errors.Is(err, registration.ErrIntentConflict), errors.Is(err, keyrotation.ErrConflict):
 		return registrationFailure{status: http.StatusConflict, result: registrationConflict}
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return registrationFailure{status: http.StatusServiceUnavailable, result: registrationCanceled}

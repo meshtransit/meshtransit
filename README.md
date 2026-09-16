@@ -10,7 +10,8 @@ the first canonical authority schema for tenancy, network identity, address
 realms, address pools, prefixes, and revision state. Authority changes are
 guarded by an atomic audit/outbox integrity foundation. The current client
 protocol slice exposes control-key discovery, credential-backed registration,
-and authenticated one-shot and streaming full-map snapshots. Every snapshot
+authenticated Node-key rotation, and authenticated one-shot and streaming
+full-map snapshots. Every snapshot
 contains the authoritative self Node, only packet-policy-authorized peers, and
 the Node-reduced inbound packet filter; explicit empty collections clear prior
 client state. Long-lived streams use generation-fenced Redis presence, bounded
@@ -37,6 +38,16 @@ Redis before authority mutation. Counter identities are purpose-separated
 HMACs; Redis failure closes management admission rather than bypassing it.
 The worker PostgreSQL adapter leases, reconciles, and completes the matching
 durable outbox work without treating Redis as authority.
+
+Node-key rotation reuses `/machine/register` only after the Noise session proves
+the active machine key. The request carries the exact old and proposed new Node
+public keys, no enrollment credential, and no caller-selected scope. One
+transaction expires the old key epoch, creates the next epoch, advances the
+Device version and session generation, advances Network and inventory revisions,
+and appends audit plus outbox evidence. The logical Device, hostname, machine-key
+epoch, and address leases remain unchanged. An exact old/new retry converges on
+the committed epoch; stale transitions and any reuse of a historical Node key
+fail closed.
 
 The module path is `github.com/meshtransit/meshtransit`; the process binary
 is `meshcore`. Development and security gates run with Go 1.26.8.
@@ -406,6 +417,39 @@ It validates route, method, media type, bounded JSON, strong `If-Match`,
 HMAC-destroyed idempotency evidence, and exact result evidence before returning
 public JSON. Login, OIDC callbacks, and Account Session issuance remain future
 slices.
+
+## Node-key rotation threat model
+
+The trust boundary is the TLS-protected, Noise-authenticated control session.
+The transport-proven machine key is the only rotation principal. Request JSON
+cannot provide Workspace, Network, Device, session generation, revision, or
+audit authority.
+
+- Spoofing: the server binds rotation to the Noise machine key and requires its
+  active machine-key epoch. A missing, revoked, expired, or cross-scope Device
+  receives one generic unauthenticated result.
+- Tampering and replay: the transaction locks current Device, machine-key,
+  Node-key, revision, and audit-stream rows. A domain-separated proof binds the
+  machine key and exact old/new Node keys. One full-history uniqueness index
+  prevents rollback to any earlier Node key. Exact committed retries are the
+  only accepted replay.
+- Repudiation: Device, key epoch, session generation, Network revision, audit
+  event, and outbox event commit atomically under one change ID. Audit payloads
+  record versions and generations, never raw key material.
+- Information disclosure: errors, logs, metrics, audit payloads, and outbox
+  payloads omit public-key bytes and database authority detail. Scope resolution
+  is executable only by `mesh_runtime`.
+- Denial of service: statement, lock, idle, rollback, and whole-transaction
+  retry budgets are bounded. Control admission and per-session stream limits
+  apply before application mutation.
+- Elevation of privilege: the caller cannot select tenant scope. A
+  `SECURITY DEFINER` resolver validates the active machine and current Node-key
+  relationship before the adapter sets exact transaction-local RLS scope.
+
+Successful rotation increments `session_generation` and Network revision.
+Existing map streams fail their generation fence, while the durable outbox
+wakeup prompts other clients to resync. Periodic reconciliation remains the
+missed-notification recovery path.
 
 ## Health surface
 

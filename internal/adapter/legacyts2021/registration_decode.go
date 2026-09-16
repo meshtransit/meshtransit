@@ -27,9 +27,9 @@ const (
 // without disclosing credential material or field-level authentication detail.
 var ErrInvalidRegistrationRequest = errors.New("legacyts2021: invalid registration request")
 
-// DecodeCredentialRegistration decodes the bounded credential-enrollment
-// subset of the pinned registration profile and translates it immediately to
-// a product-owned request. The server, not the client, supplies registrationID.
+// DecodeCredentialRegistration decodes the bounded credential-enrollment or
+// machine-authenticated Node-key rotation subset of the pinned registration
+// profile. The server, not the client, supplies registrationID.
 func DecodeCredentialRegistration(
 	body io.Reader,
 	registrationID enrollment.RegistrationID,
@@ -149,17 +149,32 @@ type registrationHostWire struct {
 func (wire registrationRequestWire) toControl(
 	registrationID enrollment.RegistrationID,
 ) (control.RegistrationRequest, error) {
-	if wire.Version != supportedCapabilityVersion || wire.Auth == nil || wire.HostInfo == nil ||
-		wire.hasUnsupportedSemantics() || wire.Auth.OAuth2Token != nil {
+	if wire.Version != supportedCapabilityVersion || wire.HostInfo == nil ||
+		wire.hasUnsupportedSemantics() {
 		return control.RegistrationRequest{}, ErrInvalidRegistrationRequest
 	}
 	nodeKey, err := parseNodeKey(wire.NodeKey)
 	if err != nil {
 		return control.RegistrationRequest{}, ErrInvalidRegistrationRequest
 	}
-	credential, err := enrollment.ParseCredentialPresentation(wire.Auth.AuthKey)
-	wire.Auth.AuthKey = ""
-	if err != nil {
+	credential := enrollment.CredentialPresentation{}
+	oldNodeKey := node.Key{}
+	switch {
+	case wire.Auth != nil && isZeroTypedPublicKey(wire.OldNodeKey, nodeKeyPrefix):
+		if wire.Auth.OAuth2Token != nil {
+			return control.RegistrationRequest{}, ErrInvalidRegistrationRequest
+		}
+		credential, err = enrollment.ParseCredentialPresentation(wire.Auth.AuthKey)
+		wire.Auth.AuthKey = ""
+		if err != nil {
+			return control.RegistrationRequest{}, ErrInvalidRegistrationRequest
+		}
+	case wire.Auth == nil:
+		oldNodeKey, err = parseNodeKey(wire.OldNodeKey)
+		if err != nil || oldNodeKey == nodeKey {
+			return control.RegistrationRequest{}, ErrInvalidRegistrationRequest
+		}
+	default:
 		return control.RegistrationRequest{}, ErrInvalidRegistrationRequest
 	}
 	hostname, err := node.ParseHostname(wire.HostInfo.Hostname)
@@ -170,6 +185,7 @@ func (wire registrationRequestWire) toControl(
 		RegistrationID: registrationID,
 		Credential:     credential,
 		NodeKey:        nodeKey,
+		OldNodeKey:     oldNodeKey,
 		Hostname:       hostname,
 	})
 	if err != nil {
@@ -179,8 +195,7 @@ func (wire registrationRequestWire) toControl(
 }
 
 func (wire registrationRequestWire) hasUnsupportedSemantics() bool {
-	return !isZeroTypedPublicKey(wire.OldNodeKey, nodeKeyPrefix) ||
-		!isZeroTypedPublicKey(wire.NetworkLockKey, networkLockKeyPrefix) ||
+	return !isZeroTypedPublicKey(wire.NetworkLockKey, networkLockKeyPrefix) ||
 		!wire.Expiry.IsZero() || wire.Followup != "" || wire.Ephemeral ||
 		len(wire.NodeKeySignature) != 0 || wire.SignatureType != 0 || wire.Timestamp != nil ||
 		len(wire.DeviceCert) != 0 || len(wire.Signature) != 0 || wire.NetworkSelector != ""
