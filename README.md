@@ -409,6 +409,50 @@ bindings, delegation ceilings, and approval policy remain fail-closed until
 their dedicated vertical slices land. The first management HTTPS route exposes
 only exact-Network Device revocation.
 
+## OIDC browser-login foundation
+
+The provider-neutral `internal/identity/oidcauth` package now owns the security
+primitives for the SSO-only browser flow. Every transaction creates independent
+256-bit state, nonce, and PKCE verifier values. State and nonce use distinct,
+domain-separated HMAC-SHA-256 digests. The PKCE verifier is stored only as an
+AES-256-GCM envelope whose authenticated context binds the exact Deployment,
+Workspace, provider, client, transaction, provider generation, recovery epoch,
+and redirect ID. Secret-bearing values redact ordinary, detailed, and
+structured-log formatting.
+
+The `internal/adapter/oidc` discovery boundary fetches only the configured HTTPS
+metadata URI through a bounded TLS client with proxies and redirects disabled.
+It rejects oversized or duplicate security-field JSON, issuer or endpoint drift
+from the exact discovery/authorization/token/JWKS allowlist, missing
+Authorization Code or PKCE S256 support, and client-authentication or
+signing-algorithm mismatch.
+Split-host providers remain compatible because every HTTPS endpoint is
+allowlisted independently. The resulting authorization request contains one
+exact client, callback, scope, state, nonce, and S256 challenge; no
+caller-selected issuer, endpoint, or redirect is accepted.
+
+This slice intentionally does not expose a login route yet. PostgreSQL-backed
+single-use transaction creation, the browser start endpoint and host-only
+pre-authentication cookie are the next slice, followed by callback exchange,
+ID-token validation, Account reconciliation, and Account Session issuance.
+
+The boundary threat model is fail-closed:
+
+- Spoofing and mix-up: exact issuer, discovery, authorization, token, JWKS,
+  client, redirect, and provider capabilities must match Core-owned
+  configuration.
+- Tampering and replay: state and nonce have separate HMAC domains; the PKCE
+  verifier is AEAD-bound to every transaction authority generation.
+- Repudiation: the next storage slice must commit transaction creation with the
+  existing immutable audit/outbox contract before any endpoint is enabled.
+- Information disclosure: state, nonce, verifier, ciphertext, and the full
+  redirect always format redacted and must not enter logs or metrics.
+- Denial of service: discovery time, response headers, decompressed body size,
+  endpoint count, capability count, and redirects are bounded.
+- Elevation of privilege: provider roles, groups, Organization, email, and
+  mutable claims are absent from authorization construction and cannot create
+  Core membership or RBAC.
+
 ## Account Session authentication
 
 The `internal/identity/accountsession` package now owns the first human-session
@@ -434,7 +478,8 @@ management HTTP boundary uses this authenticator as an opaque bearer verifier.
 It validates route, method, media type, bounded JSON, strong `If-Match`,
 HMAC-destroyed idempotency evidence, and exact result evidence before returning
 public JSON. Login, OIDC callbacks, and Account Session issuance remain future
-slices.
+slices; the cryptographic transaction and strict discovery foundation described
+above is now complete.
 
 ## Node-key rotation threat model
 
