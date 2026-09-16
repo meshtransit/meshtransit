@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 31 {
-		t.Fatalf("len(Catalog()) = %d, want 31", len(catalog))
+	if len(catalog) != 32 {
+		t.Fatalf("len(Catalog()) = %d, want 32", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,26 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 31 {
-		t.Fatalf("LatestVersion() = %d, want 31", LatestVersion())
+	if LatestVersion() != 32 {
+		t.Fatalf("LatestVersion() = %d, want 32", LatestVersion())
+	}
+}
+
+func TestSubjectResolutionMigrationIsAdditiveNoGrant(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[31]
+	for _, required := range []string{"CREATE FUNCTION mesh_ops.resolve_oidc_login_subject_v1", "SECURITY DEFINER", "SET search_path = pg_catalog, mesh, mesh_ops", "matched_subject AS MATERIALIZED", "LIMIT 2", "pg_catalog.count(*) FROM matched_subject", "pg_catalog.clock_timestamp()", "auth.state = 'consuming'", "auth.binding_semantic_hash = p_binding_hash", "auth.consumed_at = p_consumed_at", "provider.current_generation = p_provider_generation", "deployment.recovery_epoch = p_recovery_epoch", "membership.state = 'active'", "membership.expires_at > decision.at", "account.recovery_state = 'verified'", "principal.kind = 'account'", "EXCEPTION WHEN OTHERS THEN", "FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer", "TO mesh_runtime"} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("subject resolution SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"CREATE TABLE", "CREATE INDEX", "ALTER TABLE", "INSERT INTO", "UPDATE mesh.", "DELETE FROM", "FOR SHARE", "FOR UPDATE", "GRANT SELECT", "GRANT ALL", "DROP ", "BYPASSRLS"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("subject read has excess capability %q", forbidden)
+		}
+	}
+	if migration.MinimumReaderGeneration != 1 || migration.MaximumReaderGeneration != 1 || migration.MinimumWriterGeneration != 1 || migration.MaximumWriterGeneration != 1 {
+		t.Fatal("read capability changed application generations")
 	}
 }
 

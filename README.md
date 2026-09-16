@@ -696,6 +696,47 @@ working source tree. No report, secret, dependency change or history rewrite is
 committed. This scan does not replace remaining SBOM/image/provenance and target
 release qualification gates.
 
+`SubjectResolutionService` now resolves only an existing exact `(issuer, subject)`
+binding after opaque validated exchange evidence. A purpose-owned resident HMAC
+keyring prepares one active and at most one previous candidate, preserving exact
+UTF-8 bytes. The versioned length-prefixed namespace includes Deployment, provider
+and key ID; Workspace, client, provider generation and recovery epoch remain
+authority fences, not stable identity. No email/profile linking or provisioning
+is performed. Stable-binding key retirement requires audited binding migration,
+not simply waiting for pending browser transactions to expire.
+
+Forward migration 32 exposes only runtime EXECUTE on
+`mesh_ops.resolve_oidc_login_subject_v1`. Its bounded primary read checks all
+current route/lifecycle/recovery predicates, original consuming claim version,
+binding hash, consumed_at and route labels, active Account Principal, verified
+Account and the exact existing login-Workspace membership. Both subject
+candidates are counted before lifecycle filtering; multiple matches reject even
+for the same Principal or an inactive binding. Final statement decisions use
+live database time and exclusive claim/member expiry, with cleared requested RLS
+scope. No table grants, schema/index/backfill changes, locks, last-seen updates,
+Session, role, audit/outbox or Network revision writes are added. Released
+migrations and reader/writer generation 1 remain unchanged.
+
+The complete application/adapter budget is at most 30 seconds, with a fail-fast
+1–256 request gate and independently bounded joined read cleanup. No positive
+snapshot escapes failed read completion, malformed evidence, cancellation or
+expired release-time checks; no read retry or uncertain-write resolver is used.
+Private metrics use only closed results and the fixed `auth_subject_resolve`
+operation. Disposable PostgreSQL/TLS tests compose real start/verify/claim,
+controlled trusted provider-port exchange evidence and real lookup. They cover
+missing membership without provisioning, independent service instances,
+previous-key lookup/ambiguity, all SQL inputs, revocation, terminal claims and
+live expiry past frozen transaction Begin. This is not live Keycloak/Google or
+client/deployment acceptance.
+
+The result is a snapshot, never Session issuance authority: the next write must
+independently lock/recheck current subject, Account, membership, route and CAS,
+and atomically commit Session plus successful terminal erasure/audit/outbox
+before releasing a fresh Core handle. Provider `auth_time` can currently be
+absent while the released Session schema/domain requires it. Do not fabricate
+authentication_time from iat/Now; reconcile the issuance profile/storage contract
+and qualify it before enabling issuance. Public browser login stays disabled.
+
 Vulnerability qualification remains reachability-specific: the current Go 1.26.8
 scan reports zero imported-package/reachable vulnerabilities, but retains three
 module-only `golang.org/x/crypto` advisories: GO-2026-6354, GO-2026-6355 (SSH,

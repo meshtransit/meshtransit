@@ -117,6 +117,12 @@ func integrationClaimVerified(ctx context.Context, t *testing.T, store *postgres
 
 func integrationClaimVerifiedRemaining(ctx context.Context, t *testing.T, store *postgresadapter.AuthTransactionStore, suffix string, remaining time.Duration) oidcauth.VerifiedBrowser {
 	t.Helper()
+	verified, _ := integrationClaimVerifiedWithNonce(ctx, t, store, suffix, remaining)
+	return verified
+}
+
+func integrationClaimVerifiedWithNonce(ctx context.Context, t *testing.T, store *postgresadapter.AuthTransactionStore, suffix string, remaining time.Duration) (oidcauth.VerifiedBrowser, oidcauth.Nonce) {
+	t.Helper()
 	template := integrationAuthTransactionPending(t, integrationAuthRouteParams{providerGeneration: 1, recoveryEpoch: 1, workspacePublicID: "01890f00-0000-7000-8000-000000000101"}, [4]string{
 		"01890f00-0000-7000-8000-000000000" + suffix, "01890f01-0000-7000-8000-000000000" + suffix,
 		"01890f02-0000-7000-8000-000000000" + suffix, "01890f03-0000-7000-8000-000000000" + suffix,
@@ -144,6 +150,10 @@ func integrationClaimVerifiedRemaining(ctx context.Context, t *testing.T, store 
 	if err != nil {
 		t.Fatal("invalid synthetic state")
 	}
+	nonce, err := oidcauth.ParseNonce(location.Query().Get("nonce"))
+	if err != nil {
+		t.Fatal("invalid synthetic nonce")
+	}
 	verify, err := oidcauth.NewBrowserVerificationService(oidcauth.BrowserVerificationOptions{RequestTimeout: 10 * time.Second}, oidcauth.BrowserVerificationDependencies{Pending: store, DigestKey: dependencies.DigestKey, VerifierCipher: dependencies.VerifierCipher, Clock: oidcauth.SystemStartClock{}})
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +162,7 @@ func integrationClaimVerifiedRemaining(ctx context.Context, t *testing.T, store 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return verified
+	return verified, nonce
 }
 
 func assertBrowserClaimEvidence(ctx context.Context, t *testing.T, admin *pgx.Conn, command oidcauth.ClaimCommand) {
