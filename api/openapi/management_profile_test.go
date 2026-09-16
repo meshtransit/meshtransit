@@ -1,0 +1,261 @@
+package openapi_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"os"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/meshtransit/meshtransit/api/openapi"
+)
+
+func TestManagementDocumentRejectsUnknownProfiles(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"", "bearer", "console", "console-cookie-csrf-private-v1\n", strings.Repeat("x", 4096)} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			body, err := openapi.ManagementDocument(openapi.ManagementProfile(name))
+			if body != nil || !errors.Is(err, openapi.ErrInvalidManagementProfile) {
+				t.Fatal("unknown profile selected an authentication fallback")
+			}
+			if err.Error() != "openapi: invalid management profile" {
+				t.Fatal("profile diagnostic disclosed caller input")
+			}
+		})
+	}
+}
+
+func TestManagementDocumentPreservesBearerBytesAndOwnership(t *testing.T) {
+	t.Parallel()
+	expected, err := os.ReadFile("management_v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		body, err := openapi.ManagementDocument(openapi.ManagementProfileBearerV1)
+		if err != nil || !bytes.Equal(body, expected) {
+			t.Fatal("Bearer document changed", err)
+		}
+		clear(body)
+	}
+}
+
+func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
+	t.Parallel()
+	baseBytes, err := os.ReadFile("management_v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := openapi.ManagementDocument(openapi.ManagementProfileConsoleCookiePrivateV1)
+	if err != nil || len(body) > 128<<10 {
+		t.Fatal("private document did not compose within its bound", err)
+	}
+	base, console := profileObject(t, baseBytes), profileObject(t, body)
+	validIdentity := console["openapi"] == "3.1.0" &&
+		console["x-meshtransit-auth-profile"] == "console-cookie-csrf-private-v1"
+	privateSelection := console["x-meshtransit-runtime-status"] == "private-source-only" && console["security"] == nil
+	if !validIdentity || !privateSelection {
+		t.Fatal("private source profile inherited or enabled authentication")
+	}
+	servers := profileArray(t, console, "servers")
+	if len(servers) != 1 || !reflect.DeepEqual(servers[0], map[string]any{"url": "https://console.example.test"}) {
+		t.Fatal("private document retained deployment topology")
+	}
+	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
+	if len(basePaths) != 2 || len(paths) != 3 {
+		t.Fatal("private profile introduced another product resource API")
+	}
+	for path := range basePaths {
+		baseOperation := profileMap(t, profileMap(t, basePaths, path), "post")
+		item := profileMap(t, paths, path)
+		if len(item) != 1 {
+			t.Fatal("resource profile added a method or inherited parameters")
+		}
+		operation := profileMap(t, item, "post")
+		expectedSecurity := []any{map[string]any{"accountSessionCookie": []any{}, "sessionCSRF": []any{}}}
+		if !reflect.DeepEqual(operation["security"], expectedSecurity) {
+			t.Fatal("mutation does not require cookie AND proof, or allows Bearer/anonymous OR")
+		}
+		for key, expected := range baseOperation {
+			resourceField := key != "security" && key != "parameters"
+			if resourceField && !reflect.DeepEqual(operation[key], expected) {
+				t.Fatalf("single resource contract drifted at %s", key)
+			}
+		}
+		baseParameters := profileArray(t, baseOperation, "parameters")
+		parameters := profileArray(t, operation, "parameters")
+		if len(parameters) != len(baseParameters)+3 ||
+			!reflect.DeepEqual(parameters[:len(baseParameters)], baseParameters) {
+			t.Fatal("resource scope/ETag/idempotency parameters changed")
+		}
+		for index, name := range []string{"ConsoleOrigin", "ConsoleSessionChannel", "ConsoleSessionProof"} {
+			if !reflect.DeepEqual(parameters[len(baseParameters)+index], map[string]any{
+				"$ref": "#/components/parameters/" + name,
+			}) {
+				t.Fatal("mutation omitted a required browser parameter")
+			}
+		}
+	}
+	baseComponents, components := profileMap(t, base, "components"), profileMap(t, console, "components")
+	for _, section := range []string{"schemas", "parameters", "headers", "responses"} {
+		for name, expected := range profileMap(t, baseComponents, section) {
+			if !reflect.DeepEqual(profileMap(t, components, section)[name], expected) {
+				t.Fatalf("shared resource component changed: %s/%s", section, name)
+			}
+		}
+	}
+	schemes := profileMap(t, components, "securitySchemes")
+	if len(schemes) != 2 || schemes["accountSessionBearer"] != nil {
+		t.Fatal("private Console retained Bearer transport")
+	}
+	for _, test := range []struct{ name, location, parameter string }{
+		{name: "accountSessionCookie", location: "cookie", parameter: "__Host-mt_session"},
+		{name: "sessionCSRF", location: "header", parameter: "X-MeshTransit-CSRF"},
+	} {
+		scheme := profileMap(t, schemes, test.name)
+		if scheme["type"] != "apiKey" || scheme["in"] != test.location || scheme["name"] != test.parameter {
+			t.Fatal("browser security scheme changed transport")
+		}
+	}
+	parameters := profileMap(t, components, "parameters")
+	for _, name := range []string{"ConsoleOrigin", "ConsoleSessionChannel", "ConsoleSessionProof"} {
+		parameter := profileMap(t, parameters, name)
+		if parameter["in"] != "header" || parameter["required"] != true {
+			t.Fatal("browser intent became an optional or URL parameter")
+		}
+	}
+	profileReferences(t, console, console)
+}
+
+func TestManagementDocumentConsolePreparationIsNoGrant(t *testing.T) {
+	t.Parallel()
+	body, err := openapi.ManagementDocument(openapi.ManagementProfileConsoleCookiePrivateV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := profileObject(t, body)
+	item := profileMap(t, profileMap(t, document, "paths"), "/auth/v1/session/prepare")
+	if len(item) != 1 {
+		t.Fatal("prepare exposes authority through another method")
+	}
+	operation := profileMap(t, item, "post")
+	if !reflect.DeepEqual(operation["security"], []any{map[string]any{"accountSessionCookie": []any{}}}) {
+		t.Fatal("preparation requires nonexistent proof or an authentication fallback")
+	}
+	if len(profileArray(t, operation, "parameters")) != 2 {
+		t.Fatal("prepare transport omitted Origin/channel or requires existing proof")
+	}
+	request := profileMap(t, operation, "requestBody")
+	schema := profileMap(t, profileMap(t, profileMap(t, request, "content"), "application/json"), "schema")
+	validBodyBound := request["required"] == true && request["x-meshtransit-max-bytes"] == float64(4096)
+	validObject := schema["type"] == "object" && schema["additionalProperties"] == false
+	if !validBodyBound || !validObject || schema["maxProperties"] != float64(0) {
+		t.Fatal("prepare no longer describes the bounded literal empty object")
+	}
+	responses := profileMap(t, operation, "responses")
+	failure := profileMap(t, responses, "default")
+	untouchedFailure := failure["content"] == nil && failure["headers"] == nil
+	if len(responses) != 2 || !untouchedFailure {
+		t.Fatal("private pre-release failure invented HTTP output or credentials")
+	}
+	response := profileMap(t, responses, "200")
+	if profileMap(t, response, "headers")["Set-Cookie"] != nil {
+		t.Fatal("prepare document renews a Session")
+	}
+	components := profileMap(t, document, "components")
+	prepared := profileMap(t, profileMap(t, components, "schemas"), "ConsoleCSRFPrepared")
+	properties := profileMap(t, prepared, "properties")
+	exactFields := prepared["additionalProperties"] == false && len(properties) == 2
+	requiredFields := properties["csrf_token"] != nil && properties["expires_at"] != nil
+	if !exactFields || !requiredFields || len(profileArray(t, prepared, "required")) != 2 {
+		t.Fatal("proof response exposes authority/provider data or omits expiry")
+	}
+	proof := profileMap(t, profileMap(t, components, "schemas"), "ConsoleSessionProof")
+	if proof["type"] != "string" || proof["maxLength"] != float64(256) {
+		t.Fatal("proof contract lost its bounded envelope")
+	}
+	again, err := openapi.ManagementDocument(openapi.ManagementProfileConsoleCookiePrivateV1)
+	if err != nil || !bytes.Equal(body, again) {
+		t.Fatal("private rendering is not deterministic", err)
+	}
+	clear(body)
+	third, err := openapi.ManagementDocument(openapi.ManagementProfileConsoleCookiePrivateV1)
+	if err != nil || !bytes.Equal(third, again) {
+		t.Fatal("caller mutation escaped private output ownership", err)
+	}
+}
+
+func FuzzManagementDocumentProfile(f *testing.F) {
+	f.Add("")
+	f.Add("account-session-bearer-v1")
+	f.Add("console-cookie-csrf-private-v1")
+	f.Add("console-cookie-csrf-private-v1\x00")
+	f.Fuzz(func(t *testing.T, input string) {
+		body, err := openapi.ManagementDocument(openapi.ManagementProfile(input))
+		known := input == "account-session-bearer-v1" || input == "console-cookie-csrf-private-v1"
+		if !known {
+			if body != nil || !errors.Is(err, openapi.ErrInvalidManagementProfile) {
+				t.Fatal("arbitrary profile enabled a transport")
+			}
+			return
+		}
+		completeDocument := len(body) <= 128<<10 && json.Valid(body)
+		if err != nil || !completeDocument {
+			t.Fatal("known profile returned an incomplete or unbounded document", err)
+		}
+	})
+}
+
+func profileObject(t *testing.T, body []byte) map[string]any {
+	t.Helper()
+	var value map[string]any
+	if err := json.Unmarshal(body, &value); err != nil || value == nil {
+		t.Fatal("invalid contract object", err)
+	}
+	return value
+}
+
+func profileMap(t *testing.T, object map[string]any, key string) map[string]any {
+	t.Helper()
+	value, ok := object[key].(map[string]any)
+	if !ok || value == nil {
+		t.Fatalf("missing contract object %s", key)
+	}
+	return value
+}
+
+func profileArray(t *testing.T, object map[string]any, key string) []any {
+	t.Helper()
+	value, ok := object[key].([]any)
+	if !ok || value == nil {
+		t.Fatalf("missing contract array %s", key)
+	}
+	return value
+}
+
+func profileReferences(t *testing.T, root map[string]any, value any) {
+	t.Helper()
+	switch node := value.(type) {
+	case map[string]any:
+		if reference, ok := node["$ref"].(string); ok {
+			if !strings.HasPrefix(reference, "#/") {
+				t.Fatal("contract requires an external runtime resolver")
+			}
+			current := root
+			for _, part := range strings.Split(reference[2:], "/") {
+				name := strings.ReplaceAll(strings.ReplaceAll(part, "~1", "/"), "~0", "~")
+				current = profileMap(t, current, name)
+			}
+		}
+		for _, child := range node {
+			profileReferences(t, root, child)
+		}
+	case []any:
+		for _, child := range node {
+			profileReferences(t, root, child)
+		}
+	}
+}

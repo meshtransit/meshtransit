@@ -1532,6 +1532,78 @@ new baseline/exclusions. No PostgreSQL/Redis/provider integration or live client
 browser test runs in this slice; native-host clock remains unqualified. Source
 evidence does not qualify public enablement, remote CI or immutable artifacts.
 
+### Private management OpenAPI authentication profiles
+
+`SSO-MANAGEMENT-AUTH-PROFILE-001` adds pure compile-time document composition,
+not runtime admission or public SSO. `openapi.ManagementDocument` requires an
+explicit server-owned `account-session-bearer-v1` or
+`console-cookie-csrf-private-v1` profile; zero/unknown values return a closed error
+and no bytes. No query/header/credential negotiation or authentication default.
+The Bearer document remains byte-identical to `api/openapi/management_v1.json`.
+
+The private Console document derives from that SAME versioned product API and
+one reviewed MeshTransit build-time fragment, not a generic operator JSON patch
+or OpenAPI Overlay standard document. Existing device-revoke/policy-publish POST
+operations retain exact operation IDs, body/scope schemas, resource responses,
+ETags and idempotency parameters. Reject baseline version/operation/method/
+authentication drift and component-name collisions rather than adding unknown
+browser resources. One security requirement contains BOTH canonical
+`__Host-mt_session` cookie and `X-MeshTransit-CSRF` proof (AND, never anonymous or
+Bearer OR). Exact configured HTTPS Origin and `X-MeshTransit-Session: v1` are
+required. Authorization custody, including empty values, is forbidden; there
+is no Referer/CORS/provider-token or browser-session-to-IaC fallback. These
+descriptions never replace current Core membership/RBAC, fresh durable Session
+generations, transaction scope or response-submission checks.
+
+Only no-grant POST `/auth/v1/session/prepare` is added: current cookie, Origin/
+channel headers and a bounded literal empty JSON object, without a proof that
+does not yet exist. Success is no-store JSON containing ONLY `csrf_token` and
+`expires_at`, no provider/identity/bearer data or Set-Cookie/renewal. Its default
+response records private zero-output pre-release failure, not an enabled public
+HTTP error mapper. Existing wrapper limits, independent admission capacities,
+budgets, exclusive expiry and uncertain-delivery/no-retry rules remain unchanged.
+
+Compiled inputs/output each stay within 128 KiB. Rendering owns local maps and
+independent deterministic bytes; no mutable cache, runtime OS file read, clock,
+provider/DB/budget/entropy effect, worker or retry. The composed OpenAPI 3.1.0
+document is marked `private-source-only` and uses only a reserved Console example
+origin, never an operator/deployment default. Contract tests retain exact shared
+resource components, require cookie AND proof plus Origin/channel, verify every
+local reference, no-grant/ownership/size/drift rules and fuzz closed profile
+selection. A controlled private-root bridge compares the actual newly issued
+Session's preparation response with the compiled shape and verifies that empty
+Authorization is rejected before effects or output. This is not a full formal
+OpenAPI/JSON-Schema validator or live provider/client/browser qualification.
+
+No main/runtime/config/public auth selection, dispatcher, documentation endpoint,
+listener, secret loader, client wire, SQL/schema, dependency or default changes.
+Public SSO remains disabled. Production PostgreSQL/Redis/Keycloak factories and
+complete login-route OpenAPI/dispatcher come next; query custody, native-host
+clock, intended expiry/recovery, Google-through-Keycloak/client/HA, remote CI and
+immutable-artifact release gates remain open. Canonical API/identity/security/ADR
+documents were updated locally first; this README is their versioned mirror,
+not a claim that the non-Git sibling core-docs directory was committed.
+
+Source qualification (2026-09-17): full `make quality` passes host formatting,
+tidy/vet, unit/shuffled race tests, pinned regular/integration-tag lint and
+workflow lint. Govulncheck reports zero affected symbols/imported-package
+vulnerabilities, but three non-called required-module advisories, not a
+zero-advisory dependency/container assessment. Uncached host race tests pass
+`api/openapi`, `internal/config` and `cmd/meshcore` (1.449s, 1.330s, 1.639s).
+Profile-selection fuzzing passes 1,653,618 executions with two workers over ten
+seconds. Gitleaks finds no leaks in the full tree and 124 pre-commit history
+commits; no baseline/exclusion was added. Scoped pinned autofix/read-only lint
+both report zero issues and leave the four reviewed Go files unchanged.
+
+The attempted pinned Linux source-container gate did NOT execute: automated
+review rejected a complete read-only repository mount into a container without
+specific payload/destination authorization. No alternate mount/copy/indirect
+workaround was used. This source's Linux gate remains unqualified, not passed or
+waived; host or historical results do not substitute for it. A retry requires
+explicit authorization for that source/image exposure. Native-host clock,
+durable integration, live SSO/client/HA, remote CI and immutable artifacts remain
+unqualified. No public activation or deployment is part of this change.
+
 ## Account Session authentication
 
 The `internal/identity/accountsession` package now owns the first human-session

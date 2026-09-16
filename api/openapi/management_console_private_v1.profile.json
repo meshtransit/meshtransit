@@ -1,0 +1,91 @@
+{
+  "id": "console-cookie-csrf-private-v1",
+  "format": "meshtransit-management-auth-profile/v1",
+  "description": "Private source contract only. No documentation endpoint, listener or SSO is enabled. Completed direct TLS 1.2+, exact configured Host/HTTPS Origin, origin-form POST, fresh Core Session and current exact-scope RBAC are mandatory. Authorization custody, query/encoded/alternate routing, Referer fallback, CORS and provider-token grants are forbidden. The reserved server is an example, never an operator default.",
+  "securitySchemes": {
+    "accountSessionCookie": {
+      "type": "apiKey",
+      "in": "cookie",
+      "name": "__Host-mt_session",
+      "description": "One canonical nonzero Core mtas1 Account Session cookie. Fresh durable authentication, Deployment/recovery/generation and exclusive idle/absolute expiry checks apply. Never an IdP token, IaC credential or cached authority. Cookie issuance uses Secure, HttpOnly, SameSite=Lax, Path=/ and no Domain."
+    },
+    "sessionCSRF": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "X-MeshTransit-CSRF",
+      "description": "One <=256-byte dedicated mtscsrf1 intent proof bound to the complete current Session bearer, exact Origin and Deployment. Require together with the cookie for mutations. Preparation lifetime is 30-120 whole seconds, shortened to exclusive Session expiry; no future issue time, expiry equality or skew grace. The proof is replayable intent transport, never an operation/Session grant."
+    }
+  },
+  "parameters": {
+    "ConsoleOrigin": {
+      "name": "Origin",
+      "in": "header",
+      "required": true,
+      "description": "One exact operator-configured HTTPS Origin, including canonical non-default port when configured. Missing/null/foreign Origin rejects; Referer, forwarded headers and normalization never replace it.",
+      "schema": { "type": "string", "minLength": 8, "maxLength": 256, "pattern": "^https://" }
+    },
+    "ConsoleSessionChannel": {
+      "name": "X-MeshTransit-Session",
+      "in": "header",
+      "required": true,
+      "schema": { "type": "string", "const": "v1" }
+    },
+    "ConsoleSessionProof": {
+      "name": "X-MeshTransit-CSRF",
+      "in": "header",
+      "required": true,
+      "schema": { "$ref": "#/components/schemas/ConsoleSessionProof" }
+    }
+  },
+  "schemas": {
+    "ConsoleSessionProof": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^mtscsrf1\\.",
+      "description": "Shape hint only. Core verifies the complete canonical envelope/MAC and exact cookie/Origin/Deployment/time binding before fresh durable Session authentication."
+    },
+    "ConsoleCSRFPrepared": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["csrf_token", "expires_at"],
+      "properties": {
+        "csrf_token": { "$ref": "#/components/schemas/ConsoleSessionProof" },
+        "expires_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "prepare": {
+    "post": {
+      "operationId": "prepareConsoleSessionCSRF",
+      "summary": "Prepare current-Session intent without issuing or renewing authority",
+      "description": "Consume shared source/Session budgets and freshly authenticate the existing cookie before independent OS entropy. Return only the proof and exclusive expiry. No Set-Cookie, provider token, identity or resource grant. JSON whitespace around the literal empty object is allowed. Existing private transport/body/header/cookie/capacity/deadline bounds and zero-output pre-release failure apply.",
+      "security": [{ "accountSessionCookie": [] }],
+      "parameters": [
+        { "$ref": "#/components/parameters/ConsoleOrigin" },
+        { "$ref": "#/components/parameters/ConsoleSessionChannel" }
+      ],
+      "requestBody": {
+        "required": true,
+        "x-meshtransit-max-bytes": 4096,
+        "content": {
+          "application/json": {
+            "schema": { "type": "object", "additionalProperties": false, "maxProperties": 0 }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "No-grant proof for the current Session. Cookie is never set, renewed or cleared.",
+          "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } },
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ConsoleCSRFPrepared" } }
+          }
+        },
+        "default": {
+          "description": "Private pre-release failure leaves status/headers/body untouched. No public HTTP error mapper is enabled. Submission failure is uncertain delivery, never non-commit evidence, retry or response rewrite."
+        }
+      }
+    }
+  }
+}

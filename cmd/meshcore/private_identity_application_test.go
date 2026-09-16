@@ -20,6 +20,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/meshtransit/meshtransit/api/openapi"
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
 	"github.com/meshtransit/meshtransit/internal/adapter/oidc"
 	"github.com/meshtransit/meshtransit/internal/deployment"
@@ -450,6 +451,60 @@ func TestPrivateIdentityCookieManagementUsesFreshSessionAndResidentBudgets(t *te
 	if response.Code != http.StatusUnauthorized || fixture.authorityReads != 4 ||
 		slices.Contains(fixture.effects[before:], "revoke") || response.Header().Get("Www-Authenticate") != "" {
 		t.Fatal("prepared proof bypassed current Session revocation or fell back to Bearer")
+	}
+}
+
+func TestPrivateIdentityCookieManagementMatchesCompiledProfile(t *testing.T) {
+	t.Parallel()
+	document, err := openapi.ManagementDocument(openapi.ManagementProfileConsoleCookiePrivateV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contract struct {
+		Components struct {
+			Schemas map[string]struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(document, &contract); err != nil {
+		t.Fatal(err)
+	}
+	fixture := newPrivateIdentityFixture(t)
+	root := fixture.compose(t)
+	issued := fixture.issue(t, root).Issued()
+	request := fixture.managementRequest(t, issued.Token(), httpapi.AccountSessionCSRFPreparePath, "{}")
+	response := newPrivateIdentityResponse()
+	if err := root.management.Handle(response, request); err != nil {
+		t.Fatal(err)
+	}
+	var actual map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &actual); err != nil {
+		t.Fatal(err)
+	}
+	properties := contract.Components.Schemas["ConsoleCSRFPrepared"].Properties
+	if len(actual) != 2 || len(properties) != len(actual) {
+		t.Fatal("actual no-grant preparation and compiled response shape differ")
+	}
+	for name := range actual {
+		if _, present := properties[name]; !present {
+			t.Fatal("private response exposes data outside the compiled contract")
+		}
+	}
+	validPreparation := response.Code == http.StatusOK && response.Header().Get("Cache-Control") == "no-store"
+	if !validPreparation || response.Header().Get("Set-Cookie") != "" {
+		t.Fatal("compiled no-store/no-renewal response does not match the actual adapter")
+	}
+	// Even empty Authorization custody cannot negotiate this source profile.
+	before := len(fixture.effects)
+	request = fixture.managementRequest(t, issued.Token(), httpapi.AccountSessionCSRFPreparePath, "{}")
+	request.Header["Authorization"] = []string{""}
+	response = newPrivateIdentityResponse()
+	err = root.management.Handle(response, request)
+	closedTransport := errors.Is(err, httpapi.ErrInvalidBrowserManagement) && len(fixture.effects) == before
+	untouchedResponse := len(response.Header()) == 0 && response.Body.Len() == 0
+	if !closedTransport || !untouchedResponse {
+		t.Fatal("source profile negotiated Bearer or reflected rejected credential transport")
 	}
 }
 
