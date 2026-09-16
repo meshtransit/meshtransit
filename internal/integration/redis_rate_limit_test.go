@@ -50,4 +50,24 @@ func assertRedisRateLimit(ctx context.Context, t *testing.T, client *redisadapte
 			t.Fatalf("Redis denied decision retry-after = %s", decision.RetryAfter())
 		}
 	}
+	// A new pre-auth state kind must neither reuse the exhausted source bucket nor
+	// evade its own shared counter through another digester instance/operation.
+	otherDigester, err := ratelimit.NewDigester(keyID, material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := digester.Subject(ratelimit.SubjectAuthTransaction, "192.0.2.254")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameState, err := otherDigester.Subject(ratelimit.SubjectAuthTransaction, "192.0.2.254")
+	if err != nil || state != sameState {
+		t.Fatal("same state failed cross-instance counter identity")
+	}
+	for attempt, candidate := range []ratelimit.Subject{state, sameState, state} {
+		decision, err := client.Allow(ctx, candidate, policy)
+		if err != nil || decision.Allowed() != (attempt < 2) {
+			t.Fatal("exact-state shared Redis budget widened or lost isolation", err)
+		}
+	}
 }

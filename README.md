@@ -968,11 +968,73 @@ capsule count/duration metrics have only closed operation/result labels; accepte
 is not authentication or HTTP delivery. No public metric registration is added.
 
 This source primitive opens no listener and changes no schema/config version or
-supported client wire. Next: protected same-origin POST/CSRF composition with
-shared abuse budgets, fresh durable verification, single-use claim, exchange,
+supported client wire. The no-grant protected POST admission below is now present;
+next: whole-pipeline composition with fresh durable verification, single-use claim, exchange,
 exact-subject issuance and fresh session rotation. Before any public login,
 qualify edge/BFF query-log/trace suppression, nonce/key operational limits,
 exact-target expiry/recovery and Google-through-Keycloak/client acceptance.
+
+### Protected no-grant callback continuation admission
+
+Strict creation/release-time checks are unchanged. Synthetic platform tests
+run against a separate Docker VM clock; even a small negative database offset
+can reject immediate pending verification. Failure-only integration diagnostics
+report clock offset and safe presence flags, never credentials. Qualify clock
+health and immediate start-to-verify behavior before enabling public login;
+do not bypass the check, pad persisted evidence or retry an unknown claim.
+Following a Docker Desktop restart, the unchanged Go source passed three
+consecutive full platform runs on fresh disposable fixtures. This local result
+does not qualify clock behavior across production replicas or recovery.
+
+`LoginContinuationGuard` issues a NEW stateless CSRF proof, not the already
+cleared Start proof/cookie. A separate resident HMAC-SHA-256 purpose/key binds
+the full ordered Route/origin, current private pre-auth handle, exact encrypted
+capsule commitment and canonical version/key/issued/expiry/random payload.
+Independent 256-bit CSPRNG challenge, strict whole-second 30–120-second lifetime,
+canonical base64url, exact key and constant-time MAC are required. No skew,
+previous-key or Start-purpose fallback exists. Proof contains no raw cookie,
+capsule, state, code or identity; implicit formatting/logging/JSON is redacted or
+refused. No new cookie/session is created. See the
+[OWASP signed binding guidance](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html#signed-double-submit-cookie-recommended);
+this is pre-auth intent only, never an authenticated session or replay claim.
+
+`LoginContinuationGate.Prepare` accepts only POST
+`/auth/v1/login/continue/prepare`, authenticates live capsule transport, and writes
+no-store `csrf_token`/`expires_in` JSON only. `Read` accepts only POST
+`/auth/v1/login/continue` plus the custom-header proof and returns untrusted
+`LoginCallbackInput`; it writes no success status/body, clears no cookie and
+performs no durable browser verification, claim, exchange or Session issuance.
+Both variants require completed direct TLS 1.2+, exact Host/Origin, origin-form
+fixed target without query/encoded path, `X-MeshTransit-Login: v1`, JSON `{}` within
+32 bytes and coherent same-origin AJAX metadata when present. Authorization,
+ambiguous headers, transfer/trailers, Referer-only or proxy-selected admission
+reject. Existing header/cookie budgets remain unchanged.
+
+Source HMAC budget precedes crypto; an exact Deployment/epoch/state HMAC budget
+precedes release. Both use shared Redis with separate purpose/counter namespaces,
+including the additive `auth_transaction` kind. Unavailable/malformed decisions
+fail closed; exhaustion returns a closed limited error with bounded Retry-After.
+Callers map invalid/limited/unavailable-or-saturated to safe 403/429/503 responses,
+not dependency error text. A non-queuing 1–128-slot semaphore and at most 30-second
+admission context enforce bounds, together with mandatory transport read/write
+deadlines. Fresh proof/capsule checks after Redis waits reject expiry/cancellation.
+The future caller must separately own the WHOLE application/response deadline
+and capacity. Partial proof-response write failure cannot be retried or rewritten.
+
+`SSO-CONTINUATION-ADMISSION-001` source tests cover exact bindings, key ownership,
+malformed authenticated payload, byte tamper, both callback variants, dependency/
+time/cancellation/capacity failures, no secret/authority response, synthetic
+verified-HTTPS transport and bounded proof/HTTP fuzz. Disposable verified-TLS
+Redis tests also cover the new kind's isolated shared counter identity; this is
+not operational HA/real browser/Google acceptance. Private count/duration metrics
+have closed operation/result labels; `input_released` is not authentication.
+
+No public route/metric registration, BFF page, client wire, configuration/schema
+version or public login default changes. Next: confirmed-only verify → claim →
+single-attempt exchange → exact-subject issuance/failure orchestration, fresh
+session-cookie rotation and safe read-only BFF landing. Query-log suppression,
+operational expiry/recovery coverage and live Google through Keycloak remain
+release gates, not implied by these primitives or existing client regressions.
 
 The boundary threat model is fail-closed:
 

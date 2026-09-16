@@ -67,7 +67,31 @@ func assertPostgreSQLPendingBrowserEvidence(ctx context.Context, t *testing.T, a
 		}
 		verified, err := verify.VerifyBrowser(ctx, template.Route(), state, started.PreAuthCookie())
 		if err != nil || !verified.IsValid() || verified.Snapshot().SemanticHash() != transactions.pending.SemanticHash() {
-			t.Fatalf("durable browser verification error=%v", err)
+			clockBefore := time.Now().UTC()
+			var databaseNow time.Time
+			if clockErr := admin.QueryRow(ctx, `SELECT pg_catalog.clock_timestamp()`).Scan(&databaseNow); clockErr != nil {
+				t.Fatalf("durable browser verification error=%v; clock diagnostic failed", err)
+			}
+			clockAfter := time.Now().UTC()
+			digest, digestErr := dependencies.DigestKey.State(
+				template.Route().DeploymentID(), template.Route().RecoveryEpoch(), state,
+			)
+			if digestErr != nil {
+				t.Fatal("browser verification diagnostic digest failed")
+			}
+			snapshot, found, loadErr := store.LoadPending(ctx, template.Route(), digest)
+			// Only safe diagnostics escape; never log state, cookie, ciphertext or code.
+			t.Fatalf(
+				"durable browser verification error=%v; found=%t load_failed=%t route_match=%t "+
+					"database_clock_offset_bounds=[%s,%s] created_after_database_now=%t",
+				err,
+				found,
+				loadErr != nil,
+				snapshot.MatchesRoute(template.Route()),
+				databaseNow.Sub(clockAfter),
+				databaseNow.Sub(clockBefore),
+				transactions.pending.CreatedAt().After(databaseNow),
+			)
 		}
 		other, err := oidcauth.GenerateSecrets()
 		if err != nil {

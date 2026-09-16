@@ -39,6 +39,8 @@ const (
 	SubjectSource SubjectKind = "source"
 	// SubjectAccountSession identifies the post-authentication session budget.
 	SubjectAccountSession SubjectKind = "account_session"
+	// SubjectAuthTransaction identifies a pre-authentication exact-state abuse budget, not authority.
+	SubjectAuthTransaction SubjectKind = "auth_transaction"
 )
 
 // DigestKeyID is the public version identifier for one HMAC key.
@@ -202,7 +204,7 @@ func (decision Decision) IsValid() bool {
 }
 
 func validSubjectKind(kind SubjectKind) bool {
-	return kind == SubjectSource || kind == SubjectAccountSession
+	return kind == SubjectSource || kind == SubjectAccountSession || kind == SubjectAuthTransaction
 }
 
 func validKeyID(value string) bool {
