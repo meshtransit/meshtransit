@@ -1388,6 +1388,78 @@ scan passes with full redaction and no added baseline/exclusions. This evidence
 does not waive the previously recorded native-host clock failure, qualify remote
 CI/live Google/browser/client/HA, or constitute an immutable release artifact.
 
+### Private identity key preparation
+
+`SSO-PRIVATE-KEY-LOADING-001` prepares a coherent private composition-root key
+candidate, not public SSO. An explicit immutable file-reference profile names
+eleven required purposes: initiation, capture, continuation, management CSRF,
+transaction digest, verifier encryption, subject binding, provider Session
+binding, Account Session, idempotency and rate-limit subjects. Subject and
+Account Session alone admit one optional previous key each. Reject missing
+purposes, duplicate paths/IDs and invalid references before filesystem effects.
+No map, service locator, env flag, default/generated key or secret literal.
+
+This narrower private profile uses distinct canonical absolute <=4096-byte
+references and distinct 1–64-byte ASCII letter/digit/hyphen/underscore IDs,
+starting with a letter/digit. It does not change existing key-ID/environment
+contracts. All 11–13 decoded nonzero 256-bit materials must also be distinct,
+including previous keys; comparison is constant time. Reject the entire
+candidate on any failure; no partial key release or per-purpose fallback.
+
+On operator-trusted local Linux/macOS mounts, os.Root scopes each file to its
+parent. In-root projected-volume symlinks work; escaping links reject.
+Nonblocking open rejects FIFO/special-file admission without waiting for a
+writer. Opened files must be regular, owner-readable, with only 0400/0600
+permissions; no special/executable/group/world bits. Reads stop at 46 bytes.
+Accept exactly 43 canonical unpadded base64url characters with at most one LF
+or CRLF. Reject whitespace, padding, extra lines, zero or substituted material.
+Recheck descriptor/path metadata after each read, then every recorded path
+snapshot after the complete candidate, without reloading/merging individual
+keys. Ordinary projected-mount rotation withholds the entire candidate.
+
+One caller-clamped five-second context covers loading/resident construction,
+with cancellation checks around filesystem work, comparisons and final release.
+No detached worker/retry/background context. Check read/close errors, conceal
+raw diagnostics and erase owned encoded/decoded/partial buffers on all exits.
+Copy into the existing typed transaction/verifier/subject/provider-Session/
+Account Session/idempotency/rate-limit owners and four independent browser key
+buffers, then clear the loader result. Formatting/logging/JSON are redacted or
+refused. Tests retain the exact nil-context failure oracle.
+
+Operators own mount/ancestor custody and atomic rotation. Context cannot preempt
+local filesystem syscalls; remote/NFS mounts are unsupported by this profile.
+Snapshot checks are not a global filesystem transaction or resistance to a
+privileged writer restoring inode metadata. Erasure is best effort, not a Go
+heap/core-dump zeroization guarantee. Unsupported operating systems fail closed.
+Future application/browser wiring must use the same resident owners rather than
+reload/replace individual purposes.
+
+Source tests cover hostile profiles, all-or-nothing loading, optional rotation,
+resident ownership, exact Session digests, redaction, scoped symlinks, owner-only
+permissions, FIFO rejection, earlier-file rotation and late read/cancellation.
+Separate bounded fuzz gates cover the key decoder and private ID parser.
+No listener, public dispatcher, provider/DB/budget/entropy work, environment
+schema, client wire, dependency or disabled public-login default changes.
+Root application-port/auth-profile/OpenAPI and private telemetry binding remain
+next steps. Query-log suppression, native-host clock, intended expiry/recovery,
+live Google through Keycloak/client/HA, remote CI and immutable-artifact gates
+are not qualified by source preparation. Canonical original docs are updated
+locally; this README is the versioned mirror, not a claim that the sibling
+core-docs directory was committed.
+
+Local source qualification (2026-09-17): unchanged make quality passes full unit/
+race/shuffle, vet, pinned lint/integration lint, format/module, vulnerability and
+workflow checks. Govulncheck reports zero affected symbols/imported packages and
+three module-only advisories. Ten-second/two-worker key-decoder/ID fuzz passes
+1225706/1253836 executions. Uncached config/cmd race/shuffle passes under pinned
+Go 1.26.8 on Linux as UID/GID 65532, with no network, capabilities, writable source,
+host credentials or Docker socket (1.046s/1.035s). The first disposable scratch
+mount was noexec, so no test executed; the corrected harness permits execution
+only in its isolated scratch while retaining nosuid/nodev/non-root/read-only
+boundaries. This is source-file loading evidence, not a PostgreSQL/Redis/live
+provider, public SSO, client or operational clock qualification. Fully redacted
+tree and complete-history secret scans pass with no new baseline/exclusions.
+
 ## Account Session authentication
 
 The `internal/identity/accountsession` package now owns the first human-session
