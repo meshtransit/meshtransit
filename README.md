@@ -1431,8 +1431,8 @@ local filesystem syscalls; remote/NFS mounts are unsupported by this profile.
 Snapshot checks are not a global filesystem transaction or resistance to a
 privileged writer restoring inode metadata. Erasure is best effort, not a Go
 heap/core-dump zeroization guarantee. Unsupported operating systems fail closed.
-Future application/browser wiring must use the same resident owners rather than
-reload/replace individual purposes.
+The private identity application root below uses the same resident owners rather
+than reload/replace individual purposes; production binding remains separate.
 
 Source tests cover hostile profiles, all-or-nothing loading, optional rotation,
 resident ownership, exact Session digests, redaction, scoped symlinks, owner-only
@@ -1440,8 +1440,9 @@ permissions, FIFO rejection, earlier-file rotation and late read/cancellation.
 Separate bounded fuzz gates cover the key decoder and private ID parser.
 No listener, public dispatcher, provider/DB/budget/entropy work, environment
 schema, client wire, dependency or disabled public-login default changes.
-Root application-port/auth-profile/OpenAPI and private telemetry binding remain
-next steps. Query-log suppression, native-host clock, intended expiry/recovery,
+Private application-port composition and collector binding are described below;
+production auth-profile/OpenAPI and dependency-factory binding remain next steps.
+Query-log suppression, native-host clock, intended expiry/recovery,
 live Google through Keycloak/client/HA, remote CI and immutable-artifact gates
 are not qualified by source preparation. Canonical original docs are updated
 locally; this README is the versioned mirror, not a claim that the sibling
@@ -1459,6 +1460,77 @@ only in its isolated scratch while retaining nosuid/nodev/non-root/read-only
 boundaries. This is source-file loading evidence, not a PostgreSQL/Redis/live
 provider, public SSO, client or operational clock qualification. Fully redacted
 tree and complete-history secret scans pass with no new baseline/exclusions.
+
+### Private identity application root
+
+`SSO-PRIVATE-APPLICATION-ROOT-001` composes actual Start, Callback and Account
+Session services, the existing browser login BFF and cookie-management wrapper
+from one resident private key bundle. Start and Callback share the exact
+transaction/verifier owners; Callback issuance and fresh Session authentication
+share the exact Account Session keyring. Subject and provider-Session binding,
+idempotency and rate-limit purposes retain their existing typed owners. The
+caller exclusively owns the four mutable browser buffers; constructors copy
+them before the caller may erase them. No key reload, alternate key/clock/
+Deployment or prebuilt authentication-service injection.
+
+Typed effect ports explicitly supply route admission, metadata, creation and
+confirmed-creation lookup, pending/claim/failure/issuance authority, provider and
+subject resolution, fresh Session authority, ID/secret/material generation,
+revocation/policy services, shared budgets, clock and logger. Reject absent and
+typed-nil ports before construction. The composition helper opens/probes no DB,
+provider, entropy, budget or listener and does not establish dependency readiness.
+Production binding must supply current durable authority and shared budgets;
+passing typed ports alone is not operational qualification.
+
+One caller-clamped five-second context covers effect-free construction and final
+all-or-nothing release. Start/Callback windows cannot exceed their corresponding
+HTTP windows; existing constructor guards retain route/origin/return, lifetime,
+capacity and proxy contracts. No detached worker, queue, retry or partial root.
+Existing independent per-component admission caps remain independent, not a
+deployment-wide concurrency claim. Options, ports and root redact formatting/
+structured logging and refuse JSON serialization.
+
+The root owns a pedantic private registry collecting Start, Callback, subject,
+issuance, browser login, resource management and cookie-management telemetry.
+It performs no global/public registration and adds no identity/provider/query/
+cookie/token/proof/path labels. Operator registration, dashboards/alerts and
+tracing remain production work, not consequences of constructor success.
+
+Synthetic contracts cover all 21 absent/typed-nil ports, invalid profiles/key
+drift, effect-free construction and cancellation before/during release; actual
+creation/claim/issuance plus authentication with the newly issued token; fresh
+authority after revocation; no-grant, exclusive expiry and uncertain Commit
+rules; BFF intent/Start/GET capture after caller-buffer erasure; cookie proof,
+resident budget/idempotency binding, fresh mutation authentication; and registry
+isolation/redaction. Controlled provider evidence and in-memory lost-ACK effects
+are not signature validation, PostgreSQL acknowledgement, durable mutation or
+browser/client/HA qualification. Fixture corrections retained existing confirmed
+Commit/no-rollback, failure-class and origin-form API-path contracts; no guard,
+oracle, gate, baseline or exclusion was weakened.
+
+No main/runtime/config/public dispatcher/listener, public SSO activation, Bearer
+API, client wire, SQL/schema, dependency or default changes. Public SSO remains
+disabled. Auth/OpenAPI profile and production dependency factories come next,
+then query-log suppression, native-host clock and intended expiry/recovery,
+Google-through-Keycloak/client/HA and immutable-artifact release gates. Canonical
+identity/security/observability/ADR documents are updated locally first; this
+README is their versioned mirror, not a claim that the non-Git sibling core-docs
+directory was committed.
+
+Local source qualification (2026-09-17): unchanged make quality passes whole-
+repository shuffled unit/race, vet, pinned normal/integration lint, format/module,
+vulnerability-symbol and workflow gates. Govulncheck reports zero affected symbols/
+imported packages and three module-only advisories, not zero advisories. Initial
+lint rejected request-cookie literals and a credential-like TokenEndpoint field;
+complete cookie attributes and endpoint derivation from one reserved URL retain
+the exact fixture profile without suppression. Uncached config/cmd race/shuffle
+passes under pinned Go 1.26.8 Linux UID/GID 65532 with no network, capabilities,
+writable source, host credentials or Docker socket (1.034s/1.061s). Ten-second/
+two-worker unchanged HTTP capture/proof/cookie fuzz passes 52540/225987/256034
+executions. Fully redacted tree and complete-history secret scans pass without
+new baseline/exclusions. No PostgreSQL/Redis/provider integration or live client/
+browser test runs in this slice; native-host clock remains unqualified. Source
+evidence does not qualify public enablement, remote CI or immutable artifacts.
 
 ## Account Session authentication
 
