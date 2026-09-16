@@ -329,6 +329,41 @@ func revokeDeviceOverHTTP(
 		payload.Data.DeviceVersion != command.ExpectedVersion()+1 || payload.CorrelationID == "" {
 		t.Fatalf("management HTTP response = %+v, want committed Device revocation", payload)
 	}
+	// Same command/proof as an idempotent cookie replay must not create a second
+	// mutation/audit/outbox/revision. The existing exact DB oracles remain unchanged.
+	browser, proof := prepareIntegrationBrowserManagement(
+		ctx,
+		t,
+		handler,
+		rawToken,
+	)
+	cookieRequest := integrationBrowserManagementRequest(
+		ctx,
+		rawToken,
+		path,
+		`{"reason":"compromised peer"}`,
+	)
+	cookieRequest.Header.Set("X-MeshTransit-CSRF", proof)
+	cookieRequest.Header.Set("If-Match", request.Header.Get("If-Match"))
+	cookieRequest.Header.Set("Idempotency-Key", request.Header.Get("Idempotency-Key"))
+	cookieResponse := &integrationCompletionWriter{ResponseRecorder: httptest.NewRecorder()}
+	if err := browser.Handle(cookieResponse, cookieRequest); err != nil {
+		t.Fatal("private cookie revocation replay failed", err)
+	}
+	invalidCookieStatus := cookieResponse.Code != http.StatusOK || cookieResponse.statusWrites != 1
+	unexpectedCredentials := cookieResponse.Header().Get("Set-Cookie") != "" ||
+		cookieRequest.Header.Get("Authorization") != ""
+	if invalidCookieStatus || unexpectedCredentials {
+		t.Fatal("cookie replay changed management resource semantics")
+	}
+	if err := json.Unmarshal(cookieResponse.Body.Bytes(), &payload); err != nil {
+		t.Fatal("decode cookie replay", err)
+	}
+	invalidReplayIdentity := payload.Data.DeviceID != command.NodeID().String() ||
+		payload.Data.DeviceVersion != command.ExpectedVersion()+1
+	if invalidReplayIdentity || payload.Data.State != "revoked" {
+		t.Fatal("cookie replay did not return original committed result")
+	}
 }
 
 type integrationAllowAllRateLimiter struct{}
@@ -569,8 +604,9 @@ func assertRevokedDeviceCannotResumeMap(
 	if err != nil {
 		t.Fatalf("bind revoked authenticated Node: %v", err)
 	}
-	if _, err := newPeerCandidateStore(t, runtimePool, 8).Load(ctx, identityValue); !errors.Is(err, mapsession.ErrUnauthorized) {
-		t.Fatalf("revoked Device map load error = %v, want ErrUnauthorized", err)
+	_, loadErr := newPeerCandidateStore(t, runtimePool, 8).Load(ctx, identityValue)
+	if !errors.Is(loadErr, mapsession.ErrUnauthorized) {
+		t.Fatalf("revoked Device map load error = %v, want ErrUnauthorized", loadErr)
 	}
 }
 

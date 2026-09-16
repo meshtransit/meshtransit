@@ -1236,8 +1236,9 @@ authority oracles; provider/budget ports remain controlled, not live acceptance.
 
 This recipe is not public runtime/config wiring: no environment flag, secret
 loader, public dispatcher or listener is added. Management cookie authentication/
-CSRF, private runtime metrics/tracing, edge/BFF query-log suppression, native-host
-clock, intended expiry/recovery, Google-through-Keycloak/client/HA and artifact
+CSRF runtime binding, private runtime metrics/tracing, edge/BFF query-log
+suppression, native-host clock, intended expiry/recovery,
+Google-through-Keycloak/client/HA and artifact
 acceptance remain separate gates. No schema, client wire, dependencies,
 configuration or disabled public-login default changes.
 
@@ -1295,10 +1296,97 @@ qualified with Node 22.20.0; Node is not a build/runtime dependency of meshcore.
 The disposable PostgreSQL fixture also presents GET/HEAD before the existing
 18 protected durable completion scenarios, with controlled provider/budget ports.
 Public runtime/config/routes, private metrics/tracing registration, authenticated
-management cookie-CSRF, edge/BFF query-log suppression, native-host clock,
-intended expiry/recovery and pinned Google-through-Keycloak/client/HA acceptance
+management cookie-CSRF runtime binding, edge/BFF query-log suppression,
+native-host clock, intended expiry/recovery and pinned
+Google-through-Keycloak/client/HA acceptance
 remain separate gates. No schema, Go-module, client wire, configuration or
 disabled public-login default changes.
+
+### Private cookie-authenticated management
+
+`SSO-MANAGEMENT-COOKIE-CSRF-001` constructs a private Console profile around the
+same versioned management handler, with explicit Deployment, exact canonical
+HTTPS Origin, shared live clock and a dedicated resident 256-bit HMAC key.
+Reject incomplete/typed-nil ports, unsafe proxy trust, noncanonical origin/key
+and lifetime/capacity bounds before effects. Copy key material; caller owns
+input erasure and separation from login/capture/continuation/Session/rate keys.
+The later composition root must validate cross-component key separation; this
+profile cannot inspect secret custody hidden behind its durable application ports.
+No constructor calls DB/budgets/entropy or starts workers/listeners.
+
+Only completed direct TLS 1.2+ origin-form POST, exact Host/Origin, canonical JSON
+and X-MeshTransit-Session: v1 are admitted. No Referer fallback, Authorization
+custody (even empty), routing/query/fragment/transfer/trailer/upgrade ambiguity
+or incoherent Fetch Metadata. Header limits are 16384 bytes/64 fields/128 values;
+Cookie limits are 8192 bytes/8 fields/64 pairs, with exactly one canonical nonzero
+mtas1 __Host-mt_session. Proxy claims never replace TLS/Host/Origin.
+
+Fixed POST /auth/v1/session/prepare reads only {} with optional surrounding JSON
+whitespace (4 KiB maximum). Purpose-separated shared source and authenticated
+Session budgets precede independent 256-bit OS nonce generation. Fresh durable
+Session authority matches Deployment/recovery and exclusive live time. Return
+only csrf_token and expires_at in bounded no-store JSON, never identity, bearer,
+provider data, cookie issue/renew/clear or operation authority.
+
+The <=256-byte mtscsrf1 envelope has canonical key ID/times/nonce/MAC. Dedicated
+HMAC-SHA-256 purpose binds exact Deployment/Origin and the complete resident
+Session bearer, not public Session ID alone. Lifetime is 30–120 whole seconds,
+shortened/floored to idle/absolute Session expiry, with at least one second left
+at preparation submission. No future issue, expiry equality or clock grace.
+Each mutation verifies one X-MeshTransit-CSRF before freshly authenticating its
+cookie; recheck Session/scope/proof/time before application admission. The proof
+is replayable intent transport, not cached identity/RBAC or an operation grant.
+Key/profile/cookie/recovery changes reject; replicas use the same profile/key.
+
+Device revoke and policy publish keep the same decoding, exact-scope RBAC,
+ETag/idempotency, source/Session budgets, transaction/audit/outbox/result contracts
+and original 4 KiB/8 MiB input bounds. Never synthesize Authorization or forward
+cookie credentials to the Bearer entry point; its existing behavior is unchanged.
+Prepare and mutations own one <=30-second caller-clamped context, mandatory
+transport deadlines and non-queuing 1–128 cap through actual response delivery.
+Management's independent deadline/cap remains. A <=32768-byte private JSON
+candidate, combined header limits and final fresh Session/proof/cancellation
+checks precede one actual status/body submission. Final freshness/remaining
+lifetime use one live clock snapshot and recheck cancellation after validation;
+deterministic prepare/mutation tests cover cancellation during that clock read.
+Reject credential/navigation/
+encoding/reporting/CORS middleware and omit Bearer challenges. Pre-release errors
+leave caller headers/status/body untouched; short/failed writes are closed
+uncertainty, never proof of non-commit, rollback, retry or rewrite. Closed isolated
+active/count/duration labels mean submission, not commit or browser receipt.
+
+Source contracts cover constructor/input/clock/authority/budget boundaries,
+MAC tampering and purpose/scope replacement, cookie ambiguity, redaction, final
+freshness, joined capacity/leaks, bounded candidate/delivery and verified test-CA
+HTTPS. Separate bounded fuzz targets exercise cookie/proof parsers. Disposable
+TLS PostgreSQL fixtures use actual durable Session authentication, cookie policy
+publication and an idempotent cookie revocation replay; existing exact audit/
+outbox/revision oracles remain unchanged. Budget/TLS-header fixtures are controlled,
+not live Redis/browser/Google/Keycloak or public dispatcher qualification.
+
+No public runtime/config/OpenAPI profile, listener/env flag/secret loader, schema,
+client wire, dependency or disabled-login default changes. Runtime authentication
+profile/OpenAPI/private metrics/tracing/dashboards/alerts, query-log suppression,
+native-host clock,
+intended expiry/recovery, Google-through-Keycloak/client/HA and immutable artifact
+acceptance remain separate release gates. Canonical local identity/security/ADR
+docs are updated; the sibling core-docs tree is not a Git repository, so this
+versioned mirror travels with source. Move canonical docs into a versioned release
+path before public enablement; this slice does not silently initialize/move them.
+
+Final local source qualification (2026-09-17): make quality passes, including
+whole-repository shuffled unit/race, pinned lint/integration lint, vet, module/
+format consistency, vulnerability-symbol and workflow checks. Govulncheck finds
+zero affected symbols/imported packages but three module-only advisories; this
+is not a zero-advisory claim. The unchanged Node 22.20.0 landing harness passes
+all 49 tests. Ten-second/two-worker proof and cookie fuzz pass 270573/244274
+executions. The uncached same-kernel Linux TLS PostgreSQL/Redis platform lane
+passes 15.918s/6.445s on the final corrected source. Cancellation during the final
+clock read was demonstrated failing before correction, then both preparation
+and mutation regressions pass, including joined race repetition. Tree secret
+scan passes with full redaction and no added baseline/exclusions. This evidence
+does not waive the previously recorded native-host clock failure, qualify remote
+CI/live Google/browser/client/HA, or constitute an immutable release artifact.
 
 ## Account Session authentication
 

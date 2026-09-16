@@ -82,10 +82,13 @@ func assertPostgreSQLManagementPolicyPublication(
 	if _, err := service.Publish(ctx, trusted); !errors.Is(err, publication.ErrForbidden) {
 		t.Fatalf("trusted command through management publisher error = %v, want ErrForbidden", err)
 	}
-	result, err := service.Publish(ctx, command)
-	if err != nil {
-		t.Fatalf("publish management packet policy: %v", err)
-	}
+	result := publishPolicyOverBrowserManagement(
+		ctx,
+		t,
+		runtimePool,
+		service,
+		command,
+	)
 	if result.PolicyRevision() != 4 || result.NetworkRevision() != 6 ||
 		result.Scope() != snapshot.Scope() || result.SemanticHash() != candidate.SemanticHash() {
 		t.Fatalf("management publication result = %+v, want Network/policy revision 6/4", result)

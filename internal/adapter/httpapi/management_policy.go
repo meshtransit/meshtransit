@@ -69,18 +69,27 @@ func parsePolicyPublishPath(request *http.Request) (policyPublishPath, bool) {
 	return policyPublishPath{workspaceID: segments[3], networkID: segments[5]}, true
 }
 
-func (handler *ManagementHandler) publishPolicy(
-	ctx context.Context,
-	response http.ResponseWriter,
-	request *http.Request,
-	correlationID publicid.ID,
-	path policyPublishPath,
-	session accountsession.Session,
-) string {
+type managementPolicyRequest struct {
+	response      http.ResponseWriter
+	request       *http.Request
+	correlationID publicid.ID
+	path          policyPublishPath
+	session       accountsession.Session
+	browser       *browserManagementAdmission
+}
+
+func (handler *ManagementHandler) publishPolicy(ctx context.Context, input managementPolicyRequest) string {
+	response, request, correlationID := input.response, input.request, input.correlationID
+	path, session := input.path, input.session
 	command, commandErr := decodePolicyPublicationCommand(response, request, path, session)
 	if commandErr != nil {
 		writeManagementError(ctx, handler.logger, response, correlationID, *commandErr)
 		return commandErr.Code
+	}
+	if err := input.browser.validate(ctx); err != nil {
+		classified := classifyAuthenticationError(err)
+		writeManagementError(ctx, handler.logger, response, correlationID, classified)
+		return classified.Code
 	}
 	result, err := handler.policies.Publish(ctx, command)
 	if err != nil {

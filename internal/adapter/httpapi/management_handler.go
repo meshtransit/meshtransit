@@ -152,6 +152,16 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 
 // ServeHTTP exposes the versioned management API without accepting browser cookies.
 func (handler *ManagementHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	handler.serveHTTP(response, request, nil)
+}
+
+// A private browser admission verifies its own transport/proof and uses these
+// same resource contracts. Nil preserves the existing Bearer-only entry point.
+func (handler *ManagementHandler) serveHTTP(
+	response http.ResponseWriter,
+	request *http.Request,
+	browser *browserManagementAdmission,
+) {
 	if handler == nil || response == nil || request == nil || request.URL == nil ||
 		handler.sessions == nil || handler.revocations == nil || handler.policies == nil ||
 		handler.idempotency == nil ||
@@ -234,50 +244,50 @@ func (handler *ManagementHandler) ServeHTTP(response http.ResponseWriter, reques
 		writeManagementError(ctx, handler.logger, response, correlationID, *invalidManagementRequest())
 		return
 	}
-	if limitErr := handler.enforceRateLimit(
-		ctx,
-		response,
-		ratelimit.SubjectSource,
-		source.String(),
-		handler.sourcePolicy,
-	); limitErr != nil {
+	if limitErr := handler.enforceAdmittedRateLimit(ctx, browser, continuationBudget{
+		response: response, kind: ratelimit.SubjectSource, raw: source.String(), policy: handler.sourcePolicy,
+	}); limitErr != nil {
 		resultCode = limitErr.Code
 		writeManagementError(ctx, handler.logger, response, correlationID, *limitErr)
 		return
 	}
-	session, authenticationErr := handler.authenticate(ctx, request)
+	var session accountsession.Session
+	var authenticationErr error
+	if browser == nil {
+		session, authenticationErr = handler.authenticate(ctx, request)
+	} else {
+		session, authenticationErr = browser.authenticate(ctx, request)
+	}
 	if authenticationErr != nil {
 		classified := classifyAuthenticationError(authenticationErr)
 		resultCode = classified.Code
 		writeManagementError(ctx, handler.logger, response, correlationID, classified)
 		return
 	}
-	if limitErr := handler.enforceRateLimit(
-		ctx,
-		response,
-		ratelimit.SubjectAccountSession,
-		session.ID().String(),
-		handler.sessionPolicy,
-	); limitErr != nil {
+	if limitErr := handler.enforceAdmittedRateLimit(ctx, browser, continuationBudget{
+		response: response, kind: ratelimit.SubjectAccountSession, raw: session.ID().String(), policy: handler.sessionPolicy,
+	}); limitErr != nil {
 		resultCode = limitErr.Code
 		writeManagementError(ctx, handler.logger, response, correlationID, *limitErr)
 		return
 	}
 	if policyMatched {
-		resultCode = handler.publishPolicy(
-			ctx,
-			response,
-			request,
-			correlationID,
-			policyPath,
-			session,
-		)
+		resultCode = handler.publishPolicy(ctx, managementPolicyRequest{
+			response: response, request: request, correlationID: correlationID,
+			path: policyPath, session: session, browser: browser,
+		})
 		return
 	}
 	command, commandErr := handler.decodeDeviceRevokeCommand(response, request, devicePath, session)
 	if commandErr != nil {
 		resultCode = commandErr.Code
 		writeManagementError(ctx, handler.logger, response, correlationID, *commandErr)
+		return
+	}
+	if err := browser.validate(ctx); err != nil {
+		classified := classifyAuthenticationError(err)
+		resultCode = classified.Code
+		writeManagementError(ctx, handler.logger, response, correlationID, classified)
 		return
 	}
 	result, revokeErr := handler.revocations.Revoke(ctx, command)
@@ -309,6 +319,31 @@ func (handler *ManagementHandler) ServeHTTP(response http.ResponseWriter, reques
 		},
 		CorrelationID: correlationID.String(),
 	})
+}
+
+func (handler *ManagementHandler) enforceAdmittedRateLimit(
+	ctx context.Context,
+	admission *browserManagementAdmission,
+	budget continuationBudget,
+) *managementError {
+	if admission == nil {
+		return handler.enforceRateLimit(
+			ctx,
+			budget.response,
+			budget.kind,
+			budget.raw,
+			budget.policy,
+		)
+	}
+	if err := admission.browser.budget(ctx, budget); err != nil {
+		if errors.Is(err, ErrBrowserManagementLimited) {
+			return &managementError{Status: http.StatusTooManyRequests, Code: "rate_limited",
+				Message: "too many requests", Retryable: true}
+		}
+		return &managementError{Status: http.StatusServiceUnavailable, Code: "rate_limit_unavailable",
+			Message: "request admission is temporarily unavailable", Retryable: true}
+	}
+	return nil
 }
 
 func (handler *ManagementHandler) enforceRateLimit(
