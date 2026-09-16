@@ -986,6 +986,30 @@ Following a Docker Desktop restart, the unchanged Go source passed three
 consecutive full platform runs on fresh disposable fixtures. This local result
 does not qualify clock behavior across production replicas or recovery.
 
+A fresh native-host run during callback orchestration again failed before the
+new callback tests, with PostgreSQL about 26 ms behind the application host.
+The earlier three passes are historical; the native-host lane is not currently
+clock-qualified. No Docker restart, freshness grace, timestamp adjustment or
+repeat-until-green is used. The explicit Linux source lane is selected with
+`PLATFORM_GO_RUNNER=container make integration-platform-container`.
+It runs the same uncached race suites and process binary on the fixtures'
+Linux engine clock. Source is mounted
+read-only; only owned fixture/cache directories and a private bridge are added,
+without Docker socket, host credentials, privileges or capabilities. Generated
+CA/exact DNS verification, SCRAM and least-privilege roles remain unchanged.
+This separate Linux source lane does not waive cross-replica clock/recovery
+acceptance, or relabel the native-host failure as a pass.
+Auto-review initially blocked source/fixture access in the network-enabled
+runner. After specific operator approval, its first execution exposed a wrong
+new test assertion: anonymous login was expected to acquire an auth-row
+Principal, contrary to migration 19's operation CHECK. Only the assertion was
+corrected; exact persisted Session identity/result checks were added. The final
+reviewed source passes the complete Linux platform gate with fresh fixtures,
+including migration/authority/callback and TLS/process/restart/expiry suites.
+Go uses the Dockerfile's digest-pinned 1.26.8 runner; fixture versions remain
+PostgreSQL 18.6 and Redis 8.8.0. This is local Linux evidence, not a claim that
+remote CI, the native-host clock lane, live Google/client or operational HA pass.
+
 `LoginContinuationGuard` issues a NEW stateless CSRF proof, not the already
 cleared Start proof/cookie. A separate resident HMAC-SHA-256 purpose/key binds
 the full ordered Route/origin, current private pre-auth handle, exact encrypted
@@ -1030,11 +1054,66 @@ not operational HA/real browser/Google acceptance. Private count/duration metric
 have closed operation/result labels; `input_released` is not authentication.
 
 No public route/metric registration, BFF page, client wire, configuration/schema
-version or public login default changes. Next: confirmed-only verify → claim →
-single-attempt exchange → exact-subject issuance/failure orchestration, fresh
-session-cookie rotation and safe read-only BFF landing. Query-log suppression,
+version or public login default changes. Application orchestration is implemented
+separately below; fresh session-cookie rotation and safe read-only BFF landing
+remain next. Query-log suppression,
 operational expiry/recovery coverage and live Google through Keycloak remain
 release gates, not implied by these primitives or existing client regressions.
+
+### Confirmed-only browser callback application orchestration
+
+`SSO-BROWSER-ORCHESTRATION-001` constructs the existing verification, claim,
+exchange, subject-resolution, issuance and failure services exactly once from
+explicit ports and resident crypto, with one live clock. `CallbackCommand` is
+immutable redacted syntax only; `LoginCallbackInput.Command()` translates it
+without I/O or authentication. HTTP continuation POST/CSRF admission must
+precede execution and the HTTP caller still owns the entire response deadline.
+
+`CallbackService.CompleteBrowser` owns one <=30-second application context and
+non-queuing 1–128-slot capacity retained until synchronous cleanup joins. Fresh
+durable route/state/pre-auth verification precedes confirmed claim, one original
+receipt-bound PKCE exchange, exact existing-subject read and atomic issuance.
+Provider-error input verifies/claims but never exchanges. Before invoking
+issuance, failures may erase ONLY a confirmed claim once in an independent
+<=5-second failure window; each owned rollback is separately bounded <=5 seconds.
+Cleanup never extends provider/issuance work or permits expired/canceled release.
+No goroutines, open database unit across provider I/O, code retry, resolver,
+receipt reconstruction, email linking, JIT provisioning, refresh or role grant.
+
+Every claim error returns zero result and no downstream effects. Once issuance
+is invoked, ANY error returns zero and NEVER invokes failure/resolution/retry,
+including unknown Commit and cancellation/time failure AFTER confirmed Commit.
+An error is not proof of non-commit: consuming rows use expiry; undisclosed
+committed Sessions use normal expiry/revocation. Final fresh uncanceled release
+exposes either confirmed issued evidence or provider-error no-grant erasure,
+never both. Input/params/result JSON is refused and formatting/logging redacted.
+
+Anonymous login keeps the original auth-row principal_id NULL even after
+success, as required by migration 19's operation CHECK. The newly issued
+Session carries the resolved Principal/subject instead. DB assertions check
+the account_session result kind/reference and persisted Session identity;
+they do not change the original operation binding or released migrations.
+
+Named unit/race tests cover sequencing, proof/substitution fences, both callback
+variants, unknown acknowledgements, post-commit cancellation/expiry, incomplete
+cleanup, typed-nil construction, global deadlines and nonqueued cleanup ownership.
+Ten disposable verified-TLS PostgreSQL callback scenarios pass in the explicit
+Linux lane: confirmed issuance, provider error/failure, absent exact subject or
+auth_time, hidden claim/issue/failure ACK after real Commit, cancellation after
+confirmed issue Commit and issuance-evidence rollback. They verify exact
+Session identity/result, original anonymous operation, atomic lifecycle evidence,
+proof erasure, no JIT/membership/role/Network mutation and replay rejection.
+They use a controlled trusted provider port, not live Google/signature/broker
+evidence. Full native-host `make quality` and a 10-second/two-worker callback
+command fuzz run pass. Native-host clock and remote/live target qualification
+remain separate and are not implied. Isolated private
+callback active/count/duration metrics have only a closed result label; no
+global/public registration or raw error/identity/credential data.
+
+No wire, schema, configuration or disabled public-login default changes.
+Session-cookie rotation, safe read-only BFF/HTTP response composition, runtime
+metrics/tracing, query-log suppression, intended expiry/clock/recovery coverage,
+and pinned Google-through-Keycloak/client/HA acceptance remain separate gates.
 
 The boundary threat model is fail-closed:
 

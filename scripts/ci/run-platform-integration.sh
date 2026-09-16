@@ -2,11 +2,25 @@
 
 set -euo pipefail
 
+go_runner="${PLATFORM_GO_RUNNER:-host}"
+case "${go_runner}" in
+	host | container) ;;
+	*) printf '%s\n' 'Invalid platform Go runner mode.' >&2; exit 2 ;;
+esac
+go_runner_image='golang:1.26.8-bookworm@sha256:9fdc884aacc3bec89b20ffc69f4bb369c78210e3e4f600387b5128b12c199f81'
+source_dir="$(pwd -P)"
 postgres_image="${POSTGRES_IMAGE:-postgres:18.6-bookworm}"
 redis_image="${REDIS_IMAGE:-redis:8.8.0-trixie}"
 fixture_dir="$(mktemp -d)"
+runner_dir=''
+fixture_network="meshtransit-platform-$RANDOM-$$"
+runner_container="meshtransit-platform-go-$RANDOM-$$"
 postgres_container="meshtransit-postgres-$RANDOM-$$"
 redis_container="meshtransit-redis-$RANDOM-$$"
+# Keep arrays nonempty under macOS Bash 3.2's nounset behavior. Native-host
+# fixtures retain Docker's ordinary default bridge; only Linux uses its owned one.
+postgres_network=(--network bridge)
+redis_network=(--network bridge)
 postgres_password="$(openssl rand -hex 24)"
 migration_password="$(openssl rand -hex 24)"
 runtime_password="$(openssl rand -hex 24)"
@@ -19,11 +33,101 @@ rate_limit_digest_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
 noise_private_key="privkey:$(openssl rand -hex 32)"
 
 cleanup() {
+	docker rm --force "${runner_container}" >/dev/null 2>&1 || true
 	docker rm --force "${redis_container}" >/dev/null 2>&1 || true
 	docker rm --force "${postgres_container}" >/dev/null 2>&1 || true
+	if [[ "${go_runner}" == container ]]; then
+		docker network rm "${fixture_network}" >/dev/null 2>&1 || true
+	fi
+	if [[ -n "${runner_dir}" ]]; then
+		rm -rf "${runner_dir}"
+	fi
 	rm -rf "${fixture_dir}"
 }
 trap cleanup EXIT
+
+if [[ "${go_runner}" == container ]]; then
+	runner_dir="$(mktemp -d)"
+	mkdir -p "${runner_dir}/tmp"
+	docker network create "${fixture_network}" >/dev/null
+	postgres_network=(--network "${fixture_network}" --network-alias meshtransit-postgres)
+	redis_network=(--network "${fixture_network}" --network-alias meshtransit-redis)
+fi
+
+# Never forward inherited host credentials or the Docker socket. This explicit
+# fixture-only environment remains the same for every owned Go invocation.
+run_go() {
+	if [[ "${go_runner}" == host ]]; then
+		go "$@"
+		return
+	fi
+	docker run --rm \
+		--name "${runner_container}" \
+		--network "${fixture_network}" \
+		--user "$(id -u):$(id -g)" \
+		--cap-drop ALL \
+		--security-opt no-new-privileges \
+		--read-only \
+		--tmpfs /tmp:rw,nosuid,nodev \
+		--mount "type=bind,source=${source_dir},target=/src,readonly" \
+		--mount "type=bind,source=${fixture_dir},target=${fixture_dir}" \
+		--mount "type=bind,source=${runner_dir},target=/runner" \
+		--workdir /src \
+		--env GOTOOLCHAIN=local \
+		--env GOENV=off \
+		--env 'GOFLAGS=-mod=readonly -buildvcs=false' \
+		--env GOCACHE=/runner/build \
+		--env GOMODCACHE=/runner/modules \
+		--env GOPATH=/runner/gopath \
+		--env GOTMPDIR=/runner/tmp \
+		--env MESHTRANSIT_MIGRATION_INTEGRATION \
+		--env MESHTRANSIT_INTEGRATION \
+		--env MESHTRANSIT_MIGRATION_POSTGRES_ADDRESS \
+		--env MESHTRANSIT_MIGRATION_POSTGRES_DATABASE \
+		--env MESHTRANSIT_MIGRATION_POSTGRES_USER \
+		--env MESHTRANSIT_MIGRATION_POSTGRES_PASSWORD_FILE \
+		--env MESHTRANSIT_MIGRATION_POSTGRES_CA_FILE \
+		--env MESHTRANSIT_MIGRATION_ACTOR \
+		--env MESHTRANSIT_MIGRATION_CONNECT_TIMEOUT \
+		--env MESHTRANSIT_MIGRATION_LOCK_TIMEOUT \
+		--env MESHTRANSIT_MIGRATION_STATEMENT_TIMEOUT \
+		--env MESHTRANSIT_ROLE \
+		--env MESHTRANSIT_POSTGRES_ADDRESS \
+		--env MESHTRANSIT_POSTGRES_DATABASE \
+		--env MESHTRANSIT_POSTGRES_RUNTIME_USER \
+		--env MESHTRANSIT_POSTGRES_RUNTIME_PASSWORD_FILE \
+		--env MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS \
+		--env MESHTRANSIT_POSTGRES_WORKER_USER \
+		--env MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE \
+		--env MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS \
+		--env MESHTRANSIT_POSTGRES_CA_FILE \
+		--env MESHTRANSIT_REDIS_ADDRESS \
+		--env MESHTRANSIT_REDIS_USERNAME \
+		--env MESHTRANSIT_REDIS_PASSWORD_FILE \
+		--env MESHTRANSIT_REDIS_CA_FILE \
+		--env MESHTRANSIT_REDIS_POOL_SIZE \
+		--env MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_ID \
+		--env MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_FILE \
+		--env MESHTRANSIT_CONTROL_TLS_CERTIFICATE_FILE \
+		--env MESHTRANSIT_CONTROL_TLS_PRIVATE_KEY_FILE \
+		--env MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE \
+		--env MESHTRANSIT_CONTROL_MAX_SESSIONS \
+		--env MESHTRANSIT_CONTROL_MAX_STREAMS_PER_SESSION \
+		--env MESHTRANSIT_API_TLS_CERTIFICATE_FILE \
+		--env MESHTRANSIT_API_TLS_PRIVATE_KEY_FILE \
+		--env MESHTRANSIT_API_ACCOUNT_SESSION_DIGEST_ACTIVE_KEY_ID \
+		--env MESHTRANSIT_API_ACCOUNT_SESSION_DIGEST_ACTIVE_KEY_FILE \
+		--env MESHTRANSIT_API_IDEMPOTENCY_DIGEST_KEY_ID \
+		--env MESHTRANSIT_API_IDEMPOTENCY_DIGEST_KEY_FILE \
+		--env MESHTRANSIT_API_RATE_LIMIT_DIGEST_KEY_ID \
+		--env MESHTRANSIT_API_RATE_LIMIT_DIGEST_KEY_FILE \
+		--env MESHTRANSIT_API_MAX_CONNECTIONS \
+		--env MESHTRANSIT_API_MAX_CONCURRENT_REQUESTS \
+		--env MESHTRANSIT_TEST_POSTGRES_ADMIN_PASSWORD_FILE \
+		--env MESHTRANSIT_TEST_POSTGRES_WORKER_PASSWORD_FILE \
+		--env MESHTRANSIT_TEST_MESHCORE_BINARY \
+		"${go_runner_image}" go "$@"
+}
 
 openssl req \
 	-x509 \
@@ -43,7 +147,7 @@ openssl req \
 	>/dev/null 2>&1
 printf '%s\n' \
 	'[server]' \
-	'subjectAltName=IP:127.0.0.1' \
+	'subjectAltName=IP:127.0.0.1,DNS:meshtransit-postgres,DNS:meshtransit-redis' \
 	'extendedKeyUsage=serverAuth' \
 	>"${fixture_dir}/server.ext"
 openssl x509 \
@@ -105,6 +209,7 @@ chmod 0600 "${fixture_dir}/control-server.key"
 docker run \
 	--detach \
 	--name "${postgres_container}" \
+	"${postgres_network[@]}" \
 	--publish 127.0.0.1::5432 \
 	--env "POSTGRES_PASSWORD=${postgres_password}" \
 	--env 'POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256' \
@@ -178,6 +283,7 @@ docker exec \
 docker run \
 	--detach \
 	--name "${redis_container}" \
+	"${redis_network[@]}" \
 	--publish 127.0.0.1::6379 \
 	--entrypoint sh \
 	"${redis_image}" \
@@ -232,6 +338,10 @@ docker exec "${redis_container}" redis-cli \
 
 postgres_address="$(docker port "${postgres_container}" 5432/tcp)"
 redis_address="$(docker port "${redis_container}" 6379/tcp)"
+if [[ "${go_runner}" == container ]]; then
+	postgres_address='meshtransit-postgres:5432'
+	redis_address='meshtransit-redis:6379'
+fi
 export MESHTRANSIT_MIGRATION_INTEGRATION=1
 export MESHTRANSIT_INTEGRATION=1
 export MESHTRANSIT_MIGRATION_POSTGRES_ADDRESS="${postgres_address}"
@@ -275,7 +385,7 @@ export MESHTRANSIT_API_MAX_CONCURRENT_REQUESTS=4
 export MESHTRANSIT_TEST_POSTGRES_ADMIN_PASSWORD_FILE="${fixture_dir}/postgres-admin-password"
 export MESHTRANSIT_TEST_POSTGRES_WORKER_PASSWORD_FILE="${fixture_dir}/worker-password"
 
-go test \
+run_go test \
 	-tags=integration \
 	-count=1 \
 	-race \
@@ -288,9 +398,9 @@ export MESHTRANSIT_POSTGRES_WORKER_USER=mesh_worker
 export MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE="${fixture_dir}/worker-password"
 export MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS=2
 export MESHTRANSIT_TEST_MESHCORE_BINARY="${fixture_dir}/meshcore"
-go build -trimpath -o "${MESHTRANSIT_TEST_MESHCORE_BINARY}" ./cmd/meshcore
+run_go build -trimpath -o "${MESHTRANSIT_TEST_MESHCORE_BINARY}" ./cmd/meshcore
 
-go test \
+run_go test \
 	-tags=integration \
 	-count=1 \
 	-race \
