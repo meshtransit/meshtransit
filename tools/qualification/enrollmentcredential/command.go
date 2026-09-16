@@ -31,11 +31,15 @@ const (
 	envPostgreSQLAdminUser    = "MESHTRANSIT_POSTGRES_ADMIN_USER"
 	envPostgreSQLPasswordFile = "MESHTRANSIT_POSTGRES_ADMIN_PASSWORD_FILE"
 	envPostgreSQLTrustFile    = "MESHTRANSIT_POSTGRES_CA_FILE"
+	envPostgreSQLUnixSocket   = "MESHTRANSIT_QUALIFICATION_POSTGRES_UNIX_SOCKET"
+	envPostgreSQLLocalConfirm = "MESHTRANSIT_QUALIFICATION_CONFIRM_LOCAL_POSTGRES"
 
 	envEnrollmentDigestKeyID   = "MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_ID"
 	envEnrollmentDigestKeyFile = "MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_FILE"
 
-	enableConfirmation = "qualification-only"
+	enableConfirmation        = "qualification-only"
+	localPostgresConfirmation = "database-container-local-only"
+	postgresContainerSocket   = "/var/run/postgresql"
 
 	minimumExpiry = time.Minute
 	maximumExpiry = 15 * time.Minute
@@ -73,6 +77,7 @@ type issueSpec struct {
 
 type databaseSettings struct {
 	address       string
+	unixSocket    string
 	database      string
 	user          string
 	passwordFile  config.SecretFile
@@ -217,10 +222,6 @@ func (spec issueSpec) isValid() bool {
 }
 
 func loadDatabaseSettings(lookup config.LookupFunc) (databaseSettings, error) {
-	address, err := requiredEnvironment(lookup, envPostgreSQLAddress, validateAddress)
-	if err != nil {
-		return databaseSettings{}, err
-	}
 	database, err := requiredEnvironment(lookup, envPostgreSQLDatabase, validateIdentifier)
 	if err != nil {
 		return databaseSettings{}, err
@@ -229,21 +230,42 @@ func loadDatabaseSettings(lookup config.LookupFunc) (databaseSettings, error) {
 	if err != nil || user == "mesh_runtime" || user == "mesh_worker" || user == "mesh_migrator" {
 		return databaseSettings{}, errInvalidInput
 	}
-	passwordPath, err := requiredEnvironment(lookup, envPostgreSQLPasswordFile, nil)
-	if err != nil {
-		return databaseSettings{}, err
-	}
-	passwordFile, err := config.NewSecretFile(passwordPath)
-	if err != nil {
-		return databaseSettings{}, errInvalidInput
-	}
-	trustPath, err := requiredEnvironment(lookup, envPostgreSQLTrustFile, nil)
-	if err != nil {
-		return databaseSettings{}, err
-	}
-	trustFile, err := config.NewTrustFile(trustPath)
-	if err != nil {
-		return databaseSettings{}, errInvalidInput
+	settings := databaseSettings{database: database, user: user}
+	unixSocket, localSocketFound := lookup(envPostgreSQLUnixSocket)
+	if localSocketFound {
+		confirmation, confirmed := lookup(envPostgreSQLLocalConfirm)
+		_, addressFound := lookup(envPostgreSQLAddress)
+		_, passwordFound := lookup(envPostgreSQLPasswordFile)
+		_, trustFound := lookup(envPostgreSQLTrustFile)
+		if unixSocket != postgresContainerSocket || user != "meshcore" || !confirmed ||
+			confirmation != localPostgresConfirmation || addressFound || passwordFound || trustFound {
+			return databaseSettings{}, errInvalidInput
+		}
+		settings.unixSocket = unixSocket
+	} else {
+		address, loadErr := requiredEnvironment(lookup, envPostgreSQLAddress, validateAddress)
+		if loadErr != nil {
+			return databaseSettings{}, loadErr
+		}
+		passwordPath, loadErr := requiredEnvironment(lookup, envPostgreSQLPasswordFile, nil)
+		if loadErr != nil {
+			return databaseSettings{}, loadErr
+		}
+		passwordFile, loadErr := config.NewSecretFile(passwordPath)
+		if loadErr != nil {
+			return databaseSettings{}, errInvalidInput
+		}
+		trustPath, loadErr := requiredEnvironment(lookup, envPostgreSQLTrustFile, nil)
+		if loadErr != nil {
+			return databaseSettings{}, loadErr
+		}
+		trustFile, loadErr := config.NewTrustFile(trustPath)
+		if loadErr != nil {
+			return databaseSettings{}, errInvalidInput
+		}
+		settings.address = address
+		settings.passwordFile = passwordFile
+		settings.trustFile = trustFile
 	}
 	digestKeyIDValue, err := requiredEnvironment(lookup, envEnrollmentDigestKeyID, validateIdentifier)
 	if err != nil {
@@ -261,15 +283,9 @@ func loadDatabaseSettings(lookup config.LookupFunc) (databaseSettings, error) {
 	if err != nil {
 		return databaseSettings{}, errInvalidInput
 	}
-	return databaseSettings{
-		address:       address,
-		database:      database,
-		user:          user,
-		passwordFile:  passwordFile,
-		trustFile:     trustFile,
-		digestKeyID:   digestKeyID,
-		digestKeyFile: digestKeyFile,
-	}, nil
+	settings.digestKeyID = digestKeyID
+	settings.digestKeyFile = digestKeyFile
+	return settings, nil
 }
 
 func requiredEnvironment(

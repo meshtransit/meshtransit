@@ -71,6 +71,29 @@ func TestLoadDatabaseSettingsRejectsRuntimeRoles(t *testing.T) {
 	}
 }
 
+func TestLoadDatabaseSettingsAllowsExplicitContainerLocalSocket(t *testing.T) {
+	t.Parallel()
+	environment := testEnvironment()
+	delete(environment, envPostgreSQLAddress)
+	delete(environment, envPostgreSQLPasswordFile)
+	delete(environment, envPostgreSQLTrustFile)
+	environment[envPostgreSQLUnixSocket] = postgresContainerSocket
+	environment[envPostgreSQLLocalConfirm] = localPostgresConfirmation
+
+	database, err := loadDatabaseSettings(mapLookup(environment))
+	if err != nil {
+		t.Fatalf("loadDatabaseSettings() error = %v", err)
+	}
+	if database.unixSocket != postgresContainerSocket || database.address != "" {
+		t.Fatalf("loadDatabaseSettings() = %#v, want local socket only", database)
+	}
+
+	environment[envPostgreSQLLocalConfirm] = "wrong"
+	if _, err := loadDatabaseSettings(mapLookup(environment)); !errors.Is(err, errInvalidInput) {
+		t.Fatalf("loadDatabaseSettings() local confirmation error = %v, want invalid input", err)
+	}
+}
+
 func TestRunRedactsExecutorFailure(t *testing.T) {
 	t.Parallel()
 	var standardOutput bytes.Buffer

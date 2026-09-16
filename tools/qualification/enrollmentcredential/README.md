@@ -50,3 +50,10 @@ The command does not advance the Network revision because issuing a credential
 does not change any active client projection. A failed or uncertain commit
 removes the staged bearer file; the possibly committed credential then remains
 unusable by the caller and expires within the configured short lifetime.
+
+For a disposable database-host qualification only, the tool also supports the
+exact Unix socket `/var/run/postgresql`. This mode must run inside the PostgreSQL
+container, requires
+`MESHTRANSIT_QUALIFICATION_CONFIRM_LOCAL_POSTGRES=database-container-local-only`,
+accepts only the `meshcore` role, and rejects network address, password-file,
+and CA settings. It never disables TLS for a network connection.

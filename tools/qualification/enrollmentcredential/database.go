@@ -19,27 +19,8 @@ func openAdminDatabase(
 	ctx context.Context,
 	database databaseSettings,
 ) (*pgx.Conn, error) {
-	if ctx == nil || database.address == "" || database.database == "" || database.user == "" {
-		return nil, errInvalidInput
-	}
-	password, err := database.passwordFile.Read()
-	if err != nil {
-		return nil, errors.New("read postgres admin password")
-	}
-	caPEM, err := database.trustFile.Read()
-	if err != nil {
-		return nil, errors.New("read postgres trust bundle")
-	}
-	host, portValue, err := net.SplitHostPort(database.address)
-	if err != nil || host == "" {
-		return nil, errInvalidInput
-	}
-	port, err := strconv.ParseUint(portValue, 10, 16)
-	if err != nil || port == 0 {
-		return nil, errInvalidInput
-	}
-	rootCAs := x509.NewCertPool()
-	if !rootCAs.AppendCertsFromPEM(caPEM) {
+	if ctx == nil || database.database == "" || database.user == "" ||
+		(database.address == "") == (database.unixSocket == "") {
 		return nil, errInvalidInput
 	}
 	config, err := pgx.ParseConfig(
@@ -48,16 +29,41 @@ func openAdminDatabase(
 	if err != nil {
 		return nil, fmt.Errorf("parse safe postgres configuration: %w", err)
 	}
-	config.Host = host
-	config.Port = uint16(port)
 	config.Database = database.database
 	config.User = database.user
-	config.Password = password
 	config.ConnectTimeout = qualificationConnectTimeout
-	config.TLSConfig = &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		RootCAs:    rootCAs,
-		ServerName: host,
+	if database.unixSocket != "" {
+		config.Host = database.unixSocket
+		config.TLSConfig = nil
+	} else {
+		password, readErr := database.passwordFile.Read()
+		if readErr != nil {
+			return nil, errors.New("read postgres admin password")
+		}
+		caPEM, readErr := database.trustFile.Read()
+		if readErr != nil {
+			return nil, errors.New("read postgres trust bundle")
+		}
+		host, portValue, splitErr := net.SplitHostPort(database.address)
+		if splitErr != nil || host == "" {
+			return nil, errInvalidInput
+		}
+		port, parseErr := strconv.ParseUint(portValue, 10, 16)
+		if parseErr != nil || port == 0 {
+			return nil, errInvalidInput
+		}
+		rootCAs := x509.NewCertPool()
+		if !rootCAs.AppendCertsFromPEM(caPEM) {
+			return nil, errInvalidInput
+		}
+		config.Host = host
+		config.Port = uint16(port)
+		config.Password = password
+		config.TLSConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			RootCAs:    rootCAs,
+			ServerName: host,
+		}
 	}
 	config.RuntimeParams["application_name"] = "meshtransit-qualification-enrollmentcredential"
 	connection, err := pgx.ConnectConfig(ctx, config)
