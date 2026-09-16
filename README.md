@@ -472,6 +472,35 @@ durable route admission seam, but public runtime composition, callback claiming,
 and Account Session issuance remain unimplemented.
 No supported Mesh Client wire contract changed.
 
+The first live SSO qualification is planned for Google through the Keycloak
+Google identity broker. Other social/enterprise providers, directory
+integration, external OIDC replacement, and Organization-specific routing follow
+later. Core stays provider-neutral and validates the exact configured Keycloak
+issuer/client/JWKS and `(iss, sub)`; it does not add a direct Google OAuth path,
+retrieve upstream Google tokens, or use email/domain/provider claims as Core
+membership or RBAC. Human product login remains SSO-only, with no local password
+or outage fallback.
+
+Before that live test, operators must configure separate Google-to-Keycloak
+broker and Keycloak-to-Core client registrations with exact HTTPS callbacks,
+protected credentials, controlled Google test accounts, a reviewed SSO-only
+browser flow, and no automatic email-based identity linking. Selecting a default
+broker alone does not enforce SSO-only login; missing/disabled Google must reject
+instead of exposing a local password fallback. See the official
+[Keycloak broker/flow guidance](https://www.keycloak.org/docs/latest/server_admin/)
+and [Google redirect registration contract](https://developers.google.com/identity/protocols/oauth2/web-server)
+when preparing the pinned deployment.
+
+Planned Google acceptance (`SSO-GOOGLE-001` through `SSO-GOOGLE-006`) covers
+approved member login with fresh Core-session rotation, valid-login/no-membership
+denial, canceled/invalid/expired/replayed
+callbacks, two-replica single-use claim and lost-acknowledgement rejection,
+generation/revocation and dependency failure, and local Core logout while the
+upstream Google browser session remains active. Record exact source/client
+commits, schema version, image digests, and sanitized configuration fingerprints.
+No live Google test has run. The public-login prerequisites below remain
+mandatory; a unit or disposable synthetic-provider test is not Google evidence.
+
 Pre-authentication cookie HMAC evidence has an independent keyed purpose and
 binds every transaction authority dimension. It resides with PKCE inside a
 bounded, versioned browser payload under a browser-specific AEAD purpose. The
