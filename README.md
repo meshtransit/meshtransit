@@ -451,9 +451,10 @@ uncertain creation commit without inserting a second row. Audit/outbox payloads
 contain only bounded non-secret IDs, generations, route labels, and expiry;
 Deployment-scoped events have no Network revision.
 
-This slice intentionally does not expose a login route yet. The browser start
-endpoint with same-origin CSRF/admission is next, followed by callback
-exchange, ID-token validation, Account reconciliation, and Account Session issuance.
+No public listener exposes browser login yet. Bounded pre-session HTTP start and
+durable route admission are implemented as foundation adapters; callback claim/
+exchange, ID-token validation, Account reconciliation, and Account Session
+issuance remain required before public composition.
 
 `oidcauth.StartService` now owns the application boundary: bounded discovery and
 one secret/ID preparation before Begin, exact creation-evidence validation,
@@ -466,8 +467,9 @@ rollback/resolution budgets capped at 5 seconds each. `oidc.StartTelemetry`
 provides isolated active/count/histogram metrics with only closed result labels.
 It must be wired to the private operator registry when browser HTTP admission is
 implemented. A bounded HTTP prepare/start adapter now enforces the pre-session
-CSRF contract below, but public runtime composition, durable route admission,
-callback claiming, and Account Session issuance remain unimplemented.
+CSRF contract below. `AuthTransactionStore.Admit` implements its mandatory
+durable route admission seam, but public runtime composition, callback claiming,
+and Account Session issuance remain unimplemented.
 No supported Mesh Client wire contract changed.
 
 Pre-authentication cookie HMAC evidence has an independent keyed purpose and
@@ -523,9 +525,30 @@ initiation cookie is then expired. No automatic AJAX-followed redirect or
 provider token is returned. All errors are static, and private
 `LoginHTTPTelemetry` records only closed outcome counts and latency.
 
+Durable admission uses a separate READ COMMITTED, READ ONLY unit, capped at
+30 seconds with independently bounded cleanup. Forward migration 28 exposes only
+`mesh_ops.admit_oidc_login_route_v1` to runtime, with a fixed search_path and
+FORCE-RLS requested Workspace scope; it grants no general provider-table SELECT
+or DML. One snapshot checks every durable identity/lifecycle/generation/endpoint,
+recovery epoch, confidential client method, PKCE S256, code flow, exact ordered
+scopes/algorithms, and registered callback URI. Organization-routed bindings
+remain rejected. Core-owned redirect/return labels are registry configuration,
+not durable mappings or caller-selected values. Scope is cleared and resources
+close before discovery. Missing/false/malformed results, cancellation, database
+and read-completion errors fail closed, with no write replay or positive cache.
+Admission makes no transaction/audit/outbox/Network-revision writes. Success is
+not a revocation lease: creation repeats all checks under locks after discovery.
+Private pool telemetry adds only the fixed `auth_transaction_admission` operation
+with existing closed results and duration. Released migration 27 and reader/
+writer generation 1 are unchanged.
+
 These adapters are tested with the real StartService and verified TLS transport;
-authority effects in HTTP unit tests are controlled fakes. No public listener
-registers these routes yet. A durable route-loader/admission implementation,
+authority effects in HTTP unit tests are controlled fakes. Disposable verified-
+TLS integration additionally connects real PostgreSQL admission/creation and the
+distributed Redis limiter. It covers successful prepare/start, stale-route
+rejection with no browser state, and provider revocation committed during
+discovery after admission preventing creation. No public listener
+registers these routes yet. Trusted route-registry/runtime composition,
 callback single-use claim/token validation, fresh Core-session rotation,
 terminal expiry/erasure, layered abuse controls, and HA composition must pass
 before enabling browser login. Keycloak remains the reference IdP; SSO-only

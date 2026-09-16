@@ -40,6 +40,7 @@ const (
 	networkManagementRBACDescription          = "network management RBAC authority"
 	nodeKeyRotationAuthorityDescription       = "authenticated Node-key rotation authority"
 	oidcAuthTransactionPersistenceDescription = "OIDC authentication transaction persistence"
+	oidcLoginRouteAdmissionDescription        = "durable OIDC login route admission"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -123,6 +124,9 @@ var nodeKeyRotationAuthoritySQL string
 //go:embed 000027_oidc_auth_transaction_persistence.up.sql
 var oidcAuthTransactionPersistenceSQL string
 
+//go:embed 000028_oidc_login_route_admission.up.sql
+var oidcLoginRouteAdmissionSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -169,6 +173,7 @@ func Catalog() []Migration {
 			oidcAuthTransactionPersistenceDescription,
 			oidcAuthTransactionPersistenceSQL,
 		),
+		newMigration(28, oidcLoginRouteAdmissionDescription, oidcLoginRouteAdmissionSQL),
 	}
 }
 

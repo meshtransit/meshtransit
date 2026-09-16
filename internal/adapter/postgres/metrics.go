@@ -43,6 +43,7 @@ const (
 	postgresOperationAuthTransactionCommit     postgresOperation = "auth_transaction_commit"
 	postgresOperationAuthTransactionRollback   postgresOperation = "auth_transaction_rollback"
 	postgresOperationAuthTransactionReplay     postgresOperation = "auth_transaction_replay"
+	postgresOperationAuthTransactionAdmission  postgresOperation = "auth_transaction_admission"
 	postgresOperationNodeKeyRotationBegin      postgresOperation = "node_key_rotation_begin"
 	postgresOperationNodeKeyRotationResolve    postgresOperation = "node_key_rotation_resolve"
 	postgresOperationNodeKeyRotationApply      postgresOperation = "node_key_rotation_apply"
@@ -92,6 +93,7 @@ var (
 		postgresOperationAuthTransactionCommit,
 		postgresOperationAuthTransactionRollback,
 		postgresOperationAuthTransactionReplay,
+		postgresOperationAuthTransactionAdmission,
 		postgresOperationNodeKeyRotationBegin,
 		postgresOperationNodeKeyRotationResolve,
 		postgresOperationNodeKeyRotationApply,
@@ -356,6 +358,7 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationAuthTransactionCommit ||
 			operation == postgresOperationAuthTransactionRollback ||
 			operation == postgresOperationAuthTransactionReplay ||
+			operation == postgresOperationAuthTransactionAdmission ||
 			operation == postgresOperationNodeKeyRotationBegin ||
 			operation == postgresOperationNodeKeyRotationResolve ||
 			operation == postgresOperationNodeKeyRotationApply ||

@@ -242,6 +242,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertCompiledPacketPolicyRuleImmutability(ctx, t, adminConnection)
 	assertPostgreSQLPolicyPublication(ctx, t, adminConnection, runtimePool, peerIdentity)
 	assertIdentityProviderSchemaFoundation(ctx, t, adminConnection, runtimeConnection)
+	assertPostgreSQLAuthTransactionAdmission(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLAuthTransaction(ctx, t, adminConnection, adminContenderConnection, runtimePool)
 	assertAccountIdentityPermissionFoundation(ctx, t, adminConnection, runtimeConnection)
 	assertHumanAuthenticationSessionAuthority(

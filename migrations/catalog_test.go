@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 27 {
-		t.Fatalf("len(Catalog()) = %d, want 27", len(catalog))
+	if len(catalog) != 28 {
+		t.Fatalf("len(Catalog()) = %d, want 28", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,42 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 27 {
-		t.Fatalf("LatestVersion() = %d, want 27", LatestVersion())
+	if LatestVersion() != 28 {
+		t.Fatalf("LatestVersion() = %d, want 28", LatestVersion())
+	}
+}
+
+func TestOIDCLoginRouteAdmissionIsNarrowReadOnlyCapability(t *testing.T) {
+	t.Parallel()
+	admission := Catalog()[27]
+	if admission.Description != "durable OIDC login route admission" {
+		t.Fatalf("migration 28 description = %q", admission.Description)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.admit_oidc_login_route_v1",
+		"RETURNS BOOLEAN", "SECURITY DEFINER", "SET search_path = pg_catalog, mesh, mesh_ops",
+		"SELECT EXISTS", "INTO STRICT admitted", "EXCEPTION WHEN OTHERS",
+		"mesh.requested_workspace_public_id", "p_workspace_public_id::TEXT",
+		"deployment.recovery_epoch = p_recovery_epoch",
+		"provider.current_generation = p_provider_generation",
+		"provider.authorization_endpoint = p_authorization_endpoint",
+		"provider.token_endpoint = p_token_endpoint",
+		"client.allowed_scopes = p_scopes", "client.allowed_algorithms = p_allowed_algorithms",
+		"p_redirect_uri = ANY (client.redirect_uris)", "workspace_provider.organization_digest IS NULL",
+		"FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer", "TO mesh_runtime;",
+	} {
+		if !strings.Contains(admission.SQL, required) {
+			t.Errorf("route admission SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "GRANT ALL",
+		"INSERT INTO", "UPDATE mesh.", "DELETE FROM", "FOR SHARE", "FOR UPDATE",
+		"BYPASSRLS", "ALTER TABLE", "DROP ",
+	} {
+		if strings.Contains(admission.SQL, forbidden) {
+			t.Errorf("route admission SQL contains excessive capability %q", forbidden)
+		}
 	}
 }
 
