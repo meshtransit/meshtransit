@@ -141,6 +141,13 @@ type Login struct {
 	AuthURL    string `json:"auth_url,omitempty"`
 }
 
+// NodeKeyRotation is the non-secret result of a committed key transition.
+type NodeKeyRotation struct {
+	APIVersion string `json:"api_version"`
+	ProfileID  string `json:"profile_id"`
+	State      string `json:"state"`
+}
+
 type trustControlRequest struct {
 	Fingerprint string `json:"fingerprint"`
 }

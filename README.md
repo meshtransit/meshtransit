@@ -45,6 +45,7 @@ make build
 ./bin/meshctl --socket /tmp/meshd.sock profile trust \
   --fingerprint sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ./bin/meshctl --socket /tmp/meshd.sock login
+./bin/meshctl --socket /tmp/meshd.sock identity rotate-node-key
 ```
 
 Linux amd64/arm64 Debian package build and installation are documented in
@@ -67,6 +68,7 @@ Global flags must appear before the command. `MESHCTL_SOCKET` and `MESHCTL_TIMEO
 - `meshctl login --no-wait`
 - `meshctl login --auth-key-stdin`
 - `meshctl login complete`
+- `meshctl identity rotate-node-key`
 - `meshctl version`
 - `meshctl doctor control`
 - `meshctl --json ...` for machine-readable output
@@ -83,6 +85,11 @@ In JSON mode, a waiting browser flow emits the pending and registered responses
 as successive JSON documents. For a pre-auth key, pipe it to
 `login --auth-key-stdin`. Auth keys are deliberately unavailable as flags or
 environment variables and are not persisted by either process.
+
+`identity rotate-node-key` asks `meshd` to perform an authenticated, crash-safe
+rotation for the active registered profile. `meshctl` sends no key or login
+credential and never receives private key material. A temporary failure can be
+retried safely; `meshd` retains and reuses the exact staged transition.
 
 Creating a profile does not accept a network ID. The control plane derives and authorizes network membership from the registration or session credential.
 

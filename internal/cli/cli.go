@@ -39,6 +39,7 @@ type DaemonClient interface {
 	TrustControl(context.Context, string) (localapi.ControlTrust, error)
 	StartLogin(context.Context, string) (localapi.Login, error)
 	CompleteLogin(context.Context) (localapi.Login, error)
+	RotateNodeKey(context.Context) (localapi.NodeKeyRotation, error)
 }
 
 // ClientFactory constructs the local daemon client after global flags are parsed.
@@ -127,12 +128,46 @@ func Run(
 			global.isJSON,
 			client,
 		)
+	case "identity":
+		return runIdentity(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	default:
 		_, _ = fmt.Fprintf(stderr, "meshctl: unknown command %q\n", commandArgs[0])
 		writeUsage(stderr)
 
 		return 2
 	}
+}
+
+func runIdentity(
+	ctx context.Context,
+	args []string,
+	stdout io.Writer,
+	stderr io.Writer,
+	isJSON bool,
+	client DaemonClient,
+) int {
+	if len(args) != 1 || args[0] != "rotate-node-key" {
+		_, _ = fmt.Fprintln(stderr, "usage: meshctl identity rotate-node-key")
+
+		return 2
+	}
+
+	result, err := client.RotateNodeKey(ctx)
+	if err != nil {
+		return writeRuntimeError(stderr, err)
+	}
+	if result.State != "rotated" {
+		return writeRuntimeError(
+			stderr,
+			fmt.Errorf("daemon returned unsupported Node-key rotation state %q", result.State),
+		)
+	}
+	if isJSON {
+		return writeJSON(stdout, stderr, result)
+	}
+	_, _ = fmt.Fprintf(stdout, "Rotated Node key for active profile %s.\n", result.ProfileID)
+
+	return 0
 }
 
 func runLogin(
@@ -790,6 +825,7 @@ Commands:
   login [--auth-key-stdin] [--no-wait] [--wait-timeout DURATION]
                                           Register the active profile and wait for browser approval
   login complete                          Recover a pending browser authorization
+  identity rotate-node-key                Rotate the active profile Node key
   doctor control                          Probe active control compatibility
   version                                 Show meshctl build information
   help                                    Show this help

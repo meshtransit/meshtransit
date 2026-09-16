@@ -314,6 +314,45 @@ func TestClient_Login(t *testing.T) {
 	}
 }
 
+func TestClient_RotateNodeKey(t *testing.T) {
+	t.Parallel()
+
+	client := newTestClient(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPost ||
+			request.URL.Path != "/v1/identity/node-key/rotate" {
+			t.Fatalf(
+				"request = %s %s, want POST /v1/identity/node-key/rotate",
+				request.Method,
+				request.URL.Path,
+			)
+		}
+		if request.Body != nil || request.ContentLength != 0 ||
+			request.Header.Get("Content-Type") != "" {
+			t.Fatalf(
+				"rotation request carried a body: body=%v length=%d content-type=%q",
+				request.Body,
+				request.ContentLength,
+				request.Header.Get("Content-Type"),
+			)
+		}
+
+		return jsonResponse(http.StatusOK, `{
+  "api_version":"v1",
+  "profile_id":"00000000000000000000000000000001",
+  "state":"rotated"
+}`), nil
+	})
+
+	rotated, err := client.RotateNodeKey(t.Context())
+	if err != nil {
+		t.Fatalf("RotateNodeKey() error = %v", err)
+	}
+	if rotated.ProfileID != "00000000000000000000000000000001" ||
+		rotated.State != "rotated" {
+		t.Fatalf("RotateNodeKey() = %#v, want committed rotation", rotated)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

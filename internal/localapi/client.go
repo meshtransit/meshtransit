@@ -201,6 +201,30 @@ func (c *Client) CompleteLogin(ctx context.Context) (Login, error) {
 	return response, nil
 }
 
+// RotateNodeKey requests one crash-safe Node-key transition for the active
+// registered profile. Private key material remains owned by meshd.
+func (c *Client) RotateNodeKey(ctx context.Context) (NodeKeyRotation, error) {
+	response := NodeKeyRotation{}
+	if err := c.do(
+		ctx,
+		http.MethodPost,
+		"/v1/identity/node-key/rotate",
+		nil,
+		http.StatusOK,
+		&response,
+	); err != nil {
+		return NodeKeyRotation{}, err
+	}
+	if response.APIVersion != apiVersion {
+		return NodeKeyRotation{}, fmt.Errorf(
+			"localapi: unsupported api version %q",
+			response.APIVersion,
+		)
+	}
+
+	return response, nil
+}
+
 func (c *Client) do(
 	ctx context.Context,
 	method string,

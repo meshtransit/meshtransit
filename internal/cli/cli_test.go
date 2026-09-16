@@ -346,6 +346,71 @@ func TestRun_LoginCommands(t *testing.T) {
 	}
 }
 
+func TestRun_IdentityRotateNodeKey(t *testing.T) {
+	t.Parallel()
+
+	profileID := "00000000000000000000000000000001"
+	tests := []struct {
+		name     string
+		args     []string
+		contains string
+	}{
+		{
+			name:     "text",
+			args:     []string{"identity", "rotate-node-key"},
+			contains: "Rotated Node key for active profile " + profileID,
+		},
+		{
+			name:     "json",
+			args:     []string{"--json", "identity", "rotate-node-key"},
+			contains: `"state": "rotated"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &fakeClient{rotation: localapi.NodeKeyRotation{
+				APIVersion: "v1",
+				ProfileID:  profileID,
+				State:      "rotated",
+			}}
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+			exitCode := Run(
+				t.Context(),
+				test.args,
+				stdout,
+				stderr,
+				testOptions(client),
+			)
+			if exitCode != 0 {
+				t.Fatalf("Run() exit code = %d, want 0; stderr=%s", exitCode, stderr.String())
+			}
+			if !strings.Contains(stdout.String(), test.contains) {
+				t.Fatalf("output %q does not contain %q", stdout.String(), test.contains)
+			}
+		})
+	}
+}
+
+func TestRun_IdentityRejectsUnknownRotationState(t *testing.T) {
+	t.Parallel()
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exitCode := Run(
+		t.Context(),
+		[]string{"identity", "rotate-node-key"},
+		stdout,
+		stderr,
+		testOptions(&fakeClient{rotation: localapi.NodeKeyRotation{State: "pending"}}),
+	)
+	if exitCode != 1 || !strings.Contains(stderr.String(), "unsupported Node-key rotation state") {
+		t.Fatalf("Run() exit code = %d, stderr = %q", exitCode, stderr.String())
+	}
+}
+
 func TestRun_LoginWaitsForBrowserAuthorization(t *testing.T) {
 	t.Parallel()
 
@@ -692,6 +757,7 @@ type fakeClient struct {
 	trusted         localapi.ControlTrust
 	login           localapi.Login
 	completedLogin  localapi.Login
+	rotation        localapi.NodeKeyRotation
 	completeLogin   func(context.Context) (localapi.Login, error)
 	receivedAuthKey string
 	completeCalls   int
@@ -738,6 +804,10 @@ func (f *fakeClient) CompleteLogin(ctx context.Context) (localapi.Login, error) 
 	}
 
 	return f.completedLogin, f.err
+}
+
+func (f *fakeClient) RotateNodeKey(_ context.Context) (localapi.NodeKeyRotation, error) {
+	return f.rotation, f.err
 }
 
 func testOptions(client DaemonClient) Options {
