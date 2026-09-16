@@ -894,6 +894,45 @@ Keycloak and SSO-only remain unchanged; first live login is Google through its
 broker. Supported Mesh Client wire contracts are unchanged. No live deployment,
 operational HA/failover or Phase 1 completion is claimed.
 
+### No-grant code-query callback ingress reader
+
+`LoginCallbackReader` validates one fixed Core-owned Route's incoming GET syntax;
+it is not a public handler or authenticated browser proof. It requires completed
+direct TLS 1.2+, the exact registered Host/canonical callback path and origin-form
+target, no body/transfer/trailers, existing bounded headers/cookies, and coherent
+document-navigation metadata when present. Proxy/Referer claims cannot replace
+TLS/Host/issuer checks. Optional Origin must equal the BFF origin.
+
+Eight pairs and 8192 raw query bytes bound parsing before allocation. Names are
+canonical bounded ASCII tokens; duplicate known OR ignored names, encoded aliases,
+bad escapes, semicolons, empty pairs and conflicting variants reject. Form-decode
+once; require existing canonical state/pre-auth-cookie handles and exact configured
+`iss` on code AND provider-error responses under the initial
+[RFC 9207 profile](https://www.rfc-editor.org/rfc/rfc9207.html). The first live issuer
+remains Keycloak, never Google directly. Use the existing 4096-byte printable code
+bound, subject to total transport limits. Provider diagnostics/URI, session_state
+and bounded unknown extensions are discarded, never fetched or treated as identity.
+Implicit/provider-token/JARM fields reject. Cancellation releases zero input;
+only closed cancellation classes survive, not arbitrary context error text.
+
+The returned immutable typed input has redacted formatting/logging and refuses
+JSON serialization. It changes no Auth/Session/membership/Network authority.
+Isolated private telemetry records only code_received/provider_error_received/
+invalid/unavailable/unknown counts and parse duration; received is NOT authenticated.
+The caller must explicitly own private metric registration; runtime is not wired.
+
+Source unit/race tests cover variants, exact issuer, parser/field budgets,
+transport/metadata/cookie ambiguity, cancellation, immutable input, redaction and
+fixed telemetry labels; bounded fuzz smoke qualifies adversarial query input.
+No schema/configuration version, client protocol or public login default changes.
+
+GET/HEAD authority remains read-only. Next: no-grant encrypted host-cookie capture
+and clean local redirect before active content, then a protected same-origin POST
+continuation with shared abuse budgets and fresh durable proof/claim/exchange/
+issuance. Before public deployment, suppress callback query logging/tracing at
+both edge and BFF and prove exact-target expiry/recovery coverage. These are
+still gates, not implemented public Google/Keycloak or client acceptance.
+
 The boundary threat model is fail-closed:
 
 - Spoofing and mix-up: exact issuer, discovery, authorization, token, JWKS,
