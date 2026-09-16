@@ -465,9 +465,10 @@ returns no redirect. Request budgets are capped at 30 seconds, with separate
 rollback/resolution budgets capped at 5 seconds each. `oidc.StartTelemetry`
 provides isolated active/count/histogram metrics with only closed result labels.
 It must be wired to the private operator registry when browser HTTP admission is
-implemented. Public HTTP login, same-origin CSRF/admission, callback claiming,
-and Account Session issuance remain unimplemented; the service is not enabled in
-runtime composition yet. No supported Mesh Client wire contract changed.
+implemented. A bounded HTTP prepare/start adapter now enforces the pre-session
+CSRF contract below, but public runtime composition, durable route admission,
+callback claiming, and Account Session issuance remain unimplemented.
+No supported Mesh Client wire contract changed.
 
 Pre-authentication cookie HMAC evidence has an independent keyed purpose and
 binds every transaction authority dimension. It resides with PKCE inside a
@@ -487,6 +488,48 @@ emit responses nor open public login; trusted HTTPS origin, CSRF, authoritative
 cookie verification, callback claiming, and fresh session rotation remain
 mandatory before browser admission. Every callback replica must support the
 browser payload before public login is enabled; legacy pending rows restart.
+
+The browser HTTP foundation owns one immutable Core-selected route. Both
+`POST /auth/v1/login/prepare` and `POST /auth/v1/login/start` require an exact
+configured HTTPS Host/Origin, `X-MeshTransit-Login: v1`, and an exact empty JSON
+object within 32 bytes. GET/HEAD/OPTIONS, Referer-only admission, proxy-selected
+scheme/origin, request scope/URL selectors, ambiguous headers, and simple content
+types reject before any dependency effect. Total headers are bounded to 16384
+bytes, 64 names, and 128 values. A non-queuing 1–128 request gate and a maximum
+30-second context plus transport read/write deadline bound work. Wrappers that
+cannot support ResponseController deadlines fail closed.
+
+Prepare creates a private independent 256-bit `__Host-mt_login_init` cookie
+(Secure, HttpOnly, SameSite=Strict, Path=/, no Domain) and a separate versioned
+HMAC-SHA-256 CSRF proof in JSON. The private cookie handle never enters
+JavaScript. The authenticated payload fixes its exact key ID, issued/expiry
+seconds, and independent 256-bit random value. The MAC has a dedicated purpose
+and binds the cookie plus every configured route/origin/generation value.
+Lifetime is 60–300 seconds. Start requires exactly one custom
+`X-MeshTransit-CSRF` header and one canonical cookie; substituted browser,
+route, key, generation, epoch, malformed payload, and expired proof reject.
+Proof is checked again after admission and before response release. Neither
+proof nor cookie is an Account Session or membership evidence; concurrent
+pre-session replay is not claimed single-use.
+
+Both endpoints consume a shared, purpose-separated HMAC source budget using the
+existing distributed Redis adapter before durable admission or OIDC work.
+Redis failure/malformed evidence rejects with generic 503; budget exhaustion
+returns 429 with bounded Retry-After. An explicit durable admission dependency
+is mandatory, and creation rechecks route authority in PostgreSQL. Only a
+confirmed live StartResult returns the independent pre-auth cookie and an
+authorization URL in no-store JSON for explicit browser navigation. The
+initiation cookie is then expired. No automatic AJAX-followed redirect or
+provider token is returned. All errors are static, and private
+`LoginHTTPTelemetry` records only closed outcome counts and latency.
+
+These adapters are tested with the real StartService and verified TLS transport;
+authority effects in HTTP unit tests are controlled fakes. No public listener
+registers these routes yet. A durable route-loader/admission implementation,
+callback single-use claim/token validation, fresh Core-session rotation,
+terminal expiry/erasure, layered abuse controls, and HA composition must pass
+before enabling browser login. Keycloak remains the reference IdP; SSO-only
+login and Mesh Client wire contracts are unchanged.
 
 The boundary threat model is fail-closed:
 

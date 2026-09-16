@@ -54,47 +54,57 @@ func ExpiredPreAuthCookie() *http.Cookie {
 // HTTP origin/TLS validation and authoritative proof verification remain separate
 // mandatory checks before any callback claim or token exchange. SameSite is not CSRF.
 func ReadPreAuthCookie(headers http.Header) (oidcauth.PreAuthCookie, error) {
+	value, err := boundedCookieValue(headers, PreAuthCookieName)
+	if err != nil {
+		return oidcauth.PreAuthCookie{}, ErrPreAuthCookie
+	}
+	cookie, err := oidcauth.ParsePreAuthCookie(value)
+	if err != nil {
+		return oidcauth.PreAuthCookie{}, ErrPreAuthCookie
+	}
+	return cookie, nil
+}
+
+// boundedCookieValue shares the same strict budget across separate cookie purposes.
+// It never chooses the first of duplicate cookies or reflects rejected input.
+func boundedCookieValue(headers http.Header, expectedName string) (string, error) {
 	fields := headers.Values("Cookie")
 	if len(fields) == 0 || len(fields) > maximumCookieHeaderFields {
-		return oidcauth.PreAuthCookie{}, ErrPreAuthCookie
+		return "", ErrPreAuthCookie
 	}
 	var headerBytes int
 	for _, field := range fields {
 		if len(field) > maximumCookieHeaderBytes-headerBytes {
-			return oidcauth.PreAuthCookie{}, ErrPreAuthCookie
+			return "", ErrPreAuthCookie
 		}
 		headerBytes += len(field)
 		for _, character := range field {
 			if character > 0x7e || character < 0x20 && character != '\t' {
-				return oidcauth.PreAuthCookie{}, ErrPreAuthCookie
+				return "", ErrPreAuthCookie
 			}
 		}
 	}
 	var pairs, matches int
-	var cookie oidcauth.PreAuthCookie
+	var cookie string
 	for _, field := range fields {
 		for pair := range strings.SplitSeq(field, ";") {
 			pairs++
 			if pairs > maximumCookiePairs {
-				return oidcauth.PreAuthCookie{}, ErrPreAuthCookie
+				return "", ErrPreAuthCookie
 			}
 			name, value, ok := strings.Cut(strings.Trim(pair, " \t"), "=")
-			if strings.Trim(name, " \t") != PreAuthCookieName {
+			if strings.Trim(name, " \t") != expectedName {
 				continue
 			}
 			matches++
-			if !ok || name != PreAuthCookieName || matches > 1 {
-				return oidcauth.PreAuthCookie{}, ErrPreAuthCookie
+			if !ok || name != expectedName || matches > 1 {
+				return "", ErrPreAuthCookie
 			}
-			parsed, err := oidcauth.ParsePreAuthCookie(value)
-			if err != nil {
-				return oidcauth.PreAuthCookie{}, ErrPreAuthCookie
-			}
-			cookie = parsed
+			cookie = value
 		}
 	}
-	if matches != 1 || !cookie.IsValid() {
-		return oidcauth.PreAuthCookie{}, ErrPreAuthCookie
+	if matches != 1 || cookie == "" {
+		return "", ErrPreAuthCookie
 	}
 	return cookie, nil
 }

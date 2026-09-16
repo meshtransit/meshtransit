@@ -172,7 +172,7 @@ func discoveryResponse(status int, contentType, body string) *http.Response {
 	}
 }
 
-func discoveryRoute(t *testing.T) oidcauth.Route {
+func discoveryRoute(t testing.TB) oidcauth.Route {
 	t.Helper()
 	deploymentID, err := deployment.ParseID("01890f00-0000-7000-8000-000000000001")
 	if err != nil {
