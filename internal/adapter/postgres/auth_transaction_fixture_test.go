@@ -135,6 +135,12 @@ func testAuthTransactionOptions() AuthTransactionOptions {
 
 func authTransactionPendingFixture(t *testing.T) oidcauth.Pending {
 	t.Helper()
+	pending, _ := authTransactionBrowserFixture(t)
+	return pending
+}
+
+func authTransactionBrowserFixture(t *testing.T) (oidcauth.Pending, oidcauth.Secrets) {
+	t.Helper()
 	deploymentID, err := deployment.ParseID("01890f00-0000-7000-8000-000000000001")
 	if err != nil {
 		t.Fatalf("deployment.ParseID() error = %v", err)
@@ -236,7 +242,7 @@ func authTransactionPendingFixture(t *testing.T) oidcauth.Pending {
 	if err != nil {
 		t.Fatalf("oidcauth.NewPending() error = %v", err)
 	}
-	return pending
+	return pending, secrets
 }
 
 func enqueueAuthTransactionCreation(

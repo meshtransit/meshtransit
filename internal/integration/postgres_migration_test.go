@@ -244,6 +244,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertIdentityProviderSchemaFoundation(ctx, t, adminConnection, runtimeConnection)
 	assertPostgreSQLAuthTransactionAdmission(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLPendingBrowserEvidence(ctx, t, adminConnection, runtimeConnection, runtimePool)
+	assertPostgreSQLBrowserClaim(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLAuthTransaction(ctx, t, adminConnection, adminContenderConnection, runtimePool)
 	assertAccountIdentityPermissionFoundation(ctx, t, adminConnection, runtimeConnection)
 	assertHumanAuthenticationSessionAuthority(

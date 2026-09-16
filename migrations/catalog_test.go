@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 29 {
-		t.Fatalf("len(Catalog()) = %d, want 29", len(catalog))
+	if len(catalog) != 30 {
+		t.Fatalf("len(Catalog()) = %d, want 30", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 29 {
-		t.Fatalf("LatestVersion() = %d, want 29", LatestVersion())
+	if LatestVersion() != 30 {
+		t.Fatalf("LatestVersion() = %d, want 30", LatestVersion())
 	}
 }
 
@@ -1151,6 +1151,43 @@ func TestOIDCPendingBrowserEvidenceIsReadOnlyAndNotAClaim(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("pending browser SQL excessive capability %q", forbidden)
+		}
+	}
+}
+
+func TestBrowserClaimMigrationPreservesBindingAndExplicitLockOrder(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[29]
+	if migration.Description != "single-use OIDC browser transaction claim" {
+		t.Fatal("incorrect claim description")
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.claim_oidc_browser_v1", "SECURITY DEFINER", "SET search_path = pg_catalog, mesh, mesh_ops",
+		"mesh_ops.admit_oidc_login_route_v1", "EXCEPTION WHEN OTHERS", "p_workspace_public_id::TEXT",
+		"auth.state = 'pending' AND auth.version = p_expected_version AND auth.binding_semantic_hash = p_binding_hash",
+		"auth.pkce_verifier_encryption_algorithm = 'aead-aes-256-gcm-v1'", "auth.expires_at > observed_at",
+		"SET state = 'consuming', version = auth.version + 1, consumed_at = observed_at",
+		"FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer", "TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("claim SQL missing %q", required)
+		}
+	}
+	previous := -1
+	for _, lock := range []string{
+		"FROM mesh.workspace WHERE", "FROM mesh.deployment WHERE", "FROM mesh.identity_provider AS provider",
+		"FROM mesh.identity_provider_generation AS generation", "FROM mesh.identity_provider_client AS client",
+		"FROM mesh.workspace_identity_provider AS workspace_provider", "FOR UPDATE OF auth", "observed_at := pg_catalog.clock_timestamp()",
+	} {
+		position := strings.Index(migration.SQL, lock)
+		if position <= previous {
+			t.Errorf("claim lock/clock order lost at %q", lock)
+		}
+		previous = position
+	}
+	for _, forbidden := range []string{"GRANT SELECT", "GRANT UPDATE", "GRANT ALL", "BYPASSRLS", "binding_semantic_hash = observed", "pkce_verifier_ciphertext =", "INSERT INTO", "DELETE FROM", "DROP ", "transaction_timestamp()"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("claim SQL excessive or stale capability %q", forbidden)
 		}
 	}
 }

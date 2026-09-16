@@ -607,13 +607,27 @@ authority, audit, outbox, or Network revision. Equivalent verification instances
 need no sticky routing, but verification can succeed more than once: it is not a
 single-use claim, exchange grant, session, or revocation lease.
 
-The next callback slice must atomically claim `pending -> consuming` with current
-authority locks and audit/outbox, checking live expiry after lock waits. Only
-confirmed claim commit may release exchange material; uncertain completion must
-fail closed without creation resolution or reclaim. Public callback/listeners
+`ClaimService` now atomically consumes opaque verified browser possession through
+forward migration 30's runtime-only `mesh_ops.claim_oidc_browser_v1`. Serial
+Workspace/authority class locks precede auth-row FOR UPDATE; current full route,
+original pending version/hash, and live database expiry are rechecked after
+waits. Deployment audit head is last, followed by another live DB expiry check.
+Consuming/version two preserves the original binding hash and encrypted PKCE;
+fresh mutation/audit/outbox commit together with separate lifecycle before/after
+hashes. No Principal/session or Network revision is created. Non-queuing atomic
+method ownership prevents overlapping database I/O without a mutex across I/O.
+Private metrics add only fixed `auth_claim_{begin,apply,commit,rollback}` labels.
+
+Only confirmed Commit and fresh cancellation/time checks release an opaque
+consumption receipt, with no plaintext verifier or reusable exchange API.
+Unknown completion returns zero receipt, never uses creation resolution or
+Commit retry, and cannot reclaim consuming state. Disposable PostgreSQL/TLS
+tests exercise independent concurrent callbacks, real committed-but-lost ACK,
+unchanged ciphertext/binding, exact lifecycle mutation/audit/outbox, stale
+authority after proof, and hardened scope/privileges. Public callback/listeners
 remain disabled. Token validation, Core-session rotation, terminal expiry/erasure,
 abuse controls, and HA/Google-through-Keycloak acceptance are still required.
-Released migrations 27/28, application generation 1, SSO-only policy, and Mesh
+Released migrations 27/28/29, application generation 1, SSO-only policy, and Mesh
 Client wire contracts remain unchanged.
 
 The boundary threat model is fail-closed:
