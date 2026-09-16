@@ -1532,6 +1532,92 @@ new baseline/exclusions. No PostgreSQL/Redis/provider integration or live client
 browser test runs in this slice; native-host clock remains unqualified. Source
 evidence does not qualify public enablement, remote CI or immutable artifacts.
 
+### Private identity production dependency factory
+
+`SSO-PRIVATE-DEPENDENCY-FACTORY-001` binds the private identity graph to concrete
+production adapters, not runtime enablement. `composePrivateIdentityFactory`
+accepts the same resident key bundle and Core-selected Route/HTTPS Origin/local
+return mapping, borrowed runtime PostgreSQL/TLS Redis dependencies, a resident
+confidential-client `oidc.BasicSecret` and a logger. It accepts no alternate
+clock/provider port, prebuilt login/mutation service, individual replacement key,
+environment input, secret loader or service locator. One owned
+`oidcauth.SystemStartClock` serves token validation, login/Session services,
+browser/cookie management and both durable resource mutations. No construction
+clock read; native-host clock remains a separate, unqualified release gate.
+
+One runtime `AuthTransactionStore` supplies route admission, creation/replay,
+pending, claim/failure/issuance and exact subject effects; one
+`AccountSessionStore` supplies current durable Session authentication. Existing
+constructors reject worker/zero/incomplete pools. Redis is shared directly for
+distributed budgets, never identity/membership/RBAC/cache authority or a local
+limiter fallback. Pure `ValidateRateLimiter` rejects nil/zero Redis clients
+without issuing a command; it does not prove connectivity/readiness. Existing
+Device revocation and Policy publication services retain scope/RBAC, atomic
+audit/outbox, confirmed replay and bounded retry/idempotency rules. OS-CSPRNG
+ID/secret/issuance generators are constructed, not invoked.
+
+Discovery/token clients share the exact reviewed Route and existing TLS-only,
+no-proxy/no-redirect constructors. Require explicit nonzero discovery timeout/
+metadata limits within Start's work window; token timeout stays within Callback's
+window. Existing token age/skew and `client_secret_basic` validation apply.
+Google-first still means Google THROUGH the reviewed Keycloak broker; no direct
+Google/local password/provider fallback or trust-discovery branch is added.
+
+Clamp existing DB statement/lock/idle caps (five/two/ten seconds) to their work
+owners. Auth uses the lesser Start/Callback window; Session/resource work uses
+Management's window. Require at least two milliseconds, floor SQL limits to
+whole milliseconds and cap lock at half the statement window. No positive
+sub-millisecond value becomes PostgreSQL `0ms`/disabled timeout. Caller request
+contexts still bound pool acquisition and all effects; SQL limits cannot replace
+them. No new query, schema, grant, migration or database retry policy.
+
+Five-second caller-clamped construction releases either the complete graph or
+nothing, without network, authority, budget, entropy, clock or listener work.
+The factory owns discovery/token clients and closes their idle connections on
+failed construction or repeatable explicit `Close`. Added `oidc.Resolver.Close`
+has the same idle-only ownership contract. Close neither gates admission nor
+cancels/joins active requests: process owners must stop/drain first. PostgreSQL/
+Redis remain borrowed and are never closed/reopened here. Redact factory/options/
+dependency formatting/structured diagnostics and refuse JSON. Existing private
+pedantic registry stays isolated, with no public auth logger/metrics middleware.
+
+Source contracts use real lazy adapters and reserved synthetic endpoints, not
+live requests. Cover complete construction, worker/nil/zero dependencies, unsafe
+OIDC/application windows, late profile validation, cancellation/redaction, owned
+idle cleanup and repeated independent registry/client construction. Named/fuzz
+contracts cover SQL millisecond rounding, nonzero caps, bounds and overflow.
+These do not prove borrowed dependency health, active draining, durable/provider
+traffic or operational HA. No main/config/default/listener/public dispatcher or
+SSO activation, Bearer entry point, client wire, dependency or CI changes.
+Canonical identity/security/ADR/Keycloak docs were updated locally before code;
+this README is their versioned mirror, not a commit of the non-Git sibling tree.
+Full login-route OpenAPI/private dispatcher, query custody, clocks, intended
+expiry/recovery, live Google/Keycloak/browser/client/HA, remote CI and immutable
+artifact gates remain open. Public SSO remains disabled.
+
+Source qualification (2026-09-17): unchanged full `make quality` passes host
+format/module/vet, shuffled unit/race, pinned regular/integration-tag lint and
+workflow checks. Govulncheck reports zero affected symbols/imported-package
+vulnerabilities and three non-called required-module advisories; no dependency/
+container zero-advisory claim. Final uncached host cmd/oidc/redis race tests pass
+(6.761s/6.022s/5.835s). Final SQL-window fuzz passes 130,919 executions with two
+workers over ten seconds. Scoped pinned autofix/read-only lint passes; the sole
+literal-to-equivalent-options conversion was reviewed by reconstructing the exact
+pre-fix SHA-256. No guard, oracle, dependency or gate was changed. Redacted
+tree/full-125-pre-commit-history secret scans pass without new baselines/exclusions.
+
+The operator authorized the earlier rejected source exposure. The exact pinned
+Go 1.26.8 Linux source gate then passes uncached shuffled race tests for
+`api/openapi`, `internal/config`, `cmd/meshcore`, `internal/adapter/oidc` and
+`internal/adapter/redis` (1.094s/1.044s/1.210s/1.217s/1.277s), as UID/GID 65532
+with no network/capabilities/host credentials/Docker socket and read-only source/
+modules. Only isolated test scratch is writable/executable. The approved image
+was initially absent locally and fetched by its exact digest; no alternate image,
+mount/copy or indirect workaround. This qualifies current source only, including
+the unchanged renderer below, not a historical commit/artifact, native clock,
+durable/provider traffic, live Google/browser/client/HA, remote CI or release
+artifact. Those gates remain open; public SSO remains disabled.
+
 ### Private management OpenAPI authentication profiles
 
 `SSO-MANAGEMENT-AUTH-PROFILE-001` adds pure compile-time document composition,
@@ -1603,6 +1689,12 @@ waived; host or historical results do not substitute for it. A retry requires
 explicit authorization for that source/image exposure. Native-host clock,
 durable integration, live SSO/client/HA, remote CI and immutable artifacts remain
 unqualified. No public activation or deployment is part of this change.
+
+Authorized follow-up qualification in the private dependency-factory slice above
+now passes the same pinned no-network/read-only Linux source gate including
+`api/openapi` (1.094s). The original rejected attempt remains unexecuted. No bypass
+occurred; only current source is qualified, not historical commits/artifacts or
+public/live browser readiness. The remaining release gates above remain open.
 
 ## Account Session authentication
 

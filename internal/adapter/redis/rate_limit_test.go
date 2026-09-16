@@ -10,6 +10,42 @@ import (
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
 )
 
+func TestClientValidateRateLimiterIsStructuralAndEffectFree(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		valid bool
+	}{
+		{name: "missing command"}, {name: "constructed command", valid: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			client := &Client{}
+			calls := 0
+			if test.valid {
+				client.applyRateLimit = func(context.Context, string, int64, time.Duration) ([]int64, error) {
+					calls++
+					return nil, ErrRateLimit
+				}
+			}
+			err := client.ValidateRateLimiter()
+			if test.valid && err != nil {
+				t.Fatal("constructed limiter rejected", err)
+			}
+			if !test.valid && !errors.Is(err, ErrInvalidOptions) {
+				t.Fatal("unconstructed limiter admitted")
+			}
+			if calls != 0 {
+				t.Fatal("structural validation performed a command")
+			}
+		})
+	}
+	var absent *Client
+	if !errors.Is(absent.ValidateRateLimiter(), ErrInvalidOptions) {
+		t.Fatal("nil limiter admitted")
+	}
+}
+
 func TestClientAppliesSecretSafeRateLimit(t *testing.T) {
 	t.Parallel()
 

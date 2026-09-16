@@ -55,6 +55,15 @@ return {1, remaining, 0}
 
 type rateLimitFunc func(context.Context, string, int64, time.Duration) ([]int64, error)
 
+// ValidateRateLimiter checks structural construction without issuing a command.
+// It proves neither connectivity nor readiness, and never grants authority.
+func (client *Client) ValidateRateLimiter() error {
+	if client == nil || client.applyRateLimit == nil {
+		return ErrInvalidOptions
+	}
+	return nil
+}
+
 // Allow atomically consumes one distributed token using Redis server time.
 func (client *Client) Allow(
 	ctx context.Context,

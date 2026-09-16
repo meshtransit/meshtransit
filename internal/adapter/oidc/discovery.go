@@ -94,6 +94,17 @@ func newResolver(client doer, maxMetadataBytes int64) (*Resolver, error) {
 	return &Resolver{client: client, maxMetadataBytes: maxMetadataBytes}, nil
 }
 
+// Close releases owned idle HTTP connections after admission stops and requests
+// drain. It does not cancel active requests or create a resolver admission gate.
+func (resolver *Resolver) Close() {
+	if resolver == nil {
+		return
+	}
+	if client, ok := resolver.client.(*http.Client); ok {
+		client.CloseIdleConnections()
+	}
+}
+
 // Resolve validates discovery metadata against one exact configured route.
 func (resolver *Resolver) Resolve(
 	ctx context.Context,

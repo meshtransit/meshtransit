@@ -25,6 +25,33 @@ const validDiscoveryBody = `{
   "ignored_extension":{"safe":true}
 }`
 
+func TestResolverCloseOnlyReleasesOwnedIdleConnections(t *testing.T) {
+	t.Parallel()
+	var absent *Resolver
+	absent.Close()
+	transport := &discoveryIdleCloseTransport{}
+	resolver := &Resolver{client: &http.Client{Transport: transport}}
+	resolver.Close()
+	resolver.Close()
+	if transport.closes != 2 || transport.requests != 0 {
+		t.Fatal("idle cleanup performed request work or did not delegate")
+	}
+	resolver = &Resolver{client: doerFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("cleanup invoked a borrowed test client")
+		return nil, ErrDiscoveryUnavailable
+	})}
+	resolver.Close()
+}
+
+type discoveryIdleCloseTransport struct{ closes, requests int }
+
+func (transport *discoveryIdleCloseTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	transport.requests++
+	return nil, ErrDiscoveryUnavailable
+}
+
+func (transport *discoveryIdleCloseTransport) CloseIdleConnections() { transport.closes++ }
+
 func TestResolverReturnsExactValidatedMetadata(t *testing.T) {
 	t.Parallel()
 
