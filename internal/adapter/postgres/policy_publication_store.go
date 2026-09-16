@@ -44,6 +44,9 @@ type PolicyPublicationOptions struct {
 	StatementTimeout time.Duration
 	LockTimeout      time.Duration
 	IdleTimeout      time.Duration
+	// AllowTrustedActor permits the offline qualification path to publish without
+	// an Account Session. Runtime management composition must leave this false.
+	AllowTrustedActor bool
 }
 
 // PolicyPublicationStore owns short runtime-scoped publication transactions.
@@ -119,9 +122,10 @@ func (store *PolicyPublicationStore) Begin(
 	}
 	owned = true
 	return &policyPublicationTransaction{
-		database: databaseTransaction,
-		scope:    scope,
-		metrics:  store.metrics,
+		database:              databaseTransaction,
+		scope:                 scope,
+		metrics:               store.metrics,
+		requireAccountSession: !store.options.AllowTrustedActor,
 	}, nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/meshtransit/meshtransit/internal/identity"
+	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 )
 
@@ -25,6 +26,8 @@ var (
 	ErrInvalidResult = errors.New("policy publication: invalid result")
 	// ErrConflict reports that active policy changed after the caller compiled its candidate.
 	ErrConflict = errors.New("policy publication: stale base revision")
+	// ErrForbidden hides which Account Session or policy.publish authority check failed.
+	ErrForbidden = errors.New("policy publication: forbidden")
 )
 
 // AuditReason is a bounded human explanation for one authority change.
@@ -56,11 +59,20 @@ type CommandParams struct {
 	AuditReason        AuditReason
 }
 
+// ManagementCommandParams contains one SSO-authenticated policy publication request.
+type ManagementCommandParams struct {
+	Candidate          Candidate
+	BasePolicyRevision int64
+	AccountSession     accountsession.Session
+	AuditReason        AuditReason
+}
+
 // Command is a server-scoped request to activate one immutable compiled release.
 type Command struct {
 	candidate          Candidate
 	basePolicyRevision int64
 	actorPrincipalID   identity.PrincipalID
+	accountSession     accountsession.Session
 	auditReason        AuditReason
 }
 
@@ -78,6 +90,21 @@ func NewCommand(params CommandParams) (Command, error) {
 	return command, nil
 }
 
+// NewManagementCommand binds publication authority to one authenticated Account Session.
+func NewManagementCommand(params ManagementCommandParams) (Command, error) {
+	command := Command{
+		candidate:          params.Candidate,
+		basePolicyRevision: params.BasePolicyRevision,
+		actorPrincipalID:   params.AccountSession.PrincipalID(),
+		accountSession:     params.AccountSession,
+		auditReason:        params.AuditReason,
+	}
+	if !command.IsValid() || !command.HasAccountSession() {
+		return Command{}, ErrInvalidCommand
+	}
+	return command, nil
+}
+
 // Candidate returns the immutable compiled artifact.
 func (command Command) Candidate() Candidate { return command.candidate }
 
@@ -87,15 +114,25 @@ func (command Command) BasePolicyRevision() int64 { return command.basePolicyRev
 // ActorPrincipalID returns the authorized human or service principal.
 func (command Command) ActorPrincipalID() identity.PrincipalID { return command.actorPrincipalID }
 
+// AccountSession returns the SSO authority bound to a management command.
+func (command Command) AccountSession() accountsession.Session { return command.accountSession }
+
+// HasAccountSession reports whether publication must prove live management authority.
+func (command Command) HasAccountSession() bool { return command.accountSession.IsValid() }
+
 // AuditReason returns the explicit normalized publication reason.
 func (command Command) AuditReason() AuditReason { return command.auditReason }
 
 // IsValid reports whether the candidate is exactly the successor of its CAS base.
 func (command Command) IsValid() bool {
-	return command.candidate.IsValid() && command.basePolicyRevision > 0 &&
-		command.basePolicyRevision < int64(^uint64(0)>>1) &&
-		command.candidate.Snapshot().Revision() == command.basePolicyRevision+1 &&
-		command.actorPrincipalID.IsValid() && command.auditReason.IsValid()
+	if !command.candidate.IsValid() || command.basePolicyRevision <= 0 ||
+		command.basePolicyRevision >= int64(^uint64(0)>>1) ||
+		command.candidate.Snapshot().Revision() != command.basePolicyRevision+1 ||
+		!command.actorPrincipalID.IsValid() || !command.auditReason.IsValid() {
+		return false
+	}
+	return !command.accountSession.IsValid() ||
+		command.accountSession.PrincipalID() == command.actorPrincipalID
 }
 
 // ResolutionParams contains active authority read with required publication locks.

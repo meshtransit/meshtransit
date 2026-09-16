@@ -156,7 +156,7 @@ enrollment, Noise, and TLS private-key material must remain purpose-separated.
 | `MESHTRANSIT_API_MAX_CONNECTIONS` | `256` | TLS connection cap from 1 through 4096. |
 | `MESHTRANSIT_API_MAX_CONCURRENT_REQUESTS` | `128` | Admitted-request cap from 1 through the connection cap. |
 
-The first endpoint is:
+The first Device lifecycle endpoint is:
 
 ```text
 POST /api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/revoke
@@ -176,6 +176,24 @@ issuance are not exposed yet, so this slice cannot mint a new management bearer.
 Exhausted request budgets return `429` with bounded `RateLimit-*` and
 `Retry-After` headers. Redis admission failure returns retryable `503` before
 authentication or PostgreSQL mutation.
+
+Compiled packet policy can be activated through the same SSO-only boundary:
+
+```text
+POST /api/v1/workspaces/{workspace_id}/networks/{network_id}/policy/actions/publish
+Authorization: Bearer <opaque Account Session>
+If-Match: "<current Policy revision>"
+Content-Type: application/json
+
+{"reason":"operator supplied reason","rules":[...]}
+```
+
+Core requires current exact-Network `policy.publish` authority and holds that
+RBAC evidence under the same PostgreSQL transaction that advances the Policy
+and Network revisions, appends audit evidence, and records the outbox wakeup.
+An explicit empty `rules` array publishes deny-all. Successful publication
+returns the immutable release ID, Policy/Network revisions, semantic hash, rule
+count, and the new Policy revision as a strong `ETag`.
 
 Those roles also expose the public client-control listener. It accepts TLS only;
 the client session inside TLS must then authenticate with the pinned Noise

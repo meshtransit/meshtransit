@@ -18,6 +18,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
+	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
 	"github.com/meshtransit/meshtransit/internal/workspace"
@@ -282,6 +283,7 @@ func TestNewManagementHandlerRejectsInvalidDependencies(t *testing.T) {
 	for _, mutate := range []func(*ManagementHandlerOptions){
 		func(options *ManagementHandlerOptions) { options.Sessions = nil },
 		func(options *ManagementHandlerOptions) { options.Revocations = nil },
+		func(options *ManagementHandlerOptions) { options.PolicyPublications = nil },
 		func(options *ManagementHandlerOptions) { options.Idempotency = nil },
 		func(options *ManagementHandlerOptions) { options.RateLimitSubjects = nil },
 		func(options *ManagementHandlerOptions) { options.RateLimiter = nil },
@@ -304,6 +306,7 @@ type managementHandlerFixtureOptions struct {
 	session      accountsession.Session
 	authenticate func(context.Context, accountsession.Token) (accountsession.Session, error)
 	revoke       func(context.Context, revocation.Command) (revocation.Result, error)
+	publish      func(context.Context, policypublication.Command) (policypublication.Result, error)
 	limit        func(context.Context, ratelimit.Subject, ratelimit.Policy) (ratelimit.Decision, error)
 }
 
@@ -319,6 +322,9 @@ func managementHandlerFixture(t *testing.T, fixture managementHandlerFixtureOpti
 	}
 	if fixture.revoke != nil {
 		options.Revocations = managementDeviceRevokerFunc(fixture.revoke)
+	}
+	if fixture.publish != nil {
+		options.PolicyPublications = managementPolicyPublisherFunc(fixture.publish)
 	}
 	if fixture.limit != nil {
 		options.RateLimiter = managementRateLimiterFunc(fixture.limit)
@@ -347,6 +353,12 @@ func validManagementHandlerOptions(t *testing.T) ManagementHandlerOptions {
 		}),
 		Revocations: managementDeviceRevokerFunc(func(_ context.Context, command revocation.Command) (revocation.Result, error) {
 			return managementResultFixture(t, command), nil
+		}),
+		PolicyPublications: managementPolicyPublisherFunc(func(
+			_ context.Context,
+			command policypublication.Command,
+		) (policypublication.Result, error) {
+			return managementPolicyResultFixture(t, command), nil
 		}),
 		Idempotency: managementIdempotencyProverFunc(func(string) (idempotency.Proof, error) {
 			return proof, nil
@@ -398,6 +410,18 @@ func (function managementSessionAuthenticatorFunc) Authenticate(ctx context.Cont
 type managementDeviceRevokerFunc func(context.Context, revocation.Command) (revocation.Result, error)
 
 func (function managementDeviceRevokerFunc) Revoke(ctx context.Context, command revocation.Command) (revocation.Result, error) {
+	return function(ctx, command)
+}
+
+type managementPolicyPublisherFunc func(
+	context.Context,
+	policypublication.Command,
+) (policypublication.Result, error)
+
+func (function managementPolicyPublisherFunc) Publish(
+	ctx context.Context,
+	command policypublication.Command,
+) (policypublication.Result, error) {
 	return function(ctx, command)
 }
 
@@ -477,6 +501,28 @@ func managementResultFixture(t *testing.T, command revocation.Command) revocatio
 	})
 	if err != nil {
 		t.Fatalf("revocation.NewResult() error = %v", err)
+	}
+	return result
+}
+
+func managementPolicyResultFixture(
+	t *testing.T,
+	command policypublication.Command,
+) policypublication.Result {
+	t.Helper()
+	releaseID, err := policypublication.ParseReleaseID(
+		"01890f00-0000-7000-8000-000000000412",
+	)
+	if err != nil {
+		t.Fatalf("publication.ParseReleaseID() error = %v", err)
+	}
+	result, err := policypublication.NewResult(policypublication.ResultParams{
+		ReleaseID: releaseID, Scope: command.Candidate().Snapshot().Scope(),
+		NetworkRevision: 8, PolicyRevision: command.Candidate().Snapshot().Revision(),
+		SemanticHash: command.Candidate().SemanticHash(),
+	})
+	if err != nil {
+		t.Fatalf("publication.NewResult() error = %v", err)
 	}
 	return result
 }

@@ -151,7 +151,7 @@ func (service *Service) attempt(
 		}
 	}()
 
-	resolution, err := transaction.Resolve(ctx, command)
+	resolution, err := transaction.Resolve(ctx, command, now)
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve policy publication under lock: %w", err)
 	}

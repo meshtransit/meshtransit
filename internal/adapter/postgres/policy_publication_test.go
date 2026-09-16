@@ -5,10 +5,14 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	publication "github.com/meshtransit/meshtransit/internal/policy/publication"
 )
+
+var policyPublicationTestTime = time.Date(2026, time.September, 16, 8, 0, 0, 0, time.UTC)
 
 func TestPolicyPublicationTransactionCommitsReleaseRevisionAuditAndOutbox(t *testing.T) {
 	t.Parallel()
@@ -24,7 +28,7 @@ func TestPolicyPublicationTransactionCommitsReleaseRevisionAuditAndOutbox(t *tes
 		t.Fatalf("PolicyPublicationStore.Begin() error = %v", err)
 	}
 	transaction := value.(*policyPublicationTransaction)
-	resolution, err := transaction.Resolve(t.Context(), command)
+	resolution, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -94,7 +98,7 @@ func TestPolicyPublicationTransactionMapsStaleCASConflict(t *testing.T) {
 		t.Fatalf("Begin() error = %v", err)
 	}
 	transaction := value.(*policyPublicationTransaction)
-	resolution, err := transaction.Resolve(t.Context(), command)
+	resolution, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
@@ -102,6 +106,78 @@ func TestPolicyPublicationTransactionMapsStaleCASConflict(t *testing.T) {
 	_, err = transaction.Apply(t.Context(), policyPublicationChangeFixture(t, command, resolution))
 	if !errors.Is(err, ErrApplyPolicyPublication) || !errors.Is(err, publication.ErrConflict) {
 		t.Fatalf("Apply() error = %v, want classified ErrConflict", err)
+	}
+	if err := transaction.Rollback(t.Context()); err != nil {
+		t.Fatalf("Rollback() error = %v", err)
+	}
+}
+
+func TestPolicyPublicationTransactionAuthorizesManagementSessionUnderLock(t *testing.T) {
+	t.Parallel()
+
+	command := policyManagementPublicationCommandFixture(t)
+	databaseTransaction := newFakePolicyPublicationTransaction()
+	enqueuePolicyPublicationSetup(databaseTransaction)
+	enqueuePolicyPublicationAuthorization(databaseTransaction)
+	enqueuePolicyPublicationResolution(t, databaseTransaction, command, 5, 1)
+	store := beginAuthorizedTestPolicyPublicationStore(t, databaseTransaction)
+
+	value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	transaction := value.(*policyPublicationTransaction)
+	if _, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if !transaction.authorization.isValid() {
+		t.Fatalf("authorization evidence = %+v, want valid", transaction.authorization)
+	}
+	call := findPolicyPublicationCall(t, databaseTransaction.calls, authorizePolicyPublicationSQL)
+	if len(call.arguments) != 13 || call.arguments[11] != "policy.publish" ||
+		call.arguments[12] != policyPublicationTestTime {
+		t.Fatalf("authorization arguments = %#v", call.arguments)
+	}
+	if err := transaction.Rollback(t.Context()); err != nil {
+		t.Fatalf("Rollback() error = %v", err)
+	}
+}
+
+func TestPolicyPublicationTransactionRejectsMissingManagementAuthority(t *testing.T) {
+	t.Parallel()
+
+	command := policyManagementPublicationCommandFixture(t)
+	databaseTransaction := newFakePolicyPublicationTransaction()
+	enqueuePolicyPublicationSetup(databaseTransaction)
+	databaseTransaction.enqueueRow(authorizePolicyPublicationSQL, policyPublicationTestRow{err: pgx.ErrNoRows})
+	store := beginAuthorizedTestPolicyPublicationStore(t, databaseTransaction)
+	value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	transaction := value.(*policyPublicationTransaction)
+	if _, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime); !errors.Is(err, publication.ErrForbidden) {
+		t.Fatalf("Resolve() error = %v, want ErrForbidden", err)
+	}
+	if err := transaction.Rollback(t.Context()); err != nil {
+		t.Fatalf("Rollback() error = %v", err)
+	}
+}
+
+func TestPolicyPublicationTransactionRequiresManagementCommandWhenConfigured(t *testing.T) {
+	t.Parallel()
+
+	command := policyPublicationCommandFixture(t)
+	databaseTransaction := newFakePolicyPublicationTransaction()
+	enqueuePolicyPublicationSetup(databaseTransaction)
+	store := beginAuthorizedTestPolicyPublicationStore(t, databaseTransaction)
+	value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	transaction := value.(*policyPublicationTransaction)
+	if _, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime); !errors.Is(err, publication.ErrForbidden) {
+		t.Fatalf("Resolve() error = %v, want ErrForbidden", err)
 	}
 	if err := transaction.Rollback(t.Context()); err != nil {
 		t.Fatalf("Rollback() error = %v", err)

@@ -49,6 +49,68 @@ func assertPostgreSQLPolicyPublication(
 	assertCommittedPolicyPublication(ctx, t, adminConnection, command, result)
 }
 
+func assertPostgreSQLManagementPolicyPublication(
+	ctx context.Context,
+	t *testing.T,
+	adminConnection *pgx.Conn,
+	runtimePool *postgresadapter.Pool,
+) {
+	t.Helper()
+	trusted := policyPublicationIntegrationCommand(t)
+	snapshot, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope: trusted.Candidate().Snapshot().Scope(), Revision: 4, Rules: []policy.Rule{},
+	})
+	if err != nil {
+		t.Fatalf("construct management policy snapshot: %v", err)
+	}
+	candidate, err := publication.NewCandidate(snapshot, 1)
+	if err != nil {
+		t.Fatalf("construct management policy candidate: %v", err)
+	}
+	reason, err := publication.NewAuditReason("integration management deny-all activation")
+	if err != nil {
+		t.Fatalf("construct management policy audit reason: %v", err)
+	}
+	command, err := publication.NewManagementCommand(publication.ManagementCommandParams{
+		Candidate: candidate, BasePolicyRevision: 3,
+		AccountSession: managementRBACAccountSessionFixture(t), AuditReason: reason,
+	})
+	if err != nil {
+		t.Fatalf("construct management policy command: %v", err)
+	}
+	service := newIntegrationManagementPolicyPublicationService(t, runtimePool)
+	if _, err := service.Publish(ctx, trusted); !errors.Is(err, publication.ErrForbidden) {
+		t.Fatalf("trusted command through management publisher error = %v, want ErrForbidden", err)
+	}
+	result, err := service.Publish(ctx, command)
+	if err != nil {
+		t.Fatalf("publish management packet policy: %v", err)
+	}
+	if result.PolicyRevision() != 4 || result.NetworkRevision() != 6 ||
+		result.Scope() != snapshot.Scope() || result.SemanticHash() != candidate.SemanticHash() {
+		t.Fatalf("management publication result = %+v, want Network/policy revision 6/4", result)
+	}
+	var evidenceCount int
+	if err := adminConnection.QueryRow(ctx, `SELECT pg_catalog.count(*)::INTEGER
+FROM mesh_audit.audit_event
+WHERE workspace_id = 103 AND network_id = 203
+  AND target_kind = 'policy_release' AND target_public_id = $1::UUID
+  AND action = 'policy.published' AND permission = 'policy.publish'
+  AND payload ->> 'account_session_id' = $2
+  AND payload ->> 'role_binding_id' = $3
+  AND payload ->> 'role_definition_id' = $4`,
+		result.ReleaseID().String(),
+		integrationManagementSessionPublicID,
+		integrationRoleBinding203PublicID,
+		integrationRoleDefinitionPublicID,
+	).Scan(&evidenceCount); err != nil {
+		t.Fatalf("query management policy authorization evidence: %v", err)
+	}
+	if evidenceCount != 1 {
+		t.Fatalf("management policy authorization evidence count = %d, want 1", evidenceCount)
+	}
+}
+
 func policyPublicationIntegrationCommand(t *testing.T) publication.Command {
 	t.Helper()
 	workspaceID, err := workspace.ParseID(
@@ -134,9 +196,10 @@ func newIntegrationPolicyPublicationService(
 	store, err := postgresadapter.NewPolicyPublicationStore(
 		runtimePool,
 		postgresadapter.PolicyPublicationOptions{
-			StatementTimeout: 5 * time.Second,
-			LockTimeout:      2 * time.Second,
-			IdleTimeout:      10 * time.Second,
+			StatementTimeout:  5 * time.Second,
+			LockTimeout:       2 * time.Second,
+			IdleTimeout:       10 * time.Second,
+			AllowTrustedActor: true,
 		},
 	)
 	if err != nil {
@@ -154,6 +217,40 @@ func newIntegrationPolicyPublicationService(
 			MutationIDs:      publication.PublicMutationIDGenerator{},
 			Clock:            publication.SystemClock{},
 			Retry:            retry,
+		},
+	)
+	if err != nil {
+		t.Fatalf("publication.NewService() error = %v", err)
+	}
+	return service
+}
+
+func newIntegrationManagementPolicyPublicationService(
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+) *publication.Service {
+	t.Helper()
+	store, err := postgresadapter.NewPolicyPublicationStore(
+		runtimePool,
+		postgresadapter.PolicyPublicationOptions{
+			StatementTimeout: 5 * time.Second,
+			LockTimeout:      2 * time.Second,
+			IdleTimeout:      10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("postgres.NewPolicyPublicationStore() error = %v", err)
+	}
+	retry, err := publication.NewExponentialBackoff(time.Millisecond, 5*time.Millisecond)
+	if err != nil {
+		t.Fatalf("publication.NewExponentialBackoff() error = %v", err)
+	}
+	service, err := publication.NewService(
+		publication.Options{MaxAttempts: 3, RollbackTimeout: 2 * time.Second},
+		publication.Dependencies{
+			Transactions: store, CommittedResults: store,
+			MutationIDs: publication.PublicMutationIDGenerator{},
+			Clock:       publication.SystemClock{}, Retry: retry,
 		},
 	)
 	if err != nil {

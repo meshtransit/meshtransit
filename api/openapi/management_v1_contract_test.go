@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestManagementV1DeviceRevocationContract(t *testing.T) {
+func TestManagementV1MutationContracts(t *testing.T) {
 	t.Parallel()
 
 	documentBytes, err := os.ReadFile("management_v1.json")
@@ -46,6 +46,22 @@ func TestManagementV1DeviceRevocationContract(t *testing.T) {
 	for _, status := range []string{"200", "400", "401", "403", "404", "405", "409", "412", "428", "429", "503", "504"} {
 		if _, ok := operation.Post.Responses[status]; !ok {
 			t.Fatalf("Device revoke responses omit status %s", status)
+		}
+	}
+	const policyPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy/actions/publish"
+	policyOperation, ok := document.Paths[policyPath]
+	if !ok || policyOperation.Post.OperationID != "publishPolicy" {
+		t.Fatalf("Policy publish operation = %+v, found=%t", policyOperation.Post, ok)
+	}
+	if len(policyOperation.Post.Security) != 1 {
+		t.Fatalf("Policy publish security contract = %+v", policyOperation.Post.Security)
+	}
+	if _, ok := policyOperation.Post.Security[0]["accountSessionBearer"]; !ok {
+		t.Fatal("Policy publish operation does not require Account Session bearer authentication")
+	}
+	for _, status := range []string{"200", "400", "401", "403", "405", "412", "428", "429", "503", "504"} {
+		if _, ok := policyOperation.Post.Responses[status]; !ok {
+			t.Fatalf("Policy publish responses omit status %s", status)
 		}
 	}
 	bearer, ok := document.Components.SecuritySchemes["accountSessionBearer"]

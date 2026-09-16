@@ -130,9 +130,10 @@ func (row policyPublicationTestRow) Scan(destinations ...any) error {
 
 func testPolicyPublicationOptions() PolicyPublicationOptions {
 	return PolicyPublicationOptions{
-		StatementTimeout: 5 * time.Second,
-		LockTimeout:      time.Second,
-		IdleTimeout:      10 * time.Second,
+		StatementTimeout:  5 * time.Second,
+		LockTimeout:       time.Second,
+		IdleTimeout:       10 * time.Second,
+		AllowTrustedActor: true,
 	}
 }
 
@@ -152,6 +153,43 @@ func beginTestPolicyPublicationStore(
 		t.Fatalf("newPolicyPublicationStore() error = %v", err)
 	}
 	return store
+}
+
+func beginAuthorizedTestPolicyPublicationStore(
+	t *testing.T,
+	databaseTransaction *fakePolicyPublicationTransaction,
+) *PolicyPublicationStore {
+	t.Helper()
+	options := testPolicyPublicationOptions()
+	options.AllowTrustedActor = false
+	store, err := newPolicyPublicationStore(
+		&fakePolicyPublicationDatabase{transactions: []*fakePolicyPublicationTransaction{
+			databaseTransaction,
+		}},
+		options,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newPolicyPublicationStore() error = %v", err)
+	}
+	return store
+}
+
+func enqueuePolicyPublicationAuthorization(
+	transaction *fakePolicyPublicationTransaction,
+) {
+	transaction.enqueueRow(authorizePolicyPublicationSQL, policyPublicationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*string) = "01890f00-0000-7000-8000-000000000821"
+			*destinations[1].(*string) = "01890f00-0000-7000-8000-000000000822"
+			for index, generation := range [...]int64{3, 4, 5, 6} {
+				*destinations[index+2].(*int64) = generation
+			}
+			*destinations[6].(*bool) = false
+			*destinations[7].(*time.Time) = policyPublicationTestTime
+			return nil
+		},
+	})
 }
 
 func enqueuePolicyPublicationSetup(transaction *fakePolicyPublicationTransaction) {
@@ -294,6 +332,24 @@ func policyPublicationCommandFixture(t *testing.T) publication.Command {
 	})
 	if err != nil {
 		t.Fatalf("publication.NewCommand() error = %v", err)
+	}
+	return command
+}
+
+func policyManagementPublicationCommandFixture(t *testing.T) publication.Command {
+	t.Helper()
+	trusted := policyPublicationCommandFixture(t)
+	command, err := publication.NewManagementCommand(publication.ManagementCommandParams{
+		Candidate: trusted.Candidate(), BasePolicyRevision: trusted.BasePolicyRevision(),
+		AccountSession: deviceRevocationAccountSessionFixture(
+			t,
+			trusted.ActorPrincipalID(),
+			trusted.Candidate().Snapshot().Scope().WorkspaceID(),
+		),
+		AuditReason: trusted.AuditReason(),
+	})
+	if err != nil {
+		t.Fatalf("publication.NewManagementCommand() error = %v", err)
 	}
 	return command
 }

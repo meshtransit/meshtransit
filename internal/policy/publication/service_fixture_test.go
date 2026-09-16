@@ -52,6 +52,7 @@ type publicationTransactionFixture struct {
 func (transaction *publicationTransactionFixture) Resolve(
 	context.Context,
 	publication.Command,
+	time.Time,
 ) (publication.Resolution, error) {
 	transaction.calls = append(transaction.calls, "resolve")
 	return transaction.resolution, nil

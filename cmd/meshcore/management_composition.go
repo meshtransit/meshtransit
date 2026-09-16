@@ -15,6 +15,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/idempotency"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
+	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
 )
 
@@ -98,8 +99,40 @@ func composeManagementAPI(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
+	policyStore, err := postgresadapter.NewPolicyPublicationStore(
+		runtimePool,
+		postgresadapter.PolicyPublicationOptions{
+			StatementTimeout: managementStatementTimeout,
+			LockTimeout:      managementLockTimeout,
+			IdleTimeout:      managementTransactionIdle,
+		},
+	)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
+	policyBackoff, err := policypublication.NewExponentialBackoff(
+		managementRetryInitial,
+		managementRetryMaximum,
+	)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
+	policyPublications, err := policypublication.NewService(
+		policypublication.Options{
+			MaxAttempts: 3, RollbackTimeout: managementRollbackTimeout,
+		},
+		policypublication.Dependencies{
+			Transactions: policyStore, CommittedResults: policyStore,
+			MutationIDs: policypublication.PublicMutationIDGenerator{},
+			Clock:       policypublication.SystemClock{}, Retry: policyBackoff,
+		},
+	)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
-		Sessions: sessions, Revocations: revocations, Idempotency: idempotencyDigester,
+		Sessions: sessions, Revocations: revocations, PolicyPublications: policyPublications,
+		Idempotency:       idempotencyDigester,
 		RateLimitSubjects: rateLimitDigester, RateLimiter: rateLimiter,
 		TrustedProxyPrefixes: apiConfig.TrustedProxyPrefixes,
 		SourceRateLimit:      apiConfig.SourceRateLimit, SessionRateLimit: apiConfig.SessionRateLimit,

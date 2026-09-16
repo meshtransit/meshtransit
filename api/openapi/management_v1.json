@@ -100,6 +100,85 @@
           }
         }
       }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy/actions/publish": {
+      "post": {
+        "operationId": "publishPolicy",
+        "summary": "Atomically publish a compiled packet-policy release",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "$ref": "#/components/parameters/PolicyIfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishPolicyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The compiled policy is active and its Network revision wakeup is durable.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/PolicyETag"
+              },
+              "X-Correlation-ID": {
+                "$ref": "#/components/headers/CorrelationID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishPolicyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -145,6 +224,16 @@
           "pattern": "^\\\"[1-9][0-9]*\\\"$"
         }
       },
+      "PolicyIfMatch": {
+        "name": "If-Match",
+        "in": "header",
+        "required": true,
+        "description": "One strong quoted decimal active Policy revision. Wildcard and weak validators are forbidden.",
+        "schema": {
+          "type": "string",
+          "pattern": "^\\\"[1-9][0-9]*\\\"$"
+        }
+      },
       "IdempotencyKey": {
         "name": "Idempotency-Key",
         "in": "header",
@@ -161,6 +250,12 @@
     "headers": {
       "DeviceETag": {
         "description": "The strong quoted decimal terminal Device version.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "PolicyETag": {
+        "description": "The strong quoted decimal active Policy revision.",
         "schema": {
           "type": "string"
         }
@@ -276,6 +371,136 @@
           }
         }
       },
+      "PublishPolicyRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reason",
+          "rules"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "rules": {
+            "type": "array",
+            "maxItems": 10000,
+            "items": {
+              "$ref": "#/components/schemas/CompiledPolicyRule"
+            }
+          }
+        }
+      },
+      "CompiledPolicyRule": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "source_device_id",
+          "destination_device_id",
+          "protocol",
+          "destination_port_ranges"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "source_device_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "destination_device_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "tcp",
+              "udp",
+              "icmp"
+            ]
+          },
+          "destination_port_ranges": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "$ref": "#/components/schemas/PortRange"
+            }
+          }
+        }
+      },
+      "PortRange": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "first",
+          "last"
+        ],
+        "properties": {
+          "first": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "last": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        }
+      },
+      "PublishPolicyResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "correlation_id"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PublishedPolicy"
+          },
+          "correlation_id": {
+            "$ref": "#/components/schemas/PublicID"
+          }
+        }
+      },
+      "PublishedPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "release_id",
+          "policy_revision",
+          "network_revision",
+          "semantic_hash",
+          "rule_count"
+        ],
+        "properties": {
+          "release_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "policy_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 2
+          },
+          "network_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 2
+          },
+          "semantic_hash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "rule_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          }
+        }
+      },
       "ErrorResponse": {
         "type": "object",
         "additionalProperties": false,
@@ -375,7 +600,7 @@
         }
       },
       "PreconditionFailed": {
-        "description": "The strong Device version precondition is stale.",
+        "description": "The strong mutation version or revision precondition is stale.",
         "content": {
           "application/json": {
             "schema": {

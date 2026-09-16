@@ -24,10 +24,17 @@ type policyPublicationRulePayload struct {
 }
 
 type policyPublicationAuditPayload struct {
-	AuditReason           string `json:"audit_reason"`
-	BasePolicyRevision    int64  `json:"base_policy_revision"`
-	CompilerFormatVersion int    `json:"compiler_format_version"`
-	RuleCount             int    `json:"rule_count"`
+	AuditReason                   string `json:"audit_reason"`
+	BasePolicyRevision            int64  `json:"base_policy_revision"`
+	CompilerFormatVersion         int    `json:"compiler_format_version"`
+	RuleCount                     int    `json:"rule_count"`
+	AccountSessionID              string `json:"account_session_id,omitempty"`
+	RoleBindingID                 string `json:"role_binding_id,omitempty"`
+	RoleDefinitionID              string `json:"role_definition_id,omitempty"`
+	ScopeAuthorityGeneration      int64  `json:"scope_authority_generation,omitempty"`
+	MembershipAuthorityGeneration int64  `json:"membership_authority_generation,omitempty"`
+	BindingAuthorityGeneration    int64  `json:"binding_authority_generation,omitempty"`
+	RoleAuthorityGeneration       int64  `json:"role_authority_generation,omitempty"`
 }
 
 type policyPublicationOutboxPayload struct {
@@ -75,12 +82,22 @@ func (transaction *policyPublicationTransaction) appendPolicyPublicationEvidence
 ) error {
 	command := change.Command()
 	policyRevision := command.Candidate().Snapshot().Revision()
-	auditPayload, err := json.Marshal(policyPublicationAuditPayload{
+	auditEvidence := policyPublicationAuditPayload{
 		AuditReason:           command.AuditReason().String(),
 		BasePolicyRevision:    command.BasePolicyRevision(),
 		CompilerFormatVersion: command.Candidate().CompilerFormatVersion(),
 		RuleCount:             len(command.Candidate().Snapshot().Rules()),
-	})
+	}
+	if transaction.authorization.isValid() {
+		auditEvidence.AccountSessionID = transaction.authorization.accountSessionID.String()
+		auditEvidence.RoleBindingID = transaction.authorization.roleBindingID.String()
+		auditEvidence.RoleDefinitionID = transaction.authorization.roleDefinitionID.String()
+		auditEvidence.ScopeAuthorityGeneration = transaction.authorization.scopeAuthorityGeneration
+		auditEvidence.MembershipAuthorityGeneration = transaction.authorization.membershipAuthorityGeneration
+		auditEvidence.BindingAuthorityGeneration = transaction.authorization.bindingAuthorityGeneration
+		auditEvidence.RoleAuthorityGeneration = transaction.authorization.roleAuthorityGeneration
+	}
+	auditPayload, err := json.Marshal(auditEvidence)
 	if err != nil {
 		return fmt.Errorf("encode policy publication audit payload: %w", err)
 	}

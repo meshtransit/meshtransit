@@ -20,6 +20,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
+	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
 	"github.com/meshtransit/meshtransit/internal/workspace"
@@ -27,6 +28,7 @@ import (
 
 const (
 	deviceRevokeOperation      = "device_revoke"
+	policyPublishOperation     = "policy_publish"
 	unknownManagementOperation = "unknown"
 	maximumManagementBodyBytes = 4 * 1024
 	maximumManagementRequests  = 4096
@@ -47,6 +49,11 @@ type AccountSessionAuthenticator interface {
 // DeviceRevoker performs one exact-scope Device revocation command.
 type DeviceRevoker interface {
 	Revoke(context.Context, revocation.Command) (revocation.Result, error)
+}
+
+// PolicyPublisher atomically activates one Account-Session-bound compiled policy.
+type PolicyPublisher interface {
+	Publish(context.Context, policypublication.Command) (policypublication.Result, error)
 }
 
 // IdempotencyProver derives durable evidence without exposing the raw request key.
@@ -73,6 +80,7 @@ type PublicIDGenerator interface {
 type ManagementHandlerOptions struct {
 	Sessions              AccountSessionAuthenticator
 	Revocations           DeviceRevoker
+	PolicyPublications    PolicyPublisher
 	Idempotency           IdempotencyProver
 	RateLimitSubjects     RateLimitSubjectDigester
 	RateLimiter           ManagementRateLimiter
@@ -89,6 +97,7 @@ type ManagementHandlerOptions struct {
 type ManagementHandler struct {
 	sessions       AccountSessionAuthenticator
 	revocations    DeviceRevoker
+	policies       PolicyPublisher
 	idempotency    IdempotencyProver
 	rateSubjects   RateLimitSubjectDigester
 	rateLimiter    ManagementRateLimiter
@@ -104,7 +113,8 @@ type ManagementHandler struct {
 
 // NewManagementHandler constructs a bounded, fail-closed management API handler.
 func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler, error) {
-	if options.Sessions == nil || options.Revocations == nil || options.Idempotency == nil ||
+	if options.Sessions == nil || options.Revocations == nil || options.PolicyPublications == nil ||
+		options.Idempotency == nil ||
 		options.RateLimitSubjects == nil || options.RateLimiter == nil ||
 		!options.SourceRateLimit.IsValid() || !options.SessionRateLimit.IsValid() ||
 		options.CorrelationIDs == nil || options.Logger == nil ||
@@ -125,6 +135,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 	return &ManagementHandler{
 		sessions:       options.Sessions,
 		revocations:    options.Revocations,
+		policies:       options.PolicyPublications,
 		idempotency:    options.Idempotency,
 		rateSubjects:   options.RateLimitSubjects,
 		rateLimiter:    options.RateLimiter,
@@ -142,7 +153,8 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 // ServeHTTP exposes the versioned management API without accepting browser cookies.
 func (handler *ManagementHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	if handler == nil || response == nil || request == nil || request.URL == nil ||
-		handler.sessions == nil || handler.revocations == nil || handler.idempotency == nil ||
+		handler.sessions == nil || handler.revocations == nil || handler.policies == nil ||
+		handler.idempotency == nil ||
 		handler.rateSubjects == nil || handler.rateLimiter == nil ||
 		!handler.sourcePolicy.IsValid() || !handler.sessionPolicy.IsValid() ||
 		handler.correlationIDs == nil || handler.logger == nil || handler.telemetry == nil {
@@ -188,8 +200,9 @@ func (handler *ManagementHandler) ServeHTTP(response http.ResponseWriter, reques
 		return
 	}
 
-	path, matched := parseDeviceRevokePath(request)
-	if !matched {
+	devicePath, deviceMatched := parseDeviceRevokePath(request)
+	policyPath, policyMatched := parsePolicyPublishPath(request)
+	if !deviceMatched && !policyMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -197,7 +210,11 @@ func (handler *ManagementHandler) ServeHTTP(response http.ResponseWriter, reques
 		})
 		return
 	}
-	operation = deviceRevokeOperation
+	if deviceMatched {
+		operation = deviceRevokeOperation
+	} else {
+		operation = policyPublishOperation
+	}
 	if request.Method != http.MethodPost {
 		response.Header().Set("Allow", http.MethodPost)
 		resultCode = "method_not_allowed"
@@ -246,7 +263,18 @@ func (handler *ManagementHandler) ServeHTTP(response http.ResponseWriter, reques
 		writeManagementError(ctx, handler.logger, response, correlationID, *limitErr)
 		return
 	}
-	command, commandErr := handler.decodeDeviceRevokeCommand(response, request, path, session)
+	if policyMatched {
+		resultCode = handler.publishPolicy(
+			ctx,
+			response,
+			request,
+			correlationID,
+			policyPath,
+			session,
+		)
+		return
+	}
+	command, commandErr := handler.decodeDeviceRevokeCommand(response, request, devicePath, session)
 	if commandErr != nil {
 		resultCode = commandErr.Code
 		writeManagementError(ctx, handler.logger, response, correlationID, *commandErr)

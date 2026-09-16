@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/meshtransit/meshtransit/internal/authorization"
 	"github.com/meshtransit/meshtransit/internal/network"
 	publication "github.com/meshtransit/meshtransit/internal/policy/publication"
+	"github.com/meshtransit/meshtransit/internal/publicid"
 )
 
 type policyPublicationTransactionState uint8
@@ -27,15 +29,34 @@ type policyPublicationAuditHead struct {
 	previousHash     [32]byte
 }
 
+type policyPublicationAuthorizationEvidence struct {
+	accountSessionID              publicid.ID
+	roleBindingID                 publicid.ID
+	roleDefinitionID              publicid.ID
+	scopeAuthorityGeneration      int64
+	membershipAuthorityGeneration int64
+	bindingAuthorityGeneration    int64
+	roleAuthorityGeneration       int64
+}
+
+func (evidence policyPublicationAuthorizationEvidence) isValid() bool {
+	return evidence.accountSessionID.IsValid() && evidence.roleBindingID.IsValid() &&
+		evidence.roleDefinitionID.IsValid() && evidence.scopeAuthorityGeneration > 0 &&
+		evidence.membershipAuthorityGeneration > 0 && evidence.bindingAuthorityGeneration > 0 &&
+		evidence.roleAuthorityGeneration > 0
+}
+
 type policyPublicationTransaction struct {
 	mu sync.Mutex
 
-	database   policyPublicationDatabaseTransaction
-	scope      network.Scope
-	metrics    *postgresPoolMetrics
-	state      policyPublicationTransactionState
-	resolution publication.Resolution
-	audit      policyPublicationAuditHead
+	database              policyPublicationDatabaseTransaction
+	scope                 network.Scope
+	metrics               *postgresPoolMetrics
+	state                 policyPublicationTransactionState
+	resolution            publication.Resolution
+	audit                 policyPublicationAuditHead
+	authorization         policyPublicationAuthorizationEvidence
+	requireAccountSession bool
 }
 
 var _ publication.Transaction = (*policyPublicationTransaction)(nil)
@@ -43,13 +64,14 @@ var _ publication.Transaction = (*policyPublicationTransaction)(nil)
 func (transaction *policyPublicationTransaction) Resolve(
 	ctx context.Context,
 	command publication.Command,
+	evaluatedAt time.Time,
 ) (resolution publication.Resolution, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
 		transaction.observe(postgresOperationPolicyPublicationResolve, startedAt, resultErr)
 	}()
 
-	if ctx == nil || transaction == nil || !command.IsValid() {
+	if ctx == nil || transaction == nil || !command.IsValid() || evaluatedAt.IsZero() {
 		return publication.Resolution{}, ErrPolicyPublicationState
 	}
 	transaction.mu.Lock()
@@ -57,6 +79,16 @@ func (transaction *policyPublicationTransaction) Resolve(
 	if transaction.database == nil || transaction.state != policyPublicationTransactionOpen ||
 		command.Candidate().Snapshot().Scope() != transaction.scope {
 		return publication.Resolution{}, ErrPolicyPublicationState
+	}
+	if transaction.requireAccountSession {
+		authorizationEvidence, err := transaction.resolveAuthorization(ctx, command, evaluatedAt)
+		if err != nil {
+			return publication.Resolution{}, errors.Join(
+				ErrResolvePolicyPublication,
+				classifyPolicyPublicationDatabaseError(ctx, err),
+			)
+		}
+		transaction.authorization = authorizationEvidence
 	}
 
 	resolution, err := transaction.resolveLocked(ctx)
@@ -69,6 +101,77 @@ func (transaction *policyPublicationTransaction) Resolve(
 	transaction.resolution = resolution
 	transaction.state = policyPublicationTransactionResolved
 	return resolution, nil
+}
+
+func (transaction *policyPublicationTransaction) resolveAuthorization(
+	ctx context.Context,
+	command publication.Command,
+	evaluatedAt time.Time,
+) (policyPublicationAuthorizationEvidence, error) {
+	if !command.HasAccountSession() {
+		return policyPublicationAuthorizationEvidence{}, publication.ErrForbidden
+	}
+	session := command.AccountSession()
+	var bindingIDValue, roleIDValue string
+	var scopeGeneration, membershipGeneration, bindingGeneration, roleGeneration int64
+	var hasExpiry bool
+	var expiresAt time.Time
+	err := transaction.database.QueryRow(
+		ctx,
+		authorizePolicyPublicationSQL,
+		session.ID().String(),
+		session.DeploymentID().String(),
+		session.PrincipalID().String(),
+		session.IdentitySubjectID().String(),
+		session.Version(),
+		session.PrincipalAuthorityGeneration(),
+		session.AccountSessionGeneration(),
+		session.ProviderGeneration(),
+		session.DeploymentRecoveryEpoch(),
+		command.Candidate().Snapshot().Scope().WorkspaceID().String(),
+		command.Candidate().Snapshot().Scope().NetworkID().String(),
+		string(authorization.PermissionPolicyPublish),
+		evaluatedAt,
+	).Scan(
+		&bindingIDValue,
+		&roleIDValue,
+		&scopeGeneration,
+		&membershipGeneration,
+		&bindingGeneration,
+		&roleGeneration,
+		&hasExpiry,
+		&expiresAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return policyPublicationAuthorizationEvidence{}, publication.ErrForbidden
+	}
+	if err != nil {
+		return policyPublicationAuthorizationEvidence{}, fmt.Errorf("authorize policy.publish: %w", err)
+	}
+	if hasExpiry && !expiresAt.After(evaluatedAt) {
+		return policyPublicationAuthorizationEvidence{}, publication.ErrForbidden
+	}
+	bindingID, err := publicid.Parse(bindingIDValue)
+	if err != nil {
+		return policyPublicationAuthorizationEvidence{}, ErrPolicyPublicationEvidence
+	}
+	roleID, err := publicid.Parse(roleIDValue)
+	if err != nil {
+		return policyPublicationAuthorizationEvidence{}, ErrPolicyPublicationEvidence
+	}
+	evidence := policyPublicationAuthorizationEvidence{
+		accountSessionID:              publicid.ID(session.ID()),
+		roleBindingID:                 bindingID,
+		roleDefinitionID:              roleID,
+		scopeAuthorityGeneration:      scopeGeneration,
+		membershipAuthorityGeneration: membershipGeneration,
+		bindingAuthorityGeneration:    bindingGeneration,
+		roleAuthorityGeneration:       roleGeneration,
+	}
+	if !evidence.isValid() {
+		return policyPublicationAuthorizationEvidence{}, ErrPolicyPublicationEvidence
+	}
+	return evidence, nil
 }
 
 func (transaction *policyPublicationTransaction) resolveLocked(

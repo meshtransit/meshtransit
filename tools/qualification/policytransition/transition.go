@@ -61,9 +61,10 @@ func executeTransition(
 	store, err := postgresadapter.NewPolicyPublicationStore(
 		pool,
 		postgresadapter.PolicyPublicationOptions{
-			StatementTimeout: 5 * time.Second,
-			LockTimeout:      2 * time.Second,
-			IdleTimeout:      10 * time.Second,
+			StatementTimeout:  5 * time.Second,
+			LockTimeout:       2 * time.Second,
+			IdleTimeout:       10 * time.Second,
+			AllowTrustedActor: true,
 		},
 	)
 	if err != nil {

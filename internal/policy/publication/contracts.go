@@ -14,7 +14,7 @@ type Transactions interface {
 
 // Transaction is one short activation unit. The application owns commit and rollback.
 type Transaction interface {
-	Resolve(context.Context, Command) (Resolution, error)
+	Resolve(context.Context, Command, time.Time) (Resolution, error)
 	Apply(context.Context, Change) (Result, error)
 	Commit(context.Context) error
 	Rollback(context.Context) error

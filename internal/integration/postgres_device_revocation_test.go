@@ -276,6 +276,7 @@ func revokeDeviceOverHTTP(
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions:              sessions,
 		Revocations:           service,
+		PolicyPublications:    newIntegrationManagementPolicyPublicationService(t, runtimePool),
 		Idempotency:           integrationDeviceRevocationDigester(t),
 		RateLimitSubjects:     rateLimitDigester,
 		RateLimiter:           integrationAllowAllRateLimiter{},
