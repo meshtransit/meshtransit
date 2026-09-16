@@ -1688,6 +1688,78 @@ schema/grant/constraint, dependency or freshness rule change. This is current
 initiation source evidence, not signed callback/Session issuance, native clocks,
 Google/browser/client/HA, remote CI or an immutable artifact. Public SSO stays off.
 
+### Concrete private factory signed-callback integration
+
+`SSO-PRIVATE-FACTORY-CALLBACK-INTEGRATION-001` extends the source-only gate through
+the actual private factory, system clock/CSPRNG, runtime PostgreSQL stores and
+shared Redis budgets. An owned verified-TLS provider signs synthetic RS256 ID
+tokens and serves exact registered discovery/token/JWKS endpoints. Production
+OS-root TLS, no-proxy/no-redirect clients remain untouched; no effect/provider/
+clock/transport override or runtime activation setting is added.
+
+A separate cold `meshtransit_private_factory_callback` database applies all
+released migrations and refuses initialized storage before writes. Audited admin
+seeds configure a verified Account, exact opaque issuer/subject HMAC binding and
+independent exact-Workspace membership, never provider email/roles as grants.
+Existing initiation and platform/process suites remain intact. GET capture,
+clean landing and protected continuation preparation change no durable authority.
+
+Five independent route cases cover fresh cookie-only Session issuance,
+case-sensitive subject denial, missing membership, signed wrong nonce and a
+provider-error callback with no exchange. Same-ring Session authentication checks
+exact Principal/subject/Workspace/generations; durable reads check provider/client
+and active token digest. From the post-Start baseline, success adds one Session
+and three mutation/audit/outbox events (claim, Session, auth success), with the
+last two sharing one change and consecutive hashes. Denial adds only claim and
+termination; auth remains anonymous, terminal/version three, proof erased and
+result either exactly that Session or NULL. No provisioning, subject last-seen,
+membership/RBAC/Network/revision write occurs. Consumed replay makes no further
+exchange, Session or evidence and releases no browser material. Request/cleanup
+owners remain bounded, checked and joined, including race/leak verification.
+
+The internal-only offline Linux source lane retains its previously reviewed
+mount/trust/privilege profile. Canonical docs 13/17/18/26 were updated locally
+before code; this README is the Git-versioned mirror, not a commit of that non-Git
+sibling tree. This is synthetic source qualification, not live Google through
+Keycloak, browser/client/HA, native/cross-host clocks, intended expiry/recovery,
+remote CI or immutable artifact evidence. Public SSO stays off; no deployment
+or meshd/meshctl wire change. Next: operational key/query custody and intended
+expiry/recovery qualification before reviewing public runtime activation and
+the controlled Google-through-Keycloak acceptance.
+
+Source qualification (2026-09-17): final full `make quality` passes all existing
+format/module/vet, shuffled unit/race, unfiltered pinned regular/integration-tag
+lint, symbol-vulnerability and workflow gates. Govulncheck reports zero affected
+symbols/imported-package vulnerabilities and three non-called module advisories,
+not zero dependency/container advisories. Pinned context-safe changed-file
+autofix and final unfiltered cmd lint pass without fixes; all 41 cmd Go hashes
+and five exact modified Go texts stay unchanged. The initial file-only autofix
+failed typecheck from missing package context, made no edits and is not evidence.
+No new baseline, suppression, exclusion, dependency or guard change.
+
+Final fresh internal-only offline Linux execution passes all released migrations
+(15.695s), five initiation cases (cmd race 1.439s), all five named signed-callback
+cases without Skip (cmd race 2.274s), joined leak checks and unchanged dependency/
+process restart/expiry suites (6.414s). The exact pinned Go/PostgreSQL/Redis image
+digests and reviewed mount/trust/privilege profile are unchanged. Earlier new
+fixture findings were corrected: initiation erasure retains its existing Strict
+SameSite contract; bounded canonical subject encoding returns an error, fixing
+G115 without suppression or altered bytes. Native uncached private-identity unit
+race contracts pass (1.732s), not host storage/clock integration. Existing compact
+ID-token/JWK fuzz smokes pass 267,945/14,345 executions over ten seconds with two
+workers. Shell syntax/invalid-mode and fully redacted source/canonical-doc/all-128-
+pre-commit-history secret scans pass. All disposable resources are removed on exit.
+No production Go/schema/grant/constraint/old-oracle/freshness or client-wire change.
+This qualifies synthetic current source only; public SSO and live/release gates
+remain disabled/deferred.
+
+New source SHA-256 records against base `0a7eed7`: callback fixture
+`40b7c3b08ce2faaa6aa4340e39f7939413d4f02b61690adce898436ea87e4b21`,
+callback test `093c4651656dedcec71e618a783eb973831d16d968a14f33e73a04301a112aa3`,
+signing-provider fixture
+`317ac5e1e7f6efa7db875db03636f9b12aa0985ec2e36f8e59eb4e53937e3984`.
+These are source records, not Google/browser/HA/clock or release-artifact evidence.
+
 ### Private browser login document and dispatcher
 
 `SSO-LOGIN-ROUTE-CONTRACT-001` and `SSO-PRIVATE-LOGIN-DISPATCHER-001` prepare

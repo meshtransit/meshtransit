@@ -31,7 +31,7 @@ type privateFactoryIntegrationStorage struct {
 	redis   config.RedisConfig
 }
 
-func openPrivateFactoryIntegrationStorage(t *testing.T) *privateFactoryIntegrationStorage {
+func openPrivateFactoryIntegrationStorage(t *testing.T, database string) *privateFactoryIntegrationStorage {
 	t.Helper()
 	migration, err := config.LoadMigration(os.LookupEnv)
 	if err != nil {
@@ -45,7 +45,8 @@ func openPrivateFactoryIntegrationStorage(t *testing.T) *privateFactoryIntegrati
 		t.Fatal("runtime credentials are required")
 	}
 	pg := process.Storage.PostgreSQL
-	dedicatedDatabase := migration.PostgreSQL.Database == "meshtransit_private_factory"
+	allowedDatabase := database == "meshtransit_private_factory" || database == "meshtransit_private_factory_callback"
+	dedicatedDatabase := allowedDatabase && migration.PostgreSQL.Database == database
 	matchingDatabase := pg.Database == migration.PostgreSQL.Database && pg.Address == migration.PostgreSQL.Address
 	owned := dedicatedDatabase && matchingDatabase
 	postgresRoles := migration.PostgreSQL.User == "mesh_migrator" && pg.Runtime.User == "mesh_runtime"

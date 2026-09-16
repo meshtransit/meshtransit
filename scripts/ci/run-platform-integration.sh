@@ -428,6 +428,23 @@ if [[ "${go_runner}" == container ]]; then
 	export SSL_CERT_DIR="${fixture_dir}/empty-roots"
 	run_go test -tags=integration -count=1 -race -shuffle=on -v \
 		-run '^TestPrivateIdentityFactoryInitiationIntegration$' -timeout=5m ./cmd/meshcore
+	# Callback owns another cold scope; neither test depends on prior authority.
+	docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname postgres --set ON_ERROR_STOP=1 \
+		--command 'CREATE DATABASE meshtransit_private_factory_callback OWNER mesh_migrator' \
+		>/dev/null
+	docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname meshtransit_private_factory_callback --set ON_ERROR_STOP=1 \
+		--command 'CREATE EXTENSION btree_gist' \
+		>/dev/null
+	export MESHTRANSIT_MIGRATION_POSTGRES_DATABASE=meshtransit_private_factory_callback
+	export MESHTRANSIT_POSTGRES_DATABASE=meshtransit_private_factory_callback
+	run_go test -tags=integration -count=1 -race -shuffle=on -v \
+		-run '^TestPrivateIdentityFactoryCallbackIntegration$' -timeout=5m ./cmd/meshcore
 	unset MESHTRANSIT_PRIVATE_FACTORY_INTEGRATION
 	unset SSL_CERT_FILE SSL_CERT_DIR
 	export MESHTRANSIT_MIGRATION_POSTGRES_DATABASE=meshtransit

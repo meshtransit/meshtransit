@@ -40,7 +40,7 @@ func TestPrivateIdentityFactoryInitiationIntegration(t *testing.T) {
 	}
 	// Register first so leak verification runs after every owned resource closes.
 	t.Cleanup(func() { goleak.VerifyNone(t) })
-	storage := openPrivateFactoryIntegrationStorage(t)
+	storage := openPrivateFactoryIntegrationStorage(t, "meshtransit_private_factory")
 	// Cases share only an immutable Deployment and its audited fixture scope.
 	// Each route/request/provider is independent; no parallel shared-head writes.
 	for index, test := range []struct {
