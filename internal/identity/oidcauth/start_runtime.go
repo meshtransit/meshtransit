@@ -38,7 +38,7 @@ func (SystemStartIDs) NewStartIDs() (TransactionID, MutationIDs, error) {
 // SystemSecrets uses the operating-system CSPRNG, not a shared pseudo-random stream.
 type SystemSecrets struct{}
 
-// NewSecrets generates independent state, nonce, and PKCE verifier material.
+// NewSecrets generates independent state, nonce, PKCE verifier, and pre-auth cookie material.
 func (SystemSecrets) NewSecrets() (Secrets, error) { return GenerateSecrets() }
 
 // SystemStartClock reads UTC wall time without retaining request state.

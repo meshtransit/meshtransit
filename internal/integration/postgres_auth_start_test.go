@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -75,6 +76,104 @@ func assertPostgreSQLAuthStart(
 			if err != nil || !found || replayed != result.Created() {
 				t.Fatalf("durable creation lookup error = %v, want exact login-start evidence", err)
 			}
+			assertDurableBrowserProof(ctx, t, adminConnection, dependencies, pending, result)
+			assertBrowserProofTerminalErasure(ctx, t, adminConnection, pending,
+				"01890f04-0000-7000-8000-000000000"+test.suffix)
+		})
+	}
+}
+
+func assertDurableBrowserProof(
+	ctx context.Context,
+	t *testing.T,
+	connection *pgx.Conn,
+	dependencies oidcauth.StartDependencies,
+	pending oidcauth.Pending,
+	result oidcauth.StartResult,
+) {
+	t.Helper()
+	var algorithm, keyIdentity string
+	var stored, hash []byte
+	if err := connection.QueryRow(ctx, `SELECT pkce_verifier_encryption_algorithm,
+    pkce_verifier_encryption_key_id, pkce_verifier_ciphertext, binding_semantic_hash
+FROM mesh.auth_transaction WHERE public_id = $1::UUID`, pending.TransactionID().String()).Scan(&algorithm, &keyIdentity, &stored, &hash); err != nil {
+		t.Fatalf("load durable browser proof: %v", err)
+	}
+	expectedHash := pending.SemanticHash()
+	if algorithm != oidcauth.VerifierEncryptionAlgorithmAES256GCMV1 || !bytes.Equal(hash, expectedHash[:]) || !bytes.Equal(stored, pending.VerifierCiphertext().Bytes()) {
+		t.Fatal("durable browser proof changed envelope or semantic binding")
+	}
+	keyID, err := oidcauth.NewVerifierEncryptionKeyID(keyIdentity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := oidcauth.NewCiphertext(keyID, stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := pending.Route().Binding(pending.TransactionID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := dependencies.VerifierCipher.OpenBrowser(binding, ciphertext)
+	if err != nil || !dependencies.DigestKey.VerifyPreAuthCookie(binding, result.PreAuthCookie(), proof.CookieDigest()) {
+		t.Fatal("released cookie does not match durable browser proof")
+	}
+	if dependencies.DigestKey.VerifyPreAuthCookie(binding, oidcauth.PreAuthCookie{}, proof.CookieDigest()) {
+		t.Fatal("durable proof accepts absent browser binding")
+	}
+}
+
+func assertBrowserProofTerminalErasure(
+	ctx context.Context,
+	t *testing.T,
+	connection *pgx.Conn,
+	pending oidcauth.Pending,
+	changePublicID string,
+) {
+	t.Helper()
+	for _, test := range []struct {
+		name   string
+		retain bool
+	}{
+		{name: "terminal retains encrypted proof rejected", retain: true},
+		{name: "terminal clears complete encrypted proof"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			transaction, err := connection.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rollbackIntegrationTransaction(ctx, t, transaction)
+			setIntegrationChange(ctx, t, transaction, changePublicID)
+			_, err = transaction.Exec(ctx, `UPDATE mesh.auth_transaction SET
+    state = 'failed', consumed_at = GREATEST(pg_catalog.transaction_timestamp(), created_at),
+    failure_class = 'browser_binding_failed', version = version + 1,
+    updated_at = GREATEST(pg_catalog.transaction_timestamp(), updated_at),
+    pkce_verifier_encryption_algorithm = CASE WHEN $2 THEN pkce_verifier_encryption_algorithm ELSE NULL END,
+    pkce_verifier_encryption_key_id = CASE WHEN $2 THEN pkce_verifier_encryption_key_id ELSE NULL END,
+    pkce_verifier_ciphertext = CASE WHEN $2 THEN pkce_verifier_ciphertext ELSE NULL END
+WHERE public_id = $1::UUID`, pending.TransactionID().String(), test.retain)
+			if test.retain {
+				assertPostgreSQLConstraint(t, err, "auth_transaction_pkce_check")
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var erased bool
+			if err := transaction.QueryRow(ctx, `SELECT state = 'failed'
+    AND pkce_verifier_encryption_algorithm IS NULL
+    AND pkce_verifier_encryption_key_id IS NULL
+    AND pkce_verifier_ciphertext IS NULL
+FROM mesh.auth_transaction WHERE public_id = $1::UUID`, pending.TransactionID().String()).Scan(&erased); err != nil {
+				t.Fatal(err)
+			}
+			if !erased {
+				t.Fatal("terminal state retains cookie or PKCE evidence")
+			}
+			// Roll back this schema-contract probe. It is not a production expiry
+			// worker, and does not commit an unaudited lifecycle mutation.
 		})
 	}
 }

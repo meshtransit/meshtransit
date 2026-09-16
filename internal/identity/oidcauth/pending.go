@@ -158,9 +158,14 @@ func NewPending(params PendingParams) (Pending, error) {
 	if err != nil {
 		return Pending{}, errors.Join(ErrInvalidPending, err)
 	}
-	verifierCiphertext, err := params.VerifierCipher.Seal(
+	cookieDigest, err := params.DigestKey.PreAuthCookie(binding, params.Secrets.PreAuthCookie())
+	if err != nil {
+		return Pending{}, errors.Join(ErrInvalidPending, err)
+	}
+	verifierCiphertext, err := params.VerifierCipher.SealBrowser(
 		binding,
 		params.Secrets.Verifier(),
+		cookieDigest,
 	)
 	if err != nil {
 		return Pending{}, errors.Join(ErrInvalidPending, err)

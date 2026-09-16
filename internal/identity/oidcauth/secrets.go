@@ -3,6 +3,7 @@ package oidcauth
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -142,34 +143,37 @@ func (Verifier) GoString() string { return "oidcauth.Verifier([REDACTED])" }
 // LogValue prevents accidental structured-log verifier disclosure.
 func (Verifier) LogValue() slog.Value { return slog.StringValue("[REDACTED]") }
 
-// Secrets contains independent state, nonce, and PKCE verifier values.
+// Secrets contains independent state, nonce, PKCE verifier, and pre-auth cookie values.
 type Secrets struct {
-	state    State
-	nonce    Nonce
-	verifier Verifier
+	state         State
+	nonce         Nonce
+	verifier      Verifier
+	preAuthCookie PreAuthCookie
 }
 
-// GenerateSecrets reads 768 bits from the operating-system CSPRNG.
+// GenerateSecrets reads 1024 bits from the operating-system CSPRNG.
 func GenerateSecrets() (Secrets, error) { return generateSecrets(rand.Reader) }
 
 func generateSecrets(entropy io.Reader) (Secrets, error) {
 	if entropy == nil {
 		return Secrets{}, ErrGenerateSecrets
 	}
-	var material [transactionSecretBytes * 3]byte
+	var material [transactionSecretBytes * 4]byte
 	if _, err := io.ReadFull(entropy, material[:]); err != nil {
 		clear(material[:])
 		return Secrets{}, fmt.Errorf("%w: %w", ErrGenerateSecrets, err)
 	}
-	var stateValue, nonceValue, verifierValue [transactionSecretBytes]byte
+	var stateValue, nonceValue, verifierValue, cookieValue [transactionSecretBytes]byte
 	copy(stateValue[:], material[:transactionSecretBytes])
 	copy(nonceValue[:], material[transactionSecretBytes:transactionSecretBytes*2])
-	copy(verifierValue[:], material[transactionSecretBytes*2:])
+	copy(verifierValue[:], material[transactionSecretBytes*2:transactionSecretBytes*3])
+	copy(cookieValue[:], material[transactionSecretBytes*3:])
 	clear(material[:])
 	secrets := Secrets{
-		state:    State{value: stateValue},
-		nonce:    Nonce{value: nonceValue},
-		verifier: Verifier{value: verifierValue},
+		state:         State{value: stateValue},
+		nonce:         Nonce{value: nonceValue},
+		verifier:      Verifier{value: verifierValue},
+		preAuthCookie: PreAuthCookie{value: cookieValue},
 	}
 	if !secrets.IsValid() {
 		return Secrets{}, ErrGenerateSecrets
@@ -186,12 +190,23 @@ func (secrets Secrets) Nonce() Nonce { return secrets.nonce }
 // Verifier returns a copy of the PKCE verifier.
 func (secrets Secrets) Verifier() Verifier { return secrets.verifier }
 
+// PreAuthCookie returns the independent browser-binding handle, never URL material.
+func (secrets Secrets) PreAuthCookie() PreAuthCookie { return secrets.preAuthCookie }
+
 // IsValid reports whether every secret is present and purpose-distinct.
 func (secrets Secrets) IsValid() bool {
-	return secrets.state.IsValid() && secrets.nonce.IsValid() && secrets.verifier.IsValid() &&
-		secrets.state.value != secrets.nonce.value &&
-		secrets.state.value != secrets.verifier.value &&
-		secrets.nonce.value != secrets.verifier.value
+	if !secrets.state.IsValid() || !secrets.nonce.IsValid() ||
+		!secrets.verifier.IsValid() || !secrets.preAuthCookie.IsValid() {
+		return false
+	}
+	// Evaluate all six purpose pairs without short-circuiting secret equality.
+	repeated := subtle.ConstantTimeCompare(secrets.state.value[:], secrets.nonce.value[:])
+	repeated |= subtle.ConstantTimeCompare(secrets.state.value[:], secrets.verifier.value[:])
+	repeated |= subtle.ConstantTimeCompare(secrets.nonce.value[:], secrets.verifier.value[:])
+	repeated |= subtle.ConstantTimeCompare(secrets.preAuthCookie.value[:], secrets.state.value[:])
+	repeated |= subtle.ConstantTimeCompare(secrets.preAuthCookie.value[:], secrets.nonce.value[:])
+	repeated |= subtle.ConstantTimeCompare(secrets.preAuthCookie.value[:], secrets.verifier.value[:])
+	return repeated == 0
 }
 
 // String prevents accidental transaction-secret disclosure.

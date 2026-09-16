@@ -413,9 +413,10 @@ only exact-Network Device revocation.
 
 The provider-neutral `internal/identity/oidcauth` package now owns the security
 primitives for the SSO-only browser flow. Every transaction creates independent
-256-bit state, nonce, and PKCE verifier values. State and nonce use distinct,
+256-bit pre-auth cookie, state, nonce, and PKCE verifier values. State and nonce use distinct,
 domain-separated HMAC-SHA-256 digests bound to the Deployment public ID and
-recovery epoch. The PKCE verifier is stored only as an AES-256-GCM envelope whose
+recovery epoch. The PKCE verifier and a versioned cookie HMAC digest are stored
+only as an AES-256-GCM browser-proof envelope whose
 authenticated context binds the exact Deployment,
 Workspace, provider, client, transaction, provider generation, recovery epoch,
 redirect ID, and return-route ID. Secret-bearing values redact ordinary,
@@ -441,7 +442,7 @@ algorithms, registered callback URI, and recovery epoch must match durable
 configuration. Organization-routed bindings remain fail-closed until their
 expected-digest context is implemented. Runtime still has no direct table DML.
 
-Only state/nonce HMAC digests and encrypted verifier material enter PostgreSQL.
+Only state/nonce HMAC digests and encrypted browser-proof material enter PostgreSQL.
 A binding semantic hash fixes the route, redirect/return-route IDs,
 secret-derived evidence, and microsecond-canonical deadlines.
 Open expiry indexing covers both
@@ -451,22 +452,41 @@ contain only bounded non-secret IDs, generations, route labels, and expiry;
 Deployment-scoped events have no Network revision.
 
 This slice intentionally does not expose a login route yet. The browser start
-endpoint and host-only pre-authentication cookie are next, followed by callback
+endpoint with same-origin CSRF/admission is next, followed by callback
 exchange, ID-token validation, Account reconciliation, and Account Session issuance.
 
 `oidcauth.StartService` now owns the application boundary: bounded discovery and
 one secret/ID preparation before Begin, exact creation-evidence validation,
 explicit audit/outbox Commit, and a live release-time check before returning a
-redacted redirect result. An uncertain commit triggers one bounded read-only
+redacted redirect result and its exact independent cookie. An uncertain commit triggers one bounded read-only
 lookup using the original transaction ID and binding hash; it never retries
 creation. Missing, mismatched, canceled, expired, or cleanup-failed evidence
 returns no redirect. Request budgets are capped at 30 seconds, with separate
 rollback/resolution budgets capped at 5 seconds each. `oidc.StartTelemetry`
 provides isolated active/count/histogram metrics with only closed result labels.
 It must be wired to the private operator registry when browser HTTP admission is
-implemented. Public HTTP login, pre-auth cookie binding/CSRF, callback claiming,
+implemented. Public HTTP login, same-origin CSRF/admission, callback claiming,
 and Account Session issuance remain unimplemented; the service is not enabled in
 runtime composition yet. No supported Mesh Client wire contract changed.
+
+Pre-authentication cookie HMAC evidence has an independent keyed purpose and
+binds every transaction authority dimension. It resides with PKCE inside a
+bounded, versioned browser payload under a browser-specific AEAD purpose. The
+existing storage algorithm, SQL signature, schema, and binding hash remain
+compatible; no migration is changed. Browser and legacy verifier-only openers
+mutually reject each other's payloads, with no downgrade fallback. Terminal
+encrypted-proof erasure removes both PKCE and cookie evidence; automated
+callback/expiry transitions are not implemented by this slice.
+
+HTTP helpers prepare `__Host-mt_pre_auth` with Secure, HttpOnly, SameSite=Lax,
+Path=/, no Domain, and expiry no later than confirmed creation. Cookie parsing
+rejects missing/duplicate/quoted/noncanonical handles, with limits of 8192 total
+header bytes, 8 Cookie fields, and 64 pairs. A newer start replaces the host
+cookie, so an older concurrent tab must restart login. Helpers alone neither
+emit responses nor open public login; trusted HTTPS origin, CSRF, authoritative
+cookie verification, callback claiming, and fresh session rotation remain
+mandatory before browser admission. Every callback replica must support the
+browser payload before public login is enabled; legacy pending rows restart.
 
 The boundary threat model is fail-closed:
 
@@ -477,7 +497,7 @@ The boundary threat model is fail-closed:
   verifier is AEAD-bound to every transaction authority generation.
 - Repudiation: transaction creation commits with the existing immutable
   audit/outbox contract; evidence failure prevents creation commit.
-- Information disclosure: state, nonce, verifier, ciphertext, and the full
+- Information disclosure: cookie, state, nonce, verifier, ciphertext, and the full
   redirect always format redacted and must not enter logs or metrics.
 - Denial of service: discovery time, response headers, decompressed body size,
   endpoint count, capability count, and redirects are bounded.

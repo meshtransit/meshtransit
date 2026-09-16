@@ -104,10 +104,11 @@ func (service *StartService) Start(
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, service.options.RequestTimeout)
 	defer cancel()
-	pending, err := service.prepare(requestCtx, route)
+	prepared, err := service.prepare(requestCtx, route)
 	if err != nil {
 		return StartResult{}, errors.Join(ErrStartFailed, err)
 	}
+	pending := prepared.pending
 	created, err := service.create(requestCtx, pending)
 	if errors.Is(err, ErrCommitOutcomeUnknown) {
 		// Settle durable evidence even after caller cancellation, but never release
@@ -140,41 +141,52 @@ func (service *StartService) Start(
 	if now.IsZero() || now.Before(created.CreatedAt()) || !now.Before(created.ExpiresAt()) {
 		return StartResult{}, errors.Join(ErrStartFailed, ErrStartExpired)
 	}
-	return StartResult{created: created, request: pending.AuthorizationRequest()}, nil
+	return StartResult{
+		created: created, request: pending.AuthorizationRequest(), preAuthCookie: prepared.preAuthCookie,
+	}, nil
 }
 
-func (service *StartService) prepare(ctx context.Context, route Route) (Pending, error) {
+type preparedStart struct {
+	pending       Pending
+	preAuthCookie PreAuthCookie
+}
+
+func (service *StartService) prepare(ctx context.Context, route Route) (preparedStart, error) {
 	if err := ctx.Err(); err != nil {
-		return Pending{}, err
+		return preparedStart{}, err
 	}
 	metadata, err := service.dependencies.Metadata.Resolve(ctx, route)
 	if err != nil {
-		return Pending{}, fmt.Errorf("resolve login metadata: %w", err)
+		return preparedStart{}, fmt.Errorf("resolve login metadata: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return Pending{}, err
+		return preparedStart{}, err
 	}
 	transactionID, mutationIDs, err := service.dependencies.IDs.NewStartIDs()
 	if err != nil {
-		return Pending{}, fmt.Errorf("generate login identities: %w", err)
+		return preparedStart{}, fmt.Errorf("generate login identities: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return Pending{}, err
+		return preparedStart{}, err
 	}
 	secrets, err := service.dependencies.Secrets.NewSecrets()
 	if err != nil {
-		return Pending{}, fmt.Errorf("generate login secrets: %w", err)
+		return preparedStart{}, fmt.Errorf("generate login secrets: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return Pending{}, err
+		return preparedStart{}, err
 	}
 	now := service.dependencies.Clock.Now().UTC()
-	return NewPending(PendingParams{
+	pending, err := NewPending(PendingParams{
 		TransactionID: transactionID, Route: route, Metadata: metadata,
 		Secrets: secrets, DigestKey: service.dependencies.DigestKey,
 		VerifierCipher: service.dependencies.VerifierCipher, MutationIDs: mutationIDs,
 		CreatedAt: now, ExpiresAt: now.Add(service.options.PendingLifetime),
 	})
+	if err != nil {
+		return preparedStart{}, err
+	}
+	return preparedStart{pending: pending, preAuthCookie: secrets.PreAuthCookie()}, nil
 }
 
 func (service *StartService) create(
@@ -246,8 +258,9 @@ func validStartDependencies(dependencies StartDependencies) bool {
 // StartResult contains only confirmed durable creation and its secret-bearing
 // redirect. Its zero value is invalid and all ordinary formatting is redacted.
 type StartResult struct {
-	created Created
-	request AuthorizationRequest
+	created       Created
+	request       AuthorizationRequest
+	preAuthCookie PreAuthCookie
 }
 
 // Created returns the exact confirmed transaction identity and canonical lifetime.
@@ -256,8 +269,13 @@ func (result StartResult) Created() Created { return result.created }
 // AuthorizationRequest explicitly releases the secret-bearing browser redirect.
 func (result StartResult) AuthorizationRequest() AuthorizationRequest { return result.request }
 
+// PreAuthCookie explicitly releases the independent handle only after confirmed creation.
+func (result StartResult) PreAuthCookie() PreAuthCookie { return result.preAuthCookie }
+
 // IsValid reports whether this result contains complete creation and redirect evidence.
-func (result StartResult) IsValid() bool { return result.created.IsValid() && result.request.IsValid() }
+func (result StartResult) IsValid() bool {
+	return result.created.IsValid() && result.request.IsValid() && result.preAuthCookie.IsValid()
+}
 
 // String prevents accidental browser authorization disclosure.
 func (StartResult) String() string { return "[REDACTED]" }

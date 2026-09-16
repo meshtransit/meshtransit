@@ -25,11 +25,11 @@ func TestNewPendingPreparesBoundedDurableEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Route.Binding() error = %v", err)
 	}
-	verifier, err := verifierCipher.Open(binding, pending.VerifierCiphertext())
+	proof, err := verifierCipher.OpenBrowser(binding, pending.VerifierCiphertext())
 	if err != nil {
 		t.Fatalf("VerifierCipher.Open() error = %v", err)
 	}
-	if verifier.Encoded() != secretFixture(t).Verifier().Encoded() {
+	if proof.Verifier().Encoded() != secretFixture(t).Verifier().Encoded() {
 		t.Fatal("encrypted verifier did not preserve exact PKCE evidence")
 	}
 	if !pending.AuthorizationRequest().IsValid() ||

@@ -26,6 +26,7 @@ func TestStartServiceCommitsBeforeReturningRedirect(t *testing.T) {
 		!result.AuthorizationRequest().IsValid() || fixture.outcome != StartOutcomeCommitted {
 		t.Fatal("Start() lost exact committed creation evidence")
 	}
+	assertStartCookieBinding(t, fixture, result)
 }
 
 func TestNewStartServiceRejectsUnsafeConstruction(t *testing.T) {
@@ -237,6 +238,8 @@ func TestStartServiceRejectsPreparationAndCreationFailures(t *testing.T) {
 		{name: "secret generation unavailable", mutate: func(f *startFixture) { f.secretsErr = failure }, wantErr: failure, wantEffects: []string{"metadata", "ids", "secrets"}},
 		{name: "invalid generated ids", mutate: func(f *startFixture) { f.params.TransactionID = TransactionID{} }, wantErr: ErrInvalidPending, wantEffects: []string{"metadata", "ids", "secrets"}},
 		{name: "invalid generated secrets", mutate: func(f *startFixture) { f.params.Secrets = Secrets{} }, wantErr: ErrInvalidPending, wantEffects: []string{"metadata", "ids", "secrets"}},
+		{name: "missing independent cookie", mutate: func(f *startFixture) { f.params.Secrets.preAuthCookie = PreAuthCookie{} }, wantErr: ErrInvalidPending, wantEffects: []string{"metadata", "ids", "secrets"}},
+		{name: "cookie reused state", mutate: func(f *startFixture) { f.params.Secrets.preAuthCookie.value = f.params.Secrets.state.value }, wantErr: ErrInvalidPending, wantEffects: []string{"metadata", "ids", "secrets"}},
 		{name: "zero preparation clock", mutate: func(f *startFixture) { f.now = time.Time{} }, wantErr: ErrInvalidPending, wantEffects: []string{"metadata", "ids", "secrets"}},
 		{name: "begin unavailable", mutate: func(f *startFixture) { f.beginErr = failure; f.nilTransaction = true }, wantErr: failure, wantEffects: []string{"metadata", "ids", "secrets", "begin"}},
 		{name: "partially opened begin fails", mutate: func(f *startFixture) { f.beginErr = failure }, wantErr: failure, wantEffects: []string{"metadata", "ids", "secrets", "begin", "rollback"}},
@@ -250,7 +253,7 @@ func TestStartServiceRejectsPreparationAndCreationFailures(t *testing.T) {
 			test.mutate(fixture)
 			result, err := fixture.service(t).Start(t.Context(), fixture.params.Route)
 			if !errors.Is(err, ErrStartFailed) || !errors.Is(err, test.wantErr) || result.IsValid() ||
-				result.AuthorizationRequest().Location() != "" {
+				result.AuthorizationRequest().Location() != "" || result.PreAuthCookie().IsValid() {
 				t.Fatalf("Start() error = %v, want failure without redirect", err)
 			}
 			want := append([]string{"opened"}, test.wantEffects...)
@@ -307,7 +310,8 @@ func TestStartServiceSettlesUnknownCommitOnceWithoutAnotherCreation(t *testing.T
 				if err != nil || !result.IsValid() {
 					t.Fatalf("Start() error = %v, want confirmed result", err)
 				}
-			} else if !errors.Is(err, ErrCommitOutcomeUnknown) || result.IsValid() {
+				assertStartCookieBinding(t, fixture, result)
+			} else if !errors.Is(err, ErrCommitOutcomeUnknown) || result.IsValid() || result.PreAuthCookie().IsValid() {
 				t.Fatalf("Start() error = %v, want unknown without redirect", err)
 			}
 			want := []string{"opened", "metadata", "ids", "secrets", "begin", "create", "commit", "rollback", "resolve", "closed"}
@@ -315,6 +319,22 @@ func TestStartServiceSettlesUnknownCommitOnceWithoutAnotherCreation(t *testing.T
 				t.Fatalf("Start() effects = %v outcome=%s", fixture.calls, fixture.outcome)
 			}
 		})
+	}
+}
+
+func assertStartCookieBinding(t *testing.T, fixture *startFixture, result StartResult) {
+	t.Helper()
+	binding, err := fixture.pending.Route().Binding(fixture.pending.TransactionID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := fixture.params.VerifierCipher.OpenBrowser(binding, fixture.pending.VerifierCiphertext())
+	if err != nil || !fixture.params.DigestKey.VerifyPreAuthCookie(binding, result.PreAuthCookie(), proof.CookieDigest()) ||
+		result.PreAuthCookie().Encoded() != fixture.params.Secrets.PreAuthCookie().Encoded() {
+		t.Fatal("start did not release the exact durably prepared cookie binding")
+	}
+	if strings.Contains(result.AuthorizationRequest().Location(), result.PreAuthCookie().Encoded()) {
+		t.Fatal("authorization URL disclosed independent cookie")
 	}
 }
 

@@ -13,6 +13,7 @@ func TestGenerateSecretsCreatesPurposeDistinctCanonicalValues(t *testing.T) {
 
 	entropy := append(bytes.Repeat([]byte{0x11}, 32), bytes.Repeat([]byte{0x22}, 32)...)
 	entropy = append(entropy, bytes.Repeat([]byte{0x33}, 32)...)
+	entropy = append(entropy, bytes.Repeat([]byte{0x44}, 32)...)
 	secrets, err := generateSecrets(bytes.NewReader(entropy))
 	if err != nil {
 		t.Fatalf("generateSecrets() error = %v", err)
@@ -45,9 +46,10 @@ func TestGenerateSecretsRejectsUnsafeEntropy(t *testing.T) {
 		name    string
 		entropy []byte
 	}{
-		{name: "short read", entropy: bytes.Repeat([]byte{0x44}, 95)},
-		{name: "zero material", entropy: make([]byte, 96)},
-		{name: "reused material", entropy: bytes.Repeat([]byte{0x55}, 96)},
+		{name: "short read", entropy: bytes.Repeat([]byte{0x44}, 127)},
+		{name: "legacy three values", entropy: bytes.Repeat([]byte{0x44}, 96)},
+		{name: "zero material", entropy: make([]byte, 128)},
+		{name: "reused material", entropy: bytes.Repeat([]byte{0x55}, 128)},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -64,7 +66,7 @@ func TestTransactionSecretsAlwaysFormatRedacted(t *testing.T) {
 	t.Parallel()
 
 	secrets := secretFixture(t)
-	values := []any{secrets, secrets.State(), secrets.Nonce(), secrets.Verifier()}
+	values := []any{secrets, secrets.State(), secrets.Nonce(), secrets.Verifier(), secrets.PreAuthCookie()}
 	for _, value := range values {
 		if got := fmt.Sprint(value); got != "[REDACTED]" {
 			t.Errorf("fmt.Sprint(%T) = %q, want redacted", value, got)
@@ -76,10 +78,38 @@ func TestTransactionSecretsAlwaysFormatRedacted(t *testing.T) {
 	}
 }
 
+func TestGenerateSecretsRejectsEveryPurposeAlias(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name          string
+		first, second int
+	}{
+		{name: "state nonce", first: 0, second: 1},
+		{name: "state verifier", first: 0, second: 2},
+		{name: "nonce verifier", first: 1, second: 2},
+		{name: "cookie state", first: 3, second: 0},
+		{name: "cookie nonce", first: 3, second: 1},
+		{name: "cookie verifier", first: 3, second: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			entropy := make([]byte, 0, 128)
+			for index := range 4 {
+				entropy = append(entropy, bytes.Repeat([]byte{byte(index + 1)}, 32)...)
+			}
+			copy(entropy[test.second*32:(test.second+1)*32], entropy[test.first*32:(test.first+1)*32])
+			if secrets, err := generateSecrets(bytes.NewReader(entropy)); !errors.Is(err, ErrGenerateSecrets) || secrets.IsValid() {
+				t.Fatal("purpose alias accepted")
+			}
+		})
+	}
+}
+
 func secretFixture(t *testing.T) Secrets {
 	t.Helper()
 	entropy := append(bytes.Repeat([]byte{0x11}, 32), bytes.Repeat([]byte{0x22}, 32)...)
 	entropy = append(entropy, bytes.Repeat([]byte{0x33}, 32)...)
+	entropy = append(entropy, bytes.Repeat([]byte{0x44}, 32)...)
 	secrets, err := generateSecrets(bytes.NewReader(entropy))
 	if err != nil {
 		t.Fatalf("generateSecrets() error = %v", err)
