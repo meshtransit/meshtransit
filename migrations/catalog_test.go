@@ -11,8 +11,50 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 26 {
-		t.Fatalf("len(Catalog()) = %d, want 26", len(catalog))
+	if len(catalog) != 27 {
+		t.Fatalf("len(Catalog()) = %d, want 27", len(catalog))
+	}
+
+	persistence := catalog[26]
+	if persistence.Description != "OIDC authentication transaction persistence" {
+		t.Fatalf("migration 27 description = %q, want OIDC transaction persistence", persistence.Description)
+	}
+	for _, required := range []string{
+		"ADD COLUMN authorization_endpoint TEXT",
+		"ADD COLUMN token_endpoint TEXT",
+		"ADD COLUMN binding_semantic_hash BYTEA",
+		"auth_transaction_open_expiry_idx",
+		"workspace_oidc_auth_transaction_scope_policy",
+		"workspace_oidc_auth_transaction_lock_policy",
+		"mesh.requested_workspace_public_id",
+		"CREATE FUNCTION mesh_audit.lock_deployment_stream_head",
+		"CREATE FUNCTION mesh_ops.create_oidc_auth_transaction_v1",
+		"CREATE FUNCTION mesh_ops.load_oidc_auth_transaction_creation_v1",
+		"provider.authorization_endpoint = p_authorization_endpoint",
+		"provider.token_endpoint = p_token_endpoint",
+		"provider.current_generation = p_provider_generation",
+		"generation.valid_from <= pg_catalog.transaction_timestamp()",
+		"deployment.recovery_epoch = p_recovery_epoch",
+		"workspace_provider.organization_digest IS NULL",
+		"FOR SHARE OF",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.create_oidc_auth_transaction_v1",
+	} {
+		if !strings.Contains(persistence.SQL, required) {
+			t.Errorf("OIDC transaction persistence SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"DROP ",
+	} {
+		if strings.Contains(persistence.SQL, forbidden) {
+			t.Errorf("OIDC transaction persistence SQL contains excessive capability %q", forbidden)
+		}
 	}
 
 	rotation := catalog[25]
@@ -1044,8 +1086,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 26 {
-		t.Fatalf("LatestVersion() = %d, want 26", LatestVersion())
+	if LatestVersion() != 27 {
+		t.Fatalf("LatestVersion() = %d, want 27", LatestVersion())
 	}
 }
 

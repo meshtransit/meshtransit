@@ -58,6 +58,7 @@ type Pool struct {
 	registrationTransactionDatabase registrationTransactionDatabase
 	policyPublicationDatabase       policyPublicationDatabase
 	deviceRevocationDatabase        deviceRevocationDatabase
+	authTransactionDatabase         authTransactionDatabase
 	accountSessionDatabase          accountSessionDatabase
 	mapSessionStore                 func(
 		postgresmapsession.Options,
@@ -106,6 +107,7 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 		registrationTransactionDatabase: pgxRegistrationTransactionDatabase{pool: pool},
 		policyPublicationDatabase:       pgxPolicyPublicationDatabase{pool: pool},
 		deviceRevocationDatabase:        pgxDeviceRevocationDatabase{pool: pool},
+		authTransactionDatabase:         pgxAuthTransactionDatabase{pool: pool},
 		accountSessionDatabase:          pgxAccountSessionDatabase{pool: pool},
 		mapSessionStore: func(
 			options postgresmapsession.Options,

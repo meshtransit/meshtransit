@@ -45,6 +45,11 @@ func TestVerifierCipherRoundTripsExactBinding(t *testing.T) {
 	if _, err := verifierCipher.Open(other, ciphertext); !errors.Is(err, ErrOpenVerifier) {
 		t.Fatalf("VerifierCipher.Open(substituted binding) error = %v, want ErrOpenVerifier", err)
 	}
+	other = binding
+	other.ReturnRouteID = "account.settings"
+	if _, err := verifierCipher.Open(other, ciphertext); !errors.Is(err, ErrOpenVerifier) {
+		t.Fatalf("VerifierCipher.Open(substituted return route) error = %v, want ErrOpenVerifier", err)
+	}
 }
 
 func TestVerifierCipherRejectsEntropyFailure(t *testing.T) {

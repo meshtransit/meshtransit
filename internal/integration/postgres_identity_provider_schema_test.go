@@ -49,13 +49,16 @@ func seedIdentityProviderFoundation(ctx context.Context, t *testing.T, connectio
 				name: "identity provider",
 				query: `INSERT INTO mesh.identity_provider (
     id, public_id, deployment_id, issuer, issuer_digest_algorithm, issuer_digest_key_id,
-    issuer_digest, protocol, authority_kind, discovery_uri, jwks_uri,
+    issuer_digest, protocol, authority_kind, discovery_uri,
+    authorization_endpoint, token_endpoint, jwks_uri,
     current_generation, recovery_state, state
 ) OVERRIDING SYSTEM VALUE VALUES (
     601, '01890f00-0000-7000-8000-000000000601', 1,
     'https://idp.example.test/realms/main', 'hmac-sha256-v1', 'integration-v1',
     pg_catalog.decode(pg_catalog.repeat('11', 32), 'hex'), 'oidc', 'managed_oidc',
     'https://idp.example.test/realms/main/.well-known/openid-configuration',
+    'https://idp.example.test/realms/main/protocol/openid-connect/auth',
+    'https://idp.example.test/realms/main/protocol/openid-connect/token',
     'https://idp.example.test/realms/main/protocol/openid-connect/certs',
     1, 'verified', 'active'
 )`,

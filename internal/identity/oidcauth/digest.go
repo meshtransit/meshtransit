@@ -3,9 +3,12 @@ package oidcauth
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"log/slog"
 	"strings"
+
+	"github.com/meshtransit/meshtransit/internal/deployment"
 )
 
 const (
@@ -63,11 +66,15 @@ func NewDigestKey(id DigestKeyID, material []byte) (DigestKey, error) {
 func (key DigestKey) ID() DigestKeyID { return key.id }
 
 // State destroys raw state using its dedicated domain.
-func (key DigestKey) State(state State) (Digest, error) {
-	if !key.isValid() || !state.IsValid() {
+func (key DigestKey) State(
+	deploymentID deployment.ID,
+	recoveryEpoch int64,
+	state State,
+) (Digest, error) {
+	if !key.isValid() || !deploymentID.IsValid() || recoveryEpoch <= 0 || !state.IsValid() {
 		return Digest{}, ErrInvalidDigest
 	}
-	digest := key.digest(digestDomainState, state.value[:])
+	digest := key.digest(digestDomainState, deploymentID, recoveryEpoch, state.value[:])
 	if !digest.IsValid() {
 		return Digest{}, ErrInvalidDigest
 	}
@@ -75,20 +82,34 @@ func (key DigestKey) State(state State) (Digest, error) {
 }
 
 // Nonce destroys a raw nonce using a distinct dedicated domain.
-func (key DigestKey) Nonce(nonce Nonce) (Digest, error) {
-	if !key.isValid() || !nonce.IsValid() {
+func (key DigestKey) Nonce(
+	deploymentID deployment.ID,
+	recoveryEpoch int64,
+	nonce Nonce,
+) (Digest, error) {
+	if !key.isValid() || !deploymentID.IsValid() || recoveryEpoch <= 0 || !nonce.IsValid() {
 		return Digest{}, ErrInvalidDigest
 	}
-	digest := key.digest(digestDomainNonce, nonce.value[:])
+	digest := key.digest(digestDomainNonce, deploymentID, recoveryEpoch, nonce.value[:])
 	if !digest.IsValid() {
 		return Digest{}, ErrInvalidDigest
 	}
 	return digest, nil
 }
 
-func (key DigestKey) digest(domain string, value []byte) Digest {
+func (key DigestKey) digest(
+	domain string,
+	deploymentID deployment.ID,
+	recoveryEpoch int64,
+	value []byte,
+) Digest {
 	mac := hmac.New(sha256.New, key.material[:])
+	deploymentBytes := deploymentID.Bytes()
+	var epoch [binary.MaxVarintLen64]byte
+	epochBytes := binary.PutVarint(epoch[:], recoveryEpoch)
 	_, _ = mac.Write([]byte(domain))
+	_, _ = mac.Write(deploymentBytes[:])
+	_, _ = mac.Write(epoch[:epochBytes])
 	_, _ = mac.Write(value)
 	var result [sha256.Size]byte
 	copy(result[:], mac.Sum(nil))

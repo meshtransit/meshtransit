@@ -38,6 +38,11 @@ const (
 	postgresOperationDeviceRevocationCommit    postgresOperation = "device_revocation_commit"
 	postgresOperationDeviceRevocationRollback  postgresOperation = "device_revocation_rollback"
 	postgresOperationDeviceRevocationReplay    postgresOperation = "device_revocation_replay"
+	postgresOperationAuthTransactionBegin      postgresOperation = "auth_transaction_begin"
+	postgresOperationAuthTransactionCreate     postgresOperation = "auth_transaction_create"
+	postgresOperationAuthTransactionCommit     postgresOperation = "auth_transaction_commit"
+	postgresOperationAuthTransactionRollback   postgresOperation = "auth_transaction_rollback"
+	postgresOperationAuthTransactionReplay     postgresOperation = "auth_transaction_replay"
 	postgresOperationNodeKeyRotationBegin      postgresOperation = "node_key_rotation_begin"
 	postgresOperationNodeKeyRotationResolve    postgresOperation = "node_key_rotation_resolve"
 	postgresOperationNodeKeyRotationApply      postgresOperation = "node_key_rotation_apply"
@@ -82,6 +87,11 @@ var (
 		postgresOperationDeviceRevocationCommit,
 		postgresOperationDeviceRevocationRollback,
 		postgresOperationDeviceRevocationReplay,
+		postgresOperationAuthTransactionBegin,
+		postgresOperationAuthTransactionCreate,
+		postgresOperationAuthTransactionCommit,
+		postgresOperationAuthTransactionRollback,
+		postgresOperationAuthTransactionReplay,
 		postgresOperationNodeKeyRotationBegin,
 		postgresOperationNodeKeyRotationResolve,
 		postgresOperationNodeKeyRotationApply,
@@ -341,6 +351,11 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationDeviceRevocationCommit ||
 			operation == postgresOperationDeviceRevocationRollback ||
 			operation == postgresOperationDeviceRevocationReplay ||
+			operation == postgresOperationAuthTransactionBegin ||
+			operation == postgresOperationAuthTransactionCreate ||
+			operation == postgresOperationAuthTransactionCommit ||
+			operation == postgresOperationAuthTransactionRollback ||
+			operation == postgresOperationAuthTransactionReplay ||
 			operation == postgresOperationNodeKeyRotationBegin ||
 			operation == postgresOperationNodeKeyRotationResolve ||
 			operation == postgresOperationNodeKeyRotationApply ||

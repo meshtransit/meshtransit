@@ -113,12 +113,31 @@ func (route Route) Binding(transactionID TransactionID) (Binding, error) {
 		ProviderID: route.providerID, ClientID: route.clientID,
 		TransactionID: transactionID, ProviderGeneration: route.providerGeneration,
 		RecoveryEpoch: route.recoveryEpoch, RedirectID: route.redirectID,
+		ReturnRouteID: route.returnRouteID,
 	}
 	if !route.IsValid() || !binding.IsValid() {
 		return Binding{}, ErrInvalidBinding
 	}
 	return binding, nil
 }
+
+// DeploymentID returns the exact Deployment owning this login route.
+func (route Route) DeploymentID() deployment.ID { return route.deploymentID }
+
+// WorkspaceID returns the exact Workspace selected before provider redirect.
+func (route Route) WorkspaceID() workspace.ID { return route.workspaceID }
+
+// ProviderID returns the exact configured provider identity.
+func (route Route) ProviderID() ProviderID { return route.providerID }
+
+// ClientID returns the exact configured provider-client identity.
+func (route Route) ClientID() ClientID { return route.clientID }
+
+// ProviderGeneration returns the trust generation fixed by this route.
+func (route Route) ProviderGeneration() int64 { return route.providerGeneration }
+
+// RecoveryEpoch returns the Deployment anti-rollback epoch fixed by this route.
+func (route Route) RecoveryEpoch() int64 { return route.recoveryEpoch }
 
 // DiscoveryURI returns the exact allowlisted metadata endpoint.
 func (route Route) DiscoveryURI() string { return route.discoveryURI }
@@ -135,8 +154,28 @@ func (route Route) TokenEndpoint() string { return route.tokenEndpoint }
 // JWKSURI returns the exact configured signing-key endpoint.
 func (route Route) JWKSURI() string { return route.jwksURI }
 
+// OIDCClientID returns the exact external OIDC client identifier.
+func (route Route) OIDCClientID() string { return route.oidcClientID }
+
+// ClientAuthMethod returns the exact configured token-endpoint authentication method.
+func (route Route) ClientAuthMethod() string { return route.clientAuthMethod }
+
+// Scopes returns a defensive copy of the exact requested OIDC scopes.
+func (route Route) Scopes() []string { return slices.Clone(route.scopes) }
+
+// AllowedAlgorithms returns a defensive copy of the accepted ID-token algorithms.
+func (route Route) AllowedAlgorithms() []string {
+	return slices.Clone(route.allowedAlgorithms)
+}
+
+// RedirectID returns the stable Core-owned callback registration identifier.
+func (route Route) RedirectID() string { return route.redirectID }
+
 // RedirectURI returns the exact registered callback URI.
 func (route Route) RedirectURI() string { return route.redirectURI }
+
+// ReturnRouteID returns the allowlisted local post-login route identifier.
+func (route Route) ReturnRouteID() string { return route.returnRouteID }
 
 // IsValid reports whether the immutable route still satisfies browser-login policy.
 func (route Route) IsValid() bool {

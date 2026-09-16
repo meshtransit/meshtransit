@@ -59,6 +59,16 @@ func TestHashEventDistinguishesFieldBoundaries(t *testing.T) {
 	}
 }
 
+func TestHashEventAllowsAbsentNetworkRevision(t *testing.T) {
+	t.Parallel()
+
+	material := validEventHashMaterial(t)
+	material.NetworkRevision = 0
+	if result, err := audit.HashEvent(material); err != nil || result == ([sha256.Size]byte{}) {
+		t.Fatalf("HashEvent() = (%x, %v), want non-zero Deployment-scoped hash", result, err)
+	}
+}
+
 func TestHashEventRejectsInvalidMaterial(t *testing.T) {
 	t.Parallel()
 
@@ -68,6 +78,7 @@ func TestHashEventRejectsInvalidMaterial(t *testing.T) {
 	}{
 		{name: "missing event id", mutate: func(value *audit.EventHashMaterial) { value.EventID = publicid.ID{} }},
 		{name: "invalid version", mutate: func(value *audit.EventHashMaterial) { value.AggregateVersion = 0 }},
+		{name: "negative network revision", mutate: func(value *audit.EventHashMaterial) { value.NetworkRevision = -1 }},
 		{name: "invalid label", mutate: func(value *audit.EventHashMaterial) { value.Action = "Device Registered" }},
 		{name: "missing audit payload hash", mutate: func(value *audit.EventHashMaterial) { value.AuditPayloadHash = [sha256.Size]byte{} }},
 	}

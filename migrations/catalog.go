@@ -13,32 +13,33 @@ const (
 	// this binary. It advances only with a reviewed compatibility change.
 	ApplicationGeneration int64 = 1
 
-	platformFoundationDescription            = "platform migration foundation"
-	authorityFoundationDescription           = "tenancy and address authority foundation"
-	integrityFoundationDescription           = "audit and outbox integrity foundation"
-	outboxDeliveryDescription                = "outbox worker delivery capability"
-	registrationAuthorityDescription         = "node enrollment and registration authority"
-	registrationIntentHashDescription        = "registration intent semantic hash"
-	transactionNetworkScopeDescription       = "transaction-local public network scope"
-	networkAuditStreamHeadDescription        = "transaction-local network audit stream head"
-	networkInventoryAdvanceDescription       = "transaction-local network inventory revision advance"
-	registrationReplayDescription            = "registration idempotency replay evidence"
-	networkRevisionLockDescription           = "transaction-local network revision lock"
-	registrationTransactionLocksDescription  = "registration transaction scoped lock helpers"
-	registrationIntakeScopeDescription       = "registration intake scope resolution"
-	registrationIntakeScopeQueryDescription  = "registration intake scope query correction"
-	mapSessionScopeDescription               = "map session scope resolution"
-	mapSessionPeerCandidatesDescription      = "bounded map session peer candidate projection"
-	identityProviderAuthorityDescription     = "identity provider authority foundation"
-	accountIdentityPermissionDescription     = "account identity and permission catalog foundation"
-	humanAuthenticationSessionDescription    = "human authentication and account session authority"
-	compiledPacketPolicyDescription          = "compiled packet policy authority"
-	atomicPacketPolicyPublicationDescription = "atomic packet policy publication"
-	mapPeerProtocolIdentityDescription       = "map peer protocol identity projection"
-	networkIdempotencyDescription            = "network idempotency record foundation"
-	accountSessionResolutionDescription      = "deployment-bound account session resolution"
-	networkManagementRBACDescription         = "network management RBAC authority"
-	nodeKeyRotationAuthorityDescription      = "authenticated Node-key rotation authority"
+	platformFoundationDescription             = "platform migration foundation"
+	authorityFoundationDescription            = "tenancy and address authority foundation"
+	integrityFoundationDescription            = "audit and outbox integrity foundation"
+	outboxDeliveryDescription                 = "outbox worker delivery capability"
+	registrationAuthorityDescription          = "node enrollment and registration authority"
+	registrationIntentHashDescription         = "registration intent semantic hash"
+	transactionNetworkScopeDescription        = "transaction-local public network scope"
+	networkAuditStreamHeadDescription         = "transaction-local network audit stream head"
+	networkInventoryAdvanceDescription        = "transaction-local network inventory revision advance"
+	registrationReplayDescription             = "registration idempotency replay evidence"
+	networkRevisionLockDescription            = "transaction-local network revision lock"
+	registrationTransactionLocksDescription   = "registration transaction scoped lock helpers"
+	registrationIntakeScopeDescription        = "registration intake scope resolution"
+	registrationIntakeScopeQueryDescription   = "registration intake scope query correction"
+	mapSessionScopeDescription                = "map session scope resolution"
+	mapSessionPeerCandidatesDescription       = "bounded map session peer candidate projection"
+	identityProviderAuthorityDescription      = "identity provider authority foundation"
+	accountIdentityPermissionDescription      = "account identity and permission catalog foundation"
+	humanAuthenticationSessionDescription     = "human authentication and account session authority"
+	compiledPacketPolicyDescription           = "compiled packet policy authority"
+	atomicPacketPolicyPublicationDescription  = "atomic packet policy publication"
+	mapPeerProtocolIdentityDescription        = "map peer protocol identity projection"
+	networkIdempotencyDescription             = "network idempotency record foundation"
+	accountSessionResolutionDescription       = "deployment-bound account session resolution"
+	networkManagementRBACDescription          = "network management RBAC authority"
+	nodeKeyRotationAuthorityDescription       = "authenticated Node-key rotation authority"
+	oidcAuthTransactionPersistenceDescription = "OIDC authentication transaction persistence"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -119,6 +120,9 @@ var networkManagementRBACSQL string
 //go:embed 000026_node_key_rotation_authority.up.sql
 var nodeKeyRotationAuthoritySQL string
 
+//go:embed 000027_oidc_auth_transaction_persistence.up.sql
+var oidcAuthTransactionPersistenceSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -160,6 +164,11 @@ func Catalog() []Migration {
 		newMigration(24, accountSessionResolutionDescription, accountSessionResolutionSQL),
 		newMigration(25, networkManagementRBACDescription, networkManagementRBACSQL),
 		newMigration(26, nodeKeyRotationAuthorityDescription, nodeKeyRotationAuthoritySQL),
+		newMigration(
+			27,
+			oidcAuthTransactionPersistenceDescription,
+			oidcAuthTransactionPersistenceSQL,
+		),
 	}
 }
 

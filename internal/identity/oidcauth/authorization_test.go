@@ -145,6 +145,10 @@ func TestRouteAndMetadataDefensivelyCopyCapabilities(t *testing.T) {
 	}
 	scopes[0] = "offline_access"
 	algorithms[0] = "none"
+	returnedScopes := route.Scopes()
+	returnedAlgorithms := route.AllowedAlgorithms()
+	returnedScopes[0] = "offline_access"
+	returnedAlgorithms[0] = "none"
 	if !route.IsValid() {
 		t.Fatal("Route aliases caller-owned capability slices")
 	}

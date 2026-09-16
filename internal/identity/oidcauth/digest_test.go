@@ -18,17 +18,27 @@ func TestDigestKeySeparatesStateAndNoncePurposes(t *testing.T) {
 		t.Fatalf("NewDigestKey() error = %v", err)
 	}
 	secrets := secretFixture(t)
-	stateDigest, err := key.State(secrets.State())
+	route := routeFixture(t)
+	stateDigest, err := key.State(route.DeploymentID(), route.RecoveryEpoch(), secrets.State())
 	if err != nil {
 		t.Fatalf("DigestKey.State() error = %v", err)
 	}
 	nonce := Nonce{value: secrets.State().value}
-	nonceDigest, err := key.Nonce(nonce)
+	nonceDigest, err := key.Nonce(route.DeploymentID(), route.RecoveryEpoch(), nonce)
 	if err != nil {
 		t.Fatalf("DigestKey.Nonce() error = %v", err)
 	}
 	if stateDigest.Bytes() == nonceDigest.Bytes() {
 		t.Fatal("state and nonce domains produced the same digest")
+	}
+	otherEpochDigest, err := key.State(route.DeploymentID(), route.RecoveryEpoch()+1, secrets.State())
+	if err != nil || otherEpochDigest.Bytes() == stateDigest.Bytes() {
+		t.Fatalf("DigestKey.State(other epoch) = (%v, %v), want distinct evidence", otherEpochDigest, err)
+	}
+	otherDeployment := mustDeploymentID(t, "01890f00-0000-7000-8000-000000000002")
+	otherDeploymentDigest, err := key.State(otherDeployment, route.RecoveryEpoch(), secrets.State())
+	if err != nil || otherDeploymentDigest.Bytes() == stateDigest.Bytes() {
+		t.Fatalf("DigestKey.State(other Deployment) = (%v, %v), want distinct evidence", otherDeploymentDigest, err)
 	}
 	if stateDigest.Algorithm() != DigestAlgorithmHMACSHA256V1 ||
 		stateDigest.KeyID() != keyID || !stateDigest.IsValid() {

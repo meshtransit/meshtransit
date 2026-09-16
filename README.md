@@ -414,11 +414,12 @@ only exact-Network Device revocation.
 The provider-neutral `internal/identity/oidcauth` package now owns the security
 primitives for the SSO-only browser flow. Every transaction creates independent
 256-bit state, nonce, and PKCE verifier values. State and nonce use distinct,
-domain-separated HMAC-SHA-256 digests. The PKCE verifier is stored only as an
-AES-256-GCM envelope whose authenticated context binds the exact Deployment,
+domain-separated HMAC-SHA-256 digests bound to the Deployment public ID and
+recovery epoch. The PKCE verifier is stored only as an AES-256-GCM envelope whose
+authenticated context binds the exact Deployment,
 Workspace, provider, client, transaction, provider generation, recovery epoch,
-and redirect ID. Secret-bearing values redact ordinary, detailed, and
-structured-log formatting.
+redirect ID, and return-route ID. Secret-bearing values redact ordinary,
+detailed, and structured-log formatting.
 
 The `internal/adapter/oidc` discovery boundary fetches only the configured HTTPS
 metadata URI through a bounded TLS client with proxies and redirects disabled.
@@ -431,10 +432,27 @@ allowlisted independently. The resulting authorization request contains one
 exact client, callback, scope, state, nonce, and S256 challenge; no
 caller-selected issuer, endpoint, or redirect is accepted.
 
-This slice intentionally does not expose a login route yet. PostgreSQL-backed
-single-use transaction creation, the browser start endpoint and host-only
-pre-authentication cookie are the next slice, followed by callback exchange,
-ID-token validation, Account reconciliation, and Account Session issuance.
+The PostgreSQL `AuthTransactionStore` now creates a pending browser transaction
+with immutable audit-chain and outbox evidence in one short READ COMMITTED unit.
+Hardened runtime-only functions recheck and lock the exact active Deployment,
+Workspace, provider generation, confidential client, and Workspace routing
+binding. Issuer, independently allowlisted endpoints, client method/scopes/
+algorithms, registered callback URI, and recovery epoch must match durable
+configuration. Organization-routed bindings remain fail-closed until their
+expected-digest context is implemented. Runtime still has no direct table DML.
+
+Only state/nonce HMAC digests and encrypted verifier material enter PostgreSQL.
+A binding semantic hash fixes the route, redirect/return-route IDs,
+secret-derived evidence, and microsecond-canonical deadlines.
+Open expiry indexing covers both
+pending and consuming states. Exact transaction ID plus this hash resolves an
+uncertain creation commit without inserting a second row. Audit/outbox payloads
+contain only bounded non-secret IDs, generations, route labels, and expiry;
+Deployment-scoped events have no Network revision.
+
+This slice intentionally does not expose a login route yet. The browser start
+endpoint and host-only pre-authentication cookie are next, followed by callback
+exchange, ID-token validation, Account reconciliation, and Account Session issuance.
 
 The boundary threat model is fail-closed:
 
@@ -443,8 +461,8 @@ The boundary threat model is fail-closed:
   configuration.
 - Tampering and replay: state and nonce have separate HMAC domains; the PKCE
   verifier is AEAD-bound to every transaction authority generation.
-- Repudiation: the next storage slice must commit transaction creation with the
-  existing immutable audit/outbox contract before any endpoint is enabled.
+- Repudiation: transaction creation commits with the existing immutable
+  audit/outbox contract; evidence failure prevents creation commit.
 - Information disclosure: state, nonce, verifier, ciphertext, and the full
   redirect always format redacted and must not enter logs or metrics.
 - Denial of service: discovery time, response headers, decompressed body size,

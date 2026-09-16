@@ -61,6 +61,7 @@ type Binding struct {
 	ProviderGeneration int64
 	RecoveryEpoch      int64
 	RedirectID         string
+	ReturnRouteID      string
 }
 
 // IsValid reports whether every authority dimension is exact and bounded.
@@ -68,7 +69,8 @@ func (binding Binding) IsValid() bool {
 	return binding.DeploymentID.IsValid() && binding.WorkspaceID.IsValid() &&
 		binding.ProviderID.IsValid() && binding.ClientID.IsValid() &&
 		binding.TransactionID.IsValid() && binding.ProviderGeneration > 0 &&
-		binding.RecoveryEpoch > 0 && validRouteID(binding.RedirectID)
+		binding.RecoveryEpoch > 0 && validRouteID(binding.RedirectID) &&
+		validRouteID(binding.ReturnRouteID)
 }
 
 // VerifierCipher encrypts PKCE verifier material under one resident AEAD key.
@@ -241,9 +243,14 @@ func verifierBindingBytes(binding Binding) []byte {
 	buffer.Write(providerID[:])
 	buffer.Write(clientID[:])
 	buffer.Write(transactionID[:])
-	_ = binary.Write(buffer, binary.BigEndian, binding.ProviderGeneration)
-	_ = binary.Write(buffer, binary.BigEndian, binding.RecoveryEpoch)
+	var number [binary.MaxVarintLen64]byte
+	written := binary.PutVarint(number[:], binding.ProviderGeneration)
+	buffer.Write(number[:written])
+	written = binary.PutVarint(number[:], binding.RecoveryEpoch)
+	buffer.Write(number[:written])
 	buffer.WriteString(binding.RedirectID)
+	buffer.WriteByte(0)
+	buffer.WriteString(binding.ReturnRouteID)
 	return buffer.Bytes()
 }
 

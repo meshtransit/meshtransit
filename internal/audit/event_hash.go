@@ -19,8 +19,8 @@ const (
 var ErrInvalidEventHash = errors.New("audit: invalid event hash material")
 
 // EventHashMaterial contains the immutable fields committed across the audit
-// identity, business event, and outbox record. Zero actor, correlation, or
-// semantic hashes explicitly encode an absent optional field.
+// identity, business event, and outbox record. Zero NetworkRevision, actor,
+// correlation, or semantic hashes explicitly encode an absent optional field.
 type EventHashMaterial struct {
 	PreviousHash       [sha256.Size]byte
 	EventID            publicid.ID
@@ -45,7 +45,7 @@ type EventHashMaterial struct {
 func HashEvent(material EventHashMaterial) ([sha256.Size]byte, error) {
 	if !material.EventID.IsValid() || !material.ChangeID.IsValid() ||
 		!material.AggregateID.IsValid() || material.AggregateVersion <= 0 ||
-		material.NetworkRevision <= 0 || !validLabel(material.AggregateKind) ||
+		material.NetworkRevision < 0 || !validLabel(material.AggregateKind) ||
 		!validLabel(material.Action) || !validLabel(material.Permission) ||
 		!validLabel(material.OutboxEventClass) ||
 		(!isZeroID(material.ActorPrincipalID) && !material.ActorPrincipalID.IsValid()) ||
