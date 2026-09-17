@@ -2638,8 +2638,9 @@ After two DB repository timeouts, official DockerHub DBs complete OS/JAR scannin
 and exact three-occurrence deduplicated metadata; no clean-image claim. The
 [Netty maintainer advisory](https://github.com/netty/netty/security/advisories/GHSA-c4c3-7fpv-j4q5)
 lists installed 4.1.136.Final as affected with specific SNI/mTLS preconditions;
-POC exploitability and vendor JVM/MSSQL triage are not established. No VEX or
-scan waiver is accepted. No candidate image is published or installed.
+At this initial scan, POC exploitability and vendor JVM/MSSQL triage were not
+established. No VEX or scan waiver is accepted. No candidate image is published
+or installed.
 
 The supported preparation build path now requires matching recipe/base pins,
 Trivy 0.74.0, complete OS/library pre/post scans by immutable identity, no ignore
@@ -2655,6 +2656,38 @@ contain explicit authority withdrawal, not evidence of a transport/wire bug.
 Both already-offline/blocked states are preserved; no automated unfencing or
 map/reconnect/data-plane acceptance is claimed. Original core-docs/13/16/17/18/27
 are updated locally; those non-Git documents are not part of a Core push.
+
+### Keycloak vendor triage and report integrity
+
+Follow-up (2026-09-17): vendor triage establishes Red Hat's JVM CNA-rejection
+statement and Microsoft's MSSQL manifest-version mismatch. The exact bundled
+13.2.1.jre11 JAR hash matches the published hotfix. Netty's bundled 4.1.136.Final
+hash also matches upstream, in the affected range from the
+[maintainer advisory](https://github.com/netty/netty/security/advisories/GHSA-c4c3-7fpv-j4q5).
+No backport, POC exploitability or not-affected runtime is inferred. Detailed
+public-package hashes/references are in the separate deployment repository's
+`images/keycloak/VULNERABILITY_TRIAGE.md`. Latest upstream remains 26.7.4; the
+fresh full immutable arm64 scan still has two High/one Critical and exits 1.
+No exclusion, VEX or release waiver is accepted.
+
+`SSO-KEYCLOAK-SCAN-REPORT-001` requires more than scanner exit zero: exactly one
+parseable Trivy v2 container-image report, requested immutable artifact/Linux
+architecture, local ImageID and both Red Hat OS/JAR classes with zero findings.
+Incomplete/malformed/non-clean reports reject. The initial positive fixture
+fails before implementation; synthetic Docker/remote and arm64/amd64 reports
+plus adversarial report tests now pass. No-build fixtures confirm zero scanner
+exit with missing report or Critical findings cannot reach Docker. The real
+supported base guard exits 1 before a new build; no positive guarded release
+is claimed. Helm/Core/Console and shell checks are source-only regression gates,
+not provider startup, image trust or live Google evidence.
+
+No Go, migration, Core/client wire or live environment changes occur. Original
+13/17/18/27 documents are updated locally, not pushed; Core README mirrors the
+record. Whole Go quality/Linux integration is not rerun for these script/docs
+changes. Public login and all six real Google cases remain open. Next independent
+source milestone: reviewed Google-only realm/client/browser/first-broker flows,
+with no local/provider fallback, no email auto-link and no Core membership grant.
+Provider installation remains blocked on the image and other target gates.
 
 ## Account Session authentication
 
