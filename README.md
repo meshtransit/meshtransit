@@ -475,7 +475,14 @@ remains unimplemented. Existing-subject Account Session issuance now has the
 separate application/database foundation described below.
 No supported Mesh Client wire contract changed.
 
-The first live SSO qualification is planned for Google through the Keycloak
+Initial real Google SSO THROUGH the Keycloak broker is now a required Phase 1
+exit, approved by the owner on 2026-09-17 (ADR-044). Phase 1 includes runtime/
+configuration/listener wiring, safe target readiness, fresh Core Account Session
+delivery and unchanged supported meshd/meshctl compatibility. Private source
+tests, synthetic providers and schema foundations do not complete this milestone.
+The scope change does not enable public login or waive its security/HA gates.
+
+The first live SSO qualification remains planned for Google through the Keycloak
 Google identity broker. Other social/enterprise providers, directory
 integration, external OIDC replacement, and Organization-specific routing follow
 later. Core stays provider-neutral and validates the exact configured Keycloak
@@ -501,6 +508,7 @@ callbacks, two-replica single-use claim and lost-acknowledgement rejection,
 generation/revocation and dependency failure, and local Core logout while the
 upstream Google browser session remains active. Record exact source/client
 commits, schema version, image digests, and sanitized configuration fingerprints.
+All six requirements are mandatory Phase 1 acceptance, not optional Phase 2 work.
 No live Google test has run. The public-login prerequisites below remain
 mandatory; a unit or disposable synthetic-provider test is not Google evidence.
 
@@ -2031,9 +2039,11 @@ Source SHA-256: logging.go
 `55c17afd54d26b469fe976f280c91c67915e3ac06208fd09ef51a155b6b38612`,
 logging_test.go
 `c40a46598b88e1a6aa089a85dc9474b61995b76ddcd83156cbf8360da16189da`.
-Delivery checkpoint: canonical roadmap 18 places identity/session schema in
-Phase 1 and complete Keycloak/BFF/CLI login in Phase 2. Private SSO source tests
-do not close either Phase 1's deployment/operational exit or real Google login.
+Delivery checkpoint (owner-approved 2026-09-17): canonical roadmap 18 now places
+initial real Google-through-Keycloak login, Core BFF/Sessions and unchanged
+supported client compatibility in Phase 1, superseding the earlier Phase 2-only
+login checkpoint. Other providers and broader identity/routing capabilities stay
+later. Private SSO source tests do not close Phase 1's operational or live exits.
 Consolidate the remaining runtime/config/listener wiring, target custody/clock/
 uncertainty requirements and pinned Keycloak/browser/client acceptance into
 delivery milestones; do not substitute repeated tiny test slices or commit
