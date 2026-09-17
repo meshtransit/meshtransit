@@ -31,6 +31,17 @@ const (
 
 var errInvalidManagementComposition = errors.New("invalid management API composition")
 
+type managementCompositionKeys struct {
+	sessions    *accountsession.Keyring
+	idempotency *idempotency.Digester
+	rateLimit   *ratelimit.Digester
+}
+
+type managementCompositionOptions struct {
+	API  config.APIConfig
+	Keys managementCompositionKeys
+}
+
 func composeManagementAPI(
 	apiConfig config.APIConfig,
 	runtimePool *postgresadapter.Pool,
@@ -39,10 +50,6 @@ func composeManagementAPI(
 ) (*httpapi.ManagementServer, prometheus.Collector, error) {
 	if runtimePool == nil || rateLimiter == nil || logger == nil {
 		return nil, nil, errInvalidManagementComposition
-	}
-	certificate, err := loadManagementTLSCertificate(apiConfig)
-	if err != nil {
-		return nil, nil, err
 	}
 	keyring, err := composeAccountSessionKeyring(apiConfig.AccountSessionDigest)
 	if err != nil {
@@ -56,6 +63,31 @@ func composeManagementAPI(
 	if err != nil {
 		return nil, nil, err
 	}
+	return composeManagementAPIWithKeys(managementCompositionOptions{
+		API: apiConfig, Keys: managementCompositionKeys{
+			sessions: keyring, idempotency: idempotencyDigester, rateLimit: rateLimitDigester,
+		},
+	}, runtimePool, rateLimiter, logger)
+}
+
+// The private process shares the exact resident owners, not a second file read
+// that could rotate between API and BFF construction under the same key ID.
+func composeManagementAPIWithKeys(
+	options managementCompositionOptions,
+	runtimePool *postgresadapter.Pool,
+	rateLimiter httpapi.ManagementRateLimiter,
+	logger *slog.Logger,
+) (*httpapi.ManagementServer, prometheus.Collector, error) {
+	keys := options.Keys
+	completeKeys := keys.sessions != nil && keys.idempotency != nil && keys.rateLimit != nil
+	if runtimePool == nil || rateLimiter == nil || logger == nil || !completeKeys {
+		return nil, nil, errInvalidManagementComposition
+	}
+	apiConfig := options.API
+	certificate, err := loadManagementTLSCertificate(apiConfig)
+	if err != nil {
+		return nil, nil, err
+	}
 	accountSessionStore, err := postgresadapter.NewAccountSessionStore(
 		runtimePool,
 		postgresadapter.AccountSessionOptions{
@@ -66,7 +98,7 @@ func composeManagementAPI(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
-	sessions, err := accountsession.NewService(keyring, accountSessionStore, accountsession.SystemClock{})
+	sessions, err := accountsession.NewService(keys.sessions, accountSessionStore, accountsession.SystemClock{})
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
@@ -132,8 +164,8 @@ func composeManagementAPI(
 	}
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions: sessions, Revocations: revocations, PolicyPublications: policyPublications,
-		Idempotency:       idempotencyDigester,
-		RateLimitSubjects: rateLimitDigester, RateLimiter: rateLimiter,
+		Idempotency:       keys.idempotency,
+		RateLimitSubjects: keys.rateLimit, RateLimiter: rateLimiter,
 		TrustedProxyPrefixes: apiConfig.TrustedProxyPrefixes,
 		SourceRateLimit:      apiConfig.SourceRateLimit, SessionRateLimit: apiConfig.SessionRateLimit,
 		CorrelationIDs: httpapi.PublicCorrelationIDGenerator{}, Logger: logger,

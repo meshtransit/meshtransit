@@ -514,6 +514,32 @@ export MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS=2
 export MESHTRANSIT_TEST_MESHCORE_BINARY="${fixture_dir}/meshcore"
 run_go build -trimpath -o "${MESHTRANSIT_TEST_MESHCORE_BINARY}" ./cmd/meshcore
 
+if [[ "${go_runner}" == container ]]; then
+	docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname postgres --set ON_ERROR_STOP=1 \
+		--command 'CREATE DATABASE meshtransit_private_process OWNER mesh_migrator' \
+		>/dev/null
+	docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname meshtransit_private_process --set ON_ERROR_STOP=1 \
+		--command 'CREATE EXTENSION btree_gist' \
+		>/dev/null
+	export MESHTRANSIT_PRIVATE_FACTORY_INTEGRATION=1
+	export MESHTRANSIT_MIGRATION_POSTGRES_DATABASE=meshtransit_private_process
+	export MESHTRANSIT_POSTGRES_DATABASE=meshtransit_private_process
+	export SSL_CERT_FILE="${fixture_dir}/ca.crt"
+	export SSL_CERT_DIR="${fixture_dir}/empty-roots"
+	run_go test -tags=integration -count=1 -race -shuffle=on -v \
+		-run '^TestPrivateIdentityRuntimeProcessIntegration$' -timeout=5m ./cmd/meshcore
+	unset MESHTRANSIT_PRIVATE_FACTORY_INTEGRATION
+	unset SSL_CERT_FILE SSL_CERT_DIR
+	export MESHTRANSIT_MIGRATION_POSTGRES_DATABASE=meshtransit
+	export MESHTRANSIT_POSTGRES_DATABASE=meshtransit
+fi
+
 run_go test \
 	-tags=integration \
 	-count=1 \

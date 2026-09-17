@@ -39,7 +39,17 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_role_selection", "error", err)
 		return 1
 	}
-	readiness, err := app.NewRuntimeState(roles)
+	var privateProfile *config.PrivateLoginConfig
+	privateComponents := []app.Component{}
+	if processConfig.PrivateLogin != nil {
+		privateProfile, err = processConfig.PrivateLogin.Load(ctx, processConfig)
+		if err != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "private_login_configuration_failure")
+			return 1
+		}
+		privateComponents = append(privateComponents, app.ComponentPrivateLogin)
+	}
+	readiness, err := app.NewRuntimeState(roles, privateComponents...)
 	if err != nil {
 		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_runtime_state", "error", err)
 		return 1
@@ -120,18 +130,6 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		additionalMetrics = append(additionalMetrics, redisClient.MetricsCollector())
 	}
 
-	monitor, err := app.NewDependencyMonitor(
-		app.MonitorOptions{
-			CheckTimeout:  processConfig.Dependencies.CheckTimeout,
-			CheckInterval: processConfig.Dependencies.CheckInterval,
-		},
-		readiness,
-		checkers...,
-	)
-	if err != nil {
-		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_dependency_monitor", "error", err)
-		return 1
-	}
 	var revisionWorkerTelemetry *revisionworker.Telemetry
 	roleServices := make([]app.OwnedService, 0, 6)
 	if processConfig.RevisionWorker != nil {
@@ -152,27 +150,60 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			app.OwnedService{Name: "network-revision-worker", Service: workerService},
 		)
 	}
-	if processConfig.API != nil {
-		managementServer, managementMetrics, composeErr := composeManagementAPI(
-			*processConfig.API,
-			storagePools.runtime,
-			redisClient,
-			logger,
+	var privateFactory *privateIdentityFactory
+	if privateProfile != nil {
+		factory, loginService, composeErr := composePrivateIdentityRuntime(
+			ctx,
+			privateProfile,
+			privateIdentityFactoryDependencies{Runtime: storagePools.runtime, Redis: redisClient, Logger: logger},
 		)
 		if composeErr != nil {
-			logger.ErrorContext(
-				ctx,
-				"startup failed",
-				"error_code", "management_api_composition_failure",
-				"error", composeErr,
-			)
+			logger.ErrorContext(ctx, "startup failed", "error_code", "private_login_composition_failure")
 			return 1
 		}
+		closeFactory := func(context.Context) error { factory.Close(); return nil }
+		if ownErr := resources.Add("private-login-factory", closeFactory); ownErr != nil {
+			factory.Close()
+			logger.ErrorContext(ctx, "startup failed", "error_code", "private_login_ownership_failure")
+			return 1
+		}
+		checkers = append(checkers, factory)
+		privateFactory = factory
+		additionalMetrics = append(additionalMetrics, prometheus.WrapCollectorWith(
+			prometheus.Labels{"auth_profile": "console_cookie_private_v1"}, factory.identity.metrics,
+		))
+		roleServices = append(roleServices, app.OwnedService{Name: "private-login", Service: loginService})
+	}
+	if processConfig.API != nil {
+		var managementServer *httpapi.ManagementServer
+		var managementMetrics prometheus.Collector
+		var composeErr error
+		if privateFactory != nil {
+			managementServer, managementMetrics, composeErr = composeManagementAPIWithKeys(
+				managementCompositionOptions{API: *processConfig.API, Keys: privateFactory.managementKeys},
+				storagePools.runtime,
+				redisClient,
+				logger,
+			)
+		} else {
+			managementServer, managementMetrics, composeErr = composeManagementAPI(
+				*processConfig.API,
+				storagePools.runtime,
+				redisClient,
+				logger,
+			)
+		}
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "management_api_composition_failure", "error", composeErr)
+			return 1
+		}
+		if privateFactory != nil {
+			managementMetrics = prometheus.WrapCollectorWith(
+				prometheus.Labels{"auth_profile": "core_session_bearer_v1"}, managementMetrics,
+			)
+		}
 		additionalMetrics = append(additionalMetrics, managementMetrics)
-		roleServices = append(
-			roleServices,
-			app.OwnedService{Name: "management-api", Service: managementServer},
-		)
+		roleServices = append(roleServices, app.OwnedService{Name: "management-api", Service: managementServer})
 	}
 	if processConfig.Control != nil {
 		if processConfig.Enrollment == nil {
@@ -320,6 +351,18 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		roleServices = append(roleServices, app.OwnedService{Name: "browser-auth-expiry-worker", Service: worker})
 	}
 
+	monitor, err := app.NewDependencyMonitor(
+		app.MonitorOptions{
+			CheckTimeout:  processConfig.Dependencies.CheckTimeout,
+			CheckInterval: processConfig.Dependencies.CheckInterval,
+		},
+		readiness,
+		checkers...,
+	)
+	if err != nil {
+		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_dependency_monitor", "error", err)
+		return 1
+	}
 	build := buildinfo.Current()
 	healthServer, err := httpapi.NewHealthServer(httpapi.HealthServerOptions{
 		Address: processConfig.HealthAddress,

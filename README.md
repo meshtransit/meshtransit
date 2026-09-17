@@ -53,7 +53,7 @@ The module path is `github.com/meshtransit/meshtransit`; the process binary
 is `meshcore`. Development and security gates run with Go 1.26.8.
 
 Run `meshcore version` for machine-readable build, revision, Go, and
-configuration-schema versions (currently 15). Run `meshcore config validate` to validate the
+configuration-schema versions (currently 16). Run `meshcore config validate` to validate the
 selected role, bounded values, secret files, and CA bundles without dialing a
 dependency or opening a listener. The process serves normally with either no
 arguments or the explicit `meshcore serve` command.
@@ -2288,6 +2288,139 @@ now passes the same pinned no-network/read-only Linux source gate including
 `api/openapi` (1.094s). The original rejected attempt remains unexecuted. No bypass
 occurred; only current source is qualified, not historical commits/artifacts or
 public/live browser readiness. The remaining release gates above remain open.
+
+### Private login process configuration and readiness
+
+`SSO-PRIVATE-PROCESS-PROFILE-001` consolidates immutable configuration, concrete
+dependency readiness and compiled `meshcore serve` ownership. It supersedes
+historical statements above that main/config/readiness binding is absent ONLY
+for this opt-in PRIVATE loopback source profile. Public login remains disabled.
+There is no public bind/origin, enable/qualification-waiver switch, proxy
+assertion or direct Google adapter. Keycloak remains the SSO-only broker, with
+Google first. Never publish or forward the private listener.
+
+Configuration schema 16 adds `MESHTRANSIT_PRIVATE_LOGIN_CONFIG_FILE` for `api`
+and `all` only. Absent means unchanged behavior; explicitly empty, relative,
+noncanonical, unreadable or unsafe files fail closed. Read one owner-only
+(0400/0600), parent-confined regular JSON file of at most 16 KiB under the
+caller's finite context. Version 1 requires exactly these 20 fields:
+
+- `version`, `address`;
+- `deployment_id`, `workspace_id`, `provider_id`, `client_id`;
+- `provider_generation`, `recovery_epoch`;
+- `issuer`, `discovery_uri`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`;
+- `oidc_client_id`, `redirect_id`, `return_route_id`;
+- `tls_certificate_file`, `tls_private_key_file`, `client_secret_file`, `keys`.
+
+`address` is an exact canonical loopback IP/nonzero port, such as
+`127.0.0.1:9443` or `[::1]:9443`, distinct from existing listener addresses.
+Origin and callback are derived as HTTPS on that exact authority with
+`/auth/v1/callback`, not independently operator-selected. The local return path
+is `/console`. Route IDs and positive generation/epoch bind one independently
+authorized durable Keycloak route. The profile fixes confidential
+`client_secret_basic`, `openid` and `RS256`. Unknown/case-aliased/duplicate/null
+fields, malformed/trailing JSON and public/wildcard/mapped addresses are denied.
+
+`keys` requires exactly `initiation`, `capture`, `continuation`,
+`management_csrf`, `transaction_digest`, `verifier_encryption`,
+`subject_active` and `provider_session`, with optional `subject_previous`.
+Each value has exactly `id` and `file`: distinct bounded purpose IDs and
+canonical absolute protected key-file references. Session current/previous,
+idempotency and rate-limit refs/IDs come from the EXISTING bearer API settings,
+not private overrides. All 11–13 purposes load as one complete candidate with
+distinct material. Bearer API and cookie graph share the exact same resident
+keyring/digester owners; there is no second API key-file read or reload split.
+Cross-purpose key material and file-reference/ID aliases are rejected.
+Credential/TLS/control/storage file-reference aliases and enrollment key-ID
+aliases are denied. This does not prove global material uniqueness across
+external files/hardlinks or one transactional filesystem snapshot; public
+key-custody qualification remains open.
+
+TLS PEM files are bounded to 64 KiB each and the client-secret file to 4096
+bytes, with the same protected regular-file custody/change checks. Modern
+single-host certificate identity must match the exact callback host. All raw
+errors and formatting remain closed/redacted; temporary buffers are cleared
+after constructor copies, not a promise of Go heap zeroization. Trusted local
+mounts are required because cancellation cannot preempt filesystem syscalls.
+Request/lifetime/concurrency/rate bounds are fixed and finite.
+
+`meshcore config validate` loads this profile, complete keys, TLS and client
+secret through the same concrete effect-free constructors, without listeners,
+provider traffic or durable route admission. A valid result proves only local
+configuration. `serve` adds the closed `private_login` readiness component:
+current durable route admission then exact provider discovery, before ANY
+listener starts, repeated under the owned monitor deadline. A health snapshot
+is not a trust lease; actual requests retain current admission/fences.
+
+The owned health registry retains both auth collectors with fixed
+`auth_profile` labels `console_cookie_private_v1` and `core_session_bearer_v1`,
+avoiding descriptor/series collisions without dropping either owner. No metrics
+surface is exposed on login routes. All services AND the monitor must positively
+join before factory HTTP-client/storage cleanup; incomplete shutdown retains
+the graph and exits nonzero. Expiry ownership remains explicitly configured,
+not implicitly activated or certified by the private profile.
+This prerequisite affects process-wide readiness, including configured `all`;
+public API/control readiness isolation is not qualified by this private profile.
+
+The owned Linux integration lane adds the sixth cold database
+`meshtransit_private_process`, applies released migrations, and seeds only the
+audited synthetic route. Run the actual container lane explicitly:
+
+    PLATFORM_GO_RUNNER=container make integration-platform-container
+
+The target's default host lane does not execute Linux-only private fixtures.
+The new gate launches the just-built production binary with runtime-only
+fixture credentials and explicit startup trust, checks effect-free config
+validation, failed initial provider readiness BEFORE all listeners, real TLS
+landing/prepare/pending creation with no Session grant, both metrics profiles,
+readiness loss/recovery without authority effects, and exact-PID SIGTERM/join.
+This private process fixture runs `api`. The unchanged final platform gate runs
+`all` with the private profile absent; it does not qualify private `all` serving.
+This is synthetic source qualification, not release-image, native-clock,
+real Google/browser/meshd/meshctl or HA acceptance.
+
+Final source qualification (2026-09-17) passes:
+
+- Unchanged `make quality`: format/tidy, vet, all shuffled unit/race tests,
+  normal/integration lint, govulncheck and workflow lint. Govulncheck has zero
+  reachable symbols/imported-package vulnerabilities; three required-module
+  advisories are not apparently called, not absent.
+- Uncached integration-tagged shuffled race runs on macOS and pinned nonroot
+  Linux with network disabled, source/modules read-only and owned scratch.
+- Pure config fuzz smoke: 23,251 executions, ten-second budget, two workers,
+  no failure corpus or provider/filesystem effects in the fuzz target.
+- Full owned Linux PostgreSQL 18.6/Redis 8.8 TLS/ACL lane: all previous private
+  initiation/callback/replay and three intact natural expiry/death gates; new
+  compiled `api` private process (cmd race 7.347s); unchanged `all`/default-profile
+  platform/restart/Noise integration (6.289s).
+- Fresh pinned golangci-lint 2.13.2/Go 1.26.8 scoped pre/fix/post: zero issues,
+  no fixes. All 719 Go SHA/exact bytes, 700 files outside the 19-file scope,
+  index and base HEAD remain unchanged across that pass. Existing suppression
+  then Diff then Fixer order/fail-open is verified; successful Diff 67.902333ms
+  is not a runtime patch-parser claim.
+
+Initial failed NEW fixture assumptions remain recorded: missing closed operator
+component label, wrong health alias, omitted existing prepare JSON/login headers,
+wrong start 303 expectation, and insufficient metrics budget. The full lazy
+PG/Redis/auth/Go/process collector response measured 274,034 bytes; only fixture
+`/metrics` reads now permit 1 MiB while login reads stay 256 KiB. No production
+collector, request bound or prior expiry gate is dropped. The initial offline
+scratch executable denial is resolved using owned `/work` GOTMPDIR, not a looser
+container. The new unit's noctx finding is fixed with the caller context.
+These corrections are not historical passing qualification or a public waiver.
+Redacted full-tree/pre-commit full-history scans use go-run Gitleaks source
+`v8.30.1`, not released-binary CLI version metadata; final scans must pass
+before the authorized commit/push without added baselines or exclusions.
+
+Original contracts were updated first in canonical core-docs 26, 02, 13 and 18;
+qualification and telemetry are routed through 17 and 14. This README is the
+versioned Git mirror; the sibling core-docs directory is not itself a Git repo.
+Public key/query custody, unknown-ACK, target expiry/recovery/native clocks,
+all six live Google cases, clients/HA and immutable-artifact gates remain open.
+Next consolidated milestone: unknown-claim/issuance acknowledgement disposition
+and intended-target expiry/recovery qualification, retaining key/query/native
+clock and operational gates; then pinned Keycloak Google, real browser/client/HA
+and immutable-artifact acceptance before public activation. Google stays in Phase 1.
 
 ## Account Session authentication
 

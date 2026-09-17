@@ -180,6 +180,7 @@ func assertPrivateFactoryInitiationDenied(t *testing.T, response *privateIdentit
 type privateFactoryMetadataProvider struct {
 	server           *httptest.Server
 	discovery, other atomic.Int64
+	unavailable      atomic.Bool
 }
 
 func newPrivateFactoryMetadataProvider(t *testing.T, mode string, untrusted bool) *privateFactoryMetadataProvider {
@@ -193,6 +194,10 @@ func newPrivateFactoryMetadataProvider(t *testing.T, mode string, untrusted bool
 			return
 		}
 		provider.discovery.Add(1)
+		if provider.unavailable.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		if mode == "redirect" {
 			http.Redirect(w, r, provider.server.URL+"/trap", http.StatusTemporaryRedirect)
 			return

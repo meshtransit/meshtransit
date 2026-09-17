@@ -54,10 +54,21 @@ type HealthSnapshot struct {
 }
 
 // NewRuntimeState constructs a closed admission gate for concrete active roles.
-func NewRuntimeState(roles []Role) (*RuntimeState, error) {
+// The only optional component is private login, scoped to an API process. It is
+// not a public-login qualification flag or an arbitrary component registry.
+func NewRuntimeState(roles []Role, optional ...Component) (*RuntimeState, error) {
 	required, err := RequiredComponents(roles)
 	if err != nil {
 		return nil, errors.Join(ErrInvalidRuntimeState, err)
+	}
+	if len(optional) > 1 {
+		return nil, ErrInvalidRuntimeState
+	}
+	if len(optional) == 1 {
+		if optional[0] != ComponentPrivateLogin || !hasAPIRole(roles) {
+			return nil, ErrInvalidRuntimeState
+		}
+		required = append(required, ComponentPrivateLogin)
 	}
 	statuses := make(map[Component]ComponentStatus, len(required))
 	for _, component := range required {
@@ -68,6 +79,15 @@ func NewRuntimeState(roles []Role) (*RuntimeState, error) {
 		required: append([]Component(nil), required...),
 		statuses: statuses,
 	}, nil
+}
+
+func hasAPIRole(roles []Role) bool {
+	for _, role := range roles {
+		if role == RoleAPI {
+			return true
+		}
+	}
+	return false
 }
 
 // SetReady changes whether the process may admit its configured work.

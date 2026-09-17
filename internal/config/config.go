@@ -13,7 +13,7 @@ import (
 
 const (
 	// SchemaVersion identifies the validated environment configuration contract.
-	SchemaVersion = 15
+	SchemaVersion = 16
 
 	envRole            = "MESHTRANSIT_ROLE"
 	envHealthAddress   = "MESHTRANSIT_HEALTH_ADDRESS"
@@ -56,6 +56,7 @@ type Config struct {
 	Enrollment      *EnrollmentConfig
 	RevisionWorker  *RevisionWorkerConfig
 	AuthExpiry      *AuthExpiryConfig
+	PrivateLogin    *PrivateLoginFile
 }
 
 // DependencyConfig bounds startup and periodic infrastructure checks.
@@ -150,6 +151,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		}
 		revisionWorkerConfig = &loadedWorker
 	}
+	privateLoginFile, err := loadPrivateLoginFile(lookup, role)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		Role:            role,
@@ -163,6 +168,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		Enrollment:      enrollmentConfig,
 		RevisionWorker:  revisionWorkerConfig,
 		AuthExpiry:      authExpiryConfig,
+		PrivateLogin:    privateLoginFile,
 	}, nil
 }
 

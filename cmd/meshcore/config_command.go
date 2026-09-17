@@ -56,7 +56,18 @@ func runConfigValidate(
 }
 
 func validateDependencyConfiguration(ctx context.Context, processConfig config.Config) (returnErr error) {
+	var privateProfile *config.PrivateLoginConfig
+	if processConfig.PrivateLogin != nil {
+		var err error
+		privateProfile, err = processConfig.PrivateLogin.Load(ctx, processConfig)
+		if err != nil {
+			return errInvalidPrivateIdentityComposition
+		}
+	}
 	if processConfig.Storage == nil {
+		if privateProfile != nil {
+			return errInvalidPrivateIdentityComposition
+		}
 		return nil
 	}
 
@@ -70,7 +81,7 @@ func validateDependencyConfiguration(ctx context.Context, processConfig config.C
 		returnErr = errors.Join(returnErr, resources.Close(cleanupCtx))
 	}()
 
-	_, err := openPostgresPools(
+	pools, err := openPostgresPools(
 		ctx,
 		processConfig.Storage.PostgreSQL,
 		processConfig.Dependencies.CheckTimeout,
@@ -93,6 +104,23 @@ func validateDependencyConfiguration(ctx context.Context, processConfig config.C
 	}
 	if err := resources.Add("redis", redisClient.Shutdown); err != nil {
 		return errors.Join(err, redisClient.Shutdown(ctx))
+	}
+	if privateProfile != nil {
+		logger, err := observability.NewLogger(io.Discard, slog.LevelInfo)
+		if err != nil {
+			return errInvalidPrivateIdentityComposition
+		}
+		factory, _, err := composePrivateIdentityRuntime(
+			ctx,
+			privateProfile,
+			privateIdentityFactoryDependencies{Runtime: pools.runtime, Redis: redisClient, Logger: logger},
+		)
+		if err != nil {
+			return errInvalidPrivateIdentityComposition
+		}
+		// No worker, readiness request or listener was started. Only idle clients
+		// are owned here; borrowed pools remain owned by resources.
+		factory.Close()
 	}
 	return nil
 }

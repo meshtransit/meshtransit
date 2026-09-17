@@ -58,6 +58,29 @@ func TestOperatorMetricsExposeBoundedRuntimeSignals(t *testing.T) {
 	}
 }
 
+func TestOperatorMetricsPrivatePrerequisiteRemainsClosedAndObservable(t *testing.T) {
+	t.Parallel()
+	state, err := app.NewRuntimeState([]app.Role{app.RoleAPI}, app.ComponentPrivateLogin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metrics, err := newOperatorMetrics(state, testBuildInfo(), nil)
+	if err != nil {
+		t.Fatal("fixed private readiness rejected by operator metrics", err)
+	}
+	response := request(t, metrics.handler, "/metrics")
+	if response.Code != http.StatusOK ||
+		!strings.Contains(response.Body.String(), `meshtransit_dependency_ready{component="private_login"} 0`) {
+		t.Fatal("unknown private prerequisite omitted or reported ready")
+	}
+	for _, component := range []string{"postgresql", "redis", "private_login", "unknown", "private_Login", "route-123"} {
+		valid := component == "postgresql" || component == "redis" || component == "private_login"
+		if validComponentLabel(component) != valid {
+			t.Fatal("operator component allowlist changed beyond closed profile")
+		}
+	}
+}
+
 func TestOperatorMetricsDoNotExposeUnknownRequestPaths(t *testing.T) {
 	t.Parallel()
 

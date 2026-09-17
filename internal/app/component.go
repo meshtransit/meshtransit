@@ -11,6 +11,8 @@ const (
 	ComponentPostgreSQL
 	// ComponentRedis is the ephemeral coordination and cache dependency.
 	ComponentRedis
+	// ComponentPrivateLogin is required only by the configured private API profile.
+	ComponentPrivateLogin
 )
 
 // String returns the stable operator-facing component name.
@@ -20,6 +22,8 @@ func (component Component) String() string {
 		return "postgresql"
 	case ComponentRedis:
 		return "redis"
+	case ComponentPrivateLogin:
+		return "private_login"
 	default:
 		return "unknown"
 	}

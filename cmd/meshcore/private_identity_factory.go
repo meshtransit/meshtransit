@@ -36,9 +36,12 @@ type privateIdentityFactoryDependencies struct {
 // This owner closes only its HTTP clients. Admission/drain and borrowed pool/
 // Redis lifecycles belong to the process; no listener or readiness is created.
 type privateIdentityFactory struct {
-	identity  *privateIdentity
-	discovery *oidc.Resolver
-	provider  *oidc.Authenticator
+	identity       *privateIdentity
+	discovery      *oidc.Resolver
+	provider       *oidc.Authenticator
+	admission      *postgresadapter.AuthTransactionStore
+	route          oidcauth.Route
+	managementKeys managementCompositionKeys
 }
 
 func composePrivateIdentityFactory(
@@ -89,7 +92,11 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
-	owner := &privateIdentityFactory{}
+	owner := &privateIdentityFactory{admission: transactions, route: application.Route,
+		managementKeys: managementCompositionKeys{
+			sessions: keys.sessions, idempotency: keys.idempotency, rateLimit: keys.rateLimit,
+		},
+	}
 	released := false
 	defer func() {
 		if !released {
@@ -142,7 +149,9 @@ func privateIdentityMutationServices(
 	options postgresadapter.AuthTransactionOptions,
 	clock oidcauth.StartClock,
 ) (*revocation.Service, *policypublication.Service, error) {
-	revocationStore, err := postgresadapter.NewDeviceRevocationStore(pool, postgresadapter.DeviceRevocationOptions(options))
+	revocationStore, err := postgresadapter.NewDeviceRevocationStore(
+		pool, postgresadapter.DeviceRevocationOptions(options),
+	)
 	if err != nil {
 		return nil, nil, errInvalidPrivateIdentityComposition
 	}
