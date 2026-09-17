@@ -103,6 +103,50 @@ func TestPrivateLoginFileRejectsUnsafeCustodyWithoutRawErrors(t *testing.T) {
 	}
 }
 
+func TestPrivateLoginMaterialWithholdsCandidateAfterEarlierRotation(t *testing.T) {
+	t.Parallel()
+	directory := t.TempDir()
+	profile := &PrivateLoginConfig{
+		cert:         SecretFile{path: filepath.Join(directory, "cert")},
+		privateKey:   SecretFile{path: filepath.Join(directory, "private")},
+		clientSecret: SecretFile{path: filepath.Join(directory, "secret")},
+	}
+	for _, file := range []SecretFile{profile.cert, profile.privateKey, profile.clientSecret} {
+		if err := os.WriteFile(file.path, []byte("synthetic-material"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	aliases := [][]byte{}
+	rotated := false
+	material, err := profile.loadMaterialCandidate(t.Context(),
+		func(ctx context.Context, file SecretFile, limit int64) ([]byte, privateLoginFileSnapshot, error) {
+			contents, snapshot, readErr := readPrivateLoginFileSnapshot(ctx, file, limit)
+			aliases = append(aliases, contents)
+			if readErr == nil && file == profile.clientSecret {
+				replacement := filepath.Join(directory, "replacement")
+				if err := os.WriteFile(replacement, []byte("synthetic-material"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(replacement, profile.cert.path); err != nil {
+					t.Fatal(err)
+				}
+				rotated = true
+			}
+			return contents, snapshot, readErr
+		})
+	if !rotated || material != nil || !errors.Is(err, ErrInvalid) {
+		if material != nil {
+			material.Clear()
+		}
+		t.Fatal("earlier material rotation released a mixed candidate")
+	}
+	for _, alias := range aliases {
+		if !bytes.Equal(alias, make([]byte, len(alias))) {
+			t.Fatal("failed material candidate not cleared")
+		}
+	}
+}
+
 func TestPrivateLoginFileDetectsOrdinaryReplacement(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "candidate")

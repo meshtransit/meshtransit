@@ -25,7 +25,12 @@ func composePrivateIdentityRuntime(
 	}
 	ctx, cancel := context.WithTimeout(ctx, privateIdentityConstructionTimeout)
 	defer cancel()
-	keys, err := composePrivateIdentityKeys(ctx, profile.Keys())
+	candidate, err := profile.LoadConstruction(ctx)
+	if err != nil {
+		return nil, nil, errInvalidPrivateIdentityComposition
+	}
+	defer candidate.Clear()
+	keys, err := composePrivateIdentityKeyMaterial(ctx, candidate.Keys)
 	if err != nil {
 		return nil, nil, errInvalidPrivateIdentityComposition
 	}
@@ -35,11 +40,7 @@ func composePrivateIdentityRuntime(
 		clear(keys.continuation.Material)
 		clear(keys.csrf.Material)
 	}()
-	material, err := profile.LoadMaterial(ctx)
-	if err != nil {
-		return nil, nil, errInvalidPrivateIdentityComposition
-	}
-	defer material.Clear()
+	material := candidate.Material
 	secretBytes := bytes.TrimSuffix(material.ClientSecret, []byte("\r\n"))
 	secretBytes = bytes.TrimSuffix(secretBytes, []byte("\n"))
 	dependencies.Secret, err = oidc.NewBasicSecret(string(secretBytes))
@@ -58,7 +59,7 @@ func composePrivateIdentityRuntime(
 		Address: profile.Address(), CertificatePEM: material.CertificatePEM,
 		PrivateKeyPEM: material.PrivateKeyPEM, MaxConnections: 64,
 	})
-	if err != nil || ctx.Err() != nil {
+	if err != nil || candidate.CheckCurrent(ctx) != nil || ctx.Err() != nil {
 		factory.Close()
 		return nil, nil, errInvalidPrivateIdentityComposition
 	}

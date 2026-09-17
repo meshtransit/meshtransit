@@ -28,6 +28,7 @@ type PrivateLoginConfig struct {
 	route                          oidcauth.Route
 	keys                           *PrivateIdentityKeyFiles
 	cert, privateKey, clientSecret SecretFile
+	source                         privateLoginFileSnapshot
 }
 
 func loadPrivateLoginFile(lookup LookupFunc, role app.Role) (*PrivateLoginFile, error) {
@@ -54,7 +55,7 @@ func (reference *PrivateLoginFile) Load(ctx context.Context, process Config) (*P
 	}
 	ctx, cancel := context.WithTimeout(ctx, privateIdentityKeyTimeout)
 	defer cancel()
-	contents, err := readPrivateLoginFile(ctx, reference.file, 16*1024)
+	contents, snapshot, err := readPrivateLoginFileSnapshot(ctx, reference.file, 16*1024)
 	if err != nil {
 		return nil, settingError(envPrivateLoginConfigFile)
 	}
@@ -63,6 +64,7 @@ func (reference *PrivateLoginFile) Load(ctx context.Context, process Config) (*P
 	if err != nil || ctx.Err() != nil {
 		return nil, settingError(envPrivateLoginConfigFile)
 	}
+	result.source = snapshot
 	return result, nil
 }
 

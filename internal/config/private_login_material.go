@@ -12,6 +12,7 @@ import (
 // after constructors copy its bytes; this does not erase resident consumer copies.
 type PrivateLoginMaterial struct {
 	CertificatePEM, PrivateKeyPEM, ClientSecret []byte
+	snapshots                                   [3]privateLoginFileSnapshot
 }
 
 // LoadMaterial reads only the profile's bounded protected local references.
@@ -21,6 +22,17 @@ func (profile *PrivateLoginConfig) LoadMaterial(ctx context.Context) (*PrivateLo
 	}
 	ctx, cancel := context.WithTimeout(ctx, privateIdentityKeyTimeout)
 	defer cancel()
+	return profile.loadMaterialCandidate(ctx, readPrivateLoginFileSnapshot)
+}
+
+type privateLoginFileReader func(context.Context, SecretFile, int64) ([]byte, privateLoginFileSnapshot, error)
+
+// Only local deterministic fixtures replace the reader. Public loading always
+// uses the scoped production reader; this is not a process configuration seam.
+func (profile *PrivateLoginConfig) loadMaterialCandidate(
+	ctx context.Context,
+	read privateLoginFileReader,
+) (*PrivateLoginMaterial, error) {
 	result := &PrivateLoginMaterial{}
 	accepted := false
 	defer func() {
@@ -28,7 +40,7 @@ func (profile *PrivateLoginConfig) LoadMaterial(ctx context.Context) (*PrivateLo
 			result.Clear()
 		}
 	}()
-	for _, field := range []struct {
+	for index, field := range []struct {
 		file        SecretFile
 		limit       int64
 		destination *[]byte
@@ -37,17 +49,32 @@ func (profile *PrivateLoginConfig) LoadMaterial(ctx context.Context) (*PrivateLo
 		{file: profile.privateKey, limit: 64 * 1024, destination: &result.PrivateKeyPEM},
 		{file: profile.clientSecret, limit: 4096, destination: &result.ClientSecret},
 	} {
-		contents, err := readPrivateLoginFile(ctx, field.file, field.limit)
+		contents, snapshot, err := read(ctx, field.file, field.limit)
 		if err != nil {
+			clear(contents)
 			return nil, ErrInvalid
 		}
 		*field.destination = contents
+		result.snapshots[index] = snapshot
 	}
-	if ctx.Err() != nil {
+	if !result.stillCurrent(ctx) {
 		return nil, ErrInvalid
 	}
 	accepted = true
 	return result, nil
+}
+
+func (material *PrivateLoginMaterial) stillCurrent(ctx context.Context) bool {
+	if material == nil || len(material.CertificatePEM) == 0 || len(material.PrivateKeyPEM) == 0 ||
+		len(material.ClientSecret) == 0 {
+		return false
+	}
+	for _, snapshot := range material.snapshots {
+		if !snapshot.stillCurrent(ctx) {
+			return false
+		}
+	}
+	return ctx.Err() == nil
 }
 
 // Clear erases only this owner's temporary buffers, never shared resident keys.
@@ -59,20 +86,36 @@ func (material *PrivateLoginMaterial) Clear() {
 	clear(material.PrivateKeyPEM)
 	clear(material.ClientSecret)
 	material.CertificatePEM, material.PrivateKeyPEM, material.ClientSecret = nil, nil, nil
+	material.snapshots = [3]privateLoginFileSnapshot{}
+}
+
+type privateLoginFileSnapshot struct {
+	reference SecretFile
+	info      os.FileInfo
+	limit     int64
 }
 
 // Local trusted mounts are required: contexts cannot preempt filesystem syscalls.
 // O_NONBLOCK avoids blocking FIFO opens on supported Linux/macOS targets. os.Root
 // confines projected symlinks to the validated parent. No raw error is released.
 func readPrivateLoginFile(ctx context.Context, reference SecretFile, limit int64) (result []byte, resultErr error) {
+	result, _, resultErr = readPrivateLoginFileSnapshot(ctx, reference, limit)
+	return result, resultErr
+}
+
+func readPrivateLoginFileSnapshot(
+	ctx context.Context,
+	reference SecretFile,
+	limit int64,
+) (result []byte, snapshot privateLoginFileSnapshot, resultErr error) {
 	validPath := len(reference.path) <= 4096 && validateFilePath(reference.path) == nil
 	if ctx == nil || ctx.Err() != nil || !validPath || limit <= 0 || limit > 64*1024 {
-		return nil, ErrInvalid
+		return nil, snapshot, ErrInvalid
 	}
 	// #nosec G304 -- explicit canonical operator reference confined to its parent.
 	root, err := os.OpenRoot(filepath.Dir(reference.path))
 	if err != nil {
-		return nil, ErrInvalid
+		return nil, snapshot, ErrInvalid
 	}
 	defer func() {
 		if root.Close() != nil || ctx.Err() != nil {
@@ -81,19 +124,20 @@ func readPrivateLoginFile(ctx context.Context, reference SecretFile, limit int64
 		if resultErr != nil {
 			clear(result)
 			result = nil
+			snapshot = privateLoginFileSnapshot{}
 		}
 	}()
 	name := filepath.Base(reference.path)
 	file, err := openPrivateIdentityKey(root, name)
 	if err != nil {
-		return nil, ErrInvalid
+		return nil, snapshot, ErrInvalid
 	}
 	before, err := file.Stat()
 	if err != nil || !validPrivateLoginFileInfo(before, limit) {
 		if file.Close() != nil {
-			return nil, ErrInvalid
+			return nil, snapshot, ErrInvalid
 		}
-		return nil, ErrInvalid
+		return nil, snapshot, ErrInvalid
 	}
 	result, readErr := io.ReadAll(io.LimitReader(file, limit+1))
 	after, statErr := file.Stat()
@@ -102,9 +146,31 @@ func readPrivateLoginFile(ctx context.Context, reference SecretFile, limit int64
 	failedIO := readErr != nil || statErr != nil || currentErr != nil || closeErr != nil
 	if failedIO || !unchangedPrivateLoginFile(before, after, limit) || !unchangedPrivateLoginFile(after, current, limit) ||
 		int64(len(result)) != before.Size() || ctx.Err() != nil {
-		return result, ErrInvalid
+		return result, snapshot, ErrInvalid
 	}
-	return result, nil
+	snapshot = privateLoginFileSnapshot{reference: reference, info: after, limit: limit}
+	return result, snapshot, nil
+}
+
+// This checks metadata only, never reloading or combining newer secret bytes.
+func (snapshot privateLoginFileSnapshot) stillCurrent(ctx context.Context) (valid bool) {
+	validPath := len(snapshot.reference.path) <= 4096 && validateFilePath(snapshot.reference.path) == nil
+	validLimit := snapshot.limit > 0 && snapshot.limit <= 64*1024
+	if ctx == nil || ctx.Err() != nil || !validPath || !validLimit || snapshot.info == nil {
+		return false
+	}
+	// #nosec G304 -- bounded validated snapshot reference, confined to its parent.
+	root, err := os.OpenRoot(filepath.Dir(snapshot.reference.path))
+	if err != nil {
+		return false
+	}
+	defer func() {
+		if root.Close() != nil || ctx.Err() != nil {
+			valid = false
+		}
+	}()
+	current, err := root.Stat(filepath.Base(snapshot.reference.path))
+	return err == nil && unchangedPrivateLoginFile(snapshot.info, current, snapshot.limit)
 }
 
 func validPrivateLoginFileInfo(info os.FileInfo, limit int64) bool {

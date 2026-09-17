@@ -43,6 +43,18 @@ func composePrivateIdentityKeys(ctx context.Context, files *config.PrivateIdenti
 		return nil, errInvalidPrivateIdentityComposition
 	}
 	defer material.Clear()
+	return composePrivateIdentityKeyMaterial(ctx, material)
+}
+
+// The bundle's exclusive owner retains file metadata and clears its candidate
+// after the complete graph is checked. This constructor never reloads files.
+func composePrivateIdentityKeyMaterial(
+	ctx context.Context,
+	material *config.PrivateIdentityKeyMaterial,
+) (*privateIdentityKeys, error) {
+	if ctx == nil || ctx.Err() != nil || material == nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	transactionID, err := oidcauth.NewDigestKeyID(material.TransactionDigest.ID)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition

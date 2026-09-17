@@ -2480,6 +2480,85 @@ target recovery/restore, failover, Google/browser/client/HA or artifact proof.
 The original contracts were updated first in core-docs 26/13/17/18; this README
 is their Git mirror, not a claim that sibling non-Git docs were pushed.
 
+### Private startup credential construction custody
+
+`SSO-PRIVATE-CONSTRUCTION-CUSTODY-001` binds the originally loaded protected
+JSON, complete 11–13 purpose keys and three TLS/client-secret files into one
+exclusively owned candidate. Serving and config validate share the same loader.
+One caller-clamped five-second construction budget, existing scoped owner-only
+regular-file checks and byte bounds remain unchanged. Read each dependency once;
+recheck retained metadata after the full load and before returning the unstarted
+factory/service. Detected atomic/projected-mount replacement, mode/size/mtime
+changes or cancellation return only closed errors, no graph on failure. There
+is no retry, merge, reload, replacement generation or public enablement knob.
+Bearer/BFF owners remain identical; no schema/client-wire change.
+
+Clear failed/consumed candidate bytes and metadata, including both optional
+previous keys. Resident constructors own their copies; erasure is best effort,
+not a Go-heap guarantee. These checks are not a global filesystem snapshot,
+privileged metadata-restoration defense, remote-filesystem syscall deadline,
+post-release reload or operational secret-manager/target-mount qualification.
+Each input is compared to its own read-time snapshot; already-mixed inputs or
+changes before its first snapshot are not certified. Provision complete matching
+operator generations before startup.
+
+Owned real-JSON fixtures cover all seventeen references with both previous
+keys, early JSON/key/TLS replacement during later reads, late read failure/
+cancellation, redaction and use after Clear. The initial material-rotation
+regression failed because the old loader released a mixed candidate; the final
+whole-material guard now passes focused configuration/composition race tests.
+An initial new-test compile error (slicing a returned array) was fixed by storing
+the array first, without changing a production contract or test oracle.
+
+The existing compiled private-api process fixture adds three direct verified-TLS
+callback queries: ambiguous duplicate state, shape-valid code without possession,
+and provider diagnostic markers without possession. They must close before any
+response, exchange or durable effect; counters prove actual dispatcher traversal.
+Scan health/metrics and the complete joined stdout/stderr diagnostic window for
+synthetic code/state/description/URI markers. Identical os/exec writers are
+serialized, and only joined output is inspected. Reject truncation, never print
+raw logs. The detector/truncation regression passes under race instrumentation.
+Final unchanged `make quality` passes fmt/tidy/vet, shuffled unit/race tests,
+normal/integration lint, govulncheck and workflow lint. Govulncheck finds zero
+called/imported-package vulnerabilities and three required-module advisories
+not called. Final frozen-source construction/material race ×10 passes (2.298s).
+Initial fixture-only gosec path/mode findings were fixed using os.Root-scoped
+replacement operations and table-driven unsafe modes, without suppressions;
+final scoped pinned v2.13.2 normal/integration lint passes with no auto-fix edits.
+Redacted full-code/full-original-docs and all-history scans pass with pinned
+Gitleaks v8.30.1; no baselines or exclusions added.
+
+The first whole Linux execution passed older suites and wire ACK but failed the
+new exact three-capture counter. Initial canary syntax also omitted the required
+fixed issuer; corrected before accepting any process evidence. A focused owned
+verified-TLS transport test then reproduced four attempts for three canaries:
+Request.Close does not prevent reusing the landing socket, and Go retries an
+idempotent no-response GET on that reused socket. Close only the client's owned
+idle sockets before the new canary group; keep Request.Close, the exact three-
+capture oracle and all production transport/effect contracts unchanged. The
+transport/no-retry and diagnostic detector/truncation regressions pass race ×25
+(2.262s), including positive cleanup/leak checks. Final scoped lint again passes
+without Go auto-fix changes. Full frozen-source quality and whole Linux reruns
+pass; the failed first attempt is not reclassified as passing evidence.
+
+Final whole owned Linux lane passes base migrations/primitives (15.800s), intact
+default/all platform/restart/Noise matrix (6.326s), initiation (1.441s), callback
+(2.339s), natural expiry/quarantine (61.829s), consuming cleanup (61.563s),
+process-abandoned cleanup (61.589s), complete wire ACK cleanup/leak (62.420s) and
+compiled private-api process (7.332s). The process preserves exact three capture
+errors, zero query-canary authority/exchange/response and a complete untruncated
+joined output window with no synthetic markers in outputs/health/metrics.
+Read-only base expiry candidate counts are zero before the old matrix and thirteen
+after private scopes; aggregate timing diagnostics are not row/target cleanup proof.
+No old suite, oracle, natural lifetime, trust, runtime fence or client wire changed.
+
+Original contracts/threat model/operations/qualification/roadmap were updated
+first in sibling core-docs 26/13/16/17/18; this README is the Git mirror, not a claim
+those non-Git originals were pushed. This closes no external LB/proxy/Keycloak
+query-log custody, target key management, native clocks, intended expiry/recovery,
+real Google/browser/client/HA or immutable-artifact gate. Google remains Phase 1,
+SSO-only through Keycloak; private loopback source proof is not public activation.
+
 ## Account Session authentication
 
 The `internal/identity/accountsession` package now owns the first human-session

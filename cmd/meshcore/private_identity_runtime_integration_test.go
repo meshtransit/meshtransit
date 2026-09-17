@@ -18,12 +18,14 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -130,6 +132,28 @@ func TestPrivateIdentityRuntimeProcessIntegration(t *testing.T) {
 	if !validLanding || storage.census(t) != before {
 		t.Fatal("real TLS landing granted authority or failed")
 	}
+	// Synthetic query canaries enter the actual compiled TLS dispatcher without
+	// browser possession. No response or durable authority may be released.
+	privateRuntimeQueryCanaries(
+		t,
+		client,
+		profile.Route().RedirectURI(),
+		profile.Route().Issuer(),
+	)
+	if storage.census(t) != before || provider.other.Load() != 0 {
+		t.Fatal("rejected query canaries changed authority or exchanged credentials")
+	}
+	response, body = privateRuntimeRequest(
+		t,
+		client,
+		http.MethodGet,
+		"http://"+health+"/ready",
+		nil,
+		nil,
+	)
+	if response.StatusCode != http.StatusOK || !privateRuntimeCanaryFree(body) {
+		t.Fatal("runtime health disclosed query material or became unavailable")
+	}
 	response, body = privateRuntimeRequest(
 		t, client, http.MethodPost, "https://"+address+httpapi.LoginPreparePath, nil, nil,
 	)
@@ -197,6 +221,20 @@ func TestPrivateIdentityRuntimeProcessIntegration(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !privateMetrics || !apiMetrics {
 		t.Fatal("runtime metrics profile collision or omission")
 	}
+	if !privateRuntimeCanaryFree(body) {
+		t.Fatal("runtime metrics disclosed synthetic query material")
+	}
+	capturesObserved := false
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.HasPrefix(line, "meshtransit_browser_login_dispatch_requests_total{") &&
+			strings.Contains(line, `operation="capture"`) && strings.Contains(line, `result="handler_error"`) &&
+			strings.HasSuffix(line, "} 3") {
+			capturesObserved = true
+		}
+	}
+	if !capturesObserved {
+		t.Fatal("canaries did not traverse compiled callback dispatcher")
+	}
 	provider.unavailable.Store(true)
 	privateRuntimeWait(t, child, func(ctx context.Context) bool {
 		return privateRuntimeReady(ctx, client, health, http.StatusServiceUnavailable)
@@ -213,6 +251,100 @@ func TestPrivateIdentityRuntimeProcessIntegration(t *testing.T) {
 	}
 	if err := child.join(t.Context(), 5*time.Second); err != nil {
 		t.Fatal("private process did not drain cleanly")
+	}
+	// Wait joins the sole os/exec output writer before inspecting owned buffers.
+	if child.diagnostic.truncated || !privateRuntimeCanaryFree(child.diagnostic.buffer.Bytes()) {
+		t.Fatal("joined process query custody window was truncated or disclosed material")
+	}
+}
+
+const (
+	privateRuntimeCodeCanary        = "synthetic-query-code-custody-001"
+	privateRuntimeDescriptionCanary = "synthetic-query-description-custody-001"
+	privateRuntimeURICanary         = "synthetic-query-uri-custody-001"
+)
+
+func privateRuntimeCanaryFree(contents []byte) bool {
+	state := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x71}, 32))
+	for _, marker := range []string{
+		privateRuntimeCodeCanary, privateRuntimeDescriptionCanary, privateRuntimeURICanary, state,
+	} {
+		if bytes.Contains(contents, []byte(marker)) {
+			return false
+		}
+	}
+	return true
+}
+
+func privateRuntimeQueryCanaries(t *testing.T, client *http.Client, target, issuer string) {
+	t.Helper()
+	// Request.Close prevents subsequent reuse, not reuse of the landing socket.
+	// Discard existing idle sockets before the first no-response GET.
+	client.CloseIdleConnections()
+	state := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x71}, 32))
+	for _, query := range []string{
+		"code=" + privateRuntimeCodeCanary + "&state=" + state + "&state=" + state,
+		"code=" + privateRuntimeCodeCanary + "&state=" + state,
+		"error=access_denied&state=" + state + "&error_description=" + privateRuntimeDescriptionCanary +
+			"&error_uri=https%3A%2F%2Fexample.test%2F" + privateRuntimeURICanary,
+	} {
+		request, err := http.NewRequestWithContext(
+			t.Context(),
+			http.MethodGet,
+			target+"?"+query+"&iss="+url.QueryEscape(issuer),
+			nil,
+		)
+		if err != nil {
+			t.Fatal("create synthetic custody request")
+		}
+		// Use a fresh owned connection, with no transport retry on a reused one.
+		request.Close = true
+		response, err := client.Do(request)
+		if response != nil {
+			if closeErr := response.Body.Close(); closeErr != nil {
+				t.Fatal("close unexpected custody response")
+			}
+			t.Fatal("query without possession released response")
+		}
+		if !errors.Is(err, io.EOF) {
+			t.Fatal("query rejection did not close before response")
+		}
+	}
+}
+
+func TestPrivateRuntimeCanaryTransportDoesNotRetry(t *testing.T) {
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+	var captures atomic.Int64
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/landing" {
+			response.WriteHeader(http.StatusOK)
+			return
+		}
+		captures.Add(1)
+		panic(http.ErrAbortHandler)
+	}))
+	t.Cleanup(server.Close)
+	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	client := privateRuntimeClient(t, certificate)
+	response, _ := privateRuntimeRequest(
+		t,
+		client,
+		http.MethodGet,
+		server.URL+"/landing",
+		nil,
+		nil,
+	)
+	if response.StatusCode != http.StatusOK {
+		t.Fatal("transport fixture landing failed")
+	}
+	privateRuntimeQueryCanaries(
+		t,
+		client,
+		server.URL+"/callback",
+		"https://identity.example.test/realm",
+	)
+	if count := captures.Load(); count != 3 {
+		t.Fatalf("canary transport attempted unexpected capture count: %d", count)
 	}
 }
 
@@ -345,10 +477,16 @@ type privateRuntimeProcess struct {
 
 // Retain at most one bounded startup log window. Only closed error-code values
 // may be reported after Wait joins the writer; raw logs are never printed.
-type privateRuntimeDiagnostic struct{ buffer bytes.Buffer }
+type privateRuntimeDiagnostic struct {
+	buffer    bytes.Buffer
+	truncated bool
+}
 
 func (diagnostic *privateRuntimeDiagnostic) Write(contents []byte) (int, error) {
 	limit := min(len(contents), max(0, 8192-diagnostic.buffer.Len()))
+	if limit != len(contents) {
+		diagnostic.truncated = true
+	}
 	if _, err := diagnostic.buffer.Write(contents[:limit]); err != nil {
 		return 0, err
 	}
@@ -357,6 +495,9 @@ func (diagnostic *privateRuntimeDiagnostic) Write(contents []byte) (int, error) 
 
 func (diagnostic *privateRuntimeDiagnostic) failureCode() string {
 	defer func() { clear(diagnostic.buffer.Bytes()); diagnostic.buffer.Reset() }()
+	if diagnostic.truncated {
+		return "closed_process_failure"
+	}
 	for _, line := range bytes.Split(diagnostic.buffer.Bytes(), []byte{'\n'}) {
 		var entry struct {
 			Code string `json:"error_code"`
@@ -374,13 +515,36 @@ func (diagnostic *privateRuntimeDiagnostic) failureCode() string {
 	return "closed_process_failure"
 }
 
+func TestPrivateRuntimeDiagnosticCustody(t *testing.T) {
+	t.Parallel()
+	for _, marker := range []string{privateRuntimeCodeCanary, privateRuntimeDescriptionCanary, privateRuntimeURICanary,
+		base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x71}, 32))} {
+		if privateRuntimeCanaryFree([]byte("prefix " + marker + " suffix")) {
+			t.Fatal("canary detector missed synthetic query material")
+		}
+	}
+	var diagnostic privateRuntimeDiagnostic
+	for _, contents := range [][]byte{bytes.Repeat([]byte{'x'}, 8192), []byte(privateRuntimeCodeCanary)} {
+		if written, err := diagnostic.Write(contents); written != len(contents) || err != nil {
+			t.Fatal("owned diagnostic write failed")
+		}
+	}
+	if !diagnostic.truncated || diagnostic.buffer.Len() != 8192 || diagnostic.failureCode() != "closed_process_failure" {
+		t.Fatal("truncated diagnostic accepted as custody evidence")
+	}
+	if diagnostic.buffer.Len() != 0 {
+		t.Fatal("joined diagnostic retained owned bytes")
+	}
+}
+
 func startPrivateRuntimeProcess(t *testing.T, binary string, environment []string) *privateRuntimeProcess {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
 	// Binary is validated as the exact just-built fixture executable, no shell.
 	command := exec.CommandContext(ctx, binary, "serve") //nolint:gosec
 	child := &privateRuntimeProcess{command: command, done: make(chan struct{})}
-	command.Env, command.Stdout, command.Stderr = environment, io.Discard, &child.diagnostic
+	// os/exec serializes identical stdout/stderr writers. Only inspect after Wait.
+	command.Env, command.Stdout, command.Stderr = environment, &child.diagnostic, &child.diagnostic
 	if err := command.Start(); err != nil {
 		cancel()
 		t.Fatal("start owned process")

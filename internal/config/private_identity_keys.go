@@ -48,6 +48,7 @@ type PrivateIdentityKeyMaterial struct {
 	SubjectActive, ProviderSession, SessionActive     ResidentKeyMaterial
 	Idempotency, RateLimit                            ResidentKeyMaterial
 	SubjectPrevious, SessionPrevious                  *ResidentKeyMaterial
+	snapshots                                         [13]privateIdentityKeySnapshot
 }
 
 // NewPrivateIdentityKeyFiles rejects missing or aliased references before any
@@ -152,6 +153,7 @@ func (files *PrivateIdentityKeyFiles) loadCandidate(
 	if !validPrivateIdentityKeyID(material.Initiation.ID) || ctx.Err() != nil {
 		return nil, ErrInvalid
 	}
+	material.snapshots = snapshots
 	accepted = true
 	return material, nil
 }
@@ -169,6 +171,22 @@ func (material *PrivateIdentityKeyMaterial) Clear() {
 		}
 	}
 	material.SubjectPrevious, material.SessionPrevious = nil, nil
+	material.snapshots = [13]privateIdentityKeySnapshot{}
+}
+
+func (material *PrivateIdentityKeyMaterial) stillCurrent(ctx context.Context) bool {
+	if material == nil || ctx == nil || ctx.Err() != nil {
+		return false
+	}
+	for index, key := range material.purposes() {
+		if key == nil {
+			continue
+		}
+		if !validPrivateIdentityKeyID(key.ID) || !material.snapshots[index].stillCurrent(ctx) {
+			return false
+		}
+	}
+	return ctx.Err() == nil
 }
 
 func (material *PrivateIdentityKeyMaterial) purposes() [13]*ResidentKeyMaterial {
