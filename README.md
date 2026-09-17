@@ -1980,6 +1980,65 @@ Optional signing-provider fixture:
 Source only; all named unknown-ACK/production-crash/restore/live/artifact exclusions
 remain. Canonical originals updated locally, Git mirror only pushed; public SSO off.
 
+### Process log callback-custody defense
+
+`SSO-PROCESS-LOG-CUSTODY-001` closes an attribute-name/group-path gap in the
+existing process JSON logger. Exact normalized callback code/state/nonce,
+verifier/challenge, proof/CSRF, claims/email, query/request-target and referrer
+aliases redact in addition to the existing key/token/cookie/error defenses.
+Normalization ignores case and underscore/hyphen/dot separators. Exact matching
+preserves closed status_code, error_code, state_version, operation and result.
+
+Every leaf beneath ANY sensitive group also redacts, including With-bound
+attributes, WithGroup and nested groups returned by LogValuer. The stdlib
+ReplaceAttr callback visits leaves, not group attributes; checking only the leaf
+name would leak generically named payloads under raw_query/authorization groups.
+Group structure/names and independent sibling fields remain intact.
+
+This is defense in depth, not evidence of a live leak: private auth flows already
+avoid generic request logging. Fixed messages, static trusted names and closed
+values remain mandatory. No value-content inspection or safe arbitrary-object
+serialization is claimed. Secrets in messages/names, innocently named opaque
+maps/structs, custom LogValuer side effects and other sinks are outside this
+defense. No new request middleware, auth route, trace, listener or public switch.
+Client wire, authority/revision propagation, dependencies and disabled public SSO
+defaults are unchanged. Operational edge/database/query-trace suppression,
+key-mount custody, separate unknown-claim ACK, native clocks and real
+Google-through-Keycloak/browser/client/HA/artifact acceptance remain gates.
+
+Canonical STRIDE, observability, ADR and test requirements were updated before
+code in the original sibling core-docs directory. Those originals are local;
+this README is the versioned Git mirror. Next: operational key-mount/ingress query-custody qualification,
+retaining the separate unknown-claim ACK disposition gate before live SSO.
+
+Final frozen-source qualification (2026-09-17, baseline b336596): named alias and
+all six group-path regressions fail before correction and pass afterwards.
+Uncached shuffled package race passes (1.496s); ten-second/two-worker pure path
+fuzz passes 998606 executions (11.461s package), not performance/coverage proof.
+Fresh unfiltered package lint before/after scoped autofix passes with zero issues,
+no fixes and all 704 repository Go hashes/exact two target texts unchanged.
+Tool 2.13.2, Go 1.26.8, module
+`h1:bCyq3E4vo9qwzifjpzJqYndEt7Ncva80qkk8G2B4TXU=`; Diff stage 42ns on the
+zero-issue path, no processor warning/error. Unchanged full make quality passes
+format/module, vet, shuffled unit/race, full/integration lint, vuln and workflow.
+Vuln reports zero affected symbols/imported packages plus three non-called
+required-module advisories, not zero advisories. Fully redacted source/original-
+doc trees and complete history require clean secret scans before landing, without
+added exclusions/baselines. No Linux/live/target/browser/clock qualification is
+claimed by this sink-only change; no disposable or external services are needed.
+
+Source SHA-256: logging.go
+`55c17afd54d26b469fe976f280c91c67915e3ac06208fd09ef51a155b6b38612`,
+logging_test.go
+`c40a46598b88e1a6aa089a85dc9474b61995b76ddcd83156cbf8360da16189da`.
+Delivery checkpoint: canonical roadmap 18 places identity/session schema in
+Phase 1 and complete Keycloak/BFF/CLI login in Phase 2. Private SSO source tests
+do not close either Phase 1's deployment/operational exit or real Google login.
+Consolidate the remaining runtime/config/listener wiring, target custody/clock/
+uncertainty requirements and pinned Keycloak/browser/client acceptance into
+delivery milestones; do not substitute repeated tiny test slices or commit
+counts for capability progress, or waive existing public security gates.
+
 ### Private browser login document and dispatcher
 
 `SSO-LOGIN-ROUTE-CONTRACT-001` and `SSO-PRIVATE-LOGIN-DISPATCHER-001` prepare
