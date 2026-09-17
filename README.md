@@ -2887,6 +2887,38 @@ Next remains supported clean image selection, then protected target delivery/
 runtime qualification and controlled real Google/browser/client acceptance.
 No new server is needed for this source step.
 
+### Bounded private Keycloak scan lifecycle
+
+`SSO-KEYCLOAK-SCAN-LIFECYCLE-001` implements a fixed external 180-second scan
+deadline/five-second close budget in the deployment repository. Reviewed
+build-only Node 22.20.0 owns one detached Unix scanner group, captures a validated
+PID once, kills only that group on deadline/cancel, and requires leader close and
+observed group absence before success. Ambiguous kill/reap/group inspection is
+an unresolved cleanup failure; stop delivery and check owned leftovers. Node
+preload/module overrides and deadline overrides are forbidden. Scanner output
+is discarded; diagnostics contain only closed outcome/exit/duration metadata.
+This does not add Node to Core/Keycloak runtime or weaken image/report gates.
+
+Twenty-eight new deterministic/CLI tests plus existing 147 source contracts pass
+(175, no skip). One bounded native Unix-group smoke passes actual SIGKILL/close/
+group absence using only an accelerated internal clock, not production Trivy
+timing. Scan-report/no-build, syntax and unchanged private-provider/Core/Console
+Helm regressions pass. An early measured amd64 invocation overruns at 354,724 ms
+and remains failed timing evidence; cause is not established. Subsequent matching
+scanner/runner inventory is zero. Final-source real guards exit 1 before build:
+amd64 17,190 ms, arm64 2,364 ms. Neither is a clean-image/new CVE-count verdict
+or universal wall-clock guarantee. The official base index pin is unchanged;
+no supported clean replacement is selected. Read-only target inventory has zero
+matching Keycloak Deployments, not runtime acceptance.
+
+No Docker build/push/install, target Secret/DB mutation, Google request, Go/schema/
+dependency or meshd/meshctl wire change occurs. Whole Go/Linux/client/HA/provider-
+runtime canary is not rerun or claimed. Original core-docs/13/16/17/18/27 are
+updated locally, not pushed; this README is their Git mirror. The release blocker
+and all six live Google cases remain open. Next: supported clean image/release
+trust, protected target DB/TLS/immutable Secrets/runtime, then controlled Google/
+browser/client acceptance. Existing servers suffice for current source work.
+
 ## Account Session authentication
 
 The `internal/identity/accountsession` package now owns the first human-session
