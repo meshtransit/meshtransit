@@ -46,7 +46,7 @@ func (storage *privateFactoryIntegrationStorage) openPrivateFactoryWorkerPool(
 	}
 	pg := process.Storage.PostgreSQL
 	allowed := database == "meshtransit_private_factory_expiry" || database == "meshtransit_private_factory_consuming" ||
-		database == "meshtransit_private_factory_abandoned"
+		database == "meshtransit_private_factory_abandoned" || database == "meshtransit_private_factory_ack"
 	owned := allowed && pg.Address == "meshtransit-postgres:5432" && pg.Database == database
 	if !owned || pg.Worker.User != "mesh_worker" {
 		t.Fatal("refuse unowned expiry worker scope")
@@ -60,6 +60,12 @@ func (storage *privateFactoryIntegrationStorage) openPrivateFactoryWorkerPool(
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
 		defer stop()
+		if database == "meshtransit_private_factory_ack" {
+			if closePrivateFactoryACKPool(cleanup, pool) != nil {
+				t.Error("close positively idle owned ACK expiry worker pool")
+			}
+			return
+		}
 		if pool.Shutdown(cleanup) != nil {
 			t.Error("close owned expiry worker pool")
 		}

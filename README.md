@@ -2417,10 +2417,68 @@ qualification and telemetry are routed through 17 and 14. This README is the
 versioned Git mirror; the sibling core-docs directory is not itself a Git repo.
 Public key/query custody, unknown-ACK, target expiry/recovery/native clocks,
 all six live Google cases, clients/HA and immutable-artifact gates remain open.
-Next consolidated milestone: unknown-claim/issuance acknowledgement disposition
-and intended-target expiry/recovery qualification, retaining key/query/native
-clock and operational gates; then pinned Keycloak Google, real browser/client/HA
-and immutable-artifact acceptance before public activation. Google stays in Phase 1.
+The committed-wire unknown-claim/issuance branch is source-qualified below.
+Next consolidated milestone: protected key/query custody and intended-target
+expiry/recovery/clock/runtime qualification; then pinned Keycloak Google,
+real browser/client/HA and immutable-artifact acceptance before public activation.
+Google stays in Phase 1.
+
+### Private factory wire Commit acknowledgement integration
+
+`SSO-PRIVATE-FACTORY-WIRE-ACK-001` is an integration-only owned verified-TLS
+loopback PostgreSQL relay against a seventh cold `meshtransit_private_factory_ack`
+database. It drops exactly one selected backend `CommandComplete COMMIT` before
+forwarding that frame to the unchanged runtime pool/factory. Migration/admin
+reads/worker remain separate roles; no adapter/effect-port/clock override or
+production fault knob. Bounded transient frames, connection/lifetime limits and
+positive socket/copy joins retain query/proof custody without logging frame data.
+
+Source-qualified committed claim/issuance ACK loss must
+deliver no Session cookies, retain exact durable evidence/provider counts, reject replay
+through transport reconnect and naturally expire the original consuming row.
+Auth-row expiry must leave the undisclosed succeeded Session unchanged; a new
+independent login may succeed without resolving/recovering an unknown receipt.
+Fault selection skips one/three read-only and prior completions to target actual
+claim/issuance writes; independent durable evidence rejects a wrong phase.
+Dedicated ACK errors must be unavailable+unknown, not invalid or timeout/cancel;
+the old rejected-replay oracle remains unchanged. Initial fixture compile assumed
+a nonexistent Session-ID parser; use released publicid syntax rather than adding
+a production API. Initial gosec conversion failures now have an explicit bounded
+return, no nolint. First Linux execution passed the five previous private cases
+but stopped before the new lane because its added shell continuation was double-
+escaped; correct only that new block. These are not complete/wire qualification.
+Final unchanged make quality and pure frame bounds/suppression race x25 pass.
+Govulncheck reports zero called/imported-package vulnerabilities, but three
+required-module advisories not called. Scoped pinned v2.13.2/Go1.26.8 lint made
+no fixes; all 721 Go exact byte/SHA snapshots, 717 outside-scope paths and the
+781-entry raw index fence remain unchanged. Diff 121.677042 ms before Fixer is only
+lint accounting; existing nolint filtering left no input, not runtime proof.
+The second full Linux attempt passed both real wire subcases but root worker
+pool cleanup/leak assertions failed: pinned pgx v5.11.0/puddle v2.2.2 destruction
+is asynchronous and can temporarily retain an acquired lease after worker Done.
+Only this new ACK scope now probes unchanged Pool.Shutdown on classified busy,
+within its independent five-second cleanup budget after consumer joins. No SQL/
+Commit retry, force-close or leak exclusion; prior scopes retain their immediate
+cleanup assertions. A timeout still retains resources and fails the test.
+The third full attempt passes complete ACK cleanup/leak and private api process,
+but fails three old all/worker expiry evidence queries. The base fixtures retain
+five-minute open Auth rows; their batch-one total-confirmation metric cannot
+identify a row after unrelated natural waits mature that backlog.
+Final corrected Linux execution passes the whole lane: base migration/primitive
+15.746s, intact all/default-profile platform/restart/Noise matrix 6.370s, all five
+earlier private cases, complete ACK cleanup/leak 62.531s and private api process
+7.336s. Run the unchanged base matrix adjacent to its fixture before slow cold
+scopes, then restore api/no-worker environment for private initiation/callback.
+Natural earlier waits remain 61.733s/61.505s/61.477s. Bounded read-only canonical
+candidate counts are zero before the base matrix and sixteen after private
+scopes, confirming the timing precondition; the paired matrix pass supports
+fixture contamination, not an oracle waiver. No deletion/deadline/clock shortcut,
+production source/schema/client-wire change or scan exclusion was introduced.
+Prior failed attempts are not reclassified as passing evidence.
+This is not every uncertain network outcome,
+target recovery/restore, failover, Google/browser/client/HA or artifact proof.
+The original contracts were updated first in core-docs 26/13/17/18; this README
+is their Git mirror, not a claim that sibling non-Git docs were pushed.
 
 ## Account Session authentication
 

@@ -402,6 +402,33 @@ run_go test \
 	-timeout=5m \
 	./internal/integration
 
+# Base primitive tests retain five-minute open Auth rows. Keep their unchanged
+# batch-one process oracles adjacent, before unrelated natural-expiry waits.
+# Aggregate-only diagnostics use the canonical bounded selector; no row data,
+# deletion, deadline rewrite or background worker drains the base fixture.
+if [[ "${go_runner}" == container ]]; then
+	docker exec --env "PGPASSWORD=${postgres_password}" "${postgres_container}" \
+		psql --username postgres --dbname meshtransit --set ON_ERROR_STOP=1 \
+		--quiet --no-align --tuples-only \
+		--command "BEGIN READ ONLY; SET LOCAL statement_timeout='5s'; SELECT 'owned base expiry candidates before process matrix: ' || jsonb_array_length(mesh_ops.list_due_oidc_browser_v1('01890f00-0000-7000-8000-000000000001'::UUID,128)); ROLLBACK"
+fi
+export MESHTRANSIT_ROLE=all
+export MESHTRANSIT_POSTGRES_WORKER_USER=mesh_worker
+export MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE="${fixture_dir}/worker-password"
+export MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS=2
+export MESHTRANSIT_TEST_MESHCORE_BINARY="${fixture_dir}/meshcore"
+run_go build -trimpath -o "${MESHTRANSIT_TEST_MESHCORE_BINARY}" ./cmd/meshcore
+run_go test \
+	-tags=integration \
+	-count=1 \
+	-race \
+	-run '^(TestTLSAuthenticatedDependencies|TestRoleAllProcessRegistrationConvergesAcrossRestart|TestRoleAllProcessRestartsAfterGracefulShutdown|TestRoleAllProcessRejectsInvalidConfigurationBeforeListening|TestRoleAllProcessExpiryConvergesAcrossRestart)$' \
+	-timeout=5m \
+	./internal/integration
+export MESHTRANSIT_ROLE=api
+unset MESHTRANSIT_POSTGRES_WORKER_USER MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE
+unset MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS
+
 # The concrete private factory has no injected trust/clock/transport. Qualify its
 # initiation separately on a cold owned database and explicit Linux startup roots.
 # Native-host clock/trust qualification remains an independent gate.
@@ -501,6 +528,23 @@ if [[ "${go_runner}" == container ]]; then
 	export MESHTRANSIT_POSTGRES_DATABASE=meshtransit_private_factory_abandoned
 	run_go test -tags=integration -count=1 -race -shuffle=on -v \
 		-run '^TestPrivateIdentityFactoryProcessAbandonedIntegration$' -timeout=5m ./cmd/meshcore
+	# Real committed wire ACK loss owns a seventh scope; no application wrapper.
+	docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname postgres --set ON_ERROR_STOP=1 \
+		--command 'CREATE DATABASE meshtransit_private_factory_ack OWNER mesh_migrator' \
+		>/dev/null
+	docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname meshtransit_private_factory_ack --set ON_ERROR_STOP=1 \
+		--command 'CREATE EXTENSION btree_gist' \
+		>/dev/null
+	export MESHTRANSIT_MIGRATION_POSTGRES_DATABASE=meshtransit_private_factory_ack
+	export MESHTRANSIT_POSTGRES_DATABASE=meshtransit_private_factory_ack
+	run_go test -tags=integration -count=1 -race -shuffle=on -v \
+		-run '^TestPrivateIdentityFactoryWireACKIntegration$' -timeout=5m ./cmd/meshcore
 	unset MESHTRANSIT_PRIVATE_FACTORY_INTEGRATION
 	unset SSL_CERT_FILE SSL_CERT_DIR
 	export MESHTRANSIT_MIGRATION_POSTGRES_DATABASE=meshtransit
@@ -511,8 +555,6 @@ export MESHTRANSIT_ROLE=all
 export MESHTRANSIT_POSTGRES_WORKER_USER=mesh_worker
 export MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE="${fixture_dir}/worker-password"
 export MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS=2
-export MESHTRANSIT_TEST_MESHCORE_BINARY="${fixture_dir}/meshcore"
-run_go build -trimpath -o "${MESHTRANSIT_TEST_MESHCORE_BINARY}" ./cmd/meshcore
 
 if [[ "${go_runner}" == container ]]; then
 	docker exec \
@@ -540,10 +582,9 @@ if [[ "${go_runner}" == container ]]; then
 	export MESHTRANSIT_POSTGRES_DATABASE=meshtransit
 fi
 
-run_go test \
-	-tags=integration \
-	-count=1 \
-	-race \
-	-run '^(TestTLSAuthenticatedDependencies|TestRoleAllProcessRegistrationConvergesAcrossRestart|TestRoleAllProcessRestartsAfterGracefulShutdown|TestRoleAllProcessRejectsInvalidConfigurationBeforeListening|TestRoleAllProcessExpiryConvergesAcrossRestart)$' \
-	-timeout=5m \
-	./internal/integration
+if [[ "${go_runner}" == container ]]; then
+	docker exec --env "PGPASSWORD=${postgres_password}" "${postgres_container}" \
+		psql --username postgres --dbname meshtransit --set ON_ERROR_STOP=1 \
+		--quiet --no-align --tuples-only \
+		--command "BEGIN READ ONLY; SET LOCAL statement_timeout='5s'; SELECT 'owned base expiry candidates after private scopes: ' || jsonb_array_length(mesh_ops.list_due_oidc_browser_v1('01890f00-0000-7000-8000-000000000001'::UUID,128)); ROLLBACK"
+fi
