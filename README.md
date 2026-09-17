@@ -2684,10 +2684,62 @@ not provider startup, image trust or live Google evidence.
 No Go, migration, Core/client wire or live environment changes occur. Original
 13/17/18/27 documents are updated locally, not pushed; Core README mirrors the
 record. Whole Go quality/Linux integration is not rerun for these script/docs
-changes. Public login and all six real Google cases remain open. Next independent
-source milestone: reviewed Google-only realm/client/browser/first-broker flows,
-with no local/provider fallback, no email auto-link and no Core membership grant.
-Provider installation remains blocked on the image and other target gates.
+changes. Public login and all six real Google cases remain open. The independent
+Google-only configuration milestone below does not waive the image/target gates.
+
+### Google-only Keycloak configuration and native canary
+
+`SSO-KEYCLOAK-GOOGLE-CONFIG-001` adds a closed, credential-free profile and native
+realm renderer to the separate deployment repository. Realm/client/Google are
+always disabled in source output. The confidential client fixes code flow,
+PKCE S256, RS256, one exact HTTPS callback and same-origin distinct logout URI;
+default/optional/offline scopes, password/implicit/service/device/token-exchange
+grants and refresh issuance are off. Only Google is declared, without upstream
+token storage, trusted-email/role/group mapping or Core membership grants.
+Browser and first-broker flows contain only REQUIRED fixed Google redirect and
+create-user-if-unique, without password/form/cookie or auto-link alternatives.
+The native AUTH_TIME/ACR mappers are configured; successful real token assurance
+and collision behavior still require live proof, not email-based recovery.
+
+The initial source test fails before implementation. All 30 Node 22.20.0
+source/CLI tests now pass: exact non-secret fields/profile/version/identifiers/
+URIs, disabled output, declared native flow UUID binding and bounded regular
+non-symlink CLI input with no invalid stdout. The final native canary passes
+on the existing immutable Linux/arm64 blocked candidate, using generated TLS/
+operational/client/broker credentials and scratch H2/augmentation/imports. Two
+non-root/read-only bounded peers share only an internal network, with no host
+ports, upstream requests, Docker/native logs or proxy transport. HTTPS inputs
+travel on stdin, with certificate/hostname validation, bounded responses and no
+redirect following. Exact owned resources/private data are cleaned before pass.
+
+Actual native import checks client/broker/flows, disabled built-in clients and
+empty scope assignments. Browser checks exact Google redirect URI/scopes without
+following that Location; missing/disabled broker, empty/unknown hints and
+prompt-none fail without local credentials. Missing/plain PKCE, implicit,
+redirect origin/path/query changes, offline scope and password/client-credentials
+grants with valid client authentication reject. Initial alias override and
+internal-network port-publication failures were fixed with native mapped flow
+IDs and an internal HTTPS peer, not skipped or an open network. Unsupported
+implicit requests may emit only an unauthorized_client error fragment with
+exact issuer/no code or token. Normal code-flow query/issuer assertions remain;
+Core still does not accept fragment callbacks.
+
+This is disposable provider configuration evidence, not successful Google
+login/token, actual collision/linking, Core membership/session, native PostgreSQL
+Secret/escaping, enforced target Kubernetes mounts/policy, client wire/data-plane,
+HA, remote CI or signed clean-image release evidence. No image is pulled/built/
+published or live realm installed; no Core Go/schema/meshd/meshctl change occurs.
+The existing 2 High/1 Critical image blocker and all six live Google gates remain.
+No whole Go/Linux quality rerun is claimed for these script/docs changes.
+Original core-docs/13/17/18/27 are updated locally, not pushed; this is their Git
+mirror. Commands, immutable artifacts and pinned vendor references are in the
+deployment repository's `identity/keycloak/README.md`.
+
+Next: protected provisioning/preflight binding the exact realm/issuer, Core
+callback/logout/client credential and Google Web application registration.
+Existing servers suffice; provider rollout still requires supported clean
+image/signature/SBOM/provenance and actual DB/Secret/isolation/runtime gates.
+Public SSO stays disabled; first live login remains Google through Keycloak.
 
 ## Account Session authentication
 
