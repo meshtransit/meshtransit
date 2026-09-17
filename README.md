@@ -2559,6 +2559,50 @@ query-log custody, target key management, native clocks, intended expiry/recover
 real Google/browser/client/HA or immutable-artifact gate. Google remains Phase 1,
 SSO-only through Keycloak; private loopback source proof is not public activation.
 
+### Deployment-owned nginx edge preparation
+
+SSO-EDGE-TRANSPORT-PREPARATION-001 is implemented in the separate deployment
+repository's chart 0.1.10, not a new Core login listener. Original threat model,
+operations and roadmap 13/16/18 were updated before implementation; qualification
+17 and this Git mirror record the bounded evidence. Non-Git original docs are
+saved locally, not pushed as part of Core.
+
+The nginx Ingress requires a same-namespace independently provisioned CA-only
+trust Secret. The chart owns verified HTTPS, exact serving hostname/SNI, depth
+three and HTTPS redirect; disables access/rewrite logs and OpenTelemetry; and
+rejects owned annotation/snippet overrides or missing trust configuration.
+The serving private key is never copied to the trust Secret. Rendering cannot
+attest a live controller: generated directives and actual serving paths must
+also be verified. Future Helm upgrades must use reviewed chart/values rather
+than old stored overrides after an ingress-only apply.
+
+Owned chart regression failed against the old chart, then strict default/POC
+lint/render and twelve reason-checked override rejections pass on final chart.
+Existing Console isolation checks also pass. Local Trivy 0.74.0 with the cached
+check bundle reports no High/Critical findings in the actual rendered POC;
+this is not container-vulnerability, chart-signature or release-artifact proof.
+Server dry-run and ingress-only apply pass. No binary rollout, migration,
+dependency/controller configuration or client-wire change is made.
+
+Actual scoped nginx configuration has four verified TLS/CA/name/SNI directives,
+no verify-off directive, three access-log-off locations, and no trace/rewrite-on
+directive. Control HTTP is 200 with frontend TLS verification successful; a
+synthetic revoke route without bearer returns 401. A disposable .invalid virtual
+host returns 502 for the wrong backend certificate hostname after effective
+configuration convergence. Its first pre-reload 404 was not a passing negative
+test; the disposable Ingress was removed. Fresh ts2021/142 Noise probes pass on
+both existing Linux clients before and after apply. Both clients were already
+offline/blocked with no map revision before apply and remain so; no map-stream,
+reconnect, data-plane or real Google acceptance is claimed.
+
+Running Core remains git-c291741 at its existing immutable image digest;
+private construction source 9da65be is NOT deployed or target-qualified here.
+NTP synchronization flags on client hosts are inventory, not clock-skew proof.
+nginx error logs, other TLS/collector/Keycloak/browser sinks, protected identity
+mounts, native/dependency clocks, intended expiry/recovery, readiness isolation,
+real Google/browser/client/HA and signed immutable artifacts remain gates.
+Public SSO stays disabled; do not forward the private loopback profile.
+
 ## Account Session authentication
 
 The `internal/identity/accountsession` package now owns the first human-session
