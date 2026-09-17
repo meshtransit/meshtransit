@@ -2789,10 +2789,65 @@ enforced target Secret/DB/mounts/isolation/runtime or release trust is qualified
 The previous image blocker and all six live Google gates remain, public SSO off.
 Original core-docs/13/16/17/18/27 are updated locally, not pushed; README is their
 Git mirror. Commands/scope/vendor references are in deployment
-`identity/keycloak/README.md`. Next: native runtime configuration and DB/TLS
-credential delivery/escaping qualification, alongside supported clean release
-image selection. Existing servers suffice; actual rollout/live testing still
+`identity/keycloak/README.md`. The runtime milestone below supersedes this
+milestone's H2 fixture and adds native credential/TLS checks. Existing servers
+suffice; actual rollout/live testing still
 waits for image/signature/SBOM/provenance and target custody/runtime gates.
+
+### Protected native Keycloak runtime configuration
+
+`SSO-KEYCLOAK-RUNTIME-CONFIG-001` implements offline protected `keycloak.conf`
+preparation in the separate deployment repository. Eight closed credential-free
+registration fields bind native profile/version, distinct exact HTTPS frontend/
+admin origins, independent PostgreSQL host/port/database and initial/steady
+bootstrap mode. Fixed private files supply DB username/password; initial mode
+also reads operational bootstrap username/password. Steady mode never reads or
+emits bootstrap credentials. Usernames are 1–63 ASCII identifier bytes; passwords
+are exact 32–4096 printable non-whitespace ASCII bytes with distinct purposes,
+no trimming/normalization or entropy/remote-state attestation.
+
+The shared protected file boundary preserves owner-only canonical directories/
+secure ancestors/outside-Git/single-link files, bounded descriptors/path metadata
+rechecks, exclusive checked/fsynced private output and identity-checked partial
+cleanup. Only native credentials plus credential-free metadata are emitted;
+diagnostics remain fixed/generated basename only. Protect/remove completed or
+interrupted bundles; this does not guarantee hostile-filesystem transactions or
+JavaScript heap zeroization. No import/install/enable/Secret apply is performed.
+
+Exact escaping is pinned to the bundled SmallRye 3.16.0: protect dollars, then
+backslashes for Java properties. Unlike moving latest implementation, the pinned
+interceptor does not enable general expression escapes. Initial native startup
+failed because doubling other backslashes at both layers changed the DB password;
+closed failure classification identified it and exact-byte regressions guard
+the corrected algorithm. No credential rotation/authentication waiver hides it.
+
+Node 22.20.0 passes 46 new runtime, 100 older Google contracts and a maximum-
+length realm preservation regression (147, no skip). Final current-source native
+qualification passes actual optimized Keycloak at its original installation
+path, ephemeral PostgreSQL 18.6 with
+CA-signed verified TLS/SCRAM, encrypted provider DB sessions, special-character
+DB credentials and exact bootstrap authentication. Existing staged-disabled
+realm/client/Google import, Core-secret/Basic/browser/PKCE/grant assertions pass.
+Wrong password/CA/hostname each produces a specifically classified native
+startup denial, never arbitrary exit/timeout. The internal unpublished baseline
+has three bounded non-root/read-only/capability-free peers; each sequential denial
+probe adds only one temporary provider. All owned containers/network/private
+credentials/DB/TLS resources are checked clean before pass. Docker logging stays
+off; bounded private tmpfs startup errors are classified locally, never raw
+returned/retained evidence or operational/public query-custody proof.
+
+Source syntax and scan-report/no-build regressions pass. No image pull/build/
+publish, production storage/target apply, Google request, Core Go/schema/
+dependencies or meshd/meshctl wire change results. Whole Go/Linux/client/HA is
+not rerun or claimed. The image remains CVE-blocked; public SSO and all six live
+Google cases remain open. Target immutable Secret contents/0440 projections,
+independent DB ownership/grants/backup, serving/CA TLS rotation/certificate
+coverage/policy, release signature/SBOM/provenance and actual runtime custody are
+not qualified by a source fixture. Original core-docs/13/16/17/18/27 are updated
+locally, not pushed; README is the Git mirror. Commands/resource/artifact pins
+are in deployment `identity/keycloak/README.md`. Next: select a supported clean
+release artifact, then protected target delivery/runtime qualification before
+controlled real Google/browser/client acceptance. No new server is needed now.
 
 ## Account Session authentication
 
