@@ -1760,6 +1760,74 @@ signing-provider fixture
 `317ac5e1e7f6efa7db875db03636f9b12aa0985ec2e36f8e59eb4e53937e3984`.
 These are source records, not Google/browser/HA/clock or release-artifact evidence.
 
+### Concrete private factory natural-expiry/quarantine integration
+
+`SSO-PRIVATE-FACTORY-EXPIRY-QUARANTINE-INTEGRATION-001` adds a third exclusively
+owned cold `meshtransit_private_factory_expiry` database to the same isolated
+offline verified-TLS Linux lane. All released migrations, original clock/CSPRNG,
+resident keys, OS-root provider clients and existing initiation/callback/process
+oracles remain unchanged. Runtime and worker pools retain distinct credentials;
+the actual `composeAuthExpiry` worker owns no-grant cleanup.
+
+The factory creates and authenticates one Session, then independently creates
+one pending login and prepares its protected continuation. Pending lifetime is
+the already permitted one-minute minimum, never weakened or backdated. Observe
+one real empty worker pass before the original deadline. A bounded audited
+synthetic Deployment UPDATE advances version/generation/epoch to two and marks
+recovery quarantined. Old same-ring Session authentication and continuation must
+immediately fail without exchange, claim, Session or evidence. Original pending
+metadata and the durable issued Session remain unchanged.
+
+Bounded 100-ms durable-state predicate probes (at most 75 seconds from creation),
+not sleeps or `pg_sleep`, observe natural expiry through quarantine. The worker
+must commit exactly one pending-to-expired/version-two mutation/audit/outbox,
+`deadline_expired`, NULL actor/result, original binding/timestamps, canonical
+lifecycle/event hashes and complete three-column PKCE erasure. Session, subject,
+membership, RBAC, Network and revision authority do not change. After checked
+shutdown/Done join, stale continuation replay and one independently composed
+fresh empty worker pass must add no exchange/evidence. All cleanup is bounded,
+checked and joined before the final race/leak check.
+
+Canonical docs 13/17/18/26 were updated locally before code; this is their Git
+mirror, not a commit of the non-Git sibling tree. Synthetic epoch/quarantine is
+a fence fixture only, not a recovery controller, external witness, restored-ledger
+lineage or recovery audit semantic-hash claim. Factory consuming abandonment,
+full intended-target cleanup/legacy remediation, operational key/query custody,
+native/cross-host clocks, real Google through Keycloak, browser/client/HA,
+remote CI and immutable artifacts remain separate gates. Public SSO stays off;
+production Go/schema/grants/constraints/dependencies and meshd/meshctl wire are
+unchanged. Status: implemented and source-qualified in the owned Linux lane only.
+
+Source qualification (2026-09-17, base `53289a7`): final full `make quality`
+passes unchanged format/tidy/vet, shuffled unit/race, unfiltered pinned normal/
+integration-tag lint, symbol-vulnerability and workflow gates. Govulncheck finds
+zero affected symbols/imported packages and three non-called module advisories,
+not zero dependency/container advisories. An obsolete baseline tool could not
+load Go 1.26 and is not evidence; the repository-pinned successful target is.
+Context-safe scoped pinned autofix makes no edits; all 43 cmd Go hashes and exact
+three target texts remain unchanged. Probe cleanup now defers cancellation even
+on assertion exit and rechecks the deadline before accepting a result; final
+gates were rerun on those corrected bytes.
+
+Final fresh internal-only offline verified-TLS Linux execution passes all
+released migrations (16.057s), five unchanged initiation cases (cmd race 1.435s),
+five unchanged signed callback cases (2.588s), the new natural-expiry workflow
+and both named quarantine denial probes without Skip (61.818s), joined leak
+checks and existing dependency/process restart/expiry suites (6.352s). Exact
+Go/PostgreSQL/Redis digests and mount/trust/privilege profiles are unchanged.
+All owned disposable resources are removed after exit. Host uncached focused
+compiler/unit race passes (1.765s), not host TLS/clock acceptance. Existing
+two-worker ten-second expiry-batch fuzz passes 73,161 executions. Shell syntax,
+pre-effect invalid-mode rejection and fully redacted tree/canonical-doc/all-129-
+pre-commit-history secret scans pass without new exclusions/baselines.
+
+New fixture/test SHA-256 records:
+`48ac40cfcb83f6bf373cc73fbc7e414020e06fbf32c508ffc33e7f3478560f83` and
+`cbb57dcdcfee1d9f40bf5ed680408f30f83cae3fff50407cc5b679432ff30825`.
+Current source only; no public activation or live/recovery/clock/artifact waiver.
+Next: factory consuming-abandonment qualification, operational key/query custody,
+then controlled Google-through-Keycloak acceptance after remaining release gates.
+
 ### Private browser login document and dispatcher
 
 `SSO-LOGIN-ROUTE-CONTRACT-001` and `SSO-PRIVATE-LOGIN-DISPATCHER-001` prepare

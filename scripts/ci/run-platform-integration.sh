@@ -445,6 +445,28 @@ if [[ "${go_runner}" == container ]]; then
 	export MESHTRANSIT_POSTGRES_DATABASE=meshtransit_private_factory_callback
 	run_go test -tags=integration -count=1 -race -shuffle=on -v \
 		-run '^TestPrivateIdentityFactoryCallbackIntegration$' -timeout=5m ./cmd/meshcore
+	# Natural factory expiry keeps original timestamps and its one-minute minimum.
+	# This third cold scope has both runtime and independent worker credentials.
+	docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname postgres --set ON_ERROR_STOP=1 \
+		--command 'CREATE DATABASE meshtransit_private_factory_expiry OWNER mesh_migrator' \
+		>/dev/null
+	docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname meshtransit_private_factory_expiry --set ON_ERROR_STOP=1 \
+		--command 'CREATE EXTENSION btree_gist' \
+		>/dev/null
+	export MESHTRANSIT_ROLE=all
+	export MESHTRANSIT_POSTGRES_WORKER_USER=mesh_worker
+	export MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE="${fixture_dir}/worker-password"
+	export MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS=2
+	export MESHTRANSIT_MIGRATION_POSTGRES_DATABASE=meshtransit_private_factory_expiry
+	export MESHTRANSIT_POSTGRES_DATABASE=meshtransit_private_factory_expiry
+	run_go test -tags=integration -count=1 -race -shuffle=on -v \
+		-run '^TestPrivateIdentityFactoryExpiryQuarantineIntegration$' -timeout=5m ./cmd/meshcore
 	unset MESHTRANSIT_PRIVATE_FACTORY_INTEGRATION
 	unset SSL_CERT_FILE SSL_CERT_DIR
 	export MESHTRANSIT_MIGRATION_POSTGRES_DATABASE=meshtransit

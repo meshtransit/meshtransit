@@ -45,7 +45,8 @@ func openPrivateFactoryIntegrationStorage(t *testing.T, database string) *privat
 		t.Fatal("runtime credentials are required")
 	}
 	pg := process.Storage.PostgreSQL
-	allowedDatabase := database == "meshtransit_private_factory" || database == "meshtransit_private_factory_callback"
+	allowedDatabase := database == "meshtransit_private_factory" || database == "meshtransit_private_factory_callback" ||
+		database == "meshtransit_private_factory_expiry"
 	dedicatedDatabase := allowedDatabase && migration.PostgreSQL.Database == database
 	matchingDatabase := pg.Database == migration.PostgreSQL.Database && pg.Address == migration.PostgreSQL.Address
 	owned := dedicatedDatabase && matchingDatabase
