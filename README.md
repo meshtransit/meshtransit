@@ -2735,11 +2735,64 @@ Original core-docs/13/17/18/27 are updated locally, not pushed; this is their Gi
 mirror. Commands, immutable artifacts and pinned vendor references are in the
 deployment repository's `identity/keycloak/README.md`.
 
-Next: protected provisioning/preflight binding the exact realm/issuer, Core
-callback/logout/client credential and Google Web application registration.
-Existing servers suffice; provider rollout still requires supported clean
-image/signature/SBOM/provenance and actual DB/Secret/isolation/runtime gates.
-Public SSO stays disabled; first live login remains Google through Keycloak.
+The protected bundle milestone below implements offline declared-registration
+preflight; it does not qualify installed Core/Google state or target delivery.
+
+### Protected Google preparation bundle
+
+`SSO-KEYCLOAK-GOOGLE-BUNDLE-001` adds offline platform-operator preparation in
+the separate deployment repository. A closed 20-field credential-free
+registration fixes the pinned realm/origin, exact Core issuer/discovery/auth/
+token/JWKS/client/callback/logout, confidential Basic/openid/RS256/query, and
+Google Web client/identity scopes/exact broker redirect. These declare reviewed
+operator registrations, not current Google Console state, Core enabled handlers
+or remote provider drift. Core's private loopback process is not exposed/changed.
+
+Three fixed private input files contain registration and distinct Core/Google
+credentials. Canonical operator-owned 0700 directories, root/operator-owned
+non-writable ancestors (root-owned sticky temp allowed), single-link regular
+0400/0600 files, bounded descriptor/path/metadata rechecks and exclusion of all
+Git ancestors reject ordinary custody/alias/replacement mistakes. Core's actual
+resident BasicSecret requires 32–4096 printable non-whitespace ASCII bytes;
+Google's issued credential is bounded to 1–4096 bytes. Neither is trimmed or
+normalized. Protected generation/delivery remains responsible for entropy and
+installed secret-reference equality; metadata is not filesystem/KMS attestation.
+
+Only an exclusive private bundle is created: bounded native realm JSON with
+exact credentials and registration JSON without secrets/hashes, mode 0600 under
+0700, checked/synchronized files/directory/parent. Realm/client/Google stay
+disabled. No import, Admin API, network/listener, Google request, Core membership/
+audit/outbox or enable/waiver option results. Diagnostics are fixed/generated
+basename only; owned byte buffers are cleared, not JavaScript heap-zeroization
+proof. Ordinary partial failures remove only identity-checked new output;
+replacement operator data is preserved. Cleanup failure/process interruption
+can leave private secret material: stop delivery, protect/remove leftovers and
+remove completed bundles after reviewed delivery, never retain as evidence.
+
+Initial tests fail on the missing implementation. Node 22.20.0 passes 70 new
+source/CLI contracts plus the unchanged 30 renderer tests (100, no skip), including
+256 deterministic parser mutations, binding/custody drift, source/output change,
+partial writes/sync failure, exact special-character bytes and operator data
+retention. The final disposable native canary now consumes four protected
+bundles, checks staged realm/client/Google remain disabled after import, exact
+generated Core secret round-trip and Core-equivalent RFC 6749 form-before-Basic
+negative-grant authentication. Existing verified TLS/browser/PKCE/redirect/scope/
+grant assertions and owned cleanup pass. Two internal bounded non-root peers,
+existing immutable arm64 images, generated H2/TLS/credentials, no host ports/
+logs/proxy/upstream requests; no image pull/build/publish or production apply.
+
+Scan-report/no-build guard and Node syntax regressions pass; they are not image
+acceptance. Core Go/schema/dependencies/meshd/meshctl wire are unchanged, no new
+whole Go/Linux/client/HA qualification claimed. No actual Google registration/
+consent/token/collision, Core Session, native PostgreSQL properties escaping,
+enforced target Secret/DB/mounts/isolation/runtime or release trust is qualified.
+The previous image blocker and all six live Google gates remain, public SSO off.
+Original core-docs/13/16/17/18/27 are updated locally, not pushed; README is their
+Git mirror. Commands/scope/vendor references are in deployment
+`identity/keycloak/README.md`. Next: native runtime configuration and DB/TLS
+credential delivery/escaping qualification, alongside supported clean release
+image selection. Existing servers suffice; actual rollout/live testing still
+waits for image/signature/SBOM/provenance and target custody/runtime gates.
 
 ## Account Session authentication
 
