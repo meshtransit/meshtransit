@@ -1540,6 +1540,78 @@ new baseline/exclusions. No PostgreSQL/Redis/provider integration or live client
 browser test runs in this slice; native-host clock remains unqualified. Source
 evidence does not qualify public enablement, remote CI or immutable artifacts.
 
+### Private direct-TLS login service
+
+`SSO-PRIVATE-LOGIN-TLS-SERVICE-001` adds `httpapi.LoginServer`, an owned
+Start/Shutdown/Done service, not public runtime activation. The concrete factory
+can compose it only from its own existing dispatcher. There is no alternate
+handler/route/clock/provider, forwarding-based TLS assertion, environment flag,
+main binding, public docs/metrics endpoint or readiness claim. Client wire,
+Bearer entry point, authority/revision propagation, schema and dependencies
+remain unchanged. Google login remains THROUGH Keycloak, SSO-only.
+
+Require an explicit canonical non-wildcard/non-multicast IP bind and connection
+cap 1–4096. Port zero exists for owned fixtures only. Parse separately owned
+resident PEM inputs (at most 64 KiB each/eight certificates), with a non-CA
+server-auth leaf and exactly the callback hostname as its sole SAN. Reject
+wildcards/shared identities, weak signatures and unsupported/weak key profiles;
+support RSA 2048–8192, NIST ECDSA P-256/P-384/P-521 and Ed25519. Construction
+opens no socket or clock/dependency effect; the one-shot cancellable Start uses
+actual system certificate validity. Caller PEM may be erased after construction.
+No live certificate reload or shared TLS ticket-key owner is added.
+
+Serve direct TLS 1.2/1.3 and HTTP/1.1 only, no ServeMux normalization, HTTP/2/h2c,
+general OPTIONS fallback or raw net/http error logging. Header/handshake,
+read/write, idle and header-size caps are five seconds, 35 seconds, 60 seconds
+and 16 KiB. Connection capacity bounds accepted handshake/HTTP goroutines;
+existing component body/work/non-queuing/distributed-budget bounds still apply.
+Delegate the original request/context/writer. ConnContext installs a private
+connection-scoped raw socket owner, never identity metadata. On dispatch failure
+close that owned raw TCP socket before returning; otherwise staged cookies could
+implicitly flush as HTTP 200. No expected-error panic/`ErrAbortHandler`, Hijack
+or TLS close-notify write is used for abort. Check/classify close failures into
+the service's final closed result. Never overwrite partial submission, infer
+non-commit or retry effects. Component-owned normal responses remain intact;
+this is not the future public friendly-error mapper.
+
+Shutdown fences handler admission and drains within its caller context. On
+expiry cancel request ownership and close sockets. The serving owner joins
+every ConnState-tracked handler, including handshakes/connection teardown,
+before Done. Shutdown success includes that join; timeout is not join proof or
+permission to close factory/storage. Only after join may the process close
+factory idle clients; PostgreSQL/Redis remain borrowed. Profiles and owners
+redact formatting/structured diagnostics and refuse JSON serialization.
+
+Canonical runtime/security/identity/acceptance/ADR originals were updated
+locally before implementation. This README is their Git mirror; the sibling
+core-docs directory is not a Git repository. Public SSO stays disabled. Edge/
+query/key custody, native-host clocks, intended expiry/recovery, real Google/
+Keycloak/browser/client/HA, remote CI and immutable-artifact gates remain open.
+Next: validate the immutable runtime configuration and readiness prerequisites,
+then wire the service into `api`/`all` ownership without bypassing release gates.
+
+Source qualification (2026-09-17): final corrected no-panic bytes pass unchanged
+full `make quality`: whole-repository shuffled unit/race, formatting/tidy/vet,
+pinned normal/integration-tag lint, symbol-vulnerability and workflow gates.
+Govulncheck reports zero affected symbols/imported packages and three non-called
+required-module advisories, not zero advisories. Final uncached host full
+httpapi/cmd race passes 1.872s/2.209s; exact pinned Go 1.26.8 Linux/arm64 source
+race passes 1.407s/1.094s, UID/GID 65532, no network/capabilities/credentials/
+Docker socket, read-only source/modules and isolated writable scratch. The
+missing exact-image metadata was resolved by an approved exact-digest pull
+reporting up-to-date, not an alternate image/mount. Earlier panic-based-byte QA
+is superseded. Tests cover owned TLS/no-grant GET/HEAD, erased caller PEM,
+Host/path/method/query/plaintext/ALPN fencing, certificate/bind/startup bounds,
+staged/partial raw TCP abort, checked close errors, parent context preservation,
+graceful/forced handler joins, connection capacity and goleak. Factory-service
+composition uses actual lazy adapters without requests; no live PostgreSQL/
+Redis/provider/Google/browser/client/HA or native-host-clock qualification runs.
+This is source evidence, not remote CI or an immutable release artifact.
+Fresh unfiltered pre/post lint and scoped pinned v2.13.2 autofix pass with no
+changes; all 710 repository Go hashes and exact six target texts stay frozen.
+Gitleaks v8.30.1 redacted full code/docs trees and all 134 pre-commit history
+commits pass without new baseline, exclusion, suppression or gate changes.
+
 ### Private identity production dependency factory
 
 `SSO-PRIVATE-DEPENDENCY-FACTORY-001` binds the private identity graph to concrete
