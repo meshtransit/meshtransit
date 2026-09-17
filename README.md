@@ -1828,6 +1828,77 @@ Current source only; no public activation or live/recovery/clock/artifact waiver
 Next: factory consuming-abandonment qualification, operational key/query custody,
 then controlled Google-through-Keycloak acceptance after remaining release gates.
 
+### Concrete private factory consuming cleanup-wins integration
+
+`SSO-PRIVATE-FACTORY-CONSUMING-CLEANUP-INTEGRATION-001` adds an additional
+source gate specified before implementation. A fourth exclusive cold
+`meshtransit_private_factory_consuming` database retains all released migrations,
+independent runtime/worker/admin roles and the existing offline Linux/TLS trust
+profile. The unchanged actual factory creates a minimum-one-minute pending login.
+Observe an actual empty worker pass; bounded live-DB probes approach its original
+exclusive deadline. Fresh capture/protected preparation then invokes the actual
+dispatcher under a bounded request owner. A context-aware synthetic token barrier
+signals only after exact TLS/Basic/form/PKCE verification and confirmed claim.
+
+While that one token POST remains in flight, the actual worker must naturally
+commit consuming2 -> expired3 with original consumed_at/binding/times, complete
+three-column PKCE erasure and exactly one canonical expiry mutation/audit/outbox.
+Join worker before evidence census. Release a valid signed token, join callback,
+and require no Session/browser material, duplicate termination/evidence or retry.
+Replay and a fresh empty worker pass must have zero additional effects. Original
+subject/member/role/Network authority and revisions remain unchanged. Existing
+pending/version-two and signed-callback oracles are not broadened.
+
+The overall predicate bound is 75 seconds from creation with 100-ms bounded-query
+probes; no sleep/pg_sleep, backdating/timestamp rewrite, alternate clock/effect
+ports or weakened safety bounds. Request and provider/worker owners cancel and
+join before clients/pools close and final race/leak verification. This is cleanup
+winning before exchange release, not a forced issuance-CAS race or process-crash/
+unknown-claim abandonment test. Full intended-target cleanup, witness/restore
+lineage, operational key/query custody, native/cross-host clocks, Google through
+Keycloak/browser/client/HA, remote CI and immutable artifacts remain open.
+Canonical docs 13/17/18/26 were updated locally first; this is their Git mirror,
+not a commit of that non-Git sibling tree. Public SSO and client wire unchanged.
+Status: implemented and source-qualified in the owned Linux fixture lane only.
+
+Source qualification (2026-09-17, base `6c780df`): full `make quality` passes the
+unchanged format/tidy/vet, shuffled unit/race, unfiltered pinned normal/integration
+lint, vulnerability and workflow gates. Govulncheck reports zero affected symbols/
+imported-package vulnerabilities and three non-called required-module advisories,
+not zero dependency/container advisories. Fresh unfiltered cmd lint before/after
+context-safe scoped pinned autofix passes without edits; all 45 cmd Go hashes and
+exact five target texts remain unchanged, no processor warnings/errors. Final
+read-only delivery was retried after agent bookkeeping serialization, not a lint
+failure. No suppression, exclusion, baseline or gate weakening.
+
+Final fresh internal-only offline verified-TLS Linux execution passes all 34
+released migrations (15.683s), five unchanged initiation cases (cmd race 1.459s),
+five unchanged signed callback cases (2.467s), unchanged pending-quarantine
+workflow/both denial probes (61.949s), new consuming cleanup-wins workflow/both
+named replay/fresh-worker probes without Skip (61.562s), joined race/leak checks
+and existing dependency/process restart/expiry suites (6.363s). Exact image
+digests and mount/trust/privilege profiles remain unchanged. Durable assertions
+verify natural deadline, original consumed_at/binding, proof preserved until
+complete erasure, separate canonical claim payload hashes, exact expiry hashes
+and no Session/duplicate failure/evidence after one valid signed late exchange.
+
+Host focused uncached tagged compiler/unit race passes (1.770s), not host TLS/
+clock acceptance. Existing two-worker ten-second callback syntax fuzz passes
+413,560 executions. Shell syntax/pre-effect invalid-mode rejection and redacted
+source/canonical-doc/all-130-pre-commit-history secret scans pass. Fixture review
+corrected the released epoch JSON field and fail-closed request/handler join;
+all final gates ran on those bytes. Production Go/schema/grants/constraints/
+dependencies, old oracles and client wire remain unchanged; public SSO stays off.
+
+New consuming fixture/test SHA-256:
+`b8ef80225f17d45979eace81063952f9f3608365c917f247954adc195fdab790`,
+`173782fa32e14d3fac8a0e9c5fc3f0d27b23a314f1932c20c80486766237accb`.
+Updated optional signing-provider fixture SHA-256:
+`dea760c999165af71e3082a310625bea922b4616857f2c1ad519d2a78396a6b2`.
+Source only; no crash/restore/native-clock/live/artifact waiver.
+Next: exact process-abandoned/unknown-claim cleanup qualification, then key/query
+custody; controlled Google-through-Keycloak acceptance after remaining gates.
+
 ### Private browser login document and dispatcher
 
 `SSO-LOGIN-ROUTE-CONTRACT-001` and `SSO-PRIVATE-LOGIN-DISPATCHER-001` prepare

@@ -27,12 +27,26 @@ import (
 
 func (storage *privateFactoryIntegrationStorage) openExpiryWorkerPool(t *testing.T) *postgresadapter.Pool {
 	t.Helper()
+	return storage.openPrivateFactoryWorkerPool(t, "meshtransit_private_factory_expiry")
+}
+
+func (storage *privateFactoryIntegrationStorage) openConsumingWorkerPool(t *testing.T) *postgresadapter.Pool {
+	t.Helper()
+	return storage.openPrivateFactoryWorkerPool(t, "meshtransit_private_factory_consuming")
+}
+
+func (storage *privateFactoryIntegrationStorage) openPrivateFactoryWorkerPool(
+	t *testing.T,
+	database string,
+) *postgresadapter.Pool {
+	t.Helper()
 	process, err := config.Load(os.LookupEnv)
 	if err != nil || process.Storage == nil || process.Storage.PostgreSQL.Worker == nil {
 		t.Fatal("load owned expiry worker credentials")
 	}
 	pg := process.Storage.PostgreSQL
-	owned := pg.Address == "meshtransit-postgres:5432" && pg.Database == "meshtransit_private_factory_expiry"
+	allowed := database == "meshtransit_private_factory_expiry" || database == "meshtransit_private_factory_consuming"
+	owned := allowed && pg.Address == "meshtransit-postgres:5432" && pg.Database == database
 	if !owned || pg.Worker.User != "mesh_worker" {
 		t.Fatal("refuse unowned expiry worker scope")
 	}

@@ -467,6 +467,23 @@ if [[ "${go_runner}" == container ]]; then
 	export MESHTRANSIT_POSTGRES_DATABASE=meshtransit_private_factory_expiry
 	run_go test -tags=integration -count=1 -race -shuffle=on -v \
 		-run '^TestPrivateIdentityFactoryExpiryQuarantineIntegration$' -timeout=5m ./cmd/meshcore
+	# Cleanup wins against an actual in-flight factory exchange on a fourth cold scope.
+	docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname postgres --set ON_ERROR_STOP=1 \
+		--command 'CREATE DATABASE meshtransit_private_factory_consuming OWNER mesh_migrator' \
+		>/dev/null
+	docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname meshtransit_private_factory_consuming --set ON_ERROR_STOP=1 \
+		--command 'CREATE EXTENSION btree_gist' \
+		>/dev/null
+	export MESHTRANSIT_MIGRATION_POSTGRES_DATABASE=meshtransit_private_factory_consuming
+	export MESHTRANSIT_POSTGRES_DATABASE=meshtransit_private_factory_consuming
+	run_go test -tags=integration -count=1 -race -shuffle=on -v \
+		-run '^TestPrivateIdentityFactoryConsumingCleanupIntegration$' -timeout=5m ./cmd/meshcore
 	unset MESHTRANSIT_PRIVATE_FACTORY_INTEGRATION
 	unset SSL_CERT_FILE SSL_CERT_DIR
 	export MESHTRANSIT_MIGRATION_POSTGRES_DATABASE=meshtransit

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -39,6 +40,7 @@ type privateFactorySigningProvider struct {
 	route                               oidcauth.Route
 	mu                                  sync.Mutex
 	nonce, challenge                    string
+	barrier                             *privateFactoryTokenBarrier
 	discovery, tokens, jwks, unexpected atomic.Int64
 }
 
@@ -138,7 +140,7 @@ func (provider *privateFactorySigningProvider) token(w http.ResponseWriter, r *h
 		return
 	}
 	provider.mu.Lock()
-	nonce, challenge := provider.nonce, provider.challenge
+	nonce, challenge, barrier := provider.nonce, provider.challenge, provider.barrier
 	provider.mu.Unlock()
 	validForm := len(r.PostForm) == 4 && r.PostForm.Get("grant_type") == "authorization_code"
 	validCode := r.PostForm.Get("code") == privateFactoryCode &&
@@ -152,6 +154,28 @@ func (provider *privateFactorySigningProvider) token(w http.ResponseWriter, r *h
 	if !validRequest || nonce == "" {
 		provider.reject(w)
 		return
+	}
+	if barrier != nil {
+		if !barrier.accepted.CompareAndSwap(false, true) {
+			provider.reject(w)
+			return
+		}
+		// Sender-owned signals bracket the entire accepted token handler. The
+		// owner releases/cancels and joins it before closing the TLS server.
+		close(barrier.entered)
+		defer close(barrier.exited)
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		select {
+		case <-ctx.Done():
+			provider.unexpected.Add(1)
+			return
+		case <-barrier.release:
+		}
+		if ctx.Err() != nil {
+			provider.unexpected.Add(1)
+			return
+		}
 	}
 	now := time.Now().UTC().Unix()
 	header, headerErr := json.Marshal(map[string]any{"alg": "RS256", "kid": "synthetic-signing-v1", "typ": "JWT"})
@@ -175,6 +199,36 @@ func (provider *privateFactorySigningProvider) token(w http.ResponseWriter, r *h
 		return
 	}
 	provider.write(w, map[string]any{"id_token": input + "." + base64.RawURLEncoding.EncodeToString(signature)})
+}
+
+// Optional synthetic-provider scheduling only; never a production clock/effect
+// port. Existing signing cases have no barrier and retain their original path.
+type privateFactoryTokenBarrier struct {
+	entered, release, exited chan struct{}
+	accepted                 atomic.Bool
+	releaseOnce              sync.Once
+}
+
+func (provider *privateFactorySigningProvider) holdToken(t *testing.T) *privateFactoryTokenBarrier {
+	t.Helper()
+	barrier := &privateFactoryTokenBarrier{
+		entered: make(chan struct{}), release: make(chan struct{}), exited: make(chan struct{}),
+	}
+	provider.mu.Lock()
+	alreadyHeld := provider.barrier != nil
+	if !alreadyHeld {
+		provider.barrier = barrier
+	}
+	provider.mu.Unlock()
+	if alreadyHeld {
+		t.Fatal("synthetic provider barrier already owned")
+	}
+	t.Cleanup(barrier.unblock)
+	return barrier
+}
+
+func (barrier *privateFactoryTokenBarrier) unblock() {
+	barrier.releaseOnce.Do(func() { close(barrier.release) })
 }
 
 func (provider *privateFactorySigningProvider) reject(w http.ResponseWriter) {
