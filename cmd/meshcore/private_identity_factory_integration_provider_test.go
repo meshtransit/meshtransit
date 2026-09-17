@@ -168,7 +168,11 @@ func (provider *privateFactorySigningProvider) token(w http.ResponseWriter, r *h
 		defer cancel()
 		select {
 		case <-ctx.Done():
-			provider.unexpected.Add(1)
+			if barrier.expectDisconnect && r.Context().Err() == context.Canceled {
+				barrier.disconnected.Add(1)
+			} else {
+				provider.unexpected.Add(1)
+			}
 			return
 		case <-barrier.release:
 		}
@@ -206,13 +210,21 @@ func (provider *privateFactorySigningProvider) token(w http.ResponseWriter, r *h
 type privateFactoryTokenBarrier struct {
 	entered, release, exited chan struct{}
 	accepted                 atomic.Bool
+	disconnected             atomic.Int64
+	expectDisconnect         bool // Immutable before publication under provider.mu.
 	releaseOnce              sync.Once
 }
 
 func (provider *privateFactorySigningProvider) holdToken(t *testing.T) *privateFactoryTokenBarrier {
 	t.Helper()
+	return provider.holdTokenMode(t, false)
+}
+
+func (provider *privateFactorySigningProvider) holdTokenMode(t *testing.T, expectDisconnect bool) *privateFactoryTokenBarrier {
+	t.Helper()
 	barrier := &privateFactoryTokenBarrier{
 		entered: make(chan struct{}), release: make(chan struct{}), exited: make(chan struct{}),
+		expectDisconnect: expectDisconnect,
 	}
 	provider.mu.Lock()
 	alreadyHeld := provider.barrier != nil

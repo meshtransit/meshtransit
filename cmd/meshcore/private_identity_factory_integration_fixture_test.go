@@ -46,7 +46,8 @@ func openPrivateFactoryIntegrationStorage(t *testing.T, database string) *privat
 	}
 	pg := process.Storage.PostgreSQL
 	allowedDatabase := database == "meshtransit_private_factory" || database == "meshtransit_private_factory_callback" ||
-		database == "meshtransit_private_factory_expiry" || database == "meshtransit_private_factory_consuming"
+		database == "meshtransit_private_factory_expiry" || database == "meshtransit_private_factory_consuming" ||
+		database == "meshtransit_private_factory_abandoned"
 	dedicatedDatabase := allowedDatabase && migration.PostgreSQL.Database == database
 	matchingDatabase := pg.Database == migration.PostgreSQL.Database && pg.Address == migration.PostgreSQL.Address
 	owned := dedicatedDatabase && matchingDatabase

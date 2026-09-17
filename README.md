@@ -1899,6 +1899,87 @@ Source only; no crash/restore/native-clock/live/artifact waiver.
 Next: exact process-abandoned/unknown-claim cleanup qualification, then key/query
 custody; controlled Google-through-Keycloak acceptance after remaining gates.
 
+### Concrete private factory process-abandoned consuming integration
+
+`SSO-PRIVATE-FACTORY-PROCESS-ABANDONED-INTEGRATION-001` adds a fifth exclusive
+cold `meshtransit_private_factory_abandoned` database and all released migrations.
+Parent alone owns admin seeds/reads and actual factory Start/capture/preparation.
+One owned same-test-executable child attaches checked runtime PostgreSQL/Redis,
+recreates identical deterministic file-backed synthetic resident keys, and calls
+actual protected Continue with unchanged factory clocks/effects/provider clients.
+Bounded canonical private inherited fd3 carries synthetic provider/cookie/proof
+data; separate bounded raw fd4 carries Basic credential, never general JSON or
+argv/env/stdout/stderr. Private fd5 carries eight closed monotonic phase bytes
+only. Restore nonblocking mode before wrapping inherited pipes for bounded I/O;
+exec's File.Fd otherwise makes them blocking. Child inherits only explicit runtime
+profile references/startup trust, not migration/admin/worker or host credentials.
+
+Exact TLS/Basic/form/PKCE token barrier precedes independently checked consuming2
+claim/proof/canonical evidence. Parent kills ONLY its own child PID, owns one Wait
+and requires checked SIGKILL plus exactly one accepted request-cancellation join;
+no token is released/minted. AFTER joins and BEFORE any worker starts, durable
+consuming2 still has original timestamps/binding/consumed_at and intact PKCE,
+sufficient live original deadline, no Session/failure or repeated claim evidence.
+Fresh actual worker first observes not-due empty, then naturally commits expired3
+once with preserved original consumed_at/binding and full PKCE erasure. Join before
+strict canonical expiry/census checks. Stale continuation replay and a fresh empty
+worker add zero effects; unrelated subject/member/role/Network authority unchanged.
+
+75-second original-creation predicate bound, 100-ms bounded probes; no sleep,
+backdating, alternate clock/transport/effect or lifetime/schema/grant weakening.
+Every parent-owned process/pipe/handler/worker is finitely joined before clients/
+storage close and race/leak verification; SIGKILL child cannot run leak cleanup.
+This is confirmed-claim process death in compiled test-source composition, NOT
+unknown claim ACK, production binary/artifact crash, restore, full intended-target
+cleanup, operational key/query custody, native/cross-host clocks, Google through
+Keycloak/browser/client/HA, remote CI or immutable artifact acceptance.
+Canonical docs 13/17/18/26 were updated locally before code; this README is their
+Git mirror, not a commit of that non-Git sibling. Public SSO off; client wire
+unchanged. Status: implemented and source-qualified in owned Linux fixtures only.
+Next: keep unknown-claim disposition separate, then key/query custody before
+controlled Google-through-Keycloak acceptance and remaining release gates.
+
+Source qualification (2026-09-17, base `3a63767`): final full `make quality` passes
+unchanged format/tidy/vet, shuffled unit/race, unfiltered normal/integration lint,
+vulnerability and workflow gates. Zero affected symbols/imported-package
+vulnerabilities; three non-called required-module advisories remain, not zero
+dependency/container advisories. Corrected-final-source fresh unfiltered cmd lint
+before/after scoped pinned autofix passes without edits; all 48 cmd Go hashes and
+exact seven target texts unchanged. Diff 63.038541ms, no processor warning/error;
+no new suppression, exclusion, baseline or weakened gate.
+
+Final fresh internal-only offline verified-TLS Linux execution AFTER source freeze
+passes all 34 released migrations (15.729s), five unchanged initiation cases
+(cmd race 1.440s), five unchanged signed callback cases (2.381s), unchanged pending
+quarantine/both denial probes (61.859s), unchanged consuming cleanup-wins/both
+zero-effect probes (61.619s), new process-abandoned/both zero-effect probes without
+Skip (61.559s), joined race/leak and existing dependency/process restart/expiry
+suites (6.278s). Exact previous image digests/mount/trust/privilege profiles remain.
+Checked SIGKILL/reap, eight closed helper phases, exactly one accepted disconnect,
+no JWT/JWKS, live original consuming2/proof before worker, canonical natural
+expiry3/preserved consumed_at and exactly-one evidence, no Session/failure/Network
+revision or replay are asserted. All owned disposable resources removed on exit.
+
+Host final focused tagged compiler/unit race passes (1.883s), not native TLS/clock
+acceptance. Final pure IPC syntax fuzz, two workers/ten seconds, passes 1,641
+executions with cached corpus, not performance/coverage proof. Shell syntax,
+pre-effect invalid-mode rejection and fully redacted source/canonical-doc/all-131
+pre-commit-history secret scans pass. Initial sandbox port/DNS denials rerun with
+scoped authority, not counted as passes. Secret-serialization lint led to separate
+raw credential fd4 without suppression. First Linux crash attempt failed before
+barrier: exec File.Fd made inherited pipes blocking. Restore nonblocking before
+NewFile plus fixed private phase fd5; final whole-lane/quality run on corrected
+frozen bytes. No production Go/schema/grant/constraint/dependency/client wire change.
+
+New IPC syntax-test/fixture/workflow SHA-256 respectively:
+`65bb4429d5bec9bf15450d602b0d266e5ad85ebdb059c15c6ccd02613dd76623`,
+`898175f699fada560245cf951685d4970631e1f01be68216cbdecdec46c87446`,
+`6447c2c41945007cc27b08db887ebaf161c4e7d768a50622ec13ba28b610415c`.
+Optional signing-provider fixture:
+`db693a2d02208fc8bfbe1f6637a3124ad8f0d7fb2ea78dae0dfaa0e41af6aa73`.
+Source only; all named unknown-ACK/production-crash/restore/live/artifact exclusions
+remain. Canonical originals updated locally, Git mirror only pushed; public SSO off.
+
 ### Private browser login document and dispatcher
 
 `SSO-LOGIN-ROUTE-CONTRACT-001` and `SSO-PRIVATE-LOGIN-DISPATCHER-001` prepare

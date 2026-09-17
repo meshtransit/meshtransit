@@ -226,7 +226,12 @@ func newPrivateFactoryMetadataProvider(t *testing.T, mode string, untrusted bool
 
 func (provider *privateFactoryMetadataProvider) route(t *testing.T, suffix byte) oidcauth.Route {
 	t.Helper()
-	base := provider.server.URL + "/realm"
+	return privateFactoryRoute(t, provider.server.URL, suffix)
+}
+
+func privateFactoryRoute(t *testing.T, origin string, suffix byte) oidcauth.Route {
+	t.Helper()
+	base := origin + "/realm"
 	route, err := oidcauth.NewRoute(oidcauth.RouteParams{
 		DeploymentID: deployment.ID(privateIdentityID(t, 1)), WorkspaceID: workspace.ID(privateIdentityID(t, suffix)),
 		ProviderID: oidcauth.ProviderID(privateIdentityID(t, suffix+1)), ClientID: oidcauth.ClientID(privateIdentityID(t, suffix+2)),

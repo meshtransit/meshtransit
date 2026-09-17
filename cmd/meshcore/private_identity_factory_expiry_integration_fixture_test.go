@@ -45,7 +45,8 @@ func (storage *privateFactoryIntegrationStorage) openPrivateFactoryWorkerPool(
 		t.Fatal("load owned expiry worker credentials")
 	}
 	pg := process.Storage.PostgreSQL
-	allowed := database == "meshtransit_private_factory_expiry" || database == "meshtransit_private_factory_consuming"
+	allowed := database == "meshtransit_private_factory_expiry" || database == "meshtransit_private_factory_consuming" ||
+		database == "meshtransit_private_factory_abandoned"
 	owned := allowed && pg.Address == "meshtransit-postgres:5432" && pg.Database == database
 	if !owned || pg.Worker.User != "mesh_worker" {
 		t.Fatal("refuse unowned expiry worker scope")
