@@ -2603,6 +2603,59 @@ mounts, native/dependency clocks, intended expiry/recovery, readiness isolation,
 real Google/browser/client/HA and signed immutable artifacts remain gates.
 Public SSO stays disabled; do not forward the private loopback profile.
 
+### Separate private Keycloak preparation
+
+`SSO-KEYCLOAK-PRIVATE-DEPLOYMENT-001` prepares the separate deployment repository's
+private Keycloak chart and optimized provider image recipe; no provider runs
+inside Core. Official Keycloak 26.7.4 is version/digest pinned, with PostgreSQL,
+health/metrics placement and disabled tracing persisted during the build.
+Actual offline CLI checks exposed and corrected build-only flags mistakenly
+repeated at runtime. The final local arm64 image passes numeric UID/GID 1000,
+exact version and supported build/runtime option checks without network, under
+read-only root and dropped capabilities. This is not a server-startup test.
+
+The chart has one fixed private production-mode instance, local cache, ClusterIP
+HTTPS only, no Ingress/public Service, realm import, Google egress, arbitrary
+startup/environment or credential values. It references three distinct existing
+Secrets for native `keycloak.conf`, serving TLS and PostgreSQL CA. Database TLS
+verification, private operator ingress, bounded pool/scratch/resources, tokenless
+non-root process and immutable image digest are fixed contracts. Provider
+0440/fsGroup projections do not qualify Core's owner-only startup gate.
+
+Helm 3.19.0 strict lint/render and unsafe-value rejection pass; unchanged Core/
+Console chart checks pass. Trivy 0.74.0 cached-check High/Critical manifest scan
+and three-resource Kubernetes server dry-run pass on synthetic values only.
+No live apply, DB/schema/client/Core artifact change, Secret payload or credential
+provisioning occurs. The example intentionally lacks a releasable image digest
+and actual DB/operator-origin inputs. Image vulnerability/signature/SBOM/provenance,
+DB ownership/backup/migration, actual Secret/mount/health/issuer/isolation, all-hop
+query custody, clocks/recovery/HA and all six real Google tests remain gates.
+The current local candidate fails the complete image gate: Trivy reports High
+OpenJDK CVE-2026-22020, High MSSQL JDBC CVE-2025-59250 and Critical Netty
+CVE-2026-75595. The final immutable arm64 artifact is
+sha256:5b8492eef37a32714af713861dbbf62b7f837f947966b936020e51e8f527d6c3.
+After two DB repository timeouts, official DockerHub DBs complete OS/JAR scanning
+and exact three-occurrence deduplicated metadata; no clean-image claim. The
+[Netty maintainer advisory](https://github.com/netty/netty/security/advisories/GHSA-c4c3-7fpv-j4q5)
+lists installed 4.1.136.Final as affected with specific SNI/mTLS preconditions;
+POC exploitability and vendor JVM/MSSQL triage are not established. No VEX or
+scan waiver is accepted. No candidate image is published or installed.
+
+The supported preparation build path now requires matching recipe/base pins,
+Trivy 0.74.0, complete OS/library pre/post scans by immutable identity, no ignore
+file/unfixed exclusion/unreviewed scanner environment/extra build arguments,
+then actual CLI checks. Offline fixtures prove failed/unavailable scan prevents
+Docker build and override/platform rejection. This is not a positive guarded
+build or a usable release. Select a supported clean upstream artifact before
+rollout; no undocumented JAR replacement/Java fork. Public SSO stays off.
+
+Fresh ts2021/142 Noise diagnostics pass on both existing Ubuntu clients. Their
+actual daemon is 87a3dd2; the separate CLI is ce2a856. Closed journal counters
+contain explicit authority withdrawal, not evidence of a transport/wire bug.
+Both already-offline/blocked states are preserved; no automated unfencing or
+map/reconnect/data-plane acceptance is claimed. Original core-docs/13/16/17/18/27
+are updated locally; those non-Git documents are not part of a Core push.
+
 ## Account Session authentication
 
 The `internal/identity/accountsession` package now owns the first human-session
