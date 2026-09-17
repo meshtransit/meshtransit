@@ -1,5 +1,23 @@
 # MeshTransit Core
 
+Temporary owner-approved delivery change (2026-09-17): CVE remediation is deferred
+only for isolated non-production Keycloak qualification, using a separate dated
+acknowledged candidate workflow. Existing scan findings and production artifact
+gates remain unresolved; the ordinary guarded build is unchanged. No auth/TLS,
+Secret custody, membership or revoked-client exception follows. Priority is now
+private provider runtime, Google broker/confidential Core client and real Google
+SSO/browser/client acceptance. All six live Google requirements remain open.
+The canonical decision is `SSO-KEYCLOAK-POC-CVE-DEFER-001` in the original
+architecture document 27; historical no-POC-waiver statements are superseded only
+within this explicit scope.
+
+The optimized amd64 POC candidate now builds and passes immutable non-root/read-only
+native CLI checks, and is published with index
+`sha256:89e58aafc3a58c3c80f7f41c0873d86fafd2cebaecf405690fb28c94451539d2`.
+Private target startup awaits independent DB provisioning with the correct EC2
+SSH account/key; real Google OAuth Web credentials and consent are still needed.
+No Core/client binary, schema, wire contract or target authority change occurs.
+
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,
 runtime role selection, bounded lifecycle management, safe JSON logging,
