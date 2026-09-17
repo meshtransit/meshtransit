@@ -2849,6 +2849,44 @@ are in deployment `identity/keycloak/README.md`. Next: select a supported clean
 release artifact, then protected target delivery/runtime qualification before
 controlled real Google/browser/client acceptance. No new server is needed now.
 
+### Private Keycloak startup/admission hardening
+
+`SSO-KEYCLOAK-STARTUP-ADMISSION-001` fixes separate private chart 0.1.1's native
+`--http-max-queued-requests=128` and `--server-async-bootstrap=false`. The finite
+queue uses native 503 overflow behavior; it is not a global in-flight/rate limit
+or load-qualified capacity. HTTPS/management listeners wait for successful
+bootstrap instead of opening while database initialization is unfinished.
+No Helm/native-file override can weaken the chart-owned CLI directives.
+
+New directive assertions first fail on the old chart. Final strict Helm lint/
+render/single-occurrence/override rejection and actual pinned CLI checks pass.
+Current optimized PostgreSQL canary verifies both listeners 8443/9000 after
+positive discovery readiness, and sampled IPv4/IPv6 listener absence during
+specifically classified wrong-password/CA/hostname startup denials. At least
+one valid sample per failure and checked owned cleanup are required; sampling
+does not prove continuous absence, queue saturation/503 behavior or capacity.
+
+All 147 protected source tests pass without skips, alongside scan-report/no-build
+and unchanged Core/Console Helm regressions. Trivy 0.74.0 cached-check synthetic
+manifest configuration scan has no High/Critical failures. Kubesec is unavailable;
+no Kubesec or fresh cluster dry-run/install result is claimed. No image pull/
+build/publish, target DB/Secret/apply, Google request, Go/schema/dependency or
+meshd/meshctl wire change occurs; no whole Go/Linux/client/HA rerun is claimed.
+Original core-docs/13/16/17/18/27 are updated locally, not pushed; this README is
+their Git mirror. Target mount/DB/TLS/isolation, queue load and release trust
+remain gates. Public SSO stays off; all six live Google cases remain open.
+
+Fresh official release/index checks still return 26.7.4 and the same immutable
+base pin. The real arm64 guard exits 1 before build. The real amd64 pre-scan
+stalls beyond six minutes; the exact PID/parent/platform/reference-matched
+scanner is hard-stopped after SIGTERM fails to end it. The guard exits 137,
+unavailable before build, not clean or new occurrence-count evidence. See
+deployment `images/keycloak/VULNERABILITY_TRIAGE.md` for current disposition.
+
+Next remains supported clean image selection, then protected target delivery/
+runtime qualification and controlled real Google/browser/client acceptance.
+No new server is needed for this source step.
+
 ## Account Session authentication
 
 The `internal/identity/accountsession` package now owns the first human-session
