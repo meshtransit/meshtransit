@@ -20,13 +20,16 @@ func (application *Application) stopStarted(
 	defer cancel()
 
 	var results []error
+	allJoined := true
 	for index := len(services) - 1; index >= 0; index-- {
 		service := services[index]
 		if err := service.service.Shutdown(shutdownCtx); err != nil {
 			results = append(results, fmt.Errorf("shut down %s: %w", service.name, err))
 		}
 		if index != exitedService {
-			if err := joinOwned(shutdownCtx, service.name, service.done); err != nil {
+			joined, err := joinOwned(shutdownCtx, service.name, service.done)
+			allJoined = allJoined && joined
+			if err != nil {
 				results = append(results, err)
 			}
 		}
@@ -36,9 +39,14 @@ func (application *Application) stopStarted(
 		results = append(results, fmt.Errorf("shut down dependency monitor: %w", err))
 	}
 	if !monitorExited {
-		if err := joinOwned(shutdownCtx, "dependency monitor", monitorDone); err != nil {
+		joined, err := joinOwned(shutdownCtx, "dependency monitor", monitorDone)
+		allJoined = allJoined && joined
+		if err != nil {
 			results = append(results, err)
 		}
+	}
+	if !allJoined {
+		return errors.Join(ErrIncompleteShutdown, errors.Join(results...))
 	}
 	if err := application.resources.Close(shutdownCtx); err != nil {
 		results = append(results, fmt.Errorf("close runtime resources: %w", err))
@@ -57,7 +65,10 @@ func (application *Application) stopMonitor(parent context.Context, monitorDone 
 	if shutdownErr != nil {
 		shutdownErr = fmt.Errorf("shut down dependency monitor: %w", shutdownErr)
 	}
-	joinErr := joinOwned(shutdownCtx, "dependency monitor", monitorDone)
+	joined, joinErr := joinOwned(shutdownCtx, "dependency monitor", monitorDone)
+	if !joined {
+		return errors.Join(ErrIncompleteShutdown, shutdownErr, joinErr)
+	}
 	resourceErr := application.resources.Close(shutdownCtx)
 	if resourceErr != nil {
 		resourceErr = fmt.Errorf("close runtime resources: %w", resourceErr)
@@ -78,17 +89,29 @@ func (application *Application) closeResources(parent context.Context) error {
 	return nil
 }
 
-func joinOwned(ctx context.Context, name string, done <-chan error) error {
+// joinOwned separates termination evidence from the component's result. An
+// already published result wins over an expired deadline; absence retains
+// resources even if Shutdown itself returned nil.
+func joinOwned(ctx context.Context, name string, done <-chan error) (bool, error) {
 	if done == nil {
-		return fmt.Errorf("join %s: %w", name, ErrUnexpectedServiceStop)
+		return false, fmt.Errorf("join %s: %w", name, ErrUnexpectedServiceStop)
 	}
 	select {
-	case componentErr, ok := <-done:
-		if ok && componentErr != nil {
-			return fmt.Errorf("join %s: %w", name, componentErr)
-		}
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("join %s: %w", name, ctx.Err())
+	case componentErr := <-done:
+		return true, ownedJoinError(name, componentErr)
+	default:
 	}
+	select {
+	case componentErr := <-done:
+		return true, ownedJoinError(name, componentErr)
+	case <-ctx.Done():
+		return false, fmt.Errorf("join %s: %w", name, ctx.Err())
+	}
+}
+
+func ownedJoinError(name string, componentErr error) error {
+	if componentErr != nil {
+		return fmt.Errorf("join %s: %w", name, componentErr)
+	}
+	return nil
 }

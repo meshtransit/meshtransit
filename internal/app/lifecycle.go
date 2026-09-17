@@ -14,6 +14,10 @@ var (
 	ErrInvalidApplication = errors.New("invalid application")
 	// ErrUnexpectedServiceStop indicates that an owned component exited before shutdown.
 	ErrUnexpectedServiceStop = errors.New("service stopped unexpectedly")
+	// ErrIncompleteShutdown means a started owner has not positively joined.
+	// Resources are retained; the process caller must terminate nonzero without
+	// fallback Close, reuse, or a detached cleanup waiter.
+	ErrIncompleteShutdown = errors.New("runtime shutdown incomplete; resources retained")
 )
 
 // Monitor is the process-owned boundary for dependency checks. Start performs
@@ -89,6 +93,8 @@ func New(
 // Run checks dependencies, starts services in declaration order, opens
 // admission, and blocks until cancellation or an owned component exits. Every
 // exit path closes admission before bounded reverse-order cleanup.
+// ErrIncompleteShutdown is terminal: resources remain borrowed by unjoined work
+// and the process caller must not close them or restart this application.
 func (application *Application) Run(ctx context.Context) error {
 	if ctx == nil {
 		return errors.Join(

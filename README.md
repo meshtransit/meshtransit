@@ -2393,14 +2393,51 @@ must succeed before the control listener starts. Periodic bounded checks lower
 readiness on dependency loss and restore it after recovery. Graceful shutdown
 closes admission before draining control streams, stopping and joining both
 wakeup feeds, joining the monitor, and releasing Redis then PostgreSQL. Those
-phases share one configured shutdown deadline; resource cleanup is not started
-after that deadline is exhausted. PostgreSQL
+phases share one configured shutdown deadline. `RUNTIME-RESOURCE-JOIN-FENCE-001`
+requires positive `Done` evidence from every successfully started service and
+monitor before calling the resource closer. A reported component error still
+proves termination; a missing channel, successful `Shutdown` without `Done`,
+or join timeout does not. Already published results are observed before treating
+an expired context as missing evidence.
+
+If any owner cannot join, all other owners still receive reverse-order stop
+signals, but the complete resource graph is retained. `Run` returns terminal
+`app.ErrIncompleteShutdown` together with the original errors. The composition
+root keeps application resource custody and exits nonzero without fallback
+cleanup. Do not restart the application, close provider/key/storage resources,
+spawn a detached waiter, or claim a clean drain. OS process teardown releases
+retained state. Resource cleanup also refuses to start after the shared deadline
+is exhausted. PostgreSQL
 cleanup also refuses to call the pool's blocking close while a connection is
 still acquired, so shutdown never relies on an unowned timeout goroutine.
 `/live` never depends on infrastructure availability. Health responses expose
 only stable component names and `ready`, `unavailable`, or `unknown` states.
 The listener defaults to loopback and should not be exposed on public client
 ingress.
+
+This lifecycle correction applies to existing roles and is a prerequisite for
+private login runtime binding, not its completion. No new environment settings,
+listener activation, schema, client wire or public Google SSO readiness is added.
+Deterministic contracts cover missing/unjoined owners, partial startup,
+already-observed unexpected exits, reported error/closed-channel joins and an
+owned goroutine whose late cleanup outlives the application shutdown deadline.
+Original runtime/security/test/ADR documents are updated in the development
+workspace; this section is the versioned mirror of the correction.
+
+Source-only acceptance (2026-09-17): the nine negative join contracts first
+reproduce unsafe ResourceCloser invocation on the pre-fix lifecycle. Corrected
+source passes unchanged full `make quality` and uncached shuffled race/goleak
+tests for `internal/app` and `cmd/meshcore` on host Go 1.26.8 and digest-pinned
+Linux/arm64 Go 1.26.8. Linux is offline/nonroot with read-only source/modules and
+isolated scratch, no host credentials/socket/live services. Govulncheck reports
+zero affected symbols/imported packages and three non-called required-module
+advisories, not zero advisories. These are source contracts, not real provider/
+storage/browser/client/HA, native-clock, or immutable release qualification.
+
+Fresh pinned v2.13.2 unfiltered pre/post lint and modified-file-only autofix pass
+with no changes. All 711 Go hashes and exact three target texts remain frozen;
+708 outside files are untouched. Zero raw issues means Diff/Fixer receive no
+input; scoping/order is source-verified, not runtime patch-parser qualification.
 
 Metrics use a process-owned registry rather than global mutable collectors.
 They include Go/process signals, build information, concrete roles, runtime and
