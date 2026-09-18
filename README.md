@@ -19,13 +19,19 @@ immutable-Secret scope. Provisioning and six native TLS/SCRAM/isolation cases no
 pass without changing old Core credentials, grants or HBA rules. The private
 first atomic install failed memory scheduling. The owner then explicitly retired
 the old namespace; a second private attempt scheduled/connected to PostgreSQL,
-but the worker lost heartbeat before readiness. Core now has zero Ready replicas;
+but the worker lost heartbeat before readiness. Core then had zero Ready replicas;
 OOM is not established. Atomic abort removes the release but actual termination
 of its residual Terminating Pod is unverified. A provider-only deny-all quarantine
 is requested, with enforcement unverified while the worker is unreachable.
 DB/Secrets remain intact. Chart 0.1.2 fixes memory request to its full 2 GiB limit:
 the pinned JVM's default initial heap alone is 1 GiB, above the old 512 MiB request.
 Worker recovery/replacement needs owner authority before any provider retry.
+Fresh checks subsequently confirm worker Ready/Core one Ready replica on the
+unchanged image, no provider Pods and zero provider DB connections. The verified
+owned quarantine is removed; no cloud reboot/recycle/paid-node change was made.
+Provider retry still needs capacity: its corrected 2 GiB reservation cannot fit
+this worker's 1464 MiB allocatable memory. Additional/replacement capacity needs
+owner approval; no provider mount/HTTPS/network/Google acceptance follows.
 Provider startup/HTTPS/mounts/network/steady restart are not qualified yet.
 Google registration/redirect binding and human consent still require qualification;
 finding old Secret metadata alone does not establish those bindings.
