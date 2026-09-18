@@ -29,16 +29,50 @@ Worker recovery/replacement needs owner authority before any provider retry.
 Fresh checks subsequently confirm worker Ready/Core one Ready replica on the
 unchanged image, no provider Pods and zero provider DB connections. The verified
 owned quarantine is removed; no cloud reboot/recycle/paid-node change was made.
-Provider retry still needs capacity: its corrected 2 GiB reservation cannot fit
+At that handoff, provider retry still needed capacity: its 2 GiB reservation could not fit
 this worker's 1464 MiB allocatable memory. Additional/replacement capacity needs
 owner approval; no provider mount/HTTPS/network/Google acceptance follows.
-Provider startup/HTTPS/mounts/network/steady restart are not qualified yet.
+Provider startup/HTTPS/mounts/network/steady restart were then unqualified.
 Google registration/redirect binding and human consent still require qualification;
 finding old Secret metadata alone does not establish those bindings.
 Before authorized legacy deletion, selected OAuth credential fields were privately
 preserved in new immutable custody; old cookie/session keys were excluded. These
 are unqualified inputs, not an actual Google client/redirect binding or activation.
 No Core/client binary, schema, wire contract or target authority change occurs.
+
+Subsequent owner-approved capacity replacement completes: a new physical 4 GiB
+worker is Ready; normal PDB-respecting old-worker drain and explicitly requested
+cost retirement remove the old 2 GiB pool. No PV/PVC/VolumeAttachment existed.
+Core/ingress become Ready on the replacement, with unchanged Core image/LB IP.
+The same LB is updated with only the new backend, preserving forwarding/health
+rules. Verified public TLS/key discovery succeeds from the Ubuntu client, and
+verified ingress TLS/key discovery succeeds through loopback forwarding. Mac
+public probes time out; their causality and new Noise/client/HA qualification
+are not inferred. Native provider DB history and immutable input custody remain
+intact. After natural DNS autoscaling, the 2048 MiB provider can be admitted
+against 3002.824 MiB allocatable and 928 MiB existing requests, with only 26.824
+MiB left before the 8 MiB acceptance peer. This thin single-worker POC budget
+is not measured load/peak sizing; retain atomic startup/abort and pressure checks.
+
+Current private native runtime: initial bootstrap and steady Recreate become
+Ready on the pinned artifact with zero provider restarts. Actual serving PKIX/
+names/master discovery/verified management health and trust/name negatives pass
+before/after restart. Native DB bootstrap resumes without manual schema changes;
+all-TLS bounded connections verify. Actual process UID/GID 1000, root:1000/0440
+projected files, read-only root/config and token absence pass; new steady pod
+has no mounted bootstrap keys. This does not qualify Core's owner-only profile
+or product password login. Initial TCP ingress cases pass; two short steady
+operator-relabel denial checks fail while Cilium identity remains stale. A
+separate diagnostic observes fresh false-labelled peer denial and enforcement
+after identity convergence, not a passing original timing gate or instant label
+revocation. Fixed operator role labels and bounded UID-checked termination/native
+credential-session revocation correct that workflow; Core/client generation
+fencing stays unchanged. Owned peers/CA fixtures/forwards are removed. No load/
+HA/client/whole Go rerun or real Google case follows. Next is protected Google
+broker/confidential Core client/public BFF and six controlled live Google cases;
+actual Web client/secret-purpose/redirect registration and human consent are
+required. Canonical original documents 13/16/17/18/27 are updated locally, not
+claimed pushed because that original directory is non-Git.
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,
