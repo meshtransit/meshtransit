@@ -14,8 +14,11 @@ within this explicit scope.
 The optimized amd64 POC candidate now builds and passes immutable non-root/read-only
 native CLI checks, and is published with index
 `sha256:89e58aafc3a58c3c80f7f41c0873d86fafd2cebaecf405690fb28c94451539d2`.
-Private target startup awaits independent DB provisioning with the correct EC2
-SSH account/key; real Google OAuth Web credentials and consent are still needed.
+Root SSH is now verified. Private target startup awaits explicit approval of the
+shared-host new-role-only HBA/independent DB/new Secret delivery scope; auto-review
+rejected the write before execution. Google registration/redirect binding and
+human consent still require qualification; finding old Secret metadata alone
+does not establish those bindings.
 No Core/client binary, schema, wire contract or target authority change occurs.
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
