@@ -14,11 +14,24 @@ within this explicit scope.
 The optimized amd64 POC candidate now builds and passes immutable non-root/read-only
 native CLI checks, and is published with index
 `sha256:89e58aafc3a58c3c80f7f41c0873d86fafd2cebaecf405690fb28c94451539d2`.
-Root SSH is now verified. Private target startup awaits explicit approval of the
-shared-host new-role-only HBA/independent DB/new Secret delivery scope; auto-review
-rejected the write before execution. Google registration/redirect binding and
-human consent still require qualification; finding old Secret metadata alone
-does not establish those bindings.
+The owner subsequently approved the exact independent DB/new-role HBA/five-new-
+immutable-Secret scope. Provisioning and six native TLS/SCRAM/isolation cases now
+pass without changing old Core credentials, grants or HBA rules. The private
+first atomic install failed memory scheduling. The owner then explicitly retired
+the old namespace; a second private attempt scheduled/connected to PostgreSQL,
+but the worker lost heartbeat before readiness. Core now has zero Ready replicas;
+OOM is not established. Atomic abort removes the release but actual termination
+of its residual Terminating Pod is unverified. A provider-only deny-all quarantine
+is requested, with enforcement unverified while the worker is unreachable.
+DB/Secrets remain intact. Chart 0.1.2 fixes memory request to its full 2 GiB limit:
+the pinned JVM's default initial heap alone is 1 GiB, above the old 512 MiB request.
+Worker recovery/replacement needs owner authority before any provider retry.
+Provider startup/HTTPS/mounts/network/steady restart are not qualified yet.
+Google registration/redirect binding and human consent still require qualification;
+finding old Secret metadata alone does not establish those bindings.
+Before authorized legacy deletion, selected OAuth credential fields were privately
+preserved in new immutable custody; old cookie/session keys were excluded. These
+are unqualified inputs, not an actual Google client/redirect binding or activation.
 No Core/client binary, schema, wire contract or target authority change occurs.
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
