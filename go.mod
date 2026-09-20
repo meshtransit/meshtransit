@@ -8,7 +8,7 @@ require (
 	github.com/redis/go-redis/v9 v9.22.0
 	go.uber.org/goleak v1.3.0
 	golang.org/x/net v0.58.0
-	tailscale.com v1.102.3
+	tailscale.com v1.102.4
 )
 
 require (
