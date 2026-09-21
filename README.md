@@ -1,5 +1,11 @@
 # MeshTransit Core
 
+Product direction: MeshTransit targets **Zero Trust Access Assurance for private
+infrastructure**. Secure Private Resource Fabric remains architecture foundation;
+Access Graph becomes authorization, explanation, simulation, and verification
+model. Current Phase 1 scope is unchanged. See
+[PRODUCT_DIRECTION.md](PRODUCT_DIRECTION.md).
+
 Temporary owner-approved delivery change (2026-09-17): CVE remediation is deferred
 only for isolated non-production Keycloak qualification, using a separate dated
 acknowledged candidate workflow. Existing scan findings and production artifact
