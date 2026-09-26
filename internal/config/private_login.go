@@ -8,7 +8,9 @@ import (
 	"io"
 	"log/slog"
 	"net/netip"
+	"net/url"
 	"slices"
+	"strings"
 
 	"github.com/meshtransit/meshtransit/internal/app"
 	"github.com/meshtransit/meshtransit/internal/deployment"
@@ -21,10 +23,11 @@ const envPrivateLoginConfigFile = "MESHTRANSIT_PRIVATE_LOGIN_CONFIG_FILE"
 // PrivateLoginFile is an opt-in operator reference, not public SSO enablement.
 type PrivateLoginFile struct{ file SecretFile }
 
-// PrivateLoginConfig owns the immutable loopback-only source serving profile.
-// There are no setters, replacement ports, proxy assertions or waiver flags.
+// PrivateLoginConfig owns one immutable direct-TLS backend and browser origin.
+// There are no setters, replacement ports or qualification-waiver flags.
 type PrivateLoginConfig struct {
-	address                        string
+	address, origin                string
+	trustedProxyPrefixes           []netip.Prefix
 	route                          oidcauth.Route
 	keys                           *PrivateIdentityKeyFiles
 	cert, privateKey, clientSecret SecretFile
@@ -73,16 +76,24 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 		return nil, ErrInvalid
 	}
 	fields, err := privateLoginObject(contents, []string{
-		"version", "address", "deployment_id", "workspace_id", "provider_id", "client_id",
+		"version", "address", "origin", "trusted_proxy_prefixes",
+		"deployment_id", "workspace_id", "provider_id", "client_id",
 		"provider_generation", "recovery_epoch", "issuer", "discovery_uri", "authorization_endpoint",
 		"token_endpoint", "jwks_uri", "oidc_client_id", "redirect_id", "return_route_id",
 		"tls_certificate_file", "tls_private_key_file", "client_secret_file", "keys",
 	})
-	if err != nil || len(fields) != 20 {
+	if err != nil {
 		return nil, ErrInvalid
 	}
 	var version int
-	if !privateLoginField(fields, "version", &version) || version != 1 {
+	if !privateLoginField(fields, "version", &version) || version != 1 && version != 2 {
+		return nil, ErrInvalid
+	}
+	expectedFields := 20
+	if version == 2 {
+		expectedFields = 22
+	}
+	if len(fields) != expectedFields {
 		return nil, ErrInvalid
 	}
 	result := &PrivateLoginConfig{}
@@ -91,7 +102,8 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 	}
 	address, err := netip.ParseAddrPort(result.address)
 	validBind := err == nil && address.String() == result.address && address.Port() != 0
-	if !validBind || !address.Addr().IsLoopback() || address.Addr().Is4In6() || address.Addr().Zone() != "" {
+	allowedBind := address.Addr().IsLoopback() || version == 2 && address.Addr().IsPrivate()
+	if !validBind || !allowedBind || address.Addr().Is4In6() || address.Addr().Zone() != "" {
 		return nil, ErrInvalid
 	}
 	if addressesConflict(result.address, process.HealthAddress) || addressesConflict(result.address, process.API.Address) {
@@ -99,6 +111,21 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 	}
 	if process.Control != nil && addressesConflict(result.address, process.Control.Address) {
 		return nil, ErrInvalid
+	}
+	if version == 1 {
+		result.origin = "https://" + result.address
+	} else if !privateLoginField(fields, "origin", &result.origin) || !validPrivateLoginOrigin(result.origin) {
+		return nil, ErrInvalid
+	}
+	if version == 2 {
+		var prefixes []string
+		if !privateLoginField(fields, "trusted_proxy_prefixes", &prefixes) {
+			return nil, ErrInvalid
+		}
+		result.trustedProxyPrefixes, err = parsePrivateLoginTrustedProxyPrefixes(prefixes)
+		if err != nil {
+			return nil, ErrInvalid
+		}
 	}
 	params := oidcauth.RouteParams{
 		ClientKind: "confidential", ClientAuthMethod: "client_secret_basic",
@@ -145,6 +172,13 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 	result.route, err = oidcauth.NewRoute(params)
 	if err != nil {
 		return nil, ErrInvalid
+	}
+	if version == 2 {
+		issuer, issuerErr := url.Parse(result.route.Issuer())
+		origin, originErr := url.Parse(result.origin)
+		if issuerErr != nil || originErr != nil || strings.EqualFold(issuer.Hostname(), origin.Hostname()) {
+			return nil, ErrInvalid
+		}
 	}
 	for _, field := range []struct {
 		name        string
@@ -267,6 +301,39 @@ func privateLoginField(fields map[string]json.RawMessage, name string, destinati
 	return present && json.Unmarshal(raw, destination) == nil
 }
 
+func validPrivateLoginOrigin(value string) bool {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Host != parsed.Hostname() ||
+		parsed.User != nil || parsed.Path != "" || parsed.RawPath != "" || parsed.RawQuery != "" ||
+		parsed.Opaque != "" || parsed.Fragment != "" || parsed.RawFragment != "" || parsed.ForceQuery {
+		return false
+	}
+	hostname := parsed.Hostname()
+	if hostname != strings.ToLower(hostname) || !strings.Contains(hostname, ".") || !validHost(hostname) {
+		return false
+	}
+	_, err = netip.ParseAddr(hostname)
+	return err != nil && parsed.String() == value
+}
+
+func parsePrivateLoginTrustedProxyPrefixes(values []string) ([]netip.Prefix, error) {
+	if len(values) == 0 || len(values) > 16 {
+		return nil, ErrInvalid
+	}
+	prefixes := make([]netip.Prefix, 0, len(values))
+	for _, value := range values {
+		prefix, err := netip.ParsePrefix(value)
+		trustedAddress := err == nil && (prefix.Addr().IsLoopback() || prefix.Addr().IsPrivate())
+		invalid := err != nil || !prefix.IsValid() || prefix.String() != value || prefix != prefix.Masked() ||
+			!trustedAddress || prefix.Bits() == 0 || prefix.Addr().Is4In6() || prefix.Addr().Zone() != ""
+		if invalid || slices.Contains(prefixes, prefix) {
+			return nil, ErrInvalid
+		}
+		prefixes = append(prefixes, prefix)
+	}
+	return prefixes, nil
+}
+
 func (profile *PrivateLoginConfig) validOwnership(process Config) bool {
 	owned := []SecretFile{profile.cert, profile.privateKey, profile.clientSecret}
 	for _, key := range profile.keys.keys {
@@ -320,7 +387,12 @@ func (profile *PrivateLoginConfig) validOwnership(process Config) bool {
 func (profile *PrivateLoginConfig) Address() string { return profile.address }
 
 // Origin returns the exact same-origin TLS authority, not an operator redirect.
-func (profile *PrivateLoginConfig) Origin() string { return "https://" + profile.address }
+func (profile *PrivateLoginConfig) Origin() string { return profile.origin }
+
+// TrustedProxyPrefixes returns a defensive copy of the exact public-edge peers.
+func (profile *PrivateLoginConfig) TrustedProxyPrefixes() []netip.Prefix {
+	return slices.Clone(profile.trustedProxyPrefixes)
+}
 
 // Route returns the immutable Core-controlled trust decision.
 func (profile *PrivateLoginConfig) Route() oidcauth.Route { return profile.route }

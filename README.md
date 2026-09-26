@@ -184,9 +184,14 @@ broker PostgreSQL. The generic-OIDC client now permits only the fixed Google
 discovery, token, and JWKS method/URL pairs. It ignores ambient proxies, rejects
 redirects and non-public DNS results, pins each validated IP for the dial, and
 enforces bounded TLS, request, response, connection, and lifecycle behavior.
-The isolated role now mounts that handler on a separate private/loopback-only
-direct-TLS listener. Public ingress, the Core BFF callback, token exchange by
-Core, and completed browser login remain disabled.
+The isolated role mounts that handler on a separate private/loopback-only
+direct-TLS listener. Configuration schema 21 also adds the version-2 Core BFF
+profile described below: a fixed public application origin is separated from
+the private backend bind, exact trusted ingress prefixes are carried into client
+source resolution, and the existing callback/token/session graph is served only
+through the bounded direct-TLS login listener. No public DNS, ingress route or
+Google credential is created by source configuration, so completed browser
+login and public deployment acceptance remain open.
 
 Run `meshcore identity fingerprint` with every identity setting except
 `MESHTRANSIT_IDENTITY_CONFIGURATION_FINGERPRINT` to produce the exact approved
@@ -2454,10 +2459,13 @@ public/live browser readiness. The remaining release gates above remain open.
 `SSO-PRIVATE-PROCESS-PROFILE-001` consolidates immutable configuration, concrete
 dependency readiness and compiled `meshcore serve` ownership. It supersedes
 historical statements above that main/config/readiness binding is absent ONLY
-for this opt-in PRIVATE loopback source profile. Public login remains disabled.
-There is no public bind/origin, enable/qualification-waiver switch, proxy
-assertion or direct Google adapter. Keycloak remains the SSO-only broker, with
-Google first. Never publish or forward the private listener.
+for the opt-in private login profile. Version 1 remains a loopback-only source
+profile. Configuration schema 21 adds version 2 for a controlled public edge:
+the listener still binds only a specific loopback/private address and terminates
+verified TLS itself, while browser authority is one separate canonical public
+origin. There is no wildcard/public bind, enable/qualification-waiver switch or
+direct Google adapter. The edge may forward only the documented login paths and
+must preserve the configured Host while verifying the backend certificate.
 
 Configuration schema 16 adds `MESHTRANSIT_PRIVATE_LOGIN_CONFIG_FILE` for `api`
 and `all` only. Absent means unchanged behavior; explicitly empty, relative,
@@ -2472,12 +2480,22 @@ caller's finite context. Version 1 requires exactly these 20 fields:
 - `oidc_client_id`, `redirect_id`, `return_route_id`;
 - `tls_certificate_file`, `tls_private_key_file`, `client_secret_file`, `keys`.
 
-`address` is an exact canonical loopback IP/nonzero port, such as
-`127.0.0.1:9443` or `[::1]:9443`, distinct from existing listener addresses.
-Origin and callback are derived as HTTPS on that exact authority with
-`/auth/v1/callback`, not independently operator-selected. The local return path
-is `/console`. Route IDs and positive generation/epoch bind one independently
-authorized durable Keycloak route. The profile fixes confidential
+Version 2 requires those fields plus `origin` and
+`trusted_proxy_prefixes`. Its `address` is an exact canonical loopback or
+private IP/nonzero port, distinct from existing listeners; DNS, wildcard,
+public, mapped, zoned and link-local binds are rejected. `origin` is one
+lowercase canonical HTTPS DNS origin with no port, path, query, fragment or IP
+literal. It must differ from the configured issuer host. The callback is derived
+only as `<origin>/auth/v1/callback`; the local return path remains `/console`.
+`trusted_proxy_prefixes` contains 1–16 unique canonical non-wildcard private or
+loopback CIDRs. Only a direct peer inside one of those prefixes can contribute a bounded
+`X-Forwarded-For` chain; every other peer is its own rate-limit source.
+
+Version 1 continues to require an exact loopback IP/nonzero port such as
+`127.0.0.1:9443` or `[::1]:9443`, and derives its origin from that address. It
+cannot represent a public browser origin. Route IDs and positive
+generation/epoch bind one independently authorized durable OIDC route. The
+profile fixes confidential
 `client_secret_basic`, `openid` and `RS256`. Unknown/case-aliased/duplicate/null
 fields, malformed/trailing JSON and public/wildcard/mapped addresses are denied.
 
@@ -2498,7 +2516,8 @@ key-custody qualification remains open.
 
 TLS PEM files are bounded to 64 KiB each and the client-secret file to 4096
 bytes, with the same protected regular-file custody/change checks. Modern
-single-host certificate identity must match the exact callback host. All raw
+single-host certificate identity must match the exact callback/public-origin
+host, even when the socket binds a different private IP. All raw
 errors and formatting remain closed/redacted; temporary buffers are cleared
 after constructor copies, not a promise of Go heap zeroization. Trusted local
 mounts are required because cancellation cannot preempt filesystem syscalls.

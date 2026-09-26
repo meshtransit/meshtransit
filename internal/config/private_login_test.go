@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -26,7 +28,8 @@ func privateLoginTestDocument(t testing.TB) (Config, map[string]any) {
 		keys[purpose] = map[string]string{"id": purpose + "-v1", "file": "/run/private/" + purpose}
 	}
 	document := map[string]any{
-		"version": 1, "address": "127.0.0.1:9443",
+		"version": 2, "address": "127.0.0.1:9443",
+		"origin": "https://app.example.test", "trusted_proxy_prefixes": []string{"127.0.0.1/32"},
 		"deployment_id":       "01890f00-0000-7000-8000-000000000001",
 		"workspace_id":        "01890f00-0000-7000-8000-000000000002",
 		"provider_id":         "01890f00-0000-7000-8000-000000000003",
@@ -53,19 +56,50 @@ func privateLoginTestJSON(t testing.TB, document map[string]any) []byte {
 	return contents
 }
 
-func TestPrivateLoginConfigOwnsExactLoopbackProfile(t *testing.T) {
+func TestPrivateLoginConfigOwnsVersionedEdgeProfile(t *testing.T) {
 	t.Parallel()
-	for _, address := range []string{"127.0.0.1:9443", "[::1]:9443"} {
-		t.Run(address, func(t *testing.T) {
+	for _, test := range []struct {
+		name, address, origin string
+		version               int
+		proxies               []string
+	}{
+		{name: "legacy ipv4 loopback", version: 1, address: "127.0.0.1:9443", origin: "https://127.0.0.1:9443"},
+		{name: "legacy ipv6 loopback", version: 1, address: "[::1]:9443", origin: "https://[::1]:9443"},
+		{name: "edge loopback", version: 2, address: "127.0.0.1:9443", origin: "https://app.example.test", proxies: []string{"127.0.0.1/32"}},
+		{name: "edge private", version: 2, address: "10.20.30.40:9443", origin: "https://app.example.test", proxies: []string{"10.20.0.0/16", "fd20:30::/48"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			process, document := privateLoginTestDocument(t)
-			document["address"] = address
+			document["version"] = test.version
+			document["address"] = test.address
+			if test.version == 1 {
+				delete(document, "origin")
+				delete(document, "trusted_proxy_prefixes")
+			} else {
+				document["origin"] = test.origin
+				document["trusted_proxy_prefixes"] = test.proxies
+			}
 			profile, err := parsePrivateLoginConfig(privateLoginTestJSON(t, document), process)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if profile.Address() != address || profile.Route().RedirectURI() != "https://"+address+"/auth/v1/callback" ||
+			if profile.Address() != test.address || profile.Origin() != test.origin ||
+				profile.Route().RedirectURI() != test.origin+"/auth/v1/callback" ||
 				profile.Route().ClientAuthMethod() != "client_secret_basic" {
 				t.Fatal("profile binding changed")
+			}
+			prefixes := make([]netip.Prefix, 0, len(test.proxies))
+			for _, value := range test.proxies {
+				prefixes = append(prefixes, netip.MustParsePrefix(value))
+			}
+			if !slices.Equal(profile.TrustedProxyPrefixes(), prefixes) {
+				t.Fatal("trusted proxy binding changed")
+			}
+			if returned := profile.TrustedProxyPrefixes(); len(returned) > 0 {
+				returned[0] = netip.MustParsePrefix("10.255.0.0/16")
+				if slices.Equal(profile.TrustedProxyPrefixes(), returned) {
+					t.Fatal("trusted proxy accessor released mutable ownership")
+				}
 			}
 			if profile.keys.keys[8].File != process.API.AccountSessionDigest.Active.MaterialFile ||
 				profile.keys.keys[9].File != process.API.IdempotencyDigest.MaterialFile ||
@@ -96,6 +130,16 @@ func TestPrivateLoginConfigRejectsUnsafeOperatorInput(t *testing.T) {
 		{name: "mapped address", change: func(_ Config, d map[string]any) { d["address"] = "[::ffff:127.0.0.1]:9443" }},
 		{name: "health conflict", change: func(p Config, d map[string]any) { d["address"] = p.HealthAddress }},
 		{name: "API conflict", change: func(_ Config, d map[string]any) { d["address"] = "127.0.0.1:8444" }},
+		{name: "origin with path", change: func(_ Config, d map[string]any) { d["origin"] = "https://app.example.test/login" }},
+		{name: "origin with port", change: func(_ Config, d map[string]any) { d["origin"] = "https://app.example.test:443" }},
+		{name: "origin ip", change: func(_ Config, d map[string]any) { d["origin"] = "https://192.0.2.10" }},
+		{name: "origin uppercase", change: func(_ Config, d map[string]any) { d["origin"] = "https://App.example.test" }},
+		{name: "origin aliases issuer", change: func(_ Config, d map[string]any) { d["origin"] = "https://identity.example.test" }},
+		{name: "empty proxies", change: func(_ Config, d map[string]any) { d["trusted_proxy_prefixes"] = []string{} }},
+		{name: "wildcard proxy", change: func(_ Config, d map[string]any) { d["trusted_proxy_prefixes"] = []string{"0.0.0.0/0"} }},
+		{name: "public proxy", change: func(_ Config, d map[string]any) { d["trusted_proxy_prefixes"] = []string{"192.0.2.0/24"} }},
+		{name: "noncanonical proxy", change: func(_ Config, d map[string]any) { d["trusted_proxy_prefixes"] = []string{"10.0.1.1/24"} }},
+		{name: "duplicate proxy", change: func(_ Config, d map[string]any) { d["trusted_proxy_prefixes"] = []string{"10.0.0.0/8", "10.0.0.0/8"} }},
 		{name: "unknown field", change: func(_ Config, d map[string]any) { d["enabled"] = true }},
 		{name: "case alias", change: func(_ Config, d map[string]any) { d["Version"] = 1 }},
 		{name: "missing field", change: func(_ Config, d map[string]any) { delete(d, "recovery_epoch") }},
@@ -144,7 +188,7 @@ func TestPrivateLoginConfigRejectsUnsafeOperatorInput(t *testing.T) {
 	process, document := privateLoginTestDocument(t)
 	valid := string(privateLoginTestJSON(t, document))
 	for _, contents := range []string{
-		valid + `{}`, strings.Replace(valid, `"version":1`, `"version":1,"version":1`, 1),
+		valid + `{}`, strings.Replace(valid, `"version":2`, `"version":2,"version":2`, 1),
 		strings.Replace(valid, `"id":"capture-v1"`, `"id":"capture-v1","id":"capture-v1"`, 1),
 		strings.Repeat(" ", 16*1024+1), `[]`, `null`, `{"version":1`,
 	} {
@@ -206,7 +250,7 @@ func TestPrivateLoginFileDefaultRolesAndProtectedCustody(t *testing.T) {
 func FuzzPrivateLoginConfig(f *testing.F) {
 	process, document := privateLoginTestDocument(f)
 	f.Add(privateLoginTestJSON(f, document))
-	f.Add([]byte(`{"version":1,"version":1}`))
+	f.Add([]byte(`{"version":2,"version":2}`))
 	f.Fuzz(func(t *testing.T, contents []byte) {
 		profile, err := parsePrivateLoginConfig(contents, process)
 		if err != nil {
