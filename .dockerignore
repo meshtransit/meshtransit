@@ -2,6 +2,8 @@
 !go.mod
 !go.sum
 !THIRD_PARTY_NOTICES.md
+!api/
+!api/**
 !cmd/
 !cmd/**
 !internal/
