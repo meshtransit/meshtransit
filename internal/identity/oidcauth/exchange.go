@@ -128,7 +128,7 @@ func (service *ExchangeService) ExchangeBrowser(ctx context.Context, receipt Cla
 	}
 	ctx, cancel := context.WithTimeout(ctx, service.options.RequestTimeout)
 	defer cancel()
-	if ctx.Err() != nil || !liveClaim(receipt.claimed, service.dependencies.Clock.Now()) {
+	if ctx.Err() != nil || !liveClaimAtLocalClock(receipt.claimed, service.dependencies.Clock.Now()) {
 		return ExchangeResult{}, errors.Join(ErrExchangeRejected, ctx.Err())
 	}
 	if !receipt.exchangeAttempt.CompareAndSwap(false, true) {
@@ -146,7 +146,7 @@ func (service *ExchangeService) ExchangeBrowser(ctx context.Context, receipt Cla
 		return ExchangeResult{}, ErrExchangeRejected
 	}
 	proof, err := service.dependencies.Cipher.OpenBrowser(binding, claimed.snapshot.VerifierCiphertext())
-	if err != nil || !proof.IsValid() || ctx.Err() != nil || !liveClaim(claimed, service.dependencies.Clock.Now()) {
+	if err != nil || !proof.IsValid() || ctx.Err() != nil || !liveClaimAtLocalClock(claimed, service.dependencies.Clock.Now()) {
 		return ExchangeResult{}, errors.Join(ErrExchangeRejected, ctx.Err())
 	}
 	evidence, err := service.dependencies.Provider.Authenticate(ctx, ExchangeRequest{claimed: claimed, code: code, verifier: proof.Verifier()})
@@ -163,13 +163,17 @@ func (service *ExchangeService) ExchangeBrowser(ctx context.Context, receipt Cla
 		return ExchangeResult{}, ErrExchangeRejected
 	}
 	now := service.dependencies.Clock.Now()
-	if ctx.Err() != nil || !liveClaim(claimed, now) || !now.Before(evidence.ExpiresAt()) {
+	if ctx.Err() != nil || !liveClaimAtLocalClock(claimed, now) || !now.Before(evidence.ExpiresAt()) {
 		return ExchangeResult{}, errors.Join(ErrExchangeRejected, ctx.Err())
 	}
 	return ExchangeResult{claimed: claimed, identity: evidence.identity, issuanceAttempt: &atomic.Bool{}}, nil
 }
 func liveClaim(claimed Claimed, now time.Time) bool {
 	return !now.Before(claimed.ConsumedAt()) && livePendingSnapshot(claimed.snapshot, now)
+}
+
+func liveClaimAtLocalClock(claimed Claimed, now time.Time) bool {
+	return authorityTimeReached(now, claimed.ConsumedAt()) && livePendingSnapshotAtLocalClock(claimed.snapshot, now)
 }
 
 // ExchangeResult is opaque validated authentication, not session/admission authority.

@@ -30,7 +30,7 @@ func TestCallbackResultReleaseTimeAndOriginalRoute(t *testing.T) {
 				at   time.Time
 			}{
 				{name: "zero"},
-				{name: "before decision", at: fixture.now.Add(-time.Microsecond)},
+				{name: "before decision", at: fixture.now.Add(-authorityClockSkewAllowance - time.Microsecond)},
 				{name: "claim expiry", at: fixture.snapshot.ExpiresAt()},
 			} {
 				t.Run(test.name, func(t *testing.T) {

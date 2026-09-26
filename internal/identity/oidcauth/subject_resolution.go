@@ -347,7 +347,7 @@ func (service *SubjectResolutionService) ResolveBrowser(
 		return result, errors.Join(ErrSubjectResolutionUnavailable, ctx.Err())
 	}
 	now := service.dependencies.Clock.Now()
-	validCompletion := snapshot.Matches(query) && !now.Before(snapshot.EvaluatedAt()) && liveSubjectExchange(exchange, now)
+	validCompletion := snapshot.Matches(query) && authorityTimeReached(now, snapshot.EvaluatedAt()) && liveSubjectExchange(exchange, now)
 	validMembership := snapshot.MembershipExpiresAt().IsZero() || now.Before(snapshot.MembershipExpiresAt())
 	if !validCompletion || !validMembership || ctx.Err() != nil {
 		return result, errors.Join(ErrSubjectResolutionRejected, ctx.Err())
@@ -357,7 +357,7 @@ func (service *SubjectResolutionService) ResolveBrowser(
 
 func liveSubjectExchange(exchange ExchangeResult, now time.Time) bool {
 	validIdentity := exchange.IsValid() && exchange.identity.Issuer() == exchange.claimed.snapshot.Route().Issuer()
-	validDeadlines := liveClaim(exchange.claimed, now) && now.Before(exchange.identity.ExpiresAt())
+	validDeadlines := liveClaimAtLocalClock(exchange.claimed, now) && now.Before(exchange.identity.ExpiresAt())
 	return validIdentity && validDeadlines
 }
 

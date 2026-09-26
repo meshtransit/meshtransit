@@ -138,7 +138,7 @@ func (service *StartService) Start(
 		return StartResult{}, errors.Join(ErrStartFailed, err)
 	}
 	now := service.dependencies.Clock.Now().UTC()
-	if now.IsZero() || now.Before(created.CreatedAt()) || !now.Before(created.ExpiresAt()) {
+	if !authorityTimeReached(now, created.CreatedAt()) || !now.Before(created.ExpiresAt()) {
 		return StartResult{}, errors.Join(ErrStartFailed, ErrStartExpired)
 	}
 	return StartResult{

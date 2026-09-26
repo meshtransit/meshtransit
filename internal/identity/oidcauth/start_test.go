@@ -432,7 +432,7 @@ func TestStartServiceRejectsExpiredAndBackwardReleaseTime(t *testing.T) {
 				case "expiry":
 					fixture.now = fixture.params.ExpiresAt
 				case "backward":
-					fixture.now = fixture.params.CreatedAt.Add(-time.Second)
+					fixture.now = fixture.params.CreatedAt.Add(-authorityClockSkewAllowance - time.Second)
 				case "zero":
 					fixture.now = time.Time{}
 				}

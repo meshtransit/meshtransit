@@ -81,7 +81,7 @@ func (service *BrowserVerificationService) VerifyBrowser(ctx context.Context, ro
 	if err := ctx.Err(); err != nil {
 		return VerifiedBrowser{}, errors.Join(ErrBrowserVerificationRejected, err)
 	}
-	if !found || !snapshot.MatchesRoute(route) || !livePendingSnapshot(snapshot, service.dependencies.Clock.Now()) {
+	if !found || !snapshot.MatchesRoute(route) || !livePendingSnapshotAtLocalClock(snapshot, service.dependencies.Clock.Now()) {
 		return VerifiedBrowser{}, ErrBrowserVerificationRejected
 	}
 	expected, actual := snapshot.StateDigest().Bytes(), digest.Bytes()
@@ -96,7 +96,7 @@ func (service *BrowserVerificationService) VerifyBrowser(ctx context.Context, ro
 	if err != nil || !service.dependencies.DigestKey.VerifyPreAuthCookie(binding, cookie, proof.CookieDigest()) {
 		return VerifiedBrowser{}, ErrBrowserVerificationRejected
 	}
-	if !livePendingSnapshot(snapshot, service.dependencies.Clock.Now()) {
+	if !livePendingSnapshotAtLocalClock(snapshot, service.dependencies.Clock.Now()) {
 		return VerifiedBrowser{}, ErrBrowserVerificationRejected
 	}
 	if err := ctx.Err(); err != nil {
@@ -107,6 +107,10 @@ func (service *BrowserVerificationService) VerifyBrowser(ctx context.Context, ro
 
 func livePendingSnapshot(snapshot PendingSnapshot, now time.Time) bool {
 	return !now.Before(snapshot.CreatedAt()) && now.Before(snapshot.ExpiresAt())
+}
+
+func livePendingSnapshotAtLocalClock(snapshot PendingSnapshot, now time.Time) bool {
+	return authorityTimeReached(now, snapshot.CreatedAt()) && now.Before(snapshot.ExpiresAt())
 }
 
 // VerifiedBrowser is opaque possession evidence, deliberately not an exchange grant.

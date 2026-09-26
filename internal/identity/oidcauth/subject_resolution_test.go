@@ -53,6 +53,36 @@ func TestSubjectResolutionReturnsOnlyClosedExactSnapshot(t *testing.T) {
 	}
 }
 
+func TestSubjectResolutionAcceptsBoundedAuthorityClockSkew(t *testing.T) {
+	t.Parallel()
+	exchange := subjectExchangeFixture(t)
+	now := exchange.claimed.ConsumedAt()
+	evaluatedAt := now.Add(time.Second)
+	ring, err := NewSubjectKeyring(subjectKeyFixture(t, "subject-v1", 7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewSubjectResolutionService(
+		SubjectResolutionOptions{RequestTimeout: time.Second, MaxConcurrent: 1},
+		SubjectResolutionDependencies{
+			Keys: ring,
+			Clock: browserVerificationClock{now: func() time.Time {
+				return now
+			}},
+			Observer: &subjectTestObserver{},
+			Subjects: subjectTestResolver{resolve: func(_ context.Context, query SubjectLookup) (LoginSubjectSnapshot, error) {
+				return NewLoginSubjectSnapshot(subjectSnapshotParamsFixture(t, query, evaluatedAt))
+			}},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, resolveErr := service.ResolveBrowser(t.Context(), exchange); resolveErr != nil || !result.IsValid() {
+		t.Fatalf("bounded database clock skew rejected: %v", resolveErr)
+	}
+}
+
 func TestSubjectResolutionRejectsStaleMalformedAndFailedReads(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"zero exchange", "canceled before", "expired before", "dependency", "no access", "cleanup after rejection", "wrong digest", "wrong key", "bad principal", "zero generation", "wrong claim", "noncanonical time", "future DB time", "canceled after", "claim expired after", "token expired after", "member expired after"} {
@@ -111,7 +141,7 @@ func TestSubjectResolutionRejectsStaleMalformedAndFailedReads(t *testing.T) {
 					case "noncanonical time":
 						params.EvaluatedAt = now.Add(time.Nanosecond)
 					case "future DB time":
-						params.EvaluatedAt = now.Add(time.Microsecond)
+						params.EvaluatedAt = now.Add(authorityClockSkewAllowance + time.Microsecond)
 					case "canceled after":
 						cancel()
 					case "claim expired after":

@@ -201,7 +201,7 @@ func (service *ClaimService) ClaimBrowser(ctx context.Context, verified Verified
 	}
 	ctx, cancel := context.WithTimeout(ctx, service.options.RequestTimeout)
 	defer cancel()
-	if ctx.Err() != nil || !livePendingSnapshot(verified.snapshot, service.dependencies.Clock.Now()) {
+	if ctx.Err() != nil || !livePendingSnapshotAtLocalClock(verified.snapshot, service.dependencies.Clock.Now()) {
 		return result, errors.Join(ErrClaimFailed, ctx.Err())
 	}
 	ids, err := service.dependencies.IDs.NewClaimIDs()
@@ -234,7 +234,7 @@ func (service *ClaimService) ClaimBrowser(ctx context.Context, verified Verified
 		return result, errors.Join(ErrClaimFailed, ctx.Err())
 	}
 	now := service.dependencies.Clock.Now()
-	if !claimed.IsValid() || claimed.TransactionID() != verified.snapshot.TransactionID() || claimed.snapshot.SemanticHash() != verified.snapshot.SemanticHash() || ctx.Err() != nil || now.Before(claimed.ConsumedAt()) || !livePendingSnapshot(verified.snapshot, now) {
+	if !claimed.IsValid() || claimed.TransactionID() != verified.snapshot.TransactionID() || claimed.snapshot.SemanticHash() != verified.snapshot.SemanticHash() || ctx.Err() != nil || !authorityTimeReached(now, claimed.ConsumedAt()) || !livePendingSnapshotAtLocalClock(verified.snapshot, now) {
 		return result, errors.Join(ErrClaimFailed, ctx.Err())
 	}
 	if err := unit.Commit(ctx); err != nil {
@@ -245,7 +245,7 @@ func (service *ClaimService) ClaimBrowser(ctx context.Context, verified Verified
 	}
 	committed = true
 	now = service.dependencies.Clock.Now()
-	if now.Before(claimed.ConsumedAt()) || !livePendingSnapshot(verified.snapshot, now) || ctx.Err() != nil {
+	if !authorityTimeReached(now, claimed.ConsumedAt()) || !livePendingSnapshotAtLocalClock(verified.snapshot, now) || ctx.Err() != nil {
 		return result, errors.Join(ErrClaimFailed, ctx.Err())
 	}
 	return ClaimResult{claimed: claimed, exchangeAttempt: &atomic.Bool{}, failureAttempt: &atomic.Bool{}}, nil

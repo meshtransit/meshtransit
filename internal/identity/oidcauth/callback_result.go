@@ -98,12 +98,12 @@ func (result CallbackResult) IsLiveAt(now time.Time) bool {
 	if result.issued.IsValid() {
 		issued := result.issued.issued
 		command := issued.command
-		ordered := !now.Before(issued.at) && !now.Before(command.subject.EvaluatedAt())
-		liveEvidence := liveClaim(command.lookup.Claimed(), now) && now.Before(command.providerExpiresAt)
+		ordered := authorityTimeReached(now, issued.at) && authorityTimeReached(now, command.subject.EvaluatedAt())
+		liveEvidence := liveClaimAtLocalClock(command.lookup.Claimed(), now) && now.Before(command.providerExpiresAt)
 		return ordered && liveEvidence && issued.session.IsActiveAt(now)
 	}
 	terminal := result.failure.terminal
-	return !now.Before(terminal.at) && liveClaim(terminal.claimed, now)
+	return authorityTimeReached(now, terminal.at) && liveClaimAtLocalClock(terminal.claimed, now)
 }
 
 // String prevents accidental callback result credential disclosure.

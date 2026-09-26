@@ -50,7 +50,7 @@ func TestExpiryServiceOwnsOnlyOneAttemptAndJoinedCleanup(t *testing.T) {
 			case "entropy error":
 				ids = expiryBrokenIDs{}
 			case "future DB time":
-				unit.at = unit.at.Add(time.Microsecond)
+				unit.at = unit.at.Add(authorityClockSkewAllowance + time.Microsecond)
 			}
 			service := expiryServiceFixture(t, owner, ids, snapshot.ExpiresAt())
 			result, err := service.Expire(ctx, snapshot)

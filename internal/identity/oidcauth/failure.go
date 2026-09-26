@@ -253,7 +253,7 @@ func (service *FailureService) FailBrowser(
 	if !sameBinding || !sameClaimTime {
 		return result, errors.Join(ErrFailureFailed, ctx.Err())
 	}
-	if service.dependencies.Clock.Now().Before(terminal.at) || ctx.Err() != nil {
+	if !authorityTimeReached(service.dependencies.Clock.Now(), terminal.at) || ctx.Err() != nil {
 		return result, errors.Join(ErrFailureFailed, ctx.Err())
 	}
 	if err := unit.Commit(ctx); err != nil {
@@ -263,7 +263,7 @@ func (service *FailureService) FailBrowser(
 		return result, errors.Join(ErrFailureFailed, ctx.Err())
 	}
 	committed = true
-	if ctx.Err() != nil || service.dependencies.Clock.Now().Before(terminal.at) {
+	if ctx.Err() != nil || !authorityTimeReached(service.dependencies.Clock.Now(), terminal.at) {
 		return result, errors.Join(ErrFailureFailed, ctx.Err())
 	}
 	return FailureResult{terminal: terminal}, nil

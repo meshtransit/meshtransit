@@ -486,7 +486,7 @@ func (service *IssueService) IssueBrowser(
 	liveMembership := expiry.IsZero() || now.Before(expiry)
 	if !exchange.IsValid() || exchange.identity.AuthTime().IsZero() || exchange.identity.AuthTime().Unix() <= 0 ||
 		!liveSubjectExchange(exchange, now) || !subject.IsValid() || !liveMembership ||
-		now.Before(subject.EvaluatedAt()) || ctx.Err() != nil {
+		!authorityTimeReached(now, subject.EvaluatedAt()) || ctx.Err() != nil {
 		return result, errors.Join(ErrIssueRejected, ctx.Err())
 	}
 	digests, err := service.dependencies.Subjects.Digests(exchange.claimed.snapshot.Route(), exchange.identity)
@@ -566,7 +566,7 @@ func (service *IssueService) IssueBrowser(
 	return IssueResult{issued: issued, token: token}, nil
 }
 func liveIssuedRelease(exchange ExchangeResult, issued Issued, now time.Time) bool {
-	return issued.IsValid() && !now.Before(issued.at) && liveSubjectExchange(exchange, now) &&
+	return issued.IsValid() && authorityTimeReached(now, issued.at) && liveSubjectExchange(exchange, now) &&
 		issued.session.IsActiveAt(now)
 }
 

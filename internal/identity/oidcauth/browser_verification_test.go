@@ -64,7 +64,7 @@ func TestBrowserVerificationFailsClosedAcrossReadAndRelease(t *testing.T) {
 						return snapshot.ExpiresAt()
 					}
 					if name == "future creation" {
-						return snapshot.CreatedAt().Add(-time.Second)
+						return snapshot.CreatedAt().Add(-authorityClockSkewAllowance - time.Second)
 					}
 					return snapshot.CreatedAt().Add(time.Second)
 				}},

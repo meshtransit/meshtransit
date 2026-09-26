@@ -329,7 +329,7 @@ func (service *ExpiryService) Sweep(ctx context.Context, dep deployment.ID) (Exp
 	seen := make(map[TransactionID]struct{}, len(batch))
 	for _, snapshot := range batch {
 		if !snapshot.IsValid() || snapshot.DeploymentID() != dep ||
-			service.dependencies.Clock.Now().Before(snapshot.ExpiresAt()) {
+			!authorityTimeReached(service.dependencies.Clock.Now(), snapshot.ExpiresAt()) {
 			return ExpiryPass{}, ErrExpiryFailed
 		}
 		if _, duplicate := seen[snapshot.TransactionID()]; duplicate {
@@ -358,7 +358,7 @@ func (service *ExpiryService) Expire(
 	}
 	ctx, cancel := context.WithTimeout(ctx, service.options.UnitTimeout)
 	defer cancel()
-	if ctx.Err() != nil || service.dependencies.Clock.Now().Before(snapshot.ExpiresAt()) {
+	if ctx.Err() != nil || !authorityTimeReached(service.dependencies.Clock.Now(), snapshot.ExpiresAt()) {
 		return result, errors.Join(ErrExpiryFailed, ctx.Err())
 	}
 	ids, err := service.dependencies.IDs.NewClaimIDs()
@@ -388,7 +388,7 @@ func (service *ExpiryService) Expire(
 	}
 	terminal, err := unit.Expire(ctx, command)
 	if err != nil || !terminal.IsValid() || terminal.Snapshot().Params() != snapshot.Params() ||
-		service.dependencies.Clock.Now().Before(terminal.ExpiredAt()) || ctx.Err() != nil {
+		!authorityTimeReached(service.dependencies.Clock.Now(), terminal.ExpiredAt()) || ctx.Err() != nil {
 		return result, errors.Join(ErrExpiryFailed, ctx.Err())
 	}
 	if err := unit.Commit(ctx); err != nil {
@@ -398,7 +398,7 @@ func (service *ExpiryService) Expire(
 		return result, errors.Join(ErrExpiryFailed, ctx.Err())
 	}
 	committed = true
-	if ctx.Err() != nil || service.dependencies.Clock.Now().Before(terminal.ExpiredAt()) {
+	if ctx.Err() != nil || !authorityTimeReached(service.dependencies.Clock.Now(), terminal.ExpiredAt()) {
 		return result, errors.Join(ErrExpiryFailed, ctx.Err())
 	}
 	return ExpiryResult{terminal: terminal}, nil

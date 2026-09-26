@@ -50,7 +50,7 @@ func (service *CallbackService) CompleteBrowser(
 		// Zero receipt includes unknown Commit and post-commit release failure.
 		return result, safeCallbackError(err)
 	}
-	if ctx.Err() != nil || !liveClaim(receipt.claimed, service.clock.Now()) {
+	if ctx.Err() != nil || !liveClaimAtLocalClock(receipt.claimed, service.clock.Now()) {
 		return result, service.failBeforeIssue(ctx, receipt, errors.Join(ErrCallbackRejected, ctx.Err()))
 	}
 	if params.Kind == CallbackProviderErrorReceived {
@@ -59,7 +59,7 @@ func (service *CallbackService) CompleteBrowser(
 			return result, err
 		}
 		now := service.clock.Now()
-		if ctx.Err() != nil || now.Before(failure.terminal.at) || !liveClaim(receipt.claimed, now) {
+		if ctx.Err() != nil || !authorityTimeReached(now, failure.terminal.at) || !liveClaimAtLocalClock(receipt.claimed, now) {
 			return result, errors.Join(ErrCallbackRejected, ctx.Err())
 		}
 		return CallbackResult{failure: failure}, nil

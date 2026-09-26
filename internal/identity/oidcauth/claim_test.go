@@ -26,7 +26,7 @@ func TestClaimBrowserReleasesOnlyConfirmedReceipt(t *testing.T) {
 			case "malformed evidence":
 				unit.malformed = true
 			case "future claim timestamp":
-				unit.claimAt = unit.now.Add(time.Second)
+				unit.claimAt = unit.now.Add(authorityClockSkewAllowance + time.Second)
 			case "canceled before claim":
 				cancel()
 			case "expired before claim":
@@ -36,7 +36,7 @@ func TestClaimBrowserReleasesOnlyConfirmedReceipt(t *testing.T) {
 			case "expired after commit":
 				unit.afterCommit = func() { unit.now = verified.Snapshot().ExpiresAt() }
 			case "clock backwards after commit":
-				unit.afterCommit = func() { unit.now = unit.now.Add(-time.Microsecond) }
+				unit.afterCommit = func() { unit.now = unit.now.Add(-authorityClockSkewAllowance - time.Microsecond) }
 			case "cleanup failure":
 				unit.claimErr = errors.New("synthetic private failure")
 				unit.rollbackErr = errors.New("synthetic cleanup failure")

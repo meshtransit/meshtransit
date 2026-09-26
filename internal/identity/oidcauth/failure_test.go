@@ -11,7 +11,7 @@ import (
 
 func TestFailureBrowserConfirmedOnlyAndOneAttempt(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"confirmed", "expired", "unknown commit", "apply failure", "malformed", "canceled", "canceled after commit", "cleanup failure", "owned begin error", "zero receipt"} {
+	for _, name := range []string{"confirmed", "expired", "bounded clock skew", "unknown commit", "apply failure", "malformed", "canceled", "canceled after commit", "cleanup failure", "owned begin error", "zero receipt"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			receipt := failureReceiptFixture(t)
@@ -19,9 +19,13 @@ func TestFailureBrowserConfirmedOnlyAndOneAttempt(t *testing.T) {
 			defer cancel()
 			unit := &failureTestUnit{at: receipt.Claimed().ConsumedAt().Add(time.Second)}
 			store := &failureTestTransactions{unit: unit}
+			now := unit.at
 			switch name {
 			case "expired":
 				unit.at = receipt.claimed.snapshot.ExpiresAt()
+				now = unit.at
+			case "bounded clock skew":
+				now = receipt.Claimed().ConsumedAt()
 			case "unknown commit":
 				unit.commitErr = ErrCommitOutcomeUnknown
 			case "apply failure":
@@ -39,12 +43,12 @@ func TestFailureBrowserConfirmedOnlyAndOneAttempt(t *testing.T) {
 			case "zero receipt":
 				receipt = ClaimResult{}
 			}
-			service, err := NewFailureService(FailureOptions{RequestTimeout: time.Second, RollbackTimeout: time.Second}, FailureDependencies{Transactions: store, IDs: SystemClaimIDs{}, Clock: browserVerificationClock{now: func() time.Time { return unit.at }}})
+			service, err := NewFailureService(FailureOptions{RequestTimeout: time.Second, RollbackTimeout: time.Second}, FailureDependencies{Transactions: store, IDs: SystemClaimIDs{}, Clock: browserVerificationClock{now: func() time.Time { return now }}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			result, err := service.FailBrowser(ctx, receipt)
-			if name == "confirmed" || name == "expired" {
+			if name == "confirmed" || name == "expired" || name == "bounded clock skew" {
 				if err != nil || !result.IsValid() || unit.commits != 1 || unit.rollbacks != 0 {
 					t.Fatal("confirmed terminal missing", err)
 				}
