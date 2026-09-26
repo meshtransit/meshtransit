@@ -135,6 +135,7 @@ func TestNewLoginServerRejectsUnsafeProfiles(t *testing.T) {
 		{name: "noncanonical port", change: func(o *LoginServerOptions) { o.Address = "127.0.0.1:0443" }},
 		{name: "missing graph", change: func(o *LoginServerOptions) { o.Dispatcher = nil }},
 		{name: "zero graph", change: func(o *LoginServerOptions) { o.Dispatcher = &LoginDispatcher{} }},
+		{name: "missing management", change: func(o *LoginServerOptions) { o.Dispatcher.management = nil }},
 		{name: "zero capacity", change: func(o *LoginServerOptions) { o.MaxConnections = 0 }},
 		{name: "oversized capacity", change: func(o *LoginServerOptions) { o.MaxConnections = maximumLoginConnections + 1 }},
 		{name: "missing certificate", change: func(o *LoginServerOptions) { o.CertificatePEM = nil }},
@@ -192,6 +193,49 @@ func TestLoginServerServesNoGrantLandingOverOwnedTLS(t *testing.T) {
 	}
 	if len(fixture.calls) != 0 || callback.calls != 0 {
 		t.Fatal("landing reached authority or provider effects")
+	}
+}
+
+func TestLoginServerServesSessionPrepareOverOwnedTLS(t *testing.T) {
+	t.Parallel()
+	options, fixture, callback := loginServerTestOptions(t)
+	server, client := startLoginTestServer(t, options)
+	server.mu.Lock()
+	address := server.boundAddress
+	server.mu.Unlock()
+	request, err := http.NewRequestWithContext(
+		t.Context(),
+		http.MethodPost,
+		"https://"+address+AccountSessionCSRFPreparePath,
+		strings.NewReader("{}"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Host = "console.example.test"
+	request.Header.Set("Origin", "https://console.example.test")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-MeshTransit-Session", "v1")
+	request.AddCookie(&http.Cookie{Name: AccountSessionCookieName, Value: managementTokenFixture})
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal("actual TLS session preparation failed", err)
+	}
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, maximumBrowserManagementResponseBytes+1))
+	closeErr := response.Body.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatal("session preparation response not consumed/closed")
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil || len(payload) != 2 ||
+		payload["csrf_token"] == nil || payload["expires_at"] == nil {
+		t.Fatal("session preparation changed its bounded response", err)
+	}
+	invalidResponse := response.StatusCode != http.StatusOK || response.ProtoMajor != 1 ||
+		response.TLS.Version < tls.VersionTLS12 || response.Header.Get("Set-Cookie") != "" ||
+		response.Header.Get("Cache-Control") != "no-store" || bytes.Contains(body, []byte(managementTokenFixture))
+	if invalidResponse || len(fixture.calls) != 0 || callback.calls != 0 {
+		t.Fatal("session preparation crossed transport, cookie or authority boundaries")
 	}
 }
 

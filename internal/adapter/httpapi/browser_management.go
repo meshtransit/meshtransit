@@ -108,6 +108,23 @@ func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement,
 	return browser, nil
 }
 
+// validBrowserManagementOwner rechecks the sealed owner before it is joined to
+// another browser graph. It performs no authentication, budget or clock effect.
+func validBrowserManagementOwner(browser *BrowserManagement) bool {
+	if browser == nil || !validBrowserManagementHandler(browser.management) ||
+		nilContinuationDependency(browser.clock) || browser.slots == nil {
+		return false
+	}
+	validCapacity := cap(browser.slots) >= 1 && cap(browser.slots) <= 128
+	validLifetime := browser.lifetime >= 30*time.Second && browser.lifetime <= 120*time.Second &&
+		browser.lifetime%time.Second == 0
+	var zero [32]byte
+	validKey := validBrowserManagementKeyID(browser.keyID) &&
+		subtle.ConstantTimeCompare(browser.key[:], zero[:]) != 1
+	return browser.deploymentID.IsValid() && browser.origin != "" && browser.host != "" &&
+		validCapacity && validLifetime && validKey
+}
+
 func canonicalBrowserManagementHost(origin *url.URL) bool {
 	if origin.Host != strings.ToLower(origin.Host) || strings.ContainsAny(origin.Host, "\\ \t\r\n%") {
 		return false

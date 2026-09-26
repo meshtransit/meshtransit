@@ -145,14 +145,6 @@ func composePrivateIdentity(
 		return nil, errInvalidPrivateIdentityComposition
 	}
 	managementOptions := options.Management
-	dispatcher, err := httpapi.NewLoginDispatcher(login)
-	if err != nil {
-		return nil, errInvalidPrivateIdentityComposition
-	}
-	loginDocument, err := openapi.LoginDocument(openapi.ManagementProfileConsoleCookiePrivateV1, dispatcher.CallbackPath())
-	if err != nil {
-		return nil, errInvalidPrivateIdentityComposition
-	}
 	resources, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions: sessions, Revocations: ports.Revocations, PolicyPublications: ports.PolicyPublications,
 		Idempotency: keys.idempotency, RateLimitSubjects: keys.rateLimit, RateLimiter: ports.RateLimiter,
@@ -167,6 +159,14 @@ func composePrivateIdentity(
 		Management: resources, DeploymentID: options.Route.DeploymentID(), Origin: options.Origin,
 		Key: keys.csrf, Clock: ports.Clock, ProofLifetime: managementOptions.ProofLifetime,
 	})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	dispatcher, err := httpapi.NewLoginDispatcher(login, management)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	loginDocument, err := openapi.LoginDocument(openapi.ManagementProfileConsoleCookiePrivateV1, dispatcher.CallbackPath())
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}

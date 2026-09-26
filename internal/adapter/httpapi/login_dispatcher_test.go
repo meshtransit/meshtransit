@@ -20,16 +20,31 @@ import (
 
 func dispatcherTestGraph(t *testing.T) (*LoginDispatcher, *loginHTTPFixture, *completionTestPort) {
 	t.Helper()
+	dispatcher, fixture, callback, _ := dispatcherTestGraphWithManagement(t)
+	return dispatcher, fixture, callback
+}
+
+func dispatcherTestGraphWithManagement(
+	t *testing.T,
+) (*LoginDispatcher, *loginHTTPFixture, *completionTestPort, *browserManagementFixture) {
+	t.Helper()
 	options, fixture, callback := browserLoginTestOptions(t)
 	browser, err := NewBrowserLogin(options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dispatcher, err := NewLoginDispatcher(browser)
+	managementOptions, managementFixture := browserManagementTestOptions(t)
+	managementOptions.DeploymentID = options.Route.DeploymentID()
+	managementOptions.Origin = options.Origin
+	management, err := NewBrowserManagement(managementOptions)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return dispatcher, fixture, callback
+	dispatcher, err := NewLoginDispatcher(browser, management)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dispatcher, fixture, callback, managementFixture
 }
 
 func dispatcherTestInitiationRequest(ctx context.Context, path string) *http.Request {
@@ -42,10 +57,22 @@ func dispatcherTestInitiationRequest(ctx context.Context, path string) *http.Req
 
 func TestLoginDispatcherRejectsIncompleteConstruction(t *testing.T) {
 	t.Parallel()
+	management, _ := newBrowserManagementFixture(t)
 	for _, browser := range []*BrowserLogin{nil, {}, {start: &LoginStartHandler{}}} {
-		dispatcher, err := NewLoginDispatcher(browser)
+		dispatcher, err := NewLoginDispatcher(browser, management)
 		if dispatcher != nil || !errors.Is(err, ErrInvalidLoginDispatcher) {
 			t.Fatal("incomplete browser graph released a dispatcher")
+		}
+	}
+	options, _, _ := browserLoginTestOptions(t)
+	browser, err := NewBrowserLogin(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, incomplete := range []*BrowserManagement{nil, {}} {
+		dispatcher, err := NewLoginDispatcher(browser, incomplete)
+		if dispatcher != nil || !errors.Is(err, ErrInvalidLoginDispatcher) {
+			t.Fatal("incomplete management graph released a dispatcher")
 		}
 	}
 	for _, path := range []string{
@@ -63,7 +90,7 @@ func TestLoginDispatcherRejectsIncompleteConstruction(t *testing.T) {
 		if err != nil {
 			t.Fatal("standalone browser contract changed", err)
 		}
-		dispatcher, err := NewLoginDispatcher(browser)
+		dispatcher, err := NewLoginDispatcher(browser, management)
 		if dispatcher != nil || !errors.Is(err, ErrInvalidLoginDispatcher) || len(fixture.calls) != 0 || callback.calls != 0 {
 			t.Fatal("callback route overlaps another profile or construction performed effects")
 		}
@@ -109,9 +136,10 @@ func TestLoginDispatcherRejectsRoutingWithoutEffectsOrResponse(t *testing.T) {
 			r.URL.Path = "/auth/v1/../v1/login/prepare"
 			r.RequestURI = r.URL.Path
 		}},
-		{name: "management prepare", change: func(r *http.Request) {
+		{name: "get management prepare", change: func(r *http.Request) {
 			r.URL.Path = AccountSessionCSRFPreparePath
 			r.RequestURI = r.URL.Path
+			r.Method = http.MethodGet
 		}},
 		{name: "client route", change: func(r *http.Request) { r.URL.Path = "/machine/register"; r.RequestURI = r.URL.Path }},
 		{name: "unknown path", change: func(r *http.Request) { r.URL.Path = "/auth/private"; r.RequestURI = r.URL.Path }},
@@ -145,7 +173,8 @@ func (*dispatchBodySpy) Close() error { return nil }
 func TestLoginDispatcherRejectsMethodAliases(t *testing.T) {
 	t.Parallel()
 	for _, path := range []string{
-		LoginPreparePath, LoginStartPath, LoginContinuationPreparePath, LoginCallbackContinuePath, "/auth/callback",
+		LoginPreparePath, LoginStartPath, LoginContinuationPreparePath, AccountSessionCSRFPreparePath,
+		LoginCallbackContinuePath, "/auth/callback",
 	} {
 		for _, method := range []string{"GET", "HEAD", "POST", "OPTIONS", "PUT", "DELETE", "TRACE", "PATCH", "post"} {
 			fixedPost := method == http.MethodPost && path != "/auth/callback"
@@ -166,6 +195,25 @@ func TestLoginDispatcherRejectsMethodAliases(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestLoginDispatcherPreservesSessionPrepareOwnership(t *testing.T) {
+	t.Parallel()
+	dispatcher, fixture, callback, management := dispatcherTestGraphWithManagement(t)
+	request := browserManagementRequest(t, AccountSessionCSRFPreparePath, "{}")
+	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := dispatcher.Handle(response, request); err != nil {
+		t.Fatal("session preparation did not reach its exact owner", err)
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || len(body) != 2 ||
+		body["csrf_token"] == nil || body["expires_at"] == nil {
+		t.Fatal("session preparation changed its bounded response", err)
+	}
+	if response.Code != http.StatusOK || response.statusWrites != 1 || management.auth != 1 ||
+		management.budgets != 2 || len(fixture.calls) != 0 || callback.calls != 0 {
+		t.Fatal("session preparation crossed owner boundaries")
 	}
 }
 
@@ -363,7 +411,8 @@ func FuzzLoginDispatcherRouting(f *testing.F) {
 		err := dispatcher.Handle(response, request)
 		callbackGet := method == http.MethodGet && path == dispatcher.CallbackPath()
 		fixedPost := method == http.MethodPost && (path == LoginPreparePath || path == LoginStartPath ||
-			path == LoginContinuationPreparePath || path == LoginCallbackContinuePath)
+			path == LoginContinuationPreparePath || path == AccountSessionCSRFPreparePath ||
+			path == LoginCallbackContinuePath)
 		landingRead := (method == http.MethodGet || method == http.MethodHead) && path == LoginCallbackContinuePath
 		matched := rawPath == "" && len(query) <= maximumCallbackQueryBytes && (query == "" || callbackGet) &&
 			(callbackGet || fixedPost || landingRead)

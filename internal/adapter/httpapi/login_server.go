@@ -80,7 +80,7 @@ func NewLoginServer(options LoginServerOptions) (*LoginServer, error) {
 		return nil, ErrInvalidLoginServer
 	}
 	// Revalidate complete graph custody; do not replace the existing dispatcher.
-	if _, err := NewLoginDispatcher(options.Dispatcher.browser); err != nil {
+	if _, err := NewLoginDispatcher(options.Dispatcher.browser, options.Dispatcher.management); err != nil {
 		return nil, ErrInvalidLoginServer
 	}
 	certificate, err := loginServerCertificate(options)

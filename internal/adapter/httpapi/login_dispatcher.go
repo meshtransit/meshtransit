@@ -22,24 +22,29 @@ var (
 // error mapper. It accepts no alternate key, route, service or authentication
 // profile. Callers must preserve component response ownership on every return.
 type LoginDispatcher struct {
-	browser *BrowserLogin
-	metrics *loginDispatchTelemetry
+	browser    *BrowserLogin
+	management *BrowserManagement
+	metrics    *loginDispatchTelemetry
 }
 
-// NewLoginDispatcher accepts only a complete, already validated browser graph.
-// The narrower private callback profile cannot occupy management/client paths.
-// Construction performs no authority/budget/entropy/clock or listener effect.
-func NewLoginDispatcher(browser *BrowserLogin) (*LoginDispatcher, error) {
+// NewLoginDispatcher accepts only coherent, already validated login and browser
+// session graphs. The callback cannot occupy another fixed operation, and no
+// client API path is admitted. Construction performs no application effect.
+func NewLoginDispatcher(browser *BrowserLogin, management *BrowserManagement) (*LoginDispatcher, error) {
 	if browser == nil || browser.start == nil || browser.reader == nil || browser.capsule == nil ||
 		browser.gate == nil || browser.completion == nil || browser.landing == nil || browser.metrics == nil {
 		return nil, ErrInvalidLoginDispatcher
 	}
 	completeOwnership := browser.slots != nil && browser.start.slots != nil && browser.gate.slots != nil &&
 		browser.completion.slots != nil && browser.landing.slots != nil
-	if !completeOwnership || !browser.reader.route.IsValid() || !validDispatcherCallbackPath(browser.reader.path) {
+	coherentManagement := validBrowserManagementOwner(management) &&
+		management.deploymentID == browser.reader.route.DeploymentID() &&
+		management.origin == browser.reader.origin && management.host == browser.reader.host
+	if !completeOwnership || !browser.reader.route.IsValid() || !validDispatcherCallbackPath(browser.reader.path) ||
+		!coherentManagement {
 		return nil, ErrInvalidLoginDispatcher
 	}
-	return &LoginDispatcher{browser: browser, metrics: newLoginDispatchTelemetry()}, nil
+	return &LoginDispatcher{browser: browser, management: management, metrics: newLoginDispatchTelemetry()}, nil
 }
 
 func validDispatcherCallbackPath(value string) bool {
@@ -106,6 +111,12 @@ func (dispatcher *LoginDispatcher) Handle(response http.ResponseWriter, request 
 		}
 		operation = "continue_prepare"
 		return browser.gate.Prepare(response, request)
+	case AccountSessionCSRFPreparePath:
+		if request.Method != http.MethodPost {
+			return ErrInvalidLoginDispatcher
+		}
+		operation = "session_prepare"
+		return dispatcher.management.Handle(response, request)
 	case LoginCallbackContinuePath:
 		switch request.Method {
 		case http.MethodGet, http.MethodHead:
