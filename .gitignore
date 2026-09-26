@@ -1,5 +1,7 @@
 /coverage.out
 /meshcore
+/go.work
+/go.work.sum
 *.test
 .DS_Store
 .env

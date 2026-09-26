@@ -1,0 +1,329 @@
+diff --git a/server/server.go b/server/server.go
+index e923e3e..a12aeee 100644
+--- a/server/server.go
++++ b/server/server.go
+@@ -204,6 +204,7 @@ type Server struct {
+ 	logger *slog.Logger
+ 
+ 	signer signer.Signer
++	done   <-chan struct{}
+ }
+ 
+ // NewServer constructs a server from the provided config.
+@@ -509,8 +510,9 @@ func newServer(ctx context.Context, c Config) (*Server, error) {
+ 
+ 	s.mux = r
+ 
+-	s.signer.Start(ctx)
+-	s.startGarbageCollection(ctx, value(c.GCFrequency, 5*time.Minute), now)
++	signerDone := s.signer.Start(ctx)
++	garbageCollectionDone := s.startGarbageCollection(ctx, value(c.GCFrequency, 5*time.Minute), now)
++	s.done = joinWorkers(signerDone, garbageCollectionDone)
+ 
+ 	return s, nil
+ }
+@@ -519,6 +521,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 	s.mux.ServeHTTP(w, r)
+ }
+ 
++// Done closes after all background workers started by the server exit.
++func (s *Server) Done() <-chan struct{} {
++	if s == nil {
++		return nil
++	}
++	return s.done
++}
++
+ func (s *Server) absPath(pathItems ...string) string {
+ 	paths := make([]string, len(pathItems)+1)
+ 	paths[0] = s.issuerURL.Path
+@@ -647,8 +657,14 @@ func (k *keyCacher) GetKeys(ctx context.Context) (storage.Keys, error) {
+ 	return storageKeys, nil
+ }
+ 
+-func (s *Server) startGarbageCollection(ctx context.Context, frequency time.Duration, now func() time.Time) {
++func (s *Server) startGarbageCollection(
++	ctx context.Context,
++	frequency time.Duration,
++	now func() time.Time,
++) <-chan struct{} {
++	done := make(chan struct{})
+ 	go func() {
++		defer close(done)
+ 		for {
+ 			select {
+ 			case <-ctx.Done():
+@@ -664,6 +680,18 @@ func (s *Server) startGarbageCollection(ctx context.Context, frequency time.Dura
+ 			}
+ 		}
+ 	}()
++	return done
++}
++
++func joinWorkers(workers ...<-chan struct{}) <-chan struct{} {
++	done := make(chan struct{})
++	go func() {
++		defer close(done)
++		for _, worker := range workers {
++			<-worker
++		}
++	}()
++	return done
+ }
+ 
+ // ConnectorConfig is a configuration that can open a connector.
+diff --git a/server/server_lifecycle_test.go b/server/server_lifecycle_test.go
+new file mode 100644
+--- /dev/null
++++ b/server/server_lifecycle_test.go
+@@ -0,0 +1,173 @@
++package server
++
++import (
++	"context"
++	"sync"
++	"testing"
++	"time"
++
++	gosundheit "github.com/AppsFlyer/go-sundheit"
++
++	"github.com/dexidp/dex/server/signer"
++	"github.com/dexidp/dex/storage"
++	"github.com/dexidp/dex/storage/memory"
++)
++
++func TestServerDoneWaitsForSigner(t *testing.T) {
++	t.Parallel()
++
++	ctx, cancel := context.WithCancel(t.Context())
++	baseSigner, err := signer.NewMockSigner(testKey)
++	if err != nil {
++		t.Fatalf("create mock signer: %v", err)
++	}
++	delayedSigner := newDelayedSigner(baseSigner)
++	t.Cleanup(func() {
++		cancel()
++		delayedSigner.releaseWorker()
++	})
++
++	server := newLifecycleTestServer(t, ctx, memory.New(newLogger(t)), delayedSigner, time.Hour)
++	cancel()
++	assertChannelOpen(t, server.Done())
++	delayedSigner.releaseWorker()
++	waitForChannelClose(t, server.Done())
++}
++
++func TestServerDoneWaitsForGarbageCollection(t *testing.T) {
++	t.Parallel()
++
++	ctx, cancel := context.WithCancel(t.Context())
++	baseStorage := memory.New(newLogger(t))
++	blockingStorage := newBlockingGarbageCollectionStorage(baseStorage)
++	t.Cleanup(func() {
++		cancel()
++		blockingStorage.releaseWorker()
++	})
++	serverSigner, err := signer.NewMockSigner(testKey)
++	if err != nil {
++		t.Fatalf("create mock signer: %v", err)
++	}
++
++	server := newLifecycleTestServer(t, ctx, blockingStorage, serverSigner, time.Nanosecond)
++	waitForChannelClose(t, blockingStorage.entered)
++	cancel()
++	assertChannelOpen(t, server.Done())
++	blockingStorage.releaseWorker()
++	waitForChannelClose(t, server.Done())
++}
++
++func newLifecycleTestServer(
++	t *testing.T,
++	ctx context.Context,
++	serverStorage storage.Storage,
++	serverSigner signer.Signer,
++	garbageCollectionFrequency time.Duration,
++) *Server {
++	t.Helper()
++
++	connector := storage.Connector{
++		ID:              "mock",
++		Type:            "mockCallback",
++		Name:            "Mock",
++		ResourceVersion: "1",
++	}
++	if err := serverStorage.CreateConnector(ctx, connector); err != nil {
++		t.Fatalf("create connector: %v", err)
++	}
++	server, err := newServer(ctx, Config{
++		Issuer:        "https://issuer.example/dex",
++		Storage:       serverStorage,
++		Web:           WebConfig{Dir: "../web"},
++		Logger:        newLogger(t),
++		Signer:        serverSigner,
++		HealthChecker: gosundheit.New(),
++		GCFrequency:   garbageCollectionFrequency,
++	})
++	if err != nil {
++		t.Fatalf("create server: %v", err)
++	}
++	if server.Done() == nil {
++		t.Fatal("Done() returned nil")
++	}
++	return server
++}
++
++func assertChannelOpen(t *testing.T, done <-chan struct{}) {
++	t.Helper()
++
++	select {
++	case <-done:
++		t.Fatal("channel closed before owned worker exited")
++	default:
++	}
++}
++
++func waitForChannelClose(t *testing.T, done <-chan struct{}) {
++	t.Helper()
++
++	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
++	defer cancel()
++	select {
++	case <-done:
++	case <-ctx.Done():
++		t.Fatalf("wait for worker join: %v", ctx.Err())
++	}
++}
++
++type delayedSigner struct {
++	signer.Signer
++	done        chan struct{}
++	release     chan struct{}
++	releaseOnce sync.Once
++}
++
++func newDelayedSigner(base signer.Signer) *delayedSigner {
++	return &delayedSigner{
++		Signer:  base,
++		done:    make(chan struct{}),
++		release: make(chan struct{}),
++	}
++}
++
++func (delayed *delayedSigner) Start(ctx context.Context) <-chan struct{} {
++	go func() {
++		defer close(delayed.done)
++		<-ctx.Done()
++		<-delayed.release
++	}()
++	return delayed.done
++}
++
++func (delayed *delayedSigner) releaseWorker() {
++	delayed.releaseOnce.Do(func() { close(delayed.release) })
++}
++
++type blockingGarbageCollectionStorage struct {
++	storage.Storage
++	entered     chan struct{}
++	release     chan struct{}
++	enteredOnce sync.Once
++	releaseOnce sync.Once
++}
++
++func newBlockingGarbageCollectionStorage(base storage.Storage) *blockingGarbageCollectionStorage {
++	return &blockingGarbageCollectionStorage{
++		Storage: base,
++		entered: make(chan struct{}),
++		release: make(chan struct{}),
++	}
++}
++
++func (blocking *blockingGarbageCollectionStorage) GarbageCollect(
++	context.Context,
++	time.Time,
++) (storage.GCResult, error) {
++	blocking.enteredOnce.Do(func() { close(blocking.entered) })
++	<-blocking.release
++	return storage.GCResult{}, nil
++}
++
++func (blocking *blockingGarbageCollectionStorage) releaseWorker() {
++	blocking.releaseOnce.Do(func() { close(blocking.release) })
++}
+diff --git a/server/signer/local.go b/server/signer/local.go
+index a210aaa..d02cd3f 100644
+--- a/server/signer/local.go
++++ b/server/signer/local.go
+@@ -45,7 +45,7 @@ type localSigner struct {
+ //
+ // The method blocks until after the first attempt to rotate keys has completed. That way
+ // healthy storages will return from this call with valid keys.
+-func (l *localSigner) Start(ctx context.Context) {
++func (l *localSigner) Start(ctx context.Context) <-chan struct{} {
+ 	// Try to rotate immediately so properly configured storages will have keys.
+ 	if err := l.rotator.rotate(); err != nil {
+ 		if err == errAlreadyRotated {
+@@ -55,7 +55,9 @@ func (l *localSigner) Start(ctx context.Context) {
+ 		}
+ 	}
+ 
++	done := make(chan struct{})
+ 	go func() {
++		defer close(done)
+ 		for {
+ 			select {
+ 			case <-ctx.Done():
+@@ -67,6 +69,7 @@ func (l *localSigner) Start(ctx context.Context) {
+ 			}
+ 		}
+ 	}()
++	return done
+ }
+ 
+ func (l *localSigner) Sign(ctx context.Context, payload []byte) (string, error) {
+diff --git a/server/signer/mock.go b/server/signer/mock.go
+index 832a9be..c608646 100644
+--- a/server/signer/mock.go
++++ b/server/signer/mock.go
+@@ -67,8 +67,11 @@ func (m *mockSigner) Algorithm(_ context.Context) (jose.SignatureAlgorithm, erro
+ 	return jose.RS256, nil
+ }
+ 
+-func (m *mockSigner) Start(_ context.Context) {
++func (m *mockSigner) Start(_ context.Context) <-chan struct{} {
+ 	// Nothing to do for mock signer
++	done := make(chan struct{})
++	close(done)
++	return done
+ }
+ 
+ // NewMockSigner creates a mock signer with the provided key for testing.
+diff --git a/server/signer/signer.go b/server/signer/signer.go
+index 1e15bbd..bb58a94 100644
+--- a/server/signer/signer.go
++++ b/server/signer/signer.go
+@@ -15,5 +15,6 @@ type Signer interface {
+ 	// Algorithm returns the signing algorithm used by this signer.
+ 	Algorithm(ctx context.Context) (jose.SignatureAlgorithm, error)
+ 	// Start starts any background tasks required by the signer (e.g., key rotation).
+-	Start(ctx context.Context)
++	// The returned channel closes after every task started by this call exits.
++	Start(ctx context.Context) <-chan struct{}
+ }
+diff --git a/server/signer/vault.go b/server/signer/vault.go
+index ba175f2..0f23dbe 100644
+--- a/server/signer/vault.go
++++ b/server/signer/vault.go
+@@ -90,8 +90,11 @@ func newVaultSigner(c VaultConfig) (*vaultSigner, error) {
+ 	}, nil
+ }
+ 
+-func (v *vaultSigner) Start(_ context.Context) {
++func (v *vaultSigner) Start(_ context.Context) <-chan struct{} {
+ 	// Vault signer does not need background rotation tasks
++	done := make(chan struct{})
++	close(done)
++	return done
+ }
+ 
+ func (v *vaultSigner) Sign(ctx context.Context, payload []byte) (string, error) {

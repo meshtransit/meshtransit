@@ -10,8 +10,14 @@ CONTAINER_REVISION ?= unknown
 TRIVY_IMAGE_FLAGS ?=
 TEST_TIMEOUT ?= 2m
 INTEGRATION_TEST_TIMEOUT ?= 5m
+DEX_QUALIFICATION_BINARY ?=
+DEX_QUALIFICATION_RELEASE ?= v2.45.1+compat.8
+DEX_ARTIFACT_MANIFEST ?=
+DEX_UPSTREAM_SOURCE ?=
+DEX_ARTIFACT_BINARY ?=
+DEX_PREPARED_ROOT ?=
 
-.PHONY: fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container lint lint-integration vuln workflow-lint quality \
+.PHONY: fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
 	container-build container-build-multiarch container-push-multiarch container-inspect container-smoke container-scan
 
 fmt:
@@ -42,6 +48,66 @@ integration-migrations:
 
 integration-platform-container:
 	bash scripts/ci/run-platform-integration.sh
+
+qualification-dex:
+	@test -n "$(DEX_QUALIFICATION_BINARY)" || { \
+		echo "set DEX_QUALIFICATION_BINARY to an exact pinned Dex binary"; \
+		exit 2; \
+	}
+	MESHTRANSIT_TEST_DEX_BINARY="$(DEX_QUALIFICATION_BINARY)" \
+	MESHTRANSIT_TEST_DEX_RELEASE="$(DEX_QUALIFICATION_RELEASE)" \
+	$(GO) test -timeout=$(INTEGRATION_TEST_TIMEOUT) -tags=integration -count=1 \
+		-run '^TestDexBrokerCompatibilityGate$$' ./internal/integration
+
+qualification-dex-boundary:
+	$(GO) test -timeout=$(TEST_TIMEOUT) -count=1 \
+		-run '^TestDexImportsConfinedToAdapter$$' ./internal/adapter/dexbroker
+
+qualification-dex-compile:
+	@test -n "$(DEX_UPSTREAM_SOURCE)" || { echo "set DEX_UPSTREAM_SOURCE"; exit 2; }
+	@test -n "$(DEX_PREPARED_ROOT)" || { echo "set DEX_PREPARED_ROOT to the verified preparation directory"; exit 2; }
+	$(GO) run ./tools/qualification/dexcompile \
+		-upstream-source "$(DEX_UPSTREAM_SOURCE)" \
+		-candidate-source "$(DEX_PREPARED_ROOT)/source"
+
+qualification-dex-workspace:
+	@test -n "$(DEX_PREPARED_ROOT)" || { echo "set DEX_PREPARED_ROOT to the verified workspace directory"; exit 2; }
+	@test -f "$(DEX_PREPARED_ROOT)/go.work" || { echo "verified go.work is absent"; exit 2; }
+	@test "$$(GOWORK=off $(GO) env GOVERSION)" = "go1.26.8" || { echo "Go 1.26.8 is required"; exit 1; }
+	GOWORK="$(DEX_PREPARED_ROOT)/go.work" $(GO) test -timeout=$(TEST_TIMEOUT) -count=1 \
+		-tags=dexbroker ./internal/adapter/dexbroker ./cmd/meshcore
+
+verify-dex-artifact:
+	@test -n "$(DEX_ARTIFACT_MANIFEST)" || { echo "set DEX_ARTIFACT_MANIFEST"; exit 2; }
+	@test -n "$(DEX_UPSTREAM_SOURCE)" || { echo "set DEX_UPSTREAM_SOURCE"; exit 2; }
+	@test -n "$(DEX_ARTIFACT_BINARY)" || { echo "set DEX_ARTIFACT_BINARY"; exit 2; }
+	$(GO) run ./tools/qualification/dexartifact \
+		-manifest "$(DEX_ARTIFACT_MANIFEST)" \
+		-source "$(DEX_UPSTREAM_SOURCE)" \
+		-binary "$(DEX_ARTIFACT_BINARY)"
+
+prepare-dex-source:
+	@test -n "$(DEX_ARTIFACT_MANIFEST)" || { echo "set DEX_ARTIFACT_MANIFEST"; exit 2; }
+	@test -n "$(DEX_UPSTREAM_SOURCE)" || { echo "set DEX_UPSTREAM_SOURCE"; exit 2; }
+	@test -n "$(DEX_ARTIFACT_BINARY)" || { echo "set DEX_ARTIFACT_BINARY"; exit 2; }
+	@test -n "$(DEX_PREPARED_ROOT)" || { echo "set DEX_PREPARED_ROOT to an existing empty directory"; exit 2; }
+	$(GO) run ./tools/qualification/dexartifact \
+		-manifest "$(DEX_ARTIFACT_MANIFEST)" \
+		-source "$(DEX_UPSTREAM_SOURCE)" \
+		-binary "$(DEX_ARTIFACT_BINARY)" \
+		-prepared-root "$(DEX_PREPARED_ROOT)"
+
+prepare-dex-workspace:
+	@test -n "$(DEX_ARTIFACT_MANIFEST)" || { echo "set DEX_ARTIFACT_MANIFEST"; exit 2; }
+	@test -n "$(DEX_UPSTREAM_SOURCE)" || { echo "set DEX_UPSTREAM_SOURCE"; exit 2; }
+	@test -n "$(DEX_ARTIFACT_BINARY)" || { echo "set DEX_ARTIFACT_BINARY"; exit 2; }
+	@test -n "$(DEX_PREPARED_ROOT)" || { echo "set DEX_PREPARED_ROOT to an existing empty directory"; exit 2; }
+	$(GO) run ./tools/qualification/dexartifact \
+		-manifest "$(DEX_ARTIFACT_MANIFEST)" \
+		-source "$(DEX_UPSTREAM_SOURCE)" \
+		-binary "$(DEX_ARTIFACT_BINARY)" \
+		-prepared-root "$(DEX_PREPARED_ROOT)" \
+		-workspace-module "$(CURDIR)"
 
 lint:
 	$(GOLANGCI_LINT) run ./...

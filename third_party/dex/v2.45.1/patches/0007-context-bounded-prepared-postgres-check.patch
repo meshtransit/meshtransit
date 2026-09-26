@@ -1,0 +1,143 @@
+diff --git a/storage/sql/config.go b/storage/sql/config.go
+index 0c6ff9e..b1a5337 100644
+--- a/storage/sql/config.go
++++ b/storage/sql/config.go
+@@ -1,6 +1,7 @@
+ package sql
+ 
+ import (
++	"context"
+ 	"crypto/tls"
+ 	"crypto/x509"
+ 	"database/sql"
+@@ -82,6 +83,14 @@ type Postgres struct {
+ 	SSL SSL `json:"ssl" yaml:"ssl"`
+ }
+ 
++// PreparedPostgresStorage is a PostgreSQL storage opened against an exact,
++// externally prepared schema. CheckPreparedSchema is context bounded and
++// performs both a database round trip and a migration-level check.
++type PreparedPostgresStorage interface {
++	storage.Storage
++	CheckPreparedSchema(context.Context) error
++}
++
+ // Open creates a new storage implementation backed by Postgres.
+ func (p *Postgres) Open(logger *slog.Logger) (storage.Storage, error) {
+ 	conn, err := p.open(logger)
+@@ -94,12 +103,15 @@ func (p *Postgres) Open(logger *slog.Logger) (storage.Storage, error) {
+ // OpenWithPreparedSchema opens Postgres storage only when the existing schema
+ // is at the exact migration level required by this build. It never performs
+ // migrations and is intended for runtime processes without DDL privileges.
+-func (p *Postgres) OpenWithPreparedSchema(logger *slog.Logger) (storage.Storage, error) {
++func (p *Postgres) OpenWithPreparedSchema(
++	ctx context.Context,
++	logger *slog.Logger,
++) (PreparedPostgresStorage, error) {
+ 	conn, err := p.openConnection(logger)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	if err := conn.verifyMigrations(); err != nil {
++	if err := conn.CheckPreparedSchema(ctx); err != nil {
+ 		return nil, fmt.Errorf(
+ 			"failed to verify prepared schema: %v",
+ 			errors.Join(err, conn.Close()),
+diff --git a/storage/sql/migrate.go b/storage/sql/migrate.go
+index d0d1b48..296116a 100644
+--- a/storage/sql/migrate.go
++++ b/storage/sql/migrate.go
+@@ -1,6 +1,7 @@
+ package sql
+ 
+ import (
++	"context"
+ 	"database/sql"
+ 	"fmt"
+ )
+@@ -65,10 +66,20 @@ func (c *conn) migrate() (int, error) {
+ 	return i, nil
+ }
+ 
+-func (c *conn) verifyMigrations() error {
++func (c *conn) CheckPreparedSchema(ctx context.Context) error {
++	if ctx == nil {
++		return fmt.Errorf("prepared schema check requires context")
++	}
++	if err := c.db.PingContext(ctx); err != nil {
++		return fmt.Errorf("ping database: %w", err)
++	}
++	return c.verifyMigrations(ctx)
++}
++
++func (c *conn) verifyMigrations(ctx context.Context) error {
+ 	var num sql.NullInt64
+-	if err := c.QueryRow(`select max(num) from migrations;`).Scan(&num); err != nil {
+-		return fmt.Errorf("select max migration: %v", err)
++	if err := c.db.QueryRowContext(ctx, `select max(num) from migrations;`).Scan(&num); err != nil {
++		return fmt.Errorf("select max migration: %w", err)
+ 	}
+ 	expected := int64(len(migrationsForFlavor(c.flavor)))
+ 	if !num.Valid || num.Int64 != expected {
+diff --git a/storage/sql/migrate_test.go b/storage/sql/migrate_test.go
+index 2e2e4ec..924a642 100644
+--- a/storage/sql/migrate_test.go
++++ b/storage/sql/migrate_test.go
+@@ -4,7 +4,9 @@
+ package sql
+ 
+ import (
++	"context"
+ 	"database/sql"
++	"errors"
+ 	"log/slog"
+ 	"testing"
+ 
+@@ -103,7 +105,7 @@ func TestVerifyMigrations(t *testing.T) {
+ 			if test.prepare != nil {
+ 				test.prepare(t, connection)
+ 			}
+-			err = connection.verifyMigrations()
++			err = connection.verifyMigrations(t.Context())
+ 			if test.wantErr && err == nil {
+ 				t.Fatal("verifyMigrations() succeeded")
+ 			}
+@@ -113,3 +115,38 @@ func TestVerifyMigrations(t *testing.T) {
+ 		})
+ 	}
+ }
++
++func TestCheckPreparedSchemaHonorsCanceledContext(t *testing.T) {
++	db, err := sql.Open("sqlite3", ":memory:")
++	if err != nil {
++		t.Fatalf("open sqlite: %v", err)
++	}
++	t.Cleanup(func() { _ = db.Close() })
++	connection := &conn{db, &flavorSQLite3, slog.New(slog.DiscardHandler), func(error) bool { return false }}
++	ctx, cancel := context.WithCancel(t.Context())
++	cancel()
++	if err := connection.CheckPreparedSchema(ctx); !errors.Is(err, context.Canceled) {
++		t.Fatalf("CheckPreparedSchema() error = %v, want context cancellation", err)
++	}
++}
++
++func TestCheckPreparedSchemaRevalidatesMigrationLevel(t *testing.T) {
++	db, err := sql.Open("sqlite3", ":memory:")
++	if err != nil {
++		t.Fatalf("open sqlite: %v", err)
++	}
++	t.Cleanup(func() { _ = db.Close() })
++	connection := &conn{db, &flavorSQLite3, slog.New(slog.DiscardHandler), func(error) bool { return false }}
++	if _, err := connection.migrate(); err != nil {
++		t.Fatalf("migrate: %v", err)
++	}
++	if err := connection.CheckPreparedSchema(t.Context()); err != nil {
++		t.Fatalf("initial CheckPreparedSchema() error = %v", err)
++	}
++	if _, err := connection.Exec(`delete from migrations where num = (select max(num) from migrations);`); err != nil {
++		t.Fatalf("remove migration: %v", err)
++	}
++	if err := connection.CheckPreparedSchema(t.Context()); err == nil {
++		t.Fatal("CheckPreparedSchema() accepted a stale migration level")
++	}
++}

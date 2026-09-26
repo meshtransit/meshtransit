@@ -184,3 +184,23 @@ func TestTrustFileReadRejectsNonRegularAndOversizedFiles(t *testing.T) {
 		t.Fatalf("TrustFile.Read(oversized) error = %v, want ErrInvalid", err)
 	}
 }
+
+func TestTrustFilePathForDriverIsExplicitAndValidated(t *testing.T) {
+	t.Parallel()
+
+	const path = "/run/trust/postgres-ca.pem"
+	trust, err := NewTrustFile(path)
+	if err != nil {
+		t.Fatalf("NewTrustFile() error = %v", err)
+	}
+	got, err := trust.PathForDriver()
+	if err != nil {
+		t.Fatalf("PathForDriver() error = %v", err)
+	}
+	if got != path {
+		t.Fatal("PathForDriver() returned an unexpected path")
+	}
+	if _, err := (TrustFile{}).PathForDriver(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("zero TrustFile PathForDriver() error = %v, want ErrInvalid", err)
+	}
+}

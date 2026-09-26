@@ -1,0 +1,137 @@
+{
+  "schema_version": "meshtransit.dex-qualification-report/v1",
+  "evaluated_on": "2026-09-26",
+  "artifact": {
+    "upstream_version": "v2.45.1",
+    "candidate_version": "v2.45.1+compat.8",
+    "upstream_commit": "11d2eeb52b42e1980e14cb91e69dd9e3faab2076",
+    "source_tree_sha256": "31e9f91bd3761028f838e7f00635cded92bbd661a4264b8b58ba391546422bae",
+    "binary_sha256": "dfaf9cb0afd9b6c07790c55daae6e8eee5a59dbac86faffe366767def8a1165a",
+    "go_version": "go1.26.8",
+    "goos": "darwin",
+    "goarch": "arm64",
+    "cgo_enabled": false
+  },
+  "patches": [
+    {
+      "id": "rfc9207-authorization-response-issuer",
+      "sha256": "77652df0db7176e1fb752f4a81e9403b26d16a8517a3a48aab291676e736332c"
+    },
+    {
+      "id": "signed-authentication-time",
+      "sha256": "f661957c38772b7bc733eee46a16177fdff47695b478e37786413db5e299cdfd"
+    },
+    {
+      "id": "security-dependency-updates",
+      "sha256": "43912a1c989c540c7d1a73e301205b0e18d8f1306ad0d14bafa3b8bc0c4fda7f"
+    },
+    {
+      "id": "background-worker-join",
+      "sha256": "d93d2d2f3325b45d720bc5cc70c4e1164a3e7422faa8f324bc13ddb005d66a57"
+    },
+    {
+      "id": "connector-lifecycle-join",
+      "sha256": "694e23190a100eeabf354d5dbf31348b938f48c1ac536cad88ccb742b324dde5"
+    },
+    {
+      "id": "prepared-postgres-runtime-open",
+      "sha256": "72d767a1efcd5d67b6c489bfabf2238e967c6d804aff3f754dcd8bb0125d4702"
+    },
+    {
+      "id": "context-bounded-prepared-postgres-check",
+      "sha256": "db9c5f2549df7d096f115f4facad875b512e72331c1143e125a688fb1a26585b"
+    },
+    {
+      "id": "inject-connector-http-client",
+      "sha256": "524158992232a39496c976fa712a58405d52cc6abfd1eb01104232efdaf9b257"
+    }
+  ],
+  "build": {
+    "independent_builds": 2,
+    "matching_binary_digests": true,
+    "flags": [
+      "GOTOOLCHAIN=go1.26.8",
+      "CGO_ENABLED=0",
+      "-buildvcs=false",
+      "-trimpath",
+      "-ldflags=-w -X main.version=v2.45.1+compat.8"
+    ]
+  },
+  "tests": {
+    "module_checksum_verification": "pass",
+    "server_and_signer_packages": "pass",
+    "server_and_signer_race": "pass",
+    "background_worker_join_contract": "pass",
+    "connector_lifecycle_join_contract": "pass",
+    "prepared_schema_storage_package": "pass",
+    "prepared_schema_storage_race": "pass",
+    "oidc_connector_and_server_packages": "pass",
+    "oidc_connector_and_server_race": "pass",
+    "eight_way_compile_contract": "pass",
+    "complete_suite_configuration": "CGO_ENABLED=1",
+    "complete_suite": "pass_except_known_upstream_saml_certificate_fixture",
+    "known_baseline_failure": {
+      "test": "TestVerifyUnsignedMessageAndSignedAssertionWithRootXmlNs",
+      "reason": "fixture certificate is not valid at the evaluation date",
+      "reproduced_without_compatibility_patches": true
+    }
+  },
+  "background_worker_join": {
+    "result": "pass",
+    "checks": {
+      "server_done_waits_for_signer": "pass",
+      "server_done_waits_for_garbage_collection": "pass",
+      "cancellation_race_test": "pass",
+      "upstream_missing_contract_proven": "pass",
+      "candidate_contract_compiles": "pass"
+    }
+  },
+  "connector_lifecycle_join": {
+    "result": "pass",
+    "checks": {
+      "server_done_waits_for_connector_close": "pass",
+      "connector_close_exactly_once": "pass",
+      "late_connector_open_rejected": "pass",
+      "server_package_race": "pass"
+    }
+  },
+  "prepared_postgres_runtime_open": {
+    "result": "pass",
+    "checks": {
+      "missing_migration_table_rejected": "pass",
+      "current_migration_level_accepted": "pass",
+      "behind_migration_level_rejected": "pass",
+      "ahead_migration_level_rejected": "pass",
+      "context_cancellation_propagated_to_driver": "pass",
+      "periodic_check_revalidates_exact_schema_level": "pass",
+      "upstream_missing_contract_proven": "pass",
+      "candidate_contract_compiles": "pass"
+    }
+  },
+  "outbound_http_injection": {
+    "result": "pass",
+    "checks": {
+      "caller_owned_client_reaches_generic_oidc_connector": "pass",
+      "nil_client_rejected": "pass",
+      "upstream_http_client_map_missing_proven": "pass",
+      "upstream_oidc_client_open_missing_proven": "pass",
+      "candidate_contract_compiles": "pass",
+      "connector_and_server_race": "pass"
+    }
+  },
+  "sso_broker_000": {
+    "result": "pass",
+    "checks": {
+      "discovery_authorization_response_issuer_support": "pass",
+      "successful_callback_exact_issuer": "pass",
+      "error_callback_exact_issuer": "pass",
+      "signed_authentication_time": "pass"
+    }
+  },
+  "vulnerability_gate": {
+    "result": "pass",
+    "reachable_symbol_vulnerabilities": 0,
+    "imported_package_vulnerabilities": 0,
+    "module_only_advisories_with_disposition": 1
+  }
+}

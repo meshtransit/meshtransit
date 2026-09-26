@@ -22,6 +22,8 @@ const (
 	RoleWorker
 	// RoleRelay enables the packet relay responsibility.
 	RoleRelay
+	// RoleIdentity enables the isolated embedded identity broker responsibility.
+	RoleIdentity
 )
 
 // ParseRole parses one exact, canonical runtime role name.
@@ -37,6 +39,8 @@ func ParseRole(value string) (Role, error) {
 		return RoleWorker, nil
 	case "relay":
 		return RoleRelay, nil
+	case "identity":
+		return RoleIdentity, nil
 	default:
 		return RoleUnknown, ErrInvalidRole
 	}
@@ -55,6 +59,8 @@ func (role Role) String() string {
 		return "worker"
 	case RoleRelay:
 		return "relay"
+	case RoleIdentity:
+		return "identity"
 	default:
 		return "unknown"
 	}
@@ -66,7 +72,7 @@ func ExpandRole(role Role) ([]Role, error) {
 	switch role {
 	case RoleAll:
 		return []Role{RoleAPI, RoleControl, RoleWorker, RoleRelay}, nil
-	case RoleAPI, RoleControl, RoleWorker, RoleRelay:
+	case RoleAPI, RoleControl, RoleWorker, RoleRelay, RoleIdentity:
 		return []Role{role}, nil
 	default:
 		return nil, ErrInvalidRole

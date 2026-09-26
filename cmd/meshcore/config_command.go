@@ -64,7 +64,7 @@ func validateDependencyConfiguration(ctx context.Context, processConfig config.C
 			return errInvalidPrivateIdentityComposition
 		}
 	}
-	if processConfig.Storage == nil {
+	if processConfig.Storage == nil && processConfig.Identity == nil {
 		if privateProfile != nil {
 			return errInvalidPrivateIdentityComposition
 		}
@@ -80,6 +80,27 @@ func validateDependencyConfiguration(ctx context.Context, processConfig config.C
 		defer cancel()
 		returnErr = errors.Join(returnErr, resources.Close(cleanupCtx))
 	}()
+	if processConfig.Identity != nil {
+		logger, err := observability.NewLogger(io.Discard, slog.LevelInfo)
+		if err != nil {
+			return errInvalidIdentityBrokerComposition
+		}
+		broker, err := composeIdentityBroker(ctx, *processConfig.Identity, resources, logger)
+		if err != nil {
+			return err
+		}
+		for _, checker := range broker.checkers {
+			checkCtx, cancel := context.WithTimeout(ctx, processConfig.Dependencies.CheckTimeout)
+			checkErr := checker.Check(checkCtx)
+			cancel()
+			if checkErr != nil {
+				return checkErr
+			}
+		}
+	}
+	if processConfig.Storage == nil {
+		return nil
+	}
 
 	pools, err := openPostgresPools(
 		ctx,

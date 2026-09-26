@@ -38,6 +38,9 @@ func TestLoadDefaults(t *testing.T) {
 	if got.Storage == nil {
 		t.Fatal("Storage = nil for all role")
 	}
+	if got.Identity != nil {
+		t.Fatalf("Identity = %v, want nil until all-role broker serving is enabled", got.Identity)
+	}
 	if got.Storage.PostgreSQL.Runtime == nil || got.Storage.PostgreSQL.Worker == nil {
 		t.Fatal("all role did not load separate runtime and worker PostgreSQL credentials")
 	}

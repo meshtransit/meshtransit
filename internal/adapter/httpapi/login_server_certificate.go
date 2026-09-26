@@ -13,28 +13,40 @@ import (
 )
 
 func loginServerCertificate(options LoginServerOptions) (tls.Certificate, error) {
-	validSize := len(options.CertificatePEM) > 0 && len(options.CertificatePEM) <= 64*1024 &&
-		len(options.PrivateKeyPEM) > 0 && len(options.PrivateKeyPEM) <= 64*1024
-	if !validSize {
+	callback, err := url.Parse(options.Dispatcher.browser.reader.route.RedirectURI())
+	if err != nil || callback.Hostname() == "" {
 		return tls.Certificate{}, ErrInvalidLoginServer
 	}
-	certificate, err := tls.X509KeyPair(options.CertificatePEM, options.PrivateKeyPEM)
-	if err != nil || len(certificate.Certificate) > 8 {
+	certificate, err := serverCertificate(
+		options.CertificatePEM,
+		options.PrivateKeyPEM,
+		callback.Hostname(),
+	)
+	if err != nil {
+		return tls.Certificate{}, ErrInvalidLoginServer
+	}
+	return certificate, nil
+}
+
+func serverCertificate(certificatePEM, privateKeyPEM []byte, hostname string) (tls.Certificate, error) {
+	validSize := len(certificatePEM) > 0 && len(certificatePEM) <= 64*1024 &&
+		len(privateKeyPEM) > 0 && len(privateKeyPEM) <= 64*1024
+	if !validSize || hostname == "" {
+		return tls.Certificate{}, ErrInvalidLoginServer
+	}
+	certificate, err := tls.X509KeyPair(certificatePEM, privateKeyPEM)
+	if err != nil || len(certificate.Certificate) == 0 || len(certificate.Certificate) > 8 {
 		return tls.Certificate{}, ErrInvalidLoginServer
 	}
 	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
 	if err != nil {
 		return tls.Certificate{}, ErrInvalidLoginServer
 	}
-	callback, err := url.Parse(options.Dispatcher.browser.reader.route.RedirectURI())
-	if err != nil || callback.Hostname() == "" {
-		return tls.Certificate{}, ErrInvalidLoginServer
-	}
-	soleDNS := len(leaf.DNSNames) == 1 && len(leaf.IPAddresses) == 0 && leaf.DNSNames[0] == callback.Hostname()
-	soleIP := len(leaf.IPAddresses) == 1 && len(leaf.DNSNames) == 0 && leaf.IPAddresses[0].String() == callback.Hostname()
+	soleDNS := len(leaf.DNSNames) == 1 && len(leaf.IPAddresses) == 0 && leaf.DNSNames[0] == hostname
+	soleIP := len(leaf.IPAddresses) == 1 && len(leaf.DNSNames) == 0 && leaf.IPAddresses[0].String() == hostname
 	foreignSAN := len(leaf.EmailAddresses) != 0 || len(leaf.URIs) != 0
 	validUsage := !leaf.IsCA && slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth)
-	if (!soleDNS && !soleIP) || foreignSAN || !validUsage || leaf.VerifyHostname(callback.Hostname()) != nil {
+	if (!soleDNS && !soleIP) || foreignSAN || !validUsage || leaf.VerifyHostname(hostname) != nil {
 		return tls.Certificate{}, ErrInvalidLoginServer
 	}
 	if !strongLoginCertificate(leaf) {

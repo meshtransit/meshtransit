@@ -44,7 +44,7 @@ func validateActiveRoles(roles []Role) error {
 	seen := make(map[Role]struct{}, len(roles))
 	for _, role := range roles {
 		switch role {
-		case RoleAPI, RoleControl, RoleWorker, RoleRelay:
+		case RoleAPI, RoleControl, RoleWorker, RoleRelay, RoleIdentity:
 		default:
 			return ErrInvalidApplication
 		}

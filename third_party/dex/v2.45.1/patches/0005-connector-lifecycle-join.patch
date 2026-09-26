@@ -1,0 +1,198 @@
+diff --git a/server/server.go b/server/server.go
+index a12aeee..9cadd80 100644
+--- a/server/server.go
++++ b/server/server.go
+@@ -5,6 +5,7 @@ import (
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
++	"io"
+ 	"io/fs"
+ 	"log/slog"
+ 	"net"
+@@ -172,7 +173,8 @@ type Server struct {
+ 	// mutex for the connectors map.
+ 	mu sync.Mutex
+ 	// Map of connector IDs to connectors.
+-	connectors map[string]Connector
++	connectors       map[string]Connector
++	connectorsClosed bool
+ 
+ 	storage storage.Storage
+ 
+@@ -313,6 +315,12 @@ func newServer(ctx context.Context, c Config) (*Server, error) {
+ 		logger:                 c.Logger,
+ 		signer:                 c.Signer,
+ 	}
++	constructed := false
++	defer func() {
++		if !constructed {
++			s.closeConnectors()
++		}
++	}()
+ 
+ 	// Retrieves connector objects in backend storage. This list includes the static connectors
+ 	// defined in the ConfigMap and dynamic connectors retrieved from the storage.
+@@ -512,7 +520,9 @@ func newServer(ctx context.Context, c Config) (*Server, error) {
+ 
+ 	signerDone := s.signer.Start(ctx)
+ 	garbageCollectionDone := s.startGarbageCollection(ctx, value(c.GCFrequency, 5*time.Minute), now)
+-	s.done = joinWorkers(signerDone, garbageCollectionDone)
++	connectorDone := s.startConnectorShutdown(ctx)
++	s.done = joinWorkers(signerDone, garbageCollectionDone, connectorDone)
++	constructed = true
+ 
+ 	return s, nil
+ }
+@@ -683,6 +693,43 @@ func (s *Server) startGarbageCollection(
+ 	return done
+ }
+ 
++func (s *Server) startConnectorShutdown(ctx context.Context) <-chan struct{} {
++	done := make(chan struct{})
++	go func() {
++		defer close(done)
++		<-ctx.Done()
++		s.closeConnectors()
++	}()
++	return done
++}
++
++func (s *Server) closeConnectors() {
++	s.mu.Lock()
++	if s.connectorsClosed {
++		s.mu.Unlock()
++		return
++	}
++	s.connectorsClosed = true
++	connectors := s.connectors
++	s.connectors = make(map[string]Connector)
++	s.mu.Unlock()
++
++	ids := make([]string, 0, len(connectors))
++	for id := range connectors {
++		ids = append(ids, id)
++	}
++	sort.Strings(ids)
++	for _, id := range ids {
++		closer, ok := connectors[id].Connector.(io.Closer)
++		if !ok {
++			continue
++		}
++		if err := closer.Close(); err != nil {
++			s.logger.Error("server: failed to close connector", "connector_id", id)
++		}
++	}
++}
++
+ func joinWorkers(workers ...<-chan struct{}) <-chan struct{} {
+ 	done := make(chan struct{})
+ 	go func() {
+@@ -767,6 +814,13 @@ func (s *Server) OpenConnector(conn storage.Connector) (Connector, error) {
+ 		Connector:       c,
+ 	}
+ 	s.mu.Lock()
++	if s.connectorsClosed {
++		s.mu.Unlock()
++		if closer, ok := c.(io.Closer); ok {
++			_ = closer.Close()
++		}
++		return Connector{}, errors.New("server: connector lifecycle is closed")
++	}
+ 	s.connectors[conn.ID] = connector
+ 	s.mu.Unlock()
+ 
+diff --git a/server/server_lifecycle_test.go b/server/server_lifecycle_test.go
+index 1b59141..7ca84e8 100644
+--- a/server/server_lifecycle_test.go
++++ b/server/server_lifecycle_test.go
+@@ -57,6 +57,57 @@ func TestServerDoneWaitsForGarbageCollection(t *testing.T) {
+ 	waitForChannelClose(t, server.Done())
+ }
+ 
++func TestServerDoneWaitsForConnectors(t *testing.T) {
++	t.Parallel()
++
++	ctx, cancel := context.WithCancel(t.Context())
++	serverSigner, err := signer.NewMockSigner(testKey)
++	if err != nil {
++		t.Fatalf("create mock signer: %v", err)
++	}
++	server := newLifecycleTestServer(t, ctx, memory.New(newLogger(t)), serverSigner, time.Hour)
++	delayedConnector := newDelayedConnector()
++	server.mu.Lock()
++	server.connectors["mock"] = Connector{ResourceVersion: "1", Connector: delayedConnector}
++	server.mu.Unlock()
++	t.Cleanup(func() {
++		cancel()
++		delayedConnector.releaseClose()
++	})
++
++	cancel()
++	waitForChannelClose(t, delayedConnector.entered)
++	assertChannelOpen(t, server.Done())
++	delayedConnector.releaseClose()
++	waitForChannelClose(t, server.Done())
++	if delayedConnector.closeCalls != 1 {
++		t.Fatalf("connector close calls = %d, want 1", delayedConnector.closeCalls)
++	}
++}
++
++func TestServerRejectsConnectorAfterShutdown(t *testing.T) {
++	t.Parallel()
++
++	ctx, cancel := context.WithCancel(t.Context())
++	serverSigner, err := signer.NewMockSigner(testKey)
++	if err != nil {
++		t.Fatalf("create mock signer: %v", err)
++	}
++	server := newLifecycleTestServer(t, ctx, memory.New(newLogger(t)), serverSigner, time.Hour)
++	cancel()
++	waitForChannelClose(t, server.Done())
++
++	_, err = server.OpenConnector(storage.Connector{
++		ID:              "late",
++		Type:            "mockCallback",
++		Name:            "Late",
++		ResourceVersion: "1",
++	})
++	if err == nil {
++		t.Fatal("OpenConnector() accepted a connector after shutdown")
++	}
++}
++
+ func newLifecycleTestServer(
+ 	t *testing.T,
+ 	ctx context.Context,
+@@ -143,6 +194,31 @@ func (delayed *delayedSigner) releaseWorker() {
+ 	delayed.releaseOnce.Do(func() { close(delayed.release) })
+ }
+ 
++type delayedConnector struct {
++	entered     chan struct{}
++	release     chan struct{}
++	releaseOnce sync.Once
++	closeCalls  int
++}
++
++func newDelayedConnector() *delayedConnector {
++	return &delayedConnector{
++		entered: make(chan struct{}),
++		release: make(chan struct{}),
++	}
++}
++
++func (delayed *delayedConnector) Close() error {
++	delayed.closeCalls++
++	close(delayed.entered)
++	<-delayed.release
++	return nil
++}
++
++func (delayed *delayedConnector) releaseClose() {
++	delayed.releaseOnce.Do(func() { close(delayed.release) })
++}
++
+ type blockingGarbageCollectionStorage struct {
+ 	storage.Storage
+ 	entered     chan struct{}

@@ -19,6 +19,7 @@ func TestParseRole(t *testing.T) {
 		{name: "control", value: "control", want: RoleControl},
 		{name: "worker", value: "worker", want: RoleWorker},
 		{name: "relay", value: "relay", want: RoleRelay},
+		{name: "identity", value: "identity", want: RoleIdentity},
 	}
 
 	for _, test := range tests {
@@ -82,6 +83,7 @@ func TestExpandRole(t *testing.T) {
 		{name: "control only", role: RoleControl, want: []Role{RoleControl}},
 		{name: "worker only", role: RoleWorker, want: []Role{RoleWorker}},
 		{name: "relay only", role: RoleRelay, want: []Role{RoleRelay}},
+		{name: "identity only", role: RoleIdentity, want: []Role{RoleIdentity}},
 	}
 
 	for _, test := range tests {

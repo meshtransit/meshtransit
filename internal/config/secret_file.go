@@ -78,6 +78,16 @@ func (file TrustFile) Read() ([]byte, error) {
 	return contents, nil
 }
 
+// PathForDriver returns the validated absolute reference only for database
+// drivers that must reopen a CA bundle by path. Callers must not retain,
+// format, or log the returned value.
+func (file TrustFile) PathForDriver() (string, error) {
+	if err := validateFilePath(file.path); err != nil {
+		return "", ErrInvalid
+	}
+	return file.path, nil
+}
+
 // Read returns one bounded private-key document without transforming its bytes.
 func (file PrivateKeyFile) Read() ([]byte, error) {
 	contents, err := readBoundedRegularFile(file.path, maxPrivateKeyBytes)

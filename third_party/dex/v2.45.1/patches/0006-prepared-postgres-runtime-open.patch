@@ -1,0 +1,189 @@
+diff --git a/storage/sql/config.go b/storage/sql/config.go
+index 222b263..0c6ff9e 100644
+--- a/storage/sql/config.go
++++ b/storage/sql/config.go
+@@ -4,6 +4,7 @@ import (
+ 	"crypto/tls"
+ 	"crypto/x509"
+ 	"database/sql"
++	"errors"
+ 	"fmt"
+ 	"log/slog"
+ 	"net"
+@@ -90,6 +91,23 @@ func (p *Postgres) Open(logger *slog.Logger) (storage.Storage, error) {
+ 	return conn, nil
+ }
+ 
++// OpenWithPreparedSchema opens Postgres storage only when the existing schema
++// is at the exact migration level required by this build. It never performs
++// migrations and is intended for runtime processes without DDL privileges.
++func (p *Postgres) OpenWithPreparedSchema(logger *slog.Logger) (storage.Storage, error) {
++	conn, err := p.openConnection(logger)
++	if err != nil {
++		return nil, err
++	}
++	if err := conn.verifyMigrations(); err != nil {
++		return nil, fmt.Errorf(
++			"failed to verify prepared schema: %v",
++			errors.Join(err, conn.Close()),
++		)
++	}
++	return conn, nil
++}
++
+ var strEsc = regexp.MustCompile(`([\\'])`)
+ 
+ func dataSourceStr(str string) string {
+@@ -163,6 +181,17 @@ func (p *Postgres) createDataSourceName() string {
+ }
+ 
+ func (p *Postgres) open(logger *slog.Logger) (*conn, error) {
++	c, err := p.openConnection(logger)
++	if err != nil {
++		return nil, err
++	}
++	if _, err := c.migrate(); err != nil {
++		return nil, fmt.Errorf("failed to perform migrations: %v", errors.Join(err, c.Close()))
++	}
++	return c, nil
++}
++
++func (p *Postgres) openConnection(logger *slog.Logger) (*conn, error) {
+ 	dataSourceName := p.createDataSourceName()
+ 
+ 	db, err := sql.Open("postgres", dataSourceName)
+@@ -195,11 +224,7 @@ func (p *Postgres) open(logger *slog.Logger) (*conn, error) {
+ 		return sqlErr.Code == pgErrUniqueViolation
+ 	}
+ 
+-	c := &conn{db, &flavorPostgres, logger, errCheck}
+-	if _, err := c.migrate(); err != nil {
+-		return nil, fmt.Errorf("failed to perform migrations: %v", err)
+-	}
+-	return c, nil
++	return &conn{db, &flavorPostgres, logger, errCheck}, nil
+ }
+ 
+ // MySQL options for creating a MySQL db.
+diff --git a/storage/sql/migrate.go b/storage/sql/migrate.go
+index 1b8b351..d0d1b48 100644
+--- a/storage/sql/migrate.go
++++ b/storage/sql/migrate.go
+@@ -19,12 +19,7 @@ func (c *conn) migrate() (int, error) {
+ 	i := 0
+ 	done := false
+ 
+-	var flavorMigrations []migration
+-	for _, m := range migrations {
+-		if m.flavor == nil || m.flavor == c.flavor {
+-			flavorMigrations = append(flavorMigrations, m)
+-		}
+-	}
++	flavorMigrations := migrationsForFlavor(c.flavor)
+ 
+ 	for {
+ 		err := c.ExecTx(func(tx *trans) error {
+@@ -70,6 +65,28 @@ func (c *conn) migrate() (int, error) {
+ 	return i, nil
+ }
+ 
++func (c *conn) verifyMigrations() error {
++	var num sql.NullInt64
++	if err := c.QueryRow(`select max(num) from migrations;`).Scan(&num); err != nil {
++		return fmt.Errorf("select max migration: %v", err)
++	}
++	expected := int64(len(migrationsForFlavor(c.flavor)))
++	if !num.Valid || num.Int64 != expected {
++		return fmt.Errorf("unexpected migration level")
++	}
++	return nil
++}
++
++func migrationsForFlavor(databaseFlavor *flavor) []migration {
++	var result []migration
++	for _, migration := range migrations {
++		if migration.flavor == nil || migration.flavor == databaseFlavor {
++			result = append(result, migration)
++		}
++	}
++	return result
++}
++
+ type migration struct {
+ 	stmts []string
+ 
+diff --git a/storage/sql/migrate_test.go b/storage/sql/migrate_test.go
+index 707da54..2e2e4ec 100644
+--- a/storage/sql/migrate_test.go
++++ b/storage/sql/migrate_test.go
+@@ -46,3 +46,70 @@ func TestMigrate(t *testing.T) {
+ 		}
+ 	}
+ }
++
++func TestVerifyMigrations(t *testing.T) {
++	tests := []struct {
++		name    string
++		prepare func(*testing.T, *conn)
++		wantErr bool
++	}{
++		{name: "missing migration table", wantErr: true},
++		{
++			name: "current migration level",
++			prepare: func(t *testing.T, connection *conn) {
++				t.Helper()
++				if _, err := connection.migrate(); err != nil {
++					t.Fatalf("migrate: %v", err)
++				}
++			},
++		},
++		{
++			name: "migration level behind",
++			prepare: func(t *testing.T, connection *conn) {
++				t.Helper()
++				if _, err := connection.migrate(); err != nil {
++					t.Fatalf("migrate: %v", err)
++				}
++				if _, err := connection.Exec(`delete from migrations where num = (select max(num) from migrations);`); err != nil {
++					t.Fatalf("remove migration: %v", err)
++				}
++			},
++			wantErr: true,
++		},
++		{
++			name: "migration level ahead",
++			prepare: func(t *testing.T, connection *conn) {
++				t.Helper()
++				if _, err := connection.migrate(); err != nil {
++					t.Fatalf("migrate: %v", err)
++				}
++				future := len(migrationsForFlavor(&flavorSQLite3)) + 1
++				if _, err := connection.Exec(`insert into migrations (num, at) values ($1, current_timestamp);`, future); err != nil {
++					t.Fatalf("add future migration: %v", err)
++				}
++			},
++			wantErr: true,
++		},
++	}
++
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			db, err := sql.Open("sqlite3", ":memory:")
++			if err != nil {
++				t.Fatalf("open sqlite: %v", err)
++			}
++			t.Cleanup(func() { _ = db.Close() })
++			connection := &conn{db, &flavorSQLite3, slog.New(slog.DiscardHandler), func(error) bool { return false }}
++			if test.prepare != nil {
++				test.prepare(t, connection)
++			}
++			err = connection.verifyMigrations()
++			if test.wantErr && err == nil {
++				t.Fatal("verifyMigrations() succeeded")
++			}
++			if !test.wantErr && err != nil {
++				t.Fatalf("verifyMigrations() error = %v", err)
++			}
++		})
++	}
++}

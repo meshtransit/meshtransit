@@ -1,0 +1,1302 @@
+{
+  "artifact": {
+    "binary_sha256": "dfaf9cb0afd9b6c07790c55daae6e8eee5a59dbac86faffe366767def8a1165a",
+    "candidate_version": "v2.45.1+compat.8",
+    "sbom_sha256": "1eea085ef204f3232a365059951112ec76e16021341b748e33c82adf30f08b5a",
+    "upstream_version": "v2.45.1"
+  },
+  "components": [
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/ariga.io/atlas@v0.32.1-0.20250325101103-175b25e1c1b9/LICENSE"
+        }
+      ],
+      "name": "ariga.io/atlas",
+      "purl": "pkg:golang/ariga.io/atlas@v0.32.1-0.20250325101103-175b25e1c1b9",
+      "version": "v0.32.1-0.20250325101103-175b25e1c1b9"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/cloud.google.com/go/auth/oauth2adapt@v0.2.8/LICENSE"
+        }
+      ],
+      "name": "cloud.google.com/go/auth/oauth2adapt",
+      "purl": "pkg:golang/cloud.google.com/go/auth/oauth2adapt@v0.2.8",
+      "version": "v0.2.8"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/cloud.google.com/go/auth@v0.18.2/LICENSE"
+        }
+      ],
+      "name": "cloud.google.com/go/auth",
+      "purl": "pkg:golang/cloud.google.com/go/auth@v0.18.2",
+      "version": "v0.18.2"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/cloud.google.com/go/compute/metadata@v0.9.0/LICENSE"
+        }
+      ],
+      "name": "cloud.google.com/go/compute/metadata",
+      "purl": "pkg:golang/cloud.google.com/go/compute/metadata@v0.9.0",
+      "version": "v0.9.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/dario.cat/mergo@v1.0.1/LICENSE"
+        },
+        {
+          "identifier": "sha256:4f72fe957ed4e04e7edd2980165e25158b8a26bbe875327d6b89637f6db60d51",
+          "source": "file://$GOPATH/pkg/mod/dario.cat/mergo@v1.0.1/testdata/license.yml"
+        }
+      ],
+      "name": "dario.cat/mergo",
+      "purl": "pkg:golang/dario.cat/mergo@v1.0.1",
+      "version": "v1.0.1"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/entgo.io/ent@v0.14.5/LICENSE"
+        }
+      ],
+      "name": "entgo.io/ent",
+      "purl": "pkg:golang/entgo.io/ent@v0.14.5",
+      "version": "v0.14.5"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/filippo.io/edwards25519@v1.1.1/LICENSE"
+        }
+      ],
+      "name": "filippo.io/edwards25519",
+      "purl": "pkg:golang/filippo.io/edwards25519@v1.1.1",
+      "version": "v1.1.1"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/!apps!flyer/go-sundheit@v0.6.0/LICENSE"
+        }
+      ],
+      "name": "github.com/AppsFlyer/go-sundheit",
+      "purl": "pkg:golang/github.com/AppsFlyer/go-sundheit@v0.6.0",
+      "version": "v0.6.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/!azure/go-ntlmssp@v0.1.1/LICENSE"
+        }
+      ],
+      "name": "github.com/Azure/go-ntlmssp",
+      "purl": "pkg:golang/github.com/Azure/go-ntlmssp@v0.1.1",
+      "version": "v0.1.1"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/!masterminds/goutils@v1.1.1/LICENSE.txt"
+        }
+      ],
+      "name": "github.com/Masterminds/goutils",
+      "purl": "pkg:golang/github.com/Masterminds/goutils@v1.1.1",
+      "version": "v1.1.1"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/!masterminds/semver/v3@v3.3.0/LICENSE.txt"
+        }
+      ],
+      "name": "github.com/Masterminds/semver/v3",
+      "purl": "pkg:golang/github.com/Masterminds/semver/v3@v3.3.0",
+      "version": "v3.3.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/!masterminds/semver@v1.5.0/LICENSE.txt"
+        }
+      ],
+      "name": "github.com/Masterminds/semver",
+      "purl": "pkg:golang/github.com/Masterminds/semver@v1.5.0",
+      "version": "v1.5.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/!masterminds/sprig/v3@v3.3.0/LICENSE.txt"
+        }
+      ],
+      "name": "github.com/Masterminds/sprig/v3",
+      "purl": "pkg:golang/github.com/Masterminds/sprig/v3@v3.3.0",
+      "version": "v3.3.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/agext/levenshtein@v1.2.3/LICENSE"
+        },
+        {
+          "identifier": "sha256:5f8cebc9aab3ce69ade921efb14caec472c34f22566e015df9512111dcacae06",
+          "source": "file://$GOPATH/pkg/mod/github.com/agext/levenshtein@v1.2.3/NOTICE"
+        }
+      ],
+      "name": "github.com/agext/levenshtein",
+      "purl": "pkg:golang/github.com/agext/levenshtein@v1.2.3",
+      "version": "v1.2.3"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/apparentlymart/go-textseg/v15@v15.0.0/LICENSE"
+        },
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/apparentlymart/go-textseg/v15@v15.0.0/LICENSE"
+        },
+        {
+          "identifier": "Unicode-DFS-2016",
+          "source": "file://$GOPATH/pkg/mod/github.com/apparentlymart/go-textseg/v15@v15.0.0/LICENSE"
+        }
+      ],
+      "name": "github.com/apparentlymart/go-textseg/v15",
+      "purl": "pkg:golang/github.com/apparentlymart/go-textseg/v15@v15.0.0",
+      "version": "v15.0.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-2-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/beevik/etree@v1.6.0/LICENSE"
+        }
+      ],
+      "name": "github.com/beevik/etree",
+      "purl": "pkg:golang/github.com/beevik/etree@v1.6.0",
+      "version": "v1.6.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/beorn7/perks@v1.0.1/LICENSE"
+        }
+      ],
+      "name": "github.com/beorn7/perks",
+      "purl": "pkg:golang/github.com/beorn7/perks@v1.0.1",
+      "version": "v1.0.1"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/bmatcuk/doublestar@v1.3.4/LICENSE"
+        }
+      ],
+      "name": "github.com/bmatcuk/doublestar",
+      "purl": "pkg:golang/github.com/bmatcuk/doublestar@v1.3.4",
+      "version": "v1.3.4"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/cenkalti/backoff/v4@v4.3.0/LICENSE"
+        }
+      ],
+      "name": "github.com/cenkalti/backoff/v4",
+      "purl": "pkg:golang/github.com/cenkalti/backoff/v4@v4.3.0",
+      "version": "v4.3.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/cespare/xxhash/v2@v2.3.0/LICENSE.txt"
+        }
+      ],
+      "name": "github.com/cespare/xxhash/v2",
+      "purl": "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
+      "version": "v2.3.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/coreos/go-oidc/v3@v3.17.0/LICENSE"
+        },
+        {
+          "identifier": "sha256:dccd26c6fd9c296daf44d0bc56bb4efc566edd4880381b3331c9a63e6e471338",
+          "source": "file://$GOPATH/pkg/mod/github.com/coreos/go-oidc/v3@v3.17.0/NOTICE"
+        }
+      ],
+      "name": "github.com/coreos/go-oidc/v3",
+      "purl": "pkg:golang/github.com/coreos/go-oidc/v3@v3.17.0",
+      "version": "v3.17.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/coreos/go-semver@v0.3.1/LICENSE"
+        },
+        {
+          "identifier": "sha256:572b159624f1898b40e9f09c9e4cfb65a595044960982aa95126bc28f7d1e6c0",
+          "source": "file://$GOPATH/pkg/mod/github.com/coreos/go-semver@v0.3.1/NOTICE"
+        }
+      ],
+      "name": "github.com/coreos/go-semver",
+      "purl": "pkg:golang/github.com/coreos/go-semver@v0.3.1",
+      "version": "v0.3.1"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/coreos/go-systemd/v22@v22.5.0/LICENSE"
+        },
+        {
+          "identifier": "sha256:572b159624f1898b40e9f09c9e4cfb65a595044960982aa95126bc28f7d1e6c0",
+          "source": "file://$GOPATH/pkg/mod/github.com/coreos/go-systemd/v22@v22.5.0/NOTICE"
+        }
+      ],
+      "name": "github.com/coreos/go-systemd/v22",
+      "purl": "pkg:golang/github.com/coreos/go-systemd/v22@v22.5.0",
+      "version": "v22.5.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": null
+        }
+      ],
+      "name": "github.com/dexidp/dex/api/v2",
+      "purl": "pkg:golang/github.com/dexidp/dex/api/v2@v2.4.0",
+      "version": "v2.4.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": null
+        }
+      ],
+      "name": "github.com/dexidp/dex",
+      "purl": "pkg:golang/github.com/dexidp/dex@v2.45.1+compat.8",
+      "version": "v2.45.1+compat.8"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/felixge/httpsnoop@v1.0.4/LICENSE.txt"
+        }
+      ],
+      "name": "github.com/felixge/httpsnoop",
+      "purl": "pkg:golang/github.com/felixge/httpsnoop@v1.0.4",
+      "version": "v1.0.4"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/fsnotify/fsnotify@v1.9.0/LICENSE"
+        }
+      ],
+      "name": "github.com/fsnotify/fsnotify",
+      "purl": "pkg:golang/github.com/fsnotify/fsnotify@v1.9.0",
+      "version": "v1.9.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/ghodss/yaml@v1.0.0/LICENSE"
+        },
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/ghodss/yaml@v1.0.0/LICENSE"
+        }
+      ],
+      "name": "github.com/ghodss/yaml",
+      "purl": "pkg:golang/github.com/ghodss/yaml@v1.0.0",
+      "version": "v1.0.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/go-asn1-ber/asn1-ber@v1.5.8-0.20250403174932-29230038a667/LICENSE"
+        }
+      ],
+      "name": "github.com/go-asn1-ber/asn1-ber",
+      "purl": "pkg:golang/github.com/go-asn1-ber/asn1-ber@v1.5.8-0.20250403174932-29230038a667",
+      "version": "v1.5.8-0.20250403174932-29230038a667"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/go-jose/go-jose/v4@v4.1.4/LICENSE"
+        },
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/go-jose/go-jose/v4@v4.1.4/json/LICENSE"
+        }
+      ],
+      "name": "github.com/go-jose/go-jose/v4",
+      "purl": "pkg:golang/github.com/go-jose/go-jose/v4@v4.1.4",
+      "version": "v4.1.4"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/go-ldap/ldap/v3@v3.4.12/LICENSE"
+        }
+      ],
+      "name": "github.com/go-ldap/ldap/v3",
+      "purl": "pkg:golang/github.com/go-ldap/ldap/v3@v3.4.12",
+      "version": "v3.4.12"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/go-logr/logr@v1.4.3/LICENSE"
+        }
+      ],
+      "name": "github.com/go-logr/logr",
+      "purl": "pkg:golang/github.com/go-logr/logr@v1.4.3",
+      "version": "v1.4.3"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/go-logr/stdr@v1.2.2/LICENSE"
+        }
+      ],
+      "name": "github.com/go-logr/stdr",
+      "purl": "pkg:golang/github.com/go-logr/stdr@v1.2.2",
+      "version": "v1.2.2"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/go-openapi/inflect@v0.19.0/LICENCE"
+        }
+      ],
+      "name": "github.com/go-openapi/inflect",
+      "purl": "pkg:golang/github.com/go-openapi/inflect@v0.19.0",
+      "version": "v0.19.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MPL-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/go-sql-driver/mysql@v1.9.3/LICENSE"
+        }
+      ],
+      "name": "github.com/go-sql-driver/mysql",
+      "purl": "pkg:golang/github.com/go-sql-driver/mysql@v1.9.3",
+      "version": "v1.9.3"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/go-viper/mapstructure/v2@v2.4.0/LICENSE"
+        }
+      ],
+      "name": "github.com/go-viper/mapstructure/v2",
+      "purl": "pkg:golang/github.com/go-viper/mapstructure/v2@v2.4.0",
+      "version": "v2.4.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/gogo/protobuf@v1.3.2/LICENSE"
+        }
+      ],
+      "name": "github.com/gogo/protobuf",
+      "purl": "pkg:golang/github.com/gogo/protobuf@v1.3.2",
+      "version": "v1.3.2"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/golang/protobuf@v1.5.4/LICENSE"
+        }
+      ],
+      "name": "github.com/golang/protobuf",
+      "purl": "pkg:golang/github.com/golang/protobuf@v1.5.4",
+      "version": "v1.5.4"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/google/go-cmp@v0.7.0/LICENSE"
+        }
+      ],
+      "name": "github.com/google/go-cmp",
+      "purl": "pkg:golang/github.com/google/go-cmp@v0.7.0",
+      "version": "v0.7.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/google/s2a-go@v0.1.9/LICENSE.md"
+        }
+      ],
+      "name": "github.com/google/s2a-go",
+      "purl": "pkg:golang/github.com/google/s2a-go@v0.1.9",
+      "version": "v0.1.9"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/google/uuid@v1.6.0/LICENSE"
+        }
+      ],
+      "name": "github.com/google/uuid",
+      "purl": "pkg:golang/github.com/google/uuid@v1.6.0",
+      "version": "v1.6.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/googleapis/enterprise-certificate-proxy@v0.3.11/LICENSE"
+        }
+      ],
+      "name": "github.com/googleapis/enterprise-certificate-proxy",
+      "purl": "pkg:golang/github.com/googleapis/enterprise-certificate-proxy@v0.3.11",
+      "version": "v0.3.11"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/googleapis/gax-go/v2@v2.17.0/LICENSE"
+        }
+      ],
+      "name": "github.com/googleapis/gax-go/v2",
+      "purl": "pkg:golang/github.com/googleapis/gax-go/v2@v2.17.0",
+      "version": "v2.17.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/gorilla/handlers@v1.5.2/LICENSE"
+        }
+      ],
+      "name": "github.com/gorilla/handlers",
+      "purl": "pkg:golang/github.com/gorilla/handlers@v1.5.2",
+      "version": "v1.5.2"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/gorilla/mux@v1.8.1/LICENSE"
+        }
+      ],
+      "name": "github.com/gorilla/mux",
+      "purl": "pkg:golang/github.com/gorilla/mux@v1.8.1",
+      "version": "v1.8.1"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/grpc-ecosystem/go-grpc-prometheus@v1.2.0/LICENSE"
+        }
+      ],
+      "name": "github.com/grpc-ecosystem/go-grpc-prometheus",
+      "purl": "pkg:golang/github.com/grpc-ecosystem/go-grpc-prometheus@v1.2.0",
+      "version": "v1.2.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/grpc-ecosystem/grpc-gateway/v2@v2.26.3/LICENSE"
+        },
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/grpc-ecosystem/grpc-gateway/v2@v2.26.3/internal/casing/LICENSE.md"
+        }
+      ],
+      "name": "github.com/grpc-ecosystem/grpc-gateway/v2",
+      "purl": "pkg:golang/github.com/grpc-ecosystem/grpc-gateway/v2@v2.26.3",
+      "version": "v2.26.3"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MPL-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/hashicorp/errwrap@v1.1.0/LICENSE"
+        }
+      ],
+      "name": "github.com/hashicorp/errwrap",
+      "purl": "pkg:golang/github.com/hashicorp/errwrap@v1.1.0",
+      "version": "v1.1.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MPL-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/hashicorp/go-cleanhttp@v0.5.2/LICENSE"
+        }
+      ],
+      "name": "github.com/hashicorp/go-cleanhttp",
+      "purl": "pkg:golang/github.com/hashicorp/go-cleanhttp@v0.5.2",
+      "version": "v0.5.2"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MPL-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/hashicorp/go-multierror@v1.1.1/LICENSE"
+        }
+      ],
+      "name": "github.com/hashicorp/go-multierror",
+      "purl": "pkg:golang/github.com/hashicorp/go-multierror@v1.1.1",
+      "version": "v1.1.1"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MPL-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/hashicorp/go-retryablehttp@v0.7.8/LICENSE"
+        }
+      ],
+      "name": "github.com/hashicorp/go-retryablehttp",
+      "purl": "pkg:golang/github.com/hashicorp/go-retryablehttp@v0.7.8",
+      "version": "v0.7.8"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MPL-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/hashicorp/go-secure-stdlib/parseutil@v0.2.0/LICENSE"
+        }
+      ],
+      "name": "github.com/hashicorp/go-secure-stdlib/parseutil",
+      "purl": "pkg:golang/github.com/hashicorp/go-secure-stdlib/parseutil@v0.2.0",
+      "version": "v0.2.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MPL-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/hashicorp/go-secure-stdlib/strutil@v0.1.2/LICENSE"
+        }
+      ],
+      "name": "github.com/hashicorp/go-secure-stdlib/strutil",
+      "purl": "pkg:golang/github.com/hashicorp/go-secure-stdlib/strutil@v0.1.2",
+      "version": "v0.1.2"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MPL-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/hashicorp/go-sockaddr@v1.0.7/LICENSE"
+        }
+      ],
+      "name": "github.com/hashicorp/go-sockaddr",
+      "purl": "pkg:golang/github.com/hashicorp/go-sockaddr@v1.0.7",
+      "version": "v1.0.7"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MPL-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/hashicorp/hcl/v2@v2.18.1/LICENSE"
+        }
+      ],
+      "name": "github.com/hashicorp/hcl/v2",
+      "purl": "pkg:golang/github.com/hashicorp/hcl/v2@v2.18.1",
+      "version": "v2.18.1"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MPL-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/hashicorp/hcl@v1.0.1-vault-7/LICENSE"
+        }
+      ],
+      "name": "github.com/hashicorp/hcl",
+      "purl": "pkg:golang/github.com/hashicorp/hcl@v1.0.1-vault-7",
+      "version": "v1.0.1-vault-7"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/huandu/xstrings@v1.5.0/LICENSE"
+        }
+      ],
+      "name": "github.com/huandu/xstrings",
+      "purl": "pkg:golang/github.com/huandu/xstrings@v1.5.0",
+      "version": "v1.5.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/jonboulle/clockwork@v0.5.0/LICENSE"
+        }
+      ],
+      "name": "github.com/jonboulle/clockwork",
+      "purl": "pkg:golang/github.com/jonboulle/clockwork@v0.5.0",
+      "version": "v0.5.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/lib/pq@v1.11.2/LICENSE"
+        },
+        {
+          "identifier": "sha256:55d3e3cfe405b418766ecf915c2a4f186634d047918b48b158ce67f766566376",
+          "source": "file://$GOPATH/pkg/mod/github.com/lib/pq@v1.11.2/notice_test.go"
+        },
+        {
+          "identifier": "sha256:93270cbb7b8a5f4c780c843e133f826ce29ed4d7933f204733c4da6479594bb9",
+          "source": "file://$GOPATH/pkg/mod/github.com/lib/pq@v1.11.2/notice.go"
+        }
+      ],
+      "name": "github.com/lib/pq",
+      "purl": "pkg:golang/github.com/lib/pq@v1.11.2",
+      "version": "v1.11.2"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/mattermost/xml-roundtrip-validator@v0.1.0/LICENSE.txt"
+        }
+      ],
+      "name": "github.com/mattermost/xml-roundtrip-validator",
+      "purl": "pkg:golang/github.com/mattermost/xml-roundtrip-validator@v0.1.0",
+      "version": "v0.1.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/mattn/go-sqlite3@v1.14.34/LICENSE"
+        }
+      ],
+      "name": "github.com/mattn/go-sqlite3",
+      "purl": "pkg:golang/github.com/mattn/go-sqlite3@v1.14.34",
+      "version": "v1.14.34"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/mitchellh/copystructure@v1.2.0/LICENSE"
+        }
+      ],
+      "name": "github.com/mitchellh/copystructure",
+      "purl": "pkg:golang/github.com/mitchellh/copystructure@v1.2.0",
+      "version": "v1.2.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/mitchellh/go-wordwrap@v1.0.1/LICENSE.md"
+        }
+      ],
+      "name": "github.com/mitchellh/go-wordwrap",
+      "purl": "pkg:golang/github.com/mitchellh/go-wordwrap@v1.0.1",
+      "version": "v1.0.1"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/mitchellh/mapstructure@v1.5.0/LICENSE"
+        }
+      ],
+      "name": "github.com/mitchellh/mapstructure",
+      "purl": "pkg:golang/github.com/mitchellh/mapstructure@v1.5.0",
+      "version": "v1.5.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/mitchellh/reflectwalk@v1.0.2/LICENSE"
+        }
+      ],
+      "name": "github.com/mitchellh/reflectwalk",
+      "purl": "pkg:golang/github.com/mitchellh/reflectwalk@v1.0.2",
+      "version": "v1.0.2"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822/LICENSE"
+        }
+      ],
+      "name": "github.com/munnerz/goautoneg",
+      "purl": "pkg:golang/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822",
+      "version": "v0.0.0-20191010083416-a7dc8b61c822"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/oklog/run@v1.2.0/LICENSE"
+        }
+      ],
+      "name": "github.com/oklog/run",
+      "purl": "pkg:golang/github.com/oklog/run@v1.2.0",
+      "version": "v1.2.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MPL-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/openbao/openbao/api/v2@v2.5.1/LICENSE"
+        }
+      ],
+      "name": "github.com/openbao/openbao/api/v2",
+      "purl": "pkg:golang/github.com/openbao/openbao/api/v2@v2.5.1",
+      "version": "v2.5.1"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-2-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/pkg/errors@v0.9.1/LICENSE"
+        }
+      ],
+      "name": "github.com/pkg/errors",
+      "purl": "pkg:golang/github.com/pkg/errors@v0.9.1",
+      "version": "v0.9.1"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/prometheus/client_golang@v1.23.2/LICENSE"
+        },
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/prometheus/client_golang@v1.23.2/internal/github.com/golang/gddo/LICENSE"
+        },
+        {
+          "identifier": "sha256:8548bfb2bc1913396df38c548a6ec60b8dbcac3b0800485a40569c8bdd184471",
+          "source": "file://$GOPATH/pkg/mod/github.com/prometheus/client_golang@v1.23.2/NOTICE"
+        }
+      ],
+      "name": "github.com/prometheus/client_golang",
+      "purl": "pkg:golang/github.com/prometheus/client_golang@v1.23.2",
+      "version": "v1.23.2"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/prometheus/client_model@v0.6.2/LICENSE"
+        },
+        {
+          "identifier": "sha256:6c79faa15168885fb88a316ae0df18f486deafddefdc16826cdc56dfbd421e24",
+          "source": "file://$GOPATH/pkg/mod/github.com/prometheus/client_model@v0.6.2/NOTICE"
+        }
+      ],
+      "name": "github.com/prometheus/client_model",
+      "purl": "pkg:golang/github.com/prometheus/client_model@v0.6.2",
+      "version": "v0.6.2"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/prometheus/common@v0.66.1/LICENSE"
+        },
+        {
+          "identifier": "sha256:600244c8052c8c1d307043fafacbc83b429c171dd8e08f5a537c0a54014585ee",
+          "source": "file://$GOPATH/pkg/mod/github.com/prometheus/common@v0.66.1/NOTICE"
+        }
+      ],
+      "name": "github.com/prometheus/common",
+      "purl": "pkg:golang/github.com/prometheus/common@v0.66.1",
+      "version": "v0.66.1"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/russellhaering/goxmldsig@v1.6.0/LICENSE"
+        }
+      ],
+      "name": "github.com/russellhaering/goxmldsig",
+      "purl": "pkg:golang/github.com/russellhaering/goxmldsig@v1.6.0",
+      "version": "v1.6.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/ryanuber/go-glob@v1.0.0/LICENSE"
+        }
+      ],
+      "name": "github.com/ryanuber/go-glob",
+      "purl": "pkg:golang/github.com/ryanuber/go-glob@v1.0.0",
+      "version": "v1.0.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/shopspring/decimal@v1.4.0/LICENSE"
+        }
+      ],
+      "name": "github.com/shopspring/decimal",
+      "purl": "pkg:golang/github.com/shopspring/decimal@v1.4.0",
+      "version": "v1.4.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/spf13/cast@v1.7.0/LICENSE"
+        }
+      ],
+      "name": "github.com/spf13/cast",
+      "purl": "pkg:golang/github.com/spf13/cast@v1.7.0",
+      "version": "v1.7.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/spf13/cobra@v1.10.2/LICENSE.txt"
+        }
+      ],
+      "name": "github.com/spf13/cobra",
+      "purl": "pkg:golang/github.com/spf13/cobra@v1.10.2",
+      "version": "v1.10.2"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/github.com/spf13/pflag@v1.0.9/LICENSE"
+        }
+      ],
+      "name": "github.com/spf13/pflag",
+      "purl": "pkg:golang/github.com/spf13/pflag@v1.0.9",
+      "version": "v1.0.9"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/github.com/zclconf/go-cty-yaml@v1.1.0/LICENSE"
+        },
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/zclconf/go-cty-yaml@v1.1.0/LICENSE.libyaml"
+        },
+        {
+          "identifier": "sha256:13f60e7195649c2b90ba7002c7148874ca799c831735216df58cf8bb79402322",
+          "source": "file://$GOPATH/pkg/mod/github.com/zclconf/go-cty-yaml@v1.1.0/NOTICE"
+        }
+      ],
+      "name": "github.com/zclconf/go-cty-yaml",
+      "purl": "pkg:golang/github.com/zclconf/go-cty-yaml@v1.1.0",
+      "version": "v1.1.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/github.com/zclconf/go-cty@v1.14.4/LICENSE"
+        }
+      ],
+      "name": "github.com/zclconf/go-cty",
+      "purl": "pkg:golang/github.com/zclconf/go-cty@v1.14.4",
+      "version": "v1.14.4"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/go.etcd.io/etcd/api/v3@v3.6.14/LICENSE"
+        }
+      ],
+      "name": "go.etcd.io/etcd/api/v3",
+      "purl": "pkg:golang/go.etcd.io/etcd/api/v3@v3.6.14",
+      "version": "v3.6.14"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/go.etcd.io/etcd/client/pkg/v3@v3.6.14/LICENSE"
+        }
+      ],
+      "name": "go.etcd.io/etcd/client/pkg/v3",
+      "purl": "pkg:golang/go.etcd.io/etcd/client/pkg/v3@v3.6.14",
+      "version": "v3.6.14"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/go.etcd.io/etcd/client/v3@v3.6.14/LICENSE"
+        }
+      ],
+      "name": "go.etcd.io/etcd/client/v3",
+      "purl": "pkg:golang/go.etcd.io/etcd/client/v3@v3.6.14",
+      "version": "v3.6.14"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/go.opentelemetry.io/auto/sdk@v1.2.1/LICENSE"
+        }
+      ],
+      "name": "go.opentelemetry.io/auto/sdk",
+      "purl": "pkg:golang/go.opentelemetry.io/auto/sdk@v1.2.1",
+      "version": "v1.2.1"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp@v0.61.0/LICENSE"
+        }
+      ],
+      "name": "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp",
+      "purl": "pkg:golang/go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp@v0.61.0",
+      "version": "v0.61.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/go.opentelemetry.io/otel/metric@v1.44.0/LICENSE"
+        },
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/go.opentelemetry.io/otel/metric@v1.44.0/LICENSE"
+        }
+      ],
+      "name": "go.opentelemetry.io/otel/metric",
+      "purl": "pkg:golang/go.opentelemetry.io/otel/metric@v1.44.0",
+      "version": "v1.44.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/go.opentelemetry.io/otel/trace@v1.44.0/LICENSE"
+        },
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/go.opentelemetry.io/otel/trace@v1.44.0/LICENSE"
+        }
+      ],
+      "name": "go.opentelemetry.io/otel/trace",
+      "purl": "pkg:golang/go.opentelemetry.io/otel/trace@v1.44.0",
+      "version": "v1.44.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/go.opentelemetry.io/otel@v1.44.0/LICENSE"
+        },
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/go.opentelemetry.io/otel@v1.44.0/LICENSE"
+        }
+      ],
+      "name": "go.opentelemetry.io/otel",
+      "purl": "pkg:golang/go.opentelemetry.io/otel@v1.44.0",
+      "version": "v1.44.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/go.uber.org/multierr@v1.11.0/LICENSE.txt"
+        }
+      ],
+      "name": "go.uber.org/multierr",
+      "purl": "pkg:golang/go.uber.org/multierr@v1.11.0",
+      "version": "v1.11.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/go.uber.org/zap@v1.27.0/LICENSE"
+        }
+      ],
+      "name": "go.uber.org/zap",
+      "purl": "pkg:golang/go.uber.org/zap@v1.27.0",
+      "version": "v1.27.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/go.yaml.in/yaml/v2@v2.4.2/LICENSE"
+        },
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/go.yaml.in/yaml/v2@v2.4.2/NOTICE"
+        },
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/go.yaml.in/yaml/v2@v2.4.2/LICENSE.libyaml"
+        }
+      ],
+      "name": "go.yaml.in/yaml/v2",
+      "purl": "pkg:golang/go.yaml.in/yaml/v2@v2.4.2",
+      "version": "v2.4.2"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/golang.org/x/crypto@v0.56.0/LICENSE"
+        }
+      ],
+      "name": "golang.org/x/crypto",
+      "purl": "pkg:golang/golang.org/x/crypto@v0.56.0",
+      "version": "v0.56.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/golang.org/x/exp@v0.0.0-20221004215720-b9f4876ce741/LICENSE"
+        }
+      ],
+      "name": "golang.org/x/exp",
+      "purl": "pkg:golang/golang.org/x/exp@v0.0.0-20221004215720-b9f4876ce741",
+      "version": "v0.0.0-20221004215720-b9f4876ce741"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/golang.org/x/mod@v0.40.0/LICENSE"
+        }
+      ],
+      "name": "golang.org/x/mod",
+      "purl": "pkg:golang/golang.org/x/mod@v0.40.0",
+      "version": "v0.40.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/golang.org/x/net@v0.58.0/LICENSE"
+        }
+      ],
+      "name": "golang.org/x/net",
+      "purl": "pkg:golang/golang.org/x/net@v0.58.0",
+      "version": "v0.58.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/golang.org/x/oauth2@v0.36.0/LICENSE"
+        }
+      ],
+      "name": "golang.org/x/oauth2",
+      "purl": "pkg:golang/golang.org/x/oauth2@v0.36.0",
+      "version": "v0.36.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/golang.org/x/sys@v0.47.0/LICENSE"
+        }
+      ],
+      "name": "golang.org/x/sys",
+      "purl": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "version": "v0.47.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/golang.org/x/text@v0.41.0/LICENSE"
+        }
+      ],
+      "name": "golang.org/x/text",
+      "purl": "pkg:golang/golang.org/x/text@v0.41.0",
+      "version": "v0.41.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/golang.org/x/time@v0.14.0/LICENSE"
+        }
+      ],
+      "name": "golang.org/x/time",
+      "purl": "pkg:golang/golang.org/x/time@v0.14.0",
+      "version": "v0.14.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/google.golang.org/api@v0.267.0/LICENSE"
+        },
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/google.golang.org/api@v0.267.0/internal/third_party/uritemplates/LICENSE"
+        }
+      ],
+      "name": "google.golang.org/api",
+      "purl": "pkg:golang/google.golang.org/api@v0.267.0",
+      "version": "v0.267.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/google.golang.org/genproto/googleapis/api@v0.0.0-20260526163538-3dc84a4a5aaa/LICENSE"
+        }
+      ],
+      "name": "google.golang.org/genproto/googleapis/api",
+      "purl": "pkg:golang/google.golang.org/genproto/googleapis/api@v0.0.0-20260526163538-3dc84a4a5aaa",
+      "version": "v0.0.0-20260526163538-3dc84a4a5aaa"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260526163538-3dc84a4a5aaa/LICENSE"
+        }
+      ],
+      "name": "google.golang.org/genproto/googleapis/rpc",
+      "purl": "pkg:golang/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260526163538-3dc84a4a5aaa",
+      "version": "v0.0.0-20260526163538-3dc84a4a5aaa"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/google.golang.org/grpc@v1.83.2/LICENSE"
+        },
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/google.golang.org/grpc@v1.83.2/NOTICE.txt"
+        }
+      ],
+      "name": "google.golang.org/grpc",
+      "purl": "pkg:golang/google.golang.org/grpc@v1.83.2",
+      "version": "v1.83.2"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": "file://$GOPATH/pkg/mod/google.golang.org/protobuf@v1.36.11/LICENSE"
+        }
+      ],
+      "name": "google.golang.org/protobuf",
+      "purl": "pkg:golang/google.golang.org/protobuf@v1.36.11",
+      "version": "v1.36.11"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/gopkg.in/yaml.v2@v2.4.0/LICENSE"
+        },
+        {
+          "identifier": "Apache-2.0",
+          "source": "file://$GOPATH/pkg/mod/gopkg.in/yaml.v2@v2.4.0/NOTICE"
+        },
+        {
+          "identifier": "MIT",
+          "source": "file://$GOPATH/pkg/mod/gopkg.in/yaml.v2@v2.4.0/LICENSE.libyaml"
+        }
+      ],
+      "name": "gopkg.in/yaml.v2",
+      "purl": "pkg:golang/gopkg.in/yaml.v2@v2.4.0",
+      "version": "v2.4.0"
+    },
+    {
+      "licenses": [
+        {
+          "identifier": "BSD-3-Clause",
+          "source": null
+        }
+      ],
+      "name": "stdlib",
+      "purl": "pkg:golang/stdlib@1.26.8",
+      "version": "go1.26.8"
+    }
+  ],
+  "generator": {
+    "enrichment": "golang",
+    "input": "compiled Go binary",
+    "name": "syft",
+    "version": "1.51.1"
+  },
+  "review": {
+    "component_count": 106,
+    "components_without_detected_license": 0,
+    "status": "technical-inventory-complete-legal-review-required",
+    "strong_copyleft_detected": false,
+    "unclassified_license_text_count": 10,
+    "weak_copyleft_component_count": 11,
+    "weak_copyleft_licenses": [
+      "MPL-2.0"
+    ]
+  },
+  "schema_version": "meshtransit.dex-license-inventory/v1"
+}

@@ -1,0 +1,87 @@
+{
+  "schema_version": "meshtransit.dex-patch/v1",
+  "upstream": {
+    "repository": "https://github.com/dexidp/dex.git",
+    "version": "v2.45.1",
+    "commit": "11d2eeb52b42e1980e14cb91e69dd9e3faab2076",
+    "module_path": "github.com/dexidp/dex",
+    "module_version": "v0.0.0-20260303133905-11d2eeb52b42"
+  },
+  "patches": [
+    {
+      "id": "rfc9207-authorization-response-issuer",
+      "path": "patches/0001-rfc9207-authorization-response-issuer.patch",
+      "sha256": "77652df0db7176e1fb752f4a81e9403b26d16a8517a3a48aab291676e736332c"
+    },
+    {
+      "id": "signed-authentication-time",
+      "path": "patches/0002-signed-authentication-time.patch",
+      "sha256": "f661957c38772b7bc733eee46a16177fdff47695b478e37786413db5e299cdfd"
+    },
+    {
+      "id": "security-dependency-updates",
+      "path": "patches/0003-security-dependency-updates.patch",
+      "sha256": "43912a1c989c540c7d1a73e301205b0e18d8f1306ad0d14bafa3b8bc0c4fda7f"
+    },
+    {
+      "id": "background-worker-join",
+      "path": "patches/0004-background-worker-join.patch",
+      "sha256": "d93d2d2f3325b45d720bc5cc70c4e1164a3e7422faa8f324bc13ddb005d66a57"
+    },
+    {
+      "id": "connector-lifecycle-join",
+      "path": "patches/0005-connector-lifecycle-join.patch",
+      "sha256": "694e23190a100eeabf354d5dbf31348b938f48c1ac536cad88ccb742b324dde5"
+    },
+    {
+      "id": "prepared-postgres-runtime-open",
+      "path": "patches/0006-prepared-postgres-runtime-open.patch",
+      "sha256": "72d767a1efcd5d67b6c489bfabf2238e967c6d804aff3f754dcd8bb0125d4702"
+    },
+    {
+      "id": "context-bounded-prepared-postgres-check",
+      "path": "patches/0007-context-bounded-prepared-postgres-check.patch",
+      "sha256": "db9c5f2549df7d096f115f4facad875b512e72331c1143e125a688fb1a26585b"
+    },
+    {
+      "id": "inject-connector-http-client",
+      "path": "patches/0008-inject-connector-http-client.patch",
+      "sha256": "524158992232a39496c976fa712a58405d52cc6abfd1eb01104232efdaf9b257"
+    }
+  ],
+  "source_tree_sha256": "31e9f91bd3761028f838e7f00635cded92bbd661a4264b8b58ba391546422bae",
+  "build": {
+    "go_version": "go1.26.8",
+    "flags": [
+      "GOTOOLCHAIN=go1.26.8",
+      "GOOS=darwin",
+      "GOARCH=arm64",
+      "GOARM64=v8.0",
+      "CGO_ENABLED=0",
+      "go build",
+      "-buildvcs=false",
+      "-trimpath",
+      "-ldflags=-w -X main.version=v2.45.1+compat.8",
+      "./cmd/dex"
+    ],
+    "binary_sha256": "dfaf9cb0afd9b6c07790c55daae6e8eee5a59dbac86faffe366767def8a1165a"
+  },
+  "evidence": {
+    "license_inventory": {
+      "path": "evidence/license-inventory.json",
+      "sha256": "cdb981eeffbd812ce661421c631dd8195531eed945d6af24b508c99db05d229a"
+    },
+    "sbom": {
+      "path": "evidence/sbom.cdx.json",
+      "sha256": "68b215d18fbcd956fdc59c2be1ec3391c92e135a556a00ab75230a85c190615d"
+    },
+    "vulnerability_report": {
+      "path": "evidence/vulnerability-report.json",
+      "sha256": "14d58ead0a83a1d8237ed79e3947b79033fd6d3d04437d31bb3a25901d3de48a"
+    },
+    "qualification_report": {
+      "path": "evidence/qualification-report.json",
+      "sha256": "d3d3167e4024b090c39f999aa1ad052ea5125956d98da7bdb0b79174687a2df7"
+    }
+  }
+}

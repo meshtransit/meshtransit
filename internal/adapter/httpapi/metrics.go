@@ -230,7 +230,7 @@ func validBuildLabel(value string) bool {
 
 func validRoleLabel(role string) bool {
 	switch role {
-	case "api", "control", "worker", "relay":
+	case "api", "control", "worker", "relay", "identity":
 		return true
 	default:
 		return false
@@ -238,7 +238,8 @@ func validRoleLabel(role string) bool {
 }
 
 func validComponentLabel(component string) bool {
-	return component == "postgresql" || component == "redis" || component == "private_login"
+	return component == "postgresql" || component == "redis" || component == "private_login" ||
+		component == "identity_postgresql" || component == "identity_configuration"
 }
 
 func operatorRoute(path string) string {

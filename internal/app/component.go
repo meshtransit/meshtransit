@@ -13,6 +13,10 @@ const (
 	ComponentRedis
 	// ComponentPrivateLogin is required only by the configured private API profile.
 	ComponentPrivateLogin
+	// ComponentIdentityPostgreSQL is the isolated broker system of record.
+	ComponentIdentityPostgreSQL
+	// ComponentIdentityConfiguration is the approved immutable broker configuration.
+	ComponentIdentityConfiguration
 )
 
 // String returns the stable operator-facing component name.
@@ -24,6 +28,10 @@ func (component Component) String() string {
 		return "redis"
 	case ComponentPrivateLogin:
 		return "private_login"
+	case ComponentIdentityPostgreSQL:
+		return "identity_postgresql"
+	case ComponentIdentityConfiguration:
+		return "identity_configuration"
 	default:
 		return "unknown"
 	}
@@ -37,15 +45,29 @@ func RequiredComponents(roles []Role) ([]Component, error) {
 	}
 
 	requiresStorage := false
+	requiresIdentityStorage := false
 	for _, role := range roles {
 		switch role {
 		case RoleAPI, RoleControl, RoleWorker:
 			requiresStorage = true
+		case RoleIdentity:
+			requiresIdentityStorage = true
 		case RoleRelay:
 		}
 	}
-	if !requiresStorage {
+	components := make([]Component, 0, 4)
+	if requiresStorage {
+		components = append(components, ComponentPostgreSQL, ComponentRedis)
+	}
+	if requiresIdentityStorage {
+		components = append(
+			components,
+			ComponentIdentityPostgreSQL,
+			ComponentIdentityConfiguration,
+		)
+	}
+	if len(components) == 0 {
 		return nil, nil
 	}
-	return []Component{ComponentPostgreSQL, ComponentRedis}, nil
+	return components, nil
 }

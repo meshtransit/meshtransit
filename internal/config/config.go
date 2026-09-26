@@ -13,7 +13,7 @@ import (
 
 const (
 	// SchemaVersion identifies the validated environment configuration contract.
-	SchemaVersion = 16
+	SchemaVersion = 20
 
 	envRole            = "MESHTRANSIT_ROLE"
 	envHealthAddress   = "MESHTRANSIT_HEALTH_ADDRESS"
@@ -57,6 +57,7 @@ type Config struct {
 	RevisionWorker  *RevisionWorkerConfig
 	AuthExpiry      *AuthExpiryConfig
 	PrivateLogin    *PrivateLoginFile
+	Identity        *IdentityConfig
 }
 
 // DependencyConfig bounds startup and periodic infrastructure checks.
@@ -108,7 +109,8 @@ func Load(lookup LookupFunc) (Config, error) {
 	var controlConfig *ControlConfig
 	var enrollmentConfig *EnrollmentConfig
 	var revisionWorkerConfig *RevisionWorkerConfig
-	if role != app.RoleRelay {
+	var identityConfig *IdentityConfig
+	if role == app.RoleAll || role == app.RoleAPI || role == app.RoleControl || role == app.RoleWorker {
 		loadedStorage, loadErr := loadStorageConfig(lookup, role)
 		if loadErr != nil {
 			return Config{}, loadErr
@@ -151,6 +153,16 @@ func Load(lookup LookupFunc) (Config, error) {
 		}
 		revisionWorkerConfig = &loadedWorker
 	}
+	if role == app.RoleIdentity {
+		loadedIdentity, loadErr := loadIdentityConfig(lookup, dependencyConfig.CheckTimeout, true)
+		if loadErr != nil {
+			return Config{}, loadErr
+		}
+		if addressesConflict(healthAddress, loadedIdentity.Listener.Address) {
+			return Config{}, settingError(envIdentityAddress)
+		}
+		identityConfig = &loadedIdentity
+	}
 	privateLoginFile, err := loadPrivateLoginFile(lookup, role)
 	if err != nil {
 		return Config{}, err
@@ -169,6 +181,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		RevisionWorker:  revisionWorkerConfig,
 		AuthExpiry:      authExpiryConfig,
 		PrivateLogin:    privateLoginFile,
+		Identity:        identityConfig,
 	}, nil
 }
 

@@ -1,0 +1,277 @@
+diff --git a/server/handlers.go b/server/handlers.go
+index 62f1650..ef77775 100644
+--- a/server/handlers.go
++++ b/server/handlers.go
+@@ -73,21 +73,22 @@ func (s *Server) handlePublicKeys(w http.ResponseWriter, r *http.Request) {
+ }
+ 
+ type discovery struct {
+-	Issuer            string   `json:"issuer"`
+-	Auth              string   `json:"authorization_endpoint"`
+-	Token             string   `json:"token_endpoint"`
+-	Keys              string   `json:"jwks_uri"`
+-	UserInfo          string   `json:"userinfo_endpoint"`
+-	DeviceEndpoint    string   `json:"device_authorization_endpoint"`
+-	Introspect        string   `json:"introspection_endpoint"`
+-	GrantTypes        []string `json:"grant_types_supported"`
+-	ResponseTypes     []string `json:"response_types_supported"`
+-	Subjects          []string `json:"subject_types_supported"`
+-	IDTokenAlgs       []string `json:"id_token_signing_alg_values_supported"`
+-	CodeChallengeAlgs []string `json:"code_challenge_methods_supported"`
+-	Scopes            []string `json:"scopes_supported"`
+-	AuthMethods       []string `json:"token_endpoint_auth_methods_supported"`
+-	Claims            []string `json:"claims_supported"`
++	Issuer                                        string   `json:"issuer"`
++	Auth                                          string   `json:"authorization_endpoint"`
++	Token                                         string   `json:"token_endpoint"`
++	Keys                                          string   `json:"jwks_uri"`
++	UserInfo                                      string   `json:"userinfo_endpoint"`
++	DeviceEndpoint                                string   `json:"device_authorization_endpoint"`
++	Introspect                                    string   `json:"introspection_endpoint"`
++	GrantTypes                                    []string `json:"grant_types_supported"`
++	ResponseTypes                                 []string `json:"response_types_supported"`
++	Subjects                                      []string `json:"subject_types_supported"`
++	IDTokenAlgs                                   []string `json:"id_token_signing_alg_values_supported"`
++	CodeChallengeAlgs                             []string `json:"code_challenge_methods_supported"`
++	Scopes                                        []string `json:"scopes_supported"`
++	AuthMethods                                   []string `json:"token_endpoint_auth_methods_supported"`
++	Claims                                        []string `json:"claims_supported"`
++	AuthorizationResponseIssuerParameterSupported bool     `json:"authorization_response_iss_parameter_supported"`
+ }
+ 
+ func (s *Server) discoveryHandler(ctx context.Context) (http.HandlerFunc, error) {
+@@ -119,6 +120,7 @@ func (s *Server) constructDiscovery(ctx context.Context) discovery {
+ 		CodeChallengeAlgs: []string{codeChallengeMethodS256, codeChallengeMethodPlain},
+ 		Scopes:            []string{"openid", "email", "groups", "profile", "offline_access"},
+ 		AuthMethods:       []string{"client_secret_basic", "client_secret_post"},
++		AuthorizationResponseIssuerParameterSupported: true,
+ 		Claims: []string{
+ 			"iss", "sub", "aud", "iat", "exp", "email", "email_verified",
+ 			"locale", "name", "preferred_username", "at_hash",
+@@ -768,6 +770,7 @@ func (s *Server) sendCodeResponse(w http.ResponseWriter, r *http.Request, authRe
+ 
+ 	if implicitOrHybrid {
+ 		v := url.Values{}
++		v.Set("iss", s.issuerURL.String())
+ 		if accessToken != "" {
+ 			v.Set("access_token", accessToken)
+ 			v.Set("token_type", "bearer")
+@@ -809,6 +812,7 @@ func (s *Server) sendCodeResponse(w http.ResponseWriter, r *http.Request, authRe
+ 		//
+ 		q := u.Query()
+ 		q.Set("code", code.ID)
++		q.Set("iss", s.issuerURL.String())
+ 		q.Set("state", authReq.State)
+ 		u.RawQuery = q.Encode()
+ 	}
+diff --git a/server/handlers_test.go b/server/handlers_test.go
+index 0514d85..3e1a5fe 100644
+--- a/server/handlers_test.go
++++ b/server/handlers_test.go
+@@ -60,6 +60,7 @@ func TestHandleDiscovery(t *testing.T) {
+ 		UserInfo:       fmt.Sprintf("%s/userinfo", httpServer.URL),
+ 		DeviceEndpoint: fmt.Sprintf("%s/device/code", httpServer.URL),
+ 		Introspect:     fmt.Sprintf("%s/token/introspect", httpServer.URL),
++		AuthorizationResponseIssuerParameterSupported: true,
+ 		GrantTypes: []string{
+ 			"authorization_code",
+ 			"refresh_token",
+@@ -106,6 +107,73 @@ func TestHandleDiscovery(t *testing.T) {
+ 	}, res)
+ }
+ 
++func TestSendCodeResponseIncludesConfiguredIssuer(t *testing.T) {
++	tests := []struct {
++		name          string
++		responseTypes []string
++		responseMode  string
++	}{
++		{
++			name:          "code flow query",
++			responseTypes: []string{responseTypeCode},
++			responseMode:  "query",
++		},
++		{
++			name:          "hybrid flow fragment",
++			responseTypes: []string{responseTypeCode, responseTypeIDToken},
++			responseMode:  "fragment",
++		},
++	}
++
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			httpServer, s := newTestServer(t, func(c *Config) {
++				c.Issuer += "/non-root-path"
++			})
++			defer httpServer.Close()
++
++			authReq := storage.AuthRequest{
++				ID:            "auth-request",
++				ClientID:      "client",
++				ConnectorID:   "mock",
++				RedirectURI:   "https://client.example/callback?existing=value&iss=https%3A%2F%2Fattacker.example",
++				State:         "state",
++				Nonce:         "nonce",
++				Scopes:        []string{"openid"},
++				ResponseTypes: tc.responseTypes,
++				Claims: storage.Claims{
++					UserID:   "user",
++					Username: "user",
++				},
++				Expiry: time.Now().Add(time.Minute),
++			}
++			require.NoError(t, s.storage.CreateAuthRequest(t.Context(), authReq))
++
++			rr := httptest.NewRecorder()
++			req := httptest.NewRequest(http.MethodGet, "https://attacker.example/approval", nil)
++			req.Header.Set("Forwarded", "host=attacker.example;proto=https")
++			req.Header.Set("X-Forwarded-Host", "attacker.example")
++			s.sendCodeResponse(rr, req, authReq)
++
++			require.Equal(t, http.StatusSeeOther, rr.Code)
++			redirect, err := url.Parse(rr.Header().Get("Location"))
++			require.NoError(t, err)
++
++			var response url.Values
++			if tc.responseMode == "fragment" {
++				response, err = url.ParseQuery(redirect.Fragment)
++				require.NoError(t, err)
++			} else {
++				response = redirect.Query()
++				require.Equal(t, "value", response.Get("existing"))
++			}
++
++			require.Equal(t, []string{s.issuerURL.String()}, response["iss"])
++			require.Equal(t, httpServer.URL, s.issuerURL.String())
++		})
++	}
++}
++
+ func TestHandleHealthFailure(t *testing.T) {
+ 	httpServer, server := newTestServer(t, func(c *Config) {
+ 		c.HealthChecker = gosundheit.New()
+diff --git a/server/oauth2.go b/server/oauth2.go
+index 5821f0f..0970903 100644
+--- a/server/oauth2.go
++++ b/server/oauth2.go
+@@ -48,6 +48,7 @@ func newDisplayedErr(status int, format string, a ...interface{}) *displayedAuth
+ type redirectedAuthErr struct {
+ 	State       string
+ 	RedirectURI string
++	Issuer      string
+ 	Type        string
+ 	Description string
+ }
+@@ -58,13 +59,6 @@ func (err *redirectedAuthErr) Error() string {
+ 
+ func (err *redirectedAuthErr) Handler() http.Handler {
+ 	hf := func(w http.ResponseWriter, r *http.Request) {
+-		v := url.Values{}
+-		v.Add("state", err.State)
+-		v.Add("error", err.Type)
+-		if err.Description != "" {
+-			v.Add("error_description", err.Description)
+-		}
+-
+ 		// Parse the redirect URI to ensure it's valid before redirecting
+ 		u, parseErr := url.Parse(err.RedirectURI)
+ 		if parseErr != nil {
+@@ -73,12 +67,16 @@ func (err *redirectedAuthErr) Handler() http.Handler {
+ 			return
+ 		}
+ 
+-		// Add error parameters to the URL
++		// Set reserved response parameters so values embedded in the registered
++		// redirect URI cannot override or duplicate the authorization response.
+ 		query := u.Query()
+-		for key, values := range v {
+-			for _, value := range values {
+-				query.Add(key, value)
+-			}
++		query.Set("state", err.State)
++		query.Set("error", err.Type)
++		query.Set("iss", err.Issuer)
++		if err.Description != "" {
++			query.Set("error_description", err.Description)
++		} else {
++			query.Del("error_description")
+ 		}
+ 		u.RawQuery = query.Encode()
+ 
+@@ -452,7 +450,13 @@ func (s *Server) parseAuthorizationRequest(r *http.Request) (*storage.AuthReques
+ 
+ 	// From here on out, we want to redirect back to the client with an error.
+ 	newRedirectedErr := func(typ, format string, a ...interface{}) *redirectedAuthErr {
+-		return &redirectedAuthErr{state, redirectURI, typ, fmt.Sprintf(format, a...)}
++		return &redirectedAuthErr{
++			State:       state,
++			RedirectURI: redirectURI,
++			Issuer:      s.issuerURL.String(),
++			Type:        typ,
++			Description: fmt.Sprintf(format, a...),
++		}
+ 	}
+ 
+ 	if connectorID != "" {
+diff --git a/server/oauth2_test.go b/server/oauth2_test.go
+index ea930cb..fdf5d67 100644
+--- a/server/oauth2_test.go
++++ b/server/oauth2_test.go
+@@ -360,6 +360,9 @@ func TestParseAuthorizationRequest(t *testing.T) {
+ 					if e.RedirectURI != tc.queryParams["redirect_uri"] {
+ 						t.Errorf("%s: expected error to be returned in redirect to %v", tc.name, tc.queryParams["redirect_uri"])
+ 					}
++					if e.Issuer != server.issuerURL.String() {
++						t.Errorf("%s: expected issuer %v, got %v", tc.name, server.issuerURL.String(), e.Issuer)
++					}
+ 				case *displayedAuthErr:
+ 					e, ok := err.(*displayedAuthErr)
+ 					if !ok {
+@@ -708,7 +711,7 @@ func TestRedirectedAuthErrHandler(t *testing.T) {
+ 		},
+ 		{
+ 			name:        "valid redirect uri with query params",
+-			redirectURI: "https://example.com/callback?existing=param&another=value",
++			redirectURI: "https://example.com/callback?existing=param&another=value&iss=https%3A%2F%2Fattacker.example&state=attacker&error=attacker",
+ 			state:       "state456",
+ 			errType:     errAccessDenied,
+ 			description: "User denied access",
+@@ -717,7 +720,7 @@ func TestRedirectedAuthErrHandler(t *testing.T) {
+ 		},
+ 		{
+ 			name:        "valid redirect uri without description",
+-			redirectURI: "https://example.com/callback",
++			redirectURI: "https://example.com/callback?error_description=attacker",
+ 			state:       "state789",
+ 			errType:     errServerError,
+ 			description: "",
+@@ -741,6 +744,7 @@ func TestRedirectedAuthErrHandler(t *testing.T) {
+ 			err := &redirectedAuthErr{
+ 				State:       tc.state,
+ 				RedirectURI: tc.redirectURI,
++				Issuer:      "https://issuer.example.com/non-root-path",
+ 				Type:        tc.errType,
+ 				Description: tc.description,
+ 			}
+@@ -776,9 +780,21 @@ func TestRedirectedAuthErrHandler(t *testing.T) {
+ 				if query.Get("error") != tc.errType {
+ 					t.Errorf("expected error type %q, got %q", tc.errType, query.Get("error"))
+ 				}
++				if got := query["iss"]; len(got) != 1 || got[0] != err.Issuer {
++					t.Errorf("expected one issuer %q, got %q", err.Issuer, got)
++				}
++				if got := query["state"]; len(got) != 1 || got[0] != tc.state {
++					t.Errorf("expected one state %q, got %q", tc.state, got)
++				}
++				if got := query["error"]; len(got) != 1 || got[0] != tc.errType {
++					t.Errorf("expected one error %q, got %q", tc.errType, got)
++				}
+ 				if tc.description != "" && query.Get("error_description") != tc.description {
+ 					t.Errorf("expected error_description %q, got %q", tc.description, query.Get("error_description"))
+ 				}
++				if tc.description == "" && query.Has("error_description") {
++					t.Errorf("expected error_description to be absent, got %q", query["error_description"])
++				}
+ 
+ 				// Verify that existing query parameters are preserved
+ 				if tc.name == "valid redirect uri with query params" {

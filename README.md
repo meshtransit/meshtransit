@@ -133,10 +133,12 @@ The module path is `github.com/meshtransit/meshtransit`; the process binary
 is `meshcore`. Development and security gates run with Go 1.26.8.
 
 Run `meshcore version` for machine-readable build, revision, Go, and
-configuration-schema versions (currently 16). Run `meshcore config validate` to validate the
-selected role, bounded values, secret files, and CA bundles without dialing a
-dependency or opening a listener. The process serves normally with either no
-arguments or the explicit `meshcore serve` command.
+configuration-schema versions (currently 20). Run `meshcore config validate` to
+validate the selected role, bounded values, secret files, and CA bundles without
+opening a listener. Dependency-backed profiles also perform bounded connectivity
+checks; `role=identity` requires an exact prepared broker schema and never runs a
+migration from either `config validate` or `serve`. The process serves normally
+with either no arguments or the explicit `meshcore serve` command.
 
 Database migrations are explicit one-shot operations: use
 `meshcore migrate status` to inspect compatibility and `meshcore migrate up` to
@@ -150,7 +152,7 @@ invalid value stops startup before a listener is opened.
 
 | Environment variable | Default | Contract |
 | --- | --- | --- |
-| `MESHTRANSIT_ROLE` | `all` | One of `all`, `api`, `control`, `worker`, or `relay`. |
+| `MESHTRANSIT_ROLE` | `all` | One of `all`, `api`, `control`, `worker`, `relay`, or `identity`. |
 | `MESHTRANSIT_HEALTH_ADDRESS` | `127.0.0.1:8081` | TCP host and non-zero port for the operator health listener. |
 | `MESHTRANSIT_SHUTDOWN_TIMEOUT` | `15s` | Drain deadline from 1 second through 5 minutes. |
 | `MESHTRANSIT_LOG_LEVEL` | `info` | One of `debug`, `info`, `warn`, or `error`. |
@@ -165,6 +167,84 @@ separate least-privilege connection pools and are never used interchangeably.
 When both pools are configured, their PostgreSQL usernames and credential-file
 paths must be distinct.
 The `relay` role intentionally does not load or require direct storage settings.
+
+The isolated `identity` role does not load Core PostgreSQL, Redis, API, control,
+worker, enrollment, or private-login configuration. It uses the dedicated
+broker database contract below. The current incremental slice is available only
+in a binary built from the manifest-verified Dex workspace with the `dexbroker`
+build tag; ordinary builds reject the role at composition. `role=all` does not
+yet include identity. One immutable generic-OIDC Google connector and one
+confidential Core client are composed from protected files. Their generations,
+metadata, fixed protocol policy, derived broker callback, redirect URI, and
+secret contents, exact upstream endpoints, and outbound-policy version are bound
+into an approved `sha256-v2` fingerprint. Startup and periodic readiness re-read
+the files and fail closed on drift. Dynamic connector and client records remain
+invisible and their CRUD paths are denied, so those secrets are never written to
+broker PostgreSQL. The generic-OIDC client now permits only the fixed Google
+discovery, token, and JWKS method/URL pairs. It ignores ambient proxies, rejects
+redirects and non-public DNS results, pins each validated IP for the dial, and
+enforces bounded TLS, request, response, connection, and lifecycle behavior.
+The isolated role now mounts that handler on a separate private/loopback-only
+direct-TLS listener. Public ingress, the Core BFF callback, token exchange by
+Core, and completed browser login remain disabled.
+
+Run `meshcore identity fingerprint` with every identity setting except
+`MESHTRANSIT_IDENTITY_CONFIGURATION_FINGERPRINT` to produce the exact approved
+digest without printing secret contents or file paths. Put that result into the
+fingerprint setting before `config validate` or `serve`. Both connector and Core
+client secrets must contain at least 32 bytes of high-entropy single-line
+material.
+
+The schema-20 Linux/arm64 EC2 POC used binary digest
+`490c53dd3e4d723f965c2dcf69916f84a2bca07ef595ccf5511582007fab2f9c`,
+validated fingerprint
+`sha256-v2:1332d4b1a9d1a801a2af4f03252512b2bf40b794d7c6bc3f62a3475d937a5bf7`.
+`config validate` reported schema 20 and the private listener served discovery
+over TLS 1.2+/HTTP/1 with the fixed security headers. The authorization request
+redirected through the configured connector to the real
+`accounts.google.com` authorization endpoint with
+`code_challenge_method=S256` and the exact broker callback. Userinfo returned
+404, plaintext did not reach the handler, and both readiness components were
+ready. Bounded shutdown left zero runtime connections, while PostgreSQL still
+contained zero connector and zero client rows. Non-production client metadata
+was used, so this qualifies the private transport and outbound redirect, not a
+completed Google login, token exchange, Core session, public ingress, or HA
+Kubernetes deployment.
+
+| Environment variable | Default | Contract |
+| --- | --- | --- |
+| `MESHTRANSIT_IDENTITY_ISSUER` | none | Exact HTTPS broker issuer. Userinfo, query, fragment, root path, and trailing slash are rejected. |
+| `MESHTRANSIT_IDENTITY_CONFIGURATION_FINGERPRINT` | none | Exact `sha256-v2:<64 lowercase hex>` output approved for this immutable connector/client and outbound-policy configuration. Not required by `identity fingerprint`; required by validation and serving. |
+| `MESHTRANSIT_IDENTITY_ADDRESS` | none | Canonical private or loopback IP and non-zero port for the isolated broker listener. DNS, wildcard, public, mapped, zoned, and link-local binds are rejected. |
+| `MESHTRANSIT_IDENTITY_TLS_CERTIFICATE_FILE` | none | Absolute path to the direct-TLS certificate chain. The leaf must have exactly the issuer hostname SAN, server-auth usage, a strong key/signature, and current validity. |
+| `MESHTRANSIT_IDENTITY_TLS_PRIVATE_KEY_FILE` | none | Absolute path to the dedicated listener private key. It must differ from the certificate and every identity credential path. |
+| `MESHTRANSIT_IDENTITY_REQUEST_TIMEOUT` | `15s` | Whole-second request-context/read bound from 1 through 30 seconds. |
+| `MESHTRANSIT_IDENTITY_MAX_CONNECTIONS` | `256` | Per-replica TCP/TLS connection cap from 1 through 4096. |
+| `MESHTRANSIT_IDENTITY_MAX_CONCURRENT_REQUESTS` | `128` | Non-queuing request cap from 1 through the connection cap; overflow receives 429 with `Retry-After`. |
+| `MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_ID` | none | Immutable lowercase connector security ID. Changing it creates a new identity namespace. |
+| `MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_DISPLAY_NAME` | none | Bounded display label; it is not an identity key. |
+| `MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_GENERATION` | none | Positive decimal trust-configuration generation. |
+| `MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_ISSUER` | none | Phase 1 requires exactly `https://accounts.google.com`; arbitrary upstream issuers remain disabled. |
+| `MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_CLIENT_ID` | none | Exact Google OAuth client ID. |
+| `MESHTRANSIT_IDENTITY_OIDC_CONNECTOR_CLIENT_SECRET_FILE` | none | Absolute path to the bounded single-line Google client secret; never persisted to broker storage. |
+| `MESHTRANSIT_IDENTITY_CORE_CLIENT_ID` | none | Immutable lowercase ID for the confidential Core BFF client. |
+| `MESHTRANSIT_IDENTITY_CORE_CLIENT_DISPLAY_NAME` | none | Bounded Core client display label. |
+| `MESHTRANSIT_IDENTITY_CORE_CLIENT_GENERATION` | none | Positive decimal confidential-client generation. |
+| `MESHTRANSIT_IDENTITY_CORE_CLIENT_SECRET_FILE` | none | Absolute path to the bounded single-line confidential client secret; never persisted to broker storage. |
+| `MESHTRANSIT_IDENTITY_CORE_CLIENT_REDIRECT_URI` | none | One exact canonical HTTPS Core BFF callback URI; query, fragment, root/trailing-slash, and dot-segment paths are rejected. |
+| `MESHTRANSIT_IDENTITY_POSTGRES_ADDRESS` | none | Dedicated broker PostgreSQL TLS host and non-zero port. |
+| `MESHTRANSIT_IDENTITY_POSTGRES_DATABASE` | none | Dedicated broker database; no Core database fallback. |
+| `MESHTRANSIT_IDENTITY_POSTGRES_RUNTIME_USER` | none | DML-only broker runtime role; never the migration role. |
+| `MESHTRANSIT_IDENTITY_POSTGRES_RUNTIME_PASSWORD_FILE` | none | Absolute path to the runtime role's bounded single-line credential file. |
+| `MESHTRANSIT_IDENTITY_POSTGRES_CA_FILE` | none | Absolute path to the PostgreSQL trust bundle used with TLS `verify-full`. |
+| `MESHTRANSIT_IDENTITY_POSTGRES_MAX_OPEN_CONNECTIONS` | `10` | Per-replica open-connection cap from 1 through 50. |
+| `MESHTRANSIT_IDENTITY_POSTGRES_MAX_IDLE_CONNECTIONS` | `5` | Per-replica idle cap from 1 through the open cap. |
+| `MESHTRANSIT_IDENTITY_POSTGRES_CONNECT_TIMEOUT` | `1s` | Whole-second connect timeout from 1 through 30 seconds and no greater than the dependency check timeout. |
+| `MESHTRANSIT_IDENTITY_POSTGRES_CONNECTION_LIFETIME` | `30m` | Whole-second connection lifetime from 1 minute through 24 hours. |
+| `MESHTRANSIT_IDENTITY_ID_TOKEN_LIFETIME` | `5m` | ID-token lifetime from 1 minute through 1 hour. |
+| `MESHTRANSIT_IDENTITY_AUTH_REQUEST_LIFETIME` | `5m` | Broker authentication-request lifetime from 1 through 30 minutes. |
+| `MESHTRANSIT_IDENTITY_SIGNING_KEY_ROTATION` | `6h` | Signing-key rotation interval from 1 hour through 30 days. |
+| `MESHTRANSIT_IDENTITY_GARBAGE_COLLECTION_INTERVAL` | `5m` | Broker garbage-collection interval from 1 minute through 1 hour. |
 
 | Environment variable | Default | Contract |
 | --- | --- | --- |
@@ -3166,6 +3246,125 @@ Run individual gates with `make fmt-check`, `make tidy-check`, `make vet`,
 lint target compiles and analyzes the build-tagged test harness without dialing
 dependencies. The lint and vulnerability commands pin tool versions for
 reproducible execution with the module's Go 1.26.8 baseline.
+
+`make qualification-dex DEX_QUALIFICATION_BINARY=/absolute/path/to/dex`
+runs `SSO-BROKER-000` against the default pinned release. Override
+`DEX_QUALIFICATION_RELEASE` only when qualifying an exact replacement artifact.
+The suite treats Dex as a black-box OIDC server and does not import Dex packages,
+so an upgrade reruns the same discovery, successful/error callback, signature,
+and `auth_time` contracts. The target fails while any hard requirement is absent.
+
+`make qualification-dex-boundary` enforces the adapter-only portion of
+`SSO-BROKER-001`. `internal/adapter/dexbroker` is the only MeshCore package that
+may import `github.com/dexidp/dex` or any of its subpackages. The contract test
+parses every Go source file, including files excluded by current build tags, and
+fails closed on malformed or symlinked Go source. The package now exposes a
+product-owned lifecycle shell whose public surface is only `http.Handler`,
+`Ready`, `Shutdown`, and `Done`; Dex configuration and runtime types remain
+private to the adapter. It does not enable a listener, route, or public login.
+
+ADR-049 permits only temporary upstream-oriented compatibility patches. RFC 9207
+response issuer support and persisted signed authentication time remain separate
+patches so each can be removed when an upstream stable release supplies that
+behavior. A third independent patch pins the Go toolchain floor and dependency
+versions needed to clear reachable vulnerability findings. A fourth independent
+patch adds a completion fence for signer rotation and garbage collection so
+storage teardown can join every Dex-owned background worker. The ordered
+version-scoped inputs, platform manifest, CycloneDX SBOM, license inventory,
+vulnerability report, and qualification report are stored under
+[`third_party/dex/v2.45.1`](third_party/dex/v2.45.1/README.md); Dex source is not
+vendored and no Dex fork is maintained. Compatibility inputs live outside
+MeshCore domain code, record the exact upstream commit and patch digests,
+preserve original authentication time across refresh, and cannot derive claims
+from token issue time or request headers. The unchanged black-box gate, not
+patch presence, decides whether an artifact is eligible for the embedded broker
+adapter.
+
+`make verify-dex-artifact DEX_ARTIFACT_MANIFEST=/absolute/path/manifest.json
+DEX_UPSTREAM_SOURCE=/absolute/path/dex
+DEX_ARTIFACT_BINARY=/absolute/path/dex-binary` verifies ADR-049 artifact identity
+before the black-box gate runs. It operates offline, applies ordered patch copies
+to a temporary detached checkout, verifies all declared SHA-256 evidence, and
+leaves the supplied source checkout unchanged. The manifest schema and operator
+contract are in
+[`tools/qualification/dexartifact`](tools/qualification/dexartifact/README.md).
+
+`make prepare-dex-source` accepts the same three verified inputs plus
+`DEX_PREPARED_ROOT`, which must identify an existing empty private directory.
+Only after every manifest check passes does it preserve the exact patched tree
+under `DEX_PREPARED_ROOT/source`, without Git metadata. It refuses a non-empty
+root and never writes Dex source into the MeshCore repository. This produces the
+ephemeral dependency input for the compile gate; it does not enable the broker
+runtime or public login.
+
+`make qualification-dex-compile DEX_UPSTREAM_SOURCE=/absolute/path/dex
+DEX_PREPARED_ROOT=/absolute/path/prepared` runs the adapter compile contract
+against both trees. It first proves the base Dex server/configuration/storage
+API compiles against unmodified upstream, then proves that adding only the
+required `storage.Claims.AuthTime` field fails there with the expected compiler
+diagnostic. Two further negative checks independently prove that unmodified
+upstream lacks `server.Server.Done` and the signer join-channel signature. A
+fifth negative check proves the prepared PostgreSQL runtime/readiness contract
+is also absent upstream. The sixth and seventh independently prove upstream
+lacks the connector HTTP-client map and generic-OIDC client-injection API; the
+eighth compiles the complete contract against the verified prepared source. The
+generated package also locks `server.NewServer` and `http.Handler`
+compatibility. It builds but never
+executes the temporary test binary, stores no Dex source in MeshCore, and
+enables no runtime or route.
+The exact contract and upgrade behavior are documented in
+[`tools/qualification/dexcompile`](tools/qualification/dexcompile/README.md).
+
+`make prepare-dex-workspace` accepts the artifact inputs used by
+`prepare-dex-source`, verifies them again, and additionally requires the
+MeshCore `go.mod` to pin the manifest's exact Go module coordinate. It rejects
+any checked-in Dex `replace`, then writes an ephemeral `go.work` beside the
+prepared source. The workspace contains MeshCore, the verified Dex root module,
+and Dex's `api/v2` module; no workspace file or Dex source is written into the
+repository. `make qualification-dex-workspace DEX_PREPARED_ROOT=/absolute/path`
+then compiles the real build-tagged adapter and process composition in
+`internal/adapter/dexbroker` and `cmd/meshcore`.
+The current pin is
+`github.com/dexidp/dex@v0.0.0-20260303133905-11d2eeb52b42`, derived from the
+manifest commit and its UTC timestamp. The direct dependency and workspace are
+build wiring only: the ordinary image excludes the `dexbroker` tag, and no Dex
+component, listener, route, or login is enabled.
+
+The adapter lifecycle shell fences new requests before shutdown, drains every
+already-admitted handler, calls component stop exactly once, and closes `Done`
+only after the component reports that all owned background work has joined.
+Concurrent and repeated shutdown calls share one stable result; a caller
+deadline does not abandon cleanup. Unexpected component completion immediately
+removes readiness and subsequent requests fail with a generic no-store 503.
+The runtime graph is redacted from formatting and structured logging and refuses
+JSON serialization. Unit and race tests cover typed-nil construction, admission
+fencing, drain order, timeout continuation, concurrent shutdown, unexpected
+completion, and fail-closed zero values. The verified `compat.8` input supplies
+the worker/connector join fences, no-DDL prepared-schema open, a context-bounded
+exact-schema readiness check, and caller-owned per-connector HTTP clients.
+Upstream-negative compile checks, candidate compilation, full
+storage/server/signer/OIDC tests, black-box
+`SSO-BROKER-000`, and race tests pass.
+
+The exact component bridge now constructs the pinned server and signer lazily
+from product-owned scalar options but borrows storage; it never closes the
+shared handle. A private PostgreSQL resource opens only the prepared-schema path
+with
+TLS `verify-full`, file-backed password/CA references, explicit per-replica
+max-open/max-idle limits, bounded connect/lifetime values, redacted outward
+errors, and context-bounded connectivity/schema checks. Shutdown stops new uses,
+joins both admitted checks and the long-lived service borrow, preserves the
+handle after a caller timeout, and closes exactly once on retry. `role=identity`
+now maps this resource into readiness, registers it under `resourceOwner`, and
+owns the lazy broker service followed by its private HTTPS listener. Reverse
+shutdown stops and drains the listener before broker workers release their
+long-lived PostgreSQL borrow. Only discovery, authorization, the configured
+connector hop, callback, token, and keys are admitted with exact Host/path/method
+checks; userinfo, introspection, device flow, health, root, static UI, and every
+unconfigured route fail closed. Forwarded assertions are stripped, request and
+body/query/header sizes are bounded, plaintext and HTTP/2 are disabled, and
+security headers are reasserted at write time. No public ingress, Core BFF
+callback, completed Google login, or `role=all` composition is enabled.
 
 `make integration-deps` runs the build-tagged TLS/auth dependency test when
 `MESHTRANSIT_INTEGRATION=1` and the required file-backed settings above are

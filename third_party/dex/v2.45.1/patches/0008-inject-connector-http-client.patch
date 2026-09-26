@@ -1,0 +1,272 @@
+diff --git a/connector/oidc/oidc.go b/connector/oidc/oidc.go
+--- a/connector/oidc/oidc.go
++++ b/connector/oidc/oidc.go
+@@ -183,7 +183,7 @@ func getProvider(ctx context.Context, issuer string, overrides ProviderDiscovery
+ 	if overrides.JWKSURL != "" {
+ 		config.JWKSURL = overrides.JWKSURL
+ 	}
+-	return config.NewProvider(context.Background()), nil
++	return config.NewProvider(ctx), nil
+ }
+ 
+ // NewGroupFromClaims creates a new group from a list of claims and appends it to the list of existing groups.
+@@ -272,7 +272,30 @@ func (c *Config) Open(id string, logger *slog.Logger) (conn connector.Connector,
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	return c.openWithHTTPClient(id, logger, httpClient)
++}
+ 
++// OpenWithHTTPClient opens the connector with a caller-owned client. The
++// caller controls transport policy and remains responsible for its lifecycle.
++func (c *Config) OpenWithHTTPClient(
++	id string,
++	logger *slog.Logger,
++	httpClient *http.Client,
++) (connector.Connector, error) {
++	if httpClient == nil {
++		return nil, errors.New("oidc: http client is nil")
++	}
++	if len(c.HostedDomains) > 0 {
++		return nil, fmt.Errorf("support for the Hosted domains option had been deprecated and removed, consider switching to the Google connector")
++	}
++	return c.openWithHTTPClient(id, logger, httpClient)
++}
++
++func (c *Config) openWithHTTPClient(
++	id string,
++	logger *slog.Logger,
++	httpClient *http.Client,
++) (connector.Connector, error) {
+ 	bgctx, cancel := context.WithCancel(context.Background())
+ 	ctx := context.WithValue(bgctx, oauth2.HTTPClient, httpClient)
+ 	if c.IssuerAlias != "" {
+diff --git a/connector/oidc/oidc_test.go b/connector/oidc/oidc_test.go
+--- a/connector/oidc/oidc_test.go
++++ b/connector/oidc/oidc_test.go
+@@ -10,6 +10,7 @@ import (
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
++	"io"
+ 	"log/slog"
+ 	"net/http"
+ 	"net/http/httptest"
+@@ -24,6 +25,58 @@ import (
+ 	"github.com/dexidp/dex/connector"
+ )
+ 
++func TestOpenWithHTTPClientUsesInjectedClient(t *testing.T) {
++	const issuer = "https://issuer.example"
++	var requestedURL string
++	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
++		requestedURL = request.URL.String()
++		discovery := `{
++			"issuer":"https://issuer.example",
++			"authorization_endpoint":"https://issuer.example/authorize",
++			"token_endpoint":"https://issuer.example/token",
++			"jwks_uri":"https://issuer.example/keys",
++			"id_token_signing_alg_values_supported":["RS256"],
++			"code_challenge_methods_supported":["S256"]
++		}`
++		return &http.Response{
++			StatusCode: http.StatusOK,
++			Header:     http.Header{"Content-Type": []string{"application/json"}},
++			Body:       io.NopCloser(strings.NewReader(discovery)),
++			Request:    request,
++		}, nil
++	})}
++	config := &Config{
++		Issuer: issuer, ClientID: "client", ClientSecret: "secret",
++		RedirectURI: issuer + "/callback", PKCEChallenge: codeChallengeMethodS256,
++	}
++
++	opened, err := config.OpenWithHTTPClient("test", slog.New(slog.DiscardHandler), client)
++	if err != nil {
++		t.Fatalf("OpenWithHTTPClient() error = %v", err)
++	}
++	closer, ok := opened.(io.Closer)
++	if !ok {
++		t.Fatal("OpenWithHTTPClient() connector does not implement io.Closer")
++	}
++	t.Cleanup(func() { _ = closer.Close() })
++	if expected := issuer + "/.well-known/openid-configuration"; requestedURL != expected {
++		t.Fatalf("discovery URL = %q, want %q", requestedURL, expected)
++	}
++}
++
++func TestOpenWithHTTPClientRejectsNilClient(t *testing.T) {
++	config := &Config{Issuer: "https://issuer.example"}
++	if _, err := config.OpenWithHTTPClient("test", slog.New(slog.DiscardHandler), nil); err == nil {
++		t.Fatal("OpenWithHTTPClient() accepted a nil client")
++	}
++}
++
++type roundTripFunc func(*http.Request) (*http.Response, error)
++
++func (roundTrip roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
++	return roundTrip(request)
++}
++
+ func TestKnownBrokenAuthHeaderProvider(t *testing.T) {
+ 	tests := []struct {
+ 		issuerURL string
+diff --git a/server/server.go b/server/server.go
+--- a/server/server.go
++++ b/server/server.go
+@@ -69,6 +69,11 @@ type Config struct {
+ 	// The backing persistence layer.
+ 	Storage storage.Storage
+ 
++	// ConnectorHTTPClients provides caller-owned clients to connectors that
++	// explicitly support transport injection. Entries are selected by connector
++	// ID; connectors without an entry preserve their default behavior.
++	ConnectorHTTPClients map[string]*http.Client
++
+ 	AllowedGrantTypes []string
+ 
+ 	// Valid values are "code" to enable the code flow and "token" to enable the implicit
+@@ -173,8 +178,9 @@ type Server struct {
+ 	// mutex for the connectors map.
+ 	mu sync.Mutex
+ 	// Map of connector IDs to connectors.
+-	connectors       map[string]Connector
+-	connectorsClosed bool
++	connectors           map[string]Connector
++	connectorsClosed     bool
++	connectorHTTPClients map[string]*http.Client
+ 
+ 	storage storage.Storage
+ 
+@@ -295,11 +301,20 @@ func newServer(ctx context.Context, c Config) (*Server, error) {
+ 	now := c.Now
+ 	if now == nil {
+ 		now = time.Now
++	}
++
++	connectorHTTPClients := make(map[string]*http.Client, len(c.ConnectorHTTPClients))
++	for id, client := range c.ConnectorHTTPClients {
++		if id == "" || client == nil {
++			return nil, errors.New("server: invalid connector HTTP client")
++		}
++		connectorHTTPClients[id] = client
+ 	}
+ 
+ 	s := &Server{
+ 		issuerURL:              *issuerURL,
+ 		connectors:             make(map[string]Connector),
++		connectorHTTPClients:   connectorHTTPClients,
+ 		storage:                newKeyCacher(c.Storage, now),
+ 		supportedResponseTypes: supportedRes,
+ 		supportedGrantTypes:    supportedGrants,
+@@ -744,6 +759,10 @@ func joinWorkers(workers ...<-chan struct{}) <-chan struct{} {
+ // ConnectorConfig is a configuration that can open a connector.
+ type ConnectorConfig interface {
+ 	Open(id string, logger *slog.Logger) (connector.Connector, error)
++}
++
++type connectorConfigWithHTTPClient interface {
++	OpenWithHTTPClient(id string, logger *slog.Logger, client *http.Client) (connector.Connector, error)
+ }
+ 
+ // ConnectorsConfig variable provides an easy way to return a config struct
+@@ -771,7 +790,11 @@ var ConnectorsConfig = map[string]func() ConnectorConfig{
+ }
+ 
+ // openConnector will parse the connector config and open the connector.
+-func openConnector(logger *slog.Logger, conn storage.Connector) (connector.Connector, error) {
++func openConnector(
++	logger *slog.Logger,
++	conn storage.Connector,
++	httpClient *http.Client,
++) (connector.Connector, error) {
+ 	var c connector.Connector
+ 
+ 	f, ok := ConnectorsConfig[conn.Type]
+@@ -787,7 +810,14 @@ func openConnector(logger *slog.Logger, conn storage.Connector) (connector.Connec
+ 		}
+ 	}
+ 
+-	c, err := connConfig.Open(conn.ID, logger)
++	var err error
++	if httpClient == nil {
++		c, err = connConfig.Open(conn.ID, logger)
++	} else if opener, ok := connConfig.(connectorConfigWithHTTPClient); ok {
++		c, err = opener.OpenWithHTTPClient(conn.ID, logger, httpClient)
++	} else {
++		return c, fmt.Errorf("connector %s does not support HTTP client injection", conn.ID)
++	}
+ 	if err != nil {
+ 		return c, fmt.Errorf("failed to create connector %s: %v", conn.ID, err)
+ 	}
+@@ -803,7 +833,7 @@ func (s *Server) OpenConnector(conn storage.Connector) (Connector, error) {
+ 		c = newPasswordDB(s.storage)
+ 	} else {
+ 		var err error
+-		c, err = openConnector(s.logger, conn)
++		c, err = openConnector(s.logger, conn, s.connectorHTTPClients[conn.ID])
+ 		if err != nil {
+ 			return Connector{}, fmt.Errorf("failed to open connector: %v", err)
+ 		}
+diff --git a/server/server_test.go b/server/server_test.go
+--- a/server/server_test.go
++++ b/server/server_test.go
+@@ -9,6 +9,7 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"io"
++	"log/slog"
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"net/http/httputil"
+@@ -76,6 +77,50 @@ var privateKeyData = []byte(`-----BEGIN RSA PRIVATE KEY-----
+ Np4vUwMSYV5mopESLWOg3loBxKyLGFtgGKVCjGiQvy6zISQ4fQo=
+ -----END RSA PRIVATE KEY-----`)
+ 
++func TestOpenConnectorUsesInjectedHTTPClient(t *testing.T) {
++	const connectorType = "test-http-client-injection"
++	client := &http.Client{}
++	ConnectorsConfig[connectorType] = func() ConnectorConfig {
++		return &injectedHTTPClientConfig{expected: client}
++	}
++	t.Cleanup(func() { delete(ConnectorsConfig, connectorType) })
++
++	opened, err := openConnector(
++		slog.New(slog.DiscardHandler),
++		storage.Connector{ID: "test", Type: connectorType},
++		client,
++	)
++	if err != nil {
++		t.Fatalf("openConnector() error = %v", err)
++	}
++	if marker, ok := opened.(*injectedHTTPClientMarker); !ok || marker.client != client {
++		t.Fatal("openConnector() did not use the injected HTTP client")
++	}
++}
++
++type injectedHTTPClientConfig struct {
++	expected *http.Client
++}
++
++func (*injectedHTTPClientConfig) Open(string, *slog.Logger) (connector.Connector, error) {
++	return nil, errors.New("default connector open called")
++}
++
++func (config *injectedHTTPClientConfig) OpenWithHTTPClient(
++	_ string,
++	_ *slog.Logger,
++	client *http.Client,
++) (connector.Connector, error) {
++	if client != config.expected {
++		return nil, errors.New("unexpected HTTP client")
++	}
++	return &injectedHTTPClientMarker{client: client}, nil
++}
++
++type injectedHTTPClientMarker struct {
++	client *http.Client
++}
++
+ func newTestServer(t *testing.T, updateConfig func(c *Config)) (*httptest.Server, *Server) {
+ 	var server *Server
+ 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

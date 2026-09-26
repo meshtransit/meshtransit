@@ -73,10 +73,34 @@ func TestOperatorMetricsPrivatePrerequisiteRemainsClosedAndObservable(t *testing
 		!strings.Contains(response.Body.String(), `meshtransit_dependency_ready{component="private_login"} 0`) {
 		t.Fatal("unknown private prerequisite omitted or reported ready")
 	}
-	for _, component := range []string{"postgresql", "redis", "private_login", "unknown", "private_Login", "route-123"} {
-		valid := component == "postgresql" || component == "redis" || component == "private_login"
+	for _, component := range []string{
+		"postgresql", "redis", "private_login", "identity_postgresql", "identity_configuration",
+		"unknown", "private_Login", "route-123",
+	} {
+		valid := component == "postgresql" || component == "redis" || component == "private_login" ||
+			component == "identity_postgresql" || component == "identity_configuration"
 		if validComponentLabel(component) != valid {
 			t.Fatal("operator component allowlist changed beyond closed profile")
+		}
+	}
+}
+
+func TestOperatorMetricsExposeIdentityRoleAndStorage(t *testing.T) {
+	t.Parallel()
+
+	state := newRuntimeState(t, app.RoleIdentity)
+	metrics, err := newOperatorMetrics(state, testBuildInfo(), nil)
+	if err != nil {
+		t.Fatalf("newOperatorMetrics() error = %v", err)
+	}
+	response := request(t, metrics.handler, "/metrics")
+	for name, value := range map[string]string{
+		"identity role":          `meshtransit_runtime_role{role="identity"} 1`,
+		"identity storage":       `meshtransit_dependency_ready{component="identity_postgresql"} 1`,
+		"identity configuration": `meshtransit_dependency_ready{component="identity_configuration"} 1`,
+	} {
+		if !strings.Contains(response.Body.String(), value) {
+			t.Errorf("metrics missing %s %q: %s", name, value, response.Body.String())
 		}
 	}
 }

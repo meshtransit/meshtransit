@@ -131,7 +131,21 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 	}
 
 	var revisionWorkerTelemetry *revisionworker.Telemetry
-	roleServices := make([]app.OwnedService, 0, 6)
+	roleServices := make([]app.OwnedService, 0, 7)
+	if processConfig.Identity != nil {
+		identityBroker, composeErr := composeIdentityBroker(
+			ctx,
+			*processConfig.Identity,
+			resources,
+			logger,
+		)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "identity_broker_composition_failure")
+			return 1
+		}
+		checkers = append(checkers, identityBroker.checkers...)
+		roleServices = append(roleServices, identityBroker.services...)
+	}
 	if processConfig.RevisionWorker != nil {
 		revisionWorkerTelemetry = revisionworker.NewTelemetry()
 		workerService, composeErr := composeRevisionWorker(

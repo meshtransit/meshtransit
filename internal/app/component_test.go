@@ -19,9 +19,16 @@ func TestRequiredComponentsUsesRoleUnion(t *testing.T) {
 		{name: "worker", roles: []Role{RoleWorker}, want: []Component{ComponentPostgreSQL, ComponentRedis}},
 		{name: "relay", roles: []Role{RoleRelay}, want: nil},
 		{
+			name: "identity", roles: []Role{RoleIdentity},
+			want: []Component{ComponentIdentityPostgreSQL, ComponentIdentityConfiguration},
+		},
+		{
 			name:  "deduplicated union",
-			roles: []Role{RoleAPI, RoleControl, RoleWorker, RoleRelay},
-			want:  []Component{ComponentPostgreSQL, ComponentRedis},
+			roles: []Role{RoleAPI, RoleControl, RoleWorker, RoleRelay, RoleIdentity},
+			want: []Component{
+				ComponentPostgreSQL, ComponentRedis,
+				ComponentIdentityPostgreSQL, ComponentIdentityConfiguration,
+			},
 		},
 	}
 
@@ -60,10 +67,13 @@ func TestComponentStringIsStableAndSafe(t *testing.T) {
 	t.Parallel()
 
 	tests := map[Component]string{
-		ComponentUnknown:    "unknown",
-		ComponentPostgreSQL: "postgresql",
-		ComponentRedis:      "redis",
-		Component(255):      "unknown",
+		ComponentUnknown:               "unknown",
+		ComponentPostgreSQL:            "postgresql",
+		ComponentRedis:                 "redis",
+		ComponentPrivateLogin:          "private_login",
+		ComponentIdentityPostgreSQL:    "identity_postgresql",
+		ComponentIdentityConfiguration: "identity_configuration",
+		Component(255):                 "unknown",
 	}
 	for component, want := range tests {
 		if got := component.String(); got != want {
