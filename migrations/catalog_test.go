@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 35 {
-		t.Fatalf("len(Catalog()) = %d, want 35", len(catalog))
+	if len(catalog) != 36 {
+		t.Fatalf("len(Catalog()) = %d, want 36", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 35 {
-		t.Fatalf("LatestVersion() = %d, want 35", LatestVersion())
+	if LatestVersion() != 36 {
+		t.Fatalf("LatestVersion() = %d, want 36", LatestVersion())
 	}
 }
 
@@ -1278,6 +1278,41 @@ func TestAccountSessionLogoutIsDeploymentBoundAndLeastPrivilege(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("Account Session logout SQL contains excessive capability %q", forbidden)
+		}
+	}
+}
+
+func TestAccountSessionLogoutEvidenceIsPrincipalBoundAndLeastPrivilege(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[35]
+	if migration.Description != "audited account session logout evidence" {
+		t.Fatalf("migration 36 description = %q", migration.Description)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.logout_account_session_v2",
+		"mesh_ops.logout_account_session_v1(",
+		"principal_public_id UUID",
+		"ended_at TIMESTAMPTZ",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh, mesh_ops",
+		"principal.deployment_id = session.deployment_id",
+		"principal.id = session.principal_id",
+		"session.state = 'revoked'",
+		"session.end_reason = 'local_logout'",
+		"account session logout evidence is unavailable",
+		"FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("Account Session logout evidence SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "GRANT ALL",
+		"BYPASSRLS", "TO mesh_worker;", "TO mesh_observer;", "DROP ",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("Account Session logout evidence SQL contains excessive capability %q", forbidden)
 		}
 	}
 }

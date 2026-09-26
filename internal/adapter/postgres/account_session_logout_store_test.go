@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"reflect"
@@ -14,7 +15,12 @@ import (
 func TestAccountSessionLogoutStoreRevokesExactAuthority(t *testing.T) {
 	t.Parallel()
 	transaction := &fakeAccountSessionLogoutTransaction{row: fakeAccountSessionLogoutRow{
-		values: []any{"01890f00-0000-7000-8000-000000000811", int64(2)},
+		values: []any{
+			"01890f00-0000-7000-8000-000000000811",
+			int64(2),
+			"01890f00-0000-7000-8000-000000000812",
+			time.Date(2026, time.September, 26, 4, 5, 6, 0, time.UTC),
+		},
 	}}
 	store := newAccountSessionLogoutStoreFixture(t, transaction)
 	deploymentID := accountSessionDeploymentID(t)
@@ -23,12 +29,23 @@ func TestAccountSessionLogoutStoreRevokesExactAuthority(t *testing.T) {
 	if err != nil || !found || id.String() != "01890f00-0000-7000-8000-000000000811" || version != 2 {
 		t.Fatal("Revoke() did not return exact durable evidence", err)
 	}
-	if transaction.commits != 1 || transaction.rollbacks != 0 || transaction.configures != 1 ||
+	if transaction.commits != 1 || transaction.rollbacks != 0 || transaction.configures != 2 ||
 		len(transaction.arguments) != 5 || transaction.arguments[0] != deploymentID.String() ||
 		transaction.arguments[1] != int64(7) ||
 		transaction.arguments[2] != accountsession.DigestAlgorithmHMACSHA256V1 ||
 		transaction.arguments[3] != "integration-v1" {
 		t.Fatal("logout transaction changed scope, configuration or commit ownership")
+	}
+	if len(transaction.appendArguments) != 11 {
+		t.Fatal("logout transaction omitted audit/outbox evidence")
+	}
+	eventHash, eventHashOK := transaction.appendArguments[5].([]byte)
+	afterHash, afterHashOK := transaction.appendArguments[9].([]byte)
+	payload, payloadOK := transaction.appendArguments[10].([]byte)
+	if !eventHashOK || !afterHashOK || !payloadOK || len(eventHash) != 32 || len(afterHash) != 32 ||
+		bytes.Contains(payload, []byte("token")) || bytes.Contains(payload, []byte("digest")) ||
+		bytes.Contains(payload, []byte("hmac")) {
+		t.Fatal("logout evidence is incomplete or exposes secret-bearing fields")
 	}
 }
 
@@ -53,7 +70,12 @@ func TestAccountSessionLogoutStoreRollsBackFailures(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			transaction := &fakeAccountSessionLogoutTransaction{row: fakeAccountSessionLogoutRow{
-				values: []any{"01890f00-0000-7000-8000-000000000811", int64(2)},
+				values: []any{
+					"01890f00-0000-7000-8000-000000000811",
+					int64(2),
+					"01890f00-0000-7000-8000-000000000812",
+					time.Date(2026, time.September, 26, 4, 5, 6, 0, time.UTC),
+				},
 			}}
 			database := &fakeAccountSessionLogoutDatabase{transaction: transaction}
 			switch mode {
@@ -160,13 +182,14 @@ func (database *fakeAccountSessionLogoutDatabase) Begin(
 }
 
 type fakeAccountSessionLogoutTransaction struct {
-	row          fakeAccountSessionLogoutRow
-	arguments    []any
-	configures   int
-	commits      int
-	rollbacks    int
-	configureErr error
-	commitErr    error
+	row             fakeAccountSessionLogoutRow
+	arguments       []any
+	appendArguments []any
+	configures      int
+	commits         int
+	rollbacks       int
+	configureErr    error
+	commitErr       error
 }
 
 func (transaction *fakeAccountSessionLogoutTransaction) Exec(
@@ -180,11 +203,21 @@ func (transaction *fakeAccountSessionLogoutTransaction) Exec(
 
 func (transaction *fakeAccountSessionLogoutTransaction) QueryRow(
 	_ context.Context,
-	_ string,
+	query string,
 	arguments ...any,
 ) accountSessionLogoutRow {
-	transaction.arguments = arguments
-	return transaction.row
+	switch query {
+	case logoutAccountSessionSQL:
+		transaction.arguments = arguments
+		return transaction.row
+	case lockAccountSessionLogoutAuditStreamSQL:
+		return fakeAccountSessionLogoutRow{values: []any{int64(91), int64(7), make([]byte, 32)}}
+	case appendAccountSessionLogoutEvidenceSQL:
+		transaction.appendArguments = arguments
+		return fakeAccountSessionLogoutRow{values: []any{int64(7)}}
+	default:
+		return fakeAccountSessionLogoutRow{err: ErrAccountSessionLogoutEvidence}
+	}
 }
 
 func (transaction *fakeAccountSessionLogoutTransaction) Commit(context.Context) error {

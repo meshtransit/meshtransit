@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/publicid"
 )
 
 const (
@@ -82,6 +83,10 @@ func (store *AccountSessionLogoutStore) Revoke(
 		!deploymentID.IsValid() || recoveryEpoch <= 0 || !digest.IsValid() {
 		return accountsession.ID{}, 0, false, ErrInvalidAccountSessionLogoutStore
 	}
+	evidenceIDs, err := newAccountSessionLogoutEvidenceIDs(ctx)
+	if err != nil {
+		return accountsession.ID{}, 0, false, errors.Join(ErrLogoutAccountSession, err)
+	}
 	transaction, err := store.database.Begin(ctx)
 	if err != nil || transaction == nil {
 		if err == nil {
@@ -105,9 +110,18 @@ func (store *AccountSessionLogoutStore) Revoke(
 	); err != nil {
 		return accountsession.ID{}, 0, false, errors.Join(ErrLogoutAccountSession, err)
 	}
+	if err := transaction.Exec(
+		ctx,
+		setAccountSessionLogoutChangeSQL,
+		evidenceIDs.changeID.String(),
+	); err != nil {
+		return accountsession.ID{}, 0, false, errors.Join(ErrLogoutAccountSession, err)
+	}
 	digestBytes := digest.Bytes()
 	var publicID string
+	var principalPublicID string
 	var version int64
+	var endedAt time.Time
 	err = transaction.QueryRow(
 		ctx,
 		logoutAccountSessionSQL,
@@ -116,7 +130,7 @@ func (store *AccountSessionLogoutStore) Revoke(
 		digest.Algorithm(),
 		digest.KeyID().String(),
 		digestBytes[:],
-	).Scan(&publicID, &version)
+	).Scan(&publicID, &version, &principalPublicID, &endedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := transaction.Commit(ctx); err != nil {
 			return accountsession.ID{}, 0, false, errors.Join(ErrLogoutAccountSession, err)
@@ -128,7 +142,61 @@ func (store *AccountSessionLogoutStore) Revoke(
 		return accountsession.ID{}, 0, false, errors.Join(ErrLogoutAccountSession, err)
 	}
 	id, err := accountsession.ParseID(publicID)
-	if err != nil || version < 2 {
+	principalID, principalErr := publicid.Parse(principalPublicID)
+	if err != nil || principalErr != nil || version < 2 || endedAt.IsZero() {
+		return accountsession.ID{}, 0, false, errors.Join(
+			ErrLogoutAccountSession,
+			ErrAccountSessionLogoutEvidence,
+		)
+	}
+	var head accountSessionLogoutAuditHead
+	var previousHash []byte
+	if err := transaction.QueryRow(
+		ctx,
+		lockAccountSessionLogoutAuditStreamSQL,
+		deploymentID.String(),
+	).Scan(&head.streamInternalID, &head.nextSequence, &previousHash); err != nil {
+		return accountsession.ID{}, 0, false, errors.Join(ErrLogoutAccountSession, err)
+	}
+	if head.streamInternalID <= 0 || head.nextSequence <= 0 || len(previousHash) != len(head.previousHash) {
+		return accountsession.ID{}, 0, false, errors.Join(
+			ErrLogoutAccountSession,
+			ErrAccountSessionLogoutEvidence,
+		)
+	}
+	copy(head.previousHash[:], previousHash)
+	evidence, err := buildAccountSessionLogoutEvidence(
+		evidenceIDs,
+		head,
+		deploymentID,
+		recoveryEpoch,
+		id,
+		principalID,
+		version,
+		endedAt,
+	)
+	if err != nil {
+		return accountsession.ID{}, 0, false, errors.Join(ErrLogoutAccountSession, err)
+	}
+	var sequence int64
+	if err := transaction.QueryRow(
+		ctx,
+		appendAccountSessionLogoutEvidenceSQL,
+		head.streamInternalID,
+		evidenceIDs.auditID.String(),
+		evidenceIDs.outboxID.String(),
+		head.nextSequence,
+		head.previousHash[:],
+		evidence.eventHash[:],
+		id.String(),
+		version,
+		principalID.String(),
+		evidence.afterHash[:],
+		evidence.payload,
+	).Scan(&sequence); err != nil {
+		return accountsession.ID{}, 0, false, errors.Join(ErrLogoutAccountSession, err)
+	}
+	if sequence != head.nextSequence {
 		return accountsession.ID{}, 0, false, errors.Join(
 			ErrLogoutAccountSession,
 			ErrAccountSessionLogoutEvidence,
