@@ -184,8 +184,9 @@ broker PostgreSQL. The generic-OIDC client now permits only the fixed Google
 discovery, token, and JWKS method/URL pairs. It ignores ambient proxies, rejects
 redirects and non-public DNS results, pins each validated IP for the dial, and
 enforces bounded TLS, request, response, connection, and lifecycle behavior.
-The isolated role mounts that handler on a separate private/loopback-only
-direct-TLS listener. Configuration schema 21 also adds the version-2 Core BFF
+The isolated role mounts that handler on a separate direct-TLS listener. It may
+bind an unspecified address inside a container; the Kubernetes Service and
+network policy own external reachability. Configuration schema 21 also adds the version-2 Core BFF
 profile described below: a fixed public application origin is separated from
 the private backend bind, exact trusted ingress prefixes are carried into client
 source resolution, and the existing callback/token/session graph is served only
@@ -220,7 +221,7 @@ Kubernetes deployment.
 | --- | --- | --- |
 | `MESHTRANSIT_IDENTITY_ISSUER` | none | Exact HTTPS broker issuer. Userinfo, query, fragment, root path, and trailing slash are rejected. |
 | `MESHTRANSIT_IDENTITY_CONFIGURATION_FINGERPRINT` | none | Exact `sha256-v2:<64 lowercase hex>` output approved for this immutable connector/client and outbound-policy configuration. Not required by `identity fingerprint`; required by validation and serving. |
-| `MESHTRANSIT_IDENTITY_ADDRESS` | none | Canonical private or loopback IP and non-zero port for the isolated broker listener. DNS, wildcard, public, mapped, zoned, and link-local binds are rejected. |
+| `MESHTRANSIT_IDENTITY_ADDRESS` | none | Canonical private, loopback, or unspecified IP and non-zero port for the isolated broker listener. Unspecified binds support container networking; DNS, public, mapped, zoned, and link-local addresses are rejected. |
 | `MESHTRANSIT_IDENTITY_TLS_CERTIFICATE_FILE` | none | Absolute path to the direct-TLS certificate chain. The leaf must have exactly the issuer hostname SAN, server-auth usage, a strong key/signature, and current validity. |
 | `MESHTRANSIT_IDENTITY_TLS_PRIVATE_KEY_FILE` | none | Absolute path to the dedicated listener private key. It must differ from the certificate and every identity credential path. |
 | `MESHTRANSIT_IDENTITY_REQUEST_TIMEOUT` | `15s` | Whole-second request-context/read bound from 1 through 30 seconds. |
@@ -2461,9 +2462,9 @@ dependency readiness and compiled `meshcore serve` ownership. It supersedes
 historical statements above that main/config/readiness binding is absent ONLY
 for the opt-in private login profile. Version 1 remains a loopback-only source
 profile. Configuration schema 21 adds version 2 for a controlled public edge:
-the listener still binds only a specific loopback/private address and terminates
-verified TLS itself, while browser authority is one separate canonical public
-origin. There is no wildcard/public bind, enable/qualification-waiver switch or
+the listener binds a loopback, private, or unspecified container address and
+terminates verified TLS itself, while browser authority is one separate
+canonical public origin. There is no public-IP bind, enable/qualification-waiver switch or
 direct Google adapter. The edge may forward only the documented login paths and
 must preserve the configured Host while verifying the backend certificate.
 
@@ -2481,9 +2482,9 @@ caller's finite context. Version 1 requires exactly these 20 fields:
 - `tls_certificate_file`, `tls_private_key_file`, `client_secret_file`, `keys`.
 
 Version 2 requires those fields plus `origin` and
-`trusted_proxy_prefixes`. Its `address` is an exact canonical loopback or
-private IP/nonzero port, distinct from existing listeners; DNS, wildcard,
-public, mapped, zoned and link-local binds are rejected. `origin` is one
+`trusted_proxy_prefixes`. Its `address` is an exact canonical loopback, private,
+or unspecified container IP/nonzero port, distinct from existing listeners;
+DNS, public, mapped, zoned and link-local addresses are rejected. `origin` is one
 lowercase canonical HTTPS DNS origin with no port, path, query, fragment or IP
 literal. It must differ from the configured issuer host. The callback is derived
 only as `<origin>/auth/v1/callback`; the local return path remains `/console`.
@@ -2497,7 +2498,8 @@ cannot represent a public browser origin. Route IDs and positive
 generation/epoch bind one independently authorized durable OIDC route. The
 profile fixes confidential
 `client_secret_basic`, `openid` and `RS256`. Unknown/case-aliased/duplicate/null
-fields, malformed/trailing JSON and public/wildcard/mapped addresses are denied.
+fields, malformed/trailing JSON and public/mapped addresses are denied. Version
+1 still denies unspecified addresses.
 
 `keys` requires exactly `initiation`, `capture`, `continuation`,
 `management_csrf`, `transaction_digest`, `verifier_encryption`,

@@ -102,7 +102,8 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 	}
 	address, err := netip.ParseAddrPort(result.address)
 	validBind := err == nil && address.String() == result.address && address.Port() != 0
-	allowedBind := address.Addr().IsLoopback() || version == 2 && address.Addr().IsPrivate()
+	allowedBind := address.Addr().IsLoopback() ||
+		version == 2 && (address.Addr().IsPrivate() || address.Addr().IsUnspecified())
 	if !validBind || !allowedBind || address.Addr().Is4In6() || address.Addr().Zone() != "" {
 		return nil, ErrInvalid
 	}
@@ -383,7 +384,7 @@ func (profile *PrivateLoginConfig) validOwnership(process Config) bool {
 	return true
 }
 
-// Address returns the explicit canonical loopback socket address.
+// Address returns the explicit canonical backend socket address.
 func (profile *PrivateLoginConfig) Address() string { return profile.address }
 
 // Origin returns the exact same-origin TLS authority, not an operator redirect.

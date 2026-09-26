@@ -88,7 +88,8 @@ type IdentityConfig struct {
 }
 
 // IdentityListenerConfig contains the private, direct-TLS broker listener
-// contract. It never accepts a wildcard, DNS, public, or link-local bind.
+// contract. Unspecified binds support container networking; DNS, public, and
+// link-local addresses remain invalid.
 type IdentityListenerConfig struct {
 	Address               string
 	TLSCertificateFile    TrustFile
@@ -387,7 +388,8 @@ func loadIdentityListenerConfig(lookup LookupFunc) (IdentityListenerConfig, erro
 func validateIdentityListenerAddress(value string) error {
 	address, err := netip.ParseAddrPort(value)
 	if err != nil || address.String() != value || address.Port() == 0 || address.Addr().Is4In6() ||
-		address.Addr().Zone() != "" || (!address.Addr().IsPrivate() && !address.Addr().IsLoopback()) {
+		address.Addr().Zone() != "" ||
+		(!address.Addr().IsPrivate() && !address.Addr().IsLoopback() && !address.Addr().IsUnspecified()) {
 		return ErrInvalid
 	}
 	return nil

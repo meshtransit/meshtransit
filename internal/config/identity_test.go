@@ -78,6 +78,27 @@ func TestLoadIdentityUsesIsolatedRuntimeConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoadIdentityAllowsContainerListenerAddresses(t *testing.T) {
+	t.Parallel()
+
+	for _, address := range []string{"0.0.0.0:9443", "[::]:9443"} {
+		address := address
+		t.Run(address, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := Load(mapLookup(validIdentityProcessValues(map[string]string{
+				envIdentityAddress: address,
+			})))
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if got.Identity == nil || got.Identity.Listener.Address != address {
+				t.Fatalf("identity listener address = %v, want %q", got.Identity, address)
+			}
+		})
+	}
+}
+
 func TestLoadIdentityRequiresDedicatedRuntimeSettingsWithoutFallback(t *testing.T) {
 	t.Parallel()
 
@@ -130,7 +151,6 @@ func TestLoadIdentityRejectsUnsafeSettingsWithoutEchoingValues(t *testing.T) {
 		{name: "issuer dot segment", key: envIdentityIssuer, value: "https://id.example.test/a/../oauth2"},
 		{name: "dns listener", key: envIdentityAddress, value: "identity.internal:9443"},
 		{name: "public listener", key: envIdentityAddress, value: "203.0.113.1:9443"},
-		{name: "wildcard listener", key: envIdentityAddress, value: "0.0.0.0:9443"},
 		{name: "link local listener", key: envIdentityAddress, value: "169.254.1.1:9443"},
 		{name: "zero listener port", key: envIdentityAddress, value: "127.0.0.1:0"},
 		{name: "noncanonical listener", key: envIdentityAddress, value: "127.0.0.1:09443"},

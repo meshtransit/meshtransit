@@ -67,6 +67,8 @@ func TestPrivateLoginConfigOwnsVersionedEdgeProfile(t *testing.T) {
 		{name: "legacy ipv6 loopback", version: 1, address: "[::1]:9443", origin: "https://[::1]:9443"},
 		{name: "edge loopback", version: 2, address: "127.0.0.1:9443", origin: "https://app.example.test", proxies: []string{"127.0.0.1/32"}},
 		{name: "edge private", version: 2, address: "10.20.30.40:9443", origin: "https://app.example.test", proxies: []string{"10.20.0.0/16", "fd20:30::/48"}},
+		{name: "edge ipv4 wildcard", version: 2, address: "0.0.0.0:9443", origin: "https://app.example.test", proxies: []string{"10.20.0.0/16"}},
+		{name: "edge ipv6 wildcard", version: 2, address: "[::]:9443", origin: "https://app.example.test", proxies: []string{"fd20:30::/48"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			process, document := privateLoginTestDocument(t)
@@ -125,7 +127,12 @@ func TestPrivateLoginConfigRejectsUnsafeOperatorInput(t *testing.T) {
 		change func(Config, map[string]any)
 	}{
 		{name: "public bind", change: func(_ Config, d map[string]any) { d["address"] = "192.0.2.1:9443" }},
-		{name: "wildcard bind", change: func(_ Config, d map[string]any) { d["address"] = "0.0.0.0:9443" }},
+		{name: "legacy wildcard bind", change: func(_ Config, d map[string]any) {
+			d["version"] = 1
+			d["address"] = "0.0.0.0:9443"
+			delete(d, "origin")
+			delete(d, "trusted_proxy_prefixes")
+		}},
 		{name: "zero port", change: func(_ Config, d map[string]any) { d["address"] = "127.0.0.1:0" }},
 		{name: "mapped address", change: func(_ Config, d map[string]any) { d["address"] = "[::ffff:127.0.0.1]:9443" }},
 		{name: "health conflict", change: func(p Config, d map[string]any) { d["address"] = p.HealthAddress }},
