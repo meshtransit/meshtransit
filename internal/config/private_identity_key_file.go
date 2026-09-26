@@ -98,8 +98,11 @@ func validPrivateKeyFileInfo(info os.FileInfo) bool {
 	if info == nil || !info.Mode().IsRegular() {
 		return false
 	}
-	validMode := info.Mode() == 0o400 || info.Mode() == 0o600
-	return validMode && info.Size() >= 43 && info.Size() <= 45
+	return validProtectedFileMode(info.Mode()) && info.Size() >= 43 && info.Size() <= 45
+}
+
+func validProtectedFileMode(mode os.FileMode) bool {
+	return mode == 0o400 || mode == 0o600 || mode == 0o440 || mode == 0o640
 }
 
 func unchangedPrivateKeyFile(before, after os.FileInfo) bool {

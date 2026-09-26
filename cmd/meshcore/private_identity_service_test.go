@@ -91,7 +91,7 @@ func TestComposePrivateIdentityLoginServiceRejectsPartialFactory(t *testing.T) {
 	}
 	t.Cleanup(factory.Close)
 	options := privateIdentityLoginServiceTestOptions(t)
-	options.Address = "0.0.0.0:443"
+	options.Address = "224.0.0.1:443"
 	if service, err := composePrivateIdentityLoginService(factory, options); service != nil || !errors.Is(err, errInvalidPrivateIdentityComposition) || err.Error() != errInvalidPrivateIdentityComposition.Error() {
 		t.Fatal("serving error reflected topology or released unsafe ownership")
 	}

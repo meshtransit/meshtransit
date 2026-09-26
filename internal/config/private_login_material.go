@@ -177,8 +177,7 @@ func validPrivateLoginFileInfo(info os.FileInfo, limit int64) bool {
 	if info == nil || !info.Mode().IsRegular() {
 		return false
 	}
-	privateMode := info.Mode() == 0o400 || info.Mode() == 0o600
-	return privateMode && info.Size() > 0 && info.Size() <= limit
+	return validProtectedFileMode(info.Mode()) && info.Size() > 0 && info.Size() <= limit
 }
 
 func unchangedPrivateLoginFile(before, after os.FileInfo, limit int64) bool {

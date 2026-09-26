@@ -38,7 +38,7 @@ func TestPrivateLoginMaterialProtectedCandidateAndClearing(t *testing.T) {
 	for _, test := range []struct {
 		mode  os.FileMode
 		valid bool
-	}{{mode: 0o600, valid: true}, {mode: 0o644}} {
+	}{{mode: 0o600, valid: true}, {mode: 0o440, valid: true}, {mode: 0o640, valid: true}, {mode: 0o644}} {
 		if err := os.Chmod(profile.clientSecret.path, test.mode); err != nil {
 			t.Fatal(err)
 		}
@@ -72,7 +72,6 @@ func TestPrivateLoginFileRejectsUnsafeCustodyWithoutRawErrors(t *testing.T) {
 	}{
 		{name: "empty", contents: "", mode: 0o600},
 		{name: "oversized", contents: strings.Repeat("x", 33), mode: 0o600},
-		{name: "group readable", contents: "fixture", mode: 0o640},
 		{name: "world readable", contents: "fixture", mode: 0o644},
 		{name: "executable", contents: "fixture", mode: 0o700},
 	} {

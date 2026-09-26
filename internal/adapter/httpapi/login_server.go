@@ -71,7 +71,7 @@ type LoginServer struct {
 func NewLoginServer(options LoginServerOptions) (*LoginServer, error) {
 	address, err := netip.ParseAddrPort(options.Address)
 	validAddress := err == nil && address.String() == options.Address
-	if !validAddress || address.Addr().IsUnspecified() || address.Addr().IsMulticast() {
+	if !validAddress || address.Addr().IsMulticast() {
 		return nil, ErrInvalidLoginServer
 	}
 	validGraph := options.Dispatcher != nil && options.Dispatcher.browser != nil && options.Dispatcher.metrics != nil

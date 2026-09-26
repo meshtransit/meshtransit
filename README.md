@@ -1583,8 +1583,10 @@ candidate on any failure; no partial key release or per-purpose fallback.
 On operator-trusted local Linux/macOS mounts, os.Root scopes each file to its
 parent. In-root projected-volume symlinks work; escaping links reject.
 Nonblocking open rejects FIFO/special-file admission without waiting for a
-writer. Opened files must be regular, owner-readable, with only 0400/0600
-permissions; no special/executable/group/world bits. Reads stop at 46 bytes.
+writer. Opened files must be regular and private to an owner or dedicated
+runtime group, with only 0400/0600/0440/0640 permissions; no special,
+executable, group-write, or world bits. The group-readable modes support
+Kubernetes projected Secrets scoped by a pod fsGroup. Reads stop at 46 bytes.
 Accept exactly 43 canonical unpadded base64url characters with at most one LF
 or CRLF. Reject whitespace, padding, extra lines, zero or substituted material.
 Recheck descriptor/path metadata after each read, then every recorded path
@@ -1609,8 +1611,8 @@ The private identity application root below uses the same resident owners rather
 than reload/replace individual purposes; production binding remains separate.
 
 Source tests cover hostile profiles, all-or-nothing loading, optional rotation,
-resident ownership, exact Session digests, redaction, scoped symlinks, owner-only
-permissions, FIFO rejection, earlier-file rotation and late read/cancellation.
+resident ownership, exact Session digests, redaction, scoped symlinks,
+owner/group-private permissions, FIFO rejection, earlier-file rotation and late read/cancellation.
 Separate bounded fuzz gates cover the key decoder and private ID parser.
 No listener, public dispatcher, provider/DB/budget/entropy work, environment
 schema, client wire, dependency or disabled public-login default changes.
@@ -2470,8 +2472,8 @@ must preserve the configured Host while verifying the backend certificate.
 
 Configuration schema 16 adds `MESHTRANSIT_PRIVATE_LOGIN_CONFIG_FILE` for `api`
 and `all` only. Absent means unchanged behavior; explicitly empty, relative,
-noncanonical, unreadable or unsafe files fail closed. Read one owner-only
-(0400/0600), parent-confined regular JSON file of at most 16 KiB under the
+noncanonical, unreadable or unsafe files fail closed. Read one
+owner/group-private (0400/0600/0440/0640), parent-confined regular JSON file of at most 16 KiB under the
 caller's finite context. Version 1 requires exactly these 20 fields:
 
 - `version`, `address`;
@@ -2666,8 +2668,8 @@ is their Git mirror, not a claim that sibling non-Git docs were pushed.
 `SSO-PRIVATE-CONSTRUCTION-CUSTODY-001` binds the originally loaded protected
 JSON, complete 11–13 purpose keys and three TLS/client-secret files into one
 exclusively owned candidate. Serving and config validate share the same loader.
-One caller-clamped five-second construction budget, existing scoped owner-only
-regular-file checks and byte bounds remain unchanged. Read each dependency once;
+One caller-clamped five-second construction budget, existing scoped
+owner/group-private regular-file checks and byte bounds remain unchanged. Read each dependency once;
 recheck retained metadata after the full load and before returning the unstarted
 factory/service. Detected atomic/projected-mount replacement, mode/size/mtime
 changes or cancellation return only closed errors, no graph on failure. There
@@ -2801,7 +2803,8 @@ startup/environment or credential values. It references three distinct existing
 Secrets for native `keycloak.conf`, serving TLS and PostgreSQL CA. Database TLS
 verification, private operator ingress, bounded pool/scratch/resources, tokenless
 non-root process and immutable image digest are fixed contracts. Provider
-0440/fsGroup projections do not qualify Core's owner-only startup gate.
+0440/fsGroup projections qualify only when the group is dedicated to the pod;
+group-write and world access remain rejected by Core's startup gate.
 
 Helm 3.19.0 strict lint/render and unsafe-value rejection pass; unchanged Core/
 Console chart checks pass. Trivy 0.74.0 cached-check High/Critical manifest scan
@@ -2987,7 +2990,7 @@ emits bootstrap credentials. Usernames are 1–63 ASCII identifier bytes; passwo
 are exact 32–4096 printable non-whitespace ASCII bytes with distinct purposes,
 no trimming/normalization or entropy/remote-state attestation.
 
-The shared protected file boundary preserves owner-only canonical directories/
+The shared protected file boundary preserves owner/group-private canonical directories/
 secure ancestors/outside-Git/single-link files, bounded descriptors/path metadata
 rechecks, exclusive checked/fsynced private output and identity-checked partial
 cleanup. Only native credentials plus credential-free metadata are emitted;

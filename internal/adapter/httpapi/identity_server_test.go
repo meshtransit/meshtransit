@@ -69,7 +69,6 @@ func TestNewIdentityServerRejectsUnsafeProfiles(t *testing.T) {
 		change func(*IdentityServerOptions)
 	}{
 		{name: "absent bind", change: func(options *IdentityServerOptions) { options.Address = "" }},
-		{name: "wildcard bind", change: func(options *IdentityServerOptions) { options.Address = "0.0.0.0:9443" }},
 		{name: "public bind", change: func(options *IdentityServerOptions) { options.Address = "203.0.113.1:9443" }},
 		{name: "link local bind", change: func(options *IdentityServerOptions) { options.Address = "169.254.1.1:9443" }},
 		{name: "dns bind", change: func(options *IdentityServerOptions) { options.Address = "identity.internal:9443" }},
@@ -106,6 +105,24 @@ func TestNewIdentityServerRejectsUnsafeProfiles(t *testing.T) {
 			server, err := NewIdentityServer(options)
 			if server != nil || !errors.Is(err, ErrInvalidIdentityServer) {
 				t.Fatalf("NewIdentityServer() = (%v, %v), want concealed rejection", server, err)
+			}
+		})
+	}
+}
+
+func TestNewIdentityServerAllowsContainerBinds(t *testing.T) {
+	t.Parallel()
+
+	for _, address := range []string{"0.0.0.0:9443", "[::]:9443"} {
+		address := address
+		t.Run(address, func(t *testing.T) {
+			t.Parallel()
+
+			options := identityServerTestOptions(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			options.Address = address
+			server, err := NewIdentityServer(options)
+			if err != nil || server == nil || server.address != address {
+				t.Fatalf("NewIdentityServer() = (%v, %v), want container bind %q", server, err, address)
 			}
 		})
 	}

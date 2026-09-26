@@ -230,7 +230,7 @@ func TestPrivateLoginFileDefaultRolesAndProtectedCustody(t *testing.T) {
 	for _, test := range []struct {
 		mode  os.FileMode
 		valid bool
-	}{{mode: 0o600, valid: true}, {mode: 0o644}} {
+	}{{mode: 0o600, valid: true}, {mode: 0o440, valid: true}, {mode: 0o640, valid: true}, {mode: 0o644}} {
 		if err := os.Chmod(path, test.mode); err != nil {
 			t.Fatal(err)
 		}

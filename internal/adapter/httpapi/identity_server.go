@@ -100,7 +100,7 @@ func NewIdentityServer(options IdentityServerOptions) (*IdentityServer, error) {
 	address, err := netip.ParseAddrPort(options.Address)
 	validAddress := err == nil && address.String() == options.Address &&
 		!address.Addr().Is4In6() && address.Addr().Zone() == "" &&
-		(address.Addr().IsPrivate() || address.Addr().IsLoopback())
+		(address.Addr().IsPrivate() || address.Addr().IsLoopback() || address.Addr().IsUnspecified())
 	validCapacity := options.MaxConnections > 0 &&
 		options.MaxConnections <= maximumIdentityConnections &&
 		options.MaxConcurrentRequests > 0 &&

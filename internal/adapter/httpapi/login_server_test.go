@@ -128,8 +128,6 @@ func TestNewLoginServerRejectsUnsafeProfiles(t *testing.T) {
 		change func(*LoginServerOptions)
 	}{
 		{name: "absent bind", change: func(o *LoginServerOptions) { o.Address = "" }},
-		{name: "wildcard bind", change: func(o *LoginServerOptions) { o.Address = "0.0.0.0:443" }},
-		{name: "ipv6 wildcard", change: func(o *LoginServerOptions) { o.Address = "[::]:443" }},
 		{name: "multicast bind", change: func(o *LoginServerOptions) { o.Address = "224.0.0.1:443" }},
 		{name: "dns bind", change: func(o *LoginServerOptions) { o.Address = "console.example.test:443" }},
 		{name: "noncanonical port", change: func(o *LoginServerOptions) { o.Address = "127.0.0.1:0443" }},
@@ -153,6 +151,24 @@ func TestNewLoginServerRejectsUnsafeProfiles(t *testing.T) {
 			}
 			if len(fixture.calls) != 0 || callback.calls != 0 {
 				t.Fatal("constructor performed authority/budget effects")
+			}
+		})
+	}
+}
+
+func TestNewLoginServerAllowsContainerBinds(t *testing.T) {
+	t.Parallel()
+
+	for _, address := range []string{"0.0.0.0:9443", "[::]:9443"} {
+		address := address
+		t.Run(address, func(t *testing.T) {
+			t.Parallel()
+
+			options, _, _ := loginServerTestOptions(t)
+			options.Address = address
+			server, err := NewLoginServer(options)
+			if err != nil || server == nil || server.address != address {
+				t.Fatalf("NewLoginServer() = (%v, %v), want container bind %q", server, err, address)
 			}
 		})
 	}

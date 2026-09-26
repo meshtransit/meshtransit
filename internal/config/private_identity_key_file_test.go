@@ -21,9 +21,10 @@ func TestReadPrivateIdentityKeyStrictFileCustody(t *testing.T) {
 	}{
 		{name: "owner read", contents: encoded, mode: 0o400, valid: true},
 		{name: "owner read write", contents: encoded, mode: 0o600, valid: true},
+		{name: "group read", contents: encoded, mode: 0o440, valid: true},
+		{name: "owner write group read", contents: encoded, mode: 0o640, valid: true},
 		{name: "lf", contents: encoded + "\n", mode: 0o600, valid: true},
 		{name: "crlf", contents: encoded + "\r\n", mode: 0o600, valid: true},
-		{name: "group readable", contents: encoded, mode: 0o640},
 		{name: "world readable", contents: encoded, mode: 0o604},
 		{name: "executable", contents: encoded, mode: 0o700},
 		{name: "write only", contents: encoded, mode: 0o200},
@@ -47,7 +48,7 @@ func TestReadPrivateIdentityKeyStrictFileCustody(t *testing.T) {
 			key, err := (SecretFile{path: path}).readPrivateIdentityKey(t.Context())
 			if test.valid {
 				if err != nil || key != ([32]byte(bytes.Repeat([]byte{0x91}, 32))) {
-					t.Fatal("valid owner-only key rejected or transformed")
+					t.Fatal("valid protected key rejected or transformed")
 				}
 				return
 			}
