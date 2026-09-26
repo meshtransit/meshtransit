@@ -57,7 +57,7 @@ func TestComposePrivateIdentityIsEffectFreeAndOwnsCompleteGraph(t *testing.T) {
 	t.Parallel()
 	fixture := newPrivateIdentityFixture(t)
 	root := fixture.compose(t)
-	if root.start == nil || root.callback == nil || root.sessions == nil || root.login == nil ||
+	if root.start == nil || root.callback == nil || root.sessions == nil || root.logout == nil || root.login == nil ||
 		root.management == nil || root.metrics == nil || len(fixture.effects) != 0 || fixture.clockReads != 0 {
 		t.Fatal("construction performed effects or released a partial graph")
 	}
@@ -95,6 +95,7 @@ func TestComposePrivateIdentityRejectsTypedNilEffectsBeforeWork(t *testing.T) {
 		{name: "provider", change: func(p *privateIdentityPorts) { p.Provider = missing }},
 		{name: "subjects", change: func(p *privateIdentityPorts) { p.Subjects = missing }},
 		{name: "session authority", change: func(p *privateIdentityPorts) { p.SessionAuthority = missingAuthority }},
+		{name: "session revocations", change: func(p *privateIdentityPorts) { p.SessionRevocations = missingAuthority }},
 		{name: "start ids", change: func(p *privateIdentityPorts) { p.StartIDs = missing }},
 		{name: "secrets", change: func(p *privateIdentityPorts) { p.Secrets = missing }},
 		{name: "claim ids", change: func(p *privateIdentityPorts) { p.ClaimIDs = missing }},
@@ -645,10 +646,12 @@ func newPrivateIdentityFixture(t *testing.T) *privateIdentityFixture {
 			RequestTimeout: 2 * time.Second, ProofLifetime: time.Minute, MaxConcurrent: 2,
 			SourceRateLimit: policy, SessionRateLimit: policy},
 	}
+	authority := &privateIdentityAuthority{fixture: fixture}
 	fixture.ports = privateIdentityPorts{
 		Admission: fixture, Metadata: &privateIdentityMetadata{fixture: fixture}, Creations: fixture, Committed: fixture,
 		Pending: fixture, Claims: fixture, Failures: fixture, Issues: fixture, Provider: fixture, Subjects: fixture,
-		SessionAuthority: &privateIdentityAuthority{fixture: fixture}, StartIDs: fixture, Secrets: fixture, ClaimIDs: fixture,
+		SessionAuthority: authority, SessionRevocations: authority,
+		StartIDs: fixture, Secrets: fixture, ClaimIDs: fixture,
 		IssueMaterial: fixture, Revocations: fixture, PolicyPublications: fixture,
 		RateLimiter: fixture, CorrelationIDs: fixture,
 		Clock: fixture, Logger: discardCompositionLogger(),
@@ -928,6 +931,22 @@ func (port *privateIdentityAuthority) Resolve(
 		return accountsession.Session{}, false, nil
 	}
 	return f.session, true, nil
+}
+
+func (port *privateIdentityAuthority) Revoke(
+	ctx context.Context,
+	dep deployment.ID,
+	epoch int64,
+	digest accountsession.Digest,
+) (accountsession.ID, int64, bool, error) {
+	f := port.fixture
+	f.record(ctx, "session_logout")
+	validScope := dep == f.session.DeploymentID() && epoch == f.session.DeploymentRecoveryEpoch()
+	if !f.authorityFound || !validScope || digest != f.tokenDigest {
+		return accountsession.ID{}, 0, false, nil
+	}
+	f.authorityFound = false
+	return f.session.ID(), f.session.Version() + 1, true, nil
 }
 func (fixture *privateIdentityFixture) Allow(
 	ctx context.Context, subject ratelimit.Subject, policy ratelimit.Policy,

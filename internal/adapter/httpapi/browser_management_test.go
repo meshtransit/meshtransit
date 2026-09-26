@@ -28,8 +28,9 @@ import (
 )
 
 type browserManagementFixture struct {
-	at                             time.Time
-	auth, budgets, revoke, publish int
+	at                                     time.Time
+	auth, budgets, revoke, publish, logout int
+	sessionRevoked                         bool
 }
 
 func preparedBrowserProof(t *testing.T, browser *BrowserManagement) string {
@@ -87,10 +88,44 @@ func TestBrowserManagementMutationsKeepResourceContracts(t *testing.T) {
 	}
 }
 
+func TestBrowserManagementLogoutRevokesOnceAndClearsOnlyItsCookie(t *testing.T) {
+	t.Parallel()
+	browser, fixture := newBrowserManagementFixture(t)
+	proof := preparedBrowserProof(t, browser)
+	request := browserManagementRequest(t, AccountSessionLogoutPath, "{}")
+	request.Header.Set("X-MeshTransit-CSRF", proof)
+	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := browser.Handle(response, request); err != nil {
+		t.Fatal("logout was not submitted", err)
+	}
+	values := response.Header().Values("Set-Cookie")
+	if response.Code != http.StatusNoContent || response.statusWrites != 1 || response.Body.Len() != 0 ||
+		fixture.logout != 1 || fixture.auth != 2 || fixture.budgets != 4 || len(values) != 1 {
+		t.Fatal("logout changed mutation, authentication or response ownership")
+	}
+	cookie, err := http.ParseSetCookie(values[0])
+	invalidCookie := err != nil || cookie.Name != AccountSessionCookieName || cookie.Value != "" ||
+		cookie.Path != "/" || cookie.Domain != "" || !cookie.Secure || !cookie.HttpOnly ||
+		cookie.SameSite != http.SameSiteLaxMode || cookie.MaxAge >= 0 || cookie.Expires.After(time.Unix(1, 0).UTC())
+	if invalidCookie || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("logout did not emit the exact host-only deletion cookie", err)
+	}
+
+	replay := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	request = browserManagementRequest(t, AccountSessionLogoutPath, "{}")
+	request.Header.Set("X-MeshTransit-CSRF", proof)
+	if err := browser.Handle(replay, request); err != nil {
+		t.Fatal("revoked-session replay did not receive a bounded denial", err)
+	}
+	if replay.Code != http.StatusUnauthorized || fixture.logout != 1 || replay.Header().Get("Set-Cookie") != "" {
+		t.Fatal("logout replay repeated mutation or renewed cookie authority")
+	}
+}
+
 func TestBrowserManagementConstructorIsClosedAndCopiesKey(t *testing.T) {
 	t.Parallel()
 	for _, invalid := range []string{
-		"nil handler", "typed nil clock", "nil sessions", "short key", "zero key", "bad key id",
+		"nil handler", "nil logout", "typed nil clock", "nil sessions", "short key", "zero key", "bad key id",
 		"short ttl", "fraction ttl", "long ttl", "http", "path", "query", "userinfo", "uppercase",
 		"default port", "empty port", "leading port", "bad dns",
 	} {
@@ -99,6 +134,8 @@ func TestBrowserManagementConstructorIsClosedAndCopiesKey(t *testing.T) {
 			switch invalid {
 			case "nil handler":
 				options.Management = nil
+			case "nil logout":
+				options.Logout = nil
 			case "typed nil clock":
 				options.Clock = (*browserManagementFixture)(nil)
 			case "nil sessions":
@@ -248,7 +285,7 @@ func TestBrowserManagementRejectsIngressBeforeEffects(t *testing.T) {
 			response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
 			err := browser.Handle(response, request)
 			unexpectedResponse := response.statusWrites != 0 || response.Body.Len() != 0 || len(response.Header()) != 0
-			unexpectedAuthority := fixture.auth+fixture.revoke+fixture.publish != 0
+			unexpectedAuthority := fixture.auth+fixture.revoke+fixture.publish+fixture.logout != 0
 			if err == nil || unexpectedResponse || unexpectedAuthority {
 				t.Fatal("invalid ingress released authority/response", err)
 			}
@@ -733,6 +770,9 @@ func browserManagementTestOptions(t *testing.T) (BrowserManagementOptions, *brow
 		if ctx.Err() != nil || token.Encoded() != managementTokenFixture {
 			t.Error("browser Session authentication lost context or exact cookie")
 		}
+		if fixture.sessionRevoked {
+			return accountsession.Session{}, accountsession.ErrUnauthenticated
+		}
 		return managementSessionFixture(t), nil
 	})
 	options.RateLimiter = managementRateLimiterFunc(func(
@@ -769,10 +809,27 @@ func browserManagementTestOptions(t *testing.T) (BrowserManagementOptions, *brow
 	if err != nil {
 		t.Fatal(err)
 	}
-	return BrowserManagementOptions{Management: handler, Origin: "https://console.example.test",
+	logout := managementAccountSessionLogoutFunc(func(ctx context.Context, token accountsession.Token) (bool, error) {
+		fixture.logout++
+		if ctx.Err() != nil || token.Encoded() != managementTokenFixture || fixture.sessionRevoked {
+			t.Error("logout lost live exact cookie authority")
+		}
+		fixture.sessionRevoked = true
+		return true, nil
+	})
+	return BrowserManagementOptions{Management: handler, Logout: logout, Origin: "https://console.example.test",
 		DeploymentID: managementSessionFixture(t).DeploymentID(), Clock: fixture,
 		Key:           BrowserLoginKey{ID: "browser-session-csrf-v1", Material: bytes.Repeat([]byte{0x54}, 32)},
 		ProofLifetime: time.Minute}, fixture
+}
+
+type managementAccountSessionLogoutFunc func(context.Context, accountsession.Token) (bool, error)
+
+func (function managementAccountSessionLogoutFunc) Logout(
+	ctx context.Context,
+	token accountsession.Token,
+) (bool, error) {
+	return function(ctx, token)
 }
 
 func browserManagementRequest(t *testing.T, path, body string) *http.Request {

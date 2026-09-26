@@ -87,5 +87,45 @@
         }
       }
     }
+  },
+  "logout": {
+    "post": {
+      "operationId": "logoutConsoleSession",
+      "summary": "Durably revoke the current Core Session",
+      "description": "Require the current host-only Session cookie and a fresh proof bound to that exact cookie, Origin and Deployment. Atomically revoke only the matching active Session in the current recovery epoch, then expire only __Host-mt_session. Concurrent or completed revocation is an idempotent no-match. No provider token, upstream logout, alternate cookie, redirect or authority renewal is performed. JSON whitespace around the literal empty object is allowed.",
+      "security": [{ "accountSessionCookie": [], "sessionCSRF": [] }],
+      "parameters": [
+        { "$ref": "#/components/parameters/ConsoleOrigin" },
+        { "$ref": "#/components/parameters/ConsoleSessionChannel" },
+        { "$ref": "#/components/parameters/ConsoleSessionProof" }
+      ],
+      "requestBody": {
+        "required": true,
+        "x-meshtransit-max-bytes": 4096,
+        "content": {
+          "application/json": {
+            "schema": { "type": "object", "additionalProperties": false, "maxProperties": 0 }
+          }
+        }
+      },
+      "responses": {
+        "204": {
+          "description": "The current Core Session is durably ended and its browser cookie is expired. The response has no body.",
+          "headers": {
+            "Cache-Control": { "schema": { "type": "string", "const": "no-store" } },
+            "Set-Cookie": {
+              "description": "Exact host-only deletion for the Core Session cookie; no Domain or other cookie is changed.",
+              "schema": {
+                "type": "string",
+                "const": "__Host-mt_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=0; HttpOnly; Secure; SameSite=Lax"
+              }
+            }
+          }
+        },
+        "default": {
+          "description": "Private pre-release failure leaves status/headers/body untouched. Authentication failures use the existing bounded management denial without clearing or renewing cookies. Durable submission failure is uncertain delivery, never non-commit evidence or an automatic retry."
+        }
+      }
+    }
   }
 }

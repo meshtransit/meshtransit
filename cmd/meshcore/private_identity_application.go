@@ -58,6 +58,7 @@ type privateIdentityPorts struct {
 	Provider           oidcauth.TokenAuthenticator
 	Subjects           oidcauth.LoginSubjectResolver
 	SessionAuthority   accountsession.Resolver
+	SessionRevocations accountsession.Revoker
 	StartIDs           oidcauth.StartIDGenerator
 	Secrets            oidcauth.SecretsGenerator
 	ClaimIDs           oidcauth.ClaimIDGenerator
@@ -76,6 +77,7 @@ type privateIdentity struct {
 	start         *oidcauth.StartService
 	callback      *oidcauth.CallbackService
 	sessions      *accountsession.Service
+	logout        *accountsession.LogoutService
 	login         *httpapi.BrowserLogin
 	dispatcher    *httpapi.LoginDispatcher
 	loginDocument []byte
@@ -129,6 +131,10 @@ func composePrivateIdentity(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	logout, err := accountsession.NewLogoutService(keys.sessions, ports.SessionRevocations)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	profile := options.Browser
 	login, err := httpapi.NewBrowserLogin(httpapi.BrowserLoginOptions{
 		Route: options.Route, Origin: options.Origin, ReturnPath: options.ReturnPath,
@@ -156,7 +162,7 @@ func composePrivateIdentity(
 		return nil, errInvalidPrivateIdentityComposition
 	}
 	management, err := httpapi.NewBrowserManagement(httpapi.BrowserManagementOptions{
-		Management: resources, DeploymentID: options.Route.DeploymentID(), Origin: options.Origin,
+		Management: resources, Logout: logout, DeploymentID: options.Route.DeploymentID(), Origin: options.Origin,
 		Key: keys.csrf, Clock: ports.Clock, ProofLifetime: managementOptions.ProofLifetime,
 	})
 	if err != nil {
@@ -182,7 +188,7 @@ func composePrivateIdentity(
 	if ctx.Err() != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
-	return &privateIdentity{start: start, callback: callback, sessions: sessions,
+	return &privateIdentity{start: start, callback: callback, sessions: sessions, logout: logout,
 		login: login, dispatcher: dispatcher, loginDocument: loginDocument, management: management, metrics: registry}, nil
 }
 
@@ -212,6 +218,7 @@ func completePrivateIdentityPorts(ports privateIdentityPorts) bool {
 	for _, port := range []any{
 		ports.Admission, ports.Metadata, ports.Creations, ports.Committed, ports.Pending, ports.Claims,
 		ports.Failures, ports.Issues, ports.Provider, ports.Subjects, ports.SessionAuthority, ports.StartIDs,
+		ports.SessionRevocations,
 		ports.Secrets, ports.ClaimIDs, ports.IssueMaterial, ports.Revocations, ports.PolicyPublications,
 		ports.RateLimiter, ports.CorrelationIDs, ports.Clock, ports.Logger,
 	} {

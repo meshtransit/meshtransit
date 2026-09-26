@@ -53,7 +53,7 @@ func validDispatcherCallbackPath(value string) bool {
 	}
 	switch value {
 	case LoginPreparePath, LoginStartPath, LoginCallbackContinuePath, LoginContinuationPreparePath,
-		AccountSessionCSRFPreparePath:
+		AccountSessionCSRFPreparePath, AccountSessionLogoutPath:
 		return false
 	default:
 		return true
@@ -116,6 +116,12 @@ func (dispatcher *LoginDispatcher) Handle(response http.ResponseWriter, request 
 			return ErrInvalidLoginDispatcher
 		}
 		operation = "session_prepare"
+		return dispatcher.management.Handle(response, request)
+	case AccountSessionLogoutPath:
+		if request.Method != http.MethodPost {
+			return ErrInvalidLoginDispatcher
+		}
+		operation = "session_logout"
 		return dispatcher.management.Handle(response, request)
 	case LoginCallbackContinuePath:
 		switch request.Method {

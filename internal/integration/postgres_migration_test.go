@@ -277,4 +277,5 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		runtimePool,
 		peerIdentity,
 	)
+	assertPostgreSQLAccountSessionLogout(ctx, t, adminConnection, runtimePool)
 }

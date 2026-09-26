@@ -23,8 +23,12 @@ import (
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
 )
 
-// AccountSessionCSRFPreparePath is fixed private same-origin proof preparation.
-const AccountSessionCSRFPreparePath = "/auth/v1/session/prepare"
+const (
+	// AccountSessionCSRFPreparePath is fixed private same-origin proof preparation.
+	AccountSessionCSRFPreparePath = "/auth/v1/session/prepare"
+	// AccountSessionLogoutPath is fixed private same-origin durable logout.
+	AccountSessionLogoutPath = "/auth/v1/session/logout"
+)
 
 var (
 	// ErrInvalidBrowserManagement conceals invalid profile/input, never authority.
@@ -43,6 +47,7 @@ var (
 // Management's durable ports must use this clock and confirmed transaction contracts.
 type BrowserManagementOptions struct {
 	Management    *ManagementHandler
+	Logout        AccountSessionLogout
 	DeploymentID  deployment.ID
 	Origin        string
 	Key           BrowserLoginKey
@@ -54,6 +59,7 @@ type BrowserManagementOptions struct {
 // It never enables a listener, synthesizes Authorization or stores a caller Session.
 type BrowserManagement struct {
 	management   *ManagementHandler
+	logout       AccountSessionLogout
 	deploymentID deployment.ID
 	origin, host string
 	keyID        string
@@ -66,11 +72,17 @@ type BrowserManagement struct {
 	slots chan struct{}
 }
 
+// AccountSessionLogout ends the exact opaque cookie authority without exposing it.
+type AccountSessionLogout interface {
+	Logout(context.Context, accountsession.Token) (bool, error)
+}
+
 // NewBrowserManagement validates all resident input before any port/entropy effect.
 // Its isolated collector requires explicit private root registration later.
 func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement, error) {
 	handler := options.Management
-	validAuthorityProfile := validBrowserManagementHandler(handler) && options.DeploymentID.IsValid()
+	validAuthorityProfile := validBrowserManagementHandler(handler) && options.DeploymentID.IsValid() &&
+		!nilContinuationDependency(options.Logout)
 	if !validAuthorityProfile || nilContinuationDependency(options.Clock) {
 		return nil, ErrInvalidBrowserManagement
 	}
@@ -100,7 +112,7 @@ func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement,
 	if !validLifetime {
 		return nil, ErrInvalidBrowserManagement
 	}
-	browser := &BrowserManagement{management: handler, deploymentID: options.DeploymentID,
+	browser := &BrowserManagement{management: handler, logout: options.Logout, deploymentID: options.DeploymentID,
 		origin: options.Origin, host: origin.Host, keyID: options.Key.ID, clock: options.Clock,
 		lifetime: options.ProofLifetime, entropy: rand.Reader, telemetry: NewBrowserManagementTelemetry(),
 		slots: make(chan struct{}, cap(handler.slots))}
@@ -112,6 +124,7 @@ func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement,
 // another browser graph. It performs no authentication, budget or clock effect.
 func validBrowserManagementOwner(browser *BrowserManagement) bool {
 	if browser == nil || !validBrowserManagementHandler(browser.management) ||
+		nilContinuationDependency(browser.logout) ||
 		nilContinuationDependency(browser.clock) || browser.slots == nil {
 		return false
 	}
@@ -205,14 +218,17 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		return ErrInvalidBrowserManagement
 	}
 	prepare := request.URL.Path == AccountSessionCSRFPreparePath
+	logout := request.URL.Path == AccountSessionLogoutPath
 	_, device := parseDeviceRevokePath(request)
 	_, policy := parsePolicyPublishPath(request)
-	if !prepare && !device && !policy {
+	if !prepare && !logout && !device && !policy {
 		return ErrInvalidBrowserManagement
 	}
 	operation = "mutation"
 	if prepare {
 		operation = "prepare"
+	} else if logout {
+		operation = "logout"
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), browser.management.timeout)
 	defer cancel()
@@ -240,15 +256,25 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		if err := browser.prepare(ctx, candidate, request, admission); err != nil {
 			return err
 		}
+	} else if logout {
+		if err := browser.endSession(ctx, candidate, request, admission); err != nil {
+			return err
+		}
 	} else {
 		browser.management.serveHTTP(candidate, request, admission)
 	}
-	if candidate.err != nil || candidate.statusWrites != 1 || len(candidate.body) == 0 {
+	logoutCompleted := logout && candidate.status == http.StatusNoContent
+	invalidCandidateBody := logoutCompleted && len(candidate.body) != 0 || !logoutCompleted && len(candidate.body) == 0
+	if candidate.err != nil || candidate.statusWrites != 1 || invalidCandidateBody {
 		return ErrBrowserManagementUnavailable
 	}
 	// A cookie-only profile never invites a Bearer credential fallback.
 	candidate.header.Del("WWW-Authenticate")
-	if !pristineBrowserManagementResponse(candidate.header) || !boundedLoginHeaders(candidate.header) {
+	validCandidateHeader := pristineBrowserManagementResponse(candidate.header)
+	if logoutCompleted {
+		validCandidateHeader = validBrowserLogoutResponse(candidate.header)
+	}
+	if !validCandidateHeader || !boundedLoginHeaders(candidate.header) {
 		return ErrInvalidBrowserManagement
 	}
 	if err := admission.validate(ctx); err != nil {
@@ -274,10 +300,71 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		header[name] = values
 	}
 	response.WriteHeader(candidate.status)
+	if len(candidate.body) == 0 {
+		return nil
+	}
 	written, err := response.Write(candidate.body)
 	if err != nil || written != len(candidate.body) {
 		return ErrBrowserManagementDelivery
 	}
+	return nil
+}
+
+func (browser *BrowserManagement) endSession(
+	ctx context.Context,
+	response *browserManagementResponse,
+	request *http.Request,
+	admission *browserManagementAdmission,
+) error {
+	correlationID, err := browser.management.correlationIDs.NewID()
+	if err != nil || !correlationID.IsValid() {
+		return ErrBrowserManagementUnavailable
+	}
+	setManagementSecurityHeaders(response.header, correlationID)
+	address, err := browser.management.clientIPs.Resolve(request)
+	if err != nil {
+		return ErrInvalidBrowserManagement
+	}
+	if err := browser.budget(ctx, continuationBudget{response: response, kind: ratelimit.SubjectSource,
+		raw:    "browser-session-logout-source/v1\x00" + browser.deploymentID.String() + "\x00" + address.String(),
+		policy: browser.management.sourcePolicy}); err != nil {
+		return err
+	}
+	if !validLoginBody(response, request) {
+		return ErrInvalidBrowserManagement
+	}
+	session, authenticationErr := admission.authenticate(ctx, request)
+	if authenticationErr != nil {
+		writeManagementError(
+			ctx,
+			browser.management.logger,
+			response,
+			correlationID,
+			classifyAuthenticationError(authenticationErr),
+		)
+		return nil
+	}
+	if err := browser.budget(ctx, continuationBudget{response: response, kind: ratelimit.SubjectAccountSession,
+		raw:    "browser-session-logout-session/v1\x00" + browser.deploymentID.String() + "\x00" + session.ID().String(),
+		policy: browser.management.sessionPolicy}); err != nil {
+		return err
+	}
+	if err := admission.validateFresh(ctx, time.Second); err != nil {
+		return ErrBrowserManagementUnavailable
+	}
+	if _, err := browser.logout.Logout(ctx, admission.token); err != nil || ctx.Err() != nil {
+		writeManagementError(ctx, browser.management.logger, response, correlationID, managementError{
+			Status: http.StatusServiceUnavailable, Code: "logout_unavailable",
+			Message: "logout is temporarily unavailable", Retryable: true,
+		})
+		return nil
+	}
+	cookie, err := expiredAccountSessionCookie()
+	if err != nil {
+		return ErrBrowserManagementUnavailable
+	}
+	response.header.Add("Set-Cookie", cookie.String())
+	response.WriteHeader(http.StatusNoContent)
 	return nil
 }
 

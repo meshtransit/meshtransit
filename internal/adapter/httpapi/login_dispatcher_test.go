@@ -76,7 +76,8 @@ func TestLoginDispatcherRejectsIncompleteConstruction(t *testing.T) {
 		}
 	}
 	for _, path := range []string{
-		AccountSessionCSRFPreparePath, "/machine/register", "/api/v1/callback", "/key", "/auth/" + strings.Repeat("x", 251),
+		AccountSessionCSRFPreparePath, AccountSessionLogoutPath, "/machine/register", "/api/v1/callback", "/key",
+		"/auth/" + strings.Repeat("x", 251),
 	} {
 		options, fixture, callback := browserLoginTestOptions(t)
 		params := capsuleTestRouteParams(options.Route)
@@ -141,6 +142,11 @@ func TestLoginDispatcherRejectsRoutingWithoutEffectsOrResponse(t *testing.T) {
 			r.RequestURI = r.URL.Path
 			r.Method = http.MethodGet
 		}},
+		{name: "get session logout", change: func(r *http.Request) {
+			r.URL.Path = AccountSessionLogoutPath
+			r.RequestURI = r.URL.Path
+			r.Method = http.MethodGet
+		}},
 		{name: "client route", change: func(r *http.Request) { r.URL.Path = "/machine/register"; r.RequestURI = r.URL.Path }},
 		{name: "unknown path", change: func(r *http.Request) { r.URL.Path = "/auth/private"; r.RequestURI = r.URL.Path }},
 		{name: "no url", change: func(r *http.Request) { r.URL = nil }},
@@ -174,7 +180,7 @@ func TestLoginDispatcherRejectsMethodAliases(t *testing.T) {
 	t.Parallel()
 	for _, path := range []string{
 		LoginPreparePath, LoginStartPath, LoginContinuationPreparePath, AccountSessionCSRFPreparePath,
-		LoginCallbackContinuePath, "/auth/callback",
+		AccountSessionLogoutPath, LoginCallbackContinuePath, "/auth/callback",
 	} {
 		for _, method := range []string{"GET", "HEAD", "POST", "OPTIONS", "PUT", "DELETE", "TRACE", "PATCH", "post"} {
 			fixedPost := method == http.MethodPost && path != "/auth/callback"
@@ -214,6 +220,23 @@ func TestLoginDispatcherPreservesSessionPrepareOwnership(t *testing.T) {
 	if response.Code != http.StatusOK || response.statusWrites != 1 || management.auth != 1 ||
 		management.budgets != 2 || len(fixture.calls) != 0 || callback.calls != 0 {
 		t.Fatal("session preparation crossed owner boundaries")
+	}
+}
+
+func TestLoginDispatcherPreservesSessionLogoutOwnership(t *testing.T) {
+	t.Parallel()
+	dispatcher, fixture, callback, management := dispatcherTestGraphWithManagement(t)
+	proof := preparedBrowserProof(t, dispatcher.management)
+	request := browserManagementRequest(t, AccountSessionLogoutPath, "{}")
+	request.Header.Set("X-MeshTransit-CSRF", proof)
+	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := dispatcher.Handle(response, request); err != nil {
+		t.Fatal("session logout did not reach its exact owner", err)
+	}
+	if response.Code != http.StatusNoContent || response.statusWrites != 1 || response.Body.Len() != 0 ||
+		management.logout != 1 || management.auth != 2 || management.budgets != 4 ||
+		len(response.Header().Values("Set-Cookie")) != 1 || len(fixture.calls) != 0 || callback.calls != 0 {
+		t.Fatal("session logout crossed owner boundaries")
 	}
 }
 
@@ -412,7 +435,7 @@ func FuzzLoginDispatcherRouting(f *testing.F) {
 		callbackGet := method == http.MethodGet && path == dispatcher.CallbackPath()
 		fixedPost := method == http.MethodPost && (path == LoginPreparePath || path == LoginStartPath ||
 			path == LoginContinuationPreparePath || path == AccountSessionCSRFPreparePath ||
-			path == LoginCallbackContinuePath)
+			path == AccountSessionLogoutPath || path == LoginCallbackContinuePath)
 		landingRead := (method == http.MethodGet || method == http.MethodHead) && path == LoginCallbackContinuePath
 		matched := rawPath == "" && len(query) <= maximumCallbackQueryBytes && (query == "" || callbackGet) &&
 			(callbackGet || fixedPost || landingRead)

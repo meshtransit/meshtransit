@@ -87,6 +87,17 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	logoutStore, err := postgresadapter.NewAccountSessionLogoutStore(
+		dependencies.Runtime,
+		postgresadapter.AccountSessionLogoutOptions{
+			StatementTimeout: managementOptions.StatementTimeout,
+			LockTimeout:      managementOptions.LockTimeout,
+			IdleTimeout:      managementOptions.IdleTimeout,
+		},
+	)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	clock := oidcauth.SystemStartClock{}
 	revocations, policies, err := privateIdentityMutationServices(dependencies.Runtime, managementOptions, clock)
 	if err != nil {
@@ -117,7 +128,7 @@ func composePrivateIdentityFactory(
 	owner.identity, err = composePrivateIdentity(ctx, keys, application, privateIdentityPorts{
 		Admission: transactions, Metadata: owner.discovery, Creations: transactions, Committed: transactions,
 		Pending: transactions, Claims: transactions, Failures: transactions, Issues: transactions,
-		Provider: owner.provider, Subjects: transactions, SessionAuthority: authority,
+		Provider: owner.provider, Subjects: transactions, SessionAuthority: authority, SessionRevocations: logoutStore,
 		StartIDs: oidcauth.SystemStartIDs{}, Secrets: oidcauth.SystemSecrets{},
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, RateLimiter: dependencies.Redis,

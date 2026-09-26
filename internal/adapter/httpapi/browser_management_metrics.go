@@ -39,7 +39,7 @@ func NewBrowserManagementTelemetry() *BrowserManagementTelemetry {
 func (telemetry *BrowserManagementTelemetry) opened() { telemetry.active.Inc() }
 func (telemetry *BrowserManagementTelemetry) closed(operation string, err error, elapsed time.Duration) {
 	switch operation {
-	case "prepare", "mutation":
+	case "prepare", "logout", "mutation":
 	default:
 		operation = "unknown"
 	}

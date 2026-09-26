@@ -65,7 +65,7 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal("private document retained deployment topology")
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
-	if len(basePaths) != 2 || len(paths) != 3 {
+	if len(basePaths) != 2 || len(paths) != 4 {
 		t.Fatal("private profile introduced another product resource API")
 	}
 	for path := range basePaths {
@@ -128,6 +128,47 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		}
 	}
 	profileReferences(t, console, console)
+}
+
+func TestManagementDocumentConsoleLogoutIsDurableAndCookieScoped(t *testing.T) {
+	t.Parallel()
+	body, err := openapi.ManagementDocument(openapi.ManagementProfileConsoleCookiePrivateV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := profileObject(t, body)
+	item := profileMap(t, profileMap(t, document, "paths"), "/auth/v1/session/logout")
+	if len(item) != 1 {
+		t.Fatal("logout exposes another method")
+	}
+	operation := profileMap(t, item, "post")
+	expectedSecurity := []any{map[string]any{"accountSessionCookie": []any{}, "sessionCSRF": []any{}}}
+	if operation["operationId"] != "logoutConsoleSession" ||
+		!reflect.DeepEqual(operation["security"], expectedSecurity) ||
+		len(profileArray(t, operation, "parameters")) != 3 {
+		t.Fatal("logout lost exact cookie and proof authentication")
+	}
+	request := profileMap(t, operation, "requestBody")
+	schema := profileMap(t, profileMap(t, profileMap(t, request, "content"), "application/json"), "schema")
+	if request["required"] != true || request["x-meshtransit-max-bytes"] != float64(4096) ||
+		schema["type"] != "object" || schema["additionalProperties"] != false || schema["maxProperties"] != float64(0) {
+		t.Fatal("logout body is not the bounded literal empty object")
+	}
+	responses := profileMap(t, operation, "responses")
+	if len(responses) != 2 || profileMap(t, responses, "204")["content"] != nil {
+		t.Fatal("logout success is not an empty 204")
+	}
+	headers := profileMap(t, profileMap(t, responses, "204"), "headers")
+	setCookie := profileMap(t, profileMap(t, headers, "Set-Cookie"), "schema")
+	expectedCookie := "__Host-mt_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=0; HttpOnly; Secure; SameSite=Lax"
+	if setCookie["const"] != expectedCookie || strings.Contains(expectedCookie, "Domain=") {
+		t.Fatal("logout changes more than the host-only Core Session cookie")
+	}
+	failure := profileMap(t, responses, "default")
+	if failure["content"] != nil || failure["headers"] != nil {
+		t.Fatal("logout contract invented failure credentials or content")
+	}
+	profileReferences(t, document, operation)
 }
 
 func TestManagementDocumentConsolePreparationIsNoGrant(t *testing.T) {

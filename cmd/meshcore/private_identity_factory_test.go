@@ -25,7 +25,7 @@ func TestComposePrivateIdentityFactoryOwnsCompletePrivateGraph(t *testing.T) {
 	}
 	t.Cleanup(factory.Close)
 	root := factory.identity
-	completeServices := root != nil && root.start != nil && root.callback != nil && root.sessions != nil
+	completeServices := root != nil && root.start != nil && root.callback != nil && root.sessions != nil && root.logout != nil
 	completeHTTP := root != nil && root.login != nil && root.management != nil && root.metrics != nil
 	if !completeServices || !completeHTTP || factory.discovery == nil || factory.provider == nil {
 		t.Fatal("factory released an incomplete graph")

@@ -24,7 +24,7 @@ import (
 
 // This source fixture uses real least-privileged Session and mutation authority.
 // Synthetic completed TLS/deadlines and controlled budgets are not live HTTPS,
-// Redis, browser, Keycloak, root-dispatch or native-host clock qualification.
+// Redis, browser, external broker, root-dispatch or native-host clock qualification.
 func prepareIntegrationBrowserManagement(
 	ctx context.Context,
 	t *testing.T,
@@ -37,6 +37,9 @@ func prepareIntegrationBrowserManagement(
 		t.Fatal(err)
 	}
 	browser, err := httpapi.NewBrowserManagement(httpapi.BrowserManagementOptions{Management: handler,
+		Logout: integrationAccountSessionLogoutFunc(func(context.Context, accountsession.Token) (bool, error) {
+			return false, nil
+		}),
 		DeploymentID: token.DeploymentID(), Origin: "https://console.example.test", Clock: accountsession.SystemClock{},
 		Key:           httpapi.BrowserLoginKey{ID: "integration-session-csrf-v1", Material: bytes.Repeat([]byte{0x74}, 32)},
 		ProofLifetime: time.Minute})
@@ -67,6 +70,15 @@ func prepareIntegrationBrowserManagement(
 		t.Fatal("prepare changed cookie/authority/navigation")
 	}
 	return browser, payload.Token
+}
+
+type integrationAccountSessionLogoutFunc func(context.Context, accountsession.Token) (bool, error)
+
+func (function integrationAccountSessionLogoutFunc) Logout(
+	ctx context.Context,
+	token accountsession.Token,
+) (bool, error) {
+	return function(ctx, token)
 }
 
 func integrationBrowserManagementRequest(

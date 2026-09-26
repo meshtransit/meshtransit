@@ -19,6 +19,7 @@ const (
 	ManagementProfileConsoleCookiePrivateV1 ManagementProfile = "console-cookie-csrf-private-v1"
 	maximumManagementDocumentBytes                            = 128 << 10
 	consoleSessionPreparePath                                 = "/auth/v1/session/prepare"
+	consoleSessionLogoutPath                                  = "/auth/v1/session/logout"
 	deviceRevokePath                                          = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"devices/{device_id}/actions/revoke"
 	policyPublishPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
@@ -44,6 +45,7 @@ type consoleManagementProfile struct {
 	Parameters      map[string]json.RawMessage `json:"parameters"`
 	Schemas         map[string]json.RawMessage `json:"schemas"`
 	Prepare         json.RawMessage            `json:"prepare"`
+	Logout          json.RawMessage            `json:"logout"`
 }
 
 // ManagementDocument returns independently owned deterministic OpenAPI bytes.
@@ -91,7 +93,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	validIdentity := profile.ID == ManagementProfileConsoleCookiePrivateV1 &&
 		profile.Format == "meshtransit-management-auth-profile/v1"
 	validTransport := len(profile.SecuritySchemes) == 2 && len(profile.Parameters) == 3
-	validShape := len(profile.Schemas) == 2 && len(profile.Prepare) > 0
+	validShape := len(profile.Schemas) == 2 && len(profile.Prepare) > 0 && len(profile.Logout) > 0
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
 	}
@@ -131,6 +133,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		return nil, ErrInvalidManagementProfile
 	}
 	paths[consoleSessionPreparePath] = profile.Prepare
+	paths[consoleSessionLogoutPath] = profile.Logout
 	document["paths"], err = json.Marshal(paths)
 	if err != nil {
 		return nil, ErrInvalidManagementProfile

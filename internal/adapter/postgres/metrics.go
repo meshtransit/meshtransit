@@ -69,6 +69,7 @@ const (
 	postgresOperationNodeKeyRotationCommit     postgresOperation = "node_key_rotation_commit"
 	postgresOperationNodeKeyRotationRollback   postgresOperation = "node_key_rotation_rollback"
 	postgresOperationAccountSessionResolve     postgresOperation = "account_session_resolve"
+	postgresOperationAccountSessionLogout      postgresOperation = "account_session_logout"
 	postgresOperationOutboxBacklog             postgresOperation = "outbox_backlog"
 	postgresOperationOutboxClaim               postgresOperation = "outbox_claim"
 	postgresOperationOutboxLoadRevision        postgresOperation = "outbox_load_revision"
@@ -138,6 +139,7 @@ var (
 		postgresOperationNodeKeyRotationCommit,
 		postgresOperationNodeKeyRotationRollback,
 		postgresOperationAccountSessionResolve,
+		postgresOperationAccountSessionLogout,
 		postgresOperationOutboxBacklog,
 		postgresOperationOutboxClaim,
 		postgresOperationOutboxLoadRevision,
@@ -416,7 +418,8 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationNodeKeyRotationApply ||
 			operation == postgresOperationNodeKeyRotationCommit ||
 			operation == postgresOperationNodeKeyRotationRollback ||
-			operation == postgresOperationAccountSessionResolve
+			operation == postgresOperationAccountSessionResolve ||
+			operation == postgresOperationAccountSessionLogout
 	}
 	if role != PoolRoleWorker {
 		return false

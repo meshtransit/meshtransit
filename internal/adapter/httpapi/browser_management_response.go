@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 )
@@ -47,6 +48,30 @@ func pristineBrowserManagementResponse(header http.Header) bool {
 		}
 	}
 	return true
+}
+
+func expiredAccountSessionCookie() (*http.Cookie, error) {
+	cookie := &http.Cookie{
+		Name: AccountSessionCookieName, Value: "", Path: "/", Secure: true, HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, Expires: time.Unix(1, 0).UTC(), MaxAge: -1,
+	}
+	if err := cookie.Valid(); err != nil || len(cookie.String()) >= 4096 {
+		return nil, ErrInvalidBrowserManagement
+	}
+	return cookie, nil
+}
+
+func validBrowserLogoutResponse(header http.Header) bool {
+	if header == nil || len(header.Values("Set-Cookie")) != 1 {
+		return false
+	}
+	cookie, err := expiredAccountSessionCookie()
+	if err != nil || header.Values("Set-Cookie")[0] != cookie.String() {
+		return false
+	}
+	withoutCookie := header.Clone()
+	withoutCookie.Del("Set-Cookie")
+	return pristineBrowserManagementResponse(withoutCookie)
 }
 
 func readBrowserSessionCookie(headers http.Header) (accountsession.Token, error) {
