@@ -331,6 +331,45 @@ with zero loss. Mean RTT was 1.421 ms and 1.830 ms; maximum RTT was 5.132 ms
 and 7.300 ms. Control logs contained readiness only and no stream termination
 during the soak. This closes the reproduced steady-state anti-flap failure.
 
+## Same-generation presence handover continuation
+
+Core source `5578378` separates initial presence acquisition from owner-exact
+renewal. An authenticated reconnect may atomically transfer the same durable
+session generation to another Control replica without deleting matching
+endpoint observations or publishing an offline/online edge. The superseded
+replica cannot reacquire through its renewal loop, and an exact release cannot
+delete its successor's lease. Normal stream exit leaves the lease to its
+bounded TTL, so a load-balanced reconnect can complete before offline state is
+projected.
+
+The Redis/PostgreSQL TLS integration suite exercised same-generation transfer,
+old-owner renewal rejection, new-owner renewal, higher-generation fencing, and
+exact release against Redis `8.8.0`; the full 4,248-test unit and race suites and
+`go vet` also passed. The integration harness now supplies the digest-pinned
+relay directory required by Control composition, rather than bypassing that
+startup invariant.
+
+The standard multi-architecture Control image `poc-v35` was published as
+`sha256:e3f8b2a323e2e430b8051c460f2c7b3921a9e64e212fce4208c49fc4b9dadeff`.
+Helm chart `0.2.17` adds a per-component image override, allowing revision 35
+to advance only Control while API and Identity remained on the qualified
+`poc-v33` digest. Strict lint, render, and Kubernetes server-side dry-run passed
+before the atomic rollout.
+
+Both original Control pods were then deleted sequentially, waiting for 2/2
+Ready replicas after each deletion. Client `.4` advanced from map revision 76
+to 77 and recorded the activation as preserved; peer changes remained 46,
+relay fallbacks 22, direct promotions 24, and direct expirations zero. Client
+`.5` advanced from revision 37 to 38 with another preserved activation; peer
+changes remained six, relay fallbacks four, direct promotions six, and direct
+expirations one. Both remained synchronized with one direct path and no relay
+path or runtime recovery.
+
+During the two pod replacements, bidirectional probes each delivered 120 of
+120 packets with zero loss. Mean RTT was 1.479 ms and 1.650 ms; maximum RTT was
+2.693 ms and 5.190 ms. Replacement Control logs contained readiness only. This
+closes same-generation presence handover for the single-node POC topology.
+
 ## HA interpretation
 
 This run qualifies replica replacement, not infrastructure-zone failure. All
@@ -344,14 +383,11 @@ state. Redis remained non-authoritative.
 
 ## Remaining execution order
 
-1. Add seamless same-generation presence handover between Control replicas,
-   then force stream ownership transfer and replica termination without a
-   peer-authority remove/add transition.
-2. Re-run the bounded direct/relay soak under deliberate endpoint and relay-
+1. Re-run the bounded direct/relay soak under deliberate endpoint and relay-
    directory churn while the control stream remains continuous.
-3. Repeat the matrix on a multi-node cluster with topology spread and a node
+2. Repeat the matrix on a multi-node cluster with topology spread and a node
    drain or loss.
-4. Add PostgreSQL and Redis failover qualification with recovery-generation,
+3. Add PostgreSQL and Redis failover qualification with recovery-generation,
    missed-notification, and reconciliation evidence.
-5. Extend publication cases to TCP, UDP, multiple devices, and multiple
+4. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
