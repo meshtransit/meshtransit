@@ -14,6 +14,8 @@ var (
 	ErrInvalidRuntime = errors.New("invalid dex broker runtime")
 	// ErrRuntimeUnavailable indicates that the owned broker component stopped unexpectedly.
 	ErrRuntimeUnavailable = errors.New("dex broker runtime unavailable")
+	// ErrSignerCheck indicates that token signing or its published verification keys are unavailable.
+	ErrSignerCheck = errors.New("check dex broker signer")
 )
 
 // Runtime owns admission to one embedded broker component and its complete
@@ -23,7 +25,7 @@ type Runtime struct {
 	component     runtimeComponent
 	componentDone <-chan struct{}
 	parentDone    <-chan struct{}
-	requests      sync.WaitGroup
+	inFlight      sync.WaitGroup
 	stopOnce      sync.Once
 	stop          chan struct{}
 	joined        chan struct{}
@@ -37,9 +39,33 @@ type Runtime struct {
 // Err must be stable after Done closes.
 type runtimeComponent interface {
 	http.Handler
+	checkSigner(context.Context) error
 	stop()
 	done() <-chan struct{}
 	err() error
+}
+
+// CheckSigner proves that the running component can publish its current JWKS,
+// sign a bounded probe, and verify that signature with the published keys.
+func (runtime *Runtime) CheckSigner(ctx context.Context) error {
+	if runtime == nil || ctx == nil || ctx.Err() != nil {
+		return ErrSignerCheck
+	}
+	runtime.mu.Lock()
+	if !runtime.accepting || runtime.component == nil || runtime.componentCompletedLocked() {
+		runtime.accepting = false
+		runtime.mu.Unlock()
+		return ErrSignerCheck
+	}
+	runtime.inFlight.Add(1)
+	component := runtime.component
+	runtime.mu.Unlock()
+	defer runtime.inFlight.Done()
+
+	if err := component.checkSigner(ctx); err != nil {
+		return ErrSignerCheck
+	}
+	return nil
 }
 
 func newRuntime(component runtimeComponent) (*Runtime, error) {
@@ -98,10 +124,10 @@ func (runtime *Runtime) ServeHTTP(response http.ResponseWriter, request *http.Re
 		writeUnavailable(response)
 		return
 	}
-	runtime.requests.Add(1)
+	runtime.inFlight.Add(1)
 	component := runtime.component
 	runtime.mu.Unlock()
-	defer runtime.requests.Done()
+	defer runtime.inFlight.Done()
 
 	component.ServeHTTP(response, request)
 }
@@ -136,9 +162,9 @@ func (runtime *Runtime) Done() <-chan struct{} {
 	return runtime.joined
 }
 
-// Shutdown fences admission, drains admitted handlers, stops the component,
-// and waits for its complete join. A caller timeout does not abandon cleanup;
-// a later call can continue waiting for the same stable result.
+// Shutdown fences admission, drains admitted handlers and signer checks, stops
+// the component, and waits for its complete join. A caller timeout does not
+// abandon cleanup; a later call can continue waiting for the same stable result.
 func (runtime *Runtime) Shutdown(ctx context.Context) error {
 	if runtime == nil || ctx == nil {
 		return ErrInvalidRuntime
@@ -185,13 +211,13 @@ func (runtime *Runtime) ownLifecycle() {
 		runtime.accepting = false
 		stopping := runtime.stopping
 		runtime.mu.Unlock()
-		runtime.requests.Wait()
+		runtime.inFlight.Wait()
 		runtime.finish(runtime.component.err(), !stopping)
 	}
 }
 
 func (runtime *Runtime) stopAndJoin() {
-	runtime.requests.Wait()
+	runtime.inFlight.Wait()
 	runtime.component.stop()
 	<-runtime.componentDone
 	runtime.finish(runtime.component.err(), false)

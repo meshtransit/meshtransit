@@ -87,6 +87,7 @@ func TestDependencyMonitorStartsWhenIsolatedLoginDependencyIsUnavailable(t *test
 		&fakeChecker{component: ComponentRedis},
 		&fakeChecker{component: ComponentIdentityPostgreSQL, err: errors.New("identity database unavailable")},
 		&fakeChecker{component: ComponentIdentityConfiguration, err: errors.New("identity drift")},
+		&fakeChecker{component: ComponentIdentitySigner, err: errors.New("identity signer unavailable")},
 		&fakeChecker{component: ComponentPrivateLogin, err: errors.New("provider unavailable")},
 	)
 	if err := monitor.Start(t.Context()); err != nil {

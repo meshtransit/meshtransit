@@ -21,6 +21,10 @@ type identityConfigurationChecker struct {
 	service *dexbroker.Service
 }
 
+type identitySignerChecker struct {
+	service *dexbroker.Service
+}
+
 func (checker *identityConfigurationChecker) Component() app.Component {
 	return app.ComponentIdentityConfiguration
 }
@@ -30,6 +34,23 @@ func (checker *identityConfigurationChecker) Check(ctx context.Context) error {
 		return errInvalidIdentityBrokerComposition
 	}
 	return checker.service.CheckConfiguration(ctx)
+}
+
+func (checker *identitySignerChecker) Component() app.Component {
+	return app.ComponentIdentitySigner
+}
+
+func (checker *identitySignerChecker) Check(ctx context.Context) error {
+	if checker == nil || checker.service == nil || ctx == nil || ctx.Err() != nil {
+		return errInvalidIdentityBrokerComposition
+	}
+	// The dependency monitor runs its first check before services start. The
+	// broker performs the same cryptographic proof synchronously during Start;
+	// later checks exercise the running signer directly.
+	if checker.service.Done() == nil {
+		return nil
+	}
+	return checker.service.CheckSigner(ctx)
 }
 
 func (checker *identityPostgreSQLChecker) Component() app.Component {
@@ -79,6 +100,7 @@ func composeIdentityBroker(
 		checkers: []app.DependencyChecker{
 			&identityPostgreSQLChecker{resource: resource},
 			&identityConfigurationChecker{service: service},
+			&identitySignerChecker{service: service},
 		},
 		services: []app.OwnedService{
 			{Name: "identity-broker", Service: service},

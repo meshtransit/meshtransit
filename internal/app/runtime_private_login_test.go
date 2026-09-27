@@ -21,7 +21,9 @@ func TestPrivateLoginReadinessIsIsolatedAndAPIScoped(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		for _, component := range []Component{ComponentIdentityPostgreSQL, ComponentIdentityConfiguration} {
+		for _, component := range []Component{
+			ComponentIdentityPostgreSQL, ComponentIdentityConfiguration, ComponentIdentitySigner,
+		} {
 			if _, required := state.statuses[component]; required {
 				if err := state.SetComponentStatus(component, ComponentStatusReady); err != nil {
 					t.Fatal(err)
@@ -71,6 +73,7 @@ func TestAllRoleIdentityFailureDoesNotEvictCore(t *testing.T) {
 		ComponentRedis:                 ComponentStatusReady,
 		ComponentIdentityPostgreSQL:    ComponentStatusUnavailable,
 		ComponentIdentityConfiguration: ComponentStatusUnavailable,
+		ComponentIdentitySigner:        ComponentStatusUnavailable,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +81,8 @@ func TestAllRoleIdentityFailureDoesNotEvictCore(t *testing.T) {
 		t.Fatal("identity outage evicted healthy Core")
 	}
 	if state.AdmissionRequired(ComponentIdentityPostgreSQL) ||
-		state.AdmissionRequired(ComponentIdentityConfiguration) {
+		state.AdmissionRequired(ComponentIdentityConfiguration) ||
+		state.AdmissionRequired(ComponentIdentitySigner) {
 		t.Fatal("co-located identity component gates Core admission")
 	}
 }
@@ -94,6 +98,7 @@ func TestIdentityOnlyReadinessFailsClosed(t *testing.T) {
 	if err := state.SetComponentStatuses(map[Component]ComponentStatus{
 		ComponentIdentityPostgreSQL:    ComponentStatusReady,
 		ComponentIdentityConfiguration: ComponentStatusUnavailable,
+		ComponentIdentitySigner:        ComponentStatusReady,
 	}); err != nil {
 		t.Fatal(err)
 	}

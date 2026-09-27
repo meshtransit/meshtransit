@@ -265,7 +265,8 @@ func validRoleLabel(role string) bool {
 
 func validComponentLabel(component string) bool {
 	return component == "postgresql" || component == "redis" || component == "private_login" ||
-		component == "identity_postgresql" || component == "identity_configuration"
+		component == "identity_postgresql" || component == "identity_configuration" ||
+		component == "identity_signer"
 }
 
 func operatorRoute(path string) string {

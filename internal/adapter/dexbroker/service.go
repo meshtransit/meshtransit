@@ -93,6 +93,21 @@ func (service *Service) CheckConfiguration(ctx context.Context) error {
 	return nil
 }
 
+// CheckSigner performs one bounded cryptographic proof against the active
+// signer and the exact public keys it currently publishes.
+func (service *Service) CheckSigner(ctx context.Context) error {
+	if service == nil || ctx == nil || ctx.Err() != nil {
+		return ErrSignerCheck
+	}
+	service.mu.Lock()
+	runtime := service.runtime
+	service.mu.Unlock()
+	if runtime == nil {
+		return ErrSignerCheck
+	}
+	return runtime.CheckSigner(ctx)
+}
+
 func nilServiceDependency(value any) bool {
 	if value == nil {
 		return true

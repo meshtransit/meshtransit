@@ -115,7 +115,8 @@ func hasIdentityRole(roles []Role) bool {
 }
 
 func isIdentityComponent(component Component) bool {
-	return component == ComponentIdentityPostgreSQL || component == ComponentIdentityConfiguration
+	return component == ComponentIdentityPostgreSQL || component == ComponentIdentityConfiguration ||
+		component == ComponentIdentitySigner
 }
 
 // SetReady changes whether the process may admit its configured work.

@@ -178,6 +178,28 @@ func TestServiceConfigurationCheckDetectsSecretDrift(t *testing.T) {
 	}
 }
 
+func TestServiceSignerCheckRequiresRunningRuntime(t *testing.T) {
+	var absent *Service
+	if err := absent.CheckSigner(t.Context()); !errors.Is(err, ErrSignerCheck) {
+		t.Fatalf("nil CheckSigner() error = %v", err)
+	}
+	serverStorage := newPostgreSQLResourceTestStorage(componentTestLogger())
+	resource := openPostgreSQLResourceTestDouble(t, serverStorage)
+	t.Cleanup(func() { _ = resource.Shutdown(context.Background()) })
+	service, err := NewService(validServiceTestOptions(t), resource, componentTestLogger())
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	if err := service.CheckSigner(t.Context()); !errors.Is(err, ErrSignerCheck) {
+		t.Fatalf("pre-start CheckSigner() error = %v", err)
+	}
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := service.CheckSigner(canceled); !errors.Is(err, ErrSignerCheck) {
+		t.Fatalf("canceled CheckSigner() error = %v", err)
+	}
+}
+
 func validServiceTestOptions(t *testing.T) ServiceOptions {
 	t.Helper()
 	connectorSecret := testServiceSecretFile(t, "connector-secret", strings.Repeat("c", 48))

@@ -3,6 +3,7 @@
 package dexbroker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"github.com/dexidp/dex/server"
 	"github.com/dexidp/dex/server/signer"
 	"github.com/dexidp/dex/storage"
+	"github.com/go-jose/go-jose/v4"
 )
 
 var (
@@ -55,6 +57,7 @@ type componentResources struct {
 // Its done channel closes only after all server workers join.
 type dexComponent struct {
 	server              *server.Server
+	signer              signer.Signer
 	outboundHTTPClients *outboundHTTPClients
 	cancel              context.CancelFunc
 	doneCh              chan struct{}
@@ -69,6 +72,11 @@ func newDexRuntime(ctx context.Context, options componentOptions, resources comp
 	component, err := newDexComponent(ctx, options, resources)
 	if err != nil {
 		return nil, err
+	}
+	if err := component.checkSigner(ctx); err != nil {
+		component.stop()
+		<-component.done()
+		return nil, errors.Join(ErrComponentStart, ErrSignerCheck)
 	}
 
 	runtime, err := newRuntimeWithCancellation(component, ctx.Done())
@@ -153,7 +161,7 @@ func newDexComponent(ctx context.Context, options componentOptions, resources co
 	}
 
 	component := &dexComponent{
-		server: dexServer, outboundHTTPClients: outboundHTTPClients,
+		server: dexServer, signer: localSigner, outboundHTTPClients: outboundHTTPClients,
 		cancel: cancel, doneCh: make(chan struct{}),
 	}
 	go component.ownLifecycle(serverDone)
@@ -202,6 +210,48 @@ func isNilStorage(serverStorage storage.Storage) bool {
 
 func (component *dexComponent) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	component.server.ServeHTTP(response, request)
+}
+
+const signerProbePayload = "meshtransit-signer-readiness-v1"
+
+func (component *dexComponent) checkSigner(ctx context.Context) error {
+	if component == nil || ctx == nil || ctx.Err() != nil || component.signer == nil {
+		return ErrSignerCheck
+	}
+	algorithm, err := component.signer.Algorithm(ctx)
+	if err != nil || algorithm != jose.RS256 {
+		return ErrSignerCheck
+	}
+	keys, err := component.signer.ValidationKeys(ctx)
+	if err != nil || len(keys) == 0 {
+		return ErrSignerCheck
+	}
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		if key == nil || key.KeyID == "" || key.Use != "sig" ||
+			key.Algorithm != string(algorithm) || !key.IsPublic() {
+			return ErrSignerCheck
+		}
+		if _, duplicate := seen[key.KeyID]; duplicate {
+			return ErrSignerCheck
+		}
+		seen[key.KeyID] = struct{}{}
+	}
+	signed, err := component.signer.Sign(ctx, []byte(signerProbePayload))
+	if err != nil || signed == "" {
+		return ErrSignerCheck
+	}
+	message, err := jose.ParseSigned(signed, []jose.SignatureAlgorithm{algorithm})
+	if err != nil {
+		return ErrSignerCheck
+	}
+	for _, key := range keys {
+		payload, verifyErr := message.Verify(key.Key)
+		if verifyErr == nil && bytes.Equal(payload, []byte(signerProbePayload)) {
+			return nil
+		}
+	}
+	return ErrSignerCheck
 }
 
 func (component *dexComponent) stop() {

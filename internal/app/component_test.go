@@ -20,14 +20,16 @@ func TestRequiredComponentsUsesRoleUnion(t *testing.T) {
 		{name: "relay", roles: []Role{RoleRelay}, want: nil},
 		{
 			name: "identity", roles: []Role{RoleIdentity},
-			want: []Component{ComponentIdentityPostgreSQL, ComponentIdentityConfiguration},
+			want: []Component{
+				ComponentIdentityPostgreSQL, ComponentIdentityConfiguration, ComponentIdentitySigner,
+			},
 		},
 		{
 			name:  "deduplicated union",
 			roles: []Role{RoleAPI, RoleControl, RoleWorker, RoleRelay, RoleIdentity},
 			want: []Component{
 				ComponentPostgreSQL, ComponentRedis,
-				ComponentIdentityPostgreSQL, ComponentIdentityConfiguration,
+				ComponentIdentityPostgreSQL, ComponentIdentityConfiguration, ComponentIdentitySigner,
 			},
 		},
 	}
@@ -73,6 +75,7 @@ func TestComponentStringIsStableAndSafe(t *testing.T) {
 		ComponentPrivateLogin:          "private_login",
 		ComponentIdentityPostgreSQL:    "identity_postgresql",
 		ComponentIdentityConfiguration: "identity_configuration",
+		ComponentIdentitySigner:        "identity_signer",
 		Component(255):                 "unknown",
 	}
 	for component, want := range tests {

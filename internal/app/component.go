@@ -17,6 +17,8 @@ const (
 	ComponentIdentityPostgreSQL
 	// ComponentIdentityConfiguration is the approved immutable broker configuration.
 	ComponentIdentityConfiguration
+	// ComponentIdentitySigner proves token issuance and published JWKS agree.
+	ComponentIdentitySigner
 )
 
 // String returns the stable operator-facing component name.
@@ -32,6 +34,8 @@ func (component Component) String() string {
 		return "identity_postgresql"
 	case ComponentIdentityConfiguration:
 		return "identity_configuration"
+	case ComponentIdentitySigner:
+		return "identity_signer"
 	default:
 		return "unknown"
 	}
@@ -55,7 +59,7 @@ func RequiredComponents(roles []Role) ([]Component, error) {
 		case RoleRelay:
 		}
 	}
-	components := make([]Component, 0, 4)
+	components := make([]Component, 0, 5)
 	if requiresStorage {
 		components = append(components, ComponentPostgreSQL, ComponentRedis)
 	}
@@ -64,6 +68,7 @@ func RequiredComponents(roles []Role) ([]Component, error) {
 			components,
 			ComponentIdentityPostgreSQL,
 			ComponentIdentityConfiguration,
+			ComponentIdentitySigner,
 		)
 	}
 	if len(components) == 0 {

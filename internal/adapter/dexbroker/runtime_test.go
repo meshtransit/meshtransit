@@ -56,6 +56,42 @@ func TestRuntimeServesWhileReady(t *testing.T) {
 	}
 }
 
+func TestRuntimeSignerCheckIsDrainedBeforeComponentStop(t *testing.T) {
+	t.Parallel()
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	component := newRuntimeFixture(http.NotFoundHandler())
+	component.signerCheck = func(context.Context) error {
+		close(entered)
+		<-release
+		return nil
+	}
+	component.completeOnStop = true
+	runtime := mustRuntime(t, component)
+
+	checkResult := make(chan error, 1)
+	go func() { checkResult <- runtime.CheckSigner(context.Background()) }()
+	<-entered
+	shutdownResult := make(chan error, 1)
+	go func() { shutdownResult <- runtime.Shutdown(context.Background()) }()
+	waitForNotReady(t, runtime)
+	if component.stopCalls.Load() != 0 {
+		t.Fatal("component stopped before admitted signer check drained")
+	}
+
+	close(release)
+	if err := <-checkResult; err != nil {
+		t.Fatalf("CheckSigner() error = %v", err)
+	}
+	if err := <-shutdownResult; err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	if component.signerCalls.Load() != 1 || component.stopCalls.Load() != 1 {
+		t.Fatal("signer check or component stop did not complete exactly once")
+	}
+}
+
 func TestRuntimeShutdownFencesAdmissionAndDrainsHandlers(t *testing.T) {
 	t.Parallel()
 
@@ -290,7 +326,10 @@ type runtimeFixture struct {
 	completeOnce   sync.Once
 	completeOnStop bool
 	result         error
+	signerErr      error
+	signerCheck    func(context.Context) error
 	calls          atomic.Int64
+	signerCalls    atomic.Int64
 	stopCalls      atomic.Int64
 }
 
@@ -301,6 +340,14 @@ func newRuntimeFixture(handler http.Handler) *runtimeFixture {
 func (fixture *runtimeFixture) ServeHTTP(response http.ResponseWriter, request *http.Request) {
 	fixture.calls.Add(1)
 	fixture.handler.ServeHTTP(response, request)
+}
+
+func (fixture *runtimeFixture) checkSigner(ctx context.Context) error {
+	fixture.signerCalls.Add(1)
+	if fixture.signerCheck != nil {
+		return fixture.signerCheck(ctx)
+	}
+	return fixture.signerErr
 }
 
 func (fixture *runtimeFixture) stop() {

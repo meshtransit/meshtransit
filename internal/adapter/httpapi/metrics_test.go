@@ -79,10 +79,12 @@ func TestOperatorMetricsPrivatePrerequisiteRemainsClosedAndObservable(t *testing
 	}
 	for _, component := range []string{
 		"postgresql", "redis", "private_login", "identity_postgresql", "identity_configuration",
+		"identity_signer",
 		"unknown", "private_Login", "route-123",
 	} {
 		valid := component == "postgresql" || component == "redis" || component == "private_login" ||
-			component == "identity_postgresql" || component == "identity_configuration"
+			component == "identity_postgresql" || component == "identity_configuration" ||
+			component == "identity_signer"
 		if validComponentLabel(component) != valid {
 			t.Fatal("operator component allowlist changed beyond closed profile")
 		}
@@ -102,6 +104,7 @@ func TestOperatorMetricsExposeIdentityRoleAndStorage(t *testing.T) {
 		"identity role":          `meshtransit_runtime_role{role="identity"} 1`,
 		"identity storage":       `meshtransit_dependency_ready{component="identity_postgresql"} 1`,
 		"identity configuration": `meshtransit_dependency_ready{component="identity_configuration"} 1`,
+		"identity signer":        `meshtransit_dependency_ready{component="identity_signer"} 1`,
 	} {
 		if !strings.Contains(response.Body.String(), value) {
 			t.Errorf("metrics missing %s %q: %s", name, value, response.Body.String())

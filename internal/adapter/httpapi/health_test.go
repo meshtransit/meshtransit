@@ -139,6 +139,7 @@ func TestHealthHandlerReportsDegradedIdentityWithoutEvictingCore(t *testing.T) {
 		app.ComponentRedis:                 app.ComponentStatusReady,
 		app.ComponentIdentityPostgreSQL:    app.ComponentStatusUnavailable,
 		app.ComponentIdentityConfiguration: app.ComponentStatusUnavailable,
+		app.ComponentIdentitySigner:        app.ComponentStatusUnavailable,
 	}); err != nil {
 		t.Fatal(err)
 	}

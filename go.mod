@@ -5,6 +5,7 @@ go 1.26.8
 require (
 	github.com/AppsFlyer/go-sundheit v0.6.0
 	github.com/dexidp/dex v0.0.0-20260303133905-11d2eeb52b42
+	github.com/go-jose/go-jose/v4 v4.1.3
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/redis/go-redis/v9 v9.22.0
@@ -31,7 +32,6 @@ require (
 	github.com/dexidp/dex/api/v2 v2.4.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.8-0.20250403174932-29230038a667 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260214004413-d219187c3433 // indirect
 	github.com/go-ldap/ldap/v3 v3.4.12 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
