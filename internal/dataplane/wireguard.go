@@ -26,6 +26,8 @@ const (
 	maxWireGuardPeers         = 256
 	maxWireGuardRoutes        = 512
 	maxWireGuardPeerEndpoints = 128
+	// Keep direct NAT mappings warm without sending tunnel keepalives over relay paths.
+	directPathKeepaliveSeconds = 25
 )
 
 var (
@@ -779,6 +781,7 @@ func (e *WireGuardEngine) configurePeerEndpoint(
 	configuration.WriteString("\nupdate_only=true\nendpoint=")
 	configuration.WriteString(endpoint)
 	configuration.WriteByte('\n')
+	writeWireGuardKeepalive(&configuration, path)
 	if err := e.device.Configure(bytes.NewReader(configuration.Bytes())); err != nil {
 		_ = e.Close()
 
@@ -1028,12 +1031,23 @@ func writeWireGuardPeerConfiguration(
 		configuration.WriteString(peer.baseEndpoint)
 		configuration.WriteByte('\n')
 	}
+	writeWireGuardKeepalive(configuration, peer.basePath)
 	configuration.WriteString("replace_allowed_ips=true\n")
 	for _, allowedIP := range peer.allowedIPs {
 		configuration.WriteString("allowed_ip=")
 		configuration.WriteString(allowedIP.String())
 		configuration.WriteByte('\n')
 	}
+}
+
+func writeWireGuardKeepalive(configuration *bytes.Buffer, path peerPath) {
+	configuration.WriteString("persistent_keepalive_interval=")
+	if path == peerPathDirect {
+		configuration.WriteString(strconv.Itoa(directPathKeepaliveSeconds))
+	} else {
+		configuration.WriteByte('0')
+	}
+	configuration.WriteByte('\n')
 }
 
 func writeWireGuardPeerKey(configuration *bytes.Buffer, key [32]byte) {

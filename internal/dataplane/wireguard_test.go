@@ -49,6 +49,7 @@ func TestWireGuardEngineApply(t *testing.T) {
 	for _, expected := range []string{
 		"listen_port=41641",
 		"endpoint=203.0.113.20:41641",
+		"persistent_keepalive_interval=25",
 		"allowed_ip=100.64.0.4/32",
 	} {
 		if !strings.Contains(device.configuration, expected) {
@@ -63,6 +64,42 @@ func TestWireGuardEngineApply(t *testing.T) {
 	}
 	if err := engine.Close(); err != nil || device.closeCalls != 1 {
 		t.Fatalf("Close() error=%v calls=%d", err, device.closeCalls)
+	}
+}
+
+func TestWireGuardEngineTogglesKeepaliveWithSelectedPath(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot = addTestRelay(snapshot)
+	direct := snapshot.Peers[0].Endpoints[0]
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if !strings.Contains(device.configurations[0], "persistent_keepalive_interval=0") {
+		t.Fatalf("relay configuration = %q, want disabled keepalive", device.configurations[0])
+	}
+	if err := engine.SetPreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID, direct); err != nil {
+		t.Fatalf("SetPreferredEndpoint() error = %v", err)
+	}
+	if !strings.Contains(device.configurations[1], "persistent_keepalive_interval=25") {
+		t.Fatalf("direct configuration = %q, want enabled keepalive", device.configurations[1])
+	}
+	if err := engine.RestorePreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID); err != nil {
+		t.Fatalf("RestorePreferredEndpoint() error = %v", err)
+	}
+	if !strings.Contains(device.configurations[2], "persistent_keepalive_interval=0") {
+		t.Fatalf("restored relay configuration = %q, want disabled keepalive", device.configurations[2])
 	}
 }
 
