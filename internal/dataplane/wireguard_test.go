@@ -569,6 +569,80 @@ func TestWireGuardEngineEndpointAuthorityChangeResetsSelectedPath(t *testing.T) 
 	}
 }
 
+func TestWireGuardEngineDiscoveryIdentityChangeResetsPeerSession(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot.Peers[0].DiscoveryKey = "discokey:" + strings.Repeat("11", 32)
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	snapshot.Revision++
+	snapshot.Peers[0].DiscoveryKey = "discokey:" + strings.Repeat("22", 32)
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply(discovery identity change) error = %v", err)
+	}
+	if device.configureCalls != 2 {
+		t.Fatalf(
+			"discovery identity change configure calls = %d, want 2",
+			device.configureCalls,
+		)
+	}
+	reset := device.configurations[1]
+	if strings.Count(reset, "public_key=") != 2 ||
+		!strings.Contains(reset, "remove=true") ||
+		!strings.Contains(reset, "replace_allowed_ips=true") ||
+		strings.Contains(reset, "replace_peers=true") {
+		t.Fatalf("discovery identity change configuration = %q", reset)
+	}
+}
+
+func TestWireGuardEngineClosesWhenPeerSessionResetFails(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot.Peers[0].DiscoveryKey = "discokey:" + strings.Repeat("11", 32)
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	device.configureErr = errors.New("test peer reset failure")
+	snapshot.Revision++
+	snapshot.Peers[0].DiscoveryKey = "discokey:" + strings.Repeat("22", 32)
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err == nil {
+		t.Fatal("Apply(discovery identity change) error = nil")
+	}
+	if device.configureCalls != 2 || device.closeCalls != 1 || engine.device != nil ||
+		engine.appliedRevision != 0 {
+		t.Fatalf(
+			"failed peer reset calls=%d close=%d device=%#v revision=%d",
+			device.configureCalls,
+			device.closeCalls,
+			engine.device,
+			engine.appliedRevision,
+		)
+	}
+}
+
 func TestWireGuardEngineClosesWhenEquivalentRevisionResetFails(t *testing.T) {
 	t.Parallel()
 

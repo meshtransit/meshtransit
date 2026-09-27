@@ -43,6 +43,7 @@ var (
 type wireGuardPeerPlan struct {
 	id                  uint64
 	key                 [32]byte
+	discoveryKey        string
 	baseEndpoint        string
 	basePath            peerPath
 	authorizedEndpoints []netip.AddrPort
@@ -51,6 +52,7 @@ type wireGuardPeerPlan struct {
 
 type wireGuardPeerState struct {
 	key                 [32]byte
+	discoveryKey        string
 	baseEndpoint        string
 	basePath            peerPath
 	currentEndpoint     string
@@ -268,8 +270,10 @@ func (e *WireGuardEngine) Apply(
 		baseCompatible := e.configurationHash == plan.configurationHash &&
 			equalPeerBaseConfiguration(e.peers, plan.peers)
 		if baseCompatible && !routesChanged {
+			sessionResets := changedPeerSessions(e.peers, plan.peers)
 			if e.appliedRevision == snapshot.Revision &&
-				equalPeerEndpointAuthority(e.peers, plan.peers) && !relayChanged {
+				equalPeerEndpointAuthority(e.peers, plan.peers) && !relayChanged &&
+				len(sessionResets) == 0 {
 				return plan.state(), nil
 			}
 			if relayChanged {
@@ -285,6 +289,11 @@ func (e *WireGuardEngine) Apply(
 				return StateFailed, err
 			}
 			if advanced {
+				if err := e.resetPeerSessions(sessionResets); err != nil {
+					_ = e.Close()
+
+					return StateFailed, err
+				}
 				e.relayFingerprint = plan.relayFingerprint
 				e.relayTopology = plan.relayTopology
 
@@ -683,12 +692,34 @@ func (e *WireGuardEngine) advanceCompatiblePlan(
 			[]netip.AddrPort(nil),
 			peer.authorizedEndpoints...,
 		)
+		installed.discoveryKey = peer.discoveryKey
 		nextPeers[peer.id] = installed
 	}
 	e.peers = nextPeers
 	e.appliedRevision = revision
 
 	return true, nil
+}
+
+func (e *WireGuardEngine) resetPeerSessions(peers []wireGuardPeerPlan) error {
+	if len(peers) == 0 {
+		return nil
+	}
+	// A changed discovery identity proves that the remote probe session was
+	// replaced. Recreate only that encrypted peer so stale transport keys do
+	// not wait for the tunnel handshake retry timer, while preserving the TUN,
+	// shared UDP socket, routes, and unrelated peer sessions.
+	var configuration bytes.Buffer
+	for _, peer := range peers {
+		writeWireGuardPeerKey(&configuration, peer.key)
+		configuration.WriteString("remove=true\n")
+		writeWireGuardPeerConfiguration(&configuration, peer)
+	}
+	if err := e.device.Configure(bytes.NewReader(configuration.Bytes())); err != nil {
+		return errors.New("dataplane: resetting peer session failed")
+	}
+
+	return nil
 }
 
 func (e *WireGuardEngine) configurePeerEndpoint(
@@ -735,6 +766,7 @@ func (e *WireGuardEngine) adoptPlan(revision uint64, plan wireGuardPlan) {
 	for _, peer := range plan.peers {
 		e.peers[peer.id] = wireGuardPeerState{
 			key:                 peer.key,
+			discoveryKey:        peer.discoveryKey,
 			baseEndpoint:        peer.baseEndpoint,
 			basePath:            peer.basePath,
 			currentEndpoint:     peer.baseEndpoint,
@@ -882,6 +914,7 @@ func buildWireGuardPlan(
 		plannedPeers = append(plannedPeers, wireGuardPeerPlan{
 			id:                  peer.ID,
 			key:                 peerKey,
+			discoveryKey:        peer.DiscoveryKey,
 			baseEndpoint:        baseEndpoint,
 			basePath:            basePath,
 			authorizedEndpoints: authorizedEndpoints,
@@ -922,22 +955,7 @@ func buildWireGuardPlan(
 	var peerConfiguration bytes.Buffer
 	peerConfiguration.WriteString("replace_peers=true\n")
 	for _, peer := range plannedPeers {
-		peerConfiguration.WriteString("public_key=")
-		var encodedPublic [64]byte
-		hex.Encode(encodedPublic[:], peer.key[:])
-		peerConfiguration.Write(encodedPublic[:])
-		peerConfiguration.WriteString("\nprotocol_version=1\n")
-		if peer.baseEndpoint != "" {
-			peerConfiguration.WriteString("endpoint=")
-			peerConfiguration.WriteString(peer.baseEndpoint)
-			peerConfiguration.WriteByte('\n')
-		}
-		peerConfiguration.WriteString("replace_allowed_ips=true\n")
-		for _, allowedIP := range peer.allowedIPs {
-			peerConfiguration.WriteString("allowed_ip=")
-			peerConfiguration.WriteString(allowedIP.String())
-			peerConfiguration.WriteByte('\n')
-		}
+		writeWireGuardPeerConfiguration(&peerConfiguration, peer)
 	}
 	configuration.Write(peerConfiguration.Bytes())
 	encoded := configuration.Bytes()
@@ -960,6 +978,33 @@ func buildWireGuardPlan(
 	}
 
 	return plan, nil
+}
+
+func writeWireGuardPeerConfiguration(
+	configuration *bytes.Buffer,
+	peer wireGuardPeerPlan,
+) {
+	writeWireGuardPeerKey(configuration, peer.key)
+	configuration.WriteString("protocol_version=1\n")
+	if peer.baseEndpoint != "" {
+		configuration.WriteString("endpoint=")
+		configuration.WriteString(peer.baseEndpoint)
+		configuration.WriteByte('\n')
+	}
+	configuration.WriteString("replace_allowed_ips=true\n")
+	for _, allowedIP := range peer.allowedIPs {
+		configuration.WriteString("allowed_ip=")
+		configuration.WriteString(allowedIP.String())
+		configuration.WriteByte('\n')
+	}
+}
+
+func writeWireGuardPeerKey(configuration *bytes.Buffer, key [32]byte) {
+	configuration.WriteString("public_key=")
+	var encodedPublic [64]byte
+	hex.Encode(encodedPublic[:], key[:])
+	configuration.Write(encodedPublic[:])
+	configuration.WriteByte('\n')
 }
 
 func equalPeerEndpointAuthority(
@@ -995,6 +1040,22 @@ func equalPeerBaseConfiguration(
 	}
 
 	return true
+}
+
+func changedPeerSessions(
+	current map[uint64]wireGuardPeerState,
+	planned []wireGuardPeerPlan,
+) []wireGuardPeerPlan {
+	changed := make([]wireGuardPeerPlan, 0)
+	for _, peer := range planned {
+		installed, exists := current[peer.id]
+		if exists && installed.key == peer.key &&
+			installed.discoveryKey != peer.discoveryKey {
+			changed = append(changed, peer)
+		}
+	}
+
+	return changed
 }
 
 func buildRelayConfig(

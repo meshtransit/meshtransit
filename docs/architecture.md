@@ -117,6 +117,11 @@ the exact installed peer and map revision through bounded WireGuard UAPI
 expiry restores the deterministic control-signed base endpoint; a new map
 revision reapplies the full signed configuration before new proof is admitted.
 Update ambiguity closes the packet engine and stops the session fail closed.
+A validated change to one peer's ephemeral discovery identity also recreates
+only that peer's encrypted tunnel session. This discards transport keys retained
+across the remote daemon restart without reopening the TUN, shared UDP socket,
+routes, relay workers, or unrelated peer sessions; the next authenticated path
+proof can then restore the direct endpoint immediately.
 
 The relay subsystem compiles an independent immutable authority from each
 validated map. It accepts only non-STUN relay nodes, binds every destination
