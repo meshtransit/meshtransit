@@ -65,6 +65,7 @@ type Runtime struct {
 	registry  *Registry
 	manager   *pathdiscovery.ProbeManager
 	observer  PathObserver
+	telemetry *pathdiscovery.ProbeTelemetry
 	clock     func() time.Time
 	pace      time.Duration
 	refresh   time.Duration
@@ -94,12 +95,14 @@ func NewRuntime(
 	identity *disco.Identity,
 	transport pathdiscovery.DatagramTransport,
 	observer PathObserver,
+	telemetry *pathdiscovery.ProbeTelemetry,
 ) (*Runtime, error) {
 	return newRuntime(
 		ctx,
 		identity,
 		transport,
 		observer,
+		telemetry,
 		time.Now,
 		defaultProbePace,
 		randomProbeRefresh(),
@@ -111,11 +114,13 @@ func newRuntime(
 	identity *disco.Identity,
 	transport pathdiscovery.DatagramTransport,
 	observer PathObserver,
+	telemetry *pathdiscovery.ProbeTelemetry,
 	clock func() time.Time,
 	pace time.Duration,
 	refresh time.Duration,
 ) (*Runtime, error) {
-	if ctx == nil || transport == nil || clock == nil || pace <= 0 || refresh <= 0 {
+	if ctx == nil || transport == nil || telemetry == nil || clock == nil ||
+		pace <= 0 || refresh <= 0 {
 		return nil, errors.New("peerprobe: runtime dependencies are invalid")
 	}
 	if err := ctx.Err(); err != nil {
@@ -131,6 +136,7 @@ func newRuntime(
 		registry:  registry,
 		manager:   pathdiscovery.NewProbeManager(),
 		observer:  observer,
+		telemetry: telemetry,
 		clock:     clock,
 		pace:      pace,
 		refresh:   refresh,
@@ -185,6 +191,7 @@ func (r *Runtime) Activate(
 		generation: generation,
 		targets:    targets,
 	})
+	r.telemetry.RecordMapActivation()
 
 	return channelCount, len(targets), nil
 }
@@ -208,7 +215,10 @@ func (r *Runtime) deactivateLocked() int {
 	r.resetPingWindow(pathdiscovery.ProbeGeneration{})
 	r.registry.Deactivate()
 
-	return r.manager.Deactivate()
+	removed := r.manager.Deactivate()
+	r.telemetry.RecordPendingInvalidated(uint64(removed))
+
+	return removed
 }
 
 // Probe starts and sends one transaction through the current shared socket.
@@ -247,24 +257,30 @@ func (r *Runtime) probe(
 	if !generation.IsValid() || generation != r.activeGeneration() {
 		return pathdiscovery.ProbeTransaction{}, ErrInactive
 	}
+	r.telemetry.RecordProbeAttempt()
 	transaction, err := r.manager.Start(r.clock(), peerID, endpoint)
 	if err != nil {
+		r.telemetry.RecordProbeStartFailure()
 		return pathdiscovery.ProbeTransaction{}, err
 	}
+	r.telemetry.RecordProbeStarted()
 	if transaction.Generation != generation {
 		r.manager.Cancel(transaction)
+		r.telemetry.RecordProbeSendFailure()
 
 		return pathdiscovery.ProbeTransaction{}, ErrInvalidGeneration
 	}
 	packet, err := r.registry.SealPing(transaction, 0)
 	if err != nil {
 		r.manager.Cancel(transaction)
+		r.telemetry.RecordProbeSendFailure()
 
 		return pathdiscovery.ProbeTransaction{}, err
 	}
 	usedSocket, err := r.transport.SendDatagram(packet, endpoint)
 	if err != nil {
 		r.manager.Cancel(transaction)
+		r.telemetry.RecordProbeSendFailure()
 
 		return pathdiscovery.ProbeTransaction{}, fmt.Errorf(
 			"peerprobe: sending ping: %w",
@@ -273,9 +289,12 @@ func (r *Runtime) probe(
 	}
 	if usedSocket != generation.Socket {
 		r.manager.Cancel(transaction)
+		r.telemetry.RecordProbeSendFailure()
 
 		return pathdiscovery.ProbeTransaction{}, pathdiscovery.ErrSocketChanged
 	}
+
+	r.telemetry.RecordProbeSent()
 
 	return transaction, nil
 }
@@ -308,6 +327,7 @@ func (r *Runtime) HandleDatagram(
 	select {
 	case r.slots <- struct{}{}:
 	default:
+		r.telemetry.RecordDatagramDrop()
 		return
 	}
 	datagram := receivedDatagram{
@@ -319,8 +339,10 @@ func (r *Runtime) HandleDatagram(
 	case r.datagrams <- datagram:
 	case <-r.done:
 		<-r.slots
+		r.telemetry.RecordDatagramDrop()
 	default:
 		<-r.slots
+		r.telemetry.RecordDatagramDrop()
 	}
 }
 
@@ -379,20 +401,31 @@ func (r *Runtime) processDatagram(datagram receivedDatagram) {
 	now := r.clock()
 	switch message := message.(type) {
 	case IncomingPing:
+		r.telemetry.RecordAuthenticatedPing()
 		if !r.allowIncomingPing(now, message) {
+			r.telemetry.RecordPingRateLimited()
 			return
 		}
 		packet, err := r.registry.SealPong(message)
 		if err != nil {
+			r.telemetry.RecordPongSendFailure()
 			return
 		}
 		usedSocket, err := r.transport.SendDatagram(packet, message.Source())
 		if err != nil || usedSocket != generation.Socket {
+			r.telemetry.RecordPongSendFailure()
 			return
 		}
+		r.telemetry.RecordPongSent()
 	case IncomingPong:
+		r.telemetry.RecordAuthenticatedPong()
 		observation, err := r.manager.Complete(now, message.AuthenticatedReply())
-		if err != nil || r.observer == nil {
+		if err != nil {
+			r.telemetry.RecordCompletionRejection()
+			return
+		}
+		r.telemetry.RecordProbeCompletion()
+		if r.observer == nil {
 			return
 		}
 		r.observer.ObservePath(observation)
@@ -433,6 +466,7 @@ func (r *Runtime) runScheduler(ctx context.Context) {
 			if waitingForRound {
 				roundStarted = r.clock()
 				waitingForRound = false
+				r.telemetry.RecordRoundStarted()
 			}
 			if index < len(current.targets) {
 				target := current.targets[index]
@@ -452,6 +486,7 @@ func (r *Runtime) runScheduler(ctx context.Context) {
 
 				continue
 			}
+			r.telemetry.RecordRoundCompleted()
 			index = 0
 			waitingForRound = true
 			resetRuntimeTimer(

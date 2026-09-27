@@ -352,12 +352,45 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		PeerCount:          status.PeerCount,
 		PolicyRuleCount:    status.PolicyRuleCount,
 		PeerPaths:          mapPathStatus(status.PeerPaths),
+		PathProbes:         mapPathProbeStatus(status.PathProbes),
 		Relay:              mapRelayStatus(status.Relay),
 		NetworkChanges:     mapNetworkChangeStatus(status.NetworkChanges),
 		RuntimeRecovery:    mapRuntimeRecoveryStatus(status.RuntimeRecovery),
 		Runtime:            mapRuntimeStatus(status.Runtime),
 		CompatibilityNote:  status.CompatibilityNote,
 	})
+}
+
+func mapPathProbeStatus(status daemon.PathProbeStatus) pathProbeStatus {
+	snapshot := status.Snapshot
+
+	return pathProbeStatus{
+		Available:            status.Available,
+		MapActivations:       snapshot.MapActivations,
+		ActivationPreserved:  snapshot.ActivationPreserved,
+		ActivationRetired:    snapshot.ActivationRetired,
+		PendingInvalidated:   snapshot.PendingInvalidated,
+		RoundsStarted:        snapshot.RoundsStarted,
+		RoundsCompleted:      snapshot.RoundsCompleted,
+		ProbeAttempts:        snapshot.ProbeAttempts,
+		ProbesStarted:        snapshot.ProbesStarted,
+		ProbesSent:           snapshot.ProbesSent,
+		ProbeStartFailures:   snapshot.ProbeStartFailures,
+		ProbeSendFailures:    snapshot.ProbeSendFailures,
+		DatagramDrops:        snapshot.DatagramDrops,
+		AuthenticatedPings:   snapshot.AuthenticatedPings,
+		PingRateLimited:      snapshot.PingRateLimited,
+		PongsSent:            snapshot.PongsSent,
+		PongSendFailures:     snapshot.PongSendFailures,
+		AuthenticatedPongs:   snapshot.AuthenticatedPongs,
+		ProbeCompletions:     snapshot.ProbeCompletions,
+		CompletionRejections: snapshot.CompletionRejections,
+		ObservationsQueued:   snapshot.ObservationsQueued,
+		ObservationDrops:     snapshot.ObservationDrops,
+		ObservationsAccepted: snapshot.ObservationsAccepted,
+		ObservationRejected:  snapshot.ObservationRejected,
+		DirectExpirations:    snapshot.DirectExpirations,
+	}
 }
 
 func mapNetworkChangeStatus(status daemon.NetworkChangeStatus) networkChangeStatus {

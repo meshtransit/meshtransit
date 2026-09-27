@@ -112,6 +112,7 @@ type Status struct {
 	PeerCount          int
 	PolicyRuleCount    int
 	PeerPaths          dataplane.PeerPathSnapshot
+	PathProbes         PathProbeStatus
 	Relay              relay.HealthSnapshot
 	NetworkChanges     NetworkChangeStatus
 	RuntimeRecovery    RuntimeRecoveryStatus
@@ -130,6 +131,12 @@ type RuntimeRecoveryStatus struct {
 	Failures   uint64
 	Recoveries uint64
 	Pending    bool
+}
+
+// PathProbeStatus contains redacted process-local direct-path diagnostics.
+type PathProbeStatus struct {
+	Available bool
+	Snapshot  pathdiscovery.ProbeTelemetrySnapshot
 }
 
 // ControlProbe is the sanitized control compatibility result returned locally.
@@ -292,6 +299,7 @@ type Service struct {
 	runtimeFailures      atomic.Uint64
 	runtimeRecoveries    atomic.Uint64
 	runtimePending       atomic.Bool
+	pathProbes           *pathdiscovery.ProbeTelemetry
 }
 
 type syncStatus struct {
@@ -394,6 +402,7 @@ func New(
 		networkChanges:       options.NetworkChanges,
 		syncSignal:           make(chan struct{}, 1),
 		registrationGate:     registrationGate,
+		pathProbes:           pathdiscovery.NewProbeTelemetry(),
 		syncState: syncStatus{
 			state:     ControlSessionInactive,
 			dataPlane: initialDataPlane,
@@ -564,6 +573,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					pathdiscovery.NewPathSelector(),
 					endpoints,
 					&s.dataPlaneMu,
+					s.pathProbes,
 					s.clock,
 					cancel,
 				)
@@ -585,6 +595,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					dataPlane: dataPlane,
 				},
 				pathObserver,
+				s.pathProbes,
 			)
 			if err != nil {
 				pathController.Close()
@@ -1517,6 +1528,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		PeerCount:          syncState.peerCount,
 		PolicyRuleCount:    syncState.policyRuleCount,
 		PeerPaths:          peerPaths,
+		PathProbes:         s.pathProbeStatus(),
 		Relay:              relayStatus,
 		NetworkChanges: NetworkChangeStatus{
 			Available:         s.networkChanges != nil,
@@ -1530,6 +1542,19 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		},
 		Runtime: runtimehealth.Read(),
 	}, nil
+}
+
+func (s *Service) pathProbeStatus() PathProbeStatus {
+	if s == nil {
+		return PathProbeStatus{}
+	}
+	_, hasTransport := s.dataPlane.(peerProbeDataPlane)
+	_, hasEndpointControl := s.dataPlane.(preferredEndpointDataPlane)
+
+	return PathProbeStatus{
+		Available: hasTransport && hasEndpointControl,
+		Snapshot:  s.pathProbes.Snapshot(),
+	}
 }
 
 func (s *Service) recordRuntimeRecovery() {

@@ -628,6 +628,34 @@ func TestService_LoginRequiresTrust(t *testing.T) {
 	}
 }
 
+func TestService_PathProbeStatusIsRedactedAndProcessLocal(t *testing.T) {
+	t.Parallel()
+
+	service, _, _, _, _ := newTestService(t)
+	service.dataPlane = newFakeLiveProbeDataPlane()
+	service.pathProbes.RecordMapActivation()
+	service.pathProbes.RecordProbeSent()
+	service.pathProbes.RecordCompletionRejection()
+	service.pathProbes.RecordDirectExpiry(2)
+
+	status, err := service.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if !status.PathProbes.Available {
+		t.Fatal("PathProbes.Available = false, want true")
+	}
+	want := pathdiscovery.ProbeTelemetrySnapshot{
+		MapActivations:       1,
+		ProbesSent:           1,
+		CompletionRejections: 1,
+		DirectExpirations:    2,
+	}
+	if status.PathProbes.Snapshot != want {
+		t.Fatalf("PathProbes.Snapshot = %#v, want %#v", status.PathProbes.Snapshot, want)
+	}
+}
+
 func TestService_RunPublishesLatestValidatedSnapshot(t *testing.T) {
 	t.Parallel()
 

@@ -43,12 +43,14 @@ func TestPathEndpointControllerAppliesSelectionAndExactExpiry(t *testing.T) {
 		},
 	}
 	dataPlane := newRecordingPreferredEndpointDataPlane()
+	telemetry := pathdiscovery.NewProbeTelemetry()
 	ctx, cancel := context.WithCancel(t.Context())
 	controller, err := newPathEndpointController(
 		ctx,
 		selector,
 		dataPlane,
 		&sync.Mutex{},
+		telemetry,
 		time.Now,
 		cancel,
 	)
@@ -82,6 +84,11 @@ func TestPathEndpointControllerAppliesSelectionAndExactExpiry(t *testing.T) {
 			controller.Err(),
 		)
 	}
+	snapshot := telemetry.Snapshot()
+	if snapshot.ObservationsQueued != 1 || snapshot.ObservationsAccepted != 1 ||
+		snapshot.DirectExpirations != 1 {
+		t.Fatalf("path telemetry = %#v", snapshot)
+	}
 }
 
 func TestPathEndpointControllerFailsSessionOnEndpointUpdateError(t *testing.T) {
@@ -113,6 +120,7 @@ func TestPathEndpointControllerFailsSessionOnEndpointUpdateError(t *testing.T) {
 		selector,
 		dataPlane,
 		&sync.Mutex{},
+		pathdiscovery.NewProbeTelemetry(),
 		time.Now,
 		cancel,
 	)
@@ -150,6 +158,7 @@ func TestPathEndpointControllerPauseDropsQueuedProof(t *testing.T) {
 		selector,
 		dataPlane,
 		&sync.Mutex{},
+		pathdiscovery.NewProbeTelemetry(),
 		time.Now,
 		cancel,
 	)
@@ -181,24 +190,32 @@ func TestPathEndpointControllerActivationReconcilesRetiredSelection(t *testing.T
 	generation := pathEndpointGeneration()
 	retiredGeneration := generation
 	retiredGeneration.MapRevision--
+	now := time.Now()
 	selector := &scriptedPathSelector{
 		activateResult: pathdiscovery.PathSelectionResult{
 			Changes: []pathdiscovery.PathChange{{
 				PeerID: 2,
 				Previous: pathdiscovery.PathSelection{
-					PeerID:     2,
-					Generation: retiredGeneration,
+					PeerID:                2,
+					Generation:            retiredGeneration,
+					RemoteEndpoint:        netip.MustParseAddrPort("203.0.113.20:41641"),
+					ObservedLocalEndpoint: netip.MustParseAddrPort("198.51.100.20:41641"),
+					RoundTrip:             time.Millisecond,
+					ConfirmedAt:           now,
+					ExpiresAt:             now.Add(time.Second),
 				},
 			}},
 		},
 	}
 	dataPlane := newRecordingPreferredEndpointDataPlane()
+	telemetry := pathdiscovery.NewProbeTelemetry()
 	ctx, cancel := context.WithCancel(t.Context())
 	controller, err := newPathEndpointController(
 		ctx,
 		selector,
 		dataPlane,
 		&sync.Mutex{},
+		telemetry,
 		time.Now,
 		cancel,
 	)
@@ -217,6 +234,10 @@ func TestPathEndpointControllerActivationReconcilesRetiredSelection(t *testing.T
 	if !restored.restore || restored.revision != generation.MapRevision ||
 		restored.peerID != 2 {
 		t.Fatalf("activation endpoint update = %#v", restored)
+	}
+	if snapshot := telemetry.Snapshot(); snapshot.ActivationRetired != 1 ||
+		snapshot.ActivationPreserved != 0 {
+		t.Fatalf("activation telemetry = %#v", snapshot)
 	}
 }
 

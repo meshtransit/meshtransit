@@ -15,6 +15,7 @@ import (
 	"github.com/meshtransit/meshd/internal/daemon"
 	"github.com/meshtransit/meshd/internal/dataplane"
 	"github.com/meshtransit/meshd/internal/identity"
+	"github.com/meshtransit/meshd/internal/pathdiscovery"
 	"github.com/meshtransit/meshd/internal/profile"
 	"github.com/meshtransit/meshd/internal/relay"
 	"github.com/meshtransit/meshd/internal/runtimehealth"
@@ -51,6 +52,7 @@ func TestServer_ProfileLifecycle(t *testing.T) {
 		status.NetmapRevision != 0 || status.NetworkName != "" ||
 		len(status.SelfAddresses) != 0 || status.PeerCount != 0 ||
 		status.PolicyRuleCount != 0 || status.PeerPaths.Available ||
+		status.PathProbes.Available ||
 		status.Relay.Available || status.Relay.ActiveRegions != 0 ||
 		status.Relay.ConnectedRegions != 0 || status.NetworkChanges.Available ||
 		status.NetworkChanges.Observed != 0 || status.NetworkChanges.EndpointRefreshes != 0 ||
@@ -123,6 +125,71 @@ func TestMapNetworkChangeStatus(t *testing.T) {
 	})
 	if !status.Available || status.Observed != 3 || status.EndpointRefreshes != 2 {
 		t.Fatalf("mapNetworkChangeStatus() = %#v", status)
+	}
+}
+
+func TestMapPathProbeStatus(t *testing.T) {
+	t.Parallel()
+
+	snapshot := pathdiscovery.ProbeTelemetrySnapshot{
+		MapActivations:       1,
+		ActivationPreserved:  2,
+		ActivationRetired:    3,
+		PendingInvalidated:   4,
+		RoundsStarted:        5,
+		RoundsCompleted:      6,
+		ProbeAttempts:        7,
+		ProbesStarted:        8,
+		ProbesSent:           9,
+		ProbeStartFailures:   10,
+		ProbeSendFailures:    11,
+		DatagramDrops:        12,
+		AuthenticatedPings:   13,
+		PingRateLimited:      14,
+		PongsSent:            15,
+		PongSendFailures:     16,
+		AuthenticatedPongs:   17,
+		ProbeCompletions:     18,
+		CompletionRejections: 19,
+		ObservationsQueued:   20,
+		ObservationDrops:     21,
+		ObservationsAccepted: 22,
+		ObservationRejected:  23,
+		DirectExpirations:    24,
+	}
+	got := mapPathProbeStatus(daemon.PathProbeStatus{
+		Available: true,
+		Snapshot:  snapshot,
+	})
+	want := pathProbeStatus{
+		Available:            true,
+		MapActivations:       1,
+		ActivationPreserved:  2,
+		ActivationRetired:    3,
+		PendingInvalidated:   4,
+		RoundsStarted:        5,
+		RoundsCompleted:      6,
+		ProbeAttempts:        7,
+		ProbesStarted:        8,
+		ProbesSent:           9,
+		ProbeStartFailures:   10,
+		ProbeSendFailures:    11,
+		DatagramDrops:        12,
+		AuthenticatedPings:   13,
+		PingRateLimited:      14,
+		PongsSent:            15,
+		PongSendFailures:     16,
+		AuthenticatedPongs:   17,
+		ProbeCompletions:     18,
+		CompletionRejections: 19,
+		ObservationsQueued:   20,
+		ObservationDrops:     21,
+		ObservationsAccepted: 22,
+		ObservationRejected:  23,
+		DirectExpirations:    24,
+	}
+	if got != want {
+		t.Fatalf("mapPathProbeStatus() = %#v, want %#v", got, want)
 	}
 }
 

@@ -56,6 +56,7 @@ type pathEndpointController struct {
 	selector    pathSelectionEngine
 	dataPlane   preferredEndpointDataPlane
 	dataPlaneMu *sync.Mutex
+	telemetry   *pathdiscovery.ProbeTelemetry
 	clock       func() time.Time
 	stopSession context.CancelFunc
 
@@ -75,11 +76,12 @@ func newPathEndpointController(
 	selector pathSelectionEngine,
 	dataPlane preferredEndpointDataPlane,
 	dataPlaneMu *sync.Mutex,
+	telemetry *pathdiscovery.ProbeTelemetry,
 	clock func() time.Time,
 	stopSession context.CancelFunc,
 ) (*pathEndpointController, error) {
 	if ctx == nil || selector == nil || dataPlane == nil || dataPlaneMu == nil ||
-		clock == nil || stopSession == nil {
+		telemetry == nil || clock == nil || stopSession == nil {
 		return nil, errors.New("daemon: path endpoint dependencies are invalid")
 	}
 	if err := ctx.Err(); err != nil {
@@ -90,6 +92,7 @@ func newPathEndpointController(
 		selector:     selector,
 		dataPlane:    dataPlane,
 		dataPlaneMu:  dataPlaneMu,
+		telemetry:    telemetry,
 		clock:        clock,
 		stopSession:  stopSession,
 		observations: make(chan pathdiscovery.PathObservation, maxQueuedPathObservations),
@@ -117,7 +120,9 @@ func (c *pathEndpointController) ObservePath(
 	}
 	select {
 	case c.observations <- observation:
+		c.telemetry.RecordObservationQueued()
 	default:
+		c.telemetry.RecordObservationDropped()
 	}
 }
 
@@ -252,7 +257,10 @@ func (c *pathEndpointController) run(ctx context.Context) {
 				continue
 			}
 			result, err := c.selector.Observe(observation)
-			if err == nil {
+			if err != nil {
+				c.telemetry.RecordObservationRejected()
+			} else {
+				c.telemetry.RecordObservationAccepted()
 				err = c.applyChanges(generation, result.Changes)
 			}
 			if err != nil {
@@ -268,6 +276,7 @@ func (c *pathEndpointController) run(ctx context.Context) {
 		case <-timerChannel:
 			result, err := c.selector.Expire(c.clock())
 			if err == nil {
+				c.telemetry.RecordDirectExpiry(countRetiredPaths(result.Changes))
 				err = c.applyChanges(generation, result.Changes)
 			}
 			if err != nil {
@@ -299,6 +308,9 @@ func (c *pathEndpointController) handleCommand(
 	case pathEndpointActivate:
 		result, err := c.selector.Activate(command.snapshot, command.generation)
 		if err == nil {
+			preserved, retired := countActivationPaths(result.Changes)
+			c.telemetry.RecordActivationPreserved(preserved)
+			c.telemetry.RecordActivationRetired(retired)
 			err = c.applyActivationChanges(command.generation, result.Changes)
 		}
 		if err != nil {
@@ -324,6 +336,32 @@ func (c *pathEndpointController) handleCommand(
 			"daemon: path endpoint command is invalid",
 		)
 	}
+}
+
+func countActivationPaths(changes []pathdiscovery.PathChange) (uint64, uint64) {
+	var preserved uint64
+	var retired uint64
+	for _, change := range changes {
+		switch {
+		case change.Previous.IsValid() && change.Current.IsValid():
+			preserved++
+		case change.Previous.IsValid() && !change.Current.IsValid():
+			retired++
+		}
+	}
+
+	return preserved, retired
+}
+
+func countRetiredPaths(changes []pathdiscovery.PathChange) uint64 {
+	var retired uint64
+	for _, change := range changes {
+		if change.Previous.IsValid() && !change.Current.IsValid() {
+			retired++
+		}
+	}
+
+	return retired
 }
 
 func (c *pathEndpointController) applyChanges(

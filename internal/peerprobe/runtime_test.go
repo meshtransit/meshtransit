@@ -86,6 +86,14 @@ func TestRuntimeCompletesScheduledProbeAndRepliesToPing(t *testing.T) {
 	if !ok || pong.ID != remotePingID || pong.Source != remoteSource {
 		t.Fatalf("remote Open(pong) = %#v", message)
 	}
+	telemetry := runtime.telemetry.Snapshot()
+	if telemetry.MapActivations != 1 || telemetry.RoundsStarted != 1 ||
+		telemetry.ProbeAttempts != 1 || telemetry.ProbesStarted != 1 ||
+		telemetry.ProbesSent != 1 || telemetry.AuthenticatedPongs != 1 ||
+		telemetry.ProbeCompletions != 1 || telemetry.AuthenticatedPings != 1 ||
+		telemetry.PongsSent != 1 {
+		t.Fatalf("probe telemetry = %#v", telemetry)
+	}
 }
 
 func TestRuntimeRejectsStaleReplyAfterGenerationChange(t *testing.T) {
@@ -153,6 +161,11 @@ func TestRuntimeRejectsStaleReplyAfterGenerationChange(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for current generation observation")
 	}
+	telemetry := runtime.telemetry.Snapshot()
+	if telemetry.MapActivations != 2 || telemetry.PendingInvalidated == 0 ||
+		telemetry.CompletionRejections == 0 || telemetry.ProbeCompletions != 1 {
+		t.Fatalf("generation telemetry = %#v", telemetry)
+	}
 }
 
 func TestRuntimeCancelsTransactionAfterTransportFailure(t *testing.T) {
@@ -164,6 +177,11 @@ func TestRuntimeCancelsTransactionAfterTransportFailure(t *testing.T) {
 		t.Fatalf("Activate() error = %v", err)
 	}
 	waitForRuntimeAttempt(t, transport)
+	telemetry := runtime.telemetry.Snapshot()
+	if telemetry.ProbeAttempts != 1 || telemetry.ProbesStarted != 1 ||
+		telemetry.ProbeSendFailures != 1 || telemetry.ProbesSent != 0 {
+		t.Fatalf("failed-send telemetry = %#v", telemetry)
+	}
 	transport.setError(nil)
 	for index := range 8 {
 		if _, err := runtime.Probe(
@@ -195,6 +213,7 @@ func TestRuntimeLimitsAuthenticatedPingResponses(t *testing.T) {
 		local,
 		transport,
 		nil,
+		pathdiscovery.NewProbeTelemetry(),
 		clock.Now,
 		time.Millisecond,
 		time.Hour,
@@ -243,6 +262,12 @@ func TestRuntimeLimitsAuthenticatedPingResponses(t *testing.T) {
 	})
 	if sends := transport.sentSnapshot(); len(sends) != maxIncomingPingsPerPeer+1 {
 		t.Fatalf("renewed ping response count = %d", len(sends))
+	}
+	telemetry := runtime.telemetry.Snapshot()
+	if telemetry.AuthenticatedPings != maxIncomingPingsPerPeer+2 ||
+		telemetry.PingRateLimited != 1 ||
+		telemetry.PongsSent != maxIncomingPingsPerPeer+1 {
+		t.Fatalf("ping-limit telemetry = %#v", telemetry)
 	}
 }
 
@@ -296,6 +321,7 @@ func TestRuntimeRepeatsProbeRounds(t *testing.T) {
 		local,
 		transport,
 		nil,
+		pathdiscovery.NewProbeTelemetry(),
 		time.Now,
 		time.Millisecond,
 		20*time.Millisecond,
@@ -326,6 +352,7 @@ func TestRuntimeDeactivateStopsProbeRounds(t *testing.T) {
 		local,
 		transport,
 		nil,
+		pathdiscovery.NewProbeTelemetry(),
 		time.Now,
 		time.Millisecond,
 		500*time.Millisecond,
@@ -586,6 +613,7 @@ func testRuntime(
 		local,
 		transport,
 		observer,
+		pathdiscovery.NewProbeTelemetry(),
 		time.Now,
 		time.Millisecond,
 		time.Hour,
