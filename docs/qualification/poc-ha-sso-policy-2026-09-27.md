@@ -12,6 +12,7 @@ are included.
 | Artifact | Qualified value |
 | --- | --- |
 | Core source | `ab1c26c051994393e009ff8baef6e2e77b4f276c` |
+| Signing-key rotation qualification source | `32834c987850912c2904408cc1be209a3c8f9558` |
 | Proxy-safe heartbeat default source | `57546a26498cec2e9f6930a3e58330522e06ef56` |
 | Core image | `manhdev2002/meshtransit-core:poc-v36` |
 | Core image digest | `sha256:8dfc99c447475df44d3060b0993c434455ddd329898795fe385c2483e3d46bb8` |
@@ -69,6 +70,7 @@ policy implementations.
 | `POC-ARTIFACT-001` | The current embedded-broker source is bound to a reproducible immutable image | Pass | The manifested `compat.8` source and binary verified, all compile/runtime gates passed on Core `ab1c26c`, and multi-platform image `poc-v36` was published with SBOM/provenance at the pinned digest; hardened runtime smoke passed and Trivy found zero High/Critical vulnerabilities |
 | `POC-ROLLOUT-004` | The current exact Core artifact rolls through every runtime role without loss of readiness | Pass | Atomic Helm revision 39 moved API, Control, and Identity to the same `poc-v36` digest; all roles returned to 2/2 with zero restarts and their public contracts remained available |
 | `POC-IDENTITY-HA-001` | Loss of one current Identity replica does not interrupt broker or Core readiness | Pass | Forty OIDC discovery requests, 40 Control key requests, and 20 paired Core/login readiness checks completed with zero failures while one Identity pod was deleted and replaced |
+| `POC-IDENTITY-HA-002` | Shared signing-key rotation preserves verification across a rolling Identity replacement | Pass | Two embedded runtimes used one shared storage contract; the surviving and replacement runtimes published the same active and retained keys, verified a pre-rotation signature through the overlap window, and removed the expired key at the next rotation boundary |
 | `POC-ROLE-ALL-001` | One private Core process can own every runtime role, recover after process loss, and reject invalid listener topology before admission | Pass | The digest-pinned `role=all` canary reported all five roles and every dependency Ready; direct-TLS Control, API, Login, and Identity contracts passed; pod deletion recovered with zero restarts; an isolated listener-collision release exited with redacted `invalid_configuration` and no Ready endpoint |
 | `POC-DATA-HA-001` | PostgreSQL and Redis failover preserve authority and convergence | Pending | The current POC uses one external PostgreSQL/Redis host |
 
@@ -526,6 +528,39 @@ availability-zone, or regional failure tolerance. The earlier two-worker drain
 record remains historical evidence bound to the older artifacts named in that
 section.
 
+## Deterministic signing-key rotation evidence
+
+Core source `32834c987850912c2904408cc1be209a3c8f9558` adds an adapter-boundary
+contract test against the manifest-verified `v2.45.1+compat.8` workspace. Two
+embedded runtimes first opened the same storage at one stable clock instant and
+served exactly one shared active key. One runtime was then shut down and
+recreated just after the persisted rotation boundary while the other remained
+available.
+
+The replacement promoted a new active key through the shared atomic key update.
+Both the surviving and replacement runtimes immediately served the same JWKS:
+the new active key plus the previous public key. The retained key expiry equaled
+the configured ID-token lifetime from the rotation instant, and a payload signed
+before rotation verified through JWKS returned by either runtime. Every served
+key was public-only, `RS256`, `use=sig`, and had a non-empty key identifier.
+
+A second deterministic rolling replacement advanced past the next rotation
+boundary. Both remaining runtimes then served the second and third keys, while
+the first expired key was absent. The clock is atomic and injected; the test
+contains no wall-clock sleeps, external identity-provider traffic, or secret
+material. The focused contract, tagged package and command tests passed with the
+race detector, and both ordinary and tagged vet gates passed. The existing Core
+consumer contract separately proves that an unknown key identifier performs
+exactly two bounded JWKS reads, never changes the trusted route, and fails
+closed when the key remains absent.
+
+This closes the deterministic key-rotation/JWKS-overlap portion of
+`SSO-BROKER-006` together with the live two-replica loss evidence above. It does
+not claim a forced rotation against the POC broker database: the production
+minimum rotation period remains one hour, and the runtime binary did not change,
+so no new image or Helm rollout was required for this test-only source update.
+Duplicate callback delivery and unknown-write uncertainty remain open.
+
 ## Private aggregate-runtime canary
 
 Chart `0.2.22` adds a private POC profile for the same immutable `poc-v36`
@@ -591,8 +626,8 @@ state. Redis remained non-authoritative.
 
 ## Remaining execution order
 
-1. Complete the broker continuity gate with signing-key rotation/JWKS overlap,
-   duplicate callback delivery, and unknown-write uncertainty evidence.
+1. Complete the remaining broker continuity gate with duplicate callback
+   delivery and unknown-write uncertainty evidence.
 2. Exercise the broker outage matrix and recovery-generation fences, then close
    the remaining legal-review and signed-artifact items.
 3. Extend publication cases to TCP, UDP, multiple devices, and multiple
