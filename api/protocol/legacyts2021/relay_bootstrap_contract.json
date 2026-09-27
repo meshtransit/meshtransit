@@ -3,7 +3,7 @@
   "profile": "encrypted-relay-bootstrap-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
-    "revision": "87a3dd293aa95be1a1a0435055b1b31413258d83"
+    "revision": "84ee0f41068e8c5abcf529d68f5ad13fe21f3f3f"
   },
   "directory": {
     "authority": "control-signed-routing-metadata-only",

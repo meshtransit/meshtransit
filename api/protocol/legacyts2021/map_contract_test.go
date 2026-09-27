@@ -79,7 +79,7 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 		t.Fatalf("contract identity = (%d, %q), want version 6 legacy profile", contract.ContractVersion, contract.Profile)
 	}
 	if contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
-		contract.ClientEvidence.Revision != "87a3dd293aa95be1a1a0435055b1b31413258d83" {
+		contract.ClientEvidence.Revision != "84ee0f41068e8c5abcf529d68f5ad13fe21f3f3f" {
 		t.Fatalf("client evidence = %+v, want pinned meshd revision", contract.ClientEvidence)
 	}
 	request := contract.Request

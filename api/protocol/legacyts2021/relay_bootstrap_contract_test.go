@@ -63,7 +63,7 @@ func TestRelayBootstrapContractPinsPathLifecycle(t *testing.T) {
 	}
 	if contract.ContractVersion != 1 || contract.Profile != "encrypted-relay-bootstrap-v1" ||
 		contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
-		contract.ClientEvidence.Revision != "87a3dd293aa95be1a1a0435055b1b31413258d83" {
+		contract.ClientEvidence.Revision != "84ee0f41068e8c5abcf529d68f5ad13fe21f3f3f" {
 		t.Fatalf("contract identity = %+v", contract)
 	}
 	directory := contract.Directory

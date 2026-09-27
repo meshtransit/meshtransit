@@ -52,7 +52,7 @@ func TestRegistrationContractPinsObservedClientBoundary(t *testing.T) {
 		t.Fatalf("contract identity = (%d, %q), want version 3 legacy profile", contract.ContractVersion, contract.Profile)
 	}
 	if contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
-		contract.ClientEvidence.Revision != "659d9e76d1ddf36a86abb70109fbab527c2bccd1" {
+		contract.ClientEvidence.Revision != "84ee0f41068e8c5abcf529d68f5ad13fe21f3f3f" {
 		t.Fatalf("client evidence = %+v, want pinned meshd revision", contract.ClientEvidence)
 	}
 	trust := contract.TrustEstablishment

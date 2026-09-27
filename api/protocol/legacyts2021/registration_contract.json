@@ -3,7 +3,7 @@
   "profile": "legacy-ts2021-cap142-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
-    "revision": "659d9e76d1ddf36a86abb70109fbab527c2bccd1"
+    "revision": "84ee0f41068e8c5abcf529d68f5ad13fe21f3f3f"
   },
   "trust_establishment": {
     "capability": 142,
