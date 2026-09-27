@@ -15,7 +15,7 @@ const (
 	defaultControlMapIdleLimit        = 5 * time.Second
 	defaultControlMapPresenceTTL      = 30 * time.Second
 	defaultControlMapCoordination     = 2 * time.Second
-	defaultControlMapKeepAlive        = time.Minute
+	defaultControlMapKeepAlive        = 30 * time.Second
 	defaultControlMapReconcile        = 30 * time.Second
 	minControlMapRequestTimeout       = 100 * time.Millisecond
 	maxControlMapRequestTimeout       = time.Minute

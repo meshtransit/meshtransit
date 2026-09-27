@@ -321,7 +321,7 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_MAP_TRANSACTION_IDLE_LIMIT` | `5s` | PostgreSQL idle-in-transaction limit for one map snapshot, from 1ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MAP_PRESENCE_TTL` | `30s` | Generation-fenced Redis presence and endpoint-observation TTL from 3 seconds through 5 minutes. |
 | `MESHTRANSIT_CONTROL_MAP_COORDINATION_TIMEOUT` | `2s` | Redis presence and endpoint-operation deadline from 100ms through 30 seconds and below one third of the presence TTL. |
-| `MESHTRANSIT_CONTROL_MAP_KEEPALIVE_INTERVAL` | `1m` | Silent-stream keepalive interval from 1 second through 90 seconds. |
+| `MESHTRANSIT_CONTROL_MAP_KEEPALIVE_INTERVAL` | `30s` | Silent-stream keepalive interval from 1 second through 90 seconds. Keep it below every proxy idle timeout on the control path. |
 | `MESHTRANSIT_CONTROL_MAP_RECONCILE_INTERVAL` | `30s` | Authoritative PostgreSQL resync interval from 1 second through 5 minutes. |
 | `MESHTRANSIT_RELAY_DIRECTORY_FILE` | none | Absolute path to the bounded, product-schema relay directory snapshot loaded at control-role startup. |
 | `MESHTRANSIT_RELAY_DIRECTORY_SHA256` | none | Canonical lowercase `sha256:<64 hex digits>` digest pin for the exact relay directory file. |

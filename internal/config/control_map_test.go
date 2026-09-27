@@ -17,6 +17,12 @@ func TestLoadControlMapDefaults(t *testing.T) {
 	if got.Control == nil {
 		t.Fatal("Control = nil for control role")
 	}
+	if got.Control.Map.KeepAliveInterval != 30*time.Second {
+		t.Fatalf(
+			"Control.Map.KeepAliveInterval = %s, want 30s proxy-safe default",
+			got.Control.Map.KeepAliveInterval,
+		)
+	}
 	want := ControlMapConfig{
 		RequestTimeout:       defaultControlMapRequestTimeout,
 		StatementTimeout:     defaultControlMapStatementTimeout,
