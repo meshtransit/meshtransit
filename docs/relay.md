@@ -25,6 +25,27 @@ For each validated map, the data plane derives a private relay configuration:
 7. Restore the relay endpoint when that proof expires, the candidate is removed,
    or the direct update is explicitly rolled back.
 
+The relay is both the bootstrap path and the fallback path. A new peer path does
+not wait for NAT traversal: encrypted packets may flow through the peer's
+validated home region while authenticated direct probes run concurrently. A
+successful proof promotes the selected UDP endpoint without changing peer
+identity, routes, or packet policy. A failed or expired proof restores the relay
+endpoint and starts another bounded discovery cycle.
+
+Home-region selection remains client-owned. STUN observations are accepted only
+from the validated directory and active socket generation. A materially better
+region must also establish an authenticated relay connection before publication.
+The client publishes that preference with the complete endpoint update and waits
+for a validated control-map echo before changing relay authority. Unknown state
+is omitted; explicit zero is reserved for a managed withdrawal.
+
+The initial map replaces the complete relay directory. A streaming map with no
+directory leaves the active value unchanged; a non-nil directory replaces it
+atomically after full validation. An invalid replacement cannot partially alter
+the running relay pool. The exact lifecycle is pinned by the Core-owned
+`encrypted-relay-bootstrap-v1` compatibility contract at Core revision
+`9ee636c2ec9af17dc139fb883f572717ac019d44`.
+
 Changing relay topology or node identity changes the topology fingerprint and
 recreates the packet engine. Peer-region bindings and overlay rate-limit
 identities form a separate authorization fingerprint; compatible changes
