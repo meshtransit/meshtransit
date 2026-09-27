@@ -451,6 +451,66 @@ func TestWireGuardEngineEquivalentMapRevisionPreservesPreferredEndpoint(t *testi
 	}
 }
 
+func TestWireGuardEngineRelayBaseChangePreservesPreferredEndpoint(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot = addTestRelay(snapshot)
+	snapshot.Relays[2] = testRelayRegion(2, "relay-2.example.com")
+	preferred := snapshot.Peers[0].Endpoints[0]
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if err := engine.SetPreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+		preferred,
+	); err != nil {
+		t.Fatalf("SetPreferredEndpoint() error = %v", err)
+	}
+
+	snapshot.Revision++
+	snapshot.Peers[0].HomeRelay = 2
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply(relay base change) error = %v", err)
+	}
+	paths := engine.PeerPaths()
+	if device.configureCalls != 2 || paths.DirectCount != 1 ||
+		paths.RelayCount != 0 || paths.RelayFallbackCount != 0 {
+		t.Fatalf(
+			"relay base change configure=%d paths=%#v, want preserved direct path",
+			device.configureCalls,
+			paths,
+		)
+	}
+
+	peerKey, err := parseNodePublicKey(snapshot.Peers[0].PublicKey)
+	if err != nil {
+		t.Fatalf("parseNodePublicKey() error = %v", err)
+	}
+	wantRelay := formatRelayEndpoint(2, relay.Key(peerKey))
+	if err := engine.RestorePreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+	); err != nil {
+		t.Fatalf("RestorePreferredEndpoint() error = %v", err)
+	}
+	if device.configureCalls != 3 ||
+		!strings.Contains(device.configurations[2], "endpoint="+wantRelay+"\n") {
+		t.Fatalf("restored relay configuration = %q", device.configuration)
+	}
+}
+
 func TestWireGuardEngineNewEquivalentRevisionPreservesSocket(t *testing.T) {
 	t.Parallel()
 

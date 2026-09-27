@@ -68,6 +68,11 @@ All notable user-visible changes will be documented in this file.
   longer force a relay fallback and immediate re-promotion, while lease expiry,
   socket changes, and peer or endpoint-authority changes still fail closed to
   the signed base path.
+- Signed peer home-relay changes now replace the retained fallback metadata
+  without overwriting a compatible authenticated direct endpoint. The existing
+  proof deadline is unchanged, and expiry restores the newest signed relay
+  base while identity, route, authority, socket, and topology changes retain
+  fail-closed behavior.
 - A temporary local map-application failure now tears down TUN, routes, DNS,
   path probes, and session secrets before the daemon retries from a fresh full
   snapshot. Recovery uses interruptible jittered exponential backoff capped at

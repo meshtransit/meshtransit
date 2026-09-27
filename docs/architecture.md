@@ -51,7 +51,7 @@ cannot be reached makes startup fail immediately. Orderly shutdown sends a
 bounded best-effort `STOPPING=1`. The adapter uses one local Unix datagram and
 has no `libsystemd` or CGO dependency, so the common build remains portable.
 
-The unprivileged data-plane engine opens the descriptor after receiving a validated signed self map. It proves the private key belongs to the signed self node, intersects each peer route with that peer's signed host addresses, requests exactly those self/peer host prefixes, verifies the helper response byte-for-byte, and configures the official userspace WireGuard engine. A peer without an endpoint is installed with its public key and allowed host routes but remains unreachable until a valid endpoint arrives. A node with no local inbound rule may still open the path because Headscale sends node-reduced inbound filters and the remote destination enforces outbound authorization. A peerless reduced map replaces WireGuard peers, relay peer authority, and host routes in place, so packet forwarding remains fail-closed while the TUN, UDP socket, and relay transport stay available. Compatible peer-route changes use the same path: filter authority changes first, relay authorization and WireGuard peers change next, then the helper applies the route delta. Live peer updates contain only `replace_peers` plus peer-scoped fields; private key and listen port are device-creation fields and are never resent, because setting a WireGuard listen port unconditionally rebinds the socket. Any ambiguous step closes the device. A signed self-address or relay-topology change still creates a freshly confined interface. Profile changes, permanent control failure, and process shutdown close the active descriptor.
+The unprivileged data-plane engine opens the descriptor after receiving a validated signed self map. It proves the private key belongs to the signed self node, intersects each peer route with that peer's signed host addresses, requests exactly those self/peer host prefixes, verifies the helper response byte-for-byte, and configures the official userspace WireGuard engine. A peer without an endpoint is installed with its public key and allowed host routes but remains unreachable until a valid endpoint arrives. A node with no local inbound rule may still open the path because Headscale sends node-reduced inbound filters and the remote destination enforces outbound authorization. A peerless reduced map replaces WireGuard peers, relay peer authority, and host routes in place, so packet forwarding remains fail-closed while the TUN, UDP socket, and relay transport stay available. Compatible peer-route changes use the same path: filter authority changes first, relay authorization and WireGuard peers change next, then the helper applies the route delta. A peer home-relay change updates the signed fallback metadata without overwriting a currently authenticated direct endpoint when device identity, peer key and routes, discovery identity, endpoint authority, session scope, and UDP socket remain compatible. Proof expiry then restores the newest signed relay base. Live peer updates contain only `replace_peers` plus peer-scoped fields; private key and listen port are device-creation fields and are never resent, because setting a WireGuard listen port unconditionally rebinds the socket. Any ambiguous step closes the device. A signed self-address or relay-topology change still creates a freshly confined interface. Profile changes, permanent control failure, and process shutdown close the active descriptor.
 
 After a full map establishes the active self identity, the control plane can
 withdraw that authority with a terminal map frame. The frame must repeat the
@@ -117,10 +117,13 @@ path authority are identical; a socket, peer identity, discovery identity, or
 candidate-authority change clears it. One owned daemon worker applies only selector transitions to
 the exact installed peer and map revision through bounded WireGuard UAPI
 `update_only` requests. It does not recreate the TUN or replace routes. Proof
-expiry restores the deterministic control-signed base endpoint. An equivalent
-new map revision advances the revision without a device write and without
-extending the proof deadline; a changed authority restores the base endpoint
-before new proof is admitted.
+expiry restores the latest deterministic control-signed base endpoint. An
+equivalent new map revision advances the revision without a device write and
+without extending the proof deadline. A signed peer home-relay change may
+replace only the retained fallback metadata while compatible direct proof is
+active; a device, route, peer, discovery, candidate-authority, session, socket,
+or relay-topology change restores or recreates the base path before new proof
+is admitted.
 Update ambiguity closes the packet engine and stops the session fail closed.
 A validated change to one peer's ephemeral discovery identity also recreates
 only that peer's encrypted tunnel session. This discards transport keys retained

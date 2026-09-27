@@ -32,6 +32,14 @@ successful proof promotes the selected UDP endpoint without changing peer
 identity, routes, or packet policy. A failed or expired proof restores the relay
 endpoint and starts another bounded discovery cycle.
 
+A validated peer home-region change updates the retained relay fallback without
+interrupting an authenticated direct path when device identity, peer key and
+routes, discovery identity, endpoint authority, session scope, UDP socket, and
+relay topology remain compatible. The direct proof keeps its original bounded
+deadline; expiry restores the newest signed relay endpoint. Any incompatible
+identity, authority, socket, route, or topology change restores or recreates the
+base path before new direct proof is accepted.
+
 Home-region selection remains client-owned. STUN observations are accepted only
 from the validated directory and active socket generation. A materially better
 region must also establish an authenticated relay connection before publication.

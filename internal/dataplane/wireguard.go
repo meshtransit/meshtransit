@@ -155,42 +155,44 @@ type PacketObserver interface {
 }
 
 type wireGuardPlan struct {
-	configuration     []byte
-	peerConfiguration []byte
-	configurationHash [32]byte
-	addresses         []netip.Prefix
-	routes            []netip.Prefix
-	peers             []wireGuardPeerPlan
-	pendingEndpoints  bool
-	relayConfig       *relay.Config
-	relayFingerprint  [32]byte
-	relayTopology     [32]byte
-	hasRelayFallback  bool
+	configuration           []byte
+	peerConfiguration       []byte
+	configurationHash       [32]byte
+	deviceConfigurationHash [32]byte
+	addresses               []netip.Prefix
+	routes                  []netip.Prefix
+	peers                   []wireGuardPeerPlan
+	pendingEndpoints        bool
+	relayConfig             *relay.Config
+	relayFingerprint        [32]byte
+	relayTopology           [32]byte
+	hasRelayFallback        bool
 }
 
 // WireGuardEngine owns the encrypted userspace packet engine. The daemon
 // serializes Apply and Close after stopping the map callback.
 type WireGuardEngine struct {
-	opener            tunOpener
-	factory           wireGuardFactory
-	listenPort        uint16
-	device            wireGuardDevice
-	configurationHash [32]byte
-	relayFingerprint  [32]byte
-	relayTopology     [32]byte
-	appliedRevision   uint64
-	peers             map[uint64]wireGuardPeerState
-	addresses         []netip.Prefix
-	routes            []netip.Prefix
-	filter            *policyFilter
-	observer          PacketObserver
-	hostAddresses     func() ([]netip.Addr, error)
-	clock             func() time.Time
-	relayBootstraps   uint64
-	directPromotions  uint64
-	relayFallbacks    uint64
-	lastPromotion     time.Duration
-	maximumPromotion  time.Duration
+	opener                  tunOpener
+	factory                 wireGuardFactory
+	listenPort              uint16
+	device                  wireGuardDevice
+	configurationHash       [32]byte
+	deviceConfigurationHash [32]byte
+	relayFingerprint        [32]byte
+	relayTopology           [32]byte
+	appliedRevision         uint64
+	peers                   map[uint64]wireGuardPeerState
+	addresses               []netip.Prefix
+	routes                  []netip.Prefix
+	filter                  *policyFilter
+	observer                PacketObserver
+	hostAddresses           func() ([]netip.Addr, error)
+	clock                   func() time.Time
+	relayBootstraps         uint64
+	directPromotions        uint64
+	relayFallbacks          uint64
+	lastPromotion           time.Duration
+	maximumPromotion        time.Duration
 }
 
 // NewWireGuard constructs the Linux encrypted packet engine.
@@ -285,15 +287,15 @@ func (e *WireGuardEngine) Apply(
 	if e.device != nil {
 		relayChanged := e.relayFingerprint != plan.relayFingerprint
 		relayReplaced := false
-		baseCompatible := e.configurationHash == plan.configurationHash &&
-			equalPeerBaseConfiguration(e.peers, plan.peers)
-		if baseCompatible && !routesChanged {
+		peerConfigurationCompatible := e.deviceConfigurationHash == plan.deviceConfigurationHash &&
+			equalPeerDataConfiguration(e.peers, plan.peers)
+		if peerConfigurationCompatible && !routesChanged {
 			sessionResets := changedPeerSessions(e.peers, plan.peers)
 			preservePreferred := equalPeerEndpointAuthority(e.peers, plan.peers) &&
 				len(sessionResets) == 0
 			if e.appliedRevision == snapshot.Revision &&
-				preservePreferred && !relayChanged &&
-				len(sessionResets) == 0 {
+				e.configurationHash == plan.configurationHash &&
+				preservePreferred && !relayChanged {
 				return plan.state(), nil
 			}
 			if relayChanged {
@@ -306,7 +308,7 @@ func (e *WireGuardEngine) Apply(
 			}
 			advanced, err := e.advanceCompatiblePlan(
 				snapshot.Revision,
-				plan.peers,
+				plan,
 				preservePreferred,
 			)
 			if err != nil {
@@ -718,32 +720,35 @@ func (e *WireGuardEngine) RestorePreferredEndpoint(
 // endpoint so stale proof cannot cross generations.
 func (e *WireGuardEngine) advanceCompatiblePlan(
 	revision uint64,
-	planned []wireGuardPeerPlan,
+	plan wireGuardPlan,
 	preservePreferred bool,
 ) (bool, error) {
-	if !preservePreferred {
-		for _, peer := range planned {
-			installed := e.peers[peer.id]
-			if installed.currentEndpoint != installed.baseEndpoint && installed.baseEndpoint == "" {
+	for _, peer := range plan.peers {
+		installed := e.peers[peer.id]
+		if preservePreferred && installed.currentPath == peerPathDirect {
+			continue
+		}
+		if peer.baseEndpoint == "" {
+			if installed.currentEndpoint != "" {
 				return false, nil
 			}
+			continue
 		}
-		for _, peer := range planned {
-			installed := e.peers[peer.id]
-			if err := e.configurePeerEndpoint(
-				peer.id,
-				installed,
-				installed.baseEndpoint,
-				installed.basePath,
-				false,
-			); err != nil {
-				return false, err
-			}
+		if err := e.configurePeerEndpoint(
+			peer.id,
+			installed,
+			peer.baseEndpoint,
+			peer.basePath,
+			false,
+		); err != nil {
+			return false, err
 		}
 	}
-	nextPeers := make(map[uint64]wireGuardPeerState, len(planned))
-	for _, peer := range planned {
+	nextPeers := make(map[uint64]wireGuardPeerState, len(plan.peers))
+	for _, peer := range plan.peers {
 		installed := e.peers[peer.id]
+		installed.baseEndpoint = peer.baseEndpoint
+		installed.basePath = peer.basePath
 		installed.authorizedEndpoints = append(
 			[]netip.AddrPort(nil),
 			peer.authorizedEndpoints...,
@@ -752,6 +757,8 @@ func (e *WireGuardEngine) advanceCompatiblePlan(
 		installed.discoveryKey = peer.discoveryKey
 		nextPeers[peer.id] = installed
 	}
+	e.configurationHash = plan.configurationHash
+	e.deviceConfigurationHash = plan.deviceConfigurationHash
 	e.peers = nextPeers
 	e.appliedRevision = revision
 
@@ -827,6 +834,7 @@ func (e *WireGuardEngine) configurePeerEndpoint(
 
 func (e *WireGuardEngine) adoptPlan(revision uint64, plan wireGuardPlan) {
 	e.configurationHash = plan.configurationHash
+	e.deviceConfigurationHash = plan.deviceConfigurationHash
 	e.relayFingerprint = plan.relayFingerprint
 	e.relayTopology = plan.relayTopology
 	e.appliedRevision = revision
@@ -898,6 +906,7 @@ func (e *WireGuardEngine) Close() error {
 	e.device.Close()
 	e.device = nil
 	e.configurationHash = [32]byte{}
+	e.deviceConfigurationHash = [32]byte{}
 	e.relayFingerprint = [32]byte{}
 	e.relayTopology = [32]byte{}
 	e.appliedRevision = 0
@@ -1065,6 +1074,7 @@ func buildWireGuardPlan(
 	configuration.WriteString("listen_port=")
 	configuration.Write(strconv.AppendUint(nil, uint64(listenPort), 10))
 	configuration.WriteByte('\n')
+	deviceConfigurationHash := sha256.Sum256(configuration.Bytes())
 	var peerConfiguration bytes.Buffer
 	peerConfiguration.WriteString("replace_peers=true\n")
 	for _, peer := range plannedPeers {
@@ -1075,15 +1085,16 @@ func buildWireGuardPlan(
 	encodedPeers := peerConfiguration.Bytes()
 
 	plan := wireGuardPlan{
-		configuration:     encoded,
-		peerConfiguration: encodedPeers,
-		configurationHash: sha256.Sum256(encoded),
-		addresses:         addresses,
-		routes:            routes,
-		peers:             plannedPeers,
-		pendingEndpoints:  pendingEndpoints,
-		relayConfig:       relayConfig,
-		hasRelayFallback:  relayConfig != nil && len(relayConfig.Peers) != 0,
+		configuration:           encoded,
+		peerConfiguration:       encodedPeers,
+		configurationHash:       sha256.Sum256(encoded),
+		deviceConfigurationHash: deviceConfigurationHash,
+		addresses:               addresses,
+		routes:                  routes,
+		peers:                   plannedPeers,
+		pendingEndpoints:        pendingEndpoints,
+		relayConfig:             relayConfig,
+		hasRelayFallback:        relayConfig != nil && len(relayConfig.Peers) != 0,
 	}
 	if relayConfig != nil {
 		plan.relayFingerprint = relay.Fingerprint(*relayConfig)
@@ -1135,11 +1146,14 @@ func equalPeerEndpointAuthority(
 	current map[uint64]wireGuardPeerState,
 	planned []wireGuardPeerPlan,
 ) bool {
-	if !equalPeerBaseConfiguration(current, planned) {
+	if len(current) != len(planned) {
 		return false
 	}
 	for _, peer := range planned {
-		if !slices.Equal(current[peer.id].authorizedEndpoints, peer.authorizedEndpoints) {
+		installed, exists := current[peer.id]
+		if !exists || installed.key != peer.key ||
+			installed.discoveryKey != peer.discoveryKey ||
+			!slices.Equal(installed.authorizedEndpoints, peer.authorizedEndpoints) {
 			return false
 		}
 	}
@@ -1147,7 +1161,7 @@ func equalPeerEndpointAuthority(
 	return true
 }
 
-func equalPeerBaseConfiguration(
+func equalPeerDataConfiguration(
 	current map[uint64]wireGuardPeerState,
 	planned []wireGuardPeerPlan,
 ) bool {
@@ -1157,8 +1171,7 @@ func equalPeerBaseConfiguration(
 	for _, peer := range planned {
 		installed, exists := current[peer.id]
 		if !exists || installed.key != peer.key ||
-			installed.baseEndpoint != peer.baseEndpoint ||
-			installed.basePath != peer.basePath {
+			!slices.Equal(installed.allowedIPs, peer.allowedIPs) {
 			return false
 		}
 	}

@@ -110,9 +110,12 @@ peer map ──────────► authenticated path manager ───�
    bootstraps, authenticated direct promotions, and relay fallbacks, and records
    last and maximum relay-to-direct promotion duration without retaining peer
    identity or endpoint data. Equivalent map revisions preserve only the
-   remaining proof lease without a device write; the lease is not extended,
-   and any socket, peer identity, discovery identity, or candidate-authority
-   change restores the signed base path. Activity-aware probe suppression
+   remaining proof lease without a device write; the lease is not extended.
+   A compatible signed home-relay change updates only the fallback metadata,
+   keeps the authenticated direct endpoint, and makes expiry restore the newest
+   relay base. Any socket, route, peer identity, discovery identity,
+   candidate-authority, or relay-topology change restores or recreates the
+   signed base path. Activity-aware probe suppression
    remains; periodic authenticated rounds currently keep roaming decisions
    fresh for all online peers.
 5. Implemented in the Linux candidate path: end-to-end tests use only automatically
