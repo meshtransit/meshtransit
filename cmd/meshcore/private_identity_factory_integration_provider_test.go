@@ -41,8 +41,17 @@ type privateFactorySigningProvider struct {
 	mu                                  sync.Mutex
 	nonce, challenge                    string
 	barrier                             *privateFactoryTokenBarrier
+	outage                              atomic.Uint32
 	discovery, tokens, jwks, unexpected atomic.Int64
 }
+
+type privateFactoryProviderOutage uint32
+
+const (
+	privateFactoryProviderAvailable privateFactoryProviderOutage = iota
+	privateFactoryProviderTokenOutage
+	privateFactoryProviderJWKSOutage
+)
 
 func newPrivateFactorySigningProvider(t *testing.T, suffix byte) (*privateFactorySigningProvider, oidc.BasicSecret) {
 	t.Helper()
@@ -110,9 +119,15 @@ func (provider *privateFactorySigningProvider) serve(w http.ResponseWriter, r *h
 		})
 	case r.Method == http.MethodPost && r.URL.Path == "/realm/token":
 		provider.tokens.Add(1)
+		if privateFactoryProviderOutage(provider.outage.Load()) == privateFactoryProviderTokenOutage {
+			panic(http.ErrAbortHandler)
+		}
 		provider.token(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/realm/jwks":
 		provider.jwks.Add(1)
+		if privateFactoryProviderOutage(provider.outage.Load()) == privateFactoryProviderJWKSOutage {
+			panic(http.ErrAbortHandler)
+		}
 		provider.write(w, map[string]any{"keys": []any{map[string]any{
 			"kty": "RSA", "alg": "RS256", "kid": "synthetic-signing-v1", "use": "sig",
 			"key_ops": []string{"verify"}, "n": base64.RawURLEncoding.EncodeToString(provider.key.N.Bytes()),

@@ -245,6 +245,126 @@ func TestPrivateIdentityFactoryCallbackIntegration(t *testing.T) {
 	})
 }
 
+func TestPrivateIdentityFactoryProviderOutageRecoveryIntegration(t *testing.T) {
+	if os.Getenv("MESHTRANSIT_PRIVATE_FACTORY_INTEGRATION") != "1" {
+		t.Skip("requires the owned Linux private-factory fixture lane")
+	}
+	missingTrust := os.Getenv("SSL_CERT_FILE") == "" || os.Getenv("SSL_CERT_DIR") == ""
+	if runtime.GOOS != "linux" || missingTrust {
+		t.Fatal("requires explicit Linux process-startup fixture trust")
+	}
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+	storage := openPrivateFactoryIntegrationStorage(t, "meshtransit_private_factory_provider_outage")
+	storage.seedAccount(t)
+	for index, test := range []struct {
+		name   string
+		suffix byte
+		outage privateFactoryProviderOutage
+		jwks   int64
+	}{
+		{name: "token endpoint", suffix: 110, outage: privateFactoryProviderTokenOutage},
+		{name: "signing keys", suffix: 116, outage: privateFactoryProviderJWKSOutage, jwks: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newPrivateIdentityFixture(t)
+			provider, secret := newPrivateFactorySigningProvider(t, test.suffix)
+			fixture.options.Route = provider.route
+			storage.seedRoute(t, provider.route)
+			storage.seedLoginSubject(t, fixture, test.suffix, privateFactorySubject, true)
+			seen := storage.subjectLastSeen(t, test.suffix)
+			cache, _ := storage.openRedis(t)
+			factory, err := composePrivateIdentityFactory(
+				t.Context(), fixture.keys,
+				privateIdentityFactoryOptions{
+					Application: fixture.options,
+					Discovery:   oidc.Options{Timeout: time.Second, MaxMetadataBytes: 64 * 1024},
+					Token:       privateIdentityTokenOptions{Timeout: 10 * time.Second, MaxTokenAge: time.Minute},
+				},
+				privateIdentityFactoryDependencies{
+					Runtime: storage.runtime, Redis: cache, Secret: secret, Logger: discardCompositionLogger(),
+				},
+			)
+			if err != nil || factory == nil {
+				t.Fatal("compose provider-outage factory")
+			}
+			t.Cleanup(factory.Close)
+
+			address := "192.0.2." + strconv.Itoa(120+index) + ":12345"
+			location, cookies, failedTransaction := storage.startConcreteLogin(t, fixture, factory, address)
+			provider.arm(t, location, false)
+			post := prepareConcreteCallback(t, fixture, factory, location, cookies, address, false)
+			before := storage.census(t)
+			provider.outage.Store(uint32(test.outage))
+			failed := newPrivateIdentityResponse()
+			err = factory.identity.dispatcher.Handle(failed, post)
+			if !errors.Is(err, httpapi.ErrLoginCompletionUnavailable) || failed.Body.Len() != 0 ||
+				failed.Header().Get("Set-Cookie") != "" || failed.Header().Get("Location") != "" {
+				t.Fatal("provider outage did not fail closed before browser release")
+			}
+			if provider.tokens.Load() != 1 || provider.jwks.Load() < test.jwks ||
+				provider.jwks.Load() > test.jwks+1 || provider.unexpected.Load() != 0 {
+				t.Fatal("provider outage widened or repeated back-channel effects")
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			if checkErr := factory.Check(ctx); checkErr != nil {
+				cancel()
+				t.Fatal("token-stage outage evicted healthy login admission")
+			}
+			cancel()
+			before.mutations += 2
+			before.audit += 2
+			before.outbox += 2
+			storage.assertCallbackTerminal(t, failedTransaction, accountsession.Session{})
+			if storage.census(t) != before || !storage.subjectLastSeen(t, test.suffix).Equal(seen) {
+				t.Fatal("provider outage granted Session authority or changed subject state")
+			}
+			failedTokens, failedJWKS := provider.tokens.Load(), provider.jwks.Load()
+			replay := newPrivateIdentityResponse()
+			assertConcreteCallbackRejected(t, replay, factory.identity.dispatcher.Handle(replay, post))
+			if storage.census(t) != before || provider.tokens.Load() != failedTokens ||
+				provider.jwks.Load() != failedJWKS {
+				t.Fatal("outage callback replay reached provider or changed authority")
+			}
+
+			provider.outage.Store(uint32(privateFactoryProviderAvailable))
+			recoveryAddress := "192.0.2." + strconv.Itoa(130+index) + ":12345"
+			location, cookies, recoveredTransaction := storage.startConcreteLogin(
+				t, fixture, factory, recoveryAddress,
+			)
+			before.transactions++
+			before.mutations++
+			before.audit++
+			before.outbox++
+			provider.arm(t, location, false)
+			post = prepareConcreteCallback(t, fixture, factory, location, cookies, recoveryAddress, false)
+			completed := newPrivateIdentityResponse()
+			if err := factory.identity.dispatcher.Handle(completed, post); err != nil ||
+				completed.Code != http.StatusOK || completed.Body.String() != `{"return_path":"/console"}` {
+				t.Fatal("fresh login did not recover after provider restoration")
+			}
+			token := assertConcreteSessionCookies(t, completed, true)
+			ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
+			session, err := factory.identity.sessions.Authenticate(ctx, token)
+			cancel()
+			if err != nil {
+				t.Fatal("recovered Session did not authenticate")
+			}
+			assertPrivateFactorySession(t, session, provider.route, test.suffix)
+			storage.assertPersistedSession(t, fixture, session, token)
+			storage.assertCallbackTerminal(t, recoveredTransaction, session)
+			before.sessions++
+			before.mutations += 3
+			before.audit += 3
+			before.outbox += 3
+			if storage.census(t) != before || !storage.subjectLastSeen(t, test.suffix).Equal(seen) ||
+				provider.tokens.Load() != failedTokens+1 || provider.jwks.Load() != failedJWKS+1 ||
+				provider.unexpected.Load() != 0 || fixture.clockReads != 0 || len(fixture.effects) != 0 {
+				t.Fatal("provider recovery widened authority or used alternate effects")
+			}
+		})
+	}
+}
+
 func duplicateConcreteCallbackRequest(
 	t *testing.T,
 	fixture *privateIdentityFixture,
