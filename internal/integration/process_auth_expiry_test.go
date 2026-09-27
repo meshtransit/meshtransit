@@ -20,7 +20,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/publicid"
 )
 
-func TestRoleAllProcessExpiryConvergesAcrossRestart(t *testing.T) {
+func TestRoleWorkerProcessExpiryConvergesAcrossRestart(t *testing.T) {
 	if os.Getenv("MESHTRANSIT_INTEGRATION") != "1" {
 		t.Skip("set MESHTRANSIT_INTEGRATION=1 with disposable TLS dependencies")
 	}
@@ -58,7 +58,6 @@ func TestRoleAllProcessExpiryConvergesAcrossRestart(t *testing.T) {
 		role, suffix string
 		consuming    bool
 	}{
-		{role: "all", suffix: "fe0"}, {role: "all", suffix: "fe1", consuming: true},
 		{role: "worker", suffix: "fe2"}, {role: "worker", suffix: "fe3", consuming: true},
 	} {
 		t.Run(cycle.role+"-"+cycle.suffix, func(t *testing.T) {

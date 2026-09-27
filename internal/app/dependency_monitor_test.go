@@ -70,6 +70,40 @@ func TestDependencyMonitorInitialCheckFailsClosed(t *testing.T) {
 	}
 }
 
+func TestDependencyMonitorStartsWhenIsolatedLoginDependencyIsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	state, err := NewRuntimeState(
+		[]Role{RoleAPI, RoleControl, RoleWorker, RoleRelay, RoleIdentity},
+		ComponentPrivateLogin,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	monitor := mustMonitor(
+		t,
+		state,
+		&fakeChecker{component: ComponentPostgreSQL},
+		&fakeChecker{component: ComponentRedis},
+		&fakeChecker{component: ComponentIdentityPostgreSQL, err: errors.New("identity database unavailable")},
+		&fakeChecker{component: ComponentIdentityConfiguration, err: errors.New("identity drift")},
+		&fakeChecker{component: ComponentPrivateLogin, err: errors.New("provider unavailable")},
+	)
+	if err := monitor.Start(t.Context()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	state.SetReady(true)
+	if !state.Ready() || state.Snapshot().LoginReady {
+		t.Fatal("isolated login outage changed Core admission")
+	}
+	if err := monitor.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-monitor.Done(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDependencyMonitorTracksLossAndRecovery(t *testing.T) {
 	t.Parallel()
 

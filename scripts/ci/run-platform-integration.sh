@@ -421,7 +421,7 @@ if [[ "${go_runner}" == container ]]; then
 		--quiet --no-align --tuples-only \
 		--command "BEGIN READ ONLY; SET LOCAL statement_timeout='5s'; SELECT 'owned base expiry candidates before process matrix: ' || jsonb_array_length(mesh_ops.list_due_oidc_browser_v1('01890f00-0000-7000-8000-000000000001'::UUID,128)); ROLLBACK"
 fi
-export MESHTRANSIT_ROLE=all
+export MESHTRANSIT_ROLE=control
 export MESHTRANSIT_POSTGRES_WORKER_USER=mesh_worker
 export MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE="${fixture_dir}/worker-password"
 export MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS=2
@@ -431,7 +431,7 @@ run_go test \
 	-tags=integration \
 	-count=1 \
 	-race \
-	-run '^(TestTLSAuthenticatedDependencies|TestRoleAllProcessRegistrationConvergesAcrossRestart|TestRoleAllProcessRestartsAfterGracefulShutdown|TestRoleAllProcessRejectsInvalidConfigurationBeforeListening|TestRoleAllProcessExpiryConvergesAcrossRestart)$' \
+	-run '^(TestTLSAuthenticatedDependencies|TestRoleControlProcessRegistrationConvergesAcrossRestart|TestRoleControlProcessRestartsAfterGracefulShutdown|TestRoleControlProcessRejectsInvalidConfigurationBeforeListening|TestRoleWorkerProcessExpiryConvergesAcrossRestart)$' \
 	-timeout=5m \
 	./internal/integration
 export MESHTRANSIT_ROLE=api

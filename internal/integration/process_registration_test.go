@@ -20,7 +20,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/node"
 )
 
-func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
+func TestRoleControlProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 	if os.Getenv("MESHTRANSIT_INTEGRATION") != "1" {
 		t.Skip("set MESHTRANSIT_INTEGRATION=1 with disposable TLS dependencies")
 	}
@@ -46,7 +46,7 @@ func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 	controlAddress := reserveLoopbackAddress(t)
 	client := newProcessRegistrationClient(t, processConfig, controlAddress)
 
-	first := startReadyRoleAllProcess(t, binary, controlAddress)
+	first := startReadyControlProcess(t, binary, controlAddress)
 	registerCtx, cancelRegister := context.WithTimeout(ctx, 10*time.Second)
 	if err := client.Register(registerCtx, fixture.credential.Reveal()); err != nil {
 		cancelRegister()
@@ -72,9 +72,9 @@ func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 	)
 	assertControlClientMetrics(t, first)
 	waitForProcessRevisionDelivery(ctx, t, first, adminConnection, firstEvidence.nodePublicID)
-	stopIntegrationProcess(t, first.process)
+	stopReadyControlProcess(t, first)
 
-	second := startReadyRoleAllProcess(t, binary, controlAddress)
+	second := startReadyControlProcess(t, binary, controlAddress)
 	replayCtx, cancelReplay := context.WithTimeout(ctx, 10*time.Second)
 	if err := client.Register(replayCtx, fixture.credential.Reveal()); err != nil {
 		cancelReplay()
@@ -89,7 +89,7 @@ func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 		t.Fatalf("restarted stream map differs from one-shot map: one-shot=%+v stream=%+v", secondMap, secondStreamMap)
 	}
 	assertControlClientMetrics(t, second)
-	stopIntegrationProcess(t, second.process)
+	stopReadyControlProcess(t, second)
 	secondEvidence := readProcessRegistrationEvidence(ctx, t, adminConnection, client.Identity())
 	if secondEvidence != firstEvidence {
 		t.Fatalf("registration replay changed authority: before=%+v after=%+v", firstEvidence, secondEvidence)
@@ -98,10 +98,10 @@ func TestRoleAllProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 		t.Fatalf("map changed across restart: before=%+v after=%+v", firstMap, secondMap)
 	}
 
-	third := startReadyRoleAllProcess(t, binary, controlAddress)
+	third := startReadyControlProcess(t, binary, controlAddress)
 	assertProcessConnectivityWakeup(ctx, t, third, client)
 	assertProcessRevisionWakeup(ctx, t, third, client, adminConnection)
-	stopIntegrationProcess(t, third.process)
+	stopReadyControlProcess(t, third)
 }
 
 func assertProcessEndpointObservation(
@@ -139,7 +139,7 @@ func assertProcessEndpointObservation(
 func assertProcessRevisionWakeup(
 	ctx context.Context,
 	t *testing.T,
-	running readyRoleAllProcess,
+	running readyControlProcess,
 	client *protocoltest.Client,
 	adminConnection *pgx.Conn,
 ) {
@@ -183,7 +183,7 @@ func assertProcessRevisionWakeup(
 func assertProcessConnectivityWakeup(
 	ctx context.Context,
 	t *testing.T,
-	running readyRoleAllProcess,
+	running readyControlProcess,
 	client *protocoltest.Client,
 ) {
 	t.Helper()
@@ -228,11 +228,11 @@ func assertProcessConnectivityWakeup(
 	}
 }
 
-func startReadyRoleAllProcess(
+func startReadyControlProcess(
 	t *testing.T,
 	binary string,
 	controlAddress string,
-) readyRoleAllProcess {
+) readyControlProcess {
 	t.Helper()
 	healthAddress := reserveLoopbackAddress(t)
 	process := startIntegrationProcess(
@@ -245,9 +245,27 @@ func startReadyRoleAllProcess(
 	defer cancelStart()
 	if err := waitForReady(startCtx, process, healthAddress); err != nil {
 		process.forceStop(t)
-		t.Fatalf("wait for role=all readiness: %v; stderr: %s", err, process.stderr.String())
+		t.Fatalf("wait for control readiness: %v; stderr: %s", err, process.stderr.String())
 	}
-	return readyRoleAllProcess{process: process, healthAddress: healthAddress}
+	workerHealthAddress := reserveLoopbackAddress(t)
+	workerEnvironment := integrationProcessEnvironment(workerHealthAddress, reserveLoopbackAddress(t))
+	workerEnvironment = setEnvironmentValue(workerEnvironment, "MESHTRANSIT_ROLE", "worker")
+	worker := startIntegrationProcess(t, binary, workerEnvironment)
+	t.Cleanup(func() { worker.forceStop(t) })
+	workerStartCtx, cancelWorkerStart := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancelWorkerStart()
+	if err := waitForReady(workerStartCtx, worker, workerHealthAddress); err != nil {
+		worker.forceStop(t)
+		process.forceStop(t)
+		t.Fatalf("wait for worker readiness: %v; stderr: %s", err, worker.stderr.String())
+	}
+	return readyControlProcess{process: process, worker: worker, healthAddress: healthAddress}
+}
+
+func stopReadyControlProcess(t *testing.T, running readyControlProcess) {
+	t.Helper()
+	stopIntegrationProcess(t, running.worker)
+	stopIntegrationProcess(t, running.process)
 }
 
 func stopIntegrationProcess(t *testing.T, process *integrationProcess) {
@@ -255,19 +273,20 @@ func stopIntegrationProcess(t *testing.T, process *integrationProcess) {
 	stopCtx, cancelStop := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancelStop()
 	if err := process.stop(stopCtx); err != nil {
-		t.Fatalf("gracefully stop role=all process: %v; stderr: %s", err, process.stderr.String())
+		t.Fatalf("gracefully stop control process: %v; stderr: %s", err, process.stderr.String())
 	}
 }
 
-type readyRoleAllProcess struct {
+type readyControlProcess struct {
 	process       *integrationProcess
+	worker        *integrationProcess
 	healthAddress string
 }
 
 func fetchProcessFullMap(
 	ctx context.Context,
 	t *testing.T,
-	running readyRoleAllProcess,
+	running readyControlProcess,
 	client *protocoltest.Client,
 ) protocoltest.FullMap {
 	t.Helper()
@@ -284,7 +303,7 @@ func fetchProcessFullMap(
 func fetchProcessInitialStreamMap(
 	ctx context.Context,
 	t *testing.T,
-	running readyRoleAllProcess,
+	running readyControlProcess,
 	client *protocoltest.Client,
 ) protocoltest.FullMap {
 	t.Helper()
@@ -320,7 +339,7 @@ func assertProcessFullMap(
 	}
 }
 
-func assertControlClientMetrics(t *testing.T, running readyRoleAllProcess) {
+func assertControlClientMetrics(t *testing.T, running readyControlProcess) {
 	t.Helper()
 	if running.process == nil || running.healthAddress == "" {
 		t.Fatal("integration process is required")
@@ -386,7 +405,7 @@ type processRevisionFeedMetrics struct {
 
 func waitForProcessRevisionFeedMetrics(
 	t *testing.T,
-	running readyRoleAllProcess,
+	running readyControlProcess,
 	ready func(processRevisionFeedMetrics) bool,
 ) processRevisionFeedMetrics {
 	t.Helper()
@@ -456,7 +475,7 @@ func parseProcessMetric(body, name string) (uint64, bool) {
 func waitForProcessRevisionDelivery(
 	parent context.Context,
 	t *testing.T,
-	running readyRoleAllProcess,
+	running readyControlProcess,
 	adminConnection *pgx.Conn,
 	nodePublicID string,
 ) {

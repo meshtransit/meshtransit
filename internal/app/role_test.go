@@ -77,7 +77,7 @@ func TestExpandRole(t *testing.T) {
 		{
 			name: "all responsibilities",
 			role: RoleAll,
-			want: []Role{RoleAPI, RoleControl, RoleWorker, RoleRelay},
+			want: []Role{RoleAPI, RoleControl, RoleWorker, RoleRelay, RoleIdentity},
 		},
 		{name: "api only", role: RoleAPI, want: []Role{RoleAPI}},
 		{name: "control only", role: RoleControl, want: []Role{RoleControl}},

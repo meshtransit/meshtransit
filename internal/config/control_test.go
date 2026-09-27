@@ -17,6 +17,7 @@ func TestLoadControlConfigForControlRoles(t *testing.T) {
 			got, err := Load(mapLookup(validProcessValues(map[string]string{
 				envRole:                           role,
 				envControlAddress:                 "[::]:9443",
+				envIdentityAddress:                "127.0.0.1:9445",
 				envControlMaxSessions:             "17",
 				envControlMaxStreamsPerSession:    "5",
 				envControlHandshakeTimeout:        "3s",

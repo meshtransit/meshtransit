@@ -71,7 +71,7 @@ func (role Role) String() string {
 func ExpandRole(role Role) ([]Role, error) {
 	switch role {
 	case RoleAll:
-		return []Role{RoleAPI, RoleControl, RoleWorker, RoleRelay}, nil
+		return []Role{RoleAPI, RoleControl, RoleWorker, RoleRelay, RoleIdentity}, nil
 	case RoleAPI, RoleControl, RoleWorker, RoleRelay, RoleIdentity:
 		return []Role{role}, nil
 	default:

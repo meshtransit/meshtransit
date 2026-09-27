@@ -39,6 +39,8 @@ func TestOperatorMetricsExposeBoundedRuntimeSignals(t *testing.T) {
 	for name, value := range map[string]string{
 		"build info":          `meshtransit_build_info{config_schema_version="1",go_version="go1.26.8-test",revision="revision-test",version="version-test"} 1`,
 		"runtime readiness":   `meshtransit_runtime_ready 1`,
+		"login configured":    `meshtransit_login_configured 0`,
+		"login readiness":     `meshtransit_login_ready 0`,
 		"api role":            `meshtransit_runtime_role{role="api"} 1`,
 		"postgres readiness":  `meshtransit_dependency_ready{component="postgresql"} 1`,
 		"redis readiness":     `meshtransit_dependency_ready{component="redis"} 1`,
@@ -70,7 +72,9 @@ func TestOperatorMetricsPrivatePrerequisiteRemainsClosedAndObservable(t *testing
 	}
 	response := request(t, metrics.handler, "/metrics")
 	if response.Code != http.StatusOK ||
-		!strings.Contains(response.Body.String(), `meshtransit_dependency_ready{component="private_login"} 0`) {
+		!strings.Contains(response.Body.String(), `meshtransit_dependency_ready{component="private_login"} 0`) ||
+		!strings.Contains(response.Body.String(), `meshtransit_login_configured 1`) ||
+		!strings.Contains(response.Body.String(), `meshtransit_login_ready 0`) {
 		t.Fatal("unknown private prerequisite omitted or reported ready")
 	}
 	for _, component := range []string{

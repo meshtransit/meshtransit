@@ -123,12 +123,14 @@ func newOperatorMetrics(
 }
 
 type runtimeMetricsCollector struct {
-	state          healthState
-	roles          []string
-	components     []string
-	readyDesc      *prometheus.Desc
-	roleDesc       *prometheus.Desc
-	dependencyDesc *prometheus.Desc
+	state           healthState
+	roles           []string
+	components      []string
+	readyDesc       *prometheus.Desc
+	loginReadyDesc  *prometheus.Desc
+	loginConfigDesc *prometheus.Desc
+	roleDesc        *prometheus.Desc
+	dependencyDesc  *prometheus.Desc
 }
 
 func newRuntimeMetricsCollector(
@@ -143,6 +145,18 @@ func newRuntimeMetricsCollector(
 		readyDesc: prometheus.NewDesc(
 			"meshtransit_runtime_ready",
 			"Whether the runtime can safely admit its configured work.",
+			nil,
+			nil,
+		),
+		loginReadyDesc: prometheus.NewDesc(
+			"meshtransit_login_ready",
+			"Whether the configured browser login path can safely admit new logins.",
+			nil,
+			nil,
+		),
+		loginConfigDesc: prometheus.NewDesc(
+			"meshtransit_login_configured",
+			"Whether a browser login path is configured in this runtime.",
 			nil,
 			nil,
 		),
@@ -163,6 +177,8 @@ func newRuntimeMetricsCollector(
 
 func (collector *runtimeMetricsCollector) Describe(descriptions chan<- *prometheus.Desc) {
 	descriptions <- collector.readyDesc
+	descriptions <- collector.loginReadyDesc
+	descriptions <- collector.loginConfigDesc
 	descriptions <- collector.roleDesc
 	descriptions <- collector.dependencyDesc
 }
@@ -173,6 +189,16 @@ func (collector *runtimeMetricsCollector) Collect(metrics chan<- prometheus.Metr
 		collector.readyDesc,
 		prometheus.GaugeValue,
 		boolMetricValue(snapshot.Ready),
+	)
+	metrics <- prometheus.MustNewConstMetric(
+		collector.loginReadyDesc,
+		prometheus.GaugeValue,
+		boolMetricValue(snapshot.LoginReady),
+	)
+	metrics <- prometheus.MustNewConstMetric(
+		collector.loginConfigDesc,
+		prometheus.GaugeValue,
+		boolMetricValue(snapshot.LoginConfigured),
 	)
 	for _, role := range collector.roles {
 		metrics <- prometheus.MustNewConstMetric(
@@ -248,6 +274,8 @@ func operatorRoute(path string) string {
 		return "live"
 	case "/ready":
 		return "ready"
+	case "/ready/login":
+		return "ready_login"
 	case "/health":
 		return "health"
 	case "/metrics":

@@ -112,10 +112,11 @@ The `relay` role intentionally does not load or require direct storage settings.
 
 The isolated `identity` role does not load Core PostgreSQL, Redis, API, control,
 worker, enrollment, or private-login configuration. It uses the dedicated
-broker database contract below. The current incremental slice is available only
-in a binary built from the manifest-verified Dex workspace with the `dexbroker`
-build tag; ordinary builds reject the role at composition. `role=all` does not
-yet include identity. One immutable generic-OIDC Google connector and one
+broker database contract below. `role=all` now composes API, control, worker,
+relay, and the same embedded identity broker. Both `identity` and `all` require
+a binary built from the manifest-verified Dex workspace with the `dexbroker`
+build tag; ordinary builds reject broker composition. One immutable
+generic-OIDC Google connector and one
 confidential Core client are composed from protected files. Their generations,
 metadata, fixed protocol policy, derived broker callback, redirect URI, and
 secret contents, exact upstream endpoints, and outbound-policy version are bound
@@ -128,7 +129,7 @@ redirects and non-public DNS results, pins each validated IP for the dial, and
 enforces bounded TLS, request, response, connection, and lifecycle behavior.
 The isolated role mounts that handler on a separate direct-TLS listener. It may
 bind an unspecified address inside a container; the Kubernetes Service and
-network policy own external reachability. Configuration schema 21 also adds the version-2 Core BFF
+network policy own external reachability. Configuration schema 23 also adds the version-2 Core BFF
 profile described below: a fixed public application origin is separated from
 the private backend bind, exact trusted ingress prefixes are carried into client
 source resolution, and the existing callback/token/session graph is served only
@@ -629,7 +630,8 @@ missed-notification recovery path.
 The operator listener exposes:
 
 - `GET /live`: process listener is responsive;
-- `GET /ready`: configured work may be admitted;
+- `GET /ready`: Core API/control/worker/relay work may be admitted;
+- `GET /ready/login`: new browser login may be admitted, or `404` when login is not configured;
 - `GET /health`: redacted runtime component summary;
 - `GET /metrics`: Prometheus/OpenMetrics runtime and operator telemetry.
 
@@ -662,8 +664,16 @@ and connection creation/destruction. Pool state is also sampled at scrape time;
 SQL text, usernames, addresses, database names, and domain identifiers are
 never metric labels.
 
-Readiness opens only after the initial required dependency checks succeed and
-all role services start. For `control` and `all`, both wakeup-feed subscriptions
+Readiness opens only after the initial Core dependency checks succeed and all
+role services start. Identity-only processes continue to fail closed on both
+broker checks. In a successfully started `all` process, later identity or
+private-login dependency loss lowers `/ready/login` while `/ready` remains
+available for healthy Core work; fixed component metrics and the
+`meshtransit_login_configured`/`meshtransit_login_ready` gauges expose both
+states. Co-location still shares a process failure domain, so a broker
+composition failure during cold start stops `all`; deployments requiring that
+isolation use independently replicated `identity` processes. For `control` and
+`all`, both wakeup-feed subscriptions
 must succeed before the control listener starts. Periodic bounded checks lower
 readiness on dependency loss and restore it after recovery. Graceful shutdown
 closes admission before draining control streams, stopping and joining both
@@ -690,9 +700,10 @@ only stable component names and `ready`, `unavailable`, or `unknown` states.
 The listener defaults to loopback and should not be exposed on public client
 ingress.
 
-This lifecycle correction applies to existing roles and is a prerequisite for
-private login runtime binding, not its completion. No new environment settings,
-listener activation, schema, client wire or public Google SSO readiness is added.
+The lifecycle correction also protects the embedded broker and private login
+services. Configuration schema 23 adds aggregate-role identity binding and the
+separate login readiness contract; it does not change client wire protocols or
+authorize public ingress by itself.
 Deterministic contracts cover missing/unjoined owners, partial startup,
 already-observed unexpected exits, reported error/closed-channel joins and an
 owned goroutine whose late cleanup outlives the application shutdown deadline.
@@ -848,8 +859,9 @@ connector hop, callback, token, and keys are admitted with exact Host/path/metho
 checks; userinfo, introspection, device flow, health, root, static UI, and every
 unconfigured route fail closed. Forwarded assertions are stripped, request and
 body/query/header sizes are bounded, plaintext and HTTP/2 are disabled, and
-security headers are reasserted at write time. No public ingress, Core BFF
-callback, completed Google login, or `role=all` composition is enabled.
+security headers are reasserted at write time. Public ingress and Core BFF
+callback remain explicit deployment concerns; aggregate `role=all` composition
+is enabled only in the manifest-verified tagged binary.
 
 `make integration-deps` runs the build-tagged TLS/auth dependency test when
 `MESHTRANSIT_INTEGRATION=1` and the required file-backed settings above are
@@ -868,10 +880,10 @@ Never point this test at a shared or production database.
 18.6 TLS/SCRAM and Redis 8.8.0 TLS/ACL fixtures used by CI. It additionally
 proves end-to-end Network-revision wakeup delivery, transactional retry, and
 lease-expiry replay after a post-publish/pre-completion process failure. The
-gate also launches the real binary as `role=all`, checks every concrete role in
-operator metrics, performs a bounded SIGTERM shutdown, and proves a second
-process reaches readiness against the same durable state. A negative process
-case proves invalid `role=all` configuration exits with redacted diagnostics
+gate launches the ordinary binary in separated `control` and `worker` roles,
+performs bounded SIGTERM shutdowns, and proves restarted processes reach
+readiness against the same durable state. A negative process case proves
+invalid control configuration exits with redacted diagnostics
 before starting the operator listener. The same gate also discovers the
 control key over validated TLS, establishes Noise plus HTTP/2, registers a
 synthetic one-off credential, and verifies the committed Node, key epochs,

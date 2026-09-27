@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -396,31 +397,95 @@ func validateIdentityListenerAddress(value string) error {
 }
 
 func validateIdentitySecretOwnership(identity IdentityConfig) error {
-	paths := []struct {
-		setting string
-		path    string
-	}{
-		{setting: envIdentityTLSPrivateKeyFile, path: identity.Listener.TLSPrivateKeyFile.path},
-		{setting: envIdentityPostgreSQLRuntimePasswordFile, path: identity.PostgreSQL.RuntimePasswordFile.path},
-	}
-	for _, connector := range identity.OIDCConnectors {
-		paths = append(paths, struct {
-			setting string
-			path    string
-		}{setting: envIdentityOIDCConnectorClientSecretFile, path: connector.ClientSecretFile.path})
-	}
-	for _, client := range identity.Clients {
-		paths = append(paths, struct {
-			setting string
-			path    string
-		}{setting: envIdentityCoreClientSecretFile, path: client.SecretFile.path})
-	}
+	paths := identitySecretPaths(identity)
 	seen := make(map[string]struct{}, len(paths))
 	for _, candidate := range paths {
 		if _, exists := seen[candidate.path]; exists {
 			return settingError(candidate.setting)
 		}
 		seen[candidate.path] = struct{}{}
+	}
+	return nil
+}
+
+type secretPath struct {
+	setting string
+	path    string
+}
+
+func identitySecretPaths(identity IdentityConfig) []secretPath {
+	paths := []secretPath{
+		{setting: envIdentityTLSPrivateKeyFile, path: identity.Listener.TLSPrivateKeyFile.path},
+		{setting: envIdentityPostgreSQLRuntimePasswordFile, path: identity.PostgreSQL.RuntimePasswordFile.path},
+	}
+	for _, connector := range identity.OIDCConnectors {
+		paths = append(paths, secretPath{
+			setting: envIdentityOIDCConnectorClientSecretFile,
+			path:    connector.ClientSecretFile.path,
+		})
+	}
+	for _, client := range identity.Clients {
+		paths = append(paths, secretPath{
+			setting: envIdentityCoreClientSecretFile,
+			path:    client.SecretFile.path,
+		})
+	}
+	return paths
+}
+
+func validateIdentityCoreIsolation(
+	identity IdentityConfig,
+	storage *StorageConfig,
+	api *APIConfig,
+	control *ControlConfig,
+	enrollment *EnrollmentConfig,
+) error {
+	coreSecrets := make([]string, 0, 12)
+	if storage != nil {
+		sameServer := strings.EqualFold(identity.PostgreSQL.Address, storage.PostgreSQL.Address)
+		if sameServer && identity.PostgreSQL.Database == storage.PostgreSQL.Database {
+			return settingError(envIdentityPostgreSQLDatabase)
+		}
+		if sameServer && storage.PostgreSQL.Runtime != nil &&
+			identity.PostgreSQL.RuntimeUser == storage.PostgreSQL.Runtime.User {
+			return settingError(envIdentityPostgreSQLRuntimeUser)
+		}
+		if sameServer && storage.PostgreSQL.Worker != nil &&
+			identity.PostgreSQL.RuntimeUser == storage.PostgreSQL.Worker.User {
+			return settingError(envIdentityPostgreSQLRuntimeUser)
+		}
+		coreSecrets = append(coreSecrets, storage.Redis.PasswordFile.path)
+		if storage.PostgreSQL.Runtime != nil {
+			coreSecrets = append(coreSecrets, storage.PostgreSQL.Runtime.PasswordFile.path)
+		}
+		if storage.PostgreSQL.Worker != nil {
+			coreSecrets = append(coreSecrets, storage.PostgreSQL.Worker.PasswordFile.path)
+		}
+	}
+	if api != nil {
+		coreSecrets = append(coreSecrets,
+			api.TLSPrivateKeyFile.path,
+			api.AccountSessionDigest.Active.MaterialFile.path,
+			api.IdempotencyDigest.MaterialFile.path,
+			api.RateLimitDigest.MaterialFile.path,
+		)
+		if api.AccountSessionDigest.Previous != nil {
+			coreSecrets = append(coreSecrets, api.AccountSessionDigest.Previous.MaterialFile.path)
+		}
+	}
+	if control != nil {
+		coreSecrets = append(coreSecrets, control.TLSPrivateKeyFile.path, control.NoisePrivateKeyFile.path)
+	}
+	if enrollment != nil {
+		coreSecrets = append(coreSecrets, enrollment.CredentialDigest.Active.MaterialFile.path)
+		if enrollment.CredentialDigest.Previous != nil {
+			coreSecrets = append(coreSecrets, enrollment.CredentialDigest.Previous.MaterialFile.path)
+		}
+	}
+	for _, identitySecret := range identitySecretPaths(identity) {
+		if slices.Contains(coreSecrets, identitySecret.path) {
+			return settingError(identitySecret.setting)
+		}
 	}
 	return nil
 }

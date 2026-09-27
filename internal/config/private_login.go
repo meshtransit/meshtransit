@@ -113,6 +113,9 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 	if process.Control != nil && addressesConflict(result.address, process.Control.Address) {
 		return nil, ErrInvalid
 	}
+	if process.Identity != nil && addressesConflict(result.address, process.Identity.Listener.Address) {
+		return nil, ErrInvalid
+	}
 	if version == 1 {
 		result.origin = "https://" + result.address
 	} else if !privateLoginField(fields, "origin", &result.origin) || !validPrivateLoginOrigin(result.origin) {
@@ -173,6 +176,14 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 	result.route, err = oidcauth.NewRoute(params)
 	if err != nil {
 		return nil, ErrInvalid
+	}
+	if process.Identity != nil {
+		if len(process.Identity.Clients) != 1 ||
+			result.route.Issuer() != process.Identity.Issuer ||
+			result.route.OIDCClientID() != process.Identity.Clients[0].ID ||
+			result.route.RedirectURI() != process.Identity.Clients[0].RedirectURI {
+			return nil, ErrInvalid
+		}
 	}
 	if version == 2 {
 		issuer, issuerErr := url.Parse(result.route.Issuer())
@@ -374,6 +385,11 @@ func (profile *PrivateLoginConfig) validOwnership(process Config) bool {
 		}
 		if process.Storage.PostgreSQL.Worker != nil {
 			external = append(external, process.Storage.PostgreSQL.Worker.PasswordFile)
+		}
+	}
+	if process.Identity != nil {
+		for _, identitySecret := range identitySecretPaths(*process.Identity) {
+			external = append(external, SecretFile{path: identitySecret.path})
 		}
 	}
 	for _, file := range external {

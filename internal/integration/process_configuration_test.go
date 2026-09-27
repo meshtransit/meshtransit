@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func TestRoleAllProcessRejectsInvalidConfigurationBeforeListening(t *testing.T) {
+func TestRoleControlProcessRejectsInvalidConfigurationBeforeListening(t *testing.T) {
 	if os.Getenv("MESHTRANSIT_INTEGRATION") != "1" {
 		t.Skip("set MESHTRANSIT_INTEGRATION=1 with file-backed test credentials")
 	}
@@ -29,9 +29,9 @@ func TestRoleAllProcessRejectsInvalidConfigurationBeforeListening(t *testing.T) 
 		}
 	}()
 
-	runtimeUser := os.Getenv("MESHTRANSIT_POSTGRES_RUNTIME_USER")
-	if runtimeUser == "" {
-		t.Fatal("MESHTRANSIT_POSTGRES_RUNTIME_USER is required")
+	privateKeyFile := os.Getenv("MESHTRANSIT_CONTROL_TLS_PRIVATE_KEY_FILE")
+	if privateKeyFile == "" {
+		t.Fatal("MESHTRANSIT_CONTROL_TLS_PRIVATE_KEY_FILE is required")
 	}
 	environment := integrationProcessEnvironment(
 		listener.Addr().String(),
@@ -39,8 +39,8 @@ func TestRoleAllProcessRejectsInvalidConfigurationBeforeListening(t *testing.T) 
 	)
 	environment = setEnvironmentValue(
 		environment,
-		"MESHTRANSIT_POSTGRES_WORKER_USER",
-		runtimeUser,
+		"MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE",
+		privateKeyFile,
 	)
 	process := startIntegrationProcess(t, binary, environment)
 	t.Cleanup(func() { process.forceStop(t) })
@@ -58,9 +58,7 @@ func TestRoleAllProcessRejectsInvalidConfigurationBeforeListening(t *testing.T) 
 		t.Fatalf("stderr = %q, want redacted invalid_configuration event", output)
 	}
 	for _, sensitive := range []string{
-		runtimeUser,
-		os.Getenv("MESHTRANSIT_POSTGRES_RUNTIME_PASSWORD_FILE"),
-		os.Getenv("MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE"),
+		privateKeyFile,
 	} {
 		if sensitive != "" && strings.Contains(output, sensitive) {
 			t.Fatal("startup failure exposed a sensitive configuration value")

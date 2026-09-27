@@ -228,7 +228,7 @@ func (monitor *DependencyMonitor) checkAll(parent context.Context) error {
 	var checkErrors []error
 	for index, checker := range monitor.checkers {
 		updates[checker.Component()] = statuses[index]
-		if errorsByIndex[index] != nil {
+		if errorsByIndex[index] != nil && monitor.state.AdmissionRequired(checker.Component()) {
 			checkErrors = append(checkErrors, errorsByIndex[index])
 		}
 	}

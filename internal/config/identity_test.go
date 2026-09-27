@@ -70,7 +70,7 @@ func TestLoadIdentityUsesIsolatedRuntimeConfiguration(t *testing.T) {
 	}
 	client := identity.Clients[0]
 	if client.ID != "meshtransit-core" || client.DisplayName != "MeshTransit Core" ||
-		client.Generation != 1 || client.RedirectURI != "https://app.example.test/auth/callback" {
+		client.Generation != 1 || client.RedirectURI != "https://app.example.test/auth/v1/callback" {
 		t.Fatalf("identity client = %v", client)
 	}
 	if identity.ExpectedFingerprint == (IdentityConfigurationFingerprint{}) {
@@ -246,6 +246,65 @@ func TestLoadIdentityRejectsHealthListenerConflict(t *testing.T) {
 	}
 }
 
+func TestLoadAllRejectsIdentityListenerConflicts(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		address string
+	}{
+		{name: "api", address: defaultAPIAddress},
+		{name: "control", address: defaultControlAddress},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := Load(mapLookup(validProcessValues(map[string]string{
+				envIdentityAddress: test.address,
+			})))
+			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), envIdentityAddress) {
+				t.Fatalf("Load() error = %v, want redacted identity listener conflict", err)
+			}
+		})
+	}
+}
+
+func TestLoadAllRejectsSharedIdentityDatabase(t *testing.T) {
+	t.Parallel()
+
+	_, err := Load(mapLookup(validProcessValues(map[string]string{
+		envIdentityPostgreSQLAddress:  "database.internal:5432",
+		envIdentityPostgreSQLDatabase: "meshtransit",
+	})))
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), envIdentityPostgreSQLDatabase) {
+		t.Fatalf("Load() error = %v, want isolated identity database failure", err)
+	}
+}
+
+func TestLoadAllRejectsSharedIdentitySecretFiles(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name, key, sharedWith string
+	}{
+		{name: "database password", key: envIdentityPostgreSQLRuntimePasswordFile, sharedWith: envPostgreSQLRuntimePasswordFile},
+		{name: "listener private key", key: envIdentityTLSPrivateKeyFile, sharedWith: envAPITLSPrivateKeyFile},
+		{name: "connector secret", key: envIdentityOIDCConnectorClientSecretFile, sharedWith: envRedisPasswordFile},
+		{name: "core client secret", key: envIdentityCoreClientSecretFile, sharedWith: envEnrollmentDigestActiveKeyFile},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			values := validProcessValues(nil)
+			values[test.key] = values[test.sharedWith]
+			_, err := Load(mapLookup(values))
+			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), test.key) {
+				t.Fatalf("Load() error = %v, want redacted setting %s", err, test.key)
+			}
+		})
+	}
+}
+
 func TestLoadOtherRolesIgnoreIdentitySettings(t *testing.T) {
 	t.Parallel()
 
@@ -323,7 +382,7 @@ func validIdentityProcessValues(overrides map[string]string) map[string]string {
 		envIdentityCoreClientDisplayName:         "MeshTransit Core",
 		envIdentityCoreClientGeneration:          "1",
 		envIdentityCoreClientSecretFile:          "/run/secrets/meshtransit-core-client-secret",
-		envIdentityCoreClientRedirectURI:         "https://app.example.test/auth/callback",
+		envIdentityCoreClientRedirectURI:         "https://app.example.test/auth/v1/callback",
 		envIdentityPostgreSQLAddress:             "identity-db.internal:5432",
 		envIdentityPostgreSQLDatabase:            "meshtransit_identity",
 		envIdentityPostgreSQLRuntimeUser:         "identity_runtime",

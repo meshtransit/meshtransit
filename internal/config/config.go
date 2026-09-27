@@ -13,7 +13,7 @@ import (
 
 const (
 	// SchemaVersion identifies the validated environment configuration contract.
-	SchemaVersion = 22
+	SchemaVersion = 23
 
 	envRole            = "MESHTRANSIT_ROLE"
 	envHealthAddress   = "MESHTRANSIT_HEALTH_ADDRESS"
@@ -153,13 +153,24 @@ func Load(lookup LookupFunc) (Config, error) {
 		}
 		revisionWorkerConfig = &loadedWorker
 	}
-	if role == app.RoleIdentity {
+	if role == app.RoleAll || role == app.RoleIdentity {
 		loadedIdentity, loadErr := loadIdentityConfig(lookup, dependencyConfig.CheckTimeout, true)
 		if loadErr != nil {
 			return Config{}, loadErr
 		}
-		if addressesConflict(healthAddress, loadedIdentity.Listener.Address) {
+		if addressesConflict(healthAddress, loadedIdentity.Listener.Address) ||
+			apiConfig != nil && addressesConflict(apiConfig.Address, loadedIdentity.Listener.Address) ||
+			controlConfig != nil && addressesConflict(controlConfig.Address, loadedIdentity.Listener.Address) {
 			return Config{}, settingError(envIdentityAddress)
+		}
+		if loadErr := validateIdentityCoreIsolation(
+			loadedIdentity,
+			storageConfig,
+			apiConfig,
+			controlConfig,
+			enrollmentConfig,
+		); loadErr != nil {
+			return Config{}, loadErr
 		}
 		identityConfig = &loadedIdentity
 	}

@@ -70,6 +70,88 @@ func TestHealthHandlerReportsReady(t *testing.T) {
 	}
 }
 
+func TestHealthHandlerReportsIsolatedLoginReadiness(t *testing.T) {
+	t.Parallel()
+
+	state, err := app.NewRuntimeState([]app.Role{app.RoleAPI}, app.ComponentPrivateLogin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.SetReady(true)
+	if err := state.SetComponentStatuses(map[app.Component]app.ComponentStatus{
+		app.ComponentPostgreSQL: app.ComponentStatusReady,
+		app.ComponentRedis:      app.ComponentStatusReady,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	handler := newTestHealthHandler(t, state)
+
+	if response := request(t, handler, "/ready"); response.Code != http.StatusOK {
+		t.Fatalf("GET /ready status = %d, want %d", response.Code, http.StatusOK)
+	}
+	response := request(t, handler, "/ready/login")
+	if response.Code != http.StatusServiceUnavailable ||
+		responseJSONField(t, response, "status") != "not_ready" {
+		t.Fatalf("GET /ready/login = %d %s", response.Code, response.Body.String())
+	}
+	response = request(t, handler, "/health")
+	if response.Code != http.StatusOK || responseJSONField(t, response, "status") != "degraded" {
+		t.Fatalf("GET /health = %d %s", response.Code, response.Body.String())
+	}
+
+	if err := state.SetComponentStatus(app.ComponentPrivateLogin, app.ComponentStatusReady); err != nil {
+		t.Fatal(err)
+	}
+	response = request(t, handler, "/ready/login")
+	if response.Code != http.StatusOK || responseJSONField(t, response, "status") != "ready" {
+		t.Fatalf("GET /ready/login = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestHealthHandlerReportsLoginReadinessNotConfigured(t *testing.T) {
+	t.Parallel()
+
+	state := newRuntimeState(t, app.RoleAPI)
+	state.SetReady(true)
+	response := request(t, newTestHealthHandler(t, state), "/ready/login")
+	if response.Code != http.StatusNotFound ||
+		responseJSONField(t, response, "status") != "not_configured" {
+		t.Fatalf("GET /ready/login = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestHealthHandlerReportsDegradedIdentityWithoutEvictingCore(t *testing.T) {
+	t.Parallel()
+
+	state, err := app.NewRuntimeState([]app.Role{
+		app.RoleAPI,
+		app.RoleControl,
+		app.RoleWorker,
+		app.RoleRelay,
+		app.RoleIdentity,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.SetReady(true)
+	if err := state.SetComponentStatuses(map[app.Component]app.ComponentStatus{
+		app.ComponentPostgreSQL:            app.ComponentStatusReady,
+		app.ComponentRedis:                 app.ComponentStatusReady,
+		app.ComponentIdentityPostgreSQL:    app.ComponentStatusUnavailable,
+		app.ComponentIdentityConfiguration: app.ComponentStatusUnavailable,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	handler := newTestHealthHandler(t, state)
+	if response := request(t, handler, "/ready"); response.Code != http.StatusOK {
+		t.Fatalf("GET /ready status = %d, want %d", response.Code, http.StatusOK)
+	}
+	response := request(t, handler, "/health")
+	if response.Code != http.StatusOK || responseJSONField(t, response, "status") != "degraded" {
+		t.Fatalf("GET /health = %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestHealthHandlerReportsRedactedDependencyStatus(t *testing.T) {
 	t.Parallel()
 

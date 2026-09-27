@@ -14,9 +14,11 @@ var (
 // RuntimeState is the concurrency-safe admission state exposed to operational
 // adapters. It owns a defensive copy of the active concrete roles.
 type RuntimeState struct {
-	admission atomic.Bool
-	roles     []Role
-	required  []Component
+	admission         atomic.Bool
+	roles             []Role
+	required          []Component
+	admissionRequired map[Component]struct{}
+	loginConfigured   bool
 
 	mu       sync.RWMutex
 	statuses map[Component]ComponentStatus
@@ -48,9 +50,11 @@ func (status ComponentStatus) String() string {
 
 // HealthSnapshot is a caller-owned, redacted operational state snapshot.
 type HealthSnapshot struct {
-	Ready      bool
-	Roles      []string
-	Components map[string]string
+	Ready           bool
+	LoginConfigured bool
+	LoginReady      bool
+	Roles           []string
+	Components      map[string]string
 }
 
 // NewRuntimeState constructs a closed admission gate for concrete active roles.
@@ -64,20 +68,31 @@ func NewRuntimeState(roles []Role, optional ...Component) (*RuntimeState, error)
 	if len(optional) > 1 {
 		return nil, ErrInvalidRuntimeState
 	}
-	if len(optional) == 1 {
+	loginConfigured := len(optional) == 1
+	if loginConfigured {
 		if optional[0] != ComponentPrivateLogin || !hasAPIRole(roles) {
 			return nil, ErrInvalidRuntimeState
 		}
 		required = append(required, ComponentPrivateLogin)
+	}
+	admissionRequired := make(map[Component]struct{}, len(required))
+	isolateIdentity := hasAPIRole(roles) && hasIdentityRole(roles)
+	for _, component := range required {
+		if component == ComponentPrivateLogin || isolateIdentity && isIdentityComponent(component) {
+			continue
+		}
+		admissionRequired[component] = struct{}{}
 	}
 	statuses := make(map[Component]ComponentStatus, len(required))
 	for _, component := range required {
 		statuses[component] = ComponentStatusUnknown
 	}
 	return &RuntimeState{
-		roles:    append([]Role(nil), roles...),
-		required: append([]Component(nil), required...),
-		statuses: statuses,
+		roles:             append([]Role(nil), roles...),
+		required:          append([]Component(nil), required...),
+		admissionRequired: admissionRequired,
+		loginConfigured:   loginConfigured,
+		statuses:          statuses,
 	}, nil
 }
 
@@ -88,6 +103,19 @@ func hasAPIRole(roles []Role) bool {
 		}
 	}
 	return false
+}
+
+func hasIdentityRole(roles []Role) bool {
+	for _, role := range roles {
+		if role == RoleIdentity {
+			return true
+		}
+	}
+	return false
+}
+
+func isIdentityComponent(component Component) bool {
+	return component == ComponentIdentityPostgreSQL || component == ComponentIdentityConfiguration
 }
 
 // SetReady changes whether the process may admit its configured work.
@@ -110,6 +138,14 @@ func (state *RuntimeState) Roles() []string {
 // RequiredComponents returns a caller-owned list of required dependency IDs.
 func (state *RuntimeState) RequiredComponents() []Component {
 	return append([]Component(nil), state.required...)
+}
+
+// AdmissionRequired reports whether a monitored component gates the general
+// Core readiness endpoint. Login-only dependencies remain observable without
+// evicting healthy API, control, worker, or relay traffic.
+func (state *RuntimeState) AdmissionRequired(component Component) bool {
+	_, required := state.admissionRequired[component]
+	return required
 }
 
 // SetComponentStatus atomically updates one required dependency state.
@@ -146,14 +182,28 @@ func (state *RuntimeState) Snapshot() HealthSnapshot {
 		components[component.String()] = state.statuses[component].String()
 	}
 	return HealthSnapshot{
-		Ready:      state.readyLocked(),
-		Roles:      roleNames(state.roles),
-		Components: components,
+		Ready:           state.readyLocked(),
+		LoginConfigured: state.loginConfigured,
+		LoginReady:      state.loginReadyLocked(),
+		Roles:           roleNames(state.roles),
+		Components:      components,
 	}
 }
 
 func (state *RuntimeState) readyLocked() bool {
 	if !state.admission.Load() {
+		return false
+	}
+	for component := range state.admissionRequired {
+		if state.statuses[component] != ComponentStatusReady {
+			return false
+		}
+	}
+	return true
+}
+
+func (state *RuntimeState) loginReadyLocked() bool {
+	if !state.loginConfigured || !state.admission.Load() {
 		return false
 	}
 	for _, component := range state.required {

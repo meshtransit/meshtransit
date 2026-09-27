@@ -225,9 +225,28 @@ func newHealthHandler(state healthState, logger *slog.Logger, metrics *operatorM
 	}
 	handler.mux.HandleFunc("GET /live", handler.live)
 	handler.mux.HandleFunc("GET /ready", handler.ready)
+	handler.mux.HandleFunc("GET /ready/login", handler.loginReady)
 	handler.mux.HandleFunc("GET /health", handler.health)
 	handler.mux.Handle("GET /metrics", metrics.handler)
 	return metrics.instrument(handler)
+}
+
+func (handler *healthHandler) loginReady(response http.ResponseWriter, request *http.Request) {
+	snapshot := handler.state.Snapshot()
+	statusCode := http.StatusServiceUnavailable
+	status := "not_ready"
+	if !snapshot.LoginConfigured {
+		statusCode = http.StatusNotFound
+		status = "not_configured"
+	} else if snapshot.LoginReady {
+		statusCode = http.StatusOK
+		status = "ready"
+	}
+	handler.writeJSON(request.Context(), response, statusCode, map[string]any{
+		"status":     status,
+		"roles":      snapshot.Roles,
+		"components": snapshot.Components,
+	})
 }
 
 func (handler *healthHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -264,6 +283,12 @@ func (handler *healthHandler) health(response http.ResponseWriter, request *http
 	if snapshot.Ready {
 		status = "ok"
 		runtimeStatus = "ready"
+	}
+	for _, componentStatus := range snapshot.Components {
+		if componentStatus != "ready" {
+			status = "degraded"
+			break
+		}
 	}
 	components := make(map[string]string, len(snapshot.Components)+1)
 	components["runtime"] = runtimeStatus

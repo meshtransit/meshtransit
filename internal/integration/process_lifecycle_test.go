@@ -25,7 +25,7 @@ const (
 	integrationResponseLimit      = 1 << 20
 )
 
-func TestRoleAllProcessRestartsAfterGracefulShutdown(t *testing.T) {
+func TestRoleControlProcessRestartsAfterGracefulShutdown(t *testing.T) {
 	if os.Getenv("MESHTRANSIT_INTEGRATION") != "1" {
 		t.Skip("set MESHTRANSIT_INTEGRATION=1 with file-backed test credentials")
 	}
@@ -33,12 +33,12 @@ func TestRoleAllProcessRestartsAfterGracefulShutdown(t *testing.T) {
 
 	for cycle := 1; cycle <= 2; cycle++ {
 		t.Run(fmt.Sprintf("cycle-%d", cycle), func(t *testing.T) {
-			assertRoleAllProcessCycle(t, binary)
+			assertRoleControlProcessCycle(t, binary)
 		})
 	}
 }
 
-func assertRoleAllProcessCycle(t *testing.T, binary string) {
+func assertRoleControlProcessCycle(t *testing.T, binary string) {
 	t.Helper()
 
 	healthAddress := reserveLoopbackAddress(t)
@@ -54,20 +54,20 @@ func assertRoleAllProcessCycle(t *testing.T, binary string) {
 	defer cancelStart()
 	if err := waitForReady(startCtx, process, healthAddress); err != nil {
 		process.forceStop(t)
-		t.Fatalf("wait for role=all readiness: %v; stderr: %s", err, process.stderr.String())
+		t.Fatalf("wait for control readiness: %v; stderr: %s", err, process.stderr.String())
 	}
 
 	metricsCtx, cancelMetrics := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancelMetrics()
-	if err := assertRoleAllMetrics(metricsCtx, healthAddress); err != nil {
+	if err := assertRoleControlMetrics(metricsCtx, healthAddress); err != nil {
 		process.forceStop(t)
-		t.Fatalf("verify role=all metrics: %v; stderr: %s", err, process.stderr.String())
+		t.Fatalf("verify control metrics: %v; stderr: %s", err, process.stderr.String())
 	}
 
 	stopCtx, cancelStop := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancelStop()
 	if err := process.stop(stopCtx); err != nil {
-		t.Fatalf("gracefully stop role=all process: %v; stderr: %s", err, process.stderr.String())
+		t.Fatalf("gracefully stop control process: %v; stderr: %s", err, process.stderr.String())
 	}
 }
 
@@ -194,7 +194,7 @@ func waitForReady(ctx context.Context, process *integrationProcess, address stri
 	}
 }
 
-func assertRoleAllMetrics(ctx context.Context, address string) error {
+func assertRoleControlMetrics(ctx context.Context, address string) error {
 	client := integrationHTTPClient()
 	defer client.CloseIdleConnections()
 	status, body, err := integrationGET(ctx, client, address, "/metrics")
@@ -204,11 +204,9 @@ func assertRoleAllMetrics(ctx context.Context, address string) error {
 	if status != http.StatusOK {
 		return fmt.Errorf("metrics status = %d, want %d", status, http.StatusOK)
 	}
-	for _, role := range []string{"api", "control", "relay", "worker"} {
-		metric := fmt.Sprintf(`meshtransit_runtime_role{role="%s"} 1`, role)
-		if !strings.Contains(body, metric) {
-			return fmt.Errorf("metrics missing %q", metric)
-		}
+	metric := `meshtransit_runtime_role{role="control"} 1`
+	if !strings.Contains(body, metric) {
+		return fmt.Errorf("metrics missing %q", metric)
 	}
 	for _, metric := range []string{
 		"meshtransit_control_connections_limit 8",
@@ -290,7 +288,7 @@ func validateTestBinary(t *testing.T, value string) string {
 
 func integrationProcessEnvironment(healthAddress, controlAddress string) []string {
 	overrides := map[string]string{
-		"MESHTRANSIT_ROLE":                               "all",
+		"MESHTRANSIT_ROLE":                               "control",
 		"MESHTRANSIT_HEALTH_ADDRESS":                     healthAddress,
 		"MESHTRANSIT_CONTROL_ADDRESS":                    controlAddress,
 		"MESHTRANSIT_SHUTDOWN_TIMEOUT":                   "3s",

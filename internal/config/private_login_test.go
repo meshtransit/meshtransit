@@ -205,6 +205,65 @@ func TestPrivateLoginConfigRejectsUnsafeOperatorInput(t *testing.T) {
 	}
 }
 
+func TestPrivateLoginConfigBindsEmbeddedIdentityWithoutSharingCustody(t *testing.T) {
+	t.Parallel()
+
+	validDocument := func(t *testing.T, process Config) map[string]any {
+		t.Helper()
+		_, document := privateLoginTestDocument(t)
+		issuer := process.Identity.Issuer
+		document["address"] = "127.0.0.1:9444"
+		document["issuer"] = issuer
+		document["discovery_uri"] = issuer + "/.well-known/openid-configuration"
+		document["authorization_endpoint"] = issuer + "/auth"
+		document["token_endpoint"] = issuer + "/token"
+		document["jwks_uri"] = issuer + "/keys"
+		document["oidc_client_id"] = process.Identity.Clients[0].ID
+		return document
+	}
+
+	process, err := Load(mapLookup(validProcessValues(nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile, err := parsePrivateLoginConfig(
+		privateLoginTestJSON(t, validDocument(t, process)),
+		process,
+	); err != nil || profile == nil {
+		t.Fatalf("valid embedded identity binding rejected: %v", err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		change func(map[string]any)
+	}{
+		{name: "listener conflict", change: func(document map[string]any) {
+			document["address"] = process.Identity.Listener.Address
+		}},
+		{name: "issuer mismatch", change: func(document map[string]any) {
+			document["issuer"] = "https://other.example.test/oauth2"
+		}},
+		{name: "client mismatch", change: func(document map[string]any) {
+			document["oidc_client_id"] = "other-client"
+		}},
+		{name: "identity secret alias", change: func(document map[string]any) {
+			document["client_secret_file"] = process.Identity.Clients[0].SecretFile.path
+		}},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			document := validDocument(t, process)
+			test.change(document)
+			if profile, err := parsePrivateLoginConfig(
+				privateLoginTestJSON(t, document),
+				process,
+			); profile != nil || !errors.Is(err, ErrInvalid) {
+				t.Fatal("unsafe embedded identity binding released")
+			}
+		})
+	}
+}
+
 func TestPrivateLoginFileDefaultRolesAndProtectedCustody(t *testing.T) {
 	t.Parallel()
 	for _, role := range []app.Role{app.RoleAPI, app.RoleAll, app.RoleControl, app.RoleWorker, app.RoleRelay} {

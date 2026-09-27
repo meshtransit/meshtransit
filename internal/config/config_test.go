@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,8 +39,8 @@ func TestLoadDefaults(t *testing.T) {
 	if got.Storage == nil {
 		t.Fatal("Storage = nil for all role")
 	}
-	if got.Identity != nil {
-		t.Fatalf("Identity = %v, want nil until all-role broker serving is enabled", got.Identity)
+	if got.Identity == nil {
+		t.Fatal("Identity = nil for all role")
 	}
 	if got.Storage.PostgreSQL.Runtime == nil || got.Storage.PostgreSQL.Worker == nil {
 		t.Fatal("all role did not load separate runtime and worker PostgreSQL credentials")
@@ -185,32 +186,53 @@ func mapLookup(values map[string]string) LookupFunc {
 func validProcessValues(overrides map[string]string) map[string]string {
 	// #nosec G101 -- these fixtures are file paths, never credential values.
 	values := map[string]string{
-		envPostgreSQLAddress:                    "database.internal:5432",
-		envPostgreSQLDatabase:                   "meshtransit",
-		envPostgreSQLRuntimeUser:                "mesh_runtime",
-		envPostgreSQLRuntimePasswordFile:        "/run/secrets/postgres-runtime-password",
-		envPostgreSQLWorkerUser:                 "mesh_worker",
-		envPostgreSQLWorkerPasswordFile:         "/run/secrets/postgres-worker-password",
-		envPostgreSQLCAFile:                     "/run/secrets/postgres-ca.pem",
-		envRedisAddress:                         "cache.internal:6379",
-		envRedisUsername:                        "meshcore",
-		envRedisPasswordFile:                    "/run/secrets/redis-password",
-		envRedisCAFile:                          "/run/secrets/redis-ca.pem",
-		envEnrollmentDigestActiveKeyID:          "active-v1",
-		envEnrollmentDigestActiveKeyFile:        "/run/secrets/enrollment-digest-active-key",
-		envControlTLSCertificateFile:            "/run/secrets/control-tls-certificate.pem",
-		envControlTLSPrivateKeyFile:             "/run/secrets/control-tls-private-key.pem",
-		envControlNoisePrivateKeyFile:           "/run/secrets/control-noise-private-key",
-		envRelayDirectoryFile:                   "/etc/meshtransit/relay-directory.json",
-		envRelayDirectorySHA256:                 "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-		envAPITLSCertificateFile:                "/run/secrets/control-tls-certificate.pem",
-		envAPITLSPrivateKeyFile:                 "/run/secrets/control-tls-private-key.pem",
-		envAPIAccountSessionDigestActiveKeyID:   "session-v1",
-		envAPIAccountSessionDigestActiveKeyFile: "/run/secrets/account-session-digest-active-key",
-		envAPIIdempotencyDigestKeyID:            "idempotency-v1",
-		envAPIIdempotencyDigestKeyFile:          "/run/secrets/idempotency-digest-key",
-		envAPIRateLimitDigestKeyID:              "rate-limit-v1",
-		envAPIRateLimitDigestKeyFile:            "/run/secrets/rate-limit-digest-key",
+		envPostgreSQLAddress:                     "database.internal:5432",
+		envPostgreSQLDatabase:                    "meshtransit",
+		envPostgreSQLRuntimeUser:                 "mesh_runtime",
+		envPostgreSQLRuntimePasswordFile:         "/run/secrets/postgres-runtime-password",
+		envPostgreSQLWorkerUser:                  "mesh_worker",
+		envPostgreSQLWorkerPasswordFile:          "/run/secrets/postgres-worker-password",
+		envPostgreSQLCAFile:                      "/run/secrets/postgres-ca.pem",
+		envRedisAddress:                          "cache.internal:6379",
+		envRedisUsername:                         "meshcore",
+		envRedisPasswordFile:                     "/run/secrets/redis-password",
+		envRedisCAFile:                           "/run/secrets/redis-ca.pem",
+		envEnrollmentDigestActiveKeyID:           "active-v1",
+		envEnrollmentDigestActiveKeyFile:         "/run/secrets/enrollment-digest-active-key",
+		envControlTLSCertificateFile:             "/run/secrets/control-tls-certificate.pem",
+		envControlTLSPrivateKeyFile:              "/run/secrets/control-tls-private-key.pem",
+		envControlNoisePrivateKeyFile:            "/run/secrets/control-noise-private-key",
+		envRelayDirectoryFile:                    "/etc/meshtransit/relay-directory.json",
+		envRelayDirectorySHA256:                  "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		envAPITLSCertificateFile:                 "/run/secrets/control-tls-certificate.pem",
+		envAPITLSPrivateKeyFile:                  "/run/secrets/control-tls-private-key.pem",
+		envAPIAccountSessionDigestActiveKeyID:    "session-v1",
+		envAPIAccountSessionDigestActiveKeyFile:  "/run/secrets/account-session-digest-active-key",
+		envAPIIdempotencyDigestKeyID:             "idempotency-v1",
+		envAPIIdempotencyDigestKeyFile:           "/run/secrets/idempotency-digest-key",
+		envAPIRateLimitDigestKeyID:               "rate-limit-v1",
+		envAPIRateLimitDigestKeyFile:             "/run/secrets/rate-limit-digest-key",
+		envIdentityIssuer:                        "https://id.example.test/oauth2",
+		envIdentityConfigurationFingerprint:      identityConfigurationFingerprintPrefix + strings.Repeat("1", 64),
+		envIdentityAddress:                       "127.0.0.1:9443",
+		envIdentityTLSCertificateFile:            "/run/secrets/identity-tls-certificate.pem",
+		envIdentityTLSPrivateKeyFile:             "/run/secrets/identity-tls-private-key.pem",
+		envIdentityOIDCConnectorID:               "google-v1",
+		envIdentityOIDCConnectorDisplayName:      "Google",
+		envIdentityOIDCConnectorGeneration:       "1",
+		envIdentityOIDCConnectorIssuer:           identityGoogleIssuer,
+		envIdentityOIDCConnectorClientID:         "google-client.apps.googleusercontent.com",
+		envIdentityOIDCConnectorClientSecretFile: "/run/secrets/google-oidc-client-secret",
+		envIdentityCoreClientID:                  "meshtransit-core",
+		envIdentityCoreClientDisplayName:         "MeshTransit Core",
+		envIdentityCoreClientGeneration:          "1",
+		envIdentityCoreClientSecretFile:          "/run/secrets/meshtransit-core-client-secret",
+		envIdentityCoreClientRedirectURI:         "https://app.example.test/auth/v1/callback",
+		envIdentityPostgreSQLAddress:             "identity-db.internal:5432",
+		envIdentityPostgreSQLDatabase:            "meshtransit_identity",
+		envIdentityPostgreSQLRuntimeUser:         "identity_runtime",
+		envIdentityPostgreSQLRuntimePasswordFile: "/run/secrets/identity-runtime-password",
+		envIdentityPostgreSQLCAFile:              "/run/secrets/identity-postgres-ca.pem",
 	}
 	for key, value := range overrides {
 		values[key] = value
