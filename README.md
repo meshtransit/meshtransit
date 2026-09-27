@@ -2317,13 +2317,16 @@ Callback remapping permits only canonical ASCII paths within `/auth/`, at most
 four fixed login paths or management Session preparation. This narrower private
 profile does not change the standalone browser component's path contract.
 
-Exactly seven operation pairs are supported:
+Seven browser-login operation pairs and two existing browser-management
+mutation families are supported:
 
 - POST `/auth/v1/login/prepare` and POST `/auth/v1/login/start`.
 - GET the graph-selected callback path, capture only, never Session issuance.
 - POST `/auth/v1/login/continue/prepare` for the protected continuation proof.
 - GET and HEAD `/auth/v1/login/continue` for read-only clean presentation.
 - POST `/auth/v1/login/continue` for the complete confirmed-Session pipeline.
+- POST the canonical device-revoke path owned by BrowserManagement.
+- POST the canonical policy-publish path owned by BrowserManagement.
 
 Each operation has explicit security: anonymous preparation/clean presentation
 cannot inherit a global grant; start requires initiation cookie AND its intent
@@ -2341,13 +2344,15 @@ validator, real browser CSP execution or provider qualification.
 `Handle` delegates the ORIGINAL request, context and writer to exactly one owner.
 Require completed direct TLS, exact Host, bounded canonical headers, a pristine
 response, coherent origin-form target and no Authorization field. Only callback
-GET may carry a query. Reject unknown paths/methods and aliases before body reads,
-delegation or response changes. No ServeMux, redirect, URL cleaning, middleware
-error mapper, retry or alternate service/profile is added. Existing owners retain
-their work/transport deadlines, budgets, source checks, audit and transaction
-semantics. Canceled admission fails closed; delegated closed errors and uncertain
-partial output are preserved. Nil means normal dispatch return, NOT a grant,
-confirmed commit, delivery acknowledgement or successful login.
+GET may carry a query. The two management families are admitted only as canonical
+POST paths and remain subject to BrowserManagement's cookie, Origin, channel and
+CSRF checks. Reject unknown paths/methods and aliases before body reads, delegation
+or response changes. No ServeMux, redirect, URL cleaning, middleware error mapper,
+retry or alternate service/profile is added. Existing owners retain their work/
+transport deadlines, budgets, source checks, audit and transaction semantics.
+Canceled admission fails closed; delegated closed errors and uncertain partial
+output are preserved. Nil means normal dispatch return, NOT a grant, confirmed
+commit, delivery acknowledgement or successful login.
 
 Private root telemetry adds active/total/duration collectors only to its fresh
 registry. Operation/result labels are fixed enums, never a path, provider URL,
