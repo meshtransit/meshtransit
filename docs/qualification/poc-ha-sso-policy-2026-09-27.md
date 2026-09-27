@@ -1,6 +1,6 @@
 # POC HA, SSO, and policy qualification
 
-Status date: 2026-09-27
+Status date: 2026-09-28
 
 This record captures one non-production qualification run. It is evidence for
 the exact artifacts below, not a production availability or security claim.
@@ -12,17 +12,18 @@ are included.
 | Artifact | Qualified value |
 | --- | --- |
 | Core source | `07144a57b61657ec80a3d0d336b56edf416c8b96` |
+| Proxy-safe heartbeat default source | `57546a26498cec2e9f6930a3e58330522e06ef56` |
 | Core image | `manhdev2002/meshtransit-core:poc-v33` |
 | Core image digest | `sha256:380f78a452f5fef747dd963d4c08f66220a4a009dbf41295d980ae67ae5ee287` |
 | Embedded broker release | `v2.45.1+compat.8` |
-| meshd source | `68286bb455f177640a2a02cfac9230c5245e2e8a` |
-| meshd version | `0.1.0~poc60` |
-| meshd package SHA-256 | `241aebf0361a2391870b7a7d869ec09a8831cef42cc92cbd1846360eab06728d` |
-| meshctl source | `6510072e1a0aa269480f0644092134853431e93e` |
-| meshctl version | `0.1.0~poc57` |
-| meshctl package SHA-256 | `a74f07f176600d4f3473b6b7cdfa4a2d4faba1f223cda7ced2f02cc4b060f09e` |
-| Helm chart | `0.2.15` |
-| Helm release revision | `31` |
+| meshd source | `745db5193def2db0d8a1946eb762e75f898ddef0` |
+| meshd version | `0.1.0~poc62` |
+| meshd package SHA-256 | `d25645771bc86e3fda3ae6712bd61198a3da1b46d2f6aef686a5edebb68d3161` |
+| meshctl source | `41bdcedbea9c479d8ae47f077adbc41d188e87ab` |
+| meshctl version | `0.1.0~poc62` |
+| meshctl package SHA-256 | `6f5e9240521b71200a9f1db34fe9c8f4c5b0b0477f0d122ae5492fa0a2e1ac57` |
+| Helm chart | `0.2.16` |
+| Helm release revision | `34` |
 | Kubernetes topology | One cluster node; two replicas per Core role |
 
 The SSO and policy cases were first executed on Core `60ff4c6` / `poc-v31`
@@ -57,7 +58,8 @@ policy implementations.
 | `POC-RELAY-003` | Relay-region selection and latency meet the POC operational target | Pass | Both clients selected Singapore region 3; forced-relay probes had zero loss and mean RTT of 3.675 ms and 4.594 ms, below the 100 ms POC target |
 | `POC-RELAY-004` | A fresh daemon starts from relay and promotes only after authenticated direct-path discovery | Pass | Independent rolling restarts produced nonzero relay-bootstrap and direct-promotion counters on both clients; observed promotion maxima were 577 ms and 1,068 ms, followed by direct overlay traffic with zero loss |
 | `POC-PATH-001` | Equivalent map revisions and compatible peer home-relay changes do not overwrite authenticated direct endpoints | Pass | p60 carried only the remaining proof lease, converged both clients from home region 1 to 3 with zero fallback at the convergence checkpoint, and removed the p59 multi-second outage |
-| `POC-PATH-002` | Direct-path transition rate remains bounded during continuing map churn | Pending | One p60 client later repeated proof-expiry fallback and promotion while Redis endpoint and presence metadata remained stable; peer-probe/map-activation telemetry is required before setting an acceptance bound |
+| `POC-PATH-002` | Direct-path transition rate remains bounded during continuing map churn | Pass | p62 classified the churn as peer authority remove/add caused by two-minute control-stream reconnects; a 30-second heartbeat plus unbuffered 180-second ingress window held both clients at unchanged map, peer-change, and fallback counters for four minutes while 480 overlay probes completed without loss |
+| `POC-STREAM-001` | Idle control streams remain continuous through the public ingress | Pass | Helm revision 34 configured a 30-second Core heartbeat, disabled NGINX response buffering, and set 180-second read/write timeouts; neither control replica logged a stream termination during the four-minute soak |
 | `POC-NODE-HA-001` | Workload survives Kubernetes node failure | Pending | The current POC deliberately uses one cluster node |
 | `POC-DATA-HA-001` | PostgreSQL and Redis failover preserve authority and convergence | Pending | The current POC uses one external PostgreSQL/Redis host |
 
@@ -282,10 +284,52 @@ promotion. A five-second timeline observed a fallback as its local map revision
 advanced from 51 to 53 and a promotion at revision 54. Ten Redis samples across
 45 seconds showed unchanged endpoint payload hashes, generation 1, preferred
 relay 3, and stable presence-owner hashes for both clients, with leases renewing
-well before expiry. The remaining fault is therefore localized to meshd's
-peer-probe/map-activation lifecycle rather than relay-base replacement or
-authoritative Redis state. `POC-PATH-002` remains pending until that lifecycle
-has redacted per-stage evidence and meets an explicit transition-rate target.
+well before expiry. This initially localized the remaining fault to the
+peer-probe/map-activation boundary rather than relay-base replacement or
+authoritative Redis state. The redacted telemetry and control-stream
+continuation below subsequently identified and removed its steady-state source.
+
+## Control-stream continuity continuation
+
+meshd `poc61` added aggregate path-probe lifecycle counters, and `poc62` added
+redacted authority-change classification. No counter exposes a Node ID,
+endpoint, key, packet, or payload. During reproduction, one client advanced
+from map revision 6 to 9, incremented peer-set changes by two, retired one
+direct proof, fell back once, and promoted once. Node-key, discovery-key,
+endpoint-set, socket-expiry, send-failure, completion-rejection, and direct-
+expiry counters did not explain that transition. Repeated samples later showed
+the same remove/add pair on both clients.
+
+The public control ingress used its default 60-second upstream idle timeout
+while Core also used a 60-second stream heartbeat. That equality created an
+edge race: an idle stream could be closed before its heartbeat became visible,
+and the client's two-minute watchdog then reconnected it. The reconnection
+temporarily withdrew exact-generation presence and endpoint observations,
+which correctly caused the peer to retire its direct proof.
+
+Core source `57546a2` changes the default heartbeat to 30 seconds and documents
+that it must remain below every control-path proxy timeout. Helm chart `0.2.16`
+sets the POC heartbeat explicitly to 30 seconds, disables NGINX response
+buffering, and sets the ingress read and send timeouts to 180 seconds. The
+running image remained the already-qualified embedded-broker `poc-v33` digest;
+the explicit environment value therefore exercised the same runtime behavior
+without changing the image.
+
+An attempted revision 32 used an ordinary Core image that intentionally lacked
+the embedded identity-broker build tag. Its new Identity pod failed readiness
+while both old Identity replicas remained available. Helm's atomic timeout
+rolled the release back as revision 33. Revision 34 then reused the exact
+qualified `poc-v33` digest and changed only configuration. All API, Control,
+and Identity Deployments returned to two Ready replicas with zero restarts.
+
+At the post-rollout baseline, client `.4` reported map revision 75, 46 peer-set
+changes, and 22 relay fallbacks; client `.5` reported revision 36, six peer-set
+changes, and four fallbacks. After 239 seconds, every value remained unchanged,
+both clients were synchronized with one direct path, and neither had a runtime
+recovery. Bidirectional probes completed 240 of 240 packets in each direction
+with zero loss. Mean RTT was 1.421 ms and 1.830 ms; maximum RTT was 5.132 ms
+and 7.300 ms. Control logs contained readiness only and no stream termination
+during the soak. This closes the reproduced steady-state anti-flap failure.
 
 ## HA interpretation
 
@@ -300,11 +344,11 @@ state. Redis remained non-authoritative.
 
 ## Remaining execution order
 
-1. Add redacted peer-probe round, send, completion, expiry, and map-activation
-   counters; reproduce the one-sided churn and remove repeated proof-expiry
-   fallback before setting an explicit transition-rate target.
-2. Re-run the bounded direct/relay soak under endpoint and relay-directory churn
-   and close `POC-PATH-002` only when the target holds.
+1. Add seamless same-generation presence handover between Control replicas,
+   then force stream ownership transfer and replica termination without a
+   peer-authority remove/add transition.
+2. Re-run the bounded direct/relay soak under deliberate endpoint and relay-
+   directory churn while the control stream remains continuous.
 3. Repeat the matrix on a multi-node cluster with topology spread and a node
    drain or loss.
 4. Add PostgreSQL and Redis failover qualification with recovery-generation,
