@@ -11,13 +11,13 @@ are included.
 
 | Artifact | Qualified value |
 | --- | --- |
-| Core source | `07144a57b61657ec80a3d0d336b56edf416c8b96` |
+| Core source | `ab1c26c051994393e009ff8baef6e2e77b4f276c` |
 | Proxy-safe heartbeat default source | `57546a26498cec2e9f6930a3e58330522e06ef56` |
-| Core image | `manhdev2002/meshtransit-core:poc-v33` |
-| Core image digest | `sha256:380f78a452f5fef747dd963d4c08f66220a4a009dbf41295d980ae67ae5ee287` |
-| Control source | `5578378` |
-| Control image | `manhdev2002/meshtransit-core:poc-v35` |
-| Control image digest | `sha256:e3f8b2a323e2e430b8051c460f2c7b3921a9e64e212fce4208c49fc4b9dadeff` |
+| Core image | `manhdev2002/meshtransit-core:poc-v36` |
+| Core image digest | `sha256:8dfc99c447475df44d3060b0993c434455ddd329898795fe385c2483e3d46bb8` |
+| Control source | `ab1c26c051994393e009ff8baef6e2e77b4f276c` |
+| Control image | `manhdev2002/meshtransit-core:poc-v36` |
+| Control image digest | `sha256:8dfc99c447475df44d3060b0993c434455ddd329898795fe385c2483e3d46bb8` |
 | Embedded broker release | `v2.45.1+compat.8` |
 | meshd source | `745db5193def2db0d8a1946eb762e75f898ddef0` |
 | meshd version | `0.1.0~poc62` |
@@ -25,10 +25,10 @@ are included.
 | meshctl source | `41bdcedbea9c479d8ae47f077adbc41d188e87ab` |
 | meshctl version | `0.1.0~poc62` |
 | meshctl package SHA-256 | `6f5e9240521b71200a9f1db34fe9c8f4c5b0b0477f0d122ae5492fa0a2e1ac57` |
-| Helm chart | `0.2.20` |
-| Helm release revision | `38` |
+| Helm chart | `0.2.21` |
+| Helm release revision | `39` |
 | Relay directory | Revision 2, `sha256:3c2b107253566ef1d79a551171b8fa4a88ccfdcc785148916d2116fdc61ab4fb` |
-| Kubernetes topology | Two same-size workers; two replicas per Core role, one replica per worker |
+| Kubernetes topology | One POC worker at the current checkpoint; two replicas per Core role |
 
 The SSO and policy cases were first executed on Core `60ff4c6` / `poc-v31`
 and meshd `83fbb61` / `0.1.0~poc55`. Core `poc-v32` and meshd `poc56` added the
@@ -66,6 +66,9 @@ policy implementations.
 | `POC-STREAM-001` | Idle control streams remain continuous through the public ingress | Pass | Helm revision 34 configured a 30-second Core heartbeat, disabled NGINX response buffering, and set 180-second read/write timeouts; neither control replica logged a stream termination during the four-minute soak |
 | `POC-CHURN-001` | Endpoint add/remove and relay-directory revision changes preserve synchronized direct traffic | Pass | Both clients published two endpoint refreshes, revision 2 rolled through both Control replicas, and 4,183 bidirectional overlay probes completed without loss across the endpoint and rollout windows |
 | `POC-NODE-HA-001` | Workload survives Kubernetes node failure | Pass | Draining one of two workers kept one replica of every Core role Ready, preserved the active browser session on the surviving API replica, and completed all 6,273 bidirectional overlay probes without loss across drain and recovery windows |
+| `POC-ARTIFACT-001` | The current embedded-broker source is bound to a reproducible immutable image | Pass | The manifested `compat.8` source and binary verified, all compile/runtime gates passed on Core `ab1c26c`, and multi-platform image `poc-v36` was published with SBOM/provenance at the pinned digest; hardened runtime smoke passed and Trivy found zero High/Critical vulnerabilities |
+| `POC-ROLLOUT-004` | The current exact Core artifact rolls through every runtime role without loss of readiness | Pass | Atomic Helm revision 39 moved API, Control, and Identity to the same `poc-v36` digest; all roles returned to 2/2 with zero restarts and their public contracts remained available |
+| `POC-IDENTITY-HA-001` | Loss of one current Identity replica does not interrupt broker or Core readiness | Pass | Forty OIDC discovery requests, 40 Control key requests, and 20 paired Core/login readiness checks completed with zero failures while one Identity pod was deleted and replaced |
 | `POC-DATA-HA-001` | PostgreSQL and Redis failover preserve authority and convergence | Pending | The current POC uses one external PostgreSQL/Redis host |
 
 ## State transition evidence
@@ -481,6 +484,46 @@ watcher continuity, repeated subscribe failure, typed-nil rejection, terminal
 invalid-value handling, cancellation, and resource closure. This is Core
 failover readiness only; the POC still has one Redis host and does not qualify
 Sentinel, quorum, or Redis infrastructure failover.
+
+## Current embedded-broker artifact and replica-loss continuation
+
+Core `ab1c26c051994393e009ff8baef6e2e77b4f276c` was qualified against the
+manifested Dex `v2.45.1+compat.8` input. The verifier reproduced the eight-patch
+source digest
+`sha256:31e9f91bd3761028f838e7f00635cded92bbd661a4264b8b58ba391546422bae`
+and the workspace-built Darwin qualification binary digest
+`sha256:dfaf9cb0afd9b6c07790c55daae6e8eee5a59dbac86faffe366767def8a1165a`.
+The upstream-negative/candidate-positive compile contract, build-tagged adapter
+and composition tests, and unchanged black-box broker compatibility gate all
+passed against those inputs.
+
+The exact Core source was published as a Linux amd64/arm64 OCI index with
+BuildKit provenance and SBOM attestations. The immutable index digest is
+`sha256:8dfc99c447475df44d3060b0993c434455ddd329898795fe385c2483e3d46bb8`;
+the mutable tag is recorded only as the human-readable `poc-v36` alias. Chart
+`0.2.21` pins the digest. Strict chart lint, local render, and Kubernetes
+server-side dry-run passed before atomic Helm revision 39. Image metadata and a
+non-root, read-only, capability-dropped runtime smoke passed. Trivy 0.74 reported
+zero High or Critical vulnerability findings in the exact image.
+
+Revision 39 rolled the same digest through API, Control, Identity, and the
+one-shot migrator. API, Control, and Identity returned to two Ready replicas
+with zero restarts. Public OIDC discovery still advertised RFC 9207
+authorization-response issuer support and the signed `auth_time` claim, and the
+capability-142 key endpoint returned a non-zero control key.
+
+One of the two Identity pods was then deleted without changing configuration or
+traffic routing. During its replacement, 40 consecutive public OIDC discovery
+requests, 40 consecutive public Control key requests, and 20 consecutive pairs
+of Core `/ready` plus login `/ready/login` checks completed with zero failures.
+The Identity Deployment restored two Ready replicas; the replacement and all
+surviving Core containers had zero restarts.
+
+This continuation qualifies process/replica loss for the current artifact. At
+this checkpoint the POC cluster has one worker, so it does not claim worker,
+availability-zone, or regional failure tolerance. The earlier two-worker drain
+record remains historical evidence bound to the older artifacts named in that
+section.
 
 ## HA interpretation
 
