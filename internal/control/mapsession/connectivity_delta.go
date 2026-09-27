@@ -58,7 +58,7 @@ func NewConnectivityDelta(current, next Snapshot) (ConnectivityDelta, error) {
 // ownership of mutable collections.
 func (delta ConnectivityDelta) Snapshot() Snapshot { return delta.snapshot }
 
-// SelfChanged reports whether self discovery key or endpoint set changed.
+// SelfChanged reports whether self routing observations changed.
 // Self presence is intentionally not client-visible.
 func (delta ConnectivityDelta) SelfChanged() bool { return delta.isSelfChanged }
 
@@ -132,7 +132,9 @@ func equalProjectedConnectivity(
 		return currentValue.equal(nextValue)
 	}
 	if currentValue.key != nextValue.key ||
-		currentValue.endpointSetPresent != nextValue.endpointSetPresent {
+		currentValue.endpointSetPresent != nextValue.endpointSetPresent ||
+		currentValue.preferredRelay != nextValue.preferredRelay ||
+		currentValue.preferredRelayPresent != nextValue.preferredRelayPresent {
 		return false
 	}
 	return !currentValue.endpointSetPresent ||

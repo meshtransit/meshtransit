@@ -373,6 +373,9 @@ func applyConnectivity(
 			result.Endpoints[index] = endpoint.Address()
 		}
 	}
+	if preferredRelay, present := connectivity.PreferredRelay(); present {
+		result.HomeDERP = preferredRelay
+	}
 	if !self {
 		online := connectivity.Online()
 		result.Online = &online

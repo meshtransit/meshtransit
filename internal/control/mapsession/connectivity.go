@@ -64,32 +64,46 @@ func (key ConnectivityKey) IsValid() bool {
 // ConnectivityParams contains one exact-generation, non-authoritative Redis
 // projection. EndpointSetPresent distinguishes a withdrawal from no report.
 type ConnectivityParams struct {
-	Key                ConnectivityKey
-	EndpointSet        node.EndpointSet
-	EndpointSetPresent bool
-	Online             bool
+	Key                   ConnectivityKey
+	EndpointSet           node.EndpointSet
+	EndpointSetPresent    bool
+	PreferredRelay        int
+	PreferredRelayPresent bool
+	Online                bool
 }
 
 // Connectivity is immutable transient routing state. It never grants peer
 // visibility; the enclosing authoritative snapshot supplies that decision.
 type Connectivity struct {
-	key                ConnectivityKey
-	endpointSet        node.EndpointSet
-	endpointSetPresent bool
-	online             bool
+	key                   ConnectivityKey
+	endpointSet           node.EndpointSet
+	endpointSetPresent    bool
+	preferredRelay        int
+	preferredRelayPresent bool
+	online                bool
 }
 
 // NewConnectivity validates one exact-generation transient projection.
 func NewConnectivity(params ConnectivityParams) (Connectivity, error) {
-	if !params.Key.IsValid() || params.EndpointSetPresent != params.EndpointSet.IsValid() {
+	if !params.Key.IsValid() || params.EndpointSetPresent != params.EndpointSet.IsValid() ||
+		params.PreferredRelay < 0 || params.PreferredRelay > node.MaximumRelayRegionID ||
+		(!params.PreferredRelayPresent && params.PreferredRelay != 0) {
 		return Connectivity{}, ErrInvalidConnectivity
 	}
 	return Connectivity{
-		key:                params.Key,
-		endpointSet:        params.EndpointSet,
-		endpointSetPresent: params.EndpointSetPresent,
-		online:             params.Online,
+		key:                   params.Key,
+		endpointSet:           params.EndpointSet,
+		endpointSetPresent:    params.EndpointSetPresent,
+		preferredRelay:        params.PreferredRelay,
+		preferredRelayPresent: params.PreferredRelayPresent,
+		online:                params.Online,
 	}, nil
+}
+
+// PreferredRelay returns the reported home relay when present. A present zero
+// is an explicit withdrawal, not an omitted observation.
+func (connectivity Connectivity) PreferredRelay() (int, bool) {
+	return connectivity.preferredRelay, connectivity.preferredRelayPresent
 }
 
 // Key returns the exact Node generation represented by this observation.
@@ -106,12 +120,17 @@ func (connectivity Connectivity) Online() bool { return connectivity.online }
 // IsValid reports whether the projection is complete and generation-fenced.
 func (connectivity Connectivity) IsValid() bool {
 	return connectivity.key.IsValid() &&
-		connectivity.endpointSetPresent == connectivity.endpointSet.IsValid()
+		connectivity.endpointSetPresent == connectivity.endpointSet.IsValid() &&
+		connectivity.preferredRelay >= 0 &&
+		connectivity.preferredRelay <= node.MaximumRelayRegionID &&
+		(connectivity.preferredRelayPresent || connectivity.preferredRelay == 0)
 }
 
 func (connectivity Connectivity) equal(other Connectivity) bool {
 	if connectivity.key != other.key || connectivity.online != other.online ||
-		connectivity.endpointSetPresent != other.endpointSetPresent {
+		connectivity.endpointSetPresent != other.endpointSetPresent ||
+		connectivity.preferredRelay != other.preferredRelay ||
+		connectivity.preferredRelayPresent != other.preferredRelayPresent {
 		return false
 	}
 	return !connectivity.endpointSetPresent || connectivity.endpointSet.Equal(other.endpointSet)

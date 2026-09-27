@@ -116,6 +116,15 @@ func (service *Service) observeEndpoints(
 	if err != nil {
 		return errors.Join(ErrOpen, err)
 	}
+	if preferredRelay, preferredRelayPresent := request.PreferredRelay(); preferredRelayPresent {
+		if preferredRelay > 0 && !usableRelayPreference(snapshot, preferredRelay) {
+			return ErrOpen
+		}
+		observation, err = observation.WithPreferredRelay(preferredRelay)
+		if err != nil {
+			return errors.Join(ErrOpen, err)
+		}
+	}
 	operationCtx, cancel := context.WithTimeout(ctx, service.options.EndpointTimeout)
 	defer cancel()
 	accepted, err := service.endpoints.ObserveEndpoints(
@@ -130,6 +139,19 @@ func (service *Service) observeEndpoints(
 		return errors.Join(ErrOpen, ErrEndpointObservationRejected)
 	}
 	return nil
+}
+
+func usableRelayPreference(snapshot Snapshot, regionID int) bool {
+	region, found := snapshot.RelayDirectory().Region(regionID)
+	if !found {
+		return false
+	}
+	for _, relayNode := range region.Nodes() {
+		if !relayNode.IsSTUNOnly() {
+			return true
+		}
+	}
+	return false
 }
 
 func (service *Service) loadConnectivity(ctx context.Context, snapshot Snapshot) (Snapshot, error) {
@@ -159,6 +181,12 @@ func (service *Service) loadConnectivity(ctx context.Context, snapshot Snapshot)
 	for index := range keys {
 		if !values[index].IsValid() || values[index].Key() != keys[index] {
 			return Snapshot{}, ErrOpen
+		}
+		preferredRelay, preferredRelayPresent := values[index].PreferredRelay()
+		if preferredRelayPresent && preferredRelay > 0 &&
+			!usableRelayPreference(snapshot, preferredRelay) {
+			values[index].preferredRelay = 0
+			values[index].preferredRelayPresent = false
 		}
 	}
 	enriched, err := snapshot.WithConnectivity(values)

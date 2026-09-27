@@ -32,6 +32,9 @@ type relayBootstrapContract struct {
 		Publication string `json:"publication"`
 		Unknown     string `json:"unknown"`
 		Withdrawal  string `json:"withdrawal"`
+		Validation  string `json:"validation"`
+		Storage     string `json:"storage"`
+		Projection  string `json:"projection"`
 		Activation  string `json:"activation"`
 	} `json:"home_selection"`
 	PathLifecycle struct {
@@ -61,9 +64,9 @@ func TestRelayBootstrapContractPinsPathLifecycle(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 1 || contract.Profile != "encrypted-relay-bootstrap-v1" ||
+	if contract.ContractVersion != 2 || contract.Profile != "encrypted-relay-bootstrap-v1" ||
 		contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
-		contract.ClientEvidence.Revision != "84ee0f41068e8c5abcf529d68f5ad13fe21f3f3f" {
+		contract.ClientEvidence.Revision != "654adbd0ee4d34bca548a55dcf9c8b3adaa328b8" {
 		t.Fatalf("contract identity = %+v", contract)
 	}
 	directory := contract.Directory
@@ -81,6 +84,9 @@ func TestRelayBootstrapContractPinsPathLifecycle(t *testing.T) {
 		home.Publication != "complete-endpoint-update" ||
 		home.Unknown != "omitted" ||
 		home.Withdrawal != "explicit-zero" ||
+		home.Validation != "positive-region-must-be-usable-in-validated-directory" ||
+		home.Storage != "redis-ttl-session-generation-fenced" ||
+		home.Projection != "self-and-authorized-peers-only" ||
 		home.Activation != "validated-control-echo" {
 		t.Fatalf("home selection contract = %+v", home)
 	}

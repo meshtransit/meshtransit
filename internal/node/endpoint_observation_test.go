@@ -47,3 +47,42 @@ func TestEndpointObservationValidatesGenerationAndTTL(t *testing.T) {
 		})
 	}
 }
+
+func TestEndpointObservationPreservesPreferredRelayPresence(t *testing.T) {
+	t.Parallel()
+
+	nodeID, err := ParseID("01890f00-0000-7000-8000-000000000701")
+	if err != nil {
+		t.Fatalf("ParseID() error = %v", err)
+	}
+	observation, err := NewEndpointObservation(
+		nodeID,
+		7,
+		endpointSetFixture(t),
+		30*time.Second,
+	)
+	if err != nil {
+		t.Fatalf("NewEndpointObservation() error = %v", err)
+	}
+	if regionID, present := observation.PreferredRelay(); present || regionID != 0 {
+		t.Fatalf("PreferredRelay() = (%d, %t), want omitted", regionID, present)
+	}
+	for _, regionID := range []int{0, 3, MaximumRelayRegionID} {
+		withPreference, err := observation.WithPreferredRelay(regionID)
+		if err != nil {
+			t.Fatalf("WithPreferredRelay(%d) error = %v", regionID, err)
+		}
+		got, present := withPreference.PreferredRelay()
+		if !withPreference.IsValid() || !present || got != regionID {
+			t.Fatalf("PreferredRelay() = (%d, %t), want (%d, true)", got, present, regionID)
+		}
+	}
+	for _, regionID := range []int{-1, MaximumRelayRegionID + 1} {
+		if _, err := observation.WithPreferredRelay(regionID); !errors.Is(
+			err,
+			ErrInvalidEndpointObservation,
+		) {
+			t.Fatalf("WithPreferredRelay(%d) error = %v, want invalid observation", regionID, err)
+		}
+	}
+}

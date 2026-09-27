@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/netip"
+	"strconv"
 	"time"
 
 	redisclient "github.com/redis/go-redis/v9"
@@ -36,6 +37,14 @@ local current_payload = redis.call('HGET', KEYS[1], 'payload')
 if (current_endpoint_generation == false) ~= (current_payload == false) then
     return -1
 end
+local current_preferred_relay_present = redis.call('HGET', KEYS[1], 'preferred_relay_present')
+local current_preferred_relay = redis.call('HGET', KEYS[1], 'preferred_relay')
+if (current_preferred_relay_present == false) ~= (current_preferred_relay == false) then
+    return -1
+end
+if current_endpoint_generation == false and current_preferred_relay_present ~= false then
+    return -1
+end
 if current_endpoint_generation ~= false then
     local stored_generation = tonumber(current_endpoint_generation)
     local requested_generation = tonumber(ARGV[1])
@@ -59,12 +68,14 @@ if current_presence_generation ~= false then
     end
 end
 
-redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'payload', ARGV[2])
-redis.call('PEXPIRE', KEYS[1], ARGV[3])
-if current_endpoint_generation == ARGV[1] and current_payload == ARGV[2] then
+redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'payload', ARGV[2],
+    'preferred_relay_present', ARGV[3], 'preferred_relay', ARGV[4])
+redis.call('PEXPIRE', KEYS[1], ARGV[5])
+if current_endpoint_generation == ARGV[1] and current_payload == ARGV[2] and
+    current_preferred_relay_present == ARGV[3] and current_preferred_relay == ARGV[4] then
     return 2
 end
-redis.call('PUBLISH', ARGV[4], ARGV[5])
+redis.call('PUBLISH', ARGV[6], ARGV[7])
 return 1
 `)
 	loadEndpointsScript = redisclient.NewScript(`
@@ -85,9 +96,21 @@ for index = 1, #ARGV do
     if (endpoint_generation == false) ~= (endpoint_payload == false) then
         return redis.error_reply('malformed endpoint state')
     end
+    local preferred_relay_present = redis.call('HGET', endpoint_key, 'preferred_relay_present')
+    local preferred_relay = redis.call('HGET', endpoint_key, 'preferred_relay')
+    if (preferred_relay_present == false) ~= (preferred_relay == false) then
+        return redis.error_reply('malformed preferred relay state')
+    end
+    if endpoint_generation == false and preferred_relay_present ~= false then
+        return redis.error_reply('orphaned preferred relay state')
+    end
     if endpoint_generation == generation then
         result[#result + 1] = endpoint_payload
+        result[#result + 1] = preferred_relay_present
+        result[#result + 1] = preferred_relay
     else
+        result[#result + 1] = false
+        result[#result + 1] = false
         result[#result + 1] = false
     end
     local presence_generation = redis.call('HGET', presence_key, 'generation')
@@ -111,6 +134,8 @@ type observeEndpointsFunc func(
 	string,
 	int64,
 	[]byte,
+	int64,
+	int,
 	time.Duration,
 	string,
 	[]byte,
@@ -146,6 +171,11 @@ func (client *Client) ObserveEndpoints(
 		return false, err
 	}
 	defer clear(wakeup)
+	preferredRelay, preferredRelayPresent := observation.PreferredRelay()
+	preferredRelayPresence := int64(0)
+	if preferredRelayPresent {
+		preferredRelayPresence = 1
+	}
 	startedAt := time.Now()
 	result, err := client.observeEndpoints(
 		ctx,
@@ -153,6 +183,8 @@ func (client *Client) ObserveEndpoints(
 		presenceKeyForNode(observation.NodeID()),
 		observation.Generation(),
 		payload,
+		preferredRelayPresence,
+		preferredRelay,
 		observation.TTL(),
 		connectivityChangedChannel,
 		wakeup,
@@ -221,12 +253,12 @@ func (client *Client) loadConnectivityBatch(
 		generations = append(generations, key.Generation())
 	}
 	raw, err := client.loadConnectivity(ctx, redisKeys, generations)
-	if err != nil || len(raw) != len(keys)*2 {
+	if err != nil || len(raw) != len(keys)*4 {
 		return nil, ErrLoadConnectivity
 	}
 	values := make([]mapsession.Connectivity, len(keys))
 	for index, key := range keys {
-		payload, present, err := connectivityPayload(raw[index*2])
+		payload, present, err := connectivityPayload(raw[index*4])
 		if err != nil {
 			return nil, err
 		}
@@ -238,21 +270,69 @@ func (client *Client) loadConnectivityBatch(
 				return nil, err
 			}
 		}
-		online, ok := raw[index*2+1].(int64)
+		preferredRelay, preferredRelayPresent, err := connectivityPreferredRelay(
+			raw[index*4+1],
+			raw[index*4+2],
+		)
+		if err != nil {
+			return nil, err
+		}
+		online, ok := raw[index*4+3].(int64)
 		if !ok || online < 0 || online > 1 {
 			return nil, ErrLoadConnectivity
 		}
 		values[index], err = mapsession.NewConnectivity(mapsession.ConnectivityParams{
-			Key:                key,
-			EndpointSet:        set,
-			EndpointSetPresent: present,
-			Online:             online == 1,
+			Key:                   key,
+			EndpointSet:           set,
+			EndpointSetPresent:    present,
+			PreferredRelay:        preferredRelay,
+			PreferredRelayPresent: preferredRelayPresent,
+			Online:                online == 1,
 		})
 		if err != nil {
 			return nil, ErrLoadConnectivity
 		}
 	}
 	return values, nil
+}
+
+func connectivityPreferredRelay(
+	presentValue any,
+	regionValue any,
+) (int, bool, error) {
+	if presentValue == nil && regionValue == nil {
+		return 0, false, nil
+	}
+	present, err := connectivityInteger(presentValue)
+	if err != nil || present < 0 || present > 1 {
+		return 0, false, ErrLoadConnectivity
+	}
+	regionID, err := connectivityInteger(regionValue)
+	if err != nil || regionID < 0 || regionID > node.MaximumRelayRegionID ||
+		present == 0 && regionID != 0 {
+		return 0, false, ErrLoadConnectivity
+	}
+	return regionID, present == 1, nil
+}
+
+func connectivityInteger(value any) (int, error) {
+	var encoded string
+	switch typed := value.(type) {
+	case string:
+		encoded = typed
+	case []byte:
+		encoded = string(typed)
+	default:
+		return 0, ErrLoadConnectivity
+	}
+	if encoded == "" || len(encoded) > 5 {
+		return 0, ErrLoadConnectivity
+	}
+	parsed, err := strconv.Atoi(encoded)
+	if err != nil {
+		return 0, ErrLoadConnectivity
+	}
+	return parsed, nil
 }
 
 func connectivityPayload(value any) ([]byte, bool, error) {

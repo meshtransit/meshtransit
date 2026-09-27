@@ -1,9 +1,9 @@
 {
-  "contract_version": 6,
+  "contract_version": 7,
   "profile": "legacy-ts2021-cap142-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
-    "revision": "84ee0f41068e8c5abcf529d68f5ad13fe21f3f3f"
+    "revision": "654adbd0ee4d34bca548a55dcf9c8b3adaa328b8"
   },
   "request": {
     "method": "POST",
@@ -26,6 +26,9 @@
       "maximum_endpoints": 64,
       "requires_discovery_key": true,
       "requires_parallel_endpoint_types": true,
+      "preferred_relay_source": "Hostinfo.NetInfo.PreferredDERP",
+      "preferred_relay_semantics": "omitted-unchanged-zero-withdraw-positive-validated-region",
+      "preferred_relay_storage": "additive-redis-hash-generation-fenced",
       "omit_peers": "accepted-only-with-endpoint-report",
       "storage": "redis-ttl-generation-fenced",
       "wakeup": "connectivity-changed",
@@ -54,6 +57,7 @@
     "connectivity_fields": [
       "DiscoKey",
       "Endpoints",
+      "HomeDERP",
       "Online"
     ],
     "connectivity_authority": "non-authoritative",

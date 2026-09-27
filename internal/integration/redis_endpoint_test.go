@@ -77,6 +77,14 @@ func assertRedisEndpointObservationFencing(
 	if !present || !projected.Equal(generationThree.Set()) {
 		t.Fatalf("Redis connectivity endpoint set = (%+v, %t), want generation 3", projected, present)
 	}
+	preferredRelay, preferredRelayPresent := connectivity[0].PreferredRelay()
+	if !preferredRelayPresent || preferredRelay != 3 {
+		t.Fatalf(
+			"Redis connectivity preferred relay = (%d, %t), want (3, true)",
+			preferredRelay,
+			preferredRelayPresent,
+		)
+	}
 	set, found, err = client.LoadEndpoints(ctx, nodeID, 3)
 	if err != nil || !found || !slices.Equal(set.Endpoints(), generationThree.Set().Endpoints()) {
 		t.Fatalf("Redis LoadEndpoints(generation 3) = (%+v, %t, %v), want replacement", set, found, err)
@@ -122,6 +130,10 @@ func integrationEndpointObservation(
 	observation, err := node.NewEndpointObservation(nodeID, generation, set, 30*time.Second)
 	if err != nil {
 		t.Fatalf("construct integration endpoint observation: %v", err)
+	}
+	observation, err = observation.WithPreferredRelay(3)
+	if err != nil {
+		t.Fatalf("attach integration preferred relay: %v", err)
 	}
 	return observation
 }

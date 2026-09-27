@@ -8,6 +8,8 @@ import (
 const (
 	minimumEndpointObservationTTL = time.Second
 	maximumEndpointObservationTTL = 5 * time.Minute
+	// MaximumRelayRegionID bounds the compatibility relay-region namespace.
+	MaximumRelayRegionID = 1<<16 - 1
 )
 
 // ErrInvalidEndpointObservation reports an unsafe transient connectivity record.
@@ -16,10 +18,26 @@ var ErrInvalidEndpointObservation = errors.New("node: invalid endpoint observati
 // EndpointObservation binds a transient endpoint set to one Node generation.
 // It carries no membership, ownership, or policy authority.
 type EndpointObservation struct {
-	nodeID     ID
-	generation int64
-	set        EndpointSet
-	ttl        time.Duration
+	nodeID            ID
+	generation        int64
+	set               EndpointSet
+	preferredRelay    int
+	hasPreferredRelay bool
+	ttl               time.Duration
+}
+
+// WithPreferredRelay returns a copy carrying a complete client home-relay
+// observation. Region zero is an explicit managed withdrawal; absence remains
+// distinct when this method is not called.
+func (observation EndpointObservation) WithPreferredRelay(
+	regionID int,
+) (EndpointObservation, error) {
+	observation.preferredRelay = regionID
+	observation.hasPreferredRelay = true
+	if !observation.IsValid() {
+		return EndpointObservation{}, ErrInvalidEndpointObservation
+	}
+	return observation, nil
 }
 
 // NewEndpointObservation validates a generation-fenced transient observation.
@@ -50,6 +68,12 @@ func (observation EndpointObservation) Generation() int64 { return observation.g
 // Set returns the immutable connectivity report.
 func (observation EndpointObservation) Set() EndpointSet { return observation.set }
 
+// PreferredRelay returns the reported home relay when present. A present zero
+// is an explicit withdrawal, not an omitted observation.
+func (observation EndpointObservation) PreferredRelay() (int, bool) {
+	return observation.preferredRelay, observation.hasPreferredRelay
+}
+
 // TTL returns the bounded lifetime of this non-authoritative record.
 func (observation EndpointObservation) TTL() time.Duration { return observation.ttl }
 
@@ -57,5 +81,8 @@ func (observation EndpointObservation) TTL() time.Duration { return observation.
 func (observation EndpointObservation) IsValid() bool {
 	return observation.nodeID.IsValid() && observation.generation > 0 &&
 		observation.set.IsValid() && observation.ttl >= minimumEndpointObservationTTL &&
-		observation.ttl <= maximumEndpointObservationTTL
+		observation.ttl <= maximumEndpointObservationTTL &&
+		observation.preferredRelay >= 0 &&
+		observation.preferredRelay <= MaximumRelayRegionID &&
+		(observation.hasPreferredRelay || observation.preferredRelay == 0)
 }

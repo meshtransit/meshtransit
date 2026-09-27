@@ -20,6 +20,19 @@ type Request struct {
 	capabilityVersion int
 	endpointSet       node.EndpointSet
 	hasEndpointSet    bool
+	preferredRelay    int
+	hasPreferredRelay bool
+}
+
+// WithPreferredRelay returns a validated request carrying the complete client
+// home-relay observation. Region zero is an explicit managed withdrawal.
+func (request Request) WithPreferredRelay(regionID int) (Request, error) {
+	request.preferredRelay = regionID
+	request.hasPreferredRelay = true
+	if !request.IsValid() {
+		return Request{}, ErrInvalidRequest
+	}
+	return request, nil
 }
 
 // NewRequest validates an untrusted Node key and bounded compatibility version.
@@ -54,10 +67,19 @@ func (request Request) EndpointSet() (node.EndpointSet, bool) {
 	return request.endpointSet, request.hasEndpointSet
 }
 
+// PreferredRelay returns the reported home relay when present. A present zero
+// is an explicit withdrawal, not an omitted observation.
+func (request Request) PreferredRelay() (int, bool) {
+	return request.preferredRelay, request.hasPreferredRelay
+}
+
 // IsValid reports whether the request is safe to authorize.
 func (request Request) IsValid() bool {
 	if !request.nodeKey.IsValid() || request.capabilityVersion <= 0 ||
-		request.capabilityVersion > maximumCapabilityVersion {
+		request.capabilityVersion > maximumCapabilityVersion ||
+		request.preferredRelay < 0 || request.preferredRelay > node.MaximumRelayRegionID ||
+		(!request.hasPreferredRelay && request.preferredRelay != 0) ||
+		request.hasPreferredRelay && !request.hasEndpointSet {
 		return false
 	}
 	return !request.hasEndpointSet || request.endpointSet.IsValid()

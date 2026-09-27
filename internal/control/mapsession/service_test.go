@@ -65,6 +65,46 @@ func TestServiceLoadsConnectivityOnlyForSelfAndAuthorizedPeers(t *testing.T) {
 	}
 }
 
+func TestServiceOmitsStalePreferredRelayOutsideCurrentDirectory(t *testing.T) {
+	t.Parallel()
+
+	snapshot := snapshotFixture(t)
+	key, err := NewConnectivityKey(snapshot.NodeID(), snapshot.SessionGeneration())
+	if err != nil {
+		t.Fatalf("NewConnectivityKey() error = %v", err)
+	}
+	stale, err := NewConnectivity(ConnectivityParams{
+		Key:                   key,
+		PreferredRelay:        2,
+		PreferredRelayPresent: true,
+	})
+	if err != nil {
+		t.Fatalf("NewConnectivity() error = %v", err)
+	}
+	connectivity := &recordingConnectivityStore{values: []Connectivity{stale}}
+	service, err := NewService(
+		&recordingSnapshotStore{snapshot: snapshot},
+		&recordingEndpointObserver{},
+		connectivity,
+		ServiceOptions{EndpointTTL: 30 * time.Second, EndpointTimeout: time.Second},
+	)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	machine, request := authenticatedRequestFixture(t, snapshot)
+	result, err := service.Open(t.Context(), machine, request)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	projected, found := result.ConnectivityFor(snapshot.NodeID())
+	if !found {
+		t.Fatal("Open() omitted self connectivity")
+	}
+	if preferredRelay, present := projected.PreferredRelay(); present || preferredRelay != 0 {
+		t.Fatalf("PreferredRelay() = (%d, %t), want omitted stale region", preferredRelay, present)
+	}
+}
+
 func TestServiceObservesEndpointsAfterAuthoritativeIdentityBinding(t *testing.T) {
 	snapshot := snapshotFixture(t)
 	store := &recordingSnapshotStore{snapshot: snapshot}
@@ -72,16 +112,42 @@ func TestServiceObservesEndpointsAfterAuthoritativeIdentityBinding(t *testing.T)
 	service := newServiceFixture(t, store, observer)
 	machine, request := authenticatedRequestFixture(t, snapshot)
 	request = withEndpointSetFixture(t, request)
+	request, err := request.WithPreferredRelay(1)
+	if err != nil {
+		t.Fatalf("Request.WithPreferredRelay() error = %v", err)
+	}
 
 	if _, err := service.Open(t.Context(), machine, request); err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
+	preferredRelay, preferredRelayPresent := observer.observation.PreferredRelay()
 	if observer.calls != 1 || !observer.observation.IsValid() ||
 		observer.scope != snapshot.Scope() ||
 		observer.observation.NodeID() != snapshot.NodeID() ||
 		observer.observation.Generation() != snapshot.SessionGeneration() ||
-		observer.observation.TTL() != 30*time.Second {
+		observer.observation.TTL() != 30*time.Second ||
+		preferredRelay != 1 || !preferredRelayPresent {
 		t.Fatalf("endpoint observation = %+v after %d calls, want bound snapshot observation", observer.observation, observer.calls)
+	}
+}
+
+func TestServiceRejectsPreferredRelayOutsideAuthorizedDirectory(t *testing.T) {
+	t.Parallel()
+
+	snapshot := snapshotFixture(t)
+	observer := &recordingEndpointObserver{accepted: true}
+	service := newServiceFixture(t, &recordingSnapshotStore{snapshot: snapshot}, observer)
+	machine, request := authenticatedRequestFixture(t, snapshot)
+	request = withEndpointSetFixture(t, request)
+	request, err := request.WithPreferredRelay(2)
+	if err != nil {
+		t.Fatalf("Request.WithPreferredRelay() error = %v", err)
+	}
+	if _, err := service.Open(t.Context(), machine, request); !errors.Is(err, ErrOpen) {
+		t.Fatalf("Open() error = %v, want ErrOpen", err)
+	}
+	if observer.calls != 0 {
+		t.Fatalf("endpoint observer calls = %d, want zero for unknown relay", observer.calls)
 	}
 }
 
@@ -260,9 +326,10 @@ func (observer *recordingEndpointObserver) ObserveEndpoints(
 }
 
 type recordingConnectivityStore struct {
-	keys  []ConnectivityKey
-	calls int
-	err   error
+	keys   []ConnectivityKey
+	values []Connectivity
+	calls  int
+	err    error
 }
 
 func (store *recordingConnectivityStore) LoadConnectivity(
@@ -273,6 +340,9 @@ func (store *recordingConnectivityStore) LoadConnectivity(
 	store.keys = slices.Clone(keys)
 	if store.err != nil {
 		return nil, store.err
+	}
+	if store.values != nil {
+		return slices.Clone(store.values), nil
 	}
 	values := make([]Connectivity, len(keys))
 	for index, key := range keys {

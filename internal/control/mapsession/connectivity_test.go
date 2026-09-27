@@ -153,6 +153,69 @@ func TestNewConnectivityDeltaSelectsOnlyWireVisibleChanges(t *testing.T) {
 	}
 }
 
+func TestNewConnectivityDeltaIncludesPreferredRelayChange(t *testing.T) {
+	t.Parallel()
+
+	base, peer := snapshotWithAuthorizedPeerFixture(t)
+	self := connectivityFixture(
+		t,
+		base.NodeID(),
+		base.SessionGeneration(),
+		3,
+		"198.51.100.1:41641",
+		true,
+	)
+	set, present := self.EndpointSet()
+	if !present {
+		t.Fatal("self connectivity omitted endpoint set")
+	}
+	selfBefore, err := NewConnectivity(ConnectivityParams{
+		Key:                   self.Key(),
+		EndpointSet:           set,
+		EndpointSetPresent:    true,
+		PreferredRelay:        1,
+		PreferredRelayPresent: true,
+		Online:                self.Online(),
+	})
+	if err != nil {
+		t.Fatalf("NewConnectivity(before) error = %v", err)
+	}
+	selfAfter, err := NewConnectivity(ConnectivityParams{
+		Key:                   self.Key(),
+		EndpointSet:           set,
+		EndpointSetPresent:    true,
+		PreferredRelay:        3,
+		PreferredRelayPresent: true,
+		Online:                self.Online(),
+	})
+	if err != nil {
+		t.Fatalf("NewConnectivity(after) error = %v", err)
+	}
+	peerConnectivity := connectivityFixture(
+		t,
+		peer.NodeID(),
+		peer.SessionGeneration(),
+		4,
+		"198.51.100.2:41641",
+		true,
+	)
+	current, err := base.WithConnectivity([]Connectivity{selfBefore, peerConnectivity})
+	if err != nil {
+		t.Fatalf("WithConnectivity(current) error = %v", err)
+	}
+	next, err := base.WithConnectivity([]Connectivity{selfAfter, peerConnectivity})
+	if err != nil {
+		t.Fatalf("WithConnectivity(next) error = %v", err)
+	}
+	delta, err := NewConnectivityDelta(current, next)
+	if err != nil {
+		t.Fatalf("NewConnectivityDelta() error = %v", err)
+	}
+	if !delta.IsValid() || !delta.SelfChanged() || len(delta.ChangedPeers()) != 0 {
+		t.Fatalf("ConnectivityDelta = %+v, want only self preferred-relay change", delta)
+	}
+}
+
 func TestNewConnectivityDeltaRejectsAuthorityChangeOrEmptyUpdate(t *testing.T) {
 	t.Parallel()
 

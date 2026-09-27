@@ -53,6 +53,9 @@ func TestRequestCarriesImmutableEndpointSet(t *testing.T) {
 	if _, present := request.EndpointSet(); present {
 		t.Fatal("new request unexpectedly contains endpoint set")
 	}
+	if _, present := request.PreferredRelay(); present {
+		t.Fatal("new request unexpectedly contains preferred relay")
+	}
 	endpoint, err := node.NewEndpoint(
 		netip.MustParseAddrPort("192.0.2.10:41641"),
 		node.EndpointSourceSTUN,
@@ -82,5 +85,15 @@ func TestRequestCarriesImmutableEndpointSet(t *testing.T) {
 	}
 	if _, err := request.WithEndpointSet(node.EndpointSet{}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("Request.WithEndpointSet(zero) error = %v, want ErrInvalidRequest", err)
+	}
+	withPreference, err := withEndpoints.WithPreferredRelay(3)
+	if err != nil {
+		t.Fatalf("Request.WithPreferredRelay() error = %v", err)
+	}
+	if preferredRelay, present := withPreference.PreferredRelay(); !present || preferredRelay != 3 || !withPreference.IsValid() {
+		t.Fatalf("Request.PreferredRelay() = (%d, %t), want (3, true)", preferredRelay, present)
+	}
+	if _, err := request.WithPreferredRelay(3); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("Request.WithPreferredRelay() without endpoints error = %v, want invalid request", err)
 	}
 }

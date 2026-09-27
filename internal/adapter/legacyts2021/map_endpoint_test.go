@@ -83,6 +83,58 @@ func TestDecodeMapRequestAcceptsMeshDUncompressedEndpointUpdate(t *testing.T) {
 	}
 }
 
+func TestDecodeMapRequestPreservesPreferredRelayWithEndpointUpdate(t *testing.T) {
+	t.Parallel()
+
+	body := strings.Replace(
+		mapRequestBody,
+		`"Hostinfo":{"Hostname":"node-one.example"}`,
+		`"Hostinfo":{"Hostname":"node-one.example","NetInfo":{"PreferredDERP":3}}`,
+		1,
+	)
+	body = strings.Replace(body, `  "Stream":false,`, mapEndpointFields+`  "Stream":false,`, 1)
+	body = strings.Replace(body, `"OmitPeers":false`, `"OmitPeers":true`, 1)
+	request, streaming, err := DecodeMapRequest(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("DecodeMapRequest() error = %v", err)
+	}
+	preferredRelay, present := request.PreferredRelay()
+	if streaming || !present || preferredRelay != 3 {
+		t.Fatalf(
+			"DecodeMapRequest() preferred relay = (%d, %t), streaming = %t; want (3, true), false",
+			preferredRelay,
+			present,
+			streaming,
+		)
+	}
+}
+
+func TestDecodeMapRequestPreservesExplicitPreferredRelayWithdrawal(t *testing.T) {
+	t.Parallel()
+
+	body := strings.Replace(
+		mapRequestBody,
+		`"Hostinfo":{"Hostname":"node-one.example"}`,
+		`"Hostinfo":{"Hostname":"node-one.example","NetInfo":{}}`,
+		1,
+	)
+	body = strings.Replace(body, `  "Stream":false,`, mapEndpointFields+`  "Stream":false,`, 1)
+	body = strings.Replace(body, `"OmitPeers":false`, `"OmitPeers":true`, 1)
+	request, streaming, err := DecodeMapRequest(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("DecodeMapRequest() error = %v", err)
+	}
+	preferredRelay, present := request.PreferredRelay()
+	if streaming || !present || preferredRelay != 0 {
+		t.Fatalf(
+			"DecodeMapRequest() preferred relay = (%d, %t), streaming = %t; want (0, true), false",
+			preferredRelay,
+			present,
+			streaming,
+		)
+	}
+}
+
 func TestDecodeMapRequestRejectsInvalidEndpointReports(t *testing.T) {
 	t.Parallel()
 
@@ -101,6 +153,15 @@ func TestDecodeMapRequestRejectsInvalidEndpointReports(t *testing.T) {
 		{name: "duplicate endpoint", body: strings.Replace(valid, `"10.0.0.2:41641"`, `"192.0.2.10:41641"`, 1)},
 		{name: "zero port", body: strings.Replace(valid, `192.0.2.10:41641`, `192.0.2.10:0`, 1)},
 		{name: "omit peers without update", body: strings.Replace(mapRequestBody, `"OmitPeers":false`, `"OmitPeers":true`, 1)},
+		{
+			name: "preferred relay without endpoint set",
+			body: strings.Replace(
+				mapRequestBody,
+				`"Hostinfo":{"Hostname":"node-one.example"}`,
+				`"Hostinfo":{"Hostname":"node-one.example","NetInfo":{"PreferredDERP":3}}`,
+				1,
+			),
+		},
 		{name: "omit peers on stream", body: strings.Replace(strings.Replace(valid, `"Stream":false`, `"Stream":true`, 1), `"OmitPeers":false`, `"OmitPeers":true`, 1)},
 		{name: "too many endpoints", body: strings.Replace(valid, `"Endpoints":["192.0.2.10:41641","10.0.0.2:41641"]`, `"Endpoints":[`+strings.Join(tooMany, ",")+`]`, 1)},
 	} {

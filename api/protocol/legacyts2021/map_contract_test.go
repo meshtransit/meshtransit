@@ -33,6 +33,9 @@ type mapContract struct {
 			MaximumEndpoints              int    `json:"maximum_endpoints"`
 			RequiresDiscoveryKey          bool   `json:"requires_discovery_key"`
 			RequiresParallelEndpointTypes bool   `json:"requires_parallel_endpoint_types"`
+			PreferredRelaySource          string `json:"preferred_relay_source"`
+			PreferredRelaySemantics       string `json:"preferred_relay_semantics"`
+			PreferredRelayStorage         string `json:"preferred_relay_storage"`
 			OmitPeers                     string `json:"omit_peers"`
 			Storage                       string `json:"storage"`
 			Wakeup                        string `json:"wakeup"`
@@ -75,11 +78,11 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 6 || contract.Profile != "legacy-ts2021-cap142-v1" {
-		t.Fatalf("contract identity = (%d, %q), want version 6 legacy profile", contract.ContractVersion, contract.Profile)
+	if contract.ContractVersion != 7 || contract.Profile != "legacy-ts2021-cap142-v1" {
+		t.Fatalf("contract identity = (%d, %q), want version 7 legacy profile", contract.ContractVersion, contract.Profile)
 	}
 	if contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
-		contract.ClientEvidence.Revision != "84ee0f41068e8c5abcf529d68f5ad13fe21f3f3f" {
+		contract.ClientEvidence.Revision != "654adbd0ee4d34bca548a55dcf9c8b3adaa328b8" {
 		t.Fatalf("client evidence = %+v, want pinned meshd revision", contract.ClientEvidence)
 	}
 	request := contract.Request
@@ -98,6 +101,9 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 	endpointUpdate := request.EndpointUpdate
 	if endpointUpdate.Mode != "one-shot-only" || endpointUpdate.MaximumEndpoints != 64 ||
 		!endpointUpdate.RequiresDiscoveryKey || !endpointUpdate.RequiresParallelEndpointTypes ||
+		endpointUpdate.PreferredRelaySource != "Hostinfo.NetInfo.PreferredDERP" ||
+		endpointUpdate.PreferredRelaySemantics != "omitted-unchanged-zero-withdraw-positive-validated-region" ||
+		endpointUpdate.PreferredRelayStorage != "additive-redis-hash-generation-fenced" ||
 		endpointUpdate.OmitPeers != "accepted-only-with-endpoint-report" ||
 		endpointUpdate.Storage != "redis-ttl-generation-fenced" ||
 		endpointUpdate.Wakeup != "connectivity-changed" ||
@@ -116,7 +122,7 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 		response.PacketFilterProjection != "inbound-to-self-only" ||
 		response.PeerPolicyAtomicity != "same-map-response" ||
 		response.ConnectivityProjection != "redis-exact-generation-self-and-authorized-peers" ||
-		!slices.Equal(response.ConnectivityFields, []string{"DiscoKey", "Endpoints", "Online"}) ||
+		!slices.Equal(response.ConnectivityFields, []string{"DiscoKey", "Endpoints", "HomeDERP", "Online"}) ||
 		response.ConnectivityAuthority != "non-authoritative" ||
 		response.EmptyPeersSemantics != "replace-complete-set-with-empty" ||
 		response.EmptyPacketFilterSemantics != "deny-all" ||

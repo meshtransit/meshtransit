@@ -168,20 +168,22 @@ func TestEncodeFullMapResponseProjectsGenerationFencedConnectivity(t *testing.T)
 	if len(peers) != 1 {
 		t.Fatalf("AuthorizedPeers() = %+v, want one fixture peer", peers)
 	}
-	self := mapConnectivityFixture(
+	self := mapConnectivityWithPreferredRelayFixture(
 		t,
 		snapshot.NodeID(),
 		snapshot.SessionGeneration(),
 		3,
 		"198.51.100.1:41641",
+		1,
 		true,
 	)
-	peer := mapConnectivityFixture(
+	peer := mapConnectivityWithPreferredRelayFixture(
 		t,
 		peers[0].NodeID(),
 		peers[0].SessionGeneration(),
 		4,
 		"198.51.100.2:41641",
+		1,
 		true,
 	)
 	enriched, err := snapshot.WithConnectivity([]mapsession.Connectivity{peer, self})
@@ -189,13 +191,14 @@ func TestEncodeFullMapResponseProjectsGenerationFencedConnectivity(t *testing.T)
 		t.Fatalf("WithConnectivity() error = %v", err)
 	}
 	response := decodeFullMapResponseFixture(t, enriched)
-	if response.Node == nil || response.Node.DiscoKey.IsZero() ||
+	if response.Node == nil || response.Node.DiscoKey.IsZero() || response.Node.HomeDERP != 1 ||
 		!reflect.DeepEqual(response.Node.Endpoints, []netip.AddrPort{
 			netip.MustParseAddrPort("198.51.100.1:41641"),
 		}) {
 		t.Fatalf("self connectivity = %+v, want discovery key and endpoint", response.Node)
 	}
 	if len(response.Peers) != 1 || response.Peers[0].DiscoKey.IsZero() ||
+		response.Peers[0].HomeDERP != 1 ||
 		response.Peers[0].Online == nil || !*response.Peers[0].Online ||
 		!reflect.DeepEqual(response.Peers[0].Endpoints, []netip.AddrPort{
 			netip.MustParseAddrPort("198.51.100.2:41641"),
@@ -285,6 +288,49 @@ func mapConnectivityFixture(
 	address string,
 	online bool,
 ) mapsession.Connectivity {
+	return mapConnectivityFixtureWithPreference(
+		t,
+		nodeID,
+		generation,
+		keyByte,
+		address,
+		0,
+		false,
+		online,
+	)
+}
+
+func mapConnectivityWithPreferredRelayFixture(
+	t testing.TB,
+	nodeID node.ID,
+	generation int64,
+	keyByte byte,
+	address string,
+	preferredRelay int,
+	online bool,
+) mapsession.Connectivity {
+	return mapConnectivityFixtureWithPreference(
+		t,
+		nodeID,
+		generation,
+		keyByte,
+		address,
+		preferredRelay,
+		true,
+		online,
+	)
+}
+
+func mapConnectivityFixtureWithPreference(
+	t testing.TB,
+	nodeID node.ID,
+	generation int64,
+	keyByte byte,
+	address string,
+	preferredRelay int,
+	preferredRelayPresent bool,
+	online bool,
+) mapsession.Connectivity {
 	t.Helper()
 	key, err := mapsession.NewConnectivityKey(nodeID, generation)
 	if err != nil {
@@ -306,10 +352,12 @@ func mapConnectivityFixture(
 		t.Fatalf("node.NewEndpointSet() error = %v", err)
 	}
 	connectivity, err := mapsession.NewConnectivity(mapsession.ConnectivityParams{
-		Key:                key,
-		EndpointSet:        set,
-		EndpointSetPresent: true,
-		Online:             online,
+		Key:                   key,
+		EndpointSet:           set,
+		EndpointSetPresent:    true,
+		PreferredRelay:        preferredRelay,
+		PreferredRelayPresent: preferredRelayPresent,
+		Online:                online,
 	})
 	if err != nil {
 		t.Fatalf("mapsession.NewConnectivity() error = %v", err)

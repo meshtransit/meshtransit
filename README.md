@@ -32,10 +32,11 @@ contains the authoritative self Node, only packet-policy-authorized peers, and
 the Node-reduced inbound packet filter; explicit empty collections clear prior
 client state. Long-lived streams use generation-fenced Redis presence, bounded
 keepalives, exact release, process-owned revision and connectivity feeds, and
-periodic PostgreSQL plus Redis resync. One-shot endpoint updates validate and
-record canonical generation-fenced discovery keys and endpoint sets in Redis.
-Maps project exact-generation endpoint and online observations only after
-PostgreSQL membership and packet policy authorize the peer. Redis exposes
+periodic PostgreSQL plus Redis resync. One-shot connectivity updates validate
+and record canonical discovery keys, endpoint sets, and usable preferred-relay
+observations under the same Redis session-generation fence. Maps project those
+exact-generation routing observations and online state only after PostgreSQL
+membership and packet policy authorize the peer. Redis exposes
 bounded, versioned `NetworkRevisionAdvanced` and connectivity-change wakeup
 transports. A control replica holds one subscription for each feed and fans
 wakeups into bounded, coalescing Network-local channels. PostgreSQL remains the

@@ -9,6 +9,7 @@ import (
 	"tailscale.com/tailcfg"
 
 	"github.com/meshtransit/meshtransit/internal/control/mapsession"
+	"github.com/meshtransit/meshtransit/internal/node"
 )
 
 const maxMapRequestBytes = 128 << 10
@@ -88,7 +89,10 @@ func decodeMapRequest(
 		return mapsession.Request{}, false, mapResponseCompressionInvalid, ErrInvalidMapRequest
 	}
 	endpointSet, hasEndpointSet, err := decodeEndpointSet(wire)
-	if err != nil || wire.OmitPeers && (wire.Stream || !hasEndpointSet) {
+	preferredRelay, hasPreferredRelay, preferredRelayErr := decodePreferredRelay(wire)
+	if err != nil || preferredRelayErr != nil ||
+		wire.OmitPeers && (wire.Stream || !hasEndpointSet) ||
+		!wire.Stream && hasPreferredRelay && !hasEndpointSet {
 		return mapsession.Request{}, false, mapResponseCompressionInvalid, ErrInvalidMapRequest
 	}
 	if hasEndpointSet && !wire.Stream {
@@ -96,8 +100,25 @@ func decodeMapRequest(
 		if err != nil {
 			return mapsession.Request{}, false, mapResponseCompressionInvalid, ErrInvalidMapRequest
 		}
+		if hasPreferredRelay {
+			request, err = request.WithPreferredRelay(preferredRelay)
+			if err != nil {
+				return mapsession.Request{}, false, mapResponseCompressionInvalid, ErrInvalidMapRequest
+			}
+		}
 	}
 	return request, wire.Stream, responseCompression(wire.Compress), nil
+}
+
+func decodePreferredRelay(request tailcfg.MapRequest) (int, bool, error) {
+	if request.Hostinfo == nil || request.Hostinfo.NetInfo == nil {
+		return 0, false, nil
+	}
+	regionID := request.Hostinfo.NetInfo.PreferredDERP
+	if regionID < 0 || regionID > node.MaximumRelayRegionID {
+		return 0, false, ErrInvalidMapRequest
+	}
+	return regionID, true, nil
 }
 
 func validMapRequest(request tailcfg.MapRequest) bool {

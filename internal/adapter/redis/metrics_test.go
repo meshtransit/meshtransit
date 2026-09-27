@@ -80,6 +80,8 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 			string,
 			int64,
 			[]byte,
+			int64,
+			int,
 			time.Duration,
 			string,
 			[]byte,
@@ -90,7 +92,7 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 			return encodeEndpointSet(testEndpointObservation(t, 7).Set())
 		},
 		loadConnectivity: func(context.Context, []string, []int64) ([]any, error) {
-			return []any{nil, int64(0)}, nil
+			return []any{nil, nil, nil, int64(0)}, nil
 		},
 		metrics: metrics,
 	}

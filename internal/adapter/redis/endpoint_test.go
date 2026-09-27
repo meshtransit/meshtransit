@@ -40,6 +40,8 @@ func TestClientObservesAndLoadsGenerationFencedEndpoints(t *testing.T) {
 	ctx := t.Context()
 	var observedEndpointKey, observedPresenceKey, loadedKey string
 	var observedGeneration, loadedGeneration int64
+	var observedPreferredRelayPresence int64
+	var observedPreferredRelay int
 	var observedTTL time.Duration
 	var observedPayload []byte
 	var observedChannel string
@@ -51,6 +53,8 @@ func TestClientObservesAndLoadsGenerationFencedEndpoints(t *testing.T) {
 			presenceKey string,
 			generation int64,
 			payload []byte,
+			preferredRelayPresence int64,
+			preferredRelay int,
 			ttl time.Duration,
 			channel string,
 			wakeup []byte,
@@ -60,6 +64,8 @@ func TestClientObservesAndLoadsGenerationFencedEndpoints(t *testing.T) {
 			}
 			observedEndpointKey, observedPresenceKey = endpointKey, presenceKey
 			observedGeneration, observedTTL = generation, ttl
+			observedPreferredRelayPresence = preferredRelayPresence
+			observedPreferredRelay = preferredRelay
 			observedPayload = append([]byte(nil), payload...)
 			observedChannel = channel
 			observedWakeup = append([]byte(nil), wakeup...)
@@ -90,6 +96,7 @@ func TestClientObservesAndLoadsGenerationFencedEndpoints(t *testing.T) {
 	wantPresenceKey := presenceKeyPrefix + observation.NodeID().String()
 	if observedEndpointKey != wantEndpointKey || loadedKey != wantEndpointKey ||
 		observedPresenceKey != wantPresenceKey || observedGeneration != 7 || loadedGeneration != 7 ||
+		observedPreferredRelayPresence != 1 || observedPreferredRelay != 3 ||
 		observedTTL != 30*time.Second || set.DiscoveryKey() != observation.Set().DiscoveryKey() ||
 		!slices.Equal(set.Endpoints(), observation.Set().Endpoints()) ||
 		observedChannel != connectivityChangedChannel {
@@ -115,6 +122,8 @@ func TestClientTreatsStaleAndMissingEndpointsAsCleanResults(t *testing.T) {
 			string,
 			int64,
 			[]byte,
+			int64,
+			int,
 			time.Duration,
 			string,
 			[]byte,
@@ -168,15 +177,20 @@ func TestClientLoadsBoundedGenerationFencedConnectivity(t *testing.T) {
 			keys[2] != endpointKey(second.NodeID()) || keys[3] != presenceKeyForNode(second.NodeID()) {
 			t.Fatalf("LoadConnectivity() Redis input = (%v, %v)", keys, generations)
 		}
-		return []any{string(payload), int64(1), nil, int64(0)}, nil
+		return []any{
+			string(payload), "1", "3", int64(1),
+			nil, nil, nil, int64(0),
+		}, nil
 	}}
 	values, err := client.LoadConnectivity(t.Context(), []mapsession.ConnectivityKey{first, second})
 	if err != nil {
 		t.Fatalf("LoadConnectivity() error = %v", err)
 	}
 	set, found := values[0].EndpointSet()
+	preferredRelay, preferredRelayPresent := values[0].PreferredRelay()
 	if len(values) != 2 || values[0].Key() != first || !values[0].Online() || !found ||
-		!set.Equal(observation.Set()) || values[1].Key() != second || values[1].Online() {
+		!set.Equal(observation.Set()) || preferredRelay != 3 || !preferredRelayPresent ||
+		values[1].Key() != second || values[1].Online() {
 		t.Fatalf("LoadConnectivity() = %+v, want online report then clean offline miss", values)
 	}
 	if _, found := values[1].EndpointSet(); found {
@@ -211,9 +225,9 @@ func TestClientChunksConnectivityProjectionLoads(t *testing.T) {
 		if len(redisKeys) != len(generations)*2 || len(generations) > maximumConnectivityLoadBatch {
 			t.Fatalf("connectivity batch = %d keys for %d generations", len(redisKeys), len(generations))
 		}
-		result := make([]any, len(generations)*2)
+		result := make([]any, len(generations)*4)
 		for index := range generations {
-			result[index*2+1] = int64(0)
+			result[index*4+3] = int64(0)
 		}
 		return result, nil
 	}}
@@ -233,8 +247,10 @@ func TestClientRejectsCorruptConnectivityProjection(t *testing.T) {
 	}
 	for _, result := range [][]any{
 		{nil},
-		{nil, "online"},
-		{[]byte("{}"), int64(1)},
+		{nil, nil, nil, "online"},
+		{[]byte("{}"), nil, nil, int64(1)},
+		{nil, "1", nil, int64(0)},
+		{nil, "2", "3", int64(0)},
 	} {
 		client := &Client{loadConnectivity: func(context.Context, []string, []int64) ([]any, error) {
 			return result, nil
@@ -270,6 +286,8 @@ func TestClientRejectsInvalidEndpointInputsAndResults(t *testing.T) {
 				string,
 				int64,
 				[]byte,
+				int64,
+				int,
 				time.Duration,
 				string,
 				[]byte,
@@ -293,6 +311,8 @@ func TestClientRejectsInvalidEndpointInputsAndResults(t *testing.T) {
 			string,
 			int64,
 			[]byte,
+			int64,
+			int,
 			time.Duration,
 			string,
 			[]byte,
@@ -368,6 +388,10 @@ func testEndpointObservation(t testing.TB, generation int64) node.EndpointObserv
 	observation, err := node.NewEndpointObservation(nodeID, generation, set, 30*time.Second)
 	if err != nil {
 		t.Fatalf("node.NewEndpointObservation() error = %v", err)
+	}
+	observation, err = observation.WithPreferredRelay(3)
+	if err != nil {
+		t.Fatalf("EndpointObservation.WithPreferredRelay() error = %v", err)
 	}
 	return observation
 }
