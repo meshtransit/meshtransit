@@ -454,6 +454,23 @@ recovery. Their map revisions, peer-authority changes, fallback totals, and
 direct-promotion totals remained unchanged at 86/47, 46/6, 24/6, and 26/8.
 Both Control replicas logged readiness only.
 
+## Data-dependency failover preflight
+
+The PostgreSQL serving pools now treat writer identity as part of readiness,
+not merely TCP reachability. New connections require a read-write server. Each
+periodic dependency check also validates an already-pooled connection; if a
+demoted primary remains reachable but read-only, Core closes the pool so the
+next acquisition resolves the stable endpoint and validates the promoted
+writer. The operator metric records this bounded check as
+`operation="writable_check"` for each least-privilege pool role.
+
+Unit tests cover ordered ping, writer, and schema validation; rejection of a
+read-only server; immediate pool retirement on that rejection; and fixed-label
+success/error metrics. This closes the Core-side PostgreSQL reconnection
+precondition, but it does not mark `POC-DATA-HA-001` as passed: a real quorum,
+endpoint transition, recovery-generation check, and concurrent client traffic
+still need to be exercised.
+
 ## HA interpretation
 
 This run qualifies rolling replacement and single-worker drain inside one

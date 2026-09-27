@@ -48,6 +48,9 @@ func TestBuildPoolConfigAppliesSecurityAndPoolBounds(t *testing.T) {
 	if poolConfig.ConnConfig.RequireAuth != "scram-sha-256" {
 		t.Fatalf("RequireAuth = %q, want scram-sha-256", poolConfig.ConnConfig.RequireAuth)
 	}
+	if poolConfig.ConnConfig.ValidateConnect == nil {
+		t.Fatal("new connections do not require a read-write primary")
+	}
 	if poolConfig.MaxConns != 17 || poolConfig.MinConns != 0 || poolConfig.MinIdleConns != 0 {
 		t.Fatalf("pool bounds = (%d, %d, %d), want (17, 0, 0)", poolConfig.MaxConns, poolConfig.MinConns, poolConfig.MinIdleConns)
 	}
@@ -116,7 +119,12 @@ func TestPoolImplementsCheckAndIdempotentClose(t *testing.T) {
 			t.Fatal("schema compatibility checked after failed ping")
 			return nil
 		},
+		checkWritable: func(context.Context) error {
+			t.Fatal("writable primary checked after failed ping")
+			return nil
+		},
 		acquired: func() int32 { return 0 },
+		reset:    func() {},
 		close:    func() { closeCalls++ },
 	}
 	ctx := t.Context()
@@ -140,7 +148,7 @@ func TestPoolImplementsCheckAndIdempotentClose(t *testing.T) {
 	}
 }
 
-func TestPoolCheckRequiresPingAndCompatibleSchema(t *testing.T) {
+func TestPoolCheckRequiresPingWritablePrimaryAndCompatibleSchema(t *testing.T) {
 	t.Parallel()
 
 	var operations []string
@@ -149,17 +157,47 @@ func TestPoolCheckRequiresPingAndCompatibleSchema(t *testing.T) {
 			operations = append(operations, "ping")
 			return nil
 		},
+		checkWritable: func(context.Context) error {
+			operations = append(operations, "writable")
+			return nil
+		},
 		checkSchema: func(context.Context) error {
 			operations = append(operations, "schema")
 			return nil
 		},
+		reset: func() {},
 		close: func() {},
 	}
 	if err := pool.Check(t.Context()); err != nil {
 		t.Fatalf("Check() error = %v", err)
 	}
-	if !reflect.DeepEqual(operations, []string{"ping", "schema"}) {
-		t.Fatalf("operations = %v, want [ping schema]", operations)
+	if !reflect.DeepEqual(operations, []string{"ping", "writable", "schema"}) {
+		t.Fatalf("operations = %v, want [ping writable schema]", operations)
+	}
+}
+
+func TestPoolCheckResetsConnectionsWhenPrimaryIsNotWritable(t *testing.T) {
+	t.Parallel()
+
+	primaryErr := errors.New("read-only server")
+	resetCalls := 0
+	pool := &Pool{
+		ping: func(context.Context) error { return nil },
+		checkWritable: func(context.Context) error {
+			return primaryErr
+		},
+		checkSchema: func(context.Context) error {
+			t.Fatal("schema compatibility checked on read-only server")
+			return nil
+		},
+		reset: func() { resetCalls++ },
+		close: func() {},
+	}
+	if err := pool.Check(t.Context()); !errors.Is(err, primaryErr) {
+		t.Fatalf("Check() error = %v, want primary validation error", err)
+	}
+	if resetCalls != 1 {
+		t.Fatalf("pool reset calls = %d, want 1", resetCalls)
 	}
 }
 
@@ -175,6 +213,11 @@ func TestPoolCheckReturnsWhenContextIsCanceled(t *testing.T) {
 			t.Fatal("schema compatibility checked after canceled ping")
 			return nil
 		},
+		checkWritable: func(context.Context) error {
+			t.Fatal("writable primary checked after canceled ping")
+			return nil
+		},
+		reset: func() {},
 		close: func() {},
 	}
 	ctx, cancel := context.WithCancel(t.Context())

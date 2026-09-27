@@ -12,6 +12,7 @@ type postgresOperation string
 
 const (
 	postgresOperationPing                      postgresOperation = "ping"
+	postgresOperationWritableCheck             postgresOperation = "writable_check"
 	postgresOperationSchemaCheck               postgresOperation = "schema_check"
 	postgresOperationRegistrationReplay        postgresOperation = "registration_replay"
 	postgresOperationRegistrationBegin         postgresOperation = "registration_begin"
@@ -82,6 +83,7 @@ var (
 	ErrInvalidMetrics  = errors.New("invalid postgres metrics")
 	postgresOperations = [...]postgresOperation{
 		postgresOperationPing,
+		postgresOperationWritableCheck,
 		postgresOperationSchemaCheck,
 		postgresOperationRegistrationReplay,
 		postgresOperationRegistrationBegin,
@@ -364,7 +366,8 @@ func (metrics *postgresPoolMetrics) observeOperation(
 }
 
 func (operation postgresOperation) validForRole(role PoolRole) bool {
-	if operation == postgresOperationPing || operation == postgresOperationSchemaCheck {
+	if operation == postgresOperationPing || operation == postgresOperationWritableCheck ||
+		operation == postgresOperationSchemaCheck {
 		return role.valid()
 	}
 	if role == PoolRoleRuntime {

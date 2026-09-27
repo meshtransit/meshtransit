@@ -192,7 +192,7 @@ Kubernetes deployment.
 
 | Environment variable | Default | Contract |
 | --- | --- | --- |
-| `MESHTRANSIT_POSTGRES_ADDRESS` | none | PostgreSQL TLS host and non-zero port. |
+| `MESHTRANSIT_POSTGRES_ADDRESS` | none | PostgreSQL TLS host and non-zero port. For HA, the host must be a stable writer endpoint whose certificate covers that name. Every new connection is accepted only when it is read-write; periodic readiness retires the entire pool if a demoted primary remains reachable so the next acquisition resolves the promoted writer. |
 | `MESHTRANSIT_POSTGRES_DATABASE` | none | PostgreSQL database name. |
 | `MESHTRANSIT_POSTGRES_CA_FILE` | none | Absolute path to the trusted CA bundle. |
 | `MESHTRANSIT_POSTGRES_RUNTIME_USER` | none | Least-privilege PostgreSQL role used by `api` and `control`. |

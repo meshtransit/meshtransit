@@ -82,16 +82,20 @@ func testHealthyPool(role PoolRole, checked func()) *Pool {
 			checked()
 			return nil
 		},
-		checkSchema: func(context.Context) error { return nil },
-		close:       func() {},
+		checkWritable: func(context.Context) error { return nil },
+		checkSchema:   func(context.Context) error { return nil },
+		reset:         func() {},
+		close:         func() {},
 	}
 }
 
 func testFailingPool(role PoolRole, checkErr error) *Pool {
 	return &Pool{
-		role:        role,
-		ping:        func(context.Context) error { return checkErr },
-		checkSchema: func(context.Context) error { return nil },
-		close:       func() {},
+		role:          role,
+		ping:          func(context.Context) error { return checkErr },
+		checkWritable: func(context.Context) error { return nil },
+		checkSchema:   func(context.Context) error { return nil },
+		reset:         func() {},
+		close:         func() {},
 	}
 }

@@ -115,10 +115,12 @@ func TestPoolCheckRecordsEachAttemptedOperation(t *testing.T) {
 		return postgresPoolStats{MaxConnections: 1}
 	})
 	pool := &Pool{
-		role:        PoolRoleRuntime,
-		ping:        func(_ context.Context) error { return nil },
-		checkSchema: func(_ context.Context) error { return schemaErr },
-		metrics:     metrics,
+		role:          PoolRoleRuntime,
+		ping:          func(_ context.Context) error { return nil },
+		checkWritable: func(_ context.Context) error { return nil },
+		checkSchema:   func(_ context.Context) error { return schemaErr },
+		reset:         func() {},
+		metrics:       metrics,
 	}
 	if err := pool.Check(t.Context()); !errors.Is(err, schemaErr) {
 		t.Fatalf("Pool.Check() error = %v, want schema failure", err)
@@ -130,6 +132,7 @@ func TestPoolCheckRecordsEachAttemptedOperation(t *testing.T) {
 	body := gatherPostgresMetrics(t, collector)
 	for _, value := range []string{
 		`meshtransit_postgres_operations_total{operation="ping",pool_role="runtime",result="success"} 1`,
+		`meshtransit_postgres_operations_total{operation="writable_check",pool_role="runtime",result="success"} 1`,
 		`meshtransit_postgres_operations_total{operation="schema_check",pool_role="runtime",result="error"} 1`,
 	} {
 		if !strings.Contains(body, value) {

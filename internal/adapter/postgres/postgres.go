@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	postgresmapsession "github.com/meshtransit/meshtransit/internal/adapter/postgres/mapsession"
 	"github.com/meshtransit/meshtransit/internal/adapter/postgres/registrationintake"
@@ -52,6 +53,7 @@ type Options struct {
 type Pool struct {
 	role                            PoolRole
 	ping                            func(context.Context) error
+	checkWritable                   func(context.Context) error
 	checkSchema                     func(context.Context) error
 	outboxDatabase                  outboxDatabase
 	registrationReplayDatabase      registrationReplayDatabase
@@ -69,6 +71,7 @@ type Pool struct {
 	) (*registrationintake.Transactions, error)
 	metrics  *postgresPoolMetrics
 	acquired func() int32
+	reset    func()
 	close    func()
 	closeMu  sync.Mutex
 	closed   bool
@@ -101,8 +104,19 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 		return snapshotPostgresPoolStats(pool.Stat())
 	})
 	return &Pool{
-		role:                            options.Role,
-		ping:                            pool.Ping,
+		role: options.Role,
+		ping: pool.Ping,
+		checkWritable: func(ctx context.Context) error {
+			connection, err := pool.Acquire(ctx)
+			if err != nil {
+				return err
+			}
+			defer connection.Release()
+			return pgconn.ValidateConnectTargetSessionAttrsReadWrite(
+				ctx,
+				connection.Conn().PgConn(),
+			)
+		},
 		outboxDatabase:                  pgxOutboxDatabase{pool: pool},
 		registrationReplayDatabase:      pgxRegistrationReplayDatabase{pool: pool},
 		registrationTransactionDatabase: pgxRegistrationTransactionDatabase{pool: pool},
@@ -130,6 +144,7 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 		},
 		metrics:  metrics,
 		acquired: func() int32 { return pool.Stat().AcquiredConns() },
+		reset:    pool.Reset,
 		close:    pool.Close,
 	}, nil
 }
@@ -139,7 +154,8 @@ func (*Pool) Component() app.Component { return app.ComponentPostgreSQL }
 
 // Check verifies a PostgreSQL round trip within the caller's context.
 func (pool *Pool) Check(ctx context.Context) error {
-	if ctx == nil || pool == nil || pool.ping == nil || pool.checkSchema == nil {
+	if ctx == nil || pool == nil || pool.ping == nil || pool.checkWritable == nil ||
+		pool.checkSchema == nil || pool.reset == nil {
 		return ErrInvalidOptions
 	}
 	startedAt := time.Now()
@@ -147,6 +163,16 @@ func (pool *Pool) Check(ctx context.Context) error {
 	pool.metrics.observeOperation(postgresOperationPing, time.Since(startedAt), err)
 	if err != nil {
 		return fmt.Errorf("ping postgres: %w", err)
+	}
+	startedAt = time.Now()
+	err = pool.checkWritable(ctx)
+	pool.metrics.observeOperation(postgresOperationWritableCheck, time.Since(startedAt), err)
+	if err != nil {
+		// A demoted primary may keep existing sessions alive while rejecting
+		// writes. Retire every pooled session so the next acquisition resolves
+		// the stable endpoint and validates the newly promoted primary.
+		pool.reset()
+		return fmt.Errorf("check postgres writable primary: %w", err)
 	}
 	startedAt = time.Now()
 	err = pool.checkSchema(ctx)
@@ -206,7 +232,7 @@ func buildPoolConfig(options Options, password string, caPEM []byte) (*pgxpool.C
 	}
 
 	poolConfig, err := pgxpool.ParseConfig(
-		"host=localhost port=5432 user=placeholder dbname=placeholder sslmode=disable",
+		"host=localhost port=5432 user=placeholder dbname=placeholder sslmode=disable target_session_attrs=read-write",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("%w: parse safe base config: %w", ErrOpen, err)
