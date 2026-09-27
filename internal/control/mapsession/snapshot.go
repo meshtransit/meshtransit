@@ -10,6 +10,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/relay"
 )
 
 const (
@@ -44,6 +45,7 @@ type SnapshotParams struct {
 	PeerCandidates    []PeerCandidate
 	PacketPolicy      policy.Snapshot
 	Connectivity      []Connectivity
+	RelayDirectory    relay.Directory
 }
 
 // Snapshot is immutable authorization evidence for the first response of a map session.
@@ -65,6 +67,7 @@ type Snapshot struct {
 	peerCandidates    []PeerCandidate
 	packetPolicy      policy.Snapshot
 	connectivity      []Connectivity
+	relayDirectory    relay.Directory
 }
 
 // NewSnapshot validates and copies one authoritative map snapshot.
@@ -95,6 +98,7 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		peerCandidates:    params.PeerCandidates,
 		packetPolicy:      params.PacketPolicy,
 		connectivity:      params.Connectivity,
+		relayDirectory:    params.RelayDirectory,
 	}, nil
 }
 
@@ -148,6 +152,10 @@ func (snapshot Snapshot) PeerCandidates() []PeerCandidate {
 
 // PacketPolicy returns the immutable exact-revision product policy snapshot.
 func (snapshot Snapshot) PacketPolicy() policy.Snapshot { return snapshot.packetPolicy }
+
+// RelayDirectory returns complete validated routing metadata. It grants no
+// peer visibility, route, packet-policy, or Network membership authority.
+func (snapshot Snapshot) RelayDirectory() relay.Directory { return snapshot.relayDirectory }
 
 // ConnectivityFor returns transient state only for self or a policy-authorized
 // peer in this exact snapshot. A miss is normal and grants no routing authority.
@@ -211,6 +219,7 @@ func (snapshot Snapshot) params() SnapshotParams {
 		PeerCandidates:    slices.Clone(snapshot.peerCandidates),
 		PacketPolicy:      snapshot.packetPolicy,
 		Connectivity:      slices.Clone(snapshot.connectivity),
+		RelayDirectory:    snapshot.relayDirectory,
 	}
 }
 
@@ -229,7 +238,7 @@ func validSnapshotParams(params SnapshotParams) bool {
 		params.MachineKey,
 		params.NodeKey,
 	) && params.PacketPolicy.IsValid() && params.PacketPolicy.Scope() == params.Scope &&
-		validSnapshotConnectivity(params)
+		validSnapshotConnectivity(params) && params.RelayDirectory.IsValid()
 }
 
 func validSnapshotConnectivity(params SnapshotParams) bool {

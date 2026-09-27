@@ -9,6 +9,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/relay"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -48,6 +49,7 @@ func (record snapshotRecord) snapshot(
 	recoveryEpoch int64,
 	peerCandidates []appmapsession.PeerCandidate,
 	packetPolicy policy.Snapshot,
+	relayDirectory relay.Directory,
 ) (appmapsession.Snapshot, error) {
 	scope, err := scopeFromText(workspaceValue, networkValue)
 	if err != nil {
@@ -94,6 +96,7 @@ func (record snapshotRecord) snapshot(
 		KeyExpiry:         record.keyExpiry,
 		PeerCandidates:    peerCandidates,
 		PacketPolicy:      packetPolicy,
+		RelayDirectory:    relayDirectory,
 	})
 	if err != nil {
 		return appmapsession.Snapshot{}, ErrSnapshotEvidence

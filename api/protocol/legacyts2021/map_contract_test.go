@@ -56,6 +56,10 @@ type mapContract struct {
 		ConnectivityAuthority      string   `json:"connectivity_authority"`
 		EmptyPeersSemantics        string   `json:"empty_peers_semantics"`
 		EmptyPacketFilterSemantics string   `json:"empty_packet_filter_semantics"`
+		RelayDirectoryField        string   `json:"relay_directory_field"`
+		RelayDirectoryEncoding     string   `json:"relay_directory_encoding"`
+		RelayDirectoryAuthority    string   `json:"relay_directory_authority"`
+		RelayDirectoryDefaultMerge string   `json:"relay_directory_default_merge"`
 	} `json:"response"`
 }
 
@@ -71,11 +75,11 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 5 || contract.Profile != "legacy-ts2021-cap142-v1" {
-		t.Fatalf("contract identity = (%d, %q), want version 5 legacy profile", contract.ContractVersion, contract.Profile)
+	if contract.ContractVersion != 6 || contract.Profile != "legacy-ts2021-cap142-v1" {
+		t.Fatalf("contract identity = (%d, %q), want version 6 legacy profile", contract.ContractVersion, contract.Profile)
 	}
 	if contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
-		contract.ClientEvidence.Revision != "659d9e76d1ddf36a86abb70109fbab527c2bccd1" {
+		contract.ClientEvidence.Revision != "87a3dd293aa95be1a1a0435055b1b31413258d83" {
 		t.Fatalf("client evidence = %+v, want pinned meshd revision", contract.ClientEvidence)
 	}
 	request := contract.Request
@@ -102,8 +106,8 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 	}
 	response := contract.Response
 	if response.Framing != "uint32-little-endian-length" || response.Compression != "zstd" ||
-		response.MaximumDecodedBytes != 64<<10 ||
-		!slices.Equal(response.RequiredFields, []string{"Domain", "Node", "Peers", "PacketFilter"}) ||
+		response.MaximumDecodedBytes != 256<<10 ||
+		!slices.Equal(response.RequiredFields, []string{"Domain", "Node", "Peers", "PacketFilter", "DERPMap"}) ||
 		response.NetworkNameField != "Domain" ||
 		response.NetworkNameSource != "authorized-network-display-name" ||
 		response.NetworkNameAuthority != "presentation-only" ||
@@ -115,7 +119,11 @@ func TestMapContractPinsOneShotFailClosedBoundary(t *testing.T) {
 		!slices.Equal(response.ConnectivityFields, []string{"DiscoKey", "Endpoints", "Online"}) ||
 		response.ConnectivityAuthority != "non-authoritative" ||
 		response.EmptyPeersSemantics != "replace-complete-set-with-empty" ||
-		response.EmptyPacketFilterSemantics != "deny-all" {
+		response.EmptyPacketFilterSemantics != "deny-all" ||
+		response.RelayDirectoryField != "DERPMap" ||
+		response.RelayDirectoryEncoding != "complete-replacement" ||
+		response.RelayDirectoryAuthority != "routing-metadata-only" ||
+		response.RelayDirectoryDefaultMerge != "forbidden" {
 		t.Fatalf("map response contract = %+v, want bounded fail-closed first response", response)
 	}
 }

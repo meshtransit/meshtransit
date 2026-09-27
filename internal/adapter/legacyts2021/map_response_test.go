@@ -33,7 +33,7 @@ func TestEncodeFullMapResponseClearsInheritedAuthority(t *testing.T) {
 	if err := json.Unmarshal(document, &fields); err != nil {
 		t.Fatalf("decode map response fields: %v", err)
 	}
-	for _, name := range []string{"Domain", "Node", "Peers", "PacketFilter"} {
+	for _, name := range []string{"Domain", "Node", "Peers", "PacketFilter", "DERPMap"} {
 		if _, ok := fields[name]; !ok {
 			t.Fatalf("map response omitted required field %q: %s", name, document)
 		}
@@ -48,6 +48,21 @@ func TestEncodeFullMapResponseClearsInheritedAuthority(t *testing.T) {
 	}
 	if response.Domain != "Development Mesh" {
 		t.Fatalf("map response Domain = %q, want %q", response.Domain, "Development Mesh")
+	}
+	if response.DERPMap == nil {
+		t.Fatal("map response DERPMap is nil")
+	}
+	region := response.DERPMap.Regions[1]
+	if !response.DERPMap.OmitDefaultRegions || len(response.DERPMap.Regions) != 1 || region == nil ||
+		region.RegionID != 1 || region.RegionCode != "sin" || region.RegionName != "Singapore" ||
+		len(region.Nodes) != 2 || region.Nodes[0].Name != "1a" || region.Nodes[0].RegionID != 1 ||
+		region.Nodes[0].HostName != "relay-sin.example.com" ||
+		region.Nodes[0].CertName != "relay-cert-sin.example.com" ||
+		region.Nodes[0].IPv4 != "192.0.2.10" || region.Nodes[0].IPv6 != "2001:db8::10" ||
+		region.Nodes[0].STUNPort != 3478 || region.Nodes[0].DERPPort != 443 ||
+		!region.Nodes[1].STUNOnly || region.Nodes[1].HostName != "stun-sin.example.com" ||
+		region.Nodes[1].DERPPort != 0 {
+		t.Fatalf("map response DERPMap = %+v, want one complete replacement", response.DERPMap)
 	}
 	if response.Node == nil || response.Node.ID != 701 ||
 		string(response.Node.StableID) != "01890f00-0000-7000-8000-000000000701" ||

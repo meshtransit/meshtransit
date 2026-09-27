@@ -201,6 +201,8 @@ func validProcessValues(overrides map[string]string) map[string]string {
 		envControlTLSCertificateFile:            "/run/secrets/control-tls-certificate.pem",
 		envControlTLSPrivateKeyFile:             "/run/secrets/control-tls-private-key.pem",
 		envControlNoisePrivateKeyFile:           "/run/secrets/control-noise-private-key",
+		envRelayDirectoryFile:                   "/etc/meshtransit/relay-directory.json",
+		envRelayDirectorySHA256:                 "sha256:1111111111111111111111111111111111111111111111111111111111111111",
 		envAPITLSCertificateFile:                "/run/secrets/control-tls-certificate.pem",
 		envAPITLSPrivateKeyFile:                 "/run/secrets/control-tls-private-key.pem",
 		envAPIAccountSessionDigestActiveKeyID:   "session-v1",

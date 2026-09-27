@@ -79,6 +79,7 @@ func projectAuthorityDelta(
 ) (bool, []PeerCandidate, []int64, error) {
 	if !streamCanAdvance(current, next) ||
 		next.NetworkRevision() != current.NetworkRevision()+1 ||
+		relayDirectoryChanged(current, next) ||
 		!stableSelfAuthority(current, next) ||
 		!hasCompleteMapConnectivity(current) || !hasCompleteMapConnectivity(next) {
 		return false, nil, nil, ErrInvalidAuthorityDelta

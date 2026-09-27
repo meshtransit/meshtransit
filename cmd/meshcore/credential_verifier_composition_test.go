@@ -239,6 +239,8 @@ func credentialDigestTestValues(activePath string) map[string]string {
 		"MESHTRANSIT_CONTROL_TLS_CERTIFICATE_FILE":      "/run/secrets/control-tls-certificate.pem",
 		"MESHTRANSIT_CONTROL_TLS_PRIVATE_KEY_FILE":      "/run/secrets/control-tls-private-key.pem",
 		"MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE":    "/run/secrets/control-noise-private-key",
+		"MESHTRANSIT_RELAY_DIRECTORY_FILE":              "/run/config/relay-directory.json",
+		"MESHTRANSIT_RELAY_DIRECTORY_SHA256":            "sha256:1111111111111111111111111111111111111111111111111111111111111111",
 	}
 }
 

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -47,7 +48,7 @@ func TestNewMapSessionStoreDelegatesValidatedConstruction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMapSessionStore() error = %v", err)
 	}
-	if got != want || gotOptions != wantOptions {
+	if got != want || !reflect.DeepEqual(gotOptions, wantOptions) {
 		t.Fatalf("NewMapSessionStore() = (%p, %+v), want (%p, %+v)", got, gotOptions, want, wantOptions)
 	}
 }

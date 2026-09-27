@@ -16,7 +16,8 @@ func streamCanAdvance(current, next Snapshot) bool {
 		next.RecoveryEpoch() != current.RecoveryEpoch() ||
 		next.SessionGeneration() != current.SessionGeneration() ||
 		!next.CreatedAt().Equal(current.CreatedAt()) ||
-		!next.KeyExpiry().Equal(current.KeyExpiry()) {
+		!next.KeyExpiry().Equal(current.KeyExpiry()) ||
+		!relayDirectoryCanAdvance(current, next) {
 		return false
 	}
 	if next.NetworkRevision() > current.NetworkRevision() {
@@ -32,7 +33,25 @@ func streamCanAdvance(current, next Snapshot) bool {
 
 func streamSnapshotChanged(current, next Snapshot) bool {
 	return current.NetworkRevision() != next.NetworkRevision() ||
+		relayDirectoryChanged(current, next) ||
 		!equalMapConnectivity(current.NodeID(), current.connectivity, next.connectivity)
+}
+
+func relayDirectoryCanAdvance(current, next Snapshot) bool {
+	currentDirectory := current.RelayDirectory()
+	nextDirectory := next.RelayDirectory()
+	if nextDirectory.Revision() < currentDirectory.Revision() {
+		return false
+	}
+	return nextDirectory.Revision() != currentDirectory.Revision() ||
+		nextDirectory.Fingerprint() == currentDirectory.Fingerprint()
+}
+
+func relayDirectoryChanged(current, next Snapshot) bool {
+	currentDirectory := current.RelayDirectory()
+	nextDirectory := next.RelayDirectory()
+	return nextDirectory.Revision() != currentDirectory.Revision() ||
+		nextDirectory.Fingerprint() != currentDirectory.Fingerprint()
 }
 
 func equalMapConnectivity(self node.ID, first, second []Connectivity) bool {

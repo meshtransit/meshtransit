@@ -14,6 +14,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/publicid"
+	"github.com/meshtransit/meshtransit/internal/relay"
 )
 
 func TestStreamServiceOwnsBoundedPresenceLifecycle(t *testing.T) {
@@ -222,6 +223,141 @@ func TestStreamServiceUsesFullSnapshotAfterRevisionGap(t *testing.T) {
 			t.Fatalf("Serve() error = %v, want context cancellation", err)
 		}
 	})
+}
+
+func TestStreamServiceUsesFullSnapshotAfterRelayDirectoryAdvance(t *testing.T) {
+	t.Parallel()
+
+	initial := snapshotFixture(t)
+	directory, err := relay.NewDirectory(relay.DirectoryParams{
+		Revision: initial.RelayDirectory().Revision() + 1,
+		Regions:  initial.RelayDirectory().Regions(),
+	})
+	if err != nil {
+		t.Fatalf("relay.NewDirectory() error = %v", err)
+	}
+	params := initial.params()
+	params.RelayDirectory = directory
+	next, err := NewSnapshot(params)
+	if err != nil {
+		t.Fatalf("NewSnapshot() error = %v", err)
+	}
+	opener := &streamSnapshotOpener{snapshots: []Snapshot{next}}
+	service := newStreamServiceFixture(t, opener, &streamPresenceStore{})
+	machine, request := authenticatedRequestFixture(t, initial)
+	sink := &recordingStreamSink{}
+
+	refreshed, err := service.refresh(t.Context(), machine, request, sink, initial)
+	if err != nil {
+		t.Fatalf("refresh() error = %v", err)
+	}
+	snapshots, _ := sink.state()
+	if len(snapshots) != 1 || snapshots[0].RelayDirectory().Revision() != directory.Revision() ||
+		len(sink.authorityDeltaSnapshots()) != 0 || len(sink.connectivityDeltas()) != 0 ||
+		refreshed.RelayDirectory().Revision() != directory.Revision() {
+		t.Fatalf("directory refresh = snapshots %+v refreshed %v", snapshots, refreshed)
+	}
+}
+
+func TestStreamServiceRejectsRelayDirectoryDiscontinuity(t *testing.T) {
+	t.Parallel()
+
+	base := snapshotFixture(t)
+	for _, test := range []struct {
+		name            string
+		currentRevision uint64
+		currentHost     string
+		nextRevision    uint64
+		nextHost        string
+	}{
+		{
+			name:            "revision regression",
+			currentRevision: 2,
+			currentHost:     "relay-sin.example.com",
+			nextRevision:    1,
+			nextHost:        "relay-sin.example.com",
+		},
+		{
+			name:            "same revision different topology",
+			currentRevision: 1,
+			currentHost:     "relay-sin.example.com",
+			nextRevision:    1,
+			nextHost:        "relay-alt-sin.example.com",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			current := snapshotWithRelayDirectoryFixture(
+				t,
+				base,
+				test.currentRevision,
+				test.currentHost,
+			)
+			next := snapshotWithRelayDirectoryFixture(
+				t,
+				base,
+				test.nextRevision,
+				test.nextHost,
+			)
+			opener := &streamSnapshotOpener{snapshots: []Snapshot{next}}
+			service := newStreamServiceFixture(t, opener, &streamPresenceStore{})
+			machine, request := authenticatedRequestFixture(t, current)
+			sink := &recordingStreamSink{}
+
+			_, err := service.refresh(t.Context(), machine, request, sink, current)
+			if !errors.Is(err, ErrStreamDiscontinuity) {
+				t.Fatalf("refresh() error = %v, want ErrStreamDiscontinuity", err)
+			}
+			withdrawals := sink.authorityWithdrawals()
+			if len(withdrawals) != 1 ||
+				withdrawals[0].RelayDirectory().Fingerprint() != current.RelayDirectory().Fingerprint() ||
+				len(sink.authorityDeltaSnapshots()) != 0 || len(sink.connectivityDeltas()) != 0 {
+				t.Fatalf("discontinuity sink withdrawals = %+v", withdrawals)
+			}
+		})
+	}
+}
+
+func snapshotWithRelayDirectoryFixture(
+	t *testing.T,
+	base Snapshot,
+	revision uint64,
+	hostName string,
+) Snapshot {
+	t.Helper()
+
+	relayNode, err := relay.NewNode(relay.NodeParams{
+		Name:      "1a",
+		HostName:  hostName,
+		IPv4:      "192.0.2.10",
+		IPv6:      "2001:db8::10",
+		STUNPort:  3478,
+		RelayPort: 443,
+	})
+	if err != nil {
+		t.Fatalf("relay.NewNode() error = %v", err)
+	}
+	region, err := relay.NewRegion(relay.RegionParams{
+		ID: 1, Code: "sin", Name: "Singapore", Nodes: []relay.Node{relayNode},
+	})
+	if err != nil {
+		t.Fatalf("relay.NewRegion() error = %v", err)
+	}
+	directory, err := relay.NewDirectory(relay.DirectoryParams{
+		Revision: revision,
+		Regions:  []relay.Region{region},
+	})
+	if err != nil {
+		t.Fatalf("relay.NewDirectory() error = %v", err)
+	}
+	params := base.params()
+	params.RelayDirectory = directory
+	snapshot, err := NewSnapshot(params)
+	if err != nil {
+		t.Fatalf("NewSnapshot() error = %v", err)
+	}
+	return snapshot
 }
 
 func TestStreamServiceIgnoresStaleRevisionWakeup(t *testing.T) {

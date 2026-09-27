@@ -8,6 +8,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/relay"
 )
 
 func TestSnapshotOwnsAddressCollection(t *testing.T) {
@@ -16,6 +17,16 @@ func TestSnapshotOwnsAddressCollection(t *testing.T) {
 	addresses[0] = netip.MustParsePrefix("100.64.0.99/32")
 	if got := snapshot.Addresses()[0]; got != netip.MustParsePrefix("100.64.0.1/32") {
 		t.Fatalf("snapshot address = %v after caller mutation", got)
+	}
+}
+
+func TestSnapshotRequiresValidatedRelayDirectory(t *testing.T) {
+	t.Parallel()
+
+	params := snapshotFixture(t).params()
+	params.RelayDirectory = relay.Directory{}
+	if _, err := NewSnapshot(params); !errors.Is(err, ErrInvalidSnapshot) {
+		t.Fatalf("NewSnapshot() error = %v, want ErrInvalidSnapshot", err)
 	}
 }
 

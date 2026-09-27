@@ -132,6 +132,7 @@ func TestStoreRejectsMissingTransaction(t *testing.T) {
 			IdleTimeout:        2 * time.Second,
 			PeerCandidateLimit: 100,
 			PolicyRuleLimit:    100,
+			RelayDirectory:     relayDirectoryFixture(t),
 		},
 		observer,
 	)
@@ -151,6 +152,7 @@ func TestStoreRejectsUnsafeConstruction(t *testing.T) {
 		IdleTimeout:        2 * time.Second,
 		PeerCandidateLimit: 100,
 		PolicyRuleLimit:    100,
+		RelayDirectory:     relayDirectoryFixture(t),
 	}
 	for _, test := range []struct {
 		name     string
@@ -160,6 +162,7 @@ func TestStoreRejectsUnsafeConstruction(t *testing.T) {
 	}{
 		{name: "missing database", options: validOptions, observer: observer},
 		{name: "missing observer", database: &fakeDatabase{}, options: validOptions},
+		{name: "missing relay directory", database: &fakeDatabase{}, options: Options{StatementTimeout: time.Second, IdleTimeout: time.Second, PeerCandidateLimit: 1, PolicyRuleLimit: 1}, observer: observer},
 		{name: "zero statement timeout", database: &fakeDatabase{}, options: Options{IdleTimeout: time.Second}, observer: observer},
 		{name: "excess idle timeout", database: &fakeDatabase{}, options: Options{StatementTimeout: time.Second, IdleTimeout: maximumIdleTimeout + 1}, observer: observer},
 		{name: "zero candidate limit", database: &fakeDatabase{}, options: Options{StatementTimeout: time.Second, IdleTimeout: time.Second}, observer: observer},

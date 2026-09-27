@@ -1,9 +1,9 @@
 {
-  "contract_version": 6,
+  "contract_version": 7,
   "profile": "legacy-ts2021-cap142-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
-    "revision": "659d9e76d1ddf36a86abb70109fbab527c2bccd1"
+    "revision": "87a3dd293aa95be1a1a0435055b1b31413258d83"
   },
   "request": {
     "method": "POST",
@@ -30,7 +30,8 @@
     "connectivity_coalescing": "latest-wins-full-state-reload",
     "same_revision_connectivity_refresh": true,
     "missed_wakeup_repair": "postgresql-and-redis-reconciliation",
-    "reconnect": "fresh-authenticated-snapshot"
+    "reconnect": "fresh-authenticated-snapshot",
+    "relay_directory_change": "full-snapshot-complete-replacement"
   },
   "connectivity_delta": {
     "selection": "same-authority-revision-connectivity-only",
@@ -41,7 +42,8 @@
     "peer_order": "numeric-node-id",
     "forbidden_fields": [
       "Peers",
-      "PacketFilter"
+      "PacketFilter",
+      "DERPMap"
     ]
   },
   "authority_delta": {
@@ -57,11 +59,13 @@
       "reconnect",
       "revision-gap",
       "self-authority-change",
-      "ambiguous-peer-id-transition"
+      "ambiguous-peer-id-transition",
+      "relay-directory-change"
     ],
     "forbidden_fields": [
       "Peers",
-      "Domain"
+      "Domain",
+      "DERPMap"
     ]
   },
   "terminal_authority": {

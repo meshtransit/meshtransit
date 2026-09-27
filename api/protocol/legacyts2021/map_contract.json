@@ -1,9 +1,9 @@
 {
-  "contract_version": 5,
+  "contract_version": 6,
   "profile": "legacy-ts2021-cap142-v1",
   "client_evidence": {
     "repository": "https://github.com/meshtransit/meshd.git",
-    "revision": "659d9e76d1ddf36a86abb70109fbab527c2bccd1"
+    "revision": "87a3dd293aa95be1a1a0435055b1b31413258d83"
   },
   "request": {
     "method": "POST",
@@ -35,12 +35,13 @@
   "response": {
     "framing": "uint32-little-endian-length",
     "compression": "zstd",
-    "maximum_decoded_bytes": 65536,
+    "maximum_decoded_bytes": 262144,
     "required_fields": [
       "Domain",
       "Node",
       "Peers",
-      "PacketFilter"
+      "PacketFilter",
+      "DERPMap"
     ],
     "network_name_field": "Domain",
     "network_name_source": "authorized-network-display-name",
@@ -57,6 +58,10 @@
     ],
     "connectivity_authority": "non-authoritative",
     "empty_peers_semantics": "replace-complete-set-with-empty",
-    "empty_packet_filter_semantics": "deny-all"
+    "empty_packet_filter_semantics": "deny-all",
+    "relay_directory_field": "DERPMap",
+    "relay_directory_encoding": "complete-replacement",
+    "relay_directory_authority": "routing-metadata-only",
+    "relay_directory_default_merge": "forbidden"
   }
 }

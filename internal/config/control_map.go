@@ -40,6 +40,7 @@ type ControlMapConfig struct {
 	CoordinationTimeout  time.Duration
 	KeepAliveInterval    time.Duration
 	ReconcileInterval    time.Duration
+	RelayDirectory       RelayDirectoryConfig
 }
 
 func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
@@ -115,6 +116,10 @@ func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
 	if err != nil {
 		return ControlMapConfig{}, settingError(envControlMapReconcileInterval)
 	}
+	relayDirectory, err := loadRelayDirectoryConfig(lookup)
+	if err != nil {
+		return ControlMapConfig{}, err
+	}
 	return ControlMapConfig{
 		RequestTimeout:       requestTimeout,
 		StatementTimeout:     statementTimeout,
@@ -123,5 +128,6 @@ func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
 		CoordinationTimeout:  coordinationTimeout,
 		KeepAliveInterval:    keepAliveInterval,
 		ReconcileInterval:    reconcileInterval,
+		RelayDirectory:       relayDirectory,
 	}, nil
 }

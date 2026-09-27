@@ -41,6 +41,7 @@ type mapStreamContract struct {
 		SameRevisionConnectivityRefresh bool     `json:"same_revision_connectivity_refresh"`
 		MissedWakeupRepair              string   `json:"missed_wakeup_repair"`
 		Reconnect                       string   `json:"reconnect"`
+		RelayDirectoryChange            string   `json:"relay_directory_change"`
 	} `json:"lifecycle"`
 	ConnectivityDelta struct {
 		Selection          string   `json:"selection"`
@@ -85,9 +86,9 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		t.Fatalf("Decode(trailing) error = %v, want EOF", err)
 	}
-	if contract.ContractVersion != 6 || contract.Profile != "legacy-ts2021-cap142-v1" ||
+	if contract.ContractVersion != 7 || contract.Profile != "legacy-ts2021-cap142-v1" ||
 		contract.ClientEvidence.Repository != "https://github.com/meshtransit/meshd.git" ||
-		contract.ClientEvidence.Revision != "659d9e76d1ddf36a86abb70109fbab527c2bccd1" {
+		contract.ClientEvidence.Revision != "87a3dd293aa95be1a1a0435055b1b31413258d83" {
 		t.Fatalf("stream contract identity = %+v", contract)
 	}
 	request := contract.Request
@@ -108,7 +109,8 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 		lifecycle.ConnectivityCoalescing != "latest-wins-full-state-reload" ||
 		!lifecycle.SameRevisionConnectivityRefresh ||
 		lifecycle.MissedWakeupRepair != "postgresql-and-redis-reconciliation" ||
-		lifecycle.Reconnect != "fresh-authenticated-snapshot" {
+		lifecycle.Reconnect != "fresh-authenticated-snapshot" ||
+		lifecycle.RelayDirectoryChange != "full-snapshot-complete-replacement" {
 		t.Fatalf("stream lifecycle contract = %+v", lifecycle)
 	}
 	delta := contract.ConnectivityDelta
@@ -117,7 +119,7 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 		delta.PeerEncoding != "PeersChanged-complete-replacement" ||
 		delta.EndpointWithdrawal != "replacement-node-with-no-endpoints" ||
 		delta.PeerOnline != "explicit-boolean" || delta.PeerOrder != "numeric-node-id" ||
-		!slices.Equal(delta.ForbiddenFields, []string{"Peers", "PacketFilter"}) {
+		!slices.Equal(delta.ForbiddenFields, []string{"Peers", "PacketFilter", "DERPMap"}) {
 		t.Fatalf("stream connectivity delta contract = %+v", delta)
 	}
 	authorityDelta := contract.AuthorityDelta
@@ -134,7 +136,8 @@ func TestMapStreamContractPinsFailClosedLifecycle(t *testing.T) {
 			"revision-gap",
 			"self-authority-change",
 			"ambiguous-peer-id-transition",
-		}) || !slices.Equal(authorityDelta.ForbiddenFields, []string{"Peers", "Domain"}) {
+			"relay-directory-change",
+		}) || !slices.Equal(authorityDelta.ForbiddenFields, []string{"Peers", "Domain", "DERPMap"}) {
 		t.Fatalf("stream authority delta contract = %+v", authorityDelta)
 	}
 	terminal := contract.TerminalAuthority

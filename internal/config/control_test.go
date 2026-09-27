@@ -56,6 +56,7 @@ func TestLoadControlConfigForControlRoles(t *testing.T) {
 					CoordinationTimeout:  4 * time.Second,
 					KeepAliveInterval:    70 * time.Second,
 					ReconcileInterval:    20 * time.Second,
+					RelayDirectory:       relayDirectoryConfigFixture(t),
 				},
 			}
 			if *got.Control != want {

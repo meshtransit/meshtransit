@@ -11,6 +11,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/control"
 	appmapsession "github.com/meshtransit/meshtransit/internal/control/mapsession"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/relay"
 )
 
 const (
@@ -316,11 +317,36 @@ func validStoreFixture(
 		IdleTimeout:        5 * time.Second,
 		PeerCandidateLimit: 100,
 		PolicyRuleLimit:    100,
+		RelayDirectory:     relayDirectoryFixture(t),
 	}, observer)
 	if err != nil {
 		t.Fatalf("newStore() error = %v", err)
 	}
 	return store, database, transaction, observer, identity
+}
+
+func relayDirectoryFixture(t *testing.T) relay.Directory {
+	t.Helper()
+	relayNode, err := relay.NewNode(relay.NodeParams{
+		Name: "1a", HostName: "relay-sin.example.com", IPv4: "192.0.2.10",
+		IPv6: "2001:db8::10", STUNPort: 3478, RelayPort: 443,
+	})
+	if err != nil {
+		t.Fatalf("relay.NewNode() error = %v", err)
+	}
+	region, err := relay.NewRegion(relay.RegionParams{
+		ID: 1, Code: "sin", Name: "Singapore", Nodes: []relay.Node{relayNode},
+	})
+	if err != nil {
+		t.Fatalf("relay.NewRegion() error = %v", err)
+	}
+	directory, err := relay.NewDirectory(relay.DirectoryParams{
+		Revision: 1, Regions: []relay.Region{region},
+	})
+	if err != nil {
+		t.Fatalf("relay.NewDirectory() error = %v", err)
+	}
+	return directory
 }
 
 func validPolicyRuleRecord() policyRuleRecord {

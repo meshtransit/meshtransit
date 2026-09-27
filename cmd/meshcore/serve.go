@@ -297,11 +297,25 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			)
 			return 1
 		}
+		relayDirectory, composeErr := loadRelayDirectory(
+			ctx,
+			processConfig.Control.Map.RelayDirectory,
+		)
+		if composeErr != nil {
+			logger.ErrorContext(
+				ctx,
+				"startup failed",
+				"error_code", "relay_directory_load_failure",
+				"error", composeErr,
+			)
+			return 1
+		}
 		mapSessionService, composeErr := composeMapSession(
 			processConfig.Control.Map,
 			storagePools.runtime,
 			redisClient,
 			redisClient,
+			relayDirectory,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(

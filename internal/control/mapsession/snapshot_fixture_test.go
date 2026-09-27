@@ -8,6 +8,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/relay"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -70,9 +71,39 @@ func snapshotFixture(t *testing.T) Snapshot {
 		CreatedAt:         createdAt,
 		KeyExpiry:         createdAt.Add(24 * time.Hour),
 		PacketPolicy:      packetPolicy,
+		RelayDirectory:    relayDirectoryFixture(t),
 	})
 	if err != nil {
 		t.Fatalf("NewSnapshot() error = %v", err)
 	}
 	return snapshot
+}
+
+func relayDirectoryFixture(t *testing.T) relay.Directory {
+	t.Helper()
+	node, err := relay.NewNode(relay.NodeParams{
+		Name:      "1a",
+		HostName:  "relay-sin.example.com",
+		IPv4:      "192.0.2.10",
+		IPv6:      "2001:db8::10",
+		STUNPort:  3478,
+		RelayPort: 443,
+	})
+	if err != nil {
+		t.Fatalf("relay.NewNode() error = %v", err)
+	}
+	region, err := relay.NewRegion(relay.RegionParams{
+		ID: 1, Code: "sin", Name: "Singapore", Nodes: []relay.Node{node},
+	})
+	if err != nil {
+		t.Fatalf("relay.NewRegion() error = %v", err)
+	}
+	directory, err := relay.NewDirectory(relay.DirectoryParams{
+		Revision: 1,
+		Regions:  []relay.Region{region},
+	})
+	if err != nil {
+		t.Fatalf("relay.NewDirectory() error = %v", err)
+	}
+	return directory
 }

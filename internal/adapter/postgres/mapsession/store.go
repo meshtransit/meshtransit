@@ -13,6 +13,7 @@ import (
 	appmapsession "github.com/meshtransit/meshtransit/internal/control/mapsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/relay"
 )
 
 const (
@@ -36,6 +37,7 @@ type Options struct {
 	IdleTimeout        time.Duration
 	PeerCandidateLimit int
 	PolicyRuleLimit    int
+	RelayDirectory     relay.Directory
 }
 
 // Store loads exact-scope snapshots in read-only repeatable-read transactions.
@@ -183,6 +185,7 @@ func (store *Store) Load(
 		recoveryEpoch,
 		peerCandidates,
 		packetPolicy,
+		store.options.RelayDirectory,
 	)
 	if err != nil {
 		return appmapsession.Snapshot{}, err
@@ -355,7 +358,8 @@ func validOptions(options Options) bool {
 		options.PeerCandidateLimit > 0 &&
 		options.PeerCandidateLimit <= appmapsession.MaximumPeerCandidates &&
 		options.PolicyRuleLimit > 0 &&
-		options.PolicyRuleLimit <= appmapsession.MaximumPacketPolicyRules
+		options.PolicyRuleLimit <= appmapsession.MaximumPacketPolicyRules &&
+		options.RelayDirectory.IsValid()
 }
 
 func postgresTimeout(value time.Duration) string {

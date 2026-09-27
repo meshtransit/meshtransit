@@ -133,7 +133,7 @@ The module path is `github.com/meshtransit/meshtransit`; the process binary
 is `meshcore`. Development and security gates run with Go 1.26.8.
 
 Run `meshcore version` for machine-readable build, revision, Go, and
-configuration-schema versions (currently 20). Run `meshcore config validate` to
+configuration-schema versions (currently 22). Run `meshcore config validate` to
 validate the selected role, bounded values, secret files, and CA bundles without
 opening a listener. Dependency-backed profiles also perform bounded connectivity
 checks; `role=identity` requires an exact prepared broker schema and never runs a
@@ -386,6 +386,15 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_MAP_COORDINATION_TIMEOUT` | `2s` | Redis presence and endpoint-operation deadline from 100ms through 30 seconds and below one third of the presence TTL. |
 | `MESHTRANSIT_CONTROL_MAP_KEEPALIVE_INTERVAL` | `1m` | Silent-stream keepalive interval from 1 second through 90 seconds. |
 | `MESHTRANSIT_CONTROL_MAP_RECONCILE_INTERVAL` | `30s` | Authoritative PostgreSQL resync interval from 1 second through 5 minutes. |
+| `MESHTRANSIT_RELAY_DIRECTORY_FILE` | none | Absolute path to the bounded, product-schema relay directory snapshot loaded at control-role startup. |
+| `MESHTRANSIT_RELAY_DIRECTORY_SHA256` | none | Canonical lowercase `sha256:<64 hex digits>` digest pin for the exact relay directory file. |
+
+The control role fails startup when the relay directory file is absent, unsafe,
+oversized, malformed, or does not match its digest pin. Core never fetches relay
+metadata at runtime. A directory revision increase is published as a complete
+replacement in the next full map snapshot; revision regression or different
+topology under the same revision terminates the stream fail-closed. Relay
+metadata grants no peer visibility, route, packet-policy, or Network authority.
 
 Control connection saturation, session admission results, Noise handshake
 duration, authenticated-session duration, registration results/duration, and

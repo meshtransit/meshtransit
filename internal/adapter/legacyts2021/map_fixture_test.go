@@ -10,6 +10,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/relay"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -114,6 +115,7 @@ func mapSnapshotWithAuthorizedCandidateFixture(t *testing.T) mapsession.Snapshot
 		KeyExpiry:         base.KeyExpiry(),
 		PeerCandidates:    base.PeerCandidates(),
 		PacketPolicy:      packetPolicy,
+		RelayDirectory:    base.RelayDirectory(),
 	}
 	snapshot, err := mapsession.NewSnapshot(params)
 	if err != nil {
@@ -211,6 +213,7 @@ func mapSnapshotParams(base mapsession.Snapshot) mapsession.SnapshotParams {
 		KeyExpiry:         base.KeyExpiry(),
 		PeerCandidates:    base.PeerCandidates(),
 		PacketPolicy:      base.PacketPolicy(),
+		RelayDirectory:    base.RelayDirectory(),
 	}
 }
 
@@ -281,9 +284,47 @@ func mapSnapshotFixtureWithCandidates(
 		KeyExpiry:         createdAt.Add(24 * time.Hour),
 		PeerCandidates:    peerCandidates,
 		PacketPolicy:      packetPolicy,
+		RelayDirectory:    mapRelayDirectoryFixture(t),
 	})
 	if err != nil {
 		t.Fatalf("mapsession.NewSnapshot() error = %v", err)
 	}
 	return snapshot
+}
+
+func mapRelayDirectoryFixture(t *testing.T) relay.Directory {
+	t.Helper()
+	relayNode, err := relay.NewNode(relay.NodeParams{
+		Name:      "1a",
+		HostName:  "relay-sin.example.com",
+		CertName:  "relay-cert-sin.example.com",
+		IPv4:      "192.0.2.10",
+		IPv6:      "2001:db8::10",
+		STUNPort:  3478,
+		RelayPort: 443,
+	})
+	if err != nil {
+		t.Fatalf("relay.NewNode() error = %v", err)
+	}
+	stunNode, err := relay.NewNode(relay.NodeParams{
+		Name: "1b", HostName: "stun-sin.example.com", IPv4: "192.0.2.11",
+		IPv6: "none", STUNPort: 3478, IsSTUNOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("relay.NewNode(STUN only) error = %v", err)
+	}
+	region, err := relay.NewRegion(relay.RegionParams{
+		ID: 1, Code: "sin", Name: "Singapore", Nodes: []relay.Node{relayNode, stunNode},
+	})
+	if err != nil {
+		t.Fatalf("relay.NewRegion() error = %v", err)
+	}
+	directory, err := relay.NewDirectory(relay.DirectoryParams{
+		Revision: 1,
+		Regions:  []relay.Region{region},
+	})
+	if err != nil {
+		t.Fatalf("relay.NewDirectory() error = %v", err)
+	}
+	return directory
 }

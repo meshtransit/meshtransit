@@ -319,6 +319,12 @@ func (service *StreamService) refresh(
 	if !streamSnapshotChanged(current, next) {
 		return current, nil
 	}
+	if relayDirectoryChanged(current, next) {
+		if err := sink.SendSnapshot(ctx, next); err != nil {
+			return Snapshot{}, errors.Join(ErrStreamWrite, err)
+		}
+		return next, nil
+	}
 	if current.NetworkRevision() == next.NetworkRevision() {
 		delta, deltaErr := NewConnectivityDelta(current, next)
 		if deltaErr != nil {

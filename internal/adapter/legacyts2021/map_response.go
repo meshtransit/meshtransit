@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	maxMapResponseBytes    = 64 << 10
+	maxMapResponseBytes    = 256 << 10
 	mapResponseContentType = "application/octet-stream"
 )
 
@@ -31,6 +31,7 @@ type fullMapResponseWire struct {
 	Node         *tailcfg.Node        `json:"Node"`
 	Peers        []*tailcfg.Node      `json:"Peers"`
 	PacketFilter []tailcfg.FilterRule `json:"PacketFilter"`
+	DERPMap      *tailcfg.DERPMap     `json:"DERPMap"`
 }
 
 type authorityWithdrawalMapResponseWire struct {
@@ -72,11 +73,16 @@ func encodeFullMapResponse(
 	if err != nil {
 		return nil, err
 	}
+	relayDirectory, err := mapRelayDirectory(snapshot.RelayDirectory())
+	if err != nil {
+		return nil, err
+	}
 	document, err := json.Marshal(fullMapResponseWire{
 		Domain:       snapshot.NetworkName().String(),
 		Node:         self,
 		Peers:        peers,
 		PacketFilter: packetFilter,
+		DERPMap:      relayDirectory,
 	})
 	if err != nil {
 		clear(document)

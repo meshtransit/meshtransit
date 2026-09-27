@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"errors"
 
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
+	"github.com/meshtransit/meshtransit/internal/adapter/relayfile"
 	"github.com/meshtransit/meshtransit/internal/config"
 	"github.com/meshtransit/meshtransit/internal/control/mapsession"
 	"github.com/meshtransit/meshtransit/internal/publicid"
+	"github.com/meshtransit/meshtransit/internal/relay"
 )
 
 var errInvalidMapSessionComposition = errors.New("invalid map session composition")
@@ -16,8 +19,9 @@ func composeMapSession(
 	runtimePool *postgresadapter.Pool,
 	endpoints mapsession.EndpointObserver,
 	connectivity mapsession.ConnectivityStore,
+	relayDirectory relay.Directory,
 ) (*mapsession.Service, error) {
-	if runtimePool == nil || endpoints == nil || connectivity == nil {
+	if runtimePool == nil || endpoints == nil || connectivity == nil || !relayDirectory.IsValid() {
 		return nil, errInvalidMapSessionComposition
 	}
 	store, err := postgresadapter.NewMapSessionStore(
@@ -27,12 +31,31 @@ func composeMapSession(
 			IdleTimeout:        mapConfig.TransactionIdleLimit,
 			PeerCandidateLimit: mapsession.MaximumPeerCandidates,
 			PolicyRuleLimit:    mapsession.MaximumPacketPolicyRules,
+			RelayDirectory:     relayDirectory,
 		},
 	)
 	if err != nil {
 		return nil, errors.Join(errInvalidMapSessionComposition, err)
 	}
 	return newMapSessionService(mapConfig, store, endpoints, connectivity)
+}
+
+func loadRelayDirectory(
+	ctx context.Context,
+	directoryConfig config.RelayDirectoryConfig,
+) (relay.Directory, error) {
+	if ctx == nil {
+		return relay.Directory{}, errInvalidMapSessionComposition
+	}
+	path, digest, err := directoryConfig.Values()
+	if err != nil {
+		return relay.Directory{}, errors.Join(errInvalidMapSessionComposition, err)
+	}
+	directory, err := relayfile.Load(ctx, path, digest)
+	if err != nil {
+		return relay.Directory{}, errors.Join(errInvalidMapSessionComposition, err)
+	}
+	return directory, nil
 }
 
 func composeMapStream(
