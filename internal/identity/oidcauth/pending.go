@@ -326,6 +326,7 @@ func hashPending(pending Pending) [sha256.Size]byte {
 	} {
 		writePendingField(&encoded, []byte(value))
 	}
+	writePendingField(&encoded, []byte(route.ConnectorID()))
 	for _, value := range route.Scopes() {
 		writePendingField(&encoded, []byte(value))
 	}

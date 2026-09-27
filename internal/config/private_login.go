@@ -169,6 +169,13 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 	if err != nil {
 		return nil, ErrInvalid
 	}
+	if process.Identity != nil {
+		if len(process.Identity.OIDCConnectors) != 1 {
+			return nil, ErrInvalid
+		}
+		params.ConnectorID = process.Identity.OIDCConnectors[0].ID
+		params.Scopes = []string{"openid", "federated:id"}
+	}
 	if !privateLoginField(fields, "provider_generation", &params.ProviderGeneration) ||
 		!privateLoginField(fields, "recovery_epoch", &params.RecoveryEpoch) {
 		return nil, ErrInvalid

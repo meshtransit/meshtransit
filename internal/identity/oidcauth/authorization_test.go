@@ -48,6 +48,60 @@ func TestAuthorizationRequestBindsExactOIDCFlow(t *testing.T) {
 	}
 }
 
+func TestAuthorizationRequestBindsExactBrokerConnector(t *testing.T) {
+	t.Parallel()
+
+	params := routeParamsFixture(t)
+	params.ConnectorID = "google-v1"
+	params.Scopes = append(params.Scopes, "federated:id")
+	route, err := NewRoute(params)
+	if err != nil {
+		t.Fatalf("NewRoute() error = %v", err)
+	}
+	request, err := NewAuthorizationRequest(route, metadataFixture(t), secretFixture(t))
+	if err != nil {
+		t.Fatalf("NewAuthorizationRequest() error = %v", err)
+	}
+	location, err := url.Parse(request.Location())
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	query := location.Query()
+	if len(query) != 10 || query.Get("connector_id") != params.ConnectorID ||
+		query.Get("scope") != "openid profile email federated:id" {
+		t.Fatal("authorization request did not bind the exact broker connector")
+	}
+}
+
+func TestRouteRejectsUnpairedBrokerConnectorBinding(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		change func(*RouteParams)
+	}{
+		{name: "connector without claim scope", change: func(params *RouteParams) {
+			params.ConnectorID = "google-v1"
+		}},
+		{name: "claim scope without connector", change: func(params *RouteParams) {
+			params.Scopes = append(params.Scopes, "federated:id")
+		}},
+		{name: "invalid connector", change: func(params *RouteParams) {
+			params.ConnectorID = "Google v1"
+			params.Scopes = append(params.Scopes, "federated:id")
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			params := routeParamsFixture(t)
+			test.change(&params)
+			if _, err := NewRoute(params); !errors.Is(err, ErrInvalidRoute) {
+				t.Fatalf("NewRoute() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestAuthorizationRequestSupportsExplicitCrossOriginEndpoints(t *testing.T) {
 	t.Parallel()
 

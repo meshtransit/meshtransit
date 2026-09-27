@@ -229,7 +229,9 @@ func TestPrivateLoginConfigBindsEmbeddedIdentityWithoutSharingCustody(t *testing
 	if profile, err := parsePrivateLoginConfig(
 		privateLoginTestJSON(t, validDocument(t, process)),
 		process,
-	); err != nil || profile == nil {
+	); err != nil || profile == nil ||
+		profile.Route().ConnectorID() != process.Identity.OIDCConnectors[0].ID ||
+		!slices.Equal(profile.Route().Scopes(), []string{"openid", "federated:id"}) {
 		t.Fatalf("valid embedded identity binding rejected: %v", err)
 	}
 

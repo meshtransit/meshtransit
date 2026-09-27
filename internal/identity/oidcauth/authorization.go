@@ -45,6 +45,9 @@ func NewAuthorizationRequest(
 	}
 	query := url.Values{}
 	query.Set("client_id", route.oidcClientID)
+	if route.connectorID != "" {
+		query.Set("connector_id", route.connectorID)
+	}
 	query.Set("code_challenge", secrets.verifier.Challenge())
 	query.Set("code_challenge_method", "S256")
 	query.Set("nonce", secrets.nonce.Encoded())
@@ -80,7 +83,17 @@ func (request AuthorizationRequest) IsValid() bool {
 			return false
 		}
 	}
-	return len(query) == 9 && query.Get("code_challenge_method") == "S256" &&
+	expectedFields := 9
+	connectorBound := false
+	if values := query["connector_id"]; len(values) > 0 {
+		if len(values) != 1 || !validRouteID(values[0]) {
+			return false
+		}
+		connectorBound = true
+		expectedFields++
+	}
+	federatedScope := slices.Contains(strings.Split(query.Get("scope"), " "), "federated:id")
+	return connectorBound == federatedScope && len(query) == expectedFields && query.Get("code_challenge_method") == "S256" &&
 		query.Get("response_mode") == "query" && query.Get("response_type") == "code"
 }
 

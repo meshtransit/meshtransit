@@ -4,6 +4,7 @@ package dexbroker
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -162,7 +163,7 @@ func TestBrokerSignerOutageFailsClosedAndRecoversWithoutRestart(t *testing.T) {
 	code := storage.AuthCode{
 		ID: "signer-outage-code", ClientID: options.Clients[0].ID,
 		RedirectURI: options.Clients[0].RedirectURI, Nonce: "synthetic-nonce",
-		Scopes: []string{"openid"}, ConnectorID: options.OIDCConnectors[0].ID,
+		Scopes: []string{"openid", "federated:id"}, ConnectorID: options.OIDCConnectors[0].ID,
 		Claims: storage.Claims{UserID: "synthetic-user"},
 		Expiry: time.Now().Add(time.Hour),
 	}
@@ -228,6 +229,22 @@ func TestBrokerSignerOutageFailsClosedAndRecoversWithoutRestart(t *testing.T) {
 	if recovered.Code != http.StatusOK || tokenResponse.AccessToken == "" ||
 		tokenResponse.IDToken == "" || tokenResponse.TokenType != "bearer" {
 		t.Fatal("fresh token issuance did not recover")
+	}
+	parts := strings.Split(tokenResponse.IDToken, ".")
+	if len(parts) != 3 {
+		t.Fatal("broker returned malformed ID token")
+	}
+	payload, err := base64.RawURLEncoding.Strict().DecodeString(parts[1])
+	if err != nil {
+		t.Fatal("decode broker ID token payload")
+	}
+	var claims struct {
+		Federated struct {
+			ConnectorID string `json:"connector_id"`
+		} `json:"federated_claims"`
+	}
+	if json.Unmarshal(payload, &claims) != nil || claims.Federated.ConnectorID != options.OIDCConnectors[0].ID {
+		t.Fatal("broker ID token did not bind the selected connector")
 	}
 	assertBrokerTokenSignature(t, recoveredJWKS, tokenResponse.IDToken)
 	if _, err := signerGate.GetAuthCode(t.Context(), code.ID); !errors.Is(err, storage.ErrNotFound) {

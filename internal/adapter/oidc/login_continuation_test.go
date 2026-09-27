@@ -248,6 +248,10 @@ func TestLoginContinuationGuardOwnsKeysAndRejectsChangedRoute(t *testing.T) {
 		{name: "token", mutate: func(p *oidcauth.RouteParams) { p.TokenEndpoint += "/other" }},
 		{name: "jwks", mutate: func(p *oidcauth.RouteParams) { p.JWKSURI += "/other" }},
 		{name: "client", mutate: func(p *oidcauth.RouteParams) { p.OIDCClientID += "-other" }},
+		{name: "connector", mutate: func(p *oidcauth.RouteParams) {
+			p.ConnectorID = "other-connector"
+			p.Scopes = append(p.Scopes, "federated:id")
+		}},
 		{name: "scopes", mutate: func(p *oidcauth.RouteParams) { p.Scopes = []string{"openid", "profile"} }},
 		{name: "algorithms", mutate: func(p *oidcauth.RouteParams) { p.AllowedAlgorithms = []string{"RS256", "ES256"} }},
 		{name: "redirect", mutate: func(p *oidcauth.RouteParams) { p.RedirectID += ".other" }},

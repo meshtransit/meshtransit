@@ -251,6 +251,10 @@ func TestLoginCallbackCapsuleBindsEveryRouteDimensionAndKey(t *testing.T) {
 		{name: "token", mutate: func(p *oidcauth.RouteParams) { p.TokenEndpoint += "/new" }},
 		{name: "JWKS", mutate: func(p *oidcauth.RouteParams) { p.JWKSURI += "/new" }},
 		{name: "OIDC client", mutate: func(p *oidcauth.RouteParams) { p.OIDCClientID += "-new" }},
+		{name: "connector", mutate: func(p *oidcauth.RouteParams) {
+			p.ConnectorID = "other-connector"
+			p.Scopes = append(p.Scopes, "federated:id")
+		}},
 		{name: "client auth", mutate: func(p *oidcauth.RouteParams) { p.ClientAuthMethod = "private_key_jwt" }},
 		{name: "scopes", mutate: func(p *oidcauth.RouteParams) { p.Scopes = append(p.Scopes, "new-scope") }},
 		{name: "algorithms", mutate: func(p *oidcauth.RouteParams) { p.AllowedAlgorithms = []string{"ES256"} }},
@@ -491,7 +495,8 @@ func capsuleTestRouteParams(route oidcauth.Route) oidcauth.RouteParams {
 		ClientID: route.ClientID(), ProviderGeneration: route.ProviderGeneration(), RecoveryEpoch: route.RecoveryEpoch(),
 		Issuer: route.Issuer(), DiscoveryURI: route.DiscoveryURI(), AuthorizationEndpoint: route.AuthorizationEndpoint(),
 		TokenEndpoint: route.TokenEndpoint(), JWKSURI: route.JWKSURI(), OIDCClientID: route.OIDCClientID(),
-		ClientKind: "confidential", ClientAuthMethod: route.ClientAuthMethod(), Scopes: route.Scopes(),
+		ConnectorID: route.ConnectorID(),
+		ClientKind:  "confidential", ClientAuthMethod: route.ClientAuthMethod(), Scopes: route.Scopes(),
 		AllowedAlgorithms: route.AllowedAlgorithms(), RedirectID: route.RedirectID(), RedirectURI: route.RedirectURI(),
 		ReturnRouteID: route.ReturnRouteID(),
 	}

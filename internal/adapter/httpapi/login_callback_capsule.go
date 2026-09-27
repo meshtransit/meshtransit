@@ -396,7 +396,8 @@ func callbackRouteFingerprint(route oidcauth.Route) ([sha256.Size]byte, error) {
 		ClientID: route.ClientID(), ProviderGeneration: route.ProviderGeneration(), RecoveryEpoch: route.RecoveryEpoch(),
 		Issuer: route.Issuer(), DiscoveryURI: route.DiscoveryURI(), AuthorizationEndpoint: route.AuthorizationEndpoint(),
 		TokenEndpoint: route.TokenEndpoint(), JWKSURI: route.JWKSURI(), OIDCClientID: route.OIDCClientID(),
-		ClientKind: "confidential", ClientAuthMethod: route.ClientAuthMethod(), Scopes: route.Scopes(),
+		ConnectorID: route.ConnectorID(),
+		ClientKind:  "confidential", ClientAuthMethod: route.ClientAuthMethod(), Scopes: route.Scopes(),
 		AllowedAlgorithms: route.AllowedAlgorithms(), RedirectID: route.RedirectID(), RedirectURI: route.RedirectURI(),
 		ReturnRouteID: route.ReturnRouteID(),
 	})

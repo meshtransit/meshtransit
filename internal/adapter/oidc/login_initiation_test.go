@@ -296,6 +296,10 @@ func TestLoginInitiationFixesEveryConfiguredTrustDimension(t *testing.T) {
 		{name: "token endpoint", mutate: func(p *oidcauth.RouteParams) { p.TokenEndpoint = "https://other.example.test/token" }},
 		{name: "jwks", mutate: func(p *oidcauth.RouteParams) { p.JWKSURI = "https://other.example.test/certs" }},
 		{name: "client id", mutate: func(p *oidcauth.RouteParams) { p.OIDCClientID = "other-console" }},
+		{name: "connector", mutate: func(p *oidcauth.RouteParams) {
+			p.ConnectorID = "other-connector"
+			p.Scopes = append(p.Scopes, "federated:id")
+		}},
 		{name: "client authentication", mutate: func(p *oidcauth.RouteParams) { p.ClientAuthMethod = "private_key_jwt" }},
 		{name: "scopes", mutate: func(p *oidcauth.RouteParams) { p.Scopes = []string{"openid", "email"} }},
 		{name: "algorithms", mutate: func(p *oidcauth.RouteParams) { p.AllowedAlgorithms = []string{"ES256"} }},

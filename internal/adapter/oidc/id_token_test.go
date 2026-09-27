@@ -112,6 +112,60 @@ func TestIDTokenRejectsClaimsAndKeySubstitution(t *testing.T) {
 	}
 }
 
+func TestIDTokenRequiresExactBrokerConnector(t *testing.T) {
+	t.Parallel()
+
+	key, jwk := tokenKey(t, "RS256")
+	tests := []struct {
+		name      string
+		federated any
+		accepted  bool
+	}{
+		{name: "exact connector", federated: map[string]any{
+			"connector_id": "google-v1", "user_id": "opaque-upstream-subject",
+		}, accepted: true},
+		{name: "missing claim"},
+		{name: "wrong connector", federated: map[string]any{
+			"connector_id": "enterprise-v1", "user_id": "opaque-upstream-subject",
+		}},
+		{name: "missing connector", federated: map[string]any{
+			"user_id": "opaque-upstream-subject",
+		}},
+		{name: "malformed connector", federated: map[string]any{
+			"connector_id": []string{"google-v1"}, "user_id": "opaque-upstream-subject",
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			authenticator := tokenAuthenticator(t, "RS256")
+			params := loginRouteParams(authenticator.route)
+			params.ConnectorID = "google-v1"
+			params.Scopes = append(params.Scopes, "federated:id")
+			var err error
+			authenticator.route, err = oidcauth.NewRoute(params)
+			if err != nil {
+				t.Fatal(err)
+			}
+			authenticator.client = doerFunc(func(*http.Request) (*http.Response, error) {
+				return discoveryResponse(200, "application/json", tokenJSON(t, map[string]any{
+					"keys": []any{jwk},
+				})), nil
+			})
+			claims := tokenClaims(t)
+			if test.federated != nil {
+				claims["federated_claims"] = test.federated
+			}
+			result, err := authenticator.validateIDToken(
+				t.Context(), signedToken(t, key, "RS256", claims, nil),
+			)
+			if result.IsValid() != test.accepted || (err == nil) != test.accepted {
+				t.Fatalf("connector result = (%t, %v), want accepted=%t", result.IsValid(), err, test.accepted)
+			}
+		})
+	}
+}
+
 func TestUnknownKidRefreshIsBoundedAndRotationDoesNotChangeRoute(t *testing.T) {
 	t.Parallel()
 	key, jwk := tokenKey(t, "RS256")
@@ -315,7 +369,8 @@ func tokenRoute(t *testing.T, original oidcauth.Route, algorithm, endpoint, jwks
 		DeploymentID: original.DeploymentID(), WorkspaceID: original.WorkspaceID(), ProviderID: original.ProviderID(), ClientID: original.ClientID(),
 		ProviderGeneration: original.ProviderGeneration(), RecoveryEpoch: original.RecoveryEpoch(), Issuer: original.Issuer(), DiscoveryURI: original.DiscoveryURI(),
 		AuthorizationEndpoint: original.AuthorizationEndpoint(), TokenEndpoint: endpoint, JWKSURI: jwksURI, OIDCClientID: original.OIDCClientID(),
-		ClientKind: "confidential", ClientAuthMethod: original.ClientAuthMethod(), Scopes: original.Scopes(), AllowedAlgorithms: []string{algorithm},
+		ConnectorID: original.ConnectorID(),
+		ClientKind:  "confidential", ClientAuthMethod: original.ClientAuthMethod(), Scopes: original.Scopes(), AllowedAlgorithms: []string{algorithm},
 		RedirectID: original.RedirectID(), RedirectURI: original.RedirectURI(), ReturnRouteID: original.ReturnRouteID(),
 	})
 	if err != nil {

@@ -95,6 +95,10 @@ func TestPendingSnapshotRejectsEveryConfiguredRouteSubstitution(t *testing.T) {
 		{"token", func(p *RouteParams) { p.TokenEndpoint = "https://other.example.test/token" }},
 		{"jwks", func(p *RouteParams) { p.JWKSURI = "https://other.example.test/jwks" }},
 		{"client id", func(p *RouteParams) { p.OIDCClientID = "other-client" }},
+		{"connector", func(p *RouteParams) {
+			p.ConnectorID = "other-connector"
+			p.Scopes = append(p.Scopes, "federated:id")
+		}},
 		{"auth method", func(p *RouteParams) { p.ClientAuthMethod = "private_key_jwt" }},
 		{"scope ordering", func(p *RouteParams) { p.Scopes = []string{"profile", "openid", "email"} }},
 		{"algorithm ordering", func(p *RouteParams) { p.AllowedAlgorithms = []string{"PS256", "RS256"} }},

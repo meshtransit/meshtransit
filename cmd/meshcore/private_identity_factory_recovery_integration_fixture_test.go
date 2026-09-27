@@ -25,7 +25,7 @@ func privateFactoryRouteGeneration(t *testing.T, route oidcauth.Route, generatio
 		ProviderID: route.ProviderID(), ClientID: route.ClientID(), ProviderGeneration: generation,
 		RecoveryEpoch: route.RecoveryEpoch(), Issuer: route.Issuer(), DiscoveryURI: route.DiscoveryURI(),
 		AuthorizationEndpoint: route.AuthorizationEndpoint(), TokenEndpoint: route.TokenEndpoint(),
-		JWKSURI: route.JWKSURI(), OIDCClientID: route.OIDCClientID(), ClientKind: "confidential",
+		JWKSURI: route.JWKSURI(), OIDCClientID: route.OIDCClientID(), ConnectorID: route.ConnectorID(), ClientKind: "confidential",
 		ClientAuthMethod: route.ClientAuthMethod(), Scopes: route.Scopes(),
 		AllowedAlgorithms: route.AllowedAlgorithms(), RedirectID: route.RedirectID(),
 		RedirectURI: route.RedirectURI(), ReturnRouteID: route.ReturnRouteID(),

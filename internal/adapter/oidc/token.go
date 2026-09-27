@@ -204,7 +204,7 @@ func sameTokenRoute(expected, actual oidcauth.Route) bool {
 	identities := expected.DeploymentID() == actual.DeploymentID() && expected.WorkspaceID() == actual.WorkspaceID() && expected.ProviderID() == actual.ProviderID() && expected.ClientID() == actual.ClientID()
 	generations := expected.ProviderGeneration() == actual.ProviderGeneration() && expected.RecoveryEpoch() == actual.RecoveryEpoch()
 	endpoints := expected.Issuer() == actual.Issuer() && expected.DiscoveryURI() == actual.DiscoveryURI() && expected.AuthorizationEndpoint() == actual.AuthorizationEndpoint() && expected.TokenEndpoint() == actual.TokenEndpoint() && expected.JWKSURI() == actual.JWKSURI()
-	client := expected.OIDCClientID() == actual.OIDCClientID() && expected.ClientAuthMethod() == actual.ClientAuthMethod() && slices.Equal(expected.Scopes(), actual.Scopes()) && slices.Equal(expected.AllowedAlgorithms(), actual.AllowedAlgorithms())
+	client := expected.OIDCClientID() == actual.OIDCClientID() && expected.ConnectorID() == actual.ConnectorID() && expected.ClientAuthMethod() == actual.ClientAuthMethod() && slices.Equal(expected.Scopes(), actual.Scopes()) && slices.Equal(expected.AllowedAlgorithms(), actual.AllowedAlgorithms())
 	redirect := expected.RedirectID() == actual.RedirectID() && expected.RedirectURI() == actual.RedirectURI() && expected.ReturnRouteID() == actual.ReturnRouteID()
 	return identities && generations && endpoints && client && redirect
 }

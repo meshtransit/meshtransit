@@ -114,6 +114,9 @@ func (authenticator *Authenticator) decodeIDTokenClaims(raw []byte) (oidcauth.To
 	if _, present := claims["azp"]; present && authorizedParty != authenticator.route.OIDCClientID() {
 		return oidcauth.TokenEvidence{}, ErrTokenRejected
 	}
+	if !tokenConnectorMatches(claims, authenticator.route.ConnectorID()) {
+		return oidcauth.TokenEvidence{}, ErrTokenRejected
+	}
 	params.Nonce, err = oidcauth.ParseNonce(nonce)
 	if err != nil {
 		return oidcauth.TokenEvidence{}, ErrTokenRejected
@@ -149,6 +152,22 @@ func (authenticator *Authenticator) decodeIDTokenClaims(raw []byte) (oidcauth.To
 		return oidcauth.TokenEvidence{}, ErrTokenRejected
 	}
 	return evidence, nil
+}
+
+func tokenConnectorMatches(claims map[string]json.RawMessage, expected string) bool {
+	if expected == "" {
+		return true
+	}
+	raw, present := claims["federated_claims"]
+	if !present {
+		return false
+	}
+	federated, err := tokenObject(raw, 8)
+	if err != nil {
+		return false
+	}
+	var connectorID string
+	return tokenRequired(federated, "connector_id", &connectorID) && connectorID == expected
 }
 
 // No additional audience has been configured as trusted in this route profile.

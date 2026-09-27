@@ -38,6 +38,7 @@ type RouteParams struct {
 	TokenEndpoint         string
 	JWKSURI               string
 	OIDCClientID          string
+	ConnectorID           string
 	ClientKind            string
 	ClientAuthMethod      string
 	Scopes                []string
@@ -61,6 +62,7 @@ type Route struct {
 	tokenEndpoint         string
 	jwksURI               string
 	oidcClientID          string
+	connectorID           string
 	clientAuthMethod      string
 	scopes                []string
 	allowedAlgorithms     []string
@@ -76,6 +78,7 @@ func NewRoute(params RouteParams) (Route, error) {
 		params.ProviderGeneration <= 0 || params.RecoveryEpoch <= 0 ||
 		params.ClientKind != "confidential" || !validClientAuthMethod(params.ClientAuthMethod) ||
 		!validBoundedValue(params.OIDCClientID, maximumClientIDBytes) ||
+		!validConnectorBinding(params.ConnectorID, params.Scopes) ||
 		!validRouteID(params.RedirectID) || !validRouteID(params.ReturnRouteID) ||
 		!validHTTPSURL(params.Issuer, true) || !validHTTPSURL(params.DiscoveryURI, false) ||
 		!validHTTPSURL(params.AuthorizationEndpoint, false) ||
@@ -97,6 +100,7 @@ func NewRoute(params RouteParams) (Route, error) {
 		tokenEndpoint:         params.TokenEndpoint,
 		jwksURI:               params.JWKSURI,
 		oidcClientID:          params.OIDCClientID,
+		connectorID:           params.ConnectorID,
 		clientAuthMethod:      params.ClientAuthMethod,
 		scopes:                slices.Clone(params.Scopes),
 		allowedAlgorithms:     slices.Clone(params.AllowedAlgorithms),
@@ -157,6 +161,10 @@ func (route Route) JWKSURI() string { return route.jwksURI }
 // OIDCClientID returns the exact external OIDC client identifier.
 func (route Route) OIDCClientID() string { return route.oidcClientID }
 
+// ConnectorID returns the optional broker connector fixed before redirect.
+// An empty value identifies a direct OIDC provider route without a broker hop.
+func (route Route) ConnectorID() string { return route.connectorID }
+
 // ClientAuthMethod returns the exact configured token-endpoint authentication method.
 func (route Route) ClientAuthMethod() string { return route.clientAuthMethod }
 
@@ -186,13 +194,18 @@ func (route Route) IsValid() bool {
 		Issuer: route.issuer, DiscoveryURI: route.discoveryURI,
 		AuthorizationEndpoint: route.authorizationEndpoint, TokenEndpoint: route.tokenEndpoint,
 		JWKSURI:      route.jwksURI,
-		OIDCClientID: route.oidcClientID, ClientKind: "confidential",
+		OIDCClientID: route.oidcClientID, ConnectorID: route.connectorID, ClientKind: "confidential",
 		ClientAuthMethod: route.clientAuthMethod, Scopes: route.scopes,
 		AllowedAlgorithms: route.allowedAlgorithms, RedirectID: route.redirectID,
 		RedirectURI: route.redirectURI, ReturnRouteID: route.returnRouteID,
 	})
 	return err == nil && slices.Equal(validated.scopes, route.scopes) &&
 		slices.Equal(validated.allowedAlgorithms, route.allowedAlgorithms)
+}
+
+func validConnectorBinding(connectorID string, scopes []string) bool {
+	bound := connectorID != ""
+	return bound == slices.Contains(scopes, "federated:id") && (!bound || validRouteID(connectorID))
 }
 
 func validClientAuthMethod(value string) bool {
