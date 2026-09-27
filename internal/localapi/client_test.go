@@ -61,7 +61,7 @@ func TestClient_Status(t *testing.T) {
 	"self_addresses":["100.64.0.1/32"],
 	"policy_rule_count":2,
 	"paths":{"available":true,"peer_count":2,"direct_count":1,"relay_count":1,"pending_count":0,"relay_bootstrap_count":2,"direct_promotion_count":2,"relay_fallback_count":1,"last_direct_promotion_ms":3200,"max_direct_promotion_ms":4700},
-	"path_probes":{"available":true,"map_activations":9,"activation_preserved":7,"activation_retired":2,"pending_invalidated":3,"rounds_started":12,"rounds_completed":11,"probe_attempts":24,"probes_started":23,"probes_sent":22,"probe_start_failures":1,"probe_send_failures":1,"datagram_drops":4,"authenticated_pings":18,"ping_rate_limited":2,"pongs_sent":16,"pong_send_failures":1,"authenticated_pongs":21,"probe_completions":20,"completion_rejections":1,"observations_queued":20,"observation_drops":0,"observations_accepted":19,"observations_rejected":1,"direct_expirations":2},
+	"path_probes":{"available":true,"map_activations":9,"activation_preserved":7,"activation_retired":2,"authority_peer_changes":0,"authority_node_key_changes":0,"authority_discovery_key_changes":0,"authority_endpoint_changes":2,"socket_changes":0,"pending_invalidated":3,"rounds_started":12,"rounds_completed":11,"probe_attempts":24,"probes_started":23,"probes_sent":22,"probe_start_failures":1,"probe_send_failures":1,"datagram_drops":4,"authenticated_pings":18,"ping_rate_limited":2,"pongs_sent":16,"pong_send_failures":1,"authenticated_pongs":21,"probe_completions":20,"completion_rejections":1,"observations_queued":20,"observation_drops":0,"observations_accepted":19,"observations_rejected":1,"direct_expirations":2},
 	"relay":{"available":true,"home_region":7,"active_regions":2,"connected_regions":1,"regions":[{"region_id":7,"connected":true,"consecutive_failures":0}]},
 	"network_changes":{"available":true,"observed":4,"endpoint_refreshes":3},
 	"runtime_recovery":{"failures":4,"recoveries":3,"pending":true},
@@ -98,6 +98,7 @@ func TestClient_Status(t *testing.T) {
 	if status.PathProbes == nil || !status.PathProbes.Available ||
 		status.PathProbes.MapActivations != 9 ||
 		status.PathProbes.ActivationPreserved != 7 ||
+		status.PathProbes.AuthorityEndpointChanges != 2 ||
 		status.PathProbes.PendingInvalidated != 3 ||
 		status.PathProbes.RoundsStarted != 12 ||
 		status.PathProbes.RoundsCompleted != 11 ||

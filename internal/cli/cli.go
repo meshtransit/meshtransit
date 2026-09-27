@@ -522,10 +522,15 @@ func formatPathProbeStatus(status *localapi.PathProbeStatus) string {
 	}
 
 	return fmt.Sprintf(
-		"maps %d (%d preserved, %d retired, %d pending invalidated), rounds %d/%d completed, sends %d/%d attempts (%d start, %d send failures), completions %d/%d authenticated replies (%d rejected), observations %d/%d accepted (%d rejected, %d dropped), expirations %d, receive drops %d",
+		"maps %d (%d preserved, %d retired; authority peer/node/discovery/endpoint %d/%d/%d/%d; socket changes %d; %d pending invalidated), rounds %d/%d completed, sends %d/%d attempts (%d start, %d send failures), completions %d/%d authenticated replies (%d rejected), observations %d/%d accepted (%d rejected, %d dropped), expirations %d, receive drops %d",
 		status.MapActivations,
 		status.ActivationPreserved,
 		status.ActivationRetired,
+		status.AuthorityPeerChanges,
+		status.AuthorityNodeKeyChanges,
+		status.AuthorityDiscoveryKeyChanges,
+		status.AuthorityEndpointChanges,
+		status.SocketChanges,
 		status.PendingInvalidated,
 		status.RoundsCompleted,
 		status.RoundsStarted,
