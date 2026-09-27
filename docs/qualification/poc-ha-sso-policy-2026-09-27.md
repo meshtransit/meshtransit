@@ -14,6 +14,7 @@ are included.
 | Core source | `ab1c26c051994393e009ff8baef6e2e77b4f276c` |
 | Signing-key rotation qualification source | `32834c987850912c2904408cc1be209a3c8f9558` |
 | Duplicate-callback qualification source | `7e13d6513dd9e1d4f0ddec57be8b18c54934d68f` |
+| Unknown-write qualification source | `4a84c9c18268c1b7f6717d32c691c671823afffa` |
 | Proxy-safe heartbeat default source | `57546a26498cec2e9f6930a3e58330522e06ef56` |
 | Core image | `manhdev2002/meshtransit-core:poc-v36` |
 | Core image digest | `sha256:8dfc99c447475df44d3060b0993c434455ddd329898795fe385c2483e3d46bb8` |
@@ -73,6 +74,7 @@ policy implementations.
 | `POC-IDENTITY-HA-001` | Loss of one current Identity replica does not interrupt broker or Core readiness | Pass | Forty OIDC discovery requests, 40 Control key requests, and 20 paired Core/login readiness checks completed with zero failures while one Identity pod was deleted and replaced |
 | `POC-IDENTITY-HA-002` | Shared signing-key rotation preserves verification across a rolling Identity replacement | Pass | Two embedded runtimes used one shared storage contract; the surviving and replacement runtimes published the same active and retained keys, verified a pre-rotation signature through the overlap window, and removed the expired key at the next rotation boundary |
 | `POC-IDENTITY-HA-003` | Concurrent delivery of one callback to different Core replicas creates at most one Session without stickiness | Pass | Two separately composed replicas with distinct PostgreSQL pools and Redis clients raced the same callback; exactly one provider exchange and Session succeeded, the losing response released no browser material, and the winning Session authenticated through the other replica |
+| `POC-IDENTITY-HA-004` | A committed claim or Session write with a lost PostgreSQL acknowledgement cannot be retried or reconstructed by another replica | Pass | A verified-TLS wire relay dropped the selected committed claim and issuance acknowledgements; both callbacks failed closed with the exact unknown-commit signal, a newly composed replica rejected replay without effects, natural cleanup was exactly once, and only a new login produced a usable Session |
 | `POC-ROLE-ALL-001` | One private Core process can own every runtime role, recover after process loss, and reject invalid listener topology before admission | Pass | The digest-pinned `role=all` canary reported all five roles and every dependency Ready; direct-TLS Control, API, Login, and Identity contracts passed; pod deletion recovered with zero restarts; an isolated listener-collision release exited with redacted `invalid_configuration` and no Ready endpoint |
 | `POC-DATA-HA-001` | PostgreSQL and Redis failover preserve authority and convergence | Pending | The current POC uses one external PostgreSQL/Redis host |
 
@@ -592,7 +594,51 @@ and integration-tagged vet also passed.
 This qualification used a synthetic owned provider and disposable storage. It
 did not use the live Google credential or mutate the POC cluster. Production
 runtime source did not change, so no image or Helm rollout was required.
-Unknown-write/commit uncertainty remains the final open broker-continuity slice.
+Unknown-write/commit uncertainty was the final open broker-continuity slice at
+this checkpoint.
+
+## Unknown-write and lost-acknowledgement evidence
+
+Core source `4a84c9c18268c1b7f6717d32c691c671823afffa` closes the
+unknown-write portion of `SSO-BROKER-006`. The disposable Linux lane placed a
+bounded verified-TLS PostgreSQL relay between Core and the owned database. The
+relay inspected only backend protocol frames and dropped exactly the selected
+`COMMIT` completion frame after PostgreSQL had committed. It retained no SQL,
+browser proof, token, identity, or Session material.
+
+The first fault removed the committed claim acknowledgement. Core returned the
+closed unavailable category joined with the exact unknown-commit signal, not a
+timeout, and released no body, cookie, or redirect. Durable state contained one
+consuming transition with exactly one mutation, audit event, and outbox event;
+there was no provider token exchange or JWKS request. A replacement replica,
+composed only after the fault with its own PostgreSQL pool and Redis client,
+rejected the original callback without reclaiming, resolving, or exchanging it.
+Natural expiry produced exactly one no-grant disposition, and a fresh worker
+found no replayable work.
+
+The second fault removed the committed Session-issuance acknowledgement. The
+provider token exchange and JWKS read each occurred exactly once. PostgreSQL
+contained one succeeded transaction, one active Session, and the exact three
+claim/issuance evidence sequences, but Core released no bearer. Storage exposed
+only the Session identity and token digest; neither the original nor replacement
+replica could reconstruct the undisclosed token. The replacement rejected replay
+without another exchange or write, and the expiry worker ignored the already
+terminal outcome.
+
+Recovery in both cases required a new browser login. That login completed on the
+replacement replica, and its Session authenticated through the original replica
+after the faulted connection re-established TLS. The full disposable platform
+lane passed with the race detector, including duplicate callback, expiry,
+abandoned-process, cleanup, and process-readiness suites. Ordinary and
+broker-tagged race tests plus ordinary, broker-tagged, and integration-tagged vet
+also passed.
+
+Together with replica-loss, signing-key overlap, and concurrent duplicate
+delivery evidence, this closes `SSO-BROKER-006` for the current source-level HA
+scope. It does not claim PostgreSQL service failover, availability-zone failure,
+or broker outage/recovery-generation behavior. The live Google credential and
+POC cluster were untouched. Production runtime source did not change, so no new
+image or Helm rollout was required.
 
 ## Private aggregate-runtime canary
 
@@ -659,12 +705,10 @@ state. Redis remained non-authoritative.
 
 ## Remaining execution order
 
-1. Complete the remaining broker continuity gate with unknown-write/commit
-   uncertainty evidence.
-2. Exercise the broker outage matrix and recovery-generation fences, then close
+1. Exercise the broker outage matrix and recovery-generation fences, then close
    the remaining legal-review and signed-artifact items.
-3. Extend publication cases to TCP, UDP, multiple devices, and multiple
+2. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
-4. Resume PostgreSQL and Redis infrastructure failover only when that paused
+3. Resume PostgreSQL and Redis infrastructure failover only when that paused
    workstream is re-opened; the Core-side reconnect/reconciliation support is
    already present but does not qualify the external data services.
