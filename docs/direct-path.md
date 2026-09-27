@@ -105,10 +105,13 @@ peer map ──────────► authenticated path manager ───�
    daemon worker applies selector transitions through peer-scoped WireGuard
    `update_only` requests, guards the installed map revision and signed endpoint
    set, restores the signed base endpoint at exact proof expiry, and closes the
-   engine on an ambiguous update. Equivalent map revisions safely retire stale
-   path proof without reopening the shared socket. Activity-aware probe
-   suppression remains; periodic authenticated rounds currently keep roaming
-   decisions fresh for all online peers.
+   engine on an ambiguous update. Aggregate process-local status counts relay
+   bootstraps, authenticated direct promotions, and relay fallbacks, and records
+   last and maximum relay-to-direct promotion duration without retaining peer
+   identity or endpoint data. Equivalent map revisions safely retire stale path
+   proof without reopening the shared socket. Activity-aware probe suppression
+   remains; periodic authenticated rounds currently keep roaming decisions
+   fresh for all online peers.
 5. Implemented in the Linux candidate path: end-to-end tests use only automatically
    discovered host and server-reflexive candidates. They cover daemon restart,
    private-path selection, socket rebinding, stale-result cancellation, and a

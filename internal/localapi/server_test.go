@@ -151,14 +151,22 @@ func TestStatusTransportMapping(t *testing.T) {
 
 	now := time.Date(2026, time.September, 10, 12, 0, 0, 123, time.UTC)
 	paths := mapPathStatus(dataplane.PeerPathSnapshot{
-		Available:    true,
-		PeerCount:    3,
-		DirectCount:  1,
-		RelayCount:   1,
-		PendingCount: 1,
+		Available:            true,
+		PeerCount:            3,
+		DirectCount:          1,
+		RelayCount:           1,
+		PendingCount:         1,
+		RelayBootstrapCount:  4,
+		DirectPromotionCount: 3,
+		RelayFallbackCount:   2,
+		LastDirectPromotion:  1500 * time.Millisecond,
+		MaxDirectPromotion:   3250 * time.Millisecond,
 	})
 	if !paths.Available || paths.PeerCount != 3 || paths.DirectCount != 1 ||
-		paths.RelayCount != 1 || paths.PendingCount != 1 {
+		paths.RelayCount != 1 || paths.PendingCount != 1 ||
+		paths.RelayBootstrapCount != 4 || paths.DirectPromotionCount != 3 ||
+		paths.RelayFallbackCount != 2 || paths.LastDirectPromotionMillis != 1500 ||
+		paths.MaxDirectPromotionMillis != 3250 {
 		t.Fatalf("mapPathStatus() = %#v", paths)
 	}
 	relayState := mapRelayStatus(relay.HealthSnapshot{

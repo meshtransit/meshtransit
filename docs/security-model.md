@@ -41,7 +41,12 @@ Packet payloads are not an observability asset and must not be collected.
 - Linux reads `SO_PEERCRED` on every accepted connection and authorizes only root, the daemon UID, explicitly configured operator UIDs, or—when `--allow-socket-peers` is set—a verified caller admitted by the daemon-owned socket's `0660` owner/group permissions. Unverified peers remain denied.
 - The socket creator will not overwrite a regular file or a responding daemon socket.
 - API errors do not expose state paths or internal persistence errors.
-- Local transport status exposes only aggregate direct/relay/pending peer counts, relay-region lifecycle health, and process-local network-change/endpoint-refresh counters. It omits peer identities, endpoint addresses, hostnames, keys, and packet contents, and never feeds status data back into path selection.
+- Local transport status exposes only aggregate direct/relay/pending peer
+  counts, process-local relay-bootstrap/direct-promotion/fallback counters,
+  last and maximum relay-to-direct promotion duration, relay-region lifecycle
+  health, and process-local network-change/endpoint-refresh counters. It omits
+  peer identities, endpoint addresses, hostnames, keys, and packet contents,
+  and never feeds status data back into path selection.
 - Authenticated local status also exposes aggregate Go runtime memory,
   goroutine, and GC counters for soak qualification. It exposes no stack trace,
   allocation profile, label, command line, address, or per-peer metric and does

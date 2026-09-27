@@ -1278,6 +1278,88 @@ func TestWireGuardEngineUsesRelayBeforeAuthenticatedDirectPath(t *testing.T) {
 	}
 }
 
+func TestWireGuardEngineReportsRelayFirstPromotionTiming(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot = addTestRelay(snapshot)
+	now := time.Date(2026, time.September, 27, 14, 0, 0, 0, time.UTC)
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: &fakeWireGuardDevice{}},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	engine.clock = func() time.Time { return now }
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	paths := engine.PeerPaths()
+	if paths.RelayBootstrapCount != 1 || paths.DirectPromotionCount != 0 ||
+		paths.RelayFallbackCount != 0 || paths.LastDirectPromotion != 0 ||
+		paths.MaxDirectPromotion != 0 {
+		t.Fatalf("initial PeerPaths() = %#v", paths)
+	}
+
+	now = now.Add(250 * time.Millisecond)
+	if err := engine.SetPreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+		snapshot.Peers[0].Endpoints[0],
+	); err != nil {
+		t.Fatalf("SetPreferredEndpoint() error = %v", err)
+	}
+	paths = engine.PeerPaths()
+	if paths.DirectPromotionCount != 1 ||
+		paths.LastDirectPromotion != 250*time.Millisecond ||
+		paths.MaxDirectPromotion != 250*time.Millisecond {
+		t.Fatalf("promoted PeerPaths() = %#v", paths)
+	}
+	if err := engine.SetPreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+		snapshot.Peers[0].Endpoints[0],
+	); err != nil {
+		t.Fatalf("repeated SetPreferredEndpoint() error = %v", err)
+	}
+	paths = engine.PeerPaths()
+	if paths.DirectPromotionCount != 1 ||
+		paths.LastDirectPromotion != 250*time.Millisecond ||
+		paths.MaxDirectPromotion != 250*time.Millisecond {
+		t.Fatalf("reasserted PeerPaths() = %#v", paths)
+	}
+
+	now = now.Add(500 * time.Millisecond)
+	if err := engine.RestorePreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+	); err != nil {
+		t.Fatalf("RestorePreferredEndpoint() error = %v", err)
+	}
+	paths = engine.PeerPaths()
+	if paths.RelayFallbackCount != 1 {
+		t.Fatalf("fallback PeerPaths() = %#v", paths)
+	}
+
+	now = now.Add(200 * time.Millisecond)
+	if err := engine.SetPreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+		snapshot.Peers[0].Endpoints[0],
+	); err != nil {
+		t.Fatalf("second SetPreferredEndpoint() error = %v", err)
+	}
+	paths = engine.PeerPaths()
+	if paths.DirectPromotionCount != 2 ||
+		paths.LastDirectPromotion != 200*time.Millisecond ||
+		paths.MaxDirectPromotion != 250*time.Millisecond {
+		t.Fatalf("re-promoted PeerPaths() = %#v", paths)
+	}
+}
+
 func TestWireGuardEnginePeerPathsUnavailableAfterClose(t *testing.T) {
 	t.Parallel()
 

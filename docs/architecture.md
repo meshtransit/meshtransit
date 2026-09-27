@@ -226,11 +226,13 @@ Unknown JSON fields are rejected. A create request contains only a display name 
 Status exposes only non-secret diagnostics from the latest validated snapshot:
 the server-provided Network name, this node's overlay prefixes, peer count,
 packet-policy rule count, DNS lifecycle state, aggregate direct/relay/pending
-peer-path counts, relay-region connection health, and process-local aggregate
-counts of meaningful host-network events and completed endpoint refreshes. Relay timing is included
-for lifecycle diagnosis, but peer identity, endpoint addresses, hostnames,
-keys, and packet contents are omitted. These values never influence
-registration or Network selection; they let operators verify the
+peer-path counts, process-local relay-bootstrap/direct-promotion/fallback
+counters, last and maximum relay-to-direct promotion duration, relay-region
+connection health, and process-local aggregate counts of meaningful
+host-network events and completed endpoint refreshes. Relay and promotion
+timing is included for lifecycle diagnosis, but peer identity, endpoint
+addresses, hostnames, keys, and packet contents are omitted. These values never
+influence registration or Network selection; they let operators verify the
 server-authorized scope and transport transitions without reading daemon state
 or private key material.
 

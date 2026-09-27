@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/meshtransit/meshd/internal/netadmin"
 	"github.com/meshtransit/meshd/internal/networkmap"
@@ -59,6 +60,7 @@ type wireGuardPeerState struct {
 	basePath            peerPath
 	currentEndpoint     string
 	currentPath         peerPath
+	relayStartedAt      time.Time
 	authorizedEndpoints []netip.AddrPort
 	allowedIPs          []netip.Prefix
 	sessionResetPending bool
@@ -75,11 +77,16 @@ const (
 // PeerPathSnapshot reports aggregate path selection without exposing peer
 // identities, endpoint addresses, or key material.
 type PeerPathSnapshot struct {
-	Available    bool
-	PeerCount    int
-	DirectCount  int
-	RelayCount   int
-	PendingCount int
+	Available            bool
+	PeerCount            int
+	DirectCount          int
+	RelayCount           int
+	PendingCount         int
+	RelayBootstrapCount  uint64
+	DirectPromotionCount uint64
+	RelayFallbackCount   uint64
+	LastDirectPromotion  time.Duration
+	MaxDirectPromotion   time.Duration
 }
 
 // NodePrivateKey is the raw WireGuard-compatible node key. Its formatting is
@@ -178,6 +185,12 @@ type WireGuardEngine struct {
 	filter            *policyFilter
 	observer          PacketObserver
 	hostAddresses     func() ([]netip.Addr, error)
+	clock             func() time.Time
+	relayBootstraps   uint64
+	directPromotions  uint64
+	relayFallbacks    uint64
+	lastPromotion     time.Duration
+	maximumPromotion  time.Duration
 }
 
 // NewWireGuard constructs the Linux encrypted packet engine.
@@ -223,6 +236,7 @@ func newWireGuardEngine(
 		filter:        newPolicyFilter(),
 		observer:      observer,
 		hostAddresses: localHostAddresses,
+		clock:         time.Now,
 	}, nil
 }
 
@@ -589,8 +603,13 @@ func (e *WireGuardEngine) PeerPaths() PeerPathSnapshot {
 		return PeerPathSnapshot{}
 	}
 	snapshot := PeerPathSnapshot{
-		Available: true,
-		PeerCount: len(e.peers),
+		Available:            true,
+		PeerCount:            len(e.peers),
+		RelayBootstrapCount:  e.relayBootstraps,
+		DirectPromotionCount: e.directPromotions,
+		RelayFallbackCount:   e.relayFallbacks,
+		LastDirectPromotion:  e.lastPromotion,
+		MaxDirectPromotion:   e.maximumPromotion,
 	}
 	for _, peer := range e.peers {
 		switch peer.currentPath {
@@ -654,6 +673,7 @@ func (e *WireGuardEngine) SetPreferredEndpoint(
 
 			return err
 		}
+		e.recordPathTransition(&peer, reset.basePath)
 		peer.currentEndpoint = reset.baseEndpoint
 		peer.currentPath = reset.basePath
 		peer.sessionResetPending = false
@@ -787,6 +807,7 @@ func (e *WireGuardEngine) configurePeerEndpoint(
 
 		return errors.New("dataplane: applying peer endpoint failed")
 	}
+	e.recordPathTransition(&peer, path)
 	peer.currentEndpoint = endpoint
 	peer.currentPath = path
 	e.peers[peerID] = peer
@@ -802,8 +823,9 @@ func (e *WireGuardEngine) adoptPlan(revision uint64, plan wireGuardPlan) {
 	e.addresses = append([]netip.Prefix(nil), plan.addresses...)
 	e.routes = append([]netip.Prefix(nil), plan.routes...)
 	e.peers = make(map[uint64]wireGuardPeerState, len(plan.peers))
+	now := e.now()
 	for _, peer := range plan.peers {
-		e.peers[peer.id] = wireGuardPeerState{
+		state := wireGuardPeerState{
 			key:                 peer.key,
 			discoveryKey:        peer.discoveryKey,
 			baseEndpoint:        peer.baseEndpoint,
@@ -813,7 +835,48 @@ func (e *WireGuardEngine) adoptPlan(revision uint64, plan wireGuardPlan) {
 			authorizedEndpoints: append([]netip.AddrPort(nil), peer.authorizedEndpoints...),
 			allowedIPs:          append([]netip.Prefix(nil), peer.allowedIPs...),
 		}
+		if state.basePath == peerPathRelay {
+			state.relayStartedAt = now
+			e.relayBootstraps++
+		}
+		e.peers[peer.id] = state
 	}
+}
+
+func (e *WireGuardEngine) recordPathTransition(peer *wireGuardPeerState, next peerPath) {
+	if e == nil || peer == nil || peer.currentPath == next {
+		return
+	}
+	now := e.now()
+	switch {
+	case peer.currentPath == peerPathRelay && next == peerPathDirect:
+		e.directPromotions++
+		if !peer.relayStartedAt.IsZero() {
+			duration := now.Sub(peer.relayStartedAt)
+			if duration < 0 {
+				duration = 0
+			}
+			e.lastPromotion = duration
+			if duration > e.maximumPromotion {
+				e.maximumPromotion = duration
+			}
+		}
+		peer.relayStartedAt = time.Time{}
+	case peer.currentPath == peerPathDirect && next == peerPathRelay:
+		e.relayFallbacks++
+		peer.relayStartedAt = now
+	case next == peerPathRelay:
+		e.relayBootstraps++
+		peer.relayStartedAt = now
+	}
+}
+
+func (e *WireGuardEngine) now() time.Time {
+	if e != nil && e.clock != nil {
+		return e.clock()
+	}
+
+	return time.Now()
 }
 
 // Close destroys the userspace device, which closes the TUN descriptor and

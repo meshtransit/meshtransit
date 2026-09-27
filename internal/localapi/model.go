@@ -62,11 +62,16 @@ type runtimeStatus struct {
 }
 
 type pathStatus struct {
-	Available    bool `json:"available"`
-	PeerCount    int  `json:"peer_count"`
-	DirectCount  int  `json:"direct_count"`
-	RelayCount   int  `json:"relay_count"`
-	PendingCount int  `json:"pending_count"`
+	Available                 bool   `json:"available"`
+	PeerCount                 int    `json:"peer_count"`
+	DirectCount               int    `json:"direct_count"`
+	RelayCount                int    `json:"relay_count"`
+	PendingCount              int    `json:"pending_count"`
+	RelayBootstrapCount       uint64 `json:"relay_bootstrap_count"`
+	DirectPromotionCount      uint64 `json:"direct_promotion_count"`
+	RelayFallbackCount        uint64 `json:"relay_fallback_count"`
+	LastDirectPromotionMillis int64  `json:"last_direct_promotion_ms"`
+	MaxDirectPromotionMillis  int64  `json:"max_direct_promotion_ms"`
 }
 
 type relayStatus struct {

@@ -390,11 +390,16 @@ func mapRuntimeStatus(status runtimehealth.Snapshot) runtimeStatus {
 
 func mapPathStatus(snapshot dataplane.PeerPathSnapshot) pathStatus {
 	return pathStatus{
-		Available:    snapshot.Available,
-		PeerCount:    snapshot.PeerCount,
-		DirectCount:  snapshot.DirectCount,
-		RelayCount:   snapshot.RelayCount,
-		PendingCount: snapshot.PendingCount,
+		Available:                 snapshot.Available,
+		PeerCount:                 snapshot.PeerCount,
+		DirectCount:               snapshot.DirectCount,
+		RelayCount:                snapshot.RelayCount,
+		PendingCount:              snapshot.PendingCount,
+		RelayBootstrapCount:       snapshot.RelayBootstrapCount,
+		DirectPromotionCount:      snapshot.DirectPromotionCount,
+		RelayFallbackCount:        snapshot.RelayFallbackCount,
+		LastDirectPromotionMillis: snapshot.LastDirectPromotion.Milliseconds(),
+		MaxDirectPromotionMillis:  snapshot.MaxDirectPromotion.Milliseconds(),
 	}
 }
 
