@@ -1,4 +1,4 @@
-// Deterministic source qualification, not a browser/Google/Keycloak acceptance test.
+// Deterministic source qualification, not a browser or live-provider acceptance test.
 // Run with Node's built-in test runner; no packages, network or runtime Node dependency.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

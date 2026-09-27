@@ -5,7 +5,7 @@ This command creates a short-lived Account Session and the minimum
 pristine, self-hosted test deployment.
 
 It is not a login implementation. It does not contact, replace, or bypass the
-production Keycloak/OIDC SSO flow. The synthetic identity uses an unreachable
+production OIDC SSO flow. The synthetic identity uses an unreachable
 `.example` issuer and an ephemeral digest key that is discarded immediately,
 so it cannot be used to authenticate through OIDC. The command is kept below
 `tools/qualification` and must not be copied into the MeshCore runtime image.

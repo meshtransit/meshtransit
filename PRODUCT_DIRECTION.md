@@ -114,8 +114,8 @@ Observation or AI never publishes authority directly.
 
 ## Delivery order
 
-Current Phase 1 remains unchanged: platform spine, initial real Google SSO
-through Keycloak, and supported Core/client qualification.
+Current Phase 1 remains unchanged: platform spine, embedded-broker Google SSO,
+and supported Core/client qualification.
 
 Later delivery order:
 

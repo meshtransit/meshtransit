@@ -491,7 +491,7 @@ func TestLoginHTTPRejectsProofExpiryAfterAdmissionOrCommit(t *testing.T) {
 				t.Fatal("expired initiation released start")
 			}
 			if stage == "admission" && slices.Contains(f.calls, "metadata") {
-				t.Fatal("expired intent reached Keycloak")
+				t.Fatal("expired intent reached provider discovery")
 			}
 		})
 	}

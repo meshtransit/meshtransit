@@ -444,9 +444,10 @@ and fail-closed behavior.
 - Authenticate and authorize every operation server-side. Management RBAC,
   packet policy, group delegation, route approval, sharing approval, and
   enrollment authority are separate decisions.
-- Keycloak is a replaceable OIDC authentication authority. Core owns stable
-  identity, membership, RBAC, sessions, logout generations, and recovery
-  quarantine. Provider roles/groups/email domains never grant Core authority.
+- The embedded identity broker and its connectors are replaceable OIDC
+  authentication components. Core owns stable identity, membership, RBAC,
+  sessions, logout generations, and recovery quarantine. Provider roles,
+  groups, and email domains never grant Core authority.
 - Validate exact OIDC issuer, subject, audience, authorized party where
   applicable, nonce, state, PKCE, time, assurance, algorithm, and trusted key.
   Never link accounts by email alone.

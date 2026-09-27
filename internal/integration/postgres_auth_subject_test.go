@@ -139,7 +139,7 @@ func integrationSubjectExchangeWithProfile(ctx context.Context, t *testing.T, st
 	return exchange, route
 }
 
-// Controlled trusted-port evidence, not live Google/Keycloak signature evidence.
+// Controlled trusted-port evidence, not live-provider signature evidence.
 type integrationSubjectProfile struct {
 	authTime bool
 	sid, acr string
