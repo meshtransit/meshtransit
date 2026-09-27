@@ -11,9 +11,9 @@ are included.
 
 | Artifact | Qualified value |
 | --- | --- |
-| Core source | `d0ae93d98daaa650de61bf5a959319960f8e44fb` |
-| Core image | `manhdev2002/meshtransit-core:poc-v32` |
-| Core image digest | `sha256:61678225d85bff45ce032676d662d8832824c11850bdb621b42c8c9ab6bc02cf` |
+| Core source | `07144a57b61657ec80a3d0d336b56edf416c8b96` |
+| Core image | `manhdev2002/meshtransit-core:poc-v33` |
+| Core image digest | `sha256:380f78a452f5fef747dd963d4c08f66220a4a009dbf41295d980ae67ae5ee287` |
 | Embedded broker release | `v2.45.1+compat.8` |
 | meshd source | `fbd7d385f688314c5d98cf0e34f0beb09b80ad4f` |
 | meshd version | `0.1.0~poc57` |
@@ -21,8 +21,8 @@ are included.
 | meshctl source | `6510072e1a0aa269480f0644092134853431e93e` |
 | meshctl version | `0.1.0~poc57` |
 | meshctl package SHA-256 | `a74f07f176600d4f3473b6b7cdfa4a2d4faba1f223cda7ced2f02cc4b060f09e` |
-| Helm chart | `0.2.14` |
-| Helm release revision | `29` |
+| Helm chart | `0.2.15` |
+| Helm release revision | `31` |
 | Kubernetes topology | One cluster node; two replicas per Core role |
 
 The SSO and policy cases were first executed on Core `60ff4c6` / `poc-v31`
@@ -51,6 +51,7 @@ policy implementations.
 | `POC-HA-002` | Core roles remain available after the test | Pass | API, Control, Identity, and Console Deployments were 2/2; all observed containers had zero restarts |
 | `POC-ROLLOUT-001` | Console-only configuration rollout does not restart Core roles | Pass | Helm revisions 26 through 28 replaced only Console pods; API, Control, and Identity pod identities were unchanged and retained zero restarts |
 | `POC-ROLLOUT-002` | A rolling Core image update preserves control and data-plane convergence | Pass | Helm revision 29 replaced all API, Control, and Identity replicas with `poc-v32`; all roles returned to 2/2 with zero restarts and both clients remained synchronized |
+| `POC-ROLLOUT-003` | A valid browser session survives replacement of every API, Control, and Identity replica | Pass | Helm revision 31 replaced both replicas of all three roles; fresh session checks passed during both replacement waves and after completion, while 1,500 bidirectional overlay probes had zero loss |
 | `POC-RELAY-001` | Relay directory and connections are available | Pass | Both clients reported two connected relay regions and maintained an encrypted relay path during direct-path impairment |
 | `POC-RELAY-002` | A blocked direct path falls back to relay and later returns to direct | Pass | Both clients changed from direct `1/0` to relay `0/1`, enforced deny/restore policy there, and returned to direct `1/0` after fault removal |
 | `POC-RELAY-003` | Relay-region selection and latency meet the POC operational target | Pass | Both clients selected Singapore region 3; forced-relay probes had zero loss and mean RTT of 3.675 ms and 4.594 ms, below the 100 ms POC target |
@@ -182,6 +183,41 @@ The additional transitions captured relay-region convergence and map
 reapplication after startup; identical direct-endpoint reassertions remained
 deduplicated.
 
+## Active-session rolling continuation
+
+Core `poc-v33` was built from the exact source revision above with the verified
+embedded broker workspace. The registry artifact is a digest-pinned amd64 and
+arm64 OCI index with provenance and SBOM attestations. Container identity and
+read-only smoke checks passed, and a fresh Trivy database reported zero High or
+Critical findings in the Go binary.
+
+Helm revision 30 first rolled the `poc-v33` digest through API, Control, and
+Identity. A browser page that had not been reloaded initially appeared to hold
+a session, but its durable PostgreSQL record had already passed both idle and
+absolute expiry before that rollout. Its later rejection was therefore not
+counted as a rollout result.
+
+A new Google login then created an active session at deployment recovery epoch
+1. Immediately before the qualification rollout, PostgreSQL showed both expiry
+conditions in the future, with approximately 3,509 seconds of idle lifetime
+and 7,109 seconds of absolute lifetime remaining. The Console performed a
+fresh protected-session check and displayed policy revision 22.
+
+Helm revision 31 applied a qualification pod-template annotation while keeping
+the exact `poc-v33` digest. This forced both replicas of API, Control, and
+Identity through the chart's `maxUnavailable=0`, `maxSurge=1` rolling strategy.
+The unchanged two-replica Console remained available. The browser reloaded and
+verified the same session while the first replacement replicas were becoming
+Ready, again while the second replicas were replacing their predecessors, and
+once more after Helm reported `deployed`. No login redirect or new Google
+authorization was required.
+
+All six new Core containers were Ready with zero restarts and the pinned image
+digest. Both clients remained synchronized, direct, on Singapore relay region
+3, with zero runtime recovery failures or recoveries. During the rollout, 750
+overlay probes in each direction completed with zero loss. Mean RTT was 1.324
+ms and 1.407 ms; maximum RTT was 8.279 ms and 8.372 ms respectively.
+
 ## HA interpretation
 
 This run qualifies replica replacement, not infrastructure-zone failure. All
@@ -195,8 +231,8 @@ state. Redis remained non-authoritative.
 
 ## Remaining execution order
 
-1. Repeat rolling Core upgrades while preserving an active browser session in
-   addition to both client control streams.
+1. Run a bounded direct/relay anti-flap soak under endpoint and relay-directory
+   churn, then tune hysteresis against an explicit transition-rate target.
 2. Repeat the matrix on a multi-node cluster with topology spread and a node
    drain or loss.
 3. Add PostgreSQL and Redis failover qualification with recovery-generation,
