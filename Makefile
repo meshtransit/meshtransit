@@ -1,4 +1,4 @@
-.PHONY: build test race vet lint scan-secrets audit-release package-deb audit-deb clean
+.PHONY: build test control-integration race vet lint scan-secrets audit-release package-deb audit-deb clean
 
 VERSION ?= 0.1.0~dev
 ARCH ?= amd64
@@ -10,6 +10,9 @@ build:
 
 test:
 	go test ./...
+
+control-integration:
+	go test -tags=integration -run '^TestClient_ProbeLiveControl$$' ./internal/compat/ts2021
 
 race:
 	go test -race ./...

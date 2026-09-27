@@ -71,6 +71,20 @@ head -c 32 /dev/urandom > /tmp/meshd.identity-key
   --identity-key-file /tmp/meshd.identity-key
 ```
 
+The live control bootstrap gate is opt-in. It requires an HTTPS endpoint whose
+certificate is trusted by the test environment and the operator-verified
+fingerprint returned by the local `POST /v1/doctor/control` operation:
+
+```bash
+MESHTRANSIT_INTEGRATION_CONTROL_URL=https://control.example.com \
+MESHTRANSIT_INTEGRATION_CONTROL_FINGERPRINT=sha256:... \
+make control-integration
+```
+
+The gate performs the capability-142 key discovery and encrypted `/ts2021`
+handshake with the production adapter. It does not disable certificate
+verification, follow redirects, persist identity material, or register a node.
+
 Production defaults are `/run/meshd/meshd.sock` and `/var/lib/meshd`. Run the daemon under a dedicated service account and restrict membership of the socket's owning group. Linux authorizes UID `0`, the daemon UID, and values supplied through repeatable `--allow-uid UID` flags. A packaged service can enable `--allow-socket-peers` so kernel-verified callers admitted by the socket's `0660` owner/group permissions are also authorized. The Debian package provisions a host-encrypted systemd credential and exposes its decrypted 32-byte key only inside `meshd.service`; unpackaged development must provide an owner-only key with `--identity-key-file`.
 
 Non-Linux development currently lacks a verified peer-credential implementation and therefore denies API requests. No unverified-peer bypass is compiled into daemon binaries; each platform must implement native kernel-backed peer identity before it can expose the local API.

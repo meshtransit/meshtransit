@@ -44,7 +44,7 @@ directory leaves the active value unchanged; a non-nil directory replaces it
 atomically after full validation. An invalid replacement cannot partially alter
 the running relay pool. The exact lifecycle is pinned by the Core-owned
 `encrypted-relay-bootstrap-v1` compatibility contract at Core revision
-`9ee636c2ec9af17dc139fb883f572717ac019d44`.
+`31f5070de10bf5d67a09d6bd59183c7b2a9d3dac`.
 
 Changing relay topology or node identity changes the topology fingerprint and
 recreates the packet engine. Peer-region bindings and overlay rate-limit
