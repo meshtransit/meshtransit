@@ -121,7 +121,10 @@ A validated change to one peer's ephemeral discovery identity also recreates
 only that peer's encrypted tunnel session. This discards transport keys retained
 across the remote daemon restart without reopening the TUN, shared UDP socket,
 routes, relay workers, or unrelated peer sessions; the next authenticated path
-proof can then restore the direct endpoint immediately.
+proof repeats that peer-scoped reset on the proven direct endpoint. The second
+reset is readiness-gated by a packet from the replacement remote session and
+therefore does not inherit a handshake retry started before the remote packet
+engine was ready.
 
 The relay subsystem compiles an independent immutable authority from each
 validated map. It accepts only non-STUN relay nodes, binds every destination

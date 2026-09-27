@@ -58,6 +58,8 @@ type wireGuardPeerState struct {
 	currentEndpoint     string
 	currentPath         peerPath
 	authorizedEndpoints []netip.AddrPort
+	allowedIPs          []netip.Prefix
+	sessionResetPending bool
 }
 
 type peerPath uint8
@@ -294,6 +296,7 @@ func (e *WireGuardEngine) Apply(
 
 					return StateFailed, err
 				}
+				e.markPeerSessionResetPending(sessionResets)
 				e.relayFingerprint = plan.relayFingerprint
 				e.relayTopology = plan.relayTopology
 
@@ -635,6 +638,27 @@ func (e *WireGuardEngine) SetPreferredEndpoint(
 	if !slices.Contains(peer.authorizedEndpoints, endpoint) {
 		return ErrPeerEndpointUnauthorized
 	}
+	if peer.sessionResetPending {
+		reset := wireGuardPeerPlan{
+			id:           peerID,
+			key:          peer.key,
+			discoveryKey: peer.discoveryKey,
+			baseEndpoint: endpoint.String(),
+			basePath:     peerPathDirect,
+			allowedIPs:   append([]netip.Prefix(nil), peer.allowedIPs...),
+		}
+		if err := e.resetPeerSessions([]wireGuardPeerPlan{reset}); err != nil {
+			_ = e.Close()
+
+			return err
+		}
+		peer.currentEndpoint = reset.baseEndpoint
+		peer.currentPath = reset.basePath
+		peer.sessionResetPending = false
+		e.peers[peerID] = peer
+
+		return nil
+	}
 
 	return e.configurePeerEndpoint(peerID, peer, endpoint.String(), peerPathDirect, true)
 }
@@ -692,6 +716,7 @@ func (e *WireGuardEngine) advanceCompatiblePlan(
 			[]netip.AddrPort(nil),
 			peer.authorizedEndpoints...,
 		)
+		installed.allowedIPs = append([]netip.Prefix(nil), peer.allowedIPs...)
 		installed.discoveryKey = peer.discoveryKey
 		nextPeers[peer.id] = installed
 	}
@@ -720,6 +745,17 @@ func (e *WireGuardEngine) resetPeerSessions(peers []wireGuardPeerPlan) error {
 	}
 
 	return nil
+}
+
+func (e *WireGuardEngine) markPeerSessionResetPending(peers []wireGuardPeerPlan) {
+	for _, peer := range peers {
+		installed, exists := e.peers[peer.id]
+		if !exists || installed.key != peer.key {
+			continue
+		}
+		installed.sessionResetPending = true
+		e.peers[peer.id] = installed
+	}
 }
 
 func (e *WireGuardEngine) configurePeerEndpoint(
@@ -772,6 +808,7 @@ func (e *WireGuardEngine) adoptPlan(revision uint64, plan wireGuardPlan) {
 			currentEndpoint:     peer.baseEndpoint,
 			currentPath:         peer.basePath,
 			authorizedEndpoints: append([]netip.AddrPort(nil), peer.authorizedEndpoints...),
+			allowedIPs:          append([]netip.Prefix(nil), peer.allowedIPs...),
 		}
 	}
 }

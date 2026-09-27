@@ -605,6 +605,36 @@ func TestWireGuardEngineDiscoveryIdentityChangeResetsPeerSession(t *testing.T) {
 		strings.Contains(reset, "replace_peers=true") {
 		t.Fatalf("discovery identity change configuration = %q", reset)
 	}
+	preferred := snapshot.Peers[0].Endpoints[0]
+	if err := engine.SetPreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+		preferred,
+	); err != nil {
+		t.Fatalf("SetPreferredEndpoint() error = %v", err)
+	}
+	if device.configureCalls != 3 {
+		t.Fatalf("authenticated path configure calls = %d, want 3", device.configureCalls)
+	}
+	readinessReset := device.configurations[2]
+	if strings.Count(readinessReset, "public_key=") != 2 ||
+		!strings.Contains(readinessReset, "remove=true") ||
+		!strings.Contains(readinessReset, "endpoint="+preferred.String()) ||
+		strings.Contains(readinessReset, "update_only=true") {
+		t.Fatalf("authenticated path configuration = %q", readinessReset)
+	}
+	if err := engine.SetPreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+		preferred,
+	); err != nil {
+		t.Fatalf("SetPreferredEndpoint(reassert) error = %v", err)
+	}
+	if device.configureCalls != 4 ||
+		!strings.Contains(device.configurations[3], "update_only=true") ||
+		strings.Contains(device.configurations[3], "remove=true") {
+		t.Fatalf("authenticated path reassertion = %q", device.configurations[3])
+	}
 }
 
 func TestWireGuardEngineClosesWhenPeerSessionResetFails(t *testing.T) {
@@ -635,6 +665,49 @@ func TestWireGuardEngineClosesWhenPeerSessionResetFails(t *testing.T) {
 		engine.appliedRevision != 0 {
 		t.Fatalf(
 			"failed peer reset calls=%d close=%d device=%#v revision=%d",
+			device.configureCalls,
+			device.closeCalls,
+			engine.device,
+			engine.appliedRevision,
+		)
+	}
+}
+
+func TestWireGuardEngineClosesWhenReadinessSessionResetFails(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot.Peers[0].DiscoveryKey = "discokey:" + strings.Repeat("11", 32)
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(
+		&wireGuardTUNOpener{},
+		41641,
+		&fakeWireGuardFactory{device: device},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	snapshot.Revision++
+	snapshot.Peers[0].DiscoveryKey = "discokey:" + strings.Repeat("22", 32)
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply(discovery identity change) error = %v", err)
+	}
+	device.configureErr = errors.New("test readiness reset failure")
+	if err := engine.SetPreferredEndpoint(
+		snapshot.Revision,
+		snapshot.Peers[0].ID,
+		snapshot.Peers[0].Endpoints[0],
+	); err == nil {
+		t.Fatal("SetPreferredEndpoint() error = nil")
+	}
+	if device.configureCalls != 3 || device.closeCalls != 1 || engine.device != nil ||
+		engine.appliedRevision != 0 {
+		t.Fatalf(
+			"failed readiness reset calls=%d close=%d device=%#v revision=%d",
 			device.configureCalls,
 			device.closeCalls,
 			engine.device,
