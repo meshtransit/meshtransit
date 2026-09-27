@@ -640,6 +640,46 @@ or broker outage/recovery-generation behavior. The live Google credential and
 POC cluster were untouched. Production runtime source did not change, so no new
 image or Helm rollout was required.
 
+## Upstream identity-provider outage and recovery evidence
+
+Core source `8092e43e90dc1afaa5eb8bf841161659d03ccd70` closes the upstream
+identity-provider portion of `SSO-BROKER-007`. A disposable verified-TLS Linux
+lane exercised separate token-endpoint and signing-key-endpoint transport
+outages against the concrete private-login factory. Each outage occurred only
+after Core had created and captured an otherwise valid browser transaction.
+
+The token-endpoint outage performed one bounded token request and no JWKS read.
+The signing-key outage performed one token request and a bounded JWKS attempt.
+Both callbacks returned the closed unavailable category and released no body,
+cookie, redirect, Session bearer, or durable Session authority. Each consumed
+transaction ended in the exact failed state with one claim and one termination
+evidence sequence. Replaying either callback after failure performed no provider
+I/O and no authority write; the fixture observed no unregistered endpoint or
+alternate effect path.
+
+During both stage-specific outages the factory's admission/discovery check
+remained healthy, so the unavailable callback path did not evict healthy Core
+admission. The existing compiled-process case separately proves the stronger
+discovery-outage boundary: Core `/ready` remains `200`, only `/ready/login`
+becomes `503`, and login readiness recovers on the same process after the
+provider returns. Token and JWKS availability cannot be safely preflighted by
+manufacturing an authorization code, so those failures are contained at the
+real callback boundary rather than predicted by readiness.
+
+After each provider dependency recovered, a fresh login succeeded through the
+same factory without reconstruction or process restart. The new Session was
+persisted, returned only in its protected cookie, and authenticated through the
+resident Session authority. The earlier failed transaction remained failed and
+unreplayable. The full disposable platform lane passed with the race detector,
+as did ordinary and broker-tagged race tests plus ordinary, broker-tagged, and
+integration-tagged vet.
+
+This closes only the upstream provider outage slice. Broker-database outage,
+signer outage, and recovery-generation fencing remain open under
+`SSO-BROKER-007`. The live Google credential and POC cluster were untouched.
+Production runtime source did not change, so no image or Helm rollout was
+required.
+
 ## Private aggregate-runtime canary
 
 Chart `0.2.22` adds a private POC profile for the same immutable `poc-v36`
