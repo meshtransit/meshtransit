@@ -30,6 +30,7 @@ type Status struct {
 	PeerCount          int                    `json:"peer_count"`
 	PolicyRuleCount    int                    `json:"policy_rule_count"`
 	PeerPaths          PathStatus             `json:"paths"`
+	PathProbes         *PathProbeStatus       `json:"path_probes,omitempty"`
 	Relay              RelayStatus            `json:"relay"`
 	NetworkChanges     NetworkChangeStatus    `json:"network_changes"`
 	RuntimeRecovery    *RuntimeRecoveryStatus `json:"runtime_recovery,omitempty"`
@@ -49,6 +50,35 @@ type PathStatus struct {
 	RelayFallbackCount        uint64 `json:"relay_fallback_count"`
 	LastDirectPromotionMillis int64  `json:"last_direct_promotion_ms"`
 	MaxDirectPromotionMillis  int64  `json:"max_direct_promotion_ms"`
+}
+
+// PathProbeStatus contains redacted process-local direct-path diagnostics.
+type PathProbeStatus struct {
+	Available            bool   `json:"available"`
+	MapActivations       uint64 `json:"map_activations"`
+	ActivationPreserved  uint64 `json:"activation_preserved"`
+	ActivationRetired    uint64 `json:"activation_retired"`
+	PendingInvalidated   uint64 `json:"pending_invalidated"`
+	RoundsStarted        uint64 `json:"rounds_started"`
+	RoundsCompleted      uint64 `json:"rounds_completed"`
+	ProbeAttempts        uint64 `json:"probe_attempts"`
+	ProbesStarted        uint64 `json:"probes_started"`
+	ProbesSent           uint64 `json:"probes_sent"`
+	ProbeStartFailures   uint64 `json:"probe_start_failures"`
+	ProbeSendFailures    uint64 `json:"probe_send_failures"`
+	DatagramDrops        uint64 `json:"datagram_drops"`
+	AuthenticatedPings   uint64 `json:"authenticated_pings"`
+	PingRateLimited      uint64 `json:"ping_rate_limited"`
+	PongsSent            uint64 `json:"pongs_sent"`
+	PongSendFailures     uint64 `json:"pong_send_failures"`
+	AuthenticatedPongs   uint64 `json:"authenticated_pongs"`
+	ProbeCompletions     uint64 `json:"probe_completions"`
+	CompletionRejections uint64 `json:"completion_rejections"`
+	ObservationsQueued   uint64 `json:"observations_queued"`
+	ObservationDrops     uint64 `json:"observation_drops"`
+	ObservationsAccepted uint64 `json:"observations_accepted"`
+	ObservationRejected  uint64 `json:"observations_rejected"`
+	DirectExpirations    uint64 `json:"direct_expirations"`
 }
 
 // RelayStatus summarizes relay availability without exposing peer endpoints.

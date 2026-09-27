@@ -24,6 +24,7 @@ Self addresses: none
 Peers: 0
 Peer paths: unavailable
 Path transitions: unavailable
+Path probes: unavailable
 Relay: unavailable
 Policy rules: 0
 Control key: none
