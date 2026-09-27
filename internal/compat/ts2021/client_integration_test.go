@@ -15,11 +15,7 @@ const (
 func TestClient_ProbeLiveControl(t *testing.T) {
 	t.Parallel()
 
-	controlURL := os.Getenv(integrationControlURLEnv)
-	expectedFingerprint := os.Getenv(integrationControlFingerprintEnv)
-	if controlURL == "" || expectedFingerprint == "" {
-		t.Skip("live control endpoint and fingerprint are not configured")
-	}
+	controlURL, expectedFingerprint := integrationControlConfig(t)
 
 	result, err := New().Probe(t.Context(), controlURL)
 	if err != nil {
@@ -32,4 +28,16 @@ func TestClient_ProbeLiveControl(t *testing.T) {
 	if !constantTimeFingerprintEqual(result.KeyFingerprint, expectedFingerprint) {
 		t.Fatalf("Probe() fingerprint does not match configured control identity")
 	}
+}
+
+func integrationControlConfig(t *testing.T) (string, string) {
+	t.Helper()
+
+	controlURL := os.Getenv(integrationControlURLEnv)
+	expectedFingerprint := os.Getenv(integrationControlFingerprintEnv)
+	if controlURL == "" || expectedFingerprint == "" {
+		t.Skip("live control endpoint and fingerprint are not configured")
+	}
+
+	return controlURL, expectedFingerprint
 }

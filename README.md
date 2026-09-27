@@ -85,6 +85,23 @@ The gate performs the capability-142 key discovery and encrypted `/ts2021`
 handshake with the production adapter. It does not disable certificate
 verification, follow redirects, persist identity material, or register a node.
 
+Registration and initial-map qualification additionally requires a short-lived,
+single-use enrollment credential in an owner-only regular file:
+
+```bash
+MESHTRANSIT_INTEGRATION_CONTROL_URL=https://control.example.com \
+MESHTRANSIT_INTEGRATION_CONTROL_FINGERPRINT=sha256:... \
+MESHTRANSIT_INTEGRATION_ENROLLMENT_CREDENTIAL_FILE=/run/private/enrollment-credential \
+make control-registration-integration
+```
+
+This gate creates fresh client identity, consumes the credential through the
+encrypted control session, and requires an authorized first map with a self
+address and usable relay. The credential file must contain exactly one
+newline-terminated presentation, have mode `0600`, and is never logged or
+persisted by the client. Run the gate only against a disposable Network because
+successful registration creates a durable node.
+
 Production defaults are `/run/meshd/meshd.sock` and `/var/lib/meshd`. Run the daemon under a dedicated service account and restrict membership of the socket's owning group. Linux authorizes UID `0`, the daemon UID, and values supplied through repeatable `--allow-uid UID` flags. A packaged service can enable `--allow-socket-peers` so kernel-verified callers admitted by the socket's `0660` owner/group permissions are also authorized. The Debian package provisions a host-encrypted systemd credential and exposes its decrypted 32-byte key only inside `meshd.service`; unpackaged development must provide an owner-only key with `--identity-key-file`.
 
 Non-Linux development currently lacks a verified peer-credential implementation and therefore denies API requests. No unverified-peer bypass is compiled into daemon binaries; each platform must implement native kernel-backed peer identity before it can expose the local API.
