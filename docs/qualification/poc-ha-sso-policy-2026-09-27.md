@@ -15,18 +15,23 @@ are included.
 | Core image | `manhdev2002/meshtransit-core:poc-v32` |
 | Core image digest | `sha256:61678225d85bff45ce032676d662d8832824c11850bdb621b42c8c9ab6bc02cf` |
 | Embedded broker release | `v2.45.1+compat.8` |
-| meshd source | `654adbd0ee4d34bca548a55dcf9c8b3adaa328b8` |
-| meshd version | `0.1.0~poc56` |
-| meshd package SHA-256 | `31218c5b4095a7f7124547e87bf0ce612b31b45458da3a84eb667bc61567d6af` |
+| meshd source | `fbd7d385f688314c5d98cf0e34f0beb09b80ad4f` |
+| meshd version | `0.1.0~poc57` |
+| meshd package SHA-256 | `285d205b1192a23ba06ddf15d4d8d2e3c3a3aedc6e9fa8b82cfe8b2a47295d97` |
+| meshctl source | `6510072e1a0aa269480f0644092134853431e93e` |
+| meshctl version | `0.1.0~poc57` |
+| meshctl package SHA-256 | `a74f07f176600d4f3473b6b7cdfa4a2d4faba1f223cda7ced2f02cc4b060f09e` |
 | Helm chart | `0.2.14` |
 | Helm release revision | `29` |
 | Kubernetes topology | One cluster node; two replicas per Core role |
 
 The SSO and policy cases were first executed on Core `60ff4c6` / `poc-v31`
-and meshd `83fbb61` / `0.1.0~poc55`. The current artifacts add the bounded
-dual-family probe scheduler and generation-fenced preferred-relay echo. The
-relay-locality continuation below exercised those changes end to end without
-changing the Google connector, session, RBAC, or policy implementations.
+and meshd `83fbb61` / `0.1.0~poc55`. Core `poc-v32` and meshd `poc56` added the
+bounded dual-family probe scheduler and generation-fenced preferred-relay
+echo. meshd and meshctl `poc57` add process-local aggregate evidence for relay
+bootstrap, authenticated direct promotion, fallback, and promotion time. The
+continuations below did not change the Google connector, session, RBAC, or
+policy implementations.
 
 ## Qualification matrix
 
@@ -49,6 +54,7 @@ changing the Google connector, session, RBAC, or policy implementations.
 | `POC-RELAY-001` | Relay directory and connections are available | Pass | Both clients reported two connected relay regions and maintained an encrypted relay path during direct-path impairment |
 | `POC-RELAY-002` | A blocked direct path falls back to relay and later returns to direct | Pass | Both clients changed from direct `1/0` to relay `0/1`, enforced deny/restore policy there, and returned to direct `1/0` after fault removal |
 | `POC-RELAY-003` | Relay-region selection and latency meet the POC operational target | Pass | Both clients selected Singapore region 3; forced-relay probes had zero loss and mean RTT of 3.675 ms and 4.594 ms, below the 100 ms POC target |
+| `POC-RELAY-004` | A fresh daemon starts from relay and promotes only after authenticated direct-path discovery | Pass | Independent rolling restarts produced nonzero relay-bootstrap and direct-promotion counters on both clients; observed promotion maxima were 577 ms and 1,068 ms, followed by direct overlay traffic with zero loss |
 | `POC-NODE-HA-001` | Workload survives Kubernetes node failure | Pending | The current POC deliberately uses one cluster node |
 | `POC-DATA-HA-001` | PostgreSQL and Redis failover preserve authority and convergence | Pending | The current POC uses one external PostgreSQL/Redis host |
 
@@ -137,6 +143,45 @@ ten of ten probes then succeeded in each direction with zero loss and mean RTT
 of 1.699 ms and 1.366 ms. The table was absent, the timer was inactive, both
 clients were synchronized, and Core remained 2/2 per role with zero restarts.
 
+## Relay-first startup continuation
+
+meshd `poc57` records process-local aggregate path transitions at the
+WireGuard plan boundary. A relay bootstrap begins when a relay-backed peer plan
+is successfully adopted. Direct promotion is counted only after authenticated
+discovery has selected an authorized endpoint and the device accepted that
+endpoint. The recorded duration therefore measures plan adoption through
+successful direct-path reconfiguration. Reasserting the same direct endpoint
+does not increment the counter. A direct-to-relay transition increments the
+fallback counter and starts a new promotion interval.
+
+The local API and meshctl expose only totals and last/maximum promotion time;
+they do not expose peer identity, endpoint address, or key material. Unit tests
+also cover relay-first startup, repeated direct reassertion, fallback, and
+promotion after fallback. Full race tests, vet, module-diff checks, lint, and
+secret scans passed for both repositories before packaging.
+
+The amd64 packages were installed one client at a time. After the first client
+restart, both meshd and meshnetd were active, the control stream was
+synchronized, and the peer was direct. Its first observation reported one
+relay bootstrap, two direct promotions, one fallback, and 332/577 ms
+last/maximum promotion time. Three overlay probes to the still-running second
+client had zero loss and 1.607 ms mean RTT.
+
+After the second client restart, both services were active and the control
+stream synchronized. It reported one relay bootstrap, one direct promotion,
+zero fallbacks, and 979/979 ms last/maximum promotion time. Three reverse
+overlay probes had zero loss and 1.873 ms mean RTT. Both clients ran meshd and
+meshctl `0.1.0~poc57`; no Core rollout was required for the additive local
+status fields.
+
+After preferred-relay convergence, both clients selected Singapore region 3,
+retained one direct peer path, and remained synchronized. The final snapshots
+reported bootstrap/promotion/fallback totals of 4/5/2 and 2/3/1. Their
+last/maximum promotion times were 15/577 ms and 1,068/1,068 ms respectively.
+The additional transitions captured relay-region convergence and map
+reapplication after startup; identical direct-endpoint reassertions remained
+deduplicated.
+
 ## HA interpretation
 
 This run qualifies replica replacement, not infrastructure-zone failure. All
@@ -150,13 +195,11 @@ state. Redis remained non-authoritative.
 
 ## Remaining execution order
 
-1. Add relay-first bootstrap and direct-path promotion qualification, including
-   convergence-time metrics rather than only steady-state path evidence.
-2. Repeat rolling Core upgrades while preserving an active browser session in
+1. Repeat rolling Core upgrades while preserving an active browser session in
    addition to both client control streams.
-3. Repeat the matrix on a multi-node cluster with topology spread and a node
+2. Repeat the matrix on a multi-node cluster with topology spread and a node
    drain or loss.
-4. Add PostgreSQL and Redis failover qualification with recovery-generation,
+3. Add PostgreSQL and Redis failover qualification with recovery-generation,
    missed-notification, and reconciliation evidence.
-5. Extend publication cases to TCP, UDP, multiple devices, and multiple
+4. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
