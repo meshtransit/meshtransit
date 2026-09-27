@@ -67,10 +67,11 @@ advertised IPv4 underlay addresses. SSH, HTTPS control traffic, routes,
 interfaces, and relay destinations were unchanged. A 15-minute rollback timer
 was armed before the fault and canceled after explicit cleanup.
 
-All six drop counters advanced. The final outbound counters were 45, 40, and
-37 packets; the final inbound counters were 38, 0, and 31 packets. Both clients
-then reported one peer, zero direct paths, one relay path, zero pending paths,
-and two connected relay regions.
+Five of the six drop counters advanced. The final outbound counters were 45,
+40, and 37 packets; the final inbound counters were 38, 0, and 31 packets. The
+zero counter guarded an alternate inbound candidate that was not selected
+during this run. Both clients then reported one peer, zero direct paths, one
+relay path, zero pending paths, and two connected relay regions.
 
 While the direct path remained blocked, revision 21 removed all compiled rules.
 Both clients converged to zero peers and zero client-visible policy rules, and
