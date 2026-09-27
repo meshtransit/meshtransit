@@ -1,0 +1,37 @@
+{
+  "contract_version": 1,
+  "profile": "encrypted-relay-bootstrap-v1",
+  "client_evidence": {
+    "repository": "https://github.com/meshtransit/meshd.git",
+    "revision": "87a3dd293aa95be1a1a0435055b1b31413258d83"
+  },
+  "directory": {
+    "authority": "control-signed-routing-metadata-only",
+    "initial_response": "complete-replacement",
+    "unchanged_delta": "omitted",
+    "changed_delta": "complete-replacement",
+    "stun_only_packet_relay": "forbidden",
+    "authorization_effect": "none"
+  },
+  "home_selection": {
+    "owner": "client",
+    "input": "bounded-stun-latency-and-authenticated-relay-health",
+    "publication": "complete-endpoint-update",
+    "unknown": "omitted",
+    "withdrawal": "explicit-zero",
+    "activation": "validated-control-echo"
+  },
+  "path_lifecycle": {
+    "initial_path": "encrypted-relay",
+    "direct_discovery": "concurrent",
+    "direct_activation": "session-bound-authenticated-proof",
+    "direct_expiry": "restore-encrypted-relay",
+    "network_change": "restore-encrypted-relay-and-reprobe"
+  },
+  "failure": {
+    "missing_usable_relay": "direct-only-with-no-invented-relay",
+    "directory_invalid": "reject-map-atomically",
+    "relay_unavailable": "bounded-reconnect-and-region-failover",
+    "peer_revoked": "remove-direct-and-relay-authority"
+  }
+}
