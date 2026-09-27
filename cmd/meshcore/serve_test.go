@@ -3,8 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/meshtransit/meshtransit/internal/app"
 )
 
 func TestRunRejectsInvalidConfigurationBeforeListening(t *testing.T) {
@@ -45,5 +49,45 @@ func TestRunRelayDoesNotRequireStorage(t *testing.T) {
 
 	if exitCode := run(ctx, lookup, &errorOutput); exitCode != 0 {
 		t.Fatalf("run() = %d, want 0; output = %s", exitCode, errorOutput.String())
+	}
+}
+
+func TestUnavailableDependenciesReportsOnlyClosedComponents(t *testing.T) {
+	t.Parallel()
+
+	state, err := app.NewRuntimeState([]app.Role{app.RoleAPI}, app.ComponentPrivateLogin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetComponentStatuses(map[app.Component]app.ComponentStatus{
+		app.ComponentPostgreSQL:   app.ComponentStatusReady,
+		app.ComponentRedis:        app.ComponentStatusReady,
+		app.ComponentPrivateLogin: app.ComponentStatusUnavailable,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := unavailableDependencies(state); !slices.Equal(got, []string{"private_login"}) {
+		t.Fatalf("unavailableDependencies() = %v, want private_login", got)
+	}
+}
+
+func TestRuntimeFailurePhaseUsesClosedClassifications(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		err  error
+		want string
+	}{
+		{err: errors.Join(errors.New("private detail"), errPrivateIdentityAdmissionCheck), want: "private_login_admission"},
+		{err: errors.Join(errors.New("private detail"), errPrivateIdentityDiscoveryDeadline), want: "private_login_discovery_deadline"},
+		{err: errors.Join(errors.New("private detail"), errPrivateIdentityDiscoveryMetadata), want: "private_login_discovery_metadata"},
+		{err: errors.Join(errors.New("private detail"), errPrivateIdentityDiscoveryTransport), want: "private_login_discovery_transport"},
+		{err: errors.Join(errors.New("private detail"), errPrivateIdentityDiscoveryCheck), want: "private_login_discovery"},
+		{err: errors.New("private detail"), want: "unclassified"},
+	} {
+		if got := runtimeFailurePhase(test.err); got != test.want {
+			t.Fatalf("runtimeFailurePhase() = %q, want %q", got, test.want)
+		}
 	}
 }

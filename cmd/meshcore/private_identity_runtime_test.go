@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
+	"github.com/meshtransit/meshtransit/internal/adapter/oidc"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/app"
 	"github.com/meshtransit/meshtransit/internal/config"
@@ -134,6 +135,22 @@ func TestPrivateIdentityReadinessRejectsIncompleteOrCanceledGraph(t *testing.T) 
 			if !errors.Is(err, errInvalidPrivateIdentityComposition) || err.Error() != errInvalidPrivateIdentityComposition.Error() {
 				t.Fatal("unsafe readiness released or raw diagnostic disclosed")
 			}
+		}
+	}
+}
+
+func TestClassifyPrivateIdentityDiscoveryError(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		err, want error
+	}{
+		{err: context.DeadlineExceeded, want: errPrivateIdentityDiscoveryDeadline},
+		{err: errors.Join(errors.New("fixture"), oidc.ErrInvalidDiscoveryResponse), want: errPrivateIdentityDiscoveryMetadata},
+		{err: errors.Join(errors.New("fixture"), oidc.ErrDiscoveryUnavailable), want: errPrivateIdentityDiscoveryTransport},
+		{err: errors.New("fixture"), want: errPrivateIdentityDiscoveryCheck},
+	} {
+		if got := classifyPrivateIdentityDiscoveryError(test.err); !errors.Is(got, test.want) {
+			t.Fatalf("classifyPrivateIdentityDiscoveryError() = %v, want %v", got, test.want)
 		}
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
@@ -11,6 +12,14 @@ import (
 	"github.com/meshtransit/meshtransit/internal/config"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
+)
+
+var (
+	errPrivateIdentityAdmissionCheck     = errors.New("private identity admission check unavailable")
+	errPrivateIdentityDiscoveryCheck     = errors.New("private identity discovery check unavailable")
+	errPrivateIdentityDiscoveryDeadline  = errors.New("private identity discovery deadline exceeded")
+	errPrivateIdentityDiscoveryMetadata  = errors.New("private identity discovery metadata rejected")
+	errPrivateIdentityDiscoveryTransport = errors.New("private identity discovery transport unavailable")
 )
 
 // The process receives only a validated immutable configuration and its concrete
@@ -107,12 +116,33 @@ func (factory *privateIdentityFactory) Check(ctx context.Context) error {
 		return errInvalidPrivateIdentityComposition
 	}
 	if err := factory.admission.Admit(ctx, factory.route); err != nil {
-		return errInvalidPrivateIdentityComposition
+		return errors.Join(errPrivateIdentityAdmissionCheck, errInvalidPrivateIdentityComposition)
 	}
-	if _, err := factory.discovery.Resolve(ctx, factory.route); err != nil || ctx.Err() != nil {
-		return errInvalidPrivateIdentityComposition
+	_, err := factory.discovery.Resolve(ctx, factory.route)
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		return errors.Join(
+			errPrivateIdentityDiscoveryCheck,
+			classifyPrivateIdentityDiscoveryError(err),
+			errInvalidPrivateIdentityComposition,
+		)
 	}
 	return nil
+}
+
+func classifyPrivateIdentityDiscoveryError(err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return errPrivateIdentityDiscoveryDeadline
+	case errors.Is(err, oidc.ErrInvalidDiscoveryResponse):
+		return errPrivateIdentityDiscoveryMetadata
+	case errors.Is(err, oidc.ErrDiscoveryUnavailable):
+		return errPrivateIdentityDiscoveryTransport
+	default:
+		return errPrivateIdentityDiscoveryCheck
+	}
 }
 
 var _ app.DependencyChecker = (*privateIdentityFactory)(nil)

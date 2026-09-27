@@ -434,9 +434,43 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			context.WithoutCancel(ctx),
 			"runtime failed",
 			"error_code", "runtime_failure",
+			"unavailable_dependencies", unavailableDependencies(readiness),
+			"failure_phase", runtimeFailurePhase(err),
 			"error", err,
 		)
 		return 1
 	}
 	return 0
+}
+
+func runtimeFailurePhase(err error) string {
+	switch {
+	case errors.Is(err, errPrivateIdentityAdmissionCheck):
+		return "private_login_admission"
+	case errors.Is(err, errPrivateIdentityDiscoveryDeadline):
+		return "private_login_discovery_deadline"
+	case errors.Is(err, errPrivateIdentityDiscoveryMetadata):
+		return "private_login_discovery_metadata"
+	case errors.Is(err, errPrivateIdentityDiscoveryTransport):
+		return "private_login_discovery_transport"
+	case errors.Is(err, errPrivateIdentityDiscoveryCheck):
+		return "private_login_discovery"
+	default:
+		return "unclassified"
+	}
+}
+
+func unavailableDependencies(state *app.RuntimeState) []string {
+	if state == nil {
+		return nil
+	}
+	snapshot := state.Snapshot()
+	unavailable := make([]string, 0, len(snapshot.Components))
+	for _, component := range state.RequiredComponents() {
+		name := component.String()
+		if snapshot.Components[name] != app.ComponentStatusReady.String() {
+			unavailable = append(unavailable, name)
+		}
+	}
+	return unavailable
 }
