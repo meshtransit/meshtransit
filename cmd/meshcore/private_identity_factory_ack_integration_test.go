@@ -55,13 +55,14 @@ func TestPrivateIdentityFactoryWireACKIntegration(t *testing.T) {
 			storage.seedRoute(t, provider.route)
 			storage.seedLoginSubject(t, fixture, test.suffix, privateFactorySubject, true)
 			seen := storage.subjectLastSeen(t, test.suffix)
+			options := privateIdentityFactoryOptions{
+				Application: fixture.options,
+				Discovery:   oidc.Options{Timeout: time.Second, MaxMetadataBytes: 64 * 1024},
+				Token:       privateIdentityTokenOptions{Timeout: 10 * time.Second, MaxTokenAge: time.Minute},
+			}
 			cache, _ := storage.openRedis(t)
 			factory, err := composePrivateIdentityFactory(t.Context(), fixture.keys,
-				privateIdentityFactoryOptions{
-					Application: fixture.options,
-					Discovery:   oidc.Options{Timeout: time.Second, MaxMetadataBytes: 64 * 1024},
-					Token:       privateIdentityTokenOptions{Timeout: 10 * time.Second, MaxTokenAge: time.Minute},
-				},
+				options,
 				privateIdentityFactoryDependencies{
 					Runtime: wirePool, Redis: cache, Secret: secret, Logger: discardCompositionLogger(),
 				})
@@ -107,10 +108,24 @@ func TestPrivateIdentityFactoryWireACKIntegration(t *testing.T) {
 				t.Fatal("runtime transport did not reconnect after unknown Commit")
 			}
 			cancel()
+			peerCache, _ := storage.openRedis(t)
+			peer, peerErr := composePrivateIdentityFactory(
+				t.Context(),
+				fixture.keys,
+				options,
+				privateIdentityFactoryDependencies{
+					Runtime: storage.openRuntime(t), Redis: peerCache, Secret: secret,
+					Logger: discardCompositionLogger(),
+				},
+			)
+			if peerErr != nil || peer == nil {
+				t.Fatal("compose replacement acknowledgement replica")
+			}
+			t.Cleanup(peer.Close)
 			replay := newPrivateIdentityResponse()
-			assertConcreteCallbackRejected(t, replay, factory.identity.dispatcher.Handle(replay, post))
+			assertConcreteCallbackRejected(t, replay, peer.identity.dispatcher.Handle(replay, post))
 			if storage.census(t) != before || provider.tokens.Load() != calls || provider.jwks.Load() != calls {
-				t.Fatal("reconnected replay reclaimed, resolved or exchanged an uncertain callback")
+				t.Fatal("replacement replica reclaimed, resolved or exchanged an uncertain callback")
 			}
 			if test.skip == 1 {
 				storage.expireUnknownClaim(t, stranded)
@@ -122,12 +137,12 @@ func TestPrivateIdentityFactoryWireACKIntegration(t *testing.T) {
 				}
 			}
 			// Recovery is a new login, not recovery of a receipt or hidden bearer.
-			location, cookies, _ = storage.startConcreteLogin(t, fixture, factory, address)
+			location, cookies, _ = storage.startConcreteLogin(t, fixture, peer, address)
 			provider.arm(t, location, false)
-			fresh := prepareConcreteCallback(t, fixture, factory, location, cookies, address, false)
+			fresh := prepareConcreteCallback(t, fixture, peer, location, cookies, address, false)
 			before = storage.census(t)
 			completed := newPrivateIdentityResponse()
-			if factory.identity.dispatcher.Handle(completed, fresh) != nil || completed.Code != http.StatusOK ||
+			if peer.identity.dispatcher.Handle(completed, fresh) != nil || completed.Code != http.StatusOK ||
 				completed.Body.String() != `{"return_path":"/console"}` {
 				t.Fatal("independent fresh callback failed after transport recovery")
 			}
