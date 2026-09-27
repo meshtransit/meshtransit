@@ -213,7 +213,7 @@ func (storage *privateFactoryIntegrationStorage) assertPersistedSession(
 AND s.principal_id=11 AND subject.public_id=$2::UUID AND provider.public_id=$3::UUID
 AND client.public_id=$4::UUID AND workspace.public_id=$5::UUID
 AND s.token_digest_algorithm=$6 AND s.token_digest_key_id=$7 AND s.token_digest=$8
-AND s.provider_generation=1 AND s.deployment_recovery_epoch=1
+AND s.provider_generation=$11 AND s.deployment_recovery_epoch=$12
 AND s.principal_authority_generation=1 AND s.account_session_generation=1
 AND s.provider_sid_digest_algorithm IS NULL AND s.provider_sid_digest_key_id IS NULL
 AND s.provider_sid_digest IS NULL AND s.authentication_time=$9 AND s.acr=$10
@@ -226,7 +226,8 @@ JOIN mesh.workspace workspace ON workspace.id=s.login_workspace_id
 WHERE s.public_id=$1::UUID`,
 		session.ID().String(), session.IdentitySubjectID().String(), route.ProviderID().String(),
 		route.ClientID().String(), route.WorkspaceID().String(), digest.Algorithm(), digest.KeyID().String(),
-		value[:], session.AuthenticationTime(), "urn:meshtransit:assurance:mfa").Scan(&exact); err != nil || !exact {
+		value[:], session.AuthenticationTime(), "urn:meshtransit:assurance:mfa",
+		route.ProviderGeneration(), route.RecoveryEpoch()).Scan(&exact); err != nil || !exact {
 		t.Fatal("persisted Session lost exact identity/client/scope/digest/fences")
 	}
 }

@@ -499,6 +499,24 @@ if [[ "${go_runner}" == container ]]; then
 	export MESHTRANSIT_POSTGRES_DATABASE=meshtransit_private_factory_provider_outage
 	run_go test -tags=integration -count=1 -race -shuffle=on -v \
 		-run '^TestPrivateIdentityFactoryProviderOutageRecoveryIntegration$' -timeout=5m ./cmd/meshcore
+	# Provider anti-rollback owns a cold authority scope. It advances the Core
+	# recovery generation without depending on restored broker state.
+	docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname postgres --set ON_ERROR_STOP=1 \
+		--command 'CREATE DATABASE meshtransit_private_factory_recovery OWNER mesh_migrator' \
+		>/dev/null
+	docker exec \
+		--env "PGPASSWORD=${postgres_password}" \
+		"${postgres_container}" \
+		psql --username postgres --dbname meshtransit_private_factory_recovery --set ON_ERROR_STOP=1 \
+		--command 'CREATE EXTENSION btree_gist' \
+		>/dev/null
+	export MESHTRANSIT_MIGRATION_POSTGRES_DATABASE=meshtransit_private_factory_recovery
+	export MESHTRANSIT_POSTGRES_DATABASE=meshtransit_private_factory_recovery
+	run_go test -tags=integration -count=1 -race -shuffle=on -v \
+		-run '^TestPrivateIdentityFactoryProviderRecoveryGenerationIntegration$' -timeout=5m ./cmd/meshcore
 	# Natural factory expiry keeps original timestamps and its one-minute minimum.
 	# This third cold scope has both runtime and independent worker credentials.
 	docker exec \
