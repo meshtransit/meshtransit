@@ -13,6 +13,8 @@ Kubernetes. Policy publication was verified through allow, deny-all, and
 restore transitions while a Control replica was replaced. The deployable Core
 image is built from a manifest-verified Dex workspace; provider-specific
 deployment artifacts are not part of this repository.
+The exact non-production evidence and remaining gaps are recorded in the
+[POC HA, SSO, and policy qualification matrix](docs/qualification/poc-ha-sso-policy-2026-09-27.md).
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,
