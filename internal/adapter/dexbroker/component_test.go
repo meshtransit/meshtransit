@@ -18,6 +18,7 @@ import (
 
 	"github.com/dexidp/dex/storage"
 	"github.com/dexidp/dex/storage/memory"
+	"github.com/go-jose/go-jose/v4"
 )
 
 func TestDexComponentServesConstrainedDiscoveryAndJoins(t *testing.T) {
@@ -173,6 +174,74 @@ func TestDexComponentParentCancellationDrainsRuntime(t *testing.T) {
 	assertComponentChannelOpen(t, serverStorage.closed, "parent cancellation closed borrowed storage")
 }
 
+func TestDexComponentSharesSigningKeyRotationAndJWKSOverlapAcrossReplicas(t *testing.T) {
+	logger := componentTestLogger()
+	serverStorage := newComponentTestStorage(t, logger, true)
+	clock := newComponentTestClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	options := validComponentTestOptions(logger)
+	options.now = clock.Now
+
+	var runtimes []*Runtime
+	t.Cleanup(func() {
+		for _, runtime := range runtimes {
+			shutdownDexComponentRuntime(t, runtime)
+		}
+		if err := serverStorage.Close(); err != nil {
+			t.Fatalf("close storage: %v", err)
+		}
+	})
+	startReplica := func() *Runtime {
+		t.Helper()
+		runtime, err := newDexRuntime(t.Context(), options, componentResources{storage: serverStorage})
+		if err != nil {
+			t.Fatalf("construct runtime: %v", err)
+		}
+		runtimes = append(runtimes, runtime)
+		return runtime
+	}
+
+	first := startReplica()
+	second := startReplica()
+	initialKeys := componentStoredKeys(t, serverStorage)
+	initialKeyID := initialKeys.SigningKey.KeyID
+	preRotationPayload := []byte("issued-before-rotation")
+	preRotationSignature := componentSignedPayload(t, initialKeys.SigningKey, preRotationPayload)
+	for _, runtime := range []*Runtime{first, second} {
+		assertComponentJWKSKeyIDs(t, runtime, initialKeyID)
+	}
+
+	shutdownDexComponentRuntime(t, second)
+	clock.Set(initialKeys.NextRotation.Add(time.Nanosecond))
+	second = startReplica()
+	rotatedKeys := componentStoredKeys(t, serverStorage)
+	rotatedKeyID := rotatedKeys.SigningKey.KeyID
+	if rotatedKeyID == initialKeyID {
+		t.Fatal("second replica did not rotate the shared signing key")
+	}
+	if len(rotatedKeys.VerificationKeys) != 1 ||
+		rotatedKeys.VerificationKeys[0].PublicKey.KeyID != initialKeyID ||
+		!rotatedKeys.VerificationKeys[0].Expiry.Equal(clock.Now().Add(options.idTokensValidFor)) {
+		t.Fatal("retired signing key did not retain the configured token lifetime")
+	}
+	for _, runtime := range []*Runtime{first, second} {
+		jwks := componentJWKS(t, runtime)
+		assertComponentJWKSKeyIDs(t, runtime, initialKeyID, rotatedKeyID)
+		assertComponentSignature(t, jwks, initialKeyID, preRotationSignature, preRotationPayload)
+	}
+
+	shutdownDexComponentRuntime(t, second)
+	clock.Set(rotatedKeys.NextRotation.Add(time.Nanosecond))
+	third := startReplica()
+	retiredKeys := componentStoredKeys(t, serverStorage)
+	thirdKeyID := retiredKeys.SigningKey.KeyID
+	if thirdKeyID == initialKeyID || thirdKeyID == rotatedKeyID {
+		t.Fatal("third replica did not publish a fresh shared signing key")
+	}
+	for _, runtime := range []*Runtime{first, third} {
+		assertComponentJWKSKeyIDs(t, runtime, rotatedKeyID, thirdKeyID)
+	}
+}
+
 func validComponentTestOptions(logger *slog.Logger) componentOptions {
 	return componentOptions{
 		issuer:                     "https://issuer.example/dex",
@@ -187,6 +256,121 @@ func validComponentTestOptions(logger *slog.Logger) componentOptions {
 
 func componentTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+type componentTestClock struct {
+	nanoseconds atomic.Int64
+}
+
+func newComponentTestClock(initial time.Time) *componentTestClock {
+	clock := &componentTestClock{}
+	clock.Set(initial)
+	return clock
+}
+
+func (clock *componentTestClock) Now() time.Time {
+	return time.Unix(0, clock.nanoseconds.Load()).UTC()
+}
+
+func (clock *componentTestClock) Set(now time.Time) {
+	clock.nanoseconds.Store(now.UnixNano())
+}
+
+func componentStoredKeys(t *testing.T, serverStorage storage.Storage) storage.Keys {
+	t.Helper()
+	keys, err := serverStorage.GetKeys(t.Context())
+	if err != nil {
+		t.Fatalf("get shared signing keys: %v", err)
+	}
+	if keys.SigningKey == nil || keys.SigningKeyPub == nil {
+		t.Fatal("shared signing key pair is incomplete")
+	}
+	return keys
+}
+
+func componentSignedPayload(t *testing.T, key *jose.JSONWebKey, payload []byte) string {
+	t.Helper()
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, nil)
+	if err != nil {
+		t.Fatalf("construct signer: %v", err)
+	}
+	signed, err := signer.Sign(payload)
+	if err != nil {
+		t.Fatalf("sign payload: %v", err)
+	}
+	compact, err := signed.CompactSerialize()
+	if err != nil {
+		t.Fatalf("serialize signature: %v", err)
+	}
+	return compact
+}
+
+func componentJWKS(t *testing.T, runtime *Runtime) jose.JSONWebKeySet {
+	t.Helper()
+	request := httptest.NewRequestWithContext(
+		t.Context(),
+		http.MethodGet,
+		"https://issuer.example/dex/keys",
+		nil,
+	)
+	response := httptest.NewRecorder()
+	runtime.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("JWKS status = %d, want %d", response.Code, http.StatusOK)
+	}
+	var jwks jose.JSONWebKeySet
+	if err := json.NewDecoder(response.Body).Decode(&jwks); err != nil {
+		t.Fatalf("decode JWKS: %v", err)
+	}
+	if len(jwks.Keys) == 0 {
+		t.Fatal("JWKS has no verification keys")
+	}
+	for index := range jwks.Keys {
+		key := &jwks.Keys[index]
+		if key.KeyID == "" || key.Algorithm != string(jose.RS256) || key.Use != "sig" || !key.IsPublic() {
+			t.Fatal("JWKS contains a non-public or incomplete signing key")
+		}
+	}
+	return jwks
+}
+
+func assertComponentJWKSKeyIDs(t *testing.T, runtime *Runtime, want ...string) {
+	t.Helper()
+	jwks := componentJWKS(t, runtime)
+	got := make([]string, 0, len(jwks.Keys))
+	for _, key := range jwks.Keys {
+		got = append(got, key.KeyID)
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("JWKS key ids = %v, want %v", got, want)
+	}
+}
+
+func assertComponentSignature(
+	t *testing.T,
+	jwks jose.JSONWebKeySet,
+	keyID string,
+	compact string,
+	wantPayload []byte,
+) {
+	t.Helper()
+	keys := jwks.Key(keyID)
+	if len(keys) != 1 {
+		t.Fatalf("JWKS key matches for %q = %d, want 1", keyID, len(keys))
+	}
+	signed, err := jose.ParseSigned(compact, []jose.SignatureAlgorithm{jose.RS256})
+	if err != nil {
+		t.Fatalf("parse signature: %v", err)
+	}
+	payload, err := signed.Verify(keys[0].Key)
+	if err != nil {
+		t.Fatalf("verify pre-rotation signature: %v", err)
+	}
+	if string(payload) != string(wantPayload) {
+		t.Fatalf("verified payload = %q, want %q", payload, wantPayload)
+	}
 }
 
 type componentTestStorage struct {
