@@ -39,6 +39,8 @@ func newRevisionFeed(
 		revisionfeed.Options{
 			MaxWatchers:      maxWatchers,
 			SubscribeTimeout: subscribeTimeout,
+			ReconnectInitial: feedReconnectInitial,
+			ReconnectMaximum: feedReconnectMaximum,
 		},
 		subscribe,
 		telemetry,

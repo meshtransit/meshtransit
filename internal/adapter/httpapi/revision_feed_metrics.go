@@ -12,6 +12,7 @@ type revisionFeedMetricsCollector struct {
 	watchersDesc  *prometheus.Desc
 	wakeupsDesc   *prometheus.Desc
 	fanoutDesc    *prometheus.Desc
+	reconnectDesc *prometheus.Desc
 }
 
 // NewRevisionFeedMetricsCollector exposes bounded-cardinality subscriber and
@@ -48,6 +49,12 @@ func NewRevisionFeedMetricsCollector(
 			[]string{"result"},
 			nil,
 		),
+		reconnectDesc: prometheus.NewDesc(
+			"meshtransit_revision_feed_reconnect_total",
+			"Total Network revision subscription reconnect outcomes.",
+			[]string{"result"},
+			nil,
+		),
 	}, nil
 }
 
@@ -56,6 +63,7 @@ func (collector *revisionFeedMetricsCollector) Describe(descriptions chan<- *pro
 	descriptions <- collector.watchersDesc
 	descriptions <- collector.wakeupsDesc
 	descriptions <- collector.fanoutDesc
+	descriptions <- collector.reconnectDesc
 }
 
 func (collector *revisionFeedMetricsCollector) Collect(metrics chan<- prometheus.Metric) {
@@ -81,6 +89,14 @@ func (collector *revisionFeedMetricsCollector) Collect(metrics chan<- prometheus
 		[]counterResult{
 			{label: "delivered", value: snapshot.DeliveredTotal},
 			{label: "coalesced", value: snapshot.CoalescedTotal},
+		},
+	)
+	collectCounterResults(
+		metrics,
+		collector.reconnectDesc,
+		[]counterResult{
+			{label: "attempt", value: snapshot.ReconnectTotal},
+			{label: "success", value: snapshot.RecoveredTotal},
 		},
 	)
 }

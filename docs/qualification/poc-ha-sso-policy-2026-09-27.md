@@ -471,6 +471,17 @@ precondition, but it does not mark `POC-DATA-HA-001` as passed: a real quorum,
 endpoint transition, recovery-generation check, and concurrent client traffic
 still need to be exercised.
 
+The two process-owned Redis wakeup feeds now recover a lost Pub/Sub
+subscription without dropping their local map-stream watchers. Recovery uses a
+bounded setup timeout and jittered exponential backoff, closes each failed
+transport, and exports separate attempt and success counters. Notifications
+missed while disconnected remain non-authoritative hints and are repaired by
+the existing periodic PostgreSQL reconciliation. Unit and race coverage proves
+watcher continuity, repeated subscribe failure, typed-nil rejection, terminal
+invalid-value handling, cancellation, and resource closure. This is Core
+failover readiness only; the POC still has one Redis host and does not qualify
+Sentinel, quorum, or Redis infrastructure failover.
+
 ## HA interpretation
 
 This run qualifies rolling replacement and single-worker drain inside one

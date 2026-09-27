@@ -18,7 +18,7 @@ func TestNewRejectsInvalidComposition(t *testing.T) {
 	validSubscribe := func(context.Context) (Subscription, error) {
 		return &fakeSubscription{}, nil
 	}
-	validOptions := Options{MaxWatchers: 1, SubscribeTimeout: time.Second}
+	validOptions := testFeedOptions(1)
 	telemetry := NewTelemetry()
 	tests := []struct {
 		name      string
@@ -26,10 +26,12 @@ func TestNewRejectsInvalidComposition(t *testing.T) {
 		subscribe SubscribeFunc
 		telemetry *Telemetry
 	}{
-		{name: "zero watcher bound", options: Options{SubscribeTimeout: time.Second}, subscribe: validSubscribe, telemetry: telemetry},
-		{name: "excessive watcher bound", options: Options{MaxWatchers: maximumWatchers + 1, SubscribeTimeout: time.Second}, subscribe: validSubscribe, telemetry: telemetry},
-		{name: "missing subscribe timeout", options: Options{MaxWatchers: 1}, subscribe: validSubscribe, telemetry: telemetry},
-		{name: "excessive subscribe timeout", options: Options{MaxWatchers: 1, SubscribeTimeout: maximumSubscribeTimeout + time.Millisecond}, subscribe: validSubscribe, telemetry: telemetry},
+		{name: "zero watcher bound", options: withMaxWatchers(validOptions, 0), subscribe: validSubscribe, telemetry: telemetry},
+		{name: "excessive watcher bound", options: withMaxWatchers(validOptions, maximumWatchers+1), subscribe: validSubscribe, telemetry: telemetry},
+		{name: "missing subscribe timeout", options: withSubscribeTimeout(validOptions, 0), subscribe: validSubscribe, telemetry: telemetry},
+		{name: "excessive subscribe timeout", options: withSubscribeTimeout(validOptions, maximumSubscribeTimeout+time.Millisecond), subscribe: validSubscribe, telemetry: telemetry},
+		{name: "missing reconnect initial", options: withReconnectInitial(validOptions, 0), subscribe: validSubscribe, telemetry: telemetry},
+		{name: "reconnect maximum below initial", options: withReconnectMaximum(validOptions, time.Millisecond-time.Nanosecond), subscribe: validSubscribe, telemetry: telemetry},
 		{name: "missing subscriber", options: validOptions, telemetry: telemetry},
 		{name: "missing telemetry", options: validOptions, subscribe: validSubscribe},
 	}
@@ -48,7 +50,7 @@ func TestFeedBoundsSubscriptionSetup(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const timeout = 2 * time.Second
 		feed, err := New(
-			Options{MaxWatchers: 1, SubscribeTimeout: timeout},
+			withSubscribeTimeout(testFeedOptions(1), timeout),
 			func(ctx context.Context) (Subscription, error) {
 				<-ctx.Done()
 				return nil, ctx.Err()
@@ -76,7 +78,7 @@ func TestFeedOwnsOneSubscriptionLifecycle(t *testing.T) {
 	var subscribeCalls atomic.Int32
 	var sawSubscribeDeadline bool
 	feed, err := New(
-		Options{MaxWatchers: 2, SubscribeTimeout: time.Second},
+		testFeedOptions(2),
 		func(ctx context.Context) (Subscription, error) {
 			subscribeCalls.Add(1)
 			_, sawSubscribeDeadline = ctx.Deadline()
@@ -117,7 +119,7 @@ func TestFeedClassifiesSubscriptionFailures(t *testing.T) {
 
 	subscribeErr := errors.New("controlled subscribe failure")
 	feed, err := New(
-		Options{MaxWatchers: 1, SubscribeTimeout: time.Second},
+		testFeedOptions(1),
 		func(context.Context) (Subscription, error) { return nil, subscribeErr },
 		NewTelemetry(),
 	)
@@ -133,7 +135,7 @@ func TestFeedClassifiesSubscriptionFailures(t *testing.T) {
 
 	var nilSubscription *fakeSubscription
 	feed, err = New(
-		Options{MaxWatchers: 1, SubscribeTimeout: time.Second},
+		testFeedOptions(1),
 		func(context.Context) (Subscription, error) { return nilSubscription, nil },
 		NewTelemetry(),
 	)
@@ -145,34 +147,73 @@ func TestFeedClassifiesSubscriptionFailures(t *testing.T) {
 	}
 }
 
-func TestFeedReceiveFailureClosesAllWatchers(t *testing.T) {
-	t.Parallel()
+func TestFeedReceiveFailureReconnectsWithoutClosingWatchers(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		first := newFakeSubscription()
+		second := newFakeSubscription()
+		var subscribeCalls atomic.Int32
+		telemetry := NewTelemetry()
+		feed, err := New(
+			testFeedOptions(1),
+			func(context.Context) (Subscription, error) {
+				if subscribeCalls.Add(1) == 1 {
+					return first, nil
+				}
+				return second, nil
+			},
+			telemetry,
+		)
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		if err := feed.Start(t.Context()); err != nil {
+			t.Fatalf("Start() error = %v", err)
+		}
+		stopped := false
+		defer func() {
+			if stopped {
+				return
+			}
+			_ = feed.Shutdown(t.Context())
+			<-feed.Done()
+		}()
+		networkID := parseNetworkID(t, testNetworkA)
+		updates, release, err := feed.WatchNetwork(networkID)
+		if err != nil {
+			t.Fatalf("WatchNetwork() error = %v", err)
+		}
+		defer release()
 
-	subscription := newFakeSubscription()
-	feed := mustFeed(t, 1, subscription)
-	networkID := parseNetworkID(t, testNetworkA)
-	updates, release, err := feed.WatchNetwork(networkID)
-	if err != nil {
-		t.Fatalf("WatchNetwork() error = %v", err)
-	}
-	defer release()
+		select {
+		case first.failures <- errors.New("controlled receive failure"):
+		case <-t.Context().Done():
+			t.Fatalf("send receive failure: %v", t.Context().Err())
+		}
+		time.Sleep(2 * time.Millisecond)
+		synctest.Wait()
+		snapshot := telemetry.Snapshot()
+		if !snapshot.Connected || snapshot.ActiveWatchers != 1 ||
+			snapshot.ReconnectTotal != 1 || snapshot.RecoveredTotal != 1 {
+			t.Fatalf("telemetry after recovery = %+v", snapshot)
+		}
+		publishRevision(t, second, testNetworkA, 9)
+		synctest.Wait()
+		assertRevision(t, updates, testNetworkA, 9)
+		select {
+		case result := <-feed.Done():
+			t.Fatalf("feed stopped after recoverable failure: %v", result)
+		default:
+		}
 
-	receiveErr := errors.New("controlled receive failure")
-	select {
-	case subscription.failures <- receiveErr:
-	case <-t.Context().Done():
-		t.Fatalf("send receive failure: %v", t.Context().Err())
-	}
-	result := receiveFeedResult(t, feed.Done())
-	if !errors.Is(result, ErrReceive) || !errors.Is(result, receiveErr) {
-		t.Fatalf("Done() result = %v, want classified receive failure", result)
-	}
-	if _, open := <-updates; open {
-		t.Fatal("watcher remained open after subscription loss")
-	}
-	if snapshot := feed.telemetry.Snapshot(); snapshot.Connected || snapshot.ActiveWatchers != 0 {
-		t.Fatalf("telemetry after receive failure = %+v", snapshot)
-	}
+		if err := feed.Shutdown(t.Context()); err != nil {
+			t.Fatalf("Shutdown() error = %v", err)
+		}
+		synctest.Wait()
+		if result := <-feed.Done(); result != nil {
+			t.Fatalf("Done() result = %v, want nil", result)
+		}
+		stopped = true
+	})
 }
 
 func TestFeedShutdownCancelsStartup(t *testing.T) {
@@ -180,7 +221,7 @@ func TestFeedShutdownCancelsStartup(t *testing.T) {
 
 	entered := make(chan struct{})
 	feed, err := New(
-		Options{MaxWatchers: 1, SubscribeTimeout: time.Second},
+		testFeedOptions(1),
 		func(ctx context.Context) (Subscription, error) {
 			close(entered)
 			<-ctx.Done()
@@ -242,7 +283,7 @@ func mustFeed(t *testing.T, maxWatchers int, subscription *fakeSubscription) *Fe
 func mustUnstartedFeed(t *testing.T, maxWatchers int, subscription *fakeSubscription) *Feed {
 	t.Helper()
 	feed, err := New(
-		Options{MaxWatchers: maxWatchers, SubscribeTimeout: time.Second},
+		testFeedOptions(maxWatchers),
 		func(context.Context) (Subscription, error) { return subscription, nil },
 		NewTelemetry(),
 	)
@@ -261,6 +302,35 @@ func receiveFeedResult(t *testing.T, done <-chan error) error {
 		t.Fatalf("wait for feed result: %v", t.Context().Err())
 		return nil
 	}
+}
+
+func testFeedOptions(maxWatchers int) Options {
+	return Options{
+		MaxWatchers:      maxWatchers,
+		SubscribeTimeout: time.Second,
+		ReconnectInitial: time.Millisecond,
+		ReconnectMaximum: 4 * time.Millisecond,
+	}
+}
+
+func withMaxWatchers(options Options, maximum int) Options {
+	options.MaxWatchers = maximum
+	return options
+}
+
+func withSubscribeTimeout(options Options, timeout time.Duration) Options {
+	options.SubscribeTimeout = timeout
+	return options
+}
+
+func withReconnectInitial(options Options, delay time.Duration) Options {
+	options.ReconnectInitial = delay
+	return options
+}
+
+func withReconnectMaximum(options Options, delay time.Duration) Options {
+	options.ReconnectMaximum = delay
+	return options
 }
 
 type fakeSubscription struct {

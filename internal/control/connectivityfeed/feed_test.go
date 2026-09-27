@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -18,7 +19,7 @@ func TestFeedFansOutAndCoalescesNetworkConnectivityWakeups(t *testing.T) {
 		subscription := newTestSubscription()
 		telemetry := NewTelemetry()
 		feed, err := New(
-			Options{MaxWatchers: 2, SubscribeTimeout: time.Second},
+			testFeedOptions(2),
 			func(context.Context) (Subscription, error) { return subscription, nil },
 			telemetry,
 		)
@@ -28,6 +29,14 @@ func TestFeedFansOutAndCoalescesNetworkConnectivityWakeups(t *testing.T) {
 		if err := feed.Start(t.Context()); err != nil {
 			t.Fatalf("Start() error = %v", err)
 		}
+		stopped := false
+		defer func() {
+			if stopped {
+				return
+			}
+			_ = feed.Shutdown(t.Context())
+			<-feed.Done()
+		}()
 		first := connectivityChangeFixture(t, "01890f00-0000-7000-8000-000000000701", 1)
 		second := connectivityChangeFixture(t, "01890f00-0000-7000-8000-000000000702", 2)
 		updates, release, err := feed.WatchNetwork(first.NetworkID())
@@ -66,6 +75,79 @@ func TestFeedFansOutAndCoalescesNetworkConnectivityWakeups(t *testing.T) {
 		if subscription.closeCalls() != 1 || telemetry.Snapshot().Connected {
 			t.Fatalf("shutdown = closes %d telemetry %+v", subscription.closeCalls(), telemetry.Snapshot())
 		}
+		stopped = true
+	})
+}
+
+func TestFeedReconnectsWithoutDroppingConnectivityWatchers(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		first := newTestSubscription()
+		second := newTestSubscription()
+		var subscribeCalls atomic.Int32
+		telemetry := NewTelemetry()
+		feed, err := New(
+			testFeedOptions(1),
+			func(context.Context) (Subscription, error) {
+				if subscribeCalls.Add(1) == 1 {
+					return first, nil
+				}
+				return second, nil
+			},
+			telemetry,
+		)
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		if err := feed.Start(t.Context()); err != nil {
+			t.Fatalf("Start() error = %v", err)
+		}
+		stopped := false
+		defer func() {
+			if stopped {
+				return
+			}
+			_ = feed.Shutdown(t.Context())
+			<-feed.Done()
+		}()
+		change := connectivityChangeFixture(t, "01890f00-0000-7000-8000-000000000701", 1)
+		updates, release, err := feed.WatchNetwork(change.NetworkID())
+		if err != nil {
+			t.Fatalf("WatchNetwork() error = %v", err)
+		}
+		defer release()
+
+		first.fail(errors.New("transport lost"))
+		time.Sleep(2 * time.Millisecond)
+		synctest.Wait()
+		snapshot := telemetry.Snapshot()
+		if !snapshot.Connected || snapshot.ActiveWatchers != 1 ||
+			snapshot.ReconnectTotal != 1 || snapshot.RecoveredTotal != 1 {
+			t.Fatalf("telemetry after recovery = %+v", snapshot)
+		}
+		second.send(change)
+		synctest.Wait()
+		select {
+		case got, open := <-updates:
+			if !open || got.Key() != change.Key() {
+				t.Fatalf("recovered wakeup = (%+v,%t), want %+v", got, open, change)
+			}
+		default:
+			t.Fatal("watcher received no wakeup after recovery")
+		}
+		select {
+		case result := <-feed.Done():
+			t.Fatalf("feed stopped after recoverable failure: %v", result)
+		default:
+		}
+
+		if err := feed.Shutdown(t.Context()); err != nil {
+			t.Fatalf("Shutdown() error = %v", err)
+		}
+		synctest.Wait()
+		if result := <-feed.Done(); result != nil {
+			t.Fatalf("Done() result = %v, want nil", result)
+		}
+		stopped = true
 	})
 }
 
@@ -77,7 +159,7 @@ func TestFeedRejectsUnsafeLifecycleAndWatcherInputs(t *testing.T) {
 		t.Fatalf("New(invalid) error = %v, want ErrInvalidFeed", err)
 	}
 	feed, err := New(
-		Options{MaxWatchers: 1, SubscribeTimeout: time.Second},
+		testFeedOptions(1),
 		func(context.Context) (Subscription, error) { return newTestSubscription(), nil },
 		telemetry,
 	)
@@ -106,17 +188,33 @@ func TestFeedRejectsUnsafeLifecycleAndWatcherInputs(t *testing.T) {
 	if err := feed.Shutdown(t.Context()); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
 	}
+	if result := <-feed.Done(); result != nil {
+		t.Fatalf("Done() result = %v", result)
+	}
+}
+
+func testFeedOptions(maxWatchers int) Options {
+	return Options{
+		MaxWatchers:      maxWatchers,
+		SubscribeTimeout: time.Second,
+		ReconnectInitial: time.Millisecond,
+		ReconnectMaximum: 4 * time.Millisecond,
+	}
 }
 
 type testSubscription struct {
-	updates chan mapsession.ConnectivityChanged
-	mu      sync.Mutex
-	closed  bool
-	closes  int
+	updates  chan mapsession.ConnectivityChanged
+	failures chan error
+	mu       sync.Mutex
+	closed   bool
+	closes   int
 }
 
 func newTestSubscription() *testSubscription {
-	return &testSubscription{updates: make(chan mapsession.ConnectivityChanged)}
+	return &testSubscription{
+		updates:  make(chan mapsession.ConnectivityChanged),
+		failures: make(chan error),
+	}
 }
 
 func (subscription *testSubscription) Receive(
@@ -127,6 +225,8 @@ func (subscription *testSubscription) Receive(
 		return mapsession.ConnectivityChanged{}, ctx.Err()
 	case change := <-subscription.updates:
 		return change, nil
+	case err := <-subscription.failures:
+		return mapsession.ConnectivityChanged{}, err
 	}
 }
 
@@ -142,6 +242,10 @@ func (subscription *testSubscription) Close() error {
 
 func (subscription *testSubscription) send(change mapsession.ConnectivityChanged) {
 	subscription.updates <- change
+}
+
+func (subscription *testSubscription) fail(err error) {
+	subscription.failures <- err
 }
 
 func (subscription *testSubscription) closeCalls() int {

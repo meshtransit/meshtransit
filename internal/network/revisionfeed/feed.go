@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/network"
+	"github.com/meshtransit/meshtransit/internal/wakeup"
 )
 
 const (
@@ -27,7 +28,7 @@ var (
 	ErrFeedUnavailable = errors.New("network revision feed: unavailable")
 	// ErrSubscribe reports failure to establish the process-owned subscription.
 	ErrSubscribe = errors.New("network revision feed: subscribe")
-	// ErrReceive reports unexpected loss of the process-owned subscription.
+	// ErrReceive reports a terminal invalid value from the process-owned subscription.
 	ErrReceive = errors.New("network revision feed: receive")
 )
 
@@ -35,6 +36,8 @@ var (
 type Options struct {
 	MaxWatchers      int
 	SubscribeTimeout time.Duration
+	ReconnectInitial time.Duration
+	ReconnectMaximum time.Duration
 }
 
 // Feed owns one subscription goroutine and a bounded set of local watchers.
@@ -61,7 +64,9 @@ type Feed struct {
 func New(options Options, subscribe SubscribeFunc, telemetry *Telemetry) (*Feed, error) {
 	if options.MaxWatchers <= 0 || options.MaxWatchers > maximumWatchers ||
 		options.SubscribeTimeout < minimumSubscribeTimeout ||
-		options.SubscribeTimeout > maximumSubscribeTimeout || subscribe == nil || telemetry == nil {
+		options.SubscribeTimeout > maximumSubscribeTimeout ||
+		!wakeup.ValidRecoveryOptions(recoveryOptions(options)) ||
+		subscribe == nil || telemetry == nil {
 		return nil, ErrInvalidFeed
 	}
 	return &Feed{
@@ -205,25 +210,36 @@ func (feed *Feed) Shutdown(ctx context.Context) error {
 	return subscription.Close()
 }
 
-func (feed *Feed) run(ctx context.Context, subscription Subscription) (resultErr error) {
-	defer func() {
-		feed.stopWatching()
-		feed.telemetry.setConnected(false)
-		resultErr = errors.Join(resultErr, subscription.Close())
-	}()
-
-	for {
-		revision, err := subscription.Receive(ctx)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
+func (feed *Feed) run(ctx context.Context, subscription Subscription) error {
+	defer feed.stopWatching()
+	defer feed.telemetry.setConnected(false)
+	return wakeup.RunRecovery(
+		ctx,
+		subscription,
+		func(subscribeCtx context.Context) (wakeup.Subscription[network.RevisionAdvanced], error) {
+			return feed.subscribe(subscribeCtx)
+		},
+		recoveryOptions(feed.options),
+		wakeup.RecoveryObserver{
+			SetConnected:     feed.telemetry.setConnected,
+			ReconnectAttempt: feed.telemetry.reconnectAttempt,
+			ReconnectSuccess: feed.telemetry.reconnectSuccess,
+		},
+		func(revision network.RevisionAdvanced) error {
+			if !revision.IsValid() {
+				return errors.Join(ErrReceive, ErrInvalidFeed)
 			}
-			return errors.Join(ErrReceive, err)
-		}
-		if !revision.IsValid() {
-			return errors.Join(ErrReceive, ErrInvalidFeed)
-		}
-		feed.dispatch(revision)
+			feed.dispatch(revision)
+			return nil
+		},
+	)
+}
+
+func recoveryOptions(options Options) wakeup.RecoveryOptions {
+	return wakeup.RecoveryOptions{
+		SubscribeTimeout: options.SubscribeTimeout,
+		RetryInitial:     options.ReconnectInitial,
+		RetryMaximum:     options.ReconnectMaximum,
 	}
 }
 

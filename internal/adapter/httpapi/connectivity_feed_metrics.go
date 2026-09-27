@@ -12,6 +12,7 @@ type connectivityFeedMetricsCollector struct {
 	watchersDesc  *prometheus.Desc
 	wakeupsDesc   *prometheus.Desc
 	fanoutDesc    *prometheus.Desc
+	reconnectDesc *prometheus.Desc
 }
 
 // NewConnectivityFeedMetricsCollector exposes bounded-cardinality subscriber
@@ -48,6 +49,12 @@ func NewConnectivityFeedMetricsCollector(
 			[]string{"result"},
 			nil,
 		),
+		reconnectDesc: prometheus.NewDesc(
+			"meshtransit_connectivity_feed_reconnect_total",
+			"Total connectivity subscription reconnect outcomes.",
+			[]string{"result"},
+			nil,
+		),
 	}, nil
 }
 
@@ -58,6 +65,7 @@ func (collector *connectivityFeedMetricsCollector) Describe(
 	descriptions <- collector.watchersDesc
 	descriptions <- collector.wakeupsDesc
 	descriptions <- collector.fanoutDesc
+	descriptions <- collector.reconnectDesc
 }
 
 func (collector *connectivityFeedMetricsCollector) Collect(metrics chan<- prometheus.Metric) {
@@ -83,6 +91,14 @@ func (collector *connectivityFeedMetricsCollector) Collect(metrics chan<- promet
 		[]counterResult{
 			{label: "delivered", value: snapshot.DeliveredTotal},
 			{label: "coalesced", value: snapshot.CoalescedTotal},
+		},
+	)
+	collectCounterResults(
+		metrics,
+		collector.reconnectDesc,
+		[]counterResult{
+			{label: "attempt", value: snapshot.ReconnectTotal},
+			{label: "success", value: snapshot.RecoveredTotal},
 		},
 	)
 }

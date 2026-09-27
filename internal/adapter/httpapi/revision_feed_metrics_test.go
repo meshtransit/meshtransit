@@ -30,11 +30,13 @@ func TestRevisionFeedMetricsExposeBoundedSignals(t *testing.T) {
 	}
 	response := request(t, metrics.handler, "/metrics")
 	for name, value := range map[string]string{
-		"subscriber state": `meshtransit_revision_feed_subscriber_connected 0`,
-		"active watchers":  `meshtransit_revision_feed_watchers_active 0`,
-		"received wakeups": `meshtransit_revision_feed_wakeups_received_total 0`,
-		"delivered fanout": `meshtransit_revision_feed_fanout_total{result="delivered"} 0`,
-		"coalesced fanout": `meshtransit_revision_feed_fanout_total{result="coalesced"} 0`,
+		"subscriber state":  `meshtransit_revision_feed_subscriber_connected 0`,
+		"active watchers":   `meshtransit_revision_feed_watchers_active 0`,
+		"received wakeups":  `meshtransit_revision_feed_wakeups_received_total 0`,
+		"delivered fanout":  `meshtransit_revision_feed_fanout_total{result="delivered"} 0`,
+		"coalesced fanout":  `meshtransit_revision_feed_fanout_total{result="coalesced"} 0`,
+		"reconnect attempt": `meshtransit_revision_feed_reconnect_total{result="attempt"} 0`,
+		"reconnect success": `meshtransit_revision_feed_reconnect_total{result="success"} 0`,
 	} {
 		if !strings.Contains(response.Body.String(), value) {
 			t.Errorf("metrics missing %s %q", name, value)

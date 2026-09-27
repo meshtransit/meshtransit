@@ -9,6 +9,8 @@ type Telemetry struct {
 	wakeupsTotal   atomic.Uint64
 	deliveredTotal atomic.Uint64
 	coalescedTotal atomic.Uint64
+	reconnectTotal atomic.Uint64
+	recoveredTotal atomic.Uint64
 }
 
 // TelemetrySnapshot is one read-only process-local observation.
@@ -18,6 +20,8 @@ type TelemetrySnapshot struct {
 	WakeupsTotal   uint64
 	DeliveredTotal uint64
 	CoalescedTotal uint64
+	ReconnectTotal uint64
+	RecoveredTotal uint64
 }
 
 // NewTelemetry constructs zeroed feed telemetry.
@@ -34,12 +38,16 @@ func (telemetry *Telemetry) Snapshot() TelemetrySnapshot {
 		WakeupsTotal:   telemetry.wakeupsTotal.Load(),
 		DeliveredTotal: telemetry.deliveredTotal.Load(),
 		CoalescedTotal: telemetry.coalescedTotal.Load(),
+		ReconnectTotal: telemetry.reconnectTotal.Load(),
+		RecoveredTotal: telemetry.recoveredTotal.Load(),
 	}
 }
 
 func (telemetry *Telemetry) setConnected(connected bool) { telemetry.connected.Store(connected) }
 func (telemetry *Telemetry) watcherOpened()              { telemetry.watchers.Add(1) }
 func (telemetry *Telemetry) watcherClosed()              { telemetry.watchers.Add(-1) }
+func (telemetry *Telemetry) reconnectAttempt()           { telemetry.reconnectTotal.Add(1) }
+func (telemetry *Telemetry) reconnectSuccess()           { telemetry.recoveredTotal.Add(1) }
 
 func (telemetry *Telemetry) recordWakeup(delivered, coalesced uint64) {
 	telemetry.wakeupsTotal.Add(1)

@@ -42,6 +42,10 @@ bounded, versioned `NetworkRevisionAdvanced` and connectivity-change wakeup
 transports. A control replica holds one subscription for each feed and fans
 wakeups into bounded, coalescing Network-local channels. PostgreSQL remains the
 source of peer visibility and packet authority; Redis loss never widens access.
+Transient subscription loss keeps existing watchers registered while each feed
+reconnects with bounded jittered exponential backoff. Reconnect attempts and
+successful recoveries are exported as bounded metrics. A notification missed
+during recovery is repaired by periodic authoritative PostgreSQL reconciliation.
 Same-revision endpoint and online changes use bounded complete-node deltas;
 authority, DNS, and relay deltas, durable endpoint history, and relay behavior
 are not implemented.
@@ -645,8 +649,8 @@ values, and discovery keys are never labels. Pool state is sampled only when
 metrics are scraped; no observability goroutine or unbounded label is introduced.
 
 Control and `all` processes expose revision-feed and connectivity-feed subscriber
-state, active watchers, received wakeups, and bounded `delivered`/`coalesced`
-fan-out results.
+state, active watchers, received wakeups, bounded `delivered`/`coalesced`
+fan-out results, and bounded reconnect attempt/success counters.
 Workspace, Network, Node, session, and replica identities are never metric
 labels. Each process-owned feed subscriber serves all local map streams; no
 client creates its own Redis connection or goroutine.

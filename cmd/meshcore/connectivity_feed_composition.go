@@ -39,6 +39,8 @@ func newConnectivityFeed(
 		connectivityfeed.Options{
 			MaxWatchers:      maxWatchers,
 			SubscribeTimeout: subscribeTimeout,
+			ReconnectInitial: feedReconnectInitial,
+			ReconnectMaximum: feedReconnectMaximum,
 		},
 		subscribe,
 		telemetry,
