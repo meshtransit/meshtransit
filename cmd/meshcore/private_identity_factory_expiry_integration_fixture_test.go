@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"os"
 	"testing"
 	"time"
 
@@ -40,7 +39,7 @@ func (storage *privateFactoryIntegrationStorage) openPrivateFactoryWorkerPool(
 	database string,
 ) *postgresadapter.Pool {
 	t.Helper()
-	process, err := config.Load(os.LookupEnv)
+	process, err := config.Load(privateFactoryConfigLookup("worker"))
 	if err != nil || process.Storage == nil || process.Storage.PostgreSQL.Worker == nil {
 		t.Fatal("load owned expiry worker credentials")
 	}

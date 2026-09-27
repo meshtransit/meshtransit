@@ -145,6 +145,116 @@ func TestPrivateIdentityFactoryCallbackIntegration(t *testing.T) {
 			}
 		})
 	}
+	t.Run("concurrent duplicate across replicas", func(t *testing.T) {
+		fixture := newPrivateIdentityFixture(t)
+		provider, secret := newPrivateFactorySigningProvider(t, 80)
+		fixture.options.Route = provider.route
+		storage.seedRoute(t, provider.route)
+		storage.seedLoginSubject(t, fixture, 80, privateFactorySubject, true)
+		seen := storage.subjectLastSeen(t, 80)
+
+		replicas := make([]*privateIdentityFactory, 2)
+		for index := range replicas {
+			runtime := storage.runtime
+			if index > 0 {
+				runtime = storage.openRuntime(t)
+			}
+			cache, _ := storage.openRedis(t)
+			factory, err := composePrivateIdentityFactory(
+				t.Context(), fixture.keys,
+				privateIdentityFactoryOptions{
+					Application: fixture.options,
+					Discovery:   oidc.Options{Timeout: time.Second, MaxMetadataBytes: 64 * 1024},
+					Token:       privateIdentityTokenOptions{Timeout: 10 * time.Second, MaxTokenAge: time.Minute},
+				},
+				privateIdentityFactoryDependencies{
+					Runtime: runtime, Redis: cache, Secret: secret, Logger: discardCompositionLogger(),
+				},
+			)
+			if err != nil || factory == nil {
+				t.Fatal("compose callback replica")
+			}
+			replicas[index] = factory
+			t.Cleanup(factory.Close)
+		}
+
+		const address = "192.0.2.90:12345"
+		location, cookies, transactionID := storage.startConcreteLogin(t, fixture, replicas[0], address)
+		provider.arm(t, location, false)
+		post := prepareConcreteCallback(t, fixture, replicas[0], location, cookies, address, false)
+		before := storage.census(t)
+
+		type attempt struct {
+			replica  int
+			response *privateIdentityResponse
+			err      error
+		}
+		ready := make(chan struct{}, len(replicas))
+		start := make(chan struct{})
+		results := make(chan attempt, len(replicas))
+		for index, replica := range replicas {
+			request := duplicateConcreteCallbackRequest(t, fixture, post)
+			go func(index int, factory *privateIdentityFactory, callback *http.Request) {
+				ready <- struct{}{}
+				<-start
+				response := newPrivateIdentityResponse()
+				results <- attempt{replica: index, response: response, err: factory.identity.dispatcher.Handle(response, callback)}
+			}(index, replica, request)
+		}
+		for range replicas {
+			<-ready
+		}
+		close(start)
+
+		winner := -1
+		var token accountsession.Token
+		for range replicas {
+			result := <-results
+			if result.err != nil {
+				assertConcurrentCallbackClosed(t, result.response, result.err)
+				continue
+			}
+			if winner >= 0 || result.response.Code != http.StatusOK ||
+				result.response.Body.String() != `{"return_path":"/console"}` {
+				t.Fatal("duplicate callback produced an ambiguous successful response")
+			}
+			winner = result.replica
+			token = assertConcreteSessionCookies(t, result.response, true)
+		}
+		if winner < 0 || provider.tokens.Load() != 1 || provider.jwks.Load() != 1 ||
+			provider.discovery.Load() != 1 || provider.unexpected.Load() != 0 {
+			t.Fatal("callback race did not preserve one provider exchange")
+		}
+
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		session, err := replicas[1-winner].identity.sessions.Authenticate(ctx, token)
+		cancel()
+		if err != nil {
+			t.Fatal("other callback replica could not authenticate the winning Session")
+		}
+		assertPrivateFactorySession(t, session, provider.route, 80)
+		storage.assertPersistedSession(t, fixture, session, token)
+		storage.assertCallbackTerminal(t, transactionID, session)
+		before.sessions++
+		before.mutations += 3
+		before.audit += 3
+		before.outbox += 3
+		if storage.census(t) != before || !storage.subjectLastSeen(t, 80).Equal(seen) {
+			t.Fatal("duplicate callback changed authority or emitted duplicate evidence")
+		}
+	})
+}
+
+func duplicateConcreteCallbackRequest(
+	t *testing.T,
+	fixture *privateIdentityFixture,
+	source *http.Request,
+) *http.Request {
+	t.Helper()
+	request := fixture.loginRequest(t, source.URL.Path)
+	request.RemoteAddr = source.RemoteAddr
+	request.Header = source.Header.Clone()
+	return request
 }
 
 func (storage *privateFactoryIntegrationStorage) startConcreteLogin(
@@ -297,6 +407,17 @@ func assertConcreteCallbackRejected(t *testing.T, response *privateIdentityRespo
 		response.Header().Get("Location") != ""
 	if !rejected || released {
 		t.Fatal("rejected callback released browser material or changed error category")
+	}
+}
+
+func assertConcurrentCallbackClosed(t *testing.T, response *privateIdentityResponse, err error) {
+	t.Helper()
+	closed := errors.Is(err, httpapi.ErrInvalidLoginCompletion) ||
+		errors.Is(err, httpapi.ErrLoginCompletionUnavailable)
+	released := response.Body.Len() != 0 || response.Header().Get("Set-Cookie") != "" ||
+		response.Header().Get("Location") != ""
+	if !closed || released {
+		t.Fatal("losing callback released browser material or changed closed error category")
 	}
 }
 

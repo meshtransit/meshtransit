@@ -73,8 +73,8 @@ func TestPrivateIdentityRuntimeProcessIntegration(t *testing.T) {
 		t.Fatal("refuse non-owned source binary")
 	}
 
-	// Initial provider failure must stop the compiled composition root before
-	// health, bearer API or private TLS listeners start. Never print child logs.
+	// Initial provider failure closes only login readiness. General API/health
+	// admission stays available, and configuration validation performs no I/O.
 	provider.unavailable.Store(true)
 	var validation, validationErrors bytes.Buffer
 	lookup := func(name string) (string, bool) {
@@ -98,32 +98,23 @@ func TestPrivateIdentityRuntimeProcessIntegration(t *testing.T) {
 	if provider.discovery.Load() != 0 || provider.other.Load() != 0 || storage.census(t) != before {
 		t.Fatal("configuration validation performed readiness or authority effects")
 	}
-	denied := startPrivateRuntimeProcess(t, binary, environment)
-	if err := denied.join(t.Context(), 5*time.Second); err == nil {
-		t.Fatal("unavailable provider admitted process")
-	} else if _, exited := errors.AsType[*exec.ExitError](err); !exited {
-		t.Fatal("initial prerequisite failure did not terminate owned process")
-	}
-	if denied.diagnostic.failureCode() != "runtime_failure" || provider.discovery.Load() == 0 {
-		t.Fatal("initial rejection did not reach actual provider readiness")
-	}
-	for _, target := range []string{address, health, api} {
-		connection, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(t.Context(), "tcp", target)
-		if err == nil {
-			if err := connection.Close(); err != nil {
-				t.Fatal("close unexpectedly listening socket")
-			}
-			t.Fatal("listener opened despite failed initial prerequisite")
-		}
+	child := startPrivateRuntimeProcess(t, binary, environment)
+	client := privateRuntimeClient(t, certificate)
+	privateRuntimeWait(t, child, func(ctx context.Context) bool {
+		return privateRuntimeHealthStatus(ctx, client, health, "/ready", http.StatusOK)
+	})
+	privateRuntimeWait(t, child, func(ctx context.Context) bool {
+		return privateRuntimeHealthStatus(ctx, client, health, "/ready/login", http.StatusServiceUnavailable)
+	})
+	if provider.discovery.Load() == 0 {
+		t.Fatal("login readiness did not reach the unavailable provider")
 	}
 	if storage.census(t) != before {
 		t.Fatal("readiness granted durable authority")
 	}
 	provider.unavailable.Store(false)
-	child := startPrivateRuntimeProcess(t, binary, environment)
-	client := privateRuntimeClient(t, certificate)
 	privateRuntimeWait(t, child, func(ctx context.Context) bool {
-		return privateRuntimeReady(ctx, client, health, http.StatusOK)
+		return privateRuntimeHealthStatus(ctx, client, health, "/ready/login", http.StatusOK)
 	})
 	response, body := privateRuntimeRequest(
 		t, client, http.MethodGet, "https://"+address+httpapi.LoginCallbackContinuePath, nil, nil,
@@ -237,11 +228,14 @@ func TestPrivateIdentityRuntimeProcessIntegration(t *testing.T) {
 	}
 	provider.unavailable.Store(true)
 	privateRuntimeWait(t, child, func(ctx context.Context) bool {
-		return privateRuntimeReady(ctx, client, health, http.StatusServiceUnavailable)
+		return privateRuntimeHealthStatus(ctx, client, health, "/ready/login", http.StatusServiceUnavailable)
 	})
+	if !privateRuntimeHealthStatus(t.Context(), client, health, "/ready", http.StatusOK) {
+		t.Fatal("login-only dependency failure evicted the healthy API runtime")
+	}
 	provider.unavailable.Store(false)
 	privateRuntimeWait(t, child, func(ctx context.Context) bool {
-		return privateRuntimeReady(ctx, client, health, http.StatusOK)
+		return privateRuntimeHealthStatus(ctx, client, health, "/ready/login", http.StatusOK)
 	})
 	if storage.census(t) != before || provider.other.Load() != 0 {
 		t.Fatal("readiness changed authority or contacted unregistered endpoints")
@@ -660,8 +654,14 @@ func privateRuntimeRequest(
 		cookies: response.Cookies()}, body
 }
 
-func privateRuntimeReady(ctx context.Context, client *http.Client, address string, status int) bool {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+"/ready", nil)
+func privateRuntimeHealthStatus(
+	ctx context.Context,
+	client *http.Client,
+	address string,
+	path string,
+	status int,
+) bool {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+path, nil)
 	if err != nil {
 		return false
 	}

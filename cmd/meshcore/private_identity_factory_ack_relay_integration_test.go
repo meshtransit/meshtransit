@@ -46,7 +46,7 @@ var privateFactorySSLRequest = [8]byte{0, 0, 0, 8, 4, 210, 22, 47}
 
 func newPrivateFactoryACKRelay(t *testing.T) *privateFactoryACKRelay {
 	t.Helper()
-	profile, err := config.Load(os.LookupEnv)
+	profile, err := config.Load(privateFactoryConfigLookup("api"))
 	if err != nil || profile.Storage == nil ||
 		profile.Storage.PostgreSQL.Address != "meshtransit-postgres:5432" ||
 		profile.Storage.PostgreSQL.Database != "meshtransit_private_factory_ack" {
@@ -322,7 +322,7 @@ func (relay *privateFactoryACKRelay) close(t *testing.T) {
 
 func (relay *privateFactoryACKRelay) openRuntime(t *testing.T) *postgresadapter.Pool {
 	t.Helper()
-	profile, err := config.Load(os.LookupEnv)
+	profile, err := config.Load(privateFactoryConfigLookup("api"))
 	if err != nil || profile.Storage == nil || profile.Storage.PostgreSQL.Runtime == nil {
 		t.Fatal("load owned wire runtime credentials")
 	}

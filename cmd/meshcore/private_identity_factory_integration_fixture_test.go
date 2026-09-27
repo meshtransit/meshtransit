@@ -26,9 +26,10 @@ import (
 )
 
 type privateFactoryIntegrationStorage struct {
-	runtime *postgresadapter.Pool
-	admin   *pgx.Conn
-	redis   config.RedisConfig
+	runtime  *postgresadapter.Pool
+	admin    *pgx.Conn
+	postgres config.PostgreSQLConfig
+	redis    config.RedisConfig
 }
 
 func openPrivateFactoryIntegrationStorage(t *testing.T, database string) *privateFactoryIntegrationStorage {
@@ -37,7 +38,7 @@ func openPrivateFactoryIntegrationStorage(t *testing.T, database string) *privat
 	if err != nil {
 		t.Fatal("load owned migration profile")
 	}
-	process, err := config.Load(os.LookupEnv)
+	process, err := config.Load(privateFactoryConfigLookup("api"))
 	if err != nil || process.Storage == nil {
 		t.Fatal("load owned runtime profile")
 	}
@@ -115,7 +116,10 @@ func openPrivateFactoryIntegrationStorage(t *testing.T, database string) *privat
 	if err != nil {
 		t.Fatal("load separate fixture seed authority")
 	}
-	storage := &privateFactoryIntegrationStorage{runtime: pool, admin: openPrivateFactoryAdmin(ctx, t, adminProfile), redis: process.Storage.Redis}
+	storage := &privateFactoryIntegrationStorage{
+		runtime: pool, admin: openPrivateFactoryAdmin(ctx, t, adminProfile),
+		postgres: pg, redis: process.Storage.Redis,
+	}
 	storage.seed(t, "deployment", privateIdentityID(t, 1).String(), func(seedContext context.Context, tx pgx.Tx) {
 		privateFactoryExec(seedContext, t, tx, `INSERT INTO mesh.deployment
 (id, installation_public_id, profile, state, schema_epoch, authority_generation, recovery_epoch, recovery_state)
@@ -128,6 +132,15 @@ OVERRIDING SYSTEM VALUE VALUES (1,1,'deployment')`)
 OVERRIDING SYSTEM VALUE VALUES (11,$1::UUID,1,'account','active')`, privateIdentityID(t, 2).String())
 	})
 	return storage
+}
+
+func privateFactoryConfigLookup(role string) func(string) (string, bool) {
+	return func(key string) (string, bool) {
+		if key == "MESHTRANSIT_ROLE" {
+			return role, true
+		}
+		return os.LookupEnv(key)
+	}
 }
 
 func openPrivateFactoryAdmin(ctx context.Context, t *testing.T, profile config.MigrationConfig) *pgx.Conn {
@@ -205,6 +218,33 @@ func (storage *privateFactoryIntegrationStorage) openRedis(t *testing.T) (*redis
 		t.Fatal("verify fixture TLS/ACL Redis readiness")
 	}
 	return cache, closeCache
+}
+
+func (storage *privateFactoryIntegrationStorage) openRuntime(t *testing.T) *postgresadapter.Pool {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	runtime, err := openPostgresRolePool(
+		ctx,
+		postgresadapter.PoolRoleRuntime,
+		storage.postgres,
+		*storage.postgres.Runtime,
+		5*time.Second,
+	)
+	if err != nil {
+		t.Fatal("open replica runtime pool")
+	}
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer stop()
+		if err := runtime.Shutdown(cleanup); err != nil {
+			t.Error("close replica runtime pool")
+		}
+	})
+	if err := runtime.Check(ctx); err != nil {
+		t.Fatal("verify replica runtime pool")
+	}
+	return runtime
 }
 
 func (storage *privateFactoryIntegrationStorage) seedRoute(t *testing.T, route oidcauth.Route) {
