@@ -25,10 +25,10 @@ are included.
 | meshctl source | `41bdcedbea9c479d8ae47f077adbc41d188e87ab` |
 | meshctl version | `0.1.0~poc62` |
 | meshctl package SHA-256 | `6f5e9240521b71200a9f1db34fe9c8f4c5b0b0477f0d122ae5492fa0a2e1ac57` |
-| Helm chart | `0.2.18` |
-| Helm release revision | `36` |
+| Helm chart | `0.2.20` |
+| Helm release revision | `38` |
 | Relay directory | Revision 2, `sha256:3c2b107253566ef1d79a551171b8fa4a88ccfdcc785148916d2116fdc61ab4fb` |
-| Kubernetes topology | One cluster node; two replicas per Core role |
+| Kubernetes topology | Two same-size workers; two replicas per Core role, one replica per worker |
 
 The SSO and policy cases were first executed on Core `60ff4c6` / `poc-v31`
 and meshd `83fbb61` / `0.1.0~poc55`. Core `poc-v32` and meshd `poc56` added the
@@ -65,7 +65,7 @@ policy implementations.
 | `POC-PATH-002` | Direct-path transition rate remains bounded during continuing map churn | Pass | p62 classified the churn as peer authority remove/add caused by two-minute control-stream reconnects; a 30-second heartbeat plus unbuffered 180-second ingress window held both clients at unchanged map, peer-change, and fallback counters for four minutes while 480 overlay probes completed without loss |
 | `POC-STREAM-001` | Idle control streams remain continuous through the public ingress | Pass | Helm revision 34 configured a 30-second Core heartbeat, disabled NGINX response buffering, and set 180-second read/write timeouts; neither control replica logged a stream termination during the four-minute soak |
 | `POC-CHURN-001` | Endpoint add/remove and relay-directory revision changes preserve synchronized direct traffic | Pass | Both clients published two endpoint refreshes, revision 2 rolled through both Control replicas, and 4,183 bidirectional overlay probes completed without loss across the endpoint and rollout windows |
-| `POC-NODE-HA-001` | Workload survives Kubernetes node failure | Pending | The current POC deliberately uses one cluster node |
+| `POC-NODE-HA-001` | Workload survives Kubernetes node failure | Pass | Draining one of two workers kept one replica of every Core role Ready, preserved the active browser session on the surviving API replica, and completed all 6,273 bidirectional overlay probes without loss across drain and recovery windows |
 | `POC-DATA-HA-001` | PostgreSQL and Redis failover preserve authority and convergence | Pending | The current POC uses one external PostgreSQL/Redis host |
 
 ## State transition evidence
@@ -414,12 +414,53 @@ Control pods were Ready with zero restarts, used the pinned `poc-v35` digest,
 and logged readiness only. This closes the bounded endpoint and relay-directory
 churn item for the single-node POC topology.
 
+## Multi-node node-drain continuation
+
+The cluster node pool was expanded from one to two same-size workers. Helm
+chart `0.2.19` first changed hostname spreading from advisory to mandatory. Its
+first rollout exposed a rolling-update scheduler edge: predecessor pods from
+the old ReplicaSet still counted toward the topology skew, so the new
+generation could finish with both replicas on the newly added worker. Chart
+`0.2.20` adds `matchLabelKeys: [pod-template-hash]` to make the hard hostname
+constraint generation-aware. Strict lint, rendered-manifest validation, and a
+Kubernetes server-side dry-run passed before atomic release revision 38.
+
+Revision 38 placed exactly one API, Control, Identity, and Console replica on
+each worker. All eight containers were Ready with zero restarts. Draining the
+new worker evicted one replica of every role. The surviving worker retained one
+Ready replica of every role; the replacement pods remained Pending because the
+mandatory hostname constraint correctly refused to collapse both replicas into
+one failure domain. Uncordoning the worker scheduled those replacements and
+restored every Deployment to 2/2 with the original one-replica-per-worker
+placement and zero restarts.
+
+The first browser reload during this work rejected a pre-existing session. A
+fresh login established that the rejection was normal session expiry rather
+than replica loss: ingress evidence showed login prepare, start, continuation,
+completion, and protected session preparation alternating across both API
+replicas with successful responses. The protected session was first verified
+through the API replica on the worker selected for eviction. After that worker
+was drained, a fresh Console reload verified the same Core-owned session and
+policy revision 22 through the surviving API replica. Another reload succeeded
+after 2/2 recovery; no sticky-session configuration was present.
+
+Three bounded traffic windows covered the initial drain, recovery, the
+session-qualified drain, and final recovery. They delivered 6,273 of 6,273
+overlay probes with zero loss. The session-qualified drain window delivered
+747 of 747 and 746 of 746 replies with 1.210 ms and 1.224 ms mean RTT; maximum
+RTT was 6.670 ms and 5.050 ms. At the final checkpoint both clients remained
+synchronized with one direct path, zero relay or pending paths, and no runtime
+recovery. Their map revisions, peer-authority changes, fallback totals, and
+direct-promotion totals remained unchanged at 86/47, 46/6, 24/6, and 26/8.
+Both Control replicas logged readiness only.
+
 ## HA interpretation
 
-This run qualifies replica replacement, not infrastructure-zone failure. All
-Core roles were horizontally replicated and protected by a minimum-available
-PodDisruptionBudget, but the replicas shared one Kubernetes node. PostgreSQL and
-Redis were external dependencies with no failover exercised in this run.
+This run qualifies rolling replacement and single-worker drain inside one
+cluster. It does not qualify availability-zone or regional failure. All Core
+roles were horizontally replicated, protected by a minimum-available
+PodDisruptionBudget, and hard-spread across two workers. PostgreSQL and Redis
+were external dependencies with no failover exercised in this run.
 
 No correctness path required sticky sessions. Browser transactions, Core
 sessions, RBAC authority, and policy releases were reconstructed from durable
@@ -427,9 +468,7 @@ state. Redis remained non-authoritative.
 
 ## Remaining execution order
 
-1. Repeat the matrix on a multi-node cluster with topology spread and a node
-   drain or loss.
-2. Add PostgreSQL and Redis failover qualification with recovery-generation,
+1. Add PostgreSQL and Redis failover qualification with recovery-generation,
    missed-notification, and reconciliation evidence.
-3. Extend publication cases to TCP, UDP, multiple devices, and multiple
+2. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
