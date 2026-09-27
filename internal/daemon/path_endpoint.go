@@ -299,7 +299,7 @@ func (c *pathEndpointController) handleCommand(
 	case pathEndpointActivate:
 		result, err := c.selector.Activate(command.snapshot, command.generation)
 		if err == nil {
-			err = c.applyChanges(command.generation, result.Changes)
+			err = c.applyActivationChanges(command.generation, result.Changes)
 		}
 		if err != nil {
 			return paused, generation, nil, fmt.Errorf(
@@ -330,6 +330,21 @@ func (c *pathEndpointController) applyChanges(
 	generation pathdiscovery.ProbeGeneration,
 	changes []pathdiscovery.PathChange,
 ) error {
+	return c.applyChangesWithRetiredGeneration(generation, changes, false)
+}
+
+func (c *pathEndpointController) applyActivationChanges(
+	generation pathdiscovery.ProbeGeneration,
+	changes []pathdiscovery.PathChange,
+) error {
+	return c.applyChangesWithRetiredGeneration(generation, changes, true)
+}
+
+func (c *pathEndpointController) applyChangesWithRetiredGeneration(
+	generation pathdiscovery.ProbeGeneration,
+	changes []pathdiscovery.PathChange,
+	allowRetired bool,
+) error {
 	if len(changes) == 0 {
 		return nil
 	}
@@ -356,7 +371,11 @@ func (c *pathEndpointController) applyChanges(
 
 			continue
 		}
-		if change.Previous.Generation != generation {
+		if change.Previous.Generation != generation &&
+			(!allowRetired || !validRetiredPathGeneration(
+				change.Previous.Generation,
+				generation,
+			)) {
 			return errors.New("daemon: expired path generation changed")
 		}
 		if err := c.dataPlane.RestorePreferredEndpoint(
@@ -368,6 +387,24 @@ func (c *pathEndpointController) applyChanges(
 	}
 
 	return nil
+}
+
+func validRetiredPathGeneration(
+	retired pathdiscovery.ProbeGeneration,
+	active pathdiscovery.ProbeGeneration,
+) bool {
+	if !retired.IsValid() || !active.IsValid() || retired == active ||
+		retired.Scope != active.Scope ||
+		retired.MapRevision > active.MapRevision ||
+		retired.Socket.Generation > active.Socket.Generation {
+		return false
+	}
+	if retired.Socket.Generation == active.Socket.Generation &&
+		retired.Socket.Port != active.Socket.Port {
+		return false
+	}
+
+	return true
 }
 
 func (c *pathEndpointController) fail(err error) {

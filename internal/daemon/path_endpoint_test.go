@@ -179,13 +179,15 @@ func TestPathEndpointControllerActivationReconcilesRetiredSelection(t *testing.T
 	t.Parallel()
 
 	generation := pathEndpointGeneration()
+	retiredGeneration := generation
+	retiredGeneration.MapRevision--
 	selector := &scriptedPathSelector{
 		activateResult: pathdiscovery.PathSelectionResult{
 			Changes: []pathdiscovery.PathChange{{
 				PeerID: 2,
 				Previous: pathdiscovery.PathSelection{
 					PeerID:     2,
-					Generation: generation,
+					Generation: retiredGeneration,
 				},
 			}},
 		},
@@ -215,6 +217,74 @@ func TestPathEndpointControllerActivationReconcilesRetiredSelection(t *testing.T
 	if !restored.restore || restored.revision != generation.MapRevision ||
 		restored.peerID != 2 {
 		t.Fatalf("activation endpoint update = %#v", restored)
+	}
+}
+
+func TestValidRetiredPathGeneration(t *testing.T) {
+	t.Parallel()
+
+	active := pathEndpointGeneration()
+	tests := []struct {
+		name    string
+		mutate  func(*pathdiscovery.ProbeGeneration)
+		allowed bool
+	}{
+		{
+			name: "older map on same socket",
+			mutate: func(value *pathdiscovery.ProbeGeneration) {
+				value.MapRevision--
+			},
+			allowed: true,
+		},
+		{
+			name: "same map on older socket",
+			mutate: func(value *pathdiscovery.ProbeGeneration) {
+				value.Socket.Generation--
+			},
+			allowed: true,
+		},
+		{name: "exact active generation"},
+		{
+			name: "different scope",
+			mutate: func(value *pathdiscovery.ProbeGeneration) {
+				value.Scope++
+			},
+		},
+		{
+			name: "newer map",
+			mutate: func(value *pathdiscovery.ProbeGeneration) {
+				value.MapRevision++
+			},
+		},
+		{
+			name: "newer socket",
+			mutate: func(value *pathdiscovery.ProbeGeneration) {
+				value.Socket.Generation++
+			},
+		},
+		{
+			name: "changed port on same socket generation",
+			mutate: func(value *pathdiscovery.ProbeGeneration) {
+				value.Socket.Port++
+			},
+		},
+		{
+			name: "incomplete",
+			mutate: func(value *pathdiscovery.ProbeGeneration) {
+				*value = pathdiscovery.ProbeGeneration{}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			retired := active
+			if test.mutate != nil {
+				test.mutate(&retired)
+			}
+			if got := validRetiredPathGeneration(retired, active); got != test.allowed {
+				t.Fatalf("validRetiredPathGeneration() = %v, want %v", got, test.allowed)
+			}
+		})
 	}
 }
 
