@@ -90,8 +90,9 @@ func ServersFromRelayMap(
 }
 
 // NextServerBatch returns one bounded rotating probe batch. A usable current
-// home region is sampled every round while the remaining slots walk the full
-// signed topology without unbounded fan-out.
+// home region is sampled through each available address family every round
+// while the remaining slots walk the full signed topology without unbounded
+// fan-out.
 func NextServerBatch(
 	servers []RelayServer,
 	homeRegion int,
@@ -118,12 +119,28 @@ func NextServerBatch(
 	batch := make([]RelayServer, 0, min(len(servers), maxSTUNServers))
 	selected := make(map[netip.AddrPort]struct{}, cap(batch))
 	if homeRegion > 0 {
+		var homeIPv4Selected, homeIPv6Selected bool
 		for offset := range len(servers) {
 			server := servers[(cursor+offset)%len(servers)]
-			if server.RegionID == homeRegion {
-				batch = append(batch, server)
-				selected[server.Endpoint] = struct{}{}
+			if server.RegionID != homeRegion {
+				continue
+			}
 
+			switch {
+			case server.Endpoint.Addr().Is4():
+				if homeIPv4Selected {
+					continue
+				}
+				homeIPv4Selected = true
+			case server.Endpoint.Addr().Is6():
+				if homeIPv6Selected {
+					continue
+				}
+				homeIPv6Selected = true
+			}
+			batch = append(batch, server)
+			selected[server.Endpoint] = struct{}{}
+			if homeIPv4Selected && homeIPv6Selected {
 				break
 			}
 		}

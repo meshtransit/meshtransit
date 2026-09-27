@@ -68,10 +68,11 @@ The WireGuard engine owns one monotonic UDP socket-generation namespace across e
 
 Each accepted STUN response also produces an RTT bound to its exact signed
 server, transaction, profile scope, and socket generation. The client retains
-at most 2,048 signed probe targets, probes at most eight concurrently, keeps one
-target from the current home region in every round, and rotates the remaining
-slots across the topology. A session-owned selector smooths RTT with a 75/25
-moving average, expires stale samples after five minutes and ten seconds, and
+at most 2,048 signed probe targets, probes at most eight concurrently, keeps up
+to one target per available IP family from the current home region in every
+round, and rotates the remaining slots across the topology. A session-owned
+selector smooths RTT with a 75/25 moving average, expires stale samples after
+five minutes and ten seconds, and
 switches a reachable home only when another observed region is at least 10 ms
 and 20 percent faster. A partial round must miss the current home twice before
 reachability failover. Recent authenticated relay activity preserves the current

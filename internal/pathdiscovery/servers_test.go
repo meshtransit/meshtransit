@@ -120,6 +120,52 @@ func TestNextServerBatchKeepsHomeAndRotates(t *testing.T) {
 	}
 }
 
+func TestNextServerBatchKeepsBothHomeAddressFamilies(t *testing.T) {
+	t.Parallel()
+
+	servers := make([]RelayServer, 0, 24)
+	for regionID := 1; regionID <= 12; regionID++ {
+		servers = append(servers, RelayServer{
+			RegionID: regionID,
+			Endpoint: netip.MustParseAddrPort(
+				"192.0.2." + strconv.Itoa(regionID) + ":3478",
+			),
+		})
+	}
+	for regionID := 1; regionID <= 12; regionID++ {
+		servers = append(servers, RelayServer{
+			RegionID: regionID,
+			Endpoint: netip.MustParseAddrPort(
+				"[2001:db8:" + strconv.Itoa(regionID) + "::1]:3478",
+			),
+		})
+	}
+
+	batch, _, err := NextServerBatch(servers, 1, 12)
+	if err != nil {
+		t.Fatalf("NextServerBatch() error = %v", err)
+	}
+	if len(batch) != maxSTUNServers {
+		t.Fatalf("len(NextServerBatch()) = %d, want %d", len(batch), maxSTUNServers)
+	}
+
+	var hasHomeIPv4, hasHomeIPv6 bool
+	for _, server := range batch {
+		if server.RegionID != 1 {
+			continue
+		}
+		hasHomeIPv4 = hasHomeIPv4 || server.Endpoint.Addr().Is4()
+		hasHomeIPv6 = hasHomeIPv6 || server.Endpoint.Addr().Is6()
+	}
+	if !hasHomeIPv4 || !hasHomeIPv6 {
+		t.Fatalf(
+			"NextServerBatch() home families = IPv4:%t IPv6:%t, want both",
+			hasHomeIPv4,
+			hasHomeIPv6,
+		)
+	}
+}
+
 func TestNextServerBatchRejectsAmbiguousServers(t *testing.T) {
 	t.Parallel()
 
