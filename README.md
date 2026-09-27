@@ -3446,6 +3446,16 @@ without publishing them. An explicitly authorized release can use
 `make container-push-multiarch` to publish both platforms with BuildKit SBOM
 and provenance attestations.
 
+The embedded identity-broker image is an explicit release path, not an implicit
+dependency of the ordinary image. First create a verified ephemeral workspace
+with `make prepare-dex-workspace`; then pass that directory as
+`DEX_PREPARED_ROOT` to `make container-push-dexbroker-multiarch`. The dedicated
+`Dockerfile.dexbroker` receives the prepared Dex tree as a named BuildKit context,
+creates a temporary Go workspace inside the builder, and selects only the
+`dexbroker` build tag. No Dex source, workspace path, or Git metadata enters the
+MeshCore repository. A future Dex release must produce its own verified prepared
+workspace before it can use the unchanged image target.
+
 The image uses a digest-pinned Go 1.26.8 builder and a `scratch` runtime. It has
 no shell or package manager, contains only the static binary, public CA bundle,
 and third-party notices, and runs as UID/GID `65532:65532`. The health listener

@@ -18,7 +18,7 @@ DEX_ARTIFACT_BINARY ?=
 DEX_PREPARED_ROOT ?=
 
 .PHONY: fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
-	container-build container-build-multiarch container-push-multiarch container-inspect container-smoke container-scan
+	container-build container-build-multiarch container-push-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
 
 fmt:
 	gofmt -w $(GO_FILES)
@@ -146,6 +146,23 @@ container-push-multiarch:
 	docker buildx build \
 		--build-arg REVISION=$(CONTAINER_REVISION) \
 		--build-arg VERSION=$(CONTAINER_TAG) \
+		--platform linux/amd64,linux/arm64 \
+		--provenance=mode=max \
+		--sbom=true \
+		--push \
+		--tag $(CONTAINER_IMAGE):$(CONTAINER_TAG) \
+		.
+
+container-push-dexbroker-multiarch:
+	@test -n "$(DEX_PREPARED_ROOT)" || { echo "set DEX_PREPARED_ROOT to the verified workspace directory"; exit 2; }
+	@test -f "$(DEX_PREPARED_ROOT)/go.work" || { echo "verified go.work is absent"; exit 2; }
+	@test -f "$(DEX_PREPARED_ROOT)/source/go.mod" || { echo "verified Dex root module is absent"; exit 2; }
+	@test -f "$(DEX_PREPARED_ROOT)/source/api/go.mod" || { echo "verified Dex API module is absent"; exit 2; }
+	docker buildx build \
+		--build-context "dex=$(DEX_PREPARED_ROOT)/source" \
+		--build-arg REVISION=$(CONTAINER_REVISION) \
+		--build-arg VERSION=$(CONTAINER_TAG) \
+		--file Dockerfile.dexbroker \
 		--platform linux/amd64,linux/arm64 \
 		--provenance=mode=max \
 		--sbom=true \
