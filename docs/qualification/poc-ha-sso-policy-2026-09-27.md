@@ -15,9 +15,9 @@ are included.
 | Core image | `manhdev2002/meshtransit-core:poc-v33` |
 | Core image digest | `sha256:380f78a452f5fef747dd963d4c08f66220a4a009dbf41295d980ae67ae5ee287` |
 | Embedded broker release | `v2.45.1+compat.8` |
-| meshd source | `fbd7d385f688314c5d98cf0e34f0beb09b80ad4f` |
-| meshd version | `0.1.0~poc57` |
-| meshd package SHA-256 | `285d205b1192a23ba06ddf15d4d8d2e3c3a3aedc6e9fa8b82cfe8b2a47295d97` |
+| meshd source | `68286bb455f177640a2a02cfac9230c5245e2e8a` |
+| meshd version | `0.1.0~poc60` |
+| meshd package SHA-256 | `241aebf0361a2391870b7a7d869ec09a8831cef42cc92cbd1846360eab06728d` |
 | meshctl source | `6510072e1a0aa269480f0644092134853431e93e` |
 | meshctl version | `0.1.0~poc57` |
 | meshctl package SHA-256 | `a74f07f176600d4f3473b6b7cdfa4a2d4faba1f223cda7ced2f02cc4b060f09e` |
@@ -56,6 +56,8 @@ policy implementations.
 | `POC-RELAY-002` | A blocked direct path falls back to relay and later returns to direct | Pass | Both clients changed from direct `1/0` to relay `0/1`, enforced deny/restore policy there, and returned to direct `1/0` after fault removal |
 | `POC-RELAY-003` | Relay-region selection and latency meet the POC operational target | Pass | Both clients selected Singapore region 3; forced-relay probes had zero loss and mean RTT of 3.675 ms and 4.594 ms, below the 100 ms POC target |
 | `POC-RELAY-004` | A fresh daemon starts from relay and promotes only after authenticated direct-path discovery | Pass | Independent rolling restarts produced nonzero relay-bootstrap and direct-promotion counters on both clients; observed promotion maxima were 577 ms and 1,068 ms, followed by direct overlay traffic with zero loss |
+| `POC-PATH-001` | Equivalent map revisions and compatible peer home-relay changes do not overwrite authenticated direct endpoints | Pass | p60 carried only the remaining proof lease, converged both clients from home region 1 to 3 with zero fallback at the convergence checkpoint, and removed the p59 multi-second outage |
+| `POC-PATH-002` | Direct-path transition rate remains bounded during continuing map churn | Pending | One p60 client later repeated proof-expiry fallback and promotion while Redis endpoint and presence metadata remained stable; peer-probe/map-activation telemetry is required before setting an acceptance bound |
 | `POC-NODE-HA-001` | Workload survives Kubernetes node failure | Pending | The current POC deliberately uses one cluster node |
 | `POC-DATA-HA-001` | PostgreSQL and Redis failover preserve authority and convergence | Pending | The current POC uses one external PostgreSQL/Redis host |
 
@@ -218,6 +220,73 @@ digest. Both clients remained synchronized, direct, on Singapore relay region
 overlay probes in each direction completed with zero loss. Mean RTT was 1.324
 ms and 1.407 ms; maximum RTT was 8.279 ms and 8.372 ms respectively.
 
+## Direct-path map-churn continuation
+
+The first transition-counter soak on meshd `poc57` showed that identical newer
+map revisions repeatedly restored the relay endpoint and then promoted the same
+direct endpoint. The first correction carries only the unexpired remainder of
+authenticated proof across a newer revision when session scope, UDP socket,
+peer identity, discovery identity, and candidate authority remain identical.
+It neither renews the proof deadline nor weakens any authority check.
+
+The first package containing that change, `poc58`, was installed only on the
+first client. Activation incorrectly tried to apply a retired generation after
+the data plane had already advanced, so the client failed closed and did not
+open a data path. The second client remained on the previous package. The
+generation reconciliation was corrected with explicit rollback, session,
+socket, and previous-map boundary tests, then `poc59` was rolled one client at
+a time. This recovered both clients to synchronized direct paths without a
+mixed-version service outage.
+
+A 240-second p59 soak exposed a second independent transition. Both clients
+changed their measured home relay from region 1 to region 3. The signed base
+endpoint update overwrote the still-authenticated direct endpoint, producing a
+roughly five-second traffic window. One direction received 1,192 replies over
+sequence 1 through 1,195 with three gaps, 52.828 ms mean RTT, and 4,946 ms
+maximum RTT. The reverse direction received 1,167 replies with 27 gaps, 1.370
+ms mean RTT, and 10.5 ms maximum RTT.
+
+meshd `poc60` separates the device-level and peer data configuration from the
+signed relay fallback metadata. A compatible peer home-relay change now updates
+the retained fallback while leaving an authenticated direct endpoint installed.
+The proof keeps its original deadline and expiry restores the newest signed
+relay. A private key, peer key or route, discovery identity, candidate
+authority, session, socket, self address, or relay-topology change still
+restores or recreates the base path fail closed. Unit coverage verifies both
+direct preservation and restoration to the new relay. The complete quality
+gate passed 807 race tests across 28 packages, `go vet`, lint with zero issues,
+and history plus working-tree secret scans before packaging.
+
+The p60 package was installed on the first client, which synchronized and
+promoted in 520 ms before 20 of 20 overlay probes succeeded with 1.520 ms mean
+RTT. Only then was the second client upgraded; it synchronized and promoted in
+601 ms before 20 of 20 reverse probes succeeded with 1.931 ms mean RTT. Both
+clients then changed home relay from region 1 to region 3 while remaining on
+one direct path. At that checkpoint both reported zero fallback transitions,
+which directly exercises the corrected relay-base behavior.
+
+During the same 240-second traffic window, both replicas of the Control role
+were rolling-restarted. The Deployment returned to 2/2 Ready replicas and both
+clients returned to synchronized direct paths. The first direction received
+1,191 replies over sequence 1 through 1,195 with four isolated gaps, 1.362 ms
+mean RTT, and 13.5 ms maximum RTT. The reverse direction received 1,192 replies
+with three isolated gaps, 1.527 ms mean RTT, and 72.1 ms maximum RTT. The p59
+multi-second interruption did not recur. A subsequent steady-state sample
+received 299 of 300 and 300 of 300 replies; mean RTT was 1.425 ms and 1.294 ms,
+and maximum RTT was 8.093 ms and 9.180 ms respectively.
+
+This continuation does not close the general anti-flap item. After the rollout,
+the first client remained stable while the second accumulated additional
+proof-expiry fallback and promotion transitions, including one 7,072 ms
+promotion. A five-second timeline observed a fallback as its local map revision
+advanced from 51 to 53 and a promotion at revision 54. Ten Redis samples across
+45 seconds showed unchanged endpoint payload hashes, generation 1, preferred
+relay 3, and stable presence-owner hashes for both clients, with leases renewing
+well before expiry. The remaining fault is therefore localized to meshd's
+peer-probe/map-activation lifecycle rather than relay-base replacement or
+authoritative Redis state. `POC-PATH-002` remains pending until that lifecycle
+has redacted per-stage evidence and meets an explicit transition-rate target.
+
 ## HA interpretation
 
 This run qualifies replica replacement, not infrastructure-zone failure. All
@@ -231,11 +300,14 @@ state. Redis remained non-authoritative.
 
 ## Remaining execution order
 
-1. Run a bounded direct/relay anti-flap soak under endpoint and relay-directory
-   churn, then tune hysteresis against an explicit transition-rate target.
-2. Repeat the matrix on a multi-node cluster with topology spread and a node
+1. Add redacted peer-probe round, send, completion, expiry, and map-activation
+   counters; reproduce the one-sided churn and remove repeated proof-expiry
+   fallback before setting an explicit transition-rate target.
+2. Re-run the bounded direct/relay soak under endpoint and relay-directory churn
+   and close `POC-PATH-002` only when the target holds.
+3. Repeat the matrix on a multi-node cluster with topology spread and a node
    drain or loss.
-3. Add PostgreSQL and Redis failover qualification with recovery-generation,
+4. Add PostgreSQL and Redis failover qualification with recovery-generation,
    missed-notification, and reconciliation evidence.
-4. Extend publication cases to TCP, UDP, multiple devices, and multiple
+5. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
