@@ -675,10 +675,51 @@ as did ordinary and broker-tagged race tests plus ordinary, broker-tagged, and
 integration-tagged vet.
 
 This closes only the upstream provider outage slice. Broker-database outage,
-signer outage, and recovery-generation fencing remain open under
+signer outage, and recovery-generation fencing remained open under
 `SSO-BROKER-007`. The live Google credential and POC cluster were untouched.
 Production runtime source did not change, so no image or Helm rollout was
 required.
+
+## Broker-database outage and recovery evidence
+
+Core source `c7c4aaae78c701eb4743a4788639d256465bc1df` closes the
+source-level broker-database portion of `SSO-BROKER-007`. The deterministic
+adapter test runs the exact pinned embedded broker component, product-owned
+PostgreSQL resource boundary, immutable connector/client configuration, and
+role-scoped Core readiness contract against one faultable storage handle.
+
+After normal startup, the fixture made both the prepared-schema readiness check
+and the connector authorization-request write unavailable. The database check
+returned only the closed, redacted `ErrCheckPostgreSQLResource` category. An
+Identity-only runtime became not Ready, while an aggregate `role=all` runtime
+with healthy Core PostgreSQL and Redis remained Ready. The same broker runtime
+continued serving its fixed discovery document instead of stopping or being
+reconstructed.
+
+A fresh authorization attempt reached the real connector handler and failed
+with an exact no-store `500`. It returned no redirect or cookie, disclosed no
+storage error detail, and persisted zero authorization requests. This proves
+that loss of the broker system of record cannot route around persistence,
+select a fallback identity path, or manufacture browser authority.
+
+When the same storage and readiness check recovered, both role profiles became
+Ready as appropriate. A fresh authorization attempt on the same runtime wrote
+exactly one request and redirected only to the configured Google authorization
+endpoint with the configured client, callback, authorization-code response, and
+S256 binding. The failed attempt left no durable request to replay.
+
+The fixture implements the pinned broker storage method inside the isolated
+adapter, so a future dependency signature or behavior change fails the tagged
+qualification rather than bypassing the outage gate. The focused test and full
+broker-tagged suite passed with the race detector; ordinary race tests and
+ordinary, broker-tagged, and integration-tagged vet also passed.
+
+This closes the database service-outage contract, not PostgreSQL service
+failover, multi-node database HA, or availability-zone recovery. Those
+infrastructure claims remain paused and separate. Signer outage and
+recovery-generation fencing remain open under `SSO-BROKER-007`. The live Google
+credential and POC cluster were untouched. Production runtime source did not
+change, so no image or Helm rollout was required.
 
 ## Private aggregate-runtime canary
 
