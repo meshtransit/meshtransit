@@ -51,7 +51,7 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 		subscribe: func(context.Context, string) (messageSubscription, error) {
 			return transport, nil
 		},
-		claimPresence: func(
+		acquirePresence: func(
 			context.Context,
 			string,
 			string,
@@ -60,6 +60,16 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 			time.Duration,
 			string,
 			[]byte,
+		) (int64, error) {
+			return 1, nil
+		},
+		renewPresence: func(
+			context.Context,
+			string,
+			string,
+			int64,
+			string,
+			time.Duration,
 		) (int64, error) {
 			return 1, nil
 		},
@@ -112,8 +122,11 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 	}
 	lease := testPresenceLease(t, 7, "control-a")
 	scope := testNetworkScope(t)
-	if claimed, err := client.ClaimPresence(t.Context(), scope, lease); err != nil || !claimed {
-		t.Fatalf("ClaimPresence() = (%t, %v), want true", claimed, err)
+	if acquired, err := client.AcquirePresence(t.Context(), scope, lease); err != nil || !acquired {
+		t.Fatalf("AcquirePresence() = (%t, %v), want true", acquired, err)
+	}
+	if renewed, err := client.RenewPresence(t.Context(), lease); err != nil || !renewed {
+		t.Fatalf("RenewPresence() = (%t, %v), want true", renewed, err)
 	}
 	if released, err := client.ReleasePresence(t.Context(), scope, lease); err != nil || !released {
 		t.Fatalf("ReleasePresence() = (%t, %v), want true", released, err)
@@ -139,7 +152,8 @@ func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {
 		"publish success":      `meshtransit_redis_commands_total{operation="publish",result="success"} 1`,
 		"subscribe success":    `meshtransit_redis_commands_total{operation="subscribe",result="success"} 1`,
 		"receive success":      `meshtransit_redis_commands_total{operation="receive",result="success"} 1`,
-		"presence claim":       `meshtransit_redis_commands_total{operation="presence_claim",result="success"} 1`,
+		"presence acquire":     `meshtransit_redis_commands_total{operation="presence_acquire",result="success"} 1`,
+		"presence renew":       `meshtransit_redis_commands_total{operation="presence_renew",result="success"} 1`,
 		"presence release":     `meshtransit_redis_commands_total{operation="presence_release",result="success"} 1`,
 		"endpoint observe":     `meshtransit_redis_commands_total{operation="endpoints_observe",result="success"} 1`,
 		"endpoint load":        `meshtransit_redis_commands_total{operation="endpoints_load",result="success"} 1`,

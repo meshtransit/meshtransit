@@ -37,8 +37,8 @@ type SnapshotOpener interface {
 
 // PresenceStore owns only ephemeral, generation-fenced stream observations.
 type PresenceStore interface {
-	ClaimPresence(context.Context, network.Scope, node.PresenceLease) (bool, error)
-	ReleasePresence(context.Context, network.Scope, node.PresenceLease) (bool, error)
+	AcquirePresence(context.Context, network.Scope, node.PresenceLease) (bool, error)
+	RenewPresence(context.Context, node.PresenceLease) (bool, error)
 }
 
 // StreamSink serially delivers product snapshots, terminal authority
@@ -112,14 +112,15 @@ func NewStreamService(
 }
 
 // Serve authorizes an initial snapshot, owns and renews its Redis presence
-// lease, periodically reconciles PostgreSQL, and releases exact ownership on
-// exit. Redis failure terminates the stream without changing durable authority.
+// lease, and periodically reconciles PostgreSQL. On exit the lease is left to
+// expire so a reconnect may take over the same generation without an offline
+// gap. Redis failure terminates the stream without changing durable authority.
 func (service *StreamService) Serve(
 	ctx context.Context,
 	machine control.AuthenticatedMachine,
 	request Request,
 	sink StreamSink,
-) (resultErr error) {
+) error {
 	if ctx == nil || service == nil || isNilDependency(service.snapshots) ||
 		isNilDependency(service.presence) || isNilDependency(service.revisions) ||
 		isNilDependency(service.connectivity) ||
@@ -175,20 +176,13 @@ func (service *StreamService) Serve(
 	if err != nil {
 		return errors.Join(ErrInvalidStreamService, err)
 	}
-	claimed, err := service.claimPresence(ctx, snapshot.Scope(), lease)
+	claimed, err := service.acquirePresence(ctx, snapshot.Scope(), lease)
 	if err != nil {
 		return errors.Join(ErrStreamUnavailable, err)
 	}
 	if !claimed {
 		return ErrPresenceConflict
 	}
-	defer func() {
-		resultErr = errors.Join(
-			resultErr,
-			service.releasePresence(ctx, snapshot.Scope(), lease),
-		)
-	}()
-
 	if err := sink.SendSnapshot(ctx, snapshot); err != nil {
 		return errors.Join(ErrStreamWrite, err)
 	}
@@ -247,7 +241,7 @@ func (service *StreamService) run(
 		case <-authorityExpiry.C:
 			return withdrawAuthority(ctx, sink, current, ErrAuthorizationExpired)
 		case <-renewal.C:
-			claimed, err := service.claimPresence(ctx, current.Scope(), lease)
+			claimed, err := service.renewPresence(ctx, lease)
 			if err != nil {
 				return errors.Join(ErrPresenceLost, err)
 			}
@@ -373,32 +367,29 @@ func (service *StreamService) openSnapshot(
 	return service.snapshots.Open(operationCtx, machine, request)
 }
 
-func (service *StreamService) claimPresence(
+func (service *StreamService) acquirePresence(
 	ctx context.Context,
 	scope network.Scope,
 	lease node.PresenceLease,
 ) (bool, error) {
 	operationCtx, cancel := context.WithTimeout(ctx, service.options.CoordinationTimeout)
 	defer cancel()
-	claimed, err := service.presence.ClaimPresence(operationCtx, scope, lease)
+	claimed, err := service.presence.AcquirePresence(operationCtx, scope, lease)
 	if err != nil {
-		return false, fmt.Errorf("claim presence: %w", err)
+		return false, fmt.Errorf("acquire presence: %w", err)
 	}
 	return claimed, nil
 }
 
-func (service *StreamService) releasePresence(
-	requestCtx context.Context,
-	scope network.Scope,
+func (service *StreamService) renewPresence(
+	ctx context.Context,
 	lease node.PresenceLease,
-) error {
-	cleanupCtx, cancel := context.WithTimeout(
-		context.WithoutCancel(requestCtx),
-		service.options.CoordinationTimeout,
-	)
+) (bool, error) {
+	operationCtx, cancel := context.WithTimeout(ctx, service.options.CoordinationTimeout)
 	defer cancel()
-	if _, err := service.presence.ReleasePresence(cleanupCtx, scope, lease); err != nil {
-		return errors.Join(ErrStreamUnavailable, fmt.Errorf("release presence: %w", err))
+	renewed, err := service.presence.RenewPresence(operationCtx, lease)
+	if err != nil {
+		return false, fmt.Errorf("renew presence: %w", err)
 	}
-	return nil
+	return renewed, nil
 }

@@ -48,7 +48,8 @@ type Client struct {
 	ping             func(context.Context) error
 	publish          func(context.Context, string, []byte) error
 	subscribe        func(context.Context, string) (messageSubscription, error)
-	claimPresence    presenceClaimFunc
+	acquirePresence  presenceAcquireFunc
+	renewPresence    presenceRenewFunc
 	releasePresence  presenceReleaseFunc
 	observeEndpoints observeEndpointsFunc
 	loadEndpoints    loadEndpointsFunc
@@ -94,8 +95,8 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			}
 			return subscription, nil
 		},
-		claimPresence: func(
-			claimCtx context.Context,
+		acquirePresence: func(
+			acquireCtx context.Context,
 			presenceKey string,
 			endpointKey string,
 			generation int64,
@@ -104,8 +105,8 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			channel string,
 			wakeup []byte,
 		) (int64, error) {
-			return claimPresenceScript.Run(
-				claimCtx,
+			return acquirePresenceScript.Run(
+				acquireCtx,
 				client,
 				[]string{presenceKey, endpointKey},
 				generation,
@@ -113,6 +114,23 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 				ttl.Milliseconds(),
 				channel,
 				wakeup,
+			).Int64()
+		},
+		renewPresence: func(
+			renewCtx context.Context,
+			presenceKey string,
+			endpointKey string,
+			generation int64,
+			replicaID string,
+			ttl time.Duration,
+		) (int64, error) {
+			return renewPresenceScript.Run(
+				renewCtx,
+				client,
+				[]string{presenceKey, endpointKey},
+				generation,
+				replicaID,
+				ttl.Milliseconds(),
 			).Int64()
 		},
 		releasePresence: func(

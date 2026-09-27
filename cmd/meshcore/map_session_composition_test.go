@@ -153,7 +153,7 @@ func (mapEndpointObserverFixture) ObserveEndpoints(
 
 type mapPresenceStoreFixture struct{}
 
-func (mapPresenceStoreFixture) ClaimPresence(
+func (mapPresenceStoreFixture) AcquirePresence(
 	context.Context,
 	network.Scope,
 	node.PresenceLease,
@@ -161,9 +161,8 @@ func (mapPresenceStoreFixture) ClaimPresence(
 	return false, errors.New("composition fixture must not be called")
 }
 
-func (mapPresenceStoreFixture) ReleasePresence(
+func (mapPresenceStoreFixture) RenewPresence(
 	context.Context,
-	network.Scope,
 	node.PresenceLease,
 ) (bool, error) {
 	return false, errors.New("composition fixture must not be called")

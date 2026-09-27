@@ -54,7 +54,7 @@ func assertRedisEndpointObservationFencing(
 	}
 
 	newOwner := integrationPresenceLease(t, nodeID, 3, "control-b")
-	assertPresenceClaim(ctx, t, client, newOwner, true)
+	assertPresenceAcquire(ctx, t, client, newOwner, true)
 	if accepted, err := client.ObserveEndpoints(ctx, scope, generationTwo); err != nil || accepted {
 		t.Fatalf("Redis ObserveEndpoints(stale generation) = (%t, %v), want rejection", accepted, err)
 	}

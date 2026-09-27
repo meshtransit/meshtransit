@@ -32,13 +32,17 @@ func assertRedisPresenceLeaseFencing(
 	ownerGenerationTwo := integrationPresenceLease(t, nodeID, 2, "control-a")
 	staleOwner := integrationPresenceLease(t, nodeID, 1, "control-b")
 	foreignSameGeneration := integrationPresenceLease(t, nodeID, 2, "control-b")
-	newOwner := integrationPresenceLease(t, nodeID, 3, "control-b")
+	newOwner := integrationPresenceLease(t, nodeID, 3, "control-a")
 
-	assertPresenceClaim(ctx, t, client, ownerGenerationTwo, true)
-	assertPresenceClaim(ctx, t, client, staleOwner, false)
-	assertPresenceClaim(ctx, t, client, foreignSameGeneration, false)
-	assertPresenceClaim(ctx, t, client, ownerGenerationTwo, true)
-	assertPresenceClaim(ctx, t, client, newOwner, true)
+	assertPresenceAcquire(ctx, t, client, ownerGenerationTwo, true)
+	assertPresenceRenew(ctx, t, client, ownerGenerationTwo, true)
+	assertPresenceAcquire(ctx, t, client, staleOwner, false)
+	assertPresenceAcquire(ctx, t, client, foreignSameGeneration, true)
+	assertPresenceRenew(ctx, t, client, ownerGenerationTwo, false)
+	assertPresenceRenew(ctx, t, client, foreignSameGeneration, true)
+	assertPresenceAcquire(ctx, t, client, newOwner, true)
+	assertPresenceRenew(ctx, t, client, foreignSameGeneration, false)
+	assertPresenceRenew(ctx, t, client, newOwner, true)
 	assertPresenceRelease(ctx, t, client, ownerGenerationTwo, false)
 	assertPresenceRelease(ctx, t, client, newOwner, true)
 	assertPresenceRelease(ctx, t, client, newOwner, false)
@@ -58,7 +62,7 @@ func integrationPresenceLease(
 	return lease
 }
 
-func assertPresenceClaim(
+func assertPresenceAcquire(
 	ctx context.Context,
 	t *testing.T,
 	client *redisadapter.Client,
@@ -66,12 +70,29 @@ func assertPresenceClaim(
 	want bool,
 ) {
 	t.Helper()
-	claimed, err := client.ClaimPresence(ctx, redisIntegrationScope(t), lease)
+	acquired, err := client.AcquirePresence(ctx, redisIntegrationScope(t), lease)
 	if err != nil {
-		t.Fatalf("Redis ClaimPresence() error = %v", err)
+		t.Fatalf("Redis AcquirePresence() error = %v", err)
 	}
-	if claimed != want {
-		t.Fatalf("Redis ClaimPresence() = %t, want %t", claimed, want)
+	if acquired != want {
+		t.Fatalf("Redis AcquirePresence() = %t, want %t", acquired, want)
+	}
+}
+
+func assertPresenceRenew(
+	ctx context.Context,
+	t *testing.T,
+	client *redisadapter.Client,
+	lease node.PresenceLease,
+	want bool,
+) {
+	t.Helper()
+	renewed, err := client.RenewPresence(ctx, lease)
+	if err != nil {
+		t.Fatalf("Redis RenewPresence() error = %v", err)
+	}
+	if renewed != want {
+		t.Fatalf("Redis RenewPresence() = %t, want %t", renewed, want)
 	}
 }
 

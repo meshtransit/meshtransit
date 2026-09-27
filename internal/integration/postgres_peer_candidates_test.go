@@ -221,6 +221,7 @@ func newPeerCandidateStore(
 		IdleTimeout:        5 * time.Second,
 		PeerCandidateLimit: limit,
 		PolicyRuleLimit:    mapsession.MaximumPacketPolicyRules,
+		RelayDirectory:     integrationRelayDirectory(t),
 	})
 	if err != nil {
 		t.Fatalf("postgres.NewMapSessionStore() error = %v", err)

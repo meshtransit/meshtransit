@@ -111,6 +111,8 @@ run_go() {
 		--env MESHTRANSIT_REDIS_PASSWORD_FILE \
 		--env MESHTRANSIT_REDIS_CA_FILE \
 		--env MESHTRANSIT_REDIS_POOL_SIZE \
+		--env MESHTRANSIT_RELAY_DIRECTORY_FILE \
+		--env MESHTRANSIT_RELAY_DIRECTORY_SHA256 \
 		--env MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_ID \
 		--env MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_FILE \
 		--env MESHTRANSIT_CONTROL_TLS_CERTIFICATE_FILE \
@@ -204,6 +206,10 @@ printf '%s\n' "${account_session_digest_key}" >"${fixture_dir}/account-session-d
 printf '%s\n' "${idempotency_digest_key}" >"${fixture_dir}/idempotency-digest-key"
 printf '%s\n' "${rate_limit_digest_key}" >"${fixture_dir}/rate-limit-digest-key"
 printf '%s\n' "${noise_private_key}" >"${fixture_dir}/control-noise-private-key"
+printf '%s\n' \
+	'{"schema_version":1,"revision":1,"regions":[{"id":1,"code":"sin","name":"Singapore","nodes":[{"name":"1a","host_name":"relay.example.com","cert_name":"","ipv4":"192.0.2.10","ipv6":"2001:db8::10","stun_port":3478,"relay_port":443,"stun_only":false}]}]}' \
+	>"${fixture_dir}/relay-directory.json"
+relay_directory_digest="$(openssl dgst -sha256 -r "${fixture_dir}/relay-directory.json" | awk '{print $1}')"
 chmod 0600 "${fixture_dir}/migration-password"
 chmod 0600 "${fixture_dir}/runtime-password"
 chmod 0600 "${fixture_dir}/worker-password"
@@ -215,6 +221,7 @@ chmod 0600 "${fixture_dir}/idempotency-digest-key"
 chmod 0600 "${fixture_dir}/rate-limit-digest-key"
 chmod 0600 "${fixture_dir}/control-noise-private-key"
 chmod 0600 "${fixture_dir}/control-server.key"
+chmod 0600 "${fixture_dir}/relay-directory.json"
 
 docker run \
 	--detach \
@@ -374,6 +381,8 @@ export MESHTRANSIT_REDIS_USERNAME=mesh_worker
 export MESHTRANSIT_REDIS_PASSWORD_FILE="${fixture_dir}/redis-password"
 export MESHTRANSIT_REDIS_CA_FILE="${fixture_dir}/ca.crt"
 export MESHTRANSIT_REDIS_POOL_SIZE=1
+export MESHTRANSIT_RELAY_DIRECTORY_FILE="${fixture_dir}/relay-directory.json"
+export MESHTRANSIT_RELAY_DIRECTORY_SHA256="sha256:${relay_directory_digest}"
 export MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_ID=integration-v1
 export MESHTRANSIT_ENROLLMENT_DIGEST_ACTIVE_KEY_FILE="${fixture_dir}/enrollment-digest-key"
 export MESHTRANSIT_CONTROL_TLS_CERTIFICATE_FILE="${fixture_dir}/control-server.crt"

@@ -17,7 +17,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/relay"
 )
 
-func TestStreamServiceOwnsBoundedPresenceLifecycle(t *testing.T) {
+func TestStreamServiceOwnsBoundedPresenceLease(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		initial := snapshotFixture(t)
 		advanced := advancedStreamSnapshot(t, initial)
@@ -34,14 +34,16 @@ func TestStreamServiceOwnsBoundedPresenceLifecycle(t *testing.T) {
 		openerCalls, openerDeadline := opener.state()
 		presenceState := presence.state()
 		snapshots, keepAlives := sink.state()
-		if openerCalls != 1 || !openerDeadline || presenceState.claims != 1 ||
-			!presenceState.sawClaimDeadline || len(snapshots) != 1 || keepAlives != 0 {
+		if openerCalls != 1 || !openerDeadline || presenceState.acquires != 1 ||
+			!presenceState.sawAcquireDeadline || presenceState.renews != 0 ||
+			len(snapshots) != 1 || keepAlives != 0 {
 			t.Fatalf(
-				"initial stream = opener(%d,%t) presence(%d,%t) sink(%d,%d)",
+				"initial stream = opener(%d,%t) presence(%d,%t,%d) sink(%d,%d)",
 				openerCalls,
 				openerDeadline,
-				presenceState.claims,
-				presenceState.sawClaimDeadline,
+				presenceState.acquires,
+				presenceState.sawAcquireDeadline,
+				presenceState.renews,
 				len(snapshots),
 				keepAlives,
 			)
@@ -55,8 +57,14 @@ func TestStreamServiceOwnsBoundedPresenceLifecycle(t *testing.T) {
 		time.Sleep(3 * time.Second)
 		synctest.Wait()
 		presenceState = presence.state()
-		if presenceState.claims != 2 {
-			t.Fatalf("presence claims after renewal = %d, want 2", presenceState.claims)
+		if presenceState.acquires != 1 || presenceState.renews != 1 ||
+			!presenceState.sawRenewDeadline {
+			t.Fatalf(
+				"presence operations after renewal = (%d,%d,%t), want (1,1,true)",
+				presenceState.acquires,
+				presenceState.renews,
+				presenceState.sawRenewDeadline,
+			)
 		}
 		time.Sleep(time.Second)
 		synctest.Wait()
@@ -80,8 +88,12 @@ func TestStreamServiceOwnsBoundedPresenceLifecycle(t *testing.T) {
 			t.Fatalf("Serve() error = %v, want context cancellation", err)
 		}
 		presenceState = presence.state()
-		if presenceState.releases != 1 || !presenceState.sawReleaseDeadline {
-			t.Fatalf("presence releases = (%d,%t), want one bounded release", presenceState.releases, presenceState.sawReleaseDeadline)
+		if presenceState.acquires != 1 || presenceState.renews != 1 {
+			t.Fatalf(
+				"presence operations after disconnect = (%d,%d), want lease left to expire",
+				presenceState.acquires,
+				presenceState.renews,
+			)
 		}
 	})
 }
@@ -521,7 +533,7 @@ func TestStreamServiceFailsClosedWhenPresenceIsLost(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		snapshot := snapshotFixture(t)
 		opener := &streamSnapshotOpener{snapshots: []Snapshot{snapshot}}
-		presence := &streamPresenceStore{rejectClaim: 2}
+		presence := &streamPresenceStore{rejectRenew: 1}
 		sink := &recordingStreamSink{}
 		service := newStreamServiceFixture(t, opener, presence)
 		machine, request := authenticatedRequestFixture(t, snapshot)
@@ -533,9 +545,6 @@ func TestStreamServiceFailsClosedWhenPresenceIsLost(t *testing.T) {
 		synctest.Wait()
 		if err := <-result; !errors.Is(err, ErrPresenceLost) {
 			t.Fatalf("Serve() error = %v, want ErrPresenceLost", err)
-		}
-		if releases := presence.state().releases; releases != 1 {
-			t.Fatalf("presence releases = %d, want one exact cleanup attempt", releases)
 		}
 		if withdrawals := sink.authorityWithdrawals(); len(withdrawals) != 0 {
 			t.Fatalf("presence loss sent %d authority withdrawals, want 0", len(withdrawals))
@@ -561,8 +570,8 @@ func TestStreamServiceRejectsConcurrentLocalOwnership(t *testing.T) {
 		if !errors.Is(secondErr, ErrPresenceConflict) {
 			t.Fatalf("concurrent Serve() error = %v, want ErrPresenceConflict", secondErr)
 		}
-		if claims := presence.state().claims; claims != 1 {
-			t.Fatalf("Redis presence claims = %d, want only the admitted stream", claims)
+		if acquires := presence.state().acquires; acquires != 1 {
+			t.Fatalf("Redis presence acquisitions = %d, want only the admitted stream", acquires)
 		}
 
 		cancel()
@@ -1025,45 +1034,45 @@ func (opener *streamSnapshotOpener) state() (int, bool) {
 type streamPresenceStore struct {
 	mu                 sync.Mutex
 	lease              node.PresenceLease
-	claims             int
-	releases           int
-	rejectClaim        int
-	sawClaimDeadline   bool
-	sawReleaseDeadline bool
+	acquires           int
+	renews             int
+	rejectAcquire      int
+	rejectRenew        int
+	sawAcquireDeadline bool
+	sawRenewDeadline   bool
 }
 
-func (store *streamPresenceStore) ClaimPresence(
+func (store *streamPresenceStore) AcquirePresence(
 	ctx context.Context,
 	_ network.Scope,
 	lease node.PresenceLease,
 ) (bool, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	store.claims++
+	store.acquires++
 	store.lease = lease
-	_, store.sawClaimDeadline = ctx.Deadline()
-	return store.rejectClaim == 0 || store.claims != store.rejectClaim, nil
+	_, store.sawAcquireDeadline = ctx.Deadline()
+	return store.rejectAcquire == 0 || store.acquires != store.rejectAcquire, nil
 }
 
-func (store *streamPresenceStore) ReleasePresence(
+func (store *streamPresenceStore) RenewPresence(
 	ctx context.Context,
-	_ network.Scope,
 	lease node.PresenceLease,
 ) (bool, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	store.releases++
+	store.renews++
 	store.lease = lease
-	_, store.sawReleaseDeadline = ctx.Deadline()
-	return true, nil
+	_, store.sawRenewDeadline = ctx.Deadline()
+	return store.rejectRenew == 0 || store.renews != store.rejectRenew, nil
 }
 
 type streamPresenceState struct {
 	lease              node.PresenceLease
-	claims             int
-	releases           int
-	sawClaimDeadline   bool
-	sawReleaseDeadline bool
+	acquires           int
+	renews             int
+	sawAcquireDeadline bool
+	sawRenewDeadline   bool
 }
 
 func (store *streamPresenceStore) state() streamPresenceState {
@@ -1071,10 +1080,10 @@ func (store *streamPresenceStore) state() streamPresenceState {
 	defer store.mu.Unlock()
 	return streamPresenceState{
 		lease:              store.lease,
-		claims:             store.claims,
-		releases:           store.releases,
-		sawClaimDeadline:   store.sawClaimDeadline,
-		sawReleaseDeadline: store.sawReleaseDeadline,
+		acquires:           store.acquires,
+		renews:             store.renews,
+		sawAcquireDeadline: store.sawAcquireDeadline,
+		sawRenewDeadline:   store.sawRenewDeadline,
 	}
 }
 

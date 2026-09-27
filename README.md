@@ -30,9 +30,10 @@ authenticated Node-key rotation, and authenticated one-shot and streaming
 full-map snapshots. Every snapshot
 contains the authoritative self Node, only packet-policy-authorized peers, and
 the Node-reduced inbound packet filter; explicit empty collections clear prior
-client state. Long-lived streams use generation-fenced Redis presence, bounded
-keepalives, exact release, process-owned revision and connectivity feeds, and
-periodic PostgreSQL plus Redis resync. One-shot connectivity updates validate
+client state. Long-lived streams use generation-fenced Redis presence with
+same-generation replica handover, owner-exact renewal, bounded lease expiry,
+bounded keepalives, process-owned revision and connectivity feeds, and periodic
+PostgreSQL plus Redis resync. One-shot connectivity updates validate
 and record canonical discovery keys, endpoint sets, and usable preferred-relay
 observations under the same Redis session-generation fence. Maps project those
 exact-generation routing observations and online state only after PostgreSQL

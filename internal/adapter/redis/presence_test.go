@@ -10,19 +10,20 @@ import (
 	"github.com/meshtransit/meshtransit/internal/node"
 )
 
-func TestClientClaimsAndReleasesExactPresenceLease(t *testing.T) {
+func TestClientAcquiresAndRenewsExactPresenceLease(t *testing.T) {
 	t.Parallel()
 
 	lease := testPresenceLease(t, 7, "control-a")
 	ctx := t.Context()
-	var claimKey, releaseKey, claimEndpointKey, releaseEndpointKey string
-	var claimGeneration, releaseGeneration int64
-	var claimReplica, releaseReplica string
-	var claimTTL time.Duration
-	var claimChannel, releaseChannel string
-	var claimWakeup, releaseWakeup []byte
+	var acquireKey, renewKey, releaseKey string
+	var acquireEndpointKey, renewEndpointKey, releaseEndpointKey string
+	var acquireGeneration, renewGeneration, releaseGeneration int64
+	var acquireReplica, renewReplica, releaseReplica string
+	var acquireTTL, renewTTL time.Duration
+	var acquireChannel, releaseChannel string
+	var acquireWakeup, releaseWakeup []byte
 	client := &Client{
-		claimPresence: func(
+		acquirePresence: func(
 			gotContext context.Context,
 			key string,
 			gotEndpointKey string,
@@ -33,11 +34,26 @@ func TestClientClaimsAndReleasesExactPresenceLease(t *testing.T) {
 			wakeup []byte,
 		) (int64, error) {
 			if gotContext != ctx {
-				t.Fatal("ClaimPresence() did not propagate context")
+				t.Fatal("AcquirePresence() did not propagate context")
 			}
-			claimKey, claimEndpointKey = key, gotEndpointKey
-			claimGeneration, claimReplica, claimTTL = generation, replicaID, ttl
-			claimChannel, claimWakeup = channel, append([]byte(nil), wakeup...)
+			acquireKey, acquireEndpointKey = key, gotEndpointKey
+			acquireGeneration, acquireReplica, acquireTTL = generation, replicaID, ttl
+			acquireChannel, acquireWakeup = channel, append([]byte(nil), wakeup...)
+			return 1, nil
+		},
+		renewPresence: func(
+			gotContext context.Context,
+			key string,
+			gotEndpointKey string,
+			generation int64,
+			replicaID string,
+			ttl time.Duration,
+		) (int64, error) {
+			if gotContext != ctx {
+				t.Fatal("RenewPresence() did not propagate context")
+			}
+			renewKey, renewEndpointKey = key, gotEndpointKey
+			renewGeneration, renewReplica, renewTTL = generation, replicaID, ttl
 			return 1, nil
 		},
 		releasePresence: func(
@@ -59,9 +75,13 @@ func TestClientClaimsAndReleasesExactPresenceLease(t *testing.T) {
 		},
 	}
 	scope := testNetworkScope(t)
-	claimed, err := client.ClaimPresence(ctx, scope, lease)
-	if err != nil || !claimed {
-		t.Fatalf("ClaimPresence() = (%t, %v), want true", claimed, err)
+	acquired, err := client.AcquirePresence(ctx, scope, lease)
+	if err != nil || !acquired {
+		t.Fatalf("AcquirePresence() = (%t, %v), want true", acquired, err)
+	}
+	renewed, err := client.RenewPresence(ctx, lease)
+	if err != nil || !renewed {
+		t.Fatalf("RenewPresence() = (%t, %v), want true", renewed, err)
 	}
 	released, err := client.ReleasePresence(ctx, scope, lease)
 	if err != nil || !released {
@@ -69,24 +89,34 @@ func TestClientClaimsAndReleasesExactPresenceLease(t *testing.T) {
 	}
 	wantKey := presenceKeyPrefix + lease.NodeID().String()
 	wantEndpointKey := endpointKeyPrefix + lease.NodeID().String()
-	if claimKey != wantKey || releaseKey != wantKey ||
-		claimEndpointKey != wantEndpointKey || releaseEndpointKey != wantEndpointKey ||
-		claimGeneration != 7 || releaseGeneration != 7 ||
-		claimReplica != "control-a" || releaseReplica != "control-a" ||
-		claimTTL != 30*time.Second || claimChannel != connectivityChangedChannel ||
+	if acquireKey != wantKey || renewKey != wantKey || releaseKey != wantKey ||
+		acquireEndpointKey != wantEndpointKey || renewEndpointKey != wantEndpointKey ||
+		releaseEndpointKey != wantEndpointKey || acquireGeneration != 7 ||
+		renewGeneration != 7 || releaseGeneration != 7 ||
+		acquireReplica != "control-a" || renewReplica != "control-a" ||
+		releaseReplica != "control-a" ||
+		acquireTTL != 30*time.Second || renewTTL != 30*time.Second ||
+		acquireChannel != connectivityChangedChannel ||
 		releaseChannel != connectivityChangedChannel {
 		t.Fatalf(
-			"presence arguments = claim(%q,%d,%q,%s) release(%q,%d,%q)",
-			claimKey,
-			claimGeneration,
-			claimReplica,
-			claimTTL,
+			"presence arguments = acquire(%q,%d,%q,%s) renew(%q,%d,%q,%s) release(%q,%d,%q)",
+			acquireKey,
+			acquireGeneration,
+			acquireReplica,
+			acquireTTL,
+			renewKey,
+			renewGeneration,
+			renewReplica,
+			renewTTL,
 			releaseKey,
 			releaseGeneration,
 			releaseReplica,
 		)
 	}
-	for name, payload := range map[string][]byte{"claim": claimWakeup, "release": releaseWakeup} {
+	for name, payload := range map[string][]byte{
+		"acquire": acquireWakeup,
+		"release": releaseWakeup,
+	} {
 		change, err := decodeConnectivityWakeup(payload)
 		if err != nil || change.NetworkID() != scope.NetworkID() ||
 			change.Key().NodeID() != lease.NodeID() ||
@@ -101,7 +131,7 @@ func TestClientTreatsPresenceFenceRejectionAsSuccessfulResult(t *testing.T) {
 	t.Parallel()
 
 	client := &Client{
-		claimPresence: func(
+		acquirePresence: func(
 			context.Context,
 			string,
 			string,
@@ -110,6 +140,16 @@ func TestClientTreatsPresenceFenceRejectionAsSuccessfulResult(t *testing.T) {
 			time.Duration,
 			string,
 			[]byte,
+		) (int64, error) {
+			return 0, nil
+		},
+		renewPresence: func(
+			context.Context,
+			string,
+			string,
+			int64,
+			string,
+			time.Duration,
 		) (int64, error) {
 			return 0, nil
 		},
@@ -126,11 +166,21 @@ func TestClientTreatsPresenceFenceRejectionAsSuccessfulResult(t *testing.T) {
 		},
 	}
 	lease := testPresenceLease(t, 7, "control-a")
-	scope := testNetworkScope(t)
-	if claimed, err := client.ClaimPresence(t.Context(), scope, lease); err != nil || claimed {
-		t.Fatalf("ClaimPresence() = (%t, %v), want clean rejection", claimed, err)
+	if acquired, err := client.AcquirePresence(
+		t.Context(),
+		testNetworkScope(t),
+		lease,
+	); err != nil || acquired {
+		t.Fatalf("AcquirePresence() = (%t, %v), want clean rejection", acquired, err)
 	}
-	if released, err := client.ReleasePresence(t.Context(), scope, lease); err != nil || released {
+	if renewed, err := client.RenewPresence(t.Context(), lease); err != nil || renewed {
+		t.Fatalf("RenewPresence() = (%t, %v), want clean rejection", renewed, err)
+	}
+	if released, err := client.ReleasePresence(
+		t.Context(),
+		testNetworkScope(t),
+		lease,
+	); err != nil || released {
 		t.Fatalf("ReleasePresence() = (%t, %v), want clean rejection", released, err)
 	}
 }
@@ -141,35 +191,68 @@ func TestClientRejectsMalformedPresenceResultsAndTransportErrors(t *testing.T) {
 	wantErr := errors.New("redis unavailable")
 	lease := testPresenceLease(t, 7, "control-a")
 	tests := []struct {
-		name   string
-		result int64
-		err    error
-		want   error
+		name    string
+		result  int64
+		err     error
+		want    error
+		renew   bool
+		release bool
 	}{
-		{name: "malformed", result: -1, want: ErrClaimPresence},
-		{name: "transport", err: wantErr, want: wantErr},
+		{name: "malformed acquire", result: -1, want: ErrAcquirePresence},
+		{name: "acquire transport", err: wantErr, want: wantErr},
+		{name: "malformed renew", result: -1, want: ErrRenewPresence, renew: true},
+		{name: "renew transport", err: wantErr, want: wantErr, renew: true},
+		{name: "malformed release", result: -1, want: ErrReleasePresence, release: true},
+		{name: "release transport", err: wantErr, want: wantErr, release: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			client := &Client{claimPresence: func(
-				context.Context,
-				string,
-				string,
-				int64,
-				string,
-				time.Duration,
-				string,
-				[]byte,
-			) (int64, error) {
-				return test.result, test.err
-			}}
-			if _, err := client.ClaimPresence(
-				t.Context(),
-				testNetworkScope(t),
-				lease,
-			); !errors.Is(err, test.want) {
-				t.Fatalf("ClaimPresence() error = %v, want %v", err, test.want)
+			client := &Client{
+				acquirePresence: func(
+					context.Context,
+					string,
+					string,
+					int64,
+					string,
+					time.Duration,
+					string,
+					[]byte,
+				) (int64, error) {
+					return test.result, test.err
+				},
+				renewPresence: func(
+					context.Context,
+					string,
+					string,
+					int64,
+					string,
+					time.Duration,
+				) (int64, error) {
+					return test.result, test.err
+				},
+				releasePresence: func(
+					context.Context,
+					string,
+					string,
+					int64,
+					string,
+					string,
+					[]byte,
+				) (int64, error) {
+					return test.result, test.err
+				},
+			}
+			var err error
+			if test.release {
+				_, err = client.ReleasePresence(t.Context(), testNetworkScope(t), lease)
+			} else if test.renew {
+				_, err = client.RenewPresence(t.Context(), lease)
+			} else {
+				_, err = client.AcquirePresence(t.Context(), testNetworkScope(t), lease)
+			}
+			if !errors.Is(err, test.want) {
+				t.Fatalf("presence operation error = %v, want %v", err, test.want)
 			}
 		})
 	}
@@ -178,32 +261,67 @@ func TestClientRejectsMalformedPresenceResultsAndTransportErrors(t *testing.T) {
 func TestClientRejectsInvalidPresenceLeaseBeforeRedis(t *testing.T) {
 	t.Parallel()
 
-	calls := 0
-	client := &Client{claimPresence: func(
-		context.Context,
-		string,
-		string,
-		int64,
-		string,
-		time.Duration,
-		string,
-		[]byte,
-	) (int64, error) {
-		calls++
-		return 1, nil
-	}}
-	if _, err := client.ClaimPresence(
+	acquires, renews, releases := 0, 0, 0
+	client := &Client{
+		acquirePresence: func(
+			context.Context,
+			string,
+			string,
+			int64,
+			string,
+			time.Duration,
+			string,
+			[]byte,
+		) (int64, error) {
+			acquires++
+			return 1, nil
+		},
+		renewPresence: func(
+			context.Context,
+			string,
+			string,
+			int64,
+			string,
+			time.Duration,
+		) (int64, error) {
+			renews++
+			return 1, nil
+		},
+		releasePresence: func(
+			context.Context,
+			string,
+			string,
+			int64,
+			string,
+			string,
+			[]byte,
+		) (int64, error) {
+			releases++
+			return 1, nil
+		},
+	}
+	if _, err := client.AcquirePresence(
 		t.Context(),
 		testNetworkScope(t),
 		node.PresenceLease{},
-	); !errors.Is(
-		err,
-		ErrInvalidOptions,
-	) {
-		t.Fatalf("ClaimPresence() error = %v, want invalid options", err)
+	); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("AcquirePresence() error = %v, want invalid options", err)
 	}
-	if calls != 0 {
-		t.Fatalf("Redis calls = %d, want 0", calls)
+	if _, err := client.RenewPresence(
+		t.Context(),
+		node.PresenceLease{},
+	); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("RenewPresence() error = %v, want invalid options", err)
+	}
+	if _, err := client.ReleasePresence(
+		t.Context(),
+		testNetworkScope(t),
+		node.PresenceLease{},
+	); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("ReleasePresence() error = %v, want invalid options", err)
+	}
+	if acquires != 0 || renews != 0 || releases != 0 {
+		t.Fatalf("Redis calls = (%d,%d,%d), want (0,0,0)", acquires, renews, releases)
 	}
 }
 

@@ -15,7 +15,8 @@ const (
 	redisCommandPublish          redisCommand = "publish"
 	redisCommandSubscribe        redisCommand = "subscribe"
 	redisCommandReceive          redisCommand = "receive"
-	redisCommandClaim            redisCommand = "presence_claim"
+	redisCommandAcquire          redisCommand = "presence_acquire"
+	redisCommandRenew            redisCommand = "presence_renew"
 	redisCommandRelease          redisCommand = "presence_release"
 	redisCommandObserveEndpoints redisCommand = "endpoints_observe"
 	redisCommandLoadEndpoints    redisCommand = "endpoints_load"
@@ -28,7 +29,8 @@ var redisCommands = [...]redisCommand{
 	redisCommandPublish,
 	redisCommandSubscribe,
 	redisCommandReceive,
-	redisCommandClaim,
+	redisCommandAcquire,
+	redisCommandRenew,
 	redisCommandRelease,
 	redisCommandObserveEndpoints,
 	redisCommandLoadEndpoints,

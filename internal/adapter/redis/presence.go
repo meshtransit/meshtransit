@@ -15,11 +15,13 @@ import (
 const presenceKeyPrefix = "meshtransit:v1:presence:node:"
 
 var (
-	// ErrClaimPresence classifies an unavailable or malformed Redis claim.
-	ErrClaimPresence = errors.New("redis: claim presence lease")
+	// ErrAcquirePresence classifies an unavailable or malformed Redis acquisition.
+	ErrAcquirePresence = errors.New("redis: acquire presence lease")
+	// ErrRenewPresence classifies an unavailable or malformed Redis renewal.
+	ErrRenewPresence = errors.New("redis: renew presence lease")
 	// ErrReleasePresence classifies an unavailable or malformed Redis release.
-	ErrReleasePresence  = errors.New("redis: release presence lease")
-	claimPresenceScript = redisclient.NewScript(`
+	ErrReleasePresence    = errors.New("redis: release presence lease")
+	acquirePresenceScript = redisclient.NewScript(`
 local current_generation = redis.call('HGET', KEYS[1], 'generation')
 local current_replica = redis.call('HGET', KEYS[1], 'replica')
 if (current_generation == false) ~= (current_replica == false) then
@@ -39,9 +41,6 @@ if current_generation ~= false then
     if requested_generation < stored_generation then
         return 0
     end
-    if requested_generation == stored_generation and current_replica ~= ARGV[2] then
-        return 0
-    end
     changed = requested_generation > stored_generation
 end
 
@@ -55,6 +54,31 @@ elseif changed and endpoint_generation ~= false then
 end
 if changed then
     redis.call('PUBLISH', ARGV[4], ARGV[5])
+end
+return 1
+`)
+	renewPresenceScript = redisclient.NewScript(`
+local current_generation = redis.call('HGET', KEYS[1], 'generation')
+local current_replica = redis.call('HGET', KEYS[1], 'replica')
+if (current_generation == false) ~= (current_replica == false) then
+    return -1
+end
+if current_generation == false then
+    return 0
+end
+
+local requested_generation = tonumber(ARGV[1])
+local stored_generation = tonumber(current_generation)
+if requested_generation == nil or stored_generation == nil then
+    return -1
+end
+if requested_generation ~= stored_generation or current_replica ~= ARGV[2] then
+    return 0
+end
+
+redis.call('PEXPIRE', KEYS[1], ARGV[3])
+if redis.call('HGET', KEYS[2], 'generation') == ARGV[1] then
+    redis.call('PEXPIRE', KEYS[2], ARGV[3])
 end
 return 1
 `)
@@ -73,7 +97,7 @@ return 0
 `)
 )
 
-type presenceClaimFunc func(
+type presenceAcquireFunc func(
 	context.Context,
 	string,
 	string,
@@ -82,6 +106,14 @@ type presenceClaimFunc func(
 	time.Duration,
 	string,
 	[]byte,
+) (int64, error)
+type presenceRenewFunc func(
+	context.Context,
+	string,
+	string,
+	int64,
+	string,
+	time.Duration,
 ) (int64, error)
 type presenceReleaseFunc func(
 	context.Context,
@@ -93,14 +125,15 @@ type presenceReleaseFunc func(
 	[]byte,
 ) (int64, error)
 
-// ClaimPresence creates, renews, or generation-fences an ephemeral Node lease.
-// A false result is a successful rejection of a stale or foreign owner.
-func (client *Client) ClaimPresence(
+// AcquirePresence creates or generation-fences an ephemeral Node lease. A
+// same-generation acquisition atomically transfers ownership between replicas
+// without publishing an offline/online transition or deleting endpoints.
+func (client *Client) AcquirePresence(
 	ctx context.Context,
 	scope network.Scope,
 	lease node.PresenceLease,
 ) (bool, error) {
-	if ctx == nil || client == nil || client.claimPresence == nil ||
+	if ctx == nil || client == nil || client.acquirePresence == nil ||
 		!scope.IsValid() || !lease.IsValid() {
 		return false, ErrInvalidOptions
 	}
@@ -115,7 +148,7 @@ func (client *Client) ClaimPresence(
 	}
 	defer clear(wakeup)
 	startedAt := time.Now()
-	result, err := client.claimPresence(
+	result, err := client.acquirePresence(
 		ctx,
 		presenceKey(lease),
 		endpointKey(lease.NodeID()),
@@ -126,19 +159,50 @@ func (client *Client) ClaimPresence(
 		wakeup,
 	)
 	if err != nil {
-		client.metrics.observeCommand(redisCommandClaim, startedAt, err)
-		return false, errors.Join(ErrClaimPresence, err)
+		client.metrics.observeCommand(redisCommandAcquire, startedAt, err)
+		return false, errors.Join(ErrAcquirePresence, err)
 	}
 	if result != 0 && result != 1 {
-		client.metrics.observeCommand(redisCommandClaim, startedAt, ErrClaimPresence)
-		return false, ErrClaimPresence
+		client.metrics.observeCommand(redisCommandAcquire, startedAt, ErrAcquirePresence)
+		return false, ErrAcquirePresence
 	}
-	client.metrics.observeCommand(redisCommandClaim, startedAt, nil)
+	client.metrics.observeCommand(redisCommandAcquire, startedAt, nil)
+	return result == 1, nil
+}
+
+// RenewPresence extends only an exact generation-and-replica-owned lease. A
+// false result means the lease expired or another stream took ownership.
+func (client *Client) RenewPresence(
+	ctx context.Context,
+	lease node.PresenceLease,
+) (bool, error) {
+	if ctx == nil || client == nil || client.renewPresence == nil || !lease.IsValid() {
+		return false, ErrInvalidOptions
+	}
+	startedAt := time.Now()
+	result, err := client.renewPresence(
+		ctx,
+		presenceKey(lease),
+		endpointKey(lease.NodeID()),
+		lease.Generation(),
+		lease.ReplicaID(),
+		lease.TTL(),
+	)
+	if err != nil {
+		client.metrics.observeCommand(redisCommandRenew, startedAt, err)
+		return false, errors.Join(ErrRenewPresence, err)
+	}
+	if result != 0 && result != 1 {
+		client.metrics.observeCommand(redisCommandRenew, startedAt, ErrRenewPresence)
+		return false, ErrRenewPresence
+	}
+	client.metrics.observeCommand(redisCommandRenew, startedAt, nil)
 	return result == 1, nil
 }
 
 // ReleasePresence deletes only the exact generation and replica-owned lease.
-// A false result means the lease expired or ownership has already advanced.
+// Map streams normally leave leases to expire; this operation is reserved for
+// callers that explicitly require an immediate offline transition.
 func (client *Client) ReleasePresence(
 	ctx context.Context,
 	scope network.Scope,
