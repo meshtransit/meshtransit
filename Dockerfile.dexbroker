@@ -12,7 +12,7 @@ WORKDIR /workspace
 
 COPY go.mod go.sum ./meshcore/
 COPY --from=dex / ./dex/
-RUN go work init ./meshcore ./dex ./dex/api && \
+RUN go work init ./meshcore ./dex ./dex/api/v2 && \
     cd ./meshcore && \
     go mod download
 

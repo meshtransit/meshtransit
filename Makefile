@@ -157,7 +157,7 @@ container-push-dexbroker-multiarch:
 	@test -n "$(DEX_PREPARED_ROOT)" || { echo "set DEX_PREPARED_ROOT to the verified workspace directory"; exit 2; }
 	@test -f "$(DEX_PREPARED_ROOT)/go.work" || { echo "verified go.work is absent"; exit 2; }
 	@test -f "$(DEX_PREPARED_ROOT)/source/go.mod" || { echo "verified Dex root module is absent"; exit 2; }
-	@test -f "$(DEX_PREPARED_ROOT)/source/api/go.mod" || { echo "verified Dex API module is absent"; exit 2; }
+	@test -f "$(DEX_PREPARED_ROOT)/source/api/v2/go.mod" || { echo "verified Dex API module is absent"; exit 2; }
 	docker buildx build \
 		--build-context "dex=$(DEX_PREPARED_ROOT)/source" \
 		--build-arg REVISION=$(CONTAINER_REVISION) \
