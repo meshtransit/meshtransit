@@ -308,9 +308,16 @@ func (c *pathEndpointController) handleCommand(
 	case pathEndpointActivate:
 		result, err := c.selector.Activate(command.snapshot, command.generation)
 		if err == nil {
-			preserved, retired := countActivationPaths(result.Changes)
-			c.telemetry.RecordActivationPreserved(preserved)
-			c.telemetry.RecordActivationRetired(retired)
+			activation := result.Activation
+			c.telemetry.RecordActivationPreserved(activation.SelectionsPreserved)
+			c.telemetry.RecordActivationRetired(activation.SelectionsRetired)
+			c.telemetry.RecordAuthorityPeerSetChange(activation.PeerSetChanges)
+			c.telemetry.RecordAuthorityNodeKeyChange(activation.NodeKeyChanges)
+			c.telemetry.RecordAuthorityDiscoveryKeyChange(activation.DiscoveryKeyChanges)
+			c.telemetry.RecordAuthorityEndpointChange(activation.EndpointSetChanges)
+			if activation.SocketChanged {
+				c.telemetry.RecordSocketChange()
+			}
 			err = c.applyActivationChanges(command.generation, result.Changes)
 		}
 		if err != nil {
@@ -336,21 +343,6 @@ func (c *pathEndpointController) handleCommand(
 			"daemon: path endpoint command is invalid",
 		)
 	}
-}
-
-func countActivationPaths(changes []pathdiscovery.PathChange) (uint64, uint64) {
-	var preserved uint64
-	var retired uint64
-	for _, change := range changes {
-		switch {
-		case change.Previous.IsValid() && change.Current.IsValid():
-			preserved++
-		case change.Previous.IsValid() && !change.Current.IsValid():
-			retired++
-		}
-	}
-
-	return preserved, retired
 }
 
 func countRetiredPaths(changes []pathdiscovery.PathChange) uint64 {

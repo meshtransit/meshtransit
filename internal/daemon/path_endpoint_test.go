@@ -193,6 +193,14 @@ func TestPathEndpointControllerActivationReconcilesRetiredSelection(t *testing.T
 	now := time.Now()
 	selector := &scriptedPathSelector{
 		activateResult: pathdiscovery.PathSelectionResult{
+			Activation: pathdiscovery.PathActivationSummary{
+				SelectionsRetired:   1,
+				PeerSetChanges:      2,
+				NodeKeyChanges:      3,
+				DiscoveryKeyChanges: 4,
+				EndpointSetChanges:  5,
+				SocketChanged:       true,
+			},
 			Changes: []pathdiscovery.PathChange{{
 				PeerID: 2,
 				Previous: pathdiscovery.PathSelection{
@@ -236,7 +244,11 @@ func TestPathEndpointControllerActivationReconcilesRetiredSelection(t *testing.T
 		t.Fatalf("activation endpoint update = %#v", restored)
 	}
 	if snapshot := telemetry.Snapshot(); snapshot.ActivationRetired != 1 ||
-		snapshot.ActivationPreserved != 0 {
+		snapshot.ActivationPreserved != 0 ||
+		snapshot.AuthorityPeerChanges != 2 ||
+		snapshot.AuthorityNodeKeyChanges != 3 ||
+		snapshot.AuthorityDiscoveryKeyChanges != 4 ||
+		snapshot.AuthorityEndpointChanges != 5 || snapshot.SocketChanges != 1 {
 		t.Fatalf("activation telemetry = %#v", snapshot)
 	}
 }

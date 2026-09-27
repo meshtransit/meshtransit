@@ -230,7 +230,9 @@ func TestPathSelectorGenerationLifecycleIsAtomic(t *testing.T) {
 		t.Fatalf("Observe() error = %v", err)
 	}
 	result, err := selector.Activate(snapshot, generation)
-	if err != nil || len(result.Changes) != 0 || len(selector.Selections()) != 1 {
+	if err != nil || len(result.Changes) != 0 || len(selector.Selections()) != 1 ||
+		result.Activation.SelectionsPreserved != 1 ||
+		result.Activation.SelectionsRetired != 0 {
 		t.Fatalf("Activate(same) result=%#v error=%v selections=%#v", result, err, selector.Selections())
 	}
 
@@ -266,7 +268,9 @@ func TestPathSelectorGenerationLifecycleIsAtomic(t *testing.T) {
 	if err != nil || len(result.Changes) != 0 ||
 		len(selected) != 1 || selected[0].Generation != replacementGeneration ||
 		selected[0].RemoteEndpoint != remote ||
-		selected[0].ExpiresAt != now.Add(defaultPathTrust) {
+		selected[0].ExpiresAt != now.Add(defaultPathTrust) ||
+		result.Activation.SelectionsPreserved != 1 ||
+		result.Activation.EndpointSetChanges != 0 {
 		t.Fatalf("Activate(replacement) result=%#v error=%v", result, err)
 	}
 
@@ -281,7 +285,12 @@ func TestPathSelectorGenerationLifecycleIsAtomic(t *testing.T) {
 	result, err = selector.Activate(changedAuthority, changedGeneration)
 	if err != nil || len(result.Changes) != 1 ||
 		result.Changes[0].Previous.RemoteEndpoint != remote ||
-		result.Changes[0].Current.IsValid() || len(selector.Selections()) != 0 {
+		result.Changes[0].Current.IsValid() || len(selector.Selections()) != 0 ||
+		result.Activation.SelectionsRetired != 1 ||
+		result.Activation.EndpointSetChanges != 1 ||
+		result.Activation.PeerSetChanges != 0 ||
+		result.Activation.NodeKeyChanges != 0 ||
+		result.Activation.DiscoveryKeyChanges != 0 {
 		t.Fatalf("Activate(changed authority) result=%#v error=%v", result, err)
 	}
 	selector.Deactivate()
@@ -306,7 +315,8 @@ func TestPathSelectorEquivalentRevisionPreservesOnlyRemainingLease(t *testing.T)
 	generation.MapRevision = snapshot.Revision
 	result, err := selector.Activate(snapshot, generation)
 	if err != nil || len(result.Changes) != 0 ||
-		result.ExpiresAt != now.Add(defaultPathTrust) {
+		result.ExpiresAt != now.Add(defaultPathTrust) ||
+		result.Activation.SelectionsPreserved != 1 {
 		t.Fatalf("Activate(equivalent revision) result=%#v error=%v", result, err)
 	}
 
@@ -316,6 +326,42 @@ func TestPathSelectorEquivalentRevisionPreservesOnlyRemainingLease(t *testing.T)
 		result.Changes[0].Previous.RemoteEndpoint != remote ||
 		result.Changes[0].Current.IsValid() || !result.ExpiresAt.IsZero() {
 		t.Fatalf("Expire(carried lease) result=%#v error=%v", result, err)
+	}
+}
+
+func TestComparePeerPathAuthorityClassifiesAggregateChanges(t *testing.T) {
+	t.Parallel()
+
+	firstEndpoint := netip.MustParseAddrPort("203.0.113.70:41641")
+	secondEndpoint := netip.MustParseAddrPort("203.0.113.71:41641")
+	left := map[uint64]*peerPathState{
+		2: {
+			nodeKey:      "nodekey:first",
+			discoveryKey: "discokey:first",
+			candidates: map[netip.AddrPort]pathCandidateState{
+				firstEndpoint: {},
+			},
+		},
+		3: {},
+	}
+	right := map[uint64]*peerPathState{
+		2: {
+			nodeKey:      "nodekey:second",
+			discoveryKey: "discokey:second",
+			candidates: map[netip.AddrPort]pathCandidateState{
+				secondEndpoint: {},
+			},
+		},
+		4: {},
+	}
+	want := PathActivationSummary{
+		PeerSetChanges:      2,
+		NodeKeyChanges:      1,
+		DiscoveryKeyChanges: 1,
+		EndpointSetChanges:  1,
+	}
+	if got := comparePeerPathAuthority(left, right); got != want {
+		t.Fatalf("comparePeerPathAuthority() = %#v, want %#v", got, want)
 	}
 }
 
@@ -337,7 +383,9 @@ func TestPathSelectorSocketChangeRetiresAuthenticatedPath(t *testing.T) {
 	result, err := selector.Activate(snapshot, generation)
 	if err != nil || len(result.Changes) != 1 ||
 		result.Changes[0].Previous.RemoteEndpoint != remote ||
-		result.Changes[0].Current.IsValid() || len(selector.Selections()) != 0 {
+		result.Changes[0].Current.IsValid() || len(selector.Selections()) != 0 ||
+		result.Activation.SelectionsRetired != 1 ||
+		!result.Activation.SocketChanged {
 		t.Fatalf("Activate(new socket) result=%#v error=%v", result, err)
 	}
 }

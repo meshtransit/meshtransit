@@ -63,11 +63,25 @@ type PathChange struct {
 	Current  PathSelection
 }
 
+// PathActivationSummary contains aggregate reasons that path evidence was
+// retained or retired while a validated map generation was activated.
+type PathActivationSummary struct {
+	Initial             bool
+	SelectionsPreserved uint64
+	SelectionsRetired   uint64
+	PeerSetChanges      uint64
+	NodeKeyChanges      uint64
+	DiscoveryKeyChanges uint64
+	EndpointSetChanges  uint64
+	SocketChanged       bool
+}
+
 // PathSelectionResult contains endpoint transitions and the exact earliest
 // time at which any retained proof must be expired.
 type PathSelectionResult struct {
-	Changes   []PathChange
-	ExpiresAt time.Time
+	Changes    []PathChange
+	ExpiresAt  time.Time
+	Activation PathActivationSummary
 }
 
 type pathCandidateState struct {
@@ -148,24 +162,32 @@ func (s *PathSelector) Activate(
 			return PathSelectionResult{}, ErrInvalidPathSnapshot
 		}
 		current := s.selectionsLocked()
+		result := s.resultLocked(current)
+		result.Activation.SelectionsPreserved = uint64(len(current))
 
-		return s.resultLocked(current), nil
+		return result, nil
 	}
 	previous := s.selectionsLocked()
+	activation := summarizePathActivation(s.active, generation, s.peers, next)
 	preserveEvidence := s.active.IsValid() &&
 		generation.Scope == s.active.Scope &&
 		generation.Socket == s.active.Socket &&
 		equalPeerPathAuthority(s.peers, next)
 	if preserveEvidence {
 		copyPeerPathEvidence(next, s.peers)
+		activation.SelectionsPreserved = uint64(len(previous))
 	} else {
+		activation.SelectionsRetired = uint64(len(previous))
 		s.advancedAt = time.Time{}
 	}
 	s.active = generation
 	s.latest = generation
 	s.peers = next
 
-	return s.resultLocked(previous), nil
+	result := s.resultLocked(previous)
+	result.Activation = activation
+
+	return result, nil
 }
 
 func copyPeerPathEvidence(
@@ -498,21 +520,67 @@ func equalPeerPathAuthority(
 	left map[uint64]*peerPathState,
 	right map[uint64]*peerPathState,
 ) bool {
+	summary := comparePeerPathAuthority(left, right)
+
+	return summary.PeerSetChanges == 0 && summary.NodeKeyChanges == 0 &&
+		summary.DiscoveryKeyChanges == 0 && summary.EndpointSetChanges == 0
+}
+
+func summarizePathActivation(
+	active ProbeGeneration,
+	next ProbeGeneration,
+	currentPeers map[uint64]*peerPathState,
+	nextPeers map[uint64]*peerPathState,
+) PathActivationSummary {
+	if !active.IsValid() {
+		return PathActivationSummary{Initial: true}
+	}
+	summary := comparePeerPathAuthority(currentPeers, nextPeers)
+	summary.SocketChanged = active.Socket != next.Socket
+
+	return summary
+}
+
+func comparePeerPathAuthority(
+	left map[uint64]*peerPathState,
+	right map[uint64]*peerPathState,
+) PathActivationSummary {
+	summary := PathActivationSummary{}
+	for peerID, leftPeer := range left {
+		rightPeer, exists := right[peerID]
+		if !exists || leftPeer == nil || rightPeer == nil {
+			summary.PeerSetChanges++
+			continue
+		}
+		if leftPeer.nodeKey != rightPeer.nodeKey {
+			summary.NodeKeyChanges++
+		}
+		if leftPeer.discoveryKey != rightPeer.discoveryKey {
+			summary.DiscoveryKeyChanges++
+		}
+		if !equalPathCandidates(leftPeer.candidates, rightPeer.candidates) {
+			summary.EndpointSetChanges++
+		}
+	}
+	for peerID := range right {
+		if _, exists := left[peerID]; !exists {
+			summary.PeerSetChanges++
+		}
+	}
+
+	return summary
+}
+
+func equalPathCandidates(
+	left map[netip.AddrPort]pathCandidateState,
+	right map[netip.AddrPort]pathCandidateState,
+) bool {
 	if len(left) != len(right) {
 		return false
 	}
-	for peerID, leftPeer := range left {
-		rightPeer, exists := right[peerID]
-		if !exists || leftPeer == nil || rightPeer == nil ||
-			leftPeer.nodeKey != rightPeer.nodeKey ||
-			leftPeer.discoveryKey != rightPeer.discoveryKey ||
-			len(leftPeer.candidates) != len(rightPeer.candidates) {
+	for endpoint := range left {
+		if _, exists := right[endpoint]; !exists {
 			return false
-		}
-		for endpoint := range leftPeer.candidates {
-			if _, exists := rightPeer.candidates[endpoint]; !exists {
-				return false
-			}
 		}
 	}
 
