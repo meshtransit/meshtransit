@@ -15,6 +15,9 @@ are included.
 | Proxy-safe heartbeat default source | `57546a26498cec2e9f6930a3e58330522e06ef56` |
 | Core image | `manhdev2002/meshtransit-core:poc-v33` |
 | Core image digest | `sha256:380f78a452f5fef747dd963d4c08f66220a4a009dbf41295d980ae67ae5ee287` |
+| Control source | `5578378` |
+| Control image | `manhdev2002/meshtransit-core:poc-v35` |
+| Control image digest | `sha256:e3f8b2a323e2e430b8051c460f2c7b3921a9e64e212fce4208c49fc4b9dadeff` |
 | Embedded broker release | `v2.45.1+compat.8` |
 | meshd source | `745db5193def2db0d8a1946eb762e75f898ddef0` |
 | meshd version | `0.1.0~poc62` |
@@ -22,8 +25,9 @@ are included.
 | meshctl source | `41bdcedbea9c479d8ae47f077adbc41d188e87ab` |
 | meshctl version | `0.1.0~poc62` |
 | meshctl package SHA-256 | `6f5e9240521b71200a9f1db34fe9c8f4c5b0b0477f0d122ae5492fa0a2e1ac57` |
-| Helm chart | `0.2.16` |
-| Helm release revision | `34` |
+| Helm chart | `0.2.18` |
+| Helm release revision | `36` |
+| Relay directory | Revision 2, `sha256:3c2b107253566ef1d79a551171b8fa4a88ccfdcc785148916d2116fdc61ab4fb` |
 | Kubernetes topology | One cluster node; two replicas per Core role |
 
 The SSO and policy cases were first executed on Core `60ff4c6` / `poc-v31`
@@ -60,6 +64,7 @@ policy implementations.
 | `POC-PATH-001` | Equivalent map revisions and compatible peer home-relay changes do not overwrite authenticated direct endpoints | Pass | p60 carried only the remaining proof lease, converged both clients from home region 1 to 3 with zero fallback at the convergence checkpoint, and removed the p59 multi-second outage |
 | `POC-PATH-002` | Direct-path transition rate remains bounded during continuing map churn | Pass | p62 classified the churn as peer authority remove/add caused by two-minute control-stream reconnects; a 30-second heartbeat plus unbuffered 180-second ingress window held both clients at unchanged map, peer-change, and fallback counters for four minutes while 480 overlay probes completed without loss |
 | `POC-STREAM-001` | Idle control streams remain continuous through the public ingress | Pass | Helm revision 34 configured a 30-second Core heartbeat, disabled NGINX response buffering, and set 180-second read/write timeouts; neither control replica logged a stream termination during the four-minute soak |
+| `POC-CHURN-001` | Endpoint add/remove and relay-directory revision changes preserve synchronized direct traffic | Pass | Both clients published two endpoint refreshes, revision 2 rolled through both Control replicas, and 4,183 bidirectional overlay probes completed without loss across the endpoint and rollout windows |
 | `POC-NODE-HA-001` | Workload survives Kubernetes node failure | Pending | The current POC deliberately uses one cluster node |
 | `POC-DATA-HA-001` | PostgreSQL and Redis failover preserve authority and convergence | Pending | The current POC uses one external PostgreSQL/Redis host |
 
@@ -370,6 +375,45 @@ During the two pod replacements, bidirectional probes each delivered 120 of
 2.693 ms and 5.190 ms. Replacement Control logs contained readiness only. This
 closes same-generation presence handover for the single-node POC topology.
 
+## Endpoint and relay-directory churn continuation
+
+Each client received a temporary non-loopback dummy interface with a unique
+documentation-only `/32` address. The test did not change either default route,
+the mesh interface, the shared UDP socket, or the public control path. Interface
+creation and later removal each produced one host-network event and one endpoint
+refresh on both clients; the interfaces were absent after cleanup.
+
+Client `.4` advanced from map revision 77 to 83 while endpoint-authority changes
+advanced from one to three. Client `.5` advanced from revision 38 to 44 while
+endpoint-authority changes advanced from zero to two. Peer, Node-key,
+discovery-key, and socket authority counters remained unchanged at 46/6, 0/0,
+0/0, and 1/1 respectively. Each client recorded two bounded fallback/direct
+promotion pairs as endpoint candidates were added and removed. Direct promotion
+completed in 12 ms and 13 ms at the final checkpoint. Both clients finished
+synchronized with one direct path, zero relay paths, and no runtime recovery;
+probe send failures, completion rejections, and datagram drops remained zero.
+
+The first 240-second traffic window covered endpoint creation and its initial
+convergence. Client `.4` delivered 1,195 of 1,195 replies with 1.421 ms mean and
+11.900 ms maximum RTT. Client `.5` delivered 1,196 of 1,196 replies with 1.505
+ms mean and 8.000 ms maximum RTT. Both directions had zero loss.
+
+Relay-directory revision 2 changed only the monotonic revision field while
+retaining the validated topology. Its exact payload was stored in immutable
+ConfigMap `meshtransit-relay-directory-r2-3c2b1072`; the stored bytes, ConfigMap
+annotation, chart value, and Control environment all matched digest
+`sha256:3c2b107253566ef1d79a551171b8fa4a88ccfdcc785148916d2116fdc61ab4fb`.
+Helm chart `0.2.18` passed strict lint, local render, and Kubernetes server-side
+dry-run before atomic revision 36 mounted the new snapshot and rolled both
+Control replicas with `maxUnavailable=0`.
+
+The separate 180-second traffic window covered that rolling update and endpoint
+removal. Both directions delivered 896 of 896 replies with zero loss. Mean RTT
+was 1.324 ms and 1.432 ms; maximum RTT was 9.050 ms and 10.200 ms. The two new
+Control pods were Ready with zero restarts, used the pinned `poc-v35` digest,
+and logged readiness only. This closes the bounded endpoint and relay-directory
+churn item for the single-node POC topology.
+
 ## HA interpretation
 
 This run qualifies replica replacement, not infrastructure-zone failure. All
@@ -383,11 +427,9 @@ state. Redis remained non-authoritative.
 
 ## Remaining execution order
 
-1. Re-run the bounded direct/relay soak under deliberate endpoint and relay-
-   directory churn while the control stream remains continuous.
-2. Repeat the matrix on a multi-node cluster with topology spread and a node
+1. Repeat the matrix on a multi-node cluster with topology spread and a node
    drain or loss.
-3. Add PostgreSQL and Redis failover qualification with recovery-generation,
+2. Add PostgreSQL and Redis failover qualification with recovery-generation,
    missed-notification, and reconciliation evidence.
-4. Extend publication cases to TCP, UDP, multiple devices, and multiple
+3. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
