@@ -716,10 +716,54 @@ ordinary, broker-tagged, and integration-tagged vet also passed.
 
 This closes the database service-outage contract, not PostgreSQL service
 failover, multi-node database HA, or availability-zone recovery. Those
-infrastructure claims remain paused and separate. Signer outage and
-recovery-generation fencing remain open under `SSO-BROKER-007`. The live Google
-credential and POC cluster were untouched. Production runtime source did not
-change, so no image or Helm rollout was required.
+infrastructure claims remain paused and separate. At this checkpoint, signer
+outage and recovery-generation fencing remained open under `SSO-BROKER-007`.
+The live Google credential and POC cluster were untouched. Production runtime
+source did not change, so no image or Helm rollout was required.
+
+## Broker signer outage and recovery evidence
+
+Core source `71939ab2bb4e2cd7fb142b41d9717187953df78c` closes the signer
+outage portion of `SSO-BROKER-007`. Identity readiness now has a separate,
+stable `identity_signer` component instead of inferring signer health from
+database connectivity or immutable configuration. An aggregate process keeps
+healthy API/control admission when only this login dependency is unavailable;
+an Identity-only process fails readiness.
+
+The pinned broker adapter performs a bounded cryptographic proof during startup
+and on periodic readiness checks. It requires the approved RS256 algorithm, a
+non-empty JWKS containing unique public signing keys with exact algorithm/use,
+then signs a fixed non-secret probe and verifies the result against those
+published keys. Startup cannot publish a runtime when this proof fails. Runtime
+checks share the same admission/drain fence as HTTP handlers, so shutdown never
+releases signer/storage resources while an admitted proof is still active.
+
+The deterministic outage fixture makes only the signer's `GetKeys` operation
+unavailable after healthy startup while the product PostgreSQL check remains
+Ready. The signer check returns one redacted closed category. JWKS returns a
+no-store `500`, and a real authorization-code token exchange returns a no-store
+`500` with no redirect, cookie, access token, ID token, raw dependency detail,
+or alternate signing path. The authorization code remains unconsumed because
+no token was issued.
+
+After the same signer handle recovers, readiness becomes healthy without
+reconstructing the broker runtime. Retrying that authorization code succeeds
+exactly once, consumes it, and returns access/ID tokens whose ID-token signature
+verifies against the recovered JWKS. A separate startup case proves an unusable
+signer publishes no runtime and releases its borrowed storage.
+
+The focused tests, full broker-tagged suite, and ordinary repository suite
+passed with the race detector. Ordinary, broker-tagged, and integration-tagged
+vet passed. Ordinary and broker-tagged delta lint reported zero new findings;
+the repository-wide lint baseline still contains four unrelated pre-existing
+findings, so no full lint pass is claimed. The pinned vulnerability scan found
+zero reachable or imported-package vulnerabilities.
+
+This source qualification did not use the live Google credential, mutate the
+POC cluster, build an image, or roll Helm. It does not claim an external KMS/
+Vault outage test, PostgreSQL failover, multi-node database HA, or
+availability-zone recovery. Recovery-generation fencing is the only remaining
+source slice under `SSO-BROKER-007`.
 
 ## Private aggregate-runtime canary
 
@@ -786,8 +830,8 @@ state. Redis remained non-authoritative.
 
 ## Remaining execution order
 
-1. Exercise the broker outage matrix and recovery-generation fences, then close
-   the remaining legal-review and signed-artifact items.
+1. Exercise recovery-generation fencing, then close the remaining legal-review
+   and signed-artifact items.
 2. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
 3. Resume PostgreSQL and Redis infrastructure failover only when that paused
