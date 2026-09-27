@@ -175,6 +175,49 @@ func TestPathEndpointControllerPauseDropsQueuedProof(t *testing.T) {
 	}
 }
 
+func TestPathEndpointControllerActivationReconcilesRetiredSelection(t *testing.T) {
+	t.Parallel()
+
+	generation := pathEndpointGeneration()
+	selector := &scriptedPathSelector{
+		activateResult: pathdiscovery.PathSelectionResult{
+			Changes: []pathdiscovery.PathChange{{
+				PeerID: 2,
+				Previous: pathdiscovery.PathSelection{
+					PeerID:     2,
+					Generation: generation,
+				},
+			}},
+		},
+	}
+	dataPlane := newRecordingPreferredEndpointDataPlane()
+	ctx, cancel := context.WithCancel(t.Context())
+	controller, err := newPathEndpointController(
+		ctx,
+		selector,
+		dataPlane,
+		&sync.Mutex{},
+		time.Now,
+		cancel,
+	)
+	if err != nil {
+		t.Fatalf("newPathEndpointController() error = %v", err)
+	}
+	t.Cleanup(controller.Close)
+	if err := controller.Activate(
+		t.Context(),
+		networkmap.Snapshot{Revision: generation.MapRevision},
+		generation,
+	); err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	restored := waitForEndpointUpdate(t, dataPlane.updates)
+	if !restored.restore || restored.revision != generation.MapRevision ||
+		restored.peerID != 2 {
+		t.Fatalf("activation endpoint update = %#v", restored)
+	}
+}
+
 type scriptedPathSelector struct {
 	mu             sync.Mutex
 	activateResult pathdiscovery.PathSelectionResult

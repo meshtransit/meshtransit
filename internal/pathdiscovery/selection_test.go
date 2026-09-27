@@ -262,14 +262,83 @@ func TestPathSelectorGenerationLifecycleIsAtomic(t *testing.T) {
 	replacementGeneration := generation
 	replacementGeneration.MapRevision = replacement.Revision
 	result, err = selector.Activate(replacement, replacementGeneration)
+	selected := selector.Selections()
+	if err != nil || len(result.Changes) != 0 ||
+		len(selected) != 1 || selected[0].Generation != replacementGeneration ||
+		selected[0].RemoteEndpoint != remote ||
+		selected[0].ExpiresAt != now.Add(defaultPathTrust) {
+		t.Fatalf("Activate(replacement) result=%#v error=%v", result, err)
+	}
+
+	changedAuthority := cloneSelectionSnapshot(replacement)
+	changedAuthority.Revision++
+	changedAuthority.Peers[0].Endpoints = append(
+		changedAuthority.Peers[0].Endpoints,
+		netip.MustParseAddrPort("203.0.113.52:41641"),
+	)
+	changedGeneration := replacementGeneration
+	changedGeneration.MapRevision = changedAuthority.Revision
+	result, err = selector.Activate(changedAuthority, changedGeneration)
 	if err != nil || len(result.Changes) != 1 ||
 		result.Changes[0].Previous.RemoteEndpoint != remote ||
 		result.Changes[0].Current.IsValid() || len(selector.Selections()) != 0 {
-		t.Fatalf("Activate(replacement) result=%#v error=%v", result, err)
+		t.Fatalf("Activate(changed authority) result=%#v error=%v", result, err)
 	}
 	selector.Deactivate()
 	if _, err := selector.Activate(snapshot, generation); !errors.Is(err, ErrInvalidPathSnapshot) {
 		t.Fatalf("Activate(rollback) error = %v", err)
+	}
+}
+
+func TestPathSelectorEquivalentRevisionPreservesOnlyRemainingLease(t *testing.T) {
+	t.Parallel()
+
+	remote := netip.MustParseAddrPort("203.0.113.53:41641")
+	selector, snapshot, generation := activePathSelector(t, remote)
+	now := time.Unix(5_500, 0)
+	if _, err := selector.Observe(
+		pathObservation(generation, remote, 20*time.Millisecond, now),
+	); err != nil {
+		t.Fatalf("Observe() error = %v", err)
+	}
+
+	snapshot.Revision++
+	generation.MapRevision = snapshot.Revision
+	result, err := selector.Activate(snapshot, generation)
+	if err != nil || len(result.Changes) != 0 ||
+		result.ExpiresAt != now.Add(defaultPathTrust) {
+		t.Fatalf("Activate(equivalent revision) result=%#v error=%v", result, err)
+	}
+
+	result, err = selector.Expire(now.Add(defaultPathTrust))
+	if err != nil || len(result.Changes) != 1 ||
+		result.Changes[0].Previous.Generation != generation ||
+		result.Changes[0].Previous.RemoteEndpoint != remote ||
+		result.Changes[0].Current.IsValid() || !result.ExpiresAt.IsZero() {
+		t.Fatalf("Expire(carried lease) result=%#v error=%v", result, err)
+	}
+}
+
+func TestPathSelectorSocketChangeRetiresAuthenticatedPath(t *testing.T) {
+	t.Parallel()
+
+	remote := netip.MustParseAddrPort("203.0.113.54:41641")
+	selector, snapshot, generation := activePathSelector(t, remote)
+	now := time.Unix(5_600, 0)
+	if _, err := selector.Observe(
+		pathObservation(generation, remote, 20*time.Millisecond, now),
+	); err != nil {
+		t.Fatalf("Observe() error = %v", err)
+	}
+
+	snapshot.Revision++
+	generation.MapRevision = snapshot.Revision
+	generation.Socket.Generation++
+	result, err := selector.Activate(snapshot, generation)
+	if err != nil || len(result.Changes) != 1 ||
+		result.Changes[0].Previous.RemoteEndpoint != remote ||
+		result.Changes[0].Current.IsValid() || len(selector.Selections()) != 0 {
+		t.Fatalf("Activate(new socket) result=%#v error=%v", result, err)
 	}
 }
 

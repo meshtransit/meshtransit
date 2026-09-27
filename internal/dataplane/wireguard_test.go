@@ -402,7 +402,7 @@ func TestWireGuardEngineRejectsUnauthorizedOrStalePeerEndpoint(t *testing.T) {
 	}
 }
 
-func TestWireGuardEngineNewMapRevisionResetsPreferredEndpoint(t *testing.T) {
+func TestWireGuardEngineEquivalentMapRevisionPreservesPreferredEndpoint(t *testing.T) {
 	t.Parallel()
 
 	privateKey, snapshot := testWireGuardSnapshot(t)
@@ -429,17 +429,17 @@ func TestWireGuardEngineNewMapRevisionResetsPreferredEndpoint(t *testing.T) {
 	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
 		t.Fatalf("Apply(new revision) error = %v", err)
 	}
-	if device.configureCalls != 3 || !strings.Contains(
-		device.configurations[2],
-		"update_only=true",
-	) || strings.Contains(device.configurations[2], "replace_peers=true") {
-		t.Fatalf("new revision configuration = %q", device.configuration)
+	if device.configureCalls != 2 {
+		t.Fatalf("equivalent revision configure calls = %d, want 2", device.configureCalls)
+	}
+	if paths := engine.PeerPaths(); paths.DirectCount != 1 || paths.RelayCount != 0 {
+		t.Fatalf("equivalent revision PeerPaths() = %#v, want direct", paths)
 	}
 	if err := engine.RestorePreferredEndpoint(snapshot.Revision, snapshot.Peers[0].ID); err != nil {
 		t.Fatalf("RestorePreferredEndpoint() error = %v", err)
 	}
 	if device.configureCalls != 3 {
-		t.Fatalf("restored base was not tracked, configure calls = %d", device.configureCalls)
+		t.Fatalf("restored base configure calls = %d, want 3", device.configureCalls)
 	}
 	if opener.calls != 1 || device.upCalls != 1 || device.closeCalls != 0 {
 		t.Fatalf(
@@ -753,7 +753,7 @@ func TestWireGuardEngineClosesWhenReadinessSessionResetFails(t *testing.T) {
 	}
 }
 
-func TestWireGuardEngineClosesWhenEquivalentRevisionResetFails(t *testing.T) {
+func TestWireGuardEngineClosesWhenEndpointAuthorityResetFails(t *testing.T) {
 	t.Parallel()
 
 	privateKey, snapshot := testWireGuardSnapshot(t)
@@ -777,8 +777,9 @@ func TestWireGuardEngineClosesWhenEquivalentRevisionResetFails(t *testing.T) {
 	}
 	device.configureErr = errors.New("test reset failure")
 	snapshot.Revision++
+	snapshot.Peers[0].Endpoints = snapshot.Peers[0].Endpoints[:1]
 	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err == nil {
-		t.Fatal("Apply(new revision) error = nil")
+		t.Fatal("Apply(authority change) error = nil")
 	}
 	if device.configureCalls != 3 || device.closeCalls != 1 || engine.device != nil ||
 		engine.appliedRevision != 0 {
@@ -1284,10 +1285,11 @@ func TestWireGuardEngineReportsRelayFirstPromotionTiming(t *testing.T) {
 	privateKey, snapshot := testWireGuardSnapshot(t)
 	snapshot = addTestRelay(snapshot)
 	now := time.Date(2026, time.September, 27, 14, 0, 0, 0, time.UTC)
+	device := &fakeWireGuardDevice{}
 	engine, err := newWireGuardEngine(
 		&wireGuardTUNOpener{},
 		41641,
-		&fakeWireGuardFactory{device: &fakeWireGuardDevice{}},
+		&fakeWireGuardFactory{device: device},
 		nil,
 	)
 	if err != nil {
@@ -1317,6 +1319,16 @@ func TestWireGuardEngineReportsRelayFirstPromotionTiming(t *testing.T) {
 		paths.LastDirectPromotion != 250*time.Millisecond ||
 		paths.MaxDirectPromotion != 250*time.Millisecond {
 		t.Fatalf("promoted PeerPaths() = %#v", paths)
+	}
+	snapshot.Revision++
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply(equivalent revision) error = %v", err)
+	}
+	paths = engine.PeerPaths()
+	if paths.DirectCount != 1 || paths.RelayCount != 0 ||
+		paths.DirectPromotionCount != 1 || paths.RelayFallbackCount != 0 ||
+		device.configureCalls != 2 {
+		t.Fatalf("equivalent revision PeerPaths() = %#v, configure calls = %d", paths, device.configureCalls)
 	}
 	if err := engine.SetPreferredEndpoint(
 		snapshot.Revision,

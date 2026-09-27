@@ -112,7 +112,8 @@ func newPathSelector(trust time.Duration) *PathSelector {
 
 // Activate atomically replaces candidate authority for a generation. An exact
 // repeated generation preserves evidence only when its peer topology is also
-// identical. Every other valid generation starts without trusted paths.
+// identical. A newer map revision may inherit an unexpired proof only when the
+// session scope, UDP socket, and complete peer path authority are unchanged.
 func (s *PathSelector) Activate(
 	snapshot networkmap.Snapshot,
 	generation ProbeGeneration,
@@ -151,12 +152,36 @@ func (s *PathSelector) Activate(
 		return s.resultLocked(current), nil
 	}
 	previous := s.selectionsLocked()
+	preserveEvidence := s.active.IsValid() &&
+		generation.Scope == s.active.Scope &&
+		generation.Socket == s.active.Socket &&
+		equalPeerPathAuthority(s.peers, next)
+	if preserveEvidence {
+		copyPeerPathEvidence(next, s.peers)
+	} else {
+		s.advancedAt = time.Time{}
+	}
 	s.active = generation
 	s.latest = generation
-	s.advancedAt = time.Time{}
 	s.peers = next
 
 	return s.resultLocked(previous), nil
+}
+
+func copyPeerPathEvidence(
+	destination map[uint64]*peerPathState,
+	source map[uint64]*peerPathState,
+) {
+	for peerID, sourcePeer := range source {
+		destinationPeer := destination[peerID]
+		if sourcePeer == nil || destinationPeer == nil {
+			continue
+		}
+		for endpoint, state := range sourcePeer.candidates {
+			destinationPeer.candidates[endpoint] = state
+		}
+		destinationPeer.selected = sourcePeer.selected
+	}
 }
 
 // Deactivate removes all evidence and selected paths while retaining the

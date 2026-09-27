@@ -289,8 +289,10 @@ func (e *WireGuardEngine) Apply(
 			equalPeerBaseConfiguration(e.peers, plan.peers)
 		if baseCompatible && !routesChanged {
 			sessionResets := changedPeerSessions(e.peers, plan.peers)
+			preservePreferred := equalPeerEndpointAuthority(e.peers, plan.peers) &&
+				len(sessionResets) == 0
 			if e.appliedRevision == snapshot.Revision &&
-				equalPeerEndpointAuthority(e.peers, plan.peers) && !relayChanged &&
+				preservePreferred && !relayChanged &&
 				len(sessionResets) == 0 {
 				return plan.state(), nil
 			}
@@ -302,7 +304,11 @@ func (e *WireGuardEngine) Apply(
 				}
 				relayReplaced = true
 			}
-			advanced, err := e.advanceCompatiblePlan(snapshot.Revision, plan.peers)
+			advanced, err := e.advanceCompatiblePlan(
+				snapshot.Revision,
+				plan.peers,
+				preservePreferred,
+			)
 			if err != nil {
 				return StateFailed, err
 			}
@@ -706,29 +712,33 @@ func (e *WireGuardEngine) RestorePreferredEndpoint(
 }
 
 // advanceCompatiblePlan adopts peer endpoint authority without replacing the
-// WireGuard peers or reopening the shared UDP socket. A path selected under
-// the previous authority is first returned to its control-plane endpoint so
-// stale path proof cannot cross generations.
+// WireGuard peers or reopening the shared UDP socket. An unchanged authority
+// keeps its authenticated preferred endpoint while the selector transfers the
+// remaining proof lease. Changed authority first restores the control-plane
+// endpoint so stale proof cannot cross generations.
 func (e *WireGuardEngine) advanceCompatiblePlan(
 	revision uint64,
 	planned []wireGuardPeerPlan,
+	preservePreferred bool,
 ) (bool, error) {
-	for _, peer := range planned {
-		installed := e.peers[peer.id]
-		if installed.currentEndpoint != installed.baseEndpoint && installed.baseEndpoint == "" {
-			return false, nil
+	if !preservePreferred {
+		for _, peer := range planned {
+			installed := e.peers[peer.id]
+			if installed.currentEndpoint != installed.baseEndpoint && installed.baseEndpoint == "" {
+				return false, nil
+			}
 		}
-	}
-	for _, peer := range planned {
-		installed := e.peers[peer.id]
-		if err := e.configurePeerEndpoint(
-			peer.id,
-			installed,
-			installed.baseEndpoint,
-			installed.basePath,
-			false,
-		); err != nil {
-			return false, err
+		for _, peer := range planned {
+			installed := e.peers[peer.id]
+			if err := e.configurePeerEndpoint(
+				peer.id,
+				installed,
+				installed.baseEndpoint,
+				installed.basePath,
+				false,
+			); err != nil {
+				return false, err
+			}
 		}
 	}
 	nextPeers := make(map[uint64]wireGuardPeerState, len(planned))

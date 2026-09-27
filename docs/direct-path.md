@@ -101,15 +101,18 @@ peer map ──────────► authenticated path manager ───�
    are implemented. The bounded
    product-owned selector now enforces authorized candidates, a 6.5-second
    freshness window, smoothed RTT, switch hysteresis, deterministic ties,
-   exact expiry/fallback, generation reset, and rollback rejection. One owned
+   exact expiry/fallback, bounded lease handoff across an otherwise identical
+   newer map revision, generation reset, and rollback rejection. One owned
    daemon worker applies selector transitions through peer-scoped WireGuard
    `update_only` requests, guards the installed map revision and signed endpoint
    set, restores the signed base endpoint at exact proof expiry, and closes the
    engine on an ambiguous update. Aggregate process-local status counts relay
    bootstraps, authenticated direct promotions, and relay fallbacks, and records
    last and maximum relay-to-direct promotion duration without retaining peer
-   identity or endpoint data. Equivalent map revisions safely retire stale path
-   proof without reopening the shared socket. Activity-aware probe suppression
+   identity or endpoint data. Equivalent map revisions preserve only the
+   remaining proof lease without a device write; the lease is not extended,
+   and any socket, peer identity, discovery identity, or candidate-authority
+   change restores the signed base path. Activity-aware probe suppression
    remains; periodic authenticated rounds currently keep roaming decisions
    fresh for all online peers.
 5. Implemented in the Linux candidate path: end-to-end tests use only automatically

@@ -298,6 +298,9 @@ func (c *pathEndpointController) handleCommand(
 		return true, generation, nil, nil
 	case pathEndpointActivate:
 		result, err := c.selector.Activate(command.snapshot, command.generation)
+		if err == nil {
+			err = c.applyChanges(command.generation, result.Changes)
+		}
 		if err != nil {
 			return paused, generation, nil, fmt.Errorf(
 				"activating path selector: %w",

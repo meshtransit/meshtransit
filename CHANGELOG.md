@@ -63,6 +63,11 @@ All notable user-visible changes will be documented in this file.
 
 ### Changed
 
+- Authenticated direct paths now keep only their remaining proof lease across
+  otherwise identical control-map revisions. Routine endpoint publications no
+  longer force a relay fallback and immediate re-promotion, while lease expiry,
+  socket changes, and peer or endpoint-authority changes still fail closed to
+  the signed base path.
 - A temporary local map-application failure now tears down TUN, routes, DNS,
   path probes, and session secrets before the daemon retries from a fresh full
   snapshot. Recovery uses interruptible jittered exponential backoff capped at
