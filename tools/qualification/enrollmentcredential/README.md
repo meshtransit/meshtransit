@@ -16,6 +16,8 @@ Safety controls:
 - active, verified `self_hosted` deployment and active same-scope authority;
 - active persistent Profile with an exact bounded one-use policy;
 - refusal while another credential for the Profile is still usable;
+- exact RLS Network scope in both the read-only preflight and write transaction;
+- Network audit-head locking through the scoped runtime security-definer API;
 - one-to-fifteen-minute whole-second lifetime;
 - TLS, SCRAM-SHA-256, one connection, and bounded operation/transaction timeouts;
 - bearer output created with `O_EXCL` and mode `0600`, never overwritten;

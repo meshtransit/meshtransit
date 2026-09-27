@@ -115,13 +115,11 @@ const insertCredentialSQL = `INSERT INTO mesh.enrollment_credential (
 )
 RETURNING version`
 
-const lockIssueAuditStreamSQL = `SELECT id, next_sequence, latest_event_hash
-FROM mesh_audit.audit_stream
-WHERE deployment_id = $1::BIGINT
-  AND workspace_id = $2::BIGINT
-  AND network_id = $3::BIGINT
-  AND scope_kind = 'network'
-FOR UPDATE`
+const lockIssueAuditStreamSQL = `SELECT
+    stream_internal_id,
+    next_sequence,
+    latest_event_hash
+FROM mesh_audit.lock_network_stream_head()`
 
 const appendIssueEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
     $1::BIGINT, $2::UUID, $3::UUID, $4::BIGINT, $5::BYTEA, $6::BYTEA,

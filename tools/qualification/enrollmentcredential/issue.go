@@ -156,7 +156,7 @@ func executeIssue(
 		resultErr = errors.Join(resultErr, connection.Close(cleanupCtx))
 	}()
 
-	initialScope, err := loadIssueScope(operationCtx, connection, loadIssueScopeSQL, spec)
+	initialScope, err := loadInitialIssueScope(operationCtx, connection, spec)
 	if err != nil {
 		return issueOutput{}, err
 	}
@@ -300,6 +300,62 @@ func executeIssue(
 	}, nil
 }
 
+func loadInitialIssueScope(
+	ctx context.Context,
+	connection *pgx.Conn,
+	spec issueSpec,
+) (scope issueScope, resultErr error) {
+	if ctx == nil || connection == nil || !spec.isValid() {
+		return issueScope{}, errInvalidInput
+	}
+	transaction, err := connection.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return issueScope{}, fmt.Errorf("begin qualification preflight transaction: %w", err)
+	}
+	transactionClosed := false
+	defer func() {
+		if transactionClosed {
+			return
+		}
+		rollbackCtx, rollbackCancel := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			issueCleanupTimeout,
+		)
+		defer rollbackCancel()
+		resultErr = errors.Join(resultErr, transaction.Rollback(rollbackCtx))
+	}()
+	if _, err := transaction.Exec(ctx, configureIssueTransactionSQL); err != nil {
+		return issueScope{}, fmt.Errorf("configure qualification preflight transaction: %w", err)
+	}
+	var scopedWorkspaceID int64
+	var scopedNetworkID int64
+	if err := transaction.QueryRow(
+		ctx,
+		setIssueScopeSQL,
+		spec.scope.WorkspaceID().String(),
+		spec.scope.NetworkID().String(),
+	).Scan(&scopedWorkspaceID, &scopedNetworkID); err != nil {
+		return issueScope{}, fmt.Errorf("set qualification preflight scope: %w", err)
+	}
+	scope, err = loadIssueScope(ctx, transaction, loadIssueScopeSQL, spec)
+	if err != nil {
+		return issueScope{}, err
+	}
+	if scopedWorkspaceID != scope.workspaceInternalID ||
+		scopedNetworkID != scope.networkInternalID {
+		return issueScope{}, errInvalidInput
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return issueScope{}, fmt.Errorf("commit qualification preflight transaction: %w", err)
+	}
+	transactionClosed = true
+
+	return scope, nil
+}
+
 type issueScopeQuerier interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
@@ -415,9 +471,6 @@ func appendIssueEvidence(
 	if err := transaction.QueryRow(
 		ctx,
 		lockIssueAuditStreamSQL,
-		scope.deploymentInternalID,
-		scope.workspaceInternalID,
-		scope.networkInternalID,
 	).Scan(&streamID, &nextSequence, &previousHashBytes); err != nil {
 		return fmt.Errorf("lock qualification audit stream: %w", err)
 	}
