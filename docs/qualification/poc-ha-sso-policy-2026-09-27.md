@@ -762,8 +762,50 @@ zero reachable or imported-package vulnerabilities.
 This source qualification did not use the live Google credential, mutate the
 POC cluster, build an image, or roll Helm. It does not claim an external KMS/
 Vault outage test, PostgreSQL failover, multi-node database HA, or
-availability-zone recovery. Recovery-generation fencing is the only remaining
-source slice under `SSO-BROKER-007`.
+availability-zone recovery. At that checkpoint, recovery-generation fencing was
+the only remaining source slice under `SSO-BROKER-007`.
+
+## Provider recovery-generation fencing evidence
+
+Core source `d5066d5799bea6e1295375d0e1d71b3e57ab3378` closes the final
+source-level slice of `SSO-BROKER-007`. A dedicated cold, verified-TLS Linux
+fixture created one generation-one Account Session and a separate pending
+browser continuation through the concrete private-login factory. It then
+applied one audited synthetic recovery transition in Core PostgreSQL: generation
+one became revoked, generation two became current with `unproven` recovery
+evidence, and the provider entered quarantine.
+
+The still-active generation-one Session failed authentication through both the
+resident and replacement runtime pools. The prepared generation-one callback
+failed before provider token/JWKS exchange or claim, and a replica retaining
+the generation-one route could not start another login. A replacement replica
+configured for generation two also remained unable to start login while the
+provider was quarantined. The old Session and pending transaction rows remained
+durably intact during these checks, proving denial came from the current
+authority fence rather than deletion, cache loss, or test-only rewriting.
+
+A separate audited approval changed only the provider recovery state to
+verified. It did not restore generation one. The stale Session, callback, and
+replica route remained denied, while the already-composed generation-two
+replacement completed a fresh login through its independent PostgreSQL pool
+and Redis client. The new Session recorded generation two and authenticated;
+no sticky session, alternate provider effect, mutable subject update, or
+generation-one authority reappeared.
+
+The complete containerized platform integration lane passed on a fresh rerun,
+including the new recovery gate, natural expiry, cleanup-wins, process-death,
+wire-ACK-loss, and process-runtime cases. The ordinary repository race suite
+passed 4,284 tests in 51 packages. Ordinary and integration vet, module
+consistency, and ordinary/integration delta lint also passed.
+
+This fixture qualifies the Core anti-rollback fence, not a production restore
+controller, continuity witness, backup/WAL recovery, key-custody procedure, or
+physical immediate deletion of retained stale rows. It did not use the live
+Google credential, mutate the POC cluster, build an image, or roll Helm, and it
+does not qualify PostgreSQL service failover, multi-node database HA, or
+availability-zone recovery. `SSO-BROKER-007` is complete for the current
+source-level scope; those infrastructure and recovery-operation claims remain
+separate.
 
 ## Private aggregate-runtime canary
 
@@ -830,8 +872,8 @@ state. Redis remained non-authoritative.
 
 ## Remaining execution order
 
-1. Exercise recovery-generation fencing, then close the remaining legal-review
-   and signed-artifact items.
+1. Execute the `SSO-BROKER-008` adversarial security matrix, then close the
+   remaining legal-review and signed-artifact items.
 2. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
 3. Resume PostgreSQL and Redis infrastructure failover only when that paused
