@@ -25,8 +25,8 @@ are included.
 | meshctl source | `41bdcedbea9c479d8ae47f077adbc41d188e87ab` |
 | meshctl version | `0.1.0~poc62` |
 | meshctl package SHA-256 | `6f5e9240521b71200a9f1db34fe9c8f4c5b0b0477f0d122ae5492fa0a2e1ac57` |
-| Helm chart | `0.2.21` |
-| Helm release revision | `39` |
+| Helm chart | Main `0.2.21`; private `role=all` canary `0.2.22` |
+| Helm release revision | Main `39`; private `role=all` canary `6` |
 | Relay directory | Revision 2, `sha256:3c2b107253566ef1d79a551171b8fa4a88ccfdcc785148916d2116fdc61ab4fb` |
 | Kubernetes topology | One POC worker at the current checkpoint; two replicas per Core role |
 
@@ -69,6 +69,7 @@ policy implementations.
 | `POC-ARTIFACT-001` | The current embedded-broker source is bound to a reproducible immutable image | Pass | The manifested `compat.8` source and binary verified, all compile/runtime gates passed on Core `ab1c26c`, and multi-platform image `poc-v36` was published with SBOM/provenance at the pinned digest; hardened runtime smoke passed and Trivy found zero High/Critical vulnerabilities |
 | `POC-ROLLOUT-004` | The current exact Core artifact rolls through every runtime role without loss of readiness | Pass | Atomic Helm revision 39 moved API, Control, and Identity to the same `poc-v36` digest; all roles returned to 2/2 with zero restarts and their public contracts remained available |
 | `POC-IDENTITY-HA-001` | Loss of one current Identity replica does not interrupt broker or Core readiness | Pass | Forty OIDC discovery requests, 40 Control key requests, and 20 paired Core/login readiness checks completed with zero failures while one Identity pod was deleted and replaced |
+| `POC-ROLE-ALL-001` | One private Core process can own every runtime role, recover after process loss, and reject invalid listener topology before admission | Pass | The digest-pinned `role=all` canary reported all five roles and every dependency Ready; direct-TLS Control, API, Login, and Identity contracts passed; pod deletion recovered with zero restarts; an isolated listener-collision release exited with redacted `invalid_configuration` and no Ready endpoint |
 | `POC-DATA-HA-001` | PostgreSQL and Redis failover preserve authority and convergence | Pending | The current POC uses one external PostgreSQL/Redis host |
 
 ## State transition evidence
@@ -525,6 +526,57 @@ availability-zone, or regional failure tolerance. The earlier two-worker drain
 record remains historical evidence bound to the older artifacts named in that
 section.
 
+## Private aggregate-runtime canary
+
+Chart `0.2.22` adds a private POC profile for the same immutable `poc-v36`
+image digest. It disables the split API, Control, and Identity components and
+runs one `role=all` component with no Ingress. The process uses distinct TLS
+listeners for Control, management API, private Login, and Identity, a separate
+health listener, the existing immutable relay-directory snapshot, the existing
+runtime and Identity credentials, and a dedicated least-privilege
+`mesh_worker` credential. Secret values remain Secret-backed file references;
+the runtime ServiceAccount does not receive a Kubernetes API token.
+
+Strict Helm lint, local render, and Kubernetes server-side dry-run passed.
+Trivy's embedded manifest policies reported zero High or Critical
+misconfigurations across the rendered ConfigMap, Deployment, NetworkPolicy,
+ServiceAccount, and Service. The container remained non-root with a read-only
+root filesystem, RuntimeDefault seccomp, no Linux capabilities, bounded
+requests/limits, and a digest-pinned image. The chart's deployment-strategy
+schema now accepts only `RollingUpdate` or `Recreate` and validates the optional
+rolling parameters.
+
+The one-worker POC could not schedule a surge replica beside the original
+canary because the node had insufficient memory. This was a topology-capacity
+constraint, not a Core failure: the atomic rolling attempt rolled back and the
+existing pod remained Ready. The private one-replica canary therefore uses
+`Recreate`; split production roles retain their zero-unavailable rolling
+strategy. Revision 4 completed the replacement in 13 seconds and logged one
+runtime owning `api`, `control`, `worker`, `relay`, and `identity`. Revision 5
+added the exact `ingress-nginx:443` egress needed for public-issuer hairpin
+discovery. Without that rule, PostgreSQL admission succeeded but only
+`/ready/login` was unavailable; ordinary Core `/ready` correctly remained
+Ready. After the rule, both endpoints returned `200` with PostgreSQL, Redis,
+private Login, Identity PostgreSQL, and Identity configuration all Ready.
+Revision 6 records the final chart metadata without changing the pod template.
+
+The four private application listeners were then checked independently through
+port-forward with full CA and hostname verification. Control capability 142,
+the management API's structured not-found contract, a no-grant Login prepare,
+and embedded Identity discovery returned their expected responses. Deleting
+the canary pod restored a new Ready pod with zero container restarts; both Core
+and Login readiness returned `200`. During that replacement, the public
+Control key and OIDC discovery endpoints remained `200`, and the separate main
+API, Control, Identity, and Console Deployments remained 2/2.
+
+An isolated release deliberately assigned the Identity listener to the Control
+port. The process exited before admission with only redacted
+`error_code="invalid_configuration"`; its EndpointSlice reported
+`ready=false` and `serving=false`. The test release was uninstalled after
+capture. This proves aggregate-runtime compatibility and fail-closed startup on
+the current artifact; one canary replica on one worker is not an HA claim for
+the aggregate deployment profile.
+
 ## HA interpretation
 
 This run qualifies rolling replacement and single-worker drain inside one
@@ -539,7 +591,12 @@ state. Redis remained non-authoritative.
 
 ## Remaining execution order
 
-1. Add PostgreSQL and Redis failover qualification with recovery-generation,
-   missed-notification, and reconciliation evidence.
-2. Extend publication cases to TCP, UDP, multiple devices, and multiple
+1. Complete the broker continuity gate with signing-key rotation/JWKS overlap,
+   duplicate callback delivery, and unknown-write uncertainty evidence.
+2. Exercise the broker outage matrix and recovery-generation fences, then close
+   the remaining legal-review and signed-artifact items.
+3. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
+4. Resume PostgreSQL and Redis infrastructure failover only when that paused
+   workstream is re-opened; the Core-side reconnect/reconciliation support is
+   already present but does not qualify the external data services.
