@@ -60,7 +60,7 @@ func TestClient_Status(t *testing.T) {
 	"network_name":"network.example.mesh",
 	"self_addresses":["100.64.0.1/32"],
 	"policy_rule_count":2,
-	"paths":{"available":true,"peer_count":2,"direct_count":1,"relay_count":1,"pending_count":0},
+	"paths":{"available":true,"peer_count":2,"direct_count":1,"relay_count":1,"pending_count":0,"relay_bootstrap_count":2,"direct_promotion_count":2,"relay_fallback_count":1,"last_direct_promotion_ms":3200,"max_direct_promotion_ms":4700},
 	"relay":{"available":true,"home_region":7,"active_regions":2,"connected_regions":1,"regions":[{"region_id":7,"connected":true,"consecutive_failures":0}]},
 	"network_changes":{"available":true,"observed":4,"endpoint_refreshes":3},
 	"runtime_recovery":{"failures":4,"recoveries":3,"pending":true},
@@ -86,7 +86,12 @@ func TestClient_Status(t *testing.T) {
 		t.Fatalf("Status() diagnostics = %#v", status)
 	}
 	if !status.PeerPaths.Available || status.PeerPaths.DirectCount != 1 ||
-		status.PeerPaths.RelayCount != 1 {
+		status.PeerPaths.RelayCount != 1 ||
+		status.PeerPaths.RelayBootstrapCount != 2 ||
+		status.PeerPaths.DirectPromotionCount != 2 ||
+		status.PeerPaths.RelayFallbackCount != 1 ||
+		status.PeerPaths.LastDirectPromotionMillis != 3200 ||
+		status.PeerPaths.MaxDirectPromotionMillis != 4700 {
 		t.Fatalf("Status().PeerPaths = %#v, want one direct and one relay path", status.PeerPaths)
 	}
 	if !status.Relay.Available || status.Relay.HomeRegion != 7 ||

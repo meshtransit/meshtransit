@@ -52,10 +52,15 @@ func TestRun_Status(t *testing.T) {
 			PeerCount:       2,
 			PolicyRuleCount: 3,
 			PeerPaths: localapi.PathStatus{
-				Available:   true,
-				PeerCount:   2,
-				DirectCount: 1,
-				RelayCount:  1,
+				Available:                 true,
+				PeerCount:                 2,
+				DirectCount:               1,
+				RelayCount:                1,
+				RelayBootstrapCount:       2,
+				DirectPromotionCount:      2,
+				RelayFallbackCount:        1,
+				LastDirectPromotionMillis: 3200,
+				MaxDirectPromotionMillis:  4700,
 			},
 			Relay: localapi.RelayStatus{
 				Available:        true,
@@ -108,6 +113,7 @@ func TestRun_Status(t *testing.T) {
 		"Self addresses: 100.64.0.1/32, fd7a:115c:a1e0::1/128",
 		"Peers: 2",
 		"Peer paths: 2 total (1 direct, 1 relay, 0 pending)",
+		"Path transitions: relay bootstraps 2, direct promotions 2, relay fallbacks 1, last/max promotion 3200/4700 ms",
 		"Relay: 1/2 regions connected (home 7)",
 		"Policy rules: 3",
 	} {

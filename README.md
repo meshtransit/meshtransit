@@ -23,6 +23,7 @@ Network: none
 Self addresses: none
 Peers: 0
 Peer paths: unavailable
+Path transitions: unavailable
 Relay: unavailable
 Policy rules: 0
 Control key: none

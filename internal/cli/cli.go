@@ -487,7 +487,7 @@ func runStatus(
 	}
 	_, _ = fmt.Fprintf(
 		stdout,
-		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nPeers: %d\nPeer paths: %s\nRelay: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
+		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nPeers: %d\nPeer paths: %s\nPath transitions: %s\nRelay: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
 		status.Daemon.Version,
 		status.State,
 		status.DataPlane,
@@ -505,6 +505,7 @@ func runStatus(
 		selfAddresses,
 		status.PeerCount,
 		formatPathStatus(status.PeerPaths),
+		formatPathTransitionStatus(status.PeerPaths),
 		formatRelayStatus(status.Relay),
 		status.PolicyRuleCount,
 		controlFingerprint,
@@ -571,6 +572,28 @@ func formatPathStatus(status localapi.PathStatus) string {
 		status.DirectCount,
 		status.RelayCount,
 		status.PendingCount,
+	)
+}
+
+func formatPathTransitionStatus(status localapi.PathStatus) string {
+	if !status.Available {
+		return "unavailable"
+	}
+	promotionTiming := "unavailable"
+	if status.DirectPromotionCount > 0 {
+		promotionTiming = fmt.Sprintf(
+			"%d/%d ms",
+			status.LastDirectPromotionMillis,
+			status.MaxDirectPromotionMillis,
+		)
+	}
+
+	return fmt.Sprintf(
+		"relay bootstraps %d, direct promotions %d, relay fallbacks %d, last/max promotion %s",
+		status.RelayBootstrapCount,
+		status.DirectPromotionCount,
+		status.RelayFallbackCount,
+		promotionTiming,
 	)
 }
 
