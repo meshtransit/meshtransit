@@ -72,6 +72,10 @@ readonly ldflags="-s -w -X ${version_package}.Version=${version} -X ${version_pa
 install -D -m 0755 "${binary_dir}/meshctl" "${package_root}/usr/bin/meshctl"
 install -D -m 0644 "${repository_dir}/README.md" \
     "${package_root}/usr/share/doc/meshctl/README.md"
+install -D -m 0644 "${repository_dir}/LICENSE" \
+    "${package_root}/usr/share/doc/meshctl/LICENSE"
+install -D -m 0644 "${repository_dir}/NOTICE" \
+    "${package_root}/usr/share/doc/meshctl/NOTICE"
 
 installed_size="$(du -sk "${package_root}" | awk '{print $1}')"
 readonly installed_size

@@ -111,4 +111,5 @@ MeshTransit contributors.
 
 ## License
 
-No project license has been selected yet. Do not publish or redistribute this repository until the maintainers add a `LICENSE` file.
+`meshctl` is licensed under the [Apache License 2.0](LICENSE). See
+[NOTICE](NOTICE) for attribution.

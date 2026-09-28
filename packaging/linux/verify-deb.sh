@@ -30,5 +30,7 @@ trap cleanup EXIT
 dpkg-deb --extract "${package_path}" "${work_dir}/root"
 [[ -x "${work_dir}/root/usr/bin/meshctl" ]]
 [[ -f "${work_dir}/root/usr/share/doc/meshctl/README.md" ]]
+[[ -f "${work_dir}/root/usr/share/doc/meshctl/LICENSE" ]]
+[[ -f "${work_dir}/root/usr/share/doc/meshctl/NOTICE" ]]
 
 printf 'verified %s\n' "${package_path}"
