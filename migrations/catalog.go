@@ -59,6 +59,7 @@ const (
 	policyResourceGroupDestinationDescription = "policy Resource Group destination provenance"
 	accessGraphPolicyExplanationDescription   = "Access Graph active policy explanation"
 	policySimulationBaselineDescription       = "Policy simulation active baseline"
+	policyApprovalPersistenceDescription      = "Policy approval persistence"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -199,6 +200,9 @@ var accessGraphPolicyExplanationSQL string
 //go:embed 000046_policy_simulation_baseline.up.sql
 var policySimulationBaselineSQL string
 
+//go:embed 000047_policy_approval_persistence.up.sql
+var policyApprovalPersistenceSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -264,6 +268,7 @@ func Catalog() []Migration {
 		newMigration(44, policyResourceGroupDestinationDescription, policyResourceGroupDestinationSQL),
 		newMigration(45, accessGraphPolicyExplanationDescription, accessGraphPolicyExplanationSQL),
 		newMigration(46, policySimulationBaselineDescription, policySimulationBaselineSQL),
+		newMigration(47, policyApprovalPersistenceDescription, policyApprovalPersistenceSQL),
 	}
 }
 

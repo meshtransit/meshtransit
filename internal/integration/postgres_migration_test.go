@@ -142,6 +142,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertAuthorityConstraints(ctx, t, adminConnection)
 	assertDatabasePrivilegeContract(ctx, t, adminConnection)
 	assertCompiledPacketPolicyPrivilegeContract(ctx, t, adminConnection)
+	assertPolicyApprovalPersistencePrivilegeContract(ctx, t, adminConnection)
 	registrationReplayCommand := seedRegistrationAuthority(ctx, t, adminConnection)
 	assertRegistrationSchemaConstraints(ctx, t, adminConnection)
 	registrationReplayStore, err := postgresadapter.NewRegistrationReplayStore(runtimePool)

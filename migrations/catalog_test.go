@@ -11,8 +11,45 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 46 {
-		t.Fatalf("len(Catalog()) = %d, want 46", len(catalog))
+	if len(catalog) != 47 {
+		t.Fatalf("len(Catalog()) = %d, want 47", len(catalog))
+	}
+	approvalPersistence := catalog[46]
+	if approvalPersistence.Description != "Policy approval persistence" {
+		t.Fatalf("migration 47 description = %q, want Policy approval persistence", approvalPersistence.Description)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.policy_approval_request",
+		"CREATE TABLE mesh.policy_approval_evidence",
+		"CREATE FUNCTION mesh_ops.create_policy_approval_request_v1",
+		"CREATE FUNCTION mesh_ops.lock_policy_approval_request_v1",
+		"CREATE FUNCTION mesh_ops.approve_policy_approval_request_v1",
+		"CREATE FUNCTION mesh_ops.load_policy_approval_evidence_v1",
+		"proposed_network_revision = baseline_network_revision + 1",
+		"FROM mesh_ops.lock_network_revision() AS revision",
+		"OR current_isolation <> p_baseline_isolation",
+		"state = 'consumed'",
+		"FOR UPDATE OF request",
+		"FORCE ROW LEVEL SECURITY",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.create_policy_approval_request_v1",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(approvalPersistence.SQL, required) {
+			t.Errorf("Policy approval persistence SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"DROP ",
+	} {
+		if strings.Contains(approvalPersistence.SQL, forbidden) {
+			t.Errorf("Policy approval persistence SQL contains excessive capability %q", forbidden)
+		}
 	}
 
 	simulationBaseline := catalog[45]
@@ -1121,8 +1158,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 46 {
-		t.Fatalf("LatestVersion() = %d, want 46", LatestVersion())
+	if LatestVersion() != 47 {
+		t.Fatalf("LatestVersion() = %d, want 47", LatestVersion())
 	}
 }
 

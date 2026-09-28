@@ -33,6 +33,24 @@ const (
 	postgresOperationPolicyPublicationCommit   postgresOperation = "policy_publication_commit"
 	postgresOperationPolicyPublicationRollback postgresOperation = "policy_publication_rollback"
 	postgresOperationPolicyPublicationReplay   postgresOperation = "policy_publication_replay"
+)
+
+const (
+	postgresOperationPolicyApprovalRequestBegin     postgresOperation = "policy_approval_request_begin"
+	postgresOperationPolicyApprovalRequestResolve   postgresOperation = "policy_approval_request_resolve"
+	postgresOperationPolicyApprovalRequestApply     postgresOperation = "policy_approval_request_apply"
+	postgresOperationPolicyApprovalRequestCommit    postgresOperation = "policy_approval_request_commit"
+	postgresOperationPolicyApprovalRequestRollback  postgresOperation = "policy_approval_request_rollback"
+	postgresOperationPolicyApprovalRequestReplay    postgresOperation = "policy_approval_request_replay"
+	postgresOperationPolicyApprovalDecisionBegin    postgresOperation = "policy_approval_decision_begin"
+	postgresOperationPolicyApprovalDecisionResolve  postgresOperation = "policy_approval_decision_resolve"
+	postgresOperationPolicyApprovalDecisionApply    postgresOperation = "policy_approval_decision_apply"
+	postgresOperationPolicyApprovalDecisionCommit   postgresOperation = "policy_approval_decision_commit"
+	postgresOperationPolicyApprovalDecisionRollback postgresOperation = "policy_approval_decision_rollback"
+	postgresOperationPolicyApprovalDecisionReplay   postgresOperation = "policy_approval_decision_replay"
+)
+
+const (
 	postgresOperationResourceAuthorityBegin    postgresOperation = "resource_authority_begin"
 	postgresOperationResourceAuthorityResolve  postgresOperation = "resource_authority_resolve"
 	postgresOperationResourceAuthorityApply    postgresOperation = "resource_authority_apply"
@@ -110,6 +128,18 @@ var (
 		postgresOperationPolicyPublicationCommit,
 		postgresOperationPolicyPublicationRollback,
 		postgresOperationPolicyPublicationReplay,
+		postgresOperationPolicyApprovalRequestBegin,
+		postgresOperationPolicyApprovalRequestResolve,
+		postgresOperationPolicyApprovalRequestApply,
+		postgresOperationPolicyApprovalRequestCommit,
+		postgresOperationPolicyApprovalRequestRollback,
+		postgresOperationPolicyApprovalRequestReplay,
+		postgresOperationPolicyApprovalDecisionBegin,
+		postgresOperationPolicyApprovalDecisionResolve,
+		postgresOperationPolicyApprovalDecisionApply,
+		postgresOperationPolicyApprovalDecisionCommit,
+		postgresOperationPolicyApprovalDecisionRollback,
+		postgresOperationPolicyApprovalDecisionReplay,
 		postgresOperationResourceAuthorityBegin,
 		postgresOperationResourceAuthorityResolve,
 		postgresOperationResourceAuthorityApply,
@@ -402,6 +432,18 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationPolicyPublicationCommit ||
 			operation == postgresOperationPolicyPublicationRollback ||
 			operation == postgresOperationPolicyPublicationReplay ||
+			operation == postgresOperationPolicyApprovalRequestBegin ||
+			operation == postgresOperationPolicyApprovalRequestResolve ||
+			operation == postgresOperationPolicyApprovalRequestApply ||
+			operation == postgresOperationPolicyApprovalRequestCommit ||
+			operation == postgresOperationPolicyApprovalRequestRollback ||
+			operation == postgresOperationPolicyApprovalRequestReplay ||
+			operation == postgresOperationPolicyApprovalDecisionBegin ||
+			operation == postgresOperationPolicyApprovalDecisionResolve ||
+			operation == postgresOperationPolicyApprovalDecisionApply ||
+			operation == postgresOperationPolicyApprovalDecisionCommit ||
+			operation == postgresOperationPolicyApprovalDecisionRollback ||
+			operation == postgresOperationPolicyApprovalDecisionReplay ||
 			operation == postgresOperationResourceAuthorityBegin ||
 			operation == postgresOperationResourceAuthorityResolve ||
 			operation == postgresOperationResourceAuthorityApply ||

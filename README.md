@@ -39,9 +39,12 @@ explanation diffs, bounded disclosure, and a full-evidence impact hash. M4c1
 adds the pure two-person policy approval workflow contract: fresh simulation,
 candidate and impact acknowledgement, complete-vector binding, ten-minute
 expiry, stable retry evidence, and distinct proposer/approver Principal and
-Account Session requirements. No Resource Console UI, graph database, durable
-policy-approval persistence, approval API, publication gate, or second policy
-evaluator is introduced by M4c1.
+Account Session requirements. M4c2a adds PostgreSQL-authoritative retained
+request and immutable decision evidence, exact-scope `policy.validate` and
+`policy.approve` transaction adapters, durable idempotency, audit/outbox,
+commit replay, forced RLS, least-privilege functions, and bounded metrics. No
+Resource Console UI, graph database, approval management API, publication
+gate/consumption, or second policy evaluator is introduced by M4c2a.
 Design, security boundaries, acceptance evidence, and explicit non-claims are
 recorded in the
 [Phase 2 M1 Resource authority design](docs/design/phase2-m1-resource-authority.md)
@@ -101,7 +104,11 @@ and
 plus the
 [M4c1 policy approval domain design](docs/design/phase2-m4c1-policy-approval-domain.md)
 and
-[M4c1 acceptance matrix](docs/qualification/phase2-m4c1-policy-approval-domain-2026-09-29.md).
+[M4c1 acceptance matrix](docs/qualification/phase2-m4c1-policy-approval-domain-2026-09-29.md),
+plus the
+[M4c2a policy approval persistence design](docs/design/phase2-m4c2a-policy-approval-persistence.md)
+and
+[M4c2a acceptance matrix](docs/qualification/phase2-m4c2a-policy-approval-persistence-2026-09-29.md).
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,
@@ -602,10 +609,11 @@ An allowed scoped-grant decision is one step in the authorization pipeline, not
 a final mutation approval. Authentication, active membership, delegation
 ceiling, operation invariants, Approval Policy, step-up evidence, ETag/CAS, and
 the atomic audit/outbox transaction remain mandatory where the operation mutates
-authority. The M4c1 policy-approval domain defines a fail-closed two-person
-contract, but its PostgreSQL persistence, management API, and publication-time
-consumption remain deliberately deferred to M4c2; currently exposed protected
-management operations are documented by the versioned OpenAPI contract.
+authority. The M4c1 policy-approval domain and M4c2a PostgreSQL adapter now
+define and persist the fail-closed two-person workflow. Management API/runtime
+composition and publication-time single-use consumption remain pending M4c2b;
+currently exposed protected management operations are documented by the
+versioned OpenAPI contract.
 
 ## Network management RBAC authority
 
