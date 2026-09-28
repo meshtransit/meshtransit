@@ -971,18 +971,68 @@ and one Deployment-scoped outbox event. The Kubernetes image and workloads were
 not changed. Generation-one Sessions and pending browser evidence are now
 intentionally stale and cannot satisfy current-generation checks.
 
+## Provider generation-two image and live Google login
+
+The generation-two binary rollout is complete. MeshCore source
+`57e9e9168fb6d8232521d011a86bce46f9d1414a` adds private-login profile
+version 3, which carries the exact broker connector and scopes independently
+of process role placement. Both split `api` and aggregate `all` therefore
+construct the same `google-v1` route with exactly `openid` and
+`federated:id`. Aggregate composition additionally verifies that the declared
+connector matches the resident Identity connector. Versions 1 and 2 retain
+their prior direct-route behavior. Missing, empty, direct-only, duplicate, or
+mismatched connector/scope input fails configuration closed.
+
+The full ordinary suite passed 4,334 tests in 52 packages, and the focused
+race suite passed 1,165 tests in three packages. Formatting, module
+consistency, vet, and the complete ordinary test gate passed. The tagged broker
+workspace had one timing-sensitive signer-recovery failure on its first full
+run; that exact test then passed three consecutive executions and the complete
+tagged workspace passed. This evidence does not turn the timing case into an
+availability guarantee.
+
+Image `manhdev2002/meshtransit-core:poc-v38` was built from that exact commit
+as a multi-platform index with digest
+`sha256:bcf23e940701e00d9a9290e28dc89ed0f9ab7f1085ba6c8deb553e4f7c6c56f1`.
+The amd64 and arm64 manifests are
+`sha256:b5648fb90629246096eb57dbe40c8c44c12d2607f7a8018a054c40fa1df89cc2`
+and
+`sha256:6b6a0107f02e1ddc0e8406439ce669f77ac7b13923595280f0b664d8472e7fb4`.
+Both platforms carry SBOM and maximum provenance attestations. Exact-digest
+container inspection and smoke checks passed; Trivy reported zero High or
+Critical vulnerabilities and no secret finding.
+
+MeshCore Helm chart 0.2.24 rolled the aggregate canary at revision 11 and the
+split-role main release at revision 41. The canary and every new Core pod used
+the exact v38 digest with zero restarts. The split deployment reached 2/2 Ready
+for API, Control, Identity, and Console. Public discovery, console, and key
+endpoints returned 200; API `/ready/login` reported PostgreSQL,
+private-login, and Redis ready. The canary authorization request proved the
+fixed `google-v1` selector, exact `openid federated:id` scope set, and PKCE
+S256. Strict Helm lint, server-side main/canary dry-run, and rendered-manifest
+scans passed with zero High or Critical findings. The first main Helm request
+lost its HTTP/2 client connection before creating a revision or changing a
+workload; the unchanged revision was verified and the identical rollout then
+succeeded.
+
+A live Google browser flow completed through the split API and embedded
+Identity roles and returned to the MeshTransit Console with `Session verified`.
+Read-only PostgreSQL evidence then showed one generation-two successful auth
+transaction, one active generation-two Session, and one verified generation-two
+provider route with exactly `{openid,federated:id}`. One pending generation-two
+auth transaction is the deliberately unfinished canary start used to inspect
+the authorization request; it is not a failed login. The evidence query selected
+only aggregate state and no subject, email, credential, code, or token.
+
 ## Remaining execution order
 
-1. Build and push the exact source image, roll Identity and aggregate canary,
-   and prove a fresh connector-bound Google login against provider generation
-   2 before beginning resource measurements.
-2. Execute `SSO-BROKER-009` CPU, memory, goroutine, allocation, database-pool,
+1. Execute `SSO-BROKER-009` CPU, memory, goroutine, allocation, database-pool,
    latency and saturation measurements, then set role-specific requests and
    limits from evidence.
-3. Execute `SSO-BROKER-010` upgrade/rollback and identity-migration runbooks,
+2. Execute `SSO-BROKER-010` upgrade/rollback and identity-migration runbooks,
    then close the remaining legal-review and signed-artifact items.
-4. Extend publication cases to TCP, UDP, multiple devices, and multiple
+3. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
-5. Resume PostgreSQL and Redis infrastructure failover only when that paused
+4. Resume PostgreSQL and Redis infrastructure failover only when that paused
    workstream is re-opened; the Core-side reconnect/reconciliation support is
    already present but does not qualify the external data services.
