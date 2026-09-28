@@ -132,6 +132,7 @@ run_go() {
 		--env MESHTRANSIT_API_MAX_CONCURRENT_REQUESTS \
 		--env MESHTRANSIT_TEST_POSTGRES_ADMIN_PASSWORD_FILE \
 		--env MESHTRANSIT_TEST_POSTGRES_WORKER_PASSWORD_FILE \
+		--env MESHTRANSIT_IDENTITY_SUBJECT_TRANSITION_INTEGRATION \
 		--env MESHTRANSIT_TEST_MESHCORE_BINARY \
 		--env MESHTRANSIT_PRIVATE_FACTORY_INTEGRATION \
 		--env MESHTRANSIT_TEST_OIDC_TLS_CERTIFICATE_FILE \
@@ -410,6 +411,15 @@ run_go test \
 	-run '^TestPostgreSQLMigrations$' \
 	-timeout=5m \
 	./internal/integration
+
+export MESHTRANSIT_IDENTITY_SUBJECT_TRANSITION_INTEGRATION=1
+run_go test \
+	-tags=integration \
+	-count=1 \
+	-race \
+	-run '^TestIdentitySubjectTransitionPlan$' \
+	-timeout=2m \
+	./tools/qualification/identitysubjecttransition
 
 # Base primitive tests retain five-minute open Auth rows. Keep their unchanged
 # batch-one process oracles adjacent, before unrelated natural-expiry waits.

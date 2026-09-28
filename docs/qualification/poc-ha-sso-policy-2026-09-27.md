@@ -1113,10 +1113,21 @@ the apply path must take a maintenance fence and revalidate the complete plan
 in a new transaction. Broker upgrade/restore qualification and the atomic
 apply/audit path remain open before `SSO-BROKER-010` can pass.
 
+The dry-run is now also qualified against a disposable PostgreSQL 18.6
+instance after the complete production migration catalog is applied. The
+fixture owns two providers, one active source subject, one active Session, and
+one pending AuthTransaction. It compares an exact JSON snapshot of every
+fixture authority row plus global authority-mutation, audit-identity, and
+outbox counts before and after both an accepted plan and a deliberately stale
+plan. Both paths preserve the snapshot exactly. The fixture exposed an invalid
+multi-array `unnest` call in the initial collision query; the query now zips
+the equal-length principal and digest arrays by array subscript and the full
+Docker integration suite passes with the race detector.
+
 ## Remaining execution order
 
-1. Add the disposable PostgreSQL integration fixture for the read-only
-   transition plan, then implement the fenced atomic apply/audit path.
+1. Implement and qualify the fenced atomic identity-subject apply/audit path;
+   the disposable PostgreSQL read-only transition fixture is complete.
 2. Execute the broker upgrade/restore runbook and close the remaining
    legal-review and signed-artifact items for `SSO-BROKER-010`.
 3. Extend publication cases to TCP, UDP, multiple devices, and multiple

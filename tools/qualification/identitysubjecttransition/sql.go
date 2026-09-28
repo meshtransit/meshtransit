@@ -81,8 +81,10 @@ ORDER BY subject.id
 LIMIT $3::BIGINT`
 
 const targetCollisionSQL = `WITH target(principal_public_id, digest) AS (
-    SELECT *
-    FROM pg_catalog.unnest($3::UUID[], $4::BYTEA[])
+    SELECT
+        ($3::UUID[])[ordinal],
+        ($4::BYTEA[])[ordinal]
+    FROM pg_catalog.generate_subscripts($3::UUID[], 1) AS ordinal
 )
 SELECT EXISTS (
     SELECT 1
