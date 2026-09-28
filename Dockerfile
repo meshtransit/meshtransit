@@ -3,7 +3,7 @@
 ARG VERSION=dev
 ARG REVISION=unknown
 
-FROM --platform=$BUILDPLATFORM golang:1.26.8-bookworm@sha256:9fdc884aacc3bec89b20ffc69f4bb369c78210e3e4f600387b5128b12c199f81 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS build
 
 ENV CGO_ENABLED=0 \
     GOTOOLCHAIN=local
