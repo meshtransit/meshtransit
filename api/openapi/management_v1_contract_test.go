@@ -119,6 +119,16 @@ func TestManagementV1MutationContracts(t *testing.T) {
 			operation: "rebindResource",
 			statuses:  []string{"200", "400", "401", "403", "404", "405", "409", "412", "422", "428", "429", "503", "504"},
 		},
+		{
+			path:      "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}/actions/preview-replace",
+			operation: "previewResourceGroupReplacement",
+			statuses:  []string{"200", "400", "401", "403", "404", "405", "409", "412", "428", "429", "503", "504"},
+		},
+		{
+			path:      "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}/actions/replace",
+			operation: "replaceResourceGroupDefinition",
+			statuses:  []string{"200", "400", "401", "403", "404", "405", "409", "412", "428", "429", "503", "504"},
+		},
 	} {
 		rebindOperation, found := document.Paths[contract.path]
 		if !found || rebindOperation.Post.OperationID != contract.operation ||

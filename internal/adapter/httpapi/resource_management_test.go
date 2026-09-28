@@ -375,6 +375,118 @@ func TestResourceRebindErrorClassification(t *testing.T) {
 	}
 }
 
+func TestManagementHandlerPreviewsResourceGroupReplacement(t *testing.T) {
+	t.Parallel()
+	var captured authority.GroupReplacePreview
+	options := validManagementHandlerOptions(t)
+	options.ResourceGroupReplacements = managementResourceGroupReplacerFixture{
+		preview: func(
+			_ context.Context,
+			preview authority.GroupReplacePreview,
+		) (authority.GroupReplaceImpact, error) {
+			captured = preview
+			return managementGroupReplaceImpactFixture(t, preview), nil
+		},
+	}
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := newManagementRequest(
+		t, http.MethodPost, resourceGroupItemPath()+"/actions/preview-replace",
+		`{"members":[{"resource_id":"01890f00-0000-7000-8000-000000000503","resource_version":1,"target_generation":1}]}`,
+	)
+	request.Header.Del("Idempotency-Key")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"1"` ||
+		len(captured.Members()) != 1 {
+		t.Fatalf("status/headers/preview = %d/%+v/%+v; body=%s", response.Code,
+			response.Header(), captured, response.Body.String())
+	}
+	var body resourceGroupReplacePreviewEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil ||
+		body.Data.ResourceGroupID != "01890f00-0000-7000-8000-000000000502" ||
+		body.Data.CurrentDefinitionVersion != 1 || body.Data.DefinitionVersion != 2 ||
+		len(body.Data.AddedMembers) != 1 || len(body.Data.RemovedMembers) != 1 ||
+		len(body.Data.RetainedMembers) != 0 || body.Data.ApprovalRequired ||
+		len(body.Data.ImpactHash) != 64 {
+		t.Fatalf("Resource Group replacement preview = %+v, error=%v", body, err)
+	}
+}
+
+func TestManagementHandlerAppliesResourceGroupReplacement(t *testing.T) {
+	t.Parallel()
+	var captured authority.GroupReplaceCommand
+	options := validManagementHandlerOptions(t)
+	options.ResourceGroupReplacements = managementResourceGroupReplacerFixture{
+		replace: func(
+			_ context.Context,
+			command authority.GroupReplaceCommand,
+		) (authority.GroupReplaceResult, error) {
+			captured = command
+			semanticHash, err := resource.NewSemanticHash([32]byte{31: 3})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return authority.NewGroupReplaceResult(
+				command.GroupID(), command.Scope(), 2, 2, 9, 4,
+				semanticHash, command.ImpactHash(),
+			)
+		},
+	}
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := newManagementRequest(
+		t, http.MethodPost, resourceGroupItemPath()+"/actions/replace",
+		`{"members":[{"resource_id":"01890f00-0000-7000-8000-000000000503","resource_version":1,"target_generation":1}],"impact_hash":"`+
+			strings.Repeat("02", 32)+`","reason":"replace immutable production group definition"}`,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"2"` ||
+		captured.ExpectedVersion() != 1 || len(captured.Members()) != 1 ||
+		!captured.ImpactHash().IsValid() {
+		t.Fatalf("status/headers/command = %d/%+v/%+v; body=%s", response.Code,
+			response.Header(), captured, response.Body.String())
+	}
+	var body resourceGroupReplaceEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil ||
+		body.Data.ResourceGroupID != "01890f00-0000-7000-8000-000000000502" ||
+		body.Data.DefinitionVersion != 2 || body.Data.Version != 2 ||
+		body.Data.GroupRevision != 4 || len(body.Data.Members) != 1 {
+		t.Fatalf("Resource Group replacement response = %+v, error=%v", body, err)
+	}
+}
+
+func TestResourceGroupReplaceErrorClassification(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{err: authority.ErrGroupReplaceNotFound, status: http.StatusNotFound, code: "not_found"},
+		{err: authority.ErrGroupReplaceVersionConflict, status: http.StatusPreconditionFailed, code: "precondition_failed"},
+		{err: authority.ErrGroupReplaceMemberConflict, status: http.StatusConflict, code: "member_conflict"},
+		{err: authority.ErrGroupReplaceNoChange, status: http.StatusConflict, code: "definition_unchanged"},
+		{err: authority.ErrGroupReplaceImpactChanged, status: http.StatusConflict, code: "impact_changed"},
+		{err: authority.ErrGroupReplaceApprovalRequired, status: http.StatusConflict, code: "approval_required"},
+	}
+	for _, test := range tests {
+		classified := classifyResourceGroupReplaceError(test.err)
+		if classified.Status != test.status || classified.Code != test.code {
+			t.Fatalf("classification for %v = %+v", test.err, classified)
+		}
+	}
+}
+
 func TestManagementHandlerListsResourcesWithFreshAuthority(t *testing.T) {
 	t.Parallel()
 	var capturedState resource.State
@@ -521,6 +633,11 @@ func resourceCollectionPath() string {
 		managementNetworkID() + "/resources"
 }
 
+func resourceGroupItemPath() string {
+	return "/api/v1/workspaces/" + managementWorkspaceID() + "/networks/" +
+		managementNetworkID() + "/resource-groups/01890f00-0000-7000-8000-000000000502"
+}
+
 type managementResourceCreatorFunc func(context.Context, authority.Command) (authority.Result, error)
 
 func (function managementResourceCreatorFunc) Create(
@@ -545,6 +662,76 @@ func (function managementResourceLifecycleFunc) Transition(
 type managementResourceRebinderFixture struct {
 	preview func(context.Context, authority.RebindPreview) (authority.RebindImpact, error)
 	rebind  func(context.Context, authority.RebindCommand) (authority.RebindResult, error)
+}
+
+type managementResourceGroupReplacerFixture struct {
+	preview func(context.Context, authority.GroupReplacePreview) (authority.GroupReplaceImpact, error)
+	replace func(context.Context, authority.GroupReplaceCommand) (authority.GroupReplaceResult, error)
+}
+
+func (fixture managementResourceGroupReplacerFixture) Preview(
+	ctx context.Context,
+	preview authority.GroupReplacePreview,
+) (authority.GroupReplaceImpact, error) {
+	if fixture.preview == nil {
+		return authority.GroupReplaceImpact{}, errors.New("unexpected Resource Group replacement preview")
+	}
+	return fixture.preview(ctx, preview)
+}
+
+func (fixture managementResourceGroupReplacerFixture) Replace(
+	ctx context.Context,
+	command authority.GroupReplaceCommand,
+) (authority.GroupReplaceResult, error) {
+	if fixture.replace == nil {
+		return authority.GroupReplaceResult{}, errors.New("unexpected Resource Group replacement")
+	}
+	return fixture.replace(ctx, command)
+}
+
+func managementGroupReplaceImpactFixture(
+	t *testing.T,
+	preview authority.GroupReplacePreview,
+) authority.GroupReplaceImpact {
+	t.Helper()
+	name, err := resource.ParseDisplayName("Production databases")
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentResourceID, err := resource.ParseID("01890f00-0000-7000-8000-000000000501")
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentMember, err := resource.NewReference(preview.Scope(), currentResourceID, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := resource.NewGroupRevision(resource.GroupRevisionParams{
+		Scope: preview.Scope(), DisplayName: name,
+		OwnerPrincipalID:     preview.AccountSession().PrincipalID(),
+		CustodianPrincipalID: preview.AccountSession().PrincipalID(),
+		DefinitionVersion:    1, Members: []resource.Reference{currentMember},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposed, err := resource.NewGroupRevision(resource.GroupRevisionParams{
+		Scope: preview.Scope(), DisplayName: name,
+		OwnerPrincipalID:     preview.AccountSession().PrincipalID(),
+		CustodianPrincipalID: preview.AccountSession().PrincipalID(),
+		DefinitionVersion:    2, Members: preview.Members(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	impact, err := authority.NewGroupReplaceImpact(authority.GroupReplaceImpactParams{
+		GroupID: preview.GroupID(), ExpectedVersion: preview.ExpectedVersion(),
+		CurrentRevision: current, ProposedRevision: proposed,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return impact
 }
 
 func (fixture managementResourceRebinderFixture) Preview(

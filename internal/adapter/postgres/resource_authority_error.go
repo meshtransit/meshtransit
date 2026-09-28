@@ -25,16 +25,24 @@ func classifyResourceAuthorityDatabaseError(ctx context.Context, err error) erro
 		return errors.Join(authority.ErrConflict, err)
 	case "MT002":
 		return errors.Join(
-			authority.ErrLifecycleVersionConflict, authority.ErrRebindVersionConflict, err,
+			authority.ErrLifecycleVersionConflict, authority.ErrRebindVersionConflict,
+			authority.ErrGroupReplaceVersionConflict, err,
 		)
 	case "MT003":
 		return errors.Join(authority.ErrInvalidLifecycleTransition, err)
 	case "MT004":
-		return errors.Join(authority.ErrRebindStateConflict, err)
+		return errors.Join(
+			authority.ErrRebindStateConflict, authority.ErrGroupReplaceStateConflict, err,
+		)
 	case "MT005":
 		return errors.Join(authority.ErrRebindTargetConflict, err)
+	case "MT006":
+		return errors.Join(authority.ErrGroupReplaceMemberConflict, err)
 	case "MT404":
-		return errors.Join(authority.ErrLifecycleNotFound, authority.ErrRebindNotFound, err)
+		return errors.Join(
+			authority.ErrLifecycleNotFound, authority.ErrRebindNotFound,
+			authority.ErrGroupReplaceNotFound, err,
+		)
 	case "42501":
 		return errors.Join(authority.ErrForbidden, err)
 	case "40001", "40P01", "55P03":

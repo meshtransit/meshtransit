@@ -495,6 +495,83 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}/actions/preview-replace": {
+      "post": {
+        "operationId": "previewResourceGroupReplacement",
+        "summary": "Preview an immutable Resource Group definition replacement",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceGroupID"},
+          {"$ref": "#/components/parameters/AggregateIfMatch"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceGroupReplacePreviewRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Deterministic membership impact evidence for the current Resource Group version.",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/ResourceGroupETag"},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceGroupReplacePreviewResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}/actions/replace": {
+      "post": {
+        "operationId": "replaceResourceGroupDefinition",
+        "summary": "Append and activate an exact acknowledged Resource Group definition",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceGroupID"},
+          {"$ref": "#/components/parameters/AggregateIfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceGroupReplaceRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "The immutable definition replacement committed, or its identical result was replayed.",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/ResourceGroupETag"},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceGroupReplaceResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}/actions/{lifecycle_action}": {
       "post": {
         "operationId": "transitionResourceGroupLifecycle",
@@ -1059,6 +1136,104 @@
         "properties": {
           "data": {"type": "array", "maxItems": 100, "items": {"$ref": "#/components/schemas/ResourceGroup"}},
           "next_page_token": {"type": "string", "maxLength": 512},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "ResourceGroupReplacePreviewRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["members"],
+        "properties": {
+          "members": {
+            "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true,
+            "items": {"$ref": "#/components/schemas/ResourceGroupMember"}
+          }
+        }
+      },
+      "ResourceGroupReplacePreview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_group_id", "current_definition_version", "definition_version",
+          "current_members", "proposed_members", "added_members", "removed_members",
+          "retained_members", "impact_hash", "approval_required"
+        ],
+        "properties": {
+          "resource_group_id": {"$ref": "#/components/schemas/PublicID"},
+          "current_definition_version": {"type": "integer", "format": "int64", "minimum": 1},
+          "definition_version": {"type": "integer", "format": "int64", "minimum": 2},
+          "current_members": {
+            "type": "array", "minItems": 1, "maxItems": 256,
+            "items": {"$ref": "#/components/schemas/ResourceGroupMember"}
+          },
+          "proposed_members": {
+            "type": "array", "minItems": 1, "maxItems": 256,
+            "items": {"$ref": "#/components/schemas/ResourceGroupMember"}
+          },
+          "added_members": {
+            "type": "array", "maxItems": 256,
+            "items": {"$ref": "#/components/schemas/ResourceGroupMember"}
+          },
+          "removed_members": {
+            "type": "array", "maxItems": 256,
+            "items": {"$ref": "#/components/schemas/ResourceGroupMember"}
+          },
+          "retained_members": {
+            "type": "array", "maxItems": 256,
+            "items": {"$ref": "#/components/schemas/ResourceGroupMember"}
+          },
+          "impact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "approval_required": {"type": "boolean"}
+        }
+      },
+      "ResourceGroupReplacePreviewResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/ResourceGroupReplacePreview"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "ResourceGroupReplaceRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["members", "impact_hash", "reason"],
+        "properties": {
+          "members": {
+            "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true,
+            "items": {"$ref": "#/components/schemas/ResourceGroupMember"}
+          },
+          "impact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      },
+      "ResourceGroupReplaceResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_group_id", "definition_version", "version", "semantic_hash",
+          "network_revision", "group_revision", "members"
+        ],
+        "properties": {
+          "resource_group_id": {"$ref": "#/components/schemas/PublicID"},
+          "definition_version": {"type": "integer", "format": "int64", "minimum": 2},
+          "version": {"type": "integer", "format": "int64", "minimum": 2},
+          "semantic_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "network_revision": {"type": "integer", "format": "int64", "minimum": 2},
+          "group_revision": {"type": "integer", "format": "int64", "minimum": 2},
+          "members": {
+            "type": "array", "minItems": 1, "maxItems": 256,
+            "items": {"$ref": "#/components/schemas/ResourceGroupMember"}
+          }
+        }
+      },
+      "ResourceGroupReplaceResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/ResourceGroupReplaceResult"},
           "correlation_id": {"$ref": "#/components/schemas/PublicID"}
         }
       },

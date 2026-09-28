@@ -30,27 +30,29 @@ import (
 )
 
 const (
-	deviceRevokeOperation          = "device_revoke"
-	policyPublishOperation         = "policy_publish"
-	resourceCreateOperation        = "resource_create"
-	resourceGetOperation           = "resource_get"
-	resourceListOperation          = "resource_list"
-	resourceGroupCreateOperation   = "resource_group_create"
-	resourceGroupGetOperation      = "resource_group_get"
-	resourceGroupListOperation     = "resource_group_list"
-	resourceSuspendOperation       = "resource_suspend"
-	resourceResumeOperation        = "resource_resume"
-	resourceDeleteOperation        = "resource_delete"
-	resourceGroupSuspendOperation  = "resource_group_suspend"
-	resourceGroupResumeOperation   = "resource_group_resume"
-	resourceGroupDeleteOperation   = "resource_group_delete"
-	resourceRebindPreviewOperation = "resource_rebind_preview"
-	resourceRebindOperation        = "resource_rebind"
-	unknownManagementOperation     = "unknown"
-	maximumManagementBodyBytes     = 4 * 1024
-	maximumManagementRequests      = 4096
-	minimumManagementTimeout       = 100 * time.Millisecond
-	maximumManagementTimeout       = 30 * time.Second
+	deviceRevokeOperation                = "device_revoke"
+	policyPublishOperation               = "policy_publish"
+	resourceCreateOperation              = "resource_create"
+	resourceGetOperation                 = "resource_get"
+	resourceListOperation                = "resource_list"
+	resourceGroupCreateOperation         = "resource_group_create"
+	resourceGroupGetOperation            = "resource_group_get"
+	resourceGroupListOperation           = "resource_group_list"
+	resourceSuspendOperation             = "resource_suspend"
+	resourceResumeOperation              = "resource_resume"
+	resourceDeleteOperation              = "resource_delete"
+	resourceGroupSuspendOperation        = "resource_group_suspend"
+	resourceGroupResumeOperation         = "resource_group_resume"
+	resourceGroupDeleteOperation         = "resource_group_delete"
+	resourceRebindPreviewOperation       = "resource_rebind_preview"
+	resourceRebindOperation              = "resource_rebind"
+	resourceGroupReplacePreviewOperation = "resource_group_replace_preview"
+	resourceGroupReplaceOperation        = "resource_group_replace"
+	unknownManagementOperation           = "unknown"
+	maximumManagementBodyBytes           = 64 * 1024
+	maximumManagementRequests            = 4096
+	minimumManagementTimeout             = 100 * time.Millisecond
+	maximumManagementTimeout             = 30 * time.Second
 )
 
 var (
@@ -89,6 +91,12 @@ type ResourceRebinder interface {
 	Rebind(context.Context, authority.RebindCommand) (authority.RebindResult, error)
 }
 
+// ResourceGroupReplacer previews and atomically activates immutable definitions.
+type ResourceGroupReplacer interface {
+	Preview(context.Context, authority.GroupReplacePreview) (authority.GroupReplaceImpact, error)
+	Replace(context.Context, authority.GroupReplaceCommand) (authority.GroupReplaceResult, error)
+}
+
 // ResourceCatalog reads freshly authorized Resource authority snapshots.
 type ResourceCatalog interface {
 	GetResource(context.Context, accountsession.Session, network.Scope, resource.ID) (catalog.Resource, error)
@@ -119,45 +127,47 @@ type PublicIDGenerator interface {
 
 // ManagementHandlerOptions contains immutable management-boundary dependencies.
 type ManagementHandlerOptions struct {
-	Sessions              AccountSessionAuthenticator
-	Revocations           DeviceRevoker
-	PolicyPublications    PolicyPublisher
-	ResourceCreations     ResourceCreator
-	ResourceLifecycles    ResourceLifecycle
-	ResourceRebindings    ResourceRebinder
-	ResourceCatalog       ResourceCatalog
-	Idempotency           IdempotencyProver
-	RateLimitSubjects     RateLimitSubjectDigester
-	RateLimiter           ManagementRateLimiter
-	TrustedProxyPrefixes  []netip.Prefix
-	SourceRateLimit       ratelimit.Policy
-	SessionRateLimit      ratelimit.Policy
-	CorrelationIDs        PublicIDGenerator
-	Logger                *slog.Logger
-	RequestTimeout        time.Duration
-	MaxConcurrentRequests int
+	Sessions                  AccountSessionAuthenticator
+	Revocations               DeviceRevoker
+	PolicyPublications        PolicyPublisher
+	ResourceCreations         ResourceCreator
+	ResourceLifecycles        ResourceLifecycle
+	ResourceRebindings        ResourceRebinder
+	ResourceGroupReplacements ResourceGroupReplacer
+	ResourceCatalog           ResourceCatalog
+	Idempotency               IdempotencyProver
+	RateLimitSubjects         RateLimitSubjectDigester
+	RateLimiter               ManagementRateLimiter
+	TrustedProxyPrefixes      []netip.Prefix
+	SourceRateLimit           ratelimit.Policy
+	SessionRateLimit          ratelimit.Policy
+	CorrelationIDs            PublicIDGenerator
+	Logger                    *slog.Logger
+	RequestTimeout            time.Duration
+	MaxConcurrentRequests     int
 }
 
 // ManagementHandler validates public management requests before application use cases.
 type ManagementHandler struct {
-	sessions           AccountSessionAuthenticator
-	revocations        DeviceRevoker
-	policies           PolicyPublisher
-	resourceCreations  ResourceCreator
-	resourceLifecycles ResourceLifecycle
-	resourceRebindings ResourceRebinder
-	resourceCatalog    ResourceCatalog
-	idempotency        IdempotencyProver
-	rateSubjects       RateLimitSubjectDigester
-	rateLimiter        ManagementRateLimiter
-	clientIPs          clientIPResolver
-	sourcePolicy       ratelimit.Policy
-	sessionPolicy      ratelimit.Policy
-	correlationIDs     PublicIDGenerator
-	logger             *slog.Logger
-	timeout            time.Duration
-	slots              chan struct{}
-	telemetry          *ManagementTelemetry
+	sessions                  AccountSessionAuthenticator
+	revocations               DeviceRevoker
+	policies                  PolicyPublisher
+	resourceCreations         ResourceCreator
+	resourceLifecycles        ResourceLifecycle
+	resourceRebindings        ResourceRebinder
+	resourceGroupReplacements ResourceGroupReplacer
+	resourceCatalog           ResourceCatalog
+	idempotency               IdempotencyProver
+	rateSubjects              RateLimitSubjectDigester
+	rateLimiter               ManagementRateLimiter
+	clientIPs                 clientIPResolver
+	sourcePolicy              ratelimit.Policy
+	sessionPolicy             ratelimit.Policy
+	correlationIDs            PublicIDGenerator
+	logger                    *slog.Logger
+	timeout                   time.Duration
+	slots                     chan struct{}
+	telemetry                 *ManagementTelemetry
 }
 
 // NewManagementHandler constructs a bounded, fail-closed management API handler.
@@ -182,24 +192,25 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		return nil, errors.Join(ErrInvalidManagementHandler, err)
 	}
 	return &ManagementHandler{
-		sessions:           options.Sessions,
-		revocations:        options.Revocations,
-		policies:           options.PolicyPublications,
-		resourceCreations:  options.ResourceCreations,
-		resourceLifecycles: options.ResourceLifecycles,
-		resourceRebindings: options.ResourceRebindings,
-		resourceCatalog:    options.ResourceCatalog,
-		idempotency:        options.Idempotency,
-		rateSubjects:       options.RateLimitSubjects,
-		rateLimiter:        options.RateLimiter,
-		clientIPs:          clientIPs,
-		sourcePolicy:       options.SourceRateLimit,
-		sessionPolicy:      options.SessionRateLimit,
-		correlationIDs:     options.CorrelationIDs,
-		logger:             options.Logger,
-		timeout:            options.RequestTimeout,
-		slots:              make(chan struct{}, options.MaxConcurrentRequests),
-		telemetry:          telemetry,
+		sessions:                  options.Sessions,
+		revocations:               options.Revocations,
+		policies:                  options.PolicyPublications,
+		resourceCreations:         options.ResourceCreations,
+		resourceLifecycles:        options.ResourceLifecycles,
+		resourceRebindings:        options.ResourceRebindings,
+		resourceGroupReplacements: options.ResourceGroupReplacements,
+		resourceCatalog:           options.ResourceCatalog,
+		idempotency:               options.Idempotency,
+		rateSubjects:              options.RateLimitSubjects,
+		rateLimiter:               options.RateLimiter,
+		clientIPs:                 clientIPs,
+		sourcePolicy:              options.SourceRateLimit,
+		sessionPolicy:             options.SessionRateLimit,
+		correlationIDs:            options.CorrelationIDs,
+		logger:                    options.Logger,
+		timeout:                   options.RequestTimeout,
+		slots:                     make(chan struct{}, options.MaxConcurrentRequests),
+		telemetry:                 telemetry,
 	}, nil
 }
 

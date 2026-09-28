@@ -279,6 +279,94 @@ func assertResourceTargetRebinding(
 		t.Fatalf("cross-scope Resource rebind preview error = %v, want ErrRebindNotFound", err)
 	}
 	assertCommittedResourceRebind(ctx, t, adminConnection, result, groupResult.GroupID())
+	assertResourceGroupReplacement(
+		ctx, t, adminConnection, runtimePool, session, homeScope, otherScope,
+		groupResult.GroupID(), result,
+	)
+}
+
+func assertResourceGroupReplacement(
+	ctx context.Context,
+	t *testing.T,
+	adminConnection *pgx.Conn,
+	runtimePool *postgresadapter.Pool,
+	session accountsession.Session,
+	homeScope network.Scope,
+	otherScope network.Scope,
+	groupID resource.GroupID,
+	rebound authority.RebindResult,
+) {
+	t.Helper()
+	reference, err := resource.NewReference(
+		homeScope, rebound.ResourceID(), rebound.Version(), rebound.TargetGeneration(),
+	)
+	if err != nil {
+		t.Fatalf("construct replacement Resource Group reference: %v", err)
+	}
+	service := newIntegrationResourceGroupReplaceService(t, runtimePool)
+	preview, err := authority.NewGroupReplacePreview(
+		homeScope, groupID, 1, []resource.Reference{reference}, session,
+	)
+	if err != nil {
+		t.Fatalf("construct Resource Group replacement preview: %v", err)
+	}
+	impact, err := service.Preview(ctx, preview)
+	if err != nil {
+		t.Fatalf("preview Resource Group replacement: %v", err)
+	}
+	if impact.CurrentRevision().DefinitionVersion() != 1 ||
+		impact.ProposedRevision().DefinitionVersion() != 2 ||
+		len(impact.AddedMembers()) != 1 || len(impact.RemovedMembers()) != 1 ||
+		len(impact.RetainedMembers()) != 0 || impact.ApprovalRequired() {
+		t.Fatalf("Resource Group replacement impact = %+v", impact)
+	}
+	command, err := authority.NewGroupReplaceCommand(
+		preview, impact.Hash(), resourceAuthorityReason(t, "re-pin immutable group definition"),
+		resourceAuthorityProof(t, 19),
+	)
+	if err != nil {
+		t.Fatalf("construct Resource Group replacement command: %v", err)
+	}
+	result, err := service.Replace(ctx, command)
+	if err != nil {
+		t.Fatalf("replace Resource Group definition: %v", err)
+	}
+	if result.GroupID() != groupID || result.DefinitionVersion() != 2 ||
+		result.Version() != 2 || result.ImpactHash() != impact.Hash() ||
+		result.SemanticHash() != impact.ProposedRevision().SemanticHash() {
+		t.Fatalf("Resource Group replacement result = %+v", result)
+	}
+	replayed, err := service.Replace(ctx, command)
+	if err != nil || replayed != result {
+		t.Fatalf("replayed Resource Group replacement = %+v, error=%v", replayed, err)
+	}
+	stalePreview, err := authority.NewGroupReplacePreview(
+		homeScope, groupID, 1, []resource.Reference{reference}, session,
+	)
+	if err != nil {
+		t.Fatalf("construct stale Resource Group replacement preview: %v", err)
+	}
+	if _, err := service.Preview(ctx, stalePreview); !errors.Is(
+		err, authority.ErrGroupReplaceVersionConflict,
+	) {
+		t.Fatalf("stale Resource Group replacement error = %v, want version conflict", err)
+	}
+	crossScopePreview, err := authority.NewGroupReplacePreview(
+		otherScope, groupID, 2,
+		[]resource.Reference{resourceAuthorityReference(
+			t, otherScope, rebound.ResourceID(), rebound.Version(), rebound.TargetGeneration(),
+		)},
+		session,
+	)
+	if err != nil {
+		t.Fatalf("construct cross-scope Resource Group replacement preview: %v", err)
+	}
+	if _, err := service.Preview(ctx, crossScopePreview); !errors.Is(
+		err, authority.ErrGroupReplaceNotFound,
+	) {
+		t.Fatalf("cross-scope Resource Group replacement error = %v, want not found", err)
+	}
+	assertCommittedResourceGroupReplacement(ctx, t, adminConnection, result, rebound)
 }
 
 func assertResourceLifecycles(
@@ -622,6 +710,57 @@ func newIntegrationResourceRebindService(
 	return service
 }
 
+func newIntegrationResourceGroupReplaceService(
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+) *authority.GroupReplaceService {
+	t.Helper()
+	store, err := postgresadapter.NewResourceAuthorityStore(
+		runtimePool,
+		postgresadapter.ResourceAuthorityOptions{
+			StatementTimeout: 5 * time.Second,
+			LockTimeout:      2 * time.Second,
+			IdleTimeout:      10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("postgres.NewResourceAuthorityStore() error = %v", err)
+	}
+	retry, err := authority.NewExponentialBackoff(time.Millisecond, 5*time.Millisecond)
+	if err != nil {
+		t.Fatalf("authority.NewExponentialBackoff() error = %v", err)
+	}
+	service, err := authority.NewGroupReplaceService(
+		authority.Options{
+			MaxAttempts: 3, RollbackTimeout: 2 * time.Second,
+			IdempotencyWindow: time.Hour,
+		},
+		authority.GroupReplaceDependencies{
+			Impacts: store, Transactions: store, CommittedResults: store,
+			MutationIDs: authority.PublicGroupReplaceMutationIDGenerator{},
+			Clock:       authority.SystemClock{}, Retry: retry,
+		},
+	)
+	if err != nil {
+		t.Fatalf("authority.NewGroupReplaceService() error = %v", err)
+	}
+	return service
+}
+
+func resourceAuthorityReference(
+	t *testing.T,
+	scope network.Scope,
+	resourceID resource.ID,
+	version, generation int64,
+) resource.Reference {
+	t.Helper()
+	reference, err := resource.NewReference(scope, resourceID, version, generation)
+	if err != nil {
+		t.Fatalf("resource.NewReference() error = %v", err)
+	}
+	return reference
+}
+
 func resourceAuthorityProof(t *testing.T, suffix byte) idempotency.Proof {
 	t.Helper()
 	digest := [32]byte{31: suffix}
@@ -819,6 +958,69 @@ func assertCommittedResourceRebind(
 	}
 }
 
+func assertCommittedResourceGroupReplacement(
+	ctx context.Context,
+	t *testing.T,
+	connection *pgx.Conn,
+	result authority.GroupReplaceResult,
+	rebound authority.RebindResult,
+) {
+	t.Helper()
+	var groupCount, versionCount, oldMemberCount, newMemberCount int
+	var auditCount, outboxCount, idempotencyCount int
+	hash := result.SemanticHash().Bytes()
+	if err := connection.QueryRow(ctx, `SELECT
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh.resource_group
+     WHERE public_id = $1::UUID AND version = $2 AND active_definition_version = $3
+       AND activated_network_revision = $4 AND group_revision = $5
+       AND semantic_hash = $6::BYTEA AND state = 'active'),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh.resource_group_version AS version
+     JOIN mesh.resource_group AS resource_group ON resource_group.id = version.resource_group_id
+     WHERE resource_group.public_id = $1::UUID
+       AND version.definition_version IN (1, $3)),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh.resource_group_version_member AS member
+     JOIN mesh.resource_group AS resource_group ON resource_group.id = member.resource_group_id
+     JOIN mesh.resource_group_version AS version ON version.id = member.resource_group_version_id
+     WHERE resource_group.public_id = $1::UUID AND version.definition_version = 1
+       AND member.resource_version = 1 AND member.target_generation = 1),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh.resource_group_version_member AS member
+     JOIN mesh.resource_group AS resource_group ON resource_group.id = member.resource_group_id
+     JOIN mesh.resource_group_version AS version ON version.id = member.resource_group_version_id
+     JOIN mesh.resource AS resource ON resource.id = member.resource_id
+     WHERE resource_group.public_id = $1::UUID AND version.definition_version = $3
+       AND resource.public_id = $7::UUID AND member.resource_version = $8
+       AND member.target_generation = $9),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_audit.audit_event
+     WHERE target_kind = 'resource_group' AND target_public_id = $1::UUID
+       AND action = 'resource_group.definition_replaced'
+       AND permission = 'resource_group.manage'
+       AND payload ->> 'approval_status' = 'not_required'),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_ops.outbox_event
+     WHERE aggregate_kind = 'resource_group' AND aggregate_public_id = $1::UUID
+       AND aggregate_version = $2 AND network_revision = $4
+       AND event_class = 'network.revision.advanced'),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_ops.idempotency_record
+     WHERE result_kind = 'resource_group_replace' AND result_public_id = $1::UUID
+       AND result_version = $2 AND state = 'completed')`,
+		result.GroupID().String(), result.Version(), result.DefinitionVersion(),
+		result.NetworkRevision(), result.GroupRevision(), hash[:], rebound.ResourceID().String(),
+		rebound.Version(), rebound.TargetGeneration(),
+	).Scan(
+		&groupCount, &versionCount, &oldMemberCount, &newMemberCount,
+		&auditCount, &outboxCount, &idempotencyCount,
+	); err != nil {
+		t.Fatalf("query committed Resource Group replacement: %v", err)
+	}
+	if groupCount != 1 || versionCount != 2 || oldMemberCount != 1 || newMemberCount != 1 ||
+		auditCount != 1 || outboxCount != 1 || idempotencyCount != 1 {
+		t.Fatalf(
+			"Resource Group replacement evidence group/versions/old/new/audit/outbox/idempotency = %d/%d/%d/%d/%d/%d/%d",
+			groupCount, versionCount, oldMemberCount, newMemberCount,
+			auditCount, outboxCount, idempotencyCount,
+		)
+	}
+}
+
 func assertCommittedGroupLifecycle(
 	ctx context.Context,
 	t *testing.T,
@@ -918,6 +1120,8 @@ func assertResourceAuthorityPrivilegeContract(
 	var runtimeCreate, workerCreate, runtimeReads, workerReads bool
 	var runtimeLifecycle, workerLifecycle, runtimeTableAccess bool
 	var runtimeRebindReaders, workerRebindReaders, runtimeRebind, workerRebind bool
+	var runtimeGroupReplaceReaders, workerGroupReplaceReaders bool
+	var runtimeGroupReplace, workerGroupReplace bool
 	if err := adminConnection.QueryRow(ctx, `SELECT
     pg_catalog.has_function_privilege(
         'mesh_runtime',
@@ -981,6 +1185,28 @@ func assertResourceAuthorityPrivilegeContract(
 		'mesh_ops.rebind_device_resource_v1(uuid,bigint,uuid,uuid,uuid,bytea,timestamptz)',
 		'EXECUTE'
 	),
+	(SELECT pg_catalog.bool_and(pg_catalog.has_function_privilege(
+		'mesh_runtime', impact_reader.function_oid, 'EXECUTE'
+	)) FROM pg_catalog.unnest(ARRAY[
+		'mesh_ops.preview_resource_group_replace_v1(uuid,jsonb)'::pg_catalog.regprocedure,
+		'mesh_ops.lock_resource_group_replace_v1(uuid,jsonb)'::pg_catalog.regprocedure
+	]) AS impact_reader(function_oid)),
+	(SELECT pg_catalog.bool_or(pg_catalog.has_function_privilege(
+		'mesh_worker', impact_reader.function_oid, 'EXECUTE'
+	)) FROM pg_catalog.unnest(ARRAY[
+		'mesh_ops.preview_resource_group_replace_v1(uuid,jsonb)'::pg_catalog.regprocedure,
+		'mesh_ops.lock_resource_group_replace_v1(uuid,jsonb)'::pg_catalog.regprocedure
+	]) AS impact_reader(function_oid)),
+	pg_catalog.has_function_privilege(
+		'mesh_runtime',
+		'mesh_ops.replace_resource_group_definition_v1(uuid,bigint,uuid,uuid,bytea,timestamptz,jsonb)',
+		'EXECUTE'
+	),
+	pg_catalog.has_function_privilege(
+		'mesh_worker',
+		'mesh_ops.replace_resource_group_definition_v1(uuid,bigint,uuid,uuid,bytea,timestamptz,jsonb)',
+		'EXECUTE'
+	),
     COALESCE(pg_catalog.bool_or(
         pg_catalog.has_table_privilege('mesh_runtime', relation.oid, 'SELECT')
         OR pg_catalog.has_table_privilege('mesh_runtime', relation.oid, 'INSERT')
@@ -997,6 +1223,8 @@ WHERE namespace.nspname = 'mesh'
 		&runtimeCreate, &workerCreate, &runtimeReads, &workerReads,
 		&runtimeLifecycle, &workerLifecycle, &runtimeRebindReaders, &workerRebindReaders,
 		&runtimeRebind, &workerRebind,
+		&runtimeGroupReplaceReaders, &workerGroupReplaceReaders,
+		&runtimeGroupReplace, &workerGroupReplace,
 		&runtimeTableAccess,
 	); err != nil {
 		t.Fatalf("query Resource authority privileges: %v", err)
@@ -1004,12 +1232,16 @@ WHERE namespace.nspname = 'mesh'
 	if !runtimeCreate || workerCreate || !runtimeReads || workerReads ||
 		!runtimeLifecycle || workerLifecycle || !runtimeRebindReaders || workerRebindReaders ||
 		!runtimeRebind || workerRebind ||
+		!runtimeGroupReplaceReaders || workerGroupReplaceReaders ||
+		!runtimeGroupReplace || workerGroupReplace ||
 		runtimeTableAccess {
 		t.Fatalf(
-			"Resource privileges runtime-create=%t worker-create=%t runtime-reads=%t worker-reads=%t runtime-lifecycle=%t worker-lifecycle=%t runtime-rebind-readers=%t worker-rebind-readers=%t runtime-rebind=%t worker-rebind=%t runtime-table=%t",
+			"Resource privileges runtime-create=%t worker-create=%t runtime-reads=%t worker-reads=%t runtime-lifecycle=%t worker-lifecycle=%t runtime-rebind-readers=%t worker-rebind-readers=%t runtime-rebind=%t worker-rebind=%t runtime-group-replace-readers=%t worker-group-replace-readers=%t runtime-group-replace=%t worker-group-replace=%t runtime-table=%t",
 			runtimeCreate, workerCreate, runtimeReads, workerReads,
 			runtimeLifecycle, workerLifecycle, runtimeRebindReaders, workerRebindReaders,
 			runtimeRebind, workerRebind,
+			runtimeGroupReplaceReaders, workerGroupReplaceReaders,
+			runtimeGroupReplace, workerGroupReplace,
 			runtimeTableAccess,
 		)
 	}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -73,11 +74,16 @@ func parseResourceManagementPath(request *http.Request) (resourceManagementPath,
 	if len(segments) == 10 {
 		if segments[8] != "actions" ||
 			(segments[9] != "suspend" && segments[9] != "resume" && segments[9] != "delete" &&
-				segments[9] != "preview-rebind" && segments[9] != "rebind") {
+				segments[9] != "preview-rebind" && segments[9] != "rebind" &&
+				segments[9] != "preview-replace" && segments[9] != "replace") {
 			return resourceManagementPath{}, false
 		}
 		if (segments[9] == "preview-rebind" || segments[9] == "rebind") &&
 			path.kind != resourceManagementItem {
+			return resourceManagementPath{}, false
+		}
+		if (segments[9] == "preview-replace" || segments[9] == "replace") &&
+			path.kind != resourceGroupManagementItem {
 			return resourceManagementPath{}, false
 		}
 		path.action = segments[9]
@@ -137,6 +143,10 @@ func (path resourceManagementPath) operation(method string) string {
 			return resourceRebindPreviewOperation
 		case "rebind":
 			return resourceRebindOperation
+		case "preview-replace":
+			return resourceGroupReplacePreviewOperation
+		case "replace":
+			return resourceGroupReplaceOperation
 		}
 	}
 	switch path.kind {
@@ -187,6 +197,13 @@ func (handler *ManagementHandler) handleResourceManagement(
 	session accountsession.Session,
 ) string {
 	if path.isAction() {
+		if path.action == "preview-replace" || path.action == "replace" {
+			if handler.resourceGroupReplacements == nil {
+				writeManagementError(ctx, handler.logger, response, correlationID, resourceUnavailableError())
+				return "operation_unavailable"
+			}
+			return handler.replaceResourceGroup(ctx, response, request, correlationID, path, session)
+		}
 		if path.action == "preview-rebind" || path.action == "rebind" {
 			if handler.resourceRebindings == nil {
 				writeManagementError(ctx, handler.logger, response, correlationID, resourceUnavailableError())
@@ -230,6 +247,16 @@ type resourceRebindRequest struct {
 
 type resourceRebindPreviewRequest struct {
 	DeviceID string `json:"device_id"`
+}
+
+type resourceGroupReplacePreviewRequest struct {
+	Members []createResourceGroupMember `json:"members"`
+}
+
+type resourceGroupReplaceRequest struct {
+	Members    []createResourceGroupMember `json:"members"`
+	ImpactHash string                      `json:"impact_hash"`
+	Reason     string                      `json:"reason"`
 }
 
 func (handler *ManagementHandler) rebindResource(
@@ -354,6 +381,157 @@ func (handler *ManagementHandler) rebindResource(
 		CorrelationID: correlationID.String(),
 	})
 	return "success"
+}
+
+func (handler *ManagementHandler) replaceResourceGroup(
+	ctx context.Context,
+	response http.ResponseWriter,
+	request *http.Request,
+	correlationID publicid.ID,
+	path resourceManagementPath,
+	session accountsession.Session,
+) string {
+	if request.URL.RawQuery != "" || request.Body == nil ||
+		!validJSONContentType(singleHeader(request.Header, "Content-Type")) {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	scope, err := path.scope()
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	expectedVersion, requestErr := parseIfMatch(request.Header.Values("If-Match"))
+	if requestErr != nil {
+		writeManagementError(ctx, handler.logger, response, correlationID, *requestErr)
+		return requestErr.Code
+	}
+	groupID, err := resource.ParseGroupID(path.publicID)
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	if path.action == "preview-replace" {
+		if len(request.Header.Values("Idempotency-Key")) != 0 {
+			return handler.writeResourceRequestError(ctx, response, correlationID)
+		}
+		var body resourceGroupReplacePreviewRequest
+		if requestErr = decodeResourceBody(response, request, &body); requestErr != nil {
+			writeManagementError(ctx, handler.logger, response, correlationID, *requestErr)
+			return requestErr.Code
+		}
+		members, err := parseResourceGroupMemberReferences(scope, body.Members)
+		if err != nil {
+			return handler.writeResourceRequestError(ctx, response, correlationID)
+		}
+		preview, err := authority.NewGroupReplacePreview(
+			scope, groupID, expectedVersion, members, session,
+		)
+		if err != nil {
+			return handler.writeResourceRequestError(ctx, response, correlationID)
+		}
+		impact, err := handler.resourceGroupReplacements.Preview(ctx, preview)
+		if err != nil {
+			classified := classifyResourceGroupReplaceError(err)
+			writeManagementError(ctx, handler.logger, response, correlationID, classified)
+			return classified.Code
+		}
+		if !resourceGroupReplaceImpactMatches(impact, preview) {
+			writeManagementError(ctx, handler.logger, response, correlationID, internalManagementError())
+			return "internal_failure"
+		}
+		response.Header().Set("ETag", strongVersionETag(expectedVersion))
+		writeManagementJSON(ctx, handler.logger, response, http.StatusOK, resourceGroupReplacePreviewEnvelope{
+			Data:          resourceGroupReplacePreviewDataFromImpact(impact),
+			CorrelationID: correlationID.String(),
+		})
+		return "success"
+	}
+	var body resourceGroupReplaceRequest
+	if requestErr = decodeResourceBody(response, request, &body); requestErr != nil {
+		writeManagementError(ctx, handler.logger, response, correlationID, *requestErr)
+		return requestErr.Code
+	}
+	members, err := parseResourceGroupMemberReferences(scope, body.Members)
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	preview, err := authority.NewGroupReplacePreview(
+		scope, groupID, expectedVersion, members, session,
+	)
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	rawKey := singleHeader(request.Header, "Idempotency-Key")
+	if rawKey == "" {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	proof, err := handler.idempotency.Proof(rawKey)
+	if err != nil || !proof.IsValid() {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	decodedImpactHash, err := hex.DecodeString(body.ImpactHash)
+	if err != nil || len(decodedImpactHash) != 32 ||
+		hex.EncodeToString(decodedImpactHash) != body.ImpactHash {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	var fixedImpactHash [32]byte
+	copy(fixedImpactHash[:], decodedImpactHash)
+	impactHash, err := authority.NewGroupReplaceImpactHash(fixedImpactHash)
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	reason, err := authority.NewAuditReason(body.Reason)
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	command, err := authority.NewGroupReplaceCommand(preview, impactHash, reason, proof)
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	result, err := handler.resourceGroupReplacements.Replace(ctx, command)
+	if err != nil {
+		classified := classifyResourceGroupReplaceError(err)
+		writeManagementError(ctx, handler.logger, response, correlationID, classified)
+		return classified.Code
+	}
+	if !resourceGroupReplaceResultMatches(result, command) {
+		writeManagementError(ctx, handler.logger, response, correlationID, internalManagementError())
+		return "internal_failure"
+	}
+	response.Header().Set("ETag", strongVersionETag(result.Version()))
+	semanticHash := result.SemanticHash().Bytes()
+	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, resourceGroupReplaceEnvelope{
+		Data: resourceGroupReplaceData{
+			ResourceGroupID: result.GroupID().String(), DefinitionVersion: result.DefinitionVersion(),
+			Version: result.Version(), SemanticHash: hex.EncodeToString(semanticHash[:]),
+			NetworkRevision: result.NetworkRevision(), GroupRevision: result.GroupRevision(),
+			Members: resourceGroupMembers(command.Members()),
+		},
+		CorrelationID: correlationID.String(),
+	})
+	return "success"
+}
+
+func parseResourceGroupMemberReferences(
+	scope network.Scope,
+	members []createResourceGroupMember,
+) ([]resource.Reference, error) {
+	if len(members) == 0 || len(members) > resource.MaximumGroupMembers {
+		return nil, authority.ErrInvalidGroupReplacePreview
+	}
+	references := make([]resource.Reference, len(members))
+	for index, member := range members {
+		resourceID, err := resource.ParseID(member.ResourceID)
+		if err != nil {
+			return nil, err
+		}
+		reference, err := resource.NewReference(
+			scope, resourceID, member.ResourceVersion, member.TargetGeneration,
+		)
+		if err != nil {
+			return nil, err
+		}
+		references[index] = reference
+	}
+	return references, nil
 }
 
 type resourceLifecycleRequest struct {
@@ -965,6 +1143,39 @@ type resourceRebindEnvelope struct {
 	CorrelationID string             `json:"correlation_id"`
 }
 
+type resourceGroupReplacePreviewData struct {
+	ResourceGroupID          string                `json:"resource_group_id"`
+	CurrentDefinitionVersion int64                 `json:"current_definition_version"`
+	DefinitionVersion        int64                 `json:"definition_version"`
+	CurrentMembers           []resourceGroupMember `json:"current_members"`
+	ProposedMembers          []resourceGroupMember `json:"proposed_members"`
+	AddedMembers             []resourceGroupMember `json:"added_members"`
+	RemovedMembers           []resourceGroupMember `json:"removed_members"`
+	RetainedMembers          []resourceGroupMember `json:"retained_members"`
+	ImpactHash               string                `json:"impact_hash"`
+	ApprovalRequired         bool                  `json:"approval_required"`
+}
+
+type resourceGroupReplacePreviewEnvelope struct {
+	Data          resourceGroupReplacePreviewData `json:"data"`
+	CorrelationID string                          `json:"correlation_id"`
+}
+
+type resourceGroupReplaceData struct {
+	ResourceGroupID   string                `json:"resource_group_id"`
+	DefinitionVersion int64                 `json:"definition_version"`
+	Version           int64                 `json:"version"`
+	SemanticHash      string                `json:"semantic_hash"`
+	NetworkRevision   int64                 `json:"network_revision"`
+	GroupRevision     int64                 `json:"group_revision"`
+	Members           []resourceGroupMember `json:"members"`
+}
+
+type resourceGroupReplaceEnvelope struct {
+	Data          resourceGroupReplaceData `json:"data"`
+	CorrelationID string                   `json:"correlation_id"`
+}
+
 type resourceListEnvelope struct {
 	Data          []resourceData `json:"data"`
 	NextPageToken string         `json:"next_page_token,omitempty"`
@@ -1108,6 +1319,44 @@ func resourceRebindResultMatches(
 		result.Version() == command.ExpectedVersion()+1 && result.ImpactHash() == command.ImpactHash()
 }
 
+func resourceGroupReplaceImpactMatches(
+	impact authority.GroupReplaceImpact,
+	preview authority.GroupReplacePreview,
+) bool {
+	return impact.IsValid() && impact.GroupID() == preview.GroupID() &&
+		impact.ExpectedVersion() == preview.ExpectedVersion() &&
+		impact.ProposedRevision().Scope() == preview.Scope() &&
+		slices.Equal(impact.ProposedRevision().Members(), preview.Members())
+}
+
+func resourceGroupReplacePreviewDataFromImpact(
+	impact authority.GroupReplaceImpact,
+) resourceGroupReplacePreviewData {
+	current := impact.CurrentRevision()
+	proposed := impact.ProposedRevision()
+	hash := impact.Hash().Bytes()
+	return resourceGroupReplacePreviewData{
+		ResourceGroupID:          impact.GroupID().String(),
+		CurrentDefinitionVersion: current.DefinitionVersion(),
+		DefinitionVersion:        proposed.DefinitionVersion(),
+		CurrentMembers:           resourceGroupMembers(current.Members()),
+		ProposedMembers:          resourceGroupMembers(proposed.Members()),
+		AddedMembers:             resourceGroupMembers(impact.AddedMembers()),
+		RemovedMembers:           resourceGroupMembers(impact.RemovedMembers()),
+		RetainedMembers:          resourceGroupMembers(impact.RetainedMembers()),
+		ImpactHash:               hex.EncodeToString(hash[:]), ApprovalRequired: impact.ApprovalRequired(),
+	}
+}
+
+func resourceGroupReplaceResultMatches(
+	result authority.GroupReplaceResult,
+	command authority.GroupReplaceCommand,
+) bool {
+	return result.IsValid() && result.GroupID() == command.GroupID() &&
+		result.Scope() == command.Scope() && result.Version() == command.ExpectedVersion()+1 &&
+		result.ImpactHash() == command.ImpactHash()
+}
+
 func lifecycleInventoryRevision(result authority.LifecycleResult) int64 {
 	if result.Operation().IsGroup() {
 		return 0
@@ -1174,6 +1423,38 @@ func classifyResourceRebindError(err error) managementError {
 		return managementError{Status: http.StatusConflict, Code: "approval_required", Message: "durable approval is required before this change"}
 	case errors.Is(err, authority.ErrRebindImpactTooLarge):
 		return managementError{Status: http.StatusUnprocessableEntity, Code: "impact_limit_exceeded", Message: "the change impact exceeds the supported limit"}
+	case errors.Is(err, authority.ErrIntentConflict):
+		return managementError{Status: http.StatusConflict, Code: "idempotency_conflict", Message: "the idempotency key is bound to different request semantics"}
+	case errors.Is(err, authority.ErrIdempotencyExpired):
+		return managementError{Status: http.StatusConflict, Code: "idempotency_expired", Message: "the idempotency replay window expired"}
+	case errors.Is(err, context.Canceled), errors.Is(err, authority.ErrRetryableTransaction),
+		errors.Is(err, authority.ErrCommitOutcomeUnknown), errors.Is(err, authority.ErrRetryExhausted):
+		return resourceUnavailableError()
+	default:
+		return internalManagementError()
+	}
+}
+
+func classifyResourceGroupReplaceError(err error) managementError {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return managementError{Status: http.StatusGatewayTimeout, Code: "request_timeout", Message: "the request deadline expired", Retryable: true}
+	case errors.Is(err, authority.ErrForbidden):
+		return managementError{Status: http.StatusForbidden, Code: "forbidden", Message: "the request is not authorized"}
+	case errors.Is(err, authority.ErrGroupReplaceNotFound):
+		return managementError{Status: http.StatusNotFound, Code: "not_found", Message: "the Resource Group is unavailable"}
+	case errors.Is(err, authority.ErrGroupReplaceVersionConflict):
+		return managementError{Status: http.StatusPreconditionFailed, Code: "precondition_failed", Message: "the Resource Group version precondition is stale"}
+	case errors.Is(err, authority.ErrGroupReplaceMemberConflict):
+		return managementError{Status: http.StatusConflict, Code: "member_conflict", Message: "a pinned Resource Group member changed or is unavailable"}
+	case errors.Is(err, authority.ErrGroupReplaceStateConflict):
+		return managementError{Status: http.StatusConflict, Code: "invalid_state_transition", Message: "the Resource Group definition cannot be replaced"}
+	case errors.Is(err, authority.ErrGroupReplaceNoChange):
+		return managementError{Status: http.StatusConflict, Code: "definition_unchanged", Message: "the proposed Resource Group definition is unchanged"}
+	case errors.Is(err, authority.ErrGroupReplaceImpactChanged):
+		return managementError{Status: http.StatusConflict, Code: "impact_changed", Message: "the acknowledged impact preview is stale"}
+	case errors.Is(err, authority.ErrGroupReplaceApprovalRequired):
+		return managementError{Status: http.StatusConflict, Code: "approval_required", Message: "durable approval is required before this change"}
 	case errors.Is(err, authority.ErrIntentConflict):
 		return managementError{Status: http.StatusConflict, Code: "idempotency_conflict", Message: "the idempotency key is bound to different request semantics"}
 	case errors.Is(err, authority.ErrIdempotencyExpired):

@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 40 {
-		t.Fatalf("len(Catalog()) = %d, want 40", len(catalog))
+	if len(catalog) != 41 {
+		t.Fatalf("len(Catalog()) = %d, want 41", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 40 {
-		t.Fatalf("LatestVersion() = %d, want 40", LatestVersion())
+	if LatestVersion() != 41 {
+		t.Fatalf("LatestVersion() = %d, want 41", LatestVersion())
 	}
 }
 
@@ -1466,6 +1466,43 @@ func TestResourceTargetRebindingIsVersionedAndLeastPrivilege(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("Resource target rebinding SQL contains excessive capability %q", forbidden)
+		}
+	}
+}
+
+func TestResourceGroupReplacementIsImmutableAndLeastPrivilege(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[40]
+	if migration.Description != "Resource Group definition replacement authority" {
+		t.Fatalf("migration 41 description = %q", migration.Description)
+	}
+	for _, required := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.enforce_resource_authority_transition",
+		"CREATE FUNCTION mesh_ops.preview_resource_group_replace_v1",
+		"CREATE FUNCTION mesh_ops.lock_resource_group_replace_v1",
+		"CREATE FUNCTION mesh_ops.replace_resource_group_definition_v1",
+		"p_expected_group_version BIGINT",
+		"FROM mesh_ops.lock_network_revision()",
+		"FOR SHARE OF workspace, principal, membership",
+		"INSERT INTO mesh.resource_group_version",
+		"INSERT INTO mesh.resource_group_version_member",
+		"active_definition_version = advanced_definition_version",
+		"version = resource_group.version + 1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.replace_resource_group_definition_v1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.preview_resource_group_replace_v1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.lock_resource_group_replace_v1",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("Resource Group replacement SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "GRANT ALL",
+		"BYPASSRLS", "TO mesh_worker;", "TO mesh_observer;", "DROP ", "DELETE FROM",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("Resource Group replacement SQL contains excessive capability %q", forbidden)
 		}
 	}
 }

@@ -225,6 +225,21 @@ func composeManagementAPIWithKeys(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
+	resourceGroupReplacements, err := authority.NewGroupReplaceService(
+		authority.Options{
+			MaxAttempts: 3, RollbackTimeout: managementRollbackTimeout,
+			IdempotencyWindow: managementIdempotencyTTL,
+		},
+		authority.GroupReplaceDependencies{
+			Impacts: resourceAuthorityStore, Transactions: resourceAuthorityStore,
+			CommittedResults: resourceAuthorityStore,
+			MutationIDs:      authority.PublicGroupReplaceMutationIDGenerator{},
+			Clock:            authority.SystemClock{}, Retry: resourceBackoff,
+		},
+	)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
 	resourceCatalogStore, err := postgresadapter.NewResourceCatalogStore(
 		runtimePool,
 		postgresadapter.ResourceCatalogOptions{
@@ -247,8 +262,9 @@ func composeManagementAPIWithKeys(
 		Sessions: sessions, Revocations: revocations, PolicyPublications: policyPublications,
 		ResourceCreations: resourceCreations, ResourceLifecycles: resourceLifecycles,
 		ResourceRebindings: resourceRebindings, ResourceCatalog: resourceCatalog,
-		Idempotency:       keys.idempotency,
-		RateLimitSubjects: keys.rateLimit, RateLimiter: rateLimiter,
+		ResourceGroupReplacements: resourceGroupReplacements,
+		Idempotency:               keys.idempotency,
+		RateLimitSubjects:         keys.rateLimit, RateLimiter: rateLimiter,
 		TrustedProxyPrefixes: apiConfig.TrustedProxyPrefixes,
 		SourceRateLimit:      apiConfig.SourceRateLimit, SessionRateLimit: apiConfig.SessionRateLimit,
 		CorrelationIDs: httpapi.PublicCorrelationIDGenerator{}, Logger: logger,

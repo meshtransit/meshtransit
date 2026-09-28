@@ -23,8 +23,9 @@ remaining gaps are recorded in the
 
 Phase 2 M1 includes the first PostgreSQL-authoritative Device Resource and
 immutable Resource Group slice. Phase 2 M2 adds Bearer management create/get/list
-contracts. M3a adds retained lifecycle actions, and M3b1 adds deterministic
-impact preview plus atomic Device target rebinding. These slices use fresh
+contracts. M3a adds retained lifecycle actions, M3b1 adds deterministic impact
+preview plus atomic Device target rebinding, and M3b2 appends and activates
+immutable Resource Group definitions through the same preview boundary. These slices use fresh
 exact-scope authorization, strong revision preconditions, durable idempotency,
 and safe errors. No Resource Console UI, Access Graph evaluation, or graph
 database is introduced.
@@ -44,7 +45,11 @@ and
 plus the
 [M3b Resource target rebinding design](docs/design/phase2-m3b-resource-target-rebinding.md)
 and
-[M3b acceptance matrix](docs/qualification/phase2-m3b-resource-target-rebinding-2026-09-28.md).
+[M3b acceptance matrix](docs/qualification/phase2-m3b-resource-target-rebinding-2026-09-28.md),
+plus the
+[M3b2 Resource Group replacement design](docs/design/phase2-m3b2-resource-group-definition-replacement.md)
+and
+[M3b2 acceptance matrix](docs/qualification/phase2-m3b2-resource-group-definition-replacement-2026-09-28.md).
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,
