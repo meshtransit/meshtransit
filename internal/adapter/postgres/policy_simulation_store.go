@@ -52,11 +52,7 @@ func NewPolicySimulationStore(
 }
 
 func validPolicySimulationOptions(options PolicySimulationOptions) bool {
-	return validAccessGraphOptions(AccessGraphOptions{
-		StatementTimeout: options.StatementTimeout,
-		LockTimeout:      options.LockTimeout,
-		IdleTimeout:      options.IdleTimeout,
-	})
+	return validAccessGraphOptions(AccessGraphOptions(options))
 }
 
 // ReadSimulationBaseline freshly authorizes policy.validate and reconstructs the

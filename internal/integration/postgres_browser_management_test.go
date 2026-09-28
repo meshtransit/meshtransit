@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
+	"github.com/meshtransit/meshtransit/internal/accessgraph/simulation"
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
@@ -156,6 +157,7 @@ func publishPolicyOverBrowserManagement(
 		Revocations: newIntegrationDeviceRevocationService(t, runtimePool), PolicyPublications: capture,
 		PolicyCompilations: newIntegrationPolicyCompiler(t, runtimePool),
 		PolicyExplanations: newIntegrationPolicyExplainer(t, runtimePool),
+		PolicySimulations:  newIntegrationPolicySimulator(t, runtimePool),
 		Idempotency:        integrationDeviceRevocationDigester(t), RateLimitSubjects: digester,
 		RateLimiter:     integrationAllowAllRateLimiter{},
 		SourceRateLimit: policy, SessionRateLimit: policy, CorrelationIDs: httpapi.PublicCorrelationIDGenerator{},
@@ -303,6 +305,32 @@ func newIntegrationPolicyExplainer(
 	}
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
 		Reader: store, Clock: accessgraph.SystemClock{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
+}
+
+func newIntegrationPolicySimulator(
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+) *simulation.Service {
+	t.Helper()
+	store, err := postgresadapter.NewPolicySimulationStore(
+		runtimePool,
+		postgresadapter.PolicySimulationOptions{
+			StatementTimeout: 5 * time.Second,
+			LockTimeout:      2 * time.Second,
+			IdleTimeout:      10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := simulation.NewService(simulation.Dependencies{
+		Baselines: store, Compiler: newIntegrationPolicyCompiler(t, runtimePool),
+		Clock: simulation.SystemClock{},
 	})
 	if err != nil {
 		t.Fatal(err)

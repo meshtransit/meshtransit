@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
+	"github.com/meshtransit/meshtransit/internal/accessgraph/simulation"
 	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/idempotency"
 	"github.com/meshtransit/meshtransit/internal/identity"
@@ -289,6 +290,7 @@ func TestNewManagementHandlerRejectsInvalidDependencies(t *testing.T) {
 		func(options *ManagementHandlerOptions) { options.PolicyPublications = nil },
 		func(options *ManagementHandlerOptions) { options.PolicyCompilations = nil },
 		func(options *ManagementHandlerOptions) { options.PolicyExplanations = nil },
+		func(options *ManagementHandlerOptions) { options.PolicySimulations = nil },
 		func(options *ManagementHandlerOptions) { options.Idempotency = nil },
 		func(options *ManagementHandlerOptions) { options.RateLimitSubjects = nil },
 		func(options *ManagementHandlerOptions) { options.RateLimiter = nil },
@@ -383,6 +385,13 @@ func validManagementHandlerOptions(t *testing.T) ManagementHandlerOptions {
 		) (accessgraph.Result, error) {
 			return accessgraph.Result{}, accessgraph.ErrUnavailable
 		}),
+		PolicySimulations: managementPolicySimulatorFunc(func(
+			context.Context,
+			accountsession.Session,
+			compilation.Request,
+		) (simulation.Result, error) {
+			return simulation.Result{}, simulation.ErrUnavailable
+		}),
 		Idempotency: managementIdempotencyProverFunc(func(string) (idempotency.Proof, error) {
 			return proof, nil
 		}),
@@ -474,6 +483,20 @@ func (function managementPolicyExplainerFunc) Explain(
 	query accessgraph.Query,
 ) (accessgraph.Result, error) {
 	return function(ctx, session, query)
+}
+
+type managementPolicySimulatorFunc func(
+	context.Context,
+	accountsession.Session,
+	compilation.Request,
+) (simulation.Result, error)
+
+func (function managementPolicySimulatorFunc) Simulate(
+	ctx context.Context,
+	session accountsession.Session,
+	request compilation.Request,
+) (simulation.Result, error) {
+	return function(ctx, session, request)
 }
 
 func compileDirectManagementPolicy(request compilation.Request) (policypublication.Candidate, error) {

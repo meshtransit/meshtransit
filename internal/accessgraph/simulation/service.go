@@ -95,9 +95,11 @@ func (service *Service) Simulate(
 	if err != nil {
 		return Result{}, err
 	}
-	if !before.IsValid() || before.Scope() != request.Scope() ||
-		request.Revision() != before.RevisionVector().PolicyRevision()+1 {
+	if !before.IsValid() || before.Scope() != request.Scope() {
 		return Result{}, ErrInvalidBaseline
+	}
+	if request.Revision() != before.RevisionVector().PolicyRevision()+1 {
+		return Result{}, ErrStaleInputs
 	}
 	proposed, err := service.compiler.Compile(ctx, session, request)
 	if err != nil {

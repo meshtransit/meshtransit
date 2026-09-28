@@ -183,6 +183,33 @@ func TestServiceRejectsAuthorityDriftAroundCompilation(t *testing.T) {
 	}
 }
 
+func TestServiceRejectsStaleBaseRevisionBeforeCompilation(t *testing.T) {
+	t.Parallel()
+
+	scope := simulationScope(t)
+	current := simulationCandidate(t, scope, 6, []policy.Rule{})
+	baseline := simulationBaseline(t, current, simulationVector(t, 12, 8, 9, 6))
+	request := simulationRequest(t, scope, 8, []compilation.RuleIntent{
+		simulationDirectIntent(t, scope, 1, 301, 302, policy.ProtocolICMP, 0, 0),
+	})
+	reader := &simulationBaselineReader{values: []simulation.Baseline{baseline}}
+	compiler := simulationCompiler(t, &simulationDestinationResolver{})
+
+	_, err := simulationService(t, reader, compiler).Simulate(
+		t.Context(),
+		simulationSession(t),
+		request,
+	)
+	if !errors.Is(err, simulation.ErrStaleInputs) || reader.calls != 1 || compiler.calls != 0 {
+		t.Fatalf(
+			"Simulate() error = %v, reader/compiler calls = %d/%d",
+			err,
+			reader.calls,
+			compiler.calls,
+		)
+	}
+}
+
 func TestServiceSupportsCanonicalDefaultDenyBootstrap(t *testing.T) {
 	t.Parallel()
 

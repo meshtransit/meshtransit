@@ -67,6 +67,7 @@ type privateIdentityPorts struct {
 	PolicyPublications httpapi.PolicyPublisher
 	PolicyCompilations httpapi.PolicyCompiler
 	PolicyExplanations httpapi.PolicyExplainer
+	PolicySimulations  httpapi.PolicySimulator
 	RateLimiter        httpapi.ManagementRateLimiter
 	CorrelationIDs     httpapi.PublicIDGenerator
 	Clock              oidcauth.StartClock
@@ -157,6 +158,7 @@ func composePrivateIdentity(
 		Sessions: sessions, Revocations: ports.Revocations, PolicyPublications: ports.PolicyPublications,
 		PolicyCompilations: ports.PolicyCompilations,
 		PolicyExplanations: ports.PolicyExplanations,
+		PolicySimulations:  ports.PolicySimulations,
 		Idempotency:        keys.idempotency, RateLimitSubjects: keys.rateLimit, RateLimiter: ports.RateLimiter,
 		TrustedProxyPrefixes: profile.TrustedProxyPrefixes, SourceRateLimit: managementOptions.SourceRateLimit,
 		SessionRateLimit: managementOptions.SessionRateLimit, CorrelationIDs: ports.CorrelationIDs, Logger: ports.Logger,
@@ -226,6 +228,7 @@ func completePrivateIdentityPorts(ports privateIdentityPorts) bool {
 		ports.Secrets, ports.ClaimIDs, ports.IssueMaterial, ports.Revocations, ports.PolicyPublications,
 		ports.PolicyCompilations,
 		ports.PolicyExplanations,
+		ports.PolicySimulations,
 		ports.RateLimiter, ports.CorrelationIDs, ports.Clock, ports.Logger,
 	} {
 		if port == nil {

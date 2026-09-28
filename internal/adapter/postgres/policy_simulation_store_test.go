@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -169,17 +170,14 @@ func postgresPolicySimulationGroupRule(
 		DestinationGroupMemberResourceVersion:      4,
 		DestinationGroupMemberTargetGeneration:     2,
 		DestinationGroupMemberInventoryRevision:    8,
-		DestinationGroupMemberResourceSemanticHash: postgresPolicySimulationHash(byte(resourceSuffix - 600)),
+		DestinationGroupMemberResourceSemanticHash: postgresPolicySimulationHash(resourceSuffix - 600),
 	}
 }
 
 func postgresPolicySimulationID(suffix int) string {
-	return "01890f00-0000-7000-8000-000000000" + string(rune('0'+suffix/100)) +
-		string(rune('0'+suffix/10%10)) + string(rune('0'+suffix%10))
+	return fmt.Sprintf("01890f00-0000-7000-8000-000000000%03d", suffix)
 }
 
-func postgresPolicySimulationHash(value byte) string {
-	const zeroPrefix = "00000000000000000000000000000000000000000000000000000000000000"
-	const hexadecimal = "0123456789abcdef"
-	return zeroPrefix + string([]byte{hexadecimal[value>>4], hexadecimal[value&0x0f]})
+func postgresPolicySimulationHash(value int) string {
+	return fmt.Sprintf("%064x", value)
 }

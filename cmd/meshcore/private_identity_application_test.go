@@ -22,6 +22,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/api/openapi"
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
+	"github.com/meshtransit/meshtransit/internal/accessgraph/simulation"
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
 	"github.com/meshtransit/meshtransit/internal/adapter/oidc"
 	"github.com/meshtransit/meshtransit/internal/deployment"
@@ -658,6 +659,7 @@ func newPrivateIdentityFixture(t *testing.T) *privateIdentityFixture {
 		IssueMaterial: fixture, Revocations: fixture, PolicyPublications: fixture,
 		PolicyCompilations: fixture,
 		PolicyExplanations: fixture,
+		PolicySimulations:  fixture,
 		RateLimiter:        fixture, CorrelationIDs: fixture,
 		Clock: fixture, Logger: discardCompositionLogger(),
 	}
@@ -1011,6 +1013,15 @@ func (fixture *privateIdentityFixture) Explain(
 ) (accessgraph.Result, error) {
 	fixture.record(ctx, "explain")
 	return accessgraph.Result{}, errors.New("private controlled explanation failure")
+}
+
+func (fixture *privateIdentityFixture) Simulate(
+	ctx context.Context,
+	_ accountsession.Session,
+	_ compilation.Request,
+) (simulation.Result, error) {
+	fixture.record(ctx, "simulate")
+	return simulation.Result{}, errors.New("private controlled simulation failure")
 }
 
 type privateIdentityResponse struct{ *httptest.ResponseRecorder }

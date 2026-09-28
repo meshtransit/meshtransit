@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
+	"github.com/meshtransit/meshtransit/internal/accessgraph/simulation"
 	"github.com/meshtransit/meshtransit/internal/idempotency"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
@@ -34,6 +35,7 @@ import (
 const (
 	deviceRevokeOperation                   = "device_revoke"
 	policyPublishOperation                  = "policy_publish"
+	policySimulateOperation                 = "policy_simulate"
 	policyExplainOperation                  = "policy_explain"
 	resourceCreateOperation                 = "resource_create"
 	resourceGetOperation                    = "resource_get"
@@ -93,6 +95,11 @@ type PolicyCompiler interface {
 // PolicyExplainer derives revision-bound decisions from active compiled policy.
 type PolicyExplainer interface {
 	Explain(context.Context, accountsession.Session, accessgraph.Query) (accessgraph.Result, error)
+}
+
+// PolicySimulator derives a compiler-identical impact without publishing authority.
+type PolicySimulator interface {
+	Simulate(context.Context, accountsession.Session, compilation.Request) (simulation.Result, error)
 }
 
 // ResourceCreator atomically creates Resource and Resource Group authority.
@@ -159,6 +166,7 @@ type ManagementHandlerOptions struct {
 	PolicyPublications        PolicyPublisher
 	PolicyCompilations        PolicyCompiler
 	PolicyExplanations        PolicyExplainer
+	PolicySimulations         PolicySimulator
 	ResourceCreations         ResourceCreator
 	ResourceLifecycles        ResourceLifecycle
 	ResourceRebindings        ResourceRebinder
@@ -184,6 +192,7 @@ type ManagementHandler struct {
 	policies                  PolicyPublisher
 	policyCompiler            PolicyCompiler
 	policyExplainer           PolicyExplainer
+	policySimulator           PolicySimulator
 	resourceCreations         ResourceCreator
 	resourceLifecycles        ResourceLifecycle
 	resourceRebindings        ResourceRebinder
@@ -207,6 +216,7 @@ type ManagementHandler struct {
 func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler, error) {
 	if options.Sessions == nil || options.Revocations == nil || options.PolicyPublications == nil ||
 		options.PolicyCompilations == nil || options.PolicyExplanations == nil ||
+		options.PolicySimulations == nil ||
 		options.Idempotency == nil ||
 		options.RateLimitSubjects == nil || options.RateLimiter == nil ||
 		!options.SourceRateLimit.IsValid() || !options.SessionRateLimit.IsValid() ||
@@ -231,6 +241,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		policies:                  options.PolicyPublications,
 		policyCompiler:            options.PolicyCompilations,
 		policyExplainer:           options.PolicyExplanations,
+		policySimulator:           options.PolicySimulations,
 		resourceCreations:         options.ResourceCreations,
 		resourceLifecycles:        options.ResourceLifecycles,
 		resourceRebindings:        options.ResourceRebindings,
@@ -267,6 +278,7 @@ func (handler *ManagementHandler) serveHTTP(
 		handler.sessions == nil || handler.revocations == nil || handler.policies == nil ||
 		handler.policyCompiler == nil ||
 		handler.policyExplainer == nil ||
+		handler.policySimulator == nil ||
 		handler.idempotency == nil ||
 		handler.rateSubjects == nil || handler.rateLimiter == nil ||
 		!handler.sourcePolicy.IsValid() || !handler.sessionPolicy.IsValid() ||
@@ -315,9 +327,11 @@ func (handler *ManagementHandler) serveHTTP(
 
 	devicePath, deviceMatched := parseDeviceRevokePath(request)
 	policyPath, policyMatched := parsePolicyPublishPath(request)
+	policySimulationPath, policySimulationMatched := parsePolicySimulationPath(request)
 	accessGraphPath, accessGraphMatched := parseAccessGraphExplainPath(request)
 	resourcePath, resourceMatched := parseResourceManagementPath(request)
-	if !deviceMatched && !policyMatched && !accessGraphMatched && !resourceMatched {
+	if !deviceMatched && !policyMatched && !policySimulationMatched &&
+		!accessGraphMatched && !resourceMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -329,6 +343,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = deviceRevokeOperation
 	} else if policyMatched {
 		operation = policyPublishOperation
+	} else if policySimulationMatched {
+		operation = policySimulateOperation
 	} else if accessGraphMatched {
 		operation = policyExplainOperation
 	} else {
@@ -394,6 +410,13 @@ func (handler *ManagementHandler) serveHTTP(
 		resultCode = handler.publishPolicy(ctx, managementPolicyRequest{
 			response: response, request: request, correlationID: correlationID,
 			path: policyPath, session: session, browser: browser,
+		})
+		return
+	}
+	if policySimulationMatched {
+		resultCode = handler.simulatePolicy(ctx, managementPolicySimulationRequest{
+			response: response, request: request, correlationID: correlationID,
+			path: policySimulationPath, session: session, browser: browser,
 		})
 		return
 	}

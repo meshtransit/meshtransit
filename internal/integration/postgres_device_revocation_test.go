@@ -279,6 +279,7 @@ func revokeDeviceOverHTTP(
 		PolicyPublications:    newIntegrationManagementPolicyPublicationService(t, runtimePool),
 		PolicyCompilations:    newIntegrationPolicyCompiler(t, runtimePool),
 		PolicyExplanations:    newIntegrationPolicyExplainer(t, runtimePool),
+		PolicySimulations:     newIntegrationPolicySimulator(t, runtimePool),
 		Idempotency:           integrationDeviceRevocationDigester(t),
 		RateLimitSubjects:     rateLimitDigester,
 		RateLimiter:           integrationAllowAllRateLimiter{},

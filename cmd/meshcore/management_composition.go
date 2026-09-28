@@ -10,6 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
+	"github.com/meshtransit/meshtransit/internal/accessgraph/simulation"
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/config"
@@ -299,10 +300,28 @@ func composeManagementAPIWithKeys(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
+	policySimulationStore, err := postgresadapter.NewPolicySimulationStore(
+		runtimePool,
+		postgresadapter.PolicySimulationOptions{
+			StatementTimeout: managementStatementTimeout,
+			LockTimeout:      managementLockTimeout,
+			IdleTimeout:      managementTransactionIdle,
+		},
+	)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
+	policySimulator, err := simulation.NewService(simulation.Dependencies{
+		Baselines: policySimulationStore, Compiler: policyCompiler, Clock: simulation.SystemClock{},
+	})
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions: sessions, Revocations: revocations, PolicyPublications: policyPublications,
 		PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer,
+		PolicySimulations:  policySimulator,
 		ResourceCreations:  resourceCreations, ResourceLifecycles: resourceLifecycles,
 		ResourceRebindings: resourceRebindings, ResourceCatalog: resourceCatalog,
 		ResourceGroupReplacements: resourceGroupReplacements,

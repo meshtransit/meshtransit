@@ -24,6 +24,8 @@ const (
 		"devices/{device_id}/actions/revoke"
 	policyPublishPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"policy/actions/publish"
+	policySimulatePath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
+		"policy/actions/simulate"
 	accessGraphExplainPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"access-graph/actions/explain"
 )
@@ -82,7 +84,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		return nil, ErrInvalidManagementProfile
 	}
 	paths, err := managementObject(document["paths"])
-	if err != nil || len(paths) != 19 {
+	if err != nil || len(paths) != 20 {
 		return nil, ErrInvalidManagementProfile
 	}
 	if len(fragment) == 0 || len(fragment) > maximumManagementDocumentBytes {
@@ -106,6 +108,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths := make(map[string]json.RawMessage, 5)
 	for path, operationID := range map[string]string{
 		deviceRevokePath: "revokeDevice", policyPublishPath: "publishPolicy",
+		policySimulatePath:     "simulatePolicy",
 		accessGraphExplainPath: "explainActivePolicy",
 	} {
 		operation, err := consoleManagementOperation(paths[path], operationID)

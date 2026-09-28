@@ -183,6 +183,98 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy/actions/simulate": {
+      "post": {
+        "operationId": "simulatePolicy",
+        "summary": "Simulate a policy draft against the complete active compiled baseline",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "$ref": "#/components/parameters/PolicyIfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SimulatePolicyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A deterministic, bounded impact preview derived by the publication compiler without authority mutation.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/PolicyETag"
+              },
+              "Cache-Control": {
+                "description": "Simulation evidence contains authorization-sensitive graph data and is never cached.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "X-Correlation-ID": {
+                "$ref": "#/components/headers/CorrelationID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimulatePolicyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalFailure"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/access-graph/actions/explain": {
       "post": {
         "operationId": "explainActivePolicy",
@@ -1351,6 +1443,283 @@
             "minimum": 0,
             "maximum": 10000
           }
+        }
+      },
+      "SimulatePolicyRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rules"
+        ],
+        "properties": {
+          "rules": {
+            "type": "array",
+            "maxItems": 10000,
+            "items": {
+              "$ref": "#/components/schemas/CompiledPolicyRule"
+            }
+          }
+        }
+      },
+      "SimulatePolicyResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "correlation_id"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SimulatedPolicy"
+          },
+          "correlation_id": {
+            "$ref": "#/components/schemas/PublicID"
+          }
+        }
+      },
+      "SimulatedPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "baseline",
+          "proposed",
+          "impact"
+        ],
+        "properties": {
+          "baseline": {
+            "$ref": "#/components/schemas/PolicySimulationBaseline"
+          },
+          "proposed": {
+            "$ref": "#/components/schemas/PolicySimulationProposed"
+          },
+          "impact": {
+            "$ref": "#/components/schemas/PolicySimulationImpact"
+          }
+        }
+      },
+      "PolicyRevisionVector": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "network_revision",
+          "inventory_revision",
+          "group_revision",
+          "policy_revision",
+          "dns_revision",
+          "route_revision",
+          "sharing_revision",
+          "isolation_generation"
+        ],
+        "properties": {
+          "network_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "inventory_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "group_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "policy_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "dns_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "route_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "sharing_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "isolation_generation": {"type": "integer", "format": "int64", "minimum": 1}
+        }
+      },
+      "PolicySimulationBaseline": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "revision_vector",
+          "has_active_release",
+          "compiler_format_version",
+          "semantic_hash"
+        ],
+        "properties": {
+          "revision_vector": {"$ref": "#/components/schemas/PolicyRevisionVector"},
+          "has_active_release": {"type": "boolean"},
+          "release_id": {"$ref": "#/components/schemas/PublicID"},
+          "compiler_format_version": {"type": "integer", "minimum": 1, "maximum": 65535},
+          "semantic_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      },
+      "PolicySimulationProposed": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "revision_vector",
+          "compiler_format_version",
+          "semantic_hash",
+          "rule_count"
+        ],
+        "properties": {
+          "revision_vector": {"$ref": "#/components/schemas/PolicyRevisionVector"},
+          "compiler_format_version": {"type": "integer", "minimum": 1, "maximum": 65535},
+          "semantic_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "rule_count": {"type": "integer", "minimum": 0, "maximum": 10000}
+        }
+      },
+      "PolicySimulationImpact": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "impact_hash",
+          "added_relationship_count",
+          "added_relationships",
+          "removed_relationship_count",
+          "removed_relationships",
+          "added_explanation_count",
+          "added_explanations",
+          "removed_explanation_count",
+          "removed_explanations",
+          "affected_device_count",
+          "affected_device_ids",
+          "affected_resource_count",
+          "affected_resource_ids",
+          "affected_resource_group_count",
+          "affected_resource_group_ids",
+          "unsupported_capabilities",
+          "truncated",
+          "stale_inputs",
+          "uncertain"
+        ],
+        "properties": {
+          "impact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "added_relationship_count": {"type": "integer", "minimum": 0},
+          "added_relationships": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {"$ref": "#/components/schemas/PolicySimulationRelationship"}
+          },
+          "removed_relationship_count": {"type": "integer", "minimum": 0},
+          "removed_relationships": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {"$ref": "#/components/schemas/PolicySimulationRelationship"}
+          },
+          "added_explanation_count": {"type": "integer", "minimum": 0},
+          "added_explanations": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {"$ref": "#/components/schemas/PolicySimulationExplanation"}
+          },
+          "removed_explanation_count": {"type": "integer", "minimum": 0},
+          "removed_explanations": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {"$ref": "#/components/schemas/PolicySimulationExplanation"}
+          },
+          "affected_device_count": {"type": "integer", "minimum": 0},
+          "affected_device_ids": {
+            "type": "array",
+            "maxItems": 256,
+            "uniqueItems": true,
+            "items": {"$ref": "#/components/schemas/PublicID"}
+          },
+          "affected_resource_count": {"type": "integer", "minimum": 0},
+          "affected_resource_ids": {
+            "type": "array",
+            "maxItems": 256,
+            "uniqueItems": true,
+            "items": {"$ref": "#/components/schemas/PublicID"}
+          },
+          "affected_resource_group_count": {"type": "integer", "minimum": 0},
+          "affected_resource_group_ids": {
+            "type": "array",
+            "maxItems": 256,
+            "uniqueItems": true,
+            "items": {"$ref": "#/components/schemas/PublicID"}
+          },
+          "unsupported_capabilities": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "principal_projection",
+                "sensitive_resource_classification",
+                "cross_scope_relationships",
+                "guardrail_evaluation",
+                "share_intersection",
+                "routed_service_resources"
+              ]
+            }
+          },
+          "truncated": {"type": "boolean"},
+          "stale_inputs": {"type": "boolean", "const": false},
+          "uncertain": {"type": "boolean", "const": false}
+        }
+      },
+      "PolicySimulationRelationship": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source_device_id",
+          "destination_device_id",
+          "protocol"
+        ],
+        "properties": {
+          "source_device_id": {"$ref": "#/components/schemas/PublicID"},
+          "destination_device_id": {"$ref": "#/components/schemas/PublicID"},
+          "protocol": {"type": "string", "enum": ["tcp", "udp", "icmp"]},
+          "destination_port_range": {"$ref": "#/components/schemas/PortRange"}
+        }
+      },
+      "PolicySimulationExplanation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "access_rule_id",
+          "source_device_id",
+          "destination_device_id",
+          "protocol",
+          "destination_port_ranges",
+          "selector_kind"
+        ],
+        "properties": {
+          "access_rule_id": {"$ref": "#/components/schemas/PublicID"},
+          "source_device_id": {"$ref": "#/components/schemas/PublicID"},
+          "destination_device_id": {"$ref": "#/components/schemas/PublicID"},
+          "protocol": {"type": "string", "enum": ["tcp", "udp", "icmp"]},
+          "destination_port_ranges": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {"$ref": "#/components/schemas/PortRange"}
+          },
+          "selector_kind": {"type": "string", "enum": ["device", "resource", "resource_group"]},
+          "resource": {"$ref": "#/components/schemas/PolicySimulationResourceEvidence"},
+          "resource_group": {"$ref": "#/components/schemas/PolicySimulationGroupEvidence"}
+        }
+      },
+      "PolicySimulationResourceEvidence": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_id",
+          "resource_version",
+          "target_generation",
+          "inventory_revision",
+          "semantic_hash"
+        ],
+        "properties": {
+          "resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "resource_version": {"type": "integer", "format": "int64", "minimum": 1},
+          "target_generation": {"type": "integer", "format": "int64", "minimum": 1},
+          "inventory_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "semantic_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      },
+      "PolicySimulationGroupEvidence": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_group_id",
+          "group_version",
+          "definition_version",
+          "group_revision",
+          "semantic_hash"
+        ],
+        "properties": {
+          "resource_group_id": {"$ref": "#/components/schemas/PublicID"},
+          "group_version": {"type": "integer", "format": "int64", "minimum": 1},
+          "definition_version": {"type": "integer", "format": "int64", "minimum": 1},
+          "group_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "semantic_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
         }
       },
       "ExplainPolicyRequest": {
