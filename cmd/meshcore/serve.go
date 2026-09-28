@@ -145,6 +145,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		}
 		checkers = append(checkers, identityBroker.checkers...)
 		roleServices = append(roleServices, identityBroker.services...)
+		additionalMetrics = append(additionalMetrics, identityBroker.metrics...)
 	}
 	if processConfig.RevisionWorker != nil {
 		revisionWorkerTelemetry = revisionworker.NewTelemetry()

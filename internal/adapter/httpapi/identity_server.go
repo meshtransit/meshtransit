@@ -65,6 +65,7 @@ type identityRoute struct {
 	methods    string
 	allowQuery bool
 	tokenBody  bool
+	metric     string
 }
 
 // IdentityServer owns the private broker listener. It exposes only the exact
@@ -79,6 +80,7 @@ type IdentityServer struct {
 	timeout      time.Duration
 	connections  int
 	concurrency  chan struct{}
+	telemetry    *IdentityTelemetry
 	connectionWG sync.WaitGroup
 
 	mu             sync.Mutex
@@ -128,6 +130,7 @@ func NewIdentityServer(options IdentityServerOptions) (*IdentityServer, error) {
 		address: options.Address, timeout: options.RequestTimeout,
 		connections: options.MaxConnections,
 		concurrency: make(chan struct{}, options.MaxConcurrentRequests),
+		telemetry:   newIdentityTelemetry(options.MaxConnections, options.MaxConcurrentRequests),
 		tlsConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate},
 			NextProtos: []string{"http/1.1"}, SessionTicketsDisabled: true,
@@ -174,11 +177,21 @@ func identityServerRoutes(issuerValue string, connectorIDs []string) (*url.URL, 
 	}
 	prefix := issuer.Path
 	routes := map[string]identityRoute{
-		prefix + "/.well-known/openid-configuration": {methods: http.MethodGet + ", " + http.MethodHead},
-		prefix + "/auth":     {methods: http.MethodGet, allowQuery: true},
-		prefix + "/callback": {methods: http.MethodGet, allowQuery: true},
-		prefix + "/token":    {methods: http.MethodPost, tokenBody: true},
-		prefix + "/keys":     {methods: http.MethodGet + ", " + http.MethodHead},
+		prefix + "/.well-known/openid-configuration": {
+			methods: http.MethodGet + ", " + http.MethodHead, metric: identityMetricRouteDiscovery,
+		},
+		prefix + "/auth": {
+			methods: http.MethodGet, allowQuery: true, metric: identityMetricRouteAuthorization,
+		},
+		prefix + "/callback": {
+			methods: http.MethodGet, allowQuery: true, metric: identityMetricRouteCallback,
+		},
+		prefix + "/token": {
+			methods: http.MethodPost, tokenBody: true, metric: identityMetricRouteToken,
+		},
+		prefix + "/keys": {
+			methods: http.MethodGet + ", " + http.MethodHead, metric: identityMetricRouteKeys,
+		},
 	}
 	for _, connectorID := range connectorIDs {
 		if !validIdentityConnectorID(connectorID) {
@@ -188,7 +201,9 @@ func identityServerRoutes(issuerValue string, connectorIDs []string) (*url.URL, 
 		if _, exists := routes[connectorPath]; exists {
 			return nil, nil, ErrInvalidIdentityServer
 		}
-		routes[connectorPath] = identityRoute{methods: http.MethodGet, allowQuery: true}
+		routes[connectorPath] = identityRoute{
+			methods: http.MethodGet, allowQuery: true, metric: identityMetricRouteConnector,
+		}
 	}
 	return issuer, routes, nil
 }
@@ -291,15 +306,25 @@ func (owner *IdentityServer) connectionState(_ net.Conn, state http.ConnState) {
 	switch state {
 	case http.StateNew:
 		owner.connectionWG.Add(1)
+		owner.telemetry.connectionOpened()
 	case http.StateClosed:
+		owner.telemetry.connectionClosed()
 		owner.connectionWG.Done()
 	}
 }
 
 // ServeHTTP applies the fixed private route and transport policy before Dex.
 func (owner *IdentityServer) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	secured := &identityResponseWriter{ResponseWriter: response}
+	tracked := &statusResponseWriter{ResponseWriter: response}
+	secured := &identityResponseWriter{ResponseWriter: tracked}
 	secured.apply()
+	metricRoute := identityMetricRouteNotFound
+	startedAt := time.Now()
+	if owner != nil && owner.telemetry != nil {
+		defer func() {
+			owner.telemetry.recordRequest(metricRoute, tracked.StatusCode(), time.Since(startedAt))
+		}()
+	}
 	if owner == nil || request == nil || request.URL == nil || request.TLS == nil ||
 		request.Host != owner.issuerHost || request.URL.IsAbs() || request.URL.Host != "" ||
 		request.URL.Opaque != "" || request.URL.RawPath != "" ||
@@ -313,6 +338,7 @@ func (owner *IdentityServer) ServeHTTP(response http.ResponseWriter, request *ht
 		http.Error(secured, "not found", http.StatusNotFound)
 		return
 	}
+	metricRoute = route.metric
 	if !identityMethodAllowed(route.methods, request.Method) {
 		secured.Header().Set("Allow", route.methods)
 		http.Error(secured, "method not allowed", http.StatusMethodNotAllowed)
@@ -341,8 +367,13 @@ func (owner *IdentityServer) ServeHTTP(response http.ResponseWriter, request *ht
 	stripIdentityForwardingHeaders(request.Header)
 	select {
 	case owner.concurrency <- struct{}{}:
-		defer func() { <-owner.concurrency }()
+		owner.telemetry.requestOpened()
+		defer func() {
+			owner.telemetry.requestClosed()
+			<-owner.concurrency
+		}()
 	default:
+		owner.telemetry.requestSaturated()
 		secured.Header().Set("Retry-After", "1")
 		http.Error(secured, "too many requests", http.StatusTooManyRequests)
 		return

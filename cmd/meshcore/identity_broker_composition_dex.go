@@ -11,6 +11,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
 	"github.com/meshtransit/meshtransit/internal/app"
 	"github.com/meshtransit/meshtransit/internal/config"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type identityPostgreSQLChecker struct {
@@ -106,6 +107,7 @@ func composeIdentityBroker(
 			{Name: "identity-broker", Service: service},
 			{Name: "identity-listener", Service: listener},
 		},
+		metrics: []prometheus.Collector{listener.MetricsCollector()},
 	}, nil
 }
 
