@@ -71,10 +71,119 @@ func (service *Service) ResolvePolicyResources(
 	scope network.Scope,
 	ids []resource.ID,
 ) (_ []Resource, resultErr error) {
+	resources, _, err := service.ResolvePolicyDestinations(ctx, session, scope, ids, nil)
+	return resources, err
+}
+
+// ResolvePolicyDestinations returns one snapshot-consistent, freshly authorized
+// set of active Resources and immutable Resource Group definitions. Every group
+// member must still match its pinned Resource version and target generation.
+func (service *Service) ResolvePolicyDestinations(
+	ctx context.Context,
+	session accountsession.Session,
+	scope network.Scope,
+	resourceIDs []resource.ID,
+	groupIDs []resource.GroupID,
+) (_ []Resource, _ []Group, resultErr error) {
 	if ctx == nil || service == nil || !session.IsValid() || !scope.IsValid() ||
-		len(ids) == 0 || len(ids) > MaximumPolicyResources {
-		return nil, ErrInvalidRequest
+		(len(resourceIDs) == 0 && len(groupIDs) == 0) ||
+		len(resourceIDs) > MaximumPolicyResources || len(groupIDs) > MaximumPolicyResourceGroups {
+		return nil, nil, ErrInvalidRequest
 	}
+	resourceIDs, err := canonicalPolicyResourceIDs(resourceIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	groupIDs, err = canonicalPolicyResourceGroupIDs(groupIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	transaction, closeTransaction, err := service.begin(ctx, scope)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if closeTransaction != nil {
+			closeTransaction(&resultErr)
+		}
+	}()
+	evaluatedAt := service.clock.Now().UTC()
+	if len(groupIDs) > 0 {
+		if err = transaction.Authorize(
+			ctx, session, authorization.PermissionResourceGroupRead, evaluatedAt,
+		); err != nil {
+			return nil, nil, err
+		}
+	}
+	if err = transaction.Authorize(
+		ctx, session, authorization.PermissionResourceRead, evaluatedAt,
+	); err != nil {
+		return nil, nil, err
+	}
+
+	groups := make([]Group, len(groupIDs))
+	references := make(map[resource.ID]resource.Reference, len(resourceIDs))
+	for _, id := range resourceIDs {
+		references[id] = resource.Reference{}
+	}
+	for index, id := range groupIDs {
+		group, readErr := transaction.Group(ctx, id)
+		if readErr != nil {
+			return nil, nil, readErr
+		}
+		if !group.IsValid() || group.ID() != id || group.Scope() != scope {
+			return nil, nil, ErrInvalidResult
+		}
+		if group.State() != resource.StateActive {
+			return nil, nil, ErrConflict
+		}
+		groups[index] = group
+		for _, reference := range group.Members() {
+			if existing, found := references[reference.ResourceID()]; found &&
+				existing.IsValid() && existing != reference {
+				return nil, nil, ErrConflict
+			}
+			references[reference.ResourceID()] = reference
+		}
+	}
+	if len(references) > MaximumPolicyResources {
+		return nil, nil, ErrInvalidRequest
+	}
+	resourceIDs = resourceIDs[:0]
+	for id := range references {
+		resourceIDs = append(resourceIDs, id)
+	}
+	slices.SortFunc(resourceIDs, func(first, second resource.ID) int {
+		return strings.Compare(first.String(), second.String())
+	})
+	resources := make([]Resource, len(resourceIDs))
+	for index, id := range resourceIDs {
+		value, readErr := transaction.Resource(ctx, id)
+		if readErr != nil {
+			return nil, nil, readErr
+		}
+		if !value.IsValid() || value.ID() != id || value.Scope() != scope {
+			return nil, nil, ErrInvalidResult
+		}
+		if value.State() != resource.StateActive {
+			return nil, nil, ErrConflict
+		}
+		if reference := references[id]; reference.IsValid() &&
+			(reference.ResourceVersion() != value.Version() ||
+				reference.TargetGeneration() != value.TargetGeneration()) {
+			return nil, nil, ErrConflict
+		}
+		resources[index] = value
+	}
+	if err = transaction.Commit(ctx); err != nil {
+		return nil, nil, err
+	}
+	closeTransaction = nil
+	return resources, groups, nil
+}
+
+func canonicalPolicyResourceIDs(ids []resource.ID) ([]resource.ID, error) {
 	ids = slices.Clone(ids)
 	for _, id := range ids {
 		if !id.IsValid() {
@@ -89,43 +198,25 @@ func (service *Service) ResolvePolicyResources(
 			return nil, ErrInvalidRequest
 		}
 	}
+	return ids, nil
+}
 
-	transaction, closeTransaction, err := service.begin(ctx, scope)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if closeTransaction != nil {
-			closeTransaction(&resultErr)
+func canonicalPolicyResourceGroupIDs(ids []resource.GroupID) ([]resource.GroupID, error) {
+	ids = slices.Clone(ids)
+	for _, id := range ids {
+		if !id.IsValid() {
+			return nil, ErrInvalidRequest
 		}
-	}()
-	if err = transaction.Authorize(
-		ctx,
-		session,
-		authorization.PermissionResourceRead,
-		service.clock.Now().UTC(),
-	); err != nil {
-		return nil, err
 	}
-	values := make([]Resource, len(ids))
-	for index, id := range ids {
-		value, readErr := transaction.Resource(ctx, id)
-		if readErr != nil {
-			return nil, readErr
+	slices.SortFunc(ids, func(first, second resource.GroupID) int {
+		return strings.Compare(first.String(), second.String())
+	})
+	for index := 1; index < len(ids); index++ {
+		if ids[index-1] == ids[index] {
+			return nil, ErrInvalidRequest
 		}
-		if !value.IsValid() || value.ID() != id || value.Scope() != scope {
-			return nil, ErrInvalidResult
-		}
-		if value.State() != resource.StateActive {
-			return nil, ErrConflict
-		}
-		values[index] = value
 	}
-	if err = transaction.Commit(ctx); err != nil {
-		return nil, err
-	}
-	closeTransaction = nil
-	return values, nil
+	return ids, nil
 }
 
 // GetGroup returns one freshly authorized exact-scope Resource Group snapshot.

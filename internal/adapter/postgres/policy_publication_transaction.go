@@ -331,6 +331,26 @@ func (transaction *policyPublicationTransaction) applyLocked(
 			return publication.Result{}, ErrPolicyPublicationEvidence
 		}
 	}
+	resourceGroupDestinations := command.Candidate().ResourceGroupDestinations()
+	if len(resourceGroupDestinations) > 0 {
+		expectedMembers := 0
+		for _, destination := range resourceGroupDestinations {
+			expectedMembers += len(destination.Members())
+		}
+		var attachedCount int
+		if err := transaction.database.QueryRow(
+			ctx,
+			attachPolicyResourceGroupDestinationsSQL,
+			change.MutationIDs().ReleaseID().String(),
+			change.OccurredAt(),
+			rules,
+		).Scan(&attachedCount); err != nil {
+			return publication.Result{}, fmt.Errorf("attach policy Resource Group destinations: %w", err)
+		}
+		if attachedCount != expectedMembers {
+			return publication.Result{}, ErrPolicyPublicationEvidence
+		}
+	}
 	if err := transaction.appendPolicyPublicationEvidence(
 		ctx,
 		change,

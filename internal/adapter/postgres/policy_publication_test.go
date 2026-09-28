@@ -170,6 +170,61 @@ func TestPolicyPublicationTransactionRevalidatesAndPersistsResourceDestination(t
 	}
 }
 
+func TestPolicyPublicationTransactionRevalidatesAndPersistsResourceGroupDestination(t *testing.T) {
+	t.Parallel()
+
+	command := policyResourceGroupPublicationCommandFixture(t)
+	databaseTransaction := newFakePolicyPublicationTransaction()
+	enqueuePolicyPublicationResolution(t, databaseTransaction, command, 5, 1)
+	enqueuePolicyResourceGroupPublicationApply(databaseTransaction, 6, 2)
+	store := beginTestPolicyPublicationStore(t, databaseTransaction)
+	value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	transaction := value.(*policyPublicationTransaction)
+	resolution, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	change := policyPublicationChangeFixture(t, command, resolution)
+	if _, err := transaction.Apply(t.Context(), change); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	wantCalls := []string{
+		configurePolicyPublicationTransactionSQL,
+		setPolicyPublicationScopeSQL,
+		lockPolicyPublicationRevisionSQL,
+		lockActivePolicyReleaseSQL,
+		lockPolicyPublicationAuditStreamSQL,
+		setPolicyPublicationChangeSQL,
+		publishCompiledPolicySQL,
+		attachPolicyResourceGroupDestinationsSQL,
+		appendPolicyPublicationEvidenceSQL,
+	}
+	if got := policyPublicationCallQueries(databaseTransaction.calls); !reflect.DeepEqual(got, wantCalls) {
+		t.Fatalf("database call order mismatch\ngot:  %#v\nwant: %#v", got, wantCalls)
+	}
+	publishCall := findPolicyPublicationCall(t, databaseTransaction.calls, publishCompiledPolicySQL)
+	var rules []policyPublicationRulePayload
+	if err := json.Unmarshal(publishCall.arguments[5].([]byte), &rules); err != nil {
+		t.Fatalf("decode published rules: %v", err)
+	}
+	if len(rules) != 1 || rules[0].DestinationResourceGroupPublicID == "" ||
+		rules[0].DestinationResourceGroupVersion != 2 ||
+		rules[0].DestinationGroupDefinitionVersion != 2 ||
+		rules[0].DestinationGroupRevision != 8 ||
+		len(rules[0].DestinationResourceGroupSemanticHash) != 64 ||
+		rules[0].DestinationGroupMemberResourcePublicID == "" ||
+		rules[0].DestinationGroupMemberResourceVersion != 3 ||
+		rules[0].DestinationGroupMemberTargetGeneration != 2 ||
+		rules[0].DestinationGroupMemberInventoryRevision != 7 ||
+		len(rules[0].DestinationGroupMemberResourceSemanticHash) != 64 {
+		t.Fatalf("published Resource Group rules = %+v, want exact pinned provenance", rules)
+	}
+}
+
 func TestPolicyPublicationTransactionAuthorizesManagementSessionUnderLock(t *testing.T) {
 	t.Parallel()
 

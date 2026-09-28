@@ -132,6 +132,57 @@ func TestManagementHandlerPublishesResourcePolicy(t *testing.T) {
 	}
 }
 
+func TestManagementHandlerPublishesResourceGroupPolicy(t *testing.T) {
+	t.Parallel()
+
+	session := managementSessionFixture(t)
+	var captured policypublication.Command
+	handler := managementHandlerFixture(t, managementHandlerFixtureOptions{
+		session: session,
+		compile: func(
+			_ context.Context,
+			actualSession accountsession.Session,
+			request compilation.Request,
+		) (policypublication.Candidate, error) {
+			if actualSession.ID() != session.ID() || request.Revision() != 2 ||
+				len(request.Rules()) != 1 ||
+				request.Rules()[0].DestinationGroupID().String() != managementResourceGroupID() {
+				t.Fatalf("compilation input = (%+v, %+v)", actualSession, request)
+			}
+			return resourceGroupPolicyCandidate(t, request), nil
+		},
+		publish: func(
+			_ context.Context,
+			command policypublication.Command,
+		) (policypublication.Result, error) {
+			captured = command
+			return managementPolicyResultFixture(t, command), nil
+		},
+	})
+	request := newManagementRequest(
+		t,
+		http.MethodPost,
+		validPolicyPublishPath(),
+		`{"reason":"allow production services","rules":[{`+
+			`"id":"01890f00-0000-7000-8000-000000000505",`+
+			`"source_device_id":"01890f00-0000-7000-8000-000000000301",`+
+			`"destination_resource_group_id":"`+managementResourceGroupID()+`",`+
+			`"protocol":"tcp","destination_port_ranges":[{"first":443,"last":443}]}]}`,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	destinations := captured.Candidate().ResourceGroupDestinations()
+	if captured.Candidate().CompilerFormatVersion() != 3 || len(destinations) != 1 ||
+		destinations[0].ResourceGroupID().String() != managementResourceGroupID() {
+		t.Fatalf("published Resource Group provenance = %+v", destinations)
+	}
+}
+
 func TestManagementHandlerPolicyPublicationFailsClosed(t *testing.T) {
 	t.Parallel()
 
@@ -186,6 +237,16 @@ func TestManagementHandlerPolicyPublicationFailsClosed(t *testing.T) {
 		{
 			name:   "malformed Resource destination",
 			body:   `{"reason":"bad","rules":[{"id":"01890f00-0000-7000-8000-000000000501","source_device_id":"01890f00-0000-7000-8000-000000000301","destination_resource_id":"not-a-resource","protocol":"icmp","destination_port_ranges":[]}]}`,
+			status: http.StatusBadRequest, code: "invalid_request",
+		},
+		{
+			name:   "ambiguous Resource and Resource Group destination",
+			body:   `{"reason":"bad","rules":[{"id":"01890f00-0000-7000-8000-000000000501","source_device_id":"01890f00-0000-7000-8000-000000000301","destination_resource_id":"01890f00-0000-7000-8000-000000000601","destination_resource_group_id":"01890f00-0000-7000-8000-000000000651","protocol":"icmp","destination_port_ranges":[]}]}`,
+			status: http.StatusBadRequest, code: "invalid_request",
+		},
+		{
+			name:   "malformed Resource Group destination",
+			body:   `{"reason":"bad","rules":[{"id":"01890f00-0000-7000-8000-000000000501","source_device_id":"01890f00-0000-7000-8000-000000000301","destination_resource_group_id":"not-a-resource-group","protocol":"icmp","destination_port_ranges":[]}]}`,
 			status: http.StatusBadRequest, code: "invalid_request",
 		},
 		{
@@ -335,7 +396,71 @@ func resourcePolicyCandidate(t *testing.T, request compilation.Request) policypu
 	return candidate
 }
 
+func resourceGroupPolicyCandidate(t *testing.T, request compilation.Request) policypublication.Candidate {
+	t.Helper()
+	intent := request.Rules()[0]
+	destinationNodeID, err := node.ParseID("01890f00-0000-7000-8000-000000000302")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err := policy.NewRule(policy.RuleParams{
+		ID: intent.ID(), Scope: intent.Scope(), SourceNodeID: intent.SourceNodeID(),
+		DestinationNodeID: destinationNodeID, Protocol: intent.Protocol(),
+		DestinationPortRanges: intent.DestinationPortRanges(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope: request.Scope(), Revision: request.Revision(), Rules: []policy.Rule{rule},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberResourceID, err := resource.ParseID("01890f00-0000-7000-8000-000000000602")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceHash, err := resource.NewSemanticHash(sha256.Sum256([]byte("group member Resource fixture")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := policypublication.NewResourceGroupMemberDestination(
+		policypublication.ResourceGroupMemberDestinationParams{
+			Scope: intent.Scope(), ResourceID: memberResourceID, ResourceVersion: 4,
+			TargetGeneration: 2, InventoryRevision: 9, DestinationNodeID: destinationNodeID,
+			ResourceSemanticHash: resourceHash,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupHash, err := resource.NewSemanticHash(sha256.Sum256([]byte("Resource Group fixture")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination, err := policypublication.NewResourceGroupDestination(
+		policypublication.ResourceGroupDestinationParams{
+			RuleID: intent.ID(), Scope: intent.Scope(), ResourceGroupID: intent.DestinationGroupID(),
+			GroupVersion: 3, DefinitionVersion: 2, GroupRevision: 9,
+			GroupSemanticHash: groupHash, Members: []policypublication.ResourceGroupMemberDestination{member},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := policypublication.NewCandidateWithResourceGroupDestinations(
+		snapshot, nil, []policypublication.ResourceGroupDestination{destination},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return candidate
+}
+
 func managementResourceID() string { return "01890f00-0000-7000-8000-000000000601" }
+
+func managementResourceGroupID() string { return "01890f00-0000-7000-8000-000000000651" }
 
 func validPolicyPublishPath() string {
 	return "/api/v1/workspaces/" + managementWorkspaceID() + "/networks/" +

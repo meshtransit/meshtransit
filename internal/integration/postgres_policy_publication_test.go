@@ -12,12 +12,14 @@ import (
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/control"
 	"github.com/meshtransit/meshtransit/internal/identity"
+	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	publication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/resource"
+	authority "github.com/meshtransit/meshtransit/internal/resource/authority"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -377,6 +379,21 @@ WHERE release.public_id = $1::UUID AND release.state = 'active'`,
 	if tcpCount != 1 || udpCount != 1 {
 		t.Fatalf("restored TCP/UDP rule counts = %d/%d, want 1/1", tcpCount, udpCount)
 	}
+	assertPostgreSQLResourceGroupPolicyPublication(
+		ctx,
+		t,
+		adminConnection,
+		runtimePool,
+		service,
+		session,
+		scope,
+		restored,
+		transportRules[0],
+		resourceID,
+		resourceVersion,
+		targetGeneration,
+		identityValue,
+	)
 }
 
 func assertCommittedPolicyResourceDestination(
@@ -418,6 +435,235 @@ WHERE release.public_id = $1::UUID
 	}
 	if count != 1 {
 		t.Fatalf("committed Resource policy destination count = %d, want 1", count)
+	}
+}
+
+func assertPostgreSQLResourceGroupPolicyPublication(
+	ctx context.Context,
+	t *testing.T,
+	adminConnection *pgx.Conn,
+	runtimePool *postgresadapter.Pool,
+	service *publication.Service,
+	session accountsession.Session,
+	scope network.Scope,
+	active publication.Result,
+	template policy.Rule,
+	resourceID resource.ID,
+	resourceVersion int64,
+	targetGeneration int64,
+	identityValue control.AuthenticatedNode,
+) {
+	t.Helper()
+	_, groupRevision := resourceAuthorityRevisions(ctx, t, adminConnection, 103, 203)
+	reference, err := resource.NewReference(
+		scope, resourceID, resourceVersion, targetGeneration,
+	)
+	if err != nil {
+		t.Fatalf("construct Resource Group policy member: %v", err)
+	}
+	definition := resourceAuthorityGroupDefinition(
+		t, scope, session.PrincipalID(), "Policy production services", []resource.Reference{reference},
+	)
+	create, err := authority.NewCreateGroupCommand(
+		definition,
+		groupRevision,
+		session,
+		resourceAuthorityReason(t, "create policy destination Resource Group"),
+		resourceAuthorityProof(t, 101),
+	)
+	if err != nil {
+		t.Fatalf("construct policy Resource Group creation: %v", err)
+	}
+	created, err := newIntegrationResourceAuthorityService(t, runtimePool).Create(ctx, create)
+	if err != nil {
+		t.Fatalf("create policy Resource Group: %v", err)
+	}
+
+	ruleID, err := policy.ParseRuleID(integrationPublicID("01890f60-0000-7000-8000-", 4))
+	if err != nil {
+		t.Fatalf("parse Resource Group policy rule ID: %v", err)
+	}
+	intent, err := compilation.NewRuleIntent(compilation.RuleIntentParams{
+		ID: ruleID, Scope: scope, SourceNodeID: template.SourceNodeID(),
+		DestinationGroupID: created.GroupID(), Protocol: template.Protocol(),
+		DestinationPortRanges: template.DestinationPortRanges(),
+	})
+	if err != nil {
+		t.Fatalf("construct Resource Group policy intent: %v", err)
+	}
+	request, err := compilation.NewRequest(compilation.RequestParams{
+		Scope: scope, Revision: active.PolicyRevision() + 1,
+		Rules: []compilation.RuleIntent{intent},
+	})
+	if err != nil {
+		t.Fatalf("construct Resource Group compilation request: %v", err)
+	}
+	compiler := newIntegrationPolicyCompiler(t, runtimePool)
+	staleCandidate, err := compiler.Compile(ctx, session, request)
+	if err != nil {
+		t.Fatalf("compile Resource Group policy: %v", err)
+	}
+	if staleCandidate.CompilerFormatVersion() != 3 ||
+		len(staleCandidate.ResourceGroupDestinations()) != 1 ||
+		len(staleCandidate.Snapshot().Rules()) != 1 {
+		t.Fatalf("compiled Resource Group candidate = %+v", staleCandidate)
+	}
+
+	lifecycle := newIntegrationResourceLifecycleService(t, runtimePool)
+	suspend, err := authority.NewGroupLifecycleCommand(
+		authority.LifecycleSuspendGroup,
+		scope,
+		created.GroupID(),
+		created.Version(),
+		session,
+		resourceAuthorityReason(t, "race policy compilation with Resource Group suspension"),
+		resourceAuthorityProof(t, 102),
+	)
+	if err != nil {
+		t.Fatalf("construct policy Resource Group suspension: %v", err)
+	}
+	suspended, err := lifecycle.Transition(ctx, suspend)
+	if err != nil {
+		t.Fatalf("suspend policy Resource Group: %v", err)
+	}
+	staleReason, err := publication.NewAuditReason("reject stale Resource Group policy activation")
+	if err != nil {
+		t.Fatalf("construct stale Resource Group reason: %v", err)
+	}
+	staleCommand, err := publication.NewManagementCommand(publication.ManagementCommandParams{
+		Candidate: staleCandidate, BasePolicyRevision: active.PolicyRevision(),
+		AccountSession: session, AuditReason: staleReason,
+	})
+	if err != nil {
+		t.Fatalf("construct stale Resource Group publication: %v", err)
+	}
+	if _, err := service.Publish(ctx, staleCommand); !errors.Is(err, publication.ErrConflict) {
+		t.Fatalf("stale Resource Group publication error = %v, want ErrConflict", err)
+	}
+	var activeReleaseID string
+	var activePolicyRevision int64
+	if err := adminConnection.QueryRow(ctx, `SELECT public_id::TEXT, policy_revision
+FROM mesh.policy_release
+WHERE workspace_id = 103 AND network_id = 203 AND state = 'active'`).Scan(
+		&activeReleaseID,
+		&activePolicyRevision,
+	); err != nil {
+		t.Fatalf("query active release after stale Resource Group publication: %v", err)
+	}
+	if activeReleaseID != active.ReleaseID().String() || activePolicyRevision != active.PolicyRevision() {
+		t.Fatalf(
+			"active release after stale Resource Group publication = %s/%d, want %s/%d",
+			activeReleaseID,
+			activePolicyRevision,
+			active.ReleaseID().String(),
+			active.PolicyRevision(),
+		)
+	}
+
+	resume, err := authority.NewGroupLifecycleCommand(
+		authority.LifecycleResumeGroup,
+		scope,
+		created.GroupID(),
+		suspended.Version(),
+		session,
+		resourceAuthorityReason(t, "resume policy destination Resource Group"),
+		resourceAuthorityProof(t, 103),
+	)
+	if err != nil {
+		t.Fatalf("construct policy Resource Group resume: %v", err)
+	}
+	if _, err := lifecycle.Transition(ctx, resume); err != nil {
+		t.Fatalf("resume policy Resource Group: %v", err)
+	}
+	candidate, err := compiler.Compile(ctx, session, request)
+	if err != nil {
+		t.Fatalf("recompile resumed Resource Group policy: %v", err)
+	}
+	if candidate.SemanticHash() == staleCandidate.SemanticHash() {
+		t.Fatal("Resource Group lifecycle revision did not change the compiled candidate")
+	}
+	reason, err := publication.NewAuditReason("integration Resource Group policy activation")
+	if err != nil {
+		t.Fatalf("construct Resource Group policy reason: %v", err)
+	}
+	command, err := publication.NewManagementCommand(publication.ManagementCommandParams{
+		Candidate: candidate, BasePolicyRevision: active.PolicyRevision(),
+		AccountSession: session, AuditReason: reason,
+	})
+	if err != nil {
+		t.Fatalf("construct Resource Group policy publication: %v", err)
+	}
+	var networkRevision int64
+	if err := adminConnection.QueryRow(ctx, `SELECT network_revision
+FROM mesh_ops.network_revision
+WHERE workspace_id = 103 AND network_id = 203`).Scan(&networkRevision); err != nil {
+		t.Fatalf("query Resource Group publication base Network revision: %v", err)
+	}
+	published := publishPolicyOverBrowserManagement(ctx, t, runtimePool, service, command)
+	if published.PolicyRevision() != active.PolicyRevision()+1 ||
+		published.NetworkRevision() != networkRevision+1 ||
+		published.SemanticHash() != candidate.SemanticHash() {
+		t.Fatalf("Resource Group policy publication = %+v", published)
+	}
+	assertCommittedPolicyResourceGroupDestination(
+		ctx, t, adminConnection, published, candidate.ResourceGroupDestinations()[0],
+	)
+	snapshot, err := newPeerCandidateStore(t, runtimePool, 8).Load(ctx, identityValue)
+	if err != nil {
+		t.Fatalf("load Resource Group client projection: %v", err)
+	}
+	if snapshot.PacketPolicy().Revision() != published.PolicyRevision() ||
+		len(snapshot.PacketPolicy().Rules()) != len(candidate.Snapshot().Rules()) {
+		t.Fatalf(
+			"Resource Group projection = revision %d rules=%d, want %d/%d",
+			snapshot.PacketPolicy().Revision(),
+			len(snapshot.PacketPolicy().Rules()),
+			published.PolicyRevision(),
+			len(candidate.Snapshot().Rules()),
+		)
+	}
+}
+
+func assertCommittedPolicyResourceGroupDestination(
+	ctx context.Context,
+	t *testing.T,
+	connection *pgx.Conn,
+	result publication.Result,
+	destination publication.ResourceGroupDestination,
+) {
+	t.Helper()
+	groupHash := destination.GroupSemanticHash().Bytes()
+	members := destination.Members()
+	var count int
+	if err := connection.QueryRow(ctx, `SELECT pg_catalog.count(*)::INTEGER
+FROM mesh.compiled_policy_resource_group_destination AS provenance
+JOIN mesh.compiled_policy_rule AS rule
+  ON rule.id = provenance.compiled_policy_rule_id
+JOIN mesh.policy_release AS release
+  ON release.id = rule.policy_release_id
+JOIN mesh.resource_group AS resource_group
+  ON resource_group.id = provenance.destination_resource_group_id
+WHERE release.public_id = $1::UUID
+  AND release.policy_revision = $2::BIGINT
+  AND rule.access_rule_public_id = $3::UUID
+  AND resource_group.public_id = $4::UUID
+  AND provenance.resource_group_version = $5::BIGINT
+  AND provenance.definition_version = $6::BIGINT
+  AND provenance.group_revision = $7::BIGINT
+  AND provenance.resource_group_semantic_hash = $8::BYTEA`,
+		result.ReleaseID().String(),
+		result.PolicyRevision(),
+		destination.RuleID().String(),
+		destination.ResourceGroupID().String(),
+		destination.GroupVersion(),
+		destination.DefinitionVersion(),
+		destination.GroupRevision(),
+		groupHash[:],
+	).Scan(&count); err != nil {
+		t.Fatalf("query committed Resource Group policy destination: %v", err)
+	}
+	if count != len(members) {
+		t.Fatalf("committed Resource Group member count = %d, want %d", count, len(members))
 	}
 }
 

@@ -19,6 +19,8 @@ func assertCompiledPacketPolicyPrivilegeContract(
 	var runtimeReleaseRead, runtimeRuleRead, runtimeReleaseWrite, runtimeRuleWrite bool
 	var workerReleaseAccess, workerRuleAccess, runtimeAdvance, workerAdvance bool
 	var runtimePublish, workerPublish, runtimeLockRelease, workerLockRelease bool
+	var runtimeGroupRead, runtimeGroupWrite, workerGroupAccess bool
+	var runtimeAttachGroup, workerAttachGroup bool
 	if err := connection.QueryRow(ctx, `SELECT
     pg_catalog.has_table_privilege('mesh_runtime', 'mesh.policy_release', 'SELECT'),
     pg_catalog.has_table_privilege('mesh_runtime', 'mesh.compiled_policy_rule', 'SELECT'),
@@ -65,6 +67,31 @@ func assertCompiledPacketPolicyPrivilegeContract(
         'mesh_worker',
         'mesh_ops.lock_active_policy_release()',
         'EXECUTE'
+    ),
+    pg_catalog.has_table_privilege(
+        'mesh_runtime',
+        'mesh.compiled_policy_resource_group_destination',
+        'SELECT'
+    ),
+    pg_catalog.has_table_privilege(
+        'mesh_runtime',
+        'mesh.compiled_policy_resource_group_destination',
+        'INSERT,UPDATE,DELETE'
+    ),
+    pg_catalog.has_table_privilege(
+        'mesh_worker',
+        'mesh.compiled_policy_resource_group_destination',
+        'SELECT,INSERT,UPDATE,DELETE'
+    ),
+    pg_catalog.has_function_privilege(
+        'mesh_runtime',
+        'mesh_ops.attach_policy_resource_group_destinations(UUID,TIMESTAMPTZ,JSONB)',
+        'EXECUTE'
+    ),
+    pg_catalog.has_function_privilege(
+        'mesh_worker',
+        'mesh_ops.attach_policy_resource_group_destinations(UUID,TIMESTAMPTZ,JSONB)',
+        'EXECUTE'
     )`).Scan(
 		&runtimeReleaseRead,
 		&runtimeRuleRead,
@@ -78,16 +105,24 @@ func assertCompiledPacketPolicyPrivilegeContract(
 		&workerPublish,
 		&runtimeLockRelease,
 		&workerLockRelease,
+		&runtimeGroupRead,
+		&runtimeGroupWrite,
+		&workerGroupAccess,
+		&runtimeAttachGroup,
+		&workerAttachGroup,
 	); err != nil {
 		t.Fatalf("query compiled packet policy privilege contract: %v", err)
 	}
 	if !runtimeReleaseRead || !runtimeRuleRead || runtimeReleaseWrite || runtimeRuleWrite ||
 		workerReleaseAccess || workerRuleAccess || !runtimeAdvance || workerAdvance ||
-		!runtimePublish || workerPublish || !runtimeLockRelease || workerLockRelease {
+		!runtimePublish || workerPublish || !runtimeLockRelease || workerLockRelease ||
+		!runtimeGroupRead || runtimeGroupWrite || workerGroupAccess ||
+		!runtimeAttachGroup || workerAttachGroup {
 		t.Fatalf(
 			"compiled policy privileges: runtime read=%t/%t write=%t/%t "+
 				"worker access=%t/%t revision execute=%t/%t publish execute=%t/%t "+
-				"release lock execute=%t/%t",
+				"release lock execute=%t/%t group read/write/worker=%t/%t/%t "+
+				"group attach execute=%t/%t",
 			runtimeReleaseRead,
 			runtimeRuleRead,
 			runtimeReleaseWrite,
@@ -100,6 +135,11 @@ func assertCompiledPacketPolicyPrivilegeContract(
 			workerPublish,
 			runtimeLockRelease,
 			workerLockRelease,
+			runtimeGroupRead,
+			runtimeGroupWrite,
+			workerGroupAccess,
+			runtimeAttachGroup,
+			workerAttachGroup,
 		)
 	}
 }

@@ -32,6 +32,7 @@ type publishPolicyRuleRequest struct {
 	SourceDeviceID        string                          `json:"source_device_id"`
 	DestinationDeviceID   string                          `json:"destination_device_id"`
 	DestinationResourceID string                          `json:"destination_resource_id"`
+	DestinationGroupID    string                          `json:"destination_resource_group_id"`
 	Protocol              string                          `json:"protocol"`
 	DestinationPortRanges []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
 }
@@ -227,6 +228,13 @@ func decodePolicyRuleIntent(
 			return compilation.RuleIntent{}, err
 		}
 	}
+	var destinationGroupID resource.GroupID
+	if input.DestinationGroupID != "" {
+		destinationGroupID, err = resource.ParseGroupID(input.DestinationGroupID)
+		if err != nil {
+			return compilation.RuleIntent{}, err
+		}
+	}
 	protocol := parsePolicyProtocol(input.Protocol)
 	if !protocol.IsValid() {
 		return compilation.RuleIntent{}, policy.ErrInvalidRule
@@ -245,8 +253,8 @@ func decodePolicyRuleIntent(
 	}
 	return compilation.NewRuleIntent(compilation.RuleIntentParams{
 		ID: ruleID, Scope: scope, SourceNodeID: sourceID, DestinationNodeID: destinationID,
-		DestinationResourceID: destinationResourceID,
-		Protocol:              protocol, DestinationPortRanges: portRanges,
+		DestinationResourceID: destinationResourceID, DestinationGroupID: destinationGroupID,
+		Protocol: protocol, DestinationPortRanges: portRanges,
 	})
 }
 

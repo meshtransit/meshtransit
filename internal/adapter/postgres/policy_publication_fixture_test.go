@@ -292,6 +292,33 @@ func enqueuePolicyResourcePublicationApply(
 	})
 }
 
+func enqueuePolicyResourceGroupPublicationApply(
+	transaction *fakePolicyPublicationTransaction,
+	networkRevision int64,
+	policyRevision int64,
+) {
+	transaction.enqueueRow(publishCompiledPolicySQL, policyPublicationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*int64) = networkRevision
+			*destinations[1].(*int64) = policyRevision
+			*destinations[2].(*int64) = 1
+			return nil
+		},
+	})
+	transaction.enqueueRow(attachPolicyResourceGroupDestinationsSQL, policyPublicationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*int) = 1
+			return nil
+		},
+	})
+	transaction.enqueueRow(appendPolicyPublicationEvidenceSQL, policyPublicationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*int64) = 4
+			return nil
+		},
+	})
+}
+
 func policyPublicationCommandFixture(t *testing.T) publication.Command {
 	t.Helper()
 	workspaceID, err := workspace.ParseID("01890f00-0000-7000-8000-000000000101")
@@ -410,6 +437,63 @@ func policyResourcePublicationCommandFixture(t *testing.T) publication.Command {
 	)
 	if err != nil {
 		t.Fatalf("publication.NewCandidateWithResourceDestinations() error = %v", err)
+	}
+	command, err := publication.NewCommand(publication.CommandParams{
+		Candidate: candidate, BasePolicyRevision: trusted.BasePolicyRevision(),
+		ActorPrincipalID: trusted.ActorPrincipalID(), AuditReason: trusted.AuditReason(),
+	})
+	if err != nil {
+		t.Fatalf("publication.NewCommand() error = %v", err)
+	}
+	return command
+}
+
+func policyResourceGroupPublicationCommandFixture(t *testing.T) publication.Command {
+	t.Helper()
+	trusted := policyPublicationCommandFixture(t)
+	rule := trusted.Candidate().Snapshot().Rules()[0]
+	resourceID, err := resource.ParseID("01890f00-0000-7000-8000-000000000921")
+	if err != nil {
+		t.Fatalf("resource.ParseID() error = %v", err)
+	}
+	groupID, err := resource.ParseGroupID("01890f00-0000-7000-8000-000000000922")
+	if err != nil {
+		t.Fatalf("resource.ParseGroupID() error = %v", err)
+	}
+	resourceHash, err := resource.NewSemanticHash(sha256.Sum256([]byte("synthetic group Resource")))
+	if err != nil {
+		t.Fatalf("resource.NewSemanticHash() error = %v", err)
+	}
+	member, err := publication.NewResourceGroupMemberDestination(
+		publication.ResourceGroupMemberDestinationParams{
+			Scope: rule.Scope(), ResourceID: resourceID, ResourceVersion: 3,
+			TargetGeneration: 2, InventoryRevision: 7,
+			DestinationNodeID: rule.DestinationNodeID(), ResourceSemanticHash: resourceHash,
+		},
+	)
+	if err != nil {
+		t.Fatalf("publication.NewResourceGroupMemberDestination() error = %v", err)
+	}
+	groupHash, err := resource.NewSemanticHash(sha256.Sum256([]byte("synthetic Resource Group")))
+	if err != nil {
+		t.Fatalf("resource.NewSemanticHash() error = %v", err)
+	}
+	destination, err := publication.NewResourceGroupDestination(
+		publication.ResourceGroupDestinationParams{
+			RuleID: rule.ID(), Scope: rule.Scope(), ResourceGroupID: groupID,
+			GroupVersion: 2, DefinitionVersion: 2, GroupRevision: 8,
+			GroupSemanticHash: groupHash,
+			Members:           []publication.ResourceGroupMemberDestination{member},
+		},
+	)
+	if err != nil {
+		t.Fatalf("publication.NewResourceGroupDestination() error = %v", err)
+	}
+	candidate, err := publication.NewCandidateWithResourceGroupDestinations(
+		trusted.Candidate().Snapshot(), nil, []publication.ResourceGroupDestination{destination},
+	)
+	if err != nil {
+		t.Fatalf("publication.NewCandidateWithResourceGroupDestinations() error = %v", err)
 	}
 	command, err := publication.NewCommand(publication.CommandParams{
 		Candidate: candidate, BasePolicyRevision: trusted.BasePolicyRevision(),

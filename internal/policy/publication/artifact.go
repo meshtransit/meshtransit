@@ -11,9 +11,11 @@ import (
 )
 
 const (
-	policyHashDomainV1       = "meshtransit/policy-release/v1\x00"
-	policyHashDomainV2       = "meshtransit/policy-release/v2\x00"
-	resourceCompilerFormatV2 = 2
+	policyHashDomainV1            = "meshtransit/policy-release/v1\x00"
+	policyHashDomainV2            = "meshtransit/policy-release/v2\x00"
+	policyHashDomainV3            = "meshtransit/policy-release/v3\x00"
+	resourceCompilerFormatV2      = 2
+	resourceGroupCompilerFormatV3 = 3
 	// MaximumCompilerFormatVersion bounds the version encoded in durable releases.
 	MaximumCompilerFormatVersion = 65535
 )
@@ -43,10 +45,11 @@ func (hash SemanticHash) IsValid() bool { return hash != SemanticHash{} }
 // Its semantic hash excludes the allocated revision so identical semantics hash
 // identically across rollback or re-publication.
 type Candidate struct {
-	snapshot              policy.Snapshot
-	compilerFormatVersion int
-	semanticHash          SemanticHash
-	resourceDestinations  []ResourceDestination
+	snapshot                  policy.Snapshot
+	compilerFormatVersion     int
+	semanticHash              SemanticHash
+	resourceDestinations      []ResourceDestination
+	resourceGroupDestinations []ResourceGroupDestination
 }
 
 // NewCandidate validates and hashes one compiled policy artifact.
@@ -66,10 +69,37 @@ func NewCandidateWithResourceDestinations(
 	return newCandidate(snapshot, resourceCompilerFormatV2, destinations)
 }
 
+// NewCandidateWithResourceGroupDestinations constructs a format-v3 candidate
+// whose expanded Device edges retain exact Resource Group and member provenance.
+func NewCandidateWithResourceGroupDestinations(
+	snapshot policy.Snapshot,
+	resourceDestinations []ResourceDestination,
+	groupDestinations []ResourceGroupDestination,
+) (Candidate, error) {
+	if len(groupDestinations) == 0 {
+		return Candidate{}, ErrInvalidCandidate
+	}
+	return newCandidateWithDestinations(
+		snapshot,
+		resourceGroupCompilerFormatV3,
+		resourceDestinations,
+		groupDestinations,
+	)
+}
+
 func newCandidate(
 	snapshot policy.Snapshot,
 	compilerFormatVersion int,
 	destinations []ResourceDestination,
+) (Candidate, error) {
+	return newCandidateWithDestinations(snapshot, compilerFormatVersion, destinations, nil)
+}
+
+func newCandidateWithDestinations(
+	snapshot policy.Snapshot,
+	compilerFormatVersion int,
+	destinations []ResourceDestination,
+	groupDestinations []ResourceGroupDestination,
 ) (Candidate, error) {
 	if !snapshot.IsValid() || compilerFormatVersion <= 0 ||
 		compilerFormatVersion > MaximumCompilerFormatVersion {
@@ -77,10 +107,13 @@ func newCandidate(
 	}
 	destinations = cloneResourceDestinations(destinations)
 	slices.SortFunc(destinations, compareResourceDestinations)
+	groupDestinations = cloneResourceGroupDestinations(groupDestinations)
+	slices.SortFunc(groupDestinations, compareResourceGroupDestinations)
 	candidate := Candidate{
-		snapshot:              snapshot,
-		compilerFormatVersion: compilerFormatVersion,
-		resourceDestinations:  destinations,
+		snapshot:                  snapshot,
+		compilerFormatVersion:     compilerFormatVersion,
+		resourceDestinations:      destinations,
+		resourceGroupDestinations: groupDestinations,
 	}
 	candidate.semanticHash = hashCandidate(candidate)
 	if !candidate.IsValid() {
@@ -103,11 +136,17 @@ func (candidate Candidate) ResourceDestinations() []ResourceDestination {
 	return cloneResourceDestinations(candidate.resourceDestinations)
 }
 
+// ResourceGroupDestinations returns caller-owned group expansion provenance.
+func (candidate Candidate) ResourceGroupDestinations() []ResourceGroupDestination {
+	return cloneResourceGroupDestinations(candidate.resourceGroupDestinations)
+}
+
 // IsValid reports whether all candidate fields and their digest agree.
 func (candidate Candidate) IsValid() bool {
 	return candidate.snapshot.IsValid() && candidate.compilerFormatVersion > 0 &&
 		candidate.compilerFormatVersion <= MaximumCompilerFormatVersion &&
 		validResourceDestinations(candidate) &&
+		validResourceGroupDestinations(candidate) &&
 		candidate.semanticHash.IsValid() &&
 		candidate.semanticHash == hashCandidate(candidate)
 }
@@ -117,7 +156,8 @@ func validResourceDestinations(candidate Candidate) bool {
 	if len(destinations) == 0 {
 		return true
 	}
-	if candidate.compilerFormatVersion != resourceCompilerFormatV2 ||
+	if (candidate.compilerFormatVersion != resourceCompilerFormatV2 &&
+		candidate.compilerFormatVersion != resourceGroupCompilerFormatV3) ||
 		len(destinations) > len(candidate.snapshot.Rules()) {
 		return false
 	}
@@ -142,16 +182,76 @@ func validResourceDestinations(candidate Candidate) bool {
 	return true
 }
 
+func validResourceGroupDestinations(candidate Candidate) bool {
+	destinations := candidate.resourceGroupDestinations
+	if len(destinations) == 0 {
+		return true
+	}
+	if candidate.compilerFormatVersion != resourceGroupCompilerFormatV3 ||
+		len(destinations) > len(candidate.snapshot.Rules()) {
+		return false
+	}
+	directRules := make(map[policy.RuleID]struct{}, len(candidate.resourceDestinations))
+	for _, destination := range candidate.resourceDestinations {
+		directRules[destination.ruleID] = struct{}{}
+	}
+	rules := candidate.snapshot.Rules()
+	for index, destination := range destinations {
+		if !destination.IsValid() || destination.scope != candidate.snapshot.Scope() ||
+			(index > 0 && (destinations[index-1].ruleID == destination.ruleID ||
+				compareResourceGroupDestinations(destinations[index-1], destination) >= 0)) {
+			return false
+		}
+		if _, collision := directRules[destination.ruleID]; collision {
+			return false
+		}
+		groupRules := 0
+		var template policy.Rule
+		for _, rule := range rules {
+			if rule.ID() == destination.ruleID {
+				if groupRules == 0 {
+					template = rule
+				} else if rule.SourceNodeID() != template.SourceNodeID() ||
+					rule.Protocol() != template.Protocol() ||
+					!slices.Equal(rule.DestinationPortRanges(), template.DestinationPortRanges()) {
+					return false
+				}
+				groupRules++
+			}
+		}
+		if groupRules != len(destination.members) {
+			return false
+		}
+		for _, member := range destination.members {
+			memberMatches := 0
+			for _, rule := range rules {
+				if rule.ID() == destination.ruleID {
+					if rule.DestinationNodeID() == member.destinationNodeID {
+						memberMatches++
+					}
+				}
+			}
+			if memberMatches != 1 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func hashCandidate(candidate Candidate) SemanticHash {
 	rules := candidate.snapshot.Rules()
 	domain := policyHashDomainV1
-	if len(candidate.resourceDestinations) > 0 {
+	if len(candidate.resourceGroupDestinations) > 0 {
+		domain = policyHashDomainV3
+	} else if len(candidate.resourceDestinations) > 0 {
 		domain = policyHashDomainV2
 	}
 	encoded := make(
 		[]byte,
 		0,
-		len(domain)+48+len(rules)*80+len(candidate.resourceDestinations)*128,
+		len(domain)+48+len(rules)*80+len(candidate.resourceDestinations)*128+
+			len(candidate.resourceGroupDestinations)*192,
 	)
 	encoded = append(encoded, domain...)
 	workspaceID := candidate.snapshot.Scope().WorkspaceID().Bytes()
@@ -175,7 +275,7 @@ func hashCandidate(candidate Candidate) SemanticHash {
 			encoded = appendUint16(encoded, portRange.Last())
 		}
 	}
-	if len(candidate.resourceDestinations) > 0 {
+	if len(candidate.resourceDestinations) > 0 || len(candidate.resourceGroupDestinations) > 0 {
 		encoded = appendUint64(encoded, uint64(len(candidate.resourceDestinations)))
 		for _, destination := range candidate.resourceDestinations {
 			ruleID := publicid.ID(destination.ruleID).Bytes()
@@ -189,6 +289,32 @@ func hashCandidate(candidate Candidate) SemanticHash {
 			encoded = appendInt64(encoded, destination.inventoryRevision)
 			encoded = append(encoded, destinationID[:]...)
 			encoded = append(encoded, resourceHash[:]...)
+		}
+	}
+	if len(candidate.resourceGroupDestinations) > 0 {
+		encoded = appendUint64(encoded, uint64(len(candidate.resourceGroupDestinations)))
+		for _, destination := range candidate.resourceGroupDestinations {
+			ruleID := publicid.ID(destination.ruleID).Bytes()
+			groupID := destination.resourceGroupID.Bytes()
+			groupHash := destination.groupSemanticHash.Bytes()
+			encoded = append(encoded, ruleID[:]...)
+			encoded = append(encoded, groupID[:]...)
+			encoded = appendInt64(encoded, destination.groupVersion)
+			encoded = appendInt64(encoded, destination.definitionVersion)
+			encoded = appendInt64(encoded, destination.groupRevision)
+			encoded = append(encoded, groupHash[:]...)
+			encoded = appendUint64(encoded, uint64(len(destination.members)))
+			for _, member := range destination.members {
+				resourceID := member.reference.ResourceID().Bytes()
+				destinationID := publicid.ID(member.destinationNodeID).Bytes()
+				resourceHash := member.resourceSemanticHash.Bytes()
+				encoded = append(encoded, resourceID[:]...)
+				encoded = appendInt64(encoded, member.reference.ResourceVersion())
+				encoded = appendInt64(encoded, member.reference.TargetGeneration())
+				encoded = appendInt64(encoded, member.inventoryRevision)
+				encoded = append(encoded, destinationID[:]...)
+				encoded = append(encoded, resourceHash[:]...)
+			}
 		}
 	}
 	return SemanticHash(sha256.Sum256(encoded))

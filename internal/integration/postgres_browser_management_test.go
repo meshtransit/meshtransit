@@ -179,6 +179,7 @@ func publishPolicyOverBrowserManagement(
 		SourceDeviceID        string      `json:"source_device_id"`
 		DestinationDeviceID   string      `json:"destination_device_id,omitempty"`
 		DestinationResourceID string      `json:"destination_resource_id,omitempty"`
+		DestinationGroupID    string      `json:"destination_resource_group_id,omitempty"`
 		Protocol              string      `json:"protocol"`
 		DestinationPortRanges []portRange `json:"destination_port_ranges"`
 	}
@@ -186,8 +187,16 @@ func publishPolicyOverBrowserManagement(
 	for _, destination := range command.Candidate().ResourceDestinations() {
 		resourceDestinations[destination.RuleID().String()] = destination
 	}
+	groupDestinations := make(map[string]publication.ResourceGroupDestination)
+	for _, destination := range command.Candidate().ResourceGroupDestinations() {
+		groupDestinations[destination.RuleID().String()] = destination
+	}
+	emittedGroups := make(map[string]struct{}, len(groupDestinations))
 	rules := make([]rule, 0, len(command.Candidate().Snapshot().Rules()))
 	for _, compiled := range command.Candidate().Snapshot().Rules() {
+		if _, emitted := emittedGroups[compiled.ID().String()]; emitted {
+			continue
+		}
 		ranges := compiled.DestinationPortRanges()
 		ports := make([]portRange, len(ranges))
 		for index, value := range ranges {
@@ -203,6 +212,10 @@ func publishPolicyOverBrowserManagement(
 		if destination, ok := resourceDestinations[compiled.ID().String()]; ok {
 			input.DestinationDeviceID = ""
 			input.DestinationResourceID = destination.Reference().ResourceID().String()
+		} else if destination, ok := groupDestinations[compiled.ID().String()]; ok {
+			input.DestinationDeviceID = ""
+			input.DestinationGroupID = destination.ResourceGroupID().String()
+			emittedGroups[compiled.ID().String()] = struct{}{}
 		}
 		rules = append(rules, input)
 	}

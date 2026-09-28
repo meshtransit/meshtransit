@@ -1140,8 +1140,9 @@
               "destination_device_id"
             ],
             "not": {
-              "required": [
-                "destination_resource_id"
+              "anyOf": [
+                {"required": ["destination_resource_id"]},
+                {"required": ["destination_resource_group_id"]}
               ]
             }
           },
@@ -1150,8 +1151,20 @@
               "destination_resource_id"
             ],
             "not": {
-              "required": [
-                "destination_device_id"
+              "anyOf": [
+                {"required": ["destination_device_id"]},
+                {"required": ["destination_resource_group_id"]}
+              ]
+            }
+          },
+          {
+            "required": [
+              "destination_resource_group_id"
+            ],
+            "not": {
+              "anyOf": [
+                {"required": ["destination_device_id"]},
+                {"required": ["destination_resource_id"]}
               ]
             }
           }
@@ -1167,6 +1180,9 @@
             "$ref": "#/components/schemas/PublicID"
           },
           "destination_resource_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "destination_resource_group_id": {
             "$ref": "#/components/schemas/PublicID"
           },
           "protocol": {

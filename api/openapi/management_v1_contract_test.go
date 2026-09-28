@@ -79,23 +79,33 @@ func TestManagementV1MutationContracts(t *testing.T) {
 		OneOf      []struct {
 			Required []string `json:"required"`
 			Not      struct {
-				Required []string `json:"required"`
+				AnyOf []struct {
+					Required []string `json:"required"`
+				} `json:"anyOf"`
 			} `json:"not"`
 		} `json:"oneOf"`
 	}
 	if err := json.Unmarshal(document.Components.Schemas["CompiledPolicyRule"], &policyRule); err != nil {
 		t.Fatalf("decode CompiledPolicyRule: %v", err)
 	}
-	if len(policyRule.OneOf) != 2 || policyRule.Properties["destination_device_id"] == nil ||
+	if len(policyRule.OneOf) != 3 || policyRule.Properties["destination_device_id"] == nil ||
 		policyRule.Properties["destination_resource_id"] == nil ||
+		policyRule.Properties["destination_resource_group_id"] == nil ||
 		len(policyRule.OneOf[0].Required) != 1 ||
 		policyRule.OneOf[0].Required[0] != "destination_device_id" ||
-		len(policyRule.OneOf[0].Not.Required) != 1 ||
-		policyRule.OneOf[0].Not.Required[0] != "destination_resource_id" ||
+		len(policyRule.OneOf[0].Not.AnyOf) != 2 ||
+		policyRule.OneOf[0].Not.AnyOf[0].Required[0] != "destination_resource_id" ||
+		policyRule.OneOf[0].Not.AnyOf[1].Required[0] != "destination_resource_group_id" ||
 		len(policyRule.OneOf[1].Required) != 1 ||
 		policyRule.OneOf[1].Required[0] != "destination_resource_id" ||
-		len(policyRule.OneOf[1].Not.Required) != 1 ||
-		policyRule.OneOf[1].Not.Required[0] != "destination_device_id" {
+		len(policyRule.OneOf[1].Not.AnyOf) != 2 ||
+		policyRule.OneOf[1].Not.AnyOf[0].Required[0] != "destination_device_id" ||
+		policyRule.OneOf[1].Not.AnyOf[1].Required[0] != "destination_resource_group_id" ||
+		len(policyRule.OneOf[2].Required) != 1 ||
+		policyRule.OneOf[2].Required[0] != "destination_resource_group_id" ||
+		len(policyRule.OneOf[2].Not.AnyOf) != 2 ||
+		policyRule.OneOf[2].Not.AnyOf[0].Required[0] != "destination_device_id" ||
+		policyRule.OneOf[2].Not.AnyOf[1].Required[0] != "destination_resource_id" {
 		t.Fatalf("CompiledPolicyRule typed destination contract = %+v", policyRule)
 	}
 	for _, contract := range []struct {

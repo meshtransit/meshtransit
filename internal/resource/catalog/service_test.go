@@ -11,6 +11,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
+	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/resource"
 	"github.com/meshtransit/meshtransit/internal/workspace"
@@ -95,6 +96,51 @@ func TestServiceRejectsDuplicatePolicyResourceResolutionBeforeTransaction(t *tes
 	}
 }
 
+func TestServiceResolvesPolicyResourceGroupsInOneAuthorizedSnapshot(t *testing.T) {
+	t.Parallel()
+	value := catalogPolicyResourceFixture(t, 1, 1)
+	group := catalogPolicyGroupFixture(t, value, 1, 1)
+	transaction := &catalogTransactionFixture{
+		resources: map[resource.ID]Resource{value.ID(): value},
+		groups:    map[resource.GroupID]Group{group.ID(): group},
+	}
+	service := catalogServiceFixture(t, transaction)
+
+	resources, groups, err := service.ResolvePolicyDestinations(
+		t.Context(), catalogSessionFixture(t), catalogScopeFixture(t), nil,
+		[]resource.GroupID{group.ID()},
+	)
+	if err != nil {
+		t.Fatalf("ResolvePolicyDestinations() error = %v", err)
+	}
+	if len(resources) != 1 || resources[0].ID() != value.ID() || len(groups) != 1 ||
+		groups[0].ID() != group.ID() || len(transaction.permissions) != 2 ||
+		transaction.permissions[0] != authorization.PermissionResourceGroupRead ||
+		transaction.permissions[1] != authorization.PermissionResourceRead ||
+		transaction.commits != 1 || transaction.rollbacks != 0 {
+		t.Fatalf("resources=%+v groups=%+v transaction=%+v", resources, groups, transaction)
+	}
+}
+
+func TestServiceRejectsStaleResourceGroupMemberPin(t *testing.T) {
+	t.Parallel()
+	value := catalogPolicyResourceFixture(t, 2, 2)
+	group := catalogPolicyGroupFixture(t, value, 1, 1)
+	transaction := &catalogTransactionFixture{
+		resources: map[resource.ID]Resource{value.ID(): value},
+		groups:    map[resource.GroupID]Group{group.ID(): group},
+	}
+	service := catalogServiceFixture(t, transaction)
+
+	_, _, err := service.ResolvePolicyDestinations(
+		t.Context(), catalogSessionFixture(t), catalogScopeFixture(t), nil,
+		[]resource.GroupID{group.ID()},
+	)
+	if !errors.Is(err, ErrConflict) || transaction.commits != 0 || transaction.rollbacks != 1 {
+		t.Fatalf("error=%v transaction=%+v", err, transaction)
+	}
+}
+
 type catalogTransactionsFixture struct{ transaction *catalogTransactionFixture }
 
 func (fixture catalogTransactionsFixture) Begin(context.Context, network.Scope) (Transaction, error) {
@@ -103,6 +149,7 @@ func (fixture catalogTransactionsFixture) Begin(context.Context, network.Scope) 
 
 type catalogTransactionFixture struct {
 	permission        authorization.Permission
+	permissions       []authorization.Permission
 	inventoryRevision int64
 	groupRevision     int64
 	resourceErr       error
@@ -110,6 +157,8 @@ type catalogTransactionFixture struct {
 	listCalls         int
 	commits           int
 	rollbacks         int
+	resources         map[resource.ID]Resource
+	groups            map[resource.GroupID]Group
 }
 
 func (fixture *catalogTransactionFixture) Authorize(
@@ -119,6 +168,7 @@ func (fixture *catalogTransactionFixture) Authorize(
 	_ time.Time,
 ) error {
 	fixture.permission = permission
+	fixture.permissions = append(fixture.permissions, permission)
 	return nil
 }
 
@@ -126,8 +176,11 @@ func (fixture *catalogTransactionFixture) Revisions(context.Context) (int64, int
 	return fixture.inventoryRevision, fixture.groupRevision, nil
 }
 
-func (fixture *catalogTransactionFixture) Resource(context.Context, resource.ID) (Resource, error) {
-	return Resource{}, fixture.resourceErr
+func (fixture *catalogTransactionFixture) Resource(_ context.Context, id resource.ID) (Resource, error) {
+	if fixture.resourceErr != nil {
+		return Resource{}, fixture.resourceErr
+	}
+	return fixture.resources[id], nil
 }
 
 func (fixture *catalogTransactionFixture) Resources(
@@ -141,7 +194,10 @@ func (fixture *catalogTransactionFixture) Resources(
 	return []Resource{}, nil
 }
 
-func (*catalogTransactionFixture) Group(context.Context, resource.GroupID) (Group, error) {
+func (fixture *catalogTransactionFixture) Group(_ context.Context, id resource.GroupID) (Group, error) {
+	if value, found := fixture.groups[id]; found {
+		return value, nil
+	}
 	return Group{}, errors.New("unexpected Group read")
 }
 
@@ -213,4 +269,85 @@ func catalogSessionFixture(t *testing.T) accountsession.Session {
 		t.Fatal(err)
 	}
 	return session
+}
+
+func catalogPolicyResourceFixture(t *testing.T, version, generation int64) Resource {
+	t.Helper()
+	scope := catalogScopeFixture(t)
+	principalID := catalogSessionFixture(t).PrincipalID()
+	id, err := resource.ParseID("01890f00-0000-7000-8000-000000000501")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deviceID, err := node.ParseID("01890f00-0000-7000-8000-000000000301")
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, err := resource.ParseDisplayName("Production database")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := resource.NewDeviceRevision(resource.DeviceRevisionParams{
+		Scope: scope, DisplayName: name, OwnerPrincipalID: principalID,
+		CustodianPrincipalID: principalID, DeviceID: deviceID, TargetGeneration: generation,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.September, 29, 4, 0, 0, 0, time.UTC)
+	value, err := NewResource(ResourceParams{
+		ID: id, Scope: scope, DisplayName: name, OwnerPrincipalID: principalID,
+		CustodianPrincipalID: principalID, DeviceID: deviceID, State: resource.StateActive,
+		Provenance: resource.ProvenanceManual, Version: version, TargetGeneration: generation,
+		SemanticHash: revision.SemanticHash(), ActivatedNetworkRevision: 9, InventoryRevision: 9,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func catalogPolicyGroupFixture(
+	t *testing.T,
+	value Resource,
+	memberVersion,
+	memberGeneration int64,
+) Group {
+	t.Helper()
+	scope := catalogScopeFixture(t)
+	principalID := catalogSessionFixture(t).PrincipalID()
+	name, err := resource.ParseDisplayName("Production services")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference, err := resource.NewReference(
+		scope, value.ID(), memberVersion, memberGeneration,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, err := resource.NewGroupDefinition(resource.GroupDefinitionParams{
+		Scope: scope, DisplayName: name, OwnerPrincipalID: principalID,
+		CustodianPrincipalID: principalID, Members: []resource.Reference{reference},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := resource.ParseGroupID("01890f00-0000-7000-8000-000000000601")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.September, 29, 4, 0, 0, 0, time.UTC)
+	group, err := NewGroup(GroupParams{
+		ID: id, Scope: scope, DisplayName: name, OwnerPrincipalID: principalID,
+		CustodianPrincipalID: principalID, State: resource.StateActive,
+		Version: 1, DefinitionVersion: 1, SemanticHash: definition.SemanticHash(),
+		ActivatedNetworkRevision: 9, GroupRevision: 9, Members: definition.Members(),
+		CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return group
 }

@@ -29,6 +29,7 @@ type RuleIntentParams struct {
 	SourceNodeID          node.ID
 	DestinationNodeID     node.ID
 	DestinationResourceID resource.ID
+	DestinationGroupID    resource.GroupID
 	Protocol              policy.Protocol
 	DestinationPortRanges []policy.PortRange
 }
@@ -40,6 +41,7 @@ type RuleIntent struct {
 	sourceNodeID          node.ID
 	destinationNodeID     node.ID
 	destinationResourceID resource.ID
+	destinationGroupID    resource.GroupID
 	protocol              policy.Protocol
 	destinationPortRanges []policy.PortRange
 }
@@ -50,6 +52,7 @@ func NewRuleIntent(params RuleIntentParams) (RuleIntent, error) {
 		id: params.ID, scope: params.Scope, sourceNodeID: params.SourceNodeID,
 		destinationNodeID:     params.DestinationNodeID,
 		destinationResourceID: params.DestinationResourceID,
+		destinationGroupID:    params.DestinationGroupID,
 		protocol:              params.Protocol, destinationPortRanges: slices.Clone(params.DestinationPortRanges),
 	}
 	if !intent.IsValid() {
@@ -75,6 +78,11 @@ func (intent RuleIntent) DestinationResourceID() resource.ID {
 	return intent.destinationResourceID
 }
 
+// DestinationGroupID returns the Resource Group destination, when selected.
+func (intent RuleIntent) DestinationGroupID() resource.GroupID {
+	return intent.destinationGroupID
+}
+
 // Protocol returns the explicit packet protocol.
 func (intent RuleIntent) Protocol() policy.Protocol { return intent.protocol }
 
@@ -87,8 +95,9 @@ func (intent RuleIntent) DestinationPortRanges() []policy.PortRange {
 func (intent RuleIntent) IsValid() bool {
 	hasDevice := intent.destinationNodeID.IsValid()
 	hasResource := intent.destinationResourceID.IsValid()
+	hasGroup := intent.destinationGroupID.IsValid()
 	if !intent.id.IsValid() || !intent.scope.IsValid() || !intent.sourceNodeID.IsValid() ||
-		hasDevice == hasResource || !intent.protocol.IsValid() ||
+		boolCount(hasDevice, hasResource, hasGroup) != 1 || !intent.protocol.IsValid() ||
 		intent.destinationPortRanges == nil {
 		return false
 	}
@@ -115,6 +124,16 @@ func (intent RuleIntent) IsValid() bool {
 		}
 	}
 	return true
+}
+
+func boolCount(values ...bool) int {
+	count := 0
+	for _, value := range values {
+		if value {
+			count++
+		}
+	}
+	return count
 }
 
 // RequestParams contains one complete policy compilation request.

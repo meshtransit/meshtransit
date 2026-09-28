@@ -62,15 +62,20 @@ covering deterministic Device-to-Device TCP/UDP publication, atomic deny-all and
 restore, Node-reduced client projection, and fail-closed client enforcement.
 M2b1 adds active Device Resource destinations with exact Resource version,
 target-generation, inventory-revision, and semantic-hash provenance plus atomic
-publication-time revalidation. Resource Group destination expansion remains
-M2b2. See the
+publication-time revalidation. M2b2 adds active Resource Group destinations,
+deterministic member expansion, compiler format 3, and atomic revalidation of
+the complete immutable group definition and every member Resource. See the
 [M2a TCP/UDP policy design](docs/design/phase2-m2a-tcp-udp-policy-publication.md)
 and
 [M2a acceptance matrix](docs/qualification/phase2-m2a-tcp-udp-policy-publication-2026-09-29.md),
 plus the
 [M2b1 Resource policy destination design](docs/design/phase2-m2b1-resource-policy-destination.md)
 and
-[M2b1 acceptance matrix](docs/qualification/phase2-m2b1-resource-policy-destination-2026-09-29.md).
+[M2b1 acceptance matrix](docs/qualification/phase2-m2b1-resource-policy-destination-2026-09-29.md),
+plus the
+[M2b2 Resource Group policy destination design](docs/design/phase2-m2b2-resource-group-policy-destination.md)
+and
+[M2b2 acceptance matrix](docs/qualification/phase2-m2b2-resource-group-policy-destination-2026-09-29.md).
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,

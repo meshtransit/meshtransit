@@ -15,18 +15,28 @@ import (
 const policyPublicationOutboxEventClass = "network.revision.advanced"
 
 type policyPublicationRulePayload struct {
-	ProjectionPublicID              string `json:"projection_public_id"`
-	AccessRulePublicID              string `json:"access_rule_public_id"`
-	SourceNodePublicID              string `json:"source_node_public_id"`
-	DestinationNodePublicID         string `json:"destination_node_public_id"`
-	Protocol                        string `json:"protocol"`
-	PortRangeFirst                  []int  `json:"port_range_first"`
-	PortRangeLast                   []int  `json:"port_range_last"`
-	DestinationResourcePublicID     string `json:"destination_resource_public_id,omitempty"`
-	DestinationResourceVersion      int64  `json:"destination_resource_version,omitempty"`
-	DestinationTargetGeneration     int64  `json:"destination_target_generation,omitempty"`
-	DestinationInventoryRevision    int64  `json:"destination_inventory_revision,omitempty"`
-	DestinationResourceSemanticHash string `json:"destination_resource_semantic_hash,omitempty"`
+	ProjectionPublicID                         string `json:"projection_public_id"`
+	AccessRulePublicID                         string `json:"access_rule_public_id"`
+	SourceNodePublicID                         string `json:"source_node_public_id"`
+	DestinationNodePublicID                    string `json:"destination_node_public_id"`
+	Protocol                                   string `json:"protocol"`
+	PortRangeFirst                             []int  `json:"port_range_first"`
+	PortRangeLast                              []int  `json:"port_range_last"`
+	DestinationResourcePublicID                string `json:"destination_resource_public_id,omitempty"`
+	DestinationResourceVersion                 int64  `json:"destination_resource_version,omitempty"`
+	DestinationTargetGeneration                int64  `json:"destination_target_generation,omitempty"`
+	DestinationInventoryRevision               int64  `json:"destination_inventory_revision,omitempty"`
+	DestinationResourceSemanticHash            string `json:"destination_resource_semantic_hash,omitempty"`
+	DestinationResourceGroupPublicID           string `json:"destination_resource_group_public_id,omitempty"`
+	DestinationResourceGroupVersion            int64  `json:"destination_resource_group_version,omitempty"`
+	DestinationGroupDefinitionVersion          int64  `json:"destination_group_definition_version,omitempty"`
+	DestinationGroupRevision                   int64  `json:"destination_group_revision,omitempty"`
+	DestinationResourceGroupSemanticHash       string `json:"destination_resource_group_semantic_hash,omitempty"`
+	DestinationGroupMemberResourcePublicID     string `json:"destination_group_member_resource_public_id,omitempty"`
+	DestinationGroupMemberResourceVersion      int64  `json:"destination_group_member_resource_version,omitempty"`
+	DestinationGroupMemberTargetGeneration     int64  `json:"destination_group_member_target_generation,omitempty"`
+	DestinationGroupMemberInventoryRevision    int64  `json:"destination_group_member_inventory_revision,omitempty"`
+	DestinationGroupMemberResourceSemanticHash string `json:"destination_group_member_resource_semantic_hash,omitempty"`
 }
 
 type policyPublicationAuditPayload struct {
@@ -67,6 +77,25 @@ func encodePolicyPublicationRules(change publication.Change) ([]byte, error) {
 		}
 		resourceDestinations[key] = destination
 	}
+	type groupMemberDestination struct {
+		group  publication.ResourceGroupDestination
+		member publication.ResourceGroupMemberDestination
+	}
+	groupDestinations := make(map[destinationKey]groupMemberDestination)
+	for _, destination := range candidate.ResourceGroupDestinations() {
+		for _, member := range destination.Members() {
+			key := destinationKey{
+				ruleID: destination.RuleID().String(), nodeID: member.DestinationNodeID().String(),
+			}
+			if _, duplicate := groupDestinations[key]; duplicate {
+				return nil, ErrPolicyPublicationEvidence
+			}
+			if _, collision := resourceDestinations[key]; collision {
+				return nil, ErrPolicyPublicationEvidence
+			}
+			groupDestinations[key] = groupMemberDestination{group: destination, member: member}
+		}
+	}
 	payload := make([]policyPublicationRulePayload, len(rules))
 	for index, rule := range rules {
 		portRanges := rule.DestinationPortRanges()
@@ -95,9 +124,24 @@ func encodePolicyPublicationRules(change publication.Change) ([]byte, error) {
 			payload[index].DestinationInventoryRevision = destination.InventoryRevision()
 			payload[index].DestinationResourceSemanticHash = hex.EncodeToString(hash[:])
 			delete(resourceDestinations, key)
+		} else if destination, found := groupDestinations[key]; found {
+			groupHash := destination.group.GroupSemanticHash().Bytes()
+			memberReference := destination.member.Reference()
+			memberHash := destination.member.ResourceSemanticHash().Bytes()
+			payload[index].DestinationResourceGroupPublicID = destination.group.ResourceGroupID().String()
+			payload[index].DestinationResourceGroupVersion = destination.group.GroupVersion()
+			payload[index].DestinationGroupDefinitionVersion = destination.group.DefinitionVersion()
+			payload[index].DestinationGroupRevision = destination.group.GroupRevision()
+			payload[index].DestinationResourceGroupSemanticHash = hex.EncodeToString(groupHash[:])
+			payload[index].DestinationGroupMemberResourcePublicID = memberReference.ResourceID().String()
+			payload[index].DestinationGroupMemberResourceVersion = memberReference.ResourceVersion()
+			payload[index].DestinationGroupMemberTargetGeneration = memberReference.TargetGeneration()
+			payload[index].DestinationGroupMemberInventoryRevision = destination.member.InventoryRevision()
+			payload[index].DestinationGroupMemberResourceSemanticHash = hex.EncodeToString(memberHash[:])
+			delete(groupDestinations, key)
 		}
 	}
-	if len(resourceDestinations) != 0 {
+	if len(resourceDestinations) != 0 || len(groupDestinations) != 0 {
 		return nil, ErrPolicyPublicationEvidence
 	}
 	encoded, err := json.Marshal(payload)

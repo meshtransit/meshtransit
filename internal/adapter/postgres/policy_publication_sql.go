@@ -56,6 +56,13 @@ FROM mesh_ops.attach_policy_resource_destinations(
     $3::JSONB
 )`
 
+const attachPolicyResourceGroupDestinationsSQL = `SELECT attached_count
+FROM mesh_ops.attach_policy_resource_group_destinations(
+    $1::UUID,
+    $2::TIMESTAMPTZ,
+    $3::JSONB
+)`
+
 const appendPolicyPublicationEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
     $1::BIGINT, $2::UUID, $3::UUID, $4::BIGINT, $5::BYTEA, $6::BYTEA,
     'policy_release', $7::UUID, $8::BIGINT, $9::BIGINT, $10::UUID,

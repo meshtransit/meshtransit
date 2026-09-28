@@ -18,6 +18,8 @@ const (
 	MaximumPageSize = 100
 	// MaximumPolicyResources bounds one policy compilation resolution batch.
 	MaximumPolicyResources = 256
+	// MaximumPolicyResourceGroups bounds one policy compilation group batch.
+	MaximumPolicyResourceGroups = 256
 )
 
 var (

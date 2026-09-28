@@ -141,3 +141,89 @@ func TestCandidateHashBindsResourceResolutionProvenance(t *testing.T) {
 		t.Fatal("resource provenance accepted two Resources for one Access Rule")
 	}
 }
+
+func TestCandidateHashBindsResourceGroupDefinitionAndMemberProvenance(t *testing.T) {
+	t.Parallel()
+
+	firstRule := publicationRuleFixture(t, "000000000811", "000000000701", "000000000702", 443)
+	secondRule := publicationRuleFixture(t, "000000000811", "000000000701", "000000000703", 443)
+	base := publicationCandidateFixture(t, 2, []policy.Rule{secondRule, firstRule})
+	resourceHash, err := resource.NewSemanticHash(sha256.Sum256([]byte("group Resource semantics")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := func(rule policy.Rule, suffix string, generation int64) publication.ResourceGroupMemberDestination {
+		t.Helper()
+		resourceID, parseErr := resource.ParseID("01890f00-0000-7000-8000-" + suffix)
+		if parseErr != nil {
+			t.Fatal(parseErr)
+		}
+		value, memberErr := publication.NewResourceGroupMemberDestination(
+			publication.ResourceGroupMemberDestinationParams{
+				Scope: rule.Scope(), ResourceID: resourceID, ResourceVersion: 3,
+				TargetGeneration: generation, InventoryRevision: 7,
+				DestinationNodeID: rule.DestinationNodeID(), ResourceSemanticHash: resourceHash,
+			},
+		)
+		if memberErr != nil {
+			t.Fatal(memberErr)
+		}
+		return value
+	}
+	groupID, err := resource.ParseGroupID("01890f00-0000-7000-8000-000000000951")
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupHash, err := resource.NewSemanticHash(sha256.Sum256([]byte("group definition semantics")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newDestination := func(groupRevision int64, secondGeneration int64) publication.ResourceGroupDestination {
+		t.Helper()
+		destination, destinationErr := publication.NewResourceGroupDestination(
+			publication.ResourceGroupDestinationParams{
+				RuleID: firstRule.ID(), Scope: firstRule.Scope(), ResourceGroupID: groupID,
+				GroupVersion: 2, DefinitionVersion: 2, GroupRevision: groupRevision,
+				GroupSemanticHash: groupHash,
+				Members: []publication.ResourceGroupMemberDestination{
+					member(secondRule, "000000000902", secondGeneration),
+					member(firstRule, "000000000901", 1),
+				},
+			},
+		)
+		if destinationErr != nil {
+			t.Fatal(destinationErr)
+		}
+		return destination
+	}
+	first, err := publication.NewCandidateWithResourceGroupDestinations(
+		base.Snapshot(), nil, []publication.ResourceGroupDestination{newDestination(8, 1)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedRevision, err := publication.NewCandidateWithResourceGroupDestinations(
+		base.Snapshot(), nil, []publication.ResourceGroupDestination{newDestination(9, 1)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedMember, err := publication.NewCandidateWithResourceGroupDestinations(
+		base.Snapshot(), nil, []publication.ResourceGroupDestination{newDestination(8, 2)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.CompilerFormatVersion() != 3 || len(first.ResourceGroupDestinations()) != 1 ||
+		first.SemanticHash() == changedRevision.SemanticHash() ||
+		first.SemanticHash() == changedMember.SemanticHash() {
+		t.Fatal("candidate did not bind format-v3 Resource Group provenance")
+	}
+
+	incomplete := publicationCandidateFixture(t, 2, []policy.Rule{firstRule})
+	if _, err := publication.NewCandidateWithResourceGroupDestinations(
+		incomplete.Snapshot(), nil, []publication.ResourceGroupDestination{newDestination(8, 1)},
+	); err == nil {
+		t.Fatal("Resource Group provenance accepted an incomplete expansion")
+	}
+}

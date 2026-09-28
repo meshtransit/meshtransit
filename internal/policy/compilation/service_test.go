@@ -3,6 +3,7 @@ package compilation_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -68,6 +69,103 @@ func TestServiceCompilesDirectDeviceWithoutResourceRead(t *testing.T) {
 	}
 }
 
+func TestServiceExpandsResourceGroupWithPinnedDefinitionAndMembers(t *testing.T) {
+	t.Parallel()
+
+	first := compilationResourceFixtureFor(
+		t, resource.StateActive, "000000000901", "000000000702", "payments-api",
+	)
+	second := compilationResourceFixtureFor(
+		t, resource.StateActive, "000000000902", "000000000703", "orders-api",
+	)
+	group := compilationGroupFixture(t, []catalog.Resource{second, first})
+	resolver := &compilationResourceResolverFixture{
+		values: []catalog.Resource{first, second}, groups: []catalog.Group{group},
+	}
+	service, err := compilation.NewService(resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	candidate, err := service.Compile(
+		t.Context(), compilationSessionFixture(t), compilationGroupRequestFixture(t, group.ID()),
+	)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	rules := candidate.Snapshot().Rules()
+	destinations := candidate.ResourceGroupDestinations()
+	if resolver.calls != 1 || candidate.CompilerFormatVersion() != 3 || len(rules) != 2 ||
+		len(candidate.ResourceDestinations()) != 0 || len(destinations) != 1 ||
+		destinations[0].ResourceGroupID() != group.ID() ||
+		destinations[0].GroupVersion() != group.Version() ||
+		destinations[0].DefinitionVersion() != group.DefinitionVersion() ||
+		destinations[0].GroupRevision() != group.GroupRevision() ||
+		destinations[0].GroupSemanticHash() != group.SemanticHash() ||
+		len(destinations[0].Members()) != 2 || rules[0].ID() != rules[1].ID() {
+		t.Fatalf("candidate=%+v rules=%+v destinations=%+v", candidate, rules, destinations)
+	}
+}
+
+func TestServiceRejectsResourceGroupWithDuplicateDestinationDevice(t *testing.T) {
+	t.Parallel()
+
+	first := compilationResourceFixtureFor(
+		t, resource.StateActive, "000000000901", "000000000702", "payments-api",
+	)
+	second := compilationResourceFixtureFor(
+		t, resource.StateActive, "000000000902", "000000000702", "payments-canary",
+	)
+	group := compilationGroupFixture(t, []catalog.Resource{first, second})
+	resolver := &compilationResourceResolverFixture{
+		values: []catalog.Resource{first, second}, groups: []catalog.Group{group},
+	}
+	service, err := compilation.NewService(resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = service.Compile(
+		t.Context(), compilationSessionFixture(t), compilationGroupRequestFixture(t, group.ID()),
+	)
+	if !errors.Is(err, compilation.ErrResourceConflict) {
+		t.Fatalf("Compile() error = %v, want ErrResourceConflict", err)
+	}
+}
+
+func TestServiceRejectsResourceGroupExpansionAboveRuleLimit(t *testing.T) {
+	t.Parallel()
+
+	values := make([]catalog.Resource, resource.MaximumGroupMembers)
+	for index := range values {
+		values[index] = compilationResourceFixtureFor(
+			t,
+			resource.StateActive,
+			fmt.Sprintf("%012d", 1_000+index),
+			fmt.Sprintf("%012d", 2_000+index),
+			fmt.Sprintf("service-%03d", index),
+		)
+	}
+	group := compilationGroupFixture(t, values)
+	resolver := &compilationResourceResolverFixture{
+		values: values, groups: []catalog.Group{group},
+	}
+	service, err := compilation.NewService(resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleCount := policy.MaximumRules/len(values) + 1
+
+	_, err = service.Compile(
+		t.Context(),
+		compilationSessionFixture(t),
+		compilationRepeatedGroupRequestFixture(t, group.ID(), ruleCount),
+	)
+	if !errors.Is(err, compilation.ErrInvalidRequest) {
+		t.Fatalf("Compile() error = %v, want ErrInvalidRequest", err)
+	}
+}
+
 func TestServiceRejectsInactiveResource(t *testing.T) {
 	t.Parallel()
 
@@ -90,18 +188,20 @@ func TestServiceRejectsInactiveResource(t *testing.T) {
 
 type compilationResourceResolverFixture struct {
 	values []catalog.Resource
+	groups []catalog.Group
 	err    error
 	calls  int
 }
 
-func (resolver *compilationResourceResolverFixture) ResolvePolicyResources(
+func (resolver *compilationResourceResolverFixture) ResolvePolicyDestinations(
 	context.Context,
 	accountsession.Session,
 	network.Scope,
 	[]resource.ID,
-) ([]catalog.Resource, error) {
+	[]resource.GroupID,
+) ([]catalog.Resource, []catalog.Group, error) {
 	resolver.calls++
-	return resolver.values, resolver.err
+	return resolver.values, resolver.groups, resolver.err
 }
 
 func compilationRequestFixture(
@@ -136,10 +236,65 @@ func compilationRequestFixture(
 	return request
 }
 
+func compilationGroupRequestFixture(
+	t *testing.T,
+	groupID resource.GroupID,
+) compilation.Request {
+	return compilationRepeatedGroupRequestFixture(t, groupID, 1)
+}
+
+func compilationRepeatedGroupRequestFixture(
+	t *testing.T,
+	groupID resource.GroupID,
+	ruleCount int,
+) compilation.Request {
+	t.Helper()
+	port, err := policy.NewPortRange(443, 443)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intents := make([]compilation.RuleIntent, ruleCount)
+	for index := range intents {
+		ruleID, parseErr := policy.ParseRuleID(
+			fmt.Sprintf("01890f00-0000-7000-8000-%012d", 801+index),
+		)
+		if parseErr != nil {
+			t.Fatal(parseErr)
+		}
+		intents[index], err = compilation.NewRuleIntent(compilation.RuleIntentParams{
+			ID: ruleID, Scope: compilationScopeFixture(t),
+			SourceNodeID: compilationNodeID(t, "000000000701"), DestinationGroupID: groupID,
+			Protocol: policy.ProtocolTCP, DestinationPortRanges: []policy.PortRange{port},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	request, err := compilation.NewRequest(compilation.RequestParams{
+		Scope: compilationScopeFixture(t), Revision: 2, Rules: intents,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return request
+}
+
 func compilationResourceFixture(t *testing.T, state resource.State) catalog.Resource {
+	return compilationResourceFixtureFor(
+		t, state, "000000000901", "000000000702", "payments-api",
+	)
+}
+
+func compilationResourceFixtureFor(
+	t *testing.T,
+	state resource.State,
+	resourceSuffix string,
+	deviceSuffix string,
+	displayName string,
+) catalog.Resource {
 	t.Helper()
 	scope := compilationScopeFixture(t)
-	name, err := resource.ParseDisplayName("payments-api")
+	name, err := resource.ParseDisplayName(displayName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +302,7 @@ func compilationResourceFixture(t *testing.T, state resource.State) catalog.Reso
 	if err != nil {
 		t.Fatal(err)
 	}
-	deviceID := compilationNodeID(t, "000000000702")
+	deviceID := compilationNodeID(t, deviceSuffix)
 	definition, err := resource.NewDeviceDefinition(resource.DeviceDefinitionParams{
 		Scope: scope, DisplayName: name, OwnerPrincipalID: ownerID,
 		CustodianPrincipalID: ownerID, DeviceID: deviceID,
@@ -155,7 +310,7 @@ func compilationResourceFixture(t *testing.T, state resource.State) catalog.Reso
 	if err != nil {
 		t.Fatal(err)
 	}
-	resourceID, err := resource.ParseID("01890f00-0000-7000-8000-000000000901")
+	resourceID, err := resource.ParseID("01890f00-0000-7000-8000-" + resourceSuffix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,6 +327,51 @@ func compilationResourceFixture(t *testing.T, state resource.State) catalog.Reso
 		t.Fatal(err)
 	}
 	return value
+}
+
+func compilationGroupFixture(t *testing.T, values []catalog.Resource) catalog.Group {
+	t.Helper()
+	scope := compilationScopeFixture(t)
+	name, err := resource.ParseDisplayName("production-services")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerID, err := identity.ParsePrincipalID("01890f00-0000-7000-8000-000000000401")
+	if err != nil {
+		t.Fatal(err)
+	}
+	members := make([]resource.Reference, len(values))
+	for index, value := range values {
+		members[index], err = resource.NewReference(
+			scope, value.ID(), value.Version(), value.TargetGeneration(),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	definition, err := resource.NewGroupDefinition(resource.GroupDefinitionParams{
+		Scope: scope, DisplayName: name, OwnerPrincipalID: ownerID,
+		CustodianPrincipalID: ownerID, Members: members,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupID, err := resource.ParseGroupID("01890f00-0000-7000-8000-000000000951")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.September, 29, 3, 0, 0, 0, time.UTC)
+	group, err := catalog.NewGroup(catalog.GroupParams{
+		ID: groupID, Scope: scope, DisplayName: name, OwnerPrincipalID: ownerID,
+		CustodianPrincipalID: ownerID, State: resource.StateActive,
+		Version: 2, DefinitionVersion: 2, SemanticHash: definition.SemanticHash(),
+		ActivatedNetworkRevision: 9, GroupRevision: 9, Members: definition.Members(),
+		CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return group
 }
 
 func compilationScopeFixture(t *testing.T) network.Scope {

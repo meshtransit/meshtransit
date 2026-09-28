@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 43 {
-		t.Fatalf("len(Catalog()) = %d, want 43", len(catalog))
+	if len(catalog) != 44 {
+		t.Fatalf("len(Catalog()) = %d, want 44", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 43 {
-		t.Fatalf("LatestVersion() = %d, want 43", LatestVersion())
+	if LatestVersion() != 44 {
+		t.Fatalf("LatestVersion() = %d, want 44", LatestVersion())
 	}
 }
 
@@ -1587,6 +1587,49 @@ func TestPolicyResourceDestinationPinsAuthorityAndExactScope(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("policy Resource destination SQL contains excessive capability %q", forbidden)
+		}
+	}
+}
+
+func TestPolicyResourceGroupDestinationPinsDefinitionMembersAndExactScope(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[43]
+	if migration.Description != "policy Resource Group destination provenance" {
+		t.Fatalf("migration 44 description = %q", migration.Description)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.compiled_policy_resource_group_destination",
+		"compiled_policy_resource_group_destination_rule_scope_fk",
+		"compiled_policy_resource_group_destination_group_scope_fk",
+		"compiled_policy_resource_group_destination_resource_scope_fk",
+		"resource_group_version BIGINT NOT NULL",
+		"definition_version BIGINT NOT NULL",
+		"group_revision BIGINT NOT NULL",
+		"resource_group_semantic_hash BYTEA NOT NULL",
+		"resource_semantic_hash BYTEA NOT NULL",
+		"FORCE ROW LEVEL SECURITY",
+		"CREATE TRIGGER compiled_policy_resource_group_destination_authority_mutation",
+		"CREATE TRIGGER compiled_policy_resource_group_destination_immutable",
+		"CREATE FUNCTION mesh_ops.attach_policy_resource_group_destinations",
+		"FROM mesh.resource_group AS resource_group",
+		"JOIN mesh.resource_group_version AS version",
+		"JOIN mesh.resource_group_version_member AS member",
+		"FOR KEY SHARE OF resource_group",
+		"FOR KEY SHARE OF resource",
+		"target.state = 'active'",
+		"ERRCODE = 'MT001'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.attach_policy_resource_group_destinations",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("policy Resource Group destination SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"BYPASSRLS", "DROP ", "DELETE FROM", "TO mesh_worker;", "TO mesh_observer;",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("policy Resource Group destination SQL contains excessive capability %q", forbidden)
 		}
 	}
 }
