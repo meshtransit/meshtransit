@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 
@@ -104,6 +105,15 @@ func (transaction *resourceAuthorityTransaction) appendEvidence(
 	if err != nil {
 		return fmt.Errorf("encode Resource authority outbox payload: %w", err)
 	}
+	semanticHashBytes := command.SemanticHash().Bytes()
+	resultPayload, err := json.Marshal(resourceAuthorityResultPayload{
+		Operation:         resourceAuthorityOperation(command),
+		SubsystemRevision: subsystemRevision,
+		SemanticHash:      hex.EncodeToString(semanticHashBytes[:]),
+	})
+	if err != nil {
+		return fmt.Errorf("encode Resource authority result payload: %w", err)
+	}
 	auditPayloadHash := sha256.Sum256(auditPayload)
 	outboxPayloadHash := sha256.Sum256(outboxPayload)
 	afterSemanticHash := command.SemanticHash().Bytes()
@@ -118,7 +128,7 @@ func (transaction *resourceAuthorityTransaction) appendEvidence(
 		ActorPrincipalID:  publicid.ID(command.AccountSession().PrincipalID()),
 		Action:            action,
 		Permission:        permission,
-		CorrelationID:     aggregateID,
+		CorrelationID:     change.Resolution().IdempotencyRecordID(),
 		AfterSemanticHash: afterSemanticHash,
 		AuditPayloadHash:  auditPayloadHash,
 		OutboxEventClass:  resourceAuthorityOutboxEventClass,
@@ -144,7 +154,7 @@ func (transaction *resourceAuthorityTransaction) appendEvidence(
 		command.AccountSession().PrincipalID().String(),
 		action,
 		permission,
-		aggregateID.String(),
+		change.Resolution().IdempotencyRecordID().String(),
 		nil,
 		afterSemanticHash[:],
 		auditPayload,
@@ -154,6 +164,32 @@ func (transaction *resourceAuthorityTransaction) appendEvidence(
 		return fmt.Errorf("append Resource authority evidence: %w", err)
 	}
 	if appendedSequence != transaction.audit.nextSequence {
+		return ErrResourceAuthorityEvidence
+	}
+	requestHash := change.Resolution().RequestHash().Bytes()
+	proof := command.IdempotencyEvidence()
+	digest := proof.Digest()
+	var completedRecordID string
+	if err := transaction.database.QueryRow(
+		ctx,
+		completeResourceAuthorityIdempotencySQL,
+		change.Resolution().IdempotencyRecordID().String(),
+		command.AccountSession().PrincipalID().String(),
+		resourceAuthorityOperation(command),
+		proof.DigestKeyID(),
+		digest[:],
+		requestHash[:],
+		resourceAuthorityResultKind(command),
+		aggregateID.String(),
+		aggregateVersion,
+		networkRevision,
+		resultPayload,
+		change.MutationIDs().OutboxEventID().String(),
+		change.OccurredAt(),
+	).Scan(&completedRecordID); err != nil {
+		return fmt.Errorf("complete Resource authority idempotency evidence: %w", err)
+	}
+	if completedRecordID != change.Resolution().IdempotencyRecordID().String() {
 		return ErrResourceAuthorityEvidence
 	}
 	return nil

@@ -179,6 +179,202 @@
           }
         }
       }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources": {
+      "get": {
+        "operationId": "listResources",
+        "summary": "List Resources in one exact Network scope",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceState"},
+          {"$ref": "#/components/parameters/PageSize"},
+          {"$ref": "#/components/parameters/PageToken"}
+        ],
+        "responses": {
+          "200": {
+            "description": "A deterministic UUIDv7-ordered Resource page.",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/ResourceCollectionETag"},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceListResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      },
+      "post": {
+        "operationId": "createResource",
+        "summary": "Create a Device-backed Resource",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceIfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateResourceRequest"}}}
+        },
+        "responses": {
+          "201": {
+            "description": "The Resource is created, or the identical committed creation is replayed.",
+            "headers": {
+              "Location": {"$ref": "#/components/headers/ResourceLocation"},
+              "ETag": {"$ref": "#/components/headers/ResourceETag"},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}": {
+      "get": {
+        "operationId": "getResource",
+        "summary": "Read one Resource from an exact Network scope",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceID"}
+        ],
+        "responses": {
+          "200": {
+            "description": "The current Resource authority snapshot.",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/ResourceETag"},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups": {
+      "get": {
+        "operationId": "listResourceGroups",
+        "summary": "List Resource Groups in one exact Network scope",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceState"},
+          {"$ref": "#/components/parameters/PageSize"},
+          {"$ref": "#/components/parameters/PageToken"}
+        ],
+        "responses": {
+          "200": {
+            "description": "A deterministic UUIDv7-ordered Resource Group page.",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/ResourceGroupCollectionETag"},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceGroupListResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      },
+      "post": {
+        "operationId": "createResourceGroup",
+        "summary": "Create an immutable Resource Group definition",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceGroupIfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateResourceGroupRequest"}}}
+        },
+        "responses": {
+          "201": {
+            "description": "The Resource Group is created, or the identical committed creation is replayed.",
+            "headers": {
+              "Location": {"$ref": "#/components/headers/ResourceGroupLocation"},
+              "ETag": {"$ref": "#/components/headers/ResourceGroupETag"},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceGroupResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}": {
+      "get": {
+        "operationId": "getResourceGroup",
+        "summary": "Read one Resource Group from an exact Network scope",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceGroupID"}
+        ],
+        "responses": {
+          "200": {
+            "description": "The current Resource Group authority snapshot.",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/ResourceGroupETag"},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceGroupResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
     }
   },
   "components": {
@@ -245,6 +441,51 @@
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9._:~-]+$"
         }
+      },
+      "ResourceID": {
+        "name": "resource_id",
+        "in": "path",
+        "required": true,
+        "schema": {"$ref": "#/components/schemas/PublicID"}
+      },
+      "ResourceGroupID": {
+        "name": "resource_group_id",
+        "in": "path",
+        "required": true,
+        "schema": {"$ref": "#/components/schemas/PublicID"}
+      },
+      "ResourceIfMatch": {
+        "name": "If-Match",
+        "in": "header",
+        "required": true,
+        "description": "One strong quoted decimal Resource inventory revision.",
+        "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
+      },
+      "ResourceGroupIfMatch": {
+        "name": "If-Match",
+        "in": "header",
+        "required": true,
+        "description": "One strong quoted decimal Resource Group collection revision.",
+        "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
+      },
+      "ResourceState": {
+        "name": "state",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "string", "enum": ["active", "suspended", "deleted"]}
+      },
+      "PageSize": {
+        "name": "page_size",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}
+      },
+      "PageToken": {
+        "name": "page_token",
+        "in": "query",
+        "required": false,
+        "description": "Opaque continuation token pinned to the collection revision and filter.",
+        "schema": {"type": "string", "minLength": 1, "maxLength": 512}
       }
     },
     "headers": {
@@ -259,6 +500,30 @@
         "schema": {
           "type": "string"
         }
+      },
+      "ResourceETag": {
+        "description": "The strong quoted decimal Resource version.",
+        "schema": {"type": "string"}
+      },
+      "ResourceLocation": {
+        "description": "The canonical exact-scope Resource path.",
+        "schema": {"type": "string", "minLength": 1}
+      },
+      "ResourceCollectionETag": {
+        "description": "The strong quoted decimal Resource inventory revision.",
+        "schema": {"type": "string"}
+      },
+      "ResourceGroupETag": {
+        "description": "The strong quoted decimal Resource Group version.",
+        "schema": {"type": "string"}
+      },
+      "ResourceGroupLocation": {
+        "description": "The canonical exact-scope Resource Group path.",
+        "schema": {"type": "string", "minLength": 1}
+      },
+      "ResourceGroupCollectionETag": {
+        "description": "The strong quoted decimal Resource Group collection revision.",
+        "schema": {"type": "string"}
       },
       "CorrelationID": {
         "description": "A server-generated UUIDv7 used to correlate the safe response and operational log.",
@@ -499,6 +764,130 @@
             "minimum": 0,
             "maximum": 10000
           }
+        }
+      },
+      "CreateResourceRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["display_name", "device_id", "reason"],
+        "properties": {
+          "display_name": {"type": "string", "minLength": 1, "maxLength": 128},
+          "device_id": {"$ref": "#/components/schemas/PublicID"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      },
+      "Resource": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_id", "display_name", "owner_principal_id", "custodian_principal_id",
+          "device_id", "kind", "state", "provenance", "version", "target_generation",
+          "semantic_hash", "activated_network_revision", "inventory_revision"
+        ],
+        "properties": {
+          "resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "display_name": {"type": "string", "minLength": 1, "maxLength": 128},
+          "owner_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "custodian_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "device_id": {"$ref": "#/components/schemas/PublicID"},
+          "kind": {"const": "device"},
+          "state": {"type": "string", "enum": ["active", "suspended", "deleted"]},
+          "provenance": {"const": "manual"},
+          "version": {"type": "integer", "format": "int64", "minimum": 1},
+          "target_generation": {"type": "integer", "format": "int64", "minimum": 1},
+          "semantic_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "activated_network_revision": {"type": "integer", "format": "int64", "minimum": 2},
+          "inventory_revision": {"type": "integer", "format": "int64", "minimum": 2},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ResourceResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/Resource"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "ResourceListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"type": "array", "maxItems": 100, "items": {"$ref": "#/components/schemas/Resource"}},
+          "next_page_token": {"type": "string", "maxLength": 512},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "ResourceGroupMember": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resource_id", "resource_version", "target_generation"],
+        "properties": {
+          "resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "resource_version": {"type": "integer", "format": "int64", "minimum": 1},
+          "target_generation": {"type": "integer", "format": "int64", "minimum": 1}
+        }
+      },
+      "CreateResourceGroupRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["display_name", "members", "reason"],
+        "properties": {
+          "display_name": {"type": "string", "minLength": 1, "maxLength": 128},
+          "members": {
+            "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true,
+            "items": {"$ref": "#/components/schemas/ResourceGroupMember"}
+          },
+          "reason": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      },
+      "ResourceGroup": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_group_id", "display_name", "owner_principal_id", "custodian_principal_id",
+          "state", "version", "definition_version", "semantic_hash",
+          "activated_network_revision", "group_revision", "members"
+        ],
+        "properties": {
+          "resource_group_id": {"$ref": "#/components/schemas/PublicID"},
+          "display_name": {"type": "string", "minLength": 1, "maxLength": 128},
+          "owner_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "custodian_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "state": {"type": "string", "enum": ["active", "suspended", "deleted"]},
+          "version": {"type": "integer", "format": "int64", "minimum": 1},
+          "definition_version": {"type": "integer", "format": "int64", "minimum": 1},
+          "semantic_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "activated_network_revision": {"type": "integer", "format": "int64", "minimum": 2},
+          "group_revision": {"type": "integer", "format": "int64", "minimum": 2},
+          "members": {
+            "type": "array", "minItems": 1, "maxItems": 256,
+            "items": {"$ref": "#/components/schemas/ResourceGroupMember"}
+          },
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ResourceGroupResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/ResourceGroup"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "ResourceGroupListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"type": "array", "maxItems": 100, "items": {"$ref": "#/components/schemas/ResourceGroup"}},
+          "next_page_token": {"type": "string", "maxLength": 512},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
         }
       },
       "ErrorResponse": {

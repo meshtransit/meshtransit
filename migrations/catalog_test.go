@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 37 {
-		t.Fatalf("len(Catalog()) = %d, want 37", len(catalog))
+	if len(catalog) != 38 {
+		t.Fatalf("len(Catalog()) = %d, want 38", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 37 {
-		t.Fatalf("LatestVersion() = %d, want 37", LatestVersion())
+	if LatestVersion() != 38 {
+		t.Fatalf("LatestVersion() = %d, want 38", LatestVersion())
 	}
 }
 
@@ -1358,6 +1358,41 @@ func TestResourceGroupAuthorityIsScopedVersionedAndLeastPrivilege(t *testing.T) 
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("Resource authority SQL contains excessive capability %q", forbidden)
+		}
+	}
+}
+
+func TestResourceManagementReadsAreScopedBoundedAndLeastPrivilege(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[37]
+	if migration.Description != "Resource management read API" {
+		t.Fatalf("migration 38 description = %q", migration.Description)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.read_network_revision_v1",
+		"CREATE FUNCTION mesh_ops.read_resource_v2",
+		"CREATE FUNCTION mesh_ops.list_resources_v1",
+		"CREATE FUNCTION mesh_ops.read_resource_group_v2",
+		"CREATE FUNCTION mesh_ops.list_resource_groups_v1",
+		"mesh_ops.current_workspace_id()",
+		"mesh_ops.current_network_id()",
+		"p_limit > 101",
+		"ORDER BY resource.public_id",
+		"ORDER BY resource_group.public_id",
+		"FROM mesh_ops.network_revision AS revision",
+		"SECURITY DEFINER",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("Resource management read SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "GRANT ALL",
+		"BYPASSRLS", "TO mesh_worker;", "TO mesh_observer;", "FOR UPDATE", "DROP ",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("Resource management read SQL contains excessive capability %q", forbidden)
 		}
 	}
 }

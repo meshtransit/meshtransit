@@ -65,10 +65,13 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal("private document retained deployment topology")
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
-	if len(basePaths) != 2 || len(paths) != 4 {
+	if len(basePaths) != 6 || len(paths) != 4 {
 		t.Fatal("private profile introduced another product resource API")
 	}
-	for path := range basePaths {
+	for _, path := range []string{
+		"/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/revoke",
+		"/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy/actions/publish",
+	} {
 		baseOperation := profileMap(t, profileMap(t, basePaths, path), "post")
 		item := profileMap(t, paths, path)
 		if len(item) != 1 {

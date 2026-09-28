@@ -16,6 +16,11 @@ func TestManagementV1MutationContracts(t *testing.T) {
 	var document struct {
 		OpenAPI string `json:"openapi"`
 		Paths   map[string]struct {
+			Get struct {
+				OperationID string                     `json:"operationId"`
+				Security    []map[string][]string      `json:"security"`
+				Responses   map[string]json.RawMessage `json:"responses"`
+			} `json:"get"`
 			Post struct {
 				OperationID string                     `json:"operationId"`
 				Security    []map[string][]string      `json:"security"`
@@ -62,6 +67,42 @@ func TestManagementV1MutationContracts(t *testing.T) {
 	for _, status := range []string{"200", "400", "401", "403", "405", "412", "428", "429", "503", "504"} {
 		if _, ok := policyOperation.Post.Responses[status]; !ok {
 			t.Fatalf("Policy publish responses omit status %s", status)
+		}
+	}
+	for _, contract := range []struct {
+		path, getOperation, postOperation string
+	}{
+		{
+			path:         "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources",
+			getOperation: "listResources", postOperation: "createResource",
+		},
+		{
+			path:         "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups",
+			getOperation: "listResourceGroups", postOperation: "createResourceGroup",
+		},
+	} {
+		resourceOperation, found := document.Paths[contract.path]
+		if !found || resourceOperation.Get.OperationID != contract.getOperation ||
+			resourceOperation.Post.OperationID != contract.postOperation {
+			t.Fatalf("Resource collection contract = %+v, found=%t", resourceOperation, found)
+		}
+		for _, security := range [][]map[string][]string{
+			resourceOperation.Get.Security, resourceOperation.Post.Security,
+		} {
+			if len(security) != 1 || security[0]["accountSessionBearer"] == nil {
+				t.Fatal("Resource collection operation does not require Account Session bearer authentication")
+			}
+		}
+	}
+	for _, contract := range []struct{ path, operation string }{
+		{path: "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}", operation: "getResource"},
+		{path: "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}", operation: "getResourceGroup"},
+	} {
+		resourceOperation, found := document.Paths[contract.path]
+		if !found || resourceOperation.Get.OperationID != contract.operation ||
+			len(resourceOperation.Get.Security) != 1 ||
+			resourceOperation.Get.Security[0]["accountSessionBearer"] == nil {
+			t.Fatalf("Resource detail contract = %+v, found=%t", resourceOperation.Get, found)
 		}
 	}
 	bearer, ok := document.Components.SecuritySchemes["accountSessionBearer"]

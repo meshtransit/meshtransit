@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/deployment"
+	"github.com/meshtransit/meshtransit/internal/idempotency"
 	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
@@ -20,10 +21,7 @@ import (
 func TestServiceCommitsDeviceResource(t *testing.T) {
 	command := authorityCommandFixture(t, OperationCreateDevice)
 	ids := authorityMutationIDsFixture(t, command)
-	resolution, err := NewResolution(command.Scope(), 7, 3, 2)
-	if err != nil {
-		t.Fatalf("NewResolution() error = %v", err)
-	}
+	resolution := authorityResolutionFixture(t, command, ids, 7, 3, 2)
 	transaction := &fakeAuthorityTransaction{resolution: resolution}
 	transactions := &fakeAuthorityTransactions{transactions: []*fakeAuthorityTransaction{transaction}}
 	service := authorityServiceFixture(t, transactions, ids)
@@ -41,10 +39,7 @@ func TestServiceCommitsDeviceResource(t *testing.T) {
 func TestServiceRejectsStaleRevisionAndRollsBack(t *testing.T) {
 	command := authorityCommandFixture(t, OperationCreateDevice)
 	ids := authorityMutationIDsFixture(t, command)
-	resolution, err := NewResolution(command.Scope(), 7, 4, 2)
-	if err != nil {
-		t.Fatalf("NewResolution() error = %v", err)
-	}
+	resolution := authorityResolutionFixture(t, command, ids, 7, 4, 2)
 	transaction := &fakeAuthorityTransaction{resolution: resolution}
 	service := authorityServiceFixture(
 		t,
@@ -63,10 +58,7 @@ func TestServiceRejectsStaleRevisionAndRollsBack(t *testing.T) {
 func TestServiceRetriesWholeTransactionWithStableDecision(t *testing.T) {
 	command := authorityCommandFixture(t, OperationCreateGroup)
 	ids := authorityMutationIDsFixture(t, command)
-	resolution, err := NewResolution(command.Scope(), 7, 3, 2)
-	if err != nil {
-		t.Fatalf("NewResolution() error = %v", err)
-	}
+	resolution := authorityResolutionFixture(t, command, ids, 7, 3, 2)
 	first := &fakeAuthorityTransaction{
 		resolution: resolution,
 		applyErr:   errors.Join(ErrRetryableTransaction, errors.New("serialization")),
@@ -92,10 +84,7 @@ func TestServiceRetriesWholeTransactionWithStableDecision(t *testing.T) {
 func TestServiceResolvesUnknownCommitByStableAggregateID(t *testing.T) {
 	command := authorityCommandFixture(t, OperationCreateDevice)
 	ids := authorityMutationIDsFixture(t, command)
-	resolution, err := NewResolution(command.Scope(), 7, 3, 2)
-	if err != nil {
-		t.Fatalf("NewResolution() error = %v", err)
-	}
+	resolution := authorityResolutionFixture(t, command, ids, 7, 3, 2)
 	committed, err := NewResult(
 		command.Operation(), ids.ResourceID(), ids.GroupID(), command.Scope(),
 		8, 4, 1, command.SemanticHash(),
@@ -124,6 +113,43 @@ func TestServiceResolvesUnknownCommitByStableAggregateID(t *testing.T) {
 	}
 }
 
+func TestServiceReturnsCompletedIdempotentReplayWithoutMutation(t *testing.T) {
+	command := authorityCommandFixture(t, OperationCreateDevice)
+	ids := authorityMutationIDsFixture(t, command)
+	committed, err := NewResult(
+		command.Operation(), ids.ResourceID(), ids.GroupID(), command.Scope(),
+		8, 4, 1, command.SemanticHash(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestHash, err := command.RequestHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolution, err := NewCompletedResolution(
+		committed, ids.IdempotencyRecordID(), requestHash,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction := &fakeAuthorityTransaction{resolution: resolution}
+	service := authorityServiceFixture(
+		t,
+		&fakeAuthorityTransactions{transactions: []*fakeAuthorityTransaction{transaction}},
+		ids,
+	)
+
+	result, err := service.Create(t.Context(), command)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if result != committed || transaction.applies != 0 || transaction.commits != 0 ||
+		transaction.rollbacks != 1 {
+		t.Fatalf("replay result=%+v transaction=%+v", result, transaction)
+	}
+}
+
 func TestCreateCommandRequiresCreatorOwnership(t *testing.T) {
 	definition := authorityDeviceDefinitionFixture(t)
 	otherSession := authoritySessionFixture(t, authorityPrincipalID(t, 12))
@@ -131,7 +157,9 @@ func TestCreateCommandRequiresCreatorOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuditReason() error = %v", err)
 	}
-	if _, err := NewCreateDeviceCommand(definition, 3, otherSession, reason); !errors.Is(err, ErrInvalidCommand) {
+	if _, err := NewCreateDeviceCommand(
+		definition, 3, otherSession, reason, authorityIdempotencyProofFixture(t),
+	); !errors.Is(err, ErrInvalidCommand) {
 		t.Fatalf("NewCreateDeviceCommand() error = %v, want ErrInvalidCommand", err)
 	}
 }
@@ -179,6 +207,8 @@ type fakeAuthorityTransaction struct {
 func (transaction *fakeAuthorityTransaction) Resolve(
 	context.Context,
 	Command,
+	MutationIDs,
+	time.Time,
 	time.Time,
 ) (Resolution, error) {
 	return transaction.resolution, nil
@@ -241,7 +271,10 @@ func authorityServiceFixture(
 ) *Service {
 	t.Helper()
 	service, err := NewService(
-		Options{MaxAttempts: 3, RollbackTimeout: time.Second},
+		Options{
+			MaxAttempts: 3, RollbackTimeout: time.Second,
+			IdempotencyWindow: time.Hour,
+		},
 		Dependencies{
 			Transactions: transactions, CommittedResults: transactions,
 			MutationIDs: fixedAuthorityMutationIDs{ids: ids},
@@ -266,6 +299,7 @@ func authorityCommandFixture(t *testing.T, operation Operation) Command {
 	if operation == OperationCreateDevice {
 		command, err := NewCreateDeviceCommand(
 			authorityDeviceDefinitionFixture(t), 3, session, reason,
+			authorityIdempotencyProofFixture(t),
 		)
 		if err != nil {
 			t.Fatalf("NewCreateDeviceCommand() error = %v", err)
@@ -292,7 +326,9 @@ func authorityCommandFixture(t *testing.T, operation Operation) Command {
 	if err != nil {
 		t.Fatalf("resource.NewGroupDefinition() error = %v", err)
 	}
-	command, err := NewCreateGroupCommand(definition, 2, session, reason)
+	command, err := NewCreateGroupCommand(
+		definition, 2, session, reason, authorityIdempotencyProofFixture(t),
+	)
 	if err != nil {
 		t.Fatalf("NewCreateGroupCommand() error = %v", err)
 	}
@@ -326,14 +362,15 @@ func authorityMutationIDsFixture(t *testing.T, command Command) MutationIDs {
 	changeID := authorityPublicIDValue(t, 901)
 	auditID := authorityPublicIDValue(t, 902)
 	outboxID := authorityPublicIDValue(t, 903)
-	aggregateID := authorityPublicIDValue(t, 904)
+	idempotencyID := authorityPublicIDValue(t, 904)
+	aggregateID := authorityPublicIDValue(t, 905)
 	projectionCount := 1
 	if command.Operation() == OperationCreateGroup {
 		projectionCount += len(command.Group().Members())
 	}
 	projections := make([]publicid.ID, projectionCount)
 	for index := range projections {
-		projections[index] = authorityPublicIDValue(t, 905+index)
+		projections[index] = authorityPublicIDValue(t, 906+index)
 	}
 	var resourceID resource.ID
 	var groupID resource.GroupID
@@ -342,11 +379,44 @@ func authorityMutationIDsFixture(t *testing.T, command Command) MutationIDs {
 	} else {
 		groupID = resource.GroupID(aggregateID)
 	}
-	ids, err := NewMutationIDs(changeID, auditID, outboxID, resourceID, groupID, projections)
+	ids, err := NewMutationIDs(
+		changeID, auditID, outboxID, idempotencyID, resourceID, groupID, projections,
+	)
 	if err != nil {
 		t.Fatalf("NewMutationIDs() error = %v", err)
 	}
 	return ids
+}
+
+func authorityResolutionFixture(
+	t *testing.T,
+	command Command,
+	ids MutationIDs,
+	networkRevision, inventoryRevision, groupRevision int64,
+) Resolution {
+	t.Helper()
+	requestHash, err := command.RequestHash()
+	if err != nil {
+		t.Fatalf("Command.RequestHash() error = %v", err)
+	}
+	resolution, err := NewResolution(
+		command.Scope(), networkRevision, inventoryRevision, groupRevision,
+		ids.IdempotencyRecordID(), requestHash,
+	)
+	if err != nil {
+		t.Fatalf("NewResolution() error = %v", err)
+	}
+	return resolution
+}
+
+func authorityIdempotencyProofFixture(t *testing.T) idempotency.Proof {
+	t.Helper()
+	digest := [32]byte{31: 1}
+	proof, err := idempotency.NewProof("phase2-test-v1", digest)
+	if err != nil {
+		t.Fatalf("idempotency.NewProof() error = %v", err)
+	}
+	return proof
 }
 
 func authoritySessionFixture(

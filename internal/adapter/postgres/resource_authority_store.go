@@ -131,7 +131,7 @@ func (store *ResourceAuthorityStore) ResolveCommitted(
 		!ids.IsValidFor(command) || !validResourceAuthorityOptions(store.options) {
 		return authority.Result{}, false, ErrInvalidResourceAuthorityStore
 	}
-	transaction, err := store.database.Begin(ctx, true)
+	transaction, err := store.database.Begin(ctx, false)
 	if err != nil {
 		return authority.Result{}, false, errors.Join(
 			ErrResolveCommittedResourceAuthority,
@@ -147,7 +147,47 @@ func (store *ResourceAuthorityStore) ResolveCommitted(
 	if err := store.configureAndScope(ctx, transaction, command.Scope()); err != nil {
 		return authority.Result{}, false, errors.Join(ErrResolveCommittedResourceAuthority, err)
 	}
-	result, found, err := resolveCommittedResourceAuthority(ctx, transaction, command, ids)
+	evaluatedAt := time.Now().UTC()
+	authorizationTransaction := resourceAuthorityTransaction{
+		database: transaction,
+		scope:    command.Scope(),
+	}
+	if _, err := authorizationTransaction.resolveAuthorization(ctx, command, evaluatedAt); err != nil {
+		return authority.Result{}, false, errors.Join(
+			ErrResolveCommittedResourceAuthority,
+			classifyResourceAuthorityDatabaseError(ctx, err),
+		)
+	}
+	proof := command.IdempotencyEvidence()
+	digest := proof.Digest()
+	record, err := scanResourceAuthorityIdempotencyRecord(
+		transaction.QueryRow(
+			ctx,
+			loadResourceAuthorityIdempotencySQL,
+			command.AccountSession().PrincipalID().String(),
+			resourceAuthorityOperation(command),
+			proof.DigestKeyID(),
+			digest[:],
+		),
+		false,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err := transaction.Commit(ctx); err != nil {
+			return authority.Result{}, false, errors.Join(
+				ErrResolveCommittedResourceAuthority,
+				classifyResourceAuthorityCommitError(ctx, err),
+			)
+		}
+		closed = true
+		return authority.Result{}, false, nil
+	}
+	if err != nil {
+		return authority.Result{}, false, errors.Join(
+			ErrResolveCommittedResourceAuthority,
+			classifyResourceAuthorityDatabaseError(ctx, err),
+		)
+	}
+	result, found, err := resourceAuthorityCommittedRecord(record, command, evaluatedAt)
 	if err != nil {
 		return authority.Result{}, false, errors.Join(ErrResolveCommittedResourceAuthority, err)
 	}
@@ -161,6 +201,7 @@ func (store *ResourceAuthorityStore) ResolveCommitted(
 	return result, found, nil
 }
 
+//nolint:unused // Retained as a compatibility verifier for pre-M2 aggregate replay evidence.
 func resolveCommittedResourceAuthority(
 	ctx context.Context,
 	transaction resourceAuthorityDatabaseTransaction,
@@ -233,12 +274,14 @@ func resolveCommittedResourceAuthority(
 	return result, true, nil
 }
 
+//nolint:unused // Retained with the compatibility aggregate replay verifier.
 type resolvedResourceGroupMember struct {
 	ResourcePublicID string `json:"resource_public_id"`
 	ResourceVersion  int64  `json:"resource_version"`
 	TargetGeneration int64  `json:"target_generation"`
 }
 
+//nolint:unused // Retained with the compatibility aggregate replay verifier.
 func resourceGroupMembersMatch(encoded []byte, expected []resource.Reference) bool {
 	var actual []resolvedResourceGroupMember
 	if len(encoded) == 0 || json.Unmarshal(encoded, &actual) != nil || len(actual) != len(expected) {

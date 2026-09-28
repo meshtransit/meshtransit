@@ -80,7 +80,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		return nil, ErrInvalidManagementProfile
 	}
 	paths, err := managementObject(document["paths"])
-	if err != nil || len(paths) != 2 {
+	if err != nil || len(paths) != 6 {
 		return nil, ErrInvalidManagementProfile
 	}
 	if len(fragment) == 0 || len(fragment) > maximumManagementDocumentBytes {
@@ -101,6 +101,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	if err != nil || !managementBearerScheme(components["securitySchemes"]) {
 		return nil, ErrInvalidManagementProfile
 	}
+	consolePaths := make(map[string]json.RawMessage, 4)
 	for path, operationID := range map[string]string{
 		deviceRevokePath: "revokeDevice", policyPublishPath: "publishPolicy",
 	} {
@@ -108,7 +109,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		if err != nil {
 			return nil, ErrInvalidManagementProfile
 		}
-		paths[path] = operation
+		consolePaths[path] = operation
 	}
 	for section, additions := range map[string]map[string]json.RawMessage{
 		"parameters": profile.Parameters, "schemas": profile.Schemas,
@@ -132,9 +133,9 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	if err != nil {
 		return nil, ErrInvalidManagementProfile
 	}
-	paths[consoleSessionPreparePath] = profile.Prepare
-	paths[consoleSessionLogoutPath] = profile.Logout
-	document["paths"], err = json.Marshal(paths)
+	consolePaths[consoleSessionPreparePath] = profile.Prepare
+	consolePaths[consoleSessionLogoutPath] = profile.Logout
+	document["paths"], err = json.Marshal(consolePaths)
 	if err != nil {
 		return nil, ErrInvalidManagementProfile
 	}

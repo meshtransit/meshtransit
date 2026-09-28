@@ -14,7 +14,7 @@ type Transactions interface {
 
 // Transaction is one short mutation unit. The application owns completion.
 type Transaction interface {
-	Resolve(context.Context, Command, time.Time) (Resolution, error)
+	Resolve(context.Context, Command, MutationIDs, time.Time, time.Time) (Resolution, error)
 	Apply(context.Context, Change) (Result, error)
 	Commit(context.Context) error
 	Rollback(context.Context) error

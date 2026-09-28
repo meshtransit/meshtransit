@@ -1,6 +1,7 @@
 # Phase 2 M1 Resource authority design
 
-Status: implemented engineering slice, pending the Phase 2 M2 API contract.
+Status: implemented engineering foundation; the Phase 2 M2 API contract is now
+implemented and qualified separately.
 
 Date: 2026-09-28
 
@@ -127,6 +128,6 @@ authority decision and remains non-authoritative.
 
 This milestone is an engineering foundation, not a production or GA gate. It
 does not qualify multi-node, multi-AZ, or multi-region availability; PostgreSQL
-or Redis failover; Resource management API compatibility; Console UX; Access
-Graph evaluation; connector ingestion; or policy enforcement derived from
-Resource Groups.
+or Redis failover; Console UX; Access Graph evaluation; connector ingestion; or
+policy enforcement derived from Resource Groups. Resource management API
+compatibility is covered by the separate M2 design and acceptance matrix.

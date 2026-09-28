@@ -9,6 +9,7 @@ import (
 
 type resourceAuthorityDatabase interface {
 	Begin(context.Context, bool) (resourceAuthorityDatabaseTransaction, error)
+	BeginRepeatableRead(context.Context) (resourceAuthorityDatabaseTransaction, error)
 }
 
 type resourceAuthorityDatabaseTransaction interface {
@@ -32,6 +33,18 @@ func (database pgxResourceAuthorityDatabase) Begin(
 	}
 	transaction, err := database.pool.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel: pgx.ReadCommitted, AccessMode: accessMode,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return pgxResourceAuthorityTransaction{transaction: transaction}, nil
+}
+
+func (database pgxResourceAuthorityDatabase) BeginRepeatableRead(
+	ctx context.Context,
+) (resourceAuthorityDatabaseTransaction, error) {
+	transaction, err := database.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadWrite,
 	})
 	if err != nil {
 		return nil, err

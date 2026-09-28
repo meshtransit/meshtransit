@@ -3,17 +3,24 @@
 package authority
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/meshtransit/meshtransit/internal/idempotency"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
+	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/resource"
 )
 
-const maximumAuditReasonBytes = 512
+const (
+	maximumAuditReasonBytes = 512
+	requestHashDomain       = "meshtransit/resource-authority-request/v1\x00"
+)
 
 var (
 	// ErrInvalidAuditReason reports an absent, malformed, or excessive reason.
@@ -30,6 +37,10 @@ var (
 	ErrConflict = errors.New("resource authority: stale revision")
 	// ErrForbidden hides which session or permission check failed.
 	ErrForbidden = errors.New("resource authority: forbidden")
+	// ErrIntentConflict reports idempotency-key reuse with different semantics.
+	ErrIntentConflict = errors.New("resource authority: idempotency conflict")
+	// ErrIdempotencyExpired reports replay evidence outside its bounded window.
+	ErrIdempotencyExpired = errors.New("resource authority: idempotency window expired")
 )
 
 // Operation identifies the authoritative aggregate being created.
@@ -73,6 +84,7 @@ type Command struct {
 	expectedSubsystemRevision int64
 	accountSession            accountsession.Session
 	auditReason               AuditReason
+	idempotencyEvidence       idempotency.Proof
 }
 
 // NewCreateDeviceCommand validates a Device Resource creation request.
@@ -81,11 +93,13 @@ func NewCreateDeviceCommand(
 	expectedInventoryRevision int64,
 	session accountsession.Session,
 	reason AuditReason,
+	evidence idempotency.Proof,
 ) (Command, error) {
 	command := Command{
 		operation: OperationCreateDevice, device: definition,
 		expectedSubsystemRevision: expectedInventoryRevision,
 		accountSession:            session, auditReason: reason,
+		idempotencyEvidence: evidence,
 	}
 	if !command.IsValid() {
 		return Command{}, ErrInvalidCommand
@@ -99,11 +113,13 @@ func NewCreateGroupCommand(
 	expectedGroupRevision int64,
 	session accountsession.Session,
 	reason AuditReason,
+	evidence idempotency.Proof,
 ) (Command, error) {
 	command := Command{
 		operation: OperationCreateGroup, group: definition,
 		expectedSubsystemRevision: expectedGroupRevision,
 		accountSession:            session, auditReason: reason,
+		idempotencyEvidence: evidence,
 	}
 	if !command.IsValid() {
 		return Command{}, ErrInvalidCommand
@@ -139,6 +155,11 @@ func (command Command) AccountSession() accountsession.Session { return command.
 // AuditReason returns the explicit mutation explanation.
 func (command Command) AuditReason() AuditReason { return command.auditReason }
 
+// IdempotencyEvidence returns secret-safe replay evidence.
+func (command Command) IdempotencyEvidence() idempotency.Proof {
+	return command.idempotencyEvidence
+}
+
 // SemanticHash returns canonical aggregate semantics.
 func (command Command) SemanticHash() resource.SemanticHash {
 	if command.operation == OperationCreateDevice {
@@ -147,10 +168,51 @@ func (command Command) SemanticHash() resource.SemanticHash {
 	return command.group.SemanticHash()
 }
 
+// RequestHash binds one idempotency key to exact command semantics.
+func (command Command) RequestHash() (RequestHash, error) {
+	if !command.IsValid() {
+		return RequestHash{}, ErrInvalidCommand
+	}
+	material := make([]byte, 0, len(requestHashDomain)+256)
+	material = append(material, requestHashDomain...)
+	material = append(material, byte(command.operation))
+	for _, value := range [...]string{
+		command.Scope().WorkspaceID().String(),
+		command.Scope().NetworkID().String(),
+		command.accountSession.ID().String(),
+		command.accountSession.PrincipalID().String(),
+		command.auditReason.String(),
+	} {
+		material = appendAuthorityText(material, value)
+	}
+	semanticHash := command.SemanticHash().Bytes()
+	material = append(material, semanticHash[:]...)
+	material = appendAuthorityInt64(material, command.expectedSubsystemRevision)
+	return NewRequestHash(sha256.Sum256(material))
+}
+
+// RequestHash is deterministic idempotency evidence for one creation command.
+type RequestHash [sha256.Size]byte
+
+// NewRequestHash validates a non-zero request semantic hash.
+func NewRequestHash(value [sha256.Size]byte) (RequestHash, error) {
+	hash := RequestHash(value)
+	if !hash.IsValid() {
+		return RequestHash{}, ErrInvalidCommand
+	}
+	return hash, nil
+}
+
+// Bytes returns a defensive copy of the hash.
+func (hash RequestHash) Bytes() [sha256.Size]byte { return [sha256.Size]byte(hash) }
+
+// IsValid reports whether hash evidence is present.
+func (hash RequestHash) IsValid() bool { return hash != RequestHash{} }
+
 // IsValid reports whether exactly one creator-owned definition is selected.
 func (command Command) IsValid() bool {
 	if command.expectedSubsystemRevision <= 0 || !command.accountSession.IsValid() ||
-		!command.auditReason.IsValid() {
+		!command.auditReason.IsValid() || !command.idempotencyEvidence.IsValid() {
 		return false
 	}
 	switch command.operation {
@@ -169,20 +231,42 @@ func (command Command) IsValid() bool {
 
 // Resolution is Network revision authority observed under transaction locks.
 type Resolution struct {
-	scope             network.Scope
-	networkRevision   int64
-	inventoryRevision int64
-	groupRevision     int64
+	scope               network.Scope
+	networkRevision     int64
+	inventoryRevision   int64
+	groupRevision       int64
+	idempotencyRecordID publicid.ID
+	requestHash         RequestHash
+	completed           Result
 }
 
 // NewResolution validates locked revision evidence.
 func NewResolution(
 	scope network.Scope,
 	networkRevision, inventoryRevision, groupRevision int64,
+	idempotencyRecordID publicid.ID,
+	requestHash RequestHash,
 ) (Resolution, error) {
 	resolution := Resolution{
 		scope: scope, networkRevision: networkRevision,
 		inventoryRevision: inventoryRevision, groupRevision: groupRevision,
+		idempotencyRecordID: idempotencyRecordID, requestHash: requestHash,
+	}
+	if !resolution.IsValid() {
+		return Resolution{}, ErrInvalidResolution
+	}
+	return resolution, nil
+}
+
+// NewCompletedResolution validates an immutable replay result.
+func NewCompletedResolution(
+	result Result,
+	idempotencyRecordID publicid.ID,
+	requestHash RequestHash,
+) (Resolution, error) {
+	resolution := Resolution{
+		scope: result.Scope(), idempotencyRecordID: idempotencyRecordID,
+		requestHash: requestHash, completed: result,
 	}
 	if !resolution.IsValid() {
 		return Resolution{}, ErrInvalidResolution
@@ -202,9 +286,31 @@ func (resolution Resolution) InventoryRevision() int64 { return resolution.inven
 // GroupRevision returns Resource Group authority.
 func (resolution Resolution) GroupRevision() int64 { return resolution.groupRevision }
 
+// IdempotencyRecordID returns durable replay identity.
+func (resolution Resolution) IdempotencyRecordID() publicid.ID {
+	return resolution.idempotencyRecordID
+}
+
+// RequestHash returns exact idempotent request semantics.
+func (resolution Resolution) RequestHash() RequestHash { return resolution.requestHash }
+
+// CompletedResult returns replayed committed evidence, if present.
+func (resolution Resolution) CompletedResult() Result { return resolution.completed }
+
+// IsCompleted reports whether this resolution is an immutable replay.
+func (resolution Resolution) IsCompleted() bool { return resolution.completed.IsValid() }
+
 // IsValid reports whether all monotonic revisions are present and coherent.
 func (resolution Resolution) IsValid() bool {
-	return resolution.scope.IsValid() && resolution.networkRevision > 0 &&
+	if !resolution.scope.IsValid() || !resolution.idempotencyRecordID.IsValid() ||
+		!resolution.requestHash.IsValid() {
+		return false
+	}
+	if resolution.completed.IsValid() {
+		return resolution.completed.Scope() == resolution.scope && resolution.networkRevision == 0 &&
+			resolution.inventoryRevision == 0 && resolution.groupRevision == 0
+	}
+	return resolution.networkRevision > 0 &&
 		resolution.inventoryRevision > 0 && resolution.groupRevision > 0 &&
 		resolution.networkRevision >= resolution.inventoryRevision &&
 		resolution.networkRevision >= resolution.groupRevision
@@ -216,6 +322,7 @@ type Change struct {
 	resolution  Resolution
 	mutationIDs MutationIDs
 	occurredAt  time.Time
+	expiresAt   time.Time
 }
 
 // NewChange validates the CAS decision, stable IDs, and decision time.
@@ -224,10 +331,11 @@ func NewChange(
 	resolution Resolution,
 	mutationIDs MutationIDs,
 	occurredAt time.Time,
+	expiresAt time.Time,
 ) (Change, error) {
 	change := Change{
 		command: command, resolution: resolution,
-		mutationIDs: mutationIDs, occurredAt: occurredAt.UTC(),
+		mutationIDs: mutationIDs, occurredAt: occurredAt.UTC(), expiresAt: expiresAt.UTC(),
 	}
 	if !change.IsValid() {
 		return Change{}, ErrInvalidChange
@@ -247,12 +355,29 @@ func (change Change) MutationIDs() MutationIDs { return change.mutationIDs }
 // OccurredAt returns one stable decision time shared across retries.
 func (change Change) OccurredAt() time.Time { return change.occurredAt }
 
+// ExpiresAt returns the exclusive durable replay-window bound.
+func (change Change) ExpiresAt() time.Time { return change.expiresAt }
+
 // IsValid reports whether all atomic facts agree.
 func (change Change) IsValid() bool {
 	return change.command.IsValid() && change.resolution.IsValid() &&
 		change.mutationIDs.IsValidFor(change.command) &&
-		change.command.Scope() == change.resolution.Scope() &&
-		!change.occurredAt.IsZero()
+		change.command.Scope() == change.resolution.Scope() && !change.resolution.IsCompleted() &&
+		!change.occurredAt.IsZero() && change.expiresAt.After(change.occurredAt)
+}
+
+func appendAuthorityText(output []byte, value string) []byte {
+	var encoded [8]byte
+	binary.BigEndian.PutUint64(encoded[:], uint64(len(value)))
+	output = append(output, encoded[:]...)
+	return append(output, value...)
+}
+
+func appendAuthorityInt64(output []byte, value int64) []byte {
+	var encoded [8]byte
+	// #nosec G115 -- command validation requires this revision to be positive.
+	binary.BigEndian.PutUint64(encoded[:], uint64(value))
+	return append(output, encoded[:]...)
 }
 
 // Result is safe committed Resource or Resource Group authority evidence.

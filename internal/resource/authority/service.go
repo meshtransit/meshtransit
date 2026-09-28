@@ -11,8 +11,10 @@ import (
 )
 
 const (
-	maximumAttempts   = 5
-	maximumRetryDelay = time.Minute
+	maximumAttempts          = 5
+	maximumRetryDelay        = time.Minute
+	minimumIdempotencyWindow = time.Minute
+	maximumIdempotencyWindow = 24 * time.Hour
 )
 
 var (
@@ -34,8 +36,9 @@ var (
 
 // Options bounds whole-transaction retry and cleanup behavior.
 type Options struct {
-	MaxAttempts     int
-	RollbackTimeout time.Duration
+	MaxAttempts       int
+	RollbackTimeout   time.Duration
+	IdempotencyWindow time.Duration
 }
 
 // Service owns the Resource authority transaction boundary and retry protocol.
@@ -53,7 +56,9 @@ func NewService(options Options, dependencies Dependencies) (*Service, error) {
 	if dependencies.Transactions == nil || dependencies.CommittedResults == nil ||
 		dependencies.MutationIDs == nil || dependencies.Clock == nil || dependencies.Retry == nil ||
 		options.MaxAttempts <= 0 || options.MaxAttempts > maximumAttempts ||
-		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second {
+		options.RollbackTimeout <= 0 || options.RollbackTimeout > 5*time.Second ||
+		options.IdempotencyWindow < minimumIdempotencyWindow ||
+		options.IdempotencyWindow > maximumIdempotencyWindow {
 		return nil, ErrInvalidService
 	}
 	return &Service{
@@ -77,13 +82,17 @@ func (service *Service) Create(ctx context.Context, command Command) (Result, er
 	if now.IsZero() {
 		return Result{}, ErrInvalidService
 	}
+	expiresAt := now.Add(service.options.IdempotencyWindow)
+	if !expiresAt.After(now) {
+		return Result{}, ErrInvalidService
+	}
 	mutationIDs, err := service.mutationIDs.NewMutationIDs(command)
 	if err != nil || !mutationIDs.IsValidFor(command) {
 		return Result{}, errors.Join(ErrMutationFailed, ErrInvalidMutationIDs, err)
 	}
 	var lastErr error
 	for attempt := 1; attempt <= service.options.MaxAttempts; attempt++ {
-		result, attemptErr := service.attempt(ctx, command, mutationIDs, now)
+		result, attemptErr := service.attempt(ctx, command, mutationIDs, now, expiresAt)
 		if attemptErr == nil {
 			return result, nil
 		}
@@ -117,6 +126,7 @@ func (service *Service) attempt(
 	command Command,
 	mutationIDs MutationIDs,
 	now time.Time,
+	expiresAt time.Time,
 ) (result Result, resultErr error) {
 	transaction, err := service.transactions.Begin(ctx, command.Scope())
 	if err != nil || transaction == nil {
@@ -143,14 +153,29 @@ func (service *Service) attempt(
 			}
 		}
 	}()
-	resolution, err := transaction.Resolve(ctx, command, now)
+	resolution, err := transaction.Resolve(ctx, command, mutationIDs, now, expiresAt)
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve resource authority under lock: %w", err)
 	}
 	if err := validateResolution(command, resolution); err != nil {
 		return Result{}, err
 	}
-	change, err := NewChange(command, resolution, mutationIDs, now)
+	if resolution.IsCompleted() {
+		replayed := resolution.CompletedResult()
+		if !resultMatchesCommand(replayed, command) {
+			return Result{}, ErrInvalidResult
+		}
+		rollbackCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx), service.options.RollbackTimeout,
+		)
+		defer cancel()
+		if err := transaction.Rollback(rollbackCtx); err != nil {
+			return Result{}, errors.Join(ErrRollbackFailed, err)
+		}
+		finished = true
+		return replayed, nil
+	}
+	change, err := NewChange(command, resolution, mutationIDs, now, expiresAt)
 	if err != nil {
 		return Result{}, err
 	}
@@ -172,6 +197,9 @@ func validateResolution(command Command, resolution Resolution) error {
 	if !resolution.IsValid() || resolution.Scope() != command.Scope() {
 		return ErrInvalidResolution
 	}
+	if resolution.IsCompleted() {
+		return nil
+	}
 	current := resolution.InventoryRevision()
 	if command.Operation() == OperationCreateGroup {
 		current = resolution.GroupRevision()
@@ -183,14 +211,18 @@ func validateResolution(command Command, resolution Resolution) error {
 }
 
 func resultMatches(result Result, command Command, ids MutationIDs) bool {
-	if !result.IsValid() || result.Operation() != command.Operation() ||
-		result.Scope() != command.Scope() || result.SemanticHash() != command.SemanticHash() {
+	if !resultMatchesCommand(result, command) {
 		return false
 	}
 	if command.Operation() == OperationCreateDevice {
 		return result.ResourceID() == ids.ResourceID()
 	}
 	return result.GroupID() == ids.GroupID()
+}
+
+func resultMatchesCommand(result Result, command Command) bool {
+	return result.IsValid() && result.Operation() == command.Operation() &&
+		result.Scope() == command.Scope() && result.SemanticHash() == command.SemanticHash()
 }
 
 func resultMatchesChange(result Result, change Change) bool {

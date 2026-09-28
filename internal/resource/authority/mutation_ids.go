@@ -14,24 +14,26 @@ var ErrInvalidMutationIDs = errors.New("resource authority: invalid mutation IDs
 
 // MutationIDs names every row written by one authority mutation.
 type MutationIDs struct {
-	changeID      publicid.ID
-	auditEventID  publicid.ID
-	outboxEventID publicid.ID
-	resourceID    resource.ID
-	groupID       resource.GroupID
-	projectionIDs []publicid.ID
+	changeID            publicid.ID
+	auditEventID        publicid.ID
+	outboxEventID       publicid.ID
+	idempotencyRecordID publicid.ID
+	resourceID          resource.ID
+	groupID             resource.GroupID
+	projectionIDs       []publicid.ID
 }
 
 // NewMutationIDs validates and owns one operation-specific identity set.
 func NewMutationIDs(
-	changeID, auditEventID, outboxEventID publicid.ID,
+	changeID, auditEventID, outboxEventID, idempotencyRecordID publicid.ID,
 	resourceID resource.ID,
 	groupID resource.GroupID,
 	projectionIDs []publicid.ID,
 ) (MutationIDs, error) {
 	ids := MutationIDs{
 		changeID: changeID, auditEventID: auditEventID, outboxEventID: outboxEventID,
-		resourceID: resourceID, groupID: groupID,
+		idempotencyRecordID: idempotencyRecordID,
+		resourceID:          resourceID, groupID: groupID,
 		projectionIDs: slices.Clone(projectionIDs),
 	}
 	if !ids.baseValid() {
@@ -48,6 +50,9 @@ func (ids MutationIDs) AuditEventID() publicid.ID { return ids.auditEventID }
 
 // OutboxEventID returns durable outbox identity.
 func (ids MutationIDs) OutboxEventID() publicid.ID { return ids.outboxEventID }
+
+// IdempotencyRecordID returns durable replay identity.
+func (ids MutationIDs) IdempotencyRecordID() publicid.ID { return ids.idempotencyRecordID }
 
 // ResourceID returns the aggregate Resource identity when selected.
 func (ids MutationIDs) ResourceID() resource.ID { return ids.resourceID }
@@ -75,15 +80,15 @@ func (ids MutationIDs) IsValidFor(command Command) bool {
 }
 
 func (ids MutationIDs) baseValid() bool {
-	seen := make(map[publicid.ID]struct{}, len(ids.projectionIDs)+4)
-	base := []publicid.ID{ids.changeID, ids.auditEventID, ids.outboxEventID}
+	seen := make(map[publicid.ID]struct{}, len(ids.projectionIDs)+5)
+	base := []publicid.ID{ids.changeID, ids.auditEventID, ids.outboxEventID, ids.idempotencyRecordID}
 	if ids.resourceID.IsValid() {
 		base = append(base, publicid.ID(ids.resourceID))
 	}
 	if ids.groupID.IsValid() {
 		base = append(base, publicid.ID(ids.groupID))
 	}
-	if len(base) != 4 {
+	if len(base) != 5 {
 		return false
 	}
 	for _, id := range append(base, ids.projectionIDs...) {
@@ -110,7 +115,7 @@ func (PublicMutationIDGenerator) NewMutationIDs(command Command) (MutationIDs, e
 	if command.Operation() == OperationCreateGroup {
 		projectionCount += len(command.Group().Members())
 	}
-	generated := make([]publicid.ID, projectionCount+4)
+	generated := make([]publicid.ID, projectionCount+5)
 	for index := range generated {
 		id, err := publicid.New()
 		if err != nil {
@@ -121,11 +126,12 @@ func (PublicMutationIDGenerator) NewMutationIDs(command Command) (MutationIDs, e
 	var resourceID resource.ID
 	var groupID resource.GroupID
 	if command.Operation() == OperationCreateDevice {
-		resourceID = resource.ID(generated[3])
+		resourceID = resource.ID(generated[4])
 	} else {
-		groupID = resource.GroupID(generated[3])
+		groupID = resource.GroupID(generated[4])
 	}
 	return NewMutationIDs(
-		generated[0], generated[1], generated[2], resourceID, groupID, generated[4:],
+		generated[0], generated[1], generated[2], generated[3],
+		resourceID, groupID, generated[5:],
 	)
 }

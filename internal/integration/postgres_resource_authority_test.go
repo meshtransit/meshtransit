@@ -10,11 +10,14 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
+	"github.com/meshtransit/meshtransit/internal/idempotency"
 	"github.com/meshtransit/meshtransit/internal/identity"
+	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/resource"
 	authority "github.com/meshtransit/meshtransit/internal/resource/authority"
+	"github.com/meshtransit/meshtransit/internal/resource/catalog"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -39,7 +42,7 @@ func assertPostgreSQLResourceAuthority(
 	)
 	reason := resourceAuthorityReason(t, "create first Device Resource")
 	deviceCommand, err := authority.NewCreateDeviceCommand(
-		deviceDefinition, inventory203, session, reason,
+		deviceDefinition, inventory203, session, reason, resourceAuthorityProof(t, 1),
 	)
 	if err != nil {
 		t.Fatalf("construct Device Resource command: %v", err)
@@ -52,13 +55,17 @@ func assertPostgreSQLResourceAuthority(
 		deviceResult.SubsystemRevision() != inventory203+1 || deviceResult.Version() != 1 {
 		t.Fatalf("Device Resource result = %+v", deviceResult)
 	}
+	replayedDeviceResult, err := service.Create(ctx, deviceCommand)
+	if err != nil || replayedDeviceResult != deviceResult {
+		t.Fatalf("replay Device Resource result = %+v, error = %v", replayedDeviceResult, err)
+	}
 	assertCommittedDeviceResource(ctx, t, adminConnection, deviceCommand, deviceResult)
 
 	staleDefinition := resourceAuthorityDeviceDefinition(
 		t, scope203, actorID, resourceAuthorityNodeID(t, 910), "Stale Resource",
 	)
 	staleCommand, err := authority.NewCreateDeviceCommand(
-		staleDefinition, inventory203, session, reason,
+		staleDefinition, inventory203, session, reason, resourceAuthorityProof(t, 2),
 	)
 	if err != nil {
 		t.Fatalf("construct stale Resource command: %v", err)
@@ -77,6 +84,7 @@ func assertPostgreSQLResourceAuthority(
 	groupCommand, err := authority.NewCreateGroupCommand(
 		groupDefinition, group203, session,
 		resourceAuthorityReason(t, "create first destination Resource Group"),
+		resourceAuthorityProof(t, 3),
 	)
 	if err != nil {
 		t.Fatalf("construct Resource Group command: %v", err)
@@ -100,6 +108,7 @@ func assertPostgreSQLResourceAuthority(
 	)
 	staleGroupCommand, err := authority.NewCreateGroupCommand(
 		staleGroup, group203+1, session, resourceAuthorityReason(t, "reject stale generation"),
+		resourceAuthorityProof(t, 4),
 	)
 	if err != nil {
 		t.Fatalf("construct stale Resource Group command: %v", err)
@@ -109,6 +118,10 @@ func assertPostgreSQLResourceAuthority(
 	}
 
 	scope204 := resourceAuthorityScope(t, 103, 204)
+	assertResourceCatalogReads(
+		ctx, t, runtimePool, session, scope203, scope204,
+		deviceResult.ResourceID(), groupResult.GroupID(),
+	)
 	_, group204 := resourceAuthorityRevisions(ctx, t, adminConnection, 103, 204)
 	crossScopeReference, err := resource.NewReference(
 		scope204, deviceResult.ResourceID(), 1, 1,
@@ -121,6 +134,7 @@ func assertPostgreSQLResourceAuthority(
 	)
 	crossScopeCommand, err := authority.NewCreateGroupCommand(
 		crossScopeGroup, group204, session, resourceAuthorityReason(t, "reject cross-scope member"),
+		resourceAuthorityProof(t, 5),
 	)
 	if err != nil {
 		t.Fatalf("construct cross-scope group command: %v", err)
@@ -137,6 +151,7 @@ func assertPostgreSQLResourceAuthority(
 	unauthorizedCommand, err := authority.NewCreateDeviceCommand(
 		unauthorizedDefinition, inventory202, session,
 		resourceAuthorityReason(t, "reject missing Workspace membership"),
+		resourceAuthorityProof(t, 6),
 	)
 	if err != nil {
 		t.Fatalf("construct unauthorized Resource command: %v", err)
@@ -147,6 +162,54 @@ func assertPostgreSQLResourceAuthority(
 
 	assertResourceAuthorityEvidenceAtomicity(ctx, t, adminConnection, runtimeConnection)
 	assertResourceAuthorityPrivilegeContract(ctx, t, adminConnection, runtimeConnection, workerConnection)
+}
+
+func assertResourceCatalogReads(
+	ctx context.Context,
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+	session accountsession.Session,
+	homeScope network.Scope,
+	otherScope network.Scope,
+	resourceID resource.ID,
+	groupID resource.GroupID,
+) {
+	t.Helper()
+	store, err := postgresadapter.NewResourceCatalogStore(
+		runtimePool,
+		postgresadapter.ResourceCatalogOptions{
+			StatementTimeout: 5 * time.Second,
+			LockTimeout:      2 * time.Second,
+			IdleTimeout:      10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("postgres.NewResourceCatalogStore() error = %v", err)
+	}
+	service, err := catalog.NewService(catalog.Dependencies{
+		Transactions: store,
+		Clock:        catalog.SystemClock{},
+	})
+	if err != nil {
+		t.Fatalf("catalog.NewService() error = %v", err)
+	}
+	resourceValue, err := service.GetResource(ctx, session, homeScope, resourceID)
+	if err != nil || resourceValue.ID() != resourceID || resourceValue.State() != resource.StateActive {
+		t.Fatalf("GetResource() value = %+v, error = %v", resourceValue, err)
+	}
+	resourcePage, err := service.ListResources(
+		ctx, session, homeScope, resource.StateActive, 100, catalog.PageCursor{},
+	)
+	if err != nil || len(resourcePage.Items) == 0 || resourcePage.Revision <= 1 {
+		t.Fatalf("ListResources() page = %+v, error = %v", resourcePage, err)
+	}
+	groupValue, err := service.GetGroup(ctx, session, homeScope, groupID)
+	if err != nil || groupValue.ID() != groupID || len(groupValue.Members()) != 1 {
+		t.Fatalf("GetGroup() value = %+v, error = %v", groupValue, err)
+	}
+	if _, err := service.GetResource(ctx, session, otherScope, resourceID); !errors.Is(err, catalog.ErrNotFound) {
+		t.Fatalf("cross-scope GetResource() error = %v, want ErrNotFound", err)
+	}
 }
 
 func newIntegrationResourceAuthorityService(
@@ -170,7 +233,10 @@ func newIntegrationResourceAuthorityService(
 		t.Fatalf("authority.NewExponentialBackoff() error = %v", err)
 	}
 	service, err := authority.NewService(
-		authority.Options{MaxAttempts: 3, RollbackTimeout: 2 * time.Second},
+		authority.Options{
+			MaxAttempts: 3, RollbackTimeout: 2 * time.Second,
+			IdempotencyWindow: time.Hour,
+		},
 		authority.Dependencies{
 			Transactions: store, CommittedResults: store,
 			MutationIDs: authority.PublicMutationIDGenerator{},
@@ -181,6 +247,16 @@ func newIntegrationResourceAuthorityService(
 		t.Fatalf("authority.NewService() error = %v", err)
 	}
 	return service
+}
+
+func resourceAuthorityProof(t *testing.T, suffix byte) idempotency.Proof {
+	t.Helper()
+	digest := [32]byte{31: suffix}
+	proof, err := idempotency.NewProof("phase2-integration-v1", digest)
+	if err != nil {
+		t.Fatalf("idempotency.NewProof() error = %v", err)
+	}
+	return proof
 }
 
 func assertCommittedDeviceResource(
@@ -328,7 +404,7 @@ func assertResourceAuthorityPrivilegeContract(
 	workerConnection *pgx.Conn,
 ) {
 	t.Helper()
-	var runtimeCreate, workerCreate, runtimeTableAccess bool
+	var runtimeCreate, workerCreate, runtimeReads, workerReads, runtimeTableAccess bool
 	if err := adminConnection.QueryRow(ctx, `SELECT
     pg_catalog.has_function_privilege(
         'mesh_runtime',
@@ -340,6 +416,24 @@ func assertResourceAuthorityPrivilegeContract(
         'mesh_ops.create_device_resource_v1(uuid,uuid,bigint,uuid,uuid,text,bytea,timestamptz)',
         'EXECUTE'
     ),
+	(SELECT pg_catalog.bool_and(pg_catalog.has_function_privilege(
+		'mesh_runtime', reader.function_oid, 'EXECUTE'
+	)) FROM pg_catalog.unnest(ARRAY[
+		'mesh_ops.read_network_revision_v1()'::pg_catalog.regprocedure,
+		'mesh_ops.read_resource_v2(uuid)'::pg_catalog.regprocedure,
+		'mesh_ops.list_resources_v1(uuid,text,integer)'::pg_catalog.regprocedure,
+		'mesh_ops.read_resource_group_v2(uuid)'::pg_catalog.regprocedure,
+		'mesh_ops.list_resource_groups_v1(uuid,text,integer)'::pg_catalog.regprocedure
+	]) AS reader(function_oid)),
+	(SELECT pg_catalog.bool_or(pg_catalog.has_function_privilege(
+		'mesh_worker', reader.function_oid, 'EXECUTE'
+	)) FROM pg_catalog.unnest(ARRAY[
+		'mesh_ops.read_network_revision_v1()'::pg_catalog.regprocedure,
+		'mesh_ops.read_resource_v2(uuid)'::pg_catalog.regprocedure,
+		'mesh_ops.list_resources_v1(uuid,text,integer)'::pg_catalog.regprocedure,
+		'mesh_ops.read_resource_group_v2(uuid)'::pg_catalog.regprocedure,
+		'mesh_ops.list_resource_groups_v1(uuid,text,integer)'::pg_catalog.regprocedure
+	]) AS reader(function_oid)),
     COALESCE(pg_catalog.bool_or(
         pg_catalog.has_table_privilege('mesh_runtime', relation.oid, 'SELECT')
         OR pg_catalog.has_table_privilege('mesh_runtime', relation.oid, 'INSERT')
@@ -352,13 +446,15 @@ WHERE namespace.nspname = 'mesh'
   AND relation.relname IN (
       'resource', 'resource_device_target', 'resource_group',
       'resource_group_version', 'resource_group_version_member'
-  )`).Scan(&runtimeCreate, &workerCreate, &runtimeTableAccess); err != nil {
+	)`).Scan(
+		&runtimeCreate, &workerCreate, &runtimeReads, &workerReads, &runtimeTableAccess,
+	); err != nil {
 		t.Fatalf("query Resource authority privileges: %v", err)
 	}
-	if !runtimeCreate || workerCreate || runtimeTableAccess {
+	if !runtimeCreate || workerCreate || !runtimeReads || workerReads || runtimeTableAccess {
 		t.Fatalf(
-			"Resource privileges runtime-create=%t worker-create=%t runtime-table=%t",
-			runtimeCreate, workerCreate, runtimeTableAccess,
+			"Resource privileges runtime-create=%t worker-create=%t runtime-reads=%t worker-reads=%t runtime-table=%t",
+			runtimeCreate, workerCreate, runtimeReads, workerReads, runtimeTableAccess,
 		)
 	}
 	if err := runtimeConnection.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh.resource`).Scan(new(int64)); err == nil {

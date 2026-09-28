@@ -23,6 +23,8 @@ const (
 	integrationPolicyPermissionPublicID    = "01890f00-0000-7000-8000-000000000846"
 	integrationResourcePermissionPublicID  = "01890f00-0000-7000-8000-000000000847"
 	integrationGroupPermissionPublicID     = "01890f00-0000-7000-8000-000000000848"
+	integrationResourceReadPermissionID    = "01890f00-0000-7000-8000-000000000849"
+	integrationGroupReadPermissionID       = "01890f00-0000-7000-8000-000000000850"
 	integrationRoleBinding203PublicID      = "01890f00-0000-7000-8000-000000000844"
 	integrationRoleBinding204PublicID      = "01890f00-0000-7000-8000-000000000845"
 )
@@ -315,6 +317,26 @@ WHERE permission.permission_key = 'resource_group.manage'`,
 				arguments: []any{integrationGroupPermissionPublicID},
 			},
 			{
+				name: "Resource Read RolePermission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 849, $1::UUID, 1, 103, 842, permission.id
+FROM mesh.permission AS permission
+WHERE permission.permission_key = 'resource.read'`,
+				arguments: []any{integrationResourceReadPermissionID},
+			},
+			{
+				name: "Resource Group Read RolePermission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 850, $1::UUID, 1, 103, 842, permission.id
+FROM mesh.permission AS permission
+WHERE permission.permission_key = 'resource_group.read'`,
+				arguments: []any{integrationGroupReadPermissionID},
+			},
+			{
 				name: "Network 203 RoleBinding",
 				query: `INSERT INTO mesh.role_binding (
     id, public_id, deployment_id, workspace_id, network_id, principal_id,
@@ -434,7 +456,9 @@ func assertNetworkManagementPermissionResolution(
 		"device.transfer":       0,
 		"policy.publish":        1,
 		"resource.manage":       1,
+		"resource.read":         1,
 		"resource_group.manage": 1,
+		"resource_group.read":   1,
 	} {
 		var count int64
 		if err := transaction.QueryRow(ctx, `SELECT pg_catalog.count(*)

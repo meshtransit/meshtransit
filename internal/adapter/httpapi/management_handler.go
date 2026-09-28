@@ -23,17 +23,26 @@ import (
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
+	"github.com/meshtransit/meshtransit/internal/resource"
+	authority "github.com/meshtransit/meshtransit/internal/resource/authority"
+	"github.com/meshtransit/meshtransit/internal/resource/catalog"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 const (
-	deviceRevokeOperation      = "device_revoke"
-	policyPublishOperation     = "policy_publish"
-	unknownManagementOperation = "unknown"
-	maximumManagementBodyBytes = 4 * 1024
-	maximumManagementRequests  = 4096
-	minimumManagementTimeout   = 100 * time.Millisecond
-	maximumManagementTimeout   = 30 * time.Second
+	deviceRevokeOperation        = "device_revoke"
+	policyPublishOperation       = "policy_publish"
+	resourceCreateOperation      = "resource_create"
+	resourceGetOperation         = "resource_get"
+	resourceListOperation        = "resource_list"
+	resourceGroupCreateOperation = "resource_group_create"
+	resourceGroupGetOperation    = "resource_group_get"
+	resourceGroupListOperation   = "resource_group_list"
+	unknownManagementOperation   = "unknown"
+	maximumManagementBodyBytes   = 4 * 1024
+	maximumManagementRequests    = 4096
+	minimumManagementTimeout     = 100 * time.Millisecond
+	maximumManagementTimeout     = 30 * time.Second
 )
 
 var (
@@ -54,6 +63,19 @@ type DeviceRevoker interface {
 // PolicyPublisher atomically activates one Account-Session-bound compiled policy.
 type PolicyPublisher interface {
 	Publish(context.Context, policypublication.Command) (policypublication.Result, error)
+}
+
+// ResourceCreator atomically creates Resource and Resource Group authority.
+type ResourceCreator interface {
+	Create(context.Context, authority.Command) (authority.Result, error)
+}
+
+// ResourceCatalog reads freshly authorized Resource authority snapshots.
+type ResourceCatalog interface {
+	GetResource(context.Context, accountsession.Session, network.Scope, resource.ID) (catalog.Resource, error)
+	ListResources(context.Context, accountsession.Session, network.Scope, resource.State, int, catalog.PageCursor) (catalog.ResourcePage, error)
+	GetGroup(context.Context, accountsession.Session, network.Scope, resource.GroupID) (catalog.Group, error)
+	ListGroups(context.Context, accountsession.Session, network.Scope, resource.State, int, catalog.PageCursor) (catalog.GroupPage, error)
 }
 
 // IdempotencyProver derives durable evidence without exposing the raw request key.
@@ -81,6 +103,8 @@ type ManagementHandlerOptions struct {
 	Sessions              AccountSessionAuthenticator
 	Revocations           DeviceRevoker
 	PolicyPublications    PolicyPublisher
+	ResourceCreations     ResourceCreator
+	ResourceCatalog       ResourceCatalog
 	Idempotency           IdempotencyProver
 	RateLimitSubjects     RateLimitSubjectDigester
 	RateLimiter           ManagementRateLimiter
@@ -95,20 +119,22 @@ type ManagementHandlerOptions struct {
 
 // ManagementHandler validates public management requests before application use cases.
 type ManagementHandler struct {
-	sessions       AccountSessionAuthenticator
-	revocations    DeviceRevoker
-	policies       PolicyPublisher
-	idempotency    IdempotencyProver
-	rateSubjects   RateLimitSubjectDigester
-	rateLimiter    ManagementRateLimiter
-	clientIPs      clientIPResolver
-	sourcePolicy   ratelimit.Policy
-	sessionPolicy  ratelimit.Policy
-	correlationIDs PublicIDGenerator
-	logger         *slog.Logger
-	timeout        time.Duration
-	slots          chan struct{}
-	telemetry      *ManagementTelemetry
+	sessions          AccountSessionAuthenticator
+	revocations       DeviceRevoker
+	policies          PolicyPublisher
+	resourceCreations ResourceCreator
+	resourceCatalog   ResourceCatalog
+	idempotency       IdempotencyProver
+	rateSubjects      RateLimitSubjectDigester
+	rateLimiter       ManagementRateLimiter
+	clientIPs         clientIPResolver
+	sourcePolicy      ratelimit.Policy
+	sessionPolicy     ratelimit.Policy
+	correlationIDs    PublicIDGenerator
+	logger            *slog.Logger
+	timeout           time.Duration
+	slots             chan struct{}
+	telemetry         *ManagementTelemetry
 }
 
 // NewManagementHandler constructs a bounded, fail-closed management API handler.
@@ -133,20 +159,22 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		return nil, errors.Join(ErrInvalidManagementHandler, err)
 	}
 	return &ManagementHandler{
-		sessions:       options.Sessions,
-		revocations:    options.Revocations,
-		policies:       options.PolicyPublications,
-		idempotency:    options.Idempotency,
-		rateSubjects:   options.RateLimitSubjects,
-		rateLimiter:    options.RateLimiter,
-		clientIPs:      clientIPs,
-		sourcePolicy:   options.SourceRateLimit,
-		sessionPolicy:  options.SessionRateLimit,
-		correlationIDs: options.CorrelationIDs,
-		logger:         options.Logger,
-		timeout:        options.RequestTimeout,
-		slots:          make(chan struct{}, options.MaxConcurrentRequests),
-		telemetry:      telemetry,
+		sessions:          options.Sessions,
+		revocations:       options.Revocations,
+		policies:          options.PolicyPublications,
+		resourceCreations: options.ResourceCreations,
+		resourceCatalog:   options.ResourceCatalog,
+		idempotency:       options.Idempotency,
+		rateSubjects:      options.RateLimitSubjects,
+		rateLimiter:       options.RateLimiter,
+		clientIPs:         clientIPs,
+		sourcePolicy:      options.SourceRateLimit,
+		sessionPolicy:     options.SessionRateLimit,
+		correlationIDs:    options.CorrelationIDs,
+		logger:            options.Logger,
+		timeout:           options.RequestTimeout,
+		slots:             make(chan struct{}, options.MaxConcurrentRequests),
+		telemetry:         telemetry,
 	}, nil
 }
 
@@ -212,7 +240,8 @@ func (handler *ManagementHandler) serveHTTP(
 
 	devicePath, deviceMatched := parseDeviceRevokePath(request)
 	policyPath, policyMatched := parsePolicyPublishPath(request)
-	if !deviceMatched && !policyMatched {
+	resourcePath, resourceMatched := parseResourceManagementPath(request)
+	if !deviceMatched && !policyMatched && !resourceMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -222,11 +251,21 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if deviceMatched {
 		operation = deviceRevokeOperation
-	} else {
+	} else if policyMatched {
 		operation = policyPublishOperation
+	} else {
+		operation = resourcePath.operation(request.Method)
 	}
-	if request.Method != http.MethodPost {
-		response.Header().Set("Allow", http.MethodPost)
+	allowedMethod := http.MethodPost
+	if resourceMatched {
+		allowedMethod = resourcePath.allowedMethod(request.Method)
+	}
+	if allowedMethod == "" || request.Method != allowedMethod {
+		if resourceMatched && resourcePath.isCollection() {
+			response.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
+		} else {
+			response.Header().Set("Allow", allowedMethodOrGet(resourceMatched, allowedMethod))
+		}
 		resultCode = "method_not_allowed"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusMethodNotAllowed, Code: resultCode,
@@ -276,6 +315,20 @@ func (handler *ManagementHandler) serveHTTP(
 			response: response, request: request, correlationID: correlationID,
 			path: policyPath, session: session, browser: browser,
 		})
+		return
+	}
+	if resourceMatched {
+		if browser != nil {
+			resultCode = "not_found"
+			writeManagementError(ctx, handler.logger, response, correlationID, managementError{
+				Status: http.StatusNotFound, Code: resultCode,
+				Message: "the requested resource is unavailable",
+			})
+			return
+		}
+		resultCode = handler.handleResourceManagement(
+			ctx, response, request, correlationID, resourcePath, session,
+		)
 		return
 	}
 	command, commandErr := handler.decodeDeviceRevokeCommand(response, request, devicePath, session)
@@ -490,7 +543,7 @@ func parseIfMatch(values []string) (int64, *managementError) {
 	if len(values) == 0 {
 		return 0, &managementError{
 			Status: http.StatusPreconditionRequired, Code: "precondition_required",
-			Message: "a strong Device version precondition is required",
+			Message: "a strong version precondition is required",
 		}
 	}
 	if len(values) != 1 || len(values[0]) < 3 || values[0][0] != '"' ||

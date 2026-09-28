@@ -41,8 +41,9 @@ claim.
 
 ## Next order
 
-1. M2: read/list and mutation API contracts with ETags, idempotency, rate limits,
-   pagination, and resource-safe error shapes.
+1. M2: read/list and create API contracts with ETags, idempotency, rate limits,
+   pagination, and resource-safe error shapes. Completed in the separate M2
+   acceptance matrix.
 2. M3: Resource lifecycle, target rebinding, immutable Resource Group replacement,
    and ownership/custodianship workflows.
 3. M4: Access Graph references and explain/simulate/verify semantics.

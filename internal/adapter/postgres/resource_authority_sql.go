@@ -24,6 +24,34 @@ FROM mesh_ops.resolve_network_permission_v1(
 )
 LIMIT 1`
 
+const claimResourceAuthorityIdempotencySQL = `SELECT
+    record_public_id::TEXT,
+    stored_request_semantic_hash,
+    record_state,
+    COALESCE(result_kind, ''),
+    COALESCE(result_public_id::TEXT, ''),
+    COALESCE(result_version, 0),
+    COALESCE(result_network_revision, 0),
+    COALESCE(result_payload, '{}'::JSONB)::TEXT,
+    record_expires_at,
+    created
+FROM mesh_ops.claim_network_idempotency(
+    $1::UUID, $2::UUID, $3::TEXT, $4::TEXT, $5::BYTEA, $6::BYTEA,
+    $7::TIMESTAMPTZ, $8::TIMESTAMPTZ
+)`
+
+const loadResourceAuthorityIdempotencySQL = `SELECT
+    record_public_id::TEXT,
+    stored_request_semantic_hash,
+    record_state,
+    COALESCE(result_kind, ''),
+    COALESCE(result_public_id::TEXT, ''),
+    COALESCE(result_version, 0),
+    COALESCE(result_network_revision, 0),
+    COALESCE(result_payload, '{}'::JSONB)::TEXT,
+    record_expires_at
+FROM mesh_ops.load_network_idempotency($1::UUID, $2::TEXT, $3::TEXT, $4::BYTEA)`
+
 const lockResourceAuthorityRevisionSQL = `SELECT * FROM mesh_ops.lock_network_revision()`
 
 const lockResourceAuthorityAuditStreamSQL = `SELECT stream_internal_id, next_sequence, latest_event_hash
@@ -54,8 +82,17 @@ const appendResourceAuthorityEvidenceSQL = `SELECT mesh_audit.append_authority_e
     $17::JSONB, $18::TEXT, $19::JSONB
 )`
 
+const completeResourceAuthorityIdempotencySQL = `SELECT
+    mesh_ops.complete_network_idempotency(
+        $1::UUID, $2::UUID, $3::TEXT, $4::TEXT, $5::BYTEA, $6::BYTEA,
+        $7::TEXT, $8::UUID, $9::BIGINT, $10::BIGINT, $11::JSONB,
+        $12::UUID, $13::TIMESTAMPTZ
+    )::TEXT`
+
+//nolint:unused // Retained for compatibility with the M1 stable-aggregate resolver.
 const resolveCommittedDeviceResourceSQL = `SELECT *
 FROM mesh_ops.resolve_resource_v1($1::UUID)`
 
+//nolint:unused // Retained for compatibility with the M1 stable-aggregate resolver.
 const resolveCommittedResourceGroupSQL = `SELECT *
 FROM mesh_ops.resolve_resource_group_v1($1::UUID)`

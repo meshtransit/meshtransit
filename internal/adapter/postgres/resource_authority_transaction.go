@@ -63,13 +63,16 @@ var _ authority.Transaction = (*resourceAuthorityTransaction)(nil)
 func (transaction *resourceAuthorityTransaction) Resolve(
 	ctx context.Context,
 	command authority.Command,
+	ids authority.MutationIDs,
 	evaluatedAt time.Time,
+	expiresAt time.Time,
 ) (resolution authority.Resolution, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
 		transaction.observe(postgresOperationResourceAuthorityResolve, startedAt, resultErr)
 	}()
-	if ctx == nil || transaction == nil || !command.IsValid() || evaluatedAt.IsZero() {
+	if ctx == nil || transaction == nil || !command.IsValid() || !ids.IsValidFor(command) ||
+		evaluatedAt.IsZero() || !expiresAt.After(evaluatedAt) {
 		return authority.Resolution{}, ErrResourceAuthorityState
 	}
 	transaction.mu.Lock()
@@ -85,7 +88,7 @@ func (transaction *resourceAuthorityTransaction) Resolve(
 		)
 	}
 	transaction.authorization = authorizationEvidence
-	resolution, err = transaction.resolveLocked(ctx)
+	resolution, err = transaction.resolveLocked(ctx, command, ids, evaluatedAt, expiresAt)
 	if err != nil {
 		return authority.Resolution{}, errors.Join(
 			ErrResolveResourceAuthority, classifyResourceAuthorityDatabaseError(ctx, err),
@@ -161,7 +164,46 @@ func (transaction *resourceAuthorityTransaction) resolveAuthorization(
 
 func (transaction *resourceAuthorityTransaction) resolveLocked(
 	ctx context.Context,
+	command authority.Command,
+	ids authority.MutationIDs,
+	evaluatedAt time.Time,
+	expiresAt time.Time,
 ) (authority.Resolution, error) {
+	requestHash, err := command.RequestHash()
+	if err != nil {
+		return authority.Resolution{}, authority.ErrInvalidCommand
+	}
+	proof := command.IdempotencyEvidence()
+	digest := proof.Digest()
+	hashBytes := requestHash.Bytes()
+	record, err := scanResourceAuthorityIdempotencyRecord(
+		transaction.database.QueryRow(
+			ctx,
+			claimResourceAuthorityIdempotencySQL,
+			ids.IdempotencyRecordID().String(),
+			command.AccountSession().PrincipalID().String(),
+			resourceAuthorityOperation(command),
+			proof.DigestKeyID(),
+			digest[:],
+			hashBytes[:],
+			evaluatedAt,
+			expiresAt,
+		),
+		true,
+	)
+	if err != nil {
+		return authority.Resolution{}, fmt.Errorf("claim idempotency evidence: %w", err)
+	}
+	idempotencyResolution, err := resolveResourceAuthorityIdempotency(
+		record, command, ids, evaluatedAt,
+	)
+	if err != nil {
+		return authority.Resolution{}, err
+	}
+	if idempotencyResolution.IsValid() {
+		return idempotencyResolution, nil
+	}
+
 	var networkRevision, inventoryRevision, groupRevision, policyRevision int64
 	var dnsRevision, routeRevision, sharingRevision, isolationGeneration int64
 	if err := transaction.database.QueryRow(ctx, lockResourceAuthorityRevisionSQL).Scan(
@@ -187,8 +229,13 @@ func (transaction *resourceAuthorityTransaction) resolveLocked(
 		return authority.Resolution{}, ErrResourceAuthorityEvidence
 	}
 	copy(transaction.audit.previousHash[:], previousHash)
+	recordID, err := publicid.Parse(record.publicID)
+	if err != nil {
+		return authority.Resolution{}, ErrResourceAuthorityEvidence
+	}
 	resolution, err := authority.NewResolution(
 		transaction.scope, networkRevision, inventoryRevision, groupRevision,
+		recordID, requestHash,
 	)
 	if err != nil {
 		return authority.Resolution{}, ErrResourceAuthorityEvidence
