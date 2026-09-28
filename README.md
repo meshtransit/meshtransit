@@ -57,6 +57,13 @@ plus the
 [M3c protected Resource authority change design](docs/design/phase2-m3c-resource-authority-change.md)
 and
 [M3c acceptance matrix](docs/qualification/phase2-m3c-resource-authority-change-2026-09-28.md).
+The original-roadmap M2 packet-policy work now has a separately named M2a slice
+covering deterministic Device-to-Device TCP/UDP publication, atomic deny-all and
+restore, Node-reduced client projection, and fail-closed client enforcement.
+Resource and Resource Group destination compilation remains M2b. See the
+[M2a TCP/UDP policy design](docs/design/phase2-m2a-tcp-udp-policy-publication.md)
+and
+[M2a acceptance matrix](docs/qualification/phase2-m2a-tcp-udp-policy-publication-2026-09-29.md).
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,

@@ -137,6 +137,7 @@ Access Graph or consume Resource Groups in packet-policy compilation.
 
 Next order in the original Phase 2 roadmap:
 
-1. M2 policy publication for TCP/UDP Resource and Resource Group destinations.
+1. M2b Resource and Resource Group destination compilation, building on the
+   qualified M2a Device-to-Device TCP/UDP publication path.
 2. M4 Access Graph references, explanations, simulation, and verification.
 3. M5 client projection from stable Resource authority.

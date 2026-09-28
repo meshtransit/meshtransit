@@ -45,8 +45,17 @@ func TestManagementHandlerPublishesPolicy(t *testing.T) {
 		captured.BasePolicyRevision() != 1 ||
 		captured.Candidate().Snapshot().Scope().WorkspaceID().String() != managementWorkspaceID() ||
 		captured.Candidate().Snapshot().Scope().NetworkID().String() != managementNetworkID() ||
-		len(captured.Candidate().Snapshot().Rules()) != 2 {
+		len(captured.Candidate().Snapshot().Rules()) != 4 {
 		t.Fatalf("captured command = %+v, want exact Account-Session-bound policy", captured)
+	}
+	rules := captured.Candidate().Snapshot().Rules()
+	if rules[2].Protocol().String() != "tcp" || len(rules[2].DestinationPortRanges()) != 2 ||
+		rules[2].DestinationPortRanges()[0].First() != 80 ||
+		rules[2].DestinationPortRanges()[0].Last() != 81 ||
+		rules[2].DestinationPortRanges()[1].First() != 443 ||
+		rules[3].Protocol().String() != "udp" || len(rules[3].DestinationPortRanges()) != 1 ||
+		rules[3].DestinationPortRanges()[0].First() != 53 {
+		t.Fatalf("captured transport rules = %+v, want canonical TCP and UDP ranges", rules[2:])
 	}
 	if response.Header().Get("ETag") != `"2"` ||
 		response.Header().Get("X-Correlation-ID") != managementCorrelationID() {
@@ -58,7 +67,7 @@ func TestManagementHandlerPublishesPolicy(t *testing.T) {
 	}
 	if body.Data.ReleaseID == "" || body.Data.PolicyRevision != 2 ||
 		body.Data.NetworkRevision != 8 || len(body.Data.SemanticHash) != 64 ||
-		body.Data.RuleCount != 2 || body.CorrelationID != managementCorrelationID() {
+		body.Data.RuleCount != 4 || body.CorrelationID != managementCorrelationID() {
 		t.Fatalf("response body = %+v", body)
 	}
 }
@@ -92,6 +101,16 @@ func TestManagementHandlerPolicyPublicationFailsClosed(t *testing.T) {
 		{
 			name:   "tcp without ports",
 			body:   `{"reason":"bad","rules":[{"id":"01890f00-0000-7000-8000-000000000501","source_device_id":"01890f00-0000-7000-8000-000000000301","destination_device_id":"01890f00-0000-7000-8000-000000000302","protocol":"tcp","destination_port_ranges":[]}]}`,
+			status: http.StatusBadRequest, code: "invalid_request",
+		},
+		{
+			name:   "udp zero port",
+			body:   `{"reason":"bad","rules":[{"id":"01890f00-0000-7000-8000-000000000501","source_device_id":"01890f00-0000-7000-8000-000000000301","destination_device_id":"01890f00-0000-7000-8000-000000000302","protocol":"udp","destination_port_ranges":[{"first":0,"last":53}]}]}`,
+			status: http.StatusBadRequest, code: "invalid_request",
+		},
+		{
+			name:   "tcp port overflow",
+			body:   `{"reason":"bad","rules":[{"id":"01890f00-0000-7000-8000-000000000501","source_device_id":"01890f00-0000-7000-8000-000000000301","destination_device_id":"01890f00-0000-7000-8000-000000000302","protocol":"tcp","destination_port_ranges":[{"first":443,"last":65536}]}]}`,
 			status: http.StatusBadRequest, code: "invalid_request",
 		},
 		{
@@ -165,5 +184,13 @@ func validPolicyPublishBody() string {
 		`{"id":"01890f00-0000-7000-8000-000000000502",` +
 		`"source_device_id":"01890f00-0000-7000-8000-000000000302",` +
 		`"destination_device_id":"01890f00-0000-7000-8000-000000000301",` +
-		`"protocol":"icmp","destination_port_ranges":[]}]}`
+		`"protocol":"icmp","destination_port_ranges":[]},` +
+		`{"id":"01890f00-0000-7000-8000-000000000503",` +
+		`"source_device_id":"01890f00-0000-7000-8000-000000000301",` +
+		`"destination_device_id":"01890f00-0000-7000-8000-000000000302",` +
+		`"protocol":"tcp","destination_port_ranges":[{"first":443,"last":443},{"first":80,"last":81}]},` +
+		`{"id":"01890f00-0000-7000-8000-000000000504",` +
+		`"source_device_id":"01890f00-0000-7000-8000-000000000302",` +
+		`"destination_device_id":"01890f00-0000-7000-8000-000000000301",` +
+		`"protocol":"udp","destination_port_ranges":[{"first":53,"last":53}]}]}`
 }

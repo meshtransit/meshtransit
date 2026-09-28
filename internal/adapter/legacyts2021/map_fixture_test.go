@@ -177,6 +177,44 @@ func mapSnapshotWithInboundPolicyFixture(t *testing.T) mapsession.Snapshot {
 	return snapshot
 }
 
+func mapSnapshotWithInboundTransportPolicyFixture(t *testing.T) mapsession.Snapshot {
+	t.Helper()
+	base := mapSnapshotWithInboundPolicyFixture(t)
+	peers := base.PeerCandidates()
+	if len(peers) != 1 {
+		t.Fatalf("PeerCandidates() = %d, want 1", len(peers))
+	}
+	rules := base.PacketPolicy().Rules()
+	udpRule, err := policy.NewRule(policy.RuleParams{
+		ID:                mapRuleIDFixture(t, "01890f00-0000-7000-8000-000000000804"),
+		Scope:             base.Scope(),
+		SourceNodeID:      peers[0].NodeID(),
+		DestinationNodeID: base.NodeID(),
+		Protocol:          policy.ProtocolUDP,
+		DestinationPortRanges: []policy.PortRange{
+			mapPortRangeFixture(t, 53, 53),
+			mapPortRangeFixture(t, 5353, 5354),
+		},
+	})
+	if err != nil {
+		t.Fatalf("policy.NewRule(UDP) error = %v", err)
+	}
+	rules = append(rules, udpRule)
+	packetPolicy, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope: base.Scope(), Revision: base.PacketPolicy().Revision(), Rules: rules,
+	})
+	if err != nil {
+		t.Fatalf("policy.NewSnapshot() error = %v", err)
+	}
+	params := mapSnapshotParams(base)
+	params.PacketPolicy = packetPolicy
+	snapshot, err := mapsession.NewSnapshot(params)
+	if err != nil {
+		t.Fatalf("mapsession.NewSnapshot() error = %v", err)
+	}
+	return snapshot
+}
+
 func mapRuleIDFixture(t *testing.T, value string) policy.RuleID {
 	t.Helper()
 	id, err := policy.ParseRuleID(value)

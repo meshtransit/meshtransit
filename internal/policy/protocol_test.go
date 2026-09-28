@@ -25,6 +25,18 @@ func TestPortRangeRejectsInvalidBounds(t *testing.T) {
 	}
 }
 
+func TestPortRangeAcceptsCompleteTransportBoundary(t *testing.T) {
+	t.Parallel()
+
+	portRange, err := NewPortRange(1, ^uint16(0))
+	if err != nil {
+		t.Fatalf("NewPortRange() error = %v", err)
+	}
+	if portRange.First() != 1 || portRange.Last() != 65535 {
+		t.Fatalf("NewPortRange() = %d-%d, want 1-65535", portRange.First(), portRange.Last())
+	}
+}
+
 func TestProtocolHasNoWildcardValue(t *testing.T) {
 	t.Parallel()
 

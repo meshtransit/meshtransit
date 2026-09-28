@@ -167,11 +167,37 @@ func publishPolicyOverBrowserManagement(
 	scope := command.Candidate().Snapshot().Scope()
 	path := fmt.Sprintf("/api/v1/workspaces/%s/networks/%s/policy/actions/publish",
 		scope.WorkspaceID().String(), scope.NetworkID().String())
+	type portRange struct {
+		First uint16 `json:"first"`
+		Last  uint16 `json:"last"`
+	}
+	type rule struct {
+		ID                    string      `json:"id"`
+		SourceDeviceID        string      `json:"source_device_id"`
+		DestinationDeviceID   string      `json:"destination_device_id"`
+		Protocol              string      `json:"protocol"`
+		DestinationPortRanges []portRange `json:"destination_port_ranges"`
+	}
+	rules := make([]rule, 0, len(command.Candidate().Snapshot().Rules()))
+	for _, compiled := range command.Candidate().Snapshot().Rules() {
+		ranges := compiled.DestinationPortRanges()
+		ports := make([]portRange, len(ranges))
+		for index, value := range ranges {
+			ports[index] = portRange{First: value.First(), Last: value.Last()}
+		}
+		rules = append(rules, rule{
+			ID:                    compiled.ID().String(),
+			SourceDeviceID:        compiled.SourceNodeID().String(),
+			DestinationDeviceID:   compiled.DestinationNodeID().String(),
+			Protocol:              compiled.Protocol().String(),
+			DestinationPortRanges: ports,
+		})
+	}
 	body, err := json.Marshal(struct {
-		Rules  []string `json:"rules"`
-		Reason string   `json:"reason"`
+		Rules  []rule `json:"rules"`
+		Reason string `json:"reason"`
 	}{
-		Rules: []string{}, Reason: command.AuditReason().String()})
+		Rules: rules, Reason: command.AuditReason().String()})
 	if err != nil {
 		t.Fatal(err)
 	}

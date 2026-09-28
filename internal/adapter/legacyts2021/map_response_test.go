@@ -1,11 +1,13 @@
 package legacyts2021
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"net/netip"
 	"reflect"
+	"slices"
 	"testing"
 
 	"tailscale.com/tailcfg"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/control/mapsession"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/policy"
 )
 
 func TestEncodeFullMapResponseClearsInheritedAuthority(t *testing.T) {
@@ -233,6 +236,54 @@ func TestEncodeFullMapResponseProjectsOnlyNodeReducedInboundPolicy(t *testing.T)
 		!reflect.DeepEqual(icmp.IPProto, []int{1}) || len(icmp.DstPorts) != 1 ||
 		icmp.DstPorts[0].IP != "100.64.0.1" || icmp.DstPorts[0].Ports != tailcfg.PortRangeAny {
 		t.Fatalf("ICMP packet filter = %+v, want bounded IPv4 peer-to-self rule", icmp)
+	}
+}
+
+func TestEncodeFullMapResponseProjectsTCPAndUDPPortRanges(t *testing.T) {
+	t.Parallel()
+
+	response := decodeFullMapResponseFixture(t, mapSnapshotWithInboundTransportPolicyFixture(t))
+	if len(response.PacketFilter) != 3 {
+		t.Fatalf("PacketFilter = %+v, want three inbound rules", response.PacketFilter)
+	}
+	udp := response.PacketFilter[2]
+	if !reflect.DeepEqual(udp.SrcIPs, []string{"100.64.0.2"}) ||
+		!reflect.DeepEqual(udp.IPProto, []int{17}) || len(udp.DstPorts) != 2 ||
+		udp.DstPorts[0].IP != "100.64.0.1" || udp.DstPorts[0].Ports.First != 53 ||
+		udp.DstPorts[0].Ports.Last != 53 || udp.DstPorts[1].IP != "100.64.0.1" ||
+		udp.DstPorts[1].Ports.First != 5353 || udp.DstPorts[1].Ports.Last != 5354 {
+		t.Fatalf("UDP packet filter = %+v, want peer-to-self ports 53 and 5353-5354", udp)
+	}
+}
+
+func TestEncodeFullMapResponseIsDeterministicForEquivalentPolicyInput(t *testing.T) {
+	t.Parallel()
+
+	first := mapSnapshotWithInboundTransportPolicyFixture(t)
+	rules := first.PacketPolicy().Rules()
+	slices.Reverse(rules)
+	reorderedPolicy, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope: first.Scope(), Revision: first.PacketPolicy().Revision(), Rules: rules,
+	})
+	if err != nil {
+		t.Fatalf("policy.NewSnapshot() error = %v", err)
+	}
+	params := mapSnapshotParams(first)
+	params.PacketPolicy = reorderedPolicy
+	second, err := mapsession.NewSnapshot(params)
+	if err != nil {
+		t.Fatalf("mapsession.NewSnapshot() error = %v", err)
+	}
+	firstEncoded, err := EncodeFullMapResponse(first, 142)
+	if err != nil {
+		t.Fatalf("EncodeFullMapResponse(first) error = %v", err)
+	}
+	secondEncoded, err := EncodeFullMapResponse(second, 142)
+	if err != nil {
+		t.Fatalf("EncodeFullMapResponse(second) error = %v", err)
+	}
+	if !bytes.Equal(firstEncoded, secondEncoded) {
+		t.Fatal("equivalent policy input produced different map bytes")
 	}
 }
 

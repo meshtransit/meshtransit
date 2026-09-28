@@ -54,6 +54,7 @@ func assertPostgreSQLManagementPolicyPublication(
 	t *testing.T,
 	adminConnection *pgx.Conn,
 	runtimePool *postgresadapter.Pool,
+	identityValue control.AuthenticatedNode,
 ) {
 	t.Helper()
 	var baseNetworkRevision int64
@@ -121,6 +122,108 @@ WHERE workspace_id = 103 AND network_id = 203
 	}
 	if evidenceCount != 1 {
 		t.Fatalf("management policy authorization evidence count = %d, want 1", evidenceCount)
+	}
+	denySnapshot, err := newPeerCandidateStore(t, runtimePool, 8).Load(ctx, identityValue)
+	if err != nil {
+		t.Fatalf("load deny-all client projection: %v", err)
+	}
+	if denySnapshot.PacketPolicy().Revision() != 4 ||
+		len(denySnapshot.PacketPolicy().Rules()) != 0 || len(denySnapshot.AuthorizedPeers()) != 0 {
+		t.Fatalf(
+			"deny-all projection = revision %d rules=%d peers=%d",
+			denySnapshot.PacketPolicy().Revision(),
+			len(denySnapshot.PacketPolicy().Rules()),
+			len(denySnapshot.AuthorizedPeers()),
+		)
+	}
+
+	restoreRuleID, err := policy.ParseRuleID(integrationPublicID("01890f60-0000-7000-8000-", 2))
+	if err != nil {
+		t.Fatalf("parse UDP restore rule ID: %v", err)
+	}
+	transportRules := trusted.Candidate().Snapshot().Rules()
+	if len(transportRules) != 1 {
+		t.Fatalf("trusted transport rules = %d, want 1", len(transportRules))
+	}
+	udpPort, err := policy.NewPortRange(53, 53)
+	if err != nil {
+		t.Fatalf("construct UDP restore range: %v", err)
+	}
+	udpRule, err := policy.NewRule(policy.RuleParams{
+		ID:                    restoreRuleID,
+		Scope:                 snapshot.Scope(),
+		SourceNodeID:          transportRules[0].SourceNodeID(),
+		DestinationNodeID:     transportRules[0].DestinationNodeID(),
+		Protocol:              policy.ProtocolUDP,
+		DestinationPortRanges: []policy.PortRange{udpPort},
+	})
+	if err != nil {
+		t.Fatalf("construct UDP restore rule: %v", err)
+	}
+	restoreSnapshot, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope: snapshot.Scope(), Revision: 5,
+		Rules: []policy.Rule{udpRule, transportRules[0]},
+	})
+	if err != nil {
+		t.Fatalf("construct restore policy snapshot: %v", err)
+	}
+	restoreCandidate, err := publication.NewCandidate(restoreSnapshot, 1)
+	if err != nil {
+		t.Fatalf("construct restore policy candidate: %v", err)
+	}
+	restoreReason, err := publication.NewAuditReason("integration TCP and UDP restore activation")
+	if err != nil {
+		t.Fatalf("construct restore audit reason: %v", err)
+	}
+	restoreCommand, err := publication.NewManagementCommand(publication.ManagementCommandParams{
+		Candidate: restoreCandidate, BasePolicyRevision: 4,
+		AccountSession: managementRBACAccountSessionFixture(t), AuditReason: restoreReason,
+	})
+	if err != nil {
+		t.Fatalf("construct restore management command: %v", err)
+	}
+	restored := publishPolicyOverBrowserManagement(ctx, t, runtimePool, service, restoreCommand)
+	if restored.PolicyRevision() != 5 || restored.NetworkRevision() != baseNetworkRevision+2 ||
+		restored.SemanticHash() != restoreCandidate.SemanticHash() {
+		t.Fatalf(
+			"restore result = %+v, want Network/policy revision %d/5",
+			restored,
+			baseNetworkRevision+2,
+		)
+	}
+	clientSnapshot, err := newPeerCandidateStore(t, runtimePool, 8).Load(ctx, identityValue)
+	if err != nil {
+		t.Fatalf("load restored client projection: %v", err)
+	}
+	rules := clientSnapshot.PacketPolicy().Rules()
+	if clientSnapshot.PacketPolicy().Revision() != 5 || len(rules) != 2 ||
+		len(clientSnapshot.AuthorizedPeers()) != 1 ||
+		rules[0].Protocol() != policy.ProtocolTCP ||
+		rules[1].Protocol() != policy.ProtocolUDP ||
+		rules[1].DestinationPortRanges()[0].First() != 53 {
+		t.Fatalf(
+			"restored projection = revision %d rules=%+v peers=%d",
+			clientSnapshot.PacketPolicy().Revision(),
+			rules,
+			len(clientSnapshot.AuthorizedPeers()),
+		)
+	}
+	if _, err := service.Publish(ctx, command); !errors.Is(err, publication.ErrConflict) {
+		t.Fatalf("stale deny-all publication error = %v, want ErrConflict", err)
+	}
+	var tcpCount, udpCount int
+	if err := adminConnection.QueryRow(ctx, `SELECT
+    pg_catalog.count(*) FILTER (WHERE rule.protocol = 'tcp')::INTEGER,
+    pg_catalog.count(*) FILTER (WHERE rule.protocol = 'udp')::INTEGER
+FROM mesh.compiled_policy_rule AS rule
+JOIN mesh.policy_release AS release ON release.id = rule.policy_release_id
+WHERE release.public_id = $1::UUID AND release.state = 'active'`,
+		restored.ReleaseID().String(),
+	).Scan(&tcpCount, &udpCount); err != nil {
+		t.Fatalf("query restored transport policy: %v", err)
+	}
+	if tcpCount != 1 || udpCount != 1 {
+		t.Fatalf("restored TCP/UDP rule counts = %d/%d, want 1/1", tcpCount, udpCount)
 	}
 }
 

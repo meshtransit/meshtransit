@@ -270,7 +270,13 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLBrowserCallback(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLAbandonedExpiry(ctx, t, adminConnection,
 		openIntegrationWorkerConnection(ctx, t, adminConfig), openIntegrationWorkerPool(ctx, t, adminConfig), runtimePool)
-	assertPostgreSQLManagementPolicyPublication(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLManagementPolicyPublication(
+		ctx,
+		t,
+		adminConnection,
+		runtimePool,
+		peerIdentity,
+	)
 	assertPostgreSQLNodeKeyRotation(
 		ctx,
 		t,

@@ -77,3 +77,32 @@ func TestRuleRejectsUnsafeProtocolPortShapes(t *testing.T) {
 		})
 	}
 }
+
+func TestRuleRejectsExcessTransportPortRangesBeforeNormalization(t *testing.T) {
+	t.Parallel()
+
+	source := policyNodeFixture(t, "000000000701")
+	destination := policyNodeFixture(t, "000000000702")
+	ports := make([]PortRange, MaximumPortRangesPerRule+1)
+	for index := range ports {
+		port, err := NewPortRange(uint16(index+1), uint16(index+1))
+		if err != nil {
+			t.Fatalf("NewPortRange(%d) error = %v", index+1, err)
+		}
+		ports[index] = port
+	}
+	id, err := ParseRuleID("01890f00-0000-7000-8000-000000000801")
+	if err != nil {
+		t.Fatalf("ParseRuleID() error = %v", err)
+	}
+	if _, err := NewRule(RuleParams{
+		ID:                    id,
+		Scope:                 policyScopeFixture(t),
+		SourceNodeID:          source,
+		DestinationNodeID:     destination,
+		Protocol:              ProtocolUDP,
+		DestinationPortRanges: ports,
+	}); !errors.Is(err, ErrInvalidRule) {
+		t.Fatalf("NewRule() error = %v, want ErrInvalidRule", err)
+	}
+}
