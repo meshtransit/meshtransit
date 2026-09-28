@@ -910,6 +910,33 @@ scopes include `openid` and `federated:id`, and its provider generation must
 advance. The binary rollout must not widen authority implicitly. Existing
 browser login evidence is intentionally invalid after that transition.
 
+## Broker resource measurement instrumentation
+
+Core source `e80842b78d0ba287d36fea6d7a68c25eba989a39` adds the
+product-owned instrumentation needed before `SSO-BROKER-009` can run. The
+private Identity listener now exports current/configured connections,
+current/configured non-queuing request slots, request totals and latency by a
+closed route class, and saturation rejections. Both `identity` and `all`
+composition register the collector in the private operator endpoint. No metric
+contains connector ID, issuer/host, subject, code, token, or error text.
+
+CPU, RSS, live/cumulative allocation and goroutine signals already come from
+the process and Go collectors. A read-only port-forward to the currently
+deployed `ab1c26c` Identity pod proved the measurement path and observed an
+idle 35,598,336-byte RSS, 22 goroutines, 1,782,032 live heap bytes and
+18,192,648 runtime-system bytes. That revision predates the new telemetry and
+the observation is not a qualification result or resource recommendation. The
+cluster does not provide Kubernetes Metrics API, so the exact-source run will
+sample private operator metrics and PostgreSQL-side sessions directly.
+
+The ordinary race suite passed 4,302 tests in 51 packages, focused race tests
+passed 1,230 tests, and broker-tagged race tests passed in the pinned verified
+workspace. Ordinary and tagged vet, module consistency, and
+ordinary/integration/tagged delta lint passed. Four pre-existing full-tree lint
+findings outside this diff remain visible. This slice did not build or push an
+image, mutate database authority, change Kubernetes, or roll Helm; the resource
+gate remains open until the exact image completes steady and saturation runs.
+
 ## Remaining execution order
 
 1. Execute `SSO-BROKER-009` CPU, memory, goroutine, allocation, database-pool,
