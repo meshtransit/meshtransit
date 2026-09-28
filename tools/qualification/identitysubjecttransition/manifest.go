@@ -23,24 +23,32 @@ import (
 )
 
 const (
-	manifestSchemaVersion       = "meshtransit.identity-subject-transition/v1"
+	manifestSchemaVersion       = "meshtransit.identity-subject-transition/v2"
 	maximumManifestBytes        = 64 * 1024
 	maximumMappings             = 128
 	maximumActiveSessions       = 10000
 	maximumOpenAuthTransactions = 10000
+	maximumAuditReasonBytes     = 256
 )
 
 type transitionManifest struct {
-	SchemaVersion                string            `json:"schema_version"`
-	MigrationID                  string            `json:"migration_id"`
-	DeploymentID                 string            `json:"deployment_id"`
-	ActorPrincipalID             string            `json:"actor_principal_id"`
-	Source                       providerReference `json:"source"`
-	Target                       providerReference `json:"target"`
-	ExpectedActiveSourceSubjects int64             `json:"expected_active_source_subjects"`
-	ExpectedActiveSessions       int64             `json:"expected_active_sessions"`
-	ExpectedOpenAuthTransactions int64             `json:"expected_open_auth_transactions"`
-	Mappings                     []subjectMapping  `json:"mappings"`
+	SchemaVersion                string             `json:"schema_version"`
+	MigrationID                  string             `json:"migration_id"`
+	DeploymentID                 string             `json:"deployment_id"`
+	ActorPrincipalID             string             `json:"actor_principal_id"`
+	AuditReason                  string             `json:"audit_reason"`
+	Evidence                     transitionEvidence `json:"evidence"`
+	Source                       providerReference  `json:"source"`
+	Target                       providerReference  `json:"target"`
+	ExpectedActiveSourceSubjects int64              `json:"expected_active_source_subjects"`
+	ExpectedActiveSessions       int64              `json:"expected_active_sessions"`
+	ExpectedOpenAuthTransactions int64              `json:"expected_open_auth_transactions"`
+	Mappings                     []subjectMapping   `json:"mappings"`
+}
+
+type transitionEvidence struct {
+	AuditEventID  string `json:"audit_event_id"`
+	OutboxEventID string `json:"outbox_event_id"`
 }
 
 type providerReference struct {
@@ -54,6 +62,7 @@ type providerReference struct {
 
 type subjectMapping struct {
 	SourceSubjectID        string `json:"source_subject_id"`
+	TargetSubjectID        string `json:"target_subject_id"`
 	PrincipalID            string `json:"principal_id"`
 	ExpectedSourceVersion  int64  `json:"expected_source_version"`
 	ExpectedClaimsRevision int64  `json:"expected_claims_revision"`
@@ -63,6 +72,7 @@ type subjectMapping struct {
 
 type plannedMapping struct {
 	sourceSubjectID        publicid.ID
+	targetSubjectID        publicid.ID
 	principalID            identity.PrincipalID
 	expectedSourceVersion  int64
 	expectedClaimsRevision int64
@@ -72,8 +82,11 @@ type plannedMapping struct {
 
 type planSpec struct {
 	manifest         transitionManifest
+	mode             transitionMode
 	manifestSHA256   string
 	migrationID      publicid.ID
+	auditEventID     publicid.ID
+	outboxEventID    publicid.ID
 	deploymentID     deployment.ID
 	actorPrincipalID identity.PrincipalID
 	sourceProviderID oidcauth.ProviderID
@@ -120,7 +133,19 @@ func loadPlanSpec(ctx context.Context, options rawOptions, lookup config.LookupF
 	if err != nil {
 		return planSpec{}, errInvalidInput
 	}
-	return buildPlanSpec(manifest, manifestHash, sourceKey, targetKey)
+	spec, err := buildPlanSpec(manifest, manifestHash, sourceKey, targetKey)
+	if err != nil {
+		return planSpec{}, err
+	}
+	spec.mode = transitionMode(options.mode)
+	if spec.mode == transitionModeApply {
+		enabled, found := lookup(envEnable)
+		if !found || enabled != applyEnableConfirmation {
+			spec.clear()
+			return planSpec{}, errInvalidInput
+		}
+	}
+	return spec, nil
 }
 
 func parseManifest(contents []byte) (transitionManifest, error) {
@@ -143,7 +168,8 @@ func (manifest transitionManifest) valid() bool {
 		manifest.ExpectedActiveSessions < 0 || manifest.ExpectedActiveSessions > maximumActiveSessions ||
 		manifest.ExpectedOpenAuthTransactions < 0 ||
 		manifest.ExpectedOpenAuthTransactions > maximumOpenAuthTransactions ||
-		!manifest.Source.valid() || !manifest.Target.valid() ||
+		!manifest.Source.valid() || !manifest.Target.valid() || !manifest.Evidence.valid() ||
+		!validBoundedText(manifest.AuditReason, maximumAuditReasonBytes) ||
 		manifest.Source.ProviderID == manifest.Target.ProviderID ||
 		manifest.Source.Issuer == manifest.Target.Issuer {
 		return false
@@ -158,6 +184,7 @@ func (manifest transitionManifest) valid() bool {
 		return false
 	}
 	sourceIDs := make(map[string]struct{}, len(manifest.Mappings))
+	targetIDs := make(map[string]struct{}, len(manifest.Mappings))
 	principalIDs := make(map[string]struct{}, len(manifest.Mappings))
 	targetSubjects := make(map[string]struct{}, len(manifest.Mappings))
 	previousID := ""
@@ -168,6 +195,9 @@ func (manifest transitionManifest) valid() bool {
 		if _, duplicate := sourceIDs[mapping.SourceSubjectID]; duplicate {
 			return false
 		}
+		if _, duplicate := targetIDs[mapping.TargetSubjectID]; duplicate {
+			return false
+		}
 		if _, duplicate := principalIDs[mapping.PrincipalID]; duplicate {
 			return false
 		}
@@ -175,11 +205,23 @@ func (manifest transitionManifest) valid() bool {
 			return false
 		}
 		sourceIDs[mapping.SourceSubjectID] = struct{}{}
+		targetIDs[mapping.TargetSubjectID] = struct{}{}
 		principalIDs[mapping.PrincipalID] = struct{}{}
 		targetSubjects[mapping.TargetSubject] = struct{}{}
 		previousID = mapping.SourceSubjectID
 	}
+	for targetID := range targetIDs {
+		if _, overlapsSource := sourceIDs[targetID]; overlapsSource {
+			return false
+		}
+	}
 	return true
+}
+
+func (evidence transitionEvidence) valid() bool {
+	auditID, auditErr := publicid.Parse(evidence.AuditEventID)
+	outboxID, outboxErr := publicid.Parse(evidence.OutboxEventID)
+	return auditErr == nil && outboxErr == nil && auditID != outboxID
 }
 
 func (provider providerReference) valid() bool {
@@ -197,7 +239,9 @@ func (provider providerReference) valid() bool {
 }
 
 func (mapping subjectMapping) valid() bool {
-	if _, err := publicid.Parse(mapping.SourceSubjectID); err != nil {
+	sourceID, sourceErr := publicid.Parse(mapping.SourceSubjectID)
+	targetID, targetErr := publicid.Parse(mapping.TargetSubjectID)
+	if sourceErr != nil || targetErr != nil || sourceID == targetID {
 		return false
 	}
 	if _, err := identity.ParsePrincipalID(mapping.PrincipalID); err != nil {
@@ -215,23 +259,32 @@ func buildPlanSpec(
 	targetKey oidcauth.SubjectKey,
 ) (planSpec, error) {
 	migrationID, migrationErr := publicid.Parse(manifest.MigrationID)
+	auditEventID, auditErr := publicid.Parse(manifest.Evidence.AuditEventID)
+	outboxEventID, outboxErr := publicid.Parse(manifest.Evidence.OutboxEventID)
 	deploymentID, deploymentErr := deployment.ParseID(manifest.DeploymentID)
 	actorID, actorErr := identity.ParsePrincipalID(manifest.ActorPrincipalID)
 	sourceProviderID, sourceErr := oidcauth.ParseProviderID(manifest.Source.ProviderID)
 	targetProviderID, targetErr := oidcauth.ParseProviderID(manifest.Target.ProviderID)
-	if migrationErr != nil || deploymentErr != nil || actorErr != nil || sourceErr != nil || targetErr != nil ||
+	if migrationErr != nil || auditErr != nil || outboxErr != nil ||
+		deploymentErr != nil || actorErr != nil || sourceErr != nil || targetErr != nil ||
+		migrationID == auditEventID || migrationID == outboxEventID || auditEventID == outboxEventID ||
 		!validSHA256(manifestHash) {
 		return planSpec{}, errInvalidInput
 	}
 	spec := planSpec{
-		manifest: manifest, manifestSHA256: manifestHash,
+		manifest: manifest, mode: transitionModePlan, manifestSHA256: manifestHash,
 		migrationID: migrationID, deploymentID: deploymentID, actorPrincipalID: actorID,
+		auditEventID: auditEventID, outboxEventID: outboxEventID,
 		sourceProviderID: sourceProviderID, targetProviderID: targetProviderID,
 		sourceKey: sourceKey, targetKey: targetKey,
 		mappings: make([]plannedMapping, 0, len(manifest.Mappings)),
 	}
 	for _, mapping := range manifest.Mappings {
 		sourceSubjectID, err := publicid.Parse(mapping.SourceSubjectID)
+		if err != nil {
+			return planSpec{}, errInvalidInput
+		}
+		targetSubjectID, err := publicid.Parse(mapping.TargetSubjectID)
 		if err != nil {
 			return planSpec{}, errInvalidInput
 		}
@@ -254,7 +307,8 @@ func buildPlanSpec(
 			return planSpec{}, errInvalidInput
 		}
 		spec.mappings = append(spec.mappings, plannedMapping{
-			sourceSubjectID: sourceSubjectID, principalID: principalID,
+			sourceSubjectID: sourceSubjectID, targetSubjectID: targetSubjectID,
+			principalID:            principalID,
 			expectedSourceVersion:  mapping.ExpectedSourceVersion,
 			expectedClaimsRevision: mapping.ExpectedClaimsRevision,
 			sourceDigest:           sourceDigest, targetDigest: targetDigest,
@@ -470,6 +524,7 @@ func (spec *planSpec) clear() {
 	}
 	spec.manifest.Source.Issuer = ""
 	spec.manifest.Target.Issuer = ""
+	spec.manifest.AuditReason = ""
 	spec.mappings = nil
 	spec.sourceKey = oidcauth.SubjectKey{}
 	spec.targetKey = oidcauth.SubjectKey{}

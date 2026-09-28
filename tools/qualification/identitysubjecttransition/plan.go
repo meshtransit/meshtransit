@@ -45,14 +45,38 @@ type authorityState struct {
 }
 
 type subjectRow struct {
-	internalID     int64
-	publicID       string
-	principalID    string
-	algorithm      string
-	keyID          string
-	digest         []byte
-	claimsRevision int64
-	version        int64
+	internalID          int64
+	publicID            string
+	principalInternalID int64
+	principalID         string
+	algorithm           string
+	keyID               string
+	digest              []byte
+	claimsRevision      int64
+	lastSeenAt          time.Time
+	version             int64
+}
+
+type validatedSnapshot struct {
+	authority            authorityState
+	subjects             []subjectRow
+	activeSessions       int64
+	openAuthTransactions int64
+}
+
+func executeTransition(
+	ctx context.Context,
+	spec planSpec,
+	database databaseSettings,
+) (planOutput, error) {
+	switch spec.mode {
+	case transitionModePlan:
+		return executePlan(ctx, spec, database)
+	case transitionModeApply:
+		return executeApply(ctx, spec, database)
+	default:
+		return planOutput{}, errInvalidInput
+	}
 }
 
 func executePlan(
@@ -60,7 +84,7 @@ func executePlan(
 	spec planSpec,
 	database databaseSettings,
 ) (output planOutput, resultErr error) {
-	if ctx == nil || !spec.valid() {
+	if ctx == nil || spec.mode != transitionModePlan || !spec.valid() {
 		return planOutput{}, errInvalidInput
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, planTimeout)
@@ -98,50 +122,14 @@ func executePlan(
 	if _, err := transaction.Exec(operationCtx, configurePlanSQL); err != nil {
 		return planOutput{}, fmt.Errorf("configure identity subject transition plan: %w", err)
 	}
-	state, err := loadAuthorityState(operationCtx, transaction, spec)
-	if err != nil || !state.matches(spec) {
-		return planOutput{}, errInvalidInput
-	}
-	subjects, err := loadActiveSourceSubjects(
+	snapshot, err := validateSnapshot(
 		operationCtx,
 		transaction,
-		state.deploymentInternalID,
-		state.source.internalID,
-	)
-	if err != nil || !subjectsMatchPlan(subjects, spec) {
-		return planOutput{}, errInvalidInput
-	}
-	collision, err := targetCollision(
-		operationCtx,
-		transaction,
-		state.deploymentInternalID,
-		state.target.internalID,
+		loadAuthorityStateSQL,
 		spec,
 	)
-	if err != nil || collision {
-		return planOutput{}, errInvalidInput
-	}
-	activeSessions, err := countBoundedRows(
-		operationCtx,
-		transaction,
-		loadActiveSessionIDsSQL,
-		state.deploymentInternalID,
-		state.source.internalID,
-		maximumActiveSessions+1,
-	)
-	if err != nil || activeSessions != spec.manifest.ExpectedActiveSessions {
-		return planOutput{}, errInvalidInput
-	}
-	openAuth, err := countBoundedRows(
-		operationCtx,
-		transaction,
-		loadOpenAuthTransactionIDsSQL,
-		state.deploymentInternalID,
-		state.source.internalID,
-		maximumOpenAuthTransactions+1,
-	)
-	if err != nil || openAuth != spec.manifest.ExpectedOpenAuthTransactions {
-		return planOutput{}, errInvalidInput
+	if err != nil {
+		return planOutput{}, err
 	}
 	if err := transaction.Commit(operationCtx); err != nil {
 		return planOutput{}, fmt.Errorf("finish identity subject transition plan: %w", err)
@@ -152,20 +140,82 @@ func executePlan(
 		MigrationID: spec.migrationID.String(), ManifestSHA256: spec.manifestSHA256,
 		DeploymentID:     spec.deploymentID.String(),
 		SourceProviderID: spec.sourceProviderID.String(), TargetProviderID: spec.targetProviderID.String(),
-		MappingCount: len(spec.mappings), ActiveSourceSubjectCount: int64(len(subjects)),
-		ActiveSessionCount: activeSessions, OpenAuthTransactionCount: openAuth,
+		MappingCount: len(spec.mappings), ActiveSourceSubjectCount: int64(len(snapshot.subjects)),
+		ActiveSessionCount:       snapshot.activeSessions,
+		OpenAuthTransactionCount: snapshot.openAuthTransactions,
+	}, nil
+}
+
+func validateSnapshot(
+	ctx context.Context,
+	transaction pgx.Tx,
+	authorityQuery string,
+	spec planSpec,
+) (validatedSnapshot, error) {
+	state, err := loadAuthorityState(ctx, transaction, authorityQuery, spec)
+	if err != nil || !state.matches(spec) {
+		return validatedSnapshot{}, errInvalidInput
+	}
+	subjects, err := loadActiveSourceSubjects(
+		ctx,
+		transaction,
+		state.deploymentInternalID,
+		state.source.internalID,
+	)
+	if err != nil || !subjectsMatchPlan(subjects, spec) {
+		return validatedSnapshot{}, errInvalidInput
+	}
+	collision, err := targetCollision(
+		ctx,
+		transaction,
+		state.deploymentInternalID,
+		state.target.internalID,
+		spec,
+	)
+	if err != nil || collision {
+		return validatedSnapshot{}, errInvalidInput
+	}
+	activeSessions, err := countBoundedRows(
+		ctx,
+		transaction,
+		loadActiveSessionIDsSQL,
+		state.deploymentInternalID,
+		state.source.internalID,
+		maximumActiveSessions+1,
+	)
+	if err != nil || activeSessions != spec.manifest.ExpectedActiveSessions {
+		return validatedSnapshot{}, errInvalidInput
+	}
+	openAuth, err := countBoundedRows(
+		ctx,
+		transaction,
+		loadOpenAuthTransactionIDsSQL,
+		state.deploymentInternalID,
+		state.source.internalID,
+		maximumOpenAuthTransactions+1,
+	)
+	if err != nil || openAuth != spec.manifest.ExpectedOpenAuthTransactions {
+		return validatedSnapshot{}, errInvalidInput
+	}
+	return validatedSnapshot{
+		authority: state, subjects: subjects,
+		activeSessions: activeSessions, openAuthTransactions: openAuth,
 	}, nil
 }
 
 func loadAuthorityState(
 	ctx context.Context,
 	transaction pgx.Tx,
+	query string,
 	spec planSpec,
 ) (authorityState, error) {
+	if query == "" {
+		return authorityState{}, errInvalidInput
+	}
 	var state authorityState
 	err := transaction.QueryRow(
 		ctx,
-		loadAuthorityStateSQL,
+		query,
 		spec.deploymentID.String(),
 		spec.actorPrincipalID.String(),
 		spec.sourceProviderID.String(),
@@ -256,11 +306,13 @@ func loadActiveSourceSubjects(
 		if err := rows.Scan(
 			&row.internalID,
 			&row.publicID,
+			&row.principalInternalID,
 			&row.principalID,
 			&row.algorithm,
 			&row.keyID,
 			&row.digest,
 			&row.claimsRevision,
+			&row.lastSeenAt,
 			&row.version,
 		); err != nil {
 			return nil, fmt.Errorf("scan active source subject: %w", err)
@@ -283,7 +335,8 @@ func subjectsMatchPlan(rows []subjectRow, spec planSpec) bool {
 	}
 	for _, row := range rows {
 		mapping, found := planned[row.publicID]
-		if !found || row.internalID <= 0 || row.principalID != mapping.principalID.String() ||
+		if !found || row.internalID <= 0 || row.principalInternalID <= 0 ||
+			row.principalID != mapping.principalID.String() ||
 			row.algorithm != mapping.sourceDigest.Algorithm() || row.keyID != mapping.sourceDigest.KeyID().String() ||
 			row.claimsRevision != mapping.expectedClaimsRevision || row.version != mapping.expectedSourceVersion {
 			return false
@@ -306,12 +359,15 @@ func targetCollision(
 ) (bool, error) {
 	principalIDs := make([]string, 0, len(spec.mappings))
 	digests := make([][]byte, 0, len(spec.mappings))
+	targetSubjectIDs := make([]string, 0, len(spec.mappings))
 	for _, mapping := range spec.mappings {
 		principalIDs = append(principalIDs, mapping.principalID.String())
+		targetSubjectIDs = append(targetSubjectIDs, mapping.targetSubjectID.String())
 		digest := mapping.targetDigest.Bytes()
 		digests = append(digests, digest[:])
 	}
-	if len(principalIDs) != len(digests) || len(digests) == 0 {
+	if len(principalIDs) != len(digests) || len(digests) != len(targetSubjectIDs) ||
+		len(digests) == 0 {
 		return false, errInvalidInput
 	}
 	var collision bool
@@ -323,6 +379,7 @@ func targetCollision(
 		principalIDs,
 		digests,
 		spec.targetKey.ID().String(),
+		targetSubjectIDs,
 	).Scan(&collision)
 	if err != nil {
 		return false, fmt.Errorf("check target subject collision: %w", err)
@@ -362,7 +419,9 @@ func countBoundedRows(
 
 func (spec planSpec) valid() bool {
 	return spec.manifest.valid() && validSHA256(spec.manifestSHA256) &&
+		(spec.mode == transitionModePlan || spec.mode == transitionModeApply) &&
 		spec.migrationID.IsValid() && spec.deploymentID.IsValid() && spec.actorPrincipalID.IsValid() &&
+		spec.auditEventID.IsValid() && spec.outboxEventID.IsValid() &&
 		spec.sourceProviderID.IsValid() && spec.targetProviderID.IsValid() &&
 		spec.sourceProviderID != spec.targetProviderID &&
 		spec.sourceKey.ID().String() == spec.manifest.Source.SubjectKeyID &&

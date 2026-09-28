@@ -22,6 +22,9 @@ const (
 	testTargetProviderID = "01890f00-0000-7000-8000-000000000005"
 	testSourceSubjectID  = "01890f00-0000-7000-8000-000000000006"
 	testPrincipalID      = "01890f00-0000-7000-8000-000000000007"
+	testTargetSubjectID  = "01890f00-0000-7000-8000-000000000008"
+	testAuditEventID     = "01890f00-0000-7000-8000-000000000009"
+	testOutboxEventID    = "01890f00-0000-7000-8000-000000000010"
 	testSourceIssuer     = "https://source.example.test"
 	testTargetIssuer     = "https://target.example.test"
 	testSourceSubject    = " Case-sensitive-source "
@@ -42,6 +45,9 @@ func TestManifestRejectsAmbiguousAndUnsafeInput(t *testing.T) {
 		{name: "duplicate field", value: strings.Replace(valid, `"schema_version":`, `"schema_version":"duplicate","schema_version":`, 1)},
 		{name: "same provider", value: strings.Replace(valid, testTargetProviderID, testSourceProviderID, 1)},
 		{name: "insecure issuer", value: strings.Replace(valid, testTargetIssuer, "http://target.example.test", 1)},
+		{name: "source target id overlap", value: strings.Replace(valid, testTargetSubjectID, testSourceSubjectID, 1)},
+		{name: "evidence id overlap", value: strings.Replace(valid, testOutboxEventID, testAuditEventID, 1)},
+		{name: "empty audit reason", value: strings.Replace(valid, "Approved provider transition", "", 1)},
 		{name: "trailing value", value: valid + ` {}`},
 		{name: "null", value: `null`},
 	} {
@@ -52,6 +58,47 @@ func TestManifestRejectsAmbiguousAndUnsafeInput(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestApplyRequiresExactEnableConfirmation(t *testing.T) {
+	t.Parallel()
+	directory := t.TempDir()
+	manifestPath := filepath.Join(directory, "manifest.json")
+	sourceKeyPath := filepath.Join(directory, "source.key")
+	targetKeyPath := filepath.Join(directory, "target.key")
+	manifestBytes := []byte(validManifestJSON())
+	writeProtectedFixture(t, manifestPath, manifestBytes)
+	writeProtectedFixture(t, sourceKeyPath, encodedKey(1))
+	writeProtectedFixture(t, targetKeyPath, encodedKey(2))
+	hash := sha256.Sum256(manifestBytes)
+	hashText := hex.EncodeToString(hash[:])
+	confirmation := strings.Join([]string{
+		testMigrationID,
+		testDeploymentID,
+		testSourceProviderID,
+		testTargetProviderID,
+		hashText,
+	}, "/")
+	environment := map[string]string{envConfirmation: confirmation}
+	lookup := func(key string) (string, bool) { value, found := environment[key]; return value, found }
+	options := rawOptions{
+		manifestPath: manifestPath, expectedManifestHash: hashText,
+		sourceKeyPath: sourceKeyPath, targetKeyPath: targetKeyPath,
+		mode: string(transitionModeApply),
+	}
+	if _, err := loadPlanSpec(context.Background(), options, lookup); err == nil {
+		t.Fatal("apply accepted without enable confirmation")
+	}
+	environment[envEnable] = "wrong"
+	if _, err := loadPlanSpec(context.Background(), options, lookup); err == nil {
+		t.Fatal("apply accepted wrong enable confirmation")
+	}
+	environment[envEnable] = applyEnableConfirmation
+	spec, err := loadPlanSpec(context.Background(), options, lookup)
+	if err != nil || spec.mode != transitionModeApply {
+		t.Fatalf("enabled apply plan rejected: mode=%q error=%v", spec.mode, err)
+	}
+	spec.clear()
 }
 
 func TestProtectedFileRejectsWeakCustody(t *testing.T) {
@@ -172,12 +219,14 @@ func validManifestJSON() string {
 "migration_id":"` + testMigrationID + `",
 "deployment_id":"` + testDeploymentID + `",
 "actor_principal_id":"` + testActorID + `",
+"audit_reason":"Approved provider transition",
+"evidence":{"audit_event_id":"` + testAuditEventID + `","outbox_event_id":"` + testOutboxEventID + `"},
 "source":{"provider_id":"` + testSourceProviderID + `","issuer":"` + testSourceIssuer + `","subject_key_id":"source-key-v1","expected_generation":1,"expected_generation_version":1,"expected_provider_version":1},
 "target":{"provider_id":"` + testTargetProviderID + `","issuer":"` + testTargetIssuer + `","subject_key_id":"target-key-v1","expected_generation":1,"expected_generation_version":1,"expected_provider_version":1},
 "expected_active_source_subjects":1,
 "expected_active_sessions":0,
 "expected_open_auth_transactions":0,
-"mappings":[{"source_subject_id":"` + testSourceSubjectID + `","principal_id":"` + testPrincipalID + `","expected_source_version":1,"expected_claims_revision":1,"source_subject":"` + testSourceSubject + `","target_subject":"` + testTargetSubject + `"}]
+"mappings":[{"source_subject_id":"` + testSourceSubjectID + `","target_subject_id":"` + testTargetSubjectID + `","principal_id":"` + testPrincipalID + `","expected_source_version":1,"expected_claims_revision":1,"source_subject":"` + testSourceSubject + `","target_subject":"` + testTargetSubject + `"}]
 }`
 }
 

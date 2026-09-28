@@ -1096,8 +1096,8 @@ no migration code is maintained in the broker source tree. Commit `c93ed29`
 added an offline subject-digest constructor that shares the exact HMAC
 namespace with authenticated login without manufacturing token evidence.
 
-The first transition-tool slice is intentionally read-only. The
-`identitysubjecttransition` qualification command accepts a protected,
+Plan mode remains intentionally read-only. The `identitysubjecttransition`
+qualification command accepts a protected,
 SHA-256-bound manifest and protected source/target subject keys, derives both
 provider-bound digests, then validates one `SERIALIZABLE READ ONLY` PostgreSQL
 snapshot. It fails closed unless the exact provider generations and versions,
@@ -1107,11 +1107,8 @@ AuthTransaction counts all match. Its JSON output contains only public IDs,
 the manifest hash, and counts; raw issuer and subject values are never output.
 
 Unit, race, vet, targeted lint, and the full repository test suite pass for
-this slice. Repository-wide lint still reports five pre-existing findings
-outside this tool. This checkpoint does not authorize or implement mutation:
-the apply path must take a maintenance fence and revalidate the complete plan
-in a new transaction. Broker upgrade/restore qualification and the atomic
-apply/audit path remain open before `SSO-BROKER-010` can pass.
+the planning slice. Repository-wide lint still reports five pre-existing
+findings outside this tool.
 
 The dry-run is now also qualified against a disposable PostgreSQL 18.6
 instance after the complete production migration catalog is applied. The
@@ -1124,14 +1121,32 @@ multi-array `unnest` call in the initial collision query; the query now zips
 the equal-length principal and digest arrays by array subscript and the full
 Docker integration suite passes with the race detector.
 
+The transition manifest is now schema v2 and precommits stable target-subject,
+audit-event, and outbox-event IDs plus a bounded operator reason. Apply requires
+a second exact enable value. Its serializable write transaction first locks the
+source-provider row, then fences the subject, Session, and AuthTransaction
+tables before revalidating the complete plan. It suspends the source provider,
+unlinks every source subject, inserts each target binding, revokes every active
+source Session, fails every pending or consuming source AuthTransaction, and
+appends one canonical audit/outbox event. Exact authority-mutation, audit, and
+outbox counts are verified before commit.
+
+The PostgreSQL 18.6 fixture also proves the apply path end to end. Its one
+provider, two subject, one Session, and one AuthTransaction mutations produce
+exactly five authority-mutation rows, one audit event, and one outbox event.
+The source provider finishes suspended at version two, the source subject is
+unlinked, the target subject is active under the planned digest, the Session is
+revoked with `identity_unlinked`, and the pending AuthTransaction is failed
+with encrypted PKCE material cleared. A repeat apply is rejected and preserves
+the entire post-commit snapshot. Broker upgrade/restore qualification remains
+open before `SSO-BROKER-010` can pass.
+
 ## Remaining execution order
 
-1. Implement and qualify the fenced atomic identity-subject apply/audit path;
-   the disposable PostgreSQL read-only transition fixture is complete.
-2. Execute the broker upgrade/restore runbook and close the remaining
+1. Execute the broker upgrade/restore runbook and close the remaining
    legal-review and signed-artifact items for `SSO-BROKER-010`.
-3. Extend publication cases to TCP, UDP, multiple devices, and multiple
+2. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
-4. Resume PostgreSQL and Redis infrastructure failover only when that paused
+3. Resume PostgreSQL and Redis infrastructure failover only when that paused
    workstream is re-opened; the Core-side reconnect/reconciliation support is
    already present but does not qualify the external data services.

@@ -50,7 +50,8 @@ func TestSubjectsMatchCompleteExactPlan(t *testing.T) {
 	}
 	digest := spec.mappings[0].sourceDigest.Bytes()
 	rows := []subjectRow{{
-		internalID: 1, publicID: testSourceSubjectID, principalID: testPrincipalID,
+		internalID: 1, publicID: testSourceSubjectID,
+		principalInternalID: 2, principalID: testPrincipalID,
 		algorithm: spec.mappings[0].sourceDigest.Algorithm(), keyID: "source-key-v1",
 		digest: digest[:], claimsRevision: 1, version: 1,
 	}}

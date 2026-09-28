@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"os"
@@ -25,6 +26,9 @@ const (
 	transitionIntegrationSubjectID    = "01890f40-0000-7000-8000-000000000032"
 	transitionIntegrationSessionID    = "01890f40-0000-7000-8000-000000000033"
 	transitionIntegrationAuthID       = "01890f40-0000-7000-8000-000000000034"
+	transitionIntegrationTargetSubID  = "01890f40-0000-7000-8000-000000000035"
+	transitionIntegrationAuditID      = "01890f44-0000-7000-8000-000000000001"
+	transitionIntegrationOutboxID     = "01890f45-0000-7000-8000-000000000001"
 	transitionIntegrationSourceIssuer = "https://transition-source.example.test"
 	transitionIntegrationTargetIssuer = "https://transition-target.example.test"
 )
@@ -85,6 +89,165 @@ func TestIdentitySubjectTransitionPlan(t *testing.T) {
 	if rejected := loadTransitionIntegrationSnapshot(ctx, t, connection); rejected != before {
 		t.Fatal("rejected transition plan mutated PostgreSQL state")
 	}
+
+	applySpec := spec
+	applySpec.mode = transitionModeApply
+	applied, err := executeTransition(ctx, applySpec, database)
+	if err != nil {
+		t.Fatalf("apply exact identity subject transition: %v", err)
+	}
+	if applied.Operation != "applied" || applied.MappingCount != 1 ||
+		applied.ActiveSourceSubjectCount != 1 || applied.ActiveSessionCount != 1 ||
+		applied.OpenAuthTransactionCount != 1 || applied.SourceProviderVersion != 2 ||
+		applied.ChangeID != transitionIntegrationMigrationID ||
+		applied.AuditEventID != transitionIntegrationAuditID ||
+		applied.OutboxEventID != transitionIntegrationOutboxID {
+		t.Fatalf("identity subject transition apply output = %+v", applied)
+	}
+	assertTransitionIntegrationApplied(ctx, t, connection, applySpec)
+	appliedSnapshot := loadTransitionIntegrationSnapshot(ctx, t, connection)
+	if _, err := executeTransition(ctx, applySpec, database); err == nil {
+		t.Fatal("already-applied identity subject transition was applied again")
+	}
+	if retried := loadTransitionIntegrationSnapshot(ctx, t, connection); retried != appliedSnapshot {
+		t.Fatal("rejected identity subject transition retry mutated PostgreSQL state")
+	}
+}
+
+func assertTransitionIntegrationApplied(
+	ctx context.Context,
+	t *testing.T,
+	connection *pgx.Conn,
+	spec planSpec,
+) {
+	t.Helper()
+	var sourceProviderState, sourceSubjectState, targetSubjectState string
+	var sessionState, sessionEndReason, authState, authFailureClass string
+	var sourceProviderVersion, sourceSubjectVersion, targetSubjectVersion int64
+	var sessionVersion, authVersion, mutationCount, auditCount, outboxCount int64
+	var targetDigest []byte
+	var sessionEnded, authConsumed, authCiphertextCleared bool
+	if err := connection.QueryRow(ctx, `SELECT
+    source_provider.state,
+    source_provider.version,
+    source_subject.state,
+    source_subject.version,
+    target_subject.subject_digest,
+    target_subject.state,
+    target_subject.version,
+    session.state,
+    session.end_reason,
+    session.version,
+    session.ended_at IS NOT NULL,
+    auth.state,
+    auth.failure_class,
+    auth.version,
+    auth.consumed_at IS NOT NULL,
+    auth.pkce_verifier_ciphertext IS NULL,
+    (SELECT pg_catalog.count(*) FROM mesh_audit.authority_mutation AS mutation WHERE mutation.change_public_id = $8::UUID),
+    (SELECT pg_catalog.count(*)
+     FROM mesh_audit.audit_event_identity AS identity
+     JOIN mesh_audit.audit_event AS event
+       ON event.event_identity_id = identity.id AND event.occurred_at = identity.occurred_at
+     WHERE identity.public_id = $9::UUID
+       AND identity.change_public_id = $8::UUID
+       AND event.correlation_public_id = $8::UUID
+       AND event.action = 'identity.subject_transition.applied'
+       AND event.permission = 'identity_provider.manage'
+       AND event.target_public_id = $1::UUID),
+    (SELECT pg_catalog.count(*)
+     FROM mesh_ops.outbox_event AS event
+     WHERE event.public_id = $10::UUID
+       AND event.change_public_id = $8::UUID
+       AND event.event_class = 'identity.subject_transition.applied'
+       AND event.aggregate_public_id = $1::UUID)
+FROM mesh.identity_provider AS source_provider
+JOIN mesh.identity_subject AS source_subject
+  ON source_subject.deployment_id = source_provider.deployment_id
+ AND source_subject.identity_provider_id = source_provider.id
+JOIN mesh.identity_subject AS target_subject
+  ON target_subject.deployment_id = source_provider.deployment_id
+JOIN mesh.identity_provider AS target_provider
+  ON target_provider.deployment_id = target_subject.deployment_id
+ AND target_provider.id = target_subject.identity_provider_id
+JOIN mesh.principal AS principal
+  ON principal.deployment_id = target_subject.deployment_id
+ AND principal.id = target_subject.principal_id
+JOIN mesh.account_session AS session
+  ON session.deployment_id = source_provider.deployment_id
+ AND session.identity_provider_id = source_provider.id
+JOIN mesh.auth_transaction AS auth
+  ON auth.deployment_id = source_provider.deployment_id
+ AND auth.identity_provider_id = source_provider.id
+WHERE source_provider.public_id = $1::UUID
+  AND source_subject.public_id = $2::UUID
+  AND target_subject.public_id = $3::UUID
+  AND target_provider.public_id = $4::UUID
+  AND principal.public_id = $5::UUID
+  AND session.public_id = $6::UUID
+  AND auth.public_id = $7::UUID`,
+		transitionIntegrationSourceID,
+		transitionIntegrationSubjectID,
+		transitionIntegrationTargetSubID,
+		transitionIntegrationTargetID,
+		transitionIntegrationPrincipalID,
+		transitionIntegrationSessionID,
+		transitionIntegrationAuthID,
+		transitionIntegrationMigrationID,
+		transitionIntegrationAuditID,
+		transitionIntegrationOutboxID,
+	).Scan(
+		&sourceProviderState,
+		&sourceProviderVersion,
+		&sourceSubjectState,
+		&sourceSubjectVersion,
+		&targetDigest,
+		&targetSubjectState,
+		&targetSubjectVersion,
+		&sessionState,
+		&sessionEndReason,
+		&sessionVersion,
+		&sessionEnded,
+		&authState,
+		&authFailureClass,
+		&authVersion,
+		&authConsumed,
+		&authCiphertextCleared,
+		&mutationCount,
+		&auditCount,
+		&outboxCount,
+	); err != nil {
+		t.Fatalf("query applied identity subject transition: %v", err)
+	}
+	wantTargetDigest := spec.mappings[0].targetDigest.Bytes()
+	if sourceProviderState != "suspended" || sourceProviderVersion != 2 ||
+		sourceSubjectState != "unlinked" || sourceSubjectVersion != 2 ||
+		!bytes.Equal(targetDigest, wantTargetDigest[:]) ||
+		targetSubjectState != "active" || targetSubjectVersion != 1 ||
+		sessionState != "revoked" || sessionEndReason != "identity_unlinked" ||
+		sessionVersion != 2 || !sessionEnded ||
+		authState != "failed" || authFailureClass != "provider_migrated" ||
+		authVersion != 2 || !authConsumed || !authCiphertextCleared ||
+		mutationCount != 5 || auditCount != 1 || outboxCount != 1 {
+		t.Fatalf(
+			"applied identity transition provider=%s/%d source=%s/%d target=%s/%d session=%s/%s/%d auth=%s/%s/%d evidence=%d/%d/%d",
+			sourceProviderState,
+			sourceProviderVersion,
+			sourceSubjectState,
+			sourceSubjectVersion,
+			targetSubjectState,
+			targetSubjectVersion,
+			sessionState,
+			sessionEndReason,
+			sessionVersion,
+			authState,
+			authFailureClass,
+			authVersion,
+			mutationCount,
+			auditCount,
+			outboxCount,
+		)
+	}
 }
 
 func assertTransitionIntegrationPlanState(
@@ -104,7 +267,7 @@ func assertTransitionIntegrationPlanState(
 	if _, err := transaction.Exec(ctx, configurePlanSQL); err != nil {
 		t.Fatalf("configure transition fixture assertion: %v", err)
 	}
-	state, err := loadAuthorityState(ctx, transaction, spec)
+	state, err := loadAuthorityState(ctx, transaction, loadAuthorityStateSQL, spec)
 	if err != nil {
 		t.Fatalf("load transition fixture authority: %v", err)
 	}
@@ -192,6 +355,11 @@ func transitionIntegrationManifest() transitionManifest {
 		MigrationID:      transitionIntegrationMigrationID,
 		DeploymentID:     transitionIntegrationDeploymentID,
 		ActorPrincipalID: transitionIntegrationActorID,
+		AuditReason:      "Disposable cross-provider transition qualification",
+		Evidence: transitionEvidence{
+			AuditEventID:  transitionIntegrationAuditID,
+			OutboxEventID: transitionIntegrationOutboxID,
+		},
 		Source: providerReference{
 			ProviderID: transitionIntegrationSourceID, Issuer: transitionIntegrationSourceIssuer,
 			SubjectKeyID: "transition-source-v1", ExpectedGeneration: 1,
@@ -207,6 +375,7 @@ func transitionIntegrationManifest() transitionManifest {
 		ExpectedOpenAuthTransactions: 1,
 		Mappings: []subjectMapping{{
 			SourceSubjectID:       transitionIntegrationSubjectID,
+			TargetSubjectID:       transitionIntegrationTargetSubID,
 			PrincipalID:           transitionIntegrationPrincipalID,
 			ExpectedSourceVersion: 1, ExpectedClaimsRevision: 1,
 			SourceSubject: "source-subject-exact", TargetSubject: "target-subject-exact",
@@ -421,6 +590,7 @@ func loadTransitionIntegrationSnapshot(
     'principal', (SELECT pg_catalog.to_jsonb(principal) FROM mesh.principal AS principal WHERE principal.public_id = $3::UUID),
     'account', (SELECT pg_catalog.to_jsonb(account) FROM mesh.account AS account WHERE account.public_id = $4::UUID),
     'subject', (SELECT pg_catalog.to_jsonb(subject) FROM mesh.identity_subject AS subject WHERE subject.public_id = $5::UUID),
+    'target_subject', (SELECT pg_catalog.to_jsonb(subject) FROM mesh.identity_subject AS subject WHERE subject.public_id = $8::UUID),
     'session', (SELECT pg_catalog.to_jsonb(session) FROM mesh.account_session AS session WHERE session.public_id = $6::UUID),
     'auth', (SELECT pg_catalog.to_jsonb(auth) FROM mesh.auth_transaction AS auth WHERE auth.public_id = $7::UUID),
     'authority_mutations', (SELECT pg_catalog.count(*) FROM mesh_audit.authority_mutation),
@@ -434,6 +604,7 @@ func loadTransitionIntegrationSnapshot(
 		transitionIntegrationSubjectID,
 		transitionIntegrationSessionID,
 		transitionIntegrationAuthID,
+		transitionIntegrationTargetSubID,
 	).Scan(&snapshot); err != nil {
 		t.Fatalf("load transition fixture snapshot: %v", err)
 	}

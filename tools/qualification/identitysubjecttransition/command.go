@@ -16,6 +16,7 @@ import (
 
 const (
 	envConfirmation = "MESHTRANSIT_QUALIFICATION_CONFIRM_IDENTITY_SUBJECT_TRANSITION"
+	envEnable       = "MESHTRANSIT_QUALIFICATION_ENABLE_IDENTITY_SUBJECT_TRANSITION"
 
 	envPostgreSQLAddress      = "MESHTRANSIT_POSTGRES_ADDRESS"
 	envPostgreSQLDatabase     = "MESHTRANSIT_POSTGRES_DATABASE"
@@ -26,6 +27,8 @@ const (
 	exitSuccess = 0
 	exitFailure = 1
 	exitUsage   = 2
+
+	applyEnableConfirmation = "identity-subject-transition-apply-v1"
 )
 
 var errInvalidInput = errors.New("identity subject transition: invalid input")
@@ -35,7 +38,15 @@ type rawOptions struct {
 	expectedManifestHash string
 	sourceKeyPath        string
 	targetKeyPath        string
+	mode                 string
 }
+
+type transitionMode string
+
+const (
+	transitionModePlan  transitionMode = "plan"
+	transitionModeApply transitionMode = "apply"
+)
 
 type databaseSettings struct {
 	address      string
@@ -57,6 +68,10 @@ type planOutput struct {
 	ActiveSourceSubjectCount int64  `json:"active_source_subject_count"`
 	ActiveSessionCount       int64  `json:"active_session_count"`
 	OpenAuthTransactionCount int64  `json:"open_auth_transaction_count"`
+	ChangeID                 string `json:"change_id,omitempty"`
+	AuditEventID             string `json:"audit_event_id,omitempty"`
+	OutboxEventID            string `json:"outbox_event_id,omitempty"`
+	SourceProviderVersion    int64  `json:"source_provider_version,omitempty"`
 }
 
 type planExecutor func(context.Context, planSpec, databaseSettings) (planOutput, error)
@@ -90,7 +105,7 @@ func run(
 	}
 	result, err := execute(ctx, spec, database)
 	if err != nil {
-		_, _ = fmt.Fprintln(errorOutput, "identitysubjecttransition: validation failed")
+		_, _ = fmt.Fprintln(errorOutput, "identitysubjecttransition: operation failed")
 		return exitFailure
 	}
 	if err := json.NewEncoder(output).Encode(result); err != nil {
@@ -108,9 +123,12 @@ func parseOptions(args []string) (rawOptions, error) {
 	flags.StringVar(&options.expectedManifestHash, "expected-manifest-sha256", "", "exact manifest SHA-256")
 	flags.StringVar(&options.sourceKeyPath, "source-key-file", "", "protected source subject key")
 	flags.StringVar(&options.targetKeyPath, "target-key-file", "", "protected target subject key")
+	flags.StringVar(&options.mode, "mode", string(transitionModePlan), "plan or apply")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 ||
 		options.manifestPath == "" || options.sourceKeyPath == "" || options.targetKeyPath == "" ||
-		!validSHA256(options.expectedManifestHash) {
+		!validSHA256(options.expectedManifestHash) ||
+		transitionMode(options.mode) != transitionModePlan &&
+			transitionMode(options.mode) != transitionModeApply {
 		return rawOptions{}, errInvalidInput
 	}
 	return options, nil
