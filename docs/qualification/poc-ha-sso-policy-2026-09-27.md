@@ -1024,15 +1024,77 @@ auth transaction is the deliberately unfinished canary start used to inspect
 the authorization request; it is not a failed login. The evidence query selected
 only aggregate state and no subject, email, credential, code, or token.
 
+## Broker resource and saturation qualification
+
+`SSO-BROKER-009` passed for exact source
+`57e9e9168fb6d8232521d011a86bce46f9d1414a` and image index digest
+`sha256:bcf23e940701e00d9a9290e28dc89ed0f9ab7f1085ba6c8deb553e4f7c6c56f1`.
+Measurements used repeated private operator scrapes, bounded ApacheBench runs,
+deliberately held TLS connections and token request bodies, Kubernetes pod
+status, and read-only PostgreSQL activity. A single sample was not used to set
+a limit. The cluster has one worker node and the benchmark path includes local
+port-forward and, for the pre-rollout split run, public ingress overhead; the
+results qualify the POC envelope and failure behavior, not a production latency
+or multi-node throughput SLO.
+
+Split Identity idle samples across both replicas observed 35.38--37.09 MB RSS,
+20--22 goroutines, 1.71--3.54 MB live heap, and 14.00--18.45 MB Go runtime
+system memory. Each process CPU counter advanced by about 0.05 CPU-seconds over
+approximately 20 seconds while idle. A 20-second concurrency-16 discovery run
+completed 5,093 requests with zero failures and all keep-alive responses at
+254.62 requests/second. Total-request latency was p50 56 ms, p95 65 ms, p99
+255 ms, and maximum 3,851 ms. Per-pod RSS stayed at or below 38.96 MB,
+goroutines stayed at or below 25, and no saturation rejection occurred during
+the steady run.
+
+Holding 32 valid slow token request bodies filled exactly all 32 configured
+non-queuing request slots. Ten additional discovery probes all returned 429;
+the saturation counter advanced from 2 to 13 because a background readiness
+probe was also rejected. The listener returned 200 after the held requests
+were released. A separate 64-connection run reached exactly 64 active
+connections, 84 goroutines, and 40.27 MB RSS with no active request slot, then
+recovered. After the final rollout, current per-pod cumulative allocations were
+9.88 MB and 25.89 MB, live allocations were 3.03 MB and 3.93 MB, RSS was
+34.71 MB and 37.59 MB, and both pods had 21 goroutines.
+
+Aggregate `role=all` idle samples observed 44.02--45.73 MB RSS, 29--30
+goroutines, 4.98--6.38 MB live heap, and 22.91 MB Go runtime system memory. A
+concurrency-64 run completed 6,961 requests in ten seconds with zero failures
+at 695.98 requests/second and reached 64 active connections and 93 goroutines.
+Total-request latency was p50 77 ms, p95 109 ms, p99 169 ms, and maximum 913
+ms. A repeat run completed 7,158 requests with zero failures at 715.30
+requests/second. Holding all 32 request slots made ten additional probes return
+429, advanced the saturation counter by ten, and recovered to 200. The highest
+observed post-saturation RSS was 48.69 MB.
+
+Read-only PostgreSQL sampling before and after load was unchanged: six idle
+`identity_runtime`, ten idle `mesh_runtime`, and two idle `mesh_worker`
+sessions, with 27 total server sessions against `max_connections=50`. This
+proves the tested load did not grow or leak application pools. It does not
+qualify external PostgreSQL failover, which remains intentionally paused.
+
+The measured envelope produced chart 0.2.25. Split Identity uses 100m/64Mi
+requests and 1000m/192Mi limits. Aggregate `all` uses 100m/128Mi requests and
+1000m/256Mi limits. CPU limits remain conservative because the POC is not a
+production capacity test. API and Control limits were not lowered without
+equivalent endpoint-specific load evidence.
+
+Strict Helm lint, main and canary render, server-side dry-run, and Trivy
+High/Critical configuration scans passed. Canary revision 12 and main revision
+42 retained the exact v38 digest. Post-rollout canary testing completed 6,096
+requests in ten seconds at concurrency 64 with zero failures at 609.57
+requests/second; RSS was 47.18 MB and the pod had zero restarts. Post-rollout
+split Identity testing completed 2,108 requests in ten seconds at concurrency
+16 with zero failures at 210.36 requests/second; both replicas remained Ready
+with zero restarts. Public discovery and Console, aggregate readiness, and
+split Identity readiness all succeeded.
+
 ## Remaining execution order
 
-1. Execute `SSO-BROKER-009` CPU, memory, goroutine, allocation, database-pool,
-   latency and saturation measurements, then set role-specific requests and
-   limits from evidence.
-2. Execute `SSO-BROKER-010` upgrade/rollback and identity-migration runbooks,
+1. Execute `SSO-BROKER-010` upgrade/rollback and identity-migration runbooks,
    then close the remaining legal-review and signed-artifact items.
-3. Extend publication cases to TCP, UDP, multiple devices, and multiple
+2. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
-4. Resume PostgreSQL and Redis infrastructure failover only when that paused
+3. Resume PostgreSQL and Redis infrastructure failover only when that paused
    workstream is re-opened; the Core-side reconnect/reconciliation support is
    already present but does not qualify the external data services.
