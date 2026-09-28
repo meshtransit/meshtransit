@@ -69,6 +69,7 @@ func TestPrivateLoginConfigOwnsVersionedEdgeProfile(t *testing.T) {
 		{name: "edge private", version: 2, address: "10.20.30.40:9443", origin: "https://app.example.test", proxies: []string{"10.20.0.0/16", "fd20:30::/48"}},
 		{name: "edge ipv4 wildcard", version: 2, address: "0.0.0.0:9443", origin: "https://app.example.test", proxies: []string{"10.20.0.0/16"}},
 		{name: "edge ipv6 wildcard", version: 2, address: "[::]:9443", origin: "https://app.example.test", proxies: []string{"fd20:30::/48"}},
+		{name: "broker edge wildcard", version: 3, address: "0.0.0.0:9443", origin: "https://app.example.test", proxies: []string{"10.20.0.0/16"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			process, document := privateLoginTestDocument(t)
@@ -81,6 +82,10 @@ func TestPrivateLoginConfigOwnsVersionedEdgeProfile(t *testing.T) {
 				document["origin"] = test.origin
 				document["trusted_proxy_prefixes"] = test.proxies
 			}
+			if test.version == 3 {
+				document["connector_id"] = "google-v1"
+				document["scopes"] = []string{"openid", "federated:id"}
+			}
 			profile, err := parsePrivateLoginConfig(privateLoginTestJSON(t, document), process)
 			if err != nil {
 				t.Fatal(err)
@@ -89,6 +94,10 @@ func TestPrivateLoginConfigOwnsVersionedEdgeProfile(t *testing.T) {
 				profile.Route().RedirectURI() != test.origin+"/auth/v1/callback" ||
 				profile.Route().ClientAuthMethod() != "client_secret_basic" {
 				t.Fatal("profile binding changed")
+			}
+			if test.version == 3 && (profile.Route().ConnectorID() != "google-v1" ||
+				!slices.Equal(profile.Route().Scopes(), []string{"openid", "federated:id"})) {
+				t.Fatal("broker route binding changed")
 			}
 			prefixes := make([]netip.Prefix, 0, len(test.proxies))
 			for _, value := range test.proxies {
@@ -115,6 +124,43 @@ func TestPrivateLoginConfigOwnsVersionedEdgeProfile(t *testing.T) {
 				if body, err := json.Marshal(value); err == nil || body != nil {
 					t.Fatal("profile serialized")
 				}
+			}
+		})
+	}
+}
+
+func TestPrivateLoginConfigBindsSplitBrokerRoute(t *testing.T) {
+	t.Parallel()
+	process, document := privateLoginTestDocument(t)
+	document["version"] = 3
+	document["connector_id"] = "google-v1"
+	document["scopes"] = []string{"openid", "federated:id"}
+	profile, err := parsePrivateLoginConfig(privateLoginTestJSON(t, document), process)
+	if err != nil || profile == nil || profile.Route().ConnectorID() != "google-v1" ||
+		!slices.Equal(profile.Route().Scopes(), []string{"openid", "federated:id"}) {
+		t.Fatalf("valid split broker route rejected: %v", err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		change func(map[string]any)
+	}{
+		{name: "missing connector", change: func(document map[string]any) { delete(document, "connector_id") }},
+		{name: "empty connector", change: func(document map[string]any) { document["connector_id"] = "" }},
+		{name: "missing scopes", change: func(document map[string]any) { delete(document, "scopes") }},
+		{name: "direct scopes", change: func(document map[string]any) { document["scopes"] = []string{"openid"} }},
+		{name: "duplicate scopes", change: func(document map[string]any) {
+			document["scopes"] = []string{"openid", "federated:id", "openid"}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, candidate := privateLoginTestDocument(t)
+			candidate["version"] = 3
+			candidate["connector_id"] = "google-v1"
+			candidate["scopes"] = []string{"openid", "federated:id"}
+			test.change(candidate)
+			if profile, err := parsePrivateLoginConfig(privateLoginTestJSON(t, candidate), process); profile != nil || !errors.Is(err, ErrInvalid) {
+				t.Fatal("unsafe split broker route released")
 			}
 		})
 	}
@@ -219,6 +265,9 @@ func TestPrivateLoginConfigBindsEmbeddedIdentityWithoutSharingCustody(t *testing
 		document["token_endpoint"] = issuer + "/token"
 		document["jwks_uri"] = issuer + "/keys"
 		document["oidc_client_id"] = process.Identity.Clients[0].ID
+		document["version"] = 3
+		document["connector_id"] = process.Identity.OIDCConnectors[0].ID
+		document["scopes"] = []string{"openid", "federated:id"}
 		return document
 	}
 
@@ -247,6 +296,9 @@ func TestPrivateLoginConfigBindsEmbeddedIdentityWithoutSharingCustody(t *testing
 		}},
 		{name: "client mismatch", change: func(document map[string]any) {
 			document["oidc_client_id"] = "other-client"
+		}},
+		{name: "connector mismatch", change: func(document map[string]any) {
+			document["connector_id"] = "other-connector"
 		}},
 		{name: "identity secret alias", change: func(document map[string]any) {
 			document["client_secret_file"] = process.Identity.Clients[0].SecretFile.path

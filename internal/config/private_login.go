@@ -80,18 +80,20 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 		"deployment_id", "workspace_id", "provider_id", "client_id",
 		"provider_generation", "recovery_epoch", "issuer", "discovery_uri", "authorization_endpoint",
 		"token_endpoint", "jwks_uri", "oidc_client_id", "redirect_id", "return_route_id",
-		"tls_certificate_file", "tls_private_key_file", "client_secret_file", "keys",
+		"connector_id", "scopes", "tls_certificate_file", "tls_private_key_file", "client_secret_file", "keys",
 	})
 	if err != nil {
 		return nil, ErrInvalid
 	}
 	var version int
-	if !privateLoginField(fields, "version", &version) || version != 1 && version != 2 {
+	if !privateLoginField(fields, "version", &version) || version != 1 && version != 2 && version != 3 {
 		return nil, ErrInvalid
 	}
 	expectedFields := 20
 	if version == 2 {
 		expectedFields = 22
+	} else if version == 3 {
+		expectedFields = 24
 	}
 	if len(fields) != expectedFields {
 		return nil, ErrInvalid
@@ -103,7 +105,7 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 	address, err := netip.ParseAddrPort(result.address)
 	validBind := err == nil && address.String() == result.address && address.Port() != 0
 	allowedBind := address.Addr().IsLoopback() ||
-		version == 2 && (address.Addr().IsPrivate() || address.Addr().IsUnspecified())
+		version >= 2 && (address.Addr().IsPrivate() || address.Addr().IsUnspecified())
 	if !validBind || !allowedBind || address.Addr().Is4In6() || address.Addr().Zone() != "" {
 		return nil, ErrInvalid
 	}
@@ -121,7 +123,7 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 	} else if !privateLoginField(fields, "origin", &result.origin) || !validPrivateLoginOrigin(result.origin) {
 		return nil, ErrInvalid
 	}
-	if version == 2 {
+	if version >= 2 {
 		var prefixes []string
 		if !privateLoginField(fields, "trusted_proxy_prefixes", &prefixes) {
 			return nil, ErrInvalid
@@ -169,7 +171,12 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 	if err != nil {
 		return nil, ErrInvalid
 	}
-	if process.Identity != nil {
+	if version == 3 {
+		if !privateLoginField(fields, "connector_id", &params.ConnectorID) ||
+			!privateLoginField(fields, "scopes", &params.Scopes) {
+			return nil, ErrInvalid
+		}
+	} else if process.Identity != nil {
 		if len(process.Identity.OIDCConnectors) != 1 {
 			return nil, ErrInvalid
 		}
@@ -186,13 +193,14 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 	}
 	if process.Identity != nil {
 		if len(process.Identity.Clients) != 1 ||
+			result.route.ConnectorID() != process.Identity.OIDCConnectors[0].ID ||
 			result.route.Issuer() != process.Identity.Issuer ||
 			result.route.OIDCClientID() != process.Identity.Clients[0].ID ||
 			result.route.RedirectURI() != process.Identity.Clients[0].RedirectURI {
 			return nil, ErrInvalid
 		}
 	}
-	if version == 2 {
+	if version >= 2 {
 		issuer, issuerErr := url.Parse(result.route.Issuer())
 		origin, originErr := url.Parse(result.origin)
 		if issuerErr != nil || originErr != nil || strings.EqualFold(issuer.Hostname(), origin.Hostname()) {
