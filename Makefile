@@ -16,8 +16,11 @@ DEX_ARTIFACT_MANIFEST ?=
 DEX_UPSTREAM_SOURCE ?=
 DEX_ARTIFACT_BINARY ?=
 DEX_PREPARED_ROOT ?=
+DEX_OLD_SOURCE ?=
+DEX_CURRENT_BINARY ?=
+DEX_CURRENT_BINARY_SHA256 ?=
 
-.PHONY: fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
+.PHONY: fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
 	container-build container-build-multiarch container-push-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
 
 fmt:
@@ -76,6 +79,17 @@ qualification-dex-workspace:
 	@test "$$(GOWORK=off $(GO) env GOVERSION)" = "go1.26.8" || { echo "Go 1.26.8 is required"; exit 1; }
 	GOWORK="$(DEX_PREPARED_ROOT)/go.work" $(GO) test -timeout=$(TEST_TIMEOUT) -count=1 \
 		-tags=dexbroker ./internal/adapter/dexbroker ./cmd/meshcore
+
+qualification-dex-upgrade-restore:
+	@test -n "$(DEX_OLD_SOURCE)" || { echo "set DEX_OLD_SOURCE"; exit 2; }
+	@test -n "$(DEX_PREPARED_ROOT)" || { echo "set DEX_PREPARED_ROOT"; exit 2; }
+	@test -n "$(DEX_CURRENT_BINARY)" || { echo "set DEX_CURRENT_BINARY"; exit 2; }
+	@test -n "$(DEX_CURRENT_BINARY_SHA256)" || { echo "set DEX_CURRENT_BINARY_SHA256"; exit 2; }
+	DEX_OLD_SOURCE="$(DEX_OLD_SOURCE)" \
+	DEX_PREPARED_ROOT="$(DEX_PREPARED_ROOT)" \
+	DEX_CURRENT_BINARY="$(DEX_CURRENT_BINARY)" \
+	DEX_CURRENT_BINARY_SHA256="$(DEX_CURRENT_BINARY_SHA256)" \
+	bash scripts/qualification/run-identity-broker-upgrade-restore.sh
 
 verify-dex-artifact:
 	@test -n "$(DEX_ARTIFACT_MANIFEST)" || { echo "set DEX_ARTIFACT_MANIFEST"; exit 2; }

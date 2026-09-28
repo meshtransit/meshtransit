@@ -146,6 +146,40 @@ qualification-dex-workspace` successfully compiles the real build-tagged
 `internal/adapter/dexbroker` contract through that workspace. The ordinary
 MeshCore build does not select the tag, and no source or workspace is committed.
 
+## Upgrade and restore evidence
+
+`evidence/upgrade-restore-report.json` records the disposable PostgreSQL
+qualification from 2026-09-28. The harness builds upstream v2.45.0 from its
+verified tag commit, accepts the current binary only after its declared digest
+and version match, and compiles the storage helper through the manifest-verified
+broker workspace. It then proves all of the following with PostgreSQL TLS
+`verify-full`:
+
+- the old release creates migration level 13 and a restorable pre-upgrade
+  backup;
+- the dedicated migration role advances that database to level 14;
+- the DML runtime role opens both the upgraded and restored-current databases
+  only through the exact prepared-schema contract;
+- the normalized public JWKS is identical after in-place upgrade and after
+  restoring the post-upgrade backup; and
+- restoring the pre-upgrade backup into an isolated database lets the old
+  release start with the same normalized public JWKS.
+
+The helper is build-tagged, offline operator tooling and is not linked into the
+ordinary MeshCore binary. Passwords, client secrets, database addresses, and
+driver errors are excluded from its output. The report's current binary is a
+separate exact rebuild used only for this upgrade fixture; its digest does not
+replace the host artifact digest in `manifest.darwin-arm64.json`. Backup and
+JWKS digests bind this individual disposable run and are expected to change on
+a fresh run because migration timestamps and signing material are generated
+inside the fixture.
+
+Run `make qualification-dex-upgrade-restore` with absolute paths to the
+verified old checkout, prepared workspace, current binary, and the current
+binary's SHA-256. The harness refuses an origin/tag/commit mismatch, unexpected
+binary version or digest, unprotected input, schema regression, failed restore,
+or key-continuity mismatch.
+
 ## Upgrade rule
 
 For every Dex version change:

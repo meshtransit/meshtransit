@@ -96,10 +96,35 @@ func openPostgreSQLResource(
 	logger *slog.Logger,
 	opener preparedPostgreSQLOpener,
 ) (*PostgreSQLResource, error) {
-	host, port, valid := validatePostgreSQLResourceOptions(ctx, options, logger, opener)
+	if opener == nil {
+		return nil, ErrInvalidPostgreSQLResource
+	}
+	host, port, valid := validatePostgreSQLResourceOptions(ctx, options, logger)
 	if !valid {
 		return nil, ErrInvalidPostgreSQLResource
 	}
+	postgres, err := newPostgreSQLStorageConfiguration(options, host, port)
+	if err != nil {
+		return nil, err
+	}
+
+	storage, err := opener(ctx, postgres, logger)
+	if err != nil || isNilStorage(storage) {
+		if !isNilStorage(storage) {
+			_ = storage.Close()
+		}
+		return nil, ErrOpenPostgreSQLResource
+	}
+	drained := make(chan struct{})
+	close(drained)
+	return &PostgreSQLResource{storage: storage, usesDrained: drained}, nil
+}
+
+func newPostgreSQLStorageConfiguration(
+	options PostgreSQLResourceOptions,
+	host string,
+	port uint16,
+) (*dexsql.Postgres, error) {
 	password, err := options.PasswordFile.Read()
 	if err != nil {
 		return nil, ErrOpenPostgreSQLResource
@@ -113,8 +138,7 @@ func openPostgreSQLResource(
 	if err != nil {
 		return nil, ErrOpenPostgreSQLResource
 	}
-
-	storage, err := opener(ctx, &dexsql.Postgres{
+	return &dexsql.Postgres{
 		NetworkDB: dexsql.NetworkDB{
 			Database:          options.Database,
 			User:              options.User,
@@ -127,25 +151,15 @@ func openPostgreSQLResource(
 			ConnMaxLifetime:   int(options.MaxConnectionLifetime / time.Second),
 		},
 		SSL: dexsql.SSL{Mode: postgresVerifyFull, CAFile: caPath},
-	}, logger)
-	if err != nil || isNilStorage(storage) {
-		if !isNilStorage(storage) {
-			_ = storage.Close()
-		}
-		return nil, ErrOpenPostgreSQLResource
-	}
-	drained := make(chan struct{})
-	close(drained)
-	return &PostgreSQLResource{storage: storage, usesDrained: drained}, nil
+	}, nil
 }
 
 func validatePostgreSQLResourceOptions(
 	ctx context.Context,
 	options PostgreSQLResourceOptions,
 	logger *slog.Logger,
-	opener preparedPostgreSQLOpener,
 ) (string, uint16, bool) {
-	if ctx == nil || ctx.Err() != nil || logger == nil || opener == nil ||
+	if ctx == nil || ctx.Err() != nil || logger == nil ||
 		!validPostgreSQLIdentifier(options.Database) || !validPostgreSQLIdentifier(options.User) ||
 		options.MaxOpenConnections < minimumPostgreSQLConnections ||
 		options.MaxOpenConnections > maximumPostgreSQLConnections ||

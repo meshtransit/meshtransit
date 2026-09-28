@@ -1138,15 +1138,33 @@ The source provider finishes suspended at version two, the source subject is
 unlinked, the target subject is active under the planned digest, the Session is
 revoked with `identity_unlinked`, and the pending AuthTransaction is failed
 with encrypted PKCE material cleared. A repeat apply is rejected and preserves
-the entire post-commit snapshot. Broker upgrade/restore qualification remains
-open before `SSO-BROKER-010` can pass.
+the entire post-commit snapshot.
+
+The final broker upgrade/restore fixture passed on 2026-09-28 against an exact
+upstream v2.45.0 tag checkout, the manifest-prepared v2.45.1 compatibility
+source, and digest-pinned PostgreSQL 18.6. The old database was backed up at
+migration level 13, upgraded to level 14 by the dedicated migration role, and
+opened by the DML runtime role through the prepared-schema contract. Normalized
+public JWKS remained identical after in-place upgrade, restore of the upgraded
+backup, and isolated rollback by restoring the pre-upgrade backup under the old
+binary. The exact binary, backup, helper, JWKS, commit, image, and migration
+digests are recorded in
+`third_party/dex/v2.45.1/evidence/upgrade-restore-report.json`.
+
+`SSO-BROKER-010` therefore passes for the Phase 1 POC engineering scope. The
+identity migration and broker recovery implementation is owned entirely by
+MeshCore; no upstream broker repository is modified. This does not claim
+external legal approval, production PostgreSQL failover, a production SLO, or
+multi-node Kubernetes fault-domain qualification.
 
 ## Remaining execution order
 
-1. Execute the broker upgrade/restore runbook and close the remaining
-   legal-review and signed-artifact items for `SSO-BROKER-010`.
-2. Extend publication cases to TCP, UDP, multiple devices, and multiple
+1. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
+2. Qualify multi-node Kubernetes scheduling and failure domains before making
+   production HA or SLO claims.
 3. Resume PostgreSQL and Redis infrastructure failover only when that paused
    workstream is re-opened; the Core-side reconnect/reconciliation support is
    already present but does not qualify the external data services.
+4. Complete external license/legal approval and release signing before general
+   availability; those governance gates do not reopen Phase 1 POC engineering.

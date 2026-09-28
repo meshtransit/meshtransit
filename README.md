@@ -6,14 +6,19 @@ Access Graph becomes authorization, explanation, simulation, and verification
 model. Current Phase 1 scope is unchanged. See
 [PRODUCT_DIRECTION.md](PRODUCT_DIRECTION.md).
 
-Current POC status (2026-09-27): the embedded Dex identity broker, Google OIDC
+Current POC status (2026-09-28): Phase 1 POC engineering is closed. The embedded
+Dex identity broker, Google OIDC
 connector, Core-owned browser session, cookie-authenticated policy publication,
 and two-replica API, Control, Identity, and Console roles are qualified on
 Kubernetes. Policy publication was verified through allow, deny-all, and
 restore transitions while a Control replica was replaced. The deployable Core
 image is built from a manifest-verified Dex workspace; provider-specific
 deployment artifacts are not part of this repository.
-The exact non-production evidence and remaining gaps are recorded in the
+Provider-neutral identity migration and broker upgrade, backup, restore, and
+rollback are qualified on disposable PostgreSQL. External legal/release
+approval, production data-service failover, multi-node fault domains, and
+production SLOs remain separate gates. The exact non-production evidence and
+remaining gaps are recorded in the
 [POC HA, SSO, and policy qualification matrix](docs/qualification/poc-ha-sso-policy-2026-09-27.md).
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
