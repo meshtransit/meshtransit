@@ -278,6 +278,85 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/preview-rebind": {
+      "post": {
+        "operationId": "previewResourceRebind",
+        "summary": "Preview the exact impact of replacing a Device target",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceID"},
+          {"$ref": "#/components/parameters/AggregateIfMatch"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceRebindPreviewRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Deterministic impact evidence for the current Resource version.",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/ResourceETag"},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceRebindPreviewResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "422": {"$ref": "#/components/responses/UnprocessableEntity"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/rebind": {
+      "post": {
+        "operationId": "rebindResource",
+        "summary": "Replace a Device target using an exact acknowledged impact preview",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceID"},
+          {"$ref": "#/components/parameters/AggregateIfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceRebindRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "The target replacement committed, or its identical result was replayed.",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/ResourceETag"},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceRebindResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "422": {"$ref": "#/components/responses/UnprocessableEntity"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/{lifecycle_action}": {
       "post": {
         "operationId": "transitionResourceLifecycle",
@@ -991,6 +1070,80 @@
           "reason": {"type": "string", "minLength": 1, "maxLength": 512}
         }
       },
+      "ResourceRebindPreviewRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["device_id"],
+        "properties": {
+          "device_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "ResourceRebindPreview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_id", "current_device_id", "device_id", "current_target_generation",
+          "target_generation", "impact_hash", "affected_resource_group_ids", "approval_required"
+        ],
+        "properties": {
+          "resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "current_device_id": {"$ref": "#/components/schemas/PublicID"},
+          "device_id": {"$ref": "#/components/schemas/PublicID"},
+          "current_target_generation": {"type": "integer", "format": "int64", "minimum": 1},
+          "target_generation": {"type": "integer", "format": "int64", "minimum": 2},
+          "impact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "affected_resource_group_ids": {
+            "type": "array", "maxItems": 256,
+            "items": {"$ref": "#/components/schemas/PublicID"}
+          },
+          "approval_required": {"type": "boolean"}
+        }
+      },
+      "ResourceRebindPreviewResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/ResourceRebindPreview"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "ResourceRebindRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["device_id", "impact_hash", "reason"],
+        "properties": {
+          "device_id": {"$ref": "#/components/schemas/PublicID"},
+          "impact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      },
+      "ResourceRebindResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resource_id", "device_id", "target_generation", "version", "semantic_hash",
+          "network_revision", "inventory_revision"
+        ],
+        "properties": {
+          "resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "device_id": {"$ref": "#/components/schemas/PublicID"},
+          "target_generation": {"type": "integer", "format": "int64", "minimum": 2},
+          "version": {"type": "integer", "format": "int64", "minimum": 2},
+          "semantic_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "network_revision": {"type": "integer", "format": "int64", "minimum": 2},
+          "inventory_revision": {"type": "integer", "format": "int64", "minimum": 2}
+        }
+      },
+      "ResourceRebindResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/ResourceRebindResult"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
       "ResourceLifecycleResult": {
         "type": "object",
         "additionalProperties": false,
@@ -1143,6 +1296,16 @@
       },
       "PreconditionRequired": {
         "description": "If-Match is required.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "UnprocessableEntity": {
+        "description": "The bounded impact set exceeds this API contract.",
         "content": {
           "application/json": {
             "schema": {

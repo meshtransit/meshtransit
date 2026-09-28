@@ -30,25 +30,27 @@ import (
 )
 
 const (
-	deviceRevokeOperation         = "device_revoke"
-	policyPublishOperation        = "policy_publish"
-	resourceCreateOperation       = "resource_create"
-	resourceGetOperation          = "resource_get"
-	resourceListOperation         = "resource_list"
-	resourceGroupCreateOperation  = "resource_group_create"
-	resourceGroupGetOperation     = "resource_group_get"
-	resourceGroupListOperation    = "resource_group_list"
-	resourceSuspendOperation      = "resource_suspend"
-	resourceResumeOperation       = "resource_resume"
-	resourceDeleteOperation       = "resource_delete"
-	resourceGroupSuspendOperation = "resource_group_suspend"
-	resourceGroupResumeOperation  = "resource_group_resume"
-	resourceGroupDeleteOperation  = "resource_group_delete"
-	unknownManagementOperation    = "unknown"
-	maximumManagementBodyBytes    = 4 * 1024
-	maximumManagementRequests     = 4096
-	minimumManagementTimeout      = 100 * time.Millisecond
-	maximumManagementTimeout      = 30 * time.Second
+	deviceRevokeOperation          = "device_revoke"
+	policyPublishOperation         = "policy_publish"
+	resourceCreateOperation        = "resource_create"
+	resourceGetOperation           = "resource_get"
+	resourceListOperation          = "resource_list"
+	resourceGroupCreateOperation   = "resource_group_create"
+	resourceGroupGetOperation      = "resource_group_get"
+	resourceGroupListOperation     = "resource_group_list"
+	resourceSuspendOperation       = "resource_suspend"
+	resourceResumeOperation        = "resource_resume"
+	resourceDeleteOperation        = "resource_delete"
+	resourceGroupSuspendOperation  = "resource_group_suspend"
+	resourceGroupResumeOperation   = "resource_group_resume"
+	resourceGroupDeleteOperation   = "resource_group_delete"
+	resourceRebindPreviewOperation = "resource_rebind_preview"
+	resourceRebindOperation        = "resource_rebind"
+	unknownManagementOperation     = "unknown"
+	maximumManagementBodyBytes     = 4 * 1024
+	maximumManagementRequests      = 4096
+	minimumManagementTimeout       = 100 * time.Millisecond
+	maximumManagementTimeout       = 30 * time.Second
 )
 
 var (
@@ -79,6 +81,12 @@ type ResourceCreator interface {
 // ResourceLifecycle transitions Resource and Resource Group authority state.
 type ResourceLifecycle interface {
 	Transition(context.Context, authority.LifecycleCommand) (authority.LifecycleResult, error)
+}
+
+// ResourceRebinder previews and atomically replaces Device target authority.
+type ResourceRebinder interface {
+	Preview(context.Context, authority.RebindPreview) (authority.RebindImpact, error)
+	Rebind(context.Context, authority.RebindCommand) (authority.RebindResult, error)
 }
 
 // ResourceCatalog reads freshly authorized Resource authority snapshots.
@@ -116,6 +124,7 @@ type ManagementHandlerOptions struct {
 	PolicyPublications    PolicyPublisher
 	ResourceCreations     ResourceCreator
 	ResourceLifecycles    ResourceLifecycle
+	ResourceRebindings    ResourceRebinder
 	ResourceCatalog       ResourceCatalog
 	Idempotency           IdempotencyProver
 	RateLimitSubjects     RateLimitSubjectDigester
@@ -136,6 +145,7 @@ type ManagementHandler struct {
 	policies           PolicyPublisher
 	resourceCreations  ResourceCreator
 	resourceLifecycles ResourceLifecycle
+	resourceRebindings ResourceRebinder
 	resourceCatalog    ResourceCatalog
 	idempotency        IdempotencyProver
 	rateSubjects       RateLimitSubjectDigester
@@ -177,6 +187,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		policies:           options.PolicyPublications,
 		resourceCreations:  options.ResourceCreations,
 		resourceLifecycles: options.ResourceLifecycles,
+		resourceRebindings: options.ResourceRebindings,
 		resourceCatalog:    options.ResourceCatalog,
 		idempotency:        options.Idempotency,
 		rateSubjects:       options.RateLimitSubjects,

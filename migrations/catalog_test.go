@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 39 {
-		t.Fatalf("len(Catalog()) = %d, want 39", len(catalog))
+	if len(catalog) != 40 {
+		t.Fatalf("len(Catalog()) = %d, want 40", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 39 {
-		t.Fatalf("LatestVersion() = %d, want 39", LatestVersion())
+	if LatestVersion() != 40 {
+		t.Fatalf("LatestVersion() = %d, want 40", LatestVersion())
 	}
 }
 
@@ -1430,6 +1430,42 @@ func TestResourceLifecycleIsRetainedVersionedAndLeastPrivilege(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("Resource lifecycle SQL contains excessive capability %q", forbidden)
+		}
+	}
+}
+
+func TestResourceTargetRebindingIsVersionedAndLeastPrivilege(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[39]
+	if migration.Description != "Resource target rebinding authority" {
+		t.Fatalf("migration 40 description = %q", migration.Description)
+	}
+	for _, required := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.enforce_resource_authority_transition",
+		"CREATE FUNCTION mesh_ops.preview_device_resource_rebind_v1",
+		"CREATE FUNCTION mesh_ops.lock_device_resource_rebind_v1",
+		"CREATE FUNCTION mesh_ops.rebind_device_resource_v1",
+		"p_expected_resource_version BIGINT",
+		"FROM mesh_ops.lock_network_revision()",
+		"FOR SHARE OF workspace, principal, membership",
+		"SET state = 'superseded'",
+		"target_generation = advanced_target_generation",
+		"version = resource.version + 1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.rebind_device_resource_v1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.preview_device_resource_rebind_v1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.lock_device_resource_rebind_v1",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("Resource target rebinding SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "GRANT ALL",
+		"BYPASSRLS", "TO mesh_worker;", "TO mesh_observer;", "DROP ", "DELETE FROM",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("Resource target rebinding SQL contains excessive capability %q", forbidden)
 		}
 	}
 }

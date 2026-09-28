@@ -105,6 +105,33 @@ func TestManagementV1MutationContracts(t *testing.T) {
 			t.Fatalf("Resource detail contract = %+v, found=%t", resourceOperation.Get, found)
 		}
 	}
+	for _, contract := range []struct {
+		path, operation string
+		statuses        []string
+	}{
+		{
+			path:      "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/preview-rebind",
+			operation: "previewResourceRebind",
+			statuses:  []string{"200", "400", "401", "403", "404", "405", "409", "412", "422", "428", "429", "503", "504"},
+		},
+		{
+			path:      "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/rebind",
+			operation: "rebindResource",
+			statuses:  []string{"200", "400", "401", "403", "404", "405", "409", "412", "422", "428", "429", "503", "504"},
+		},
+	} {
+		rebindOperation, found := document.Paths[contract.path]
+		if !found || rebindOperation.Post.OperationID != contract.operation ||
+			len(rebindOperation.Post.Security) != 1 ||
+			rebindOperation.Post.Security[0]["accountSessionBearer"] == nil {
+			t.Fatalf("Resource rebind contract = %+v, found=%t", rebindOperation.Post, found)
+		}
+		for _, status := range contract.statuses {
+			if _, ok := rebindOperation.Post.Responses[status]; !ok {
+				t.Fatalf("Resource rebind responses omit status %s", status)
+			}
+		}
+	}
 	for _, contract := range []struct{ path, operation string }{
 		{
 			path:      "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/{lifecycle_action}",

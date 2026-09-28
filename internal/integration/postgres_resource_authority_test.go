@@ -160,6 +160,10 @@ func assertPostgreSQLResourceAuthority(
 		t.Fatalf("unauthorized Resource error = %v, want ErrForbidden", err)
 	}
 
+	assertResourceTargetRebinding(
+		ctx, t, adminConnection, runtimePool, service, session, scope203, scope204,
+	)
+
 	assertResourceLifecycles(
 		ctx, t, adminConnection, runtimeConnection, runtimePool, session, scope203, scope204,
 		deviceResult, groupResult,
@@ -167,6 +171,114 @@ func assertPostgreSQLResourceAuthority(
 
 	assertResourceAuthorityEvidenceAtomicity(ctx, t, adminConnection, runtimeConnection)
 	assertResourceAuthorityPrivilegeContract(ctx, t, adminConnection, runtimeConnection, workerConnection)
+}
+
+func assertResourceTargetRebinding(
+	ctx context.Context,
+	t *testing.T,
+	adminConnection *pgx.Conn,
+	runtimePool *postgresadapter.Pool,
+	creationService *authority.Service,
+	session accountsession.Session,
+	homeScope network.Scope,
+	otherScope network.Scope,
+) {
+	t.Helper()
+	inventoryRevision, groupRevision := resourceAuthorityRevisions(ctx, t, adminConnection, 103, 203)
+	definition := resourceAuthorityDeviceDefinition(
+		t, homeScope, session.PrincipalID(), resourceAuthorityNodeID(t, 910),
+		"Rebind qualification Resource",
+	)
+	createCommand, err := authority.NewCreateDeviceCommand(
+		definition, inventoryRevision, session,
+		resourceAuthorityReason(t, "create target-rebinding fixture"),
+		resourceAuthorityProof(t, 16),
+	)
+	if err != nil {
+		t.Fatalf("construct target-rebinding fixture: %v", err)
+	}
+	created, err := creationService.Create(ctx, createCommand)
+	if err != nil {
+		t.Fatalf("create target-rebinding fixture: %v", err)
+	}
+	reference, err := resource.NewReference(homeScope, created.ResourceID(), 1, 1)
+	if err != nil {
+		t.Fatalf("construct target-rebinding group reference: %v", err)
+	}
+	groupDefinition := resourceAuthorityGroupDefinition(
+		t, homeScope, session.PrincipalID(), "Rebind affected group", []resource.Reference{reference},
+	)
+	groupCommand, err := authority.NewCreateGroupCommand(
+		groupDefinition, groupRevision, session,
+		resourceAuthorityReason(t, "create target-rebinding impact fixture"),
+		resourceAuthorityProof(t, 17),
+	)
+	if err != nil {
+		t.Fatalf("construct target-rebinding group: %v", err)
+	}
+	groupResult, err := creationService.Create(ctx, groupCommand)
+	if err != nil {
+		t.Fatalf("create target-rebinding group: %v", err)
+	}
+
+	service := newIntegrationResourceRebindService(t, runtimePool)
+	replacementDeviceID := resourceAuthorityNodeID(t, 970)
+	preview, err := authority.NewRebindPreview(
+		homeScope, created.ResourceID(), 1, replacementDeviceID, session,
+	)
+	if err != nil {
+		t.Fatalf("construct Resource rebind preview: %v", err)
+	}
+	impact, err := service.Preview(ctx, preview)
+	if err != nil {
+		t.Fatalf("preview Resource rebind: %v", err)
+	}
+	affectedGroups := impact.AffectedGroupIDs()
+	if impact.CurrentDeviceID() != resourceAuthorityNodeID(t, 910) ||
+		impact.ProposedRevision().DeviceID() != replacementDeviceID ||
+		impact.ProposedRevision().TargetGeneration() != 2 || impact.ApprovalRequired() ||
+		len(affectedGroups) != 1 || affectedGroups[0] != groupResult.GroupID() {
+		t.Fatalf("Resource rebind impact = %+v groups=%+v", impact, affectedGroups)
+	}
+	command, err := authority.NewRebindCommand(
+		preview, impact.Hash(), resourceAuthorityReason(t, "replace failed Device target"),
+		resourceAuthorityProof(t, 18),
+	)
+	if err != nil {
+		t.Fatalf("construct Resource rebind command: %v", err)
+	}
+	result, err := service.Rebind(ctx, command)
+	if err != nil {
+		t.Fatalf("apply Resource rebind: %v", err)
+	}
+	if result.DeviceID() != replacementDeviceID || result.TargetGeneration() != 2 ||
+		result.Version() != 2 || result.ImpactHash() != impact.Hash() {
+		t.Fatalf("Resource rebind result = %+v", result)
+	}
+	replayed, err := service.Rebind(ctx, command)
+	if err != nil || replayed != result {
+		t.Fatalf("replayed Resource rebind = %+v, error=%v", replayed, err)
+	}
+
+	stalePreview, err := authority.NewRebindPreview(
+		homeScope, created.ResourceID(), 1, resourceAuthorityNodeID(t, 910), session,
+	)
+	if err != nil {
+		t.Fatalf("construct stale Resource rebind preview: %v", err)
+	}
+	if _, err := service.Preview(ctx, stalePreview); !errors.Is(err, authority.ErrRebindVersionConflict) {
+		t.Fatalf("stale Resource rebind preview error = %v, want ErrRebindVersionConflict", err)
+	}
+	crossScopePreview, err := authority.NewRebindPreview(
+		otherScope, created.ResourceID(), 2, resourceAuthorityNodeID(t, 910), session,
+	)
+	if err != nil {
+		t.Fatalf("construct cross-scope Resource rebind preview: %v", err)
+	}
+	if _, err := service.Preview(ctx, crossScopePreview); !errors.Is(err, authority.ErrRebindNotFound) {
+		t.Fatalf("cross-scope Resource rebind preview error = %v, want ErrRebindNotFound", err)
+	}
+	assertCommittedResourceRebind(ctx, t, adminConnection, result, groupResult.GroupID())
 }
 
 func assertResourceLifecycles(
@@ -473,6 +585,43 @@ func newIntegrationResourceLifecycleService(
 	return service
 }
 
+func newIntegrationResourceRebindService(
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+) *authority.RebindService {
+	t.Helper()
+	store, err := postgresadapter.NewResourceAuthorityStore(
+		runtimePool,
+		postgresadapter.ResourceAuthorityOptions{
+			StatementTimeout: 5 * time.Second,
+			LockTimeout:      2 * time.Second,
+			IdleTimeout:      10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("postgres.NewResourceAuthorityStore() error = %v", err)
+	}
+	retry, err := authority.NewExponentialBackoff(time.Millisecond, 5*time.Millisecond)
+	if err != nil {
+		t.Fatalf("authority.NewExponentialBackoff() error = %v", err)
+	}
+	service, err := authority.NewRebindService(
+		authority.Options{
+			MaxAttempts: 3, RollbackTimeout: 2 * time.Second,
+			IdempotencyWindow: time.Hour,
+		},
+		authority.RebindDependencies{
+			Impacts: store, Transactions: store, CommittedResults: store,
+			MutationIDs: authority.PublicRebindMutationIDGenerator{},
+			Clock:       authority.SystemClock{}, Retry: retry,
+		},
+	)
+	if err != nil {
+		t.Fatalf("authority.NewRebindService() error = %v", err)
+	}
+	return service
+}
+
 func resourceAuthorityProof(t *testing.T, suffix byte) idempotency.Proof {
 	t.Helper()
 	digest := [32]byte{31: suffix}
@@ -610,6 +759,66 @@ func assertCommittedResourceLifecycle(
 	}
 }
 
+func assertCommittedResourceRebind(
+	ctx context.Context,
+	t *testing.T,
+	connection *pgx.Conn,
+	result authority.RebindResult,
+	affectedGroupID resource.GroupID,
+) {
+	t.Helper()
+	var resourceCount, supersededCount, activeCount, pinnedGroupCount int
+	var auditCount, outboxCount, idempotencyCount int
+	if err := connection.QueryRow(ctx, `SELECT
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh.resource
+     WHERE public_id = $1::UUID AND version = $2 AND target_generation = $3
+       AND activated_network_revision = $4 AND inventory_revision = $5
+       AND state = 'active'),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh.resource_device_target AS target
+     JOIN mesh.resource AS resource ON resource.id = target.resource_id
+     WHERE resource.public_id = $1::UUID AND target.state = 'superseded'
+       AND target.target_generation = 1 AND target.version = 2),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh.resource_device_target AS target
+     JOIN mesh.resource AS resource ON resource.id = target.resource_id
+     JOIN mesh.device AS device ON device.id = target.device_id
+     WHERE resource.public_id = $1::UUID AND target.state = 'active'
+       AND target.target_generation = $3 AND target.version = 1
+       AND device.public_id = $6::UUID),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh.resource_group_version_member AS member
+     JOIN mesh.resource_group AS resource_group ON resource_group.id = member.resource_group_id
+     JOIN mesh.resource AS resource ON resource.id = member.resource_id
+     WHERE resource_group.public_id = $7::UUID AND resource.public_id = $1::UUID
+       AND member.target_generation = 1),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_audit.audit_event
+     WHERE target_kind = 'resource' AND target_public_id = $1::UUID
+       AND action = 'resource.rebound' AND permission = 'resource.manage'
+       AND payload ->> 'approval_status' = 'not_required'),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_ops.outbox_event
+     WHERE aggregate_kind = 'resource' AND aggregate_public_id = $1::UUID
+       AND aggregate_version = $2 AND network_revision = $4
+       AND event_class = 'network.revision.advanced'),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_ops.idempotency_record
+     WHERE result_kind = 'resource_rebind' AND result_public_id = $1::UUID
+       AND result_version = $2 AND state = 'completed')`,
+		result.ResourceID().String(), result.Version(), result.TargetGeneration(),
+		result.NetworkRevision(), result.InventoryRevision(), result.DeviceID().String(),
+		affectedGroupID.String(),
+	).Scan(
+		&resourceCount, &supersededCount, &activeCount, &pinnedGroupCount,
+		&auditCount, &outboxCount, &idempotencyCount,
+	); err != nil {
+		t.Fatalf("query committed Resource rebind: %v", err)
+	}
+	if resourceCount != 1 || supersededCount != 1 || activeCount != 1 ||
+		pinnedGroupCount != 1 || auditCount != 1 || outboxCount != 1 || idempotencyCount != 1 {
+		t.Fatalf(
+			"Resource rebind evidence resource/superseded/active/pinned/audit/outbox/idempotency = %d/%d/%d/%d/%d/%d/%d",
+			resourceCount, supersededCount, activeCount, pinnedGroupCount,
+			auditCount, outboxCount, idempotencyCount,
+		)
+	}
+}
+
 func assertCommittedGroupLifecycle(
 	ctx context.Context,
 	t *testing.T,
@@ -708,6 +917,7 @@ func assertResourceAuthorityPrivilegeContract(
 	t.Helper()
 	var runtimeCreate, workerCreate, runtimeReads, workerReads bool
 	var runtimeLifecycle, workerLifecycle, runtimeTableAccess bool
+	var runtimeRebindReaders, workerRebindReaders, runtimeRebind, workerRebind bool
 	if err := adminConnection.QueryRow(ctx, `SELECT
     pg_catalog.has_function_privilege(
         'mesh_runtime',
@@ -749,6 +959,28 @@ func assertResourceAuthorityPrivilegeContract(
 		'mesh_ops.transition_resource_lifecycle_v1(uuid,bigint,text,uuid,timestamptz)'::pg_catalog.regprocedure,
 		'mesh_ops.transition_resource_group_lifecycle_v1(uuid,bigint,text,uuid,timestamptz)'::pg_catalog.regprocedure
 	]) AS lifecycle(function_oid)),
+	(SELECT pg_catalog.bool_and(pg_catalog.has_function_privilege(
+		'mesh_runtime', impact_reader.function_oid, 'EXECUTE'
+	)) FROM pg_catalog.unnest(ARRAY[
+		'mesh_ops.preview_device_resource_rebind_v1(uuid,uuid)'::pg_catalog.regprocedure,
+		'mesh_ops.lock_device_resource_rebind_v1(uuid,uuid)'::pg_catalog.regprocedure
+	]) AS impact_reader(function_oid)),
+	(SELECT pg_catalog.bool_or(pg_catalog.has_function_privilege(
+		'mesh_worker', impact_reader.function_oid, 'EXECUTE'
+	)) FROM pg_catalog.unnest(ARRAY[
+		'mesh_ops.preview_device_resource_rebind_v1(uuid,uuid)'::pg_catalog.regprocedure,
+		'mesh_ops.lock_device_resource_rebind_v1(uuid,uuid)'::pg_catalog.regprocedure
+	]) AS impact_reader(function_oid)),
+	pg_catalog.has_function_privilege(
+		'mesh_runtime',
+		'mesh_ops.rebind_device_resource_v1(uuid,bigint,uuid,uuid,uuid,bytea,timestamptz)',
+		'EXECUTE'
+	),
+	pg_catalog.has_function_privilege(
+		'mesh_worker',
+		'mesh_ops.rebind_device_resource_v1(uuid,bigint,uuid,uuid,uuid,bytea,timestamptz)',
+		'EXECUTE'
+	),
     COALESCE(pg_catalog.bool_or(
         pg_catalog.has_table_privilege('mesh_runtime', relation.oid, 'SELECT')
         OR pg_catalog.has_table_privilege('mesh_runtime', relation.oid, 'INSERT')
@@ -763,16 +995,22 @@ WHERE namespace.nspname = 'mesh'
       'resource_group_version', 'resource_group_version_member'
 	)`).Scan(
 		&runtimeCreate, &workerCreate, &runtimeReads, &workerReads,
-		&runtimeLifecycle, &workerLifecycle, &runtimeTableAccess,
+		&runtimeLifecycle, &workerLifecycle, &runtimeRebindReaders, &workerRebindReaders,
+		&runtimeRebind, &workerRebind,
+		&runtimeTableAccess,
 	); err != nil {
 		t.Fatalf("query Resource authority privileges: %v", err)
 	}
 	if !runtimeCreate || workerCreate || !runtimeReads || workerReads ||
-		!runtimeLifecycle || workerLifecycle || runtimeTableAccess {
+		!runtimeLifecycle || workerLifecycle || !runtimeRebindReaders || workerRebindReaders ||
+		!runtimeRebind || workerRebind ||
+		runtimeTableAccess {
 		t.Fatalf(
-			"Resource privileges runtime-create=%t worker-create=%t runtime-reads=%t worker-reads=%t runtime-lifecycle=%t worker-lifecycle=%t runtime-table=%t",
+			"Resource privileges runtime-create=%t worker-create=%t runtime-reads=%t worker-reads=%t runtime-lifecycle=%t worker-lifecycle=%t runtime-rebind-readers=%t worker-rebind-readers=%t runtime-rebind=%t worker-rebind=%t runtime-table=%t",
 			runtimeCreate, workerCreate, runtimeReads, workerReads,
-			runtimeLifecycle, workerLifecycle, runtimeTableAccess,
+			runtimeLifecycle, workerLifecycle, runtimeRebindReaders, workerRebindReaders,
+			runtimeRebind, workerRebind,
+			runtimeTableAccess,
 		)
 	}
 	if err := runtimeConnection.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh.resource`).Scan(new(int64)); err == nil {
@@ -788,6 +1026,16 @@ WHERE namespace.nspname = 'mesh'
     '01890f00-0000-7000-8000-000000000011', pg_catalog.transaction_timestamp()
 )`).Scan(new(int64)); err == nil {
 		t.Fatal("worker Resource lifecycle execution unexpectedly succeeded")
+	}
+	if err := workerConnection.QueryRow(ctx, `SELECT * FROM mesh_ops.rebind_device_resource_v1(
+    '01890f70-0000-7000-8000-000000000001', 1,
+    '01890f70-0000-7000-8000-000000000002',
+    '01890f31-0000-7000-8000-000000000910',
+    '01890f00-0000-7000-8000-000000000011',
+    pg_catalog.decode(pg_catalog.repeat('01', 32), 'hex'),
+    pg_catalog.transaction_timestamp()
+)`).Scan(new(int64)); err == nil {
+		t.Fatal("worker Resource rebind execution unexpectedly succeeded")
 	}
 }
 

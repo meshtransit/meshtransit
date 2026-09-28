@@ -52,6 +52,7 @@ const (
 	resourceGroupAuthorityDescription         = "Resource and Resource Group authority foundation"
 	resourceManagementReadDescription         = "Resource management read API"
 	resourceLifecycleAuthorityDescription     = "Resource lifecycle authority"
+	resourceTargetRebindingDescription        = "Resource target rebinding authority"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -171,6 +172,9 @@ var resourceManagementReadSQL string
 //go:embed 000039_resource_lifecycle_authority.up.sql
 var resourceLifecycleAuthoritySQL string
 
+//go:embed 000040_resource_target_rebinding.up.sql
+var resourceTargetRebindingSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -229,6 +233,7 @@ func Catalog() []Migration {
 		newMigration(37, resourceGroupAuthorityDescription, resourceGroupAuthoritySQL),
 		newMigration(38, resourceManagementReadDescription, resourceManagementReadSQL),
 		newMigration(39, resourceLifecycleAuthorityDescription, resourceLifecycleAuthoritySQL),
+		newMigration(40, resourceTargetRebindingDescription, resourceTargetRebindingSQL),
 	}
 }
 

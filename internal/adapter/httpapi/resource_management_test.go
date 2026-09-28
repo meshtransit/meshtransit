@@ -11,6 +11,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
+	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/resource"
 	authority "github.com/meshtransit/meshtransit/internal/resource/authority"
@@ -200,6 +201,180 @@ func TestResourceLifecycleErrorClassification(t *testing.T) {
 	}
 }
 
+func TestManagementHandlerPreviewsResourceRebindImpact(t *testing.T) {
+	t.Parallel()
+	var captured authority.RebindPreview
+	options := validManagementHandlerOptions(t)
+	options.ResourceRebindings = managementResourceRebinderFixture{
+		preview: func(
+			_ context.Context,
+			preview authority.RebindPreview,
+		) (authority.RebindImpact, error) {
+			captured = preview
+			return managementRebindImpactFixture(t, preview), nil
+		},
+	}
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := newManagementRequest(
+		t, http.MethodPost,
+		resourceCollectionPath()+"/01890f00-0000-7000-8000-000000000501/actions/preview-rebind",
+		`{"device_id":"01890f00-0000-7000-8000-000000000302"}`,
+	)
+	request.Header.Del("Idempotency-Key")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"1"` ||
+		captured.DeviceID().String() != "01890f00-0000-7000-8000-000000000302" {
+		t.Fatalf("status/headers/preview = %d/%+v/%+v; body=%s", response.Code,
+			response.Header(), captured, response.Body.String())
+	}
+	var body resourceRebindPreviewEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil ||
+		body.Data.ResourceID != "01890f00-0000-7000-8000-000000000501" ||
+		body.Data.TargetGeneration != 2 || len(body.Data.AffectedResourceGroupIDs) != 1 ||
+		body.Data.ApprovalRequired || len(body.Data.ImpactHash) != 64 {
+		t.Fatalf("Resource rebind preview = %+v, error=%v", body, err)
+	}
+}
+
+func TestManagementHandlerRejectsPreviewRebindMutationFields(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name               string
+		body               string
+		keepIdempotencyKey bool
+	}{
+		{
+			name: "mutation field", body: `{"device_id":"01890f00-0000-7000-8000-000000000302","impact_hash":""}`,
+		},
+		{
+			name: "idempotency key", body: `{"device_id":"01890f00-0000-7000-8000-000000000302"}`,
+			keepIdempotencyKey: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			options := validManagementHandlerOptions(t)
+			options.ResourceRebindings = managementResourceRebinderFixture{}
+			handler, err := NewManagementHandler(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := newManagementRequest(
+				t, http.MethodPost,
+				resourceCollectionPath()+"/01890f00-0000-7000-8000-000000000501/actions/preview-rebind",
+				test.body,
+			)
+			if !test.keepIdempotencyKey {
+				request.Header.Del("Idempotency-Key")
+			}
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestManagementHandlerAppliesAcknowledgedResourceRebind(t *testing.T) {
+	t.Parallel()
+	var captured authority.RebindCommand
+	options := validManagementHandlerOptions(t)
+	options.ResourceRebindings = managementResourceRebinderFixture{
+		rebind: func(
+			_ context.Context,
+			command authority.RebindCommand,
+		) (authority.RebindResult, error) {
+			captured = command
+			semanticHash, err := resource.NewSemanticHash([32]byte{31: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return authority.NewRebindResult(
+				command.ResourceID(), command.Scope(), command.DeviceID(), 2, 2, 9, 4,
+				semanticHash, command.ImpactHash(),
+			)
+		},
+	}
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := newManagementRequest(
+		t, http.MethodPost,
+		resourceCollectionPath()+"/01890f00-0000-7000-8000-000000000501/actions/rebind",
+		`{"device_id":"01890f00-0000-7000-8000-000000000302","impact_hash":"`+
+			strings.Repeat("01", 32)+`","reason":"replace failed Device target"}`,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"2"` ||
+		captured.ExpectedVersion() != 1 || !captured.ImpactHash().IsValid() {
+		t.Fatalf("status/headers/command = %d/%+v/%+v; body=%s", response.Code,
+			response.Header(), captured, response.Body.String())
+	}
+	var body resourceRebindEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil ||
+		body.Data.DeviceID != "01890f00-0000-7000-8000-000000000302" ||
+		body.Data.TargetGeneration != 2 || body.Data.Version != 2 ||
+		body.Data.InventoryRevision != 4 {
+		t.Fatalf("Resource rebind response = %+v, error=%v", body, err)
+	}
+}
+
+func TestManagementHandlerRejectsNonCanonicalRebindImpactHash(t *testing.T) {
+	t.Parallel()
+	options := validManagementHandlerOptions(t)
+	options.ResourceRebindings = managementResourceRebinderFixture{}
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := newManagementRequest(
+		t, http.MethodPost,
+		resourceCollectionPath()+"/01890f00-0000-7000-8000-000000000501/actions/rebind",
+		`{"device_id":"01890f00-0000-7000-8000-000000000302","impact_hash":"`+
+			strings.Repeat("AB", 32)+`","reason":"replace failed Device target"}`,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestResourceRebindErrorClassification(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{err: authority.ErrRebindNotFound, status: http.StatusNotFound, code: "not_found"},
+		{err: authority.ErrRebindVersionConflict, status: http.StatusPreconditionFailed, code: "precondition_failed"},
+		{err: authority.ErrRebindImpactChanged, status: http.StatusConflict, code: "impact_changed"},
+		{err: authority.ErrRebindApprovalRequired, status: http.StatusConflict, code: "approval_required"},
+	}
+	for _, test := range tests {
+		classified := classifyResourceRebindError(test.err)
+		if classified.Status != test.status || classified.Code != test.code {
+			t.Fatalf("classification for %v = %+v", test.err, classified)
+		}
+	}
+}
+
 func TestManagementHandlerListsResourcesWithFreshAuthority(t *testing.T) {
 	t.Parallel()
 	var capturedState resource.State
@@ -365,6 +540,73 @@ func (function managementResourceLifecycleFunc) Transition(
 	command authority.LifecycleCommand,
 ) (authority.LifecycleResult, error) {
 	return function(ctx, command)
+}
+
+type managementResourceRebinderFixture struct {
+	preview func(context.Context, authority.RebindPreview) (authority.RebindImpact, error)
+	rebind  func(context.Context, authority.RebindCommand) (authority.RebindResult, error)
+}
+
+func (fixture managementResourceRebinderFixture) Preview(
+	ctx context.Context,
+	preview authority.RebindPreview,
+) (authority.RebindImpact, error) {
+	if fixture.preview == nil {
+		return authority.RebindImpact{}, errors.New("unexpected Resource rebind preview")
+	}
+	return fixture.preview(ctx, preview)
+}
+
+func (fixture managementResourceRebinderFixture) Rebind(
+	ctx context.Context,
+	command authority.RebindCommand,
+) (authority.RebindResult, error) {
+	if fixture.rebind == nil {
+		return authority.RebindResult{}, errors.New("unexpected Resource rebind")
+	}
+	return fixture.rebind(ctx, command)
+}
+
+func managementRebindImpactFixture(
+	t *testing.T,
+	preview authority.RebindPreview,
+) authority.RebindImpact {
+	t.Helper()
+	currentDeviceID, err := node.ParseID(managementDeviceID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, err := resource.ParseDisplayName("Database 01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := resource.NewDeviceRevision(resource.DeviceRevisionParams{
+		Scope: preview.Scope(), DisplayName: name,
+		OwnerPrincipalID:     preview.AccountSession().PrincipalID(),
+		CustodianPrincipalID: preview.AccountSession().PrincipalID(),
+		DeviceID:             preview.DeviceID(), TargetGeneration: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentHash, err := resource.NewSemanticHash([32]byte{31: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupID, err := resource.ParseGroupID("01890f00-0000-7000-8000-000000000502")
+	if err != nil {
+		t.Fatal(err)
+	}
+	impact, err := authority.NewRebindImpact(authority.RebindImpactParams{
+		ResourceID: preview.ResourceID(), ExpectedVersion: preview.ExpectedVersion(),
+		CurrentDeviceID: currentDeviceID, CurrentTargetGeneration: 1,
+		CurrentSemanticHash: currentHash,
+		ProposedRevision:    revision, AffectedGroupIDs: []resource.GroupID{groupID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return impact
 }
 
 type managementResourceCatalogFixture struct {

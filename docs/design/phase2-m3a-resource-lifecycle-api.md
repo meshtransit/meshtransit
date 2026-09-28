@@ -11,10 +11,10 @@ Device-backed Resources and Resource Groups. PostgreSQL remains the sole
 authority. Redis remains request-admission infrastructure only; no graph
 database or Access Graph evaluator is introduced.
 
-M3 is intentionally split. Target rebinding and immutable Resource Group
-replacement remain M3b. Ownership transfer and custodian delegation remain M3c
-because those workflows require approved step-up/quorum semantics rather than a
-plain CRUD update.
+M3 is intentionally split. Device Resource target rebinding is implemented by
+the subsequent M3b slice; immutable Resource Group replacement remains M3b2.
+Ownership transfer and custodian delegation remain M3c because those workflows
+require approved step-up/quorum semantics rather than a plain CRUD update.
 
 ## Bearer API
 
@@ -97,9 +97,10 @@ Access Graph.
 
 ## Next order
 
-1. M3b: Resource target rebinding and immutable Resource Group replacement with
-   impact analysis and approval hooks.
-2. M3c: protected ownership transfer and custodian delegation with step-up and
+1. M3b1: Resource target rebinding with deterministic impact analysis and an
+   approval fail-closed boundary (implemented after this design record).
+2. M3b2: immutable Resource Group replacement using the same impact boundary.
+3. M3c: protected ownership transfer and custodian delegation with step-up and
    second-actor/quorum enforcement.
-3. M4: Access Graph references, explanations, simulation, and verification.
-4. M5: policy compilation and client projection from stable Resource authority.
+4. M4: Access Graph references, explanations, simulation, and verification.
+5. M5: policy compilation and client projection from stable Resource authority.

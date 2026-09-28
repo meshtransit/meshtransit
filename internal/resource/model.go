@@ -12,7 +12,6 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
-	"github.com/meshtransit/meshtransit/internal/publicid"
 )
 
 const (
@@ -343,18 +342,12 @@ func (definition GroupDefinition) IsValid() bool {
 }
 
 func hashDeviceDefinition(definition DeviceDefinition) SemanticHash {
-	encoded := make([]byte, 0, 160)
-	encoded = append(encoded, deviceHashDomain...)
-	encoded = appendScope(encoded, definition.scope)
-	encoded = appendText(encoded, definition.displayName.String())
-	ownerID := definition.ownerPrincipalID.Bytes()
-	custodianID := definition.custodianPrincipalID.Bytes()
-	deviceID := publicid.ID(definition.deviceID).Bytes()
-	encoded = append(encoded, ownerID[:]...)
-	encoded = append(encoded, custodianID[:]...)
-	encoded = append(encoded, deviceID[:]...)
-	encoded = appendInt64(encoded, 1)
-	return SemanticHash(sha256.Sum256(encoded))
+	revision := DeviceRevision{
+		scope: definition.scope, displayName: definition.displayName,
+		ownerPrincipalID: definition.ownerPrincipalID, custodianPrincipalID: definition.custodianPrincipalID,
+		deviceID: definition.deviceID, targetGeneration: 1,
+	}
+	return hashDeviceRevision(revision)
 }
 
 func hashGroupDefinition(definition GroupDefinition) SemanticHash {

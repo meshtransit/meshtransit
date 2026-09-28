@@ -37,7 +37,8 @@ GA claim.
 ## Residual limits
 
 - Device remains the only Resource kind.
-- Target rebinding and immutable Resource Group replacement remain M3b.
+- Device Resource target rebinding is implemented by M3b1; immutable Resource
+  Group replacement remains M3b2.
 - Ownership transfer and custodian delegation remain M3c and require protected
   approval/step-up semantics.
 - Resource Groups are not yet consumed by Access Graph or policy compilation.

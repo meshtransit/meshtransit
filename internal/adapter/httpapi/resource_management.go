@@ -72,7 +72,12 @@ func parseResourceManagementPath(request *http.Request) (resourceManagementPath,
 	}
 	if len(segments) == 10 {
 		if segments[8] != "actions" ||
-			(segments[9] != "suspend" && segments[9] != "resume" && segments[9] != "delete") {
+			(segments[9] != "suspend" && segments[9] != "resume" && segments[9] != "delete" &&
+				segments[9] != "preview-rebind" && segments[9] != "rebind") {
+			return resourceManagementPath{}, false
+		}
+		if (segments[9] == "preview-rebind" || segments[9] == "rebind") &&
+			path.kind != resourceManagementItem {
 			return resourceManagementPath{}, false
 		}
 		path.action = segments[9]
@@ -128,6 +133,10 @@ func (path resourceManagementPath) operation(method string) string {
 				return resourceGroupDeleteOperation
 			}
 			return resourceDeleteOperation
+		case "preview-rebind":
+			return resourceRebindPreviewOperation
+		case "rebind":
+			return resourceRebindOperation
 		}
 	}
 	switch path.kind {
@@ -178,6 +187,13 @@ func (handler *ManagementHandler) handleResourceManagement(
 	session accountsession.Session,
 ) string {
 	if path.isAction() {
+		if path.action == "preview-rebind" || path.action == "rebind" {
+			if handler.resourceRebindings == nil {
+				writeManagementError(ctx, handler.logger, response, correlationID, resourceUnavailableError())
+				return "operation_unavailable"
+			}
+			return handler.rebindResource(ctx, response, request, correlationID, path, session)
+		}
 		if handler.resourceLifecycles == nil {
 			writeManagementError(ctx, handler.logger, response, correlationID, resourceUnavailableError())
 			return "operation_unavailable"
@@ -204,6 +220,140 @@ func (handler *ManagementHandler) handleResourceManagement(
 		return handler.listResourceAuthority(ctx, response, request, correlationID, path, session)
 	}
 	return handler.getResourceAuthority(ctx, response, request, correlationID, path, session)
+}
+
+type resourceRebindRequest struct {
+	DeviceID   string `json:"device_id"`
+	ImpactHash string `json:"impact_hash"`
+	Reason     string `json:"reason"`
+}
+
+type resourceRebindPreviewRequest struct {
+	DeviceID string `json:"device_id"`
+}
+
+func (handler *ManagementHandler) rebindResource(
+	ctx context.Context,
+	response http.ResponseWriter,
+	request *http.Request,
+	correlationID publicid.ID,
+	path resourceManagementPath,
+	session accountsession.Session,
+) string {
+	if request.URL.RawQuery != "" || request.Body == nil ||
+		!validJSONContentType(singleHeader(request.Header, "Content-Type")) {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	scope, err := path.scope()
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	expectedVersion, requestErr := parseIfMatch(request.Header.Values("If-Match"))
+	if requestErr != nil {
+		writeManagementError(ctx, handler.logger, response, correlationID, *requestErr)
+		return requestErr.Code
+	}
+	resourceID, err := resource.ParseID(path.publicID)
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	if path.action == "preview-rebind" {
+		if len(request.Header.Values("Idempotency-Key")) != 0 {
+			return handler.writeResourceRequestError(ctx, response, correlationID)
+		}
+		var body resourceRebindPreviewRequest
+		if requestErr = decodeResourceBody(response, request, &body); requestErr != nil {
+			writeManagementError(ctx, handler.logger, response, correlationID, *requestErr)
+			return requestErr.Code
+		}
+		deviceID, err := node.ParseID(body.DeviceID)
+		if err != nil {
+			return handler.writeResourceRequestError(ctx, response, correlationID)
+		}
+		preview, err := authority.NewRebindPreview(
+			scope, resourceID, expectedVersion, deviceID, session,
+		)
+		if err != nil {
+			return handler.writeResourceRequestError(ctx, response, correlationID)
+		}
+		impact, err := handler.resourceRebindings.Preview(ctx, preview)
+		if err != nil {
+			classified := classifyResourceRebindError(err)
+			writeManagementError(ctx, handler.logger, response, correlationID, classified)
+			return classified.Code
+		}
+		if !resourceRebindImpactMatches(impact, preview) {
+			writeManagementError(ctx, handler.logger, response, correlationID, internalManagementError())
+			return "internal_failure"
+		}
+		response.Header().Set("ETag", strongVersionETag(expectedVersion))
+		writeManagementJSON(ctx, handler.logger, response, http.StatusOK, resourceRebindPreviewEnvelope{
+			Data: resourceRebindPreviewDataFromImpact(impact), CorrelationID: correlationID.String(),
+		})
+		return "success"
+	}
+	var body resourceRebindRequest
+	if requestErr = decodeResourceBody(response, request, &body); requestErr != nil {
+		writeManagementError(ctx, handler.logger, response, correlationID, *requestErr)
+		return requestErr.Code
+	}
+	deviceID, err := node.ParseID(body.DeviceID)
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	preview, err := authority.NewRebindPreview(scope, resourceID, expectedVersion, deviceID, session)
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	rawKey := singleHeader(request.Header, "Idempotency-Key")
+	if rawKey == "" {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	proof, err := handler.idempotency.Proof(rawKey)
+	if err != nil || !proof.IsValid() {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	decodedImpactHash, err := hex.DecodeString(body.ImpactHash)
+	if err != nil || len(decodedImpactHash) != 32 ||
+		hex.EncodeToString(decodedImpactHash) != body.ImpactHash {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	var fixedImpactHash [32]byte
+	copy(fixedImpactHash[:], decodedImpactHash)
+	impactHash, err := authority.NewRebindImpactHash(fixedImpactHash)
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	reason, err := authority.NewAuditReason(body.Reason)
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	command, err := authority.NewRebindCommand(preview, impactHash, reason, proof)
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	result, err := handler.resourceRebindings.Rebind(ctx, command)
+	if err != nil {
+		classified := classifyResourceRebindError(err)
+		writeManagementError(ctx, handler.logger, response, correlationID, classified)
+		return classified.Code
+	}
+	if !resourceRebindResultMatches(result, command) {
+		writeManagementError(ctx, handler.logger, response, correlationID, internalManagementError())
+		return "internal_failure"
+	}
+	response.Header().Set("ETag", strongVersionETag(result.Version()))
+	semanticHash := result.SemanticHash().Bytes()
+	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, resourceRebindEnvelope{
+		Data: resourceRebindData{
+			ResourceID: result.ResourceID().String(), DeviceID: result.DeviceID().String(),
+			TargetGeneration: result.TargetGeneration(), Version: result.Version(),
+			SemanticHash:    hex.EncodeToString(semanticHash[:]),
+			NetworkRevision: result.NetworkRevision(), InventoryRevision: result.InventoryRevision(),
+		},
+		CorrelationID: correlationID.String(),
+	})
+	return "success"
 }
 
 type resourceLifecycleRequest struct {
@@ -784,6 +934,37 @@ type resourceLifecycleEnvelope struct {
 	CorrelationID string                `json:"correlation_id"`
 }
 
+type resourceRebindPreviewData struct {
+	ResourceID               string   `json:"resource_id"`
+	CurrentDeviceID          string   `json:"current_device_id"`
+	DeviceID                 string   `json:"device_id"`
+	CurrentTargetGeneration  int64    `json:"current_target_generation"`
+	TargetGeneration         int64    `json:"target_generation"`
+	ImpactHash               string   `json:"impact_hash"`
+	AffectedResourceGroupIDs []string `json:"affected_resource_group_ids"`
+	ApprovalRequired         bool     `json:"approval_required"`
+}
+
+type resourceRebindPreviewEnvelope struct {
+	Data          resourceRebindPreviewData `json:"data"`
+	CorrelationID string                    `json:"correlation_id"`
+}
+
+type resourceRebindData struct {
+	ResourceID        string `json:"resource_id"`
+	DeviceID          string `json:"device_id"`
+	TargetGeneration  int64  `json:"target_generation"`
+	Version           int64  `json:"version"`
+	SemanticHash      string `json:"semantic_hash"`
+	NetworkRevision   int64  `json:"network_revision"`
+	InventoryRevision int64  `json:"inventory_revision"`
+}
+
+type resourceRebindEnvelope struct {
+	Data          resourceRebindData `json:"data"`
+	CorrelationID string             `json:"correlation_id"`
+}
+
 type resourceListEnvelope struct {
 	Data          []resourceData `json:"data"`
 	NextPageToken string         `json:"next_page_token,omitempty"`
@@ -891,6 +1072,42 @@ func resourceLifecycleMatches(
 	return result.ResourceID() == command.ResourceID() && !result.GroupID().IsValid()
 }
 
+func resourceRebindImpactMatches(
+	impact authority.RebindImpact,
+	preview authority.RebindPreview,
+) bool {
+	return impact.IsValid() && impact.ResourceID() == preview.ResourceID() &&
+		impact.ExpectedVersion() == preview.ExpectedVersion() &&
+		impact.ProposedRevision().Scope() == preview.Scope() &&
+		impact.ProposedRevision().DeviceID() == preview.DeviceID()
+}
+
+func resourceRebindPreviewDataFromImpact(impact authority.RebindImpact) resourceRebindPreviewData {
+	groupIDs := impact.AffectedGroupIDs()
+	affectedGroups := make([]string, len(groupIDs))
+	for index, groupID := range groupIDs {
+		affectedGroups[index] = groupID.String()
+	}
+	hash := impact.Hash().Bytes()
+	return resourceRebindPreviewData{
+		ResourceID: impact.ResourceID().String(), CurrentDeviceID: impact.CurrentDeviceID().String(),
+		DeviceID:                impact.ProposedRevision().DeviceID().String(),
+		CurrentTargetGeneration: impact.CurrentTargetGeneration(),
+		TargetGeneration:        impact.ProposedRevision().TargetGeneration(),
+		ImpactHash:              hex.EncodeToString(hash[:]), AffectedResourceGroupIDs: affectedGroups,
+		ApprovalRequired: impact.ApprovalRequired(),
+	}
+}
+
+func resourceRebindResultMatches(
+	result authority.RebindResult,
+	command authority.RebindCommand,
+) bool {
+	return result.IsValid() && result.ResourceID() == command.ResourceID() &&
+		result.Scope() == command.Scope() && result.DeviceID() == command.DeviceID() &&
+		result.Version() == command.ExpectedVersion()+1 && result.ImpactHash() == command.ImpactHash()
+}
+
 func lifecycleInventoryRevision(result authority.LifecycleResult) int64 {
 	if result.Operation().IsGroup() {
 		return 0
@@ -927,6 +1144,36 @@ func classifyResourceAuthorityError(err error) managementError {
 		return managementError{Status: http.StatusForbidden, Code: "forbidden", Message: "the request is not authorized"}
 	case errors.Is(err, authority.ErrConflict):
 		return managementError{Status: http.StatusPreconditionFailed, Code: "precondition_failed", Message: "the collection revision precondition is stale"}
+	case errors.Is(err, authority.ErrIntentConflict):
+		return managementError{Status: http.StatusConflict, Code: "idempotency_conflict", Message: "the idempotency key is bound to different request semantics"}
+	case errors.Is(err, authority.ErrIdempotencyExpired):
+		return managementError{Status: http.StatusConflict, Code: "idempotency_expired", Message: "the idempotency replay window expired"}
+	case errors.Is(err, context.Canceled), errors.Is(err, authority.ErrRetryableTransaction),
+		errors.Is(err, authority.ErrCommitOutcomeUnknown), errors.Is(err, authority.ErrRetryExhausted):
+		return resourceUnavailableError()
+	default:
+		return internalManagementError()
+	}
+}
+
+func classifyResourceRebindError(err error) managementError {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return managementError{Status: http.StatusGatewayTimeout, Code: "request_timeout", Message: "the request deadline expired", Retryable: true}
+	case errors.Is(err, authority.ErrForbidden):
+		return managementError{Status: http.StatusForbidden, Code: "forbidden", Message: "the request is not authorized"}
+	case errors.Is(err, authority.ErrRebindNotFound):
+		return managementError{Status: http.StatusNotFound, Code: "not_found", Message: "the Resource or target is unavailable"}
+	case errors.Is(err, authority.ErrRebindVersionConflict):
+		return managementError{Status: http.StatusPreconditionFailed, Code: "precondition_failed", Message: "the Resource version precondition is stale"}
+	case errors.Is(err, authority.ErrRebindTargetConflict), errors.Is(err, authority.ErrRebindStateConflict):
+		return managementError{Status: http.StatusConflict, Code: "target_conflict", Message: "the Resource target cannot be replaced"}
+	case errors.Is(err, authority.ErrRebindImpactChanged):
+		return managementError{Status: http.StatusConflict, Code: "impact_changed", Message: "the acknowledged impact preview is stale"}
+	case errors.Is(err, authority.ErrRebindApprovalRequired):
+		return managementError{Status: http.StatusConflict, Code: "approval_required", Message: "durable approval is required before this change"}
+	case errors.Is(err, authority.ErrRebindImpactTooLarge):
+		return managementError{Status: http.StatusUnprocessableEntity, Code: "impact_limit_exceeded", Message: "the change impact exceeds the supported limit"}
 	case errors.Is(err, authority.ErrIntentConflict):
 		return managementError{Status: http.StatusConflict, Code: "idempotency_conflict", Message: "the idempotency key is bound to different request semantics"}
 	case errors.Is(err, authority.ErrIdempotencyExpired):
