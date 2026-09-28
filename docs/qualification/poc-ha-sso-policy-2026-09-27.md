@@ -1089,12 +1089,38 @@ split Identity testing completed 2,108 requests in ten seconds at concurrency
 with zero restarts. Public discovery and Console, aggregate readiness, and
 split Identity readiness all succeeded.
 
+## SSO-BROKER-010 migration checkpoint
+
+MeshCore now owns the provider-neutral identity-subject transition boundary;
+no migration code is maintained in the broker source tree. Commit `c93ed29`
+added an offline subject-digest constructor that shares the exact HMAC
+namespace with authenticated login without manufacturing token evidence.
+
+The first transition-tool slice is intentionally read-only. The
+`identitysubjecttransition` qualification command accepts a protected,
+SHA-256-bound manifest and protected source/target subject keys, derives both
+provider-bound digests, then validates one `SERIALIZABLE READ ONLY` PostgreSQL
+snapshot. It fails closed unless the exact provider generations and versions,
+complete active-source-subject set, subject revisions and digests, absence of
+target collisions in every state, and bounded active Session/open
+AuthTransaction counts all match. Its JSON output contains only public IDs,
+the manifest hash, and counts; raw issuer and subject values are never output.
+
+Unit, race, vet, targeted lint, and the full repository test suite pass for
+this slice. Repository-wide lint still reports five pre-existing findings
+outside this tool. This checkpoint does not authorize or implement mutation:
+the apply path must take a maintenance fence and revalidate the complete plan
+in a new transaction. Broker upgrade/restore qualification and the atomic
+apply/audit path remain open before `SSO-BROKER-010` can pass.
+
 ## Remaining execution order
 
-1. Execute `SSO-BROKER-010` upgrade/rollback and identity-migration runbooks,
-   then close the remaining legal-review and signed-artifact items.
-2. Extend publication cases to TCP, UDP, multiple devices, and multiple
+1. Add the disposable PostgreSQL integration fixture for the read-only
+   transition plan, then implement the fenced atomic apply/audit path.
+2. Execute the broker upgrade/restore runbook and close the remaining
+   legal-review and signed-artifact items for `SSO-BROKER-010`.
+3. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
-3. Resume PostgreSQL and Redis infrastructure failover only when that paused
+4. Resume PostgreSQL and Redis infrastructure failover only when that paused
    workstream is re-opened; the Core-side reconnect/reconciliation support is
    already present but does not qualify the external data services.
