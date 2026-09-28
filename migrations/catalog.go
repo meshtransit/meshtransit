@@ -51,6 +51,7 @@ const (
 	accountSessionLogoutEvidenceDescription   = "audited account session logout evidence"
 	resourceGroupAuthorityDescription         = "Resource and Resource Group authority foundation"
 	resourceManagementReadDescription         = "Resource management read API"
+	resourceLifecycleAuthorityDescription     = "Resource lifecycle authority"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -167,6 +168,9 @@ var resourceGroupAuthoritySQL string
 //go:embed 000038_resource_management_read_api.up.sql
 var resourceManagementReadSQL string
 
+//go:embed 000039_resource_lifecycle_authority.up.sql
+var resourceLifecycleAuthoritySQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -224,6 +228,7 @@ func Catalog() []Migration {
 		newMigration(36, accountSessionLogoutEvidenceDescription, accountSessionLogoutEvidenceSQL),
 		newMigration(37, resourceGroupAuthorityDescription, resourceGroupAuthoritySQL),
 		newMigration(38, resourceManagementReadDescription, resourceManagementReadSQL),
+		newMigration(39, resourceLifecycleAuthorityDescription, resourceLifecycleAuthoritySQL),
 	}
 }
 

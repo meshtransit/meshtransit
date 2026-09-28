@@ -160,8 +160,195 @@ func assertPostgreSQLResourceAuthority(
 		t.Fatalf("unauthorized Resource error = %v, want ErrForbidden", err)
 	}
 
+	assertResourceLifecycles(
+		ctx, t, adminConnection, runtimeConnection, runtimePool, session, scope203, scope204,
+		deviceResult, groupResult,
+	)
+
 	assertResourceAuthorityEvidenceAtomicity(ctx, t, adminConnection, runtimeConnection)
 	assertResourceAuthorityPrivilegeContract(ctx, t, adminConnection, runtimeConnection, workerConnection)
+}
+
+func assertResourceLifecycles(
+	ctx context.Context,
+	t *testing.T,
+	adminConnection *pgx.Conn,
+	runtimeConnection *pgx.Conn,
+	runtimePool *postgresadapter.Pool,
+	session accountsession.Session,
+	homeScope network.Scope,
+	otherScope network.Scope,
+	deviceResult authority.Result,
+	groupResult authority.Result,
+) {
+	t.Helper()
+	assertResourceLifecycleEvidenceAtomicity(
+		ctx, t, adminConnection, runtimeConnection, deviceResult.ResourceID(),
+		session.PrincipalID(),
+	)
+	service := newIntegrationResourceLifecycleService(t, runtimePool)
+	reason := resourceAuthorityReason(t, "qualification lifecycle transition")
+	suspendResource, err := authority.NewResourceLifecycleCommand(
+		authority.LifecycleSuspendResource, homeScope, deviceResult.ResourceID(), 1,
+		session, reason, resourceAuthorityProof(t, 7),
+	)
+	if err != nil {
+		t.Fatalf("construct Resource suspension: %v", err)
+	}
+	suspendedResource, err := service.Transition(ctx, suspendResource)
+	if err != nil {
+		t.Fatalf("suspend Resource: %v", err)
+	}
+	if suspendedResource.State() != resource.StateSuspended || suspendedResource.Version() != 2 {
+		t.Fatalf("suspended Resource result = %+v", suspendedResource)
+	}
+	replayedResource, err := service.Transition(ctx, suspendResource)
+	if err != nil || replayedResource != suspendedResource {
+		t.Fatalf("replayed Resource suspension = %+v, error = %v", replayedResource, err)
+	}
+
+	staleResource, err := authority.NewResourceLifecycleCommand(
+		authority.LifecycleDeleteResource, homeScope, deviceResult.ResourceID(), 1,
+		session, reason, resourceAuthorityProof(t, 8),
+	)
+	if err != nil {
+		t.Fatalf("construct stale Resource lifecycle: %v", err)
+	}
+	if _, err := service.Transition(ctx, staleResource); !errors.Is(
+		err, authority.ErrLifecycleVersionConflict,
+	) {
+		t.Fatalf("stale Resource lifecycle error = %v, want ErrLifecycleVersionConflict", err)
+	}
+
+	resumeResource, err := authority.NewResourceLifecycleCommand(
+		authority.LifecycleResumeResource, homeScope, deviceResult.ResourceID(), 2,
+		session, reason, resourceAuthorityProof(t, 9),
+	)
+	if err != nil {
+		t.Fatalf("construct Resource resume: %v", err)
+	}
+	resumedResource, err := service.Transition(ctx, resumeResource)
+	if err != nil || resumedResource.State() != resource.StateActive || resumedResource.Version() != 3 {
+		t.Fatalf("resumed Resource result = %+v, error = %v", resumedResource, err)
+	}
+
+	deleteResource, err := authority.NewResourceLifecycleCommand(
+		authority.LifecycleDeleteResource, homeScope, deviceResult.ResourceID(), 3,
+		session, reason, resourceAuthorityProof(t, 10),
+	)
+	if err != nil {
+		t.Fatalf("construct Resource deletion: %v", err)
+	}
+	deletedResource, err := service.Transition(ctx, deleteResource)
+	if err != nil || deletedResource.State() != resource.StateDeleted || deletedResource.Version() != 4 {
+		t.Fatalf("deleted Resource result = %+v, error = %v", deletedResource, err)
+	}
+
+	resurrectResource, err := authority.NewResourceLifecycleCommand(
+		authority.LifecycleResumeResource, homeScope, deviceResult.ResourceID(), 4,
+		session, reason, resourceAuthorityProof(t, 11),
+	)
+	if err != nil {
+		t.Fatalf("construct terminal Resource transition: %v", err)
+	}
+	if _, err := service.Transition(ctx, resurrectResource); !errors.Is(
+		err, authority.ErrInvalidLifecycleTransition,
+	) {
+		t.Fatalf("terminal Resource lifecycle error = %v, want ErrInvalidLifecycleTransition", err)
+	}
+
+	crossScopeResource, err := authority.NewResourceLifecycleCommand(
+		authority.LifecycleSuspendResource, otherScope, deviceResult.ResourceID(), 4,
+		session, reason, resourceAuthorityProof(t, 12),
+	)
+	if err != nil {
+		t.Fatalf("construct cross-scope Resource lifecycle: %v", err)
+	}
+	if _, err := service.Transition(ctx, crossScopeResource); !errors.Is(
+		err, authority.ErrLifecycleNotFound,
+	) {
+		t.Fatalf("cross-scope Resource lifecycle error = %v, want ErrLifecycleNotFound", err)
+	}
+
+	suspendGroup, err := authority.NewGroupLifecycleCommand(
+		authority.LifecycleSuspendGroup, homeScope, groupResult.GroupID(), 1,
+		session, reason, resourceAuthorityProof(t, 13),
+	)
+	if err != nil {
+		t.Fatalf("construct Resource Group suspension: %v", err)
+	}
+	suspendedGroup, err := service.Transition(ctx, suspendGroup)
+	if err != nil || suspendedGroup.State() != resource.StateSuspended || suspendedGroup.Version() != 2 {
+		t.Fatalf("suspended Resource Group result = %+v, error = %v", suspendedGroup, err)
+	}
+	resumeGroup, err := authority.NewGroupLifecycleCommand(
+		authority.LifecycleResumeGroup, homeScope, groupResult.GroupID(), 2,
+		session, reason, resourceAuthorityProof(t, 14),
+	)
+	if err != nil {
+		t.Fatalf("construct Resource Group resume: %v", err)
+	}
+	resumedGroup, err := service.Transition(ctx, resumeGroup)
+	if err != nil || resumedGroup.State() != resource.StateActive || resumedGroup.Version() != 3 {
+		t.Fatalf("resumed Resource Group result = %+v, error = %v", resumedGroup, err)
+	}
+	deleteGroup, err := authority.NewGroupLifecycleCommand(
+		authority.LifecycleDeleteGroup, homeScope, groupResult.GroupID(), 3,
+		session, reason, resourceAuthorityProof(t, 15),
+	)
+	if err != nil {
+		t.Fatalf("construct Resource Group deletion: %v", err)
+	}
+	deletedGroup, err := service.Transition(ctx, deleteGroup)
+	if err != nil || deletedGroup.State() != resource.StateDeleted || deletedGroup.Version() != 4 {
+		t.Fatalf("deleted Resource Group result = %+v, error = %v", deletedGroup, err)
+	}
+
+	assertCommittedResourceLifecycle(ctx, t, adminConnection, deletedResource, 3)
+	assertCommittedGroupLifecycle(ctx, t, adminConnection, deletedGroup, 3)
+}
+
+func assertResourceLifecycleEvidenceAtomicity(
+	ctx context.Context,
+	t *testing.T,
+	adminConnection *pgx.Conn,
+	runtimeConnection *pgx.Conn,
+	resourceID resource.ID,
+	actorID identity.PrincipalID,
+) {
+	t.Helper()
+	transaction, err := runtimeConnection.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin incomplete Resource lifecycle: %v", err)
+	}
+	if _, err := transaction.Exec(ctx, `SELECT * FROM mesh_ops.set_network_scope(
+    '01890f00-0000-7000-8000-000000000103',
+    '01890f00-0000-7000-8000-000000000203'
+)`); err != nil {
+		t.Fatalf("set incomplete Resource lifecycle scope: %v", err)
+	}
+	if _, err := transaction.Exec(ctx, `SELECT pg_catalog.set_config(
+    'mesh.change_public_id', '01890f70-0000-7000-8000-000000000004', TRUE
+)`); err != nil {
+		t.Fatalf("set incomplete Resource lifecycle change: %v", err)
+	}
+	if _, err := transaction.Exec(ctx, `SELECT * FROM mesh_ops.transition_resource_lifecycle_v1(
+    $1::UUID, 1, 'suspended', $2::UUID, pg_catalog.transaction_timestamp()
+)`, resourceID.String(), actorID.String()); err != nil {
+		t.Fatalf("apply incomplete Resource lifecycle: %v", err)
+	}
+	if err := transaction.Commit(ctx); err == nil {
+		t.Fatal("incomplete Resource lifecycle commit error = nil")
+	}
+	var state string
+	var version int64
+	if err := adminConnection.QueryRow(ctx, `SELECT state, version
+FROM mesh.resource WHERE public_id = $1::UUID`, resourceID.String()).Scan(&state, &version); err != nil {
+		t.Fatalf("query incomplete Resource lifecycle rollback: %v", err)
+	}
+	if state != "active" || version != 1 {
+		t.Fatalf("incomplete Resource lifecycle state/version = %s/%d", state, version)
+	}
 }
 
 func assertResourceCatalogReads(
@@ -245,6 +432,43 @@ func newIntegrationResourceAuthorityService(
 	)
 	if err != nil {
 		t.Fatalf("authority.NewService() error = %v", err)
+	}
+	return service
+}
+
+func newIntegrationResourceLifecycleService(
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+) *authority.LifecycleService {
+	t.Helper()
+	store, err := postgresadapter.NewResourceAuthorityStore(
+		runtimePool,
+		postgresadapter.ResourceAuthorityOptions{
+			StatementTimeout: 5 * time.Second,
+			LockTimeout:      2 * time.Second,
+			IdleTimeout:      10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("postgres.NewResourceAuthorityStore() error = %v", err)
+	}
+	retry, err := authority.NewExponentialBackoff(time.Millisecond, 5*time.Millisecond)
+	if err != nil {
+		t.Fatalf("authority.NewExponentialBackoff() error = %v", err)
+	}
+	service, err := authority.NewLifecycleService(
+		authority.Options{
+			MaxAttempts: 3, RollbackTimeout: 2 * time.Second,
+			IdempotencyWindow: time.Hour,
+		},
+		authority.LifecycleDependencies{
+			Transactions: store, CommittedResults: store,
+			MutationIDs: authority.PublicLifecycleMutationIDGenerator{},
+			Clock:       authority.SystemClock{}, Retry: retry,
+		},
+	)
+	if err != nil {
+		t.Fatalf("authority.NewLifecycleService() error = %v", err)
 	}
 	return service
 }
@@ -347,6 +571,84 @@ func assertCommittedResourceGroup(
 	}
 }
 
+func assertCommittedResourceLifecycle(
+	ctx context.Context,
+	t *testing.T,
+	connection *pgx.Conn,
+	result authority.LifecycleResult,
+	expectedEventCount int,
+) {
+	t.Helper()
+	var aggregateCount, auditCount, outboxCount, idempotencyCount int
+	if err := connection.QueryRow(ctx, `SELECT
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh.resource
+     WHERE public_id = $1::UUID AND state = 'deleted' AND deleted_at = updated_at
+       AND version = $2 AND activated_network_revision = $3
+       AND inventory_revision = $4),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_audit.audit_event
+     WHERE target_kind = 'resource' AND target_public_id = $1::UUID
+       AND action IN ('resource.suspended', 'resource.resumed', 'resource.deleted')
+       AND permission = 'resource.manage'),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_ops.outbox_event
+     WHERE aggregate_kind = 'resource' AND aggregate_public_id = $1::UUID
+       AND aggregate_version BETWEEN 2 AND $2
+       AND event_class = 'network.revision.advanced'),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_ops.idempotency_record
+     WHERE result_kind = 'resource_lifecycle' AND result_public_id = $1::UUID
+       AND state = 'completed')`,
+		result.ResourceID().String(), result.Version(), result.NetworkRevision(),
+		result.SubsystemRevision(),
+	).Scan(&aggregateCount, &auditCount, &outboxCount, &idempotencyCount); err != nil {
+		t.Fatalf("query committed Resource lifecycle: %v", err)
+	}
+	if aggregateCount != 1 || auditCount != expectedEventCount ||
+		outboxCount != expectedEventCount || idempotencyCount != expectedEventCount {
+		t.Fatalf(
+			"Resource lifecycle evidence aggregate/audit/outbox/idempotency = %d/%d/%d/%d",
+			aggregateCount, auditCount, outboxCount, idempotencyCount,
+		)
+	}
+}
+
+func assertCommittedGroupLifecycle(
+	ctx context.Context,
+	t *testing.T,
+	connection *pgx.Conn,
+	result authority.LifecycleResult,
+	expectedEventCount int,
+) {
+	t.Helper()
+	var aggregateCount, auditCount, outboxCount, idempotencyCount int
+	if err := connection.QueryRow(ctx, `SELECT
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh.resource_group
+     WHERE public_id = $1::UUID AND state = 'deleted' AND deleted_at = updated_at
+       AND version = $2 AND activated_network_revision = $3
+       AND group_revision = $4),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_audit.audit_event
+     WHERE target_kind = 'resource_group' AND target_public_id = $1::UUID
+       AND action IN ('resource_group.suspended', 'resource_group.resumed', 'resource_group.deleted')
+       AND permission = 'resource_group.manage'),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_ops.outbox_event
+     WHERE aggregate_kind = 'resource_group' AND aggregate_public_id = $1::UUID
+       AND aggregate_version BETWEEN 2 AND $2
+       AND event_class = 'network.revision.advanced'),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_ops.idempotency_record
+     WHERE result_kind = 'resource_group_lifecycle' AND result_public_id = $1::UUID
+       AND state = 'completed')`,
+		result.GroupID().String(), result.Version(), result.NetworkRevision(),
+		result.SubsystemRevision(),
+	).Scan(&aggregateCount, &auditCount, &outboxCount, &idempotencyCount); err != nil {
+		t.Fatalf("query committed Resource Group lifecycle: %v", err)
+	}
+	if aggregateCount != 1 || auditCount != expectedEventCount ||
+		outboxCount != expectedEventCount || idempotencyCount != expectedEventCount {
+		t.Fatalf(
+			"Resource Group lifecycle evidence aggregate/audit/outbox/idempotency = %d/%d/%d/%d",
+			aggregateCount, auditCount, outboxCount, idempotencyCount,
+		)
+	}
+}
+
 func assertResourceAuthorityEvidenceAtomicity(
 	ctx context.Context,
 	t *testing.T,
@@ -404,7 +706,8 @@ func assertResourceAuthorityPrivilegeContract(
 	workerConnection *pgx.Conn,
 ) {
 	t.Helper()
-	var runtimeCreate, workerCreate, runtimeReads, workerReads, runtimeTableAccess bool
+	var runtimeCreate, workerCreate, runtimeReads, workerReads bool
+	var runtimeLifecycle, workerLifecycle, runtimeTableAccess bool
 	if err := adminConnection.QueryRow(ctx, `SELECT
     pg_catalog.has_function_privilege(
         'mesh_runtime',
@@ -434,6 +737,18 @@ func assertResourceAuthorityPrivilegeContract(
 		'mesh_ops.read_resource_group_v2(uuid)'::pg_catalog.regprocedure,
 		'mesh_ops.list_resource_groups_v1(uuid,text,integer)'::pg_catalog.regprocedure
 	]) AS reader(function_oid)),
+	(SELECT pg_catalog.bool_and(pg_catalog.has_function_privilege(
+		'mesh_runtime', lifecycle.function_oid, 'EXECUTE'
+	)) FROM pg_catalog.unnest(ARRAY[
+		'mesh_ops.transition_resource_lifecycle_v1(uuid,bigint,text,uuid,timestamptz)'::pg_catalog.regprocedure,
+		'mesh_ops.transition_resource_group_lifecycle_v1(uuid,bigint,text,uuid,timestamptz)'::pg_catalog.regprocedure
+	]) AS lifecycle(function_oid)),
+	(SELECT pg_catalog.bool_or(pg_catalog.has_function_privilege(
+		'mesh_worker', lifecycle.function_oid, 'EXECUTE'
+	)) FROM pg_catalog.unnest(ARRAY[
+		'mesh_ops.transition_resource_lifecycle_v1(uuid,bigint,text,uuid,timestamptz)'::pg_catalog.regprocedure,
+		'mesh_ops.transition_resource_group_lifecycle_v1(uuid,bigint,text,uuid,timestamptz)'::pg_catalog.regprocedure
+	]) AS lifecycle(function_oid)),
     COALESCE(pg_catalog.bool_or(
         pg_catalog.has_table_privilege('mesh_runtime', relation.oid, 'SELECT')
         OR pg_catalog.has_table_privilege('mesh_runtime', relation.oid, 'INSERT')
@@ -447,14 +762,17 @@ WHERE namespace.nspname = 'mesh'
       'resource', 'resource_device_target', 'resource_group',
       'resource_group_version', 'resource_group_version_member'
 	)`).Scan(
-		&runtimeCreate, &workerCreate, &runtimeReads, &workerReads, &runtimeTableAccess,
+		&runtimeCreate, &workerCreate, &runtimeReads, &workerReads,
+		&runtimeLifecycle, &workerLifecycle, &runtimeTableAccess,
 	); err != nil {
 		t.Fatalf("query Resource authority privileges: %v", err)
 	}
-	if !runtimeCreate || workerCreate || !runtimeReads || workerReads || runtimeTableAccess {
+	if !runtimeCreate || workerCreate || !runtimeReads || workerReads ||
+		!runtimeLifecycle || workerLifecycle || runtimeTableAccess {
 		t.Fatalf(
-			"Resource privileges runtime-create=%t worker-create=%t runtime-reads=%t worker-reads=%t runtime-table=%t",
-			runtimeCreate, workerCreate, runtimeReads, workerReads, runtimeTableAccess,
+			"Resource privileges runtime-create=%t worker-create=%t runtime-reads=%t worker-reads=%t runtime-lifecycle=%t worker-lifecycle=%t runtime-table=%t",
+			runtimeCreate, workerCreate, runtimeReads, workerReads,
+			runtimeLifecycle, workerLifecycle, runtimeTableAccess,
 		)
 	}
 	if err := runtimeConnection.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh.resource`).Scan(new(int64)); err == nil {
@@ -464,6 +782,12 @@ WHERE namespace.nspname = 'mesh'
     '01890f70-0000-7000-8000-000000000001'
 )`).Scan(new(string)); err == nil {
 		t.Fatal("worker Resource resolver execution unexpectedly succeeded")
+	}
+	if err := workerConnection.QueryRow(ctx, `SELECT * FROM mesh_ops.transition_resource_lifecycle_v1(
+    '01890f70-0000-7000-8000-000000000001', 1, 'suspended',
+    '01890f00-0000-7000-8000-000000000011', pg_catalog.transaction_timestamp()
+)`).Scan(new(int64)); err == nil {
+		t.Fatal("worker Resource lifecycle execution unexpectedly succeeded")
 	}
 }
 

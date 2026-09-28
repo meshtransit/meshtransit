@@ -278,6 +278,46 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/{lifecycle_action}": {
+      "post": {
+        "operationId": "transitionResourceLifecycle",
+        "summary": "Suspend, resume, or terminally delete one Resource",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceID"},
+          {"$ref": "#/components/parameters/LifecycleAction"},
+          {"$ref": "#/components/parameters/AggregateIfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceLifecycleRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "The lifecycle transition committed, or its identical result was replayed.",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/ResourceETag"},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceLifecycleResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups": {
       "get": {
         "operationId": "listResourceGroups",
@@ -375,6 +415,46 @@
           "504": {"$ref": "#/components/responses/Timeout"}
         }
       }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}/actions/{lifecycle_action}": {
+      "post": {
+        "operationId": "transitionResourceGroupLifecycle",
+        "summary": "Suspend, resume, or terminally delete one Resource Group",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceGroupID"},
+          {"$ref": "#/components/parameters/LifecycleAction"},
+          {"$ref": "#/components/parameters/AggregateIfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceLifecycleRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "The lifecycle transition committed, or its identical result was replayed.",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/ResourceGroupETag"},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceGroupLifecycleResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
     }
   },
   "components": {
@@ -467,6 +547,19 @@
         "required": true,
         "description": "One strong quoted decimal Resource Group collection revision.",
         "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
+      },
+      "AggregateIfMatch": {
+        "name": "If-Match",
+        "in": "header",
+        "required": true,
+        "description": "One strong quoted decimal Resource or Resource Group aggregate version.",
+        "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
+      },
+      "LifecycleAction": {
+        "name": "lifecycle_action",
+        "in": "path",
+        "required": true,
+        "schema": {"type": "string", "enum": ["suspend", "resume", "delete"]}
       },
       "ResourceState": {
         "name": "state",
@@ -887,6 +980,56 @@
         "properties": {
           "data": {"type": "array", "maxItems": 100, "items": {"$ref": "#/components/schemas/ResourceGroup"}},
           "next_page_token": {"type": "string", "maxLength": 512},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "ResourceLifecycleRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason"],
+        "properties": {
+          "reason": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      },
+      "ResourceLifecycleResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resource_id", "state", "version", "network_revision", "inventory_revision"],
+        "properties": {
+          "resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "state": {"type": "string", "enum": ["active", "suspended", "deleted"]},
+          "version": {"type": "integer", "format": "int64", "minimum": 2},
+          "network_revision": {"type": "integer", "format": "int64", "minimum": 2},
+          "inventory_revision": {"type": "integer", "format": "int64", "minimum": 2}
+        }
+      },
+      "ResourceGroupLifecycleResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resource_group_id", "state", "version", "network_revision", "group_revision"],
+        "properties": {
+          "resource_group_id": {"$ref": "#/components/schemas/PublicID"},
+          "state": {"type": "string", "enum": ["active", "suspended", "deleted"]},
+          "version": {"type": "integer", "format": "int64", "minimum": 2},
+          "network_revision": {"type": "integer", "format": "int64", "minimum": 2},
+          "group_revision": {"type": "integer", "format": "int64", "minimum": 2}
+        }
+      },
+      "ResourceLifecycleResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/ResourceLifecycleResult"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "ResourceGroupLifecycleResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/ResourceGroupLifecycleResult"},
           "correlation_id": {"$ref": "#/components/schemas/PublicID"}
         }
       },

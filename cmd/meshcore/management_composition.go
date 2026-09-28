@@ -196,6 +196,20 @@ func composeManagementAPIWithKeys(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
+	resourceLifecycles, err := authority.NewLifecycleService(
+		authority.Options{
+			MaxAttempts: 3, RollbackTimeout: managementRollbackTimeout,
+			IdempotencyWindow: managementIdempotencyTTL,
+		},
+		authority.LifecycleDependencies{
+			Transactions: resourceAuthorityStore, CommittedResults: resourceAuthorityStore,
+			MutationIDs: authority.PublicLifecycleMutationIDGenerator{}, Clock: authority.SystemClock{},
+			Retry: resourceBackoff,
+		},
+	)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
 	resourceCatalogStore, err := postgresadapter.NewResourceCatalogStore(
 		runtimePool,
 		postgresadapter.ResourceCatalogOptions{
@@ -216,7 +230,8 @@ func composeManagementAPIWithKeys(
 	}
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions: sessions, Revocations: revocations, PolicyPublications: policyPublications,
-		ResourceCreations: resourceCreations, ResourceCatalog: resourceCatalog,
+		ResourceCreations: resourceCreations, ResourceLifecycles: resourceLifecycles,
+		ResourceCatalog:   resourceCatalog,
 		Idempotency:       keys.idempotency,
 		RateLimitSubjects: keys.rateLimit, RateLimiter: rateLimiter,
 		TrustedProxyPrefixes: apiConfig.TrustedProxyPrefixes,

@@ -105,6 +105,30 @@ func TestManagementV1MutationContracts(t *testing.T) {
 			t.Fatalf("Resource detail contract = %+v, found=%t", resourceOperation.Get, found)
 		}
 	}
+	for _, contract := range []struct{ path, operation string }{
+		{
+			path:      "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/{lifecycle_action}",
+			operation: "transitionResourceLifecycle",
+		},
+		{
+			path:      "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}/actions/{lifecycle_action}",
+			operation: "transitionResourceGroupLifecycle",
+		},
+	} {
+		lifecycleOperation, found := document.Paths[contract.path]
+		if !found || lifecycleOperation.Post.OperationID != contract.operation ||
+			len(lifecycleOperation.Post.Security) != 1 ||
+			lifecycleOperation.Post.Security[0]["accountSessionBearer"] == nil {
+			t.Fatalf("Resource lifecycle contract = %+v, found=%t", lifecycleOperation.Post, found)
+		}
+		for _, status := range []string{
+			"200", "400", "401", "403", "404", "405", "409", "412", "428", "429", "503", "504",
+		} {
+			if _, ok := lifecycleOperation.Post.Responses[status]; !ok {
+				t.Fatalf("Resource lifecycle responses omit status %s", status)
+			}
+		}
+	}
 	bearer, ok := document.Components.SecuritySchemes["accountSessionBearer"]
 	if !ok || bearer.Type != "http" || bearer.Scheme != "bearer" {
 		t.Fatalf("Account Session security scheme = %+v, found=%t", bearer, ok)

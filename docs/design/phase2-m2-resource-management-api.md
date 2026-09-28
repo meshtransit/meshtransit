@@ -11,9 +11,10 @@ Bearer-authenticated management contract. PostgreSQL remains the only authority;
 Redis is used for request admission only and no graph database is introduced.
 
 This slice adds create, get, and deterministic list operations for Device-backed
-Resources and immutable Resource Groups. It does not add lifecycle mutation,
-target rebinding, group replacement, ownership transfer, Access Graph evaluation,
-policy compilation from groups, connector ingestion, sharing, or Console UI.
+Resources and immutable Resource Groups. Lifecycle mutation is implemented by
+the subsequent M3a slice; target rebinding, group replacement, ownership
+transfer, Access Graph evaluation, policy compilation from groups, connector
+ingestion, sharing, and Console UI remain outside M2.
 
 ## Public contract
 
@@ -119,9 +120,11 @@ document remains four paths including session prepare and logout.
 
 Next order:
 
-1. M3: Resource lifecycle, target rebinding, immutable Resource Group replacement,
-   and ownership/custodianship workflows.
-2. M4: Access Graph references, explanations, simulation, and verification.
-3. M5: policy compilation and client projection from stable Resource authority.
-4. Later gates: connector ingestion, sharing/export, Console UX, and separate
+1. M3a: Resource and Resource Group lifecycle actions (implemented after this
+   design record).
+2. M3b/M3c: target rebinding, immutable Resource Group replacement, and protected
+   ownership/custodianship workflows.
+3. M4: Access Graph references, explanations, simulation, and verification.
+4. M5: policy compilation and client projection from stable Resource authority.
+5. Later gates: connector ingestion, sharing/export, Console UX, and separate
    production availability qualification.

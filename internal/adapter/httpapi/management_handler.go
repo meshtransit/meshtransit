@@ -30,19 +30,25 @@ import (
 )
 
 const (
-	deviceRevokeOperation        = "device_revoke"
-	policyPublishOperation       = "policy_publish"
-	resourceCreateOperation      = "resource_create"
-	resourceGetOperation         = "resource_get"
-	resourceListOperation        = "resource_list"
-	resourceGroupCreateOperation = "resource_group_create"
-	resourceGroupGetOperation    = "resource_group_get"
-	resourceGroupListOperation   = "resource_group_list"
-	unknownManagementOperation   = "unknown"
-	maximumManagementBodyBytes   = 4 * 1024
-	maximumManagementRequests    = 4096
-	minimumManagementTimeout     = 100 * time.Millisecond
-	maximumManagementTimeout     = 30 * time.Second
+	deviceRevokeOperation         = "device_revoke"
+	policyPublishOperation        = "policy_publish"
+	resourceCreateOperation       = "resource_create"
+	resourceGetOperation          = "resource_get"
+	resourceListOperation         = "resource_list"
+	resourceGroupCreateOperation  = "resource_group_create"
+	resourceGroupGetOperation     = "resource_group_get"
+	resourceGroupListOperation    = "resource_group_list"
+	resourceSuspendOperation      = "resource_suspend"
+	resourceResumeOperation       = "resource_resume"
+	resourceDeleteOperation       = "resource_delete"
+	resourceGroupSuspendOperation = "resource_group_suspend"
+	resourceGroupResumeOperation  = "resource_group_resume"
+	resourceGroupDeleteOperation  = "resource_group_delete"
+	unknownManagementOperation    = "unknown"
+	maximumManagementBodyBytes    = 4 * 1024
+	maximumManagementRequests     = 4096
+	minimumManagementTimeout      = 100 * time.Millisecond
+	maximumManagementTimeout      = 30 * time.Second
 )
 
 var (
@@ -68,6 +74,11 @@ type PolicyPublisher interface {
 // ResourceCreator atomically creates Resource and Resource Group authority.
 type ResourceCreator interface {
 	Create(context.Context, authority.Command) (authority.Result, error)
+}
+
+// ResourceLifecycle transitions Resource and Resource Group authority state.
+type ResourceLifecycle interface {
+	Transition(context.Context, authority.LifecycleCommand) (authority.LifecycleResult, error)
 }
 
 // ResourceCatalog reads freshly authorized Resource authority snapshots.
@@ -104,6 +115,7 @@ type ManagementHandlerOptions struct {
 	Revocations           DeviceRevoker
 	PolicyPublications    PolicyPublisher
 	ResourceCreations     ResourceCreator
+	ResourceLifecycles    ResourceLifecycle
 	ResourceCatalog       ResourceCatalog
 	Idempotency           IdempotencyProver
 	RateLimitSubjects     RateLimitSubjectDigester
@@ -119,22 +131,23 @@ type ManagementHandlerOptions struct {
 
 // ManagementHandler validates public management requests before application use cases.
 type ManagementHandler struct {
-	sessions          AccountSessionAuthenticator
-	revocations       DeviceRevoker
-	policies          PolicyPublisher
-	resourceCreations ResourceCreator
-	resourceCatalog   ResourceCatalog
-	idempotency       IdempotencyProver
-	rateSubjects      RateLimitSubjectDigester
-	rateLimiter       ManagementRateLimiter
-	clientIPs         clientIPResolver
-	sourcePolicy      ratelimit.Policy
-	sessionPolicy     ratelimit.Policy
-	correlationIDs    PublicIDGenerator
-	logger            *slog.Logger
-	timeout           time.Duration
-	slots             chan struct{}
-	telemetry         *ManagementTelemetry
+	sessions           AccountSessionAuthenticator
+	revocations        DeviceRevoker
+	policies           PolicyPublisher
+	resourceCreations  ResourceCreator
+	resourceLifecycles ResourceLifecycle
+	resourceCatalog    ResourceCatalog
+	idempotency        IdempotencyProver
+	rateSubjects       RateLimitSubjectDigester
+	rateLimiter        ManagementRateLimiter
+	clientIPs          clientIPResolver
+	sourcePolicy       ratelimit.Policy
+	sessionPolicy      ratelimit.Policy
+	correlationIDs     PublicIDGenerator
+	logger             *slog.Logger
+	timeout            time.Duration
+	slots              chan struct{}
+	telemetry          *ManagementTelemetry
 }
 
 // NewManagementHandler constructs a bounded, fail-closed management API handler.
@@ -159,22 +172,23 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		return nil, errors.Join(ErrInvalidManagementHandler, err)
 	}
 	return &ManagementHandler{
-		sessions:          options.Sessions,
-		revocations:       options.Revocations,
-		policies:          options.PolicyPublications,
-		resourceCreations: options.ResourceCreations,
-		resourceCatalog:   options.ResourceCatalog,
-		idempotency:       options.Idempotency,
-		rateSubjects:      options.RateLimitSubjects,
-		rateLimiter:       options.RateLimiter,
-		clientIPs:         clientIPs,
-		sourcePolicy:      options.SourceRateLimit,
-		sessionPolicy:     options.SessionRateLimit,
-		correlationIDs:    options.CorrelationIDs,
-		logger:            options.Logger,
-		timeout:           options.RequestTimeout,
-		slots:             make(chan struct{}, options.MaxConcurrentRequests),
-		telemetry:         telemetry,
+		sessions:           options.Sessions,
+		revocations:        options.Revocations,
+		policies:           options.PolicyPublications,
+		resourceCreations:  options.ResourceCreations,
+		resourceLifecycles: options.ResourceLifecycles,
+		resourceCatalog:    options.ResourceCatalog,
+		idempotency:        options.Idempotency,
+		rateSubjects:       options.RateLimitSubjects,
+		rateLimiter:        options.RateLimiter,
+		clientIPs:          clientIPs,
+		sourcePolicy:       options.SourceRateLimit,
+		sessionPolicy:      options.SessionRateLimit,
+		correlationIDs:     options.CorrelationIDs,
+		logger:             options.Logger,
+		timeout:            options.RequestTimeout,
+		slots:              make(chan struct{}, options.MaxConcurrentRequests),
+		telemetry:          telemetry,
 	}, nil
 }
 
@@ -263,6 +277,8 @@ func (handler *ManagementHandler) serveHTTP(
 	if allowedMethod == "" || request.Method != allowedMethod {
 		if resourceMatched && resourcePath.isCollection() {
 			response.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
+		} else if resourceMatched && resourcePath.isAction() {
+			response.Header().Set("Allow", http.MethodPost)
 		} else {
 			response.Header().Set("Allow", allowedMethodOrGet(resourceMatched, allowedMethod))
 		}

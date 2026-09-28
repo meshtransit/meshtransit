@@ -106,6 +106,100 @@ func TestManagementHandlerCreatesResourceGroup(t *testing.T) {
 	}
 }
 
+func TestManagementHandlerSuspendsResource(t *testing.T) {
+	t.Parallel()
+	var captured authority.LifecycleCommand
+	options := validManagementHandlerOptions(t)
+	options.ResourceLifecycles = managementResourceLifecycleFunc(func(
+		_ context.Context,
+		command authority.LifecycleCommand,
+	) (authority.LifecycleResult, error) {
+		captured = command
+		hash, err := resource.NewSemanticHash([32]byte{31: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return authority.NewLifecycleResult(
+			command.Operation(), command.ResourceID(), command.GroupID(), command.Scope(),
+			resource.StateSuspended, 2, 9, 4, hash,
+		)
+	})
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := resourceCollectionPath() +
+		"/01890f00-0000-7000-8000-000000000501/actions/suspend"
+	request := newManagementRequest(
+		t, http.MethodPost, path, `{"reason":"temporarily remove destination"}`,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"2"` ||
+		captured.Operation() != authority.LifecycleSuspendResource ||
+		captured.ExpectedVersion() != 1 || captured.ResourceID().String() !=
+		"01890f00-0000-7000-8000-000000000501" {
+		t.Fatalf("status/headers/command = %d/%+v/%+v; body=%s", response.Code,
+			response.Header(), captured, response.Body.String())
+	}
+	var body resourceLifecycleEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil ||
+		body.Data.ResourceID != "01890f00-0000-7000-8000-000000000501" ||
+		body.Data.ResourceGroupID != "" || body.Data.State != "suspended" ||
+		body.Data.Version != 2 || body.Data.InventoryRevision != 4 || body.Data.GroupRevision != 0 {
+		t.Fatalf("lifecycle response = %+v, error=%v", body, err)
+	}
+}
+
+func TestResourceLifecycleRequiresStrongPrecondition(t *testing.T) {
+	t.Parallel()
+	options := validManagementHandlerOptions(t)
+	options.ResourceLifecycles = managementResourceLifecycleFunc(func(
+		context.Context,
+		authority.LifecycleCommand,
+	) (authority.LifecycleResult, error) {
+		return authority.LifecycleResult{}, errors.New("unexpected lifecycle call")
+	})
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := newManagementRequest(
+		t, http.MethodPost,
+		resourceCollectionPath()+"/01890f00-0000-7000-8000-000000000501/actions/delete",
+		`{"reason":"retire destination"}`,
+	)
+	request.Header.Del("If-Match")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusPreconditionRequired {
+		t.Fatalf("status = %d, want 428; body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestResourceLifecycleErrorClassification(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{err: authority.ErrLifecycleNotFound, status: http.StatusNotFound, code: "not_found"},
+		{err: authority.ErrLifecycleVersionConflict, status: http.StatusPreconditionFailed, code: "precondition_failed"},
+		{err: authority.ErrInvalidLifecycleTransition, status: http.StatusConflict, code: "invalid_state_transition"},
+	}
+	for _, test := range tests {
+		classified := classifyResourceLifecycleError(test.err)
+		if classified.Status != test.status || classified.Code != test.code {
+			t.Fatalf("classification for %v = %+v", test.err, classified)
+		}
+	}
+}
+
 func TestManagementHandlerListsResourcesWithFreshAuthority(t *testing.T) {
 	t.Parallel()
 	var capturedState resource.State
@@ -258,6 +352,18 @@ func (function managementResourceCreatorFunc) Create(
 	ctx context.Context,
 	command authority.Command,
 ) (authority.Result, error) {
+	return function(ctx, command)
+}
+
+type managementResourceLifecycleFunc func(
+	context.Context,
+	authority.LifecycleCommand,
+) (authority.LifecycleResult, error)
+
+func (function managementResourceLifecycleFunc) Transition(
+	ctx context.Context,
+	command authority.LifecycleCommand,
+) (authority.LifecycleResult, error) {
 	return function(ctx, command)
 }
 

@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 38 {
-		t.Fatalf("len(Catalog()) = %d, want 38", len(catalog))
+	if len(catalog) != 39 {
+		t.Fatalf("len(Catalog()) = %d, want 39", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 38 {
-		t.Fatalf("LatestVersion() = %d, want 38", LatestVersion())
+	if LatestVersion() != 39 {
+		t.Fatalf("LatestVersion() = %d, want 39", LatestVersion())
 	}
 }
 
@@ -1393,6 +1393,43 @@ func TestResourceManagementReadsAreScopedBoundedAndLeastPrivilege(t *testing.T) 
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("Resource management read SQL contains excessive capability %q", forbidden)
+		}
+	}
+}
+
+func TestResourceLifecycleIsRetainedVersionedAndLeastPrivilege(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[38]
+	if migration.Description != "Resource lifecycle authority" {
+		t.Fatalf("migration 39 description = %q", migration.Description)
+	}
+	for _, required := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.enforce_resource_authority_transition",
+		"CREATE FUNCTION mesh_ops.transition_resource_lifecycle_v1",
+		"CREATE FUNCTION mesh_ops.transition_resource_group_lifecycle_v1",
+		"p_expected_resource_version BIGINT",
+		"p_expected_group_version BIGINT",
+		"FROM mesh_ops.lock_network_revision()",
+		"FOR SHARE OF workspace, principal, membership",
+		"FOR UPDATE;",
+		"OLD.state = 'deleted'",
+		"state = p_target_state",
+		"version = resource.version + 1",
+		"version = resource_group.version + 1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.transition_resource_lifecycle_v1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.transition_resource_group_lifecycle_v1",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("Resource lifecycle SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "GRANT ALL",
+		"BYPASSRLS", "TO mesh_worker;", "TO mesh_observer;", "DROP ", "DELETE FROM",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("Resource lifecycle SQL contains excessive capability %q", forbidden)
 		}
 	}
 }

@@ -40,6 +40,7 @@ type resourceManagementPath struct {
 	workspaceID string
 	networkID   string
 	publicID    string
+	action      string
 }
 
 func parseResourceManagementPath(request *http.Request) (resourceManagementPath, bool) {
@@ -47,7 +48,8 @@ func parseResourceManagementPath(request *http.Request) (resourceManagementPath,
 		return resourceManagementPath{}, false
 	}
 	segments := strings.Split(strings.TrimPrefix(request.URL.Path, "/"), "/")
-	if (len(segments) != 7 && len(segments) != 8) || segments[0] != "api" ||
+	if (len(segments) != 7 && len(segments) != 8 && len(segments) != 10) ||
+		segments[0] != "api" ||
 		segments[1] != "v1" || segments[2] != "workspaces" || segments[4] != "networks" {
 		return resourceManagementPath{}, false
 	}
@@ -55,18 +57,25 @@ func parseResourceManagementPath(request *http.Request) (resourceManagementPath,
 	switch segments[6] {
 	case "resources":
 		path.kind = resourceManagementCollection
-		if len(segments) == 8 {
+		if len(segments) >= 8 {
 			path.kind = resourceManagementItem
 			path.publicID = segments[7]
 		}
 	case "resource-groups":
 		path.kind = resourceGroupManagementCollection
-		if len(segments) == 8 {
+		if len(segments) >= 8 {
 			path.kind = resourceGroupManagementItem
 			path.publicID = segments[7]
 		}
 	default:
 		return resourceManagementPath{}, false
+	}
+	if len(segments) == 10 {
+		if segments[8] != "actions" ||
+			(segments[9] != "suspend" && segments[9] != "resume" && segments[9] != "delete") {
+			return resourceManagementPath{}, false
+		}
+		path.action = segments[9]
 	}
 	return path, true
 }
@@ -75,8 +84,13 @@ func (path resourceManagementPath) isCollection() bool {
 	return path.kind == resourceManagementCollection || path.kind == resourceGroupManagementCollection
 }
 
+func (path resourceManagementPath) isAction() bool { return path.action != "" }
+
 func (path resourceManagementPath) allowedMethod(method string) string {
 	if path.isCollection() && (method == http.MethodGet || method == http.MethodPost) {
+		return method
+	}
+	if path.isAction() && method == http.MethodPost {
 		return method
 	}
 	if !path.isCollection() && method == http.MethodGet {
@@ -96,6 +110,26 @@ func allowedMethodOrGet(resourceMatched bool, allowed string) string {
 }
 
 func (path resourceManagementPath) operation(method string) string {
+	if path.isAction() && method == http.MethodPost {
+		group := path.kind == resourceGroupManagementItem
+		switch path.action {
+		case "suspend":
+			if group {
+				return resourceGroupSuspendOperation
+			}
+			return resourceSuspendOperation
+		case "resume":
+			if group {
+				return resourceGroupResumeOperation
+			}
+			return resourceResumeOperation
+		case "delete":
+			if group {
+				return resourceGroupDeleteOperation
+			}
+			return resourceDeleteOperation
+		}
+	}
 	switch path.kind {
 	case resourceManagementCollection:
 		switch method {
@@ -143,6 +177,15 @@ func (handler *ManagementHandler) handleResourceManagement(
 	path resourceManagementPath,
 	session accountsession.Session,
 ) string {
+	if path.isAction() {
+		if handler.resourceLifecycles == nil {
+			writeManagementError(ctx, handler.logger, response, correlationID, resourceUnavailableError())
+			return "operation_unavailable"
+		}
+		return handler.transitionResourceLifecycle(
+			ctx, response, request, correlationID, path, session,
+		)
+	}
 	if path.isCollection() && request.Method == http.MethodPost {
 		if handler.resourceCreations == nil {
 			writeManagementError(ctx, handler.logger, response, correlationID, resourceUnavailableError())
@@ -161,6 +204,107 @@ func (handler *ManagementHandler) handleResourceManagement(
 		return handler.listResourceAuthority(ctx, response, request, correlationID, path, session)
 	}
 	return handler.getResourceAuthority(ctx, response, request, correlationID, path, session)
+}
+
+type resourceLifecycleRequest struct {
+	Reason string `json:"reason"`
+}
+
+func (handler *ManagementHandler) transitionResourceLifecycle(
+	ctx context.Context,
+	response http.ResponseWriter,
+	request *http.Request,
+	correlationID publicid.ID,
+	path resourceManagementPath,
+	session accountsession.Session,
+) string {
+	if request.URL.RawQuery != "" {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	scope, expectedVersion, proof, requestErr := handler.resourceMutationEnvelope(request, path)
+	if requestErr != nil {
+		writeManagementError(ctx, handler.logger, response, correlationID, *requestErr)
+		return requestErr.Code
+	}
+	var body resourceLifecycleRequest
+	if requestErr = decodeResourceBody(response, request, &body); requestErr != nil {
+		writeManagementError(ctx, handler.logger, response, correlationID, *requestErr)
+		return requestErr.Code
+	}
+	reason, err := authority.NewAuditReason(body.Reason)
+	if err != nil {
+		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	operation := lifecycleOperation(path)
+	var command authority.LifecycleCommand
+	if path.kind == resourceManagementItem {
+		id, err := resource.ParseID(path.publicID)
+		if err != nil {
+			return handler.writeResourceRequestError(ctx, response, correlationID)
+		}
+		command, err = authority.NewResourceLifecycleCommand(
+			operation, scope, id, expectedVersion, session, reason, proof,
+		)
+		if err != nil {
+			return handler.writeResourceRequestError(ctx, response, correlationID)
+		}
+	} else {
+		id, err := resource.ParseGroupID(path.publicID)
+		if err != nil {
+			return handler.writeResourceRequestError(ctx, response, correlationID)
+		}
+		command, err = authority.NewGroupLifecycleCommand(
+			operation, scope, id, expectedVersion, session, reason, proof,
+		)
+		if err != nil {
+			return handler.writeResourceRequestError(ctx, response, correlationID)
+		}
+	}
+	result, err := handler.resourceLifecycles.Transition(ctx, command)
+	if err != nil {
+		classified := classifyResourceLifecycleError(err)
+		writeManagementError(ctx, handler.logger, response, correlationID, classified)
+		return classified.Code
+	}
+	if !resourceLifecycleMatches(result, command) {
+		writeManagementError(ctx, handler.logger, response, correlationID, internalManagementError())
+		return "internal_failure"
+	}
+	response.Header().Set("ETag", strongVersionETag(result.Version()))
+	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, resourceLifecycleEnvelope{
+		Data: resourceLifecycleData{
+			ResourceID: lifecycleResourceID(result), ResourceGroupID: lifecycleGroupID(result),
+			State: catalog.StateString(result.State()), Version: result.Version(),
+			NetworkRevision:   result.NetworkRevision(),
+			InventoryRevision: lifecycleInventoryRevision(result),
+			GroupRevision:     lifecycleGroupRevision(result),
+		},
+		CorrelationID: correlationID.String(),
+	})
+	return "success"
+}
+
+func lifecycleOperation(path resourceManagementPath) authority.LifecycleOperation {
+	group := path.kind == resourceGroupManagementItem
+	switch path.action {
+	case "suspend":
+		if group {
+			return authority.LifecycleSuspendGroup
+		}
+		return authority.LifecycleSuspendResource
+	case "resume":
+		if group {
+			return authority.LifecycleResumeGroup
+		}
+		return authority.LifecycleResumeResource
+	case "delete":
+		if group {
+			return authority.LifecycleDeleteGroup
+		}
+		return authority.LifecycleDeleteResource
+	default:
+		return authority.LifecycleOperationUnknown
+	}
 }
 
 type createResourceRequest struct {
@@ -625,6 +769,21 @@ type resourceGroupItemEnvelope struct {
 	CorrelationID string            `json:"correlation_id"`
 }
 
+type resourceLifecycleData struct {
+	ResourceID        string `json:"resource_id,omitempty"`
+	ResourceGroupID   string `json:"resource_group_id,omitempty"`
+	State             string `json:"state"`
+	Version           int64  `json:"version"`
+	NetworkRevision   int64  `json:"network_revision"`
+	InventoryRevision int64  `json:"inventory_revision,omitempty"`
+	GroupRevision     int64  `json:"group_revision,omitempty"`
+}
+
+type resourceLifecycleEnvelope struct {
+	Data          resourceLifecycleData `json:"data"`
+	CorrelationID string                `json:"correlation_id"`
+}
+
 type resourceListEnvelope struct {
 	Data          []resourceData `json:"data"`
 	NextPageToken string         `json:"next_page_token,omitempty"`
@@ -717,6 +876,49 @@ func resourceCreationMatches(result authority.Result, command authority.Command)
 	return result.GroupID().IsValid() && !result.ResourceID().IsValid()
 }
 
+func resourceLifecycleMatches(
+	result authority.LifecycleResult,
+	command authority.LifecycleCommand,
+) bool {
+	if !result.IsValid() || result.Operation() != command.Operation() ||
+		result.Scope() != command.Scope() || result.State() != command.Operation().TargetState() ||
+		result.Version() != command.ExpectedVersion()+1 {
+		return false
+	}
+	if command.Operation().IsGroup() {
+		return result.GroupID() == command.GroupID() && !result.ResourceID().IsValid()
+	}
+	return result.ResourceID() == command.ResourceID() && !result.GroupID().IsValid()
+}
+
+func lifecycleInventoryRevision(result authority.LifecycleResult) int64 {
+	if result.Operation().IsGroup() {
+		return 0
+	}
+	return result.SubsystemRevision()
+}
+
+func lifecycleGroupRevision(result authority.LifecycleResult) int64 {
+	if !result.Operation().IsGroup() {
+		return 0
+	}
+	return result.SubsystemRevision()
+}
+
+func lifecycleResourceID(result authority.LifecycleResult) string {
+	if !result.ResourceID().IsValid() {
+		return ""
+	}
+	return result.ResourceID().String()
+}
+
+func lifecycleGroupID(result authority.LifecycleResult) string {
+	if !result.GroupID().IsValid() {
+		return ""
+	}
+	return result.GroupID().String()
+}
+
 func classifyResourceAuthorityError(err error) managementError {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
@@ -725,6 +927,30 @@ func classifyResourceAuthorityError(err error) managementError {
 		return managementError{Status: http.StatusForbidden, Code: "forbidden", Message: "the request is not authorized"}
 	case errors.Is(err, authority.ErrConflict):
 		return managementError{Status: http.StatusPreconditionFailed, Code: "precondition_failed", Message: "the collection revision precondition is stale"}
+	case errors.Is(err, authority.ErrIntentConflict):
+		return managementError{Status: http.StatusConflict, Code: "idempotency_conflict", Message: "the idempotency key is bound to different request semantics"}
+	case errors.Is(err, authority.ErrIdempotencyExpired):
+		return managementError{Status: http.StatusConflict, Code: "idempotency_expired", Message: "the idempotency replay window expired"}
+	case errors.Is(err, context.Canceled), errors.Is(err, authority.ErrRetryableTransaction),
+		errors.Is(err, authority.ErrCommitOutcomeUnknown), errors.Is(err, authority.ErrRetryExhausted):
+		return resourceUnavailableError()
+	default:
+		return internalManagementError()
+	}
+}
+
+func classifyResourceLifecycleError(err error) managementError {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return managementError{Status: http.StatusGatewayTimeout, Code: "request_timeout", Message: "the request deadline expired", Retryable: true}
+	case errors.Is(err, authority.ErrForbidden):
+		return managementError{Status: http.StatusForbidden, Code: "forbidden", Message: "the request is not authorized"}
+	case errors.Is(err, authority.ErrLifecycleNotFound):
+		return managementError{Status: http.StatusNotFound, Code: "not_found", Message: "the requested resource is unavailable"}
+	case errors.Is(err, authority.ErrLifecycleVersionConflict):
+		return managementError{Status: http.StatusPreconditionFailed, Code: "precondition_failed", Message: "the aggregate version precondition is stale"}
+	case errors.Is(err, authority.ErrInvalidLifecycleTransition):
+		return managementError{Status: http.StatusConflict, Code: "invalid_state_transition", Message: "the requested lifecycle transition is not valid"}
 	case errors.Is(err, authority.ErrIntentConflict):
 		return managementError{Status: http.StatusConflict, Code: "idempotency_conflict", Message: "the idempotency key is bound to different request semantics"}
 	case errors.Is(err, authority.ErrIdempotencyExpired):
