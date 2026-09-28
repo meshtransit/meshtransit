@@ -107,7 +107,7 @@ No packet payload, raw DNS stream, secret, or unbounded topology is collected.
 Policy intelligence follows:
 
 ```text
-observe -> explain -> suggest -> human approve -> simulate -> publish
+observe -> explain -> suggest -> simulate -> human approve -> publish
 ```
 
 Observation or AI never publishes authority directly.

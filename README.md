@@ -32,12 +32,16 @@ and ten-minute pending requests. M4a adds bounded, revision-bound explanation
 of exact `network.connect` decisions from active compiled policy and its Device,
 Resource, or Resource Group provenance. These slices use fresh
 exact-scope authorization, strong revision preconditions, durable idempotency,
-and safe errors. M4b1 adds a read-only, compiler-identical simulation domain
-kernel with complete revision-vector stability checks, exact before/after
-packet and explanation diffs, bounded disclosure, and a full-evidence impact
-hash. No Resource Console UI, graph database, simulation management endpoint,
-PostgreSQL simulation reader, human approval workflow, or second policy
-evaluator is introduced.
+and safe errors. M4b adds a read-only, compiler-identical simulation domain
+and management operation with a PostgreSQL-authoritative active baseline,
+complete revision-vector stability checks, exact before/after packet and
+explanation diffs, bounded disclosure, and a full-evidence impact hash. M4c1
+adds the pure two-person policy approval workflow contract: fresh simulation,
+candidate and impact acknowledgement, complete-vector binding, ten-minute
+expiry, stable retry evidence, and distinct proposer/approver Principal and
+Account Session requirements. No Resource Console UI, graph database, durable
+policy-approval persistence, approval API, publication gate, or second policy
+evaluator is introduced by M4c1.
 Design, security boundaries, acceptance evidence, and explicit non-claims are
 recorded in the
 [Phase 2 M1 Resource authority design](docs/design/phase2-m1-resource-authority.md)
@@ -89,7 +93,15 @@ and
 plus the
 [M4b1 policy simulation domain design](docs/design/phase2-m4b1-policy-simulation-domain.md)
 and
-[M4b1 acceptance matrix](docs/qualification/phase2-m4b1-policy-simulation-domain-2026-09-29.md).
+[M4b1 acceptance matrix](docs/qualification/phase2-m4b1-policy-simulation-domain-2026-09-29.md),
+plus the
+[M4b2 policy simulation API design](docs/design/phase2-m4b2-policy-simulation-api.md)
+and
+[M4b2 acceptance matrix](docs/qualification/phase2-m4b2-policy-simulation-api-2026-09-29.md),
+plus the
+[M4c1 policy approval domain design](docs/design/phase2-m4c1-policy-approval-domain.md)
+and
+[M4c1 acceptance matrix](docs/qualification/phase2-m4c1-policy-approval-domain-2026-09-29.md).
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,
@@ -570,7 +582,7 @@ domain packages.
 
 ## Authorization foundation
 
-The `internal/authorization` package owns the complete 72-entry v1 management
+The `internal/authorization` package owns the complete 74-entry v1 management
 permission catalog and a pure scoped-grant evaluator. Permissions are exact
 stable identifiers; wildcard or unknown permissions are rejected. Evaluation
 uses validated UUIDv7 Principal, Deployment, Workspace, and Network IDs and a
@@ -590,9 +602,10 @@ An allowed scoped-grant decision is one step in the authorization pipeline, not
 a final mutation approval. Authentication, active membership, delegation
 ceiling, operation invariants, Approval Policy, step-up evidence, ETag/CAS, and
 the atomic audit/outbox transaction remain mandatory where the operation mutates
-authority. General policy-approval persistence remains deliberately deferred;
-the currently exposed protected management operations are documented by the
-versioned OpenAPI contract.
+authority. The M4c1 policy-approval domain defines a fail-closed two-person
+contract, but its PostgreSQL persistence, management API, and publication-time
+consumption remain deliberately deferred to M4c2; currently exposed protected
+management operations are documented by the versioned OpenAPI contract.
 
 ## Network management RBAC authority
 
