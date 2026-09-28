@@ -11,8 +11,43 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 45 {
-		t.Fatalf("len(Catalog()) = %d, want 45", len(catalog))
+	if len(catalog) != 46 {
+		t.Fatalf("len(Catalog()) = %d, want 46", len(catalog))
+	}
+
+	simulationBaseline := catalog[45]
+	if simulationBaseline.Description != "Policy simulation active baseline" {
+		t.Fatalf("migration 46 description = %q, want Policy simulation baseline", simulationBaseline.Description)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.read_policy_simulation_baseline_v1",
+		"'policy.validate'",
+		"FROM mesh_ops.resolve_network_permission_v1",
+		"FROM mesh_ops.read_network_revision_v1()",
+		"JOIN mesh.compiled_policy_rule",
+		"LEFT JOIN mesh.compiled_policy_resource_destination",
+		"LEFT JOIN mesh.compiled_policy_resource_group_destination",
+		"LIMIT p_rule_limit",
+		"SECURITY DEFINER",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_policy_simulation_baseline_v1",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(simulationBaseline.SQL, required) {
+			t.Errorf("Policy simulation baseline SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT",
+		"GRANT INSERT",
+		"GRANT UPDATE",
+		"GRANT DELETE",
+		"GRANT ALL",
+		"BYPASSRLS",
+		"DROP ",
+	} {
+		if strings.Contains(simulationBaseline.SQL, forbidden) {
+			t.Errorf("Policy simulation baseline SQL contains excessive capability %q", forbidden)
+		}
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1121,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 45 {
-		t.Fatalf("LatestVersion() = %d, want 45", LatestVersion())
+	if LatestVersion() != 46 {
+		t.Fatalf("LatestVersion() = %d, want 46", LatestVersion())
 	}
 }
 

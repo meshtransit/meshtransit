@@ -35,6 +35,8 @@ var (
 	ErrInvalidResult = errors.New("policy simulation: invalid result")
 	// ErrStaleInputs reports authority changes while a draft was compiled.
 	ErrStaleInputs = errors.New("policy simulation: stale inputs")
+	// ErrForbidden conceals missing policy.validate authority.
+	ErrForbidden = errors.New("policy simulation: forbidden")
 	// ErrUnavailable reports a missing or unavailable simulation dependency.
 	ErrUnavailable = errors.New("policy simulation: unavailable")
 )
