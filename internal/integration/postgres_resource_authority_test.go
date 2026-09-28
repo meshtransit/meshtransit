@@ -160,8 +160,11 @@ func assertPostgreSQLResourceAuthority(
 		t.Fatalf("unauthorized Resource error = %v, want ErrForbidden", err)
 	}
 
-	assertResourceTargetRebinding(
+	rebound := assertResourceTargetRebinding(
 		ctx, t, adminConnection, runtimePool, service, session, scope203, scope204,
+	)
+	assertResourceAuthorityChange(
+		ctx, t, adminConnection, runtimePool, session, scope203, rebound,
 	)
 
 	assertResourceLifecycles(
@@ -173,6 +176,120 @@ func assertPostgreSQLResourceAuthority(
 	assertResourceAuthorityPrivilegeContract(ctx, t, adminConnection, runtimeConnection, workerConnection)
 }
 
+func assertResourceAuthorityChange(
+	ctx context.Context,
+	t *testing.T,
+	adminConnection *pgx.Conn,
+	runtimePool *postgresadapter.Pool,
+	requester accountsession.Session,
+	scope network.Scope,
+	rebound authority.RebindResult,
+) {
+	t.Helper()
+	confirmer := authorityConfirmerAccountSessionFixture(t)
+	service := newIntegrationResourceAuthorityChangeService(t, runtimePool)
+	nonOwnerPreview, err := authority.NewResourceAuthorityChangePreview(
+		scope, rebound.ResourceID(), rebound.Version(),
+		authority.AuthorityChangeTransferOwner, requester.PrincipalID(), confirmer,
+	)
+	if err != nil {
+		t.Fatalf("construct non-owner authority-change preview: %v", err)
+	}
+	if _, err := service.Preview(ctx, nonOwnerPreview); !errors.Is(err, authority.ErrForbidden) {
+		t.Fatalf("non-owner authority-change preview error = %v, want forbidden", err)
+	}
+	preview, err := authority.NewResourceAuthorityChangePreview(
+		scope, rebound.ResourceID(), rebound.Version(),
+		authority.AuthorityChangeTransferOwner, confirmer.PrincipalID(), requester,
+	)
+	if err != nil {
+		t.Fatalf("construct ownership-transfer preview: %v", err)
+	}
+	impact, err := service.Preview(ctx, preview)
+	if err != nil {
+		t.Fatalf("preview ownership transfer: %v", err)
+	}
+	if impact.CurrentOwnerPrincipalID() != requester.PrincipalID() ||
+		impact.ProposedOwnerPrincipalID() != confirmer.PrincipalID() ||
+		impact.ProposedCustodianPrincipalID() != requester.PrincipalID() ||
+		impact.RequiredConfirmations() != 1 ||
+		impact.MaximumStepUpAge() != authority.MaximumAuthorityChangeStepUpAge {
+		t.Fatalf("ownership-transfer impact = %+v", impact)
+	}
+	requestCommand, err := authority.NewAuthorityChangeRequestCommand(
+		preview, impact.Hash(), resourceAuthorityReason(t, "propose protected owner transfer"),
+		resourceAuthorityProof(t, 21),
+	)
+	if err != nil {
+		t.Fatalf("construct ownership-transfer request: %v", err)
+	}
+	requested, err := service.Request(ctx, requestCommand)
+	if err != nil {
+		t.Fatalf("request ownership transfer: %v", err)
+	}
+	if requested.RequestVersion() != 1 || requested.ImpactHash() != impact.Hash() ||
+		!requested.ExpiresAt().After(time.Now().UTC()) {
+		t.Fatalf("ownership-transfer request result = %+v", requested)
+	}
+	replayedRequest, err := service.Request(ctx, requestCommand)
+	if err != nil || !replayedRequest.Equal(requested) {
+		t.Fatalf("replayed ownership-transfer request = %+v, error=%v", replayedRequest, err)
+	}
+	wrongActorCommand, err := authority.NewResourceAuthorityChangeConfirmation(
+		scope, rebound.ResourceID(), requested.RequestID(), requested.RequestVersion(),
+		impact.Hash(), requester,
+		resourceAuthorityReason(t, "reject requester self-confirmation"),
+		resourceAuthorityProof(t, 22),
+	)
+	if err != nil {
+		t.Fatalf("construct requester self-confirmation: %v", err)
+	}
+	if _, err := service.Confirm(ctx, wrongActorCommand); !errors.Is(err, authority.ErrForbidden) {
+		t.Fatalf("requester self-confirmation error = %v, want ErrForbidden", err)
+	}
+	confirmationCommand, err := authority.NewResourceAuthorityChangeConfirmation(
+		scope, rebound.ResourceID(), requested.RequestID(), requested.RequestVersion(),
+		impact.Hash(), confirmer,
+		resourceAuthorityReason(t, "accept protected owner transfer"),
+		resourceAuthorityProof(t, 23),
+	)
+	if err != nil {
+		t.Fatalf("construct ownership-transfer confirmation: %v", err)
+	}
+	confirmed, err := service.Confirm(ctx, confirmationCommand)
+	if err != nil {
+		t.Fatalf("confirm ownership transfer: %v", err)
+	}
+	if confirmed.SubjectVersion() != rebound.Version()+1 || confirmed.RequestVersion() != 2 ||
+		confirmed.OwnerPrincipalID() != confirmer.PrincipalID() ||
+		confirmed.CustodianPrincipalID() != requester.PrincipalID() ||
+		confirmed.SemanticHash() != impact.ProposedSemanticHash() {
+		t.Fatalf("ownership-transfer confirmation = %+v", confirmed)
+	}
+	replayedConfirmation, err := service.Confirm(ctx, confirmationCommand)
+	if err != nil || !replayedConfirmation.Equal(confirmed) {
+		t.Fatalf(
+			"replayed ownership-transfer confirmation = %+v, error=%v",
+			replayedConfirmation, err,
+		)
+	}
+	stalePreview, err := authority.NewResourceAuthorityChangePreview(
+		scope, rebound.ResourceID(), rebound.Version(),
+		authority.AuthorityChangeDelegateCustodian, confirmer.PrincipalID(), requester,
+	)
+	if err != nil {
+		t.Fatalf("construct stale authority-change preview: %v", err)
+	}
+	if _, err := service.Preview(ctx, stalePreview); !errors.Is(
+		err, authority.ErrAuthorityChangeVersionConflict,
+	) {
+		t.Fatalf("stale authority-change preview error = %v, want version conflict", err)
+	}
+	assertCommittedResourceAuthorityChange(
+		ctx, t, adminConnection, requested, confirmed, requester, confirmer,
+	)
+}
+
 func assertResourceTargetRebinding(
 	ctx context.Context,
 	t *testing.T,
@@ -182,7 +299,7 @@ func assertResourceTargetRebinding(
 	session accountsession.Session,
 	homeScope network.Scope,
 	otherScope network.Scope,
-) {
+) authority.RebindResult {
 	t.Helper()
 	inventoryRevision, groupRevision := resourceAuthorityRevisions(ctx, t, adminConnection, 103, 203)
 	definition := resourceAuthorityDeviceDefinition(
@@ -283,6 +400,7 @@ func assertResourceTargetRebinding(
 		ctx, t, adminConnection, runtimePool, session, homeScope, otherScope,
 		groupResult.GroupID(), result,
 	)
+	return result
 }
 
 func assertResourceGroupReplacement(
@@ -747,6 +865,44 @@ func newIntegrationResourceGroupReplaceService(
 	return service
 }
 
+func newIntegrationResourceAuthorityChangeService(
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+) *authority.ChangeService {
+	t.Helper()
+	store, err := postgresadapter.NewResourceAuthorityStore(
+		runtimePool,
+		postgresadapter.ResourceAuthorityOptions{
+			StatementTimeout: 5 * time.Second,
+			LockTimeout:      2 * time.Second,
+			IdleTimeout:      10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("postgres.NewResourceAuthorityStore() error = %v", err)
+	}
+	retry, err := authority.NewExponentialBackoff(time.Millisecond, 5*time.Millisecond)
+	if err != nil {
+		t.Fatalf("authority.NewExponentialBackoff() error = %v", err)
+	}
+	service, err := authority.NewAuthorityChangeService(
+		authority.Options{
+			MaxAttempts: 3, RollbackTimeout: 2 * time.Second,
+			IdempotencyWindow: time.Hour,
+		},
+		authority.ChangeDependencies{
+			Impacts: store, RequestTransactions: store, CommittedRequests: store,
+			ConfirmationTransactions: store, CommittedConfirmations: store,
+			MutationIDs: authority.PublicAuthorityChangeMutationIDGenerator{},
+			Clock:       authority.SystemClock{}, Retry: retry,
+		},
+	)
+	if err != nil {
+		t.Fatalf("authority.NewAuthorityChangeService() error = %v", err)
+	}
+	return service
+}
+
 func resourceAuthorityReference(
 	t *testing.T,
 	scope network.Scope,
@@ -1017,6 +1173,80 @@ func assertCommittedResourceGroupReplacement(
 			"Resource Group replacement evidence group/versions/old/new/audit/outbox/idempotency = %d/%d/%d/%d/%d/%d/%d",
 			groupCount, versionCount, oldMemberCount, newMemberCount,
 			auditCount, outboxCount, idempotencyCount,
+		)
+	}
+}
+
+func assertCommittedResourceAuthorityChange(
+	ctx context.Context,
+	t *testing.T,
+	connection *pgx.Conn,
+	requested authority.ChangeRequestResult,
+	confirmed authority.ChangeConfirmationResult,
+	requester, confirmer accountsession.Session,
+) {
+	t.Helper()
+	var resourceCount, requestCount, stepUpCount int
+	var requestAuditCount, confirmationAuditCount, outboxCount, idempotencyCount int
+	hash := confirmed.SemanticHash().Bytes()
+	if err := connection.QueryRow(ctx, `SELECT
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh.resource
+     WHERE public_id = $1::UUID AND version = $2
+       AND owner_principal_id = 13 AND custodian_principal_id = 11
+       AND semantic_hash = $3::BYTEA),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh.resource_authority_change_request
+     WHERE public_id = $4::UUID AND state = 'applied' AND version = 2
+       AND confirmation_count = 1 AND applied_at IS NOT NULL),
+    (SELECT pg_catalog.count(*)::INTEGER
+     FROM mesh.resource_authority_step_up_evidence AS evidence
+     JOIN mesh.resource_authority_change_request AS request
+       ON request.id = evidence.request_id
+     WHERE request.public_id = $4::UUID
+       AND evidence.account_session_id IN (812, 813)),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_audit.audit_event
+     WHERE target_kind = 'resource_authority_change_request'
+       AND target_public_id = $4::UUID
+       AND action = 'resource.authority_change_requested'
+       AND permission = 'resource.transfer'
+       AND payload ->> 'account_session_id' = $5),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_audit.audit_event
+     WHERE target_kind = 'resource' AND target_public_id = $1::UUID
+       AND action = 'resource.owner_transfer'
+       AND permission = 'resource.transfer'
+       AND payload ->> 'account_session_id' = $6),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_ops.outbox_event AS event
+     WHERE event.public_id IN (
+         SELECT record.outbox_public_id
+         FROM mesh_ops.idempotency_record AS record
+         WHERE record.operation IN (
+             'resource_authority_change.request',
+             'resource_authority_change.confirm'
+         )
+           AND record.result_public_id IN ($1::UUID, $4::UUID)
+     )
+       AND event.event_class = 'network.revision.advanced'),
+    (SELECT pg_catalog.count(*)::INTEGER FROM mesh_ops.idempotency_record
+     WHERE state = 'completed'
+       AND operation IN (
+           'resource_authority_change.request',
+           'resource_authority_change.confirm'
+       )
+       AND result_public_id IN ($1::UUID, $4::UUID))`,
+		confirmed.SubjectPublicID().String(), confirmed.SubjectVersion(), hash[:],
+		requested.RequestID().String(), requester.ID().String(), confirmer.ID().String(),
+	).Scan(
+		&resourceCount, &requestCount, &stepUpCount, &requestAuditCount,
+		&confirmationAuditCount, &outboxCount, &idempotencyCount,
+	); err != nil {
+		t.Fatalf("query committed Resource authority change: %v", err)
+	}
+	if resourceCount != 1 || requestCount != 1 || stepUpCount != 2 ||
+		requestAuditCount != 1 || confirmationAuditCount != 1 || outboxCount != 2 ||
+		idempotencyCount != 2 {
+		t.Fatalf(
+			"Resource authority change evidence resource/request/step-up/request-audit/confirmation-audit/outbox/idempotency = %d/%d/%d/%d/%d/%d/%d",
+			resourceCount, requestCount, stepUpCount, requestAuditCount,
+			confirmationAuditCount, outboxCount, idempotencyCount,
 		)
 	}
 }

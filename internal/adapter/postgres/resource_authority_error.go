@@ -26,22 +26,35 @@ func classifyResourceAuthorityDatabaseError(ctx context.Context, err error) erro
 	case "MT002":
 		return errors.Join(
 			authority.ErrLifecycleVersionConflict, authority.ErrRebindVersionConflict,
-			authority.ErrGroupReplaceVersionConflict, err,
+			authority.ErrGroupReplaceVersionConflict,
+			authority.ErrAuthorityChangeVersionConflict,
+			authority.ErrAuthorityChangeRequestVersionConflict, err,
 		)
 	case "MT003":
 		return errors.Join(authority.ErrInvalidLifecycleTransition, err)
 	case "MT004":
 		return errors.Join(
-			authority.ErrRebindStateConflict, authority.ErrGroupReplaceStateConflict, err,
+			authority.ErrRebindStateConflict, authority.ErrGroupReplaceStateConflict,
+			authority.ErrAuthorityChangeStateConflict,
+			authority.ErrAuthorityChangeRequestStateConflict, err,
 		)
 	case "MT005":
-		return errors.Join(authority.ErrRebindTargetConflict, err)
+		return errors.Join(
+			authority.ErrRebindTargetConflict, authority.ErrAuthorityChangeTargetConflict, err,
+		)
 	case "MT006":
-		return errors.Join(authority.ErrGroupReplaceMemberConflict, err)
+		return errors.Join(
+			authority.ErrGroupReplaceMemberConflict,
+			authority.ErrAuthorityChangeImpactChanged, err,
+		)
+	case "MT007":
+		return errors.Join(authority.ErrAuthorityChangeStepUpRequired, err)
+	case "MT008":
+		return errors.Join(authority.ErrAuthorityChangeRequestExpired, err)
 	case "MT404":
 		return errors.Join(
 			authority.ErrLifecycleNotFound, authority.ErrRebindNotFound,
-			authority.ErrGroupReplaceNotFound, err,
+			authority.ErrGroupReplaceNotFound, authority.ErrAuthorityChangeNotFound, err,
 		)
 	case "42501":
 		return errors.Join(authority.ErrForbidden, err)

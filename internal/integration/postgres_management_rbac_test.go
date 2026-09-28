@@ -16,17 +16,22 @@ import (
 )
 
 const (
-	integrationManagementSessionPublicID   = "01890f00-0000-7000-8000-000000000812"
-	integrationWorkspaceMembershipPublicID = "01890f00-0000-7000-8000-000000000841"
-	integrationRoleDefinitionPublicID      = "01890f00-0000-7000-8000-000000000842"
-	integrationRolePermissionPublicID      = "01890f00-0000-7000-8000-000000000843"
-	integrationPolicyPermissionPublicID    = "01890f00-0000-7000-8000-000000000846"
-	integrationResourcePermissionPublicID  = "01890f00-0000-7000-8000-000000000847"
-	integrationGroupPermissionPublicID     = "01890f00-0000-7000-8000-000000000848"
-	integrationResourceReadPermissionID    = "01890f00-0000-7000-8000-000000000849"
-	integrationGroupReadPermissionID       = "01890f00-0000-7000-8000-000000000850"
-	integrationRoleBinding203PublicID      = "01890f00-0000-7000-8000-000000000844"
-	integrationRoleBinding204PublicID      = "01890f00-0000-7000-8000-000000000845"
+	integrationManagementSessionPublicID    = "01890f00-0000-7000-8000-000000000812"
+	integrationWorkspaceMembershipPublicID  = "01890f00-0000-7000-8000-000000000841"
+	integrationRoleDefinitionPublicID       = "01890f00-0000-7000-8000-000000000842"
+	integrationRolePermissionPublicID       = "01890f00-0000-7000-8000-000000000843"
+	integrationPolicyPermissionPublicID     = "01890f00-0000-7000-8000-000000000846"
+	integrationResourcePermissionPublicID   = "01890f00-0000-7000-8000-000000000847"
+	integrationGroupPermissionPublicID      = "01890f00-0000-7000-8000-000000000848"
+	integrationResourceReadPermissionID     = "01890f00-0000-7000-8000-000000000849"
+	integrationGroupReadPermissionID        = "01890f00-0000-7000-8000-000000000850"
+	integrationResourceTransferPermissionID = "01890f00-0000-7000-8000-000000000853"
+	integrationGroupTransferPermissionID    = "01890f00-0000-7000-8000-000000000854"
+	integrationRoleBinding203PublicID       = "01890f00-0000-7000-8000-000000000844"
+	integrationRoleBinding204PublicID       = "01890f00-0000-7000-8000-000000000845"
+	integrationAuthorityConfirmerSessionID  = "01890f00-0000-7000-8000-000000000813"
+	integrationAuthorityConfirmerID         = "01890f00-0000-7000-8000-000000000013"
+	integrationAuthorityConfirmerSubjectID  = "01890f00-0000-7000-8000-000000000713"
 )
 
 func assertNetworkManagementRBACAuthority(
@@ -237,6 +242,71 @@ WHERE workspace_id = 103 AND network_id = 203`).Scan(&networkRevision); err != n
 			arguments []any
 		}{
 			{
+				name: "authority confirmer Principal",
+				query: `INSERT INTO mesh.principal (
+    id, public_id, deployment_id, kind, state
+) OVERRIDING SYSTEM VALUE VALUES (
+    13, '01890f00-0000-7000-8000-000000000013', 1, 'account', 'active'
+)`,
+			},
+			{
+				name: "authority confirmer Account",
+				query: `INSERT INTO mesh.account (
+    id, public_id, deployment_id, principal_id, display_name,
+    login_identifier_digest_algorithm, login_identifier_digest_key_id,
+    login_identifier_digest, session_generation, recovery_state
+) OVERRIDING SYSTEM VALUE VALUES (
+    703, '01890f00-0000-7000-8000-000000000703', 1, 13, 'Authority Confirmer',
+    'hmac-sha256-v1', 'integration-v1',
+    pg_catalog.decode(pg_catalog.repeat('99', 32), 'hex'), 1, 'verified'
+)`,
+			},
+			{
+				name: "authority confirmer identity subject",
+				query: `INSERT INTO mesh.identity_subject (
+    id, public_id, deployment_id, identity_provider_id, principal_id,
+    subject_digest_algorithm, subject_digest_key_id, subject_digest,
+    claims_revision, last_seen_at, state
+) OVERRIDING SYSTEM VALUE VALUES (
+    713, '01890f00-0000-7000-8000-000000000713', 1, 601, 13,
+    'hmac-sha256-v1', 'integration-v1',
+    pg_catalog.decode(pg_catalog.repeat('aa', 32), 'hex'),
+    1, pg_catalog.transaction_timestamp(), 'active'
+)`,
+			},
+			{
+				name: "management Workspace identity provider",
+				query: `INSERT INTO mesh.workspace_identity_provider (
+    id, public_id, deployment_id, workspace_id, identity_provider_id,
+    identity_provider_client_id, admission_mode, minimum_assurance,
+    routing_priority, state
+) OVERRIDING SYSTEM VALUE VALUES (
+    633, '01890f00-0000-7000-8000-000000000633', 1, 103, 601, 621,
+    'invitation_only', 'urn:meshtransit:assurance:mfa', 10, 'active'
+)`,
+			},
+			{
+				name: "authority confirmer Account Session",
+				query: `INSERT INTO mesh.account_session (
+    id, public_id, deployment_id, principal_id, identity_provider_id,
+    identity_subject_id, identity_provider_client_id, login_workspace_id,
+    token_digest_algorithm, token_digest_key_id, token_digest,
+    provider_generation, authentication_time, acr, amr,
+    principal_authority_generation, account_session_generation,
+    deployment_recovery_epoch, issued_at, last_used_at, idle_expires_at,
+    absolute_expires_at, state
+) OVERRIDING SYSTEM VALUE VALUES (
+    813, '01890f00-0000-7000-8000-000000000813', 1, 13, 601, 713, 621, 103,
+    'hmac-sha256-v1', 'integration-v1',
+    pg_catalog.decode(pg_catalog.repeat('bb', 32), 'hex'), 1,
+    pg_catalog.transaction_timestamp() - INTERVAL '1 minute',
+    'urn:meshtransit:assurance:mfa', ARRAY['pwd', 'mfa'], 1, 1, 1,
+    pg_catalog.transaction_timestamp(), pg_catalog.transaction_timestamp(),
+    pg_catalog.transaction_timestamp() + INTERVAL '30 minutes',
+    pg_catalog.transaction_timestamp() + INTERVAL '8 hours', 'active'
+)`,
+			},
+			{
 				name: "management Account Session",
 				query: `INSERT INTO mesh.account_session (
     id, public_id, deployment_id, principal_id, identity_provider_id,
@@ -335,6 +405,47 @@ SELECT 850, $1::UUID, 1, 103, 842, permission.id
 FROM mesh.permission AS permission
 WHERE permission.permission_key = 'resource_group.read'`,
 				arguments: []any{integrationGroupReadPermissionID},
+			},
+			{
+				name: "Resource Transfer RolePermission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 853, $1::UUID, 1, 103, 842, permission.id
+FROM mesh.permission AS permission
+WHERE permission.permission_key = 'resource.transfer'`,
+				arguments: []any{integrationResourceTransferPermissionID},
+			},
+			{
+				name: "Resource Group Transfer RolePermission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 854, $1::UUID, 1, 103, 842, permission.id
+FROM mesh.permission AS permission
+WHERE permission.permission_key = 'resource_group.transfer'`,
+				arguments: []any{integrationGroupTransferPermissionID},
+			},
+			{
+				name: "authority confirmer Workspace membership",
+				query: `INSERT INTO mesh.workspace_membership (
+    id, public_id, deployment_id, workspace_id, principal_id,
+    state, authority_generation, valid_from
+) OVERRIDING SYSTEM VALUE VALUES (
+    851, '01890f00-0000-7000-8000-000000000851', 1, 103, 13,
+    'active', 1, pg_catalog.transaction_timestamp() - INTERVAL '1 minute'
+)`,
+			},
+			{
+				name: "authority confirmer Network 203 RoleBinding",
+				query: `INSERT INTO mesh.role_binding (
+    id, public_id, deployment_id, workspace_id, network_id, principal_id,
+    workspace_membership_id, role_definition_id, state,
+    authority_generation, valid_from
+) OVERRIDING SYSTEM VALUE VALUES (
+    852, '01890f00-0000-7000-8000-000000000852', 1, 103, 203, 13,
+    851, 842, 'active', 1, pg_catalog.transaction_timestamp() - INTERVAL '1 minute'
+)`,
 			},
 			{
 				name: "Network 203 RoleBinding",
@@ -452,13 +563,15 @@ func assertNetworkManagementPermissionResolution(
 		t.Fatalf("set management RBAC Network scope: %v", err)
 	}
 	for permission, expectedCount := range map[string]int64{
-		"device.manage":         1,
-		"device.transfer":       0,
-		"policy.publish":        1,
-		"resource.manage":       1,
-		"resource.read":         1,
-		"resource_group.manage": 1,
-		"resource_group.read":   1,
+		"device.manage":           1,
+		"device.transfer":         0,
+		"policy.publish":          1,
+		"resource.manage":         1,
+		"resource.read":           1,
+		"resource_group.manage":   1,
+		"resource_group.read":     1,
+		"resource.transfer":       1,
+		"resource_group.transfer": 1,
 	} {
 		var count int64
 		if err := transaction.QueryRow(ctx, `SELECT pg_catalog.count(*)
@@ -531,6 +644,46 @@ func managementRBACAccountSessionFixture(t *testing.T) accountsession.Session {
 	})
 	if err != nil {
 		t.Fatalf("construct management Account Session: %v", err)
+	}
+	return session
+}
+
+func authorityConfirmerAccountSessionFixture(t *testing.T) accountsession.Session {
+	t.Helper()
+	deploymentID, err := deployment.ParseID("01890f00-0000-7000-8000-000000000001")
+	if err != nil {
+		t.Fatalf("parse authority confirmer Deployment: %v", err)
+	}
+	principalID, err := identity.ParsePrincipalID(integrationAuthorityConfirmerID)
+	if err != nil {
+		t.Fatalf("parse authority confirmer Principal: %v", err)
+	}
+	sessionID, err := accountsession.ParseID(integrationAuthorityConfirmerSessionID)
+	if err != nil {
+		t.Fatalf("parse authority confirmer Account Session: %v", err)
+	}
+	subjectID, err := accountsession.ParseIdentitySubjectID(
+		integrationAuthorityConfirmerSubjectID,
+	)
+	if err != nil {
+		t.Fatalf("parse authority confirmer identity subject: %v", err)
+	}
+	workspaceID, err := workspace.ParseID("01890f00-0000-7000-8000-000000000103")
+	if err != nil {
+		t.Fatalf("parse authority confirmer Workspace: %v", err)
+	}
+	now := time.Now().UTC()
+	session, err := accountsession.NewSession(accountsession.Params{
+		ID: sessionID, DeploymentID: deploymentID, PrincipalID: principalID,
+		IdentitySubjectID: subjectID, LoginWorkspaceID: workspaceID,
+		HasLoginWorkspace: true, AuthenticationTime: now.Add(-time.Minute),
+		ACR: "urn:meshtransit:assurance:mfa", AMR: []string{"pwd", "mfa"},
+		Version: 1, PrincipalAuthorityGeneration: 1, AccountSessionGeneration: 1,
+		ProviderGeneration: 1, DeploymentRecoveryEpoch: 1,
+		IdleExpiresAt: now.Add(20 * time.Minute), AbsoluteExpiresAt: now.Add(7 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("construct authority confirmer Account Session: %v", err)
 	}
 	return session
 }

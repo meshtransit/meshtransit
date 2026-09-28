@@ -30,29 +30,32 @@ import (
 )
 
 const (
-	deviceRevokeOperation                = "device_revoke"
-	policyPublishOperation               = "policy_publish"
-	resourceCreateOperation              = "resource_create"
-	resourceGetOperation                 = "resource_get"
-	resourceListOperation                = "resource_list"
-	resourceGroupCreateOperation         = "resource_group_create"
-	resourceGroupGetOperation            = "resource_group_get"
-	resourceGroupListOperation           = "resource_group_list"
-	resourceSuspendOperation             = "resource_suspend"
-	resourceResumeOperation              = "resource_resume"
-	resourceDeleteOperation              = "resource_delete"
-	resourceGroupSuspendOperation        = "resource_group_suspend"
-	resourceGroupResumeOperation         = "resource_group_resume"
-	resourceGroupDeleteOperation         = "resource_group_delete"
-	resourceRebindPreviewOperation       = "resource_rebind_preview"
-	resourceRebindOperation              = "resource_rebind"
-	resourceGroupReplacePreviewOperation = "resource_group_replace_preview"
-	resourceGroupReplaceOperation        = "resource_group_replace"
-	unknownManagementOperation           = "unknown"
-	maximumManagementBodyBytes           = 64 * 1024
-	maximumManagementRequests            = 4096
-	minimumManagementTimeout             = 100 * time.Millisecond
-	maximumManagementTimeout             = 30 * time.Second
+	deviceRevokeOperation                   = "device_revoke"
+	policyPublishOperation                  = "policy_publish"
+	resourceCreateOperation                 = "resource_create"
+	resourceGetOperation                    = "resource_get"
+	resourceListOperation                   = "resource_list"
+	resourceGroupCreateOperation            = "resource_group_create"
+	resourceGroupGetOperation               = "resource_group_get"
+	resourceGroupListOperation              = "resource_group_list"
+	resourceSuspendOperation                = "resource_suspend"
+	resourceResumeOperation                 = "resource_resume"
+	resourceDeleteOperation                 = "resource_delete"
+	resourceGroupSuspendOperation           = "resource_group_suspend"
+	resourceGroupResumeOperation            = "resource_group_resume"
+	resourceGroupDeleteOperation            = "resource_group_delete"
+	resourceRebindPreviewOperation          = "resource_rebind_preview"
+	resourceRebindOperation                 = "resource_rebind"
+	resourceGroupReplacePreviewOperation    = "resource_group_replace_preview"
+	resourceGroupReplaceOperation           = "resource_group_replace"
+	resourceAuthorityChangePreviewOperation = "resource_authority_change_preview"
+	resourceAuthorityChangeRequestOperation = "resource_authority_change_request"
+	resourceAuthorityChangeConfirmOperation = "resource_authority_change_confirm"
+	unknownManagementOperation              = "unknown"
+	maximumManagementBodyBytes              = 64 * 1024
+	maximumManagementRequests               = 4096
+	minimumManagementTimeout                = 100 * time.Millisecond
+	maximumManagementTimeout                = 30 * time.Second
 )
 
 var (
@@ -97,6 +100,13 @@ type ResourceGroupReplacer interface {
 	Replace(context.Context, authority.GroupReplaceCommand) (authority.GroupReplaceResult, error)
 }
 
+// ResourceAuthorityChanger runs protected ownership and custody changes.
+type ResourceAuthorityChanger interface {
+	Preview(context.Context, authority.ChangePreview) (authority.ChangeImpact, error)
+	Request(context.Context, authority.ChangeRequestCommand) (authority.ChangeRequestResult, error)
+	Confirm(context.Context, authority.ChangeConfirmationCommand) (authority.ChangeConfirmationResult, error)
+}
+
 // ResourceCatalog reads freshly authorized Resource authority snapshots.
 type ResourceCatalog interface {
 	GetResource(context.Context, accountsession.Session, network.Scope, resource.ID) (catalog.Resource, error)
@@ -134,6 +144,7 @@ type ManagementHandlerOptions struct {
 	ResourceLifecycles        ResourceLifecycle
 	ResourceRebindings        ResourceRebinder
 	ResourceGroupReplacements ResourceGroupReplacer
+	ResourceAuthorityChanges  ResourceAuthorityChanger
 	ResourceCatalog           ResourceCatalog
 	Idempotency               IdempotencyProver
 	RateLimitSubjects         RateLimitSubjectDigester
@@ -156,6 +167,7 @@ type ManagementHandler struct {
 	resourceLifecycles        ResourceLifecycle
 	resourceRebindings        ResourceRebinder
 	resourceGroupReplacements ResourceGroupReplacer
+	resourceAuthorityChanges  ResourceAuthorityChanger
 	resourceCatalog           ResourceCatalog
 	idempotency               IdempotencyProver
 	rateSubjects              RateLimitSubjectDigester
@@ -199,6 +211,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		resourceLifecycles:        options.ResourceLifecycles,
 		resourceRebindings:        options.ResourceRebindings,
 		resourceGroupReplacements: options.ResourceGroupReplacements,
+		resourceAuthorityChanges:  options.ResourceAuthorityChanges,
 		resourceCatalog:           options.ResourceCatalog,
 		idempotency:               options.Idempotency,
 		rateSubjects:              options.RateLimitSubjects,

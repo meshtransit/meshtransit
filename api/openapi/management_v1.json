@@ -357,6 +357,108 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/preview-authority-change": {
+      "post": {
+        "operationId": "previewResourceAuthorityChange",
+        "summary": "Preview an owner transfer or custodian delegation",
+        "description": "Computes deterministic before/after authority evidence. The authenticated Principal must be the current owner. This read-like preview rejects Idempotency-Key.",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceID"},
+          {"$ref": "#/components/parameters/AggregateIfMatch"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AuthorityChangePreviewRequest"}}}},
+        "responses": {
+          "200": {
+            "description": "Deterministic authority-change impact bound to the current Resource version.",
+            "headers": {"ETag": {"$ref": "#/components/headers/ResourceETag"}, "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}},
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AuthorityChangePreviewResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/request-authority-change": {
+      "post": {
+        "operationId": "requestResourceAuthorityChange",
+        "summary": "Propose a protected Resource authority change",
+        "description": "Requires a fresh, single-use step-up Account Session from the current owner and exact acknowledged impact evidence. Creates a ten-minute pending request for the target Principal.",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceID"},
+          {"$ref": "#/components/parameters/AggregateIfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AuthorityChangeRequest"}}}},
+        "responses": {
+          "202": {
+            "description": "The pending authority-change request was created, or the identical committed proposal was replayed.",
+            "headers": {"ETag": {"$ref": "#/components/headers/AuthorityChangeRequestETag"}, "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}},
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AuthorityChangeRequestResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/confirm-authority-change": {
+      "post": {
+        "operationId": "confirmResourceAuthorityChange",
+        "summary": "Confirm and atomically apply a pending Resource authority change",
+        "description": "Requires a distinct fresh, single-use step-up Account Session from the proposed owner or custodian. If-Match identifies the pending request version, not the Resource version.",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceID"},
+          {"$ref": "#/components/parameters/AuthorityChangeRequestIfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AuthorityChangeConfirmationRequest"}}}},
+        "responses": {
+          "200": {
+            "description": "The protected Resource authority change committed, or the identical result was replayed.",
+            "headers": {"ETag": {"$ref": "#/components/headers/ResourceETag"}, "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}},
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AuthorityChangeConfirmationResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "410": {"$ref": "#/components/responses/Gone"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/{lifecycle_action}": {
       "post": {
         "operationId": "transitionResourceLifecycle",
@@ -572,6 +674,108 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}/actions/preview-authority-change": {
+      "post": {
+        "operationId": "previewResourceGroupAuthorityChange",
+        "summary": "Preview a Resource Group owner transfer or custodian delegation",
+        "description": "Computes deterministic before/after authority evidence. The authenticated Principal must be the current owner. This read-like preview rejects Idempotency-Key.",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceGroupID"},
+          {"$ref": "#/components/parameters/AggregateIfMatch"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AuthorityChangePreviewRequest"}}}},
+        "responses": {
+          "200": {
+            "description": "Deterministic authority-change impact bound to the current Resource Group version.",
+            "headers": {"ETag": {"$ref": "#/components/headers/ResourceGroupETag"}, "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}},
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AuthorityChangePreviewResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}/actions/request-authority-change": {
+      "post": {
+        "operationId": "requestResourceGroupAuthorityChange",
+        "summary": "Propose a protected Resource Group authority change",
+        "description": "Requires a fresh, single-use step-up Account Session from the current owner and exact acknowledged impact evidence. Creates a ten-minute pending request for the target Principal.",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceGroupID"},
+          {"$ref": "#/components/parameters/AggregateIfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AuthorityChangeRequest"}}}},
+        "responses": {
+          "202": {
+            "description": "The pending authority-change request was created, or the identical committed proposal was replayed.",
+            "headers": {"ETag": {"$ref": "#/components/headers/AuthorityChangeRequestETag"}, "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}},
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AuthorityChangeRequestResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}/actions/confirm-authority-change": {
+      "post": {
+        "operationId": "confirmResourceGroupAuthorityChange",
+        "summary": "Confirm and atomically apply a pending Resource Group authority change",
+        "description": "Requires a distinct fresh, single-use step-up Account Session from the proposed owner or custodian. If-Match identifies the pending request version, not the Resource Group version.",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ResourceGroupID"},
+          {"$ref": "#/components/parameters/AuthorityChangeRequestIfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AuthorityChangeConfirmationRequest"}}}},
+        "responses": {
+          "200": {
+            "description": "The protected Resource Group authority change committed, or the identical result was replayed.",
+            "headers": {"ETag": {"$ref": "#/components/headers/ResourceGroupETag"}, "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}},
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AuthorityChangeConfirmationResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "410": {"$ref": "#/components/responses/Gone"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}/actions/{lifecycle_action}": {
       "post": {
         "operationId": "transitionResourceGroupLifecycle",
@@ -711,6 +915,13 @@
         "description": "One strong quoted decimal Resource or Resource Group aggregate version.",
         "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
       },
+      "AuthorityChangeRequestIfMatch": {
+        "name": "If-Match",
+        "in": "header",
+        "required": true,
+        "description": "One strong quoted decimal pending authority-change request version. It is not the subject aggregate version.",
+        "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
+      },
       "LifecycleAction": {
         "name": "lifecycle_action",
         "in": "path",
@@ -773,6 +984,10 @@
       "ResourceGroupCollectionETag": {
         "description": "The strong quoted decimal Resource Group collection revision.",
         "schema": {"type": "string"}
+      },
+      "AuthorityChangeRequestETag": {
+        "description": "The strong quoted decimal pending authority-change request version.",
+        "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
       },
       "CorrelationID": {
         "description": "A server-generated UUIDv7 used to correlate the safe response and operational log.",
@@ -1361,6 +1576,138 @@
           "correlation_id": {"$ref": "#/components/schemas/PublicID"}
         }
       },
+      "AuthorityChangeAction": {
+        "type": "string",
+        "enum": ["owner_transfer", "custodian_delegation"]
+      },
+      "AuthorityChangePreviewRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action", "target_principal_id"],
+        "properties": {
+          "action": {"$ref": "#/components/schemas/AuthorityChangeAction"},
+          "target_principal_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "AuthorityChangePreview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "subject_kind", "subject_public_id", "action", "target_principal_id",
+          "current_owner_principal_id", "current_custodian_principal_id",
+          "proposed_owner_principal_id", "proposed_custodian_principal_id",
+          "current_semantic_hash", "proposed_semantic_hash", "impact_hash",
+          "confirmation_principal_id", "required_confirmations", "maximum_step_up_age_seconds"
+        ],
+        "properties": {
+          "subject_kind": {"type": "string", "enum": ["resource", "resource_group"]},
+          "subject_public_id": {"$ref": "#/components/schemas/PublicID"},
+          "action": {"$ref": "#/components/schemas/AuthorityChangeAction"},
+          "target_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "current_owner_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "current_custodian_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "proposed_owner_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "proposed_custodian_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "current_semantic_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "proposed_semantic_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "impact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "confirmation_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "required_confirmations": {"type": "integer", "const": 1},
+          "maximum_step_up_age_seconds": {"type": "integer", "const": 300}
+        }
+      },
+      "AuthorityChangePreviewResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/AuthorityChangePreview"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "AuthorityChangeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action", "target_principal_id", "impact_hash", "reason"],
+        "properties": {
+          "action": {"$ref": "#/components/schemas/AuthorityChangeAction"},
+          "target_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "impact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      },
+      "AuthorityChangeRequestResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "change_request_id", "subject_kind", "subject_public_id", "action",
+          "target_principal_id", "request_version", "network_revision",
+          "subsystem_revision", "impact_hash", "expires_at"
+        ],
+        "properties": {
+          "change_request_id": {"$ref": "#/components/schemas/PublicID"},
+          "subject_kind": {"type": "string", "enum": ["resource", "resource_group"]},
+          "subject_public_id": {"$ref": "#/components/schemas/PublicID"},
+          "action": {"$ref": "#/components/schemas/AuthorityChangeAction"},
+          "target_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "request_version": {"type": "integer", "const": 1},
+          "network_revision": {"type": "integer", "format": "int64", "minimum": 2},
+          "subsystem_revision": {"type": "integer", "format": "int64", "minimum": 2},
+          "impact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "expires_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "AuthorityChangeRequestResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/AuthorityChangeRequestResult"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "AuthorityChangeConfirmationRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["change_request_id", "impact_hash", "reason"],
+        "properties": {
+          "change_request_id": {"$ref": "#/components/schemas/PublicID"},
+          "impact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      },
+      "AuthorityChangeConfirmationResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "change_request_id", "subject_kind", "subject_public_id", "action",
+          "subject_version", "request_version", "network_revision", "subsystem_revision",
+          "owner_principal_id", "custodian_principal_id", "semantic_hash", "impact_hash"
+        ],
+        "properties": {
+          "change_request_id": {"$ref": "#/components/schemas/PublicID"},
+          "subject_kind": {"type": "string", "enum": ["resource", "resource_group"]},
+          "subject_public_id": {"$ref": "#/components/schemas/PublicID"},
+          "action": {"$ref": "#/components/schemas/AuthorityChangeAction"},
+          "subject_version": {"type": "integer", "format": "int64", "minimum": 2},
+          "request_version": {"type": "integer", "const": 2},
+          "network_revision": {"type": "integer", "format": "int64", "minimum": 2},
+          "subsystem_revision": {"type": "integer", "format": "int64", "minimum": 2},
+          "owner_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "custodian_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "semantic_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "impact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      },
+      "AuthorityChangeConfirmationResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/AuthorityChangeConfirmationResult"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
       "ErrorResponse": {
         "type": "object",
         "additionalProperties": false,
@@ -1456,6 +1803,14 @@
             "schema": {
               "$ref": "#/components/schemas/ErrorResponse"
             }
+          }
+        }
+      },
+      "Gone": {
+        "description": "The pending protected-change confirmation window expired.",
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/ErrorResponse"}
           }
         }
       },

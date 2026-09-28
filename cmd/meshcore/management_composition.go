@@ -240,6 +240,24 @@ func composeManagementAPIWithKeys(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
+	resourceAuthorityChanges, err := authority.NewAuthorityChangeService(
+		authority.Options{
+			MaxAttempts: 3, RollbackTimeout: managementRollbackTimeout,
+			IdempotencyWindow: managementIdempotencyTTL,
+		},
+		authority.ChangeDependencies{
+			Impacts:                  resourceAuthorityStore,
+			RequestTransactions:      resourceAuthorityStore,
+			CommittedRequests:        resourceAuthorityStore,
+			ConfirmationTransactions: resourceAuthorityStore,
+			CommittedConfirmations:   resourceAuthorityStore,
+			MutationIDs:              authority.PublicAuthorityChangeMutationIDGenerator{},
+			Clock:                    authority.SystemClock{}, Retry: resourceBackoff,
+		},
+	)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
 	resourceCatalogStore, err := postgresadapter.NewResourceCatalogStore(
 		runtimePool,
 		postgresadapter.ResourceCatalogOptions{
@@ -263,6 +281,7 @@ func composeManagementAPIWithKeys(
 		ResourceCreations: resourceCreations, ResourceLifecycles: resourceLifecycles,
 		ResourceRebindings: resourceRebindings, ResourceCatalog: resourceCatalog,
 		ResourceGroupReplacements: resourceGroupReplacements,
+		ResourceAuthorityChanges:  resourceAuthorityChanges,
 		Idempotency:               keys.idempotency,
 		RateLimitSubjects:         keys.rateLimit, RateLimiter: rateLimiter,
 		TrustedProxyPrefixes: apiConfig.TrustedProxyPrefixes,

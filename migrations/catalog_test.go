@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 41 {
-		t.Fatalf("len(Catalog()) = %d, want 41", len(catalog))
+	if len(catalog) != 42 {
+		t.Fatalf("len(Catalog()) = %d, want 42", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 41 {
-		t.Fatalf("LatestVersion() = %d, want 41", LatestVersion())
+	if LatestVersion() != 42 {
+		t.Fatalf("LatestVersion() = %d, want 42", LatestVersion())
 	}
 }
 
@@ -1503,6 +1503,51 @@ func TestResourceGroupReplacementIsImmutableAndLeastPrivilege(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("Resource Group replacement SQL contains excessive capability %q", forbidden)
+		}
+	}
+}
+
+func TestResourceAuthorityChangeRequiresStepUpAndSecondActor(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[41]
+	if migration.Description != "protected Resource ownership and custody authority" {
+		t.Fatalf("migration 42 description = %q", migration.Description)
+	}
+	for _, required := range []string{
+		"('resource.transfer'",
+		"('resource_group.transfer'",
+		"CREATE TABLE mesh.resource_authority_change_request",
+		"CREATE TABLE mesh.resource_authority_step_up_evidence",
+		"CREATE TRIGGER resource_authority_change_request_authority_mutation",
+		"CREATE TRIGGER resource_authority_step_up_authority_mutation",
+		"EXECUTE FUNCTION mesh_audit.capture_authority_mutation",
+		"FORCE ROW LEVEL SECURITY",
+		"UNIQUE (account_session_id)",
+		"authentication_time > created_at - INTERVAL '5 minutes'",
+		"required_confirmations = 1",
+		"target_principal_id <> requested_by_principal_id",
+		"CREATE FUNCTION mesh_ops.require_resource_authority_step_up_v1",
+		"routing.minimum_assurance IS NOT NULL",
+		"session.acr = routing.minimum_assurance",
+		"CREATE FUNCTION mesh_ops.request_resource_authority_change_v1",
+		"CREATE FUNCTION mesh_ops.confirm_resource_authority_change_v1",
+		"CREATE FUNCTION mesh_ops.lock_resource_authority_change_request_v1",
+		"FOR UPDATE OF session",
+		"FOR UPDATE OF request",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.confirm_resource_authority_change_v1",
+		"REVOKE ALL ON mesh.resource_authority_change_request",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("Resource authority change SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "GRANT ALL",
+		"BYPASSRLS", "TO mesh_worker;", "TO mesh_observer;", "DROP ", "DELETE FROM",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("Resource authority change SQL contains excessive capability %q", forbidden)
 		}
 	}
 }

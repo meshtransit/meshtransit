@@ -22,9 +22,12 @@ func TestManagementV1MutationContracts(t *testing.T) {
 				Responses   map[string]json.RawMessage `json:"responses"`
 			} `json:"get"`
 			Post struct {
-				OperationID string                     `json:"operationId"`
-				Security    []map[string][]string      `json:"security"`
-				Responses   map[string]json.RawMessage `json:"responses"`
+				OperationID string                `json:"operationId"`
+				Security    []map[string][]string `json:"security"`
+				Parameters  []struct {
+					Ref string `json:"$ref"`
+				} `json:"parameters"`
+				Responses map[string]json.RawMessage `json:"responses"`
 			} `json:"post"`
 		} `json:"paths"`
 		Components struct {
@@ -140,6 +143,71 @@ func TestManagementV1MutationContracts(t *testing.T) {
 			if _, ok := rebindOperation.Post.Responses[status]; !ok {
 				t.Fatalf("Resource rebind responses omit status %s", status)
 			}
+		}
+	}
+	for _, contract := range []struct {
+		path, operation, success string
+		confirmation             bool
+	}{
+		{
+			path:      "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/preview-authority-change",
+			operation: "previewResourceAuthorityChange", success: "200",
+		},
+		{
+			path:      "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/request-authority-change",
+			operation: "requestResourceAuthorityChange", success: "202",
+		},
+		{
+			path:      "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}/actions/confirm-authority-change",
+			operation: "confirmResourceAuthorityChange", success: "200", confirmation: true,
+		},
+		{
+			path:      "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}/actions/preview-authority-change",
+			operation: "previewResourceGroupAuthorityChange", success: "200",
+		},
+		{
+			path:      "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}/actions/request-authority-change",
+			operation: "requestResourceGroupAuthorityChange", success: "202",
+		},
+		{
+			path:      "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resource-groups/{resource_group_id}/actions/confirm-authority-change",
+			operation: "confirmResourceGroupAuthorityChange", success: "200", confirmation: true,
+		},
+	} {
+		operation, found := document.Paths[contract.path]
+		if !found || operation.Post.OperationID != contract.operation ||
+			len(operation.Post.Security) != 1 ||
+			operation.Post.Security[0]["accountSessionBearer"] == nil {
+			t.Fatalf("authority-change contract = %+v, found=%t", operation.Post, found)
+		}
+		statuses := []string{
+			contract.success, "400", "401", "403", "404", "405", "409", "412",
+			"428", "429", "503", "504",
+		}
+		if contract.confirmation {
+			statuses = append(statuses, "410")
+		}
+		for _, status := range statuses {
+			if _, ok := operation.Post.Responses[status]; !ok {
+				t.Fatalf("authority-change responses omit status %s for %s", status, contract.operation)
+			}
+		}
+		parameters := make(map[string]bool, len(operation.Post.Parameters))
+		for _, parameter := range operation.Post.Parameters {
+			parameters[parameter.Ref] = true
+		}
+		ifMatch := "#/components/parameters/AggregateIfMatch"
+		if contract.confirmation {
+			ifMatch = "#/components/parameters/AuthorityChangeRequestIfMatch"
+		}
+		if !parameters[ifMatch] {
+			t.Fatalf("authority-change operation %s omits %s", contract.operation, ifMatch)
+		}
+		hasIdempotencyKey := parameters["#/components/parameters/IdempotencyKey"]
+		mutation := contract.success == "202" || contract.confirmation
+		if hasIdempotencyKey != mutation {
+			t.Fatalf("authority-change operation %s idempotency parameter = %t, want %t",
+				contract.operation, hasIdempotencyKey, mutation)
 		}
 	}
 	for _, contract := range []struct{ path, operation string }{

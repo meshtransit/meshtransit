@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
@@ -487,6 +490,224 @@ func TestResourceGroupReplaceErrorClassification(t *testing.T) {
 	}
 }
 
+func TestManagementHandlerPreviewsResourceAuthorityChange(t *testing.T) {
+	t.Parallel()
+	var captured authority.ChangePreview
+	options := validManagementHandlerOptions(t)
+	options.ResourceAuthorityChanges = managementResourceAuthorityChangerFixture{
+		preview: func(
+			_ context.Context,
+			preview authority.ChangePreview,
+		) (authority.ChangeImpact, error) {
+			captured = preview
+			return managementAuthorityChangeImpactFixture(t, preview), nil
+		},
+	}
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := newManagementRequest(
+		t, http.MethodPost,
+		resourceCollectionPath()+"/01890f00-0000-7000-8000-000000000501/actions/preview-authority-change",
+		`{"action":"owner_transfer","target_principal_id":"01890f00-0000-7000-8000-000000000402"}`,
+	)
+	request.Header.Del("Idempotency-Key")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"1"` ||
+		captured.SubjectKind() != authority.AuthoritySubjectResource ||
+		captured.Action() != authority.AuthorityChangeTransferOwner {
+		t.Fatalf("status/headers/preview = %d/%+v/%+v; body=%s", response.Code,
+			response.Header(), captured, response.Body.String())
+	}
+	var body resourceAuthorityChangePreviewEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil ||
+		body.Data.SubjectKind != "resource" || body.Data.Action != "owner_transfer" ||
+		body.Data.TargetPrincipalID != "01890f00-0000-7000-8000-000000000402" ||
+		body.Data.RequiredConfirmations != 1 || body.Data.MaximumStepUpAgeSeconds != 300 ||
+		len(body.Data.ImpactHash) != 64 {
+		t.Fatalf("authority-change preview = %+v, error=%v", body, err)
+	}
+}
+
+func TestManagementHandlerRequestsResourceGroupAuthorityChange(t *testing.T) {
+	t.Parallel()
+	var captured authority.ChangeRequestCommand
+	options := validManagementHandlerOptions(t)
+	options.ResourceAuthorityChanges = managementResourceAuthorityChangerFixture{
+		request: func(
+			_ context.Context,
+			command authority.ChangeRequestCommand,
+		) (authority.ChangeRequestResult, error) {
+			captured = command
+			requestID, err := authority.ParseAuthorityChangeRequestID(
+				"01890f00-0000-7000-8000-000000000591",
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return authority.NewAuthorityChangeRequestResult(
+				requestID, command.Preview(), 1, 9, 4, command.ImpactHash(),
+				time.Date(2026, time.September, 28, 1, 10, 0, 0, time.UTC),
+			)
+		},
+	}
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := newManagementRequest(
+		t, http.MethodPost, resourceGroupItemPath()+"/actions/request-authority-change",
+		`{"action":"custodian_delegation","target_principal_id":"01890f00-0000-7000-8000-000000000402","impact_hash":"`+
+			strings.Repeat("01", 32)+`","reason":"delegate operational custody"}`,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted || response.Header().Get("ETag") != `"1"` ||
+		captured.Preview().SubjectKind() != authority.AuthoritySubjectGroup ||
+		captured.Preview().Action() != authority.AuthorityChangeDelegateCustodian ||
+		!captured.IdempotencyEvidence().IsValid() {
+		t.Fatalf("status/headers/command = %d/%+v/%+v; body=%s", response.Code,
+			response.Header(), captured, response.Body.String())
+	}
+	var body resourceAuthorityChangeRequestEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil ||
+		body.Data.ChangeRequestID != "01890f00-0000-7000-8000-000000000591" ||
+		body.Data.SubjectKind != "resource_group" ||
+		body.Data.Action != "custodian_delegation" || body.Data.RequestVersion != 1 {
+		t.Fatalf("authority-change request = %+v, error=%v", body, err)
+	}
+}
+
+func TestManagementHandlerConfirmsResourceAuthorityChange(t *testing.T) {
+	t.Parallel()
+	var captured authority.ChangeConfirmationCommand
+	options := validManagementHandlerOptions(t)
+	options.ResourceAuthorityChanges = managementResourceAuthorityChangerFixture{
+		confirm: func(
+			_ context.Context,
+			command authority.ChangeConfirmationCommand,
+		) (authority.ChangeConfirmationResult, error) {
+			captured = command
+			semanticHash, err := resource.NewSemanticHash([32]byte{31: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return authority.NewAuthorityChangeConfirmationResult(
+				command.RequestID(), command.Scope(), command.SubjectKind(), command.ResourceID(),
+				command.GroupID(), authority.AuthorityChangeTransferOwner, 2, 2, 10, 5,
+				managementPrincipalIDFixture(t, 402), managementPrincipalIDFixture(t, 401),
+				semanticHash, command.ImpactHash(),
+			)
+		},
+	}
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := newManagementRequest(
+		t, http.MethodPost,
+		resourceCollectionPath()+"/01890f00-0000-7000-8000-000000000501/actions/confirm-authority-change",
+		`{"change_request_id":"01890f00-0000-7000-8000-000000000591","impact_hash":"`+
+			strings.Repeat("01", 32)+`","reason":"accept ownership"}`,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"2"` ||
+		captured.ExpectedRequestVersion() != 1 || !captured.IdempotencyEvidence().IsValid() {
+		t.Fatalf("status/headers/command = %d/%+v/%+v; body=%s", response.Code,
+			response.Header(), captured, response.Body.String())
+	}
+	var body resourceAuthorityChangeConfirmationEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil ||
+		body.Data.ChangeRequestID != "01890f00-0000-7000-8000-000000000591" ||
+		body.Data.SubjectVersion != 2 || body.Data.RequestVersion != 2 ||
+		body.Data.OwnerPrincipalID != "01890f00-0000-7000-8000-000000000402" {
+		t.Fatalf("authority-change confirmation = %+v, error=%v", body, err)
+	}
+}
+
+func TestManagementHandlerRejectsAuthorityChangeTransportAmbiguity(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, action string
+		mutate       func(*http.Request)
+	}{
+		{
+			name: "preview idempotency key", action: "preview-authority-change",
+			mutate: func(*http.Request) {},
+		},
+		{
+			name: "request without idempotency key", action: "request-authority-change",
+			mutate: func(request *http.Request) { request.Header.Del("Idempotency-Key") },
+		},
+		{
+			name: "confirmation without precondition", action: "confirm-authority-change",
+			mutate: func(request *http.Request) { request.Header.Del("If-Match") },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			options := validManagementHandlerOptions(t)
+			options.ResourceAuthorityChanges = managementResourceAuthorityChangerFixture{}
+			handler, err := NewManagementHandler(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := `{"action":"owner_transfer","target_principal_id":"01890f00-0000-7000-8000-000000000402"}`
+			switch test.action {
+			case "request-authority-change":
+				body = `{"action":"owner_transfer","target_principal_id":"01890f00-0000-7000-8000-000000000402","impact_hash":"` + strings.Repeat("01", 32) + `","reason":"transfer ownership"}`
+			case "confirm-authority-change":
+				body = `{"change_request_id":"01890f00-0000-7000-8000-000000000591","impact_hash":"` + strings.Repeat("01", 32) + `","reason":"accept ownership"}`
+			}
+			request := newManagementRequest(
+				t, http.MethodPost,
+				resourceCollectionPath()+"/01890f00-0000-7000-8000-000000000501/actions/"+test.action,
+				body,
+			)
+			test.mutate(request)
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest &&
+				response.Code != http.StatusPreconditionRequired {
+				t.Fatalf("status = %d, want 400 or 428; body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestResourceAuthorityChangeErrorClassification(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{err: authority.ErrAuthorityChangeNotFound, status: http.StatusNotFound, code: "not_found"},
+		{err: authority.ErrAuthorityChangeVersionConflict, status: http.StatusPreconditionFailed, code: "precondition_failed"},
+		{err: authority.ErrAuthorityChangeStepUpRequired, status: http.StatusPreconditionRequired, code: "step_up_required"},
+		{err: authority.ErrAuthorityChangeRequestExpired, status: http.StatusGone, code: "request_expired"},
+		{err: authority.ErrAuthorityChangeImpactChanged, status: http.StatusConflict, code: "impact_changed"},
+		{err: authority.ErrAuthorityChangeTargetConflict, status: http.StatusConflict, code: "target_conflict"},
+	}
+	for _, test := range tests {
+		classified := classifyResourceAuthorityChangeError(test.err)
+		if classified.Status != test.status || classified.Code != test.code {
+			t.Fatalf("classification for %v = %+v", test.err, classified)
+		}
+	}
+}
+
 func TestManagementHandlerListsResourcesWithFreshAuthority(t *testing.T) {
 	t.Parallel()
 	var capturedState resource.State
@@ -667,6 +888,83 @@ type managementResourceRebinderFixture struct {
 type managementResourceGroupReplacerFixture struct {
 	preview func(context.Context, authority.GroupReplacePreview) (authority.GroupReplaceImpact, error)
 	replace func(context.Context, authority.GroupReplaceCommand) (authority.GroupReplaceResult, error)
+}
+
+type managementResourceAuthorityChangerFixture struct {
+	preview func(context.Context, authority.ChangePreview) (authority.ChangeImpact, error)
+	request func(context.Context, authority.ChangeRequestCommand) (authority.ChangeRequestResult, error)
+	confirm func(context.Context, authority.ChangeConfirmationCommand) (authority.ChangeConfirmationResult, error)
+}
+
+func (fixture managementResourceAuthorityChangerFixture) Preview(
+	ctx context.Context,
+	preview authority.ChangePreview,
+) (authority.ChangeImpact, error) {
+	if fixture.preview == nil {
+		return authority.ChangeImpact{}, errors.New("unexpected authority-change preview")
+	}
+	return fixture.preview(ctx, preview)
+}
+
+func (fixture managementResourceAuthorityChangerFixture) Request(
+	ctx context.Context,
+	command authority.ChangeRequestCommand,
+) (authority.ChangeRequestResult, error) {
+	if fixture.request == nil {
+		return authority.ChangeRequestResult{}, errors.New("unexpected authority-change request")
+	}
+	return fixture.request(ctx, command)
+}
+
+func (fixture managementResourceAuthorityChangerFixture) Confirm(
+	ctx context.Context,
+	command authority.ChangeConfirmationCommand,
+) (authority.ChangeConfirmationResult, error) {
+	if fixture.confirm == nil {
+		return authority.ChangeConfirmationResult{}, errors.New("unexpected authority-change confirmation")
+	}
+	return fixture.confirm(ctx, command)
+}
+
+func managementAuthorityChangeImpactFixture(
+	t *testing.T,
+	preview authority.ChangePreview,
+) authority.ChangeImpact {
+	t.Helper()
+	currentHash, err := resource.NewSemanticHash([32]byte{31: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposedHash, err := resource.NewSemanticHash([32]byte{31: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerID := preview.AccountSession().PrincipalID()
+	targetID := preview.TargetPrincipalID()
+	params := authority.ChangeImpactParams{
+		Preview: preview, CurrentOwnerPrincipalID: ownerID,
+		CurrentCustodianPrincipalID: ownerID, ProposedOwnerPrincipalID: targetID,
+		ProposedCustodianPrincipalID: ownerID, CurrentSemanticHash: currentHash,
+		ProposedSemanticHash: proposedHash,
+	}
+	if preview.Action() == authority.AuthorityChangeDelegateCustodian {
+		params.ProposedOwnerPrincipalID = ownerID
+		params.ProposedCustodianPrincipalID = targetID
+	}
+	impact, err := authority.NewAuthorityChangeImpact(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return impact
+}
+
+func managementPrincipalIDFixture(t *testing.T, suffix int) identity.PrincipalID {
+	t.Helper()
+	id, err := identity.ParsePrincipalID(fmt.Sprintf("01890f00-0000-7000-8000-%012d", suffix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func (fixture managementResourceGroupReplacerFixture) Preview(

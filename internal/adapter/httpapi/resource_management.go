@@ -75,7 +75,10 @@ func parseResourceManagementPath(request *http.Request) (resourceManagementPath,
 		if segments[8] != "actions" ||
 			(segments[9] != "suspend" && segments[9] != "resume" && segments[9] != "delete" &&
 				segments[9] != "preview-rebind" && segments[9] != "rebind" &&
-				segments[9] != "preview-replace" && segments[9] != "replace") {
+				segments[9] != "preview-replace" && segments[9] != "replace" &&
+				segments[9] != "preview-authority-change" &&
+				segments[9] != "request-authority-change" &&
+				segments[9] != "confirm-authority-change") {
 			return resourceManagementPath{}, false
 		}
 		if (segments[9] == "preview-rebind" || segments[9] == "rebind") &&
@@ -147,6 +150,12 @@ func (path resourceManagementPath) operation(method string) string {
 			return resourceGroupReplacePreviewOperation
 		case "replace":
 			return resourceGroupReplaceOperation
+		case "preview-authority-change":
+			return resourceAuthorityChangePreviewOperation
+		case "request-authority-change":
+			return resourceAuthorityChangeRequestOperation
+		case "confirm-authority-change":
+			return resourceAuthorityChangeConfirmOperation
 		}
 	}
 	switch path.kind {
@@ -197,6 +206,17 @@ func (handler *ManagementHandler) handleResourceManagement(
 	session accountsession.Session,
 ) string {
 	if path.isAction() {
+		if path.action == "preview-authority-change" ||
+			path.action == "request-authority-change" ||
+			path.action == "confirm-authority-change" {
+			if handler.resourceAuthorityChanges == nil {
+				writeManagementError(ctx, handler.logger, response, correlationID, resourceUnavailableError())
+				return "operation_unavailable"
+			}
+			return handler.changeResourceAuthority(
+				ctx, response, request, correlationID, path, session,
+			)
+		}
 		if path.action == "preview-replace" || path.action == "replace" {
 			if handler.resourceGroupReplacements == nil {
 				writeManagementError(ctx, handler.logger, response, correlationID, resourceUnavailableError())

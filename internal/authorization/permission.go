@@ -125,10 +125,14 @@ const (
 	PermissionResourceManage Permission = "resource.manage"
 	// PermissionResourceExport exports a resource through a protected workflow.
 	PermissionResourceExport Permission = "resource.export"
+	// PermissionResourceTransfer changes Resource ownership or custody.
+	PermissionResourceTransfer Permission = "resource.transfer"
 	// PermissionResourceGroupRead reads resource groups.
 	PermissionResourceGroupRead Permission = "resource_group.read"
 	// PermissionResourceGroupManage changes resource groups.
 	PermissionResourceGroupManage Permission = "resource_group.manage"
+	// PermissionResourceGroupTransfer changes Resource Group ownership or custody.
+	PermissionResourceGroupTransfer Permission = "resource_group.transfer"
 
 	// PermissionShareRead reads local sharing state.
 	PermissionShareRead Permission = "share.read"
@@ -244,5 +248,7 @@ func Permissions() []Permission {
 		PermissionSupportGrantManage,
 		PermissionBillingRead,
 		PermissionBillingManage,
+		PermissionResourceTransfer,
+		PermissionResourceGroupTransfer,
 	}
 }
