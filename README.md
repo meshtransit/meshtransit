@@ -964,3 +964,15 @@ never pushes it. Publishing is a separate, explicitly authorized release
 operation and should use an immutable version tag plus the resulting digest.
 Release automation should pass the source commit through `CONTAINER_REVISION`;
 the workflow already records its Git commit in the OCI image metadata.
+
+## License
+
+Except for third-party components identified in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), the community distribution of
+MeshTransit Core is licensed under the
+[GNU Affero General Public License v3.0 only](LICENSE).
+
+The same MeshTransit-owned code may also be licensed under a separate written
+commercial agreement. See
+[COMMERCIAL-LICENSING.md](COMMERCIAL-LICENSING.md) for the licensing boundary;
+that document does not itself grant a commercial license.

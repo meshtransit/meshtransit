@@ -40,11 +40,14 @@ ARG REVISION
 LABEL org.opencontainers.image.title="MeshTransit Core" \
       org.opencontainers.image.description="MeshTransit control-plane runtime" \
       org.opencontainers.image.source="https://github.com/meshtransit/meshtransit" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.version="$VERSION" \
       org.opencontainers.image.revision="$REVISION"
 
 COPY --from=build --chown=65532:65532 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build --chown=65532:65532 /out/meshcore /meshcore
+COPY --chown=65532:65532 LICENSE /licenses/LICENSE
+COPY --chown=65532:65532 COMMERCIAL-LICENSING.md /licenses/COMMERCIAL-LICENSING.md
 COPY --chown=65532:65532 THIRD_PARTY_NOTICES.md /licenses/THIRD_PARTY_NOTICES.md
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
