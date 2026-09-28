@@ -120,6 +120,82 @@ func TestSubjectNamespaceSeparatesIdentityFromAuthorityFences(t *testing.T) {
 	}
 }
 
+func TestSubjectMigrationDigestMatchesAuthenticatedNamespace(t *testing.T) {
+	t.Parallel()
+	params := pendingParamsFixture(t)
+	key := subjectKeyFixture(t, "migration-v1", 7)
+	identity := subjectIdentityFixture(t, params.Route.Issuer(), "opaque-migration-subject")
+	ring, err := NewSubjectKeyring(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticated, err := ring.Digests(params.Route, identity)
+	if err != nil || len(authenticated) != 1 {
+		t.Fatal("authenticated subject digest failed")
+	}
+	migrated, err := NewSubjectMigrationDigest(
+		params.Route.DeploymentID(),
+		params.Route.ProviderID(),
+		key,
+		identity.Issuer(),
+		identity.Subject(),
+	)
+	if err != nil || migrated != authenticated[0] {
+		t.Fatal("migration namespace drifted from authenticated subject namespace")
+	}
+
+	for _, candidate := range []string{"opaque-migration-subject ", "Opaque-migration-subject"} {
+		other, digestErr := NewSubjectMigrationDigest(
+			params.Route.DeploymentID(),
+			params.Route.ProviderID(),
+			key,
+			identity.Issuer(),
+			candidate,
+		)
+		if digestErr != nil || other == migrated {
+			t.Fatal("offline migration normalized an opaque subject")
+		}
+	}
+}
+
+func TestSubjectMigrationDigestRejectsUnboundedInput(t *testing.T) {
+	t.Parallel()
+	params := pendingParamsFixture(t)
+	validKey := subjectKeyFixture(t, "migration-v1", 7)
+	validDeployment := params.Route.DeploymentID()
+	validProvider := params.Route.ProviderID()
+	validIssuer := params.Route.Issuer()
+	validSubject := "opaque-migration-subject"
+
+	for _, candidate := range []struct {
+		name       string
+		deployment deployment.ID
+		provider   ProviderID
+		key        SubjectKey
+		issuer     string
+		subject    string
+	}{
+		{name: "deployment", provider: validProvider, key: validKey, issuer: validIssuer, subject: validSubject},
+		{name: "provider", deployment: validDeployment, key: validKey, issuer: validIssuer, subject: validSubject},
+		{name: "key", deployment: validDeployment, provider: validProvider, issuer: validIssuer, subject: validSubject},
+		{name: "issuer", deployment: validDeployment, provider: validProvider, key: validKey, issuer: "http://issuer.invalid", subject: validSubject},
+		{name: "subject", deployment: validDeployment, provider: validProvider, key: validKey, issuer: validIssuer, subject: "subject\nline"},
+	} {
+		t.Run(candidate.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := NewSubjectMigrationDigest(
+				candidate.deployment,
+				candidate.provider,
+				candidate.key,
+				candidate.issuer,
+				candidate.subject,
+			); err == nil {
+				t.Fatal("unsafe migration binding accepted")
+			}
+		})
+	}
+}
+
 func FuzzSubjectDigestsPreserveBoundedOpaqueIdentity(f *testing.F) {
 	for _, subject := range []string{"subject", " Case-é ", " Case-é ", "\x00", "\xff", ""} {
 		f.Add(subject)

@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"log/slog"
+
+	"github.com/meshtransit/meshtransit/internal/deployment"
 )
 
 const subjectDigestDomain = "meshtransit/oidc-auth/identity-subject/v1\x00"
@@ -124,6 +126,23 @@ func (ring *SubjectKeyring) Digests(route Route, identity ExternalIdentity) ([]S
 	return append(result, previous), nil
 }
 
+// NewSubjectMigrationDigest derives one stable binding for an explicitly
+// approved offline identity migration. It uses the same exact namespace as
+// the authenticated login path without manufacturing token evidence.
+func NewSubjectMigrationDigest(
+	deploymentID deployment.ID,
+	providerID ProviderID,
+	key SubjectKey,
+	issuer string,
+	subject string,
+) (SubjectDigest, error) {
+	if !deploymentID.IsValid() || !providerID.IsValid() || !key.key.isValid() ||
+		!validHTTPSURL(issuer, true) || !validOpaqueIdentity(subject, 255) {
+		return SubjectDigest{}, ErrSubjectResolutionRejected
+	}
+	return digestSubjectNamespace(key, deploymentID, providerID, issuer, subject)
+}
+
 // String redacts the complete resident key window.
 func (SubjectKeyring) String() string { return "[REDACTED]" }
 
@@ -147,12 +166,28 @@ func (ring *SubjectKeyring) isValid() bool {
 }
 
 func digestSubject(key SubjectKey, route Route, identity ExternalIdentity) (SubjectDigest, error) {
-	input := make([]byte, 0, len(subjectDigestDomain)+32+6+len(key.ID().String())+len(identity.Issuer())+len(identity.Subject()))
+	return digestSubjectNamespace(
+		key,
+		route.DeploymentID(),
+		route.ProviderID(),
+		identity.Issuer(),
+		identity.Subject(),
+	)
+}
+
+func digestSubjectNamespace(
+	key SubjectKey,
+	deploymentID deployment.ID,
+	providerID ProviderID,
+	issuer string,
+	subject string,
+) (SubjectDigest, error) {
+	input := make([]byte, 0, len(subjectDigestDomain)+32+6+len(key.ID().String())+len(issuer)+len(subject))
 	input = append(input, subjectDigestDomain...)
-	deploymentBytes, providerBytes := route.DeploymentID().Bytes(), route.ProviderID().Bytes()
+	deploymentBytes, providerBytes := deploymentID.Bytes(), providerID.Bytes()
 	input = append(input, deploymentBytes[:]...)
 	input = append(input, providerBytes[:]...)
-	for _, value := range []string{key.ID().String(), identity.Issuer(), identity.Subject()} {
+	for _, value := range []string{key.ID().String(), issuer, subject} {
 		length := len(value)
 		if length <= 0 || length > 65535 {
 			return SubjectDigest{}, ErrInvalidDigest
