@@ -870,12 +870,55 @@ No correctness path required sticky sessions. Browser transactions, Core
 sessions, RBAC authority, and policy releases were reconstructed from durable
 state. Redis remained non-authoritative.
 
+## Broker adversarial security matrix
+
+Core source `dff11516d35d39908f30eaf6a24c1f2b4c255b71` closes
+`SSO-BROKER-008` for the current source-level scope. Review of the existing
+boundary tests found one missing trust dimension: a brokered login fixed issuer,
+audience, nonce, subject and route generation, but did not independently bind
+the upstream connector selected in the browser authorization request.
+
+Embedded identity composition now derives the exact connector ID from immutable
+configuration and pairs it with `federated:id`. Authorization requests contain
+that selector, while token validation requires the signed
+`federated_claims.connector_id` to match before any identity evidence exists.
+The connector is also included in pending, initiation, continuation, callback
+capsule and token-route bindings. Missing, malformed, switched, or replayed
+connector evidence releases no subject lookup or Session. Direct OIDC remains a
+separate route shape with neither selector nor federated scope.
+
+The complete matrix reran fixed outbound endpoint/no-proxy/no-redirect and
+special-address SSRF controls; exact TLS/Host and forwarding-header stripping;
+same-subject wrong-connector and same-email wrong-subject account-link denial;
+single-use and concurrent cross-replica callback replay; shared rate limits and
+non-queuing saturation; bounded body/header/query plus deadlines and
+cancellation; and redacted formatting, errors, health, metrics, callback query
+custody and runtime diagnostics.
+
+The ordinary race suite passed 4,299 tests in 51 packages. Broker-tagged race
+tests passed in the pinned verified workspace. The full disposable Linux
+platform lane passed both integration stages. Ordinary, integration and tagged
+vet and delta lint passed; module consistency and the pinned vulnerability scan
+also passed with zero reachable findings. This did not use the live Google
+credential, mutate Kubernetes, build or push an image, or roll Helm. Public edge
+query-log/trace suppression, container scanning and signed release evidence
+remain deployment/artifact gates rather than source-test claims.
+
+Before the next image or Helm rollout, durable provider-client configuration
+must be reconciled through the audited configuration path so its exact allowed
+scopes include `openid` and `federated:id`, and its provider generation must
+advance. The binary rollout must not widen authority implicitly. Existing
+browser login evidence is intentionally invalid after that transition.
+
 ## Remaining execution order
 
-1. Execute the `SSO-BROKER-008` adversarial security matrix, then close the
-   remaining legal-review and signed-artifact items.
-2. Extend publication cases to TCP, UDP, multiple devices, and multiple
+1. Execute `SSO-BROKER-009` CPU, memory, goroutine, allocation, database-pool,
+   latency and saturation measurements, then set role-specific requests and
+   limits from evidence.
+2. Execute `SSO-BROKER-010` upgrade/rollback and identity-migration runbooks,
+   then close the remaining legal-review and signed-artifact items.
+3. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
-3. Resume PostgreSQL and Redis infrastructure failover only when that paused
+4. Resume PostgreSQL and Redis infrastructure failover only when that paused
    workstream is re-opened; the Core-side reconnect/reconciliation support is
    already present but does not qualify the external data services.
