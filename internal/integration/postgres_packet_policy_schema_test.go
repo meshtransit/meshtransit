@@ -21,6 +21,7 @@ func assertCompiledPacketPolicyPrivilegeContract(
 	var runtimePublish, workerPublish, runtimeLockRelease, workerLockRelease bool
 	var runtimeGroupRead, runtimeGroupWrite, workerGroupAccess bool
 	var runtimeAttachGroup, workerAttachGroup bool
+	var runtimeExplain, workerExplain bool
 	if err := connection.QueryRow(ctx, `SELECT
     pg_catalog.has_table_privilege('mesh_runtime', 'mesh.policy_release', 'SELECT'),
     pg_catalog.has_table_privilege('mesh_runtime', 'mesh.compiled_policy_rule', 'SELECT'),
@@ -92,6 +93,16 @@ func assertCompiledPacketPolicyPrivilegeContract(
         'mesh_worker',
         'mesh_ops.attach_policy_resource_group_destinations(UUID,TIMESTAMPTZ,JSONB)',
         'EXECUTE'
+    ),
+    pg_catalog.has_function_privilege(
+        'mesh_runtime',
+        'mesh_ops.explain_active_policy_v1(UUID,UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,BIGINT,BIGINT,UUID,UUID,UUID,UUID,UUID,TEXT,INTEGER,TIMESTAMPTZ,INTEGER)',
+        'EXECUTE'
+    ),
+    pg_catalog.has_function_privilege(
+        'mesh_worker',
+        'mesh_ops.explain_active_policy_v1(UUID,UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,BIGINT,BIGINT,UUID,UUID,UUID,UUID,UUID,TEXT,INTEGER,TIMESTAMPTZ,INTEGER)',
+        'EXECUTE'
     )`).Scan(
 		&runtimeReleaseRead,
 		&runtimeRuleRead,
@@ -110,6 +121,8 @@ func assertCompiledPacketPolicyPrivilegeContract(
 		&workerGroupAccess,
 		&runtimeAttachGroup,
 		&workerAttachGroup,
+		&runtimeExplain,
+		&workerExplain,
 	); err != nil {
 		t.Fatalf("query compiled packet policy privilege contract: %v", err)
 	}
@@ -117,12 +130,12 @@ func assertCompiledPacketPolicyPrivilegeContract(
 		workerReleaseAccess || workerRuleAccess || !runtimeAdvance || workerAdvance ||
 		!runtimePublish || workerPublish || !runtimeLockRelease || workerLockRelease ||
 		!runtimeGroupRead || runtimeGroupWrite || workerGroupAccess ||
-		!runtimeAttachGroup || workerAttachGroup {
+		!runtimeAttachGroup || workerAttachGroup || !runtimeExplain || workerExplain {
 		t.Fatalf(
 			"compiled policy privileges: runtime read=%t/%t write=%t/%t "+
 				"worker access=%t/%t revision execute=%t/%t publish execute=%t/%t "+
 				"release lock execute=%t/%t group read/write/worker=%t/%t/%t "+
-				"group attach execute=%t/%t",
+				"group attach execute=%t/%t explain execute=%t/%t",
 			runtimeReleaseRead,
 			runtimeRuleRead,
 			runtimeReleaseWrite,
@@ -140,6 +153,8 @@ func assertCompiledPacketPolicyPrivilegeContract(
 			workerGroupAccess,
 			runtimeAttachGroup,
 			workerAttachGroup,
+			runtimeExplain,
+			workerExplain,
 		)
 	}
 }

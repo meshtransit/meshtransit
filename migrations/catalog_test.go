@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 44 {
-		t.Fatalf("len(Catalog()) = %d, want 44", len(catalog))
+	if len(catalog) != 45 {
+		t.Fatalf("len(Catalog()) = %d, want 45", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 44 {
-		t.Fatalf("LatestVersion() = %d, want 44", LatestVersion())
+	if LatestVersion() != 45 {
+		t.Fatalf("LatestVersion() = %d, want 45", LatestVersion())
 	}
 }
 
@@ -1630,6 +1630,46 @@ func TestPolicyResourceGroupDestinationPinsDefinitionMembersAndExactScope(t *tes
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("policy Resource Group destination SQL contains excessive capability %q", forbidden)
+		}
+	}
+}
+
+func TestAccessGraphExplanationIsBoundedAuthorizedAndReadOnly(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[44]
+	if migration.Description != "Access Graph active policy explanation" {
+		t.Fatalf("migration 45 description = %q", migration.Description)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.explain_active_policy_v1",
+		"'policy.explain'",
+		"mesh_ops.resolve_network_permission_v1",
+		"mesh_ops.read_network_revision_v1",
+		"release.state = 'active'",
+		"source.state = 'active'",
+		"destination.state = 'active'",
+		"resource.state = 'active'",
+		"p_protocol IS NULL",
+		"p_destination_port IS NULL",
+		"p_path_limit IS NULL",
+		"p_path_limit NOT BETWEEN 1 AND 65",
+		"rule.destination_ports @> p_destination_port",
+		"compiled_policy_resource_destination",
+		"compiled_policy_resource_group_destination",
+		"AND resource_provenance.id IS NOT NULL THEN 'invalid'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.explain_active_policy_v1",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("Access Graph explanation SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"BYPASSRLS", "DROP ", "INSERT INTO", "UPDATE ", "DELETE FROM",
+		"TO mesh_worker;", "TO mesh_observer;",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("Access Graph explanation SQL contains excessive capability %q", forbidden)
 		}
 	}
 }

@@ -57,6 +57,7 @@ const (
 	resourceAuthorityChangeDescription        = "protected Resource ownership and custody authority"
 	policyResourceDestinationDescription      = "policy Resource destination provenance"
 	policyResourceGroupDestinationDescription = "policy Resource Group destination provenance"
+	accessGraphPolicyExplanationDescription   = "Access Graph active policy explanation"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -191,6 +192,9 @@ var policyResourceDestinationSQL string
 //go:embed 000044_policy_resource_group_destination_provenance.up.sql
 var policyResourceGroupDestinationSQL string
 
+//go:embed 000045_access_graph_policy_explanation.up.sql
+var accessGraphPolicyExplanationSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -254,6 +258,7 @@ func Catalog() []Migration {
 		newMigration(42, resourceAuthorityChangeDescription, resourceAuthorityChangeSQL),
 		newMigration(43, policyResourceDestinationDescription, policyResourceDestinationSQL),
 		newMigration(44, policyResourceGroupDestinationDescription, policyResourceGroupDestinationSQL),
+		newMigration(45, accessGraphPolicyExplanationDescription, accessGraphPolicyExplanationSQL),
 	}
 }
 

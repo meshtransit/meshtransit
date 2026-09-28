@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/meshtransit/meshtransit/internal/accessgraph"
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
 	"github.com/meshtransit/meshtransit/internal/adapter/oidc"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
@@ -101,7 +102,7 @@ func composePrivateIdentityFactory(
 		return nil, errInvalidPrivateIdentityComposition
 	}
 	clock := oidcauth.SystemStartClock{}
-	revocations, policies, policyCompiler, err := privateIdentityMutationServices(
+	revocations, policies, policyCompiler, policyExplainer, err := privateIdentityManagementServices(
 		dependencies.Runtime,
 		managementOptions,
 		clock,
@@ -138,8 +139,9 @@ func composePrivateIdentityFactory(
 		StartIDs: oidcauth.SystemStartIDs{}, Secrets: oidcauth.SystemSecrets{},
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
-		RateLimiter:    dependencies.Redis,
-		CorrelationIDs: httpapi.PublicCorrelationIDGenerator{}, Clock: clock, Logger: dependencies.Logger,
+		PolicyExplanations: policyExplainer,
+		RateLimiter:        dependencies.Redis,
+		CorrelationIDs:     httpapi.PublicCorrelationIDGenerator{}, Clock: clock, Logger: dependencies.Logger,
 	})
 	if err != nil || ctx.Err() != nil {
 		return nil, errInvalidPrivateIdentityComposition
@@ -162,20 +164,20 @@ func privateIdentityDatabaseWindow(window time.Duration) (postgresadapter.AuthTr
 	}, nil
 }
 
-func privateIdentityMutationServices(
+func privateIdentityManagementServices(
 	pool *postgresadapter.Pool,
 	options postgresadapter.AuthTransactionOptions,
 	clock oidcauth.StartClock,
-) (*revocation.Service, *policypublication.Service, *compilation.Service, error) {
+) (*revocation.Service, *policypublication.Service, *compilation.Service, *accessgraph.Service, error) {
 	revocationStore, err := postgresadapter.NewDeviceRevocationStore(
 		pool, postgresadapter.DeviceRevocationOptions(options),
 	)
 	if err != nil {
-		return nil, nil, nil, errInvalidPrivateIdentityComposition
+		return nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
 	retry, err := revocation.NewExponentialBackoff(managementRetryInitial, managementRetryMaximum)
 	if err != nil {
-		return nil, nil, nil, errInvalidPrivateIdentityComposition
+		return nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
 	revocations, err := revocation.NewService(revocation.Options{
 		MaxAttempts: 3, RollbackTimeout: managementRollbackTimeout, IdempotencyTTL: managementIdempotencyTTL,
@@ -184,17 +186,17 @@ func privateIdentityMutationServices(
 		MutationIDs: revocation.PublicMutationIDGenerator{}, Clock: clock, Retry: retry,
 	})
 	if err != nil {
-		return nil, nil, nil, errInvalidPrivateIdentityComposition
+		return nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
 	policyStore, err := postgresadapter.NewPolicyPublicationStore(pool, postgresadapter.PolicyPublicationOptions{
 		StatementTimeout: options.StatementTimeout, LockTimeout: options.LockTimeout, IdleTimeout: options.IdleTimeout,
 	})
 	if err != nil {
-		return nil, nil, nil, errInvalidPrivateIdentityComposition
+		return nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
 	policyRetry, err := policypublication.NewExponentialBackoff(managementRetryInitial, managementRetryMaximum)
 	if err != nil {
-		return nil, nil, nil, errInvalidPrivateIdentityComposition
+		return nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
 	policies, err := policypublication.NewService(policypublication.Options{
 		MaxAttempts: 3, RollbackTimeout: managementRollbackTimeout,
@@ -203,27 +205,40 @@ func privateIdentityMutationServices(
 		MutationIDs: policypublication.PublicMutationIDGenerator{}, Clock: clock, Retry: policyRetry,
 	})
 	if err != nil {
-		return nil, nil, nil, errInvalidPrivateIdentityComposition
+		return nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
 	resourceCatalogStore, err := postgresadapter.NewResourceCatalogStore(
 		pool,
 		postgresadapter.ResourceCatalogOptions(options),
 	)
 	if err != nil {
-		return nil, nil, nil, errInvalidPrivateIdentityComposition
+		return nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
 	resourceCatalog, err := catalog.NewService(catalog.Dependencies{
 		Transactions: resourceCatalogStore,
 		Clock:        catalog.SystemClock{},
 	})
 	if err != nil {
-		return nil, nil, nil, errInvalidPrivateIdentityComposition
+		return nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
 	policyCompiler, err := compilation.NewService(resourceCatalog)
 	if err != nil {
-		return nil, nil, nil, errInvalidPrivateIdentityComposition
+		return nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
-	return revocations, policies, policyCompiler, nil
+	accessGraphStore, err := postgresadapter.NewAccessGraphStore(
+		pool,
+		postgresadapter.AccessGraphOptions(options),
+	)
+	if err != nil {
+		return nil, nil, nil, nil, errInvalidPrivateIdentityComposition
+	}
+	policyExplainer, err := accessgraph.NewService(accessgraph.Dependencies{
+		Reader: accessGraphStore, Clock: accessgraph.SystemClock{},
+	})
+	if err != nil {
+		return nil, nil, nil, nil, errInvalidPrivateIdentityComposition
+	}
+	return revocations, policies, policyCompiler, policyExplainer, nil
 }
 
 // Close is repeatable idle cleanup, not an admission gate or active-request join.

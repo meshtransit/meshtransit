@@ -9,6 +9,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/meshtransit/meshtransit/internal/accessgraph"
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/config"
@@ -281,9 +282,27 @@ func composeManagementAPIWithKeys(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
+	accessGraphStore, err := postgresadapter.NewAccessGraphStore(
+		runtimePool,
+		postgresadapter.AccessGraphOptions{
+			StatementTimeout: managementStatementTimeout,
+			LockTimeout:      managementLockTimeout,
+			IdleTimeout:      managementTransactionIdle,
+		},
+	)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
+	policyExplainer, err := accessgraph.NewService(accessgraph.Dependencies{
+		Reader: accessGraphStore, Clock: accessgraph.SystemClock{},
+	})
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions: sessions, Revocations: revocations, PolicyPublications: policyPublications,
 		PolicyCompilations: policyCompiler,
+		PolicyExplanations: policyExplainer,
 		ResourceCreations:  resourceCreations, ResourceLifecycles: resourceLifecycles,
 		ResourceRebindings: resourceRebindings, ResourceCatalog: resourceCatalog,
 		ResourceGroupReplacements: resourceGroupReplacements,

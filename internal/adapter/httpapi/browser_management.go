@@ -203,7 +203,7 @@ func validBrowserManagementKeyID(id string) bool {
 	return true
 }
 
-// Handle owns fixed proof preparation or an existing protected management mutation.
+// Handle owns fixed proof preparation or an existing protected management operation.
 // Pre-release errors leave response untouched. No retry, rewrite or commit inference.
 func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *http.Request) (resultErr error) {
 	if browser == nil || browser.slots == nil || request == nil || nilContinuationDependency(response) {
@@ -221,7 +221,8 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	logout := request.URL.Path == AccountSessionLogoutPath
 	_, device := parseDeviceRevokePath(request)
 	_, policy := parsePolicyPublishPath(request)
-	if !prepare && !logout && !device && !policy {
+	_, accessGraph := parseAccessGraphExplainPath(request)
+	if !prepare && !logout && !device && !policy && !accessGraph {
 		return ErrInvalidBrowserManagement
 	}
 	operation = "mutation"

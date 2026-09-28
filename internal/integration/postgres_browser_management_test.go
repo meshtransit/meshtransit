@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/meshtransit/meshtransit/internal/accessgraph"
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
@@ -154,6 +155,7 @@ func publishPolicyOverBrowserManagement(
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{Sessions: sessions,
 		Revocations: newIntegrationDeviceRevocationService(t, runtimePool), PolicyPublications: capture,
 		PolicyCompilations: newIntegrationPolicyCompiler(t, runtimePool),
+		PolicyExplanations: newIntegrationPolicyExplainer(t, runtimePool),
 		Idempotency:        integrationDeviceRevocationDigester(t), RateLimitSubjects: digester,
 		RateLimiter:     integrationAllowAllRateLimiter{},
 		SourceRateLimit: policy, SessionRateLimit: policy, CorrelationIDs: httpapi.PublicCorrelationIDGenerator{},
@@ -281,4 +283,29 @@ func newIntegrationPolicyCompiler(
 		t.Fatal(err)
 	}
 	return compiler
+}
+
+func newIntegrationPolicyExplainer(
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+) *accessgraph.Service {
+	t.Helper()
+	store, err := postgresadapter.NewAccessGraphStore(
+		runtimePool,
+		postgresadapter.AccessGraphOptions{
+			StatementTimeout: 5 * time.Second,
+			LockTimeout:      2 * time.Second,
+			IdleTimeout:      10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := accessgraph.NewService(accessgraph.Dependencies{
+		Reader: store, Clock: accessgraph.SystemClock{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
 }

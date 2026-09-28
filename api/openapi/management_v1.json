@@ -183,6 +183,86 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/access-graph/actions/explain": {
+      "post": {
+        "operationId": "explainActivePolicy",
+        "summary": "Explain one exact network.connect decision from active compiled policy",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExplainPolicyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A bounded allow or default-deny explanation tied to one authority revision vector.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/PolicyETag"
+              },
+              "Cache-Control": {
+                "description": "Explanations contain authorization-sensitive evidence and are never cached.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "X-Correlation-ID": {
+                "$ref": "#/components/headers/CorrelationID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExplainPolicyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalFailure"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources": {
       "get": {
         "operationId": "listResources",
@@ -1273,6 +1353,159 @@
           }
         }
       },
+      "ExplainPolicyRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_device_id", "protocol"],
+        "allOf": [
+          {
+            "oneOf": [
+              {
+                "required": ["destination_device_id"],
+                "not": {"required": ["destination_resource_id"]}
+              },
+              {
+                "required": ["destination_resource_id"],
+                "not": {"required": ["destination_device_id"]}
+              }
+            ]
+          },
+          {
+            "oneOf": [
+              {
+                "required": ["destination_port"],
+                "properties": {"protocol": {"enum": ["tcp", "udp"]}}
+              },
+              {
+                "properties": {"protocol": {"const": "icmp"}},
+                "not": {"required": ["destination_port"]}
+              }
+            ]
+          }
+        ],
+        "properties": {
+          "source_device_id": {"$ref": "#/components/schemas/PublicID"},
+          "destination_device_id": {"$ref": "#/components/schemas/PublicID"},
+          "destination_resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "protocol": {"type": "string", "enum": ["tcp", "udp", "icmp"]},
+          "destination_port": {"type": "integer", "minimum": 1, "maximum": 65535}
+        }
+      },
+      "ExplainPolicyResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/ExplainedPolicy"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "ExplainedPolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision", "reason", "action", "subject", "target", "evidence", "paths", "truncated"
+        ],
+        "properties": {
+          "decision": {"type": "string", "enum": ["allow", "deny"]},
+          "reason": {
+            "type": "string",
+            "enum": ["matching_active_rule", "no_matching_active_rule"]
+          },
+          "action": {"$ref": "#/components/schemas/ExplainedPolicyAction"},
+          "subject": {"$ref": "#/components/schemas/ExplainedPolicySubject"},
+          "target": {"$ref": "#/components/schemas/ExplainedPolicyTarget"},
+          "evidence": {"$ref": "#/components/schemas/ExplainedPolicyEvidence"},
+          "paths": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {"$ref": "#/components/schemas/ExplainedPolicyPath"}
+          },
+          "truncated": {"type": "boolean"}
+        }
+      },
+      "ExplainedPolicyAction": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "protocol"],
+        "properties": {
+          "name": {"const": "network.connect"},
+          "protocol": {"type": "string", "enum": ["tcp", "udp", "icmp"]},
+          "destination_port": {"type": "integer", "minimum": 1, "maximum": 65535}
+        }
+      },
+      "ExplainedPolicySubject": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["device_id"],
+        "properties": {
+          "device_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "ExplainedPolicyTarget": {
+        "type": "object",
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": ["device_id"],
+            "not": {"required": ["resource_id"]}
+          },
+          {
+            "required": ["resource_id"],
+            "not": {"required": ["device_id"]}
+          }
+        ],
+        "properties": {
+          "device_id": {"$ref": "#/components/schemas/PublicID"},
+          "resource_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "ExplainedPolicyEvidence": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "network_revision", "inventory_revision", "group_revision", "policy_revision",
+          "dns_revision", "route_revision", "sharing_revision", "isolation_generation",
+          "has_active_release"
+        ],
+        "properties": {
+          "network_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "inventory_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "group_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "policy_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "dns_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "route_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "sharing_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "isolation_generation": {"type": "integer", "format": "int64", "minimum": 1},
+          "has_active_release": {"type": "boolean"},
+          "release_id": {"$ref": "#/components/schemas/PublicID"},
+          "compiler_format_version": {"type": "integer", "minimum": 1},
+          "semantic_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      },
+      "ExplainedPolicyPath": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "projection_id", "access_rule_id", "source_device_id", "destination_device_id",
+          "protocol", "destination_port_ranges", "selector_kind"
+        ],
+        "properties": {
+          "projection_id": {"$ref": "#/components/schemas/PublicID"},
+          "access_rule_id": {"$ref": "#/components/schemas/PublicID"},
+          "source_device_id": {"$ref": "#/components/schemas/PublicID"},
+          "destination_device_id": {"$ref": "#/components/schemas/PublicID"},
+          "protocol": {"type": "string", "enum": ["tcp", "udp", "icmp"]},
+          "destination_port_ranges": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {"$ref": "#/components/schemas/PortRange"}
+          },
+          "selector_kind": {"type": "string", "enum": ["device", "resource", "resource_group"]},
+          "destination_resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "destination_resource_group_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
       "CreateResourceRequest": {
         "type": "object",
         "additionalProperties": false,
@@ -1811,6 +2044,16 @@
       },
       "Forbidden": {
         "description": "The authenticated principal lacks current exact-scope authority.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "InternalFailure": {
+        "description": "Authoritative evidence failed closed because it was internally inconsistent.",
         "content": {
           "application/json": {
             "schema": {

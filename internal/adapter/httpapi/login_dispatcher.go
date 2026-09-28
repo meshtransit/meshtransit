@@ -29,7 +29,7 @@ type LoginDispatcher struct {
 
 // NewLoginDispatcher accepts only coherent, already validated login and browser
 // session graphs. The callback cannot occupy another fixed operation, and only
-// the browser management mutations owned by BrowserManagement are admitted.
+// the browser management operations owned by BrowserManagement are admitted.
 // Construction performs no application effect.
 func NewLoginDispatcher(browser *BrowserLogin, management *BrowserManagement) (*LoginDispatcher, error) {
 	if browser == nil || browser.start == nil || browser.reader == nil || browser.capsule == nil ||
@@ -88,7 +88,7 @@ func (dispatcher *LoginDispatcher) Handle(response http.ResponseWriter, request 
 	if request.Context().Err() != nil {
 		return ErrLoginDispatchUnavailable
 	}
-	if isBrowserManagementMutation(request) {
+	if isBrowserManagementOperation(request) {
 		operation = "management"
 		return dispatcher.management.Handle(response, request)
 	}
@@ -141,13 +141,14 @@ func (dispatcher *LoginDispatcher) Handle(response http.ResponseWriter, request 
 	return ErrInvalidLoginDispatcher
 }
 
-func isBrowserManagementMutation(request *http.Request) bool {
+func isBrowserManagementOperation(request *http.Request) bool {
 	if request == nil || request.Method != http.MethodPost {
 		return false
 	}
 	_, device := parseDeviceRevokePath(request)
 	_, policy := parsePolicyPublishPath(request)
-	return device || policy
+	_, accessGraph := parseAccessGraphExplainPath(request)
+	return device || policy || accessGraph
 }
 
 func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, request *http.Request) bool {

@@ -28,10 +28,12 @@ preview plus atomic Device target rebinding, and M3b2 appends and activates
 immutable Resource Group definitions through the same preview boundary. M3c
 adds protected owner transfer and custodian delegation with two distinct
 Principals, fresh single-use step-up Sessions, fixed quorum-one confirmation,
-and ten-minute pending requests. These slices use fresh
+and ten-minute pending requests. M4a adds bounded, revision-bound explanation
+of exact `network.connect` decisions from active compiled policy and its Device,
+Resource, or Resource Group provenance. These slices use fresh
 exact-scope authorization, strong revision preconditions, durable idempotency,
-and safe errors. No Resource Console UI, Access Graph evaluation, or graph
-database is introduced.
+and safe errors. No Resource Console UI, graph database, draft simulation,
+human approval workflow, or second policy evaluator is introduced.
 Design, security boundaries, acceptance evidence, and explicit non-claims are
 recorded in the
 [Phase 2 M1 Resource authority design](docs/design/phase2-m1-resource-authority.md)
@@ -75,7 +77,11 @@ and
 plus the
 [M2b2 Resource Group policy destination design](docs/design/phase2-m2b2-resource-group-policy-destination.md)
 and
-[M2b2 acceptance matrix](docs/qualification/phase2-m2b2-resource-group-policy-destination-2026-09-29.md).
+[M2b2 acceptance matrix](docs/qualification/phase2-m2b2-resource-group-policy-destination-2026-09-29.md),
+plus the
+[M4a Access Graph policy explanation design](docs/design/phase2-m4a-access-graph-policy-explanation.md)
+and
+[M4a acceptance matrix](docs/qualification/phase2-m4a-access-graph-policy-explanation-2026-09-29.md).
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,
@@ -365,6 +371,23 @@ An explicit empty `rules` array publishes deny-all. Successful publication
 returns the immutable release ID, Policy/Network revisions, semantic hash, rule
 count, and the new Policy revision as a strong `ETag`.
 
+Current active policy can be explained through the same SSO-only boundary:
+
+```text
+POST /api/v1/workspaces/{workspace_id}/networks/{network_id}/access-graph/actions/explain
+Authorization: Bearer <opaque Account Session>
+Content-Type: application/json
+
+{"source_device_id":"<uuidv7>","destination_resource_id":"<uuidv7>","protocol":"tcp","destination_port":443}
+```
+
+Core requires current exact-Network `policy.explain` authority and derives the
+answer from the active compiled release in one repeatable-read PostgreSQL
+snapshot. The bounded response contains allow/default-deny, the complete
+authority revision vector, immutable release evidence, and at most 64 matching
+paths with authoring selector provenance. It is marked `no-store`; it does not
+claim packet execution or introduce a graph database.
+
 Those roles also expose the public client-control listener. It accepts TLS only;
 the client session inside TLS must then authenticate with the pinned Noise
 capability. Port `8443` is the non-root container default; a load balancer or
@@ -558,9 +581,10 @@ would disclose hidden authority.
 An allowed scoped-grant decision is one step in the authorization pipeline, not
 a final mutation approval. Authentication, active membership, delegation
 ceiling, operation invariants, Approval Policy, step-up evidence, ETag/CAS, and
-the atomic audit/outbox transaction remain mandatory. Approval persistence and
-management mutations beyond the explicitly exposed Device-revoke route remain
-deliberately deferred.
+the atomic audit/outbox transaction remain mandatory where the operation mutates
+authority. General policy-approval persistence remains deliberately deferred;
+the currently exposed protected management operations are documented by the
+versioned OpenAPI contract.
 
 ## Network management RBAC authority
 

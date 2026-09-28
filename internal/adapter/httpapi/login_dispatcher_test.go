@@ -240,16 +240,19 @@ func TestLoginDispatcherPreservesSessionLogoutOwnership(t *testing.T) {
 	}
 }
 
-func TestLoginDispatcherPreservesBrowserManagementMutationOwnership(t *testing.T) {
+func TestLoginDispatcherPreservesBrowserManagementOperationOwnership(t *testing.T) {
 	t.Parallel()
-	for _, operation := range []string{"revoke", "publish"} {
+	for _, operation := range []string{"revoke", "publish", "explain"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Parallel()
 			dispatcher, fixture, callback, management := dispatcherTestGraphWithManagement(t)
 			proof := preparedBrowserProof(t, dispatcher.management)
 			path, body := validManagementPath(), `{"reason":"compromised peer"}`
-			if operation == "publish" {
+			switch operation {
+			case "publish":
 				path, body = validPolicyPublishPath(), validPolicyPublishBody()
+			case "explain":
+				path, body = validAccessGraphExplainPath(), validAccessGraphExplainBody()
 			}
 			request := browserManagementRequest(t, path, body)
 			request.Header.Set("X-MeshTransit-CSRF", proof)
@@ -259,11 +262,15 @@ func TestLoginDispatcherPreservesBrowserManagementMutationOwnership(t *testing.T
 				t.Fatal("browser management mutation did not reach its exact owner", err)
 			}
 			if response.Code != http.StatusOK || response.statusWrites != 1 || management.auth != 2 ||
-				management.budgets != 4 || management.revoke+management.publish != 1 ||
+				management.budgets != 4 || management.revoke+management.publish+management.explain != 1 ||
 				!reflect.DeepEqual(original, request.Header) || len(fixture.calls) != 0 || callback.calls != 0 {
 				t.Fatal("browser management mutation crossed owner boundaries")
 			}
-			if response.Header().Get("ETag") != `"2"` || response.Header().Get("Set-Cookie") != "" ||
+			expectedETag := `"2"`
+			if operation == "explain" {
+				expectedETag = `"6"`
+			}
+			if response.Header().Get("ETag") != expectedETag || response.Header().Get("Set-Cookie") != "" ||
 				response.Header().Get("Www-Authenticate") != "" {
 				t.Fatal("browser management mutation changed resource or credential ownership")
 			}
@@ -271,9 +278,9 @@ func TestLoginDispatcherPreservesBrowserManagementMutationOwnership(t *testing.T
 	}
 }
 
-func TestLoginDispatcherRejectsBrowserManagementMutationAliases(t *testing.T) {
+func TestLoginDispatcherRejectsBrowserManagementOperationAliases(t *testing.T) {
 	t.Parallel()
-	for _, path := range []string{validManagementPath(), validPolicyPublishPath()} {
+	for _, path := range []string{validManagementPath(), validPolicyPublishPath(), validAccessGraphExplainPath()} {
 		for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 			t.Run(method+" "+path, func(t *testing.T) {
 				t.Parallel()
@@ -285,7 +292,7 @@ func TestLoginDispatcherRejectsBrowserManagementMutationAliases(t *testing.T) {
 				response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
 				if err := dispatcher.Handle(response, request); !errors.Is(err, ErrInvalidLoginDispatcher) ||
 					response.statusWrites != 0 || response.Body.Len() != 0 || len(response.Header()) != 0 ||
-					management.auth+management.budgets+management.revoke+management.publish != 0 ||
+					management.auth+management.budgets+management.revoke+management.publish+management.explain != 0 ||
 					len(fixture.calls) != 0 || callback.calls != 0 || body.reads != 0 {
 					t.Fatal("browser management method alias reached an owner", err)
 				}

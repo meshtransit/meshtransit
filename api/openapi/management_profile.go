@@ -24,6 +24,8 @@ const (
 		"devices/{device_id}/actions/revoke"
 	policyPublishPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"policy/actions/publish"
+	accessGraphExplainPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
+		"access-graph/actions/explain"
 )
 
 // ErrInvalidManagementProfile conceals unknown selection or compiled-contract drift.
@@ -80,7 +82,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		return nil, ErrInvalidManagementProfile
 	}
 	paths, err := managementObject(document["paths"])
-	if err != nil || len(paths) != 18 {
+	if err != nil || len(paths) != 19 {
 		return nil, ErrInvalidManagementProfile
 	}
 	if len(fragment) == 0 || len(fragment) > maximumManagementDocumentBytes {
@@ -101,9 +103,10 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	if err != nil || !managementBearerScheme(components["securitySchemes"]) {
 		return nil, ErrInvalidManagementProfile
 	}
-	consolePaths := make(map[string]json.RawMessage, 4)
+	consolePaths := make(map[string]json.RawMessage, 5)
 	for path, operationID := range map[string]string{
 		deviceRevokePath: "revokeDevice", policyPublishPath: "publishPolicy",
+		accessGraphExplainPath: "explainActivePolicy",
 	} {
 		operation, err := consoleManagementOperation(paths[path], operationID)
 		if err != nil {

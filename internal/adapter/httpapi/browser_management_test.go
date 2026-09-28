@@ -19,6 +19,7 @@ import (
 
 	"go.uber.org/goleak"
 
+	"github.com/meshtransit/meshtransit/internal/accessgraph"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
@@ -28,9 +29,9 @@ import (
 )
 
 type browserManagementFixture struct {
-	at                                     time.Time
-	auth, budgets, revoke, publish, logout int
-	sessionRevoked                         bool
+	at                                              time.Time
+	auth, budgets, revoke, publish, explain, logout int
+	sessionRevoked                                  bool
 }
 
 func preparedBrowserProof(t *testing.T, browser *BrowserManagement) string {
@@ -58,15 +59,18 @@ func newBrowserManagementFixture(t *testing.T) (*BrowserManagement, *browserMana
 	return browser, fixture
 }
 
-func TestBrowserManagementMutationsKeepResourceContracts(t *testing.T) {
+func TestBrowserManagementOperationsKeepResourceContracts(t *testing.T) {
 	t.Parallel()
-	for _, operation := range []string{"revoke", "publish"} {
+	for _, operation := range []string{"revoke", "publish", "explain"} {
 		t.Run(operation, func(t *testing.T) {
 			browser, fixture := newBrowserManagementFixture(t)
 			proof := preparedBrowserProof(t, browser)
 			path, body := validManagementPath(), `{"reason":"compromised peer"}`
-			if operation == "publish" {
+			switch operation {
+			case "publish":
 				path, body = validPolicyPublishPath(), validPolicyPublishBody()
+			case "explain":
+				path, body = validAccessGraphExplainPath(), validAccessGraphExplainBody()
 			}
 			request := browserManagementRequest(t, path, body)
 			request.Header.Set("X-MeshTransit-CSRF", proof)
@@ -76,10 +80,14 @@ func TestBrowserManagementMutationsKeepResourceContracts(t *testing.T) {
 				t.Fatal(err)
 			}
 			if response.Code != http.StatusOK || response.statusWrites != 1 || fixture.auth != 2 || fixture.budgets != 4 ||
-				fixture.revoke+fixture.publish != 1 || !reflect.DeepEqual(original, request.Header) {
+				fixture.revoke+fixture.publish+fixture.explain != 1 || !reflect.DeepEqual(original, request.Header) {
 				t.Fatal("cookie mutation bypassed/replaced the resource contract or mutated credentials")
 			}
-			if response.Header().Get("ETag") != `"2"` || response.Header().Get("Set-Cookie") != "" ||
+			expectedETag := `"2"`
+			if operation == "explain" {
+				expectedETag = `"6"`
+			}
+			if response.Header().Get("ETag") != expectedETag || response.Header().Get("Set-Cookie") != "" ||
 				response.Header().Get("Www-Authenticate") != "" || strings.Contains(response.Body.String(), proof) ||
 				strings.Contains(response.Body.String(), managementTokenFixture) {
 				t.Fatal("mutation leaked credentials or changed optimistic version")
@@ -285,7 +293,7 @@ func TestBrowserManagementRejectsIngressBeforeEffects(t *testing.T) {
 			response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
 			err := browser.Handle(response, request)
 			unexpectedResponse := response.statusWrites != 0 || response.Body.Len() != 0 || len(response.Header()) != 0
-			unexpectedAuthority := fixture.auth+fixture.revoke+fixture.publish+fixture.logout != 0
+			unexpectedAuthority := fixture.auth+fixture.revoke+fixture.publish+fixture.explain+fixture.logout != 0
 			if err == nil || unexpectedResponse || unexpectedAuthority {
 				t.Fatal("invalid ingress released authority/response", err)
 			}
@@ -347,7 +355,7 @@ func TestBrowserManagementProofAndAuthorityBothRequired(t *testing.T) {
 				expected = http.StatusServiceUnavailable
 			}
 			invalidStatus := response.Code != expected || response.statusWrites != 1
-			unexpectedAuthority := fixture.revoke+fixture.publish != 0
+			unexpectedAuthority := fixture.revoke+fixture.publish+fixture.explain != 0
 			if invalidStatus || unexpectedAuthority || response.Header().Get("Www-Authenticate") != "" {
 				t.Fatal("proof replaced current authority or invited Bearer fallback")
 			}
@@ -420,7 +428,8 @@ func TestBrowserManagementPrepareBudgetsPrecedeEntropy(t *testing.T) {
 			browser.entropy = entropy
 			response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
 			err := browser.Handle(response, browserManagementRequest(t, AccountSessionCSRFPreparePath, "{}").WithContext(ctx))
-			if err == nil || response.statusWrites != 0 || len(response.Header()) != 0 || fixture.revoke+fixture.publish != 0 {
+			if err == nil || response.statusWrites != 0 || len(response.Header()) != 0 ||
+				fixture.revoke+fixture.publish+fixture.explain != 0 {
 				t.Fatal("failed admission released prepare", err)
 			}
 			if mode != "entropy failed" && mode != "zero entropy" && entropy.calls != 0 {
@@ -805,6 +814,22 @@ func browserManagementTestOptions(t *testing.T) (BrowserManagementOptions, *brow
 		fixture.publish++
 		return managementPolicyResultFixture(t, command), nil
 	})
+	explainer, err := accessgraph.NewService(accessgraph.Dependencies{
+		Reader: managementAccessGraphReaderFunc(func(
+			_ context.Context,
+			_ accountsession.Session,
+			query accessgraph.Query,
+			_ time.Time,
+		) (accessgraph.Snapshot, error) {
+			fixture.explain++
+			return managementAccessGraphSnapshot(t, query), nil
+		}),
+		Clock: accessgraph.SystemClock{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options.PolicyExplanations = explainer
 	handler, err := NewManagementHandler(options)
 	if err != nil {
 		t.Fatal(err)
@@ -856,7 +881,8 @@ func TestBrowserManagementPreparationNeverIssuesAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fixture.auth != 0 || fixture.budgets != 0 || fixture.revoke != 0 || fixture.publish != 0 {
+	if fixture.auth != 0 || fixture.budgets != 0 || fixture.revoke != 0 ||
+		fixture.publish != 0 || fixture.explain != 0 {
 		t.Fatal("constructor invoked an application/budget effect")
 	}
 	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
@@ -867,7 +893,8 @@ func TestBrowserManagementPreparationNeverIssuesAuthority(t *testing.T) {
 	if response.statusWrites != 1 || response.Code != http.StatusOK || fixture.auth != 1 || fixture.budgets != 2 {
 		t.Fatal("prepare did not own bounded authenticated shared admission")
 	}
-	if fixture.revoke != 0 || fixture.publish != 0 || response.Header().Get("Set-Cookie") != "" ||
+	if fixture.revoke != 0 || fixture.publish != 0 || fixture.explain != 0 ||
+		response.Header().Get("Set-Cookie") != "" ||
 		response.Header().Get("Location") != "" || response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("prepare mutated authority/cookie/navigation")
 	}

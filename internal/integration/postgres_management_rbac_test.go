@@ -27,6 +27,7 @@ const (
 	integrationGroupReadPermissionID        = "01890f00-0000-7000-8000-000000000850"
 	integrationResourceTransferPermissionID = "01890f00-0000-7000-8000-000000000853"
 	integrationGroupTransferPermissionID    = "01890f00-0000-7000-8000-000000000854"
+	integrationPolicyExplainPermissionID    = "01890f00-0000-7000-8000-000000000855"
 	integrationRoleBinding203PublicID       = "01890f00-0000-7000-8000-000000000844"
 	integrationRoleBinding204PublicID       = "01890f00-0000-7000-8000-000000000845"
 	integrationAuthorityConfirmerSessionID  = "01890f00-0000-7000-8000-000000000813"
@@ -427,6 +428,16 @@ WHERE permission.permission_key = 'resource_group.transfer'`,
 				arguments: []any{integrationGroupTransferPermissionID},
 			},
 			{
+				name: "Policy Explain RolePermission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 855, $1::UUID, 1, 103, 842, permission.id
+FROM mesh.permission AS permission
+WHERE permission.permission_key = 'policy.explain'`,
+				arguments: []any{integrationPolicyExplainPermissionID},
+			},
+			{
 				name: "authority confirmer Workspace membership",
 				query: `INSERT INTO mesh.workspace_membership (
     id, public_id, deployment_id, workspace_id, principal_id,
@@ -566,6 +577,7 @@ func assertNetworkManagementPermissionResolution(
 		"device.manage":           1,
 		"device.transfer":         0,
 		"policy.publish":          1,
+		"policy.explain":          1,
 		"resource.manage":         1,
 		"resource.read":           1,
 		"resource_group.manage":   1,

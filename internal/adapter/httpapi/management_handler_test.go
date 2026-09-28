@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/meshtransit/meshtransit/internal/accessgraph"
 	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/idempotency"
 	"github.com/meshtransit/meshtransit/internal/identity"
@@ -287,6 +288,7 @@ func TestNewManagementHandlerRejectsInvalidDependencies(t *testing.T) {
 		func(options *ManagementHandlerOptions) { options.Revocations = nil },
 		func(options *ManagementHandlerOptions) { options.PolicyPublications = nil },
 		func(options *ManagementHandlerOptions) { options.PolicyCompilations = nil },
+		func(options *ManagementHandlerOptions) { options.PolicyExplanations = nil },
 		func(options *ManagementHandlerOptions) { options.Idempotency = nil },
 		func(options *ManagementHandlerOptions) { options.RateLimitSubjects = nil },
 		func(options *ManagementHandlerOptions) { options.RateLimiter = nil },
@@ -374,6 +376,13 @@ func validManagementHandlerOptions(t *testing.T) ManagementHandlerOptions {
 		) (policypublication.Candidate, error) {
 			return compileDirectManagementPolicy(request)
 		}),
+		PolicyExplanations: managementPolicyExplainerFunc(func(
+			context.Context,
+			accountsession.Session,
+			accessgraph.Query,
+		) (accessgraph.Result, error) {
+			return accessgraph.Result{}, accessgraph.ErrUnavailable
+		}),
 		Idempotency: managementIdempotencyProverFunc(func(string) (idempotency.Proof, error) {
 			return proof, nil
 		}),
@@ -451,6 +460,20 @@ func (function managementPolicyCompilerFunc) Compile(
 	request compilation.Request,
 ) (policypublication.Candidate, error) {
 	return function(ctx, session, request)
+}
+
+type managementPolicyExplainerFunc func(
+	context.Context,
+	accountsession.Session,
+	accessgraph.Query,
+) (accessgraph.Result, error)
+
+func (function managementPolicyExplainerFunc) Explain(
+	ctx context.Context,
+	session accountsession.Session,
+	query accessgraph.Query,
+) (accessgraph.Result, error) {
+	return function(ctx, session, query)
 }
 
 func compileDirectManagementPolicy(request compilation.Request) (policypublication.Candidate, error) {

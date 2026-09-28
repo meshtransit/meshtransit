@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/meshtransit/meshtransit/internal/accessgraph"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/control"
 	"github.com/meshtransit/meshtransit/internal/identity"
@@ -621,6 +622,64 @@ WHERE workspace_id = 103 AND network_id = 203`).Scan(&networkRevision); err != n
 			published.PolicyRevision(),
 			len(candidate.Snapshot().Rules()),
 		)
+	}
+	assertPostgreSQLActivePolicyExplanation(
+		ctx, t, runtimePool, session, scope, template, resourceID, created.GroupID(), published,
+	)
+}
+
+func assertPostgreSQLActivePolicyExplanation(
+	ctx context.Context,
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+	session accountsession.Session,
+	scope network.Scope,
+	template policy.Rule,
+	resourceID resource.ID,
+	groupID resource.GroupID,
+	published publication.Result,
+) {
+	t.Helper()
+	ranges := template.DestinationPortRanges()
+	if len(ranges) != 1 {
+		t.Fatalf("Access Graph fixture port ranges = %d, want 1", len(ranges))
+	}
+	query, err := accessgraph.NewQuery(accessgraph.QueryParams{
+		Scope: scope, SourceNodeID: template.SourceNodeID(), DestinationResourceID: resourceID,
+		Protocol: template.Protocol(), DestinationPort: ranges[0].First(),
+	})
+	if err != nil {
+		t.Fatalf("construct Access Graph allow query: %v", err)
+	}
+	explainer := newIntegrationPolicyExplainer(t, runtimePool)
+	result, err := explainer.Explain(ctx, session, query)
+	if err != nil {
+		t.Fatalf("explain active Resource Group policy: %v", err)
+	}
+	paths := result.Paths()
+	releaseID, compilerFormat, semanticHash, hasRelease := result.Snapshot().ActiveRelease()
+	if !result.IsValid() || result.Decision() != accessgraph.DecisionAllow || result.Truncated() ||
+		len(paths) != 1 || paths[0].SelectorKind() != accessgraph.SelectorKindResourceGroup ||
+		paths[0].DestinationResourceID() != resourceID || paths[0].DestinationGroupID() != groupID ||
+		!hasRelease || releaseID != published.ReleaseID() || compilerFormat != 3 ||
+		semanticHash != published.SemanticHash() || result.Snapshot().PolicyRevision() != published.PolicyRevision() {
+		t.Fatalf("active policy explanation = %+v, paths=%+v", result, paths)
+	}
+
+	denyQuery, err := accessgraph.NewQuery(accessgraph.QueryParams{
+		Scope: scope, SourceNodeID: template.SourceNodeID(), DestinationResourceID: resourceID,
+		Protocol: policy.ProtocolUDP, DestinationPort: ranges[0].First(),
+	})
+	if err != nil {
+		t.Fatalf("construct Access Graph deny query: %v", err)
+	}
+	denied, err := explainer.Explain(ctx, session, denyQuery)
+	if err != nil {
+		t.Fatalf("explain default-deny policy: %v", err)
+	}
+	if !denied.IsValid() || denied.Decision() != accessgraph.DecisionDeny ||
+		denied.Reason() != accessgraph.ReasonNoMatchingActiveRule || len(denied.Paths()) != 0 {
+		t.Fatalf("default-deny explanation = %+v", denied)
 	}
 }
 

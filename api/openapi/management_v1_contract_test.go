@@ -73,6 +73,28 @@ func TestManagementV1MutationContracts(t *testing.T) {
 			t.Fatalf("Policy publish responses omit status %s", status)
 		}
 	}
+	const explainPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/access-graph/actions/explain"
+	explainOperation, ok := document.Paths[explainPath]
+	if !ok || explainOperation.Post.OperationID != "explainActivePolicy" {
+		t.Fatalf("Policy explanation operation = %+v, found=%t", explainOperation.Post, ok)
+	}
+	if len(explainOperation.Post.Security) != 1 ||
+		explainOperation.Post.Security[0]["accountSessionBearer"] == nil {
+		t.Fatal("Policy explanation does not require Account Session bearer authentication")
+	}
+	for _, status := range []string{"200", "400", "401", "403", "405", "429", "500", "503", "504"} {
+		if _, ok := explainOperation.Post.Responses[status]; !ok {
+			t.Fatalf("Policy explanation responses omit status %s", status)
+		}
+	}
+	for _, schema := range []string{
+		"ExplainPolicyRequest", "ExplainPolicyResponse", "ExplainedPolicy",
+		"ExplainedPolicyEvidence", "ExplainedPolicyPath",
+	} {
+		if document.Components.Schemas[schema] == nil {
+			t.Fatalf("Policy explanation schema %s is absent", schema)
+		}
+	}
 	var policyRule struct {
 		Required   []string                   `json:"required"`
 		Properties map[string]json.RawMessage `json:"properties"`
