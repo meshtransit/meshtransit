@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 
@@ -14,13 +15,18 @@ import (
 const policyPublicationOutboxEventClass = "network.revision.advanced"
 
 type policyPublicationRulePayload struct {
-	ProjectionPublicID      string `json:"projection_public_id"`
-	AccessRulePublicID      string `json:"access_rule_public_id"`
-	SourceNodePublicID      string `json:"source_node_public_id"`
-	DestinationNodePublicID string `json:"destination_node_public_id"`
-	Protocol                string `json:"protocol"`
-	PortRangeFirst          []int  `json:"port_range_first"`
-	PortRangeLast           []int  `json:"port_range_last"`
+	ProjectionPublicID              string `json:"projection_public_id"`
+	AccessRulePublicID              string `json:"access_rule_public_id"`
+	SourceNodePublicID              string `json:"source_node_public_id"`
+	DestinationNodePublicID         string `json:"destination_node_public_id"`
+	Protocol                        string `json:"protocol"`
+	PortRangeFirst                  []int  `json:"port_range_first"`
+	PortRangeLast                   []int  `json:"port_range_last"`
+	DestinationResourcePublicID     string `json:"destination_resource_public_id,omitempty"`
+	DestinationResourceVersion      int64  `json:"destination_resource_version,omitempty"`
+	DestinationTargetGeneration     int64  `json:"destination_target_generation,omitempty"`
+	DestinationInventoryRevision    int64  `json:"destination_inventory_revision,omitempty"`
+	DestinationResourceSemanticHash string `json:"destination_resource_semantic_hash,omitempty"`
 }
 
 type policyPublicationAuditPayload struct {
@@ -43,10 +49,23 @@ type policyPublicationOutboxPayload struct {
 }
 
 func encodePolicyPublicationRules(change publication.Change) ([]byte, error) {
-	rules := change.Command().Candidate().Snapshot().Rules()
+	candidate := change.Command().Candidate()
+	rules := candidate.Snapshot().Rules()
 	projectionIDs := change.MutationIDs().ProjectionIDs()
 	if len(projectionIDs) != len(rules) {
 		return nil, ErrPolicyPublicationEvidence
+	}
+	type destinationKey struct{ ruleID, nodeID string }
+	resourceDestinations := make(map[destinationKey]publication.ResourceDestination)
+	for _, destination := range candidate.ResourceDestinations() {
+		key := destinationKey{
+			ruleID: destination.RuleID().String(),
+			nodeID: destination.DestinationNodeID().String(),
+		}
+		if _, duplicate := resourceDestinations[key]; duplicate {
+			return nil, ErrPolicyPublicationEvidence
+		}
+		resourceDestinations[key] = destination
 	}
 	payload := make([]policyPublicationRulePayload, len(rules))
 	for index, rule := range rules {
@@ -66,6 +85,20 @@ func encodePolicyPublicationRules(change publication.Change) ([]byte, error) {
 			PortRangeFirst:          first,
 			PortRangeLast:           last,
 		}
+		key := destinationKey{ruleID: rule.ID().String(), nodeID: rule.DestinationNodeID().String()}
+		if destination, found := resourceDestinations[key]; found {
+			reference := destination.Reference()
+			hash := destination.ResourceSemanticHash().Bytes()
+			payload[index].DestinationResourcePublicID = reference.ResourceID().String()
+			payload[index].DestinationResourceVersion = reference.ResourceVersion()
+			payload[index].DestinationTargetGeneration = reference.TargetGeneration()
+			payload[index].DestinationInventoryRevision = destination.InventoryRevision()
+			payload[index].DestinationResourceSemanticHash = hex.EncodeToString(hash[:])
+			delete(resourceDestinations, key)
+		}
+	}
+	if len(resourceDestinations) != 0 {
+		return nil, ErrPolicyPublicationEvidence
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

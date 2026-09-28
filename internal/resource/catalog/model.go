@@ -13,8 +13,12 @@ import (
 	"github.com/meshtransit/meshtransit/internal/resource"
 )
 
-// MaximumPageSize bounds one public Resource catalog page.
-const MaximumPageSize = 100
+const (
+	// MaximumPageSize bounds one public Resource catalog page.
+	MaximumPageSize = 100
+	// MaximumPolicyResources bounds one policy compilation resolution batch.
+	MaximumPolicyResources = 256
+)
 
 var (
 	// ErrInvalidRequest reports malformed scope, identity, filter, or pagination input.
@@ -55,17 +59,17 @@ type Resource struct{ params ResourceParams }
 
 // NewResource validates durable Resource read evidence.
 func NewResource(params ResourceParams) (Resource, error) {
-	definition, err := resource.NewDeviceDefinition(resource.DeviceDefinitionParams{
+	revision, err := resource.NewDeviceRevision(resource.DeviceRevisionParams{
 		Scope: params.Scope, DisplayName: params.DisplayName,
 		OwnerPrincipalID: params.OwnerPrincipalID, CustodianPrincipalID: params.CustodianPrincipalID,
-		DeviceID: params.DeviceID,
+		DeviceID: params.DeviceID, TargetGeneration: params.TargetGeneration,
 	})
 	valid := err == nil && params.ID.IsValid() && validState(params.State) &&
 		params.Provenance == resource.ProvenanceManual && params.Version > 0 &&
 		params.TargetGeneration > 0 && params.ActivatedNetworkRevision > 1 &&
 		params.InventoryRevision > 1 && params.ActivatedNetworkRevision >= params.InventoryRevision &&
 		!params.CreatedAt.IsZero() && !params.UpdatedAt.Before(params.CreatedAt) &&
-		params.SemanticHash.IsValid() && definition.SemanticHash() == params.SemanticHash
+		params.SemanticHash.IsValid() && revision.SemanticHash() == params.SemanticHash
 	if !valid {
 		return Resource{}, ErrInvalidResult
 	}

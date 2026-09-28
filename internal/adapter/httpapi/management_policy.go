@@ -13,8 +13,10 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
+	"github.com/meshtransit/meshtransit/internal/resource"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -29,6 +31,7 @@ type publishPolicyRuleRequest struct {
 	ID                    string                          `json:"id"`
 	SourceDeviceID        string                          `json:"source_device_id"`
 	DestinationDeviceID   string                          `json:"destination_device_id"`
+	DestinationResourceID string                          `json:"destination_resource_id"`
 	Protocol              string                          `json:"protocol"`
 	DestinationPortRanges []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
 }
@@ -81,15 +84,30 @@ type managementPolicyRequest struct {
 func (handler *ManagementHandler) publishPolicy(ctx context.Context, input managementPolicyRequest) string {
 	response, request, correlationID := input.response, input.request, input.correlationID
 	path, session := input.path, input.session
-	command, commandErr := decodePolicyPublicationCommand(response, request, path, session)
-	if commandErr != nil {
-		writeManagementError(ctx, handler.logger, response, correlationID, *commandErr)
-		return commandErr.Code
+	decoded, decodeErr := decodePolicyPublicationRequest(response, request, path)
+	if decodeErr != nil {
+		writeManagementError(ctx, handler.logger, response, correlationID, *decodeErr)
+		return decodeErr.Code
 	}
 	if err := input.browser.validate(ctx); err != nil {
 		classified := classifyAuthenticationError(err)
 		writeManagementError(ctx, handler.logger, response, correlationID, classified)
 		return classified.Code
+	}
+	candidate, err := handler.policyCompiler.Compile(ctx, session, decoded.request)
+	if err != nil {
+		classified := classifyPolicyCompilationError(err)
+		writeManagementError(ctx, handler.logger, response, correlationID, classified)
+		return classified.Code
+	}
+	command, err := policypublication.NewManagementCommand(policypublication.ManagementCommandParams{
+		Candidate: candidate, BasePolicyRevision: decoded.baseRevision,
+		AccountSession: session, AuditReason: decoded.reason,
+	})
+	if err != nil {
+		apiError := invalidManagementRequest()
+		writeManagementError(ctx, handler.logger, response, correlationID, *apiError)
+		return apiError.Code
 	}
 	result, err := handler.policies.Publish(ctx, command)
 	if err != nil {
@@ -121,104 +139,114 @@ func (handler *ManagementHandler) publishPolicy(ctx context.Context, input manag
 	return "success"
 }
 
-func decodePolicyPublicationCommand(
+type decodedPolicyPublication struct {
+	request      compilation.Request
+	baseRevision int64
+	reason       policypublication.AuditReason
+}
+
+func decodePolicyPublicationRequest(
 	response http.ResponseWriter,
 	request *http.Request,
 	path policyPublishPath,
-	session accountsession.Session,
-) (policypublication.Command, *managementError) {
+) (decodedPolicyPublication, *managementError) {
 	workspaceID, err := workspace.ParseID(path.workspaceID)
 	if err != nil {
-		return policypublication.Command{}, invalidManagementRequest()
+		return decodedPolicyPublication{}, invalidManagementRequest()
 	}
 	networkID, err := network.ParseID(path.networkID)
 	if err != nil {
-		return policypublication.Command{}, invalidManagementRequest()
+		return decodedPolicyPublication{}, invalidManagementRequest()
 	}
 	scope, err := network.NewScope(workspaceID, networkID)
 	if err != nil {
-		return policypublication.Command{}, invalidManagementRequest()
+		return decodedPolicyPublication{}, invalidManagementRequest()
 	}
 	baseRevision, preconditionErr := parsePolicyIfMatch(request.Header.Values("If-Match"))
 	if preconditionErr != nil {
-		return policypublication.Command{}, preconditionErr
+		return decodedPolicyPublication{}, preconditionErr
 	}
 	if request.Body == nil || !validJSONContentType(singleHeader(request.Header, "Content-Type")) {
-		return policypublication.Command{}, invalidManagementRequest()
+		return decodedPolicyPublication{}, invalidManagementRequest()
 	}
 	var body publishPolicyRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, maximumPolicyPublicationBodyBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil || ensureJSONEnd(decoder) != nil || body.Rules == nil {
-		return policypublication.Command{}, invalidManagementRequest()
+		return decodedPolicyPublication{}, invalidManagementRequest()
 	}
 	reason, err := policypublication.NewAuditReason(body.Reason)
 	if err != nil || len(body.Rules) > policy.MaximumRules {
-		return policypublication.Command{}, invalidManagementRequest()
+		return decodedPolicyPublication{}, invalidManagementRequest()
 	}
-	rules := make([]policy.Rule, len(body.Rules))
+	rules := make([]compilation.RuleIntent, len(body.Rules))
 	for index, input := range body.Rules {
-		rule, ruleErr := decodePolicyRule(scope, input)
+		rule, ruleErr := decodePolicyRuleIntent(scope, input)
 		if ruleErr != nil {
-			return policypublication.Command{}, invalidManagementRequest()
+			return decodedPolicyPublication{}, invalidManagementRequest()
 		}
 		rules[index] = rule
 	}
-	snapshot, err := policy.NewSnapshot(policy.SnapshotParams{
+	compilationRequest, err := compilation.NewRequest(compilation.RequestParams{
 		Scope: scope, Revision: baseRevision + 1, Rules: rules,
 	})
 	if err != nil {
-		return policypublication.Command{}, invalidManagementRequest()
+		return decodedPolicyPublication{}, invalidManagementRequest()
 	}
-	candidate, err := policypublication.NewCandidate(snapshot, 1)
-	if err != nil {
-		return policypublication.Command{}, invalidManagementRequest()
-	}
-	command, err := policypublication.NewManagementCommand(policypublication.ManagementCommandParams{
-		Candidate: candidate, BasePolicyRevision: baseRevision,
-		AccountSession: session, AuditReason: reason,
-	})
-	if err != nil {
-		return policypublication.Command{}, invalidManagementRequest()
-	}
-	return command, nil
+	return decodedPolicyPublication{
+		request: compilationRequest, baseRevision: baseRevision, reason: reason,
+	}, nil
 }
 
-func decodePolicyRule(scope network.Scope, input publishPolicyRuleRequest) (policy.Rule, error) {
+func decodePolicyRuleIntent(
+	scope network.Scope,
+	input publishPolicyRuleRequest,
+) (compilation.RuleIntent, error) {
 	if input.DestinationPortRanges == nil {
-		return policy.Rule{}, policy.ErrInvalidRule
+		return compilation.RuleIntent{}, policy.ErrInvalidRule
 	}
 	ruleID, err := policy.ParseRuleID(input.ID)
 	if err != nil {
-		return policy.Rule{}, err
+		return compilation.RuleIntent{}, err
 	}
 	sourceID, err := node.ParseID(input.SourceDeviceID)
 	if err != nil {
-		return policy.Rule{}, err
+		return compilation.RuleIntent{}, err
 	}
-	destinationID, err := node.ParseID(input.DestinationDeviceID)
-	if err != nil {
-		return policy.Rule{}, err
+	var destinationID node.ID
+	if input.DestinationDeviceID != "" {
+		destinationID, err = node.ParseID(input.DestinationDeviceID)
+		if err != nil {
+			return compilation.RuleIntent{}, err
+		}
+	}
+	var destinationResourceID resource.ID
+	if input.DestinationResourceID != "" {
+		destinationResourceID, err = resource.ParseID(input.DestinationResourceID)
+		if err != nil {
+			return compilation.RuleIntent{}, err
+		}
 	}
 	protocol := parsePolicyProtocol(input.Protocol)
 	if !protocol.IsValid() {
-		return policy.Rule{}, policy.ErrInvalidRule
+		return compilation.RuleIntent{}, policy.ErrInvalidRule
 	}
 	portRanges := make([]policy.PortRange, len(input.DestinationPortRanges))
 	for index, inputRange := range input.DestinationPortRanges {
 		if inputRange.First <= 0 || inputRange.First > math.MaxUint16 ||
 			inputRange.Last <= 0 || inputRange.Last > math.MaxUint16 {
-			return policy.Rule{}, policy.ErrInvalidPortRange
+			return compilation.RuleIntent{}, policy.ErrInvalidPortRange
 		}
 		portRange, rangeErr := policy.NewPortRange(uint16(inputRange.First), uint16(inputRange.Last))
 		if rangeErr != nil {
-			return policy.Rule{}, rangeErr
+			return compilation.RuleIntent{}, rangeErr
 		}
 		portRanges[index] = portRange
 	}
-	return policy.NewRule(policy.RuleParams{
+	return compilation.NewRuleIntent(compilation.RuleIntentParams{
 		ID: ruleID, Scope: scope, SourceNodeID: sourceID, DestinationNodeID: destinationID,
-		Protocol: protocol, DestinationPortRanges: portRanges,
+		DestinationResourceID: destinationResourceID,
+		Protocol:              protocol, DestinationPortRanges: portRanges,
 	})
 }
 
@@ -277,6 +305,33 @@ func classifyPolicyPublicationError(err error) managementError {
 		return managementError{
 			Status: http.StatusInternalServerError, Code: "internal_failure",
 			Message: "the request could not be completed",
+		}
+	}
+}
+
+func classifyPolicyCompilationError(err error) managementError {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return managementError{
+			Status: http.StatusGatewayTimeout, Code: "request_timeout",
+			Message: "the request deadline expired", Retryable: true,
+		}
+	case errors.Is(err, compilation.ErrForbidden):
+		return managementError{
+			Status: http.StatusForbidden, Code: "forbidden",
+			Message: "the request is not authorized",
+		}
+	case errors.Is(err, compilation.ErrResourceConflict):
+		return managementError{
+			Status: http.StatusConflict, Code: "resource_conflict",
+			Message: "a Resource destination is not active or changed",
+		}
+	case errors.Is(err, compilation.ErrInvalidRequest):
+		return *invalidManagementRequest()
+	default:
+		return managementError{
+			Status: http.StatusServiceUnavailable, Code: "operation_unavailable",
+			Message: "the operation is temporarily unavailable", Retryable: true,
 		}
 	}
 }

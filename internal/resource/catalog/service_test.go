@@ -78,6 +78,23 @@ func TestServicePreservesOpaqueNotFoundAndRollsBack(t *testing.T) {
 	}
 }
 
+func TestServiceRejectsDuplicatePolicyResourceResolutionBeforeTransaction(t *testing.T) {
+	t.Parallel()
+	transaction := &catalogTransactionFixture{}
+	service := catalogServiceFixture(t, transaction)
+	id, err := resource.ParseID("01890f00-0000-7000-8000-000000000501")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = service.ResolvePolicyResources(
+		t.Context(), catalogSessionFixture(t), catalogScopeFixture(t), []resource.ID{id, id},
+	)
+	if !errors.Is(err, ErrInvalidRequest) || transaction.permission != authorization.Permission("") {
+		t.Fatalf("error=%v transaction=%+v", err, transaction)
+	}
+}
+
 type catalogTransactionsFixture struct{ transaction *catalogTransactionFixture }
 
 func (fixture catalogTransactionsFixture) Begin(context.Context, network.Scope) (Transaction, error) {

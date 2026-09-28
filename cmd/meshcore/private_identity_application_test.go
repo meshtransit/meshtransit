@@ -28,6 +28,8 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
+	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
@@ -653,7 +655,8 @@ func newPrivateIdentityFixture(t *testing.T) *privateIdentityFixture {
 		SessionAuthority: authority, SessionRevocations: authority,
 		StartIDs: fixture, Secrets: fixture, ClaimIDs: fixture,
 		IssueMaterial: fixture, Revocations: fixture, PolicyPublications: fixture,
-		RateLimiter: fixture, CorrelationIDs: fixture,
+		PolicyCompilations: fixture,
+		RateLimiter:        fixture, CorrelationIDs: fixture,
 		Clock: fixture, Logger: discardCompositionLogger(),
 	}
 	return fixture
@@ -967,6 +970,36 @@ func (fixture *privateIdentityFixture) Publish(
 ) (policypublication.Result, error) {
 	fixture.record(ctx, "publish")
 	return policypublication.Result{}, errors.New("private controlled publication failure")
+}
+
+func (fixture *privateIdentityFixture) Compile(
+	ctx context.Context,
+	_ accountsession.Session,
+	request compilation.Request,
+) (policypublication.Candidate, error) {
+	fixture.record(ctx, "compile")
+	rules := make([]policy.Rule, len(request.Rules()))
+	for index, intent := range request.Rules() {
+		if intent.DestinationResourceID().IsValid() {
+			return policypublication.Candidate{}, compilation.ErrResourceConflict
+		}
+		rule, err := policy.NewRule(policy.RuleParams{
+			ID: intent.ID(), Scope: intent.Scope(), SourceNodeID: intent.SourceNodeID(),
+			DestinationNodeID: intent.DestinationNodeID(), Protocol: intent.Protocol(),
+			DestinationPortRanges: intent.DestinationPortRanges(),
+		})
+		if err != nil {
+			return policypublication.Candidate{}, err
+		}
+		rules[index] = rule
+	}
+	snapshot, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope: request.Scope(), Revision: request.Revision(), Rules: rules,
+	})
+	if err != nil {
+		return policypublication.Candidate{}, err
+	}
+	return policypublication.NewCandidate(snapshot, 1)
 }
 
 type privateIdentityResponse struct{ *httptest.ResponseRecorder }

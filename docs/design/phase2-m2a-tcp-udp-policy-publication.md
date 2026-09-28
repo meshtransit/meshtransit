@@ -1,7 +1,8 @@
 # Phase 2 M2a TCP/UDP policy publication design
 
-Status: implemented and locally qualified for Device-to-Device policy; Resource
-and Resource Group destinations remain M2b.
+Status: implemented and locally qualified for Device-to-Device policy. Active
+Device Resource destinations are implemented by M2b1; Resource Groups remain
+M2b2.
 
 Date: 2026-09-29
 
@@ -101,8 +102,9 @@ cross-platform packet enforcement.
 
 ## Next order
 
-1. M2b: compile active Device Resources and immutable Resource Groups to the
-   exact same Node-resolved TCP/UDP semantics, pinning Resource version, target
-   generation, Group definition version, and relevant collection revisions.
-2. M4: reuse the compiler semantics for Access Graph explanation and simulation.
-3. M5: extend enforcement to routed/service Resources and trusted gateways.
+1. M2b1: compile active Device Resources to the exact same Node-resolved TCP/UDP
+   semantics with exact version, target generation, inventory revision, and
+   semantic-hash pins (implemented).
+2. M2b2: expand immutable Resource Groups with exact definition/member pins.
+3. M4: reuse the compiler semantics for Access Graph explanation and simulation.
+4. M5: extend enforcement to routed/service Resources and trusted gateways.

@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 42 {
-		t.Fatalf("len(Catalog()) = %d, want 42", len(catalog))
+	if len(catalog) != 43 {
+		t.Fatalf("len(Catalog()) = %d, want 43", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 42 {
-		t.Fatalf("LatestVersion() = %d, want 42", LatestVersion())
+	if LatestVersion() != 43 {
+		t.Fatalf("LatestVersion() = %d, want 43", LatestVersion())
 	}
 }
 
@@ -1548,6 +1548,45 @@ func TestResourceAuthorityChangeRequiresStepUpAndSecondActor(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("Resource authority change SQL contains excessive capability %q", forbidden)
+		}
+	}
+}
+
+func TestPolicyResourceDestinationPinsAuthorityAndExactScope(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[42]
+	if migration.Description != "policy Resource destination provenance" {
+		t.Fatalf("migration 43 description = %q", migration.Description)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.compiled_policy_resource_destination",
+		"compiled_policy_resource_destination_rule_scope_fk",
+		"compiled_policy_resource_destination_resource_scope_fk",
+		"resource_version BIGINT NOT NULL",
+		"target_generation BIGINT NOT NULL",
+		"inventory_revision BIGINT NOT NULL",
+		"resource_semantic_hash BYTEA NOT NULL",
+		"FORCE ROW LEVEL SECURITY",
+		"CREATE TRIGGER compiled_policy_resource_destination_authority_mutation",
+		"CREATE TRIGGER compiled_policy_resource_destination_immutable",
+		"CREATE FUNCTION mesh_ops.attach_policy_resource_destinations",
+		"FROM mesh.policy_release AS release",
+		"FROM mesh.resource AS resource",
+		"FOR KEY SHARE OF resource",
+		"target.state = 'active'",
+		"ERRCODE = 'MT001'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.attach_policy_resource_destinations",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("policy Resource destination SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"BYPASSRLS", "DROP ", "DELETE FROM", "TO mesh_worker;", "TO mesh_observer;",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("policy Resource destination SQL contains excessive capability %q", forbidden)
 		}
 	}
 }

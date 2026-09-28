@@ -18,6 +18,8 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
+	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
@@ -284,6 +286,7 @@ func TestNewManagementHandlerRejectsInvalidDependencies(t *testing.T) {
 		func(options *ManagementHandlerOptions) { options.Sessions = nil },
 		func(options *ManagementHandlerOptions) { options.Revocations = nil },
 		func(options *ManagementHandlerOptions) { options.PolicyPublications = nil },
+		func(options *ManagementHandlerOptions) { options.PolicyCompilations = nil },
 		func(options *ManagementHandlerOptions) { options.Idempotency = nil },
 		func(options *ManagementHandlerOptions) { options.RateLimitSubjects = nil },
 		func(options *ManagementHandlerOptions) { options.RateLimiter = nil },
@@ -307,6 +310,7 @@ type managementHandlerFixtureOptions struct {
 	authenticate func(context.Context, accountsession.Token) (accountsession.Session, error)
 	revoke       func(context.Context, revocation.Command) (revocation.Result, error)
 	publish      func(context.Context, policypublication.Command) (policypublication.Result, error)
+	compile      func(context.Context, accountsession.Session, compilation.Request) (policypublication.Candidate, error)
 	limit        func(context.Context, ratelimit.Subject, ratelimit.Policy) (ratelimit.Decision, error)
 }
 
@@ -325,6 +329,9 @@ func managementHandlerFixture(t *testing.T, fixture managementHandlerFixtureOpti
 	}
 	if fixture.publish != nil {
 		options.PolicyPublications = managementPolicyPublisherFunc(fixture.publish)
+	}
+	if fixture.compile != nil {
+		options.PolicyCompilations = managementPolicyCompilerFunc(fixture.compile)
 	}
 	if fixture.limit != nil {
 		options.RateLimiter = managementRateLimiterFunc(fixture.limit)
@@ -359,6 +366,13 @@ func validManagementHandlerOptions(t *testing.T) ManagementHandlerOptions {
 			command policypublication.Command,
 		) (policypublication.Result, error) {
 			return managementPolicyResultFixture(t, command), nil
+		}),
+		PolicyCompilations: managementPolicyCompilerFunc(func(
+			_ context.Context,
+			_ accountsession.Session,
+			request compilation.Request,
+		) (policypublication.Candidate, error) {
+			return compileDirectManagementPolicy(request)
 		}),
 		Idempotency: managementIdempotencyProverFunc(func(string) (idempotency.Proof, error) {
 			return proof, nil
@@ -423,6 +437,45 @@ func (function managementPolicyPublisherFunc) Publish(
 	command policypublication.Command,
 ) (policypublication.Result, error) {
 	return function(ctx, command)
+}
+
+type managementPolicyCompilerFunc func(
+	context.Context,
+	accountsession.Session,
+	compilation.Request,
+) (policypublication.Candidate, error)
+
+func (function managementPolicyCompilerFunc) Compile(
+	ctx context.Context,
+	session accountsession.Session,
+	request compilation.Request,
+) (policypublication.Candidate, error) {
+	return function(ctx, session, request)
+}
+
+func compileDirectManagementPolicy(request compilation.Request) (policypublication.Candidate, error) {
+	rules := make([]policy.Rule, len(request.Rules()))
+	for index, intent := range request.Rules() {
+		if intent.DestinationResourceID().IsValid() {
+			return policypublication.Candidate{}, compilation.ErrResourceConflict
+		}
+		rule, err := policy.NewRule(policy.RuleParams{
+			ID: intent.ID(), Scope: intent.Scope(), SourceNodeID: intent.SourceNodeID(),
+			DestinationNodeID: intent.DestinationNodeID(), Protocol: intent.Protocol(),
+			DestinationPortRanges: intent.DestinationPortRanges(),
+		})
+		if err != nil {
+			return policypublication.Candidate{}, err
+		}
+		rules[index] = rule
+	}
+	snapshot, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope: request.Scope(), Revision: request.Revision(), Rules: rules,
+	})
+	if err != nil {
+		return policypublication.Candidate{}, err
+	}
+	return policypublication.NewCandidate(snapshot, 1)
 }
 
 type managementIdempotencyProverFunc func(string) (idempotency.Proof, error)

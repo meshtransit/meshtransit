@@ -4,13 +4,16 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"slices"
 
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 )
 
 const (
-	policyHashDomain = "meshtransit/policy-release/v1\x00"
+	policyHashDomainV1       = "meshtransit/policy-release/v1\x00"
+	policyHashDomainV2       = "meshtransit/policy-release/v2\x00"
+	resourceCompilerFormatV2 = 2
 	// MaximumCompilerFormatVersion bounds the version encoded in durable releases.
 	MaximumCompilerFormatVersion = 65535
 )
@@ -43,19 +46,43 @@ type Candidate struct {
 	snapshot              policy.Snapshot
 	compilerFormatVersion int
 	semanticHash          SemanticHash
+	resourceDestinations  []ResourceDestination
 }
 
 // NewCandidate validates and hashes one compiled policy artifact.
 func NewCandidate(snapshot policy.Snapshot, compilerFormatVersion int) (Candidate, error) {
+	return newCandidate(snapshot, compilerFormatVersion, nil)
+}
+
+// NewCandidateWithResourceDestinations constructs a format-v2 candidate whose
+// compiled Device edges retain exact Resource resolution provenance.
+func NewCandidateWithResourceDestinations(
+	snapshot policy.Snapshot,
+	destinations []ResourceDestination,
+) (Candidate, error) {
+	if len(destinations) == 0 {
+		return Candidate{}, ErrInvalidCandidate
+	}
+	return newCandidate(snapshot, resourceCompilerFormatV2, destinations)
+}
+
+func newCandidate(
+	snapshot policy.Snapshot,
+	compilerFormatVersion int,
+	destinations []ResourceDestination,
+) (Candidate, error) {
 	if !snapshot.IsValid() || compilerFormatVersion <= 0 ||
 		compilerFormatVersion > MaximumCompilerFormatVersion {
 		return Candidate{}, ErrInvalidCandidate
 	}
+	destinations = cloneResourceDestinations(destinations)
+	slices.SortFunc(destinations, compareResourceDestinations)
 	candidate := Candidate{
 		snapshot:              snapshot,
 		compilerFormatVersion: compilerFormatVersion,
-		semanticHash:          hashCandidate(snapshot, compilerFormatVersion),
+		resourceDestinations:  destinations,
 	}
+	candidate.semanticHash = hashCandidate(candidate)
 	if !candidate.IsValid() {
 		return Candidate{}, ErrInvalidCandidate
 	}
@@ -71,23 +98,67 @@ func (candidate Candidate) CompilerFormatVersion() int { return candidate.compil
 // SemanticHash returns the canonical compiled semantics digest.
 func (candidate Candidate) SemanticHash() SemanticHash { return candidate.semanticHash }
 
+// ResourceDestinations returns caller-owned Resource resolution provenance.
+func (candidate Candidate) ResourceDestinations() []ResourceDestination {
+	return cloneResourceDestinations(candidate.resourceDestinations)
+}
+
 // IsValid reports whether all candidate fields and their digest agree.
 func (candidate Candidate) IsValid() bool {
 	return candidate.snapshot.IsValid() && candidate.compilerFormatVersion > 0 &&
 		candidate.compilerFormatVersion <= MaximumCompilerFormatVersion &&
+		validResourceDestinations(candidate) &&
 		candidate.semanticHash.IsValid() &&
-		candidate.semanticHash == hashCandidate(candidate.snapshot, candidate.compilerFormatVersion)
+		candidate.semanticHash == hashCandidate(candidate)
 }
 
-func hashCandidate(snapshot policy.Snapshot, compilerFormatVersion int) SemanticHash {
-	rules := snapshot.Rules()
-	encoded := make([]byte, 0, len(policyHashDomain)+40+len(rules)*80)
-	encoded = append(encoded, policyHashDomain...)
-	workspaceID := snapshot.Scope().WorkspaceID().Bytes()
-	networkID := snapshot.Scope().NetworkID().Bytes()
+func validResourceDestinations(candidate Candidate) bool {
+	destinations := candidate.resourceDestinations
+	if len(destinations) == 0 {
+		return true
+	}
+	if candidate.compilerFormatVersion != resourceCompilerFormatV2 ||
+		len(destinations) > len(candidate.snapshot.Rules()) {
+		return false
+	}
+	rules := candidate.snapshot.Rules()
+	for index, destination := range destinations {
+		if !destination.IsValid() || destination.reference.Scope() != candidate.snapshot.Scope() ||
+			(index > 0 && (destinations[index-1].ruleID == destination.ruleID ||
+				compareResourceDestinations(destinations[index-1], destination) >= 0)) {
+			return false
+		}
+		matches := 0
+		for _, rule := range rules {
+			if rule.ID() == destination.ruleID &&
+				rule.DestinationNodeID() == destination.destinationNodeID {
+				matches++
+			}
+		}
+		if matches != 1 {
+			return false
+		}
+	}
+	return true
+}
+
+func hashCandidate(candidate Candidate) SemanticHash {
+	rules := candidate.snapshot.Rules()
+	domain := policyHashDomainV1
+	if len(candidate.resourceDestinations) > 0 {
+		domain = policyHashDomainV2
+	}
+	encoded := make(
+		[]byte,
+		0,
+		len(domain)+48+len(rules)*80+len(candidate.resourceDestinations)*128,
+	)
+	encoded = append(encoded, domain...)
+	workspaceID := candidate.snapshot.Scope().WorkspaceID().Bytes()
+	networkID := candidate.snapshot.Scope().NetworkID().Bytes()
 	encoded = append(encoded, workspaceID[:]...)
 	encoded = append(encoded, networkID[:]...)
-	encoded = appendInt64(encoded, int64(compilerFormatVersion))
+	encoded = appendInt64(encoded, int64(candidate.compilerFormatVersion))
 	encoded = appendUint64(encoded, uint64(len(rules)))
 	for _, rule := range rules {
 		ruleID := publicid.ID(rule.ID()).Bytes()
@@ -102,6 +173,22 @@ func hashCandidate(snapshot policy.Snapshot, compilerFormatVersion int) Semantic
 		for _, portRange := range portRanges {
 			encoded = appendUint16(encoded, portRange.First())
 			encoded = appendUint16(encoded, portRange.Last())
+		}
+	}
+	if len(candidate.resourceDestinations) > 0 {
+		encoded = appendUint64(encoded, uint64(len(candidate.resourceDestinations)))
+		for _, destination := range candidate.resourceDestinations {
+			ruleID := publicid.ID(destination.ruleID).Bytes()
+			resourceID := destination.reference.ResourceID().Bytes()
+			destinationID := publicid.ID(destination.destinationNodeID).Bytes()
+			resourceHash := destination.resourceSemanticHash.Bytes()
+			encoded = append(encoded, ruleID[:]...)
+			encoded = append(encoded, resourceID[:]...)
+			encoded = appendInt64(encoded, destination.reference.ResourceVersion())
+			encoded = appendInt64(encoded, destination.reference.TargetGeneration())
+			encoded = appendInt64(encoded, destination.inventoryRevision)
+			encoded = append(encoded, destinationID[:]...)
+			encoded = append(encoded, resourceHash[:]...)
 		}
 	}
 	return SemanticHash(sha256.Sum256(encoded))

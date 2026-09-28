@@ -65,6 +65,7 @@ type privateIdentityPorts struct {
 	IssueMaterial      oidcauth.IssueMaterialGenerator
 	Revocations        httpapi.DeviceRevoker
 	PolicyPublications httpapi.PolicyPublisher
+	PolicyCompilations httpapi.PolicyCompiler
 	RateLimiter        httpapi.ManagementRateLimiter
 	CorrelationIDs     httpapi.PublicIDGenerator
 	Clock              oidcauth.StartClock
@@ -153,7 +154,8 @@ func composePrivateIdentity(
 	managementOptions := options.Management
 	resources, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions: sessions, Revocations: ports.Revocations, PolicyPublications: ports.PolicyPublications,
-		Idempotency: keys.idempotency, RateLimitSubjects: keys.rateLimit, RateLimiter: ports.RateLimiter,
+		PolicyCompilations: ports.PolicyCompilations,
+		Idempotency:        keys.idempotency, RateLimitSubjects: keys.rateLimit, RateLimiter: ports.RateLimiter,
 		TrustedProxyPrefixes: profile.TrustedProxyPrefixes, SourceRateLimit: managementOptions.SourceRateLimit,
 		SessionRateLimit: managementOptions.SessionRateLimit, CorrelationIDs: ports.CorrelationIDs, Logger: ports.Logger,
 		RequestTimeout: managementOptions.RequestTimeout, MaxConcurrentRequests: managementOptions.MaxConcurrent,
@@ -220,6 +222,7 @@ func completePrivateIdentityPorts(ports privateIdentityPorts) bool {
 		ports.Failures, ports.Issues, ports.Provider, ports.Subjects, ports.SessionAuthority, ports.StartIDs,
 		ports.SessionRevocations,
 		ports.Secrets, ports.ClaimIDs, ports.IssueMaterial, ports.Revocations, ports.PolicyPublications,
+		ports.PolicyCompilations,
 		ports.RateLimiter, ports.CorrelationIDs, ports.Clock, ports.Logger,
 	} {
 		if port == nil {

@@ -1,10 +1,13 @@
 package publication_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 
 	"github.com/meshtransit/meshtransit/internal/policy"
 	publication "github.com/meshtransit/meshtransit/internal/policy/publication"
+	"github.com/meshtransit/meshtransit/internal/resource"
 )
 
 func TestCandidateHashIsDeterministicAndRevisionIndependent(t *testing.T) {
@@ -21,6 +24,10 @@ func TestCandidateHashIsDeterministicAndRevisionIndependent(t *testing.T) {
 			first.SemanticHash().Bytes(),
 			second.SemanticHash().Bytes(),
 		)
+	}
+	firstHash := first.SemanticHash().Bytes()
+	if encoded := hex.EncodeToString(firstHash[:]); encoded != "af10c4cb27ca1a47360763896f1812657802e6e63dd5c33cae38f56ea8916ca7" {
+		t.Fatalf("format-v1 semantic hash = %s, want compatibility fixture", encoded)
 	}
 	if !first.IsValid() || first.CompilerFormatVersion() != 1 ||
 		first.Snapshot().Revision() != 2 {
@@ -61,5 +68,76 @@ func TestCandidateRejectsUnsafeInput(t *testing.T) {
 		publication.MaximumCompilerFormatVersion+1,
 	); err == nil {
 		t.Fatal("NewCandidate() accepted excessive compiler format")
+	}
+}
+
+func TestCandidateHashBindsResourceResolutionProvenance(t *testing.T) {
+	t.Parallel()
+
+	rule := publicationRuleFixture(t, "000000000801", "000000000701", "000000000702", 443)
+	base := publicationCandidateFixture(t, 2, []policy.Rule{rule})
+	resourceID, err := resource.ParseID("01890f00-0000-7000-8000-000000000901")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashValue := sha256.Sum256([]byte("synthetic Resource semantics"))
+	resourceHash, err := resource.NewSemanticHash(hashValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination, err := publication.NewResourceDestination(publication.ResourceDestinationParams{
+		RuleID: rule.ID(), Scope: rule.Scope(), ResourceID: resourceID,
+		ResourceVersion: 3, TargetGeneration: 2, InventoryRevision: 7,
+		DestinationNodeID: rule.DestinationNodeID(), ResourceSemanticHash: resourceHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := publication.NewCandidateWithResourceDestinations(base.Snapshot(), []publication.ResourceDestination{destination})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := publication.NewResourceDestination(publication.ResourceDestinationParams{
+		RuleID: rule.ID(), Scope: rule.Scope(), ResourceID: resourceID,
+		ResourceVersion: 3, TargetGeneration: 3, InventoryRevision: 8,
+		DestinationNodeID: rule.DestinationNodeID(), ResourceSemanticHash: resourceHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := publication.NewCandidateWithResourceDestinations(base.Snapshot(), []publication.ResourceDestination{changed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.CompilerFormatVersion() != 2 || len(first.ResourceDestinations()) != 1 ||
+		first.SemanticHash() == second.SemanticHash() {
+		t.Fatal("candidate did not bind format-v2 Resource provenance")
+	}
+
+	mismatchedRule := publicationRuleFixture(t, "000000000802", "000000000701", "000000000702", 443)
+	mismatched := publicationCandidateFixture(t, 2, []policy.Rule{mismatchedRule})
+	if _, err := publication.NewCandidateWithResourceDestinations(
+		mismatched.Snapshot(),
+		[]publication.ResourceDestination{destination},
+	); err == nil {
+		t.Fatal("resource provenance accepted a mismatched Access Rule")
+	}
+	alternateResourceID, err := resource.ParseID("01890f00-0000-7000-8000-000000000902")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alternate, err := publication.NewResourceDestination(publication.ResourceDestinationParams{
+		RuleID: rule.ID(), Scope: rule.Scope(), ResourceID: alternateResourceID,
+		ResourceVersion: 1, TargetGeneration: 1, InventoryRevision: 7,
+		DestinationNodeID: rule.DestinationNodeID(), ResourceSemanticHash: resourceHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publication.NewCandidateWithResourceDestinations(
+		base.Snapshot(),
+		[]publication.ResourceDestination{destination, alternate},
+	); err == nil {
+		t.Fatal("resource provenance accepted two Resources for one Access Rule")
 	}
 }

@@ -3,6 +3,8 @@ package catalog
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/authorization"
@@ -59,6 +61,71 @@ func (service *Service) GetResource(
 	}
 	closeTransaction = nil
 	return value, nil
+}
+
+// ResolvePolicyResources returns one snapshot-consistent, freshly authorized,
+// active Resource set for policy compilation. IDs must be unique and bounded.
+func (service *Service) ResolvePolicyResources(
+	ctx context.Context,
+	session accountsession.Session,
+	scope network.Scope,
+	ids []resource.ID,
+) (_ []Resource, resultErr error) {
+	if ctx == nil || service == nil || !session.IsValid() || !scope.IsValid() ||
+		len(ids) == 0 || len(ids) > MaximumPolicyResources {
+		return nil, ErrInvalidRequest
+	}
+	ids = slices.Clone(ids)
+	for _, id := range ids {
+		if !id.IsValid() {
+			return nil, ErrInvalidRequest
+		}
+	}
+	slices.SortFunc(ids, func(first, second resource.ID) int {
+		return strings.Compare(first.String(), second.String())
+	})
+	for index := 1; index < len(ids); index++ {
+		if ids[index-1] == ids[index] {
+			return nil, ErrInvalidRequest
+		}
+	}
+
+	transaction, closeTransaction, err := service.begin(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeTransaction != nil {
+			closeTransaction(&resultErr)
+		}
+	}()
+	if err = transaction.Authorize(
+		ctx,
+		session,
+		authorization.PermissionResourceRead,
+		service.clock.Now().UTC(),
+	); err != nil {
+		return nil, err
+	}
+	values := make([]Resource, len(ids))
+	for index, id := range ids {
+		value, readErr := transaction.Resource(ctx, id)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if !value.IsValid() || value.ID() != id || value.Scope() != scope {
+			return nil, ErrInvalidResult
+		}
+		if value.State() != resource.StateActive {
+			return nil, ErrConflict
+		}
+		values[index] = value
+	}
+	if err = transaction.Commit(ctx); err != nil {
+		return nil, err
+	}
+	closeTransaction = nil
+	return values, nil
 }
 
 // GetGroup returns one freshly authorized exact-scope Resource Group snapshot.

@@ -35,6 +35,7 @@ func TestManagementV1MutationContracts(t *testing.T) {
 				Type   string `json:"type"`
 				Scheme string `json:"scheme"`
 			} `json:"securitySchemes"`
+			Schemas map[string]json.RawMessage `json:"schemas"`
 		} `json:"components"`
 	}
 	if err := json.Unmarshal(documentBytes, &document); err != nil {
@@ -67,10 +68,35 @@ func TestManagementV1MutationContracts(t *testing.T) {
 	if _, ok := policyOperation.Post.Security[0]["accountSessionBearer"]; !ok {
 		t.Fatal("Policy publish operation does not require Account Session bearer authentication")
 	}
-	for _, status := range []string{"200", "400", "401", "403", "405", "412", "428", "429", "503", "504"} {
+	for _, status := range []string{"200", "400", "401", "403", "405", "409", "412", "428", "429", "503", "504"} {
 		if _, ok := policyOperation.Post.Responses[status]; !ok {
 			t.Fatalf("Policy publish responses omit status %s", status)
 		}
+	}
+	var policyRule struct {
+		Required   []string                   `json:"required"`
+		Properties map[string]json.RawMessage `json:"properties"`
+		OneOf      []struct {
+			Required []string `json:"required"`
+			Not      struct {
+				Required []string `json:"required"`
+			} `json:"not"`
+		} `json:"oneOf"`
+	}
+	if err := json.Unmarshal(document.Components.Schemas["CompiledPolicyRule"], &policyRule); err != nil {
+		t.Fatalf("decode CompiledPolicyRule: %v", err)
+	}
+	if len(policyRule.OneOf) != 2 || policyRule.Properties["destination_device_id"] == nil ||
+		policyRule.Properties["destination_resource_id"] == nil ||
+		len(policyRule.OneOf[0].Required) != 1 ||
+		policyRule.OneOf[0].Required[0] != "destination_device_id" ||
+		len(policyRule.OneOf[0].Not.Required) != 1 ||
+		policyRule.OneOf[0].Not.Required[0] != "destination_resource_id" ||
+		len(policyRule.OneOf[1].Required) != 1 ||
+		policyRule.OneOf[1].Required[0] != "destination_resource_id" ||
+		len(policyRule.OneOf[1].Not.Required) != 1 ||
+		policyRule.OneOf[1].Not.Required[0] != "destination_device_id" {
+		t.Fatalf("CompiledPolicyRule typed destination contract = %+v", policyRule)
 	}
 	for _, contract := range []struct {
 		path, getOperation, postOperation string

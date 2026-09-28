@@ -64,9 +64,9 @@ HA, data-service failover, cross-platform enforcement, production SLOs, or GA.
 
 ## Residual work
 
-- M2b must resolve Resource and Resource Group destinations under exact scope,
-  pin every Resource version/target generation and Group definition version,
-  and revalidate those facts inside the publication transaction.
+- M2b1 now resolves Device Resource destinations under exact scope and pins and
+  revalidates Resource version, target generation, inventory revision, and
+  semantic hash. M2b2 must add immutable Resource Group definition expansion.
 - A disposable live two-client TCP/UDP matrix on immutable Core/client artifacts
   remains a deployment qualification gate.
 - PostgreSQL/Redis infrastructure failover remains paused by owner direction.

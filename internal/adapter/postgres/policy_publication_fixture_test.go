@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/policy"
 	publication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
+	"github.com/meshtransit/meshtransit/internal/resource"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -263,6 +265,33 @@ func enqueuePolicyPublicationApply(
 	})
 }
 
+func enqueuePolicyResourcePublicationApply(
+	transaction *fakePolicyPublicationTransaction,
+	networkRevision int64,
+	policyRevision int64,
+) {
+	transaction.enqueueRow(publishCompiledPolicySQL, policyPublicationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*int64) = networkRevision
+			*destinations[1].(*int64) = policyRevision
+			*destinations[2].(*int64) = 1
+			return nil
+		},
+	})
+	transaction.enqueueRow(attachPolicyResourceDestinationsSQL, policyPublicationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*int) = 1
+			return nil
+		},
+	})
+	transaction.enqueueRow(appendPolicyPublicationEvidenceSQL, policyPublicationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*int64) = 4
+			return nil
+		},
+	})
+}
+
 func policyPublicationCommandFixture(t *testing.T) publication.Command {
 	t.Helper()
 	workspaceID, err := workspace.ParseID("01890f00-0000-7000-8000-000000000101")
@@ -350,6 +379,44 @@ func policyManagementPublicationCommandFixture(t *testing.T) publication.Command
 	})
 	if err != nil {
 		t.Fatalf("publication.NewManagementCommand() error = %v", err)
+	}
+	return command
+}
+
+func policyResourcePublicationCommandFixture(t *testing.T) publication.Command {
+	t.Helper()
+	trusted := policyPublicationCommandFixture(t)
+	rule := trusted.Candidate().Snapshot().Rules()[0]
+	resourceID, err := resource.ParseID("01890f00-0000-7000-8000-000000000921")
+	if err != nil {
+		t.Fatalf("resource.ParseID() error = %v", err)
+	}
+	hashValue := sha256.Sum256([]byte("synthetic policy Resource"))
+	resourceHash, err := resource.NewSemanticHash(hashValue)
+	if err != nil {
+		t.Fatalf("resource.NewSemanticHash() error = %v", err)
+	}
+	destination, err := publication.NewResourceDestination(publication.ResourceDestinationParams{
+		RuleID: rule.ID(), Scope: rule.Scope(), ResourceID: resourceID,
+		ResourceVersion: 3, TargetGeneration: 2, InventoryRevision: 7,
+		DestinationNodeID: rule.DestinationNodeID(), ResourceSemanticHash: resourceHash,
+	})
+	if err != nil {
+		t.Fatalf("publication.NewResourceDestination() error = %v", err)
+	}
+	candidate, err := publication.NewCandidateWithResourceDestinations(
+		trusted.Candidate().Snapshot(),
+		[]publication.ResourceDestination{destination},
+	)
+	if err != nil {
+		t.Fatalf("publication.NewCandidateWithResourceDestinations() error = %v", err)
+	}
+	command, err := publication.NewCommand(publication.CommandParams{
+		Candidate: candidate, BasePolicyRevision: trusted.BasePolicyRevision(),
+		ActorPrincipalID: trusted.ActorPrincipalID(), AuditReason: trusted.AuditReason(),
+	})
+	if err != nil {
+		t.Fatalf("publication.NewCommand() error = %v", err)
 	}
 	return command
 }

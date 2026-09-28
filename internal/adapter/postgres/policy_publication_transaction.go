@@ -315,6 +315,22 @@ func (transaction *policyPublicationTransaction) applyLocked(
 		policyRevision != command.Candidate().Snapshot().Revision() || releaseVersion != 1 {
 		return publication.Result{}, ErrPolicyPublicationEvidence
 	}
+	resourceDestinations := command.Candidate().ResourceDestinations()
+	if len(resourceDestinations) > 0 {
+		var attachedCount int
+		if err := transaction.database.QueryRow(
+			ctx,
+			attachPolicyResourceDestinationsSQL,
+			change.MutationIDs().ReleaseID().String(),
+			change.OccurredAt(),
+			rules,
+		).Scan(&attachedCount); err != nil {
+			return publication.Result{}, fmt.Errorf("attach policy Resource destinations: %w", err)
+		}
+		if attachedCount != len(resourceDestinations) {
+			return publication.Result{}, ErrPolicyPublicationEvidence
+		}
+	}
 	if err := transaction.appendPolicyPublicationEvidence(
 		ctx,
 		change,

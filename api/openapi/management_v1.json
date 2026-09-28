@@ -162,6 +162,9 @@
           "405": {
             "$ref": "#/components/responses/MethodNotAllowed"
           },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
           "412": {
             "$ref": "#/components/responses/PreconditionFailed"
           },
@@ -1128,9 +1131,30 @@
         "required": [
           "id",
           "source_device_id",
-          "destination_device_id",
           "protocol",
           "destination_port_ranges"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "destination_device_id"
+            ],
+            "not": {
+              "required": [
+                "destination_resource_id"
+              ]
+            }
+          },
+          {
+            "required": [
+              "destination_resource_id"
+            ],
+            "not": {
+              "required": [
+                "destination_device_id"
+              ]
+            }
+          }
         ],
         "properties": {
           "id": {
@@ -1140,6 +1164,9 @@
             "$ref": "#/components/schemas/PublicID"
           },
           "destination_device_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "destination_resource_id": {
             "$ref": "#/components/schemas/PublicID"
           },
           "protocol": {

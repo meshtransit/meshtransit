@@ -18,8 +18,10 @@ import (
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	publication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
+	"github.com/meshtransit/meshtransit/internal/resource/catalog"
 )
 
 // This source fixture uses real least-privileged Session and mutation authority.
@@ -151,7 +153,8 @@ func publishPolicyOverBrowserManagement(
 	capture := &integrationBrowserPolicyCapture{service: service}
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{Sessions: sessions,
 		Revocations: newIntegrationDeviceRevocationService(t, runtimePool), PolicyPublications: capture,
-		Idempotency: integrationDeviceRevocationDigester(t), RateLimitSubjects: digester,
+		PolicyCompilations: newIntegrationPolicyCompiler(t, runtimePool),
+		Idempotency:        integrationDeviceRevocationDigester(t), RateLimitSubjects: digester,
 		RateLimiter:     integrationAllowAllRateLimiter{},
 		SourceRateLimit: policy, SessionRateLimit: policy, CorrelationIDs: httpapi.PublicCorrelationIDGenerator{},
 		Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)), RequestTimeout: 10 * time.Second, MaxConcurrentRequests: 2})
@@ -174,9 +177,14 @@ func publishPolicyOverBrowserManagement(
 	type rule struct {
 		ID                    string      `json:"id"`
 		SourceDeviceID        string      `json:"source_device_id"`
-		DestinationDeviceID   string      `json:"destination_device_id"`
+		DestinationDeviceID   string      `json:"destination_device_id,omitempty"`
+		DestinationResourceID string      `json:"destination_resource_id,omitempty"`
 		Protocol              string      `json:"protocol"`
 		DestinationPortRanges []portRange `json:"destination_port_ranges"`
+	}
+	resourceDestinations := make(map[string]publication.ResourceDestination)
+	for _, destination := range command.Candidate().ResourceDestinations() {
+		resourceDestinations[destination.RuleID().String()] = destination
 	}
 	rules := make([]rule, 0, len(command.Candidate().Snapshot().Rules()))
 	for _, compiled := range command.Candidate().Snapshot().Rules() {
@@ -185,13 +193,18 @@ func publishPolicyOverBrowserManagement(
 		for index, value := range ranges {
 			ports[index] = portRange{First: value.First(), Last: value.Last()}
 		}
-		rules = append(rules, rule{
+		input := rule{
 			ID:                    compiled.ID().String(),
 			SourceDeviceID:        compiled.SourceNodeID().String(),
 			DestinationDeviceID:   compiled.DestinationNodeID().String(),
 			Protocol:              compiled.Protocol().String(),
 			DestinationPortRanges: ports,
-		})
+		}
+		if destination, ok := resourceDestinations[compiled.ID().String()]; ok {
+			input.DestinationDeviceID = ""
+			input.DestinationResourceID = destination.Reference().ResourceID().String()
+		}
+		rules = append(rules, input)
 	}
 	body, err := json.Marshal(struct {
 		Rules  []rule `json:"rules"`
@@ -215,7 +228,44 @@ func publishPolicyOverBrowserManagement(
 	}
 	if response.Code != http.StatusOK || response.statusWrites != 1 || capture.calls != 1 || !capture.result.IsValid() ||
 		response.Header().Get("Set-Cookie") != "" || request.Header.Get("Authorization") != "" {
-		t.Fatal("cookie transport bypassed confirmed management policy authority")
+		t.Fatalf(
+			"cookie transport bypassed confirmed management policy authority: status=%d writes=%d calls=%d result_valid=%t body=%s",
+			response.Code,
+			response.statusWrites,
+			capture.calls,
+			capture.result.IsValid(),
+			response.Body.String(),
+		)
 	}
 	return capture.result
+}
+
+func newIntegrationPolicyCompiler(
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+) *compilation.Service {
+	t.Helper()
+	store, err := postgresadapter.NewResourceCatalogStore(
+		runtimePool,
+		postgresadapter.ResourceCatalogOptions{
+			StatementTimeout: 5 * time.Second,
+			LockTimeout:      2 * time.Second,
+			IdleTimeout:      10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resources, err := catalog.NewService(catalog.Dependencies{
+		Transactions: store,
+		Clock:        catalog.SystemClock{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, err := compilation.NewService(resources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compiler
 }

@@ -2,13 +2,19 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
+	"github.com/meshtransit/meshtransit/internal/resource"
 )
 
 func TestManagementHandlerPublishesPolicy(t *testing.T) {
@@ -72,6 +78,60 @@ func TestManagementHandlerPublishesPolicy(t *testing.T) {
 	}
 }
 
+func TestManagementHandlerPublishesResourcePolicy(t *testing.T) {
+	t.Parallel()
+
+	session := managementSessionFixture(t)
+	var captured policypublication.Command
+	handler := managementHandlerFixture(t, managementHandlerFixtureOptions{
+		session: session,
+		compile: func(
+			_ context.Context,
+			actualSession accountsession.Session,
+			request compilation.Request,
+		) (policypublication.Candidate, error) {
+			if actualSession.ID() != session.ID() || request.Revision() != 2 ||
+				len(request.Rules()) != 1 ||
+				request.Rules()[0].DestinationResourceID().String() != managementResourceID() {
+				t.Fatalf("compilation input = (%+v, %+v)", actualSession, request)
+			}
+			return resourcePolicyCandidate(t, request), nil
+		},
+		publish: func(
+			_ context.Context,
+			command policypublication.Command,
+		) (policypublication.Result, error) {
+			captured = command
+			return managementPolicyResultFixture(t, command), nil
+		},
+	})
+	request := newManagementRequest(
+		t,
+		http.MethodPost,
+		validPolicyPublishPath(),
+		`{"reason":"allow database service","rules":[{`+
+			`"id":"01890f00-0000-7000-8000-000000000505",`+
+			`"source_device_id":"01890f00-0000-7000-8000-000000000301",`+
+			`"destination_resource_id":"`+managementResourceID()+`",`+
+			`"protocol":"tcp","destination_port_ranges":[{"first":5432,"last":5432}]}]}`,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	destinations := captured.Candidate().ResourceDestinations()
+	if captured.Candidate().CompilerFormatVersion() != 2 || len(destinations) != 1 ||
+		destinations[0].Reference().ResourceID().String() != managementResourceID() ||
+		destinations[0].Reference().ResourceVersion() != 3 ||
+		destinations[0].Reference().TargetGeneration() != 2 ||
+		destinations[0].InventoryRevision() != 8 {
+		t.Fatalf("published Resource provenance = %+v", destinations)
+	}
+}
+
 func TestManagementHandlerPolicyPublicationFailsClosed(t *testing.T) {
 	t.Parallel()
 
@@ -111,6 +171,21 @@ func TestManagementHandlerPolicyPublicationFailsClosed(t *testing.T) {
 		{
 			name:   "tcp port overflow",
 			body:   `{"reason":"bad","rules":[{"id":"01890f00-0000-7000-8000-000000000501","source_device_id":"01890f00-0000-7000-8000-000000000301","destination_device_id":"01890f00-0000-7000-8000-000000000302","protocol":"tcp","destination_port_ranges":[{"first":443,"last":65536}]}]}`,
+			status: http.StatusBadRequest, code: "invalid_request",
+		},
+		{
+			name:   "missing typed destination",
+			body:   `{"reason":"bad","rules":[{"id":"01890f00-0000-7000-8000-000000000501","source_device_id":"01890f00-0000-7000-8000-000000000301","protocol":"icmp","destination_port_ranges":[]}]}`,
+			status: http.StatusBadRequest, code: "invalid_request",
+		},
+		{
+			name:   "ambiguous typed destination",
+			body:   `{"reason":"bad","rules":[{"id":"01890f00-0000-7000-8000-000000000501","source_device_id":"01890f00-0000-7000-8000-000000000301","destination_device_id":"01890f00-0000-7000-8000-000000000302","destination_resource_id":"01890f00-0000-7000-8000-000000000601","protocol":"icmp","destination_port_ranges":[]}]}`,
+			status: http.StatusBadRequest, code: "invalid_request",
+		},
+		{
+			name:   "malformed Resource destination",
+			body:   `{"reason":"bad","rules":[{"id":"01890f00-0000-7000-8000-000000000501","source_device_id":"01890f00-0000-7000-8000-000000000301","destination_resource_id":"not-a-resource","protocol":"icmp","destination_port_ranges":[]}]}`,
 			status: http.StatusBadRequest, code: "invalid_request",
 		},
 		{
@@ -169,6 +244,98 @@ func TestManagementHandlerPolicyPublicationFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+func TestManagementHandlerClassifiesPolicyCompilationFailures(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name, code string
+		err        error
+		status     int
+	}{
+		{name: "forbidden", err: compilation.ErrForbidden, status: http.StatusForbidden, code: "forbidden"},
+		{name: "stale Resource", err: compilation.ErrResourceConflict, status: http.StatusConflict, code: "resource_conflict"},
+		{name: "unavailable", err: compilation.ErrUnavailable, status: http.StatusServiceUnavailable, code: "operation_unavailable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			published := false
+			handler := managementHandlerFixture(t, managementHandlerFixtureOptions{
+				compile: func(
+					context.Context,
+					accountsession.Session,
+					compilation.Request,
+				) (policypublication.Candidate, error) {
+					return policypublication.Candidate{}, errors.Join(test.err, errors.New("private detail"))
+				},
+				publish: func(
+					context.Context,
+					policypublication.Command,
+				) (policypublication.Result, error) {
+					published = true
+					return policypublication.Result{}, nil
+				},
+			})
+			request := newManagementRequest(t, http.MethodPost, validPolicyPublishPath(), validPolicyPublishBody())
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			var envelope managementErrorResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil ||
+				response.Code != test.status || envelope.Error.Code != test.code || published {
+				t.Fatalf("response = %d/%+v/%v, want %d/%q/unpublished", response.Code, envelope, err, test.status, test.code)
+			}
+		})
+	}
+}
+
+func resourcePolicyCandidate(t *testing.T, request compilation.Request) policypublication.Candidate {
+	t.Helper()
+	intent := request.Rules()[0]
+	destinationNodeID, err := node.ParseID("01890f00-0000-7000-8000-000000000302")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err := policy.NewRule(policy.RuleParams{
+		ID: intent.ID(), Scope: intent.Scope(), SourceNodeID: intent.SourceNodeID(),
+		DestinationNodeID: destinationNodeID, Protocol: intent.Protocol(),
+		DestinationPortRanges: intent.DestinationPortRanges(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope: request.Scope(), Revision: request.Revision(), Rules: []policy.Rule{rule},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceHash, err := resource.NewSemanticHash(sha256.Sum256([]byte("management Resource fixture")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination, err := policypublication.NewResourceDestination(
+		policypublication.ResourceDestinationParams{
+			RuleID: intent.ID(), Scope: intent.Scope(), ResourceID: intent.DestinationResourceID(),
+			ResourceVersion: 3, TargetGeneration: 2, InventoryRevision: 8,
+			DestinationNodeID: destinationNodeID, ResourceSemanticHash: resourceHash,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := policypublication.NewCandidateWithResourceDestinations(
+		snapshot,
+		[]policypublication.ResourceDestination{destination},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return candidate
+}
+
+func managementResourceID() string { return "01890f00-0000-7000-8000-000000000601" }
 
 func validPolicyPublishPath() string {
 	return "/api/v1/workspaces/" + managementWorkspaceID() + "/networks/" +

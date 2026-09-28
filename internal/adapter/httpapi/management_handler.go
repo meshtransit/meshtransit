@@ -20,6 +20,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
+	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
@@ -76,6 +77,15 @@ type DeviceRevoker interface {
 // PolicyPublisher atomically activates one Account-Session-bound compiled policy.
 type PolicyPublisher interface {
 	Publish(context.Context, policypublication.Command) (policypublication.Result, error)
+}
+
+// PolicyCompiler resolves typed destinations into an immutable compiled candidate.
+type PolicyCompiler interface {
+	Compile(
+		context.Context,
+		accountsession.Session,
+		compilation.Request,
+	) (policypublication.Candidate, error)
 }
 
 // ResourceCreator atomically creates Resource and Resource Group authority.
@@ -140,6 +150,7 @@ type ManagementHandlerOptions struct {
 	Sessions                  AccountSessionAuthenticator
 	Revocations               DeviceRevoker
 	PolicyPublications        PolicyPublisher
+	PolicyCompilations        PolicyCompiler
 	ResourceCreations         ResourceCreator
 	ResourceLifecycles        ResourceLifecycle
 	ResourceRebindings        ResourceRebinder
@@ -163,6 +174,7 @@ type ManagementHandler struct {
 	sessions                  AccountSessionAuthenticator
 	revocations               DeviceRevoker
 	policies                  PolicyPublisher
+	policyCompiler            PolicyCompiler
 	resourceCreations         ResourceCreator
 	resourceLifecycles        ResourceLifecycle
 	resourceRebindings        ResourceRebinder
@@ -185,6 +197,7 @@ type ManagementHandler struct {
 // NewManagementHandler constructs a bounded, fail-closed management API handler.
 func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler, error) {
 	if options.Sessions == nil || options.Revocations == nil || options.PolicyPublications == nil ||
+		options.PolicyCompilations == nil ||
 		options.Idempotency == nil ||
 		options.RateLimitSubjects == nil || options.RateLimiter == nil ||
 		!options.SourceRateLimit.IsValid() || !options.SessionRateLimit.IsValid() ||
@@ -207,6 +220,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		sessions:                  options.Sessions,
 		revocations:               options.Revocations,
 		policies:                  options.PolicyPublications,
+		policyCompiler:            options.PolicyCompilations,
 		resourceCreations:         options.ResourceCreations,
 		resourceLifecycles:        options.ResourceLifecycles,
 		resourceRebindings:        options.ResourceRebindings,
@@ -241,6 +255,7 @@ func (handler *ManagementHandler) serveHTTP(
 ) {
 	if handler == nil || response == nil || request == nil || request.URL == nil ||
 		handler.sessions == nil || handler.revocations == nil || handler.policies == nil ||
+		handler.policyCompiler == nil ||
 		handler.idempotency == nil ||
 		handler.rateSubjects == nil || handler.rateLimiter == nil ||
 		!handler.sourcePolicy.IsValid() || !handler.sessionPolicy.IsValid() ||

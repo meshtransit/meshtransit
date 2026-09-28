@@ -132,12 +132,13 @@ IDs, and unrelated object existence never enter the response.
 ## Residual limits and next order
 
 This engineering slice does not claim production availability, HA, failover,
-multi-replica load behavior, SLO attainment, or GA. It does not implement an
-Access Graph or consume Resource Groups in packet-policy compilation.
+multi-replica load behavior, SLO attainment, or GA. M2b1 now consumes active
+Device Resources in packet-policy compilation, but no Access Graph or Resource
+Group policy expansion is implemented here.
 
 Next order in the original Phase 2 roadmap:
 
-1. M2b Resource and Resource Group destination compilation, building on the
-   qualified M2a Device-to-Device TCP/UDP publication path.
+1. M2b2 Resource Group destination compilation, building on the qualified M2a
+   Device-to-Device and M2b1 Device Resource publication paths.
 2. M4 Access Graph references, explanations, simulation, and verification.
 3. M5 client projection from stable Resource authority.
