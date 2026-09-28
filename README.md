@@ -32,8 +32,12 @@ and ten-minute pending requests. M4a adds bounded, revision-bound explanation
 of exact `network.connect` decisions from active compiled policy and its Device,
 Resource, or Resource Group provenance. These slices use fresh
 exact-scope authorization, strong revision preconditions, durable idempotency,
-and safe errors. No Resource Console UI, graph database, draft simulation,
-human approval workflow, or second policy evaluator is introduced.
+and safe errors. M4b1 adds a read-only, compiler-identical simulation domain
+kernel with complete revision-vector stability checks, exact before/after
+packet and explanation diffs, bounded disclosure, and a full-evidence impact
+hash. No Resource Console UI, graph database, simulation management endpoint,
+PostgreSQL simulation reader, human approval workflow, or second policy
+evaluator is introduced.
 Design, security boundaries, acceptance evidence, and explicit non-claims are
 recorded in the
 [Phase 2 M1 Resource authority design](docs/design/phase2-m1-resource-authority.md)
@@ -81,7 +85,11 @@ and
 plus the
 [M4a Access Graph policy explanation design](docs/design/phase2-m4a-access-graph-policy-explanation.md)
 and
-[M4a acceptance matrix](docs/qualification/phase2-m4a-access-graph-policy-explanation-2026-09-29.md).
+[M4a acceptance matrix](docs/qualification/phase2-m4a-access-graph-policy-explanation-2026-09-29.md),
+plus the
+[M4b1 policy simulation domain design](docs/design/phase2-m4b1-policy-simulation-domain.md)
+and
+[M4b1 acceptance matrix](docs/qualification/phase2-m4b1-policy-simulation-domain-2026-09-29.md).
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,

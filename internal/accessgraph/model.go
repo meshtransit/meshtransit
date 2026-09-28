@@ -349,6 +349,17 @@ func (snapshot Snapshot) IsValid() bool {
 // Scope returns the exact graph scope.
 func (snapshot Snapshot) Scope() network.Scope { return snapshot.scope }
 
+// RevisionVector returns the complete authority state used by this snapshot.
+func (snapshot Snapshot) RevisionVector() RevisionVector {
+	vector, _ := NewRevisionVector(RevisionVectorParams{
+		NetworkRevision: snapshot.networkRevision, InventoryRevision: snapshot.inventoryRevision,
+		GroupRevision: snapshot.groupRevision, PolicyRevision: snapshot.policyRevision,
+		DNSRevision: snapshot.dnsRevision, RouteRevision: snapshot.routeRevision,
+		SharingRevision: snapshot.sharingRevision, IsolationGeneration: snapshot.isolationGeneration,
+	})
+	return vector
+}
+
 // NetworkRevision returns the authority revision observed by the read.
 func (snapshot Snapshot) NetworkRevision() int64 { return snapshot.networkRevision }
 
