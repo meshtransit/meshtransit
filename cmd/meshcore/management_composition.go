@@ -142,6 +142,7 @@ func composeManagementAPIWithKeys(
 			StatementTimeout: managementStatementTimeout,
 			LockTimeout:      managementLockTimeout,
 			IdleTimeout:      managementTransactionIdle,
+			ApprovalMode:     postgresadapter.PolicyPublicationApprovalModeRequired,
 		},
 	)
 	if err != nil {

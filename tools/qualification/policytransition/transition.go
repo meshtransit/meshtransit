@@ -65,6 +65,7 @@ func executeTransition(
 			LockTimeout:       2 * time.Second,
 			IdleTimeout:       10 * time.Second,
 			AllowTrustedActor: true,
+			ApprovalMode:      postgresadapter.PolicyPublicationApprovalModeQualificationBypass,
 		},
 	)
 	if err != nil {

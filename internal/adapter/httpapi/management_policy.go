@@ -23,8 +23,9 @@ import (
 const maximumPolicyPublicationBodyBytes = 8 * 1024 * 1024
 
 type publishPolicyRequest struct {
-	Reason string                     `json:"reason"`
-	Rules  []publishPolicyRuleRequest `json:"rules"`
+	Reason             string                     `json:"reason"`
+	ApprovalEvidenceID string                     `json:"approval_evidence_id"`
+	Rules              []publishPolicyRuleRequest `json:"rules"`
 }
 
 type publishPolicyRuleRequest struct {
@@ -101,9 +102,10 @@ func (handler *ManagementHandler) publishPolicy(ctx context.Context, input manag
 		writeManagementError(ctx, handler.logger, response, correlationID, classified)
 		return classified.Code
 	}
-	command, err := policypublication.NewManagementCommand(policypublication.ManagementCommandParams{
+	command, err := policypublication.NewApprovedManagementCommand(policypublication.ManagementCommandParams{
 		Candidate: candidate, BasePolicyRevision: decoded.baseRevision,
-		AccountSession: session, AuditReason: decoded.reason,
+		AccountSession: session, ApprovalEvidenceID: decoded.approvalEvidenceID,
+		AuditReason: decoded.reason,
 	})
 	if err != nil {
 		apiError := invalidManagementRequest()
@@ -141,9 +143,10 @@ func (handler *ManagementHandler) publishPolicy(ctx context.Context, input manag
 }
 
 type decodedPolicyPublication struct {
-	request      compilation.Request
-	baseRevision int64
-	reason       policypublication.AuditReason
+	request            compilation.Request
+	baseRevision       int64
+	reason             policypublication.AuditReason
+	approvalEvidenceID policypublication.ApprovalEvidenceID
 }
 
 func decodePolicyPublicationRequest(
@@ -188,6 +191,10 @@ func decodePolicyPublicationRequest(
 		}
 		rules[index] = rule
 	}
+	approvalEvidenceID, err := policypublication.ParseApprovalEvidenceID(body.ApprovalEvidenceID)
+	if err != nil {
+		return decodedPolicyPublication{}, invalidManagementRequest()
+	}
 	compilationRequest, err := compilation.NewRequest(compilation.RequestParams{
 		Scope: scope, Revision: baseRevision + 1, Rules: rules,
 	})
@@ -196,6 +203,7 @@ func decodePolicyPublicationRequest(
 	}
 	return decodedPolicyPublication{
 		request: compilationRequest, baseRevision: baseRevision, reason: reason,
+		approvalEvidenceID: approvalEvidenceID,
 	}, nil
 }
 
@@ -301,6 +309,12 @@ func classifyPolicyPublicationError(err error) managementError {
 		return managementError{
 			Status: http.StatusPreconditionFailed, Code: "precondition_failed",
 			Message: "the Policy revision precondition is stale",
+		}
+	case errors.Is(err, policypublication.ErrApprovalRequired),
+		errors.Is(err, policypublication.ErrApprovalUnavailable):
+		return managementError{
+			Status: http.StatusConflict, Code: "approval_conflict",
+			Message: "approval evidence is stale, expired, consumed, or unavailable",
 		}
 	case errors.Is(err, context.Canceled), errors.Is(err, policypublication.ErrRetryableTransaction),
 		errors.Is(err, policypublication.ErrCommitOutcomeUnknown),

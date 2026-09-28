@@ -43,8 +43,12 @@ Account Session requirements. M4c2a adds PostgreSQL-authoritative retained
 request and immutable decision evidence, exact-scope `policy.validate` and
 `policy.approve` transaction adapters, durable idempotency, audit/outbox,
 commit replay, forced RLS, least-privilege functions, and bounded metrics. No
-Resource Console UI, graph database, approval management API, publication
-gate/consumption, or second policy evaluator is introduced by M4c2a.
+Resource Console UI, graph database, approval management API, or second policy
+evaluator is introduced by M4c2a. M4c2b makes approved Evidence mandatory for
+production management publication, freshly revalidates `policy.approve` and
+the complete eight-field authority vector, consumes Evidence atomically with
+the Policy Release, and exposes the Evidence ID in the existing publish wire
+contract. Proposal and decision management endpoints remain a later slice.
 Design, security boundaries, acceptance evidence, and explicit non-claims are
 recorded in the
 [Phase 2 M1 Resource authority design](docs/design/phase2-m1-resource-authority.md)
@@ -108,7 +112,11 @@ and
 plus the
 [M4c2a policy approval persistence design](docs/design/phase2-m4c2a-policy-approval-persistence.md)
 and
-[M4c2a acceptance matrix](docs/qualification/phase2-m4c2a-policy-approval-persistence-2026-09-29.md).
+[M4c2a acceptance matrix](docs/qualification/phase2-m4c2a-policy-approval-persistence-2026-09-29.md),
+plus the
+[M4c2b approval publication gate design](docs/design/phase2-m4c2b-policy-approval-publication-gate.md)
+and
+[M4c2b acceptance matrix](docs/qualification/phase2-m4c2b-policy-approval-publication-gate-2026-09-29.md).
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,

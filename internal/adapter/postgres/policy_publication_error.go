@@ -23,6 +23,8 @@ func classifyPolicyPublicationDatabaseError(ctx context.Context, err error) erro
 	switch postgresError.Code {
 	case "MT001":
 		return errors.Join(publication.ErrConflict, err)
+	case "MT003", "MT006", "MT008", "MT009", "MT011", "42501":
+		return errors.Join(publication.ErrApprovalUnavailable, err)
 	case "40001", "40P01", "55P03":
 		return errors.Join(publication.ErrRetryableTransaction, err)
 	default:

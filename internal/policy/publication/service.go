@@ -155,7 +155,7 @@ func (service *Service) attempt(
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve policy publication under lock: %w", err)
 	}
-	if err := validateResolution(command, resolution); err != nil {
+	if err := validateResolution(command, resolution, now); err != nil {
 		return Result{}, err
 	}
 	change, err := NewChange(ChangeParams{
@@ -181,12 +181,15 @@ func (service *Service) attempt(
 	return result, nil
 }
 
-func validateResolution(command Command, resolution Resolution) error {
+func validateResolution(command Command, resolution Resolution, evaluatedAt time.Time) error {
 	if !resolution.IsValid() || resolution.Scope() != command.Candidate().Snapshot().Scope() {
 		return ErrInvalidResolution
 	}
 	if resolution.PolicyRevision() != command.BasePolicyRevision() {
 		return ErrConflict
+	}
+	if !approvalGateMatchesCommand(command, resolution, evaluatedAt) {
+		return ErrApprovalUnavailable
 	}
 	return nil
 }

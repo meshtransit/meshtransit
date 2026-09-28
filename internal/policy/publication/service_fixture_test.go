@@ -270,10 +270,17 @@ func publicationResolutionFixture(
 	policyRevision int64,
 ) publication.Resolution {
 	t.Helper()
+	vector, err := publication.NewAuthorityVector(publication.AuthorityVectorParams{
+		NetworkRevision: networkRevision, InventoryRevision: 1, GroupRevision: 1,
+		PolicyRevision: policyRevision, DNSRevision: 1, RouteRevision: 1,
+		SharingRevision: 1, IsolationGeneration: 1,
+	})
+	if err != nil {
+		t.Fatalf("publication.NewAuthorityVector() error = %v", err)
+	}
 	params := publication.ResolutionParams{
 		Scope:           command.Candidate().Snapshot().Scope(),
-		NetworkRevision: networkRevision,
-		PolicyRevision:  policyRevision,
+		AuthorityVector: vector,
 	}
 	if policyRevision > 1 {
 		params.ActiveReleaseID = publicationReleaseIDFixture(t, "000000000901")

@@ -46,6 +46,8 @@ func TestManagementHandlerPublishesPolicy(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
 	}
 	if !captured.IsValid() || !captured.HasAccountSession() ||
+		!captured.HasApprovalEvidence() ||
+		captured.ApprovalEvidenceID().String() != "01890f00-0000-7000-8000-000000000551" ||
 		captured.AccountSession().ID() != session.ID() ||
 		captured.ActorPrincipalID() != session.PrincipalID() ||
 		captured.BasePolicyRevision() != 1 ||
@@ -109,7 +111,8 @@ func TestManagementHandlerPublishesResourcePolicy(t *testing.T) {
 		t,
 		http.MethodPost,
 		validPolicyPublishPath(),
-		`{"reason":"allow database service","rules":[{`+
+		`{"reason":"allow database service",`+
+			`"approval_evidence_id":"01890f00-0000-7000-8000-000000000551","rules":[{`+
 			`"id":"01890f00-0000-7000-8000-000000000505",`+
 			`"source_device_id":"01890f00-0000-7000-8000-000000000301",`+
 			`"destination_resource_id":"`+managementResourceID()+`",`+
@@ -163,7 +166,8 @@ func TestManagementHandlerPublishesResourceGroupPolicy(t *testing.T) {
 		t,
 		http.MethodPost,
 		validPolicyPublishPath(),
-		`{"reason":"allow production services","rules":[{`+
+		`{"reason":"allow production services",`+
+			`"approval_evidence_id":"01890f00-0000-7000-8000-000000000551","rules":[{`+
 			`"id":"01890f00-0000-7000-8000-000000000505",`+
 			`"source_device_id":"01890f00-0000-7000-8000-000000000301",`+
 			`"destination_resource_group_id":"`+managementResourceGroupID()+`",`+
@@ -202,6 +206,16 @@ func TestManagementHandlerPolicyPublicationFailsClosed(t *testing.T) {
 		},
 		{
 			name: "nil rule set", body: `{"reason":"deny all","rules":null}`,
+			status: http.StatusBadRequest, code: "invalid_request",
+		},
+		{
+			name:   "missing approval evidence",
+			body:   `{"reason":"deny all","rules":[]}`,
+			status: http.StatusBadRequest, code: "invalid_request",
+		},
+		{
+			name:   "malformed approval evidence",
+			body:   `{"reason":"deny all","approval_evidence_id":"not-an-id","rules":[]}`,
 			status: http.StatusBadRequest, code: "invalid_request",
 		},
 		{
@@ -256,6 +270,10 @@ func TestManagementHandlerPolicyPublicationFailsClosed(t *testing.T) {
 		{
 			name: "stale revision", publishErr: policypublication.ErrConflict,
 			status: http.StatusPreconditionFailed, code: "precondition_failed", wantCall: true,
+		},
+		{
+			name: "approval conflict", publishErr: policypublication.ErrApprovalUnavailable,
+			status: http.StatusConflict, code: "approval_conflict", wantCall: true,
 		},
 		{
 			name: "publication unavailable", publishErr: policypublication.ErrRetryExhausted,
@@ -468,7 +486,8 @@ func validPolicyPublishPath() string {
 }
 
 func validPolicyPublishBody() string {
-	return `{"reason":"allow node health probes","rules":[` +
+	return `{"reason":"allow node health probes",` +
+		`"approval_evidence_id":"01890f00-0000-7000-8000-000000000551","rules":[` +
 		`{"id":"01890f00-0000-7000-8000-000000000501",` +
 		`"source_device_id":"01890f00-0000-7000-8000-000000000301",` +
 		`"destination_device_id":"01890f00-0000-7000-8000-000000000302",` +

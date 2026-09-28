@@ -224,10 +224,13 @@ func publishPolicyOverBrowserManagement(
 		rules = append(rules, input)
 	}
 	body, err := json.Marshal(struct {
-		Rules  []rule `json:"rules"`
-		Reason string `json:"reason"`
+		Rules              []rule `json:"rules"`
+		Reason             string `json:"reason"`
+		ApprovalEvidenceID string `json:"approval_evidence_id"`
 	}{
-		Rules: rules, Reason: command.AuditReason().String()})
+		Rules: rules, Reason: command.AuditReason().String(),
+		ApprovalEvidenceID: command.ApprovalEvidenceID().String(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

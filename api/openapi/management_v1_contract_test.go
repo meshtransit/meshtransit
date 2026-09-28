@@ -3,6 +3,7 @@ package openapi_test
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"testing"
 )
 
@@ -72,6 +73,17 @@ func TestManagementV1MutationContracts(t *testing.T) {
 		if _, ok := policyOperation.Post.Responses[status]; !ok {
 			t.Fatalf("Policy publish responses omit status %s", status)
 		}
+	}
+	var publishRequest struct {
+		Required   []string                   `json:"required"`
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(document.Components.Schemas["PublishPolicyRequest"], &publishRequest); err != nil {
+		t.Fatalf("decode PublishPolicyRequest: %v", err)
+	}
+	if publishRequest.Properties["approval_evidence_id"] == nil ||
+		!slices.Contains(publishRequest.Required, "approval_evidence_id") {
+		t.Fatal("Policy publication does not require immutable approval evidence")
 	}
 	const explainPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/access-graph/actions/explain"
 	explainOperation, ok := document.Paths[explainPath]

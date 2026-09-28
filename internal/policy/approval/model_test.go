@@ -171,6 +171,69 @@ func TestApprovalStateParsingIsClosed(t *testing.T) {
 	}
 }
 
+func TestPublicMutationIDGeneratorReturnsValidDistinctIDs(t *testing.T) {
+	t.Parallel()
+
+	generator := approval.PublicMutationIDGenerator{}
+	binding := approvalBindingFixture(t)
+	requestCommand, err := approval.NewRequestCommand(
+		binding,
+		approvalSessionFixture(t, 401, 811),
+		approvalReasonFixture(t, "request production policy approval"),
+		approvalProofFixture(t, 1),
+	)
+	if err != nil {
+		t.Fatalf("NewRequestCommand() error = %v", err)
+	}
+	decisionCommand := approvalCommandFixture(
+		t,
+		binding,
+		approvalSessionFixture(t, 402, 812),
+	)
+	requestIDs, err := generator.NewApprovalRequestMutationIDs(requestCommand)
+	if err != nil {
+		t.Fatalf("NewApprovalRequestMutationIDs() error = %v", err)
+	}
+	decisionIDs, err := generator.NewPolicyApprovalMutationIDs(decisionCommand)
+	if err != nil {
+		t.Fatalf("NewPolicyApprovalMutationIDs() error = %v", err)
+	}
+	if !requestIDs.IsValid() || !decisionIDs.IsValid() {
+		t.Fatalf("generated IDs request=%+v decision=%+v", requestIDs, decisionIDs)
+	}
+	values := []string{
+		requestIDs.RequestID().String(),
+		requestIDs.ChangeID().String(),
+		requestIDs.IdempotencyRecordID().String(),
+		requestIDs.AuditEventID().String(),
+		requestIDs.OutboxEventID().String(),
+		decisionIDs.EvidenceID().String(),
+		decisionIDs.ChangeID().String(),
+		decisionIDs.IdempotencyRecordID().String(),
+		decisionIDs.AuditEventID().String(),
+		decisionIDs.OutboxEventID().String(),
+	}
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if _, duplicate := seen[value]; duplicate {
+			t.Fatalf("generated duplicate public ID %s", value)
+		}
+		seen[value] = struct{}{}
+	}
+	if _, err := generator.NewApprovalRequestMutationIDs(approval.RequestCommand{}); !errors.Is(
+		err,
+		approval.ErrInvalidRequestMutationIDs,
+	) {
+		t.Fatalf("invalid request command error = %v, want ErrInvalidRequestMutationIDs", err)
+	}
+	if _, err := generator.NewPolicyApprovalMutationIDs(approval.Command{}); !errors.Is(
+		err,
+		approval.ErrInvalidApprovalMutationIDs,
+	) {
+		t.Fatalf("invalid approval command error = %v, want ErrInvalidApprovalMutationIDs", err)
+	}
+}
+
 func approvalBindingFixture(t *testing.T) approval.Binding {
 	t.Helper()
 	baseline := approvalVectorFixture(t, 11, 7, 8, 6)

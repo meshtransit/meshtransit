@@ -17,6 +17,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/policy/approval"
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	publication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/resource"
@@ -171,13 +172,6 @@ LIMIT 1`).Scan(
 	if err != nil {
 		t.Fatalf("construct Resource policy reason: %v", err)
 	}
-	resourcePublication, err := publication.NewManagementCommand(publication.ManagementCommandParams{
-		Candidate: resourceCandidate, BasePolicyRevision: 3,
-		AccountSession: session, AuditReason: resourceReason,
-	})
-	if err != nil {
-		t.Fatalf("construct Resource policy publication: %v", err)
-	}
 	service := newIntegrationManagementPolicyPublicationService(t, runtimePool)
 	if _, err := service.Publish(ctx, trusted); !errors.Is(err, publication.ErrForbidden) {
 		t.Fatalf("trusted command through management publisher error = %v, want ErrForbidden", err)
@@ -207,6 +201,12 @@ LIMIT 1`).Scan(
 	if compiledResourceCandidate.SemanticHash() != resourceCandidate.SemanticHash() {
 		t.Fatal("PostgreSQL Resource compilation changed exact pinned candidate")
 	}
+	resourceApproval := approveIntegrationPolicyCandidate(
+		ctx, t, runtimePool, resourceCompilation, session, 201,
+	)
+	resourcePublication := newApprovedIntegrationManagementCommand(
+		t, resourceCandidate, 3, session, resourceReason, resourceApproval,
+	)
 	resourcePublished := publishPolicyOverBrowserManagement(
 		ctx,
 		t,
@@ -219,6 +219,9 @@ LIMIT 1`).Scan(
 		resourcePublished.SemanticHash() != resourceCandidate.SemanticHash() {
 		t.Fatalf("Resource policy publication = %+v", resourcePublished)
 	}
+	assertConsumedPolicyApproval(
+		ctx, t, adminConnection, resourceApproval, resourcePublished,
+	)
 	assertCommittedPolicyResourceDestination(
 		ctx,
 		t,
@@ -241,13 +244,18 @@ LIMIT 1`).Scan(
 	if err != nil {
 		t.Fatalf("construct management policy audit reason: %v", err)
 	}
-	command, err := publication.NewManagementCommand(publication.ManagementCommandParams{
-		Candidate: candidate, BasePolicyRevision: 4,
-		AccountSession: session, AuditReason: reason,
+	denyCompilation, err := compilation.NewRequest(compilation.RequestParams{
+		Scope: scope, Revision: 5, Rules: []compilation.RuleIntent{},
 	})
 	if err != nil {
-		t.Fatalf("construct management policy command: %v", err)
+		t.Fatalf("construct deny-all compilation request: %v", err)
 	}
+	denyApproval := approveIntegrationPolicyCandidate(
+		ctx, t, runtimePool, denyCompilation, session, 203,
+	)
+	command := newApprovedIntegrationManagementCommand(
+		t, candidate, 4, session, reason, denyApproval,
+	)
 	result := publishPolicyOverBrowserManagement(
 		ctx,
 		t,
@@ -263,6 +271,7 @@ LIMIT 1`).Scan(
 			baseNetworkRevision+2,
 		)
 	}
+	assertConsumedPolicyApproval(ctx, t, adminConnection, denyApproval, result)
 	var evidenceCount int
 	if err := adminConnection.QueryRow(ctx, `SELECT pg_catalog.count(*)::INTEGER
 FROM mesh_audit.audit_event
@@ -330,13 +339,32 @@ WHERE workspace_id = 103 AND network_id = 203
 	if err != nil {
 		t.Fatalf("construct restore audit reason: %v", err)
 	}
-	restoreCommand, err := publication.NewManagementCommand(publication.ManagementCommandParams{
-		Candidate: restoreCandidate, BasePolicyRevision: 5,
-		AccountSession: session, AuditReason: restoreReason,
+	restoreIntents := make([]compilation.RuleIntent, 0, len(restoreSnapshot.Rules()))
+	for _, restoreRule := range restoreSnapshot.Rules() {
+		intent, intentErr := compilation.NewRuleIntent(compilation.RuleIntentParams{
+			ID: restoreRule.ID(), Scope: scope,
+			SourceNodeID:          restoreRule.SourceNodeID(),
+			DestinationNodeID:     restoreRule.DestinationNodeID(),
+			Protocol:              restoreRule.Protocol(),
+			DestinationPortRanges: restoreRule.DestinationPortRanges(),
+		})
+		if intentErr != nil {
+			t.Fatalf("construct restore Policy intent: %v", intentErr)
+		}
+		restoreIntents = append(restoreIntents, intent)
+	}
+	restoreCompilation, err := compilation.NewRequest(compilation.RequestParams{
+		Scope: scope, Revision: 6, Rules: restoreIntents,
 	})
 	if err != nil {
-		t.Fatalf("construct restore management command: %v", err)
+		t.Fatalf("construct restore Policy compilation request: %v", err)
 	}
+	restoreApproval := approveIntegrationPolicyCandidate(
+		ctx, t, runtimePool, restoreCompilation, session, 205,
+	)
+	restoreCommand := newApprovedIntegrationManagementCommand(
+		t, restoreCandidate, 5, session, restoreReason, restoreApproval,
+	)
 	restored := publishPolicyOverBrowserManagement(ctx, t, runtimePool, service, restoreCommand)
 	if restored.PolicyRevision() != 6 || restored.NetworkRevision() != baseNetworkRevision+3 ||
 		restored.SemanticHash() != restoreCandidate.SemanticHash() {
@@ -346,6 +374,7 @@ WHERE workspace_id = 103 AND network_id = 203
 			baseNetworkRevision+3,
 		)
 	}
+	assertConsumedPolicyApproval(ctx, t, adminConnection, restoreApproval, restored)
 	clientSnapshot, err := newPeerCandidateStore(t, runtimePool, 8).Load(ctx, identityValue)
 	if err != nil {
 		t.Fatalf("load restored client projection: %v", err)
@@ -363,8 +392,13 @@ WHERE workspace_id = 103 AND network_id = 203
 			len(clientSnapshot.AuthorizedPeers()),
 		)
 	}
-	if _, err := service.Publish(ctx, command); !errors.Is(err, publication.ErrConflict) {
-		t.Fatalf("stale deny-all publication error = %v, want ErrConflict", err)
+	if _, err := service.Publish(ctx, command); !errors.Is(
+		err, publication.ErrApprovalUnavailable,
+	) {
+		t.Fatalf(
+			"consumed deny-all approval reuse error = %v, want ErrApprovalUnavailable",
+			err,
+		)
 	}
 	var tcpCount, udpCount int
 	if err := adminConnection.QueryRow(ctx, `SELECT
@@ -509,6 +543,9 @@ func assertPostgreSQLResourceGroupPolicyPublication(
 		len(staleCandidate.Snapshot().Rules()) != 1 {
 		t.Fatalf("compiled Resource Group candidate = %+v", staleCandidate)
 	}
+	staleApproval := approveIntegrationPolicyCandidate(
+		ctx, t, runtimePool, request, session, 207,
+	)
 
 	lifecycle := newIntegrationResourceLifecycleService(t, runtimePool)
 	suspend, err := authority.NewGroupLifecycleCommand(
@@ -531,16 +568,18 @@ func assertPostgreSQLResourceGroupPolicyPublication(
 	if err != nil {
 		t.Fatalf("construct stale Resource Group reason: %v", err)
 	}
-	staleCommand, err := publication.NewManagementCommand(publication.ManagementCommandParams{
-		Candidate: staleCandidate, BasePolicyRevision: active.PolicyRevision(),
-		AccountSession: session, AuditReason: staleReason,
-	})
-	if err != nil {
-		t.Fatalf("construct stale Resource Group publication: %v", err)
+	staleCommand := newApprovedIntegrationManagementCommand(
+		t, staleCandidate, active.PolicyRevision(), session, staleReason, staleApproval,
+	)
+	if _, err := service.Publish(ctx, staleCommand); !errors.Is(
+		err, publication.ErrApprovalUnavailable,
+	) {
+		t.Fatalf(
+			"stale Resource Group publication error = %v, want ErrApprovalUnavailable",
+			err,
+		)
 	}
-	if _, err := service.Publish(ctx, staleCommand); !errors.Is(err, publication.ErrConflict) {
-		t.Fatalf("stale Resource Group publication error = %v, want ErrConflict", err)
-	}
+	assertUnconsumedPolicyApproval(ctx, t, adminConnection, staleApproval)
 	var activeReleaseID string
 	var activePolicyRevision int64
 	if err := adminConnection.QueryRow(ctx, `SELECT public_id::TEXT, policy_revision
@@ -587,13 +626,12 @@ WHERE workspace_id = 103 AND network_id = 203 AND state = 'active'`).Scan(
 	if err != nil {
 		t.Fatalf("construct Resource Group policy reason: %v", err)
 	}
-	command, err := publication.NewManagementCommand(publication.ManagementCommandParams{
-		Candidate: candidate, BasePolicyRevision: active.PolicyRevision(),
-		AccountSession: session, AuditReason: reason,
-	})
-	if err != nil {
-		t.Fatalf("construct Resource Group policy publication: %v", err)
-	}
+	approvalEvidence := approveIntegrationPolicyCandidate(
+		ctx, t, runtimePool, request, session, 209,
+	)
+	command := newApprovedIntegrationManagementCommand(
+		t, candidate, active.PolicyRevision(), session, reason, approvalEvidence,
+	)
 	var networkRevision int64
 	if err := adminConnection.QueryRow(ctx, `SELECT network_revision
 FROM mesh_ops.network_revision
@@ -606,6 +644,7 @@ WHERE workspace_id = 103 AND network_id = 203`).Scan(&networkRevision); err != n
 		published.SemanticHash() != candidate.SemanticHash() {
 		t.Fatalf("Resource Group policy publication = %+v", published)
 	}
+	assertConsumedPolicyApproval(ctx, t, adminConnection, approvalEvidence, published)
 	assertCommittedPolicyResourceGroupDestination(
 		ctx, t, adminConnection, published, candidate.ResourceGroupDestinations()[0],
 	)
@@ -815,6 +854,7 @@ func newIntegrationPolicyPublicationService(
 			LockTimeout:       2 * time.Second,
 			IdleTimeout:       10 * time.Second,
 			AllowTrustedActor: true,
+			ApprovalMode:      postgresadapter.PolicyPublicationApprovalModeQualificationBypass,
 		},
 	)
 	if err != nil {
@@ -851,6 +891,7 @@ func newIntegrationManagementPolicyPublicationService(
 			StatementTimeout: 5 * time.Second,
 			LockTimeout:      2 * time.Second,
 			IdleTimeout:      10 * time.Second,
+			ApprovalMode:     postgresadapter.PolicyPublicationApprovalModeRequired,
 		},
 	)
 	if err != nil {
@@ -872,6 +913,219 @@ func newIntegrationManagementPolicyPublicationService(
 		t.Fatalf("publication.NewService() error = %v", err)
 	}
 	return service
+}
+
+func newIntegrationPolicyApprovalService(
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+) *approval.Service {
+	t.Helper()
+	store, err := postgresadapter.NewPolicyApprovalStore(
+		runtimePool,
+		postgresadapter.PolicyApprovalOptions{
+			StatementTimeout: 5 * time.Second,
+			LockTimeout:      2 * time.Second,
+			IdleTimeout:      10 * time.Second,
+		},
+	)
+	if err != nil {
+		t.Fatalf("postgres.NewPolicyApprovalStore() error = %v", err)
+	}
+	retry, err := publication.NewExponentialBackoff(time.Millisecond, 5*time.Millisecond)
+	if err != nil {
+		t.Fatalf("publication.NewExponentialBackoff() error = %v", err)
+	}
+	service, err := approval.NewService(
+		approval.Options{
+			MaxAttempts: 3, RollbackTimeout: 2 * time.Second,
+			IdempotencyWindow: time.Hour,
+		},
+		approval.Dependencies{
+			Simulator:           newIntegrationPolicySimulator(t, runtimePool),
+			RequestTransactions: store, CommittedRequests: store,
+			ApprovalTransactions: store, CommittedApprovals: store,
+			MutationIDs: approval.PublicMutationIDGenerator{},
+			Clock:       approval.SystemClock{}, Retry: retry,
+		},
+	)
+	if err != nil {
+		t.Fatalf("approval.NewService() error = %v", err)
+	}
+	return service
+}
+
+func approveIntegrationPolicyCandidate(
+	ctx context.Context,
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+	request compilation.Request,
+	proposer accountsession.Session,
+	proofSuffix byte,
+) approval.Result {
+	t.Helper()
+	simulator := newIntegrationPolicySimulator(t, runtimePool)
+	simulated, err := simulator.Simulate(ctx, proposer, request)
+	if err != nil {
+		t.Fatalf("simulate Policy approval candidate: %v", err)
+	}
+	requestReason, err := approval.NewAuditReason("request independent integration policy approval")
+	if err != nil {
+		t.Fatalf("construct Policy approval request reason: %v", err)
+	}
+	intent, err := approval.NewRequestIntent(approval.RequestIntentParams{
+		CompilationRequest:    request,
+		CandidateSemanticHash: simulated.ProposedCandidate().SemanticHash(),
+		ImpactHash:            simulated.ImpactHash(), AccountSession: proposer,
+		AuditReason:         requestReason,
+		IdempotencyEvidence: resourceAuthorityProof(t, proofSuffix),
+	})
+	if err != nil {
+		t.Fatalf("construct Policy approval request intent: %v", err)
+	}
+	service := newIntegrationPolicyApprovalService(t, runtimePool)
+	requested, err := service.Request(ctx, intent)
+	if err != nil {
+		t.Fatalf("request independent Policy approval: %v", err)
+	}
+	decisionReason, err := approval.NewAuditReason("approve unchanged integration policy impact")
+	if err != nil {
+		t.Fatalf("construct Policy approval decision reason: %v", err)
+	}
+	command, err := approval.NewCommand(approval.CommandParams{
+		Scope: requested.Scope(), RequestID: requested.RequestID(),
+		ExpectedRequestVersion: requested.RequestVersion(),
+		CandidateSemanticHash:  requested.Binding().CandidateSemanticHash(),
+		ImpactHash:             requested.Binding().ImpactHash(),
+		AccountSession:         authorityConfirmerAccountSessionFixture(t),
+		AuditReason:            decisionReason,
+		IdempotencyEvidence:    resourceAuthorityProof(t, proofSuffix+1),
+	})
+	if err != nil {
+		t.Fatalf("construct independent Policy approval command: %v", err)
+	}
+	approved, err := service.Approve(ctx, command)
+	if err != nil {
+		t.Fatalf("approve unchanged Policy candidate: %v", err)
+	}
+	if !approved.IsValid() || approved.RequestID() != requested.RequestID() ||
+		approved.Binding().CandidateSemanticHash() != simulated.ProposedCandidate().SemanticHash() {
+		t.Fatalf("Policy approval evidence = %+v", approved)
+	}
+	return approved
+}
+
+func newApprovedIntegrationManagementCommand(
+	t *testing.T,
+	candidate publication.Candidate,
+	basePolicyRevision int64,
+	session accountsession.Session,
+	reason publication.AuditReason,
+	evidence approval.Result,
+) publication.Command {
+	t.Helper()
+	evidenceID, err := publication.ParseApprovalEvidenceID(evidence.EvidenceID().String())
+	if err != nil {
+		t.Fatalf("parse publication approval evidence ID: %v", err)
+	}
+	command, err := publication.NewApprovedManagementCommand(publication.ManagementCommandParams{
+		Candidate: candidate, BasePolicyRevision: basePolicyRevision,
+		AccountSession: session, ApprovalEvidenceID: evidenceID, AuditReason: reason,
+	})
+	if err != nil {
+		t.Fatalf("construct approved management Policy command: %v", err)
+	}
+	return command
+}
+
+func assertConsumedPolicyApproval(
+	ctx context.Context,
+	t *testing.T,
+	adminConnection *pgx.Conn,
+	evidence approval.Result,
+	published publication.Result,
+) {
+	t.Helper()
+	var count int
+	if err := adminConnection.QueryRow(ctx, `SELECT pg_catalog.count(*)::INTEGER
+FROM mesh.policy_approval_request AS request
+JOIN mesh.policy_approval_evidence AS evidence
+  ON evidence.workspace_id = request.workspace_id
+ AND evidence.network_id = request.network_id
+ AND evidence.request_id = request.id
+JOIN mesh.policy_release AS release
+  ON release.workspace_id = request.workspace_id
+ AND release.network_id = request.network_id
+ AND release.id = request.consumed_policy_release_id
+ AND release.policy_revision = request.consumed_policy_revision
+JOIN mesh.principal AS proposer
+  ON proposer.deployment_id = request.deployment_id
+ AND proposer.id = request.proposer_principal_id
+JOIN mesh.principal AS approver
+  ON approver.deployment_id = evidence.deployment_id
+ AND approver.id = evidence.approver_principal_id
+WHERE request.public_id = $1::UUID
+  AND evidence.public_id = $2::UUID
+  AND release.public_id = $3::UUID
+  AND request.state = 'consumed'
+  AND request.version = 3
+  AND request.approval_count = 1
+  AND request.consumed_policy_revision = $4::BIGINT
+  AND request.consumed_at >= evidence.approved_at
+  AND evidence.request_version = 2
+  AND evidence.version = 1
+  AND proposer.public_id = '01890f00-0000-7000-8000-000000000011'::UUID
+  AND approver.public_id = $5::UUID`,
+		evidence.RequestID().String(),
+		evidence.EvidenceID().String(),
+		published.ReleaseID().String(),
+		published.PolicyRevision(),
+		integrationAuthorityConfirmerID,
+	).Scan(&count); err != nil {
+		t.Fatalf("query consumed Policy approval evidence: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf(
+			"consumed Policy approval evidence %s count = %d, want 1",
+			evidence.EvidenceID().String(),
+			count,
+		)
+	}
+}
+
+func assertUnconsumedPolicyApproval(
+	ctx context.Context,
+	t *testing.T,
+	adminConnection *pgx.Conn,
+	evidence approval.Result,
+) {
+	t.Helper()
+	var count int
+	if err := adminConnection.QueryRow(ctx, `SELECT pg_catalog.count(*)::INTEGER
+FROM mesh.policy_approval_request AS request
+JOIN mesh.policy_approval_evidence AS evidence
+  ON evidence.workspace_id = request.workspace_id
+ AND evidence.network_id = request.network_id
+ AND evidence.request_id = request.id
+WHERE request.public_id = $1::UUID
+  AND evidence.public_id = $2::UUID
+  AND request.state = 'approved'
+  AND request.version = 2
+  AND request.approval_count = 1
+  AND request.consumed_at IS NULL
+  AND request.consumed_policy_release_id IS NULL
+  AND request.consumed_policy_revision IS NULL`,
+		evidence.RequestID().String(),
+		evidence.EvidenceID().String(),
+	).Scan(&count); err != nil {
+		t.Fatalf("query unconsumed Policy approval evidence: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf(
+			"unconsumed Policy approval evidence %s count = %d, want 1",
+			evidence.EvidenceID().String(),
+			count,
+		)
+	}
 }
 
 func assertCommittedPolicyPublication(

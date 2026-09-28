@@ -64,6 +64,7 @@ type ManagementCommandParams struct {
 	Candidate          Candidate
 	BasePolicyRevision int64
 	AccountSession     accountsession.Session
+	ApprovalEvidenceID ApprovalEvidenceID
 	AuditReason        AuditReason
 }
 
@@ -73,6 +74,7 @@ type Command struct {
 	basePolicyRevision int64
 	actorPrincipalID   identity.PrincipalID
 	accountSession     accountsession.Session
+	approvalEvidenceID ApprovalEvidenceID
 	auditReason        AuditReason
 }
 
@@ -97,9 +99,19 @@ func NewManagementCommand(params ManagementCommandParams) (Command, error) {
 		basePolicyRevision: params.BasePolicyRevision,
 		actorPrincipalID:   params.AccountSession.PrincipalID(),
 		accountSession:     params.AccountSession,
+		approvalEvidenceID: params.ApprovalEvidenceID,
 		auditReason:        params.AuditReason,
 	}
 	if !command.IsValid() || !command.HasAccountSession() {
+		return Command{}, ErrInvalidCommand
+	}
+	return command, nil
+}
+
+// NewApprovedManagementCommand requires one immutable approval Evidence identity.
+func NewApprovedManagementCommand(params ManagementCommandParams) (Command, error) {
+	command, err := NewManagementCommand(params)
+	if err != nil || !command.HasApprovalEvidence() {
 		return Command{}, ErrInvalidCommand
 	}
 	return command, nil
@@ -120,6 +132,12 @@ func (command Command) AccountSession() accountsession.Session { return command.
 // HasAccountSession reports whether publication must prove live management authority.
 func (command Command) HasAccountSession() bool { return command.accountSession.IsValid() }
 
+// ApprovalEvidenceID returns the immutable decision selected for single-use consumption.
+func (command Command) ApprovalEvidenceID() ApprovalEvidenceID { return command.approvalEvidenceID }
+
+// HasApprovalEvidence reports whether publication must enforce the durable approval gate.
+func (command Command) HasApprovalEvidence() bool { return command.approvalEvidenceID.IsValid() }
+
 // AuditReason returns the explicit normalized publication reason.
 func (command Command) AuditReason() AuditReason { return command.auditReason }
 
@@ -131,36 +149,42 @@ func (command Command) IsValid() bool {
 		!command.actorPrincipalID.IsValid() || !command.auditReason.IsValid() {
 		return false
 	}
-	return !command.accountSession.IsValid() ||
-		command.accountSession.PrincipalID() == command.actorPrincipalID
+	if command.approvalEvidenceID != (ApprovalEvidenceID{}) &&
+		!command.approvalEvidenceID.IsValid() {
+		return false
+	}
+	if !command.accountSession.IsValid() {
+		return !command.approvalEvidenceID.IsValid()
+	}
+	return command.accountSession.PrincipalID() == command.actorPrincipalID
 }
 
 // ResolutionParams contains active authority read with required publication locks.
 type ResolutionParams struct {
 	Scope              network.Scope
-	NetworkRevision    int64
-	PolicyRevision     int64
+	AuthorityVector    AuthorityVector
 	ActiveReleaseID    ReleaseID
 	ActiveSemanticHash SemanticHash
+	ApprovalGate       ApprovalGate
 }
 
 // Resolution is active policy authority observed under the transaction locks.
 type Resolution struct {
 	scope              network.Scope
-	networkRevision    int64
-	policyRevision     int64
+	authorityVector    AuthorityVector
 	activeReleaseID    ReleaseID
 	activeSemanticHash SemanticHash
+	approvalGate       ApprovalGate
 }
 
 // NewResolution validates locked publication authority.
 func NewResolution(params ResolutionParams) (Resolution, error) {
 	resolution := Resolution{
 		scope:              params.Scope,
-		networkRevision:    params.NetworkRevision,
-		policyRevision:     params.PolicyRevision,
+		authorityVector:    params.AuthorityVector,
 		activeReleaseID:    params.ActiveReleaseID,
 		activeSemanticHash: params.ActiveSemanticHash,
+		approvalGate:       params.ApprovalGate,
 	}
 	if !resolution.IsValid() {
 		return Resolution{}, ErrInvalidResolution
@@ -172,10 +196,20 @@ func NewResolution(params ResolutionParams) (Resolution, error) {
 func (resolution Resolution) Scope() network.Scope { return resolution.scope }
 
 // NetworkRevision returns the current client-visible revision.
-func (resolution Resolution) NetworkRevision() int64 { return resolution.networkRevision }
+func (resolution Resolution) NetworkRevision() int64 {
+	return resolution.authorityVector.NetworkRevision()
+}
 
 // PolicyRevision returns the current active packet-policy revision.
-func (resolution Resolution) PolicyRevision() int64 { return resolution.policyRevision }
+func (resolution Resolution) PolicyRevision() int64 {
+	return resolution.authorityVector.PolicyRevision()
+}
+
+// AuthorityVector returns the complete locked Access Graph revision boundary.
+func (resolution Resolution) AuthorityVector() AuthorityVector { return resolution.authorityVector }
+
+// ApprovalGate returns the locked approval proof, when this is an approved management publication.
+func (resolution Resolution) ApprovalGate() ApprovalGate { return resolution.approvalGate }
 
 // ActiveRelease returns the active release evidence and whether it exists.
 func (resolution Resolution) ActiveRelease() (ReleaseID, SemanticHash, bool) {
@@ -185,8 +219,7 @@ func (resolution Resolution) ActiveRelease() (ReleaseID, SemanticHash, bool) {
 
 // IsValid reports whether revision and optional bootstrap evidence are consistent.
 func (resolution Resolution) IsValid() bool {
-	if !resolution.scope.IsValid() || resolution.networkRevision <= 0 ||
-		resolution.policyRevision <= 0 || resolution.networkRevision < resolution.policyRevision {
+	if !resolution.scope.IsValid() || !resolution.authorityVector.IsValid() {
 		return false
 	}
 	hasID := resolution.activeReleaseID.IsValid()
@@ -194,7 +227,9 @@ func (resolution Resolution) IsValid() bool {
 	if hasID != hasHash {
 		return false
 	}
-	return resolution.policyRevision == 1 || hasID
+	validApprovalGate := resolution.approvalGate == (ApprovalGate{}) ||
+		(resolution.approvalGate.IsValid() && resolution.approvalGate.scope == resolution.scope)
+	return (resolution.PolicyRevision() == 1 || hasID) && validApprovalGate
 }
 
 // ChangeParams contains one complete publication decision for persistence.
@@ -243,9 +278,23 @@ func (change Change) OccurredAt() time.Time { return change.occurredAt }
 func (change Change) IsValid() bool {
 	return change.command.IsValid() && change.resolution.IsValid() && change.mutationIDs.IsValid() &&
 		change.command.candidate.Snapshot().Scope() == change.resolution.scope &&
-		change.command.basePolicyRevision == change.resolution.policyRevision &&
+		change.command.basePolicyRevision == change.resolution.PolicyRevision() &&
 		len(change.mutationIDs.projectionIDs) == len(change.command.candidate.Snapshot().Rules()) &&
-		!change.occurredAt.IsZero()
+		!change.occurredAt.IsZero() &&
+		approvalGateMatchesCommand(change.command, change.resolution, change.occurredAt)
+}
+
+func approvalGateMatchesCommand(command Command, resolution Resolution, evaluatedAt time.Time) bool {
+	gate := resolution.approvalGate
+	if !command.HasApprovalEvidence() {
+		return gate == (ApprovalGate{})
+	}
+	return gate.IsValid() && gate.evidenceID == command.approvalEvidenceID &&
+		gate.scope == command.candidate.Snapshot().Scope() &&
+		gate.baselineVector.Equal(resolution.authorityVector) &&
+		gate.candidateSemanticHash == command.candidate.SemanticHash() &&
+		gate.compilerFormatVersion == command.candidate.CompilerFormatVersion() &&
+		!evaluatedAt.Before(gate.approvedAt) && gate.expiresAt.After(evaluatedAt)
 }
 
 // ResultParams contains a safe committed Policy Release outcome.

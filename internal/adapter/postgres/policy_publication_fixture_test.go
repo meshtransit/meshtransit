@@ -136,6 +136,7 @@ func testPolicyPublicationOptions() PolicyPublicationOptions {
 		LockTimeout:       time.Second,
 		IdleTimeout:       10 * time.Second,
 		AllowTrustedActor: true,
+		ApprovalMode:      PolicyPublicationApprovalModeQualificationBypass,
 	}
 }
 
@@ -164,6 +165,27 @@ func beginAuthorizedTestPolicyPublicationStore(
 	t.Helper()
 	options := testPolicyPublicationOptions()
 	options.AllowTrustedActor = false
+	store, err := newPolicyPublicationStore(
+		&fakePolicyPublicationDatabase{transactions: []*fakePolicyPublicationTransaction{
+			databaseTransaction,
+		}},
+		options,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("newPolicyPublicationStore() error = %v", err)
+	}
+	return store
+}
+
+func beginApprovalRequiredTestPolicyPublicationStore(
+	t *testing.T,
+	databaseTransaction *fakePolicyPublicationTransaction,
+) *PolicyPublicationStore {
+	t.Helper()
+	options := testPolicyPublicationOptions()
+	options.AllowTrustedActor = false
+	options.ApprovalMode = PolicyPublicationApprovalModeRequired
 	store, err := newPolicyPublicationStore(
 		&fakePolicyPublicationDatabase{transactions: []*fakePolicyPublicationTransaction{
 			databaseTransaction,
@@ -254,6 +276,33 @@ func enqueuePolicyPublicationApply(
 			*destinations[0].(*int64) = networkRevision
 			*destinations[1].(*int64) = policyRevision
 			*destinations[2].(*int64) = 1
+			return nil
+		},
+	})
+	transaction.enqueueRow(appendPolicyPublicationEvidenceSQL, policyPublicationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*int64) = 4
+			return nil
+		},
+	})
+}
+
+func enqueueApprovedPolicyPublicationApply(
+	transaction *fakePolicyPublicationTransaction,
+	networkRevision int64,
+	policyRevision int64,
+) {
+	transaction.enqueueRow(publishCompiledPolicySQL, policyPublicationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*int64) = networkRevision
+			*destinations[1].(*int64) = policyRevision
+			*destinations[2].(*int64) = 1
+			return nil
+		},
+	})
+	transaction.enqueueRow(consumePolicyPublicationApprovalSQL, policyPublicationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*int64) = 3
 			return nil
 		},
 	})
@@ -410,6 +459,73 @@ func policyManagementPublicationCommandFixture(t *testing.T) publication.Command
 	return command
 }
 
+func policyApprovedManagementPublicationCommandFixture(t *testing.T) publication.Command {
+	t.Helper()
+	trusted := policyPublicationCommandFixture(t)
+	evidenceID, err := publication.ParseApprovalEvidenceID(
+		"01890f00-0000-7000-8000-000000000551",
+	)
+	if err != nil {
+		t.Fatalf("publication.ParseApprovalEvidenceID() error = %v", err)
+	}
+	command, err := publication.NewApprovedManagementCommand(publication.ManagementCommandParams{
+		Candidate: trusted.Candidate(), BasePolicyRevision: trusted.BasePolicyRevision(),
+		AccountSession: deviceRevocationAccountSessionFixture(
+			t,
+			trusted.ActorPrincipalID(),
+			trusted.Candidate().Snapshot().Scope().WorkspaceID(),
+		),
+		ApprovalEvidenceID: evidenceID,
+		AuditReason:        trusted.AuditReason(),
+	})
+	if err != nil {
+		t.Fatalf("publication.NewApprovedManagementCommand() error = %v", err)
+	}
+	return command
+}
+
+func enqueuePolicyPublicationApproval(
+	t *testing.T,
+	transaction *fakePolicyPublicationTransaction,
+	command publication.Command,
+	networkRevision int64,
+	policyRevision int64,
+) {
+	t.Helper()
+	candidateHash := command.Candidate().SemanticHash().Bytes()
+	impactHash := sha256.Sum256([]byte("complete Policy approval impact"))
+	transaction.enqueueRow(lockPolicyPublicationApprovalSQL, policyPublicationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*string) = "01890f00-0000-7000-8000-000000000550"
+			*destinations[1].(*string) = command.ApprovalEvidenceID().String()
+			baseline := [...]int64{networkRevision, 1, 1, policyRevision, 1, 1, 1, 1}
+			proposed := [...]int64{networkRevision + 1, 1, 1, policyRevision + 1, 1, 1, 1, 1}
+			for index, value := range baseline {
+				*destinations[index+2].(*int64) = value
+			}
+			for index, value := range proposed {
+				*destinations[index+10].(*int64) = value
+			}
+			*destinations[18].(*[]byte) = append([]byte(nil), candidateHash[:]...)
+			*destinations[19].(*int) = command.Candidate().CompilerFormatVersion()
+			*destinations[20].(*[]byte) = append([]byte(nil), impactHash[:]...)
+			*destinations[21].(*int64) = 2
+			*destinations[22].(*int64) = 1
+			*destinations[23].(*time.Time) = policyPublicationTestTime.Add(-time.Minute)
+			*destinations[24].(*time.Time) = policyPublicationTestTime.Add(9 * time.Minute)
+			*destinations[25].(*string) = "01890f00-0000-7000-8000-000000000631"
+			*destinations[26].(*string) = "01890f00-0000-7000-8000-000000000632"
+			*destinations[27].(*string) = "01890f00-0000-7000-8000-000000000633"
+			*destinations[28].(*string) = "01890f00-0000-7000-8000-000000000634"
+			for index, value := range [...]int64{2, 3, 4, 5, 6} {
+				*destinations[index+29].(*int64) = value
+			}
+			return nil
+		},
+	})
+	enqueuePolicyPublicationAuthorization(transaction)
+}
+
 func policyResourcePublicationCommandFixture(t *testing.T) publication.Command {
 	t.Helper()
 	trusted := policyPublicationCommandFixture(t)
@@ -516,6 +632,23 @@ func policyPublicationChangeFixture(
 		Resolution:  resolution,
 		MutationIDs: policyPublicationMutationIDsFixture(t),
 		OccurredAt:  time.Date(2026, time.September, 15, 8, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("publication.NewChange() error = %v", err)
+	}
+	return change
+}
+
+func approvedPolicyPublicationChangeFixture(
+	t *testing.T,
+	command publication.Command,
+	resolution publication.Resolution,
+) publication.Change {
+	t.Helper()
+	change, err := publication.NewChange(publication.ChangeParams{
+		Command: command, Resolution: resolution,
+		MutationIDs: policyPublicationMutationIDsFixture(t),
+		OccurredAt:  policyPublicationTestTime,
 	})
 	if err != nil {
 		t.Fatalf("publication.NewChange() error = %v", err)

@@ -11,8 +11,37 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 47 {
-		t.Fatalf("len(Catalog()) = %d, want 47", len(catalog))
+	if len(catalog) != 48 {
+		t.Fatalf("len(Catalog()) = %d, want 48", len(catalog))
+	}
+	approvalGate := catalog[47]
+	if approvalGate.Description != "Policy approval publication gate" {
+		t.Fatalf("migration 48 description = %q, want Policy approval publication gate", approvalGate.Description)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.lock_policy_approval_for_publication_v1",
+		"CREATE FUNCTION mesh_ops.consume_policy_approval_for_publication_v1",
+		"FOR UPDATE OF request",
+		"FOR SHARE OF evidence",
+		"request_row.state <> 'approved'",
+		"current_network <> request_row.proposed_network_revision",
+		"release_row.semantic_hash <> p_candidate_hash",
+		"state = 'consumed'",
+		"consumed_policy_release_id = release_row.id",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.consume_policy_approval_for_publication_v1",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(approvalGate.SQL, required) {
+			t.Errorf("Policy approval publication gate SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE",
+		"GRANT ALL", "BYPASSRLS", "DROP ",
+	} {
+		if strings.Contains(approvalGate.SQL, forbidden) {
+			t.Errorf("Policy approval publication gate SQL contains excessive capability %q", forbidden)
+		}
 	}
 	approvalPersistence := catalog[46]
 	if approvalPersistence.Description != "Policy approval persistence" {
@@ -1158,8 +1187,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 47 {
-		t.Fatalf("LatestVersion() = %d, want 47", LatestVersion())
+	if LatestVersion() != 48 {
+		t.Fatalf("LatestVersion() = %d, want 48", LatestVersion())
 	}
 }
 

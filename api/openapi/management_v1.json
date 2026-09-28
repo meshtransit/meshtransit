@@ -1280,6 +1280,7 @@
         "additionalProperties": false,
         "required": [
           "reason",
+          "approval_evidence_id",
           "rules"
         ],
         "properties": {
@@ -1287,6 +1288,9 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 512
+          },
+          "approval_evidence_id": {
+            "$ref": "#/components/schemas/PublicID"
           },
           "rules": {
             "type": "array",

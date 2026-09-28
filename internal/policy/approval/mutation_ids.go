@@ -2,6 +2,7 @@ package approval
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/meshtransit/meshtransit/internal/publicid"
 )
@@ -123,6 +124,55 @@ func (ids MutationIDs) IsValid() bool {
 		publicid.ID(ids.evidenceID), ids.changeID, ids.idempotencyRecordID,
 		ids.auditEventID, ids.outboxEventID,
 	})
+}
+
+// PublicMutationIDGenerator creates UUIDv7 identities from operating-system entropy.
+type PublicMutationIDGenerator struct{}
+
+// NewApprovalRequestMutationIDs returns fresh, distinct proposal identities.
+func (PublicMutationIDGenerator) NewApprovalRequestMutationIDs(
+	command RequestCommand,
+) (RequestMutationIDs, error) {
+	if !command.IsValid() {
+		return RequestMutationIDs{}, ErrInvalidRequestMutationIDs
+	}
+	generated, err := newPublicIDs(5)
+	if err != nil {
+		return RequestMutationIDs{}, err
+	}
+	return NewRequestMutationIDs(RequestMutationIDParams{
+		RequestID: RequestID(generated[0]), ChangeID: generated[1],
+		IdempotencyRecordID: generated[2], AuditEventID: generated[3],
+		OutboxEventID: generated[4],
+	})
+}
+
+// NewPolicyApprovalMutationIDs returns fresh, distinct approval-decision identities.
+func (PublicMutationIDGenerator) NewPolicyApprovalMutationIDs(command Command) (MutationIDs, error) {
+	if !command.IsValid() {
+		return MutationIDs{}, ErrInvalidApprovalMutationIDs
+	}
+	generated, err := newPublicIDs(5)
+	if err != nil {
+		return MutationIDs{}, err
+	}
+	return NewMutationIDs(MutationIDParams{
+		EvidenceID: EvidenceID(generated[0]), ChangeID: generated[1],
+		IdempotencyRecordID: generated[2], AuditEventID: generated[3],
+		OutboxEventID: generated[4],
+	})
+}
+
+func newPublicIDs(count int) ([]publicid.ID, error) {
+	generated := make([]publicid.ID, count)
+	for index := range generated {
+		id, err := publicid.New()
+		if err != nil {
+			return nil, fmt.Errorf("generate policy approval public ID: %w", err)
+		}
+		generated[index] = id
+	}
+	return generated, nil
 }
 
 func distinctIDs(values []publicid.ID) bool {

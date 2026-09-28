@@ -39,11 +39,24 @@ var (
 	ErrResolveCommittedPolicyPublication = errors.New("resolve committed postgres policy publication")
 )
 
+// PolicyPublicationApprovalMode makes approval enforcement explicit at composition time.
+type PolicyPublicationApprovalMode uint8
+
+const (
+	// PolicyPublicationApprovalModeUnknown is invalid and prevents fail-open composition.
+	PolicyPublicationApprovalModeUnknown PolicyPublicationApprovalMode = iota
+	// PolicyPublicationApprovalModeRequired enforces durable, single-use human approval.
+	PolicyPublicationApprovalModeRequired
+	// PolicyPublicationApprovalModeQualificationBypass is only for offline compatibility tests.
+	PolicyPublicationApprovalModeQualificationBypass
+)
+
 // PolicyPublicationOptions bounds every database wait in a publication transaction.
 type PolicyPublicationOptions struct {
 	StatementTimeout time.Duration
 	LockTimeout      time.Duration
 	IdleTimeout      time.Duration
+	ApprovalMode     PolicyPublicationApprovalMode
 	// AllowTrustedActor permits the offline qualification path to publish without
 	// an Account Session. Runtime management composition must leave this false.
 	AllowTrustedActor bool
@@ -126,6 +139,7 @@ func (store *PolicyPublicationStore) Begin(
 		scope:                 scope,
 		metrics:               store.metrics,
 		requireAccountSession: !store.options.AllowTrustedActor,
+		requireApproval:       store.options.ApprovalMode == PolicyPublicationApprovalModeRequired,
 	}, nil
 }
 
@@ -170,13 +184,14 @@ func (store *PolicyPublicationStore) ResolveCommitted(
 	}
 	var networkRevision, policyRevision int64
 	var semanticHashValue []byte
+	var approvalEvidenceID *string
 	err = databaseTransaction.QueryRow(
 		ctx,
 		loadCommittedPolicyReleaseSQL,
 		workspaceInternalID,
 		networkInternalID,
 		releaseID.String(),
-	).Scan(&networkRevision, &policyRevision, &semanticHashValue)
+	).Scan(&networkRevision, &policyRevision, &semanticHashValue, &approvalEvidenceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := databaseTransaction.Commit(ctx); err != nil {
 			return publication.Result{}, false, errors.Join(
@@ -210,6 +225,19 @@ func (store *PolicyPublicationStore) ResolveCommitted(
 			ErrResolveCommittedPolicyPublication,
 			ErrPolicyPublicationEvidence,
 			err,
+		)
+	}
+	if command.HasApprovalEvidence() {
+		if approvalEvidenceID == nil || *approvalEvidenceID != command.ApprovalEvidenceID().String() {
+			return publication.Result{}, false, errors.Join(
+				ErrResolveCommittedPolicyPublication,
+				publication.ErrApprovalUnavailable,
+			)
+		}
+	} else if approvalEvidenceID != nil {
+		return publication.Result{}, false, errors.Join(
+			ErrResolveCommittedPolicyPublication,
+			ErrPolicyPublicationEvidence,
 		)
 	}
 	if err := databaseTransaction.Commit(ctx); err != nil {
@@ -262,7 +290,9 @@ func validPolicyPublicationOptions(options PolicyPublicationOptions) bool {
 	return options.StatementTimeout > 0 &&
 		options.StatementTimeout <= maxPolicyPublicationStatementTimeout &&
 		options.LockTimeout > 0 && options.LockTimeout <= maxPolicyPublicationLockTimeout &&
-		options.IdleTimeout > 0 && options.IdleTimeout <= maxPolicyPublicationIdleTimeout
+		options.IdleTimeout > 0 && options.IdleTimeout <= maxPolicyPublicationIdleTimeout &&
+		(options.ApprovalMode == PolicyPublicationApprovalModeRequired ||
+			options.ApprovalMode == PolicyPublicationApprovalModeQualificationBypass)
 }
 
 func rollbackPolicyPublicationSetup(transaction policyPublicationDatabaseTransaction) error {

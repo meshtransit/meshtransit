@@ -256,6 +256,161 @@ func TestPolicyPublicationTransactionAuthorizesManagementSessionUnderLock(t *tes
 	}
 }
 
+func TestPolicyPublicationTransactionRequiresApprovalEvidenceInProductionMode(t *testing.T) {
+	t.Parallel()
+
+	command := policyManagementPublicationCommandFixture(t)
+	databaseTransaction := newFakePolicyPublicationTransaction()
+	enqueuePolicyPublicationSetup(databaseTransaction)
+	enqueuePolicyPublicationAuthorization(databaseTransaction)
+	store := beginApprovalRequiredTestPolicyPublicationStore(t, databaseTransaction)
+
+	value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	transaction := value.(*policyPublicationTransaction)
+	if _, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime); !errors.Is(
+		err,
+		publication.ErrApprovalRequired,
+	) {
+		t.Fatalf("Resolve() error = %v, want ErrApprovalRequired", err)
+	}
+	if err := transaction.Rollback(t.Context()); err != nil {
+		t.Fatalf("Rollback() error = %v", err)
+	}
+	wantCalls := []string{
+		configurePolicyPublicationTransactionSQL,
+		setPolicyPublicationScopeSQL,
+		authorizePolicyPublicationSQL,
+	}
+	if got := policyPublicationCallQueries(databaseTransaction.calls); !reflect.DeepEqual(got, wantCalls) {
+		t.Fatalf("database call order mismatch\ngot:  %#v\nwant: %#v", got, wantCalls)
+	}
+}
+
+func TestPolicyPublicationTransactionConsumesApprovalWithReleaseAuditAndOutbox(t *testing.T) {
+	t.Parallel()
+
+	command := policyApprovedManagementPublicationCommandFixture(t)
+	databaseTransaction := newFakePolicyPublicationTransaction()
+	enqueuePolicyPublicationAuthorization(databaseTransaction)
+	enqueuePolicyPublicationResolution(t, databaseTransaction, command, 5, 1)
+	enqueuePolicyPublicationApproval(t, databaseTransaction, command, 5, 1)
+	enqueueApprovedPolicyPublicationApply(databaseTransaction, 6, 2)
+	store := beginApprovalRequiredTestPolicyPublicationStore(t, databaseTransaction)
+
+	value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	transaction := value.(*policyPublicationTransaction)
+	resolution, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if !resolution.ApprovalGate().IsValid() ||
+		resolution.ApprovalGate().EvidenceID() != command.ApprovalEvidenceID() ||
+		!transaction.approvalAuthorization.isValid() {
+		t.Fatalf("approval resolution = %+v authority=%+v", resolution, transaction.approvalAuthorization)
+	}
+	change := approvedPolicyPublicationChangeFixture(t, command, resolution)
+	result, err := transaction.Apply(t.Context(), change)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if result.NetworkRevision() != 6 || result.PolicyRevision() != 2 {
+		t.Fatalf("Apply() result = %+v, want revisions 6/2", result)
+	}
+	if err := transaction.Commit(t.Context()); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+
+	wantCalls := []string{
+		configurePolicyPublicationTransactionSQL,
+		setPolicyPublicationScopeSQL,
+		authorizePolicyPublicationSQL,
+		lockPolicyPublicationRevisionSQL,
+		lockActivePolicyReleaseSQL,
+		lockPolicyPublicationApprovalSQL,
+		authorizePolicyPublicationSQL,
+		lockPolicyPublicationAuditStreamSQL,
+		setPolicyPublicationChangeSQL,
+		publishCompiledPolicySQL,
+		consumePolicyPublicationApprovalSQL,
+		appendPolicyPublicationEvidenceSQL,
+	}
+	if got := policyPublicationCallQueries(databaseTransaction.calls); !reflect.DeepEqual(got, wantCalls) {
+		t.Fatalf("database call order mismatch\ngot:  %#v\nwant: %#v", got, wantCalls)
+	}
+	permissions := make([]string, 0, 2)
+	for _, call := range databaseTransaction.calls {
+		if call.query == authorizePolicyPublicationSQL {
+			permissions = append(permissions, call.arguments[11].(string))
+		}
+	}
+	if !reflect.DeepEqual(permissions, []string{"policy.publish", "policy.approve"}) {
+		t.Fatalf("authorization permissions = %v", permissions)
+	}
+	consumeCall := findPolicyPublicationCall(
+		t,
+		databaseTransaction.calls,
+		consumePolicyPublicationApprovalSQL,
+	)
+	if len(consumeCall.arguments) != 6 ||
+		consumeCall.arguments[0] != command.ApprovalEvidenceID().String() ||
+		consumeCall.arguments[1] != change.MutationIDs().ReleaseID().String() ||
+		consumeCall.arguments[3] != command.Candidate().CompilerFormatVersion() ||
+		consumeCall.arguments[5] != policyPublicationTestTime {
+		t.Fatalf("approval consumption arguments = %#v", consumeCall.arguments)
+	}
+	evidenceCall := findPolicyPublicationCall(
+		t,
+		databaseTransaction.calls,
+		appendPolicyPublicationEvidenceSQL,
+	)
+	var auditPayload policyPublicationAuditPayload
+	if err := json.Unmarshal(evidenceCall.arguments[14].([]byte), &auditPayload); err != nil {
+		t.Fatalf("decode audit payload: %v", err)
+	}
+	if auditPayload.ApprovalEvidenceID != command.ApprovalEvidenceID().String() ||
+		auditPayload.ApprovalRequestID == "" || len(auditPayload.ApprovalImpactHash) != 64 ||
+		auditPayload.ApprovalBaselineVector == nil ||
+		auditPayload.ApprovalProposedVector == nil ||
+		auditPayload.ApproverAccountSessionID == "" ||
+		auditPayload.ApproverRoleBindingID == "" {
+		t.Fatalf("approval audit payload = %+v", auditPayload)
+	}
+}
+
+func TestPolicyPublicationTransactionRejectsUnavailableApprovalEvidence(t *testing.T) {
+	t.Parallel()
+
+	command := policyApprovedManagementPublicationCommandFixture(t)
+	databaseTransaction := newFakePolicyPublicationTransaction()
+	enqueuePolicyPublicationAuthorization(databaseTransaction)
+	enqueuePolicyPublicationResolution(t, databaseTransaction, command, 5, 1)
+	databaseTransaction.enqueueRow(
+		lockPolicyPublicationApprovalSQL,
+		policyPublicationTestRow{err: pgx.ErrNoRows},
+	)
+	store := beginApprovalRequiredTestPolicyPublicationStore(t, databaseTransaction)
+	value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	transaction := value.(*policyPublicationTransaction)
+	if _, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime); !errors.Is(
+		err,
+		publication.ErrApprovalUnavailable,
+	) {
+		t.Fatalf("Resolve() error = %v, want ErrApprovalUnavailable", err)
+	}
+	if err := transaction.Rollback(t.Context()); err != nil {
+		t.Fatalf("Rollback() error = %v", err)
+	}
+}
+
 func TestPolicyPublicationTransactionRejectsMissingManagementAuthority(t *testing.T) {
 	t.Parallel()
 
@@ -352,6 +507,15 @@ func TestPolicyPublicationStoreRejectsUnsafeConstruction(t *testing.T) {
 		nil,
 	); !errors.Is(err, ErrInvalidPolicyPublicationStore) {
 		t.Fatalf("newPolicyPublicationStore() unsafe timeout error = %v", err)
+	}
+	options = testPolicyPublicationOptions()
+	options.ApprovalMode = PolicyPublicationApprovalModeUnknown
+	if _, err := newPolicyPublicationStore(
+		&fakePolicyPublicationDatabase{},
+		options,
+		nil,
+	); !errors.Is(err, ErrInvalidPolicyPublicationStore) {
+		t.Fatalf("newPolicyPublicationStore() unknown approval mode error = %v", err)
 	}
 }
 

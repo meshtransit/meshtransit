@@ -199,6 +199,7 @@ func privateIdentityManagementServices(
 	}
 	policyStore, err := postgresadapter.NewPolicyPublicationStore(pool, postgresadapter.PolicyPublicationOptions{
 		StatementTimeout: options.StatementTimeout, LockTimeout: options.LockTimeout, IdleTimeout: options.IdleTimeout,
+		ApprovalMode: postgresadapter.PolicyPublicationApprovalModeRequired,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition

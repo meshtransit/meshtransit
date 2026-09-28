@@ -28,6 +28,10 @@ const (
 	integrationResourceTransferPermissionID = "01890f00-0000-7000-8000-000000000853"
 	integrationGroupTransferPermissionID    = "01890f00-0000-7000-8000-000000000854"
 	integrationPolicyExplainPermissionID    = "01890f00-0000-7000-8000-000000000855"
+	integrationApproverRoleDefinitionID     = "01890f00-0000-7000-8000-000000000856"
+	integrationPolicyApprovePermissionID    = "01890f00-0000-7000-8000-000000000857"
+	integrationApproverTransferPermissionID = "01890f00-0000-7000-8000-000000000858"
+	integrationPolicyValidatePermissionID   = "01890f00-0000-7000-8000-000000000859"
 	integrationRoleBinding203PublicID       = "01890f00-0000-7000-8000-000000000844"
 	integrationRoleBinding204PublicID       = "01890f00-0000-7000-8000-000000000845"
 	integrationAuthorityConfirmerSessionID  = "01890f00-0000-7000-8000-000000000813"
@@ -438,6 +442,16 @@ WHERE permission.permission_key = 'policy.explain'`,
 				arguments: []any{integrationPolicyExplainPermissionID},
 			},
 			{
+				name: "Policy Validate RolePermission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 859, $1::UUID, 1, 103, 842, permission.id
+FROM mesh.permission AS permission
+WHERE permission.permission_key = 'policy.validate'`,
+				arguments: []any{integrationPolicyValidatePermissionID},
+			},
+			{
 				name: "authority confirmer Workspace membership",
 				query: `INSERT INTO mesh.workspace_membership (
     id, public_id, deployment_id, workspace_id, principal_id,
@@ -448,6 +462,37 @@ WHERE permission.permission_key = 'policy.explain'`,
 )`,
 			},
 			{
+				name: "policy approver RoleDefinition",
+				query: `INSERT INTO mesh.role_definition (
+    id, public_id, deployment_id, workspace_id, role_key, display_name,
+    kind, state, authority_generation
+) OVERRIDING SYSTEM VALUE VALUES (
+    856, $1::UUID, 1, 103,
+    'policy_approver', 'Policy Approver', 'built_in', 'active', 1
+)`,
+				arguments: []any{integrationApproverRoleDefinitionID},
+			},
+			{
+				name: "Policy Approve RolePermission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 857, $1::UUID, 1, 103, 856, permission.id
+FROM mesh.permission AS permission
+WHERE permission.permission_key = 'policy.approve'`,
+				arguments: []any{integrationPolicyApprovePermissionID},
+			},
+			{
+				name: "policy approver Resource Transfer RolePermission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 858, $1::UUID, 1, 103, 856, permission.id
+FROM mesh.permission AS permission
+WHERE permission.permission_key = 'resource.transfer'`,
+				arguments: []any{integrationApproverTransferPermissionID},
+			},
+			{
 				name: "authority confirmer Network 203 RoleBinding",
 				query: `INSERT INTO mesh.role_binding (
     id, public_id, deployment_id, workspace_id, network_id, principal_id,
@@ -455,7 +500,7 @@ WHERE permission.permission_key = 'policy.explain'`,
     authority_generation, valid_from
 ) OVERRIDING SYSTEM VALUE VALUES (
     852, '01890f00-0000-7000-8000-000000000852', 1, 103, 203, 13,
-    851, 842, 'active', 1, pg_catalog.transaction_timestamp() - INTERVAL '1 minute'
+    851, 856, 'active', 1, pg_catalog.transaction_timestamp() - INTERVAL '1 minute'
 )`,
 			},
 			{
@@ -577,6 +622,8 @@ func assertNetworkManagementPermissionResolution(
 		"device.manage":           1,
 		"device.transfer":         0,
 		"policy.publish":          1,
+		"policy.approve":          0,
+		"policy.validate":         1,
 		"policy.explain":          1,
 		"resource.manage":         1,
 		"resource.read":           1,
@@ -604,6 +651,38 @@ FROM mesh_ops.resolve_network_permission_v1(
 		}
 		if count != expectedCount {
 			t.Fatalf("resolved %s grants = %d, want %d", permission, count, expectedCount)
+		}
+	}
+	for permission, expectedCount := range map[string]int64{
+		"policy.approve":    1,
+		"policy.publish":    0,
+		"policy.validate":   0,
+		"resource.transfer": 1,
+	} {
+		var count int64
+		if err := transaction.QueryRow(ctx, `SELECT pg_catalog.count(*)
+FROM mesh_ops.resolve_network_permission_v1(
+    $1::UUID, $2::UUID, $3::UUID, $4::UUID,
+    1, 1, 1, 1, 1, $5::UUID, $6::UUID, $7::TEXT,
+    pg_catalog.transaction_timestamp()
+)`,
+			integrationAuthorityConfirmerSessionID,
+			"01890f00-0000-7000-8000-000000000001",
+			integrationAuthorityConfirmerID,
+			integrationAuthorityConfirmerSubjectID,
+			"01890f00-0000-7000-8000-000000000103",
+			"01890f00-0000-7000-8000-000000000203",
+			permission,
+		).Scan(&count); err != nil {
+			t.Fatalf("resolve authority confirmer %s permission: %v", permission, err)
+		}
+		if count != expectedCount {
+			t.Fatalf(
+				"resolved authority confirmer %s grants = %d, want %d",
+				permission,
+				count,
+				expectedCount,
+			)
 		}
 	}
 	if err := transaction.Rollback(ctx); err != nil {

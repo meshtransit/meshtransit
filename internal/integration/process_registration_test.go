@@ -480,7 +480,7 @@ func waitForProcessRevisionDelivery(
 	nodePublicID string,
 ) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()

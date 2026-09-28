@@ -56,7 +56,9 @@ type policyPublicationTransaction struct {
 	resolution            publication.Resolution
 	audit                 policyPublicationAuditHead
 	authorization         policyPublicationAuthorizationEvidence
+	approvalAuthorization policyPublicationAuthorizationEvidence
 	requireAccountSession bool
+	requireApproval       bool
 }
 
 var _ publication.Transaction = (*policyPublicationTransaction)(nil)
@@ -90,8 +92,14 @@ func (transaction *policyPublicationTransaction) Resolve(
 		}
 		transaction.authorization = authorizationEvidence
 	}
+	if transaction.requireApproval && !command.HasApprovalEvidence() {
+		return publication.Resolution{}, errors.Join(
+			ErrResolvePolicyPublication,
+			publication.ErrApprovalRequired,
+		)
+	}
 
-	resolution, err := transaction.resolveLocked(ctx)
+	resolution, err := transaction.resolveLocked(ctx, command, evaluatedAt)
 	if err != nil {
 		return publication.Resolution{}, errors.Join(
 			ErrResolvePolicyPublication,
@@ -176,6 +184,8 @@ func (transaction *policyPublicationTransaction) resolveAuthorization(
 
 func (transaction *policyPublicationTransaction) resolveLocked(
 	ctx context.Context,
+	command publication.Command,
+	evaluatedAt time.Time,
 ) (publication.Resolution, error) {
 	var networkRevision, inventoryRevision, groupRevision, policyRevision int64
 	var dnsRevision, routeRevision, sharingRevision, isolationGeneration int64
@@ -195,11 +205,20 @@ func (transaction *policyPublicationTransaction) resolveLocked(
 		dnsRevision <= 0 || routeRevision <= 0 || sharingRevision <= 0 || isolationGeneration <= 0 {
 		return publication.Resolution{}, ErrPolicyPublicationEvidence
 	}
+	authorityVector, err := publication.NewAuthorityVector(publication.AuthorityVectorParams{
+		NetworkRevision: networkRevision, InventoryRevision: inventoryRevision,
+		GroupRevision: groupRevision, PolicyRevision: policyRevision,
+		DNSRevision: dnsRevision, RouteRevision: routeRevision,
+		SharingRevision: sharingRevision, IsolationGeneration: isolationGeneration,
+	})
+	if err != nil {
+		return publication.Resolution{}, ErrPolicyPublicationEvidence
+	}
 
 	var activeReleaseValue string
 	var activePolicyRevision int64
 	var activeSemanticHashValue []byte
-	err := transaction.database.QueryRow(
+	err = transaction.database.QueryRow(
 		ctx,
 		lockActivePolicyReleaseSQL,
 	).Scan(&activeReleaseValue, &activePolicyRevision, &activeSemanticHashValue)
@@ -222,6 +241,14 @@ func (transaction *policyPublicationTransaction) resolveLocked(
 		}
 	}
 
+	var approvalGate publication.ApprovalGate
+	if command.HasApprovalEvidence() {
+		approvalGate, err = transaction.resolveApprovalGate(ctx, command, evaluatedAt)
+		if err != nil {
+			return publication.Resolution{}, err
+		}
+	}
+
 	var previousHash []byte
 	if err := transaction.database.QueryRow(ctx, lockPolicyPublicationAuditStreamSQL).Scan(
 		&transaction.audit.streamInternalID,
@@ -238,10 +265,10 @@ func (transaction *policyPublicationTransaction) resolveLocked(
 
 	resolution, err := publication.NewResolution(publication.ResolutionParams{
 		Scope:              transaction.scope,
-		NetworkRevision:    networkRevision,
-		PolicyRevision:     policyRevision,
+		AuthorityVector:    authorityVector,
 		ActiveReleaseID:    activeReleaseID,
 		ActiveSemanticHash: activeSemanticHash,
+		ApprovalGate:       approvalGate,
 	})
 	if err != nil {
 		return publication.Resolution{}, ErrPolicyPublicationEvidence
@@ -348,6 +375,25 @@ func (transaction *policyPublicationTransaction) applyLocked(
 			return publication.Result{}, fmt.Errorf("attach policy Resource Group destinations: %w", err)
 		}
 		if attachedCount != expectedMembers {
+			return publication.Result{}, ErrPolicyPublicationEvidence
+		}
+	}
+	if command.HasApprovalEvidence() {
+		impactHash := change.Resolution().ApprovalGate().ImpactHash().Bytes()
+		var consumedRequestVersion int64
+		if err := transaction.database.QueryRow(
+			ctx,
+			consumePolicyPublicationApprovalSQL,
+			command.ApprovalEvidenceID().String(),
+			change.MutationIDs().ReleaseID().String(),
+			semanticHash[:],
+			command.Candidate().CompilerFormatVersion(),
+			impactHash[:],
+			change.OccurredAt(),
+		).Scan(&consumedRequestVersion); err != nil {
+			return publication.Result{}, fmt.Errorf("consume Policy approval evidence: %w", err)
+		}
+		if consumedRequestVersion != 3 {
 			return publication.Result{}, ErrPolicyPublicationEvidence
 		}
 	}

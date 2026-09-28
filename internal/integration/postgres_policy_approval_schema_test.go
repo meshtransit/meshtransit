@@ -75,17 +75,46 @@ WHERE namespace.nspname = 'mesh_ops'
       'lock_policy_approval_request_v1',
       'load_policy_approval_request_v1',
       'approve_policy_approval_request_v1',
-      'load_policy_approval_evidence_v1'
+      'load_policy_approval_evidence_v1',
+      'lock_policy_approval_for_publication_v1',
+      'consume_policy_approval_for_publication_v1'
   )`).Scan(&functionCount, &runtimeFunctions, &nonRuntimeFunctions); err != nil {
 		t.Fatalf("query Policy approval function privileges: %v", err)
 	}
-	if functionCount != 5 || !runtimeFunctions || nonRuntimeFunctions {
+	if functionCount != 7 || !runtimeFunctions || nonRuntimeFunctions {
 		t.Fatalf(
 			"Policy approval functions count=%d runtime-execute=%t non-runtime-execute=%t",
 			functionCount,
 			runtimeFunctions,
 			nonRuntimeFunctions,
 		)
+	}
+
+	var securityDefinerCount int
+	if err := connection.QueryRow(ctx, `SELECT pg_catalog.count(*)
+FROM pg_catalog.pg_proc AS procedure
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+WHERE namespace.nspname = 'mesh_ops'
+  AND procedure.proname IN (
+      'lock_policy_approval_for_publication_v1',
+      'consume_policy_approval_for_publication_v1'
+  )
+  AND procedure.prosecdef
+  AND NOT EXISTS (
+      SELECT 1
+      FROM pg_catalog.aclexplode(COALESCE(
+          procedure.proacl,
+          pg_catalog.acldefault('f', procedure.proowner)
+      )) AS privilege
+      WHERE privilege.grantee = 0
+        AND privilege.privilege_type = 'EXECUTE'
+  )`).Scan(
+		&securityDefinerCount,
+	); err != nil {
+		t.Fatalf("query Policy approval publication function security: %v", err)
+	}
+	if securityDefinerCount != 2 {
+		t.Fatalf("Policy approval publication secured function count = %d, want 2", securityDefinerCount)
 	}
 
 	var triggerCount int

@@ -40,17 +40,40 @@ type policyPublicationRulePayload struct {
 }
 
 type policyPublicationAuditPayload struct {
-	AuditReason                   string `json:"audit_reason"`
-	BasePolicyRevision            int64  `json:"base_policy_revision"`
-	CompilerFormatVersion         int    `json:"compiler_format_version"`
-	RuleCount                     int    `json:"rule_count"`
-	AccountSessionID              string `json:"account_session_id,omitempty"`
-	RoleBindingID                 string `json:"role_binding_id,omitempty"`
-	RoleDefinitionID              string `json:"role_definition_id,omitempty"`
-	ScopeAuthorityGeneration      int64  `json:"scope_authority_generation,omitempty"`
-	MembershipAuthorityGeneration int64  `json:"membership_authority_generation,omitempty"`
-	BindingAuthorityGeneration    int64  `json:"binding_authority_generation,omitempty"`
-	RoleAuthorityGeneration       int64  `json:"role_authority_generation,omitempty"`
+	AuditReason                           string                                   `json:"audit_reason"`
+	BasePolicyRevision                    int64                                    `json:"base_policy_revision"`
+	CompilerFormatVersion                 int                                      `json:"compiler_format_version"`
+	RuleCount                             int                                      `json:"rule_count"`
+	AccountSessionID                      string                                   `json:"account_session_id,omitempty"`
+	RoleBindingID                         string                                   `json:"role_binding_id,omitempty"`
+	RoleDefinitionID                      string                                   `json:"role_definition_id,omitempty"`
+	ScopeAuthorityGeneration              int64                                    `json:"scope_authority_generation,omitempty"`
+	MembershipAuthorityGeneration         int64                                    `json:"membership_authority_generation,omitempty"`
+	BindingAuthorityGeneration            int64                                    `json:"binding_authority_generation,omitempty"`
+	RoleAuthorityGeneration               int64                                    `json:"role_authority_generation,omitempty"`
+	ApprovalRequestID                     string                                   `json:"approval_request_id,omitempty"`
+	ApprovalEvidenceID                    string                                   `json:"approval_evidence_id,omitempty"`
+	ApprovalImpactHash                    string                                   `json:"approval_impact_hash,omitempty"`
+	ApprovalBaselineVector                *policyPublicationAuthorityVectorPayload `json:"approval_baseline_vector,omitempty"`
+	ApprovalProposedVector                *policyPublicationAuthorityVectorPayload `json:"approval_proposed_vector,omitempty"`
+	ApproverAccountSessionID              string                                   `json:"approver_account_session_id,omitempty"`
+	ApproverRoleBindingID                 string                                   `json:"approver_role_binding_id,omitempty"`
+	ApproverRoleDefinitionID              string                                   `json:"approver_role_definition_id,omitempty"`
+	ApproverScopeAuthorityGeneration      int64                                    `json:"approver_scope_authority_generation,omitempty"`
+	ApproverMembershipAuthorityGeneration int64                                    `json:"approver_membership_authority_generation,omitempty"`
+	ApproverBindingAuthorityGeneration    int64                                    `json:"approver_binding_authority_generation,omitempty"`
+	ApproverRoleAuthorityGeneration       int64                                    `json:"approver_role_authority_generation,omitempty"`
+}
+
+type policyPublicationAuthorityVectorPayload struct {
+	NetworkRevision     int64 `json:"network_revision"`
+	InventoryRevision   int64 `json:"inventory_revision"`
+	GroupRevision       int64 `json:"group_revision"`
+	PolicyRevision      int64 `json:"policy_revision"`
+	DNSRevision         int64 `json:"dns_revision"`
+	RouteRevision       int64 `json:"route_revision"`
+	SharingRevision     int64 `json:"sharing_revision"`
+	IsolationGeneration int64 `json:"isolation_generation"`
 }
 
 type policyPublicationOutboxPayload struct {
@@ -174,6 +197,27 @@ func (transaction *policyPublicationTransaction) appendPolicyPublicationEvidence
 		auditEvidence.BindingAuthorityGeneration = transaction.authorization.bindingAuthorityGeneration
 		auditEvidence.RoleAuthorityGeneration = transaction.authorization.roleAuthorityGeneration
 	}
+	if command.HasApprovalEvidence() {
+		gate := change.Resolution().ApprovalGate()
+		impactHash := gate.ImpactHash().Bytes()
+		baseline := policyPublicationAuthorityVectorAuditPayload(gate.BaselineVector())
+		proposed := policyPublicationAuthorityVectorAuditPayload(gate.ProposedVector())
+		auditEvidence.ApprovalRequestID = gate.RequestID().String()
+		auditEvidence.ApprovalEvidenceID = gate.EvidenceID().String()
+		auditEvidence.ApprovalImpactHash = hex.EncodeToString(impactHash[:])
+		auditEvidence.ApprovalBaselineVector = &baseline
+		auditEvidence.ApprovalProposedVector = &proposed
+	}
+	if transaction.approvalAuthorization.isValid() {
+		authorization := transaction.approvalAuthorization
+		auditEvidence.ApproverAccountSessionID = authorization.accountSessionID.String()
+		auditEvidence.ApproverRoleBindingID = authorization.roleBindingID.String()
+		auditEvidence.ApproverRoleDefinitionID = authorization.roleDefinitionID.String()
+		auditEvidence.ApproverScopeAuthorityGeneration = authorization.scopeAuthorityGeneration
+		auditEvidence.ApproverMembershipAuthorityGeneration = authorization.membershipAuthorityGeneration
+		auditEvidence.ApproverBindingAuthorityGeneration = authorization.bindingAuthorityGeneration
+		auditEvidence.ApproverRoleAuthorityGeneration = authorization.roleAuthorityGeneration
+	}
 	auditPayload, err := json.Marshal(auditEvidence)
 	if err != nil {
 		return fmt.Errorf("encode policy publication audit payload: %w", err)
@@ -245,4 +289,19 @@ func (transaction *policyPublicationTransaction) appendPolicyPublicationEvidence
 		return ErrPolicyPublicationEvidence
 	}
 	return nil
+}
+
+func policyPublicationAuthorityVectorAuditPayload(
+	vector publication.AuthorityVector,
+) policyPublicationAuthorityVectorPayload {
+	return policyPublicationAuthorityVectorPayload{
+		NetworkRevision:     vector.NetworkRevision(),
+		InventoryRevision:   vector.InventoryRevision(),
+		GroupRevision:       vector.GroupRevision(),
+		PolicyRevision:      vector.PolicyRevision(),
+		DNSRevision:         vector.DNSRevision(),
+		RouteRevision:       vector.RouteRevision(),
+		SharingRevision:     vector.SharingRevision(),
+		IsolationGeneration: vector.IsolationGeneration(),
+	}
 }

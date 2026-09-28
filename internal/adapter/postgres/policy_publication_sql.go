@@ -33,6 +33,24 @@ FROM mesh_ops.lock_active_policy_release()`
 const lockPolicyPublicationAuditStreamSQL = `SELECT stream_internal_id, next_sequence, latest_event_hash
 FROM mesh_audit.lock_network_stream_head()`
 
+const lockPolicyPublicationApprovalSQL = `SELECT
+    request_public_id::TEXT, evidence_public_id::TEXT,
+    baseline_network, baseline_inventory, baseline_group, baseline_policy,
+    baseline_dns, baseline_route, baseline_sharing, baseline_isolation,
+    proposed_network, proposed_inventory, proposed_group, proposed_policy,
+    proposed_dns, proposed_route, proposed_sharing, proposed_isolation,
+    candidate_hash, compiler_format, simulation_impact_hash,
+    approved_request_version, approval_evidence_version,
+    evidence_approved_at, evidence_expires_at,
+    approver_session_public_id::TEXT, deployment_public_id::TEXT,
+    approver_principal_public_id::TEXT, identity_subject_public_id::TEXT,
+    approver_session_version, approver_principal_generation,
+    approver_account_generation, approver_provider_generation,
+    approver_recovery_epoch
+FROM mesh_ops.lock_policy_approval_for_publication_v1(
+    $1::UUID, $2::TIMESTAMPTZ
+)`
+
 const setPolicyPublicationChangeSQL = `SELECT pg_catalog.set_config(
     'mesh.change_public_id',
     $1::TEXT,
@@ -63,6 +81,12 @@ FROM mesh_ops.attach_policy_resource_group_destinations(
     $3::JSONB
 )`
 
+const consumePolicyPublicationApprovalSQL = `SELECT
+    mesh_ops.consume_policy_approval_for_publication_v1(
+        $1::UUID, $2::UUID, $3::BYTEA, $4::INTEGER,
+        $5::BYTEA, $6::TIMESTAMPTZ
+    )`
+
 const appendPolicyPublicationEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
     $1::BIGINT, $2::UUID, $3::UUID, $4::BIGINT, $5::BYTEA, $6::BYTEA,
     'policy_release', $7::UUID, $8::BIGINT, $9::BIGINT, $10::UUID,
@@ -73,8 +97,18 @@ const appendPolicyPublicationEvidenceSQL = `SELECT mesh_audit.append_authority_e
 const loadCommittedPolicyReleaseSQL = `SELECT
     release.activated_network_revision,
     release.policy_revision,
-    release.semantic_hash
+    release.semantic_hash,
+    evidence.public_id::TEXT
 FROM mesh.policy_release AS release
+LEFT JOIN mesh.policy_approval_request AS approval_request
+  ON approval_request.workspace_id = release.workspace_id
+ AND approval_request.network_id = release.network_id
+ AND approval_request.consumed_policy_release_id = release.id
+ AND approval_request.consumed_policy_revision = release.policy_revision
+LEFT JOIN mesh.policy_approval_evidence AS evidence
+  ON evidence.workspace_id = approval_request.workspace_id
+ AND evidence.network_id = approval_request.network_id
+ AND evidence.request_id = approval_request.id
 WHERE release.workspace_id = $1::BIGINT
   AND release.network_id = $2::BIGINT
   AND release.public_id = $3::UUID`
