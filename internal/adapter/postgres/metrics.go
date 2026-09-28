@@ -33,6 +33,12 @@ const (
 	postgresOperationPolicyPublicationCommit   postgresOperation = "policy_publication_commit"
 	postgresOperationPolicyPublicationRollback postgresOperation = "policy_publication_rollback"
 	postgresOperationPolicyPublicationReplay   postgresOperation = "policy_publication_replay"
+	postgresOperationResourceAuthorityBegin    postgresOperation = "resource_authority_begin"
+	postgresOperationResourceAuthorityResolve  postgresOperation = "resource_authority_resolve"
+	postgresOperationResourceAuthorityApply    postgresOperation = "resource_authority_apply"
+	postgresOperationResourceAuthorityCommit   postgresOperation = "resource_authority_commit"
+	postgresOperationResourceAuthorityRollback postgresOperation = "resource_authority_rollback"
+	postgresOperationResourceAuthorityReplay   postgresOperation = "resource_authority_replay"
 	postgresOperationDeviceRevocationBegin     postgresOperation = "device_revocation_begin"
 	postgresOperationDeviceRevocationResolve   postgresOperation = "device_revocation_resolve"
 	postgresOperationDeviceRevocationApply     postgresOperation = "device_revocation_apply"
@@ -104,6 +110,12 @@ var (
 		postgresOperationPolicyPublicationCommit,
 		postgresOperationPolicyPublicationRollback,
 		postgresOperationPolicyPublicationReplay,
+		postgresOperationResourceAuthorityBegin,
+		postgresOperationResourceAuthorityResolve,
+		postgresOperationResourceAuthorityApply,
+		postgresOperationResourceAuthorityCommit,
+		postgresOperationResourceAuthorityRollback,
+		postgresOperationResourceAuthorityReplay,
 		postgresOperationDeviceRevocationBegin,
 		postgresOperationDeviceRevocationResolve,
 		postgresOperationDeviceRevocationApply,
@@ -390,6 +402,12 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationPolicyPublicationCommit ||
 			operation == postgresOperationPolicyPublicationRollback ||
 			operation == postgresOperationPolicyPublicationReplay ||
+			operation == postgresOperationResourceAuthorityBegin ||
+			operation == postgresOperationResourceAuthorityResolve ||
+			operation == postgresOperationResourceAuthorityApply ||
+			operation == postgresOperationResourceAuthorityCommit ||
+			operation == postgresOperationResourceAuthorityRollback ||
+			operation == postgresOperationResourceAuthorityReplay ||
 			operation == postgresOperationDeviceRevocationBegin ||
 			operation == postgresOperationDeviceRevocationResolve ||
 			operation == postgresOperationDeviceRevocationApply ||

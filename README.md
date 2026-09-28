@@ -21,6 +21,14 @@ production SLOs remain separate gates. The exact non-production evidence and
 remaining gaps are recorded in the
 [POC HA, SSO, and policy qualification matrix](docs/qualification/poc-ha-sso-policy-2026-09-27.md).
 
+Phase 2 M1 now includes the first PostgreSQL-authoritative Device Resource and
+immutable Resource Group slice. It is an application and adapter foundation;
+no public management API or UI is exposed yet. Design, security boundaries,
+acceptance evidence, and explicit non-claims are recorded in the
+[Phase 2 M1 Resource authority design](docs/design/phase2-m1-resource-authority.md)
+and
+[acceptance matrix](docs/qualification/phase2-m1-resource-authority-2026-09-28.md).
+
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,
 runtime role selection, bounded lifecycle management, safe JSON logging,

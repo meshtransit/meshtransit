@@ -49,6 +49,7 @@ const (
 	oidcBrowserExpiryDescription              = "bounded abandoned OIDC browser expiry"
 	accountSessionLogoutDescription           = "deployment-bound local account session logout"
 	accountSessionLogoutEvidenceDescription   = "audited account session logout evidence"
+	resourceGroupAuthorityDescription         = "Resource and Resource Group authority foundation"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -159,6 +160,9 @@ var accountSessionLogoutSQL string
 //go:embed 000036_account_session_logout_evidence.up.sql
 var accountSessionLogoutEvidenceSQL string
 
+//go:embed 000037_resource_group_authority.up.sql
+var resourceGroupAuthoritySQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -214,6 +218,7 @@ func Catalog() []Migration {
 		newMigration(34, oidcBrowserExpiryDescription, oidcBrowserExpirySQL),
 		newMigration(35, accountSessionLogoutDescription, accountSessionLogoutSQL),
 		newMigration(36, accountSessionLogoutEvidenceDescription, accountSessionLogoutEvidenceSQL),
+		newMigration(37, resourceGroupAuthorityDescription, resourceGroupAuthoritySQL),
 	}
 }
 

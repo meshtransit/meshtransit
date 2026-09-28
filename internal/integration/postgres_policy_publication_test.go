@@ -56,6 +56,12 @@ func assertPostgreSQLManagementPolicyPublication(
 	runtimePool *postgresadapter.Pool,
 ) {
 	t.Helper()
+	var baseNetworkRevision int64
+	if err := adminConnection.QueryRow(ctx, `SELECT network_revision
+FROM mesh_ops.network_revision
+WHERE workspace_id = 103 AND network_id = 203`).Scan(&baseNetworkRevision); err != nil {
+		t.Fatalf("query management publication base Network revision: %v", err)
+	}
 	trusted := policyPublicationIntegrationCommand(t)
 	snapshot, err := policy.NewSnapshot(policy.SnapshotParams{
 		Scope: trusted.Candidate().Snapshot().Scope(), Revision: 4, Rules: []policy.Rule{},
@@ -89,9 +95,13 @@ func assertPostgreSQLManagementPolicyPublication(
 		service,
 		command,
 	)
-	if result.PolicyRevision() != 4 || result.NetworkRevision() != 6 ||
+	if result.PolicyRevision() != 4 || result.NetworkRevision() != baseNetworkRevision+1 ||
 		result.Scope() != snapshot.Scope() || result.SemanticHash() != candidate.SemanticHash() {
-		t.Fatalf("management publication result = %+v, want Network/policy revision 6/4", result)
+		t.Fatalf(
+			"management publication result = %+v, want Network/policy revision %d/4",
+			result,
+			baseNetworkRevision+1,
+		)
 	}
 	var evidenceCount int
 	if err := adminConnection.QueryRow(ctx, `SELECT pg_catalog.count(*)::INTEGER

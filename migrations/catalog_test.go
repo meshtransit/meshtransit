@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 36 {
-		t.Fatalf("len(Catalog()) = %d, want 36", len(catalog))
+	if len(catalog) != 37 {
+		t.Fatalf("len(Catalog()) = %d, want 37", len(catalog))
 	}
 
 	persistence := catalog[26]
@@ -1086,8 +1086,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 36 {
-		t.Fatalf("LatestVersion() = %d, want 36", LatestVersion())
+	if LatestVersion() != 37 {
+		t.Fatalf("LatestVersion() = %d, want 37", LatestVersion())
 	}
 }
 
@@ -1313,6 +1313,51 @@ func TestAccountSessionLogoutEvidenceIsPrincipalBoundAndLeastPrivilege(t *testin
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("Account Session logout evidence SQL contains excessive capability %q", forbidden)
+		}
+	}
+}
+
+func TestResourceGroupAuthorityIsScopedVersionedAndLeastPrivilege(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[36]
+	if migration.Description != "Resource and Resource Group authority foundation" {
+		t.Fatalf("migration 37 description = %q", migration.Description)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.resource (",
+		"CREATE TABLE mesh.resource_device_target (",
+		"CREATE TABLE mesh.resource_group (",
+		"CREATE TABLE mesh.resource_group_version (",
+		"CREATE TABLE mesh.resource_group_version_member (",
+		"target_generation BIGINT NOT NULL",
+		"active_definition_version BIGINT NOT NULL",
+		"resource_active_target_generation_fk",
+		"resource_group_active_version_fk",
+		"DEFERRABLE INITIALLY DEFERRED",
+		"capture_authority_mutation('resource'",
+		"capture_authority_mutation('resource_group'",
+		"CREATE FUNCTION mesh_ops.create_device_resource_v1",
+		"CREATE FUNCTION mesh_ops.create_resource_group_v1",
+		"CREATE FUNCTION mesh_ops.resolve_resource_v1",
+		"CREATE FUNCTION mesh_ops.resolve_resource_group_v1",
+		"p_expected_inventory_revision BIGINT",
+		"p_expected_group_revision BIGINT",
+		"FROM mesh_ops.lock_network_revision()",
+		"resource.version = member.resource_version",
+		"resource.target_generation = member.target_generation",
+		"SECURITY DEFINER",
+		"TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("Resource authority SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "GRANT ALL",
+		"BYPASSRLS", "TO mesh_worker;", "TO mesh_observer;", "DROP ",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("Resource authority SQL contains excessive capability %q", forbidden)
 		}
 	}
 }

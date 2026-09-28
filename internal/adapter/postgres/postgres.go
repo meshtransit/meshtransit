@@ -59,6 +59,7 @@ type Pool struct {
 	registrationReplayDatabase      registrationReplayDatabase
 	registrationTransactionDatabase registrationTransactionDatabase
 	policyPublicationDatabase       policyPublicationDatabase
+	resourceAuthorityDatabase       resourceAuthorityDatabase
 	deviceRevocationDatabase        deviceRevocationDatabase
 	authTransactionDatabase         authTransactionDatabase
 	accountSessionDatabase          accountSessionDatabase
@@ -121,6 +122,7 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 		registrationReplayDatabase:      pgxRegistrationReplayDatabase{pool: pool},
 		registrationTransactionDatabase: pgxRegistrationTransactionDatabase{pool: pool},
 		policyPublicationDatabase:       pgxPolicyPublicationDatabase{pool: pool},
+		resourceAuthorityDatabase:       pgxResourceAuthorityDatabase{pool: pool},
 		deviceRevocationDatabase:        pgxDeviceRevocationDatabase{pool: pool},
 		authTransactionDatabase:         pgxAuthTransactionDatabase{pool: pool},
 		accountSessionDatabase:          pgxAccountSessionDatabase{pool: pool},

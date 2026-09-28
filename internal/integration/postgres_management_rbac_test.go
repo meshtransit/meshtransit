@@ -21,6 +21,8 @@ const (
 	integrationRoleDefinitionPublicID      = "01890f00-0000-7000-8000-000000000842"
 	integrationRolePermissionPublicID      = "01890f00-0000-7000-8000-000000000843"
 	integrationPolicyPermissionPublicID    = "01890f00-0000-7000-8000-000000000846"
+	integrationResourcePermissionPublicID  = "01890f00-0000-7000-8000-000000000847"
+	integrationGroupPermissionPublicID     = "01890f00-0000-7000-8000-000000000848"
 	integrationRoleBinding203PublicID      = "01890f00-0000-7000-8000-000000000844"
 	integrationRoleBinding204PublicID      = "01890f00-0000-7000-8000-000000000845"
 )
@@ -293,6 +295,26 @@ WHERE permission.permission_key = 'policy.publish'`,
 				arguments: []any{integrationPolicyPermissionPublicID},
 			},
 			{
+				name: "Resource RolePermission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 847, $1::UUID, 1, 103, 842, permission.id
+FROM mesh.permission AS permission
+WHERE permission.permission_key = 'resource.manage'`,
+				arguments: []any{integrationResourcePermissionPublicID},
+			},
+			{
+				name: "Resource Group RolePermission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 848, $1::UUID, 1, 103, 842, permission.id
+FROM mesh.permission AS permission
+WHERE permission.permission_key = 'resource_group.manage'`,
+				arguments: []any{integrationGroupPermissionPublicID},
+			},
+			{
 				name: "Network 203 RoleBinding",
 				query: `INSERT INTO mesh.role_binding (
     id, public_id, deployment_id, workspace_id, network_id, principal_id,
@@ -408,9 +430,11 @@ func assertNetworkManagementPermissionResolution(
 		t.Fatalf("set management RBAC Network scope: %v", err)
 	}
 	for permission, expectedCount := range map[string]int64{
-		"device.manage":   1,
-		"device.transfer": 0,
-		"policy.publish":  1,
+		"device.manage":         1,
+		"device.transfer":       0,
+		"policy.publish":        1,
+		"resource.manage":       1,
+		"resource_group.manage": 1,
 	} {
 		var count int64
 		if err := transaction.QueryRow(ctx, `SELECT pg_catalog.count(*)
