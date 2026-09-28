@@ -218,4 +218,7 @@ MeshTransit contributors.
 
 ## License
 
-No project license has been selected yet. Do not publish or redistribute this repository until the maintainers add a `LICENSE` file. Existing dependency obligations are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Except for third-party components identified in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), `meshd` is licensed under the
+[Apache License 2.0](LICENSE). The required attributions are recorded in
+[NOTICE](NOTICE).

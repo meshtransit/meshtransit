@@ -95,6 +95,10 @@ install -D -m 0640 "${script_dir}/default/meshd.env" \
 install -d -m 0700 "${package_root}/etc/credstore.encrypted"
 install -D -m 0644 "${repository_dir}/README.md" \
     "${package_root}/usr/share/doc/meshd/README.md"
+install -D -m 0644 "${repository_dir}/LICENSE" \
+    "${package_root}/usr/share/doc/meshd/LICENSE"
+install -D -m 0644 "${repository_dir}/NOTICE" \
+    "${package_root}/usr/share/doc/meshd/NOTICE"
 install -D -m 0644 "${repository_dir}/THIRD_PARTY_NOTICES.md" \
     "${package_root}/usr/share/doc/meshd/THIRD_PARTY_NOTICES.md"
 
