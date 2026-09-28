@@ -937,15 +937,52 @@ findings outside this diff remain visible. This slice did not build or push an
 image, mutate database authority, change Kubernetes, or roll Helm; the resource
 gate remains open until the exact image completes steady and saturation runs.
 
+## Audited provider-client scope transition
+
+The rollout prerequisite for connector-bound login is complete. MeshCore now
+contains a deliberately narrow `providertransition` qualification command. It
+accepts only one exact Deployment/provider/client/actor tuple plus expected
+provider, client, and generation versions. Its source and target scope sets are
+fixed to `openid` and `openid` + `federated:id`; it cannot act as a general
+provider editor. TLS, SCRAM, a separate administrator credential, an exact
+tuple confirmation, and an additional apply-only enable value are mandatory.
+Errors are redacted and output contains no credential or private identity data.
+
+Dry-run uses a read-only serializable transaction. Apply locks the exact
+Deployment, provider, current generation, client, and actor; changes the old
+generation to `superseded`; inserts one `continuous` generation with the same
+trust-configuration hash and a bounded evidence reference; advances the
+provider; changes the client scope allowlist; and appends immutable Deployment
+audit plus outbox evidence in the same serializable transaction. Optimistic
+generation/version predicates and exact old scopes fence stale or ambiguous
+execution. The deferred authority-evidence constraint remains the final commit
+gate.
+
+The ordinary full-repository race suite passed 4,326 tests in 52 packages.
+Full vet, command-local delta lint, module consistency, and 23 focused command
+tests passed. The exact POC dry-run observed provider generation 1, provider
+version 2, current-generation version 2, client version 2, and only `openid`.
+Apply then committed change `01a0e573-8923-7e5d-909e-4db5c7c126ce` and new
+generation `01a0e573-8923-7667-94df-fcc70ae754f7`. Post-commit readback proved
+provider generation/version 2/3, client version 3 with exactly `openid` and
+`federated:id`, old generation 1 superseded at version 3, new continuous
+generation 2 current at version 1, four authority mutations, one audit event,
+and one Deployment-scoped outbox event. The Kubernetes image and workloads were
+not changed. Generation-one Sessions and pending browser evidence are now
+intentionally stale and cannot satisfy current-generation checks.
+
 ## Remaining execution order
 
-1. Execute `SSO-BROKER-009` CPU, memory, goroutine, allocation, database-pool,
+1. Build and push the exact source image, roll Identity and aggregate canary,
+   and prove a fresh connector-bound Google login against provider generation
+   2 before beginning resource measurements.
+2. Execute `SSO-BROKER-009` CPU, memory, goroutine, allocation, database-pool,
    latency and saturation measurements, then set role-specific requests and
    limits from evidence.
-2. Execute `SSO-BROKER-010` upgrade/rollback and identity-migration runbooks,
+3. Execute `SSO-BROKER-010` upgrade/rollback and identity-migration runbooks,
    then close the remaining legal-review and signed-artifact items.
-3. Extend publication cases to TCP, UDP, multiple devices, and multiple
+4. Extend publication cases to TCP, UDP, multiple devices, and multiple
    Networks before treating policy qualification as complete.
-4. Resume PostgreSQL and Redis infrastructure failover only when that paused
+5. Resume PostgreSQL and Redis infrastructure failover only when that paused
    workstream is re-opened; the Core-side reconnect/reconciliation support is
    already present but does not qualify the external data services.
