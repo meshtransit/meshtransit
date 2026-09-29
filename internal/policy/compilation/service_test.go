@@ -16,6 +16,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	"github.com/meshtransit/meshtransit/internal/resource"
 	"github.com/meshtransit/meshtransit/internal/resource/catalog"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -66,6 +67,52 @@ func TestServiceCompilesDirectDeviceWithoutResourceRead(t *testing.T) {
 		len(candidate.ResourceDestinations()) != 0 ||
 		candidate.Snapshot().Rules()[0].DestinationNodeID() != destinationID {
 		t.Fatalf("candidate=%+v resolver=%+v", candidate, resolver)
+	}
+}
+
+func TestServiceCompilesImportedResourceAsProvenanceOnly(t *testing.T) {
+	t.Parallel()
+
+	destination := compilationImportedDestinationFixture(t)
+	resourceResolver := &compilationResourceResolverFixture{}
+	importedResolver := &compilationImportedResolverFixture{values: []sharing.PolicyDestination{
+		destination,
+	}}
+	service, err := compilation.NewService(resourceResolver, importedResolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, _ := policy.NewPortRange(443, 443)
+	ruleID, _ := policy.ParseRuleID("01890f00-0000-7000-8000-000000000801")
+	intent, err := compilation.NewRuleIntent(compilation.RuleIntentParams{
+		ID: ruleID, Scope: compilationScopeFixture(t),
+		SourceNodeID:                  compilationNodeID(t, "000000000701"),
+		DestinationImportedResourceID: destination.ImportedResourceID(),
+		Protocol:                      policy.ProtocolTCP, DestinationPortRanges: []policy.PortRange{port},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := compilation.NewRequest(compilation.RequestParams{
+		Scope: compilationScopeFixture(t), Revision: 2, Rules: []compilation.RuleIntent{intent},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	candidate, err := service.Compile(t.Context(), compilationSessionFixture(t), request)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	provenance := candidate.ImportedResourceDestinations()
+	if resourceResolver.calls != 0 || importedResolver.calls != 1 ||
+		candidate.CompilerFormatVersion() != 4 || len(candidate.Snapshot().Rules()) != 0 ||
+		len(provenance) != 1 ||
+		provenance[0].Resolution().ImportedResourceID() != destination.ImportedResourceID() ||
+		provenance[0].Protocol() != policy.ProtocolTCP ||
+		len(provenance[0].DestinationPortRanges()) != 1 ||
+		provenance[0].DestinationPortRanges()[0] != port {
+		t.Fatalf("candidate=%+v provenance=%+v", candidate, provenance)
 	}
 }
 
@@ -191,6 +238,22 @@ type compilationResourceResolverFixture struct {
 	groups []catalog.Group
 	err    error
 	calls  int
+}
+
+type compilationImportedResolverFixture struct {
+	values []sharing.PolicyDestination
+	err    error
+	calls  int
+}
+
+func (resolver *compilationImportedResolverFixture) ResolveImportedPolicyDestinations(
+	context.Context,
+	accountsession.Session,
+	network.Scope,
+	[]sharing.ImportedResourceID,
+) ([]sharing.PolicyDestination, error) {
+	resolver.calls++
+	return resolver.values, resolver.err
 }
 
 func (resolver *compilationResourceResolverFixture) ResolvePolicyDestinations(
@@ -372,6 +435,45 @@ func compilationGroupFixture(t *testing.T, values []catalog.Resource) catalog.Gr
 		t.Fatal(err)
 	}
 	return group
+}
+
+func compilationImportedDestinationFixture(t *testing.T) sharing.PolicyDestination {
+	t.Helper()
+	providerWorkspaceID, _ := workspace.ParseID("01890f00-0000-7000-8000-000000000102")
+	providerNetworkID, _ := network.ParseID("01890f00-0000-7000-8000-000000000202")
+	providerScope, _ := network.NewScope(providerWorkspaceID, providerNetworkID)
+	resourceID, _ := resource.ParseID("01890f00-0000-7000-8000-000000000901")
+	semanticHash, _ := resource.NewSemanticHash([32]byte{1})
+	binding, _ := sharing.NewResourceBinding(providerScope, resourceID, 3, 2, semanticHash)
+	portRange, _ := policy.NewPortRange(80, 500)
+	constraint, _ := sharing.NewTrafficConstraint(sharing.TrafficConstraintParams{
+		Protocol: policy.ProtocolTCP, DestinationPortRanges: []policy.PortRange{portRange},
+	})
+	traffic, _ := sharing.NewTrafficSet([]sharing.TrafficConstraint{constraint})
+	importedID, _ := sharing.ParseImportedResourceID("01890f00-0000-7000-8000-000000000825")
+	contractID, _ := sharing.ParseContractID("01890f00-0000-7000-8000-000000000824")
+	offerID, _ := sharing.ParseOfferID("01890f00-0000-7000-8000-000000000823")
+	exportID, _ := sharing.ParseExportID("01890f00-0000-7000-8000-000000000822")
+	evaluatedAt := time.Date(2026, time.September, 29, 3, 0, 0, 0, time.UTC)
+	contract, err := sharing.NewContract(sharing.ContractParams{
+		ID: contractID, ImportedResourceID: importedID, OfferID: offerID, ExportID: exportID,
+		ProviderScope: providerScope, ConsumerScope: compilationScopeFixture(t), Resource: binding,
+		MaximumTraffic: traffic, ProviderAuthorityGeneration: 2,
+		ConsumerAuthorityGeneration: 3, RecoveryEpoch: 4,
+		ExpiresAt: evaluatedAt.Add(time.Hour), State: sharing.ContractStateActive, Version: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination, err := sharing.NewPolicyDestination(sharing.PolicyDestinationParams{
+		ImportedResourceID: importedID, ImportedResourceVersion: 2,
+		Contract: contract, ExportVersion: 1, ProviderInventoryRevision: 8,
+		ProviderSharingRevision: 5, ConsumerSharingRevision: 6, EvaluatedAt: evaluatedAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return destination
 }
 
 func compilationScopeFixture(t *testing.T) network.Scope {

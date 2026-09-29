@@ -72,6 +72,58 @@ func TestManagementHandlerExplainsActiveResourceGroupPolicy(t *testing.T) {
 	}
 }
 
+func TestManagementHandlerExplainsImportedResourceAsFailClosed(t *testing.T) {
+	t.Parallel()
+
+	reader := managementAccessGraphReaderFunc(func(
+		_ context.Context,
+		_ accountsession.Session,
+		query accessgraph.Query,
+		_ time.Time,
+	) (accessgraph.Snapshot, error) {
+		return managementImportedAccessGraphSnapshot(t, query), nil
+	})
+	service, err := accessgraph.NewService(accessgraph.Dependencies{
+		Reader: reader, Clock: accessgraph.SystemClock{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := validManagementHandlerOptions(t)
+	options.PolicyExplanations = service
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const importedID = "01890f00-0000-7000-8000-000000000801"
+	request := newManagementRequest(
+		t,
+		http.MethodPost,
+		validAccessGraphExplainPath(),
+		`{"source_device_id":"01890f00-0000-7000-8000-000000000301",`+
+			`"destination_imported_resource_id":"`+importedID+`",`+
+			`"protocol":"tcp","destination_port":443}`,
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var body explainPolicyResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Data.Decision != "deny" || body.Data.Reason != "no_matching_active_rule" ||
+		body.Data.Target.ImportedResourceID != importedID || body.Data.Target.DeviceID != "" ||
+		body.Data.Target.ResourceID != "" || len(body.Data.Paths) != 0 || body.Data.Truncated ||
+		body.Data.Evidence.CompilerFormatVersion != 4 ||
+		response.Header().Get("ETag") != `"6"` || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("response = %+v; headers = %+v", body, response.Header())
+	}
+}
+
 func TestManagementHandlerAccessGraphFailsClosed(t *testing.T) {
 	t.Parallel()
 
@@ -89,6 +141,14 @@ func TestManagementHandlerAccessGraphFailsClosed(t *testing.T) {
 			body: `{"source_device_id":"01890f00-0000-7000-8000-000000000301",` +
 				`"destination_device_id":"01890f00-0000-7000-8000-000000000302",` +
 				`"destination_resource_id":"01890f00-0000-7000-8000-000000000601",` +
+				`"protocol":"tcp","destination_port":443}`,
+			status: http.StatusBadRequest, code: "invalid_request",
+		},
+		{
+			name: "ambiguous imported target",
+			body: `{"source_device_id":"01890f00-0000-7000-8000-000000000301",` +
+				`"destination_resource_id":"01890f00-0000-7000-8000-000000000601",` +
+				`"destination_imported_resource_id":"01890f00-0000-7000-8000-000000000801",` +
 				`"protocol":"tcp","destination_port":443}`,
 			status: http.StatusBadRequest, code: "invalid_request",
 		},
@@ -259,6 +319,34 @@ func managementAccessGraphSnapshot(
 		SharingRevision: 2, IsolationGeneration: 1, HasActiveRelease: true,
 		ReleaseID: releaseID, CompilerFormatVersion: 3, SemanticHash: semanticHash,
 		TargetNodeID: targetNodeID, Paths: []accessgraph.Path{path},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
+}
+
+func managementImportedAccessGraphSnapshot(
+	t *testing.T,
+	query accessgraph.Query,
+) accessgraph.Snapshot {
+	t.Helper()
+	releaseID, err := publication.ParseReleaseID("01890f00-0000-7000-8000-000000000902")
+	if err != nil {
+		t.Fatal(err)
+	}
+	semanticHash, err := publication.NewSemanticHash(
+		sha256.Sum256([]byte("Imported Resource access graph fixture")),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accessgraph.NewSnapshot(accessgraph.SnapshotParams{
+		Scope: query.Scope(), NetworkRevision: 13, InventoryRevision: 8,
+		GroupRevision: 9, PolicyRevision: 6, DNSRevision: 2, RouteRevision: 2,
+		SharingRevision: 3, IsolationGeneration: 1, HasActiveRelease: true,
+		ReleaseID: releaseID, CompilerFormatVersion: 4, SemanticHash: semanticHash,
+		Paths: []accessgraph.Path{},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -96,12 +96,12 @@ func assertCompiledPacketPolicyPrivilegeContract(
     ),
     pg_catalog.has_function_privilege(
         'mesh_runtime',
-        'mesh_ops.explain_active_policy_v1(UUID,UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,BIGINT,BIGINT,UUID,UUID,UUID,UUID,UUID,TEXT,INTEGER,TIMESTAMPTZ,INTEGER)',
+        'mesh_ops.explain_active_policy_v2(UUID,UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,BIGINT,BIGINT,UUID,UUID,UUID,UUID,UUID,UUID,TEXT,INTEGER,TIMESTAMPTZ,INTEGER)',
         'EXECUTE'
     ),
     pg_catalog.has_function_privilege(
         'mesh_worker',
-        'mesh_ops.explain_active_policy_v1(UUID,UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,BIGINT,BIGINT,UUID,UUID,UUID,UUID,UUID,TEXT,INTEGER,TIMESTAMPTZ,INTEGER)',
+        'mesh_ops.explain_active_policy_v2(UUID,UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,BIGINT,BIGINT,UUID,UUID,UUID,UUID,UUID,UUID,TEXT,INTEGER,TIMESTAMPTZ,INTEGER)',
         'EXECUTE'
     )`).Scan(
 		&runtimeReleaseRead,

@@ -187,6 +187,28 @@ func TestManagementHandlerPublishesResourceGroupPolicy(t *testing.T) {
 	}
 }
 
+func TestDecodePolicyRuleIntentAcceptsImportedResourceDestination(t *testing.T) {
+	t.Parallel()
+
+	scope := managementSharingScope(t, managementWorkspaceID(), managementNetworkID())
+	const importedResourceID = "01890f00-0000-7000-8000-000000000825"
+	intent, err := decodePolicyRuleIntent(scope, publishPolicyRuleRequest{
+		ID:                            "01890f00-0000-7000-8000-000000000505",
+		SourceDeviceID:                "01890f00-0000-7000-8000-000000000301",
+		DestinationImportedResourceID: importedResourceID,
+		Protocol:                      "tcp",
+		DestinationPortRanges:         []publishPolicyPortRangeRequest{{First: 443, Last: 443}},
+	})
+	if err != nil {
+		t.Fatalf("decodePolicyRuleIntent() error = %v", err)
+	}
+	if intent.DestinationImportedResourceID().String() != importedResourceID ||
+		intent.DestinationNodeID().IsValid() || intent.DestinationResourceID().IsValid() ||
+		intent.DestinationGroupID().IsValid() {
+		t.Fatalf("decoded Imported Resource intent = %+v", intent)
+	}
+}
+
 func TestManagementHandlerPolicyPublicationFailsClosed(t *testing.T) {
 	t.Parallel()
 

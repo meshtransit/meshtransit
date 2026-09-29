@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/meshtransit/meshtransit/internal/audit"
 	publication "github.com/meshtransit/meshtransit/internal/policy/publication"
@@ -15,28 +16,51 @@ import (
 const policyPublicationOutboxEventClass = "network.revision.advanced"
 
 type policyPublicationRulePayload struct {
-	ProjectionPublicID                         string `json:"projection_public_id"`
-	AccessRulePublicID                         string `json:"access_rule_public_id"`
-	SourceNodePublicID                         string `json:"source_node_public_id"`
-	DestinationNodePublicID                    string `json:"destination_node_public_id"`
-	Protocol                                   string `json:"protocol"`
-	PortRangeFirst                             []int  `json:"port_range_first"`
-	PortRangeLast                              []int  `json:"port_range_last"`
-	DestinationResourcePublicID                string `json:"destination_resource_public_id,omitempty"`
-	DestinationResourceVersion                 int64  `json:"destination_resource_version,omitempty"`
-	DestinationTargetGeneration                int64  `json:"destination_target_generation,omitempty"`
-	DestinationInventoryRevision               int64  `json:"destination_inventory_revision,omitempty"`
-	DestinationResourceSemanticHash            string `json:"destination_resource_semantic_hash,omitempty"`
-	DestinationResourceGroupPublicID           string `json:"destination_resource_group_public_id,omitempty"`
-	DestinationResourceGroupVersion            int64  `json:"destination_resource_group_version,omitempty"`
-	DestinationGroupDefinitionVersion          int64  `json:"destination_group_definition_version,omitempty"`
-	DestinationGroupRevision                   int64  `json:"destination_group_revision,omitempty"`
-	DestinationResourceGroupSemanticHash       string `json:"destination_resource_group_semantic_hash,omitempty"`
-	DestinationGroupMemberResourcePublicID     string `json:"destination_group_member_resource_public_id,omitempty"`
-	DestinationGroupMemberResourceVersion      int64  `json:"destination_group_member_resource_version,omitempty"`
-	DestinationGroupMemberTargetGeneration     int64  `json:"destination_group_member_target_generation,omitempty"`
-	DestinationGroupMemberInventoryRevision    int64  `json:"destination_group_member_inventory_revision,omitempty"`
-	DestinationGroupMemberResourceSemanticHash string `json:"destination_group_member_resource_semantic_hash,omitempty"`
+	ProjectionPublicID                         string                         `json:"projection_public_id"`
+	AccessRulePublicID                         string                         `json:"access_rule_public_id"`
+	SourceNodePublicID                         string                         `json:"source_node_public_id"`
+	DestinationNodePublicID                    string                         `json:"destination_node_public_id"`
+	Protocol                                   string                         `json:"protocol"`
+	PortRangeFirst                             []int                          `json:"port_range_first"`
+	PortRangeLast                              []int                          `json:"port_range_last"`
+	DestinationResourcePublicID                string                         `json:"destination_resource_public_id,omitempty"`
+	DestinationResourceVersion                 int64                          `json:"destination_resource_version,omitempty"`
+	DestinationTargetGeneration                int64                          `json:"destination_target_generation,omitempty"`
+	DestinationInventoryRevision               int64                          `json:"destination_inventory_revision,omitempty"`
+	DestinationResourceSemanticHash            string                         `json:"destination_resource_semantic_hash,omitempty"`
+	DestinationResourceGroupPublicID           string                         `json:"destination_resource_group_public_id,omitempty"`
+	DestinationResourceGroupVersion            int64                          `json:"destination_resource_group_version,omitempty"`
+	DestinationGroupDefinitionVersion          int64                          `json:"destination_group_definition_version,omitempty"`
+	DestinationGroupRevision                   int64                          `json:"destination_group_revision,omitempty"`
+	DestinationResourceGroupSemanticHash       string                         `json:"destination_resource_group_semantic_hash,omitempty"`
+	DestinationGroupMemberResourcePublicID     string                         `json:"destination_group_member_resource_public_id,omitempty"`
+	DestinationGroupMemberResourceVersion      int64                          `json:"destination_group_member_resource_version,omitempty"`
+	DestinationGroupMemberTargetGeneration     int64                          `json:"destination_group_member_target_generation,omitempty"`
+	DestinationGroupMemberInventoryRevision    int64                          `json:"destination_group_member_inventory_revision,omitempty"`
+	DestinationGroupMemberResourceSemanticHash string                         `json:"destination_group_member_resource_semantic_hash,omitempty"`
+	DestinationImportedResourcePublicID        string                         `json:"destination_imported_resource_public_id,omitempty"`
+	DestinationImportedResourceVersion         int64                          `json:"destination_imported_resource_version,omitempty"`
+	DestinationTrustContractPublicID           string                         `json:"destination_trust_contract_public_id,omitempty"`
+	DestinationTrustContractVersion            int64                          `json:"destination_trust_contract_version,omitempty"`
+	DestinationShareOfferPublicID              string                         `json:"destination_share_offer_public_id,omitempty"`
+	DestinationResourceExportPublicID          string                         `json:"destination_resource_export_public_id,omitempty"`
+	DestinationResourceExportVersion           int64                          `json:"destination_resource_export_version,omitempty"`
+	DestinationProviderWorkspacePublicID       string                         `json:"destination_provider_workspace_public_id,omitempty"`
+	DestinationProviderNetworkPublicID         string                         `json:"destination_provider_network_public_id,omitempty"`
+	DestinationProviderResourcePublicID        string                         `json:"destination_provider_resource_public_id,omitempty"`
+	DestinationProviderResourceVersion         int64                          `json:"destination_provider_resource_version,omitempty"`
+	DestinationProviderTargetGeneration        int64                          `json:"destination_provider_target_generation,omitempty"`
+	DestinationProviderResourceSemanticHash    string                         `json:"destination_provider_resource_semantic_hash,omitempty"`
+	DestinationProviderInventoryRevision       int64                          `json:"destination_provider_inventory_revision,omitempty"`
+	DestinationProviderSharingRevision         int64                          `json:"destination_provider_sharing_revision,omitempty"`
+	DestinationConsumerSharingRevision         int64                          `json:"destination_consumer_sharing_revision,omitempty"`
+	DestinationProviderAuthorityGeneration     int64                          `json:"destination_provider_authority_generation,omitempty"`
+	DestinationConsumerAuthorityGeneration     int64                          `json:"destination_consumer_authority_generation,omitempty"`
+	DestinationRecoveryEpoch                   int64                          `json:"destination_recovery_epoch,omitempty"`
+	DestinationContractExpiresAt               string                         `json:"destination_contract_expires_at,omitempty"`
+	DestinationConstraintHash                  string                         `json:"destination_constraint_hash,omitempty"`
+	DestinationAuthorityEvaluatedAt            string                         `json:"destination_authority_evaluated_at,omitempty"`
+	DestinationContractConstraints             []resourceSharingTrafficRecord `json:"destination_contract_constraints,omitempty"`
 }
 
 type policyPublicationAuditPayload struct {
@@ -84,8 +108,9 @@ type policyPublicationOutboxPayload struct {
 func encodePolicyPublicationRules(change publication.Change) ([]byte, error) {
 	candidate := change.Command().Candidate()
 	rules := candidate.Snapshot().Rules()
+	importedDestinations := candidate.ImportedResourceDestinations()
 	projectionIDs := change.MutationIDs().ProjectionIDs()
-	if len(projectionIDs) != len(rules) {
+	if len(projectionIDs) != len(rules)+len(importedDestinations) {
 		return nil, ErrPolicyPublicationEvidence
 	}
 	type destinationKey struct{ ruleID, nodeID string }
@@ -119,7 +144,7 @@ func encodePolicyPublicationRules(change publication.Change) ([]byte, error) {
 			groupDestinations[key] = groupMemberDestination{group: destination, member: member}
 		}
 	}
-	payload := make([]policyPublicationRulePayload, len(rules))
+	payload := make([]policyPublicationRulePayload, len(rules)+len(importedDestinations))
 	for index, rule := range rules {
 		portRanges := rule.DestinationPortRanges()
 		first := make([]int, len(portRanges))
@@ -162,6 +187,48 @@ func encodePolicyPublicationRules(change publication.Change) ([]byte, error) {
 			payload[index].DestinationGroupMemberInventoryRevision = destination.member.InventoryRevision()
 			payload[index].DestinationGroupMemberResourceSemanticHash = hex.EncodeToString(memberHash[:])
 			delete(groupDestinations, key)
+		}
+	}
+	for index, destination := range importedDestinations {
+		resolution := destination.Resolution()
+		contract := resolution.Contract()
+		binding := contract.Resource()
+		resourceHash := binding.SemanticHash().Bytes()
+		constraintHash := contract.MaximumTraffic().Hash()
+		portRanges := destination.DestinationPortRanges()
+		first := make([]int, len(portRanges))
+		last := make([]int, len(portRanges))
+		for rangeIndex, portRange := range portRanges {
+			first[rangeIndex] = int(portRange.First())
+			last[rangeIndex] = int(portRange.Last())
+		}
+		payload[len(rules)+index] = policyPublicationRulePayload{
+			ProjectionPublicID:                      projectionIDs[len(rules)+index].String(),
+			AccessRulePublicID:                      destination.RuleID().String(),
+			SourceNodePublicID:                      destination.SourceNodeID().String(),
+			Protocol:                                destination.Protocol().String(),
+			PortRangeFirst:                          first,
+			PortRangeLast:                           last,
+			DestinationImportedResourcePublicID:     resolution.ImportedResourceID().String(),
+			DestinationImportedResourceVersion:      resolution.ImportedResourceVersion(),
+			DestinationTrustContractPublicID:        contract.ID().String(),
+			DestinationTrustContractVersion:         contract.Version(),
+			DestinationResourceExportPublicID:       contract.ExportID().String(),
+			DestinationResourceExportVersion:        resolution.ExportVersion(),
+			DestinationProviderWorkspacePublicID:    contract.ProviderScope().WorkspaceID().String(),
+			DestinationProviderNetworkPublicID:      contract.ProviderScope().NetworkID().String(),
+			DestinationProviderResourcePublicID:     binding.ResourceID().String(),
+			DestinationProviderResourceVersion:      binding.ResourceVersion(),
+			DestinationProviderTargetGeneration:     binding.TargetGeneration(),
+			DestinationProviderResourceSemanticHash: hex.EncodeToString(resourceHash[:]),
+			DestinationProviderInventoryRevision:    resolution.ProviderInventoryRevision(),
+			DestinationProviderSharingRevision:      resolution.ProviderSharingRevision(),
+			DestinationConsumerSharingRevision:      resolution.ConsumerSharingRevision(),
+			DestinationProviderAuthorityGeneration:  contract.ProviderAuthorityGeneration(),
+			DestinationConsumerAuthorityGeneration:  contract.ConsumerAuthorityGeneration(),
+			DestinationRecoveryEpoch:                contract.RecoveryEpoch(),
+			DestinationContractExpiresAt:            contract.ExpiresAt().UTC().Format(time.RFC3339Nano),
+			DestinationConstraintHash:               hex.EncodeToString(constraintHash[:]),
 		}
 	}
 	if len(resourceDestinations) != 0 || len(groupDestinations) != 0 {

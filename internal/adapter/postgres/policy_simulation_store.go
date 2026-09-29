@@ -17,6 +17,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/resource"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 )
 
 const maximumPolicySimulationBaselineRules = policy.MaximumRules + 1
@@ -254,17 +255,34 @@ func reconstructPolicySimulationCandidate(
 	compilerFormatVersion int,
 	records []policyPublicationRulePayload,
 ) (publication.Candidate, error) {
-	rules := make([]policy.Rule, len(records))
+	rules := make([]policy.Rule, 0, len(records))
 	directDestinations := make([]publication.ResourceDestination, 0, len(records))
 	groupBuilders := make(map[policy.RuleID]*policySimulationGroupBuilder)
-	for index, record := range records {
+	importedDestinations := make(
+		[]publication.ImportedResourceDestination,
+		0,
+		len(records),
+	)
+	for _, record := range records {
+		importedPresent := policySimulationImportedEvidencePresent(record)
+		directPresent := policySimulationDirectEvidencePresent(record)
+		groupPresent := policySimulationGroupEvidencePresent(record)
+		if importedPresent {
+			if directPresent || groupPresent || record.DestinationNodePublicID != "" {
+				return publication.Candidate{}, simulation.ErrInvalidBaseline
+			}
+			destination, destinationErr := policySimulationImportedDestination(scope, record)
+			if destinationErr != nil {
+				return publication.Candidate{}, simulation.ErrInvalidBaseline
+			}
+			importedDestinations = append(importedDestinations, destination)
+			continue
+		}
 		rule, err := policySimulationRule(scope, record)
 		if err != nil {
 			return publication.Candidate{}, simulation.ErrInvalidBaseline
 		}
-		rules[index] = rule
-		directPresent := policySimulationDirectEvidencePresent(record)
-		groupPresent := policySimulationGroupEvidencePresent(record)
+		rules = append(rules, rule)
 		if directPresent && groupPresent {
 			return publication.Candidate{}, simulation.ErrInvalidBaseline
 		}
@@ -306,6 +324,13 @@ func reconstructPolicySimulationCandidate(
 		groupDestinations = append(groupDestinations, destination)
 	}
 	switch {
+	case len(importedDestinations) > 0 && compilerFormatVersion == 4:
+		return publication.NewCandidateWithImportedResourceDestinations(
+			snapshot,
+			directDestinations,
+			groupDestinations,
+			importedDestinations,
+		)
 	case len(groupDestinations) > 0 && compilerFormatVersion == 3:
 		return publication.NewCandidateWithResourceGroupDestinations(
 			snapshot,
@@ -319,6 +344,134 @@ func reconstructPolicySimulationCandidate(
 	default:
 		return publication.Candidate{}, simulation.ErrInvalidBaseline
 	}
+}
+
+func policySimulationImportedEvidencePresent(record policyPublicationRulePayload) bool {
+	return record.DestinationImportedResourcePublicID != "" ||
+		record.DestinationImportedResourceVersion != 0 ||
+		record.DestinationTrustContractPublicID != "" ||
+		record.DestinationTrustContractVersion != 0 ||
+		record.DestinationShareOfferPublicID != "" ||
+		record.DestinationResourceExportPublicID != "" ||
+		record.DestinationResourceExportVersion != 0 ||
+		record.DestinationProviderWorkspacePublicID != "" ||
+		record.DestinationProviderNetworkPublicID != "" ||
+		record.DestinationProviderResourcePublicID != "" ||
+		record.DestinationProviderResourceVersion != 0 ||
+		record.DestinationProviderTargetGeneration != 0 ||
+		record.DestinationProviderResourceSemanticHash != "" ||
+		record.DestinationProviderInventoryRevision != 0 ||
+		record.DestinationProviderSharingRevision != 0 ||
+		record.DestinationConsumerSharingRevision != 0 ||
+		record.DestinationProviderAuthorityGeneration != 0 ||
+		record.DestinationConsumerAuthorityGeneration != 0 ||
+		record.DestinationRecoveryEpoch != 0 ||
+		record.DestinationContractExpiresAt != "" ||
+		record.DestinationConstraintHash != "" ||
+		record.DestinationAuthorityEvaluatedAt != "" ||
+		len(record.DestinationContractConstraints) != 0
+}
+
+func policySimulationImportedDestination(
+	scope network.Scope,
+	record policyPublicationRulePayload,
+) (publication.ImportedResourceDestination, error) {
+	if _, err := publication.ParseProjectionID(record.ProjectionPublicID); err != nil ||
+		len(record.PortRangeFirst) != len(record.PortRangeLast) {
+		return publication.ImportedResourceDestination{}, simulation.ErrInvalidBaseline
+	}
+	ruleID, ruleErr := policy.ParseRuleID(record.AccessRulePublicID)
+	sourceID, sourceErr := node.ParseID(record.SourceNodePublicID)
+	protocol := parseAccessGraphProtocol(record.Protocol)
+	ranges, rangeErr := policySimulationPortRanges(
+		record.PortRangeFirst,
+		record.PortRangeLast,
+		protocol,
+	)
+	expiresAt, expiresErr := time.Parse(time.RFC3339Nano, record.DestinationContractExpiresAt)
+	evaluatedAt, evaluatedErr := time.Parse(
+		time.RFC3339Nano,
+		record.DestinationAuthorityEvaluatedAt,
+	)
+	if ruleErr != nil || sourceErr != nil || !protocol.IsValid() || rangeErr != nil ||
+		expiresErr != nil || evaluatedErr != nil {
+		return publication.ImportedResourceDestination{}, simulation.ErrInvalidBaseline
+	}
+	resolution, err := (importedPolicyDestinationRecord{
+		ImportedResourceID:          record.DestinationImportedResourcePublicID,
+		ImportedResourceVersion:     record.DestinationImportedResourceVersion,
+		ContractID:                  record.DestinationTrustContractPublicID,
+		ContractVersion:             record.DestinationTrustContractVersion,
+		OfferID:                     record.DestinationShareOfferPublicID,
+		ExportID:                    record.DestinationResourceExportPublicID,
+		ExportVersion:               record.DestinationResourceExportVersion,
+		ProviderWorkspaceID:         record.DestinationProviderWorkspacePublicID,
+		ProviderNetworkID:           record.DestinationProviderNetworkPublicID,
+		ConsumerWorkspaceID:         scope.WorkspaceID().String(),
+		ConsumerNetworkID:           scope.NetworkID().String(),
+		ResourceID:                  record.DestinationProviderResourcePublicID,
+		ResourceVersion:             record.DestinationProviderResourceVersion,
+		TargetGeneration:            record.DestinationProviderTargetGeneration,
+		ResourceSemanticHash:        record.DestinationProviderResourceSemanticHash,
+		ProviderInventoryRevision:   record.DestinationProviderInventoryRevision,
+		ProviderSharingRevision:     record.DestinationProviderSharingRevision,
+		ConsumerSharingRevision:     record.DestinationConsumerSharingRevision,
+		ProviderAuthorityGeneration: record.DestinationProviderAuthorityGeneration,
+		ConsumerAuthorityGeneration: record.DestinationConsumerAuthorityGeneration,
+		RecoveryEpoch:               record.DestinationRecoveryEpoch,
+		ExpiresAt:                   expiresAt,
+		ConstraintHash:              record.DestinationConstraintHash,
+		Constraints:                 record.DestinationContractConstraints,
+	}).value(evaluatedAt, scope)
+	if err != nil {
+		return publication.ImportedResourceDestination{}, simulation.ErrInvalidBaseline
+	}
+	requestedConstraint, err := sharing.NewTrafficConstraint(sharing.TrafficConstraintParams{
+		Protocol: protocol, DestinationPortRanges: ranges,
+	})
+	if err != nil {
+		return publication.ImportedResourceDestination{}, simulation.ErrInvalidBaseline
+	}
+	requestedTraffic, err := sharing.NewTrafficSet([]sharing.TrafficConstraint{requestedConstraint})
+	if err != nil || !requestedTraffic.IsSubsetOf(resolution.Contract().MaximumTraffic()) {
+		return publication.ImportedResourceDestination{}, simulation.ErrInvalidBaseline
+	}
+	destination, err := publication.NewImportedResourceDestination(
+		publication.ImportedResourceDestinationParams{
+			RuleID: ruleID, SourceNodeID: sourceID, Resolution: resolution,
+			Protocol: protocol, DestinationPortRanges: ranges,
+		},
+	)
+	if err != nil {
+		return publication.ImportedResourceDestination{}, simulation.ErrInvalidBaseline
+	}
+	return destination, nil
+}
+
+func policySimulationPortRanges(
+	firstValues []int,
+	lastValues []int,
+	protocol policy.Protocol,
+) ([]policy.PortRange, error) {
+	if len(firstValues) != len(lastValues) || len(firstValues) > policy.MaximumPortRangesPerRule ||
+		protocol == policy.ProtocolICMP && len(firstValues) != 0 ||
+		protocol != policy.ProtocolICMP && len(firstValues) == 0 {
+		return nil, simulation.ErrInvalidBaseline
+	}
+	ranges := make([]policy.PortRange, len(firstValues))
+	for index, first := range firstValues {
+		last := lastValues[index]
+		if first < 1 || first > 65535 || last < first || last > 65535 {
+			return nil, simulation.ErrInvalidBaseline
+		}
+		// #nosec G115 -- both values are range-checked against uint16's positive domain above.
+		value, err := policy.NewPortRange(uint16(first), uint16(last))
+		if err != nil {
+			return nil, simulation.ErrInvalidBaseline
+		}
+		ranges[index] = value
+	}
+	return ranges, nil
 }
 
 func policySimulationRule(

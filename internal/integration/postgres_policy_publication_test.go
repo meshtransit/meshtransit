@@ -22,6 +22,7 @@ import (
 	publication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/resource"
 	authority "github.com/meshtransit/meshtransit/internal/resource/authority"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -717,6 +718,34 @@ func assertPostgreSQLActivePolicyExplanation(
 	if !denied.IsValid() || denied.Decision() != accessgraph.DecisionDeny ||
 		denied.Reason() != accessgraph.ReasonNoMatchingActiveRule || len(denied.Paths()) != 0 {
 		t.Fatalf("default-deny explanation = %+v", denied)
+	}
+
+	importedID, err := sharing.ParseImportedResourceID(
+		"01890f00-0000-7000-8000-000000000981",
+	)
+	if err != nil {
+		t.Fatalf("parse Imported Resource explanation fixture: %v", err)
+	}
+	importedQuery, err := accessgraph.NewQuery(accessgraph.QueryParams{
+		Scope: scope, SourceNodeID: template.SourceNodeID(),
+		DestinationImportedResourceID: importedID,
+		Protocol:                      template.Protocol(), DestinationPort: ranges[0].First(),
+	})
+	if err != nil {
+		t.Fatalf("construct Imported Resource Access Graph query: %v", err)
+	}
+	importedDenied, err := explainer.Explain(ctx, session, importedQuery)
+	if err != nil {
+		t.Fatalf("explain fail-closed Imported Resource policy: %v", err)
+	}
+	importedReleaseID, importedFormat, importedHash, importedHasRelease :=
+		importedDenied.Snapshot().ActiveRelease()
+	if !importedDenied.IsValid() || importedDenied.Decision() != accessgraph.DecisionDeny ||
+		importedDenied.Reason() != accessgraph.ReasonNoMatchingActiveRule ||
+		len(importedDenied.Paths()) != 0 || importedDenied.Snapshot().TargetNodeID().IsValid() ||
+		!importedHasRelease || importedReleaseID != published.ReleaseID() || importedFormat != 3 ||
+		importedHash != published.SemanticHash() {
+		t.Fatalf("Imported Resource fail-closed explanation = %+v", importedDenied)
 	}
 }
 

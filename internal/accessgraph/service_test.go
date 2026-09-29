@@ -16,6 +16,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/resource"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -79,6 +80,37 @@ func TestServiceExplainsDefaultDenyWithoutActiveRelease(t *testing.T) {
 	}
 	if result.Decision() != accessgraph.DecisionDeny ||
 		result.Reason() != accessgraph.ReasonNoMatchingActiveRule || len(result.Paths()) != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestServiceExplainsImportedResourceAsFailClosedProvenance(t *testing.T) {
+	t.Parallel()
+
+	query := accessGraphImportedResourceQueryFixture(t)
+	params := accessGraphSnapshotParams(t, query, nil)
+	params.CompilerFormatVersion = 4
+	params.TargetNodeID = node.ID{}
+	snapshot, err := accessgraph.NewSnapshot(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := accessgraph.NewService(accessgraph.Dependencies{
+		Reader: &accessGraphReaderFixture{snapshot: snapshot},
+		Clock:  fixedAccessGraphClock{value: accessGraphTime()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := service.Explain(t.Context(), accessGraphSessionFixture(t), query)
+	if err != nil {
+		t.Fatalf("Explain() error = %v", err)
+	}
+	if !result.IsValid() || result.Decision() != accessgraph.DecisionDeny ||
+		result.Reason() != accessgraph.ReasonNoMatchingActiveRule ||
+		len(result.Paths()) != 0 || result.Snapshot().TargetNodeID().IsValid() ||
+		result.Query().DestinationImportedResourceID() != query.DestinationImportedResourceID() {
 		t.Fatalf("result = %+v", result)
 	}
 }
@@ -247,6 +279,25 @@ func accessGraphQueryFixture(
 		params.DestinationNodeID = accessGraphNodeID(t, 302)
 	}
 	query, err := accessgraph.NewQuery(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return query
+}
+
+func accessGraphImportedResourceQueryFixture(t *testing.T) accessgraph.Query {
+	t.Helper()
+	importedID, err := sharing.ParseImportedResourceID(
+		"01890f00-0000-7000-8000-000000000801",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query, err := accessgraph.NewQuery(accessgraph.QueryParams{
+		Scope: accessGraphScopeFixture(t), SourceNodeID: accessGraphNodeID(t, 301),
+		DestinationImportedResourceID: importedID,
+		Protocol:                      policy.ProtocolTCP, DestinationPort: 443,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

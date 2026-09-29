@@ -30,6 +30,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/resource"
 	authority "github.com/meshtransit/meshtransit/internal/resource/authority"
 	"github.com/meshtransit/meshtransit/internal/resource/catalog"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -61,6 +62,14 @@ const (
 	resourceAuthorityChangePreviewOperation = "resource_authority_change_preview"
 	resourceAuthorityChangeRequestOperation = "resource_authority_change_request"
 	resourceAuthorityChangeConfirmOperation = "resource_authority_change_confirm"
+	shareOfferCreateOperation               = "share_offer_create"
+	shareOfferGetOperation                  = "share_offer_get"
+	shareOfferListOperation                 = "share_offer_list"
+	shareOfferAcceptOperation               = "share_offer_accept"
+	shareOfferRejectOperation               = "share_offer_reject"
+	shareOfferRevokeOperation               = "share_offer_revoke"
+	shareContractRevokeOperation            = "share_contract_revoke"
+	shareContractActivateOperation          = "share_contract_activate"
 	unknownManagementOperation              = "unknown"
 	maximumManagementBodyBytes              = 64 * 1024
 	maximumManagementRequests               = 4096
@@ -156,6 +165,29 @@ type ResourceCatalog interface {
 	ListGroups(context.Context, accountsession.Session, network.Scope, resource.State, int, catalog.PageCursor) (catalog.GroupPage, error)
 }
 
+// ResourceSharingManagement exposes bounded Resource-sharing commands and reads.
+type ResourceSharingManagement interface {
+	CreateOffer(context.Context, sharing.CreateOffer) (sharing.MutationResult, error)
+	DecideOffer(context.Context, sharing.DecideOffer) (sharing.MutationResult, error)
+	ActivateContract(context.Context, sharing.ActivateContract) (sharing.MutationResult, error)
+	RevokeContract(context.Context, sharing.RevokeContract) (sharing.MutationResult, error)
+	GetOffer(
+		context.Context,
+		accountsession.Session,
+		network.Scope,
+		sharing.OfferID,
+	) (sharing.OfferSnapshot, error)
+	ListOffers(
+		context.Context,
+		accountsession.Session,
+		network.Scope,
+		sharing.Direction,
+		sharing.OfferState,
+		int,
+		sharing.PageCursor,
+	) (sharing.OfferPage, error)
+}
+
 // IdempotencyProver derives durable evidence without exposing the raw request key.
 type IdempotencyProver interface {
 	Proof(string) (idempotency.Proof, error)
@@ -192,6 +224,7 @@ type ManagementHandlerOptions struct {
 	ResourceGroupReplacements ResourceGroupReplacer
 	ResourceAuthorityChanges  ResourceAuthorityChanger
 	ResourceCatalog           ResourceCatalog
+	ResourceSharing           ResourceSharingManagement
 	Idempotency               IdempotencyProver
 	RateLimitSubjects         RateLimitSubjectDigester
 	RateLimiter               ManagementRateLimiter
@@ -220,6 +253,7 @@ type ManagementHandler struct {
 	resourceGroupReplacements ResourceGroupReplacer
 	resourceAuthorityChanges  ResourceAuthorityChanger
 	resourceCatalog           ResourceCatalog
+	resourceSharing           ResourceSharingManagement
 	idempotency               IdempotencyProver
 	rateSubjects              RateLimitSubjectDigester
 	rateLimiter               ManagementRateLimiter
@@ -271,6 +305,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		resourceGroupReplacements: options.ResourceGroupReplacements,
 		resourceAuthorityChanges:  options.ResourceAuthorityChanges,
 		resourceCatalog:           options.ResourceCatalog,
+		resourceSharing:           options.ResourceSharing,
 		idempotency:               options.Idempotency,
 		rateSubjects:              options.RateLimitSubjects,
 		rateLimiter:               options.RateLimiter,
@@ -354,8 +389,9 @@ func (handler *ManagementHandler) serveHTTP(
 	policyApprovalPath, policyApprovalMatched := parsePolicyApprovalPath(request)
 	accessGraphPath, accessGraphMatched := parseAccessGraphExplainPath(request)
 	resourcePath, resourceMatched := parseResourceManagementPath(request)
+	sharingPath, sharingMatched := parseResourceSharingPath(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
-		!accessGraphMatched && !resourceMatched {
+		!accessGraphMatched && !resourceMatched && !sharingMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -373,6 +409,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = policyApprovalPath.operation(request.Method)
 	} else if accessGraphMatched {
 		operation = policyExplainOperation
+	} else if sharingMatched {
+		operation = sharingPath.operation(request.Method)
 	} else {
 		operation = resourcePath.operation(request.Method)
 	}
@@ -381,6 +419,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = policyApprovalPath.allowedMethod(request.Method)
 	} else if resourceMatched {
 		allowedMethod = resourcePath.allowedMethod(request.Method)
+	} else if sharingMatched {
+		allowedMethod = sharingPath.allowedMethod(request.Method)
 	}
 	if allowedMethod == "" || request.Method != allowedMethod {
 		if policyApprovalMatched && policyApprovalPath.isCollection() {
@@ -393,6 +433,12 @@ func (handler *ManagementHandler) serveHTTP(
 			response.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
 		} else if resourceMatched && resourcePath.isAction() {
 			response.Header().Set("Allow", http.MethodPost)
+		} else if sharingMatched && sharingPath.isCollection() {
+			response.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
+		} else if sharingMatched && sharingPath.isAction() {
+			response.Header().Set("Allow", http.MethodPost)
+		} else if sharingMatched {
+			response.Header().Set("Allow", http.MethodGet)
 		} else {
 			response.Header().Set("Allow", allowedMethodOrGet(resourceMatched, allowedMethod))
 		}
@@ -478,6 +524,20 @@ func (handler *ManagementHandler) serveHTTP(
 		}
 		resultCode = handler.handleResourceManagement(
 			ctx, response, request, correlationID, resourcePath, session,
+		)
+		return
+	}
+	if sharingMatched {
+		if browser != nil {
+			resultCode = "not_found"
+			writeManagementError(ctx, handler.logger, response, correlationID, managementError{
+				Status: http.StatusNotFound, Code: resultCode,
+				Message: "the requested resource is unavailable",
+			})
+			return
+		}
+		resultCode = handler.handleResourceSharing(
+			ctx, response, request, correlationID, sharingPath, session,
 		)
 		return
 	}

@@ -10,6 +10,7 @@ import (
 
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/config"
+	"github.com/meshtransit/meshtransit/migrations"
 )
 
 func TestPostgreSQLMigrations(t *testing.T) {
@@ -136,6 +137,18 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		adminConfig.PostgreSQL.CAFile,
 		adminConfig.ConnectTimeout,
 	)
+	for range 2 {
+		if _, err := adminConnection.Exec(ctx, migrations.ResourceSharingFunctionOwnershipSQL()); err != nil {
+			t.Fatalf("apply idempotent Resource Sharing function ownership hardening: %v", err)
+		}
+		if _, err := adminConnection.Exec(
+			ctx,
+			migrations.PolicyImportedResourceFunctionOwnershipSQL(),
+		); err != nil {
+			t.Fatalf("apply idempotent Imported Resource resolver ownership hardening: %v", err)
+		}
+	}
+	assertResourceSharingPrivilegeContract(ctx, t, adminConnection)
 	seedAuthorityFixture(ctx, t, adminConnection)
 	assertAuthorityEvidenceFoundation(ctx, t, adminConnection)
 	assertAuthorityMutationAtomicity(ctx, t, adminConnection)
@@ -267,6 +280,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		runtimePool,
 		workerConnection,
 	)
+	assertPostgreSQLResourceSharing(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLLoginSubjectResolution(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLSessionIssuance(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLBrowserCallback(ctx, t, adminConnection, runtimePool)

@@ -11,8 +11,112 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 50 {
-		t.Fatalf("len(Catalog()) = %d, want 50", len(catalog))
+	if len(catalog) != 52 {
+		t.Fatalf("len(Catalog()) = %d, want 52", len(catalog))
+	}
+	importedPolicy := catalog[51]
+	if importedPolicy.Description != "policy Imported Resource destination provenance" {
+		t.Fatalf("migration 52 description = %q, want Imported Resource provenance", importedPolicy.Description)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.compiled_policy_imported_resource_destination",
+		"CREATE FUNCTION mesh_ops.attach_policy_imported_resource_destinations_internal_v1",
+		"RENAME TO publish_compiled_policy_local_v1",
+		"CREATE FUNCTION mesh_ops.publish_compiled_policy(",
+		"CREATE FUNCTION mesh_ops.resolve_imported_policy_destinations_v1",
+		"CREATE FUNCTION mesh_ops.lock_and_resolve_policy_imported_resources_internal_v1",
+		"CREATE FUNCTION mesh_ops.read_policy_simulation_baseline_v2",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_policy_simulation_baseline_v2",
+		"CREATE FUNCTION mesh_ops.explain_active_policy_v2",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.explain_active_policy_v2",
+		"GRANT SELECT ON mesh.compiled_policy_imported_resource_destination TO mesh_runtime",
+		"FORCE ROW LEVEL SECURITY",
+	} {
+		if !strings.Contains(importedPolicy.SQL, required) {
+			t.Errorf("Imported Resource policy SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"publish_compiled_policy_v2",
+		"GRANT INSERT ON mesh.compiled_policy_imported_resource_destination",
+		"GRANT UPDATE ON mesh.compiled_policy_imported_resource_destination",
+		"GRANT DELETE ON mesh.compiled_policy_imported_resource_destination",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.attach_policy_imported_resource_destinations_internal_v1",
+		"BYPASSRLS",
+		"ALTER DEFAULT PRIVILEGES",
+		"DROP ",
+	} {
+		if strings.Contains(importedPolicy.SQL, forbidden) {
+			t.Errorf("Imported Resource policy SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	policyImportedOwnership := PolicyImportedResourceFunctionOwnershipSQL()
+	for _, required := range []string{
+		"OWNER TO mesh_share_writer",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.resolve_imported_policy_destinations_v1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.lock_and_resolve_policy_imported_resources_internal_v1",
+		"TO mesh_migrator",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(policyImportedOwnership, required) {
+			t.Errorf("Imported Resource resolver ownership SQL missing %q", required)
+		}
+	}
+	resourceSharing := catalog[50]
+	if resourceSharing.Description != "Resource sharing authority foundation" {
+		t.Fatalf("migration 51 description = %q, want Resource sharing authority foundation", resourceSharing.Description)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.resource_export",
+		"CREATE TABLE mesh.share_offer",
+		"CREATE TABLE mesh.trust_contract",
+		"CREATE TABLE mesh.imported_resource",
+		"CREATE FUNCTION mesh_ops.create_resource_share_offer_v1",
+		"CREATE FUNCTION mesh_ops.decide_resource_share_offer_v1",
+		"CREATE FUNCTION mesh_ops.activate_resource_share_v1",
+		"CREATE FUNCTION mesh_ops.revoke_resource_share_v1",
+		"provider_authority_generation",
+		"consumer_authority_generation",
+		"resource_public_id UUID NOT NULL",
+		"CREATE POLICY resource_export_runtime_policy",
+		"CREATE POLICY imported_resource_runtime_policy",
+		"deployment.recovery_epoch = p_recovery_epoch",
+		"state IN ('activating', 'active', 'revoked', 'expired', 'invalidated')",
+		"FORCE ROW LEVEL SECURITY",
+		"TO mesh_share_writer",
+	} {
+		if !strings.Contains(resourceSharing.SQL, required) {
+			t.Errorf("Resource sharing authority SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"REVOKE ALL ON ALL SEQUENCES",
+		"GRANT INSERT ON mesh.resource_export TO mesh_runtime",
+		"GRANT UPDATE ON mesh.resource_export TO mesh_runtime",
+		"GRANT DELETE ON mesh.resource_export TO mesh_runtime",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.create_resource_share_offer_v1",
+		"BYPASSRLS",
+		"DROP ",
+	} {
+		if strings.Contains(resourceSharing.SQL, forbidden) {
+			t.Errorf("Resource sharing authority SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	ownership := ResourceSharingFunctionOwnershipSQL()
+	if strings.Contains(ownership, "GRANT EXECUTE ON FUNCTION mesh_ops.set_share_scope_v1") {
+		t.Error("Resource Sharing ownership SQL exposes direct share scope capability")
+	}
+	for _, required := range []string{
+		"OWNER TO mesh_share_writer",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.create_resource_share_offer_v1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.decide_resource_share_offer_v1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.activate_resource_share_v1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.revoke_resource_share_v1",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(ownership, required) {
+			t.Errorf("Resource sharing ownership hardening SQL missing %q", required)
+		}
 	}
 	managementScopes := catalog[49]
 	if managementScopes.Description != "Console management scope projection" {
@@ -922,6 +1026,10 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 		"CREATE TABLE mesh.permission",
 		"permission_immutable",
 		"catalog_version",
+		"'share.read'",
+		"'share.offer'",
+		"'share.accept'",
+		"'share.revoke'",
 		"CREATE TRIGGER account_authority_mutation",
 		"CREATE TRIGGER identity_subject_authority_mutation",
 		"REVOKE ALL ON",
@@ -1249,8 +1357,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 50 {
-		t.Fatalf("LatestVersion() = %d, want 50", LatestVersion())
+	if LatestVersion() != 52 {
+		t.Fatalf("LatestVersion() = %d, want 52", LatestVersion())
 	}
 }
 

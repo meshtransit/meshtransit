@@ -96,11 +96,13 @@ func (store *AccessGraphStore) ReadActive(
 		return accessgraph.Snapshot{}, accessgraph.ErrUnavailable
 	}
 
-	var destinationNodeArgument, destinationResourceArgument any
+	var destinationNodeArgument, destinationResourceArgument, destinationImportedArgument any
 	if query.DestinationNodeID().IsValid() {
 		destinationNodeArgument = query.DestinationNodeID().String()
-	} else {
+	} else if query.DestinationResourceID().IsValid() {
 		destinationResourceArgument = query.DestinationResourceID().String()
+	} else {
+		destinationImportedArgument = query.DestinationImportedResourceID().String()
 	}
 	var record accessGraphSnapshotRecord
 	var releaseID, targetNodeID *string
@@ -124,6 +126,7 @@ func (store *AccessGraphStore) ReadActive(
 		query.SourceNodeID().String(),
 		destinationNodeArgument,
 		destinationResourceArgument,
+		destinationImportedArgument,
 		query.Protocol().String(),
 		int(query.DestinationPort()),
 		evaluatedAt,

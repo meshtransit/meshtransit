@@ -279,7 +279,8 @@ func (change Change) IsValid() bool {
 	return change.command.IsValid() && change.resolution.IsValid() && change.mutationIDs.IsValid() &&
 		change.command.candidate.Snapshot().Scope() == change.resolution.scope &&
 		change.command.basePolicyRevision == change.resolution.PolicyRevision() &&
-		len(change.mutationIDs.projectionIDs) == len(change.command.candidate.Snapshot().Rules()) &&
+		len(change.mutationIDs.projectionIDs) == len(change.command.candidate.Snapshot().Rules())+
+			len(change.command.candidate.ImportedResourceDestinations()) &&
 		!change.occurredAt.IsZero() &&
 		approvalGateMatchesCommand(change.command, change.resolution, change.occurredAt)
 }

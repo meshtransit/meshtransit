@@ -183,3 +183,50 @@ func TestEveryPermissionHasAnApplicableScopeRelation(t *testing.T) {
 		}
 	}
 }
+
+func TestSharingPermissionsRequireExactNetworkScope(t *testing.T) {
+	t.Parallel()
+
+	deployment := mustDeploymentID(t, 71)
+	workspace := mustWorkspaceID(t, 72)
+	otherWorkspace := mustWorkspaceID(t, 73)
+	network := mustNetworkID(t, 74)
+	otherNetwork := mustNetworkID(t, 75)
+	exact := mustNetworkScope(t, deployment, workspace, network)
+	workspaceScope := mustWorkspaceScope(t, deployment, workspace)
+	sibling := mustNetworkScope(t, deployment, workspace, otherNetwork)
+	crossWorkspace := mustNetworkScope(t, deployment, otherWorkspace, network)
+
+	permissions := []authorization.Permission{
+		authorization.PermissionShareRead,
+		authorization.PermissionShareOffer,
+		authorization.PermissionShareAccept,
+		authorization.PermissionShareRevoke,
+	}
+	for _, permission := range permissions {
+		permission := permission
+		t.Run(string(permission), func(t *testing.T) {
+			t.Parallel()
+
+			definition, ok := authorization.LookupPermission(permission)
+			if !ok {
+				t.Fatalf("LookupPermission(%q) did not find sharing permission", permission)
+			}
+			if !definition.Applies(exact, exact) {
+				t.Fatal("sharing permission rejected its exact Network scope")
+			}
+			for name, target := range map[string]authorization.Scope{
+				"Workspace":       workspaceScope,
+				"sibling Network": sibling,
+				"cross Workspace": crossWorkspace,
+			} {
+				if definition.Applies(exact, target) {
+					t.Errorf("sharing permission widened to %s target", name)
+				}
+				if definition.Applies(workspaceScope, exact) {
+					t.Errorf("sharing permission inherited from Workspace binding for %s case", name)
+				}
+			}
+		})
+	}
+}

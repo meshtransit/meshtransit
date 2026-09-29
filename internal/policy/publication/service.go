@@ -74,7 +74,8 @@ func (service *Service) Publish(ctx context.Context, command Command) (Result, e
 	if now.IsZero() {
 		return Result{}, ErrInvalidService
 	}
-	ruleCount := len(command.Candidate().Snapshot().Rules())
+	ruleCount := len(command.Candidate().Snapshot().Rules()) +
+		len(command.Candidate().ImportedResourceDestinations())
 	mutationIDs, err := service.mutationIDs.NewMutationIDs(ruleCount)
 	if err != nil || !mutationIDs.IsValid() || len(mutationIDs.ProjectionIDs()) != ruleCount {
 		return Result{}, errors.Join(ErrPublicationFailed, ErrInvalidMutationIDs, err)

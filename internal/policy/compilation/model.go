@@ -9,6 +9,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/resource"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 )
 
 var (
@@ -24,36 +25,39 @@ var (
 
 // RuleIntentParams contains one atomic Access Rule before destination resolution.
 type RuleIntentParams struct {
-	ID                    policy.RuleID
-	Scope                 network.Scope
-	SourceNodeID          node.ID
-	DestinationNodeID     node.ID
-	DestinationResourceID resource.ID
-	DestinationGroupID    resource.GroupID
-	Protocol              policy.Protocol
-	DestinationPortRanges []policy.PortRange
+	ID                            policy.RuleID
+	Scope                         network.Scope
+	SourceNodeID                  node.ID
+	DestinationNodeID             node.ID
+	DestinationResourceID         resource.ID
+	DestinationGroupID            resource.GroupID
+	DestinationImportedResourceID sharing.ImportedResourceID
+	Protocol                      policy.Protocol
+	DestinationPortRanges         []policy.PortRange
 }
 
 // RuleIntent is one immutable Access Rule with exactly one typed destination.
 type RuleIntent struct {
-	id                    policy.RuleID
-	scope                 network.Scope
-	sourceNodeID          node.ID
-	destinationNodeID     node.ID
-	destinationResourceID resource.ID
-	destinationGroupID    resource.GroupID
-	protocol              policy.Protocol
-	destinationPortRanges []policy.PortRange
+	id                            policy.RuleID
+	scope                         network.Scope
+	sourceNodeID                  node.ID
+	destinationNodeID             node.ID
+	destinationResourceID         resource.ID
+	destinationGroupID            resource.GroupID
+	destinationImportedResourceID sharing.ImportedResourceID
+	protocol                      policy.Protocol
+	destinationPortRanges         []policy.PortRange
 }
 
 // NewRuleIntent validates one Device or Resource destination without resolving it.
 func NewRuleIntent(params RuleIntentParams) (RuleIntent, error) {
 	intent := RuleIntent{
 		id: params.ID, scope: params.Scope, sourceNodeID: params.SourceNodeID,
-		destinationNodeID:     params.DestinationNodeID,
-		destinationResourceID: params.DestinationResourceID,
-		destinationGroupID:    params.DestinationGroupID,
-		protocol:              params.Protocol, destinationPortRanges: slices.Clone(params.DestinationPortRanges),
+		destinationNodeID:             params.DestinationNodeID,
+		destinationResourceID:         params.DestinationResourceID,
+		destinationGroupID:            params.DestinationGroupID,
+		destinationImportedResourceID: params.DestinationImportedResourceID,
+		protocol:                      params.Protocol, destinationPortRanges: slices.Clone(params.DestinationPortRanges),
 	}
 	if !intent.IsValid() {
 		return RuleIntent{}, ErrInvalidRequest
@@ -83,6 +87,11 @@ func (intent RuleIntent) DestinationGroupID() resource.GroupID {
 	return intent.destinationGroupID
 }
 
+// DestinationImportedResourceID returns the consumer-local shared selector, when selected.
+func (intent RuleIntent) DestinationImportedResourceID() sharing.ImportedResourceID {
+	return intent.destinationImportedResourceID
+}
+
 // Protocol returns the explicit packet protocol.
 func (intent RuleIntent) Protocol() policy.Protocol { return intent.protocol }
 
@@ -96,8 +105,9 @@ func (intent RuleIntent) IsValid() bool {
 	hasDevice := intent.destinationNodeID.IsValid()
 	hasResource := intent.destinationResourceID.IsValid()
 	hasGroup := intent.destinationGroupID.IsValid()
+	hasImported := intent.destinationImportedResourceID.IsValid()
 	if !intent.id.IsValid() || !intent.scope.IsValid() || !intent.sourceNodeID.IsValid() ||
-		boolCount(hasDevice, hasResource, hasGroup) != 1 || !intent.protocol.IsValid() ||
+		boolCount(hasDevice, hasResource, hasGroup, hasImported) != 1 || !intent.protocol.IsValid() ||
 		intent.destinationPortRanges == nil {
 		return false
 	}

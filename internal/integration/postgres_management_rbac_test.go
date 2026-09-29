@@ -33,6 +33,10 @@ const (
 	integrationPolicyApprovePermissionID    = "01890f00-0000-7000-8000-000000000857"
 	integrationApproverTransferPermissionID = "01890f00-0000-7000-8000-000000000858"
 	integrationPolicyValidatePermissionID   = "01890f00-0000-7000-8000-000000000859"
+	integrationShareReadPermissionID        = "01890f00-0000-7000-8000-000000000860"
+	integrationShareOfferPermissionID       = "01890f00-0000-7000-8000-000000000861"
+	integrationShareAcceptPermissionID      = "01890f00-0000-7000-8000-000000000862"
+	integrationShareRevokePermissionID      = "01890f00-0000-7000-8000-000000000863"
 	integrationRoleBinding203PublicID       = "01890f00-0000-7000-8000-000000000844"
 	integrationRoleBinding204PublicID       = "01890f00-0000-7000-8000-000000000845"
 	integrationAuthorityConfirmerSessionID  = "01890f00-0000-7000-8000-000000000813"
@@ -457,6 +461,46 @@ SELECT 859, $1::UUID, 1, 103, 842, permission.id
 FROM mesh.permission AS permission
 WHERE permission.permission_key = 'policy.validate'`,
 				arguments: []any{integrationPolicyValidatePermissionID},
+			},
+			{
+				name: "Share Read RolePermission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 860, $1::UUID, 1, 103, 842, permission.id
+FROM mesh.permission AS permission
+WHERE permission.permission_key = 'share.read'`,
+				arguments: []any{integrationShareReadPermissionID},
+			},
+			{
+				name: "Share Offer RolePermission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 861, $1::UUID, 1, 103, 842, permission.id
+FROM mesh.permission AS permission
+WHERE permission.permission_key = 'share.offer'`,
+				arguments: []any{integrationShareOfferPermissionID},
+			},
+			{
+				name: "Share Accept RolePermission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 862, $1::UUID, 1, 103, 842, permission.id
+FROM mesh.permission AS permission
+WHERE permission.permission_key = 'share.accept'`,
+				arguments: []any{integrationShareAcceptPermissionID},
+			},
+			{
+				name: "Share Revoke RolePermission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 863, $1::UUID, 1, 103, 842, permission.id
+FROM mesh.permission AS permission
+WHERE permission.permission_key = 'share.revoke'`,
+				arguments: []any{integrationShareRevokePermissionID},
 			},
 			{
 				name: "authority confirmer Workspace membership",

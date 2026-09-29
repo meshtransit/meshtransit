@@ -23,6 +23,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
 	authority "github.com/meshtransit/meshtransit/internal/resource/authority"
 	"github.com/meshtransit/meshtransit/internal/resource/catalog"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 )
 
 const (
@@ -281,7 +282,19 @@ func composeManagementAPIWithKeys(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
-	policyCompiler, err := compilation.NewService(resourceCatalog)
+	resourceSharingStore, err := postgresadapter.NewResourceSharingStore(
+		runtimePool,
+		postgresadapter.ResourceSharingOptions{
+			StatementTimeout: managementStatementTimeout,
+			LockTimeout:      managementLockTimeout,
+			IdleTimeout:      managementTransactionIdle,
+			IdempotencyTTL:   managementIdempotencyTTL,
+		},
+	)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
+	policyCompiler, err := compilation.NewService(resourceCatalog, resourceSharingStore)
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
@@ -353,6 +366,10 @@ func composeManagementAPIWithKeys(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
+	resourceSharing, err := sharing.NewService(resourceSharingStore, sharing.SystemClock{})
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions: sessions, Revocations: revocations, PolicyPublications: policyPublications,
 		PolicyCompilations:    policyCompiler,
@@ -364,6 +381,7 @@ func composeManagementAPIWithKeys(
 		ResourceRebindings: resourceRebindings, ResourceCatalog: resourceCatalog,
 		ResourceGroupReplacements: resourceGroupReplacements,
 		ResourceAuthorityChanges:  resourceAuthorityChanges,
+		ResourceSharing:           resourceSharing,
 		Idempotency:               keys.idempotency,
 		RateLimitSubjects:         keys.rateLimit, RateLimiter: rateLimiter,
 		TrustedProxyPrefixes: apiConfig.TrustedProxyPrefixes,

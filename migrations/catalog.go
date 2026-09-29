@@ -63,6 +63,8 @@ const (
 	policyApprovalPublicationGateDescription  = "Policy approval publication gate"
 	policyApprovalManagementReadDescription   = "Policy approval management read API"
 	consoleManagementScopeDescription         = "Console management scope projection"
+	resourceSharingAuthorityDescription       = "Resource sharing authority foundation"
+	policyImportedResourceDescription         = "policy Imported Resource destination provenance"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -215,6 +217,12 @@ var policyApprovalManagementReadSQL string
 //go:embed 000050_console_management_scope_projection.up.sql
 var consoleManagementScopeSQL string
 
+//go:embed 000051_resource_sharing_authority.up.sql
+var resourceSharingAuthoritySQL string
+
+//go:embed 000052_policy_imported_resource_destination.up.sql
+var policyImportedResourceSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -284,6 +292,8 @@ func Catalog() []Migration {
 		newMigration(48, policyApprovalPublicationGateDescription, policyApprovalPublicationGateSQL),
 		newMigration(49, policyApprovalManagementReadDescription, policyApprovalManagementReadSQL),
 		newMigration(50, consoleManagementScopeDescription, consoleManagementScopeSQL),
+		newMigration(51, resourceSharingAuthorityDescription, resourceSharingAuthoritySQL),
+		newMigration(52, policyImportedResourceDescription, policyImportedResourceSQL),
 	}
 }
 

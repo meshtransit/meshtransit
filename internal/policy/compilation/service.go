@@ -14,6 +14,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/resource"
 	"github.com/meshtransit/meshtransit/internal/resource/catalog"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 )
 
 // DestinationResolver returns one snapshot-consistent active Resource and
@@ -28,15 +29,38 @@ type DestinationResolver interface {
 	) ([]catalog.Resource, []catalog.Group, error)
 }
 
+// ImportedDestinationResolver returns active, exact-consumer-scope bilateral authority.
+type ImportedDestinationResolver interface {
+	ResolveImportedPolicyDestinations(
+		context.Context,
+		accountsession.Session,
+		network.Scope,
+		[]sharing.ImportedResourceID,
+	) ([]sharing.PolicyDestination, error)
+}
+
 // Service compiles typed Device, Resource, and Resource Group destinations.
-type Service struct{ destinations DestinationResolver }
+type Service struct {
+	destinations DestinationResolver
+	imported     ImportedDestinationResolver
+}
 
 // NewService validates and constructs a policy compiler.
-func NewService(destinations DestinationResolver) (*Service, error) {
+func NewService(
+	destinations DestinationResolver,
+	imported ...ImportedDestinationResolver,
+) (*Service, error) {
 	if destinations == nil {
 		return nil, ErrInvalidRequest
 	}
-	return &Service{destinations: destinations}, nil
+	if len(imported) > 1 || len(imported) == 1 && imported[0] == nil {
+		return nil, ErrInvalidRequest
+	}
+	service := &Service{destinations: destinations}
+	if len(imported) == 1 {
+		service.imported = imported[0]
+	}
+	return service, nil
 }
 
 // Compile resolves Resource destinations and deterministically expands Resource Groups.
@@ -55,12 +79,17 @@ func (service *Service) Compile(
 
 	resourceIDs := uniqueResourceIDs(request.rules)
 	groupIDs := uniqueResourceGroupIDs(request.rules)
+	importedIDs := uniqueImportedResourceIDs(request.rules)
 	if len(resourceIDs) > catalog.MaximumPolicyResources ||
 		len(groupIDs) > catalog.MaximumPolicyResourceGroups {
 		return publication.Candidate{}, ErrInvalidRequest
 	}
 	resolved := make(map[resource.ID]catalog.Resource, len(resourceIDs))
 	resolvedGroups := make(map[resource.GroupID]catalog.Group, len(groupIDs))
+	resolvedImported := make(
+		map[sharing.ImportedResourceID]sharing.PolicyDestination,
+		len(importedIDs),
+	)
 	if len(resourceIDs) > 0 || len(groupIDs) > 0 {
 		values, groups, err := service.destinations.ResolvePolicyDestinations(
 			ctx, session, request.scope, resourceIDs, groupIDs,
@@ -120,13 +149,67 @@ func (service *Service) Compile(
 			}
 		}
 	}
+	if len(importedIDs) > 0 {
+		if service.imported == nil {
+			return publication.Candidate{}, ErrUnavailable
+		}
+		values, err := service.imported.ResolveImportedPolicyDestinations(
+			ctx, session, request.scope, importedIDs,
+		)
+		if err != nil {
+			return publication.Candidate{}, classifyImportedResolutionError(err)
+		}
+		if len(values) != len(importedIDs) {
+			return publication.Candidate{}, ErrUnavailable
+		}
+		expected := make(map[sharing.ImportedResourceID]struct{}, len(importedIDs))
+		for _, id := range importedIDs {
+			expected[id] = struct{}{}
+		}
+		for _, value := range values {
+			if _, requested := expected[value.ImportedResourceID()]; !requested ||
+				!value.IsValid() || value.ConsumerScope() != request.scope {
+				return publication.Candidate{}, ErrResourceConflict
+			}
+			if _, duplicate := resolvedImported[value.ImportedResourceID()]; duplicate {
+				return publication.Candidate{}, ErrUnavailable
+			}
+			resolvedImported[value.ImportedResourceID()] = value
+		}
+	}
 
 	rules := make([]policy.Rule, 0, len(request.rules))
 	destinations := make([]publication.ResourceDestination, 0, len(resourceIDs))
 	groupDestinations := make([]publication.ResourceGroupDestination, 0, len(groupIDs))
+	importedDestinations := make(
+		[]publication.ImportedResourceDestination,
+		0,
+		len(importedIDs),
+	)
 	for _, intent := range request.rules {
 		destinationNodeID := intent.destinationNodeID
-		if intent.destinationResourceID.IsValid() {
+		if intent.destinationImportedResourceID.IsValid() {
+			resolved, found := resolvedImported[intent.destinationImportedResourceID]
+			if !found {
+				return publication.Candidate{}, ErrUnavailable
+			}
+			ranges, err := intersectImportedTraffic(intent, resolved.Contract().MaximumTraffic())
+			if err != nil {
+				return publication.Candidate{}, err
+			}
+			destination, err := publication.NewImportedResourceDestination(
+				publication.ImportedResourceDestinationParams{
+					RuleID: intent.id, SourceNodeID: intent.sourceNodeID,
+					Resolution: resolved, Protocol: intent.protocol,
+					DestinationPortRanges: ranges,
+				},
+			)
+			if err != nil {
+				return publication.Candidate{}, errors.Join(ErrUnavailable, err)
+			}
+			importedDestinations = append(importedDestinations, destination)
+			continue
+		} else if intent.destinationResourceID.IsValid() {
 			value, found := resolved[intent.destinationResourceID]
 			if !found {
 				return publication.Candidate{}, ErrUnavailable
@@ -199,6 +282,11 @@ func (service *Service) Compile(
 	if err != nil {
 		return publication.Candidate{}, ErrInvalidRequest
 	}
+	if len(importedDestinations) > 0 {
+		return publication.NewCandidateWithImportedResourceDestinations(
+			snapshot, destinations, groupDestinations, importedDestinations,
+		)
+	}
 	if len(destinations) == 0 {
 		if len(groupDestinations) > 0 {
 			return publication.NewCandidateWithResourceGroupDestinations(
@@ -213,6 +301,31 @@ func (service *Service) Compile(
 		)
 	}
 	return publication.NewCandidateWithResourceDestinations(snapshot, destinations)
+}
+
+func intersectImportedTraffic(
+	intent RuleIntent,
+	maximum sharing.TrafficSet,
+) ([]policy.PortRange, error) {
+	requestedConstraint, err := sharing.NewTrafficConstraint(sharing.TrafficConstraintParams{
+		Protocol: intent.protocol, DestinationPortRanges: intent.destinationPortRanges,
+	})
+	if err != nil {
+		return nil, ErrInvalidRequest
+	}
+	requested, err := sharing.NewTrafficSet([]sharing.TrafficConstraint{requestedConstraint})
+	if err != nil {
+		return nil, ErrInvalidRequest
+	}
+	effective, found := sharing.IntersectTraffic(requested, maximum)
+	if !found {
+		return nil, ErrResourceConflict
+	}
+	constraints := effective.Constraints()
+	if len(constraints) != 1 || constraints[0].Protocol() != intent.protocol {
+		return nil, ErrResourceConflict
+	}
+	return constraints[0].DestinationPortRanges(), nil
 }
 
 func appendCompiledRule(
@@ -270,6 +383,23 @@ func uniqueResourceGroupIDs(rules []RuleIntent) []resource.GroupID {
 	return ids
 }
 
+func uniqueImportedResourceIDs(rules []RuleIntent) []sharing.ImportedResourceID {
+	seen := make(map[sharing.ImportedResourceID]struct{}, len(rules))
+	for _, rule := range rules {
+		if rule.destinationImportedResourceID.IsValid() {
+			seen[rule.destinationImportedResourceID] = struct{}{}
+		}
+	}
+	ids := make([]sharing.ImportedResourceID, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	slices.SortFunc(ids, func(first, second sharing.ImportedResourceID) int {
+		return strings.Compare(first.String(), second.String())
+	})
+	return ids
+}
+
 func classifyResourceResolutionError(err error) error {
 	switch {
 	case errors.Is(err, catalog.ErrForbidden):
@@ -280,5 +410,18 @@ func classifyResourceResolutionError(err error) error {
 		return errors.Join(ErrInvalidRequest, err)
 	default:
 		return errors.Join(ErrUnavailable, fmt.Errorf("resolve policy Resources: %w", err))
+	}
+}
+
+func classifyImportedResolutionError(err error) error {
+	switch {
+	case errors.Is(err, sharing.ErrForbidden):
+		return errors.Join(ErrForbidden, err)
+	case errors.Is(err, sharing.ErrNotFound), errors.Is(err, sharing.ErrConflict):
+		return errors.Join(ErrResourceConflict, err)
+	case errors.Is(err, sharing.ErrInvalidManagementRequest):
+		return errors.Join(ErrInvalidRequest, err)
+	default:
+		return errors.Join(ErrUnavailable, fmt.Errorf("resolve policy Imported Resources: %w", err))
 	}
 }

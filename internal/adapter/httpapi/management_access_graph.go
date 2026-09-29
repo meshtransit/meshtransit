@@ -16,17 +16,19 @@ import (
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/resource"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 const maximumAccessGraphBodyBytes = 64 * 1024
 
 type explainPolicyRequest struct {
-	SourceDeviceID        string `json:"source_device_id"`
-	DestinationDeviceID   string `json:"destination_device_id"`
-	DestinationResourceID string `json:"destination_resource_id"`
-	Protocol              string `json:"protocol"`
-	DestinationPort       *int   `json:"destination_port"`
+	SourceDeviceID                string `json:"source_device_id"`
+	DestinationDeviceID           string `json:"destination_device_id"`
+	DestinationResourceID         string `json:"destination_resource_id"`
+	DestinationImportedResourceID string `json:"destination_imported_resource_id"`
+	Protocol                      string `json:"protocol"`
+	DestinationPort               *int   `json:"destination_port"`
 }
 
 type explainPolicyResponse struct {
@@ -56,8 +58,9 @@ type explainedPolicySubject struct {
 }
 
 type explainedPolicyTarget struct {
-	DeviceID   string `json:"device_id,omitempty"`
-	ResourceID string `json:"resource_id,omitempty"`
+	DeviceID           string `json:"device_id,omitempty"`
+	ResourceID         string `json:"resource_id,omitempty"`
+	ImportedResourceID string `json:"imported_resource_id,omitempty"`
 }
 
 type explainedPolicyEvidence struct {
@@ -166,8 +169,10 @@ func (handler *ManagementHandler) explainPolicy(
 	target := explainedPolicyTarget{}
 	if query.DestinationNodeID().IsValid() {
 		target.DeviceID = query.DestinationNodeID().String()
-	} else {
+	} else if query.DestinationResourceID().IsValid() {
 		target.ResourceID = query.DestinationResourceID().String()
+	} else {
+		target.ImportedResourceID = query.DestinationImportedResourceID().String()
 	}
 	paths := make([]explainedPolicyPath, len(result.Paths()))
 	for index, path := range result.Paths() {
@@ -246,6 +251,15 @@ func decodeAccessGraphQuery(
 			return accessgraph.Query{}, invalidManagementRequest()
 		}
 	}
+	var destinationImportedResourceID sharing.ImportedResourceID
+	if body.DestinationImportedResourceID != "" {
+		destinationImportedResourceID, err = sharing.ParseImportedResourceID(
+			body.DestinationImportedResourceID,
+		)
+		if err != nil {
+			return accessgraph.Query{}, invalidManagementRequest()
+		}
+	}
 	protocol := parsePolicyProtocol(body.Protocol)
 	var destinationPort int
 	if protocol == policy.ProtocolICMP {
@@ -261,8 +275,10 @@ func decodeAccessGraphQuery(
 	}
 	query, err := accessgraph.NewQuery(accessgraph.QueryParams{
 		Scope: scope, SourceNodeID: sourceID, DestinationNodeID: destinationID,
-		DestinationResourceID: destinationResourceID, Protocol: protocol,
-		DestinationPort: uint16(destinationPort),
+		DestinationResourceID:         destinationResourceID,
+		DestinationImportedResourceID: destinationImportedResourceID,
+		Protocol:                      protocol,
+		DestinationPort:               uint16(destinationPort),
 	})
 	if err != nil {
 		return accessgraph.Query{}, invalidManagementRequest()

@@ -17,7 +17,7 @@ const (
 	// ManagementProfileConsoleCookiePrivateV1 is disabled private source preparation.
 	// Rendering it mounts no handler or documentation endpoint and enables no SSO.
 	ManagementProfileConsoleCookiePrivateV1 ManagementProfile = "console-cookie-csrf-private-v1"
-	maximumManagementDocumentBytes                            = 128 << 10
+	maximumManagementDocumentBytes                            = 192 << 10
 	consoleSessionPreparePath                                 = "/auth/v1/session/prepare"
 	consoleSessionLogoutPath                                  = "/auth/v1/session/logout"
 	consoleSessionManagementScopesPath                        = "/auth/v1/session/management-scopes"
@@ -92,7 +92,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		return nil, ErrInvalidManagementProfile
 	}
 	paths, err := managementObject(document["paths"])
-	if err != nil || len(paths) != 23 {
+	if err != nil || len(paths) != 27 {
 		return nil, ErrInvalidManagementProfile
 	}
 	if len(fragment) == 0 || len(fragment) > maximumManagementDocumentBytes {

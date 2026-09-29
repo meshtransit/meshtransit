@@ -1129,6 +1129,156 @@
           "504": {"$ref": "#/components/responses/Timeout"}
         }
       }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/share-offers": {
+      "get": {
+        "operationId": "listShareOffers",
+        "summary": "List incoming or outgoing Resource Share Offers in one exact Network scope",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ShareDirection"},
+          {"$ref": "#/components/parameters/ShareOfferState"},
+          {"$ref": "#/components/parameters/PageSize"},
+          {"$ref": "#/components/parameters/PageToken"}
+        ],
+        "responses": {
+          "200": {
+            "description": "A deterministic UUIDv7-ordered page pinned to the local sharing revision.",
+            "headers": {"ETag": {"$ref": "#/components/headers/SharingRevisionETag"}, "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}},
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ShareOfferListResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      },
+      "post": {
+        "operationId": "createShareOffer",
+        "summary": "Create a provider-bounded Resource Export and one targeted Share Offer",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateShareOfferRequest"}}}},
+        "responses": {
+          "201": {
+            "description": "The Share Offer was created. The bearer offer token is returned only by this response.",
+            "headers": {"Location": {"$ref": "#/components/headers/ShareOfferLocation"}, "ETag": {"$ref": "#/components/headers/ShareOfferETag"}, "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}},
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ShareOfferResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/share-offers/{share_offer_id}": {
+      "get": {
+        "operationId": "getShareOffer",
+        "summary": "Read one Share Offer from an exact provider or consumer Network scope",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ShareOfferID"}
+        ],
+        "responses": {
+          "200": {
+            "description": "The current Share Offer snapshot without bearer token material.",
+            "headers": {"ETag": {"$ref": "#/components/headers/ShareOfferETag"}, "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}},
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ShareOfferResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/share-offers/{share_offer_id}/actions/{share_offer_action}": {
+      "post": {
+        "operationId": "decideShareOffer",
+        "summary": "Accept, reject, or revoke one still-current Share Offer",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/ShareOfferID"},
+          {"$ref": "#/components/parameters/ShareOfferAction"},
+          {"$ref": "#/components/parameters/AggregateIfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DecideShareOfferRequest"}}}},
+        "responses": {
+          "200": {
+            "description": "The terminal decision committed; acceptance remains fail-closed in activating state until publication succeeds.",
+            "headers": {"ETag": {"$ref": "#/components/headers/ShareOfferETag"}, "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}},
+            "content": {"application/json": {"schema": {"oneOf": [{"$ref": "#/components/schemas/ShareOfferResponse"}, {"$ref": "#/components/schemas/TrustContractResponse"}]}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/trust-contracts/{trust_contract_id}/actions/revoke": {
+      "post": {
+        "operationId": "revokeTrustContract",
+        "summary": "Terminally revoke one Trust Contract from either exact Network scope",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/TrustContractID"},
+          {"$ref": "#/components/parameters/AggregateIfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RevokeTrustContractRequest"}}}},
+        "responses": {
+          "200": {
+            "description": "The Trust Contract and Imported Resource were revoked atomically.",
+            "headers": {"ETag": {"$ref": "#/components/headers/TrustContractETag"}, "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}},
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TrustContractResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
     }
   },
   "components": {
@@ -1279,6 +1429,36 @@
         "required": false,
         "description": "Opaque continuation token bound to the collection's pagination state and filters.",
         "schema": {"type": "string", "minLength": 1, "maxLength": 512}
+      },
+      "ShareOfferID": {
+        "name": "share_offer_id",
+        "in": "path",
+        "required": true,
+        "schema": {"$ref": "#/components/schemas/PublicID"}
+      },
+      "TrustContractID": {
+        "name": "trust_contract_id",
+        "in": "path",
+        "required": true,
+        "schema": {"$ref": "#/components/schemas/PublicID"}
+      },
+      "ShareOfferAction": {
+        "name": "share_offer_action",
+        "in": "path",
+        "required": true,
+        "schema": {"type": "string", "enum": ["accept", "reject", "revoke"]}
+      },
+      "ShareDirection": {
+        "name": "direction",
+        "in": "query",
+        "required": true,
+        "schema": {"type": "string", "enum": ["incoming", "outgoing"]}
+      },
+      "ShareOfferState": {
+        "name": "state",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "string", "enum": ["offered", "accepted", "rejected", "expired", "revoked"]}
       }
     },
     "headers": {
@@ -1328,6 +1508,22 @@
       },
       "PolicyApprovalLocation": {
         "description": "The canonical exact-scope Policy approval request path.",
+        "schema": {"type": "string", "minLength": 1}
+      },
+      "ShareOfferETag": {
+        "description": "The strong quoted decimal Share Offer version.",
+        "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
+      },
+      "TrustContractETag": {
+        "description": "The strong quoted decimal Trust Contract version.",
+        "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
+      },
+      "SharingRevisionETag": {
+        "description": "The strong quoted decimal sharing collection revision.",
+        "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
+      },
+      "ShareOfferLocation": {
+        "description": "The canonical provider-scope Share Offer path.",
         "schema": {"type": "string", "minLength": 1}
       },
       "CorrelationID": {
@@ -1484,7 +1680,8 @@
             "not": {
               "anyOf": [
                 {"required": ["destination_resource_id"]},
-                {"required": ["destination_resource_group_id"]}
+                {"required": ["destination_resource_group_id"]},
+                {"required": ["destination_imported_resource_id"]}
               ]
             }
           },
@@ -1495,7 +1692,8 @@
             "not": {
               "anyOf": [
                 {"required": ["destination_device_id"]},
-                {"required": ["destination_resource_group_id"]}
+                {"required": ["destination_resource_group_id"]},
+                {"required": ["destination_imported_resource_id"]}
               ]
             }
           },
@@ -1506,7 +1704,20 @@
             "not": {
               "anyOf": [
                 {"required": ["destination_device_id"]},
-                {"required": ["destination_resource_id"]}
+                {"required": ["destination_resource_id"]},
+                {"required": ["destination_imported_resource_id"]}
+              ]
+            }
+          },
+          {
+            "required": [
+              "destination_imported_resource_id"
+            ],
+            "not": {
+              "anyOf": [
+                {"required": ["destination_device_id"]},
+                {"required": ["destination_resource_id"]},
+                {"required": ["destination_resource_group_id"]}
               ]
             }
           }
@@ -1525,6 +1736,9 @@
             "$ref": "#/components/schemas/PublicID"
           },
           "destination_resource_group_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "destination_imported_resource_id": {
             "$ref": "#/components/schemas/PublicID"
           },
           "protocol": {
@@ -2066,11 +2280,30 @@
             "oneOf": [
               {
                 "required": ["destination_device_id"],
-                "not": {"required": ["destination_resource_id"]}
+                "not": {
+                  "anyOf": [
+                    {"required": ["destination_resource_id"]},
+                    {"required": ["destination_imported_resource_id"]}
+                  ]
+                }
               },
               {
                 "required": ["destination_resource_id"],
-                "not": {"required": ["destination_device_id"]}
+                "not": {
+                  "anyOf": [
+                    {"required": ["destination_device_id"]},
+                    {"required": ["destination_imported_resource_id"]}
+                  ]
+                }
+              },
+              {
+                "required": ["destination_imported_resource_id"],
+                "not": {
+                  "anyOf": [
+                    {"required": ["destination_device_id"]},
+                    {"required": ["destination_resource_id"]}
+                  ]
+                }
               }
             ]
           },
@@ -2091,6 +2324,7 @@
           "source_device_id": {"$ref": "#/components/schemas/PublicID"},
           "destination_device_id": {"$ref": "#/components/schemas/PublicID"},
           "destination_resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "destination_imported_resource_id": {"$ref": "#/components/schemas/PublicID"},
           "protocol": {"type": "string", "enum": ["tcp", "udp", "icmp"]},
           "destination_port": {"type": "integer", "minimum": 1, "maximum": 65535}
         }
@@ -2152,16 +2386,36 @@
         "oneOf": [
           {
             "required": ["device_id"],
-            "not": {"required": ["resource_id"]}
+            "not": {
+              "anyOf": [
+                {"required": ["resource_id"]},
+                {"required": ["imported_resource_id"]}
+              ]
+            }
           },
           {
             "required": ["resource_id"],
-            "not": {"required": ["device_id"]}
+            "not": {
+              "anyOf": [
+                {"required": ["device_id"]},
+                {"required": ["imported_resource_id"]}
+              ]
+            }
+          },
+          {
+            "required": ["imported_resource_id"],
+            "not": {
+              "anyOf": [
+                {"required": ["device_id"]},
+                {"required": ["resource_id"]}
+              ]
+            }
           }
         ],
         "properties": {
           "device_id": {"$ref": "#/components/schemas/PublicID"},
-          "resource_id": {"$ref": "#/components/schemas/PublicID"}
+          "resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "imported_resource_id": {"$ref": "#/components/schemas/PublicID"}
         }
       },
       "ExplainedPolicyEvidence": {
@@ -2685,6 +2939,145 @@
         "required": ["data", "correlation_id"],
         "properties": {
           "data": {"$ref": "#/components/schemas/AuthorityChangeConfirmationResult"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "SharePortRange": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["first", "last"],
+        "properties": {
+          "first": {"type": "integer", "minimum": 1, "maximum": 65535},
+          "last": {"type": "integer", "minimum": 1, "maximum": 65535}
+        }
+      },
+      "ShareTrafficConstraint": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["protocol", "destination_port_ranges"],
+        "properties": {
+          "protocol": {"type": "string", "enum": ["tcp", "udp", "icmp"]},
+          "destination_port_ranges": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {"$ref": "#/components/schemas/SharePortRange"}
+          }
+        }
+      },
+      "CreateShareOfferRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["consumer_workspace_id", "consumer_network_id", "resource_id", "maximum_traffic", "expires_at", "reason"],
+        "properties": {
+          "consumer_workspace_id": {"$ref": "#/components/schemas/PublicID"},
+          "consumer_network_id": {"$ref": "#/components/schemas/PublicID"},
+          "resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "maximum_traffic": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 3,
+            "items": {"$ref": "#/components/schemas/ShareTrafficConstraint"}
+          },
+          "expires_at": {"type": "string", "format": "date-time"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      },
+      "DecideShareOfferRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider_workspace_id", "provider_network_id", "consumer_workspace_id", "consumer_network_id", "offer_token", "reason"],
+        "properties": {
+          "provider_workspace_id": {"$ref": "#/components/schemas/PublicID"},
+          "provider_network_id": {"$ref": "#/components/schemas/PublicID"},
+          "consumer_workspace_id": {"$ref": "#/components/schemas/PublicID"},
+          "consumer_network_id": {"$ref": "#/components/schemas/PublicID"},
+          "offer_token": {"type": "string", "minLength": 43, "maxLength": 43, "pattern": "^[A-Za-z0-9_-]{43}$"},
+          "imported_display_name": {"type": "string", "minLength": 1, "maxLength": 128},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      },
+      "RevokeTrustContractRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider_workspace_id", "provider_network_id", "consumer_workspace_id", "consumer_network_id", "reason"],
+        "properties": {
+          "provider_workspace_id": {"$ref": "#/components/schemas/PublicID"},
+          "provider_network_id": {"$ref": "#/components/schemas/PublicID"},
+          "consumer_workspace_id": {"$ref": "#/components/schemas/PublicID"},
+          "consumer_network_id": {"$ref": "#/components/schemas/PublicID"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      },
+      "ShareOffer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "offer_id", "export_id", "provider_workspace_id", "provider_network_id",
+          "consumer_workspace_id", "consumer_network_id", "resource_id", "resource_version",
+          "target_generation", "maximum_traffic", "state", "version", "created_at", "expires_at"
+        ],
+        "properties": {
+          "offer_id": {"$ref": "#/components/schemas/PublicID"},
+          "export_id": {"$ref": "#/components/schemas/PublicID"},
+          "provider_workspace_id": {"$ref": "#/components/schemas/PublicID"},
+          "provider_network_id": {"$ref": "#/components/schemas/PublicID"},
+          "consumer_workspace_id": {"$ref": "#/components/schemas/PublicID"},
+          "consumer_network_id": {"$ref": "#/components/schemas/PublicID"},
+          "resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "resource_version": {"type": "integer", "format": "int64", "minimum": 1},
+          "target_generation": {"type": "integer", "format": "int64", "minimum": 1},
+          "maximum_traffic": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/components/schemas/ShareTrafficConstraint"}},
+          "state": {"type": "string", "enum": ["offered", "accepted", "rejected", "expired", "revoked"]},
+          "version": {"type": "integer", "format": "int64", "minimum": 1},
+          "accepted_trust_contract_id": {"$ref": "#/components/schemas/PublicID"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "expires_at": {"type": "string", "format": "date-time"},
+          "provider_network_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "provider_sharing_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "consumer_network_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "consumer_sharing_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "offer_token": {"type": "string", "minLength": 43, "maxLength": 43, "pattern": "^[A-Za-z0-9_-]{43}$", "writeOnly": true}
+        }
+      },
+      "ShareOfferResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/ShareOffer"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "ShareOfferListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "sharing_revision", "correlation_id"],
+        "properties": {
+          "data": {"type": "array", "maxItems": 100, "items": {"$ref": "#/components/schemas/ShareOffer"}},
+          "next_page_token": {"type": "string", "minLength": 1, "maxLength": 512},
+          "sharing_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "TrustContract": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["trust_contract_id", "imported_resource_id", "offer_id", "state", "version", "imported_resource_version"],
+        "properties": {
+          "trust_contract_id": {"$ref": "#/components/schemas/PublicID"},
+          "imported_resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "offer_id": {"$ref": "#/components/schemas/PublicID"},
+          "state": {"type": "string", "enum": ["activating", "active", "revoked", "expired", "invalidated"]},
+          "version": {"type": "integer", "format": "int64", "minimum": 1},
+          "imported_resource_version": {"type": "integer", "format": "int64", "minimum": 1}
+        }
+      },
+      "TrustContractResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/TrustContract"},
           "correlation_id": {"$ref": "#/components/schemas/PublicID"}
         }
       },

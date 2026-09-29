@@ -225,6 +225,62 @@ func TestPolicyPublicationTransactionRevalidatesAndPersistsResourceGroupDestinat
 	}
 }
 
+func TestPolicyPublicationTransactionPublishesImportedResourceAtomically(t *testing.T) {
+	t.Parallel()
+
+	command := policyImportedResourcePublicationCommandFixture(t)
+	databaseTransaction := newFakePolicyPublicationTransaction()
+	enqueuePolicyPublicationResolution(t, databaseTransaction, command, 5, 1)
+	enqueuePolicyPublicationApply(databaseTransaction, 6, 2)
+	store := beginTestPolicyPublicationStore(t, databaseTransaction)
+	value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	transaction := value.(*policyPublicationTransaction)
+	resolution, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	change := policyPublicationChangeFixture(t, command, resolution)
+	if _, err := transaction.Apply(t.Context(), change); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	wantCalls := []string{
+		configurePolicyPublicationTransactionSQL,
+		setPolicyPublicationScopeSQL,
+		lockPolicyPublicationRevisionSQL,
+		lockActivePolicyReleaseSQL,
+		lockPolicyPublicationAuditStreamSQL,
+		setPolicyPublicationChangeSQL,
+		publishCompiledPolicySQL,
+		appendPolicyPublicationEvidenceSQL,
+	}
+	if got := policyPublicationCallQueries(databaseTransaction.calls); !reflect.DeepEqual(got, wantCalls) {
+		t.Fatalf("database call order mismatch\ngot:  %#v\nwant: %#v", got, wantCalls)
+	}
+	publishCall := findPolicyPublicationCall(t, databaseTransaction.calls, publishCompiledPolicySQL)
+	if publishCall.arguments[3] != 4 {
+		t.Fatalf("compiler format = %v, want 4", publishCall.arguments[3])
+	}
+	var rules []policyPublicationRulePayload
+	if err := json.Unmarshal(publishCall.arguments[5].([]byte), &rules); err != nil {
+		t.Fatalf("decode published rules: %v", err)
+	}
+	if len(rules) != 1 || rules[0].DestinationNodePublicID != "" ||
+		rules[0].DestinationImportedResourcePublicID == "" ||
+		rules[0].DestinationTrustContractPublicID == "" ||
+		rules[0].DestinationResourceExportPublicID == "" ||
+		rules[0].DestinationProviderResourcePublicID == "" ||
+		rules[0].DestinationImportedResourceVersion != 2 ||
+		rules[0].DestinationTrustContractVersion != 2 ||
+		len(rules[0].DestinationProviderResourceSemanticHash) != 64 ||
+		len(rules[0].DestinationConstraintHash) != 64 {
+		t.Fatalf("published Imported Resource rules = %+v", rules)
+	}
+}
+
 func TestPolicyPublicationTransactionAuthorizesManagementSessionUnderLock(t *testing.T) {
 	t.Parallel()
 

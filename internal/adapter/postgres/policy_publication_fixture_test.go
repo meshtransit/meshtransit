@@ -16,6 +16,7 @@ import (
 	publication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/resource"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -617,6 +618,134 @@ func policyResourceGroupPublicationCommandFixture(t *testing.T) publication.Comm
 	})
 	if err != nil {
 		t.Fatalf("publication.NewCommand() error = %v", err)
+	}
+	return command
+}
+
+func policyImportedResourcePublicationCommandFixture(t *testing.T) publication.Command {
+	t.Helper()
+	trusted := policyPublicationCommandFixture(t)
+	consumerScope := trusted.Candidate().Snapshot().Scope()
+	providerWorkspaceID, err := workspace.ParseID(
+		"01890f00-0000-7000-8000-000000000102",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerNetworkID, err := network.ParseID("01890f00-0000-7000-8000-000000000202")
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerScope, err := network.NewScope(providerWorkspaceID, providerNetworkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceID, err := resource.ParseID("01890f00-0000-7000-8000-000000000923")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceHash, err := resource.NewSemanticHash(
+		sha256.Sum256([]byte("synthetic imported policy Resource")),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := sharing.NewResourceBinding(
+		providerScope,
+		resourceID,
+		3,
+		2,
+		resourceHash,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	portRange, err := policy.NewPortRange(443, 443)
+	if err != nil {
+		t.Fatal(err)
+	}
+	constraint, err := sharing.NewTrafficConstraint(sharing.TrafficConstraintParams{
+		Protocol: policy.ProtocolTCP, DestinationPortRanges: []policy.PortRange{portRange},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	traffic, err := sharing.NewTrafficSet([]sharing.TrafficConstraint{constraint})
+	if err != nil {
+		t.Fatal(err)
+	}
+	importedID, err := sharing.ParseImportedResourceID(
+		"01890f00-0000-7000-8000-000000000924",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contractID, err := sharing.ParseContractID("01890f00-0000-7000-8000-000000000925")
+	if err != nil {
+		t.Fatal(err)
+	}
+	offerID, err := sharing.ParseOfferID("01890f00-0000-7000-8000-000000000926")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exportID, err := sharing.ParseExportID("01890f00-0000-7000-8000-000000000927")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := sharing.NewContract(sharing.ContractParams{
+		ID: contractID, ImportedResourceID: importedID, OfferID: offerID, ExportID: exportID,
+		ProviderScope: providerScope, ConsumerScope: consumerScope, Resource: binding,
+		MaximumTraffic: traffic, ProviderAuthorityGeneration: 2,
+		ConsumerAuthorityGeneration: 3, RecoveryEpoch: 4,
+		ExpiresAt: policyPublicationTestTime.Add(time.Hour), State: sharing.ContractStateActive,
+		Version: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolution, err := sharing.NewPolicyDestination(sharing.PolicyDestinationParams{
+		ImportedResourceID: importedID, ImportedResourceVersion: 2, Contract: contract,
+		ExportVersion: 1, ProviderInventoryRevision: 7, ProviderSharingRevision: 8,
+		ConsumerSharingRevision: 9, EvaluatedAt: policyPublicationTestTime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleID, err := policy.ParseRuleID("01890f00-0000-7000-8000-000000000828")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID := trusted.Candidate().Snapshot().Rules()[0].SourceNodeID()
+	destination, err := publication.NewImportedResourceDestination(
+		publication.ImportedResourceDestinationParams{
+			RuleID: ruleID, SourceNodeID: sourceID, Resolution: resolution,
+			Protocol: policy.ProtocolTCP, DestinationPortRanges: []policy.PortRange{portRange},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := policy.NewSnapshot(policy.SnapshotParams{
+		Scope: consumerScope, Revision: 2, Rules: []policy.Rule{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := publication.NewCandidateWithImportedResourceDestinations(
+		snapshot,
+		nil,
+		nil,
+		[]publication.ImportedResourceDestination{destination},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := publication.NewCommand(publication.CommandParams{
+		Candidate: candidate, BasePolicyRevision: trusted.BasePolicyRevision(),
+		ActorPrincipalID: trusted.ActorPrincipalID(), AuditReason: trusted.AuditReason(),
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 	return command
 }

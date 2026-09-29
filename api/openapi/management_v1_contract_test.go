@@ -18,9 +18,12 @@ func TestManagementV1MutationContracts(t *testing.T) {
 		OpenAPI string `json:"openapi"`
 		Paths   map[string]struct {
 			Get struct {
-				OperationID string                     `json:"operationId"`
-				Security    []map[string][]string      `json:"security"`
-				Responses   map[string]json.RawMessage `json:"responses"`
+				OperationID string                `json:"operationId"`
+				Security    []map[string][]string `json:"security"`
+				Parameters  []struct {
+					Ref string `json:"$ref"`
+				} `json:"parameters"`
+				Responses map[string]json.RawMessage `json:"responses"`
 			} `json:"get"`
 			Post struct {
 				OperationID string                `json:"operationId"`
@@ -101,11 +104,52 @@ func TestManagementV1MutationContracts(t *testing.T) {
 	}
 	for _, schema := range []string{
 		"ExplainPolicyRequest", "ExplainPolicyResponse", "ExplainedPolicy",
-		"ExplainedPolicyEvidence", "ExplainedPolicyPath",
+		"ExplainedPolicyTarget", "ExplainedPolicyEvidence", "ExplainedPolicyPath",
 	} {
 		if document.Components.Schemas[schema] == nil {
 			t.Fatalf("Policy explanation schema %s is absent", schema)
 		}
+	}
+	type typedSelectorBranch struct {
+		Required []string `json:"required"`
+		Not      struct {
+			AnyOf []struct {
+				Required []string `json:"required"`
+			} `json:"anyOf"`
+		} `json:"not"`
+	}
+	var explainRequest struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		AllOf      []struct {
+			OneOf []typedSelectorBranch `json:"oneOf"`
+		} `json:"allOf"`
+	}
+	if err := json.Unmarshal(document.Components.Schemas["ExplainPolicyRequest"], &explainRequest); err != nil {
+		t.Fatalf("decode ExplainPolicyRequest: %v", err)
+	}
+	if len(explainRequest.AllOf) < 1 || len(explainRequest.AllOf[0].OneOf) != 3 ||
+		explainRequest.Properties["destination_device_id"] == nil ||
+		explainRequest.Properties["destination_resource_id"] == nil ||
+		explainRequest.Properties["destination_imported_resource_id"] == nil ||
+		len(explainRequest.AllOf[0].OneOf[2].Required) != 1 ||
+		explainRequest.AllOf[0].OneOf[2].Required[0] != "destination_imported_resource_id" ||
+		len(explainRequest.AllOf[0].OneOf[2].Not.AnyOf) != 2 {
+		t.Fatalf("ExplainPolicyRequest typed destination contract = %+v", explainRequest)
+	}
+	var explainTarget struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		OneOf      []typedSelectorBranch      `json:"oneOf"`
+	}
+	if err := json.Unmarshal(document.Components.Schemas["ExplainedPolicyTarget"], &explainTarget); err != nil {
+		t.Fatalf("decode ExplainedPolicyTarget: %v", err)
+	}
+	if len(explainTarget.OneOf) != 3 || explainTarget.Properties["device_id"] == nil ||
+		explainTarget.Properties["resource_id"] == nil ||
+		explainTarget.Properties["imported_resource_id"] == nil ||
+		len(explainTarget.OneOf[2].Required) != 1 ||
+		explainTarget.OneOf[2].Required[0] != "imported_resource_id" ||
+		len(explainTarget.OneOf[2].Not.AnyOf) != 2 {
+		t.Fatalf("ExplainedPolicyTarget typed destination contract = %+v", explainTarget)
 	}
 	var policyRule struct {
 		Required   []string                   `json:"required"`
@@ -122,24 +166,34 @@ func TestManagementV1MutationContracts(t *testing.T) {
 	if err := json.Unmarshal(document.Components.Schemas["CompiledPolicyRule"], &policyRule); err != nil {
 		t.Fatalf("decode CompiledPolicyRule: %v", err)
 	}
-	if len(policyRule.OneOf) != 3 || policyRule.Properties["destination_device_id"] == nil ||
+	if len(policyRule.OneOf) != 4 || policyRule.Properties["destination_device_id"] == nil ||
 		policyRule.Properties["destination_resource_id"] == nil ||
 		policyRule.Properties["destination_resource_group_id"] == nil ||
+		policyRule.Properties["destination_imported_resource_id"] == nil ||
 		len(policyRule.OneOf[0].Required) != 1 ||
 		policyRule.OneOf[0].Required[0] != "destination_device_id" ||
-		len(policyRule.OneOf[0].Not.AnyOf) != 2 ||
+		len(policyRule.OneOf[0].Not.AnyOf) != 3 ||
 		policyRule.OneOf[0].Not.AnyOf[0].Required[0] != "destination_resource_id" ||
 		policyRule.OneOf[0].Not.AnyOf[1].Required[0] != "destination_resource_group_id" ||
+		policyRule.OneOf[0].Not.AnyOf[2].Required[0] != "destination_imported_resource_id" ||
 		len(policyRule.OneOf[1].Required) != 1 ||
 		policyRule.OneOf[1].Required[0] != "destination_resource_id" ||
-		len(policyRule.OneOf[1].Not.AnyOf) != 2 ||
+		len(policyRule.OneOf[1].Not.AnyOf) != 3 ||
 		policyRule.OneOf[1].Not.AnyOf[0].Required[0] != "destination_device_id" ||
 		policyRule.OneOf[1].Not.AnyOf[1].Required[0] != "destination_resource_group_id" ||
+		policyRule.OneOf[1].Not.AnyOf[2].Required[0] != "destination_imported_resource_id" ||
 		len(policyRule.OneOf[2].Required) != 1 ||
 		policyRule.OneOf[2].Required[0] != "destination_resource_group_id" ||
-		len(policyRule.OneOf[2].Not.AnyOf) != 2 ||
+		len(policyRule.OneOf[2].Not.AnyOf) != 3 ||
 		policyRule.OneOf[2].Not.AnyOf[0].Required[0] != "destination_device_id" ||
-		policyRule.OneOf[2].Not.AnyOf[1].Required[0] != "destination_resource_id" {
+		policyRule.OneOf[2].Not.AnyOf[1].Required[0] != "destination_resource_id" ||
+		policyRule.OneOf[2].Not.AnyOf[2].Required[0] != "destination_imported_resource_id" ||
+		len(policyRule.OneOf[3].Required) != 1 ||
+		policyRule.OneOf[3].Required[0] != "destination_imported_resource_id" ||
+		len(policyRule.OneOf[3].Not.AnyOf) != 3 ||
+		policyRule.OneOf[3].Not.AnyOf[0].Required[0] != "destination_device_id" ||
+		policyRule.OneOf[3].Not.AnyOf[1].Required[0] != "destination_resource_id" ||
+		policyRule.OneOf[3].Not.AnyOf[2].Required[0] != "destination_resource_group_id" {
 		t.Fatalf("CompiledPolicyRule typed destination contract = %+v", policyRule)
 	}
 	for _, contract := range []struct {
@@ -176,6 +230,64 @@ func TestManagementV1MutationContracts(t *testing.T) {
 			len(resourceOperation.Get.Security) != 1 ||
 			resourceOperation.Get.Security[0]["accountSessionBearer"] == nil {
 			t.Fatalf("Resource detail contract = %+v, found=%t", resourceOperation.Get, found)
+		}
+	}
+	const shareCollectionPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/share-offers"
+	shareCollection, found := document.Paths[shareCollectionPath]
+	if !found || shareCollection.Get.OperationID != "listShareOffers" ||
+		shareCollection.Post.OperationID != "createShareOffer" {
+		t.Fatalf("Share Offer collection contract = %+v, found=%t", shareCollection, found)
+	}
+	for _, security := range [][]map[string][]string{
+		shareCollection.Get.Security, shareCollection.Post.Security,
+	} {
+		if len(security) != 1 || security[0]["accountSessionBearer"] == nil {
+			t.Fatal("Share Offer collection does not require Account Session bearer authentication")
+		}
+	}
+	for _, status := range []string{"201", "400", "401", "403", "405", "409", "429", "503", "504"} {
+		if shareCollection.Post.Responses[status] == nil {
+			t.Fatalf("Share Offer creation responses omit status %s", status)
+		}
+	}
+	for _, contract := range []struct {
+		path, operation string
+		read            bool
+	}{
+		{path: shareCollectionPath + "/{share_offer_id}", operation: "getShareOffer", read: true},
+		{path: shareCollectionPath + "/{share_offer_id}/actions/{share_offer_action}", operation: "decideShareOffer"},
+		{path: "/api/v1/workspaces/{workspace_id}/networks/{network_id}/trust-contracts/{trust_contract_id}/actions/revoke", operation: "revokeTrustContract"},
+	} {
+		operation, ok := document.Paths[contract.path]
+		if !ok {
+			t.Fatalf("sharing path %s is absent", contract.path)
+		}
+		if contract.read {
+			if operation.Get.OperationID != contract.operation || len(operation.Get.Security) != 1 ||
+				operation.Get.Security[0]["accountSessionBearer"] == nil {
+				t.Fatalf("sharing read contract = %+v", operation.Get)
+			}
+			continue
+		}
+		if operation.Post.OperationID != contract.operation || len(operation.Post.Security) != 1 ||
+			operation.Post.Security[0]["accountSessionBearer"] == nil {
+			t.Fatalf("sharing mutation contract = %+v", operation.Post)
+		}
+		for _, status := range []string{
+			"200", "400", "401", "403", "404", "405", "409", "412", "428", "429", "503", "504",
+		} {
+			if operation.Post.Responses[status] == nil {
+				t.Fatalf("sharing mutation %s omits status %s", contract.operation, status)
+			}
+		}
+	}
+	for _, schema := range []string{
+		"CreateShareOfferRequest", "DecideShareOfferRequest", "RevokeTrustContractRequest",
+		"ShareOffer", "ShareOfferResponse", "ShareOfferListResponse",
+		"TrustContract", "TrustContractResponse",
+	} {
+		if document.Components.Schemas[schema] == nil {
+			t.Fatalf("Resource Sharing schema %s is absent", schema)
 		}
 	}
 	for _, contract := range []struct {

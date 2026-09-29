@@ -55,6 +55,64 @@ func TestPolicySimulationBaselineRecordReconstructsFormatThreeCandidate(t *testi
 	}
 }
 
+func TestPolicySimulationBaselineRecordReconstructsFormatFourCandidate(t *testing.T) {
+	t.Parallel()
+
+	scope := postgresPolicySimulationScope(t)
+	record := policySimulationBaselineRecord{
+		NetworkRevision: 13, InventoryRevision: 8, GroupRevision: 9,
+		PolicyRevision: 7, DNSRevision: 2, RouteRevision: 2,
+		SharingRevision: 3, IsolationGeneration: 1, HasActiveRelease: true,
+		Rules: []policyPublicationRulePayload{
+			postgresPolicySimulationDirectRule(),
+			postgresPolicySimulationImportedRule(t),
+		},
+	}
+	releaseID := "01890f00-0000-7000-8000-000000000902"
+	compilerFormat := 4
+	record.ReleaseID = &releaseID
+	record.CompilerFormatVersion = &compilerFormat
+	candidate, err := reconstructPolicySimulationCandidate(
+		scope,
+		record.PolicyRevision,
+		compilerFormat,
+		record.Rules,
+	)
+	if err != nil {
+		t.Fatalf("reconstructPolicySimulationCandidate() error = %v", err)
+	}
+	hash := candidate.SemanticHash().Bytes()
+	record.SemanticHash = hash[:]
+
+	baseline, err := record.baseline(scope)
+	if err != nil {
+		t.Fatalf("baseline() error = %v", err)
+	}
+	actual := baseline.Candidate()
+	if !baseline.IsValid() || actual.CompilerFormatVersion() != 4 ||
+		len(actual.Snapshot().Rules()) != 1 || len(actual.ResourceDestinations()) != 1 ||
+		len(actual.ResourceGroupDestinations()) != 0 ||
+		len(actual.ImportedResourceDestinations()) != 1 ||
+		actual.SemanticHash() != candidate.SemanticHash() {
+		t.Fatalf("baseline = %+v, candidate = %+v", baseline, actual)
+	}
+}
+
+func TestPolicySimulationCandidateRejectsImportedPacketEdge(t *testing.T) {
+	t.Parallel()
+
+	record := postgresPolicySimulationImportedRule(t)
+	record.DestinationNodePublicID = postgresPolicySimulationID(399)
+	if _, err := reconstructPolicySimulationCandidate(
+		postgresPolicySimulationScope(t),
+		7,
+		4,
+		[]policyPublicationRulePayload{record},
+	); !errors.Is(err, simulation.ErrInvalidBaseline) {
+		t.Fatalf("reconstructPolicySimulationCandidate() error = %v, want ErrInvalidBaseline", err)
+	}
+}
+
 func TestPolicySimulationBaselineRecordConstructsDefaultDenyBootstrap(t *testing.T) {
 	t.Parallel()
 
@@ -171,6 +229,49 @@ func postgresPolicySimulationGroupRule(
 		DestinationGroupMemberTargetGeneration:     2,
 		DestinationGroupMemberInventoryRevision:    8,
 		DestinationGroupMemberResourceSemanticHash: postgresPolicySimulationHash(resourceSuffix - 600),
+	}
+}
+
+func postgresPolicySimulationImportedRule(t *testing.T) policyPublicationRulePayload {
+	t.Helper()
+	constraints := []resourceSharingTrafficRecord{{
+		Protocol: "tcp",
+		Ranges:   [][2]int64{{443, 443}, {8443, 8443}},
+	}}
+	traffic, err := resourceSharingTrafficSet(constraints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return policyPublicationRulePayload{
+		ProjectionPublicID:                      postgresPolicySimulationID(704),
+		AccessRulePublicID:                      postgresPolicySimulationID(504),
+		SourceNodePublicID:                      postgresPolicySimulationID(305),
+		Protocol:                                "tcp",
+		PortRangeFirst:                          []int{443},
+		PortRangeLast:                           []int{443},
+		DestinationImportedResourcePublicID:     postgresPolicySimulationID(801),
+		DestinationImportedResourceVersion:      2,
+		DestinationTrustContractPublicID:        postgresPolicySimulationID(802),
+		DestinationTrustContractVersion:         2,
+		DestinationShareOfferPublicID:           postgresPolicySimulationID(803),
+		DestinationResourceExportPublicID:       postgresPolicySimulationID(804),
+		DestinationResourceExportVersion:        1,
+		DestinationProviderWorkspacePublicID:    postgresPolicySimulationID(102),
+		DestinationProviderNetworkPublicID:      postgresPolicySimulationID(202),
+		DestinationProviderResourcePublicID:     postgresPolicySimulationID(604),
+		DestinationProviderResourceVersion:      4,
+		DestinationProviderTargetGeneration:     2,
+		DestinationProviderResourceSemanticHash: postgresPolicySimulationHash(4),
+		DestinationProviderInventoryRevision:    8,
+		DestinationProviderSharingRevision:      3,
+		DestinationConsumerSharingRevision:      3,
+		DestinationProviderAuthorityGeneration:  2,
+		DestinationConsumerAuthorityGeneration:  2,
+		DestinationRecoveryEpoch:                2,
+		DestinationContractExpiresAt:            "2030-01-02T00:00:00Z",
+		DestinationConstraintHash:               fmt.Sprintf("%x", traffic.Hash()),
+		DestinationAuthorityEvaluatedAt:         "2030-01-01T00:00:00Z",
+		DestinationContractConstraints:          constraints,
 	}
 }
 

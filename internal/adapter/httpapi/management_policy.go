@@ -17,6 +17,7 @@ import (
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/resource"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -29,13 +30,14 @@ type publishPolicyRequest struct {
 }
 
 type publishPolicyRuleRequest struct {
-	ID                    string                          `json:"id"`
-	SourceDeviceID        string                          `json:"source_device_id"`
-	DestinationDeviceID   string                          `json:"destination_device_id"`
-	DestinationResourceID string                          `json:"destination_resource_id"`
-	DestinationGroupID    string                          `json:"destination_resource_group_id"`
-	Protocol              string                          `json:"protocol"`
-	DestinationPortRanges []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
+	ID                            string                          `json:"id"`
+	SourceDeviceID                string                          `json:"source_device_id"`
+	DestinationDeviceID           string                          `json:"destination_device_id"`
+	DestinationResourceID         string                          `json:"destination_resource_id"`
+	DestinationGroupID            string                          `json:"destination_resource_group_id"`
+	DestinationImportedResourceID string                          `json:"destination_imported_resource_id"`
+	Protocol                      string                          `json:"protocol"`
+	DestinationPortRanges         []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
 }
 
 type publishPolicyPortRangeRequest struct {
@@ -243,6 +245,15 @@ func decodePolicyRuleIntent(
 			return compilation.RuleIntent{}, err
 		}
 	}
+	var destinationImportedResourceID sharing.ImportedResourceID
+	if input.DestinationImportedResourceID != "" {
+		destinationImportedResourceID, err = sharing.ParseImportedResourceID(
+			input.DestinationImportedResourceID,
+		)
+		if err != nil {
+			return compilation.RuleIntent{}, err
+		}
+	}
 	protocol := parsePolicyProtocol(input.Protocol)
 	if !protocol.IsValid() {
 		return compilation.RuleIntent{}, policy.ErrInvalidRule
@@ -262,7 +273,8 @@ func decodePolicyRuleIntent(
 	return compilation.NewRuleIntent(compilation.RuleIntentParams{
 		ID: ruleID, Scope: scope, SourceNodeID: sourceID, DestinationNodeID: destinationID,
 		DestinationResourceID: destinationResourceID, DestinationGroupID: destinationGroupID,
-		Protocol: protocol, DestinationPortRanges: portRanges,
+		DestinationImportedResourceID: destinationImportedResourceID,
+		Protocol:                      protocol, DestinationPortRanges: portRanges,
 	})
 }
 

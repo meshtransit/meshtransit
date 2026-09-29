@@ -12,6 +12,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/resource"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 )
 
 const (
@@ -33,32 +34,35 @@ var (
 
 // QueryParams contains one bounded network.connect explanation question.
 type QueryParams struct {
-	Scope                 network.Scope
-	SourceNodeID          node.ID
-	DestinationNodeID     node.ID
-	DestinationResourceID resource.ID
-	Protocol              policy.Protocol
-	DestinationPort       uint16
+	Scope                         network.Scope
+	SourceNodeID                  node.ID
+	DestinationNodeID             node.ID
+	DestinationResourceID         resource.ID
+	DestinationImportedResourceID sharing.ImportedResourceID
+	Protocol                      policy.Protocol
+	DestinationPort               uint16
 }
 
 // Query asks whether one Device can initiate an exact packet action toward one
 // Device or Resource in the same Network.
 type Query struct {
-	scope                 network.Scope
-	sourceNodeID          node.ID
-	destinationNodeID     node.ID
-	destinationResourceID resource.ID
-	protocol              policy.Protocol
-	destinationPort       uint16
+	scope                         network.Scope
+	sourceNodeID                  node.ID
+	destinationNodeID             node.ID
+	destinationResourceID         resource.ID
+	destinationImportedResourceID sharing.ImportedResourceID
+	protocol                      policy.Protocol
+	destinationPort               uint16
 }
 
 // NewQuery validates one exact Device-to-Device or Device-to-Resource question.
 func NewQuery(params QueryParams) (Query, error) {
 	query := Query{
 		scope: params.Scope, sourceNodeID: params.SourceNodeID,
-		destinationNodeID:     params.DestinationNodeID,
-		destinationResourceID: params.DestinationResourceID,
-		protocol:              params.Protocol, destinationPort: params.DestinationPort,
+		destinationNodeID:             params.DestinationNodeID,
+		destinationResourceID:         params.DestinationResourceID,
+		destinationImportedResourceID: params.DestinationImportedResourceID,
+		protocol:                      params.Protocol, destinationPort: params.DestinationPort,
 	}
 	if !query.IsValid() {
 		return Query{}, ErrInvalidQuery
@@ -78,6 +82,11 @@ func (query Query) DestinationNodeID() node.ID { return query.destinationNodeID 
 // DestinationResourceID returns the queried Resource, when selected.
 func (query Query) DestinationResourceID() resource.ID { return query.destinationResourceID }
 
+// DestinationImportedResourceID returns the queried Imported Resource, when selected.
+func (query Query) DestinationImportedResourceID() sharing.ImportedResourceID {
+	return query.destinationImportedResourceID
+}
+
 // Protocol returns the exact packet protocol.
 func (query Query) Protocol() policy.Protocol { return query.protocol }
 
@@ -88,7 +97,14 @@ func (query Query) DestinationPort() uint16 { return query.destinationPort }
 func (query Query) IsValid() bool {
 	hasDevice := query.destinationNodeID.IsValid()
 	hasResource := query.destinationResourceID.IsValid()
-	if !query.scope.IsValid() || !query.sourceNodeID.IsValid() || hasDevice == hasResource ||
+	hasImportedResource := query.destinationImportedResourceID.IsValid()
+	selectorCount := 0
+	for _, selected := range []bool{hasDevice, hasResource, hasImportedResource} {
+		if selected {
+			selectorCount++
+		}
+	}
+	if !query.scope.IsValid() || !query.sourceNodeID.IsValid() || selectorCount != 1 ||
 		!query.protocol.IsValid() || (hasDevice && query.sourceNodeID == query.destinationNodeID) {
 		return false
 	}
