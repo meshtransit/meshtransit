@@ -215,8 +215,10 @@ const revokeResourceShareSQL = `SELECT
     consumer_sharing_revision,
     contract_version,
     imported_resource_version,
-    access_name_version
-FROM mesh_ops.revoke_resource_share_v2(
+    access_name_version,
+    alias_lease_version,
+    private_endpoint_version
+FROM mesh_ops.revoke_resource_share_v3(
     $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::BIGINT,
     $5::UUID, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::TIMESTAMPTZ
 )`
@@ -227,8 +229,11 @@ const activateResourceShareSQL = `SELECT
     consumer_network_revision,
     consumer_sharing_revision,
     contract_version,
-    imported_resource_version
-FROM mesh_ops.activate_resource_share_v1(
+    imported_resource_version,
+    alias_lease_version,
+    private_endpoint_version
+FROM mesh_ops.activate_resource_share_v2(
     $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::BIGINT,
-    $5::UUID, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::TIMESTAMPTZ
+    $5::UUID, $6::BIGINT, $7::BIGINT, $8::BIGINT,
+    $9::UUID, $10::UUID, $11::TIMESTAMPTZ
 )`

@@ -159,10 +159,31 @@ independently reject malformed names, while a database unique violation maps
 to a stable conflict and rolls back offer, contract, import, revisions, audit,
 outbox, and idempotency writes together.
 
-The reservation deliberately has no `published` state. Alias-pool allocation,
-Private Endpoint persistence, DNS publication, and `dns_revision` advancement
-remain absent, so neither a reserved name nor a validated in-memory endpoint
-creates a DNS record or packet path by itself.
+Migration 54 adds the next fail-closed boundary. Contract activation selects an
+active Deployment-scoped `federation_resource_alias` pool, serializes its
+monotonic cursor, reserves a never-reused host alias, and persists a Private
+Endpoint in `provisioning`. The endpoint pins the exact Trust Contract and
+Imported Resource versions, both Network scopes, access-name reservation,
+authority generations, recovery epoch, constraint hash, expiry, alias lease,
+and endpoint generation. Composite foreign keys make cross-record substitution
+invalid even for the dedicated writer.
+
+Allocation is performed inside the same transaction as activation, revision
+advancement, audit, outbox, and idempotency evidence. A failed pool lookup,
+exhausted cursor, address collision, or endpoint invariant rolls the entire
+activation back. The cursor is row-locked and monotonically advances, while
+withdrawn addresses are not recycled, avoiding delayed-packet confusion.
+Forced RLS exposes consumer-scoped reads only; runtime cannot write either
+authority table. Runtime access to `activate_resource_share_v1` and
+`revoke_resource_share_v2` is closed in favor of endpoint-aware v2/v3 entry
+points owned by `mesh_share_writer`. Revoke atomically terminalizes a current
+endpoint and withdraws its alias lease together with the access name.
+
+The access-name reservation deliberately still has no `published` state, and
+the endpoint remains `provisioning`. DNS publication, route readiness evidence,
+and `dns_revision`/`route_revision` advancement remain absent, so neither the
+reserved name nor allocated alias creates a DNS record or packet path by
+itself.
 
 ## Non-claims
 
@@ -171,7 +192,7 @@ creates a DNS record or packet path by itself.
 - No UI is included in Phase 2.
 - No cross-Workspace packet path is enabled without a trusted endpoint or
   gateway.
-- No consumable DNS access name is published before that endpoint authority is
-  implemented.
+- No consumable DNS access name is published while the endpoint is only
+  `provisioning`; a later trusted worker must prove route readiness.
 - No mandatory human separation-of-duty is inferred beyond the two independent
   Workspace authority checks.

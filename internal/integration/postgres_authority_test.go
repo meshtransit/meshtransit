@@ -74,7 +74,7 @@ func assertAuthorityEvidenceFoundation(ctx context.Context, t *testing.T, connec
 	); err != nil {
 		t.Fatalf("query authority evidence foundation: %v", err)
 	}
-	if mutations != 12 || identities != 4 || payloads != 4 || outboxEvents != 4 || streams != 3 {
+	if mutations != 14 || identities != 5 || payloads != 5 || outboxEvents != 5 || streams != 3 {
 		t.Fatalf(
 			"authority evidence counts: mutations=%d identities=%d payloads=%d outbox=%d streams=%d",
 			mutations,
@@ -102,9 +102,9 @@ func assertAuthorityEvidenceFoundation(ctx context.Context, t *testing.T, connec
 	); err != nil {
 		t.Fatalf("query seeded audit stream sequences: %v", err)
 	}
-	if deploymentNextSequence != 3 || networkNextSequence != 2 {
+	if deploymentNextSequence != 4 || networkNextSequence != 2 {
 		t.Fatalf(
-			"seeded audit stream sequences: deployment=%d network=%d, want 3 and 2",
+			"seeded audit stream sequences: deployment=%d network=%d, want 4 and 2",
 			deploymentNextSequence,
 			networkNextSequence,
 		)

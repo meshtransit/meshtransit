@@ -11,8 +11,53 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 53 {
-		t.Fatalf("len(Catalog()) = %d, want 53", len(catalog))
+	if len(catalog) != 54 {
+		t.Fatalf("len(Catalog()) = %d, want 54", len(catalog))
+	}
+	privateEndpointAuthority := catalog[53]
+	if privateEndpointAuthority.Description != "Resource sharing Private Endpoint provisioning authority" {
+		t.Fatalf("migration 54 description = %q, want Private Endpoint provisioning authority", privateEndpointAuthority.Description)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.federation_alias_lease",
+		"CREATE TABLE mesh.private_endpoint",
+		"CREATE TABLE mesh_ops.federation_alias_pool_cursor",
+		"CREATE FUNCTION mesh_ops.activate_resource_share_v2",
+		"CREATE FUNCTION mesh_ops.revoke_resource_share_v3",
+		"CREATE UNIQUE INDEX federation_alias_lease_current_address_uidx",
+		"CREATE POLICY private_endpoint_runtime_policy",
+		"CREATE POLICY private_endpoint_share_writer_policy",
+		"state IN ('provisioning', 'ready', 'revoked', 'expired', 'invalidated')",
+		"FORCE ROW LEVEL SECURITY",
+	} {
+		if !strings.Contains(privateEndpointAuthority.SQL, required) {
+			t.Errorf("Resource Sharing Private Endpoint SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT INSERT ON mesh.private_endpoint TO mesh_runtime",
+		"GRANT UPDATE ON mesh.private_endpoint TO mesh_runtime",
+		"GRANT DELETE ON mesh.private_endpoint TO mesh_runtime",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.activate_resource_share_v2",
+		"BYPASSRLS",
+		"DROP ",
+	} {
+		if strings.Contains(privateEndpointAuthority.SQL, forbidden) {
+			t.Errorf("Resource Sharing Private Endpoint SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	privateEndpointOwnership := ResourceSharingPrivateEndpointFunctionOwnershipSQL()
+	for _, required := range []string{
+		"OWNER TO mesh_share_writer",
+		"REVOKE ALL ON FUNCTION mesh_ops.activate_resource_share_v1",
+		"REVOKE ALL ON FUNCTION mesh_ops.revoke_resource_share_v2",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.activate_resource_share_v2",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.revoke_resource_share_v3",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(privateEndpointOwnership, required) {
+			t.Errorf("Resource Sharing Private Endpoint ownership SQL missing %q", required)
+		}
 	}
 	accessNameAuthority := catalog[52]
 	if accessNameAuthority.Description != "Resource sharing consumer access-name authority" {
@@ -1402,8 +1447,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 53 {
-		t.Fatalf("LatestVersion() = %d, want 53", LatestVersion())
+	if LatestVersion() != 54 {
+		t.Fatalf("LatestVersion() = %d, want 54", LatestVersion())
 	}
 }
 

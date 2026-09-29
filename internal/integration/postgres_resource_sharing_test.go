@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
@@ -159,6 +160,10 @@ func assertPostgreSQLResourceSharing(
 		activeContract.Version() != contract.Version()+1 || activated.ImportedResourceVersion() != 2 {
 		t.Fatalf("Resource Sharing activate result = %+v", activated)
 	}
+	assertPrivateEndpointProvisioning(
+		ctx, t, admin, activeContract.ImportedResourceID(), "provisioning", 1,
+		"reserved", 1, "fd00:feed::1",
+	)
 	replayedActivation, err := service.ActivateContract(ctx, activateCommand)
 	if err != nil {
 		t.Fatalf("Resource Sharing ActivateContract() replay error = %v", err)
@@ -207,6 +212,10 @@ func assertPostgreSQLResourceSharing(
 	}
 	assertImportedResourceAccessName(
 		ctx, t, admin, contract.ImportedResourceID(), accessName, "withdrawn", 2,
+	)
+	assertPrivateEndpointProvisioning(
+		ctx, t, admin, activeContract.ImportedResourceID(), "revoked", 2,
+		"withdrawn", 2, "fd00:feed::1",
 	)
 	if _, err := store.ResolveImportedPolicyDestinations(
 		ctx,
@@ -307,6 +316,28 @@ func assertCrossWorkspaceResourceSharingConsent(
 	}
 	assertImportedResourceAccessName(
 		ctx, t, admin, contract.ImportedResourceID(), accessName, "reserved", 1,
+	)
+	activateCommand, err := sharing.NewActivateContract(sharing.ActivateContractParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		ContractID: contract.ID(), ExpectedContractVersion: contract.Version(),
+		AccountSession: consumerSession, Reason: reason,
+		Idempotency: resourceAuthorityProof(t, 124),
+	})
+	if err != nil {
+		t.Fatalf("construct cross-Workspace activation: %v", err)
+	}
+	activated, err := service.ActivateContract(ctx, activateCommand)
+	if err != nil {
+		t.Fatalf("activate cross-Workspace Trust Contract: %v", err)
+	}
+	activeContract, hasContract := activated.Contract()
+	if !hasContract || activeContract.State() != sharing.ContractStateActive ||
+		activeContract.ScopeRelation() != sharing.ScopeRelationCrossWorkspace {
+		t.Fatalf("cross-Workspace active contract = %+v", activated)
+	}
+	assertPrivateEndpointProvisioning(
+		ctx, t, admin, activeContract.ImportedResourceID(), "provisioning", 1,
+		"reserved", 1, "fd00:feed::2",
 	)
 	assertCrossWorkspaceSharingConsentEvidence(ctx, t, admin, offer.Offer().ID())
 
@@ -455,6 +486,80 @@ WHERE imported.public_id = $1::UUID`, importedResourceID.String()).Scan(
 			wantName.String(),
 			wantState,
 			wantVersion,
+		)
+	}
+}
+
+func assertPrivateEndpointProvisioning(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	importedResourceID sharing.ImportedResourceID,
+	wantEndpointState string,
+	wantEndpointVersion int64,
+	wantAliasState string,
+	wantAliasVersion int64,
+	wantAliasAddress string,
+) {
+	t.Helper()
+	var endpointState, aliasState, aliasAddress string
+	var endpointVersion, aliasVersion int64
+	var readyAt, endpointEndedAt, aliasActivatedAt, aliasWithdrawnAt pgtype.Timestamptz
+	if err := admin.QueryRow(ctx, `SELECT
+    endpoint.state,
+    endpoint.version,
+    endpoint.ready_at,
+    endpoint.ended_at,
+    pg_catalog.host(endpoint.resource_alias),
+    lease.state,
+    lease.version,
+    lease.activated_at,
+    lease.withdrawn_at
+FROM mesh.private_endpoint AS endpoint
+JOIN mesh.federation_alias_lease AS lease
+  ON lease.id = endpoint.alias_lease_id
+ AND lease.resource_alias = endpoint.resource_alias
+JOIN mesh.imported_resource AS imported
+  ON imported.workspace_id = endpoint.consumer_workspace_id
+ AND imported.network_id = endpoint.consumer_network_id
+ AND imported.id = endpoint.imported_resource_id
+WHERE imported.public_id = $1::UUID`, importedResourceID.String()).Scan(
+		&endpointState,
+		&endpointVersion,
+		&readyAt,
+		&endpointEndedAt,
+		&aliasAddress,
+		&aliasState,
+		&aliasVersion,
+		&aliasActivatedAt,
+		&aliasWithdrawnAt,
+	); err != nil {
+		t.Fatalf("query Private Endpoint provisioning: %v", err)
+	}
+	if endpointState != wantEndpointState || endpointVersion != wantEndpointVersion ||
+		aliasState != wantAliasState || aliasVersion != wantAliasVersion ||
+		aliasAddress != wantAliasAddress || readyAt.Valid || aliasActivatedAt.Valid {
+		t.Fatalf(
+			"Private Endpoint state/version/alias = %s/%d/%s/%d/%s, want %s/%d/%s/%d/%s",
+			endpointState,
+			endpointVersion,
+			aliasState,
+			aliasVersion,
+			aliasAddress,
+			wantEndpointState,
+			wantEndpointVersion,
+			wantAliasState,
+			wantAliasVersion,
+			wantAliasAddress,
+		)
+	}
+	terminal := wantEndpointState == "revoked"
+	if terminal != endpointEndedAt.Valid || terminal != aliasWithdrawnAt.Valid {
+		t.Fatalf(
+			"Private Endpoint terminal timestamps endpoint=%v alias=%v, terminal=%t",
+			endpointEndedAt,
+			aliasWithdrawnAt,
+			terminal,
 		)
 	}
 }

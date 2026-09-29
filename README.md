@@ -65,13 +65,16 @@ classification. Same-Workspace management remains exact-Network RBAC;
 cross-Workspace acceptance requires fresh authority on both sides and records
 both consent steps in both audit streams. Workspace address realms reject CIDR
 overlap internally while allowing isolated Workspaces to reuse CIDRs. No direct
-cross-Workspace packet edge is created; a trusted Private Endpoint or gateway
-remains a later data-plane prerequisite. Applications will use a stable,
+cross-Workspace packet edge is created. Activation now allocates a monotonic
+address from the Deployment Federation Alias pool and persists a generation-
+bound Private Endpoint in `provisioning`; a trusted gateway still has to make
+that path ready. Applications will use a stable,
 consumer-local DNS name that resolves to that endpoint alias; raw provider IPs
 are neither the user contract nor an authorization identity. Acceptance now
 validates and atomically reserves that consumer-local access name in its exact
-Network namespace. Reservation is not DNS publication: the name remains
-non-resolving until a later endpoint/alias generation passes activation.
+Network namespace. Reservation and endpoint provisioning are not DNS
+publication: the name remains non-resolving until a trusted worker confirms
+the alias path and atomically publishes its DNS generation.
 Design, security boundaries, acceptance evidence, and explicit non-claims are
 recorded in the
 [Phase 2 M1 Resource authority design](docs/design/phase2-m1-resource-authority.md)
@@ -581,7 +584,7 @@ elevated attribute, or participates in any role membership.
 | `mesh_runtime` | yes | Scope-filtered reads for serving processes; owns no database or MeshTransit object. |
 | `mesh_worker` | yes | Scope-filtered tenant reads plus column-limited outbox claim/delivery operations; owns no database or MeshTransit object. |
 | `mesh_audit_writer` | no | Reserved for a future audited write path; currently no grants. |
-| `mesh_share_writer` | no | Owns the bounded Resource Sharing mutation functions and has only the bilateral, RLS-scoped table/sequence grants required by those functions. |
+| `mesh_share_writer` | no | Owns the bounded Resource Sharing, access-name, alias-allocation, and Private Endpoint mutation functions and has only their bilateral RLS-scoped table/sequence grants. |
 | `mesh_observer` | yes | Reserved for a future observability contract; currently no grants. |
 
 Migration history is immutable and forward-only. Unknown future versions,

@@ -55,6 +55,8 @@ type resourceSharingMutationRevisions struct {
 	consumerSharing   int64
 	importedVersion   int64
 	accessNameVersion int64
+	aliasLeaseVersion int64
+	endpointVersion   int64
 }
 
 // CreateOffer commits one provider-owned export and targeted offer atomically.
@@ -498,6 +500,14 @@ func (store *ResourceSharingStore) ActivateContract(
 	if err != nil {
 		return sharing.MutationResult{}, err
 	}
+	aliasLeaseID, err := publicid.New()
+	if err != nil {
+		return sharing.MutationResult{}, fmt.Errorf("generate Federation Alias lease ID: %w", err)
+	}
+	privateEndpointID, err := publicid.New()
+	if err != nil {
+		return sharing.MutationResult{}, fmt.Errorf("generate Private Endpoint ID: %w", err)
+	}
 	requestHash, err := resourceSharingActivationHash(command)
 	if err != nil {
 		return sharing.MutationResult{}, err
@@ -595,6 +605,8 @@ func (store *ResourceSharingStore) ActivateContract(
 		command.ExpectedContractVersion(),
 		provider.sharingRevision,
 		consumer.sharingRevision,
+		aliasLeaseID.String(),
+		privateEndpointID.String(),
 		evaluatedAt,
 	).Scan(
 		&revisions.providerNetwork,
@@ -603,10 +615,13 @@ func (store *ResourceSharingStore) ActivateContract(
 		&revisions.consumerSharing,
 		&contractVersion,
 		&revisions.importedVersion,
+		&revisions.aliasLeaseVersion,
+		&revisions.endpointVersion,
 	); err != nil {
 		return sharing.MutationResult{}, resourceSharingDatabaseError(ctx, err)
 	}
-	if contractVersion != command.ExpectedContractVersion()+1 || revisions.importedVersion <= 1 {
+	if contractVersion != command.ExpectedContractVersion()+1 || revisions.importedVersion <= 1 ||
+		revisions.aliasLeaseVersion != 1 || revisions.endpointVersion != 1 {
 		return sharing.MutationResult{}, sharing.ErrUnavailable
 	}
 	projection, err := readResourceSharingOffer(ctx, transaction, locator.offerID)
@@ -792,11 +807,15 @@ func (store *ResourceSharingStore) RevokeContract(
 		&contractVersion,
 		&revisions.importedVersion,
 		&revisions.accessNameVersion,
+		&revisions.aliasLeaseVersion,
+		&revisions.endpointVersion,
 	); err != nil {
 		return sharing.MutationResult{}, resourceSharingDatabaseError(ctx, err)
 	}
 	if contractVersion != command.ExpectedContractVersion()+1 || revisions.importedVersion <= 1 ||
-		(revisions.accessNameVersion != 0 && revisions.accessNameVersion <= 1) {
+		(revisions.accessNameVersion != 0 && revisions.accessNameVersion <= 1) ||
+		(revisions.aliasLeaseVersion != 0 && revisions.aliasLeaseVersion <= 1) ||
+		(revisions.endpointVersion != 0 && revisions.endpointVersion <= 1) {
 		return sharing.MutationResult{}, sharing.ErrUnavailable
 	}
 	projection, err := readResourceSharingOffer(ctx, transaction, locator.offerID)

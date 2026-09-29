@@ -80,6 +80,7 @@ func seedAuthorityFixture(ctx context.Context, t *testing.T, connection *pgx.Con
 			t.Fatalf("insert integration deployment audit stream: %v", err)
 		}
 	})
+	seedFederationAliasAuthority(ctx, t, connection)
 
 	commitAuditedAuthorityFixture(ctx, t, connection, authorityEvidenceFixture{
 		changePublicID:         "01890f01-0000-7000-8000-000000000011",
@@ -129,6 +130,43 @@ func seedAuthorityFixture(ctx context.Context, t *testing.T, connection *pgx.Con
 		networkPrefixID: 502,
 		publicIDSuffix:  "102",
 		nameSuffix:      "two",
+	})
+}
+
+func seedFederationAliasAuthority(
+	ctx context.Context,
+	t *testing.T,
+	connection *pgx.Conn,
+) {
+	t.Helper()
+	commitAuditedAuthorityFixture(ctx, t, connection, authorityEvidenceFixture{
+		changePublicID:    "01890f01-0000-7000-8000-000000000399",
+		eventPublicID:     "01890f02-0000-7000-8000-000000000399",
+		outboxPublicID:    "01890f03-0000-7000-8000-000000000399",
+		streamID:          1,
+		aggregateKind:     "address_pool",
+		aggregatePublicID: "01890f00-0000-7000-8000-000000000499",
+		aggregateVersion:  1,
+		action:            "federation_alias_pool.created",
+		permission:        "system.bootstrap",
+		outboxEventClass:  "federation_alias_pool.created",
+	}, func(transaction pgx.Tx) {
+		if _, err := transaction.Exec(ctx, `INSERT INTO mesh.address_realm (
+    id, public_id, deployment_id, workspace_id, kind,
+    ipv4_enabled, ipv6_enabled, state
+) OVERRIDING SYSTEM VALUE VALUES (
+    399, '01890f00-0000-7000-8000-000000000399', 1, NULL,
+    'federation_alias', FALSE, TRUE, 'active'
+);
+INSERT INTO mesh.address_pool (
+    id, public_id, deployment_id, workspace_id, address_realm_id,
+    purpose, prefix, family, state
+) OVERRIDING SYSTEM VALUE VALUES (
+    499, '01890f00-0000-7000-8000-000000000499', 1, NULL, 399,
+    'federation_resource_alias', 'fd00:feed::/96', 6, 'active'
+)`); err != nil {
+			t.Fatalf("insert integration Federation Alias authority: %v", err)
+		}
 	})
 }
 

@@ -13,15 +13,18 @@
 | Same-Workspace sharing uses management RBAC | The existing end-to-end flow offers from Network 203 and accepts into Network 204 using explicit `share.offer` and `share.accept` grants. |
 | Cross-Workspace sharing requires both sides | Provider Principal 11 creates the offer; the same provider is denied consumer acceptance; consumer Principal 13 with an independent Workspace 102 membership and Network 202 role accepts. |
 | Consent is attributable | Each of the two Network audit streams records provider and consumer events with actor, permission, `scope_relation=cross_workspace`, and the correct `authority_side`. |
-| Cross-Workspace connectivity remains fail closed | Accepted contract remains `activating`; no direct provider Device edge is created. Imported Resource evaluation requires separately resolved safe path authority. |
+| Cross-Workspace connectivity remains fail closed | Activation persists only a `provisioning` Private Endpoint. No direct provider Device edge or DNS record is created; effective access still requires a separately confirmed `ready` endpoint. |
 | Provider IP is not the consumer contract | Share Offer and Imported Resource management projections expose identities and provenance, not a raw provider overlay IP. Consumer-local DNS plus Private Endpoint alias publication remains the required executable path. |
 | DNS access names reject address fallback | `AccessName` unit tests reject IPv4 literals, numeric pseudo-addresses, relative labels, unsafe labels, trailing root dots, and Unicode without an explicit IDNA boundary. |
 | Endpoint readiness is generation-bound | `PrivateEndpoint` tests bind contract/import versions, exact scopes, recovery epoch, endpoint generation, alias, traffic grant, expiry, and lifecycle; stale inputs fail closed. |
 | Cross-Workspace routing requires alias mode | A direct cross-Workspace endpoint is invalid even if current CIDRs do not overlap; the domain accepts only the explicit Federation Alias mode. |
 | Access-name allocation is consumer-local | Migration 53 reserves a canonical name under `(consumer Workspace, consumer Network)`; the same name succeeds in another Network while a duplicate in the same active namespace returns conflict. |
 | Name collision rolls back atomically | PostgreSQL integration creates a second offer, attempts the same reserved name, observes `ErrConflict`, and confirms the offer remains `offered` at version 1 with no Trust Contract. |
-| Runtime cannot bypass naming authority | Forced RLS exposes scoped reads only; direct runtime writes are denied, v1 decide/revoke execute grants are closed, and only v2 entry points are runtime-callable through `mesh_share_writer`. |
-| Revoke withdraws without deleting evidence | Contract revoke moves the access-name row from `reserved` version 1 to `withdrawn` version 2 in the same transaction. No DNS publication state exists yet. |
+| Runtime cannot bypass sharing authority | Forced RLS exposes scoped reads only; direct runtime writes are denied. Legacy decide/activate/revoke entry points are closed and only the current v2/v3 functions are callable through `mesh_share_writer`. |
+| Federation Alias allocation is serialized | Migration 54 row-locks a Deployment pool cursor and allocates `fd00:feed::1`, then `fd00:feed::2` for a cross-Workspace activation; active aliases are unique and withdrawn offsets are not reused. |
+| Private Endpoint provenance is exact | Composite foreign keys bind one endpoint to the same contract, Imported Resource, access-name reservation, alias lease, consumer scope, versions, generations, recovery epoch, constraint hash, and expiry. |
+| Provisioning is not publication | Activation creates endpoint state `provisioning` and alias state `reserved`; `ready_at` and `activated_at` remain null and no DNS state or revision is created. |
+| Revoke withdraws without deleting evidence | Contract revoke moves the access name and alias lease to `withdrawn` and the endpoint to `revoked`, all at version 2 in the same transaction. |
 
 ## Verification commands
 
@@ -37,10 +40,11 @@ Observed results:
 - focused sharing race suite: 73 tests passed;
 - focused migration, sharing, HTTP, and PostgreSQL adapter suite: 1,657 tests
   passed across 4 packages;
-- PostgreSQL/container integration after migration 53: passed, including
+- PostgreSQL/container integration after migration 54: passed, including
   migration replay, privilege/RLS checks, v1 entry-point closure, scoped name
-  reuse, same-Network collision rollback, revoke withdrawal, CIDR isolation,
-  bilateral consent, audit, and qualification tooling.
+  reuse, same-Network collision rollback, sequential Federation Alias
+  allocation, Private Endpoint provisioning, revoke withdrawal, CIDR
+  isolation, bilateral consent, audit, and qualification tooling.
 
 ## Security conclusions
 
@@ -55,6 +59,6 @@ Observed results:
   Private Endpoint snapshot.
 - The implementation does not claim an executable cross-Workspace data path;
   a trusted Private Endpoint or gateway is still required.
-- Federation alias allocation, Private Endpoint persistence, DNS revision
-  publication, and terminal expiry/invalidation withdrawal are the next
+- Trusted route-readiness confirmation, DNS publication with `dns_revision`
+  advancement, and terminal expiry/invalidation withdrawal are the next
   implementation slice.

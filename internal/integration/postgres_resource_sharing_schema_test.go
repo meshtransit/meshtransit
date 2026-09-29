@@ -47,7 +47,8 @@ JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = class.relnamespace
 WHERE namespace.nspname = 'mesh'
   AND class.relname = ANY(ARRAY[
       'resource_export', 'resource_export_constraint', 'share_offer', 'share_offer_locator',
-      'trust_contract', 'imported_resource', 'imported_resource_access_name'
+      'trust_contract', 'imported_resource', 'imported_resource_access_name',
+      'federation_alias_lease', 'private_endpoint'
   ]::TEXT[])`).Scan(
 		&tableCount,
 		&allRLS,
@@ -59,7 +60,7 @@ WHERE namespace.nspname = 'mesh'
 	); err != nil {
 		t.Fatal("query Resource Sharing table privileges", err)
 	}
-	if tableCount != 7 || !allRLS || !allForceRLS || runtimeMutation || !runtimeReadBounded ||
+	if tableCount != 9 || !allRLS || !allForceRLS || runtimeMutation || !runtimeReadBounded ||
 		publicDML || !writerBounded {
 		t.Fatalf(
 			"Resource Sharing tables count=%d rls=%t force=%t runtime_mutation=%t runtime_read=%t public_dml=%t writer=%t",
@@ -106,8 +107,8 @@ WHERE namespace.nspname = 'mesh_ops'
   AND procedure.proname = ANY(ARRAY[
 		'create_resource_share_offer_v1',
 		'decide_resource_share_offer_v2',
-		'activate_resource_share_v1',
-		'revoke_resource_share_v2'
+		'activate_resource_share_v2',
+		'revoke_resource_share_v3'
   ]::TEXT[])`).Scan(
 		&functionCount,
 		&runtimeExecute,
@@ -136,7 +137,8 @@ WHERE namespace.nspname = 'mesh_ops'
 	}
 
 	var ownerNoLogin, ownerNoBypass, migratorNotMember, helperClosed bool
-	var migratorScopeClosed, legacyDecideClosed, legacyRevokeClosed, schemaUsage bool
+	var migratorScopeClosed, legacyDecideClosed, legacyActivateClosed bool
+	var legacyRevokeV1Closed, legacyRevokeV2Closed, schemaUsage bool
 	if err := admin.QueryRow(ctx, `SELECT
     NOT owner.rolcanlogin,
     NOT owner.rolbypassrls,
@@ -161,6 +163,16 @@ WHERE namespace.nspname = 'mesh_ops'
         'mesh_ops.revoke_resource_share_v1(bigint,bigint,bigint,bigint,uuid,bigint,bigint,bigint,timestamptz)',
         'EXECUTE'
     ),
+    NOT pg_catalog.has_function_privilege(
+        'mesh_runtime',
+        'mesh_ops.activate_resource_share_v1(bigint,bigint,bigint,bigint,uuid,bigint,bigint,bigint,timestamptz)',
+        'EXECUTE'
+    ),
+    NOT pg_catalog.has_function_privilege(
+        'mesh_runtime',
+        'mesh_ops.revoke_resource_share_v2(bigint,bigint,bigint,bigint,uuid,bigint,bigint,bigint,timestamptz)',
+        'EXECUTE'
+    ),
     pg_catalog.has_schema_privilege('mesh_share_writer', 'mesh', 'USAGE')
     AND pg_catalog.has_schema_privilege('mesh_share_writer', 'mesh_ops', 'USAGE')
 FROM pg_catalog.pg_roles AS owner
@@ -171,22 +183,27 @@ WHERE owner.rolname = 'mesh_share_writer'`).Scan(
 		&helperClosed,
 		&migratorScopeClosed,
 		&legacyDecideClosed,
-		&legacyRevokeClosed,
+		&legacyRevokeV1Closed,
+		&legacyActivateClosed,
+		&legacyRevokeV2Closed,
 		&schemaUsage,
 	); err != nil {
 		t.Fatal("query Resource Sharing owner isolation", err)
 	}
 	if !ownerNoLogin || !ownerNoBypass || !migratorNotMember || !helperClosed ||
-		!migratorScopeClosed || !legacyDecideClosed || !legacyRevokeClosed || !schemaUsage {
+		!migratorScopeClosed || !legacyDecideClosed || !legacyActivateClosed ||
+		!legacyRevokeV1Closed || !legacyRevokeV2Closed || !schemaUsage {
 		t.Fatalf(
-			"Resource Sharing owner nologin=%t nobypass=%t isolated=%t helper_closed=%t migrator_scope_closed=%t legacy_decide_closed=%t legacy_revoke_closed=%t schema_usage=%t",
+			"Resource Sharing owner nologin=%t nobypass=%t isolated=%t helper_closed=%t migrator_scope_closed=%t legacy_decide_closed=%t legacy_activate_closed=%t legacy_revoke_v1_closed=%t legacy_revoke_v2_closed=%t schema_usage=%t",
 			ownerNoLogin,
 			ownerNoBypass,
 			migratorNotMember,
 			helperClosed,
 			migratorScopeClosed,
 			legacyDecideClosed,
-			legacyRevokeClosed,
+			legacyActivateClosed,
+			legacyRevokeV1Closed,
+			legacyRevokeV2Closed,
 			schemaUsage,
 		)
 	}
@@ -211,6 +228,14 @@ WHERE schemaname IN ('mesh', 'mesh_ops')
       'imported_resource_access_name_migrator_policy',
       'imported_resource_access_name_share_writer_policy',
       'imported_resource_access_name_runtime_policy',
+      'federation_alias_lease_migrator_policy',
+      'federation_alias_lease_share_writer_policy',
+      'federation_alias_lease_runtime_policy',
+      'private_endpoint_migrator_policy',
+      'private_endpoint_share_writer_policy',
+      'private_endpoint_runtime_policy',
+      'address_realm_share_writer_federation_policy',
+      'address_pool_share_writer_federation_policy',
       'deployment_share_writer_policy',
       'workspace_share_writer_policy',
       'network_share_writer_policy',
@@ -220,8 +245,8 @@ WHERE schemaname IN ('mesh', 'mesh_ops')
   ]::TEXT[])`).Scan(&scopedPolicyCount); err != nil {
 		t.Fatal("query Resource Sharing RLS policies", err)
 	}
-	if scopedPolicyCount != 21 {
-		t.Fatalf("Resource Sharing scoped policy count = %d, want 21", scopedPolicyCount)
+	if scopedPolicyCount != 29 {
+		t.Fatalf("Resource Sharing scoped policy count = %d, want 29", scopedPolicyCount)
 	}
 
 	assertImportedPolicyPrivilegeContract(ctx, t, admin)
