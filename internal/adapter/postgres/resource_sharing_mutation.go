@@ -57,6 +57,7 @@ type resourceSharingMutationRevisions struct {
 	accessNameVersion int64
 	aliasLeaseVersion int64
 	endpointVersion   int64
+	dnsVersion        int64
 }
 
 // CreateOffer commits one provider-owned export and targeted offer atomically.
@@ -809,13 +810,15 @@ func (store *ResourceSharingStore) RevokeContract(
 		&revisions.accessNameVersion,
 		&revisions.aliasLeaseVersion,
 		&revisions.endpointVersion,
+		&revisions.dnsVersion,
 	); err != nil {
 		return sharing.MutationResult{}, resourceSharingDatabaseError(ctx, err)
 	}
 	if contractVersion != command.ExpectedContractVersion()+1 || revisions.importedVersion <= 1 ||
 		(revisions.accessNameVersion != 0 && revisions.accessNameVersion <= 1) ||
 		(revisions.aliasLeaseVersion != 0 && revisions.aliasLeaseVersion <= 1) ||
-		(revisions.endpointVersion != 0 && revisions.endpointVersion <= 1) {
+		(revisions.endpointVersion != 0 && revisions.endpointVersion <= 1) ||
+		(revisions.dnsVersion != 0 && revisions.dnsVersion != 2) {
 		return sharing.MutationResult{}, sharing.ErrUnavailable
 	}
 	projection, err := readResourceSharingOffer(ctx, transaction, locator.offerID)

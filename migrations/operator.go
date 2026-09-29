@@ -14,6 +14,9 @@ var resourceSharingAccessNameFunctionOwnershipSQL string
 //go:embed operator/000054_resource_sharing_private_endpoint_function_ownership.sql
 var resourceSharingPrivateEndpointFunctionOwnershipSQL string
 
+//go:embed operator/000055_resource_sharing_private_endpoint_publication_ownership.sql
+var resourceSharingEndpointPublicationOwnershipSQL string
+
 // ResourceSharingFunctionOwnershipSQL returns the operator-only post-migration
 // hardening step that transfers the two-authority functions to a NOLOGIN owner
 // before exposing their bounded entry points to the runtime role.
@@ -39,4 +42,10 @@ func ResourceSharingAccessNameFunctionOwnershipSQL() string {
 // mutation entry points through the Resource Sharing NOLOGIN owner.
 func ResourceSharingPrivateEndpointFunctionOwnershipSQL() string {
 	return resourceSharingPrivateEndpointFunctionOwnershipSQL
+}
+
+// ResourceSharingEndpointPublicationOwnershipSQL returns the operator-only
+// step that closes the v3 revocation bypass and exposes DNS-aware revocation.
+func ResourceSharingEndpointPublicationOwnershipSQL() string {
+	return resourceSharingEndpointPublicationOwnershipSQL
 }

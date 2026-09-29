@@ -67,14 +67,18 @@ both consent steps in both audit streams. Workspace address realms reject CIDR
 overlap internally while allowing isolated Workspaces to reuse CIDRs. No direct
 cross-Workspace packet edge is created. Activation now allocates a monotonic
 address from the Deployment Federation Alias pool and persists a generation-
-bound Private Endpoint in `provisioning`; a trusted gateway still has to make
-that path ready. Applications will use a stable,
+bound Private Endpoint in `provisioning`. A worker-only migration 55 boundary
+exposes an authoritative snapshot, accepts contract-bound route readiness, and
+atomically moves the endpoint and alias to `ready`/`active` while publishing
+the consumer DNS generation. Applications use a stable,
 consumer-local DNS name that resolves to that endpoint alias; raw provider IPs
 are neither the user contract nor an authorization identity. Acceptance now
 validates and atomically reserves that consumer-local access name in its exact
 Network namespace. Reservation and endpoint provisioning are not DNS
 publication: the name remains non-resolving until a trusted worker confirms
-the alias path and atomically publishes its DNS generation.
+the alias path. This repository defines and qualifies that control-plane
+transaction; the gateway/route-agent implementation remains a deployment
+responsibility.
 Design, security boundaries, acceptance evidence, and explicit non-claims are
 recorded in the
 [Phase 2 M1 Resource authority design](docs/design/phase2-m1-resource-authority.md)

@@ -217,8 +217,9 @@ const revokeResourceShareSQL = `SELECT
     imported_resource_version,
     access_name_version,
     alias_lease_version,
-    private_endpoint_version
-FROM mesh_ops.revoke_resource_share_v3(
+    private_endpoint_version,
+    dns_publication_version
+FROM mesh_ops.revoke_resource_share_v4(
     $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::BIGINT,
     $5::UUID, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::TIMESTAMPTZ
 )`

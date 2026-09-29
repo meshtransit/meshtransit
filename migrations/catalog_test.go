@@ -11,8 +11,59 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 54 {
-		t.Fatalf("len(Catalog()) = %d, want 54", len(catalog))
+	if len(catalog) != 55 {
+		t.Fatalf("len(Catalog()) = %d, want 55", len(catalog))
+	}
+	endpointPublication := catalog[54]
+	if endpointPublication.Description != "Resource sharing Private Endpoint readiness and DNS publication" {
+		t.Fatalf("migration 55 description = %q, want endpoint publication", endpointPublication.Description)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.private_endpoint_readiness",
+		"CREATE TABLE mesh.imported_resource_dns_publication",
+		"CREATE FUNCTION mesh_ops.list_private_endpoint_publication_candidates_v1",
+		"CREATE FUNCTION mesh_ops.read_private_endpoint_publication_snapshot_v1",
+		"CREATE FUNCTION mesh_ops.lock_private_endpoint_network_revision_internal_v1",
+		"CREATE FUNCTION mesh_ops.assert_private_endpoint_scope_internal_v1",
+		"CREATE FUNCTION mesh_ops.publish_private_endpoint_v1",
+		"CREATE FUNCTION mesh_ops.withdraw_private_endpoint_publication_internal_v1",
+		"CREATE FUNCTION mesh_ops.revoke_resource_share_v4",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.publish_private_endpoint_v1",
+		"TO mesh_worker",
+		"FORCE ROW LEVEL SECURITY",
+		"route_snapshot_hash",
+		"dns_revision = revision.dns_revision + 1",
+		"route_revision = revision.route_revision + 1",
+	} {
+		if !strings.Contains(endpointPublication.SQL, required) {
+			t.Errorf("Resource Sharing endpoint publication SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT INSERT ON mesh.private_endpoint_readiness TO mesh_worker",
+		"GRANT UPDATE ON mesh.private_endpoint_readiness TO mesh_worker",
+		"GRANT INSERT ON mesh.imported_resource_dns_publication TO mesh_worker",
+		"GRANT UPDATE ON mesh.imported_resource_dns_publication TO mesh_worker",
+		"GRANT UPDATE ON mesh.imported_resource_dns_publication TO mesh_share_writer",
+		"BYPASSRLS",
+		"DROP ",
+	} {
+		if strings.Contains(endpointPublication.SQL, forbidden) {
+			t.Errorf("Resource Sharing endpoint publication SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	publicationOwnership := ResourceSharingEndpointPublicationOwnershipSQL()
+	for _, required := range []string{
+		"OWNER TO mesh_share_writer",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.assert_private_endpoint_scope_internal_v1",
+		"TO mesh_migrator",
+		"REVOKE ALL ON FUNCTION mesh_ops.revoke_resource_share_v3",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.revoke_resource_share_v4",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(publicationOwnership, required) {
+			t.Errorf("Resource Sharing endpoint publication ownership SQL missing %q", required)
+		}
 	}
 	privateEndpointAuthority := catalog[53]
 	if privateEndpointAuthority.Description != "Resource sharing Private Endpoint provisioning authority" {
@@ -1447,8 +1498,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 54 {
-		t.Fatalf("LatestVersion() = %d, want 54", LatestVersion())
+	if LatestVersion() != 55 {
+		t.Fatalf("LatestVersion() = %d, want 55", LatestVersion())
 	}
 }
 

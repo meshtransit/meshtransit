@@ -34,13 +34,17 @@ func assertResourceSharingPrivilegeContract(ctx context.Context, t *testing.T, a
           AND privilege.privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
     )),
     pg_catalog.bool_and(CASE
-        WHEN class.relname = 'share_offer_locator' THEN
+		WHEN class.relname IN (
+			'private_endpoint_readiness',
+			'imported_resource_dns_publication'
+		) THEN
+			NOT pg_catalog.has_table_privilege(
+				'mesh_share_writer', class.oid, 'SELECT,INSERT,UPDATE,DELETE'
+			)
+		ELSE
             pg_catalog.has_table_privilege('mesh_share_writer', class.oid, 'SELECT,INSERT,UPDATE')
             AND NOT pg_catalog.has_table_privilege('mesh_share_writer', class.oid, 'DELETE')
-        ELSE
-            pg_catalog.has_table_privilege('mesh_share_writer', class.oid, 'SELECT,INSERT,UPDATE')
-            AND NOT pg_catalog.has_table_privilege('mesh_share_writer', class.oid, 'DELETE')
-        END
+		END
     )
 FROM pg_catalog.pg_class AS class
 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = class.relnamespace
@@ -48,7 +52,8 @@ WHERE namespace.nspname = 'mesh'
   AND class.relname = ANY(ARRAY[
       'resource_export', 'resource_export_constraint', 'share_offer', 'share_offer_locator',
       'trust_contract', 'imported_resource', 'imported_resource_access_name',
-      'federation_alias_lease', 'private_endpoint'
+	  'federation_alias_lease', 'private_endpoint',
+	  'private_endpoint_readiness', 'imported_resource_dns_publication'
   ]::TEXT[])`).Scan(
 		&tableCount,
 		&allRLS,
@@ -60,7 +65,7 @@ WHERE namespace.nspname = 'mesh'
 	); err != nil {
 		t.Fatal("query Resource Sharing table privileges", err)
 	}
-	if tableCount != 9 || !allRLS || !allForceRLS || runtimeMutation || !runtimeReadBounded ||
+	if tableCount != 11 || !allRLS || !allForceRLS || runtimeMutation || !runtimeReadBounded ||
 		publicDML || !writerBounded {
 		t.Fatalf(
 			"Resource Sharing tables count=%d rls=%t force=%t runtime_mutation=%t runtime_read=%t public_dml=%t writer=%t",
@@ -108,7 +113,7 @@ WHERE namespace.nspname = 'mesh_ops'
 		'create_resource_share_offer_v1',
 		'decide_resource_share_offer_v2',
 		'activate_resource_share_v2',
-		'revoke_resource_share_v3'
+		'revoke_resource_share_v4'
   ]::TEXT[])`).Scan(
 		&functionCount,
 		&runtimeExecute,
@@ -138,7 +143,7 @@ WHERE namespace.nspname = 'mesh_ops'
 
 	var ownerNoLogin, ownerNoBypass, migratorNotMember, helperClosed bool
 	var migratorScopeClosed, legacyDecideClosed, legacyActivateClosed bool
-	var legacyRevokeV1Closed, legacyRevokeV2Closed, schemaUsage bool
+	var legacyRevokeV1Closed, legacyRevokeV2Closed, legacyRevokeV3Closed, schemaUsage bool
 	if err := admin.QueryRow(ctx, `SELECT
     NOT owner.rolcanlogin,
     NOT owner.rolbypassrls,
@@ -173,6 +178,11 @@ WHERE namespace.nspname = 'mesh_ops'
         'mesh_ops.revoke_resource_share_v2(bigint,bigint,bigint,bigint,uuid,bigint,bigint,bigint,timestamptz)',
         'EXECUTE'
     ),
+	NOT pg_catalog.has_function_privilege(
+		'mesh_runtime',
+		'mesh_ops.revoke_resource_share_v3(bigint,bigint,bigint,bigint,uuid,bigint,bigint,bigint,timestamptz)',
+		'EXECUTE'
+	),
     pg_catalog.has_schema_privilege('mesh_share_writer', 'mesh', 'USAGE')
     AND pg_catalog.has_schema_privilege('mesh_share_writer', 'mesh_ops', 'USAGE')
 FROM pg_catalog.pg_roles AS owner
@@ -186,15 +196,16 @@ WHERE owner.rolname = 'mesh_share_writer'`).Scan(
 		&legacyRevokeV1Closed,
 		&legacyActivateClosed,
 		&legacyRevokeV2Closed,
+		&legacyRevokeV3Closed,
 		&schemaUsage,
 	); err != nil {
 		t.Fatal("query Resource Sharing owner isolation", err)
 	}
 	if !ownerNoLogin || !ownerNoBypass || !migratorNotMember || !helperClosed ||
 		!migratorScopeClosed || !legacyDecideClosed || !legacyActivateClosed ||
-		!legacyRevokeV1Closed || !legacyRevokeV2Closed || !schemaUsage {
+		!legacyRevokeV1Closed || !legacyRevokeV2Closed || !legacyRevokeV3Closed || !schemaUsage {
 		t.Fatalf(
-			"Resource Sharing owner nologin=%t nobypass=%t isolated=%t helper_closed=%t migrator_scope_closed=%t legacy_decide_closed=%t legacy_activate_closed=%t legacy_revoke_v1_closed=%t legacy_revoke_v2_closed=%t schema_usage=%t",
+			"Resource Sharing owner nologin=%t nobypass=%t isolated=%t helper_closed=%t migrator_scope_closed=%t legacy_decide_closed=%t legacy_activate_closed=%t legacy_revoke_v1_closed=%t legacy_revoke_v2_closed=%t legacy_revoke_v3_closed=%t schema_usage=%t",
 			ownerNoLogin,
 			ownerNoBypass,
 			migratorNotMember,
@@ -204,6 +215,7 @@ WHERE owner.rolname = 'mesh_share_writer'`).Scan(
 			legacyActivateClosed,
 			legacyRevokeV1Closed,
 			legacyRevokeV2Closed,
+			legacyRevokeV3Closed,
 			schemaUsage,
 		)
 	}
@@ -233,7 +245,11 @@ WHERE schemaname IN ('mesh', 'mesh_ops')
       'federation_alias_lease_runtime_policy',
       'private_endpoint_migrator_policy',
       'private_endpoint_share_writer_policy',
-      'private_endpoint_runtime_policy',
+		'private_endpoint_runtime_policy',
+		'private_endpoint_readiness_migrator_policy',
+		'private_endpoint_readiness_runtime_policy',
+		'imported_resource_dns_publication_migrator_policy',
+		'imported_resource_dns_publication_runtime_policy',
       'address_realm_share_writer_federation_policy',
       'address_pool_share_writer_federation_policy',
       'deployment_share_writer_policy',
@@ -245,11 +261,182 @@ WHERE schemaname IN ('mesh', 'mesh_ops')
   ]::TEXT[])`).Scan(&scopedPolicyCount); err != nil {
 		t.Fatal("query Resource Sharing RLS policies", err)
 	}
-	if scopedPolicyCount != 29 {
-		t.Fatalf("Resource Sharing scoped policy count = %d, want 29", scopedPolicyCount)
+	if scopedPolicyCount != 33 {
+		t.Fatalf("Resource Sharing scoped policy count = %d, want 33", scopedPolicyCount)
 	}
 
+	assertPrivateEndpointPublicationPrivilegeContract(ctx, t, admin)
+
 	assertImportedPolicyPrivilegeContract(ctx, t, admin)
+}
+
+func assertPrivateEndpointPublicationPrivilegeContract(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+) {
+	t.Helper()
+
+	var tableCount int
+	var runtimeRead, applicationWrite, publicAccess, sequenceAccess bool
+	if err := admin.QueryRow(ctx, `SELECT
+    pg_catalog.count(*)::INTEGER,
+    pg_catalog.bool_and(pg_catalog.has_table_privilege('mesh_runtime', class.oid, 'SELECT')),
+    pg_catalog.bool_or(
+        pg_catalog.has_table_privilege('mesh_runtime', class.oid, 'INSERT,UPDATE,DELETE')
+        OR pg_catalog.has_table_privilege('mesh_worker', class.oid, 'SELECT,INSERT,UPDATE,DELETE')
+        OR pg_catalog.has_table_privilege('mesh_observer', class.oid, 'SELECT,INSERT,UPDATE,DELETE')
+        OR pg_catalog.has_table_privilege('mesh_audit_writer', class.oid, 'SELECT,INSERT,UPDATE,DELETE')
+        OR pg_catalog.has_table_privilege('mesh_share_writer', class.oid, 'SELECT,INSERT,UPDATE,DELETE')
+    ),
+    pg_catalog.bool_or(EXISTS (
+        SELECT 1
+        FROM pg_catalog.aclexplode(COALESCE(
+            class.relacl,
+            pg_catalog.acldefault('r', class.relowner)
+        )) AS privilege
+        WHERE privilege.grantee = 0
+          AND privilege.privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+    )),
+    pg_catalog.bool_or(EXISTS (
+        SELECT 1
+        FROM pg_catalog.unnest(ARRAY[
+            'mesh_runtime', 'mesh_worker', 'mesh_observer',
+            'mesh_audit_writer', 'mesh_share_writer'
+        ]::TEXT[]) AS role_name(value)
+        WHERE pg_catalog.has_sequence_privilege(
+            role_name.value,
+            pg_catalog.to_regclass(pg_catalog.format(
+                '%I.%I_id_seq', namespace.nspname, class.relname
+            )),
+            'USAGE,SELECT,UPDATE'
+        )
+    ))
+FROM pg_catalog.pg_class AS class
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = class.relnamespace
+WHERE namespace.nspname = 'mesh'
+  AND class.relname = ANY(ARRAY[
+      'private_endpoint_readiness', 'imported_resource_dns_publication'
+  ]::TEXT[])`).Scan(
+		&tableCount,
+		&runtimeRead,
+		&applicationWrite,
+		&publicAccess,
+		&sequenceAccess,
+	); err != nil {
+		t.Fatal("query Private Endpoint publication table privileges", err)
+	}
+	if tableCount != 2 || !runtimeRead || applicationWrite || publicAccess || sequenceAccess {
+		t.Fatalf(
+			"Private Endpoint publication tables count=%d runtime_read=%t application_write=%t public=%t sequence=%t",
+			tableCount,
+			runtimeRead,
+			applicationWrite,
+			publicAccess,
+			sequenceAccess,
+		)
+	}
+
+	var functionCount int
+	var workerContract, runtimeClosed, foreignClosed, publicClosed, definer, fixedPath bool
+	if err := admin.QueryRow(ctx, `SELECT
+    pg_catalog.count(*)::INTEGER,
+    pg_catalog.bool_and(pg_catalog.has_function_privilege('mesh_worker', procedure.oid, 'EXECUTE')),
+    pg_catalog.bool_and(NOT pg_catalog.has_function_privilege('mesh_runtime', procedure.oid, 'EXECUTE')),
+    pg_catalog.bool_and(
+        NOT pg_catalog.has_function_privilege('mesh_observer', procedure.oid, 'EXECUTE')
+        AND NOT pg_catalog.has_function_privilege('mesh_audit_writer', procedure.oid, 'EXECUTE')
+        AND NOT pg_catalog.has_function_privilege('mesh_share_writer', procedure.oid, 'EXECUTE')
+    ),
+    pg_catalog.bool_and(NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.aclexplode(COALESCE(
+            procedure.proacl,
+            pg_catalog.acldefault('f', procedure.proowner)
+        )) AS privilege
+        WHERE privilege.grantee = 0 AND privilege.privilege_type = 'EXECUTE'
+    )),
+    pg_catalog.bool_and(procedure.prosecdef),
+    pg_catalog.bool_and(
+        procedure.proconfig @> ARRAY['search_path=pg_catalog, mesh, mesh_ops, mesh_audit']
+    )
+FROM pg_catalog.pg_proc AS procedure
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+WHERE namespace.nspname = 'mesh_ops'
+  AND procedure.proname = ANY(ARRAY[
+      'list_private_endpoint_publication_candidates_v1',
+	  'read_private_endpoint_publication_snapshot_v1',
+      'publish_private_endpoint_v1'
+  ]::TEXT[])`).Scan(
+		&functionCount,
+		&workerContract,
+		&runtimeClosed,
+		&foreignClosed,
+		&publicClosed,
+		&definer,
+		&fixedPath,
+	); err != nil {
+		t.Fatal("query Private Endpoint publication worker privileges", err)
+	}
+	if functionCount != 3 || !workerContract || !runtimeClosed || !foreignClosed ||
+		!publicClosed || !definer || !fixedPath {
+		t.Fatalf(
+			"Private Endpoint publication functions count=%d worker=%t runtime_closed=%t foreign_closed=%t public_closed=%t definer=%t path=%t",
+			functionCount,
+			workerContract,
+			runtimeClosed,
+			foreignClosed,
+			publicClosed,
+			definer,
+			fixedPath,
+		)
+	}
+
+	var helperOwner string
+	var migratorExecute, applicationClosed, helperPublicClosed, helperDefiner, helperPath bool
+	if err := admin.QueryRow(ctx, `SELECT
+    owner.rolname,
+    pg_catalog.has_function_privilege('mesh_migrator', procedure.oid, 'EXECUTE'),
+    NOT pg_catalog.has_function_privilege('mesh_runtime', procedure.oid, 'EXECUTE')
+      AND NOT pg_catalog.has_function_privilege('mesh_worker', procedure.oid, 'EXECUTE')
+      AND NOT pg_catalog.has_function_privilege('mesh_observer', procedure.oid, 'EXECUTE')
+      AND NOT pg_catalog.has_function_privilege('mesh_audit_writer', procedure.oid, 'EXECUTE'),
+    NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.aclexplode(COALESCE(
+            procedure.proacl,
+            pg_catalog.acldefault('f', procedure.proowner)
+        )) AS privilege
+        WHERE privilege.grantee = 0 AND privilege.privilege_type = 'EXECUTE'
+    ),
+    procedure.prosecdef,
+    procedure.proconfig @> ARRAY['search_path=pg_catalog, mesh, mesh_ops']
+FROM pg_catalog.pg_proc AS procedure
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+JOIN pg_catalog.pg_roles AS owner ON owner.oid = procedure.proowner
+WHERE namespace.nspname = 'mesh_ops'
+  AND procedure.proname = 'assert_private_endpoint_scope_internal_v1'`).Scan(
+		&helperOwner,
+		&migratorExecute,
+		&applicationClosed,
+		&helperPublicClosed,
+		&helperDefiner,
+		&helperPath,
+	); err != nil {
+		t.Fatal("query Private Endpoint publication scope helper privileges", err)
+	}
+	if helperOwner != "mesh_share_writer" || !migratorExecute || !applicationClosed ||
+		!helperPublicClosed || !helperDefiner || !helperPath {
+		t.Fatalf(
+			"Private Endpoint scope helper owner=%s migrator=%t application_closed=%t public_closed=%t definer=%t path=%t",
+			helperOwner,
+			migratorExecute,
+			applicationClosed,
+			helperPublicClosed,
+			helperDefiner,
+			helperPath,
+		)
+	}
 }
 
 func assertImportedPolicyPrivilegeContract(ctx context.Context, t *testing.T, admin *pgx.Conn) {

@@ -88,15 +88,18 @@ owner constrain the bilateral tables and security-definer functions.
 
 ## Data-plane boundary
 
-The current Phase 2 slice persists and compiles Imported Resource provenance,
-but it does not invent a direct packet edge. Explanation and simulation remain
-fail closed when a safe endpoint path is unavailable.
+The current Phase 2 slice persists and compiles Imported Resource provenance
+and now defines the trusted publication transaction, but it does not invent a
+direct packet edge. Explanation and simulation remain fail closed when a safe
+endpoint path is unavailable.
 
 This is mandatory for cross-Workspace sharing: two Workspaces may use the same
 CIDR, so exposing the provider Device address directly would create ambiguous
 routing and tenant-confusion risk. Executable cross-Workspace traffic requires
-a later trusted Private Endpoint or gateway with a federation alias, explicit
-route authority, and contract-bound packet policy.
+a trusted Private Endpoint or gateway with a federation alias, explicit route
+authority, and contract-bound packet policy. Migration 55 provides the database
+boundary through which that trusted reconciler proves readiness; it does not
+implement the packet gateway itself.
 
 Within-Workspace direct Device access is also not claimed by this slice. It
 requires an explicit cross-Network peer/map projection and packet-filter path;
@@ -179,20 +182,52 @@ authority table. Runtime access to `activate_resource_share_v1` and
 points owned by `mesh_share_writer`. Revoke atomically terminalizes a current
 endpoint and withdraws its alias lease together with the access name.
 
-The access-name reservation deliberately still has no `published` state, and
-the endpoint remains `provisioning`. DNS publication, route readiness evidence,
-and `dns_revision`/`route_revision` advancement remain absent, so neither the
-reserved name nor allocated alias creates a DNS record or packet path by
-itself.
+The access-name reservation deliberately has no `published` state. Activation
+still ends with the endpoint in `provisioning` and therefore creates neither a
+DNS record nor a packet path by itself.
+
+Migration 55 adds the trusted publication boundary. A worker can list bounded
+deployment candidates, then must read an exact authoritative snapshot before
+reconciling the route. The snapshot revalidates the active contract, import,
+reserved access name and alias lease, exact Device target and primary node
+addresses, both Network authority generations, both revision vectors, and both
+audit stream heads. Its `snapshot_at` value comes from PostgreSQL, avoiding
+host/container clock-skew in the readiness proof.
+
+Publication is a single fail-closed transaction. It locks both Network revision
+rows in deterministic order, repeats exact scope and authority validation,
+checks every expected version and audit head, records immutable route-readiness
+evidence, changes the endpoint and alias to `ready`/`active`, and creates the
+consumer-local DNS publication. Provider route/sharing revisions and consumer
+DNS/route/sharing revisions advance atomically with two hash-chained audit and
+outbox events. The candidate list is only a hint; the exact snapshot and publish
+checks are authoritative.
+
+The three publication entry points are executable only by `mesh_worker` and
+are security-definer functions with fixed search paths. The worker has no
+direct write privilege on readiness, DNS publication, endpoints, alias leases,
+or revision tables. A separate internal scope assertion is owned by the
+`mesh_share_writer` NOLOGIN role and callable only by the migration owner,
+preserving the bilateral Workspace/Network RLS boundary without widening table
+grants.
+
+DNS-aware revoke v4 first performs the existing contract/import/access-name/
+endpoint/alias transition, then withdraws the current DNS publication and
+advances both route revisions plus the consumer DNS revision. The caller's
+original runtime scope is restored before the surrounding mutation continues,
+so later authorization, projection, audit, and idempotency reads remain scoped.
 
 ## Non-claims
 
 - No graph database is required; PostgreSQL remains authoritative.
 - No Network merge, CIDR renumbering, or global CIDR uniqueness is introduced.
 - No UI is included in Phase 2.
-- No cross-Workspace packet path is enabled without a trusted endpoint or
-  gateway.
-- No consumable DNS access name is published while the endpoint is only
-  `provisioning`; a later trusted worker must prove route readiness.
+- No cross-Workspace packet path is enabled merely by storing a contract or
+  activating it; a trusted endpoint/gateway must reconcile the route and submit
+  the worker-only readiness proof.
+- No consumable DNS access name is published while the endpoint remains
+  `provisioning`.
+- The migration defines the route/DNS publication authority and evidence, not
+  the external gateway or route-agent implementation.
 - No mandatory human separation-of-duty is inferred beyond the two independent
   Workspace authority checks.

@@ -159,6 +159,12 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		); err != nil {
 			t.Fatalf("apply idempotent Resource Sharing Private Endpoint ownership hardening: %v", err)
 		}
+		if _, err := adminConnection.Exec(
+			ctx,
+			migrations.ResourceSharingEndpointPublicationOwnershipSQL(),
+		); err != nil {
+			t.Fatalf("apply idempotent Resource Sharing endpoint publication ownership hardening: %v", err)
+		}
 	}
 	assertResourceSharingPrivilegeContract(ctx, t, adminConnection)
 	seedAuthorityFixture(ctx, t, adminConnection)
@@ -292,7 +298,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		runtimePool,
 		workerConnection,
 	)
-	assertPostgreSQLResourceSharing(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLResourceSharing(ctx, t, adminConnection, workerConnection, runtimePool)
 	assertPostgreSQLLoginSubjectResolution(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLSessionIssuance(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLBrowserCallback(ctx, t, adminConnection, runtimePool)

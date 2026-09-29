@@ -15,9 +15,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
+	"github.com/meshtransit/meshtransit/internal/audit"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/resource"
 	"github.com/meshtransit/meshtransit/internal/sharing"
 )
@@ -26,6 +28,7 @@ func assertPostgreSQLResourceSharing(
 	ctx context.Context,
 	t *testing.T,
 	admin *pgx.Conn,
+	worker *pgx.Conn,
 	runtimePool *postgresadapter.Pool,
 ) {
 	t.Helper()
@@ -174,6 +177,9 @@ func assertPostgreSQLResourceSharing(
 		replayedActivation.ConsumerSharingRevision() != activated.ConsumerSharingRevision() {
 		t.Fatalf("Resource Sharing activate replay = %+v", replayedActivation)
 	}
+	assertPrivateEndpointPublication(
+		ctx, t, admin, worker, activeContract.ImportedResourceID(), accessName, "fd00:feed::1/128",
+	)
 	resolved, err := store.ResolveImportedPolicyDestinations(
 		ctx,
 		session,
@@ -189,7 +195,7 @@ func assertPostgreSQLResourceSharing(
 	}
 	assertAtomicImportedPolicyPublication(ctx, t, admin, resolved[0])
 	assertCrossWorkspaceResourceSharingConsent(
-		ctx, t, admin, service, providerScope, resourceID, maximumTraffic, reason,
+		ctx, t, admin, worker, service, providerScope, resourceID, maximumTraffic, reason,
 	)
 	revokeCommand, err := sharing.NewRevokeContract(sharing.RevokeContractParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
@@ -214,8 +220,11 @@ func assertPostgreSQLResourceSharing(
 		ctx, t, admin, contract.ImportedResourceID(), accessName, "withdrawn", 2,
 	)
 	assertPrivateEndpointProvisioning(
-		ctx, t, admin, activeContract.ImportedResourceID(), "revoked", 2,
-		"withdrawn", 2, "fd00:feed::1",
+		ctx, t, admin, activeContract.ImportedResourceID(), "revoked", 3,
+		"withdrawn", 3, "fd00:feed::1",
+	)
+	assertPrivateEndpointPublicationWithdrawn(
+		ctx, t, admin, activeContract.ImportedResourceID(), accessName,
 	)
 	if _, err := store.ResolveImportedPolicyDestinations(
 		ctx,
@@ -242,7 +251,7 @@ func assertPostgreSQLResourceSharing(
 func assertCrossWorkspaceResourceSharingConsent(
 	ctx context.Context,
 	t *testing.T,
-	admin *pgx.Conn,
+	admin, worker *pgx.Conn,
 	service *sharing.Service,
 	providerScope network.Scope,
 	resourceID resource.ID,
@@ -338,6 +347,9 @@ func assertCrossWorkspaceResourceSharingConsent(
 	assertPrivateEndpointProvisioning(
 		ctx, t, admin, activeContract.ImportedResourceID(), "provisioning", 1,
 		"reserved", 1, "fd00:feed::2",
+	)
+	assertPrivateEndpointPublication(
+		ctx, t, admin, worker, activeContract.ImportedResourceID(), accessName, "fd00:feed::2/128",
 	)
 	assertCrossWorkspaceSharingConsentEvidence(ctx, t, admin, offer.Offer().ID())
 
@@ -490,6 +502,339 @@ WHERE imported.public_id = $1::UUID`, importedResourceID.String()).Scan(
 	}
 }
 
+type integrationEndpointPublicationCandidate struct {
+	DeploymentID            string    `json:"deployment_public_id"`
+	EndpointID              string    `json:"endpoint_public_id"`
+	EndpointVersion         int64     `json:"endpoint_version"`
+	EndpointGeneration      int64     `json:"endpoint_generation"`
+	AliasLeaseVersion       int64     `json:"alias_lease_version"`
+	ContractVersion         int64     `json:"contract_version"`
+	ImportedResourceVersion int64     `json:"imported_resource_version"`
+	TargetDeviceID          string    `json:"target_device_id"`
+	TargetGeneration        int64     `json:"target_generation"`
+	TargetAddresses         []string  `json:"target_addresses"`
+	ResourceAlias           string    `json:"resource_alias"`
+	AccessName              string    `json:"access_name"`
+	ConstraintHash          string    `json:"constraint_hash"`
+	SnapshotAt              time.Time `json:"snapshot_at"`
+	ProviderNetworkRevision int64     `json:"provider_network_revision"`
+	ProviderDNSRevision     int64     `json:"provider_dns_revision"`
+	ProviderRouteRevision   int64     `json:"provider_route_revision"`
+	ProviderSharingRevision int64     `json:"provider_sharing_revision"`
+	ConsumerNetworkRevision int64     `json:"consumer_network_revision"`
+	ConsumerDNSRevision     int64     `json:"consumer_dns_revision"`
+	ConsumerRouteRevision   int64     `json:"consumer_route_revision"`
+	ConsumerSharingRevision int64     `json:"consumer_sharing_revision"`
+	ProviderStreamID        int64     `json:"provider_stream_id"`
+	ProviderStreamSequence  int64     `json:"provider_stream_sequence"`
+	ProviderStreamHash      string    `json:"provider_stream_hash"`
+	ConsumerStreamID        int64     `json:"consumer_stream_id"`
+	ConsumerStreamSequence  int64     `json:"consumer_stream_sequence"`
+	ConsumerStreamHash      string    `json:"consumer_stream_hash"`
+}
+
+type integrationEndpointPublicationAuditPayload struct {
+	EndpointID         string `json:"endpoint_public_id"`
+	ReadinessID        string `json:"readiness_public_id"`
+	DNSPublicationID   string `json:"dns_publication_public_id"`
+	AuthoritySide      string `json:"authority_side"`
+	ReconcilerID       string `json:"reconciler_id"`
+	EndpointGeneration int64  `json:"endpoint_generation"`
+	ResourceAlias      string `json:"resource_alias"`
+	RouteSnapshotHash  string `json:"route_snapshot_hash"`
+	NetworkRevision    int64  `json:"network_revision"`
+	DNSRevision        int64  `json:"dns_revision"`
+	RouteRevision      int64  `json:"route_revision"`
+	SharingRevision    int64  `json:"sharing_revision"`
+}
+
+type integrationEndpointPublicationOutboxPayload struct {
+	EndpointID      string `json:"endpoint_public_id"`
+	NetworkRevision int64  `json:"network_revision"`
+	DNSRevision     int64  `json:"dns_revision"`
+	RouteRevision   int64  `json:"route_revision"`
+	Subsystem       string `json:"subsystem"`
+	SharingRevision int64  `json:"subsystem_revision"`
+}
+
+func assertPrivateEndpointPublication(
+	ctx context.Context,
+	t *testing.T,
+	admin, worker *pgx.Conn,
+	importedResourceID sharing.ImportedResourceID,
+	accessName sharing.AccessName,
+	wantResourceAlias string,
+) {
+	t.Helper()
+	const deploymentID = "01890f00-0000-7000-8000-000000000001"
+	var encoded []byte
+	if err := worker.QueryRow(ctx, `SELECT
+    mesh_ops.list_private_endpoint_publication_candidates_v1($1::UUID, 128)`,
+		deploymentID,
+	).Scan(&encoded); err != nil {
+		t.Fatalf("list Private Endpoint publication candidates: %v", err)
+	}
+	var candidates []integrationEndpointPublicationCandidate
+	if err := json.Unmarshal(encoded, &candidates); err != nil {
+		t.Fatalf("decode Private Endpoint publication candidates: %v", err)
+	}
+	var candidate integrationEndpointPublicationCandidate
+	for _, item := range candidates {
+		if item.AccessName == accessName.String() {
+			candidate = item
+			break
+		}
+	}
+	if candidate.EndpointID != "" {
+		var snapshot []byte
+		if err := worker.QueryRow(ctx, `SELECT
+    mesh_ops.read_private_endpoint_publication_snapshot_v1($1::UUID, $2::UUID)`,
+			deploymentID,
+			candidate.EndpointID,
+		).Scan(&snapshot); err != nil {
+			t.Fatalf("read Private Endpoint publication snapshot: %v", err)
+		}
+		if err := json.Unmarshal(snapshot, &candidate); err != nil {
+			t.Fatalf("decode Private Endpoint publication snapshot: %v", err)
+		}
+	}
+	if candidate.EndpointID == "" || candidate.DeploymentID != deploymentID ||
+		candidate.EndpointVersion != 1 || candidate.EndpointGeneration != 1 ||
+		candidate.AliasLeaseVersion != 1 || candidate.ContractVersion <= 0 ||
+		candidate.ImportedResourceVersion != 2 || candidate.TargetDeviceID == "" ||
+		candidate.TargetGeneration <= 0 || len(candidate.TargetAddresses) == 0 ||
+		candidate.ResourceAlias != wantResourceAlias || len(candidate.ConstraintHash) != 64 ||
+		candidate.SnapshotAt.IsZero() {
+		t.Fatalf("Private Endpoint publication candidate = %+v", candidate)
+	}
+
+	endpointID, err := publicid.Parse(candidate.EndpointID)
+	if err != nil {
+		t.Fatalf("parse Private Endpoint candidate ID: %v", err)
+	}
+	changeID := newIntegrationPublicationID(t)
+	readinessID := newIntegrationPublicationID(t)
+	dnsPublicationID := newIntegrationPublicationID(t)
+	providerEventID := newIntegrationPublicationID(t)
+	providerOutboxID := newIntegrationPublicationID(t)
+	consumerEventID := newIntegrationPublicationID(t)
+	consumerOutboxID := newIntegrationPublicationID(t)
+	routeMaterial, err := json.Marshal(struct {
+		EndpointID         string   `json:"endpoint_public_id"`
+		EndpointGeneration int64    `json:"endpoint_generation"`
+		TargetDeviceID     string   `json:"target_device_id"`
+		TargetGeneration   int64    `json:"target_generation"`
+		TargetAddresses    []string `json:"target_addresses"`
+		ResourceAlias      string   `json:"resource_alias"`
+	}{
+		EndpointID: candidate.EndpointID, EndpointGeneration: candidate.EndpointGeneration,
+		TargetDeviceID: candidate.TargetDeviceID, TargetGeneration: candidate.TargetGeneration,
+		TargetAddresses: candidate.TargetAddresses, ResourceAlias: candidate.ResourceAlias,
+	})
+	if err != nil {
+		t.Fatalf("encode Private Endpoint route snapshot: %v", err)
+	}
+	routeHash := sha256.Sum256(routeMaterial)
+	reconcilerID := "integration-route-reconciler"
+	providerAudit := integrationEndpointPublicationAuditPayload{
+		EndpointID: candidate.EndpointID, ReadinessID: readinessID.String(),
+		DNSPublicationID: dnsPublicationID.String(), AuthoritySide: "provider",
+		ReconcilerID: reconcilerID, EndpointGeneration: candidate.EndpointGeneration,
+		ResourceAlias: candidate.ResourceAlias, RouteSnapshotHash: hex.EncodeToString(routeHash[:]),
+		NetworkRevision: candidate.ProviderNetworkRevision + 1,
+		DNSRevision:     candidate.ProviderDNSRevision,
+		RouteRevision:   candidate.ProviderRouteRevision + 1,
+		SharingRevision: candidate.ProviderSharingRevision + 1,
+	}
+	consumerAudit := integrationEndpointPublicationAuditPayload{
+		EndpointID: candidate.EndpointID, ReadinessID: readinessID.String(),
+		DNSPublicationID: dnsPublicationID.String(), AuthoritySide: "consumer",
+		ReconcilerID: reconcilerID, EndpointGeneration: candidate.EndpointGeneration,
+		ResourceAlias: candidate.ResourceAlias, RouteSnapshotHash: hex.EncodeToString(routeHash[:]),
+		NetworkRevision: candidate.ConsumerNetworkRevision + 1,
+		DNSRevision:     candidate.ConsumerDNSRevision + 1,
+		RouteRevision:   candidate.ConsumerRouteRevision + 1,
+		SharingRevision: candidate.ConsumerSharingRevision + 1,
+	}
+	providerOutbox := integrationEndpointPublicationOutboxPayload{
+		EndpointID: candidate.EndpointID, NetworkRevision: providerAudit.NetworkRevision,
+		DNSRevision: providerAudit.DNSRevision, RouteRevision: providerAudit.RouteRevision,
+		Subsystem: "sharing", SharingRevision: providerAudit.SharingRevision,
+	}
+	consumerOutbox := integrationEndpointPublicationOutboxPayload{
+		EndpointID: candidate.EndpointID, NetworkRevision: consumerAudit.NetworkRevision,
+		DNSRevision: consumerAudit.DNSRevision, RouteRevision: consumerAudit.RouteRevision,
+		Subsystem: "sharing", SharingRevision: consumerAudit.SharingRevision,
+	}
+	providerAuditJSON := mustIntegrationJSON(t, providerAudit)
+	consumerAuditJSON := mustIntegrationJSON(t, consumerAudit)
+	providerOutboxJSON := mustIntegrationJSON(t, providerOutbox)
+	consumerOutboxJSON := mustIntegrationJSON(t, consumerOutbox)
+	providerPreviousHash := mustIntegrationHash(t, candidate.ProviderStreamHash)
+	consumerPreviousHash := mustIntegrationHash(t, candidate.ConsumerStreamHash)
+	providerEventHash := mustIntegrationPublicationEventHash(t, audit.EventHashMaterial{
+		PreviousHash: providerPreviousHash, EventID: providerEventID, ChangeID: changeID,
+		AggregateKind: "private_endpoint", AggregateID: endpointID, AggregateVersion: 2,
+		NetworkRevision: providerAudit.NetworkRevision, Action: "private_endpoint.published",
+		Permission: "system.reconcile", CorrelationID: endpointID, AfterSemanticHash: routeHash,
+		AuditPayloadHash:  sha256.Sum256(providerAuditJSON),
+		OutboxEventClass:  "sharing.private_endpoint.published",
+		OutboxPayloadHash: sha256.Sum256(providerOutboxJSON),
+	})
+	consumerEventHash := mustIntegrationPublicationEventHash(t, audit.EventHashMaterial{
+		PreviousHash: consumerPreviousHash, EventID: consumerEventID, ChangeID: changeID,
+		AggregateKind: "private_endpoint", AggregateID: endpointID, AggregateVersion: 2,
+		NetworkRevision: consumerAudit.NetworkRevision, Action: "private_endpoint.published",
+		Permission: "system.reconcile", CorrelationID: endpointID, AfterSemanticHash: routeHash,
+		AuditPayloadHash:  sha256.Sum256(consumerAuditJSON),
+		OutboxEventClass:  "sharing.private_endpoint.published",
+		OutboxPayloadHash: sha256.Sum256(consumerOutboxJSON),
+	})
+
+	transaction, err := worker.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin Private Endpoint publication: %v", err)
+	}
+	defer func() { _ = transaction.Rollback(context.WithoutCancel(ctx)) }()
+	var providerNetwork, providerDNS, providerRoute, providerSharing int64
+	var consumerNetwork, consumerDNS, consumerRoute, consumerSharing int64
+	var aliasVersion, endpointVersion, readinessVersion, dnsVersion int64
+	observedAt := candidate.SnapshotAt
+	if err := transaction.QueryRow(ctx, `SELECT * FROM mesh_ops.publish_private_endpoint_v1(
+    $1::UUID,$2::UUID,$3::BIGINT,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::BIGINT,
+    $8::BIGINT,$9::BIGINT,$10::BIGINT,$11::BIGINT,$12::BIGINT,$13::BIGINT,$14::BIGINT,$15::BIGINT,
+    $16::UUID,$17::UUID,$18::UUID,$19::BYTEA,$20::TEXT,$21::TIMESTAMPTZ,
+    $22::BIGINT,$23::UUID,$24::UUID,$25::BIGINT,$26::BYTEA,$27::BYTEA,$28::JSONB,$29::JSONB,
+    $30::BIGINT,$31::UUID,$32::UUID,$33::BIGINT,$34::BYTEA,$35::BYTEA,$36::JSONB,$37::JSONB
+)`,
+		deploymentID, candidate.EndpointID, candidate.EndpointVersion,
+		candidate.EndpointGeneration, candidate.AliasLeaseVersion,
+		candidate.ContractVersion, candidate.ImportedResourceVersion,
+		candidate.ProviderNetworkRevision, candidate.ProviderDNSRevision,
+		candidate.ProviderRouteRevision, candidate.ProviderSharingRevision,
+		candidate.ConsumerNetworkRevision, candidate.ConsumerDNSRevision,
+		candidate.ConsumerRouteRevision, candidate.ConsumerSharingRevision,
+		changeID.String(), readinessID.String(), dnsPublicationID.String(), routeHash[:],
+		reconcilerID, observedAt, candidate.ProviderStreamID, providerEventID.String(),
+		providerOutboxID.String(), candidate.ProviderStreamSequence, providerPreviousHash[:],
+		providerEventHash[:], providerAuditJSON, providerOutboxJSON,
+		candidate.ConsumerStreamID, consumerEventID.String(), consumerOutboxID.String(),
+		candidate.ConsumerStreamSequence, consumerPreviousHash[:], consumerEventHash[:],
+		consumerAuditJSON, consumerOutboxJSON,
+	).Scan(
+		&providerNetwork, &providerDNS, &providerRoute, &providerSharing,
+		&consumerNetwork, &consumerDNS, &consumerRoute, &consumerSharing,
+		&aliasVersion, &endpointVersion, &readinessVersion, &dnsVersion,
+	); err != nil {
+		t.Fatalf(
+			"publish Private Endpoint %s with candidate %+v: %v",
+			wantResourceAlias,
+			candidate,
+			err,
+		)
+	}
+	if providerNetwork != providerAudit.NetworkRevision || providerDNS != providerAudit.DNSRevision ||
+		providerRoute != providerAudit.RouteRevision || providerSharing != providerAudit.SharingRevision ||
+		consumerNetwork != consumerAudit.NetworkRevision || consumerDNS != consumerAudit.DNSRevision ||
+		consumerRoute != consumerAudit.RouteRevision || consumerSharing != consumerAudit.SharingRevision ||
+		aliasVersion != 2 || endpointVersion != 2 || readinessVersion != 1 || dnsVersion != 1 {
+		t.Fatalf("Private Endpoint publication result has unexpected revisions")
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		t.Fatalf("commit Private Endpoint publication: %v", err)
+	}
+
+	var endpointState, aliasState, publicationState, publishedName string
+	var storedEndpointVersion, storedAliasVersion, publicationVersion, evidenceCount int64
+	if err := admin.QueryRow(ctx, `SELECT
+    endpoint.state, endpoint.version, lease.state, lease.version,
+    publication.state, publication.version, publication.access_name,
+    (SELECT pg_catalog.count(*) FROM mesh_audit.audit_event_identity AS event
+     WHERE event.change_public_id = $2::UUID)
+FROM mesh.private_endpoint AS endpoint
+JOIN mesh.federation_alias_lease AS lease ON lease.id = endpoint.alias_lease_id
+JOIN mesh.imported_resource AS imported ON imported.id = endpoint.imported_resource_id
+JOIN mesh.imported_resource_dns_publication AS publication
+  ON publication.private_endpoint_id = endpoint.id
+WHERE imported.public_id = $1::UUID`, importedResourceID.String(), changeID.String()).Scan(
+		&endpointState, &storedEndpointVersion, &aliasState, &storedAliasVersion,
+		&publicationState, &publicationVersion, &publishedName, &evidenceCount,
+	); err != nil {
+		t.Fatalf("query published Private Endpoint: %v", err)
+	}
+	if endpointState != "ready" || storedEndpointVersion != 2 || aliasState != "active" ||
+		storedAliasVersion != 2 || publicationState != "published" || publicationVersion != 1 ||
+		publishedName != accessName.String() || evidenceCount != 2 {
+		t.Fatalf("published Private Endpoint state/evidence is inconsistent")
+	}
+}
+
+func newIntegrationPublicationID(t *testing.T) publicid.ID {
+	t.Helper()
+	id, err := publicid.New()
+	if err != nil {
+		t.Fatalf("generate Private Endpoint publication ID: %v", err)
+	}
+	return id
+}
+
+func mustIntegrationJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("encode Private Endpoint publication evidence: %v", err)
+	}
+	return encoded
+}
+
+func mustIntegrationHash(t *testing.T, value string) [sha256.Size]byte {
+	t.Helper()
+	decoded, err := hex.DecodeString(value)
+	if err != nil || len(decoded) != sha256.Size {
+		t.Fatalf("decode Private Endpoint publication hash %q: %v", value, err)
+	}
+	var result [sha256.Size]byte
+	copy(result[:], decoded)
+	return result
+}
+
+func mustIntegrationPublicationEventHash(
+	t *testing.T,
+	material audit.EventHashMaterial,
+) [sha256.Size]byte {
+	t.Helper()
+	digest, err := audit.HashEvent(material)
+	if err != nil {
+		t.Fatalf("hash Private Endpoint publication event: %v", err)
+	}
+	return digest
+}
+
+func assertPrivateEndpointPublicationWithdrawn(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	importedResourceID sharing.ImportedResourceID,
+	accessName sharing.AccessName,
+) {
+	t.Helper()
+	var state, name string
+	var version int64
+	var withdrawnAt pgtype.Timestamptz
+	if err := admin.QueryRow(ctx, `SELECT
+    publication.state, publication.version, publication.access_name, publication.withdrawn_at
+FROM mesh.imported_resource_dns_publication AS publication
+JOIN mesh.imported_resource AS imported ON imported.id = publication.imported_resource_id
+WHERE imported.public_id = $1::UUID`, importedResourceID.String()).Scan(
+		&state, &version, &name, &withdrawnAt,
+	); err != nil {
+		t.Fatalf("query withdrawn Private Endpoint publication: %v", err)
+	}
+	if state != "withdrawn" || version != 2 || name != accessName.String() || !withdrawnAt.Valid {
+		t.Fatalf("withdrawn Private Endpoint publication = %s/%d/%s/%v", state, version, name, withdrawnAt)
+	}
+}
+
 func assertPrivateEndpointProvisioning(
 	ctx context.Context,
 	t *testing.T,
@@ -538,7 +883,7 @@ WHERE imported.public_id = $1::UUID`, importedResourceID.String()).Scan(
 	}
 	if endpointState != wantEndpointState || endpointVersion != wantEndpointVersion ||
 		aliasState != wantAliasState || aliasVersion != wantAliasVersion ||
-		aliasAddress != wantAliasAddress || readyAt.Valid || aliasActivatedAt.Valid {
+		aliasAddress != wantAliasAddress {
 		t.Fatalf(
 			"Private Endpoint state/version/alias = %s/%d/%s/%d/%s, want %s/%d/%s/%d/%s",
 			endpointState,
@@ -551,6 +896,15 @@ WHERE imported.public_id = $1::UUID`, importedResourceID.String()).Scan(
 			wantAliasState,
 			wantAliasVersion,
 			wantAliasAddress,
+		)
+	}
+	published := wantEndpointState == "ready" || wantEndpointState == "revoked"
+	if published != readyAt.Valid || published != aliasActivatedAt.Valid {
+		t.Fatalf(
+			"Private Endpoint publication timestamps ready=%v alias=%v, published=%t",
+			readyAt,
+			aliasActivatedAt,
+			published,
 		)
 	}
 	terminal := wantEndpointState == "revoked"
