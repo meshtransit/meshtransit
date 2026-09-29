@@ -48,6 +48,8 @@ const (
 	postgresOperationPolicyApprovalDecisionCommit   postgresOperation = "policy_approval_decision_commit"
 	postgresOperationPolicyApprovalDecisionRollback postgresOperation = "policy_approval_decision_rollback"
 	postgresOperationPolicyApprovalDecisionReplay   postgresOperation = "policy_approval_decision_replay"
+	postgresOperationPolicyApprovalCatalogRead      postgresOperation = "policy_approval_catalog_read"
+	postgresOperationPolicyApprovalCatalogList      postgresOperation = "policy_approval_catalog_list"
 )
 
 const (
@@ -140,6 +142,8 @@ var (
 		postgresOperationPolicyApprovalDecisionCommit,
 		postgresOperationPolicyApprovalDecisionRollback,
 		postgresOperationPolicyApprovalDecisionReplay,
+		postgresOperationPolicyApprovalCatalogRead,
+		postgresOperationPolicyApprovalCatalogList,
 		postgresOperationResourceAuthorityBegin,
 		postgresOperationResourceAuthorityResolve,
 		postgresOperationResourceAuthorityApply,

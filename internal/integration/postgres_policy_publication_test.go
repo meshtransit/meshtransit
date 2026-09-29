@@ -250,9 +250,7 @@ LIMIT 1`).Scan(
 	if err != nil {
 		t.Fatalf("construct deny-all compilation request: %v", err)
 	}
-	denyApproval := approveIntegrationPolicyCandidate(
-		ctx, t, runtimePool, denyCompilation, session, 203,
-	)
+	denyApproval := approveEmptyPolicyOverBrowserManagement(ctx, t, runtimePool, denyCompilation)
 	command := newApprovedIntegrationManagementCommand(
 		t, candidate, 4, session, reason, denyApproval,
 	)
@@ -920,6 +918,15 @@ func newIntegrationPolicyApprovalService(
 	runtimePool *postgresadapter.Pool,
 ) *approval.Service {
 	t.Helper()
+	service, _ := newIntegrationPolicyApprovalWorkflow(t, runtimePool)
+	return service
+}
+
+func newIntegrationPolicyApprovalWorkflow(
+	t *testing.T,
+	runtimePool *postgresadapter.Pool,
+) (*approval.Service, *approval.CatalogService) {
+	t.Helper()
 	store, err := postgresadapter.NewPolicyApprovalStore(
 		runtimePool,
 		postgresadapter.PolicyApprovalOptions{
@@ -951,7 +958,11 @@ func newIntegrationPolicyApprovalService(
 	if err != nil {
 		t.Fatalf("approval.NewService() error = %v", err)
 	}
-	return service
+	catalog, err := approval.NewCatalogService(store, approval.SystemClock{})
+	if err != nil {
+		t.Fatalf("approval.NewCatalogService() error = %v", err)
+	}
+	return service, catalog
 }
 
 func approveIntegrationPolicyCandidate(

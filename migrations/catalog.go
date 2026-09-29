@@ -61,6 +61,7 @@ const (
 	policySimulationBaselineDescription       = "Policy simulation active baseline"
 	policyApprovalPersistenceDescription      = "Policy approval persistence"
 	policyApprovalPublicationGateDescription  = "Policy approval publication gate"
+	policyApprovalManagementReadDescription   = "Policy approval management read API"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -207,6 +208,9 @@ var policyApprovalPersistenceSQL string
 //go:embed 000048_policy_approval_publication_gate.up.sql
 var policyApprovalPublicationGateSQL string
 
+//go:embed 000049_policy_approval_management_read.up.sql
+var policyApprovalManagementReadSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -274,6 +278,7 @@ func Catalog() []Migration {
 		newMigration(46, policySimulationBaselineDescription, policySimulationBaselineSQL),
 		newMigration(47, policyApprovalPersistenceDescription, policyApprovalPersistenceSQL),
 		newMigration(48, policyApprovalPublicationGateDescription, policyApprovalPublicationGateSQL),
+		newMigration(49, policyApprovalManagementReadDescription, policyApprovalManagementReadSQL),
 	}
 }
 

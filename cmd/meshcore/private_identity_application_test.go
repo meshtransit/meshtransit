@@ -29,8 +29,10 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
 	"github.com/meshtransit/meshtransit/internal/policy"
+	policyapproval "github.com/meshtransit/meshtransit/internal/policy/approval"
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
@@ -651,6 +653,7 @@ func newPrivateIdentityFixture(t *testing.T) *privateIdentityFixture {
 			SourceRateLimit: policy, SessionRateLimit: policy},
 	}
 	authority := &privateIdentityAuthority{fixture: fixture}
+	approvals := privateIdentityPolicyApprovals{}
 	fixture.ports = privateIdentityPorts{
 		Admission: fixture, Metadata: &privateIdentityMetadata{fixture: fixture}, Creations: fixture, Committed: fixture,
 		Pending: fixture, Claims: fixture, Failures: fixture, Issues: fixture, Provider: fixture, Subjects: fixture,
@@ -660,10 +663,47 @@ func newPrivateIdentityFixture(t *testing.T) *privateIdentityFixture {
 		PolicyCompilations: fixture,
 		PolicyExplanations: fixture,
 		PolicySimulations:  fixture,
-		RateLimiter:        fixture, CorrelationIDs: fixture,
+		PolicyApprovals:    approvals, PolicyApprovalCatalog: approvals,
+		RateLimiter: fixture, CorrelationIDs: fixture,
 		Clock: fixture, Logger: discardCompositionLogger(),
 	}
 	return fixture
+}
+
+type privateIdentityPolicyApprovals struct{}
+
+func (privateIdentityPolicyApprovals) Request(
+	context.Context,
+	policyapproval.RequestIntent,
+) (policyapproval.RequestResult, error) {
+	return policyapproval.RequestResult{}, policyapproval.ErrOperationFailed
+}
+
+func (privateIdentityPolicyApprovals) Approve(
+	context.Context,
+	policyapproval.Command,
+) (policyapproval.Result, error) {
+	return policyapproval.Result{}, policyapproval.ErrOperationFailed
+}
+
+func (privateIdentityPolicyApprovals) Get(
+	context.Context,
+	accountsession.Session,
+	network.Scope,
+	policyapproval.RequestID,
+) (policyapproval.Snapshot, error) {
+	return policyapproval.Snapshot{}, policyapproval.ErrCatalogUnavailable
+}
+
+func (privateIdentityPolicyApprovals) List(
+	context.Context,
+	accountsession.Session,
+	network.Scope,
+	policyapproval.State,
+	int,
+	policyapproval.RequestID,
+) (policyapproval.CatalogPage, error) {
+	return policyapproval.CatalogPage{}, policyapproval.ErrCatalogUnavailable
 }
 
 func privateIdentityID(t *testing.T, suffix byte) publicid.ID {

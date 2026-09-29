@@ -47,31 +47,33 @@ type privateIdentityManagementOptions struct {
 // Production binding must supply current durable authority and shared budgets;
 // this helper neither opens dependencies nor probes their operational readiness.
 type privateIdentityPorts struct {
-	Admission          httpapi.LoginRouteAdmission
-	Metadata           oidcauth.MetadataResolver
-	Creations          oidcauth.Transactions
-	Committed          oidcauth.CommittedCreationResolver
-	Pending            oidcauth.PendingLoader
-	Claims             oidcauth.ClaimTransactions
-	Failures           oidcauth.FailureTransactions
-	Issues             oidcauth.IssueTransactions
-	Provider           oidcauth.TokenAuthenticator
-	Subjects           oidcauth.LoginSubjectResolver
-	SessionAuthority   accountsession.Resolver
-	SessionRevocations accountsession.Revoker
-	StartIDs           oidcauth.StartIDGenerator
-	Secrets            oidcauth.SecretsGenerator
-	ClaimIDs           oidcauth.ClaimIDGenerator
-	IssueMaterial      oidcauth.IssueMaterialGenerator
-	Revocations        httpapi.DeviceRevoker
-	PolicyPublications httpapi.PolicyPublisher
-	PolicyCompilations httpapi.PolicyCompiler
-	PolicyExplanations httpapi.PolicyExplainer
-	PolicySimulations  httpapi.PolicySimulator
-	RateLimiter        httpapi.ManagementRateLimiter
-	CorrelationIDs     httpapi.PublicIDGenerator
-	Clock              oidcauth.StartClock
-	Logger             *slog.Logger
+	Admission             httpapi.LoginRouteAdmission
+	Metadata              oidcauth.MetadataResolver
+	Creations             oidcauth.Transactions
+	Committed             oidcauth.CommittedCreationResolver
+	Pending               oidcauth.PendingLoader
+	Claims                oidcauth.ClaimTransactions
+	Failures              oidcauth.FailureTransactions
+	Issues                oidcauth.IssueTransactions
+	Provider              oidcauth.TokenAuthenticator
+	Subjects              oidcauth.LoginSubjectResolver
+	SessionAuthority      accountsession.Resolver
+	SessionRevocations    accountsession.Revoker
+	StartIDs              oidcauth.StartIDGenerator
+	Secrets               oidcauth.SecretsGenerator
+	ClaimIDs              oidcauth.ClaimIDGenerator
+	IssueMaterial         oidcauth.IssueMaterialGenerator
+	Revocations           httpapi.DeviceRevoker
+	PolicyPublications    httpapi.PolicyPublisher
+	PolicyCompilations    httpapi.PolicyCompiler
+	PolicyExplanations    httpapi.PolicyExplainer
+	PolicySimulations     httpapi.PolicySimulator
+	PolicyApprovals       httpapi.PolicyApprovalWorkflow
+	PolicyApprovalCatalog httpapi.PolicyApprovalCatalog
+	RateLimiter           httpapi.ManagementRateLimiter
+	CorrelationIDs        httpapi.PublicIDGenerator
+	Clock                 oidcauth.StartClock
+	Logger                *slog.Logger
 }
 
 // A complete private graph has explicit source dispatch/document ownership, but
@@ -156,10 +158,12 @@ func composePrivateIdentity(
 	managementOptions := options.Management
 	resources, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions: sessions, Revocations: ports.Revocations, PolicyPublications: ports.PolicyPublications,
-		PolicyCompilations: ports.PolicyCompilations,
-		PolicyExplanations: ports.PolicyExplanations,
-		PolicySimulations:  ports.PolicySimulations,
-		Idempotency:        keys.idempotency, RateLimitSubjects: keys.rateLimit, RateLimiter: ports.RateLimiter,
+		PolicyCompilations:    ports.PolicyCompilations,
+		PolicyExplanations:    ports.PolicyExplanations,
+		PolicySimulations:     ports.PolicySimulations,
+		PolicyApprovals:       ports.PolicyApprovals,
+		PolicyApprovalCatalog: ports.PolicyApprovalCatalog,
+		Idempotency:           keys.idempotency, RateLimitSubjects: keys.rateLimit, RateLimiter: ports.RateLimiter,
 		TrustedProxyPrefixes: profile.TrustedProxyPrefixes, SourceRateLimit: managementOptions.SourceRateLimit,
 		SessionRateLimit: managementOptions.SessionRateLimit, CorrelationIDs: ports.CorrelationIDs, Logger: ports.Logger,
 		RequestTimeout: managementOptions.RequestTimeout, MaxConcurrentRequests: managementOptions.MaxConcurrent,
@@ -229,6 +233,8 @@ func completePrivateIdentityPorts(ports privateIdentityPorts) bool {
 		ports.PolicyCompilations,
 		ports.PolicyExplanations,
 		ports.PolicySimulations,
+		ports.PolicyApprovals,
+		ports.PolicyApprovalCatalog,
 		ports.RateLimiter, ports.CorrelationIDs, ports.Clock, ports.Logger,
 	} {
 		if port == nil {

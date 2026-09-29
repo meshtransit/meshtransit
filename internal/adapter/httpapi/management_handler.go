@@ -22,6 +22,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
+	policyapproval "github.com/meshtransit/meshtransit/internal/policy/approval"
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
@@ -37,6 +38,10 @@ const (
 	policyPublishOperation                  = "policy_publish"
 	policySimulateOperation                 = "policy_simulate"
 	policyExplainOperation                  = "policy_explain"
+	policyApprovalRequestOperation          = "policy_approval_request"
+	policyApprovalListOperation             = "policy_approval_list"
+	policyApprovalGetOperation              = "policy_approval_get"
+	policyApprovalApproveOperation          = "policy_approval_approve"
 	resourceCreateOperation                 = "resource_create"
 	resourceGetOperation                    = "resource_get"
 	resourceListOperation                   = "resource_list"
@@ -100,6 +105,18 @@ type PolicyExplainer interface {
 // PolicySimulator derives a compiler-identical impact without publishing authority.
 type PolicySimulator interface {
 	Simulate(context.Context, accountsession.Session, compilation.Request) (simulation.Result, error)
+}
+
+// PolicyApprovalWorkflow persists proposals and independent human decisions.
+type PolicyApprovalWorkflow interface {
+	Request(context.Context, policyapproval.RequestIntent) (policyapproval.RequestResult, error)
+	Approve(context.Context, policyapproval.Command) (policyapproval.Result, error)
+}
+
+// PolicyApprovalCatalog reads freshly authorized approval workflow projections.
+type PolicyApprovalCatalog interface {
+	Get(context.Context, accountsession.Session, network.Scope, policyapproval.RequestID) (policyapproval.Snapshot, error)
+	List(context.Context, accountsession.Session, network.Scope, policyapproval.State, int, policyapproval.RequestID) (policyapproval.CatalogPage, error)
 }
 
 // ResourceCreator atomically creates Resource and Resource Group authority.
@@ -167,6 +184,8 @@ type ManagementHandlerOptions struct {
 	PolicyCompilations        PolicyCompiler
 	PolicyExplanations        PolicyExplainer
 	PolicySimulations         PolicySimulator
+	PolicyApprovals           PolicyApprovalWorkflow
+	PolicyApprovalCatalog     PolicyApprovalCatalog
 	ResourceCreations         ResourceCreator
 	ResourceLifecycles        ResourceLifecycle
 	ResourceRebindings        ResourceRebinder
@@ -193,6 +212,8 @@ type ManagementHandler struct {
 	policyCompiler            PolicyCompiler
 	policyExplainer           PolicyExplainer
 	policySimulator           PolicySimulator
+	policyApprovals           PolicyApprovalWorkflow
+	policyApprovalCatalog     PolicyApprovalCatalog
 	resourceCreations         ResourceCreator
 	resourceLifecycles        ResourceLifecycle
 	resourceRebindings        ResourceRebinder
@@ -242,6 +263,8 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		policyCompiler:            options.PolicyCompilations,
 		policyExplainer:           options.PolicyExplanations,
 		policySimulator:           options.PolicySimulations,
+		policyApprovals:           options.PolicyApprovals,
+		policyApprovalCatalog:     options.PolicyApprovalCatalog,
 		resourceCreations:         options.ResourceCreations,
 		resourceLifecycles:        options.ResourceLifecycles,
 		resourceRebindings:        options.ResourceRebindings,
@@ -328,9 +351,10 @@ func (handler *ManagementHandler) serveHTTP(
 	devicePath, deviceMatched := parseDeviceRevokePath(request)
 	policyPath, policyMatched := parsePolicyPublishPath(request)
 	policySimulationPath, policySimulationMatched := parsePolicySimulationPath(request)
+	policyApprovalPath, policyApprovalMatched := parsePolicyApprovalPath(request)
 	accessGraphPath, accessGraphMatched := parseAccessGraphExplainPath(request)
 	resourcePath, resourceMatched := parseResourceManagementPath(request)
-	if !deviceMatched && !policyMatched && !policySimulationMatched &&
+	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
 		!accessGraphMatched && !resourceMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
@@ -345,17 +369,27 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = policyPublishOperation
 	} else if policySimulationMatched {
 		operation = policySimulateOperation
+	} else if policyApprovalMatched {
+		operation = policyApprovalPath.operation(request.Method)
 	} else if accessGraphMatched {
 		operation = policyExplainOperation
 	} else {
 		operation = resourcePath.operation(request.Method)
 	}
 	allowedMethod := http.MethodPost
-	if resourceMatched {
+	if policyApprovalMatched {
+		allowedMethod = policyApprovalPath.allowedMethod(request.Method)
+	} else if resourceMatched {
 		allowedMethod = resourcePath.allowedMethod(request.Method)
 	}
 	if allowedMethod == "" || request.Method != allowedMethod {
-		if resourceMatched && resourcePath.isCollection() {
+		if policyApprovalMatched && policyApprovalPath.isCollection() {
+			response.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
+		} else if policyApprovalMatched && policyApprovalPath.isAction() {
+			response.Header().Set("Allow", http.MethodPost)
+		} else if policyApprovalMatched {
+			response.Header().Set("Allow", http.MethodGet)
+		} else if resourceMatched && resourcePath.isCollection() {
 			response.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
 		} else if resourceMatched && resourcePath.isAction() {
 			response.Header().Set("Allow", http.MethodPost)
@@ -418,6 +452,12 @@ func (handler *ManagementHandler) serveHTTP(
 			response: response, request: request, correlationID: correlationID,
 			path: policySimulationPath, session: session, browser: browser,
 		})
+		return
+	}
+	if policyApprovalMatched {
+		resultCode = handler.handlePolicyApproval(
+			ctx, response, request, correlationID, policyApprovalPath, session, browser,
+		)
 		return
 	}
 	if accessGraphMatched {

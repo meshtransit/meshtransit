@@ -11,8 +11,39 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 48 {
-		t.Fatalf("len(Catalog()) = %d, want 48", len(catalog))
+	if len(catalog) != 49 {
+		t.Fatalf("len(Catalog()) = %d, want 49", len(catalog))
+	}
+	approvalManagement := catalog[48]
+	if approvalManagement.Description != "Policy approval management read API" {
+		t.Fatalf("migration 49 description = %q, want Policy approval management read API", approvalManagement.Description)
+	}
+	for _, required := range []string{
+		"CREATE INDEX policy_approval_request_management_cursor_idx",
+		"CREATE INDEX policy_approval_request_management_state_cursor_idx",
+		"CREATE FUNCTION mesh_ops.policy_approval_request_payload_v1",
+		"CREATE FUNCTION mesh_ops.read_policy_approval_request_management_v1",
+		"CREATE FUNCTION mesh_ops.list_policy_approval_requests_management_v1",
+		"request.workspace_id = mesh_ops.current_workspace_id()",
+		"request.network_id = mesh_ops.current_network_id()",
+		"proposer.deployment_id = request.deployment_id",
+		"approver.deployment_id = evidence.deployment_id",
+		"p_state NOT IN ('pending', 'approved', 'consumed')",
+		"REVOKE ALL ON FUNCTION mesh_ops.policy_approval_request_payload_v1(BIGINT)",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_policy_approval_request_management_v1(UUID)",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(approvalManagement.SQL, required) {
+			t.Errorf("Policy approval management read SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE",
+		"GRANT ALL", "BYPASSRLS", "ALTER DEFAULT PRIVILEGES", "DROP ",
+	} {
+		if strings.Contains(approvalManagement.SQL, forbidden) {
+			t.Errorf("Policy approval management read SQL contains excessive capability %q", forbidden)
+		}
 	}
 	approvalGate := catalog[47]
 	if approvalGate.Description != "Policy approval publication gate" {
@@ -1187,8 +1218,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 48 {
-		t.Fatalf("LatestVersion() = %d, want 48", LatestVersion())
+	if LatestVersion() != 49 {
+		t.Fatalf("LatestVersion() = %d, want 49", LatestVersion())
 	}
 }
 

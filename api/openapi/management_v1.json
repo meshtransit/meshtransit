@@ -275,6 +275,145 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy/approval-requests": {
+      "get": {
+        "operationId": "listPolicyApprovalRequests",
+        "summary": "List exact-scope Policy approval requests for independent review",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/PolicyApprovalState"},
+          {"$ref": "#/components/parameters/PageSize"},
+          {"$ref": "#/components/parameters/PageToken"}
+        ],
+        "responses": {
+          "200": {
+            "description": "A deterministic UUIDv7-keyset page of retained Policy approval requests.",
+            "headers": {
+              "Cache-Control": {"schema": {"type": "string", "const": "no-store"}},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PolicyApprovalListResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "500": {"$ref": "#/components/responses/InternalFailure"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      },
+      "post": {
+        "operationId": "requestPolicyApproval",
+        "summary": "Freshly simulate and retain one exact Policy approval proposal",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/PolicyIfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RequestPolicyApprovalRequest"}}}
+        },
+        "responses": {
+          "201": {
+            "description": "The pending request is retained for an independent authorized human.",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/PolicyApprovalETag"},
+              "Location": {"$ref": "#/components/headers/PolicyApprovalLocation"},
+              "Cache-Control": {"schema": {"type": "string", "const": "no-store"}},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PolicyApprovalRequestResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "412": {"$ref": "#/components/responses/PreconditionFailed"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy/approval-requests/{approval_request_id}": {
+      "get": {
+        "operationId": "getPolicyApprovalRequest",
+        "summary": "Get one exact-scope Policy approval request",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/PolicyApprovalRequestID"}
+        ],
+        "responses": {
+          "200": {
+            "description": "The retained request and any immutable decision or consumption evidence.",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/PolicyApprovalETag"},
+              "Cache-Control": {"schema": {"type": "string", "const": "no-store"}},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PolicyApprovalCatalogResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "500": {"$ref": "#/components/responses/InternalFailure"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy/approval-requests/{approval_request_id}/actions/approve": {
+      "post": {
+        "operationId": "approvePolicyApprovalRequest",
+        "summary": "Approve one unchanged proposal as a distinct authorized human",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {"$ref": "#/components/parameters/PolicyApprovalRequestID"},
+          {"$ref": "#/components/parameters/PolicyApprovalIfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApprovePolicyRequest"}}}
+        },
+        "responses": {
+          "200": {
+            "description": "Immutable approval Evidence was committed for one future publication.",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/PolicyApprovalETag"},
+              "Cache-Control": {"schema": {"type": "string", "const": "no-store"}},
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PolicyApprovalDecisionResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "428": {"$ref": "#/components/responses/PreconditionRequired"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/access-graph/actions/explain": {
       "post": {
         "operationId": "explainActivePolicy",
@@ -1097,6 +1236,25 @@
         "description": "One strong quoted decimal pending authority-change request version. It is not the subject aggregate version.",
         "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
       },
+      "PolicyApprovalRequestID": {
+        "name": "approval_request_id",
+        "in": "path",
+        "required": true,
+        "schema": {"$ref": "#/components/schemas/PublicID"}
+      },
+      "PolicyApprovalIfMatch": {
+        "name": "If-Match",
+        "in": "header",
+        "required": true,
+        "description": "One strong quoted decimal Policy approval request version.",
+        "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
+      },
+      "PolicyApprovalState": {
+        "name": "state",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "string", "enum": ["pending", "approved", "consumed"]}
+      },
       "LifecycleAction": {
         "name": "lifecycle_action",
         "in": "path",
@@ -1119,7 +1277,7 @@
         "name": "page_token",
         "in": "query",
         "required": false,
-        "description": "Opaque continuation token pinned to the collection revision and filter.",
+        "description": "Opaque continuation token bound to the collection's pagination state and filters.",
         "schema": {"type": "string", "minLength": 1, "maxLength": 512}
       }
     },
@@ -1163,6 +1321,14 @@
       "AuthorityChangeRequestETag": {
         "description": "The strong quoted decimal pending authority-change request version.",
         "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
+      },
+      "PolicyApprovalETag": {
+        "description": "The strong quoted decimal Policy approval request version.",
+        "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
+      },
+      "PolicyApprovalLocation": {
+        "description": "The canonical exact-scope Policy approval request path.",
+        "schema": {"type": "string", "minLength": 1}
       },
       "CorrelationID": {
         "description": "A server-generated UUIDv7 used to correlate the safe response and operational log.",
@@ -1463,6 +1629,171 @@
               "$ref": "#/components/schemas/CompiledPolicyRule"
             }
           }
+        }
+      },
+      "RequestPolicyApprovalRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rules", "candidate_semantic_hash", "impact_hash", "reason"],
+        "properties": {
+          "rules": {
+            "type": "array",
+            "maxItems": 10000,
+            "items": {"$ref": "#/components/schemas/CompiledPolicyRule"}
+          },
+          "candidate_semantic_hash": {"$ref": "#/components/schemas/SHA256Digest"},
+          "impact_hash": {"$ref": "#/components/schemas/SHA256Digest"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      },
+      "ApprovePolicyRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidate_semantic_hash", "impact_hash", "reason"],
+        "properties": {
+          "candidate_semantic_hash": {"$ref": "#/components/schemas/SHA256Digest"},
+          "impact_hash": {"$ref": "#/components/schemas/SHA256Digest"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 512}
+        }
+      },
+      "SHA256Digest": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "PolicyApprovalBinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "baseline_revision_vector", "proposed_revision_vector",
+          "candidate_semantic_hash", "compiler_format_version", "impact_hash"
+        ],
+        "properties": {
+          "baseline_revision_vector": {"$ref": "#/components/schemas/PolicyRevisionVector"},
+          "proposed_revision_vector": {"$ref": "#/components/schemas/PolicyRevisionVector"},
+          "candidate_semantic_hash": {"$ref": "#/components/schemas/SHA256Digest"},
+          "compiler_format_version": {"type": "integer", "minimum": 1, "maximum": 3},
+          "impact_hash": {"$ref": "#/components/schemas/SHA256Digest"}
+        }
+      },
+      "PolicyApprovalRequested": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id", "state", "request_version", "proposer_principal_id",
+          "binding", "created_at", "expires_at"
+        ],
+        "properties": {
+          "request_id": {"$ref": "#/components/schemas/PublicID"},
+          "state": {"type": "string", "const": "pending"},
+          "request_version": {"type": "integer", "format": "int64", "const": 1},
+          "proposer_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "binding": {"$ref": "#/components/schemas/PolicyApprovalBinding"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "expires_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "PolicyApprovalApproved": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id", "state", "request_version", "evidence_id", "evidence_version",
+          "proposer_principal_id", "approver_principal_id", "binding", "approved_at", "expires_at"
+        ],
+        "properties": {
+          "request_id": {"$ref": "#/components/schemas/PublicID"},
+          "state": {"type": "string", "const": "approved"},
+          "request_version": {"type": "integer", "format": "int64", "const": 2},
+          "evidence_id": {"$ref": "#/components/schemas/PublicID"},
+          "evidence_version": {"type": "integer", "format": "int64", "const": 1},
+          "proposer_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "approver_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "binding": {"$ref": "#/components/schemas/PolicyApprovalBinding"},
+          "approved_at": {"type": "string", "format": "date-time"},
+          "expires_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "PolicyApprovalDecision": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidence_id", "evidence_version", "approver_principal_id", "reason", "approved_at"],
+        "properties": {
+          "evidence_id": {"$ref": "#/components/schemas/PublicID"},
+          "evidence_version": {"type": "integer", "format": "int64", "const": 1},
+          "approver_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 512},
+          "approved_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "PolicyApprovalConsumption": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["policy_release_id", "policy_revision", "consumed_at"],
+        "properties": {
+          "policy_release_id": {"$ref": "#/components/schemas/PublicID"},
+          "policy_revision": {"type": "integer", "format": "int64", "minimum": 2},
+          "consumed_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "PolicyApprovalCatalogItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id", "state", "request_version", "proposer_principal_id", "proposal_reason",
+          "binding", "created_at", "expires_at", "updated_at"
+        ],
+        "properties": {
+          "request_id": {"$ref": "#/components/schemas/PublicID"},
+          "state": {"type": "string", "enum": ["pending", "approved", "consumed"]},
+          "request_version": {"type": "integer", "format": "int64", "minimum": 1, "maximum": 3},
+          "proposer_principal_id": {"$ref": "#/components/schemas/PublicID"},
+          "proposal_reason": {"type": "string", "minLength": 1, "maxLength": 512},
+          "binding": {"$ref": "#/components/schemas/PolicyApprovalBinding"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "expires_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"},
+          "decision": {"$ref": "#/components/schemas/PolicyApprovalDecision"},
+          "consumption": {"$ref": "#/components/schemas/PolicyApprovalConsumption"}
+        }
+      },
+      "PolicyApprovalRequestResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/PolicyApprovalRequested"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "PolicyApprovalDecisionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/PolicyApprovalApproved"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "PolicyApprovalCatalogResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/PolicyApprovalCatalogItem"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "PolicyApprovalListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {"$ref": "#/components/schemas/PolicyApprovalCatalogItem"}
+          },
+          "next_page_token": {"type": "string", "minLength": 1, "maxLength": 512},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
         }
       },
       "SimulatePolicyResponse": {

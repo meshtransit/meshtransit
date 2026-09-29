@@ -221,8 +221,11 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	logout := request.URL.Path == AccountSessionLogoutPath
 	_, device := parseDeviceRevokePath(request)
 	_, policy := parsePolicyPublishPath(request)
+	_, simulation := parsePolicySimulationPath(request)
+	approvalPath, approvalMatched := parsePolicyApprovalPath(request)
+	approval := approvalMatched && (approvalPath.kind == policyApprovalPathCollection || approvalPath.isAction())
 	_, accessGraph := parseAccessGraphExplainPath(request)
-	if !prepare && !logout && !device && !policy && !accessGraph {
+	if !prepare && !logout && !device && !policy && !simulation && !approval && !accessGraph {
 		return ErrInvalidBrowserManagement
 	}
 	operation = "mutation"
@@ -271,6 +274,10 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	}
 	// A cookie-only profile never invites a Bearer credential fallback.
 	candidate.header.Del("WWW-Authenticate")
+	// Private fetch responses return created identifiers in the JSON body and
+	// never emit navigation authority, even when the Bearer contract has a
+	// same-origin Location header.
+	candidate.header.Del("Location")
 	validCandidateHeader := pristineBrowserManagementResponse(candidate.header)
 	if logoutCompleted {
 		validCandidateHeader = validBrowserLogoutResponse(candidate.header)
@@ -390,7 +397,10 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 		return false
 	}
 	maximumBody := int64(maximumManagementBodyBytes)
-	if _, policy := parsePolicyPublishPath(request); policy {
+	_, policy := parsePolicyPublishPath(request)
+	_, simulation := parsePolicySimulationPath(request)
+	approvalPath, approval := parsePolicyApprovalPath(request)
+	if policy || simulation || approval && approvalPath.kind == policyApprovalPathCollection {
 		maximumBody = maximumPolicyPublicationBodyBytes
 	}
 	if request.ContentLength > maximumBody {

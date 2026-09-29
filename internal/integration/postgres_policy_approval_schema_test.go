@@ -117,6 +117,75 @@ WHERE namespace.nspname = 'mesh_ops'
 		t.Fatalf("Policy approval publication secured function count = %d, want 2", securityDefinerCount)
 	}
 
+	var catalogFunctionCount int
+	var runtimeCatalogContract, nonRuntimeCatalogAccess, publicCatalogAccess bool
+	var catalogSecurityDefiner bool
+	if err := connection.QueryRow(ctx, `SELECT
+    pg_catalog.count(*),
+    pg_catalog.bool_and(CASE
+        WHEN procedure.proname = 'policy_approval_request_payload_v1'
+            THEN NOT pg_catalog.has_function_privilege('mesh_runtime', procedure.oid, 'EXECUTE')
+        ELSE pg_catalog.has_function_privilege('mesh_runtime', procedure.oid, 'EXECUTE')
+    END),
+    pg_catalog.bool_or(
+        pg_catalog.has_function_privilege('mesh_worker', procedure.oid, 'EXECUTE')
+        OR pg_catalog.has_function_privilege('mesh_observer', procedure.oid, 'EXECUTE')
+        OR pg_catalog.has_function_privilege('mesh_audit_writer', procedure.oid, 'EXECUTE')
+        OR pg_catalog.has_function_privilege('mesh_share_writer', procedure.oid, 'EXECUTE')
+    ),
+    pg_catalog.bool_or(EXISTS (
+        SELECT 1
+        FROM pg_catalog.aclexplode(COALESCE(
+            procedure.proacl,
+            pg_catalog.acldefault('f', procedure.proowner)
+        )) AS privilege
+        WHERE privilege.grantee = 0
+          AND privilege.privilege_type = 'EXECUTE'
+    )),
+    pg_catalog.bool_and(procedure.prosecdef)
+FROM pg_catalog.pg_proc AS procedure
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+WHERE namespace.nspname = 'mesh_ops'
+  AND procedure.proname IN (
+      'policy_approval_request_payload_v1',
+      'read_policy_approval_request_management_v1',
+      'list_policy_approval_requests_management_v1'
+  )`).Scan(
+		&catalogFunctionCount,
+		&runtimeCatalogContract,
+		&nonRuntimeCatalogAccess,
+		&publicCatalogAccess,
+		&catalogSecurityDefiner,
+	); err != nil {
+		t.Fatalf("query Policy approval catalog function security: %v", err)
+	}
+	if catalogFunctionCount != 3 || !runtimeCatalogContract || nonRuntimeCatalogAccess ||
+		publicCatalogAccess || !catalogSecurityDefiner {
+		t.Fatalf(
+			"Policy approval catalog functions count=%d runtime-contract=%t non-runtime=%t public=%t security-definer=%t",
+			catalogFunctionCount,
+			runtimeCatalogContract,
+			nonRuntimeCatalogAccess,
+			publicCatalogAccess,
+			catalogSecurityDefiner,
+		)
+	}
+
+	var catalogIndexCount int
+	if err := connection.QueryRow(ctx, `SELECT pg_catalog.count(*)
+FROM pg_catalog.pg_indexes
+WHERE schemaname = 'mesh'
+  AND tablename = 'policy_approval_request'
+  AND indexname IN (
+      'policy_approval_request_management_cursor_idx',
+      'policy_approval_request_management_state_cursor_idx'
+  )`).Scan(&catalogIndexCount); err != nil {
+		t.Fatalf("query Policy approval management indexes: %v", err)
+	}
+	if catalogIndexCount != 2 {
+		t.Fatalf("Policy approval management index count = %d, want 2", catalogIndexCount)
+	}
+
 	var triggerCount int
 	if err := connection.QueryRow(ctx, `SELECT pg_catalog.count(*)
 FROM pg_catalog.pg_trigger AS trigger_row

@@ -17,6 +17,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/idempotency"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
+	policyapproval "github.com/meshtransit/meshtransit/internal/policy/approval"
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
@@ -318,12 +319,48 @@ func composeManagementAPIWithKeys(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
+	policyApprovalStore, err := postgresadapter.NewPolicyApprovalStore(
+		runtimePool,
+		postgresadapter.PolicyApprovalOptions{
+			StatementTimeout: managementStatementTimeout,
+			LockTimeout:      managementLockTimeout,
+			IdleTimeout:      managementTransactionIdle,
+		},
+	)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
+	policyApprovals, err := policyapproval.NewService(
+		policyapproval.Options{
+			MaxAttempts: 3, RollbackTimeout: managementRollbackTimeout,
+			IdempotencyWindow: managementIdempotencyTTL,
+		},
+		policyapproval.Dependencies{
+			Simulator:           policySimulator,
+			RequestTransactions: policyApprovalStore, CommittedRequests: policyApprovalStore,
+			ApprovalTransactions: policyApprovalStore, CommittedApprovals: policyApprovalStore,
+			MutationIDs: policyapproval.PublicMutationIDGenerator{},
+			Clock:       policyapproval.SystemClock{}, Retry: policyBackoff,
+		},
+	)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
+	policyApprovalCatalog, err := policyapproval.NewCatalogService(
+		policyApprovalStore,
+		policyapproval.SystemClock{},
+	)
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
 	handler, err := httpapi.NewManagementHandler(httpapi.ManagementHandlerOptions{
 		Sessions: sessions, Revocations: revocations, PolicyPublications: policyPublications,
-		PolicyCompilations: policyCompiler,
-		PolicyExplanations: policyExplainer,
-		PolicySimulations:  policySimulator,
-		ResourceCreations:  resourceCreations, ResourceLifecycles: resourceLifecycles,
+		PolicyCompilations:    policyCompiler,
+		PolicyExplanations:    policyExplainer,
+		PolicySimulations:     policySimulator,
+		PolicyApprovals:       policyApprovals,
+		PolicyApprovalCatalog: policyApprovalCatalog,
+		ResourceCreations:     resourceCreations, ResourceLifecycles: resourceLifecycles,
 		ResourceRebindings: resourceRebindings, ResourceCatalog: resourceCatalog,
 		ResourceGroupReplacements: resourceGroupReplacements,
 		ResourceAuthorityChanges:  resourceAuthorityChanges,

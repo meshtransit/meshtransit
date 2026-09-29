@@ -26,6 +26,10 @@ const (
 		"policy/actions/publish"
 	policySimulatePath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"policy/actions/simulate"
+	policyApprovalRequestPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
+		"policy/approval-requests"
+	policyApprovalApprovePath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
+		"policy/approval-requests/{approval_request_id}/actions/approve"
 	accessGraphExplainPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"access-graph/actions/explain"
 )
@@ -84,7 +88,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		return nil, ErrInvalidManagementProfile
 	}
 	paths, err := managementObject(document["paths"])
-	if err != nil || len(paths) != 20 {
+	if err != nil || len(paths) != 23 {
 		return nil, ErrInvalidManagementProfile
 	}
 	if len(fragment) == 0 || len(fragment) > maximumManagementDocumentBytes {
@@ -105,11 +109,13 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	if err != nil || !managementBearerScheme(components["securitySchemes"]) {
 		return nil, ErrInvalidManagementProfile
 	}
-	consolePaths := make(map[string]json.RawMessage, 5)
+	consolePaths := make(map[string]json.RawMessage, 8)
 	for path, operationID := range map[string]string{
 		deviceRevokePath: "revokeDevice", policyPublishPath: "publishPolicy",
-		policySimulatePath:     "simulatePolicy",
-		accessGraphExplainPath: "explainActivePolicy",
+		policySimulatePath:        "simulatePolicy",
+		policyApprovalRequestPath: "requestPolicyApproval",
+		policyApprovalApprovePath: "approvePolicyApprovalRequest",
+		accessGraphExplainPath:    "explainActivePolicy",
 	} {
 		operation, err := consoleManagementOperation(paths[path], operationID)
 		if err != nil {
@@ -173,7 +179,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 
 func consoleManagementOperation(item json.RawMessage, operationID string) (json.RawMessage, error) {
 	methods, err := managementObject(item)
-	if err != nil || len(methods) != 1 {
+	if err != nil || len(methods) < 1 || len(methods) > 2 {
 		return nil, ErrInvalidManagementProfile
 	}
 	operation, err := managementObject(methods["post"])
@@ -208,11 +214,11 @@ func consoleManagementOperation(item json.RawMessage, operationID string) (json.
 		return nil, ErrInvalidManagementProfile
 	}
 	operation["security"] = json.RawMessage(`[{"accountSessionCookie":[],"sessionCSRF":[]}]`)
-	methods["post"], err = json.Marshal(operation)
+	post, err := json.Marshal(operation)
 	if err != nil {
 		return nil, ErrInvalidManagementProfile
 	}
-	body, err := json.Marshal(methods)
+	body, err := json.Marshal(map[string]json.RawMessage{"post": post})
 	if err != nil {
 		return nil, ErrInvalidManagementProfile
 	}

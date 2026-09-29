@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"testing"
 	"time"
 
@@ -221,6 +222,12 @@ func seedNetworkManagementRBACAuthority(
 		t.Fatalf("derive management Account Session digest: %v", err)
 	}
 	tokenDigest := digests[0].Bytes()
+	approverKeyring, approverToken, _ := integrationAuthorityConfirmerAccountSessionSecurity(t)
+	approverDigests, err := approverKeyring.Digests(approverToken)
+	if err != nil || len(approverDigests) != 1 {
+		t.Fatalf("derive authority confirmer Account Session digest: %v", err)
+	}
+	approverTokenDigest := approverDigests[0].Bytes()
 	var networkRevision int64
 	if err := connection.QueryRow(ctx, `SELECT network_revision
 FROM mesh_ops.network_revision
@@ -302,14 +309,14 @@ WHERE workspace_id = 103 AND network_id = 203`).Scan(&networkRevision); err != n
     absolute_expires_at, state
 ) OVERRIDING SYSTEM VALUE VALUES (
     813, '01890f00-0000-7000-8000-000000000813', 1, 13, 601, 713, 621, 103,
-    'hmac-sha256-v1', 'integration-v1',
-    pg_catalog.decode(pg_catalog.repeat('bb', 32), 'hex'), 1,
+    'hmac-sha256-v1', 'integration-v1', $1::BYTEA, 1,
     pg_catalog.transaction_timestamp() - INTERVAL '1 minute',
     'urn:meshtransit:assurance:mfa', ARRAY['pwd', 'mfa'], 1, 1, 1,
     pg_catalog.transaction_timestamp(), pg_catalog.transaction_timestamp(),
     pg_catalog.transaction_timestamp() + INTERVAL '30 minutes',
     pg_catalog.transaction_timestamp() + INTERVAL '8 hours', 'active'
 )`,
+				arguments: []any{approverTokenDigest[:]},
 			},
 			{
 				name: "management Account Session",
@@ -555,6 +562,31 @@ func integrationManagementAccountSessionSecurity(
 	keyring, err := accountsession.NewKeyring(key)
 	if err != nil {
 		t.Fatalf("construct management Account Session keyring: %v", err)
+	}
+	return keyring, token, rawToken
+}
+
+func integrationAuthorityConfirmerAccountSessionSecurity(
+	t *testing.T,
+) (*accountsession.Keyring, accountsession.Token, string) {
+	t.Helper()
+	rawToken := "mtas1.01890f00-0000-7000-8000-000000000001.1." +
+		base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x02}, 32))
+	token, err := accountsession.ParseToken(rawToken)
+	if err != nil {
+		t.Fatalf("parse authority confirmer Account Session token: %v", err)
+	}
+	keyID, err := accountsession.NewDigestKeyID("integration-v1")
+	if err != nil {
+		t.Fatalf("construct authority confirmer Account Session key ID: %v", err)
+	}
+	key, err := accountsession.NewDigestKey(keyID, bytes.Repeat([]byte{0x77}, 32))
+	if err != nil {
+		t.Fatalf("construct authority confirmer Account Session key: %v", err)
+	}
+	keyring, err := accountsession.NewKeyring(key)
+	if err != nil {
+		t.Fatalf("construct authority confirmer Account Session keyring: %v", err)
 	}
 	return keyring, token, rawToken
 }
