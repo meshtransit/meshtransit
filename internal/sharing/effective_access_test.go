@@ -13,6 +13,7 @@ func TestEvaluateEffectiveAccessReturnsExactSixWayIntersection(t *testing.T) {
 
 	contract := mustContract(t)
 	binding := contract.Resource()
+	endpoint := mustPrivateEndpoint(t, contract)
 	params := EffectiveAccessParams{
 		Contract: contract, EvaluatedAt: contract.ExpiresAt().Add(-time.Minute),
 		RecoveryEpoch:               contract.RecoveryEpoch(),
@@ -20,7 +21,8 @@ func TestEvaluateEffectiveAccessReturnsExactSixWayIntersection(t *testing.T) {
 		ConsumerAuthorityGeneration: contract.ConsumerAuthorityGeneration(),
 		ResourceVersion:             binding.ResourceVersion(), TargetGeneration: binding.TargetGeneration(),
 		ResourceSemanticHash: binding.SemanticHash(), IsResourceActive: true,
-		IsImportedResourceActive: true, IsEndpointGenerationActive: true,
+		IsImportedResourceActive: true, ImportedResourceVersion: endpoint.ImportedResourceVersion(),
+		Endpoint: endpoint,
 		ConsumerRule: mustTrafficSet(t,
 			mustTrafficConstraint(t, policy.ProtocolTCP, mustPortRange(t, 90, 110)),
 		),
@@ -33,10 +35,10 @@ func TestEvaluateEffectiveAccessReturnsExactSixWayIntersection(t *testing.T) {
 		ResourceConstraints: mustTrafficSet(t,
 			mustTrafficConstraint(t, policy.ProtocolTCP, mustPortRange(t, 97, 103)),
 		),
-		EndpointGrant: mustTrafficSet(t,
-			mustTrafficConstraint(t, policy.ProtocolTCP, mustPortRange(t, 98, 102)),
-		),
 	}
+	params.Endpoint.grant = mustTrafficSet(t,
+		mustTrafficConstraint(t, policy.ProtocolTCP, mustPortRange(t, 98, 102)),
+	)
 
 	decision := EvaluateEffectiveAccess(params)
 	if !decision.IsAllowed() || decision.Reason() != DenialReasonAllowed ||
@@ -53,6 +55,7 @@ func TestEvaluateEffectiveAccessFailsClosedForEveryIndependentAuthority(t *testi
 
 	contract := mustContract(t)
 	binding := contract.Resource()
+	endpoint := mustPrivateEndpoint(t, contract)
 	allowed := mustTrafficSet(t,
 		mustTrafficConstraint(t, policy.ProtocolTCP, mustPortRange(t, 80, 100)),
 	)
@@ -63,9 +66,10 @@ func TestEvaluateEffectiveAccessFailsClosedForEveryIndependentAuthority(t *testi
 		ConsumerAuthorityGeneration: contract.ConsumerAuthorityGeneration(),
 		ResourceVersion:             binding.ResourceVersion(), TargetGeneration: binding.TargetGeneration(),
 		ResourceSemanticHash: binding.SemanticHash(), IsResourceActive: true,
-		IsImportedResourceActive: true, IsEndpointGenerationActive: true,
+		IsImportedResourceActive: true, ImportedResourceVersion: endpoint.ImportedResourceVersion(),
+		Endpoint:     endpoint,
 		ConsumerRule: allowed, ProviderGuardrail: allowed, ConsumerGuardrail: allowed,
-		ResourceConstraints: allowed, EndpointGrant: allowed,
+		ResourceConstraints: allowed,
 	}
 
 	tests := []struct {
@@ -107,7 +111,9 @@ func TestEvaluateEffectiveAccessFailsClosedForEveryIndependentAuthority(t *testi
 		},
 		{
 			name: "inactive endpoint", reason: DenialReasonEndpointInactive,
-			mutate: func(params *EffectiveAccessParams) { params.IsEndpointGenerationActive = false },
+			mutate: func(params *EffectiveAccessParams) {
+				params.Endpoint.state = EndpointStateProvisioning
+			},
 		},
 		{
 			name: "disjoint consumer rule", reason: DenialReasonNoIntersection,
@@ -144,7 +150,7 @@ func TestEvaluateEffectiveAccessFailsClosedForEveryIndependentAuthority(t *testi
 		{
 			name: "disjoint endpoint grant", reason: DenialReasonNoIntersection,
 			mutate: func(params *EffectiveAccessParams) {
-				params.EndpointGrant = mustTrafficSet(t,
+				params.Endpoint.grant = mustTrafficSet(t,
 					mustTrafficConstraint(t, policy.ProtocolTCP, mustPortRange(t, 443, 443)),
 				)
 			},
@@ -168,6 +174,7 @@ func TestEvaluateEffectiveAccessRejectsMalformedCurrentAuthority(t *testing.T) {
 
 	contract := mustContract(t)
 	binding := contract.Resource()
+	endpoint := mustPrivateEndpoint(t, contract)
 	allowed := mustTrafficSet(t,
 		mustTrafficConstraint(t, policy.ProtocolTCP, mustPortRange(t, 80, 100)),
 	)
@@ -181,12 +188,12 @@ func TestEvaluateEffectiveAccessRejectsMalformedCurrentAuthority(t *testing.T) {
 		ResourceSemanticHash:        binding.SemanticHash(),
 		IsResourceActive:            true,
 		IsImportedResourceActive:    true,
-		IsEndpointGenerationActive:  true,
+		ImportedResourceVersion:     endpoint.ImportedResourceVersion(),
+		Endpoint:                    endpoint,
 		ConsumerRule:                allowed,
 		ProviderGuardrail:           allowed,
 		ConsumerGuardrail:           allowed,
 		ResourceConstraints:         allowed,
-		EndpointGrant:               allowed,
 	}
 
 	mutations := []func(*EffectiveAccessParams){
@@ -196,7 +203,8 @@ func TestEvaluateEffectiveAccessRejectsMalformedCurrentAuthority(t *testing.T) {
 		func(params *EffectiveAccessParams) { params.ResourceVersion = 0 },
 		func(params *EffectiveAccessParams) { params.TargetGeneration = 0 },
 		func(params *EffectiveAccessParams) { params.ResourceSemanticHash = resource.SemanticHash{} },
-		func(params *EffectiveAccessParams) { params.EndpointGrant = TrafficSet{} },
+		func(params *EffectiveAccessParams) { params.ImportedResourceVersion = 0 },
+		func(params *EffectiveAccessParams) { params.Endpoint = PrivateEndpoint{} },
 	}
 	for index, mutate := range mutations {
 		params := base

@@ -15,6 +15,9 @@
 | Consent is attributable | Each of the two Network audit streams records provider and consumer events with actor, permission, `scope_relation=cross_workspace`, and the correct `authority_side`. |
 | Cross-Workspace connectivity remains fail closed | Accepted contract remains `activating`; no direct provider Device edge is created. Imported Resource evaluation requires separately resolved safe path authority. |
 | Provider IP is not the consumer contract | Share Offer and Imported Resource management projections expose identities and provenance, not a raw provider overlay IP. Consumer-local DNS plus Private Endpoint alias publication remains the required executable path. |
+| DNS access names reject address fallback | `AccessName` unit tests reject IPv4 literals, numeric pseudo-addresses, relative labels, unsafe labels, trailing root dots, and Unicode without an explicit IDNA boundary. |
+| Endpoint readiness is generation-bound | `PrivateEndpoint` tests bind contract/import versions, exact scopes, recovery epoch, endpoint generation, alias, traffic grant, expiry, and lifecycle; stale inputs fail closed. |
+| Cross-Workspace routing requires alias mode | A direct cross-Workspace endpoint is invalid even if current CIDRs do not overlap; the domain accepts only the explicit Federation Alias mode. |
 
 ## Verification commands
 
@@ -25,7 +28,9 @@ make integration-platform-container
 
 Observed results:
 
-- focused unit and adapter suite: 1,606 tests passed across 3 packages;
+- full Go suite after the access-name and Private Endpoint domain slice: 4,735
+  tests passed across 62 packages;
+- focused sharing race suite: 73 tests passed;
 - PostgreSQL/container integration: passed, including migration replay,
   privilege/RLS checks, CIDR isolation, bilateral consent, audit, and
   qualification tooling.
@@ -38,7 +43,11 @@ Observed results:
   membership and role binding there.
 - CIDR overlap across Workspaces cannot be used as identity or authorization.
 - Audit/outbox/idempotency evidence remains atomic with the sharing mutation.
+- Effective access no longer accepts a free-standing endpoint-ready boolean or
+  caller-supplied endpoint grant; it evaluates one validated, contract-bound
+  Private Endpoint snapshot.
 - The implementation does not claim an executable cross-Workspace data path;
   a trusted Private Endpoint or gateway is still required.
-- Stable consumer-local DNS naming, alias allocation, DNS revision publication,
-  and revoke-time record withdrawal are the next implementation slice.
+- Database-backed access-name reservation, alias-pool allocation, DNS revision
+  publication, and revoke-time record withdrawal are the next implementation
+  slice.

@@ -42,12 +42,12 @@ type EffectiveAccessParams struct {
 	ResourceSemanticHash        resource.SemanticHash
 	IsResourceActive            bool
 	IsImportedResourceActive    bool
-	IsEndpointGenerationActive  bool
+	ImportedResourceVersion     int64
+	Endpoint                    PrivateEndpoint
 	ConsumerRule                TrafficSet
 	ProviderGuardrail           TrafficSet
 	ConsumerGuardrail           TrafficSet
 	ResourceConstraints         TrafficSet
-	EndpointGrant               TrafficSet
 }
 
 // EffectiveAccess is the exact traffic intersection or a stable denial class.
@@ -77,10 +77,10 @@ func EvaluateEffectiveAccess(params EffectiveAccessParams) EffectiveAccess {
 	if !params.Contract.IsValid() || params.EvaluatedAt.IsZero() ||
 		params.RecoveryEpoch <= 0 || params.ProviderAuthorityGeneration <= 0 ||
 		params.ConsumerAuthorityGeneration <= 0 || params.ResourceVersion <= 0 ||
-		params.TargetGeneration <= 0 || !params.ResourceSemanticHash.IsValid() ||
+		params.TargetGeneration <= 0 || params.ImportedResourceVersion <= 0 ||
+		!params.ResourceSemanticHash.IsValid() || !params.Endpoint.IsValid() ||
 		!params.ConsumerRule.IsValid() || !params.ProviderGuardrail.IsValid() ||
-		!params.ConsumerGuardrail.IsValid() || !params.ResourceConstraints.IsValid() ||
-		!params.EndpointGrant.IsValid() {
+		!params.ConsumerGuardrail.IsValid() || !params.ResourceConstraints.IsValid() {
 		return EffectiveAccess{reason: DenialReasonInvalidInput}
 	}
 	if params.Contract.State() != ContractStateActive ||
@@ -104,7 +104,11 @@ func EvaluateEffectiveAccess(params EffectiveAccessParams) EffectiveAccess {
 	if !params.IsImportedResourceActive {
 		return EffectiveAccess{reason: DenialReasonImportInactive}
 	}
-	if !params.IsEndpointGenerationActive {
+	if !params.Endpoint.IsUsableAt(
+		params.Contract,
+		params.ImportedResourceVersion,
+		params.EvaluatedAt,
+	) {
 		return EffectiveAccess{reason: DenialReasonEndpointInactive}
 	}
 
@@ -114,7 +118,7 @@ func EvaluateEffectiveAccess(params EffectiveAccessParams) EffectiveAccess {
 		params.ProviderGuardrail,
 		params.ConsumerGuardrail,
 		params.ResourceConstraints,
-		params.EndpointGrant,
+		params.Endpoint.Grant(),
 	} {
 		var ok bool
 		effective, ok = IntersectTraffic(effective, narrowing)

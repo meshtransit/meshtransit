@@ -17,6 +17,8 @@ var (
 	ErrInvalidContractID = errors.New("sharing: invalid contract id")
 	// ErrInvalidImportedResourceID reports an absent or malformed Imported Resource ID.
 	ErrInvalidImportedResourceID = errors.New("sharing: invalid imported resource id")
+	// ErrInvalidPrivateEndpointID reports an absent or malformed Private Endpoint ID.
+	ErrInvalidPrivateEndpointID = errors.New("sharing: invalid private endpoint id")
 )
 
 // ExportID is a validated opaque UUIDv7 identifying one Resource Export.
@@ -102,3 +104,24 @@ func (id ImportedResourceID) Bytes() [16]byte { return publicid.ID(id).Bytes() }
 
 // IsValid reports whether the ID satisfies the public identity contract.
 func (id ImportedResourceID) IsValid() bool { return publicid.ID(id).IsValid() }
+
+// PrivateEndpointID is a validated opaque UUIDv7 identifying one endpoint generation authority.
+type PrivateEndpointID publicid.ID
+
+// ParsePrivateEndpointID validates a Private Endpoint ID from its canonical string.
+func ParsePrivateEndpointID(value string) (PrivateEndpointID, error) {
+	id, err := publicid.Parse(value)
+	if err != nil {
+		return PrivateEndpointID{}, ErrInvalidPrivateEndpointID
+	}
+	return PrivateEndpointID(id), nil
+}
+
+// String returns the lowercase canonical UUID representation.
+func (id PrivateEndpointID) String() string { return publicid.ID(id).String() }
+
+// Bytes returns a copy of the binary UUID representation.
+func (id PrivateEndpointID) Bytes() [16]byte { return publicid.ID(id).Bytes() }
+
+// IsValid reports whether the ID satisfies the public identity contract.
+func (id PrivateEndpointID) IsValid() bool { return publicid.ID(id).IsValid() }

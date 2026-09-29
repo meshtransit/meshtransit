@@ -128,6 +128,24 @@ DNS therefore improves usability but grants no access by itself. Before the
 endpoint and DNS projection exist, the safe response is no usable resolution,
 not a provider IP fallback.
 
+The domain layer now enforces the foundation for that projection:
+
+- `AccessName` is a canonical lowercase ASCII DNS name, separate from
+  `display_name`; relative labels, root-dot forms, Unicode without an explicit
+  IDNA boundary, numeric pseudo-addresses, and IP literals are rejected;
+- `PrivateEndpoint` pins the Trust Contract and Imported Resource versions,
+  both exact scopes, recovery epoch, endpoint generation, consumer access
+  name, consumer-visible address, traffic grant, expiry, and lifecycle;
+- cross-Workspace endpoints cannot use direct mode and must declare a
+  Federation Alias path;
+- the effective-access evaluator consumes the complete validated endpoint
+  object instead of trusting a caller-supplied readiness boolean and separate
+  traffic set.
+
+Persistence, alias-pool allocation, DNS publication, and revision advancement
+remain deliberately absent from this slice. A validated in-memory endpoint
+therefore does not create a DNS record or packet path by itself.
+
 ## Non-claims
 
 - No graph database is required; PostgreSQL remains authoritative.
