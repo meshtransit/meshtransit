@@ -65,6 +65,7 @@ const (
 	consoleManagementScopeDescription         = "Console management scope projection"
 	resourceSharingAuthorityDescription       = "Resource sharing authority foundation"
 	policyImportedResourceDescription         = "policy Imported Resource destination provenance"
+	resourceSharingAccessNameDescription      = "Resource sharing consumer access-name authority"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -223,6 +224,9 @@ var resourceSharingAuthoritySQL string
 //go:embed 000052_policy_imported_resource_destination.up.sql
 var policyImportedResourceSQL string
 
+//go:embed 000053_resource_sharing_access_name_authority.up.sql
+var resourceSharingAccessNameSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -294,6 +298,7 @@ func Catalog() []Migration {
 		newMigration(50, consoleManagementScopeDescription, consoleManagementScopeSQL),
 		newMigration(51, resourceSharingAuthorityDescription, resourceSharingAuthoritySQL),
 		newMigration(52, policyImportedResourceDescription, policyImportedResourceSQL),
+		newMigration(53, resourceSharingAccessNameDescription, resourceSharingAccessNameSQL),
 	}
 }
 

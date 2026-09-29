@@ -197,13 +197,15 @@ const decideResourceShareOfferSQL = `SELECT
     offer_version,
     contract_version,
     imported_resource_version,
-    contract_state
-FROM mesh_ops.decide_resource_share_offer_v1(
+    contract_state,
+    access_name_version
+FROM mesh_ops.decide_resource_share_offer_v2(
     $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::BIGINT,
     $5::UUID, $6::UUID, $7::UUID, $8::UUID, $9::UUID,
     $10::BIGINT, $11::BYTEA, $12::TEXT, $13::UUID, $14::UUID,
-    $15::TEXT, $16::BIGINT, $17::BIGINT, $18::BIGINT,
-    $19::BIGINT, $20::BIGINT, $21::TIMESTAMPTZ
+    $15::TEXT, $16::UUID, $17::TEXT,
+    $18::BIGINT, $19::BIGINT, $20::BIGINT,
+    $21::BIGINT, $22::BIGINT, $23::TIMESTAMPTZ
 )`
 
 const revokeResourceShareSQL = `SELECT
@@ -212,8 +214,9 @@ const revokeResourceShareSQL = `SELECT
     consumer_network_revision,
     consumer_sharing_revision,
     contract_version,
-    imported_resource_version
-FROM mesh_ops.revoke_resource_share_v1(
+    imported_resource_version,
+    access_name_version
+FROM mesh_ops.revoke_resource_share_v2(
     $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::BIGINT,
     $5::UUID, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::TIMESTAMPTZ
 )`

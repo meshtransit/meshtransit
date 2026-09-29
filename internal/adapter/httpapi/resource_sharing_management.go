@@ -168,6 +168,7 @@ type decideShareOfferRequest struct {
 	ConsumerNetworkID   string `json:"consumer_network_id"`
 	OfferToken          string `json:"offer_token"`
 	ImportedDisplayName string `json:"imported_display_name,omitempty"`
+	AccessName          string `json:"access_name,omitempty"`
 	Reason              string `json:"reason"`
 }
 
@@ -216,6 +217,7 @@ type shareOfferData struct {
 type shareContractData struct {
 	TrustContractID         string `json:"trust_contract_id"`
 	ImportedResourceID      string `json:"imported_resource_id"`
+	AccessName              string `json:"access_name,omitempty"`
 	OfferID                 string `json:"offer_id"`
 	State                   string `json:"state"`
 	Version                 int64  `json:"version"`
@@ -418,6 +420,13 @@ func (handler *ManagementHandler) decideShareOffer(
 			return handler.writeSharingRequestError(ctx, response, correlationID)
 		}
 	}
+	var accessName sharing.AccessName
+	if body.AccessName != "" {
+		accessName, err = sharing.ParseAccessName(body.AccessName)
+		if err != nil {
+			return handler.writeSharingRequestError(ctx, response, correlationID)
+		}
+	}
 	reason, err := sharing.NewAuditReason(body.Reason)
 	if err != nil {
 		return handler.writeSharingRequestError(ctx, response, correlationID)
@@ -425,7 +434,8 @@ func (handler *ManagementHandler) decideShareOffer(
 	command, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope, OfferID: offerID,
 		ExpectedOfferVersion: expectedVersion, Token: token, Action: action,
-		ImportedDisplayName: importedName, AccountSession: session, Reason: reason,
+		ImportedDisplayName: importedName, AccessName: accessName,
+		AccountSession: session, Reason: reason,
 		Idempotency: proof,
 	})
 	if err != nil {
@@ -446,7 +456,11 @@ func (handler *ManagementHandler) decideShareOffer(
 		}
 		response.Header().Set("ETag", strongVersionETag(contract.Version()))
 		writeManagementJSON(ctx, handler.logger, response, http.StatusOK, shareContractEnvelope{
-			Data:          shareContractDataFromResult(contract, result.ImportedResourceVersion()),
+			Data: shareContractDataFromResult(
+				contract,
+				result.ImportedResourceVersion(),
+				command.AccessName(),
+			),
 			CorrelationID: correlationID.String(),
 		})
 		return "success"
@@ -541,7 +555,11 @@ func (handler *ManagementHandler) changeTrustContract(
 	}
 	response.Header().Set("ETag", strongVersionETag(contract.Version()))
 	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, shareContractEnvelope{
-		Data:          shareContractDataFromResult(contract, result.ImportedResourceVersion()),
+		Data: shareContractDataFromResult(
+			contract,
+			result.ImportedResourceVersion(),
+			sharing.AccessName{},
+		),
 		CorrelationID: correlationID.String(),
 	})
 	return "success"
@@ -928,10 +946,15 @@ func sharingTrafficDataFromSet(set sharing.TrafficSet) []sharingTrafficData {
 	return result
 }
 
-func shareContractDataFromResult(contract sharing.Contract, importedVersion int64) shareContractData {
+func shareContractDataFromResult(
+	contract sharing.Contract,
+	importedVersion int64,
+	accessName sharing.AccessName,
+) shareContractData {
 	return shareContractData{
 		TrustContractID:    contract.ID().String(),
 		ImportedResourceID: contract.ImportedResourceID().String(),
+		AccessName:         accessName.String(),
 		OfferID:            contract.OfferID().String(), State: sharingContractStateString(contract.State()),
 		Version: contract.Version(), ImportedResourceVersion: importedVersion,
 	}

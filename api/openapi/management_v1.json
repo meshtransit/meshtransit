@@ -2993,6 +2993,7 @@
           "consumer_network_id": {"$ref": "#/components/schemas/PublicID"},
           "offer_token": {"type": "string", "minLength": 43, "maxLength": 43, "pattern": "^[A-Za-z0-9_-]{43}$"},
           "imported_display_name": {"type": "string", "minLength": 1, "maxLength": 128},
+          "access_name": {"type": "string", "minLength": 3, "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", "description": "Required for accept and forbidden for reject or revoke; canonical lower-case consumer-local DNS name."},
           "reason": {"type": "string", "minLength": 1, "maxLength": 512}
         }
       },
@@ -3067,6 +3068,7 @@
         "properties": {
           "trust_contract_id": {"$ref": "#/components/schemas/PublicID"},
           "imported_resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "access_name": {"type": "string", "minLength": 3, "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", "readOnly": true},
           "offer_id": {"$ref": "#/components/schemas/PublicID"},
           "state": {"type": "string", "enum": ["activating", "active", "revoked", "expired", "invalidated"]},
           "version": {"type": "integer", "format": "int64", "minimum": 1},

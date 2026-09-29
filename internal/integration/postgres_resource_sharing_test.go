@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
+	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/resource"
@@ -91,11 +92,15 @@ func assertPostgreSQLResourceSharing(
 	if err != nil {
 		t.Fatalf("resource.ParseDisplayName() error = %v", err)
 	}
+	accessName, err := sharing.ParseAccessName("database.shared.consumer.example")
+	if err != nil {
+		t.Fatalf("sharing.ParseAccessName() error = %v", err)
+	}
 	acceptCommand, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		OfferID: createdOffer.Offer().ID(), ExpectedOfferVersion: 1,
 		Token: token, Action: sharing.DecisionActionAccept,
-		ImportedDisplayName: importedName, AccountSession: session,
+		ImportedDisplayName: importedName, AccessName: accessName, AccountSession: session,
 		Reason: reason, Idempotency: resourceAuthorityProof(t, 112),
 	})
 	if err != nil {
@@ -112,6 +117,9 @@ func assertPostgreSQLResourceSharing(
 		contract.ProviderScope() != providerScope || contract.ConsumerScope() != consumerScope {
 		t.Fatalf("Resource Sharing accept result = %+v", accepted)
 	}
+	assertImportedResourceAccessName(
+		ctx, t, admin, contract.ImportedResourceID(), accessName, "reserved", 1,
+	)
 	replayedAccept, err := service.DecideOffer(ctx, acceptCommand)
 	if err != nil {
 		t.Fatalf("Resource Sharing DecideOffer() replay error = %v", err)
@@ -121,6 +129,19 @@ func assertPostgreSQLResourceSharing(
 		replayedAccept.ConsumerSharingRevision() != accepted.ConsumerSharingRevision() {
 		t.Fatalf("Resource Sharing accept replay = %+v", replayedAccept)
 	}
+	assertAccessNameCollisionRollsBack(
+		ctx,
+		t,
+		admin,
+		service,
+		session,
+		providerScope,
+		consumerScope,
+		resourceID,
+		maximumTraffic,
+		reason,
+		accessName,
+	)
 	activateCommand, err := sharing.NewActivateContract(sharing.ActivateContractParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		ContractID: contract.ID(), ExpectedContractVersion: contract.Version(),
@@ -162,6 +183,9 @@ func assertPostgreSQLResourceSharing(
 		t.Fatalf("ResolveImportedPolicyDestinations() = %+v, error = %v", resolved, err)
 	}
 	assertAtomicImportedPolicyPublication(ctx, t, admin, resolved[0])
+	assertCrossWorkspaceResourceSharingConsent(
+		ctx, t, admin, service, providerScope, resourceID, maximumTraffic, reason,
+	)
 	revokeCommand, err := sharing.NewRevokeContract(sharing.RevokeContractParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		ContractID: activeContract.ID(), ExpectedContractVersion: activeContract.Version(),
@@ -181,6 +205,9 @@ func assertPostgreSQLResourceSharing(
 		revoked.ImportedResourceVersion() != 3 {
 		t.Fatalf("Resource Sharing revoke result = %+v", revoked)
 	}
+	assertImportedResourceAccessName(
+		ctx, t, admin, contract.ImportedResourceID(), accessName, "withdrawn", 2,
+	)
 	if _, err := store.ResolveImportedPolicyDestinations(
 		ctx,
 		session,
@@ -201,9 +228,6 @@ func assertPostgreSQLResourceSharing(
 		t.Fatalf("cross-Workspace Resource Sharing list error = %v, want forbidden", err)
 	}
 	assertCommittedResourceSharingEvidence(ctx, t, admin, createdOffer.Offer().ID(), contract.ID())
-	assertCrossWorkspaceResourceSharingConsent(
-		ctx, t, admin, service, providerScope, resourceID, maximumTraffic, reason,
-	)
 }
 
 func assertCrossWorkspaceResourceSharingConsent(
@@ -245,11 +269,15 @@ func assertCrossWorkspaceResourceSharingConsent(
 	if err != nil {
 		t.Fatalf("parse cross-Workspace Imported Resource name: %v", err)
 	}
+	accessName, err := sharing.ParseAccessName("database.shared.consumer.example")
+	if err != nil {
+		t.Fatalf("parse cross-Workspace access name: %v", err)
+	}
 	providerDecision, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		OfferID: offer.Offer().ID(), ExpectedOfferVersion: offer.Offer().Version(),
 		Token: token, Action: sharing.DecisionActionAccept,
-		ImportedDisplayName: importedName, AccountSession: providerSession,
+		ImportedDisplayName: importedName, AccessName: accessName, AccountSession: providerSession,
 		Reason: reason, Idempotency: resourceAuthorityProof(t, 122),
 	})
 	if err != nil {
@@ -262,7 +290,7 @@ func assertCrossWorkspaceResourceSharingConsent(
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		OfferID: offer.Offer().ID(), ExpectedOfferVersion: offer.Offer().Version(),
 		Token: token, Action: sharing.DecisionActionAccept,
-		ImportedDisplayName: importedName, AccountSession: consumerSession,
+		ImportedDisplayName: importedName, AccessName: accessName, AccountSession: consumerSession,
 		Reason: reason, Idempotency: resourceAuthorityProof(t, 123),
 	})
 	if err != nil {
@@ -277,6 +305,9 @@ func assertCrossWorkspaceResourceSharingConsent(
 		contract.ScopeRelation() != sharing.ScopeRelationCrossWorkspace {
 		t.Fatalf("cross-Workspace accepted contract = %+v", accepted)
 	}
+	assertImportedResourceAccessName(
+		ctx, t, admin, contract.ImportedResourceID(), accessName, "reserved", 1,
+	)
 	assertCrossWorkspaceSharingConsentEvidence(ctx, t, admin, offer.Offer().ID())
 
 	var networkCount int
@@ -286,6 +317,145 @@ FROM mesh.network WHERE workspace_id = 103 AND state = 'active'`).Scan(&networkC
 	}
 	if networkCount < 2 {
 		t.Fatalf("active Networks in Workspace = %d, want at least 2", networkCount)
+	}
+}
+
+func assertAccessNameCollisionRollsBack(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	service *sharing.Service,
+	session accountsession.Session,
+	providerScope, consumerScope network.Scope,
+	resourceID resource.ID,
+	maximumTraffic sharing.TrafficSet,
+	reason sharing.AuditReason,
+	accessName sharing.AccessName,
+) {
+	t.Helper()
+	created, err := service.CreateOffer(ctx, mustCreateSharingOffer(
+		t,
+		providerScope,
+		consumerScope,
+		resourceID,
+		maximumTraffic,
+		session,
+		reason,
+		115,
+	))
+	if err != nil {
+		t.Fatalf("create access-name collision offer: %v", err)
+	}
+	offer, hasOffer := created.Offer()
+	token, hasToken := created.Token()
+	if !hasOffer || !hasToken {
+		t.Fatalf("access-name collision offer result = %+v", created)
+	}
+	importedName, err := resource.ParseDisplayName("Secondary imported production Resource")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		OfferID: offer.Offer().ID(), ExpectedOfferVersion: offer.Offer().Version(),
+		Token: token, Action: sharing.DecisionActionAccept,
+		ImportedDisplayName: importedName, AccessName: accessName, AccountSession: session,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 116),
+	})
+	if err != nil {
+		t.Fatalf("construct access-name collision decision: %v", err)
+	}
+	if _, err := service.DecideOffer(ctx, command); !errors.Is(err, sharing.ErrConflict) {
+		t.Fatalf("accept duplicate access name: error = %v, want conflict", err)
+	}
+
+	var state string
+	var version int64
+	var contractCount int
+	if err := admin.QueryRow(ctx, `SELECT
+    offer.state,
+    offer.version,
+    (SELECT pg_catalog.count(*)::INTEGER
+     FROM mesh.trust_contract AS contract
+     WHERE contract.share_offer_id = offer.id)
+FROM mesh.share_offer AS offer
+WHERE offer.public_id = $1::UUID`, offer.Offer().ID().String()).Scan(
+		&state,
+		&version,
+		&contractCount,
+	); err != nil {
+		t.Fatalf("query rolled-back access-name collision: %v", err)
+	}
+	if state != "offered" || version != 1 || contractCount != 0 {
+		t.Fatalf(
+			"access-name collision state/version/contracts = %s/%d/%d, want offered/1/0",
+			state,
+			version,
+			contractCount,
+		)
+	}
+}
+
+func mustCreateSharingOffer(
+	t *testing.T,
+	providerScope, consumerScope network.Scope,
+	resourceID resource.ID,
+	maximumTraffic sharing.TrafficSet,
+	session accountsession.Session,
+	reason sharing.AuditReason,
+	proofMarker byte,
+) sharing.CreateOffer {
+	t.Helper()
+	command, err := sharing.NewCreateOffer(sharing.CreateOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		ResourceID: resourceID, MaximumTraffic: maximumTraffic,
+		ExpiresAt: time.Now().UTC().Add(time.Hour), AccountSession: session,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, proofMarker),
+	})
+	if err != nil {
+		t.Fatalf("construct Resource Share Offer: %v", err)
+	}
+	return command
+}
+
+func assertImportedResourceAccessName(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	importedResourceID sharing.ImportedResourceID,
+	wantName sharing.AccessName,
+	wantState string,
+	wantVersion int64,
+) {
+	t.Helper()
+	var name, state string
+	var version int64
+	if err := admin.QueryRow(ctx, `SELECT
+    access_name.access_name,
+    access_name.state,
+    access_name.version
+FROM mesh.imported_resource_access_name AS access_name
+JOIN mesh.imported_resource AS imported
+  ON imported.workspace_id = access_name.workspace_id
+ AND imported.network_id = access_name.network_id
+ AND imported.id = access_name.imported_resource_id
+WHERE imported.public_id = $1::UUID`, importedResourceID.String()).Scan(
+		&name,
+		&state,
+		&version,
+	); err != nil {
+		t.Fatalf("query Imported Resource access name: %v", err)
+	}
+	if name != wantName.String() || state != wantState || version != wantVersion {
+		t.Fatalf(
+			"Imported Resource access name/name-state-version = %s/%s/%d, want %s/%s/%d",
+			name,
+			state,
+			version,
+			wantName.String(),
+			wantState,
+			wantVersion,
+		)
 	}
 }
 

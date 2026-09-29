@@ -110,7 +110,7 @@ name, not a provider overlay IP. The intended shape is similar to
 `db-prod.shared.<consumer-network-domain>`. The name is discovery metadata; the
 Imported Resource UUID and Trust Contract remain the authorization identities.
 
-The executable endpoint slice must enforce all of the following:
+The complete executable endpoint path must enforce all of the following:
 
 - store a separately validated, unique consumer-local access name instead of
   treating the human `display_name` as DNS-safe;
@@ -142,9 +142,27 @@ The domain layer now enforces the foundation for that projection:
   object instead of trusting a caller-supplied readiness boolean and separate
   traffic set.
 
-Persistence, alias-pool allocation, DNS publication, and revision advancement
-remain deliberately absent from this slice. A validated in-memory endpoint
-therefore does not create a DNS record or packet path by itself.
+Migration 53 now persists the first non-executable naming authority. Accepting
+an offer requires `access_name` and atomically creates one `reserved` row bound
+to the Imported Resource in the consumer Workspace and Network. A partial
+unique index serializes collisions only inside that Network namespace; another
+Network may use the same name. Reject and offer revoke cannot carry a name.
+Trust Contract revoke atomically moves the reservation to `withdrawn`, retains
+the evidence row, and releases the namespace for later reuse.
+
+The table is forced-RLS. Runtime can only read rows in its current consumer
+scope and cannot mutate them directly. The `mesh_share_writer` NOLOGIN owner is
+the only application role with write capability. Runtime access to the old
+decision and revoke functions is removed; access-name-aware v2 functions are
+the only callable mutation boundary. Go validation and PostgreSQL constraints
+independently reject malformed names, while a database unique violation maps
+to a stable conflict and rolls back offer, contract, import, revisions, audit,
+outbox, and idempotency writes together.
+
+The reservation deliberately has no `published` state. Alias-pool allocation,
+Private Endpoint persistence, DNS publication, and `dns_revision` advancement
+remain absent, so neither a reserved name nor a validated in-memory endpoint
+creates a DNS record or packet path by itself.
 
 ## Non-claims
 

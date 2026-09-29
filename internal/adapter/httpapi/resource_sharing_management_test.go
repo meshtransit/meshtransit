@@ -150,7 +150,8 @@ func TestManagementHandlerSharingMutationRequiresPreconditionAndIdempotency(t *t
 		`","provider_network_id":"` + fixture.provider.NetworkID().String() +
 		`","consumer_workspace_id":"` + fixture.consumer.WorkspaceID().String() +
 		`","consumer_network_id":"` + fixture.consumer.NetworkID().String() +
-		`","offer_token":"invalid","imported_display_name":"database","reason":"accept database"}`
+		`","offer_token":"invalid","imported_display_name":"database",` +
+		`"access_name":"database.shared.consumer.example","reason":"accept database"}`
 	for _, test := range []struct {
 		name   string
 		mutate func(*http.Request)
@@ -206,7 +207,8 @@ func TestManagementHandlerAcceptsShareOfferIntoFailClosedContract(t *testing.T) 
 		`","consumer_workspace_id":"` + fixture.consumer.WorkspaceID().String() +
 		`","consumer_network_id":"` + fixture.consumer.NetworkID().String() +
 		`","offer_token":"` + base64.RawURLEncoding.EncodeToString(token[:]) +
-		`","imported_display_name":"production database","reason":"accept reviewed share"}`
+		`","imported_display_name":"production database",` +
+		`"access_name":"database.shared.consumer.example","reason":"accept reviewed share"}`
 	request := newManagementRequest(t, http.MethodPost, path, body)
 	response := httptest.NewRecorder()
 
@@ -214,15 +216,72 @@ func TestManagementHandlerAcceptsShareOfferIntoFailClosedContract(t *testing.T) 
 
 	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"1"` ||
 		!captured.IsValid() || captured.Action() != sharing.DecisionActionAccept ||
-		captured.ConsumerScope() != fixture.consumer || captured.ExpectedOfferVersion() != 1 {
+		captured.ConsumerScope() != fixture.consumer || captured.ExpectedOfferVersion() != 1 ||
+		captured.AccessName().String() != "database.shared.consumer.example" {
 		t.Fatalf("status/header/command = %d/%s/%+v; body=%s",
 			response.Code, response.Header().Get("ETag"), captured, response.Body.String())
 	}
 	var envelope shareContractEnvelope
 	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil ||
 		envelope.Data.TrustContractID != contract.ID().String() ||
-		envelope.Data.State != "activating" || envelope.Data.ImportedResourceVersion != 1 {
+		envelope.Data.State != "activating" || envelope.Data.ImportedResourceVersion != 1 ||
+		envelope.Data.AccessName != "database.shared.consumer.example" {
 		t.Fatalf("accept response = %+v, error=%v", envelope, err)
+	}
+}
+
+func TestManagementHandlerRequiresAccessNameOnlyForShareAcceptance(t *testing.T) {
+	t.Parallel()
+
+	fixture := managementSharingFixture(t, sharing.OfferStateOffered)
+	token := fixture.token.Bytes()
+	baseBody := `{"provider_workspace_id":"` + fixture.provider.WorkspaceID().String() +
+		`","provider_network_id":"` + fixture.provider.NetworkID().String() +
+		`","consumer_workspace_id":"` + fixture.consumer.WorkspaceID().String() +
+		`","consumer_network_id":"` + fixture.consumer.NetworkID().String() +
+		`","offer_token":"` + base64.RawURLEncoding.EncodeToString(token[:]) + `"`
+	for _, test := range []struct {
+		name   string
+		action string
+		body   string
+	}{
+		{
+			name:   "accept without access name",
+			action: "accept",
+			body:   baseBody + `,"imported_display_name":"production database"}`,
+		},
+		{
+			name:   "reject with access name",
+			action: "reject",
+			body:   baseBody + `,"access_name":"database.shared.consumer.example"}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			options := validManagementHandlerOptions(t)
+			options.ResourceSharing = &managementResourceSharingStub{
+				decide: func(context.Context, sharing.DecideOffer) (sharing.MutationResult, error) {
+					t.Fatal("invalid request reached resource-sharing service")
+					return sharing.MutationResult{}, nil
+				},
+			}
+			handler, err := NewManagementHandler(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := "/api/v1/workspaces/" + fixture.consumer.WorkspaceID().String() +
+				"/networks/" + fixture.consumer.NetworkID().String() + "/share-offers/" +
+				fixture.snapshot.Offer().ID().String() + "/actions/" + test.action
+			request := newManagementRequest(t, http.MethodPost, path, test.body)
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest ||
+				decodeManagementErrorCode(t, response.Body.Bytes()) != "invalid_request" {
+				t.Fatalf("status/body = %d/%s", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 

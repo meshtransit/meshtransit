@@ -182,6 +182,7 @@ type DecideOfferParams struct {
 	Token                OfferToken
 	Action               DecisionAction
 	ImportedDisplayName  resource.DisplayName
+	AccessName           AccessName
 	AccountSession       accountsession.Session
 	Reason               AuditReason
 	Idempotency          idempotency.Proof
@@ -224,6 +225,9 @@ func (command DecideOffer) ImportedDisplayName() resource.DisplayName {
 	return command.params.ImportedDisplayName
 }
 
+// AccessName returns the separately validated consumer-local DNS name.
+func (command DecideOffer) AccessName() AccessName { return command.params.AccessName }
+
 // AccountSession returns the authenticated decision session.
 func (command DecideOffer) AccountSession() accountsession.Session {
 	return command.params.AccountSession
@@ -246,7 +250,8 @@ func (command DecideOffer) IsValid() bool {
 		!params.AccountSession.IsValid() || !params.Reason.IsValid() || !params.Idempotency.IsValid() {
 		return false
 	}
-	return (params.Action == DecisionActionAccept) == params.ImportedDisplayName.IsValid()
+	accept := params.Action == DecisionActionAccept
+	return accept == params.ImportedDisplayName.IsValid() && accept == params.AccessName.IsValid()
 }
 
 // RevokeContractParams contains one version-bound bilateral revocation.

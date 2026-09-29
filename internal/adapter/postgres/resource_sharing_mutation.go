@@ -38,6 +38,7 @@ type resourceSharingMutationIDs struct {
 	offerID             sharing.OfferID
 	contractID          sharing.ContractID
 	importedResourceID  sharing.ImportedResourceID
+	accessNameID        publicid.ID
 	constraintIDs       []publicid.ID
 }
 
@@ -48,11 +49,12 @@ type resourceSharingScopeLocator struct {
 }
 
 type resourceSharingMutationRevisions struct {
-	providerNetwork int64
-	providerSharing int64
-	consumerNetwork int64
-	consumerSharing int64
-	importedVersion int64
+	providerNetwork   int64
+	providerSharing   int64
+	consumerNetwork   int64
+	consumerSharing   int64
+	importedVersion   int64
+	accessNameVersion int64
 }
 
 // CreateOffer commits one provider-owned export and targeted offer atomically.
@@ -373,11 +375,13 @@ func (store *ResourceSharingStore) DecideOffer(
 	nonceDigest := sha256.Sum256(tokenBytes[:])
 	action := resourceSharingDecisionAction(command.Action())
 	var contractID, importedID any
-	var importedName any
+	var importedName, accessNameID, accessName any
 	if accept {
 		contractID = ids.contractID.String()
 		importedID = ids.importedResourceID.String()
 		importedName = command.ImportedDisplayName().String()
+		accessNameID = ids.accessNameID.String()
+		accessName = command.AccessName().String()
 	}
 	var revisions resourceSharingMutationRevisions
 	var offerVersion, contractVersion int64
@@ -400,6 +404,8 @@ func (store *ResourceSharingStore) DecideOffer(
 		contractID,
 		importedID,
 		importedName,
+		accessNameID,
+		accessName,
 		provider.authorityGeneration,
 		consumer.authorityGeneration,
 		command.AccountSession().DeploymentRecoveryEpoch(),
@@ -415,12 +421,15 @@ func (store *ResourceSharingStore) DecideOffer(
 		&contractVersion,
 		&revisions.importedVersion,
 		&contractState,
+		&revisions.accessNameVersion,
 	); err != nil {
 		return sharing.MutationResult{}, resourceSharingDatabaseError(ctx, err)
 	}
 	if offerVersion != command.ExpectedOfferVersion()+1 ||
-		(accept && (contractVersion != 1 || contractState != "activating" || revisions.importedVersion != 1)) ||
-		(!accept && (contractVersion != 0 || contractState != "" || revisions.importedVersion != 0)) {
+		(accept && (contractVersion != 1 || contractState != "activating" ||
+			revisions.importedVersion != 1 || revisions.accessNameVersion != 1)) ||
+		(!accept && (contractVersion != 0 || contractState != "" ||
+			revisions.importedVersion != 0 || revisions.accessNameVersion != 0)) {
 		return sharing.MutationResult{}, sharing.ErrUnavailable
 	}
 	projection, err := readResourceSharingOffer(ctx, transaction, command.OfferID())
@@ -782,10 +791,12 @@ func (store *ResourceSharingStore) RevokeContract(
 		&revisions.consumerSharing,
 		&contractVersion,
 		&revisions.importedVersion,
+		&revisions.accessNameVersion,
 	); err != nil {
 		return sharing.MutationResult{}, resourceSharingDatabaseError(ctx, err)
 	}
-	if contractVersion != command.ExpectedContractVersion()+1 || revisions.importedVersion <= 1 {
+	if contractVersion != command.ExpectedContractVersion()+1 || revisions.importedVersion <= 1 ||
+		(revisions.accessNameVersion != 0 && revisions.accessNameVersion <= 1) {
 		return sharing.MutationResult{}, sharing.ErrUnavailable
 	}
 	projection, err := readResourceSharingOffer(ctx, transaction, locator.offerID)
@@ -1118,7 +1129,7 @@ func newResourceSharingMutationIDs(
 	}
 	count := 8 + constraintCount
 	if accept {
-		count += 2
+		count += 3
 	}
 	generated := make([]publicid.ID, count)
 	for index := range generated {
@@ -1136,8 +1147,9 @@ func newResourceSharingMutationIDs(
 		constraintIDs: generated[8 : 8+constraintCount],
 	}
 	if accept {
-		ids.contractID = sharing.ContractID(generated[count-2])
-		ids.importedResourceID = sharing.ImportedResourceID(generated[count-1])
+		ids.contractID = sharing.ContractID(generated[count-3])
+		ids.importedResourceID = sharing.ImportedResourceID(generated[count-2])
+		ids.accessNameID = generated[count-1]
 	}
 	return ids, nil
 }
@@ -1256,6 +1268,7 @@ func resourceSharingDecisionHash(command sharing.DecideOffer) ([sha256.Size]byte
 		TokenDigest     string `json:"token_digest"`
 		Action          string `json:"action"`
 		ImportedName    string `json:"imported_name,omitempty"`
+		AccessName      string `json:"access_name,omitempty"`
 		Reason          string `json:"reason"`
 	}{
 		Operation:     resourceSharingDecideOperation,
@@ -1265,6 +1278,7 @@ func resourceSharingDecisionHash(command sharing.DecideOffer) ([sha256.Size]byte
 		TokenDigest:  hex.EncodeToString(tokenDigest[:]),
 		Action:       resourceSharingDecisionAction(command.Action()),
 		ImportedName: command.ImportedDisplayName().String(),
+		AccessName:   command.AccessName().String(),
 		Reason:       command.Reason().String(),
 	})
 }

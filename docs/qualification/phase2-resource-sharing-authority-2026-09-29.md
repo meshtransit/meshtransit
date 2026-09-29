@@ -18,22 +18,29 @@
 | DNS access names reject address fallback | `AccessName` unit tests reject IPv4 literals, numeric pseudo-addresses, relative labels, unsafe labels, trailing root dots, and Unicode without an explicit IDNA boundary. |
 | Endpoint readiness is generation-bound | `PrivateEndpoint` tests bind contract/import versions, exact scopes, recovery epoch, endpoint generation, alias, traffic grant, expiry, and lifecycle; stale inputs fail closed. |
 | Cross-Workspace routing requires alias mode | A direct cross-Workspace endpoint is invalid even if current CIDRs do not overlap; the domain accepts only the explicit Federation Alias mode. |
+| Access-name allocation is consumer-local | Migration 53 reserves a canonical name under `(consumer Workspace, consumer Network)`; the same name succeeds in another Network while a duplicate in the same active namespace returns conflict. |
+| Name collision rolls back atomically | PostgreSQL integration creates a second offer, attempts the same reserved name, observes `ErrConflict`, and confirms the offer remains `offered` at version 1 with no Trust Contract. |
+| Runtime cannot bypass naming authority | Forced RLS exposes scoped reads only; direct runtime writes are denied, v1 decide/revoke execute grants are closed, and only v2 entry points are runtime-callable through `mesh_share_writer`. |
+| Revoke withdraws without deleting evidence | Contract revoke moves the access-name row from `reserved` version 1 to `withdrawn` version 2 in the same transaction. No DNS publication state exists yet. |
 
 ## Verification commands
 
 ```text
-go test ./internal/sharing ./internal/adapter/httpapi ./internal/adapter/postgres
+go test ./migrations ./internal/sharing ./internal/adapter/httpapi ./internal/adapter/postgres
 make integration-platform-container
 ```
 
 Observed results:
 
-- full Go suite after the access-name and Private Endpoint domain slice: 4,735
+- full Go suite after the access-name and Private Endpoint domain slice: 4,738
   tests passed across 62 packages;
 - focused sharing race suite: 73 tests passed;
-- PostgreSQL/container integration: passed, including migration replay,
-  privilege/RLS checks, CIDR isolation, bilateral consent, audit, and
-  qualification tooling.
+- focused migration, sharing, HTTP, and PostgreSQL adapter suite: 1,657 tests
+  passed across 4 packages;
+- PostgreSQL/container integration after migration 53: passed, including
+  migration replay, privilege/RLS checks, v1 entry-point closure, scoped name
+  reuse, same-Network collision rollback, revoke withdrawal, CIDR isolation,
+  bilateral consent, audit, and qualification tooling.
 
 ## Security conclusions
 
@@ -48,6 +55,6 @@ Observed results:
   Private Endpoint snapshot.
 - The implementation does not claim an executable cross-Workspace data path;
   a trusted Private Endpoint or gateway is still required.
-- Database-backed access-name reservation, alias-pool allocation, DNS revision
-  publication, and revoke-time record withdrawal are the next implementation
-  slice.
+- Federation alias allocation, Private Endpoint persistence, DNS revision
+  publication, and terminal expiry/invalidation withdrawal are the next
+  implementation slice.
