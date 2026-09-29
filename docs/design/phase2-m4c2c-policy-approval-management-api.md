@@ -5,6 +5,11 @@ deployed Console workflow qualification remains pending.
 
 Date: 2026-09-29
 
+Follow-up: M4c2d later admits the same catalog list/get operations through the
+private Console profile; see
+`phase2-m4c2d-private-console-policy-approval-catalog.md`. The boundary below
+records the M4c2c candidate as qualified at that time.
+
 ## Scope
 
 M4c2c exposes the retained M4c2a two-person approval workflow through the

@@ -1,7 +1,7 @@
 {
   "id": "console-cookie-csrf-private-v1",
   "format": "meshtransit-management-auth-profile/v1",
-  "description": "Private source contract only. No documentation endpoint, listener or SSO is enabled. Completed direct TLS 1.2+, exact configured Host/HTTPS Origin, origin-form POST, fresh Core Session and current exact-scope RBAC are mandatory. Authorization custody, query/encoded/alternate routing, Referer fallback, CORS and provider-token grants are forbidden. The reserved server is an example, never an operator default.",
+  "description": "Private source contract only. No documentation endpoint, listener or SSO is enabled. Completed direct TLS 1.2+, exact configured Host/HTTPS Origin, canonical origin-form request, fresh Core Session and current exact-scope RBAC are mandatory. Read-only approval catalog requests require the cookie and explicit session channel; every mutation additionally requires the current CSRF proof. Authorization custody, encoded/alternate routing, Referer fallback, CORS and provider-token grants are forbidden. The reserved server is an example, never an operator default.",
   "securitySchemes": {
     "accountSessionCookie": {
       "type": "apiKey",

@@ -23,7 +23,9 @@ import (
 	"github.com/meshtransit/meshtransit/internal/publicid"
 
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
+	approval "github.com/meshtransit/meshtransit/internal/policy/approval"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
 )
@@ -31,6 +33,7 @@ import (
 type browserManagementFixture struct {
 	at                                              time.Time
 	auth, budgets, revoke, publish, explain, logout int
+	approvalGet, approvalList                       int
 	sessionRevoked                                  bool
 }
 
@@ -91,6 +94,125 @@ func TestBrowserManagementOperationsKeepResourceContracts(t *testing.T) {
 				response.Header().Get("Www-Authenticate") != "" || strings.Contains(response.Body.String(), proof) ||
 				strings.Contains(response.Body.String(), managementTokenFixture) {
 				t.Fatal("mutation leaked credentials or changed optimistic version")
+			}
+		})
+	}
+}
+
+func TestBrowserManagementReadsPolicyApprovalCatalog(t *testing.T) {
+	t.Parallel()
+	browser, fixture := newBrowserManagementFixture(t)
+	snapshot := managementPolicyApprovalSnapshot(t, approval.StatePending)
+
+	getRequest := browserManagementReadRequest(
+		t, managementPolicyApprovalCollectionPath()+"/"+snapshot.RequestID().String(),
+	)
+	getResponse := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := browser.Handle(getResponse, getRequest); err != nil {
+		t.Fatal(err)
+	}
+	if getResponse.Code != http.StatusOK || getResponse.Header().Get("ETag") != `"1"` ||
+		getResponse.Header().Get("Cache-Control") != "no-store" || fixture.approvalGet != 1 {
+		t.Fatalf("approval get = %d/%+v/%s", getResponse.Code, getResponse.Header(), getResponse.Body.String())
+	}
+
+	listRequest := browserManagementReadRequest(
+		t, managementPolicyApprovalCollectionPath()+"?state=pending&page_size=1",
+	)
+	listResponse := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := browser.Handle(listResponse, listRequest); err != nil {
+		t.Fatal(err)
+	}
+	var body policyApprovalListEnvelope
+	if err := json.Unmarshal(listResponse.Body.Bytes(), &body); err != nil ||
+		listResponse.Code != http.StatusOK || len(body.Data) != 1 ||
+		body.Data[0].RequestID != snapshot.RequestID().String() || fixture.approvalList != 1 {
+		t.Fatalf("approval list = %d/%+v/%v", listResponse.Code, body, err)
+	}
+	if fixture.auth != 2 || fixture.budgets != 4 ||
+		getResponse.Header().Get("Set-Cookie") != "" || listResponse.Header().Get("Set-Cookie") != "" ||
+		getResponse.Header().Get("Www-Authenticate") != "" || listResponse.Header().Get("Www-Authenticate") != "" {
+		t.Fatal("approval reads bypassed fresh admission or released credential authority")
+	}
+}
+
+func TestBrowserManagementBuffersMaximumApprovalCatalogPage(t *testing.T) {
+	t.Parallel()
+	browser, _ := newBrowserManagementFixture(t)
+	snapshot := managementPolicyApprovalSnapshot(t, approval.StatePending)
+	items := make([]approval.Snapshot, approval.MaximumCatalogPageSize)
+	for index := range items {
+		items[index] = snapshot
+	}
+	browser.management.policyApprovalCatalog = &managementPolicyApprovalCatalog{
+		list: func(
+			_ context.Context,
+			_ accountsession.Session,
+			_ network.Scope,
+			state approval.State,
+			limit int,
+			_ approval.RequestID,
+		) (approval.CatalogPage, error) {
+			if state != approval.StatePending || limit != approval.MaximumCatalogPageSize {
+				return approval.CatalogPage{}, approval.ErrInvalidCatalogRequest
+			}
+			return approval.CatalogPage{Items: items}, nil
+		},
+	}
+	request := browserManagementReadRequest(
+		t,
+		managementPolicyApprovalCollectionPath()+"?state=pending&page_size=100",
+	)
+	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := browser.Handle(response, request); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || response.Body.Len() <= 32<<10 ||
+		response.Body.Len() > maximumBrowserManagementResponseBytes {
+		t.Fatalf("maximum approval page response = %d/%d", response.Code, response.Body.Len())
+	}
+}
+
+func TestBrowserManagementApprovalReadsRejectMutationTransport(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{
+		"body", "content type", "csrf", "if match", "idempotency", "transfer",
+		"item query", "post item", "get mutation",
+	} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			browser, fixture := newBrowserManagementFixture(t)
+			path := managementPolicyApprovalCollectionPath() + "/" +
+				managementPolicyApprovalSnapshot(t, approval.StatePending).RequestID().String()
+			request := browserManagementReadRequest(t, path)
+			switch mode {
+			case "body":
+				request.Body = io.NopCloser(strings.NewReader("{}"))
+				request.ContentLength = 2
+			case "content type":
+				request.Header.Set("Content-Type", "application/json")
+			case "csrf":
+				request.Header.Set("X-MeshTransit-CSRF", "unexpected")
+			case "if match":
+				request.Header.Set("If-Match", `"1"`)
+			case "idempotency":
+				request.Header.Set("Idempotency-Key", "unexpected")
+			case "transfer":
+				request.TransferEncoding = []string{"chunked"}
+			case "item query":
+				request.URL.RawQuery = "page_size=1"
+				request.RequestURI = request.URL.RequestURI()
+			case "post item":
+				request = browserManagementRequest(t, path, "{}")
+			case "get mutation":
+				request = browserManagementReadRequest(t, validManagementPath())
+			}
+			response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+			err := browser.Handle(response, request)
+			unexpectedEffect := fixture.auth+fixture.budgets+fixture.approvalGet+fixture.approvalList != 0
+			if !errors.Is(err, ErrInvalidBrowserManagement) || unexpectedEffect ||
+				response.statusWrites != 0 || response.Body.Len() != 0 || len(response.Header()) != 0 {
+				t.Fatal("unsafe approval read transport reached authority", err)
 			}
 		})
 	}
@@ -830,6 +952,35 @@ func browserManagementTestOptions(t *testing.T) (BrowserManagementOptions, *brow
 		t.Fatal(err)
 	}
 	options.PolicyExplanations = explainer
+	snapshot := managementPolicyApprovalSnapshot(t, approval.StatePending)
+	options.PolicyApprovalCatalog = &managementPolicyApprovalCatalog{
+		get: func(
+			_ context.Context,
+			_ accountsession.Session,
+			_ network.Scope,
+			requestID approval.RequestID,
+		) (approval.Snapshot, error) {
+			fixture.approvalGet++
+			if requestID != snapshot.RequestID() {
+				return approval.Snapshot{}, approval.ErrRequestNotFound
+			}
+			return snapshot, nil
+		},
+		list: func(
+			_ context.Context,
+			_ accountsession.Session,
+			_ network.Scope,
+			state approval.State,
+			limit int,
+			_ approval.RequestID,
+		) (approval.CatalogPage, error) {
+			fixture.approvalList++
+			if state != approval.StatePending || limit != 1 {
+				return approval.CatalogPage{}, approval.ErrInvalidCatalogRequest
+			}
+			return approval.CatalogPage{Items: []approval.Snapshot{snapshot}}, nil
+		},
+	}
 	handler, err := NewManagementHandler(options)
 	if err != nil {
 		t.Fatal(err)
@@ -871,6 +1022,18 @@ func browserManagementRequest(t *testing.T, path, body string) *http.Request {
 	request.Header.Set("Origin", "https://console.example.test")
 	request.Header.Set("X-MeshTransit-Session", "v1")
 	request.Header.Set("Cookie", AccountSessionCookieName+"="+managementTokenFixture)
+	return request
+}
+
+func browserManagementReadRequest(t *testing.T, path string) *http.Request {
+	t.Helper()
+	request := browserManagementRequest(t, path, "")
+	request.Method = http.MethodGet
+	request.Body = http.NoBody
+	request.ContentLength = 0
+	request.Header.Del("Content-Type")
+	request.Header.Del("Idempotency-Key")
+	request.Header.Del("If-Match")
 	return request
 }
 

@@ -76,7 +76,9 @@ func TestConsoleManagementOperationRejectsAuthenticationOrMethodDrift(t *testing
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			body, err := consoleManagementOperation(json.RawMessage(test.item), "revokeDevice")
+			body, err := consoleManagementOperation(
+				json.RawMessage(test.item), "post", "revokeDevice", true,
+			)
 			if body != nil || !errors.Is(err, ErrInvalidManagementProfile) {
 				t.Fatal("unreviewed operation negotiated another transport or method")
 			}

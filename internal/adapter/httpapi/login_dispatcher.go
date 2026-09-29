@@ -142,13 +142,20 @@ func (dispatcher *LoginDispatcher) Handle(response http.ResponseWriter, request 
 }
 
 func isBrowserManagementOperation(request *http.Request) bool {
-	if request == nil || request.Method != http.MethodPost {
+	if request == nil {
 		return false
 	}
 	_, device := parseDeviceRevokePath(request)
 	_, policy := parsePolicyPublishPath(request)
+	_, simulation := parsePolicySimulationPath(request)
+	approvalPath, approval := parsePolicyApprovalPath(request)
 	_, accessGraph := parseAccessGraphExplainPath(request)
-	return device || policy || accessGraph
+	if request.Method == http.MethodPost {
+		return device || policy || simulation || accessGraph ||
+			approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.isAction())
+	}
+	return request.Method == http.MethodGet && approval &&
+		(approvalPath.kind == policyApprovalPathCollection || approvalPath.kind == policyApprovalPathItem)
 }
 
 func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, request *http.Request) bool {
@@ -175,7 +182,10 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 		return false
 	}
 	callback := target.Path == dispatcher.browser.reader.path && request.Method == http.MethodGet
-	return callback || target.RawQuery == ""
+	approvalPath, approval := parsePolicyApprovalPath(request)
+	approvalList := approval && request.Method == http.MethodGet &&
+		approvalPath.kind == policyApprovalPathCollection
+	return callback || approvalList || target.RawQuery == ""
 }
 
 // MetricsCollector permits private root registration only, never a public endpoint.

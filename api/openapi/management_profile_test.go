@@ -65,7 +65,7 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal("private document retained deployment topology")
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
-	if len(basePaths) != 23 || len(paths) != 8 {
+	if len(basePaths) != 23 || len(paths) != 9 {
 		t.Fatal("private profile introduced another product resource API")
 	}
 	for _, path := range []string{
@@ -78,7 +78,11 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 	} {
 		baseOperation := profileMap(t, profileMap(t, basePaths, path), "post")
 		item := profileMap(t, paths, path)
-		if len(item) != 1 {
+		expectedMethods := 1
+		if path == "/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy/approval-requests" {
+			expectedMethods = 2
+		}
+		if len(item) != expectedMethods {
 			t.Fatal("resource profile added a method or inherited parameters")
 		}
 		operation := profileMap(t, item, "post")
@@ -103,6 +107,36 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 				"$ref": "#/components/parameters/" + name,
 			}) {
 				t.Fatal("mutation omitted a required browser parameter")
+			}
+		}
+	}
+	for _, path := range []string{
+		"/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy/approval-requests",
+		"/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy/approval-requests/{approval_request_id}",
+	} {
+		baseOperation := profileMap(t, profileMap(t, basePaths, path), "get")
+		operation := profileMap(t, profileMap(t, paths, path), "get")
+		expectedSecurity := []any{map[string]any{"accountSessionCookie": []any{}}}
+		if !reflect.DeepEqual(operation["security"], expectedSecurity) {
+			t.Fatal("approval catalog read gained mutation proof or a Bearer/anonymous fallback")
+		}
+		for key, expected := range baseOperation {
+			resourceField := key != "security" && key != "parameters"
+			if resourceField && !reflect.DeepEqual(operation[key], expected) {
+				t.Fatalf("approval catalog contract drifted at %s", key)
+			}
+		}
+		baseParameters := profileArray(t, baseOperation, "parameters")
+		parameters := profileArray(t, operation, "parameters")
+		if len(parameters) != len(baseParameters)+2 ||
+			!reflect.DeepEqual(parameters[:len(baseParameters)], baseParameters) {
+			t.Fatal("approval catalog scope/filter parameters changed")
+		}
+		for index, name := range []string{"ConsoleOrigin", "ConsoleSessionChannel"} {
+			if !reflect.DeepEqual(parameters[len(baseParameters)+index], map[string]any{
+				"$ref": "#/components/parameters/" + name,
+			}) {
+				t.Fatal("approval catalog read omitted required browser intent")
 			}
 		}
 	}

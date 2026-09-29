@@ -2,6 +2,9 @@
 
 Status date: 2026-09-29
 
+Follow-up: M4c2d later supersedes only the qualified browser-read omission in
+`M4C2C-12`; this matrix remains the historical M4c2c candidate evidence.
+
 This record is engineering evidence for the local M4c2c proposal, catalog, and
 independent-decision workflow. It does not qualify a deployed Console workflow,
 production SLO, HA, legal approval, release, or GA.

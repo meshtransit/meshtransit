@@ -16,6 +16,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/adapter/oidc"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
+	approval "github.com/meshtransit/meshtransit/internal/policy/approval"
 )
 
 func dispatcherTestGraph(t *testing.T) (*LoginDispatcher, *loginHTTPFixture, *completionTestPort) {
@@ -273,6 +274,56 @@ func TestLoginDispatcherPreservesBrowserManagementOperationOwnership(t *testing.
 			if response.Header().Get("ETag") != expectedETag || response.Header().Get("Set-Cookie") != "" ||
 				response.Header().Get("Www-Authenticate") != "" {
 				t.Fatal("browser management mutation changed resource or credential ownership")
+			}
+		})
+	}
+}
+
+func TestLoginDispatcherPreservesApprovalCatalogOwnership(t *testing.T) {
+	t.Parallel()
+	dispatcher, fixture, callback, management := dispatcherTestGraphWithManagement(t)
+	snapshot := managementPolicyApprovalSnapshot(t, approval.StatePending)
+	for _, path := range []string{
+		managementPolicyApprovalCollectionPath() + "/" + snapshot.RequestID().String(),
+		managementPolicyApprovalCollectionPath() + "?state=pending&page_size=1",
+	} {
+		request := browserManagementReadRequest(t, path)
+		response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+		if err := dispatcher.Handle(response, request); err != nil {
+			t.Fatal("approval catalog read did not reach its exact owner", err)
+		}
+		if response.Code != http.StatusOK || response.statusWrites != 1 ||
+			len(fixture.calls) != 0 || callback.calls != 0 || response.Header().Get("Set-Cookie") != "" ||
+			response.Header().Get("Www-Authenticate") != "" {
+			t.Fatal("approval catalog read crossed owner boundaries")
+		}
+	}
+	if management.auth != 2 || management.budgets != 4 ||
+		management.approvalGet != 1 || management.approvalList != 1 {
+		t.Fatal("approval catalog read skipped fresh private admission")
+	}
+}
+
+func TestLoginDispatcherOwnsNewPolicyMutationRoutes(t *testing.T) {
+	t.Parallel()
+	for _, path := range []string{
+		managementPolicySimulationPath(),
+		managementPolicyApprovalCollectionPath(),
+		managementPolicyApprovalCollectionPath() + "/01890f00-0000-7000-8000-000000000901/actions/approve",
+	} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			dispatcher, fixture, callback, management := dispatcherTestGraphWithManagement(t)
+			proof := preparedBrowserProof(t, dispatcher.management)
+			request := browserManagementRequest(t, path, "{}")
+			request.Header.Set("X-MeshTransit-CSRF", proof)
+			response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+			if err := dispatcher.Handle(response, request); err != nil {
+				t.Fatal("policy mutation did not reach browser management", err)
+			}
+			if response.statusWrites != 1 || management.auth != 2 || management.budgets != 4 ||
+				len(fixture.calls) != 0 || callback.calls != 0 {
+				t.Fatal("policy mutation crossed owner boundaries")
 			}
 		})
 	}

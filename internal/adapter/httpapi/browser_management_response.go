@@ -8,7 +8,9 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 )
 
-const maximumBrowserManagementResponseBytes = 32768
+// The largest catalog page is 100 bounded approval projections. At the maximum
+// 128 concurrent private requests this caps buffered response ownership at 32 MiB.
+const maximumBrowserManagementResponseBytes = 256 << 10
 
 // This finite private candidate has no underlying transport and cannot release
 // status/body while authority processing is still in progress.

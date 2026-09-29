@@ -28,6 +28,8 @@ const (
 		"policy/actions/simulate"
 	policyApprovalRequestPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"policy/approval-requests"
+	policyApprovalItemPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
+		"policy/approval-requests/{approval_request_id}"
 	policyApprovalApprovePath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"policy/approval-requests/{approval_request_id}/actions/approve"
 	accessGraphExplainPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
@@ -109,19 +111,37 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	if err != nil || !managementBearerScheme(components["securitySchemes"]) {
 		return nil, ErrInvalidManagementProfile
 	}
-	consolePaths := make(map[string]json.RawMessage, 8)
-	for path, operationID := range map[string]string{
-		deviceRevokePath: "revokeDevice", policyPublishPath: "publishPolicy",
-		policySimulatePath:        "simulatePolicy",
-		policyApprovalRequestPath: "requestPolicyApproval",
-		policyApprovalApprovePath: "approvePolicyApprovalRequest",
-		accessGraphExplainPath:    "explainActivePolicy",
-	} {
-		operation, err := consoleManagementOperation(paths[path], operationID)
+	type consoleOperation struct {
+		path, method, operationID string
+		mutation                  bool
+	}
+	operations := []consoleOperation{
+		{deviceRevokePath, "post", "revokeDevice", true},
+		{policyPublishPath, "post", "publishPolicy", true},
+		{policySimulatePath, "post", "simulatePolicy", true},
+		{policyApprovalRequestPath, "get", "listPolicyApprovalRequests", false},
+		{policyApprovalRequestPath, "post", "requestPolicyApproval", true},
+		{policyApprovalItemPath, "get", "getPolicyApprovalRequest", false},
+		{policyApprovalApprovePath, "post", "approvePolicyApprovalRequest", true},
+		{accessGraphExplainPath, "post", "explainActivePolicy", true},
+	}
+	consolePathItems := make(map[string]map[string]json.RawMessage, 7)
+	for _, specification := range operations {
+		operation, err := consoleManagementOperation(
+			paths[specification.path], specification.method, specification.operationID, specification.mutation,
+		)
 		if err != nil {
 			return nil, ErrInvalidManagementProfile
 		}
-		consolePaths[path] = operation
+		item := consolePathItems[specification.path]
+		if item == nil {
+			item = make(map[string]json.RawMessage, 2)
+			consolePathItems[specification.path] = item
+		}
+		if item[specification.method] != nil {
+			return nil, ErrInvalidManagementProfile
+		}
+		item[specification.method] = operation
 	}
 	for section, additions := range map[string]map[string]json.RawMessage{
 		"parameters": profile.Parameters, "schemas": profile.Schemas,
@@ -144,6 +164,13 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	components["securitySchemes"], err = json.Marshal(profile.SecuritySchemes)
 	if err != nil {
 		return nil, ErrInvalidManagementProfile
+	}
+	consolePaths := make(map[string]json.RawMessage, len(consolePathItems)+2)
+	for path, item := range consolePathItems {
+		consolePaths[path], err = json.Marshal(item)
+		if err != nil {
+			return nil, ErrInvalidManagementProfile
+		}
 	}
 	consolePaths[consoleSessionPreparePath] = profile.Prepare
 	consolePaths[consoleSessionLogoutPath] = profile.Logout
@@ -177,12 +204,20 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	return body, nil
 }
 
-func consoleManagementOperation(item json.RawMessage, operationID string) (json.RawMessage, error) {
+func consoleManagementOperation(
+	item json.RawMessage,
+	method string,
+	operationID string,
+	mutation bool,
+) (json.RawMessage, error) {
 	methods, err := managementObject(item)
 	if err != nil || len(methods) < 1 || len(methods) > 2 {
 		return nil, ErrInvalidManagementProfile
 	}
-	operation, err := managementObject(methods["post"])
+	if method != "get" && method != "post" {
+		return nil, ErrInvalidManagementProfile
+	}
+	operation, err := managementObject(methods[method])
 	if err != nil {
 		return nil, ErrInvalidManagementProfile
 	}
@@ -206,23 +241,22 @@ func consoleManagementOperation(item json.RawMessage, operationID string) (json.
 	if err := json.Unmarshal(operation["parameters"], &parameters); err != nil || len(parameters) == 0 {
 		return nil, ErrInvalidManagementProfile
 	}
-	for _, name := range []string{"ConsoleOrigin", "ConsoleSessionChannel", "ConsoleSessionProof"} {
+	parametersToAdd := []string{"ConsoleOrigin", "ConsoleSessionChannel"}
+	if mutation {
+		parametersToAdd = append(parametersToAdd, "ConsoleSessionProof")
+	}
+	for _, name := range parametersToAdd {
 		parameters = append(parameters, json.RawMessage(`{"$ref":"#/components/parameters/`+name+`"}`))
 	}
 	operation["parameters"], err = json.Marshal(parameters)
 	if err != nil {
 		return nil, ErrInvalidManagementProfile
 	}
-	operation["security"] = json.RawMessage(`[{"accountSessionCookie":[],"sessionCSRF":[]}]`)
-	post, err := json.Marshal(operation)
-	if err != nil {
-		return nil, ErrInvalidManagementProfile
+	operation["security"] = json.RawMessage(`[{"accountSessionCookie":[]}]`)
+	if mutation {
+		operation["security"] = json.RawMessage(`[{"accountSessionCookie":[],"sessionCSRF":[]}]`)
 	}
-	body, err := json.Marshal(map[string]json.RawMessage{"post": post})
-	if err != nil {
-		return nil, ErrInvalidManagementProfile
-	}
-	return body, nil
+	return json.Marshal(operation)
 }
 
 func managementObject(body []byte) (map[string]json.RawMessage, error) {

@@ -159,13 +159,6 @@ func (handler *ManagementHandler) handlePolicyApproval(
 			ctx, response, request, correlationID, path, session, browser,
 		)
 	}
-	if browser != nil {
-		writeManagementError(ctx, handler.logger, response, correlationID, managementError{
-			Status: http.StatusNotFound, Code: "not_found",
-			Message: "the requested resource is unavailable",
-		})
-		return "not_found"
-	}
 	if handler.policyApprovalCatalog == nil {
 		return handler.writePolicyApprovalUnavailable(ctx, response, correlationID)
 	}

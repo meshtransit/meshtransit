@@ -160,7 +160,24 @@ func integrationClaimVerifiedWithNonce(ctx context.Context, t *testing.T, store 
 	}
 	verified, err := verify.VerifyBrowser(ctx, template.Route(), state, started.PreAuthCookie())
 	if err != nil {
-		t.Fatal(err)
+		digest, digestErr := dependencies.DigestKey.State(
+			template.Route().DeploymentID(), template.Route().RecoveryEpoch(), state,
+		)
+		if digestErr != nil {
+			t.Fatalf("durable browser verification error=%v; diagnostic digest failed", err)
+		}
+		snapshot, found, loadErr := store.LoadPending(ctx, template.Route(), digest)
+		now := time.Now().UTC()
+		t.Fatalf(
+			"durable browser verification error=%v; found=%t load_failed=%t route_match=%t "+
+				"created_offset=%s expiry_remaining=%s",
+			err,
+			found,
+			loadErr != nil,
+			snapshot.MatchesRoute(template.Route()),
+			snapshot.CreatedAt().Sub(now),
+			snapshot.ExpiresAt().Sub(now),
+		)
 	}
 	return verified, nonce
 }

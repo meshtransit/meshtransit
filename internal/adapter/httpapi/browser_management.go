@@ -223,7 +223,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	_, policy := parsePolicyPublishPath(request)
 	_, simulation := parsePolicySimulationPath(request)
 	approvalPath, approvalMatched := parsePolicyApprovalPath(request)
-	approval := approvalMatched && (approvalPath.kind == policyApprovalPathCollection || approvalPath.isAction())
+	approval := approvalMatched && approvalPath.allowedMethod(request.Method) == request.Method
 	_, accessGraph := parseAccessGraphExplainPath(request)
 	if !prepare && !logout && !device && !policy && !simulation && !approval && !accessGraph {
 		return ErrInvalidBrowserManagement
@@ -233,6 +233,8 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		operation = "prepare"
 	} else if logout {
 		operation = "logout"
+	} else if request.Method == http.MethodGet {
+		operation = "read"
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), browser.management.timeout)
 	defer cancel()
@@ -255,7 +257,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	}
 	request = request.WithContext(ctx)
 	candidate := &browserManagementResponse{header: response.Header().Clone()}
-	admission := &browserManagementAdmission{browser: browser}
+	admission := &browserManagementAdmission{browser: browser, requiresProof: request.Method != http.MethodGet}
 	if prepare {
 		if err := browser.prepare(ctx, candidate, request, admission); err != nil {
 			return err
@@ -379,7 +381,8 @@ func (browser *BrowserManagement) endSession(
 func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	target, transport := request.URL, request.TLS
 	validTransport := transport != nil && transport.HandshakeComplete && transport.Version >= tls.VersionTLS12
-	if target == nil || !validTransport || request.Method != http.MethodPost || request.Host != browser.host {
+	if target == nil || !validTransport || request.Host != browser.host ||
+		(request.Method != http.MethodGet && request.Method != http.MethodPost) {
 		return false
 	}
 	if len(target.Path) > 512 || !canonicalCallbackPath(target.Path) || !boundedLoginHeaders(request.Header) {
@@ -388,18 +391,38 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	if target.RawPath != "" || target.Scheme != "" || target.Host != "" || target.User != nil || target.Opaque != "" {
 		return false
 	}
-	if target.RawQuery != "" || target.ForceQuery || target.Fragment != "" || target.RawFragment != "" ||
-		request.RequestURI != target.Path {
+	if target.ForceQuery || target.Fragment != "" || target.RawFragment != "" ||
+		request.RequestURI != target.RequestURI() {
 		return false
 	}
-	invalidBodyTransport := request.ContentLength < 0 || len(request.TransferEncoding) != 0 || len(request.Trailer) != 0
-	if nilContinuationDependency(request.Body) || invalidBodyTransport {
+	approvalPath, approvalMatched := parsePolicyApprovalPath(request)
+	approvalRead := approvalMatched && request.Method == http.MethodGet &&
+		(approvalPath.kind == policyApprovalPathCollection || approvalPath.kind == policyApprovalPathItem)
+	if request.Method == http.MethodGet && !approvalRead {
 		return false
+	}
+	queryAllowed := approvalRead && approvalPath.kind == policyApprovalPathCollection
+	if (!queryAllowed && target.RawQuery != "") || len(target.RawQuery) > maximumCallbackQueryBytes {
+		return false
+	}
+	if approvalRead {
+		if !validResourceReadHeaders(request) {
+			return false
+		}
+		if _, present := request.Header["X-Meshtransit-Csrf"]; present {
+			return false
+		}
+	} else {
+		invalidBodyTransport := request.ContentLength < 0 || len(request.TransferEncoding) != 0 ||
+			len(request.Trailer) != 0
+		if nilContinuationDependency(request.Body) || invalidBodyTransport {
+			return false
+		}
 	}
 	maximumBody := int64(maximumManagementBodyBytes)
 	_, policy := parsePolicyPublishPath(request)
 	_, simulation := parsePolicySimulationPath(request)
-	approvalPath, approval := parsePolicyApprovalPath(request)
+	_, approval := parsePolicyApprovalPath(request)
 	if policy || simulation || approval && approvalPath.kind == policyApprovalPathCollection {
 		maximumBody = maximumPolicyPublicationBodyBytes
 	}
@@ -415,7 +438,9 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	}
 	invalidIntent := singleHeader(request.Header, "Origin") != browser.origin ||
 		singleHeader(request.Header, "X-Meshtransit-Session") != "v1"
-	if invalidIntent || !validJSONContentType(singleHeader(request.Header, "Content-Type")) {
+	invalidContentType := request.Method == http.MethodPost &&
+		!validJSONContentType(singleHeader(request.Header, "Content-Type"))
+	if invalidIntent || invalidContentType {
 		return false
 	}
 	if values, present := request.Header["Content-Length"]; present {
@@ -486,6 +511,7 @@ func (browser *BrowserManagement) prepare(
 	}
 	admission.token, admission.session, admission.proof = token, session, proof
 	admission.hasSession = true
+	admission.requiresProof = true
 	if err := admission.validateFresh(ctx, time.Second); err != nil {
 		return ErrBrowserManagementUnavailable
 	}
@@ -534,11 +560,12 @@ func (browser *BrowserManagement) budget(ctx context.Context, budget continuatio
 }
 
 type browserManagementAdmission struct {
-	browser    *BrowserManagement
-	token      accountsession.Token
-	session    accountsession.Session
-	proof      browserSessionProof
-	hasSession bool
+	browser       *BrowserManagement
+	token         accountsession.Token
+	session       accountsession.Session
+	proof         browserSessionProof
+	hasSession    bool
+	requiresProof bool
 }
 
 func (admission *browserManagementAdmission) authenticate(
@@ -550,9 +577,14 @@ func (admission *browserManagementAdmission) authenticate(
 	if err != nil || token.DeploymentID() != browser.deploymentID {
 		return accountsession.Session{}, accountsession.ErrUnauthenticated
 	}
-	proof, err := browser.readProof(token, singleHeader(request.Header, "X-Meshtransit-Csrf"), browser.clock.Now())
-	if err != nil {
-		return accountsession.Session{}, accountsession.ErrUnauthenticated
+	proof := browserSessionProof{}
+	if admission.requiresProof {
+		proof, err = browser.readProof(
+			token, singleHeader(request.Header, "X-Meshtransit-Csrf"), browser.clock.Now(),
+		)
+		if err != nil {
+			return accountsession.Session{}, accountsession.ErrUnauthenticated
+		}
 	}
 	session, err := browser.management.sessions.Authenticate(ctx, token)
 	if err != nil {
@@ -589,15 +621,17 @@ func (admission *browserManagementAdmission) validateFresh(ctx context.Context, 
 	if !browser.activeSession(admission.token, admission.session, now) {
 		return accountsession.ErrUnauthenticated
 	}
-	if admission.proof.expires.After(admission.session.IdleExpiresAt()) ||
-		admission.proof.expires.After(admission.session.AbsoluteExpiresAt()) {
-		return accountsession.ErrUnauthenticated
-	}
-	if _, err := browser.readProof(admission.token, admission.proof.encoded, now); err != nil {
-		return accountsession.ErrUnauthenticated
-	}
-	if admission.proof.expires.Sub(now) < minimumRemaining {
-		return accountsession.ErrUnauthenticated
+	if admission.requiresProof {
+		if admission.proof.expires.After(admission.session.IdleExpiresAt()) ||
+			admission.proof.expires.After(admission.session.AbsoluteExpiresAt()) {
+			return accountsession.ErrUnauthenticated
+		}
+		if _, err := browser.readProof(admission.token, admission.proof.encoded, now); err != nil {
+			return accountsession.ErrUnauthenticated
+		}
+		if admission.proof.expires.Sub(now) < minimumRemaining {
+			return accountsession.ErrUnauthenticated
+		}
 	}
 	// The clock is a port too: no late cancellation may hide behind a valid
 	// timestamp/MAC. Freshness and remaining lifetime share exactly this snapshot.
