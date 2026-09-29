@@ -52,25 +52,34 @@ func assertAuthorityConstraints(ctx context.Context, t *testing.T, connection *p
 	t.Helper()
 
 	tests := []struct {
-		name      string
-		networkID int64
-		prefixID  int64
-		prefix    string
-		wantCode  string
+		name        string
+		workspaceID int64
+		networkID   int64
+		realmID     int64
+		poolID      int64
+		prefixID    int64
+		prefix      string
+		wantCode    string
 	}{
 		{
-			name:      "overlapping prefix in one realm",
-			networkID: 201,
-			prefixID:  503,
-			prefix:    "100.64.1.128/25",
-			wantCode:  "23P01",
+			name:        "overlapping prefix in one realm",
+			workspaceID: 101,
+			networkID:   201,
+			realmID:     301,
+			poolID:      401,
+			prefixID:    503,
+			prefix:      "100.64.1.128/25",
+			wantCode:    "23P01",
 		},
 		{
-			name:      "cross workspace network substitution",
-			networkID: 202,
-			prefixID:  504,
-			prefix:    "100.64.2.0/24",
-			wantCode:  "23503",
+			name:        "cross workspace network substitution",
+			workspaceID: 101,
+			networkID:   202,
+			realmID:     301,
+			poolID:      401,
+			prefixID:    504,
+			prefix:      "100.64.2.0/24",
+			wantCode:    "23503",
 		},
 	}
 	for _, test := range tests {
@@ -80,14 +89,47 @@ func assertAuthorityConstraints(ctx context.Context, t *testing.T, connection *p
 				t.Fatalf("begin constraint transaction: %v", err)
 			}
 			defer rollbackIntegrationTransaction(ctx, t, transaction)
-			setIntegrationScope(ctx, t, transaction, 101, test.networkID)
+			setIntegrationScope(ctx, t, transaction, test.workspaceID, test.networkID)
 			_, err = transaction.Exec(ctx, `INSERT INTO mesh.network_prefix (
     id, public_id, workspace_id, network_id, address_realm_id, address_pool_id, prefix, family, state
 ) OVERRIDING SYSTEM VALUE VALUES (
-    $1, '01890f00-0000-7000-8000-000000000999', 101, $2, 301, 401, $3, 4, 'active'
-)`, test.prefixID, test.networkID, test.prefix)
+    $1, $2::UUID, $3, $4, $5, $6, $7, 4, 'active'
+)`,
+				test.prefixID,
+				integrationPublicID("01890f00-0000-7000-8000-", test.prefixID),
+				test.workspaceID,
+				test.networkID,
+				test.realmID,
+				test.poolID,
+				test.prefix,
+			)
 			assertPostgreSQLCode(t, err, test.wantCode)
 		})
+	}
+
+	var ownedWorkspaceCount, crossWorkspaceCIDRReuseCount int
+	if err := connection.QueryRow(ctx, `SELECT
+    (SELECT pg_catalog.count(*)::INTEGER
+     FROM mesh.workspace
+     WHERE deployment_id = 1 AND owner_principal_id = 11 AND state = 'active'),
+    (SELECT pg_catalog.count(*)::INTEGER
+     FROM mesh.network_prefix AS first_prefix
+     JOIN mesh.network_prefix AS second_prefix
+       ON second_prefix.workspace_id > first_prefix.workspace_id
+      AND second_prefix.address_realm_id <> first_prefix.address_realm_id
+      AND second_prefix.prefix = first_prefix.prefix
+      AND second_prefix.state = 'active'
+     WHERE first_prefix.state = 'active')`).Scan(
+		&ownedWorkspaceCount,
+		&crossWorkspaceCIDRReuseCount,
+	); err != nil {
+		t.Fatalf("query Workspace ownership and CIDR isolation: %v", err)
+	}
+	if ownedWorkspaceCount < 2 {
+		t.Fatalf("active Workspaces owned by one Principal = %d, want at least 2", ownedWorkspaceCount)
+	}
+	if crossWorkspaceCIDRReuseCount < 1 {
+		t.Fatalf("cross-Workspace reused CIDRs = %d, want at least 1", crossWorkspaceCIDRReuseCount)
 	}
 }
 

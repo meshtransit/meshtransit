@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/resource"
 	"github.com/meshtransit/meshtransit/internal/sharing"
@@ -200,6 +201,225 @@ func assertPostgreSQLResourceSharing(
 		t.Fatalf("cross-Workspace Resource Sharing list error = %v, want forbidden", err)
 	}
 	assertCommittedResourceSharingEvidence(ctx, t, admin, createdOffer.Offer().ID(), contract.ID())
+	assertCrossWorkspaceResourceSharingConsent(
+		ctx, t, admin, service, providerScope, resourceID, maximumTraffic, reason,
+	)
+}
+
+func assertCrossWorkspaceResourceSharingConsent(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	service *sharing.Service,
+	providerScope network.Scope,
+	resourceID resource.ID,
+	maximumTraffic sharing.TrafficSet,
+	reason sharing.AuditReason,
+) {
+	t.Helper()
+	seedCrossWorkspaceShareConsumerAuthority(ctx, t, admin)
+	providerSession := managementRBACAccountSessionFixture(t)
+	consumerSession := authorityConfirmerAccountSessionFixture(t)
+	consumerScope := resourceAuthorityScope(t, 102, 202)
+	createCommand, err := sharing.NewCreateOffer(sharing.CreateOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		ResourceID: resourceID, MaximumTraffic: maximumTraffic,
+		ExpiresAt: time.Now().UTC().Add(time.Hour), AccountSession: providerSession,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 121),
+	})
+	if err != nil {
+		t.Fatalf("construct cross-Workspace Share Offer: %v", err)
+	}
+	created, err := service.CreateOffer(ctx, createCommand)
+	if err != nil {
+		t.Fatalf("create cross-Workspace Share Offer: %v", err)
+	}
+	offer, hasOffer := created.Offer()
+	token, hasToken := created.Token()
+	if !hasOffer || !hasToken ||
+		offer.Offer().ScopeRelation() != sharing.ScopeRelationCrossWorkspace ||
+		!offer.Offer().ScopeRelation().RequiresIndependentWorkspaceConsent() {
+		t.Fatalf("cross-Workspace Share Offer = %+v", created)
+	}
+	importedName, err := resource.ParseDisplayName("Cross Workspace production Resource")
+	if err != nil {
+		t.Fatalf("parse cross-Workspace Imported Resource name: %v", err)
+	}
+	providerDecision, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		OfferID: offer.Offer().ID(), ExpectedOfferVersion: offer.Offer().Version(),
+		Token: token, Action: sharing.DecisionActionAccept,
+		ImportedDisplayName: importedName, AccountSession: providerSession,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 122),
+	})
+	if err != nil {
+		t.Fatalf("construct unauthorized provider acceptance: %v", err)
+	}
+	if _, err := service.DecideOffer(ctx, providerDecision); !errors.Is(err, sharing.ErrForbidden) {
+		t.Fatalf("provider accepted for foreign Workspace: error = %v, want forbidden", err)
+	}
+	consumerDecision, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		OfferID: offer.Offer().ID(), ExpectedOfferVersion: offer.Offer().Version(),
+		Token: token, Action: sharing.DecisionActionAccept,
+		ImportedDisplayName: importedName, AccountSession: consumerSession,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 123),
+	})
+	if err != nil {
+		t.Fatalf("construct consumer acceptance: %v", err)
+	}
+	accepted, err := service.DecideOffer(ctx, consumerDecision)
+	if err != nil {
+		t.Fatalf("consumer accept cross-Workspace Share Offer: %v", err)
+	}
+	contract, hasContract := accepted.Contract()
+	if !hasContract || contract.State() != sharing.ContractStateActivating ||
+		contract.ScopeRelation() != sharing.ScopeRelationCrossWorkspace {
+		t.Fatalf("cross-Workspace accepted contract = %+v", accepted)
+	}
+	assertCrossWorkspaceSharingConsentEvidence(ctx, t, admin, offer.Offer().ID())
+
+	var networkCount int
+	if err := admin.QueryRow(ctx, `SELECT pg_catalog.count(*)::INTEGER
+FROM mesh.network WHERE workspace_id = 103 AND state = 'active'`).Scan(&networkCount); err != nil {
+		t.Fatalf("query Workspace Network cardinality: %v", err)
+	}
+	if networkCount < 2 {
+		t.Fatalf("active Networks in Workspace = %d, want at least 2", networkCount)
+	}
+}
+
+func seedCrossWorkspaceShareConsumerAuthority(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+) {
+	t.Helper()
+	var networkRevision int64
+	if err := admin.QueryRow(ctx, `SELECT network_revision
+FROM mesh_ops.network_revision
+WHERE workspace_id = 102 AND network_id = 202`).Scan(&networkRevision); err != nil {
+		t.Fatalf("query cross-Workspace consumer Network revision: %v", err)
+	}
+	commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
+		changePublicID:         "01890f01-0000-7000-8000-000000000869",
+		eventPublicID:          "01890f02-0000-7000-8000-000000000869",
+		outboxPublicID:         "01890f03-0000-7000-8000-000000000869",
+		streamID:               202,
+		aggregateKind:          "role_binding",
+		aggregatePublicID:      "01890f00-0000-7000-8000-000000000869",
+		aggregateVersion:       1,
+		networkRevision:        networkRevision,
+		actorPrincipalPublicID: "01890f00-0000-7000-8000-000000000011",
+		action:                 "cross_workspace_share_authority.seeded",
+		permission:             "system.bootstrap",
+		outboxEventClass:       "cross_workspace_share_authority.seeded",
+	}, func(transaction pgx.Tx) {
+		statements := []struct {
+			name  string
+			query string
+		}{
+			{
+				name: "cross-Workspace consumer membership",
+				query: `INSERT INTO mesh.workspace_membership (
+    id, public_id, deployment_id, workspace_id, principal_id,
+    state, authority_generation, valid_from
+) OVERRIDING SYSTEM VALUE VALUES (
+    864, '01890f00-0000-7000-8000-000000000864', 1, 102, 13,
+    'active', 1, pg_catalog.transaction_timestamp() - INTERVAL '1 minute'
+)`,
+			},
+			{
+				name: "cross-Workspace share manager role",
+				query: `INSERT INTO mesh.role_definition (
+    id, public_id, deployment_id, workspace_id, role_key, display_name,
+    kind, state, authority_generation
+) OVERRIDING SYSTEM VALUE VALUES (
+    865, '01890f00-0000-7000-8000-000000000865', 1, 102,
+    'resource_share_manager', 'Resource Share Manager', 'custom', 'active', 1
+)`,
+			},
+			{
+				name: "cross-Workspace share read permission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 866, '01890f00-0000-7000-8000-000000000866', 1, 102, 865, permission.id
+FROM mesh.permission AS permission WHERE permission.permission_key = 'share.read'`,
+			},
+			{
+				name: "cross-Workspace share accept permission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 867, '01890f00-0000-7000-8000-000000000867', 1, 102, 865, permission.id
+FROM mesh.permission AS permission WHERE permission.permission_key = 'share.accept'`,
+			},
+			{
+				name: "cross-Workspace share revoke permission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 868, '01890f00-0000-7000-8000-000000000868', 1, 102, 865, permission.id
+FROM mesh.permission AS permission WHERE permission.permission_key = 'share.revoke'`,
+			},
+			{
+				name: "cross-Workspace consumer Network binding",
+				query: `INSERT INTO mesh.role_binding (
+    id, public_id, deployment_id, workspace_id, network_id, principal_id,
+    workspace_membership_id, role_definition_id, state,
+    authority_generation, valid_from
+) OVERRIDING SYSTEM VALUE VALUES (
+    869, '01890f00-0000-7000-8000-000000000869', 1, 102, 202, 13,
+    864, 865, 'active', 1, pg_catalog.transaction_timestamp() - INTERVAL '1 minute'
+)`,
+			},
+		}
+		for _, statement := range statements {
+			if _, err := transaction.Exec(ctx, statement.query); err != nil {
+				t.Fatalf("insert %s: %v", statement.name, err)
+			}
+		}
+	})
+}
+
+func assertCrossWorkspaceSharingConsentEvidence(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	offerID sharing.OfferID,
+) {
+	t.Helper()
+	var providerConsent, consumerConsent int
+	if err := admin.QueryRow(ctx, `SELECT
+    pg_catalog.count(*) FILTER (
+        WHERE action = 'share_offer.created'
+          AND permission = 'share.offer'
+          AND actor_principal_public_id = '01890f00-0000-7000-8000-000000000011'::UUID
+          AND payload->>'scope_relation' = 'cross_workspace'
+          AND payload->>'authority_side' = 'provider'
+    )::INTEGER,
+    pg_catalog.count(*) FILTER (
+        WHERE action = 'share_offer.accepted'
+          AND permission = 'share.accept'
+          AND actor_principal_public_id = '01890f00-0000-7000-8000-000000000013'::UUID
+          AND payload->>'scope_relation' = 'cross_workspace'
+          AND payload->>'authority_side' = 'consumer'
+    )::INTEGER
+FROM mesh_audit.audit_event
+WHERE target_kind = 'share_offer' AND target_public_id = $1::UUID`, offerID.String()).Scan(
+		&providerConsent,
+		&consumerConsent,
+	); err != nil {
+		t.Fatalf("query cross-Workspace consent evidence: %v", err)
+	}
+	if providerConsent != 2 || consumerConsent != 2 {
+		t.Fatalf(
+			"cross-Workspace provider/consumer consent evidence = %d/%d, want 2/2",
+			providerConsent,
+			consumerConsent,
+		)
+	}
 }
 
 func assertAtomicImportedPolicyPublication(

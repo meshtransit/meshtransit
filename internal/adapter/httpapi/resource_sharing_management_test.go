@@ -63,6 +63,7 @@ func TestManagementHandlerCreatesShareOfferWithOneTimeToken(t *testing.T) {
 	}
 	token := fixture.token.Bytes()
 	if body.Data.OfferID != fixture.snapshot.Offer().ID().String() ||
+		body.Data.ScopeRelation != "cross_workspace" ||
 		body.Data.State != "offered" || body.Data.Version != 1 ||
 		body.Data.OfferToken != base64.RawURLEncoding.EncodeToString(token[:]) ||
 		body.Data.ProviderSharingRevision != 2 || body.Data.ConsumerSharingRevision != 2 {

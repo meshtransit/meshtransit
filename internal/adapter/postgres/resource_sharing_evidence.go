@@ -18,6 +18,8 @@ import (
 
 type resourceSharingAuditPayload struct {
 	AuditReason                   string `json:"audit_reason"`
+	ScopeRelation                 string `json:"scope_relation"`
+	AuthoritySide                 string `json:"authority_side"`
 	EvidenceNetwork               string `json:"evidence_network"`
 	ProviderNetwork               string `json:"provider_network"`
 	ConsumerNetwork               string `json:"consumer_network"`
@@ -90,11 +92,13 @@ func appendResourceSharingMutationEvidence(
 	payload resourceSharingIdempotencyPayload,
 	occurredAt time.Time,
 ) error {
+	relation := sharing.ClassifyScopeRelation(locator.provider.scope, locator.consumer.scope)
+	authoritySide := resourceSharingAuthoritySide(localScope, locator)
 	if !session.IsValid() || !reason.IsValid() || !proof.IsValid() || !localScope.IsValid() ||
 		!authorizationEvidence.isValid() || len(heads) != 2 || !aggregateID.IsValid() ||
 		aggregateVersion <= 0 || action == "" || !validResourceSharingPermission(permission) ||
 		idempotencyRecord.publicID == "" || requestHash == ([sha256.Size]byte{}) ||
-		occurredAt.IsZero() {
+		occurredAt.IsZero() || !relation.IsValid() || authoritySide == "" {
 		return sharing.ErrUnavailable
 	}
 	correlationID, err := publicid.Parse(idempotencyRecord.publicID)
@@ -128,7 +132,8 @@ func appendResourceSharingMutationEvidence(
 			return sharing.ErrUnavailable
 		}
 		auditPayload, err := json.Marshal(resourceSharingAuditPayload{
-			AuditReason: reason.String(), EvidenceNetwork: resourceSharingScopeKey(target.state.scope),
+			AuditReason: reason.String(), ScopeRelation: relation.String(), AuthoritySide: authoritySide,
+			EvidenceNetwork:               resourceSharingScopeKey(target.state.scope),
 			ProviderNetwork:               resourceSharingScopeKey(locator.provider.scope),
 			ConsumerNetwork:               resourceSharingScopeKey(locator.consumer.scope),
 			AccountSessionID:              authorizationEvidence.accountSessionID.String(),
@@ -235,6 +240,19 @@ func appendResourceSharingMutationEvidence(
 		return sharing.ErrUnavailable
 	}
 	return nil
+}
+
+func resourceSharingAuthoritySide(
+	localScope network.Scope,
+	locator resourceSharingScopeLocator,
+) string {
+	if localScope == locator.provider.scope {
+		return "provider"
+	}
+	if localScope == locator.consumer.scope {
+		return "consumer"
+	}
+	return ""
 }
 
 func validResourceSharingPermission(permission authorization.Permission) bool {

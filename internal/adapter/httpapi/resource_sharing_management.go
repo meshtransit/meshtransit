@@ -192,6 +192,7 @@ type sharingTrafficData struct {
 type shareOfferData struct {
 	OfferID                 string               `json:"offer_id"`
 	ExportID                string               `json:"export_id"`
+	ScopeRelation           string               `json:"scope_relation"`
 	ProviderWorkspaceID     string               `json:"provider_workspace_id"`
 	ProviderNetworkID       string               `json:"provider_network_id"`
 	ConsumerWorkspaceID     string               `json:"consumer_workspace_id"`
@@ -890,6 +891,7 @@ func shareOfferDataFromSnapshot(snapshot sharing.OfferSnapshot) shareOfferData {
 	binding := snapshot.Resource()
 	data := shareOfferData{
 		OfferID: offer.ID().String(), ExportID: offer.ExportID().String(),
+		ScopeRelation:       offer.ScopeRelation().String(),
 		ProviderWorkspaceID: offer.ProviderScope().WorkspaceID().String(),
 		ProviderNetworkID:   offer.ProviderScope().NetworkID().String(),
 		ConsumerWorkspaceID: offer.ConsumerScope().WorkspaceID().String(),

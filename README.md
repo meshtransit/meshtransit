@@ -58,6 +58,17 @@ fresh `policy.approve`, using runtime-only migration 50 and bounded keyset
 pagination. These projections remain navigation-only, Account Session
 identifiers remain concealed, every approval operation reauthorizes exact
 scope, and no graph database is introduced.
+The Resource Sharing slice adds exact Device-backed Resource offers, bounded
+protocol/port constraints, bilateral Trust Contracts, Imported Resource
+provenance, and explicit `within_workspace` or `cross_workspace` relationship
+classification. Same-Workspace management remains exact-Network RBAC;
+cross-Workspace acceptance requires fresh authority on both sides and records
+both consent steps in both audit streams. Workspace address realms reject CIDR
+overlap internally while allowing isolated Workspaces to reuse CIDRs. No direct
+cross-Workspace packet edge is created; a trusted Private Endpoint or gateway
+remains a later data-plane prerequisite. Applications will use a stable,
+consumer-local DNS name that resolves to that endpoint alias; raw provider IPs
+are neither the user contract nor an authorization identity.
 Design, security boundaries, acceptance evidence, and explicit non-claims are
 recorded in the
 [Phase 2 M1 Resource authority design](docs/design/phase2-m1-resource-authority.md)
@@ -138,6 +149,10 @@ plus the
 [M4c2e Console management-scope projection design](docs/design/phase2-m4c2e-console-management-scope-projection.md)
 and
 [M4c2e acceptance matrix](docs/qualification/phase2-m4c2e-console-management-scope-projection-2026-09-29.md).
+Resource Sharing boundaries and evidence are recorded in the
+[Phase 2 Resource Sharing authority design](docs/design/phase2-resource-sharing-authority.md)
+and
+[Resource Sharing qualification matrix](docs/qualification/phase2-resource-sharing-authority-2026-09-29.md).
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,
@@ -563,7 +578,7 @@ elevated attribute, or participates in any role membership.
 | `mesh_runtime` | yes | Scope-filtered reads for serving processes; owns no database or MeshTransit object. |
 | `mesh_worker` | yes | Scope-filtered tenant reads plus column-limited outbox claim/delivery operations; owns no database or MeshTransit object. |
 | `mesh_audit_writer` | no | Reserved for a future audited write path; currently no grants. |
-| `mesh_share_writer` | no | Reserved for a future sharing write path; currently no grants. |
+| `mesh_share_writer` | no | Owns the bounded Resource Sharing mutation functions and has only the bilateral, RLS-scoped table/sequence grants required by those functions. |
 | `mesh_observer` | yes | Reserved for a future observability contract; currently no grants. |
 
 Migration history is immutable and forward-only. Unknown future versions,

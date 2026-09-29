@@ -150,6 +150,11 @@ func (export Export) ProviderScope() network.Scope { return export.params.Provid
 // ConsumerScope returns the only scope permitted to accept the export.
 func (export Export) ConsumerScope() network.Scope { return export.params.ConsumerScope }
 
+// ScopeRelation returns the derived Workspace trust boundary.
+func (export Export) ScopeRelation() ScopeRelation {
+	return ClassifyScopeRelation(export.params.ProviderScope, export.params.ConsumerScope)
+}
+
 // Resource returns pinned provider Resource authority.
 func (export Export) Resource() ResourceBinding { return export.params.Resource }
 
@@ -229,6 +234,11 @@ func (offer Offer) ProviderScope() network.Scope { return offer.params.ProviderS
 
 // ConsumerScope returns the exact intended consumer scope.
 func (offer Offer) ConsumerScope() network.Scope { return offer.params.ConsumerScope }
+
+// ScopeRelation returns the derived Workspace trust boundary.
+func (offer Offer) ScopeRelation() ScopeRelation {
+	return ClassifyScopeRelation(offer.params.ProviderScope, offer.params.ConsumerScope)
+}
 
 // MaximumTraffic returns the provider ceiling bound into the offer.
 func (offer Offer) MaximumTraffic() TrafficSet {
@@ -335,6 +345,11 @@ func (contract Contract) ProviderScope() network.Scope { return contract.params.
 
 // ConsumerScope returns the exact consumer scope.
 func (contract Contract) ConsumerScope() network.Scope { return contract.params.ConsumerScope }
+
+// ScopeRelation returns the derived Workspace trust boundary.
+func (contract Contract) ScopeRelation() ScopeRelation {
+	return ClassifyScopeRelation(contract.params.ProviderScope, contract.params.ConsumerScope)
+}
 
 // Resource returns pinned provider Resource authority.
 func (contract Contract) Resource() ResourceBinding { return contract.params.Resource }

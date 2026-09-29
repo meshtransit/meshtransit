@@ -3012,13 +3012,14 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "offer_id", "export_id", "provider_workspace_id", "provider_network_id",
+          "offer_id", "export_id", "scope_relation", "provider_workspace_id", "provider_network_id",
           "consumer_workspace_id", "consumer_network_id", "resource_id", "resource_version",
           "target_generation", "maximum_traffic", "state", "version", "created_at", "expires_at"
         ],
         "properties": {
           "offer_id": {"$ref": "#/components/schemas/PublicID"},
           "export_id": {"$ref": "#/components/schemas/PublicID"},
+          "scope_relation": {"type": "string", "enum": ["within_workspace", "cross_workspace"], "readOnly": true},
           "provider_workspace_id": {"$ref": "#/components/schemas/PublicID"},
           "provider_network_id": {"$ref": "#/components/schemas/PublicID"},
           "consumer_workspace_id": {"$ref": "#/components/schemas/PublicID"},
