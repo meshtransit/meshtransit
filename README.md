@@ -51,8 +51,13 @@ the Policy Release, and exposes the Evidence ID in the existing publish wire
 contract. M4c2c adds proposal, bounded list/get, and independent-decision
 management contracts, safe workflow projections, private-browser mutation
 support, both production compositions, and runtime-only migration 49 read
-functions. Account Session identifiers remain concealed and no graph database
-is introduced.
+functions. M4c2d exposes the same bounded approval catalog reads through the
+private Console cookie boundary. M4c2e adds the server-authoritative mapping
+from the current Session to its UUIDv7 login Workspace and active Networks with
+fresh `policy.approve`, using runtime-only migration 50 and bounded keyset
+pagination. These projections remain navigation-only, Account Session
+identifiers remain concealed, every approval operation reauthorizes exact
+scope, and no graph database is introduced.
 Design, security boundaries, acceptance evidence, and explicit non-claims are
 recorded in the
 [Phase 2 M1 Resource authority design](docs/design/phase2-m1-resource-authority.md)
@@ -124,7 +129,15 @@ and
 plus the
 [M4c2c policy approval management API design](docs/design/phase2-m4c2c-policy-approval-management-api.md)
 and
-[M4c2c acceptance matrix](docs/qualification/phase2-m4c2c-policy-approval-management-api-2026-09-29.md).
+[M4c2c acceptance matrix](docs/qualification/phase2-m4c2c-policy-approval-management-api-2026-09-29.md),
+plus the
+[M4c2d private Console approval catalog design](docs/design/phase2-m4c2d-private-console-policy-approval-catalog.md)
+and
+[M4c2d acceptance matrix](docs/qualification/phase2-m4c2d-private-console-policy-approval-catalog-2026-09-29.md),
+plus the
+[M4c2e Console management-scope projection design](docs/design/phase2-m4c2e-console-management-scope-projection.md)
+and
+[M4c2e acceptance matrix](docs/qualification/phase2-m4c2e-console-management-scope-projection-2026-09-29.md).
 
 MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,

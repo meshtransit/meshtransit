@@ -30,6 +30,7 @@ func TestLoginDocumentRejectsProfileAndRoutingFallbacks(t *testing.T) {
 		"/auth/call%62ack", "/auth/call\\back", "/auth/é", "/auth/" + strings.Repeat("x", 251),
 		"/auth/v1/login/prepare", "/auth/v1/login/start", "/auth/v1/login/continue",
 		"/auth/v1/login/continue/prepare", "/auth/v1/session/prepare", "/auth/v1/session/logout",
+		"/auth/v1/session/management-scopes",
 	} {
 		t.Run("path "+path, func(t *testing.T) {
 			t.Parallel()

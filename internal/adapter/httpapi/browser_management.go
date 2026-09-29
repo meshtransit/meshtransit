@@ -20,6 +20,8 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/identity/sessioncontext"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
 )
 
@@ -28,6 +30,8 @@ const (
 	AccountSessionCSRFPreparePath = "/auth/v1/session/prepare"
 	// AccountSessionLogoutPath is fixed private same-origin durable logout.
 	AccountSessionLogoutPath = "/auth/v1/session/logout"
+	// AccountSessionManagementScopesPath is the fixed private management-scope projection.
+	AccountSessionManagementScopesPath = "/auth/v1/session/management-scopes"
 )
 
 var (
@@ -48,6 +52,7 @@ var (
 type BrowserManagementOptions struct {
 	Management    *ManagementHandler
 	Logout        AccountSessionLogout
+	Scopes        SessionManagementScopes
 	DeploymentID  deployment.ID
 	Origin        string
 	Key           BrowserLoginKey
@@ -60,6 +65,7 @@ type BrowserManagementOptions struct {
 type BrowserManagement struct {
 	management   *ManagementHandler
 	logout       AccountSessionLogout
+	scopes       SessionManagementScopes
 	deploymentID deployment.ID
 	origin, host string
 	keyID        string
@@ -77,12 +83,17 @@ type AccountSessionLogout interface {
 	Logout(context.Context, accountsession.Token) (bool, error)
 }
 
+// SessionManagementScopes reads one fresh server-authoritative Console projection.
+type SessionManagementScopes interface {
+	List(context.Context, accountsession.Session, int, network.ID) (sessioncontext.Page, error)
+}
+
 // NewBrowserManagement validates all resident input before any port/entropy effect.
 // Its isolated collector requires explicit private root registration later.
 func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement, error) {
 	handler := options.Management
 	validAuthorityProfile := validBrowserManagementHandler(handler) && options.DeploymentID.IsValid() &&
-		!nilContinuationDependency(options.Logout)
+		!nilContinuationDependency(options.Logout) && !nilContinuationDependency(options.Scopes)
 	if !validAuthorityProfile || nilContinuationDependency(options.Clock) {
 		return nil, ErrInvalidBrowserManagement
 	}
@@ -112,8 +123,9 @@ func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement,
 	if !validLifetime {
 		return nil, ErrInvalidBrowserManagement
 	}
-	browser := &BrowserManagement{management: handler, logout: options.Logout, deploymentID: options.DeploymentID,
-		origin: options.Origin, host: origin.Host, keyID: options.Key.ID, clock: options.Clock,
+	browser := &BrowserManagement{management: handler, logout: options.Logout, scopes: options.Scopes,
+		deploymentID: options.DeploymentID,
+		origin:       options.Origin, host: origin.Host, keyID: options.Key.ID, clock: options.Clock,
 		lifetime: options.ProofLifetime, entropy: rand.Reader, telemetry: NewBrowserManagementTelemetry(),
 		slots: make(chan struct{}, cap(handler.slots))}
 	copy(browser.key[:], options.Key.Material)
@@ -125,6 +137,7 @@ func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement,
 func validBrowserManagementOwner(browser *BrowserManagement) bool {
 	if browser == nil || !validBrowserManagementHandler(browser.management) ||
 		nilContinuationDependency(browser.logout) ||
+		nilContinuationDependency(browser.scopes) ||
 		nilContinuationDependency(browser.clock) || browser.slots == nil {
 		return false
 	}
@@ -219,13 +232,14 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	}
 	prepare := request.URL.Path == AccountSessionCSRFPreparePath
 	logout := request.URL.Path == AccountSessionLogoutPath
+	managementScopes := request.URL.Path == AccountSessionManagementScopesPath && request.Method == http.MethodGet
 	_, device := parseDeviceRevokePath(request)
 	_, policy := parsePolicyPublishPath(request)
 	_, simulation := parsePolicySimulationPath(request)
 	approvalPath, approvalMatched := parsePolicyApprovalPath(request)
 	approval := approvalMatched && approvalPath.allowedMethod(request.Method) == request.Method
 	_, accessGraph := parseAccessGraphExplainPath(request)
-	if !prepare && !logout && !device && !policy && !simulation && !approval && !accessGraph {
+	if !prepare && !logout && !managementScopes && !device && !policy && !simulation && !approval && !accessGraph {
 		return ErrInvalidBrowserManagement
 	}
 	operation = "mutation"
@@ -264,6 +278,10 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		}
 	} else if logout {
 		if err := browser.endSession(ctx, candidate, request, admission); err != nil {
+			return err
+		}
+	} else if managementScopes {
+		if err := browser.readManagementScopes(ctx, candidate, request, admission); err != nil {
 			return err
 		}
 	} else {
@@ -398,14 +416,16 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	approvalPath, approvalMatched := parsePolicyApprovalPath(request)
 	approvalRead := approvalMatched && request.Method == http.MethodGet &&
 		(approvalPath.kind == policyApprovalPathCollection || approvalPath.kind == policyApprovalPathItem)
-	if request.Method == http.MethodGet && !approvalRead {
+	managementScopeRead := request.Method == http.MethodGet && target.Path == AccountSessionManagementScopesPath
+	safeRead := approvalRead || managementScopeRead
+	if request.Method == http.MethodGet && !safeRead {
 		return false
 	}
-	queryAllowed := approvalRead && approvalPath.kind == policyApprovalPathCollection
+	queryAllowed := approvalRead && approvalPath.kind == policyApprovalPathCollection || managementScopeRead
 	if (!queryAllowed && target.RawQuery != "") || len(target.RawQuery) > maximumCallbackQueryBytes {
 		return false
 	}
-	if approvalRead {
+	if safeRead {
 		if !validResourceReadHeaders(request) {
 			return false
 		}

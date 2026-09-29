@@ -27,3 +27,10 @@ FROM mesh_ops.resolve_account_session_v2(
     $4::TEXT,
     $5::BYTEA
 )`
+
+const readAccountSessionManagementScopesSQL = `SELECT
+    mesh_ops.read_console_management_scopes_v1(
+        $1::UUID, $2::UUID, $3::UUID, $4::UUID,
+        $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
+        $10::UUID, $11::TIMESTAMPTZ, $12::UUID, $13::INTEGER
+    )::TEXT`

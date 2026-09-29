@@ -12,6 +12,7 @@ import (
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	redisadapter "github.com/meshtransit/meshtransit/internal/adapter/redis"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
+	"github.com/meshtransit/meshtransit/internal/identity/sessioncontext"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
 	policyapproval "github.com/meshtransit/meshtransit/internal/policy/approval"
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
@@ -104,6 +105,10 @@ func composePrivateIdentityFactory(
 		return nil, errInvalidPrivateIdentityComposition
 	}
 	clock := oidcauth.SystemStartClock{}
+	managementScopes, err := sessioncontext.NewService(authority, clock)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	revocations, policies, policyCompiler, policyExplainer, policySimulator,
 		policyApprovals, policyApprovalCatalog, err :=
 		privateIdentityManagementServices(
@@ -140,7 +145,8 @@ func composePrivateIdentityFactory(
 		Admission: transactions, Metadata: owner.discovery, Creations: transactions, Committed: transactions,
 		Pending: transactions, Claims: transactions, Failures: transactions, Issues: transactions,
 		Provider: owner.provider, Subjects: transactions, SessionAuthority: authority, SessionRevocations: logoutStore,
-		StartIDs: oidcauth.SystemStartIDs{}, Secrets: oidcauth.SystemSecrets{},
+		SessionScopes: managementScopes,
+		StartIDs:      oidcauth.SystemStartIDs{}, Secrets: oidcauth.SystemSecrets{},
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, PolicySimulations: policySimulator,

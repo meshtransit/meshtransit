@@ -11,8 +11,39 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 49 {
-		t.Fatalf("len(Catalog()) = %d, want 49", len(catalog))
+	if len(catalog) != 50 {
+		t.Fatalf("len(Catalog()) = %d, want 50", len(catalog))
+	}
+	managementScopes := catalog[49]
+	if managementScopes.Description != "Console management scope projection" {
+		t.Fatalf("migration 50 description = %q, want Console management scope projection", managementScopes.Description)
+	}
+	for _, required := range []string{
+		"CREATE POLICY network_console_management_scope_projection_policy",
+		"'mesh.console_management_scope_workspace_public_id'",
+		"CREATE FUNCTION mesh_ops.read_console_management_scopes_v1",
+		"SECURITY DEFINER",
+		"session.login_workspace_id",
+		"membership.state = 'active'",
+		"binding.state = 'active'",
+		"permission.permission_key = 'policy.approve'",
+		"p_after_network_public_id",
+		"p_limit > 101",
+		"previous_projection_workspace_public_id",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_console_management_scopes_v1",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(managementScopes.SQL, required) {
+			t.Errorf("Console management scope SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE",
+		"GRANT ALL", "BYPASSRLS", "ALTER DEFAULT PRIVILEGES", "DROP ",
+	} {
+		if strings.Contains(managementScopes.SQL, forbidden) {
+			t.Errorf("Console management scope SQL contains excessive capability %q", forbidden)
+		}
 	}
 	approvalManagement := catalog[48]
 	if approvalManagement.Description != "Policy approval management read API" {
@@ -1218,8 +1249,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 49 {
-		t.Fatalf("LatestVersion() = %d, want 49", LatestVersion())
+	if LatestVersion() != 50 {
+		t.Fatalf("LatestVersion() = %d, want 50", LatestVersion())
 	}
 }
 

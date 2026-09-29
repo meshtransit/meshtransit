@@ -2,6 +2,10 @@
 
 Status date: 2026-09-29
 
+Follow-up: M4c2e later completes the first residual item with a
+server-authoritative UUIDv7 management-scope projection. This matrix remains
+the historical M4c2d candidate evidence.
+
 This record is engineering evidence for the local private Console catalog and
 dispatcher-parity slice. It does not qualify the Console UI, a deployed
 workflow, production SLO, HA, legal approval, release, or GA.

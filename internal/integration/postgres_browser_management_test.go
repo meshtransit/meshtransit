@@ -21,6 +21,8 @@ import (
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/identity/sessioncontext"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/policy/approval"
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	publication "github.com/meshtransit/meshtransit/internal/policy/publication"
@@ -46,6 +48,7 @@ func prepareIntegrationBrowserManagement(
 		Logout: integrationAccountSessionLogoutFunc(func(context.Context, accountsession.Token) (bool, error) {
 			return false, nil
 		}),
+		Scopes:       integrationManagementScopes{},
 		DeploymentID: token.DeploymentID(), Origin: "https://console.example.test", Clock: accountsession.SystemClock{},
 		Key:           httpapi.BrowserLoginKey{ID: "integration-session-csrf-v1", Material: bytes.Repeat([]byte{0x74}, 32)},
 		ProofLifetime: time.Minute})
@@ -76,6 +79,17 @@ func prepareIntegrationBrowserManagement(
 		t.Fatal("prepare changed cookie/authority/navigation")
 	}
 	return browser, payload.Token
+}
+
+type integrationManagementScopes struct{}
+
+func (integrationManagementScopes) List(
+	context.Context,
+	accountsession.Session,
+	int,
+	network.ID,
+) (sessioncontext.Page, error) {
+	return sessioncontext.Page{}, sessioncontext.ErrUnavailable
 }
 
 type integrationAccountSessionLogoutFunc func(context.Context, accountsession.Token) (bool, error)

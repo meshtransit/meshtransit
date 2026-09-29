@@ -258,6 +258,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		runtimePool,
 	)
 	assertNetworkManagementRBACAuthority(ctx, t, adminConnection, runtimeConnection)
+	assertPostgreSQLConsoleManagementScopes(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLResourceAuthority(
 		ctx,
 		t,
@@ -293,4 +294,5 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		peerIdentity,
 	)
 	assertPostgreSQLAccountSessionLogout(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLRevokedConsoleManagementScopes(ctx, t, runtimePool)
 }

@@ -86,6 +86,25 @@ func TestConsoleManagementOperationRejectsAuthenticationOrMethodDrift(t *testing
 	}
 }
 
+func TestConsoleManagementScopeOperationRejectsContractDrift(t *testing.T) {
+	t.Parallel()
+	for _, item := range []string{
+		`null`,
+		`{"post":{}}`,
+		`{"get":{},"post":{}}`,
+		`{"get":{"operationId":"other","security":[{"accountSessionCookie":[]}],"parameters":[{},{},{},{}]}}`,
+		`{"get":{"operationId":"listConsoleManagementScopes","security":[{}],"parameters":[{},{},{},{}]}}`,
+		`{"get":{"operationId":"listConsoleManagementScopes","security":[{"accountSessionBearer":[]}],"parameters":[{},{},{},{}]}}`,
+		`{"get":{"operationId":"listConsoleManagementScopes","security":[{"accountSessionCookie":null}],"parameters":[{},{},{},{}]}}`,
+		`{"get":{"operationId":"listConsoleManagementScopes","security":[{"accountSessionCookie":[]}],"parameters":[{}]}}`,
+		`{"get":{"operationId":"listConsoleManagementScopes","security":[{"accountSessionCookie":[]}],"parameters":[{},{},{},{}],"requestBody":{}}}`,
+	} {
+		if consoleManagementScopeOperation(json.RawMessage(item)) {
+			t.Fatal("unreviewed management-scope operation contract was accepted", item)
+		}
+	}
+}
+
 func TestComposeConsoleManagementDocumentRejectsComponentCollision(t *testing.T) {
 	t.Parallel()
 	for _, section := range []string{"schemas", "parameters"} {

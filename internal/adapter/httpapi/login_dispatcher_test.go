@@ -77,7 +77,8 @@ func TestLoginDispatcherRejectsIncompleteConstruction(t *testing.T) {
 		}
 	}
 	for _, path := range []string{
-		AccountSessionCSRFPreparePath, AccountSessionLogoutPath, "/machine/register", "/api/v1/callback", "/key",
+		AccountSessionCSRFPreparePath, AccountSessionLogoutPath, AccountSessionManagementScopesPath,
+		"/machine/register", "/api/v1/callback", "/key",
 		"/auth/" + strings.Repeat("x", 251),
 	} {
 		options, fixture, callback := browserLoginTestOptions(t)
@@ -181,13 +182,16 @@ func TestLoginDispatcherRejectsMethodAliases(t *testing.T) {
 	t.Parallel()
 	for _, path := range []string{
 		LoginPreparePath, LoginStartPath, LoginContinuationPreparePath, AccountSessionCSRFPreparePath,
-		AccountSessionLogoutPath, LoginCallbackContinuePath, "/auth/callback",
+		AccountSessionLogoutPath, AccountSessionManagementScopesPath, LoginCallbackContinuePath, "/auth/callback",
 	} {
 		for _, method := range []string{"GET", "HEAD", "POST", "OPTIONS", "PUT", "DELETE", "TRACE", "PATCH", "post"} {
-			fixedPost := method == http.MethodPost && path != "/auth/callback"
+			fixedPost := method == http.MethodPost && (path == LoginPreparePath || path == LoginStartPath ||
+				path == LoginContinuationPreparePath || path == AccountSessionCSRFPreparePath ||
+				path == AccountSessionLogoutPath || path == LoginCallbackContinuePath)
 			landingRead := (method == http.MethodGet || method == http.MethodHead) && path == LoginCallbackContinuePath
 			callbackGet := method == http.MethodGet && path == "/auth/callback"
-			if fixedPost || landingRead || callbackGet {
+			managementScopeRead := method == http.MethodGet && path == AccountSessionManagementScopesPath
+			if fixedPost || landingRead || callbackGet || managementScopeRead {
 				continue
 			}
 			t.Run(method+" "+path, func(t *testing.T) {
@@ -301,6 +305,25 @@ func TestLoginDispatcherPreservesApprovalCatalogOwnership(t *testing.T) {
 	if management.auth != 2 || management.budgets != 4 ||
 		management.approvalGet != 1 || management.approvalList != 1 {
 		t.Fatal("approval catalog read skipped fresh private admission")
+	}
+}
+
+func TestLoginDispatcherPreservesManagementScopeOwnership(t *testing.T) {
+	t.Parallel()
+	dispatcher, fixture, callback, management := dispatcherTestGraphWithManagement(t)
+	request := browserManagementReadRequest(t, AccountSessionManagementScopesPath+"?page_size=1")
+	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := dispatcher.Handle(response, request); err != nil {
+		t.Fatal("management-scope read did not reach its exact owner", err)
+	}
+	var body managementScopeEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || len(body.Data.Networks) != 1 {
+		t.Fatal("management-scope read changed its bounded response", err)
+	}
+	if response.Code != http.StatusOK || response.statusWrites != 1 || management.auth != 1 ||
+		management.budgets != 2 || len(fixture.calls) != 0 || callback.calls != 0 ||
+		response.Header().Get("Set-Cookie") != "" || response.Header().Get("Www-Authenticate") != "" {
+		t.Fatal("management-scope read crossed owner boundaries")
 	}
 }
 
@@ -545,12 +568,14 @@ func FuzzLoginDispatcherRouting(f *testing.F) {
 		response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
 		err := dispatcher.Handle(response, request)
 		callbackGet := method == http.MethodGet && path == dispatcher.CallbackPath()
+		managementScopeRead := method == http.MethodGet && path == AccountSessionManagementScopesPath
 		fixedPost := method == http.MethodPost && (path == LoginPreparePath || path == LoginStartPath ||
 			path == LoginContinuationPreparePath || path == AccountSessionCSRFPreparePath ||
 			path == AccountSessionLogoutPath || path == LoginCallbackContinuePath)
 		landingRead := (method == http.MethodGet || method == http.MethodHead) && path == LoginCallbackContinuePath
-		matched := rawPath == "" && len(query) <= maximumCallbackQueryBytes && (query == "" || callbackGet) &&
-			(callbackGet || fixedPost || landingRead)
+		matched := rawPath == "" && len(query) <= maximumCallbackQueryBytes &&
+			(query == "" || callbackGet || managementScopeRead) &&
+			(callbackGet || fixedPost || landingRead || managementScopeRead)
 		if !matched {
 			if !errors.Is(err, ErrInvalidLoginDispatcher) || len(fixture.calls) != 0 || callback.calls != 0 ||
 				len(response.Header()) != 0 || response.statusWrites != 0 || response.Body.Len() != 0 {

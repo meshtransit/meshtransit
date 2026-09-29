@@ -20,14 +20,17 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
+	"github.com/meshtransit/meshtransit/internal/authorization"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/identity/sessioncontext"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
 	approval "github.com/meshtransit/meshtransit/internal/policy/approval"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
+	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 type browserManagementFixture struct {
@@ -133,6 +136,86 @@ func TestBrowserManagementReadsPolicyApprovalCatalog(t *testing.T) {
 		getResponse.Header().Get("Set-Cookie") != "" || listResponse.Header().Get("Set-Cookie") != "" ||
 		getResponse.Header().Get("Www-Authenticate") != "" || listResponse.Header().Get("Www-Authenticate") != "" {
 		t.Fatal("approval reads bypassed fresh admission or released credential authority")
+	}
+}
+
+func TestBrowserManagementReadsServerAuthoritativeScopes(t *testing.T) {
+	t.Parallel()
+	browser, fixture := newBrowserManagementFixture(t)
+	request := browserManagementReadRequest(
+		t, AccountSessionManagementScopesPath+"?page_size=1",
+	)
+	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := browser.Handle(response, request); err != nil {
+		t.Fatal(err)
+	}
+	var body managementScopeEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	expectedSession := managementSessionFixture(t)
+	validScope := body.Data.PrincipalID == expectedSession.PrincipalID().String() &&
+		body.Data.Workspace.ID == "01890f00-0000-7000-8000-000000000101" &&
+		body.Data.Workspace.DisplayName == "Primary" && len(body.Data.Networks) == 1 &&
+		body.Data.Networks[0].ID == "01890f00-0000-7000-8000-000000000202" &&
+		reflect.DeepEqual(body.Data.Networks[0].Permissions, []string{"policy.approve"})
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" ||
+		response.Header().Get("Set-Cookie") != "" || response.Header().Get("Www-Authenticate") != "" ||
+		fixture.auth != 1 || fixture.budgets != 2 || !validScope ||
+		strings.Contains(response.Body.String(), expectedSession.ID().String()) {
+		t.Fatalf("management scopes = %d/%+v/%s", response.Code, body, response.Body.String())
+	}
+
+	unsafe := browserManagementReadRequest(t, AccountSessionManagementScopesPath)
+	unsafe.Header.Set("X-MeshTransit-CSRF", "unexpected")
+	unsafeResponse := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := browser.Handle(unsafeResponse, unsafe); !errors.Is(err, ErrInvalidBrowserManagement) ||
+		unsafeResponse.statusWrites != 0 || unsafeResponse.Body.Len() != 0 {
+		t.Fatal("management-scope read accepted mutation transport", err)
+	}
+}
+
+func TestManagementScopeQueryIsCanonicalAndWorkspaceBound(t *testing.T) {
+	t.Parallel()
+	workspaceID, err := workspace.ParseID("01890f00-0000-7000-8000-000000000101")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherWorkspaceID, err := workspace.ParseID("01890f00-0000-7000-8000-000000000102")
+	if err != nil {
+		t.Fatal(err)
+	}
+	networkID, err := network.ParseID("01890f00-0000-7000-8000-000000000201")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := encodeManagementScopePageToken(workspaceID, networkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limit, after, requestErr := parseManagementScopeQuery("page_size=1&page_token="+token, workspaceID)
+	if requestErr != nil || limit != 1 || after != networkID {
+		t.Fatalf("canonical management-scope query = %d/%v/%+v", limit, after, requestErr)
+	}
+	limit, after, requestErr = parseManagementScopeQuery("", workspaceID)
+	if requestErr != nil || limit != defaultManagementScopePageSize || after.IsValid() {
+		t.Fatalf("default management-scope query = %d/%v/%+v", limit, after, requestErr)
+	}
+	for _, rawQuery := range []string{
+		"page_size=01",
+		"page_size=101",
+		"page_size=1&page_size=2",
+		"unknown=1",
+		"page_token=not_base64",
+		"page_token=" + token,
+	} {
+		scope := workspaceID
+		if rawQuery == "page_token="+token {
+			scope = otherWorkspaceID
+		}
+		if _, _, requestErr := parseManagementScopeQuery(rawQuery, scope); requestErr == nil {
+			t.Fatal("noncanonical or cross-Workspace query was accepted", rawQuery)
+		}
 	}
 }
 
@@ -255,7 +338,8 @@ func TestBrowserManagementLogoutRevokesOnceAndClearsOnlyItsCookie(t *testing.T) 
 func TestBrowserManagementConstructorIsClosedAndCopiesKey(t *testing.T) {
 	t.Parallel()
 	for _, invalid := range []string{
-		"nil handler", "nil logout", "typed nil clock", "nil sessions", "short key", "zero key", "bad key id",
+		"nil handler", "nil logout", "nil scopes", "typed nil scopes", "typed nil clock", "nil sessions",
+		"short key", "zero key", "bad key id",
 		"short ttl", "fraction ttl", "long ttl", "http", "path", "query", "userinfo", "uppercase",
 		"default port", "empty port", "leading port", "bad dns",
 	} {
@@ -266,6 +350,10 @@ func TestBrowserManagementConstructorIsClosedAndCopiesKey(t *testing.T) {
 				options.Management = nil
 			case "nil logout":
 				options.Logout = nil
+			case "nil scopes":
+				options.Scopes = nil
+			case "typed nil scopes":
+				options.Scopes = (*sessioncontext.Service)(nil)
 			case "typed nil clock":
 				options.Clock = (*browserManagementFixture)(nil)
 			case "nil sessions":
@@ -993,10 +1081,47 @@ func browserManagementTestOptions(t *testing.T) (BrowserManagementOptions, *brow
 		fixture.sessionRevoked = true
 		return true, nil
 	})
-	return BrowserManagementOptions{Management: handler, Logout: logout, Origin: "https://console.example.test",
+	session := managementSessionFixture(t)
+	workspaceID, ok := session.LoginWorkspaceID()
+	if !ok {
+		t.Fatal("management Session has no login Workspace")
+	}
+	networkID, err := network.ParseID("01890f00-0000-7000-8000-000000000202")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := sessioncontext.NewManagementScope(
+		networkID, "Production", []authorization.Permission{authorization.PermissionPolicyApprove},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopes, err := sessioncontext.NewService(
+		browserManagementScopeReader{result: sessioncontext.ReadResult{
+			WorkspaceID: workspaceID, WorkspaceDisplayName: "Primary", Scopes: []sessioncontext.ManagementScope{scope},
+		}},
+		fixture,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return BrowserManagementOptions{Management: handler, Logout: logout, Scopes: scopes,
+		Origin:       "https://console.example.test",
 		DeploymentID: managementSessionFixture(t).DeploymentID(), Clock: fixture,
 		Key:           BrowserLoginKey{ID: "browser-session-csrf-v1", Material: bytes.Repeat([]byte{0x54}, 32)},
 		ProofLifetime: time.Minute}, fixture
+}
+
+type browserManagementScopeReader struct{ result sessioncontext.ReadResult }
+
+func (reader browserManagementScopeReader) ReadManagementScopes(
+	context.Context,
+	accountsession.Session,
+	network.ID,
+	int,
+	time.Time,
+) (sessioncontext.ReadResult, error) {
+	return reader.result, nil
 }
 
 type managementAccountSessionLogoutFunc func(context.Context, accountsession.Token) (bool, error)

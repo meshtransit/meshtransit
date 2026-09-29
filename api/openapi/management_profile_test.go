@@ -65,7 +65,7 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal("private document retained deployment topology")
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
-	if len(basePaths) != 23 || len(paths) != 9 {
+	if len(basePaths) != 23 || len(paths) != 10 {
 		t.Fatal("private profile introduced another product resource API")
 	}
 	for _, path := range []string{
@@ -169,6 +169,48 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		}
 	}
 	profileReferences(t, console, console)
+}
+
+func TestManagementDocumentConsoleScopesAreReadOnlyNavigationEvidence(t *testing.T) {
+	t.Parallel()
+	body, err := openapi.ManagementDocument(openapi.ManagementProfileConsoleCookiePrivateV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := profileObject(t, body)
+	item := profileMap(t, profileMap(t, document, "paths"), "/auth/v1/session/management-scopes")
+	if len(item) != 1 {
+		t.Fatal("management-scope projection exposes another method")
+	}
+	operation := profileMap(t, item, "get")
+	expectedSecurity := []any{map[string]any{"accountSessionCookie": []any{}}}
+	if operation["operationId"] != "listConsoleManagementScopes" ||
+		!reflect.DeepEqual(operation["security"], expectedSecurity) || operation["requestBody"] != nil {
+		t.Fatal("management-scope projection gained mutation proof, body or authentication fallback")
+	}
+	parameters := profileArray(t, operation, "parameters")
+	if len(parameters) != 4 ||
+		!reflect.DeepEqual(parameters[0], map[string]any{"$ref": "#/components/parameters/ConsoleOrigin"}) ||
+		!reflect.DeepEqual(parameters[1], map[string]any{"$ref": "#/components/parameters/ConsoleSessionChannel"}) {
+		t.Fatal("management-scope projection lost exact browser channel or bounded pagination")
+	}
+	pageSize := profileMap(t, parameters[2].(map[string]any), "schema")
+	pageToken := profileMap(t, parameters[3].(map[string]any), "schema")
+	if pageSize["minimum"] != float64(1) || pageSize["maximum"] != float64(100) ||
+		pageToken["maxLength"] != float64(512) {
+		t.Fatal("management-scope pagination is not bounded")
+	}
+	responses := profileMap(t, operation, "responses")
+	response := profileMap(t, responses, "200")
+	if profileMap(t, profileMap(t, response, "headers"), "Cache-Control")["schema"] == nil {
+		t.Fatal("management-scope projection lost no-store response")
+	}
+	schema := profileMap(t, profileMap(t, document, "components"), "schemas")
+	projection := profileMap(t, schema, "ConsoleManagementScopePage")
+	if projection["additionalProperties"] != false {
+		t.Fatal("management-scope response became open-ended")
+	}
+	profileReferences(t, document, operation)
 }
 
 func TestManagementDocumentConsoleLogoutIsDurableAndCookieScoped(t *testing.T) {

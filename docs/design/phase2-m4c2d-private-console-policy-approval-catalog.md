@@ -5,6 +5,11 @@ qualification remain pending.
 
 Date: 2026-09-29
 
+Follow-up: M4c2e later adds the server-authoritative UUIDv7 management-scope
+projection required by the Console; see
+`phase2-m4c2e-console-management-scope-projection.md`. The boundary below
+records the M4c2d candidate as qualified at that time.
+
 ## Scope
 
 M4c2d exposes the retained M4c2c Policy approval catalog to the private
@@ -67,13 +72,13 @@ ETag.
 
 ## Non-claims and next order
 
-M4c2d does not add Console components, scope discovery, Principal display-name
+M4c2d does not add Console components, scope projection, Principal display-name
 projection, notifications, configurable quorum, approval-policy administration,
 or production rollout. The current legacy Console Account API still identifies
 Networks with numeric IDs, while the Phase 2 management contract uses UUIDv7
-Workspace and Network public IDs. The next Console slice must first expose a
-server-authoritative management-scope projection, then add the queue/detail and
-independent approval experience against this private contract.
+Workspace and Network public IDs. M4c2e subsequently closes that projection
+gap; the remaining Console slice adds the queue/detail and independent approval
+experience against the private contracts.
 
 Local acceptance evidence is recorded in
 `docs/qualification/phase2-m4c2d-private-console-policy-approval-catalog-2026-09-29.md`.

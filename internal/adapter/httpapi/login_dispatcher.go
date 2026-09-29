@@ -54,7 +54,7 @@ func validDispatcherCallbackPath(value string) bool {
 	}
 	switch value {
 	case LoginPreparePath, LoginStartPath, LoginCallbackContinuePath, LoginContinuationPreparePath,
-		AccountSessionCSRFPreparePath, AccountSessionLogoutPath:
+		AccountSessionCSRFPreparePath, AccountSessionLogoutPath, AccountSessionManagementScopesPath:
 		return false
 	default:
 		return true
@@ -150,12 +150,13 @@ func isBrowserManagementOperation(request *http.Request) bool {
 	_, simulation := parsePolicySimulationPath(request)
 	approvalPath, approval := parsePolicyApprovalPath(request)
 	_, accessGraph := parseAccessGraphExplainPath(request)
+	managementScopes := request.URL != nil && request.URL.Path == AccountSessionManagementScopesPath
 	if request.Method == http.MethodPost {
 		return device || policy || simulation || accessGraph ||
 			approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.isAction())
 	}
-	return request.Method == http.MethodGet && approval &&
-		(approvalPath.kind == policyApprovalPathCollection || approvalPath.kind == policyApprovalPathItem)
+	return request.Method == http.MethodGet && (managementScopes ||
+		approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.kind == policyApprovalPathItem))
 }
 
 func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, request *http.Request) bool {
@@ -185,7 +186,8 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 	approvalPath, approval := parsePolicyApprovalPath(request)
 	approvalList := approval && request.Method == http.MethodGet &&
 		approvalPath.kind == policyApprovalPathCollection
-	return callback || approvalList || target.RawQuery == ""
+	managementScopes := target.Path == AccountSessionManagementScopesPath && request.Method == http.MethodGet
+	return callback || approvalList || managementScopes || target.RawQuery == ""
 }
 
 // MetricsCollector permits private root registration only, never a public endpoint.

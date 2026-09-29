@@ -2,14 +2,18 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/meshtransit/meshtransit/internal/authorization"
 	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/identity/sessioncontext"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -42,6 +46,7 @@ type AccountSessionStore struct {
 }
 
 var _ accountsession.Resolver = (*AccountSessionStore)(nil)
+var _ sessioncontext.Reader = (*AccountSessionStore)(nil)
 
 // NewAccountSessionStore constructs a resolver from a runtime-authenticated pool.
 func NewAccountSessionStore(
@@ -139,6 +144,136 @@ func (store *AccountSessionStore) Resolve(
 	return session, true, nil
 }
 
+// ReadManagementScopes returns one fresh login-Workspace policy-approval projection.
+func (store *AccountSessionStore) ReadManagementScopes(
+	ctx context.Context,
+	session accountsession.Session,
+	after network.ID,
+	limit int,
+	evaluatedAt time.Time,
+) (_ sessioncontext.ReadResult, resultErr error) {
+	startedAt := time.Now()
+	defer func() {
+		store.observeOperation(postgresOperationAccountSessionScopes, startedAt, resultErr)
+	}()
+	workspaceID, hasWorkspace := session.LoginWorkspaceID()
+	if ctx == nil || store == nil || store.database == nil ||
+		!validAccountSessionOptions(store.options) || !session.IsValid() || !hasWorkspace ||
+		(!after.IsValid() && after != (network.ID{})) || limit < 1 ||
+		limit > sessioncontext.MaximumPageSize+1 || evaluatedAt.IsZero() {
+		return sessioncontext.ReadResult{}, sessioncontext.ErrInvalidRequest
+	}
+	transaction, err := store.database.Begin(ctx)
+	if err != nil || transaction == nil {
+		if err == nil {
+			err = ErrInvalidAccountSessionStore
+		}
+		return sessioncontext.ReadResult{}, errors.Join(sessioncontext.ErrUnavailable, err)
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			resultErr = errors.Join(resultErr, rollbackAccountSessionTransaction(transaction))
+		}
+	}()
+	if err := transaction.Exec(
+		ctx,
+		configureAccountSessionTransactionSQL,
+		postgresTimeout(store.options.StatementTimeout),
+		postgresTimeout(store.options.IdleTimeout),
+	); err != nil {
+		return sessioncontext.ReadResult{}, errors.Join(sessioncontext.ErrUnavailable, err)
+	}
+	var afterValue any
+	if after.IsValid() {
+		afterValue = after.String()
+	}
+	var encoded *string
+	err = transaction.QueryRow(
+		ctx,
+		readAccountSessionManagementScopesSQL,
+		session.ID().String(),
+		session.DeploymentID().String(),
+		session.PrincipalID().String(),
+		session.IdentitySubjectID().String(),
+		session.Version(),
+		session.PrincipalAuthorityGeneration(),
+		session.AccountSessionGeneration(),
+		session.ProviderGeneration(),
+		session.DeploymentRecoveryEpoch(),
+		workspaceID.String(),
+		evaluatedAt,
+		afterValue,
+		limit,
+	).Scan(&encoded)
+	if err != nil {
+		return sessioncontext.ReadResult{}, errors.Join(sessioncontext.ErrUnavailable, err)
+	}
+	if encoded == nil {
+		if err := transaction.Commit(ctx); err != nil {
+			return sessioncontext.ReadResult{}, errors.Join(sessioncontext.ErrUnavailable, err)
+		}
+		closed = true
+		return sessioncontext.ReadResult{}, sessioncontext.ErrUnauthenticated
+	}
+	result, err := decodeAccountSessionManagementScopes(*encoded)
+	if err != nil {
+		return sessioncontext.ReadResult{}, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return sessioncontext.ReadResult{}, errors.Join(sessioncontext.ErrUnavailable, err)
+	}
+	closed = true
+	return result, nil
+}
+
+type accountSessionManagementScopesRecord struct {
+	WorkspaceID          string                                `json:"workspace_id"`
+	WorkspaceDisplayName string                                `json:"workspace_display_name"`
+	Scopes               []accountSessionManagementScopeRecord `json:"scopes"`
+}
+
+type accountSessionManagementScopeRecord struct {
+	NetworkID          string   `json:"network_id"`
+	NetworkDisplayName string   `json:"network_display_name"`
+	Permissions        []string `json:"permissions"`
+}
+
+func decodeAccountSessionManagementScopes(encoded string) (sessioncontext.ReadResult, error) {
+	var record accountSessionManagementScopesRecord
+	if err := json.Unmarshal([]byte(encoded), &record); err != nil {
+		return sessioncontext.ReadResult{}, sessioncontext.ErrInvalidResult
+	}
+	workspaceID, err := workspace.ParseID(record.WorkspaceID)
+	if err != nil {
+		return sessioncontext.ReadResult{}, sessioncontext.ErrInvalidResult
+	}
+	result := sessioncontext.ReadResult{
+		WorkspaceID: workspaceID, WorkspaceDisplayName: record.WorkspaceDisplayName,
+		Scopes: make([]sessioncontext.ManagementScope, len(record.Scopes)),
+	}
+	for index, item := range record.Scopes {
+		networkID, err := network.ParseID(item.NetworkID)
+		if err != nil {
+			return sessioncontext.ReadResult{}, sessioncontext.ErrInvalidResult
+		}
+		permissions := make([]authorization.Permission, len(item.Permissions))
+		for permissionIndex, permission := range item.Permissions {
+			permissions[permissionIndex] = authorization.Permission(permission)
+		}
+		value, err := sessioncontext.NewManagementScope(
+			networkID,
+			item.NetworkDisplayName,
+			permissions,
+		)
+		if err != nil {
+			return sessioncontext.ReadResult{}, sessioncontext.ErrInvalidResult
+		}
+		result.Scopes[index] = value
+	}
+	return result, nil
+}
+
 func scanAccountSession(row accountSessionRow) (accountsession.Session, error) {
 	var sessionPublicID, deploymentPublicID, principalPublicID, subjectPublicID string
 	var loginWorkspacePublicID *string
@@ -233,9 +368,17 @@ func rollbackAccountSessionTransaction(transaction accountSessionTransaction) er
 }
 
 func (store *AccountSessionStore) observe(startedAt time.Time, err error) {
+	store.observeOperation(postgresOperationAccountSessionResolve, startedAt, err)
+}
+
+func (store *AccountSessionStore) observeOperation(
+	operation postgresOperation,
+	startedAt time.Time,
+	err error,
+) {
 	if store != nil && store.metrics != nil {
 		store.metrics.observeOperation(
-			postgresOperationAccountSessionResolve,
+			operation,
 			time.Since(startedAt),
 			err,
 		)

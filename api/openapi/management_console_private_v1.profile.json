@@ -1,7 +1,7 @@
 {
   "id": "console-cookie-csrf-private-v1",
   "format": "meshtransit-management-auth-profile/v1",
-  "description": "Private source contract only. No documentation endpoint, listener or SSO is enabled. Completed direct TLS 1.2+, exact configured Host/HTTPS Origin, canonical origin-form request, fresh Core Session and current exact-scope RBAC are mandatory. Read-only approval catalog requests require the cookie and explicit session channel; every mutation additionally requires the current CSRF proof. Authorization custody, encoded/alternate routing, Referer fallback, CORS and provider-token grants are forbidden. The reserved server is an example, never an operator default.",
+  "description": "Private source contract only. No documentation endpoint, listener or SSO is enabled. Completed direct TLS 1.2+, exact configured Host/HTTPS Origin, canonical origin-form request, fresh Core Session and current exact-scope RBAC are mandatory. Read-only approval catalog and management-scope requests require the cookie and explicit session channel; every mutation additionally requires the current CSRF proof. Authorization custody, encoded/alternate routing, Referer fallback, CORS and provider-token grants are forbidden. The reserved server is an example, never an operator default.",
   "securitySchemes": {
     "accountSessionCookie": {
       "type": "apiKey",
@@ -52,6 +52,51 @@
       "properties": {
         "csrf_token": { "$ref": "#/components/schemas/ConsoleSessionProof" },
         "expires_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ConsoleManagementScopePage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data", "correlation_id"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["principal_id", "workspace", "networks"],
+          "properties": {
+            "principal_id": { "type": "string", "format": "uuid" },
+            "workspace": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "display_name"],
+              "properties": {
+                "id": { "type": "string", "format": "uuid" },
+                "display_name": { "type": "string", "minLength": 1, "maxLength": 128 }
+              }
+            },
+            "networks": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "display_name", "permissions"],
+                "properties": {
+                  "id": { "type": "string", "format": "uuid" },
+                  "display_name": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "permissions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "items": { "type": "string", "const": "policy.approve" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "next_page_token": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "correlation_id": { "type": "string", "format": "uuid" }
       }
     }
   },
@@ -124,6 +169,42 @@
         },
         "default": {
           "description": "Private pre-release failure leaves status/headers/body untouched. Authentication failures use the existing bounded management denial without clearing or renewing cookies. Durable submission failure is uncertain delivery, never non-commit evidence or an automatic retry."
+        }
+      }
+    }
+  },
+  "managementScopes": {
+    "get": {
+      "operationId": "listConsoleManagementScopes",
+      "summary": "List current Session management scopes for Console navigation",
+      "description": "Return only the login Workspace and a UUIDv7-keyset page of active Networks where the current Principal freshly holds policy.approve. This projection is for navigation and user experience only; every approval catalog read and decision still performs current exact-Network authorization. No CSRF proof, request body, Authorization credential, Session identifier or provider claim is accepted or returned.",
+      "security": [{ "accountSessionCookie": [] }],
+      "parameters": [
+        { "$ref": "#/components/parameters/ConsoleOrigin" },
+        { "$ref": "#/components/parameters/ConsoleSessionChannel" },
+        {
+          "name": "page_size",
+          "in": "query",
+          "required": false,
+          "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 }
+        },
+        {
+          "name": "page_token",
+          "in": "query",
+          "required": false,
+          "schema": { "type": "string", "minLength": 1, "maxLength": 512 }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Fresh server-authoritative management-scope projection for the current Session login Workspace.",
+          "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } },
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ConsoleManagementScopePage" } }
+          }
+        },
+        "default": {
+          "description": "Bounded generic authentication, request, rate-limit or availability failure. No Session, membership, role-binding or cross-scope evidence is disclosed."
         }
       }
     }
