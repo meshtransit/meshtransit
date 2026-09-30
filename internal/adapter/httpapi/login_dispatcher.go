@@ -151,11 +151,12 @@ func isBrowserManagementOperation(request *http.Request) bool {
 	approvalPath, approval := parsePolicyApprovalPath(request)
 	_, accessGraph := parseAccessGraphExplainPath(request)
 	managementScopes := request.URL != nil && request.URL.Path == AccountSessionManagementScopesPath
+	deploymentCapabilities := request.URL != nil && request.URL.Path == DeploymentCapabilitiesPath
 	if request.Method == http.MethodPost {
 		return device || policy || simulation || accessGraph ||
 			approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.isAction())
 	}
-	return request.Method == http.MethodGet && (managementScopes ||
+	return request.Method == http.MethodGet && (managementScopes || deploymentCapabilities ||
 		approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.kind == policyApprovalPathItem))
 }
 
@@ -187,7 +188,9 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 	approvalList := approval && request.Method == http.MethodGet &&
 		approvalPath.kind == policyApprovalPathCollection
 	managementScopes := target.Path == AccountSessionManagementScopesPath && request.Method == http.MethodGet
-	return callback || approvalList || managementScopes || target.RawQuery == ""
+	deploymentCapabilities := target.Path == DeploymentCapabilitiesPath && request.Method == http.MethodGet &&
+		target.RawQuery == ""
+	return callback || approvalList || managementScopes || deploymentCapabilities || target.RawQuery == ""
 }
 
 // MetricsCollector permits private root registration only, never a public endpoint.

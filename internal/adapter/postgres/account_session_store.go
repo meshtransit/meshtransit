@@ -47,6 +47,7 @@ type AccountSessionStore struct {
 
 var _ accountsession.Resolver = (*AccountSessionStore)(nil)
 var _ sessioncontext.Reader = (*AccountSessionStore)(nil)
+var _ sessioncontext.CapabilityReader = (*AccountSessionStore)(nil)
 
 // NewAccountSessionStore constructs a resolver from a runtime-authenticated pool.
 func NewAccountSessionStore(
@@ -225,6 +226,102 @@ func (store *AccountSessionStore) ReadManagementScopes(
 	}
 	closed = true
 	return result, nil
+}
+
+// ReadDeploymentCapabilities returns one fresh non-secret Deployment projection.
+func (store *AccountSessionStore) ReadDeploymentCapabilities(
+	ctx context.Context,
+	session accountsession.Session,
+	evaluatedAt time.Time,
+) (_ sessioncontext.CapabilityReadResult, resultErr error) {
+	startedAt := time.Now()
+	defer func() {
+		store.observeOperation(postgresOperationAccountSessionCaps, startedAt, resultErr)
+	}()
+	workspaceID, hasWorkspace := session.LoginWorkspaceID()
+	if ctx == nil || store == nil || store.database == nil ||
+		!validAccountSessionOptions(store.options) || !session.IsValid() || !hasWorkspace || evaluatedAt.IsZero() {
+		return sessioncontext.CapabilityReadResult{}, sessioncontext.ErrInvalidCapabilityRequest
+	}
+	transaction, err := store.database.Begin(ctx)
+	if err != nil || transaction == nil {
+		if err == nil {
+			err = ErrInvalidAccountSessionStore
+		}
+		return sessioncontext.CapabilityReadResult{}, errors.Join(sessioncontext.ErrCapabilitiesUnavailable, err)
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			resultErr = errors.Join(resultErr, rollbackAccountSessionTransaction(transaction))
+		}
+	}()
+	if err := transaction.Exec(
+		ctx,
+		configureAccountSessionTransactionSQL,
+		postgresTimeout(store.options.StatementTimeout),
+		postgresTimeout(store.options.IdleTimeout),
+	); err != nil {
+		return sessioncontext.CapabilityReadResult{}, errors.Join(sessioncontext.ErrCapabilitiesUnavailable, err)
+	}
+	var encoded *string
+	err = transaction.QueryRow(
+		ctx,
+		readAccountSessionDeploymentCapabilitiesSQL,
+		session.ID().String(),
+		session.DeploymentID().String(),
+		session.PrincipalID().String(),
+		session.IdentitySubjectID().String(),
+		session.Version(),
+		session.PrincipalAuthorityGeneration(),
+		session.AccountSessionGeneration(),
+		session.ProviderGeneration(),
+		session.DeploymentRecoveryEpoch(),
+		workspaceID.String(),
+		evaluatedAt,
+	).Scan(&encoded)
+	if err != nil {
+		return sessioncontext.CapabilityReadResult{}, errors.Join(sessioncontext.ErrCapabilitiesUnavailable, err)
+	}
+	if encoded == nil {
+		if err := transaction.Commit(ctx); err != nil {
+			return sessioncontext.CapabilityReadResult{}, errors.Join(sessioncontext.ErrCapabilitiesUnavailable, err)
+		}
+		closed = true
+		return sessioncontext.CapabilityReadResult{}, sessioncontext.ErrCapabilitiesUnauthenticated
+	}
+	result, err := decodeAccountSessionDeploymentCapabilities(*encoded)
+	if err != nil {
+		return sessioncontext.CapabilityReadResult{}, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return sessioncontext.CapabilityReadResult{}, errors.Join(sessioncontext.ErrCapabilitiesUnavailable, err)
+	}
+	closed = true
+	return result, nil
+}
+
+type accountSessionDeploymentCapabilitiesRecord struct {
+	DeploymentID string `json:"deployment_id"`
+	Profile      string `json:"profile"`
+	Revision     int64  `json:"revision"`
+}
+
+func decodeAccountSessionDeploymentCapabilities(encoded string) (sessioncontext.CapabilityReadResult, error) {
+	var record accountSessionDeploymentCapabilitiesRecord
+	if err := json.Unmarshal([]byte(encoded), &record); err != nil {
+		return sessioncontext.CapabilityReadResult{}, sessioncontext.ErrInvalidCapabilityResult
+	}
+	deploymentID, err := deployment.ParseID(record.DeploymentID)
+	profile := deployment.Profile(record.Profile)
+	if err != nil || !profile.IsValid() || record.Revision <= 0 {
+		return sessioncontext.CapabilityReadResult{}, sessioncontext.ErrInvalidCapabilityResult
+	}
+	return sessioncontext.CapabilityReadResult{
+		DeploymentID: deploymentID,
+		Profile:      profile,
+		Revision:     record.Revision,
+	}, nil
 }
 
 type accountSessionManagementScopesRecord struct {

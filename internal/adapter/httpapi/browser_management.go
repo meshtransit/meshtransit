@@ -32,6 +32,8 @@ const (
 	AccountSessionLogoutPath = "/auth/v1/session/logout"
 	// AccountSessionManagementScopesPath is the fixed private management-scope projection.
 	AccountSessionManagementScopesPath = "/auth/v1/session/management-scopes"
+	// DeploymentCapabilitiesPath is the fixed authenticated Deployment projection.
+	DeploymentCapabilitiesPath = "/v1/system/capabilities"
 )
 
 var (
@@ -53,6 +55,7 @@ type BrowserManagementOptions struct {
 	Management    *ManagementHandler
 	Logout        AccountSessionLogout
 	Scopes        SessionManagementScopes
+	Capabilities  SessionDeploymentCapabilities
 	DeploymentID  deployment.ID
 	Origin        string
 	Key           BrowserLoginKey
@@ -66,6 +69,7 @@ type BrowserManagement struct {
 	management   *ManagementHandler
 	logout       AccountSessionLogout
 	scopes       SessionManagementScopes
+	capabilities SessionDeploymentCapabilities
 	deploymentID deployment.ID
 	origin, host string
 	keyID        string
@@ -93,7 +97,8 @@ type SessionManagementScopes interface {
 func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement, error) {
 	handler := options.Management
 	validAuthorityProfile := validBrowserManagementHandler(handler) && options.DeploymentID.IsValid() &&
-		!nilContinuationDependency(options.Logout) && !nilContinuationDependency(options.Scopes)
+		!nilContinuationDependency(options.Logout) && !nilContinuationDependency(options.Scopes) &&
+		!nilContinuationDependency(options.Capabilities)
 	if !validAuthorityProfile || nilContinuationDependency(options.Clock) {
 		return nil, ErrInvalidBrowserManagement
 	}
@@ -124,6 +129,7 @@ func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement,
 		return nil, ErrInvalidBrowserManagement
 	}
 	browser := &BrowserManagement{management: handler, logout: options.Logout, scopes: options.Scopes,
+		capabilities: options.Capabilities,
 		deploymentID: options.DeploymentID,
 		origin:       options.Origin, host: origin.Host, keyID: options.Key.ID, clock: options.Clock,
 		lifetime: options.ProofLifetime, entropy: rand.Reader, telemetry: NewBrowserManagementTelemetry(),
@@ -138,6 +144,7 @@ func validBrowserManagementOwner(browser *BrowserManagement) bool {
 	if browser == nil || !validBrowserManagementHandler(browser.management) ||
 		nilContinuationDependency(browser.logout) ||
 		nilContinuationDependency(browser.scopes) ||
+		nilContinuationDependency(browser.capabilities) ||
 		nilContinuationDependency(browser.clock) || browser.slots == nil {
 		return false
 	}
@@ -233,13 +240,15 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	prepare := request.URL.Path == AccountSessionCSRFPreparePath
 	logout := request.URL.Path == AccountSessionLogoutPath
 	managementScopes := request.URL.Path == AccountSessionManagementScopesPath && request.Method == http.MethodGet
+	deploymentCapabilities := request.URL.Path == DeploymentCapabilitiesPath && request.Method == http.MethodGet
 	_, device := parseDeviceRevokePath(request)
 	_, policy := parsePolicyPublishPath(request)
 	_, simulation := parsePolicySimulationPath(request)
 	approvalPath, approvalMatched := parsePolicyApprovalPath(request)
 	approval := approvalMatched && approvalPath.allowedMethod(request.Method) == request.Method
 	_, accessGraph := parseAccessGraphExplainPath(request)
-	if !prepare && !logout && !managementScopes && !device && !policy && !simulation && !approval && !accessGraph {
+	if !prepare && !logout && !managementScopes && !deploymentCapabilities && !device && !policy && !simulation &&
+		!approval && !accessGraph {
 		return ErrInvalidBrowserManagement
 	}
 	operation = "mutation"
@@ -282,6 +291,10 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		}
 	} else if managementScopes {
 		if err := browser.readManagementScopes(ctx, candidate, request, admission); err != nil {
+			return err
+		}
+	} else if deploymentCapabilities {
+		if err := browser.readDeploymentCapabilities(ctx, candidate, request, admission); err != nil {
 			return err
 		}
 	} else {
@@ -417,7 +430,8 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	approvalRead := approvalMatched && request.Method == http.MethodGet &&
 		(approvalPath.kind == policyApprovalPathCollection || approvalPath.kind == policyApprovalPathItem)
 	managementScopeRead := request.Method == http.MethodGet && target.Path == AccountSessionManagementScopesPath
-	safeRead := approvalRead || managementScopeRead
+	deploymentCapabilityRead := request.Method == http.MethodGet && target.Path == DeploymentCapabilitiesPath
+	safeRead := approvalRead || managementScopeRead || deploymentCapabilityRead
 	if request.Method == http.MethodGet && !safeRead {
 		return false
 	}

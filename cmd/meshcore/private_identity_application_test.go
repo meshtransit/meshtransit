@@ -88,6 +88,7 @@ func TestComposePrivateIdentityRejectsTypedNilEffectsBeforeWork(t *testing.T) {
 	var missingMetadata *privateIdentityMetadata
 	var missingAuthority *privateIdentityAuthority
 	var missingScopes *privateIdentityManagementScopes
+	var missingCapabilities *privateIdentityManagementCapabilities
 	for _, test := range []struct {
 		name   string
 		change func(*privateIdentityPorts)
@@ -105,6 +106,7 @@ func TestComposePrivateIdentityRejectsTypedNilEffectsBeforeWork(t *testing.T) {
 		{name: "session authority", change: func(p *privateIdentityPorts) { p.SessionAuthority = missingAuthority }},
 		{name: "session revocations", change: func(p *privateIdentityPorts) { p.SessionRevocations = missingAuthority }},
 		{name: "session scopes", change: func(p *privateIdentityPorts) { p.SessionScopes = missingScopes }},
+		{name: "session capabilities", change: func(p *privateIdentityPorts) { p.SessionCapabilities = missingCapabilities }},
 		{name: "start ids", change: func(p *privateIdentityPorts) { p.StartIDs = missing }},
 		{name: "secrets", change: func(p *privateIdentityPorts) { p.Secrets = missing }},
 		{name: "claim ids", change: func(p *privateIdentityPorts) { p.ClaimIDs = missing }},
@@ -661,8 +663,9 @@ func newPrivateIdentityFixture(t *testing.T) *privateIdentityFixture {
 		Admission: fixture, Metadata: &privateIdentityMetadata{fixture: fixture}, Creations: fixture, Committed: fixture,
 		Pending: fixture, Claims: fixture, Failures: fixture, Issues: fixture, Provider: fixture, Subjects: fixture,
 		SessionAuthority: authority, SessionRevocations: authority,
-		SessionScopes: &privateIdentityManagementScopes{},
-		StartIDs:      fixture, Secrets: fixture, ClaimIDs: fixture,
+		SessionScopes:       &privateIdentityManagementScopes{},
+		SessionCapabilities: &privateIdentityManagementCapabilities{},
+		StartIDs:            fixture, Secrets: fixture, ClaimIDs: fixture,
 		IssueMaterial: fixture, Revocations: fixture, PolicyPublications: fixture,
 		PolicyCompilations: fixture,
 		PolicyExplanations: fixture,
@@ -678,6 +681,8 @@ type privateIdentityPolicyApprovals struct{}
 
 type privateIdentityManagementScopes struct{}
 
+type privateIdentityManagementCapabilities struct{}
+
 func (*privateIdentityManagementScopes) List(
 	context.Context,
 	accountsession.Session,
@@ -685,6 +690,13 @@ func (*privateIdentityManagementScopes) List(
 	network.ID,
 ) (sessioncontext.Page, error) {
 	return sessioncontext.Page{}, sessioncontext.ErrUnavailable
+}
+
+func (*privateIdentityManagementCapabilities) Read(
+	context.Context,
+	accountsession.Session,
+) (sessioncontext.DeploymentCapabilities, error) {
+	return sessioncontext.DeploymentCapabilities{}, sessioncontext.ErrCapabilitiesUnavailable
 }
 
 func (privateIdentityPolicyApprovals) Request(

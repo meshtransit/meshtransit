@@ -182,7 +182,8 @@ func TestLoginDispatcherRejectsMethodAliases(t *testing.T) {
 	t.Parallel()
 	for _, path := range []string{
 		LoginPreparePath, LoginStartPath, LoginContinuationPreparePath, AccountSessionCSRFPreparePath,
-		AccountSessionLogoutPath, AccountSessionManagementScopesPath, LoginCallbackContinuePath, "/auth/callback",
+		AccountSessionLogoutPath, AccountSessionManagementScopesPath, DeploymentCapabilitiesPath,
+		LoginCallbackContinuePath, "/auth/callback",
 	} {
 		for _, method := range []string{"GET", "HEAD", "POST", "OPTIONS", "PUT", "DELETE", "TRACE", "PATCH", "post"} {
 			fixedPost := method == http.MethodPost && (path == LoginPreparePath || path == LoginStartPath ||
@@ -191,7 +192,8 @@ func TestLoginDispatcherRejectsMethodAliases(t *testing.T) {
 			landingRead := (method == http.MethodGet || method == http.MethodHead) && path == LoginCallbackContinuePath
 			callbackGet := method == http.MethodGet && path == "/auth/callback"
 			managementScopeRead := method == http.MethodGet && path == AccountSessionManagementScopesPath
-			if fixedPost || landingRead || callbackGet || managementScopeRead {
+			deploymentCapabilityRead := method == http.MethodGet && path == DeploymentCapabilitiesPath
+			if fixedPost || landingRead || callbackGet || managementScopeRead || deploymentCapabilityRead {
 				continue
 			}
 			t.Run(method+" "+path, func(t *testing.T) {
@@ -324,6 +326,25 @@ func TestLoginDispatcherPreservesManagementScopeOwnership(t *testing.T) {
 		management.budgets != 2 || len(fixture.calls) != 0 || callback.calls != 0 ||
 		response.Header().Get("Set-Cookie") != "" || response.Header().Get("Www-Authenticate") != "" {
 		t.Fatal("management-scope read crossed owner boundaries")
+	}
+}
+
+func TestLoginDispatcherPreservesDeploymentCapabilityOwnership(t *testing.T) {
+	t.Parallel()
+	dispatcher, fixture, callback, management := dispatcherTestGraphWithManagement(t)
+	request := browserManagementReadRequest(t, DeploymentCapabilitiesPath)
+	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := dispatcher.Handle(response, request); err != nil {
+		t.Fatal("Deployment capability read did not reach its exact owner", err)
+	}
+	var body deploymentCapabilityResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || body.CapabilityRevision != 7 {
+		t.Fatal("Deployment capability read changed its bounded response", err)
+	}
+	if response.Code != http.StatusOK || response.statusWrites != 1 || management.auth != 1 ||
+		management.budgets != 2 || management.capabilityReads != 1 || len(fixture.calls) != 0 || callback.calls != 0 ||
+		response.Header().Get("Set-Cookie") != "" || response.Header().Get("Www-Authenticate") != "" {
+		t.Fatal("Deployment capability read crossed owner boundaries")
 	}
 }
 
@@ -569,13 +590,14 @@ func FuzzLoginDispatcherRouting(f *testing.F) {
 		err := dispatcher.Handle(response, request)
 		callbackGet := method == http.MethodGet && path == dispatcher.CallbackPath()
 		managementScopeRead := method == http.MethodGet && path == AccountSessionManagementScopesPath
+		deploymentCapabilityRead := method == http.MethodGet && path == DeploymentCapabilitiesPath
 		fixedPost := method == http.MethodPost && (path == LoginPreparePath || path == LoginStartPath ||
 			path == LoginContinuationPreparePath || path == AccountSessionCSRFPreparePath ||
 			path == AccountSessionLogoutPath || path == LoginCallbackContinuePath)
 		landingRead := (method == http.MethodGet || method == http.MethodHead) && path == LoginCallbackContinuePath
 		matched := rawPath == "" && len(query) <= maximumCallbackQueryBytes &&
 			(query == "" || callbackGet || managementScopeRead) &&
-			(callbackGet || fixedPost || landingRead || managementScopeRead)
+			(callbackGet || fixedPost || landingRead || managementScopeRead || deploymentCapabilityRead)
 		if !matched {
 			if !errors.Is(err, ErrInvalidLoginDispatcher) || len(fixture.calls) != 0 || callback.calls != 0 ||
 				len(response.Header()) != 0 || response.statusWrites != 0 || response.Body.Len() != 0 {

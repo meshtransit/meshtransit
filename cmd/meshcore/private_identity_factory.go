@@ -105,6 +105,10 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	managementCapabilities, err := sessioncontext.NewCapabilityService(authority, clock)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	revocations, policies, policyCompiler, policyExplainer, policySimulator,
 		policyApprovals, policyApprovalCatalog, err :=
 		privateIdentityManagementServices(
@@ -141,8 +145,8 @@ func composePrivateIdentityFactory(
 		Admission: transactions, Metadata: owner.discovery, Creations: transactions, Committed: transactions,
 		Pending: transactions, Claims: transactions, Failures: transactions, Issues: transactions,
 		Provider: owner.provider, Subjects: transactions, SessionAuthority: authority, SessionRevocations: logoutStore,
-		SessionScopes: managementScopes,
-		StartIDs:      oidcauth.SystemStartIDs{}, Secrets: oidcauth.SystemSecrets{},
+		SessionScopes: managementScopes, SessionCapabilities: managementCapabilities,
+		StartIDs: oidcauth.SystemStartIDs{}, Secrets: oidcauth.SystemSecrets{},
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, PolicySimulations: policySimulator,

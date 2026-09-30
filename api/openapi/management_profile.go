@@ -21,6 +21,7 @@ const (
 	consoleSessionPreparePath                                 = "/auth/v1/session/prepare"
 	consoleSessionLogoutPath                                  = "/auth/v1/session/logout"
 	consoleSessionManagementScopesPath                        = "/auth/v1/session/management-scopes"
+	consoleDeploymentCapabilitiesPath                         = "/v1/system/capabilities"
 	deviceRevokePath                                          = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"devices/{device_id}/actions/revoke"
 	policyPublishPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
@@ -49,15 +50,16 @@ var managementV1Contract string
 var consolePrivateProfile string
 
 type consoleManagementProfile struct {
-	ID               ManagementProfile          `json:"id"`
-	Format           string                     `json:"format"`
-	Description      string                     `json:"description"`
-	SecuritySchemes  map[string]json.RawMessage `json:"securitySchemes"`
-	Parameters       map[string]json.RawMessage `json:"parameters"`
-	Schemas          map[string]json.RawMessage `json:"schemas"`
-	Prepare          json.RawMessage            `json:"prepare"`
-	Logout           json.RawMessage            `json:"logout"`
-	ManagementScopes json.RawMessage            `json:"managementScopes"`
+	ID                     ManagementProfile          `json:"id"`
+	Format                 string                     `json:"format"`
+	Description            string                     `json:"description"`
+	SecuritySchemes        map[string]json.RawMessage `json:"securitySchemes"`
+	Parameters             map[string]json.RawMessage `json:"parameters"`
+	Schemas                map[string]json.RawMessage `json:"schemas"`
+	Prepare                json.RawMessage            `json:"prepare"`
+	Logout                 json.RawMessage            `json:"logout"`
+	ManagementScopes       json.RawMessage            `json:"managementScopes"`
+	DeploymentCapabilities json.RawMessage            `json:"deploymentCapabilities"`
 }
 
 // ManagementDocument returns independently owned deterministic OpenAPI bytes.
@@ -105,12 +107,15 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	validIdentity := profile.ID == ManagementProfileConsoleCookiePrivateV1 &&
 		profile.Format == "meshtransit-management-auth-profile/v1"
 	validTransport := len(profile.SecuritySchemes) == 2 && len(profile.Parameters) == 3
-	validShape := len(profile.Schemas) == 3 && len(profile.Prepare) > 0 && len(profile.Logout) > 0 &&
-		len(profile.ManagementScopes) > 0
+	validShape := len(profile.Schemas) == 4 && len(profile.Prepare) > 0 && len(profile.Logout) > 0 &&
+		len(profile.ManagementScopes) > 0 && len(profile.DeploymentCapabilities) > 0
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
 	}
 	if !consoleManagementScopeOperation(profile.ManagementScopes) {
+		return nil, ErrInvalidManagementProfile
+	}
+	if !consoleDeploymentCapabilitiesOperation(profile.DeploymentCapabilities) {
 		return nil, ErrInvalidManagementProfile
 	}
 	components, err := managementObject(document["components"])
@@ -171,7 +176,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	if err != nil {
 		return nil, ErrInvalidManagementProfile
 	}
-	consolePaths := make(map[string]json.RawMessage, len(consolePathItems)+3)
+	consolePaths := make(map[string]json.RawMessage, len(consolePathItems)+4)
 	for path, item := range consolePathItems {
 		consolePaths[path], err = json.Marshal(item)
 		if err != nil {
@@ -181,6 +186,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths[consoleSessionPreparePath] = profile.Prepare
 	consolePaths[consoleSessionLogoutPath] = profile.Logout
 	consolePaths[consoleSessionManagementScopesPath] = profile.ManagementScopes
+	consolePaths[consoleDeploymentCapabilitiesPath] = profile.DeploymentCapabilities
 	document["paths"], err = json.Marshal(consolePaths)
 	if err != nil {
 		return nil, ErrInvalidManagementProfile
@@ -317,4 +323,31 @@ func consoleManagementScopeOperation(item json.RawMessage) bool {
 	}
 	var parameters []json.RawMessage
 	return json.Unmarshal(operation["parameters"], &parameters) == nil && len(parameters) == 4
+}
+
+func consoleDeploymentCapabilitiesOperation(item json.RawMessage) bool {
+	methods, err := managementObject(item)
+	if err != nil || len(methods) != 1 {
+		return false
+	}
+	operation, err := managementObject(methods["get"])
+	if err != nil || operation["requestBody"] != nil {
+		return false
+	}
+	var operationID string
+	if err := json.Unmarshal(operation["operationId"], &operationID); err != nil ||
+		operationID != "getConsoleDeploymentCapabilities" {
+		return false
+	}
+	var security []map[string][]string
+	if err := json.Unmarshal(operation["security"], &security); err != nil || len(security) != 1 ||
+		len(security[0]) != 1 {
+		return false
+	}
+	scopes, present := security[0]["accountSessionCookie"]
+	if !present || scopes == nil || len(scopes) != 0 {
+		return false
+	}
+	var parameters []json.RawMessage
+	return json.Unmarshal(operation["parameters"], &parameters) == nil && len(parameters) == 2
 }

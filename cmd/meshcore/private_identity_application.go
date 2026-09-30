@@ -60,6 +60,7 @@ type privateIdentityPorts struct {
 	SessionAuthority      accountsession.Resolver
 	SessionRevocations    accountsession.Revoker
 	SessionScopes         httpapi.SessionManagementScopes
+	SessionCapabilities   httpapi.SessionDeploymentCapabilities
 	StartIDs              oidcauth.StartIDGenerator
 	Secrets               oidcauth.SecretsGenerator
 	ClaimIDs              oidcauth.ClaimIDGenerator
@@ -174,6 +175,7 @@ func composePrivateIdentity(
 	}
 	management, err := httpapi.NewBrowserManagement(httpapi.BrowserManagementOptions{
 		Management: resources, Logout: logout, Scopes: ports.SessionScopes,
+		Capabilities: ports.SessionCapabilities,
 		DeploymentID: options.Route.DeploymentID(), Origin: options.Origin,
 		Key: keys.csrf, Clock: ports.Clock, ProofLifetime: managementOptions.ProofLifetime,
 	})
@@ -230,7 +232,7 @@ func completePrivateIdentityPorts(ports privateIdentityPorts) bool {
 	for _, port := range []any{
 		ports.Admission, ports.Metadata, ports.Creations, ports.Committed, ports.Pending, ports.Claims,
 		ports.Failures, ports.Issues, ports.Provider, ports.Subjects, ports.SessionAuthority, ports.StartIDs,
-		ports.SessionRevocations, ports.SessionScopes,
+		ports.SessionRevocations, ports.SessionScopes, ports.SessionCapabilities,
 		ports.Secrets, ports.ClaimIDs, ports.IssueMaterial, ports.Revocations, ports.PolicyPublications,
 		ports.PolicyCompilations,
 		ports.PolicyExplanations,

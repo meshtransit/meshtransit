@@ -21,6 +21,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
 	"github.com/meshtransit/meshtransit/internal/authorization"
+	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
@@ -37,6 +38,7 @@ type browserManagementFixture struct {
 	at                                              time.Time
 	auth, budgets, revoke, publish, explain, logout int
 	approvalGet, approvalList                       int
+	capabilityReads                                 int
 	sessionRevoked                                  bool
 }
 
@@ -172,6 +174,36 @@ func TestBrowserManagementReadsServerAuthoritativeScopes(t *testing.T) {
 	if err := browser.Handle(unsafeResponse, unsafe); !errors.Is(err, ErrInvalidBrowserManagement) ||
 		unsafeResponse.statusWrites != 0 || unsafeResponse.Body.Len() != 0 {
 		t.Fatal("management-scope read accepted mutation transport", err)
+	}
+}
+
+func TestBrowserManagementReadsServerAuthoritativeDeploymentCapabilities(t *testing.T) {
+	t.Parallel()
+	browser, fixture := newBrowserManagementFixture(t)
+	request := browserManagementReadRequest(t, DeploymentCapabilitiesPath)
+	response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := browser.Handle(response, request); err != nil {
+		t.Fatal(err)
+	}
+	var body deploymentCapabilityResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	validProjection := body.DeploymentProfile == "self_hosted" && body.WorkspaceMode == "single" &&
+		body.MaxActiveWorkspaces == 1 && body.WorkspaceCreation == "bootstrap_only" &&
+		!body.CloudBilling && !body.PlatformOperations && body.CapabilityRevision == 7
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" ||
+		response.Header().Get("Set-Cookie") != "" || response.Header().Get("Www-Authenticate") != "" ||
+		fixture.auth != 1 || fixture.budgets != 2 || fixture.capabilityReads != 1 || !validProjection ||
+		strings.Contains(response.Body.String(), managementSessionFixture(t).ID().String()) {
+		t.Fatalf("deployment capabilities = %d/%+v/%s", response.Code, body, response.Body.String())
+	}
+
+	unsafe := browserManagementReadRequest(t, DeploymentCapabilitiesPath+"?profile=cloud")
+	unsafeResponse := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+	if err := browser.Handle(unsafeResponse, unsafe); !errors.Is(err, ErrInvalidBrowserManagement) ||
+		unsafeResponse.statusWrites != 0 || unsafeResponse.Body.Len() != 0 {
+		t.Fatal("deployment capability read accepted client-selected profile", err)
 	}
 }
 
@@ -338,7 +370,8 @@ func TestBrowserManagementLogoutRevokesOnceAndClearsOnlyItsCookie(t *testing.T) 
 func TestBrowserManagementConstructorIsClosedAndCopiesKey(t *testing.T) {
 	t.Parallel()
 	for _, invalid := range []string{
-		"nil handler", "nil logout", "nil scopes", "typed nil scopes", "typed nil clock", "nil sessions",
+		"nil handler", "nil logout", "nil scopes", "typed nil scopes", "nil capabilities",
+		"typed nil capabilities", "typed nil clock", "nil sessions",
 		"short key", "zero key", "bad key id",
 		"short ttl", "fraction ttl", "long ttl", "http", "path", "query", "userinfo", "uppercase",
 		"default port", "empty port", "leading port", "bad dns",
@@ -354,6 +387,10 @@ func TestBrowserManagementConstructorIsClosedAndCopiesKey(t *testing.T) {
 				options.Scopes = nil
 			case "typed nil scopes":
 				options.Scopes = (*sessioncontext.Service)(nil)
+			case "nil capabilities":
+				options.Capabilities = nil
+			case "typed nil capabilities":
+				options.Capabilities = (*sessioncontext.CapabilityService)(nil)
 			case "typed nil clock":
 				options.Clock = (*browserManagementFixture)(nil)
 			case "nil sessions":
@@ -1105,11 +1142,37 @@ func browserManagementTestOptions(t *testing.T) (BrowserManagementOptions, *brow
 	if err != nil {
 		t.Fatal(err)
 	}
-	return BrowserManagementOptions{Management: handler, Logout: logout, Scopes: scopes,
+	capabilities, err := sessioncontext.NewCapabilityService(
+		browserManagementCapabilityReader{
+			fixture: fixture,
+			result: sessioncontext.CapabilityReadResult{
+				DeploymentID: session.DeploymentID(), Profile: deployment.ProfileSelfHosted, Revision: 7,
+			},
+		},
+		fixture,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return BrowserManagementOptions{Management: handler, Logout: logout, Scopes: scopes, Capabilities: capabilities,
 		Origin:       "https://console.example.test",
 		DeploymentID: managementSessionFixture(t).DeploymentID(), Clock: fixture,
 		Key:           BrowserLoginKey{ID: "browser-session-csrf-v1", Material: bytes.Repeat([]byte{0x54}, 32)},
 		ProofLifetime: time.Minute}, fixture
+}
+
+type browserManagementCapabilityReader struct {
+	fixture *browserManagementFixture
+	result  sessioncontext.CapabilityReadResult
+}
+
+func (reader browserManagementCapabilityReader) ReadDeploymentCapabilities(
+	context.Context,
+	accountsession.Session,
+	time.Time,
+) (sessioncontext.CapabilityReadResult, error) {
+	reader.fixture.capabilityReads++
+	return reader.result, nil
 }
 
 type browserManagementScopeReader struct{ result sessioncontext.ReadResult }

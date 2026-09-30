@@ -49,6 +49,7 @@ func prepareIntegrationBrowserManagement(
 			return false, nil
 		}),
 		Scopes:       integrationManagementScopes{},
+		Capabilities: integrationDeploymentCapabilities{},
 		DeploymentID: token.DeploymentID(), Origin: "https://console.example.test", Clock: accountsession.SystemClock{},
 		Key:           httpapi.BrowserLoginKey{ID: "integration-session-csrf-v1", Material: bytes.Repeat([]byte{0x74}, 32)},
 		ProofLifetime: time.Minute})
@@ -83,6 +84,8 @@ func prepareIntegrationBrowserManagement(
 
 type integrationManagementScopes struct{}
 
+type integrationDeploymentCapabilities struct{}
+
 func (integrationManagementScopes) List(
 	context.Context,
 	accountsession.Session,
@@ -90,6 +93,13 @@ func (integrationManagementScopes) List(
 	network.ID,
 ) (sessioncontext.Page, error) {
 	return sessioncontext.Page{}, sessioncontext.ErrUnavailable
+}
+
+func (integrationDeploymentCapabilities) Read(
+	context.Context,
+	accountsession.Session,
+) (sessioncontext.DeploymentCapabilities, error) {
+	return sessioncontext.DeploymentCapabilities{}, sessioncontext.ErrCapabilitiesUnavailable
 }
 
 type integrationAccountSessionLogoutFunc func(context.Context, accountsession.Token) (bool, error)

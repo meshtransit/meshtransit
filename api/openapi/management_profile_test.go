@@ -65,7 +65,7 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal("private document retained deployment topology")
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
-	if len(basePaths) != 27 || len(paths) != 10 {
+	if len(basePaths) != 27 || len(paths) != 11 {
 		t.Fatal("private profile introduced another product resource API")
 	}
 	for _, path := range []string{
@@ -211,6 +211,44 @@ func TestManagementDocumentConsoleScopesAreReadOnlyNavigationEvidence(t *testing
 		t.Fatal("management-scope response became open-ended")
 	}
 	profileReferences(t, document, operation)
+}
+
+func TestManagementDocumentConsoleCapabilitiesAreAuthenticatedNavigationEvidence(t *testing.T) {
+	t.Parallel()
+	body, err := openapi.ManagementDocument(openapi.ManagementProfileConsoleCookiePrivateV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := profileObject(t, body)
+	item := profileMap(t, profileMap(t, document, "paths"), "/v1/system/capabilities")
+	if len(item) != 1 {
+		t.Fatal("Deployment capability projection exposes another method")
+	}
+	operation := profileMap(t, item, "get")
+	expectedSecurity := []any{map[string]any{"accountSessionCookie": []any{}}}
+	if operation["operationId"] != "getConsoleDeploymentCapabilities" ||
+		!reflect.DeepEqual(operation["security"], expectedSecurity) || operation["requestBody"] != nil {
+		t.Fatal("Deployment capability projection gained mutation proof, body or authentication fallback")
+	}
+	parameters := profileArray(t, operation, "parameters")
+	if len(parameters) != 2 ||
+		!reflect.DeepEqual(parameters[0], map[string]any{"$ref": "#/components/parameters/ConsoleOrigin"}) ||
+		!reflect.DeepEqual(parameters[1], map[string]any{"$ref": "#/components/parameters/ConsoleSessionChannel"}) {
+		t.Fatal("Deployment capability projection lost exact browser intent")
+	}
+	schemas := profileMap(t, profileMap(t, document, "components"), "schemas")
+	projection := profileMap(t, schemas, "ConsoleDeploymentCapabilities")
+	if projection["additionalProperties"] != false {
+		t.Fatal("Deployment capability projection accepts unknown fields")
+	}
+	properties := profileMap(t, projection, "properties")
+	if len(properties) != 7 || profileMap(t, properties, "deployment_profile")["const"] != "self_hosted" ||
+		profileMap(t, properties, "workspace_mode")["const"] != "single" ||
+		profileMap(t, properties, "max_active_workspaces")["const"] != float64(1) ||
+		profileMap(t, properties, "cloud_billing")["const"] != false ||
+		profileMap(t, properties, "platform_operations")["const"] != false {
+		t.Fatal("Deployment capability projection widened the supported self-hosted baseline")
+	}
 }
 
 func TestManagementDocumentConsoleLogoutIsDurableAndCookieScoped(t *testing.T) {

@@ -1,7 +1,7 @@
 {
   "id": "console-cookie-csrf-private-v1",
   "format": "meshtransit-management-auth-profile/v1",
-  "description": "Private source contract only. No documentation endpoint, listener or SSO is enabled. Completed direct TLS 1.2+, exact configured Host/HTTPS Origin, canonical origin-form request, fresh Core Session and current exact-scope RBAC are mandatory. Read-only approval catalog and management-scope requests require the cookie and explicit session channel; every mutation additionally requires the current CSRF proof. Authorization custody, encoded/alternate routing, Referer fallback, CORS and provider-token grants are forbidden. The reserved server is an example, never an operator default.",
+  "description": "Private source contract only. No documentation endpoint, listener or SSO is enabled. Completed direct TLS 1.2+, exact configured Host/HTTPS Origin, canonical origin-form request, fresh Core Session and current exact-scope RBAC are mandatory. Read-only Deployment capability, approval catalog and management-scope requests require the cookie and explicit session channel; every mutation additionally requires the current CSRF proof. Authorization custody, encoded/alternate routing, Referer fallback, CORS and provider-token grants are forbidden. The reserved server is an example, never an operator default.",
   "securitySchemes": {
     "accountSessionCookie": {
       "type": "apiKey",
@@ -97,6 +97,28 @@
         },
         "next_page_token": { "type": "string", "minLength": 1, "maxLength": 512 },
         "correlation_id": { "type": "string", "format": "uuid" }
+      }
+    },
+    "ConsoleDeploymentCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deployment_profile",
+        "workspace_mode",
+        "max_active_workspaces",
+        "workspace_creation",
+        "cloud_billing",
+        "platform_operations",
+        "capability_revision"
+      ],
+      "properties": {
+        "deployment_profile": { "type": "string", "const": "self_hosted" },
+        "workspace_mode": { "type": "string", "const": "single" },
+        "max_active_workspaces": { "type": "integer", "const": 1 },
+        "workspace_creation": { "type": "string", "const": "bootstrap_only" },
+        "cloud_billing": { "type": "boolean", "const": false },
+        "platform_operations": { "type": "boolean", "const": false },
+        "capability_revision": { "type": "integer", "minimum": 1 }
       }
     }
   },
@@ -205,6 +227,30 @@
         },
         "default": {
           "description": "Bounded generic authentication, request, rate-limit or availability failure. No Session, membership, role-binding or cross-scope evidence is disclosed."
+        }
+      }
+    }
+  },
+  "deploymentCapabilities": {
+    "get": {
+      "operationId": "getConsoleDeploymentCapabilities",
+      "summary": "Read the current server-authoritative Deployment capability projection",
+      "description": "Return only the official self-hosted Deployment baseline and durable capability revision after fresh Session authentication. The projection is for Console navigation and route guards only. It grants no Workspace, platform, billing or operation authority; unknown, cloud, contradictory or stale authority fails closed.",
+      "security": [{ "accountSessionCookie": [] }],
+      "parameters": [
+        { "$ref": "#/components/parameters/ConsoleOrigin" },
+        { "$ref": "#/components/parameters/ConsoleSessionChannel" }
+      ],
+      "responses": {
+        "200": {
+          "description": "Fresh non-secret Deployment capability projection for the authenticated Console Session.",
+          "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } },
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ConsoleDeploymentCapabilities" } }
+          }
+        },
+        "default": {
+          "description": "Bounded generic authentication, request, rate-limit, unsupported-profile or availability failure. No entitlement, installation key, Session or topology evidence is disclosed."
         }
       }
     }
