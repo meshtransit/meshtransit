@@ -11,8 +11,43 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 55 {
-		t.Fatalf("len(Catalog()) = %d, want 55", len(catalog))
+	if len(catalog) != 56 {
+		t.Fatalf("len(Catalog()) = %d, want 56", len(catalog))
+	}
+	reconciliation := catalog[55]
+	if reconciliation.Description != "Resource sharing Private Endpoint route reconciliation and withdrawal" {
+		t.Fatalf("migration 56 description = %q, want endpoint reconciliation", reconciliation.Description)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh_ops.private_endpoint_route_intent",
+		"CREATE FUNCTION mesh_ops.read_private_endpoint_publication_snapshot_v2",
+		"CREATE FUNCTION mesh_ops.stage_private_endpoint_route_v1",
+		"CREATE OR REPLACE FUNCTION mesh_ops.reject_private_endpoint_readiness_change",
+		"CREATE FUNCTION mesh_ops.list_private_endpoint_withdrawal_candidates_v1",
+		"CREATE FUNCTION mesh_ops.read_private_endpoint_withdrawal_snapshot_v1",
+		"CREATE FUNCTION mesh_ops.finalize_private_endpoint_withdrawal_v1",
+		"'route_present', route_present_value",
+		"TO mesh_worker",
+		"FORCE ROW LEVEL SECURITY",
+		"p_reason NOT IN ('expired', 'invalidated')",
+		"route_revision = revision.route_revision + 1",
+		"dns_revision = revision.dns_revision + 1",
+		"sharing_revision = revision.sharing_revision + 1",
+	} {
+		if !strings.Contains(reconciliation.SQL, required) {
+			t.Errorf("Resource Sharing endpoint reconciliation SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT INSERT ON mesh_ops.private_endpoint_route_intent TO mesh_worker",
+		"GRANT UPDATE ON mesh.private_endpoint TO mesh_worker",
+		"GRANT UPDATE ON mesh.imported_resource_dns_publication TO mesh_worker",
+		"BYPASSRLS",
+		"DROP ",
+	} {
+		if strings.Contains(reconciliation.SQL, forbidden) {
+			t.Errorf("Resource Sharing endpoint reconciliation SQL contains unsafe capability %q", forbidden)
+		}
 	}
 	endpointPublication := catalog[54]
 	if endpointPublication.Description != "Resource sharing Private Endpoint readiness and DNS publication" {
@@ -1498,8 +1533,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 55 {
-		t.Fatalf("LatestVersion() = %d, want 55", LatestVersion())
+	if LatestVersion() != 56 {
+		t.Fatalf("LatestVersion() = %d, want 56", LatestVersion())
 	}
 }
 

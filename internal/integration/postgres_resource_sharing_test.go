@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,12 +17,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/audit"
+	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/resource"
 	"github.com/meshtransit/meshtransit/internal/sharing"
+	"github.com/meshtransit/meshtransit/internal/sharing/endpointpublication"
 )
 
 func assertPostgreSQLResourceSharing(
@@ -29,6 +32,7 @@ func assertPostgreSQLResourceSharing(
 	t *testing.T,
 	admin *pgx.Conn,
 	worker *pgx.Conn,
+	workerPool *postgresadapter.Pool,
 	runtimePool *postgresadapter.Pool,
 ) {
 	t.Helper()
@@ -194,8 +198,8 @@ func assertPostgreSQLResourceSharing(
 		t.Fatalf("ResolveImportedPolicyDestinations() = %+v, error = %v", resolved, err)
 	}
 	assertAtomicImportedPolicyPublication(ctx, t, admin, resolved[0])
-	assertCrossWorkspaceResourceSharingConsent(
-		ctx, t, admin, worker, service, providerScope, resourceID, maximumTraffic, reason,
+	crossWorkspaceImport := assertCrossWorkspaceResourceSharingConsent(
+		ctx, t, admin, workerPool, service, providerScope, resourceID, maximumTraffic, reason,
 	)
 	revokeCommand, err := sharing.NewRevokeContract(sharing.RevokeContractParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
@@ -226,6 +230,13 @@ func assertPostgreSQLResourceSharing(
 	assertPrivateEndpointPublicationWithdrawn(
 		ctx, t, admin, activeContract.ImportedResourceID(), accessName,
 	)
+	unstagedImport := createUnstagedPrivateEndpointFixture(
+		ctx, t, service, session, providerScope, consumerScope,
+		resourceID, maximumTraffic, reason,
+	)
+	assertAutomaticPrivateEndpointInvalidation(
+		ctx, t, admin, worker, workerPool, crossWorkspaceImport, unstagedImport,
+	)
 	if _, err := store.ResolveImportedPolicyDestinations(
 		ctx,
 		session,
@@ -248,16 +259,85 @@ func assertPostgreSQLResourceSharing(
 	assertCommittedResourceSharingEvidence(ctx, t, admin, createdOffer.Offer().ID(), contract.ID())
 }
 
+func createUnstagedPrivateEndpointFixture(
+	ctx context.Context,
+	t *testing.T,
+	service *sharing.Service,
+	session accountsession.Session,
+	providerScope, consumerScope network.Scope,
+	resourceID resource.ID,
+	maximumTraffic sharing.TrafficSet,
+	reason sharing.AuditReason,
+) sharing.ImportedResourceID {
+	t.Helper()
+	created, err := service.CreateOffer(ctx, mustCreateSharingOffer(
+		t, providerScope, consumerScope, resourceID, maximumTraffic, session, reason, 125,
+	))
+	if err != nil {
+		t.Fatalf("create unstaged Private Endpoint offer: %v", err)
+	}
+	offer, hasOffer := created.Offer()
+	token, hasToken := created.Token()
+	if !hasOffer || !hasToken {
+		t.Fatalf("unstaged Private Endpoint offer result = %+v", created)
+	}
+	name, err := resource.ParseDisplayName("Unstaged production Resource")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessName, err := sharing.ParseAccessName("unstaged.shared.consumer.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		OfferID: offer.Offer().ID(), ExpectedOfferVersion: offer.Offer().Version(),
+		Token: token, Action: sharing.DecisionActionAccept,
+		ImportedDisplayName: name, AccessName: accessName, AccountSession: session,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 126),
+	})
+	if err != nil {
+		t.Fatalf("construct unstaged Private Endpoint acceptance: %v", err)
+	}
+	accepted, err := service.DecideOffer(ctx, decision)
+	if err != nil {
+		t.Fatalf("accept unstaged Private Endpoint offer: %v", err)
+	}
+	contract, hasContract := accepted.Contract()
+	if !hasContract {
+		t.Fatalf("unstaged Private Endpoint acceptance = %+v", accepted)
+	}
+	activation, err := sharing.NewActivateContract(sharing.ActivateContractParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		ContractID: contract.ID(), ExpectedContractVersion: contract.Version(),
+		AccountSession: session, Reason: reason,
+		Idempotency: resourceAuthorityProof(t, 127),
+	})
+	if err != nil {
+		t.Fatalf("construct unstaged Private Endpoint activation: %v", err)
+	}
+	activated, err := service.ActivateContract(ctx, activation)
+	if err != nil {
+		t.Fatalf("activate unstaged Private Endpoint: %v", err)
+	}
+	activeContract, hasContract := activated.Contract()
+	if !hasContract || activeContract.State() != sharing.ContractStateActive {
+		t.Fatalf("unstaged Private Endpoint activation = %+v", activated)
+	}
+	return activeContract.ImportedResourceID()
+}
+
 func assertCrossWorkspaceResourceSharingConsent(
 	ctx context.Context,
 	t *testing.T,
-	admin, worker *pgx.Conn,
+	admin *pgx.Conn,
+	workerPool *postgresadapter.Pool,
 	service *sharing.Service,
 	providerScope network.Scope,
 	resourceID resource.ID,
 	maximumTraffic sharing.TrafficSet,
 	reason sharing.AuditReason,
-) {
+) sharing.ImportedResourceID {
 	t.Helper()
 	seedCrossWorkspaceShareConsumerAuthority(ctx, t, admin)
 	providerSession := managementRBACAccountSessionFixture(t)
@@ -348,8 +428,8 @@ func assertCrossWorkspaceResourceSharingConsent(
 		ctx, t, admin, activeContract.ImportedResourceID(), "provisioning", 1,
 		"reserved", 1, "fd00:feed::2",
 	)
-	assertPrivateEndpointPublication(
-		ctx, t, admin, worker, activeContract.ImportedResourceID(), accessName, "fd00:feed::2/128",
+	assertPrivateEndpointPublicationViaAdapter(
+		ctx, t, admin, workerPool, activeContract.ImportedResourceID(), accessName, "fd00:feed::2",
 	)
 	assertCrossWorkspaceSharingConsentEvidence(ctx, t, admin, offer.Offer().ID())
 
@@ -360,6 +440,250 @@ FROM mesh.network WHERE workspace_id = 103 AND state = 'active'`).Scan(&networkC
 	}
 	if networkCount < 2 {
 		t.Fatalf("active Networks in Workspace = %d, want at least 2", networkCount)
+	}
+	return activeContract.ImportedResourceID()
+}
+
+func assertAutomaticPrivateEndpointInvalidation(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	worker *pgx.Conn,
+	workerPool *postgresadapter.Pool,
+	importedResourceID, unstagedImportedResourceID sharing.ImportedResourceID,
+) {
+	t.Helper()
+	const deploymentPublicID = "01890f00-0000-7000-8000-000000000001"
+	if workerPool == nil || !importedResourceID.IsValid() || !unstagedImportedResourceID.IsValid() {
+		t.Fatal("automatic Private Endpoint invalidation fixture is incomplete")
+	}
+
+	// Simulate a committed disaster-recovery epoch rotation. The integration
+	// administrator bypasses the ordinary evidence trigger only for this fault
+	// injection; production writers cannot perform this mutation directly.
+	if _, err := admin.Exec(ctx, `SET session_replication_role = replica`); err != nil {
+		t.Fatalf("enable recovery-epoch fault injection: %v", err)
+	}
+	restored := false
+	defer func() {
+		if !restored {
+			_, _ = admin.Exec(context.WithoutCancel(ctx), `UPDATE mesh.deployment
+SET recovery_epoch = 1, updated_at = pg_catalog.clock_timestamp()
+WHERE installation_public_id = $1::UUID`, deploymentPublicID)
+		}
+		_, _ = admin.Exec(context.WithoutCancel(ctx), `SET session_replication_role = origin`)
+	}()
+	if _, err := admin.Exec(ctx, `UPDATE mesh.deployment
+SET recovery_epoch = recovery_epoch + 1, updated_at = pg_catalog.clock_timestamp()
+WHERE installation_public_id = $1::UUID`, deploymentPublicID); err != nil {
+		t.Fatalf("rotate deployment recovery epoch: %v", err)
+	}
+
+	deploymentID, err := deployment.ParseID(deploymentPublicID)
+	if err != nil {
+		t.Fatalf("parse deployment ID: %v", err)
+	}
+	var endpointPublicID string
+	if err := admin.QueryRow(ctx, `SELECT endpoint.public_id::TEXT
+FROM mesh.private_endpoint AS endpoint
+JOIN mesh.imported_resource AS imported ON imported.id = endpoint.imported_resource_id
+WHERE imported.public_id = $1::UUID`, importedResourceID.String()).Scan(&endpointPublicID); err != nil {
+		t.Fatalf("locate invalidated Private Endpoint: %v", err)
+	}
+	endpointID, err := sharing.ParsePrivateEndpointID(endpointPublicID)
+	if err != nil {
+		t.Fatalf("parse invalidated Private Endpoint ID: %v", err)
+	}
+	store, err := postgresadapter.NewPrivateEndpointPublicationStore(workerPool)
+	if err != nil {
+		t.Fatalf("construct Private Endpoint worker store: %v", err)
+	}
+	candidates, err := store.ListWithdrawalCandidates(ctx, deploymentID, 128)
+	if err != nil {
+		t.Fatalf("list invalidated Private Endpoint candidates: %v", err)
+	}
+	found := false
+	for _, candidate := range candidates {
+		if candidate.EndpointID == endpointID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("invalidated Private Endpoint %s was not selected", endpointID)
+	}
+	assertUnstagedPrivateEndpointInvalidation(
+		ctx, t, admin, store, deploymentID, candidates, unstagedImportedResourceID,
+	)
+	snapshot, err := store.ReadWithdrawalSnapshot(ctx, deploymentID, endpointID)
+	if err != nil {
+		var raw []byte
+		rawErr := worker.QueryRow(ctx, `SELECT
+    mesh_ops.read_private_endpoint_withdrawal_snapshot_v1($1::UUID, $2::UUID)`,
+			deploymentPublicID, endpointID.String(),
+		).Scan(&raw)
+		t.Fatalf("read invalidated Private Endpoint snapshot: error=%v raw_error=%v raw=%s", err, rawErr, raw)
+	}
+	if snapshot.Reason != endpointpublication.WithdrawalInvalidated {
+		t.Fatalf("read invalidated Private Endpoint snapshot: reason=%s error=%v", snapshot.Reason, err)
+	}
+	terminalHash, err := snapshot.TerminalHash()
+	if err != nil {
+		t.Fatalf("hash invalidated Private Endpoint terminal state: %v", err)
+	}
+
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			results <- store.FinalizeWithdrawal(
+				ctx, snapshot, terminalHash, "integration-route-reconciler",
+			)
+		}()
+	}
+	succeeded, rejected := 0, 0
+	for range 2 {
+		if finalizeErr := <-results; finalizeErr == nil {
+			succeeded++
+		} else if errors.Is(finalizeErr, postgresadapter.ErrFinalizePrivateEndpointWithdrawal) {
+			rejected++
+		} else {
+			t.Fatalf("unexpected concurrent Private Endpoint finalization error: %v", finalizeErr)
+		}
+	}
+	if succeeded != 1 || rejected != 1 {
+		t.Fatalf("concurrent Private Endpoint finalization = %d success/%d rejected", succeeded, rejected)
+	}
+
+	var endpointState, contractState, importedState, nameState, aliasState, dnsState string
+	var endpointVersion, contractVersion, importedVersion, nameVersion, aliasVersion, dnsVersion int64
+	if err := admin.QueryRow(ctx, `SELECT
+    endpoint.state, endpoint.version, contract.state, contract.version,
+    imported.state, imported.version, access_name.state, access_name.version,
+    lease.state, lease.version, publication.state, publication.version
+FROM mesh.private_endpoint AS endpoint
+JOIN mesh.trust_contract AS contract ON contract.id = endpoint.trust_contract_id
+JOIN mesh.imported_resource AS imported ON imported.id = endpoint.imported_resource_id
+JOIN mesh.imported_resource_access_name AS access_name ON access_name.id = endpoint.access_name_id
+JOIN mesh.federation_alias_lease AS lease ON lease.id = endpoint.alias_lease_id
+JOIN mesh.imported_resource_dns_publication AS publication
+  ON publication.private_endpoint_id = endpoint.id
+WHERE imported.public_id = $1::UUID`, importedResourceID.String()).Scan(
+		&endpointState, &endpointVersion, &contractState, &contractVersion,
+		&importedState, &importedVersion, &nameState, &nameVersion,
+		&aliasState, &aliasVersion, &dnsState, &dnsVersion,
+	); err != nil {
+		t.Fatalf("query invalidated Private Endpoint state: %v", err)
+	}
+	if endpointState != "invalidated" || endpointVersion != 3 ||
+		contractState != "invalidated" || contractVersion != 3 ||
+		importedState != "invalidated" || importedVersion != 3 ||
+		nameState != "withdrawn" || nameVersion != 2 ||
+		aliasState != "withdrawn" || aliasVersion != 3 ||
+		dnsState != "withdrawn" || dnsVersion != 2 {
+		t.Fatalf("automatic Private Endpoint invalidation is not atomic")
+	}
+	if _, err := admin.Exec(ctx, `UPDATE mesh.deployment
+SET recovery_epoch = 1, updated_at = pg_catalog.clock_timestamp()
+WHERE installation_public_id = $1::UUID`, deploymentPublicID); err != nil {
+		t.Fatalf("restore deployment recovery epoch: %v", err)
+	}
+	restored = true
+}
+
+func assertUnstagedPrivateEndpointInvalidation(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	store *postgresadapter.PrivateEndpointPublicationStore,
+	deploymentID deployment.ID,
+	candidates []endpointpublication.Candidate,
+	importedResourceID sharing.ImportedResourceID,
+) {
+	t.Helper()
+	var endpointPublicID, endpointState, aliasState string
+	var endpointVersion, aliasVersion, intentCount, readinessCount, dnsCount int64
+	if err := admin.QueryRow(ctx, `SELECT
+    endpoint.public_id::TEXT, endpoint.state, endpoint.version,
+    lease.state, lease.version,
+    (SELECT pg_catalog.count(*) FROM mesh_ops.private_endpoint_route_intent AS intent
+     WHERE intent.private_endpoint_id = endpoint.id),
+    (SELECT pg_catalog.count(*) FROM mesh.private_endpoint_readiness AS readiness
+     WHERE readiness.private_endpoint_id = endpoint.id),
+    (SELECT pg_catalog.count(*) FROM mesh.imported_resource_dns_publication AS publication
+     WHERE publication.private_endpoint_id = endpoint.id)
+FROM mesh.private_endpoint AS endpoint
+JOIN mesh.imported_resource AS imported ON imported.id = endpoint.imported_resource_id
+JOIN mesh.federation_alias_lease AS lease ON lease.id = endpoint.alias_lease_id
+WHERE imported.public_id = $1::UUID`, importedResourceID.String()).Scan(
+		&endpointPublicID, &endpointState, &endpointVersion, &aliasState, &aliasVersion,
+		&intentCount, &readinessCount, &dnsCount,
+	); err != nil {
+		t.Fatalf("query unstaged Private Endpoint: %v", err)
+	}
+	if endpointState != "provisioning" || endpointVersion != 1 ||
+		aliasState != "reserved" || aliasVersion != 1 ||
+		intentCount != 0 || readinessCount != 0 || dnsCount != 0 {
+		t.Fatal("unstaged Private Endpoint unexpectedly had route or DNS evidence")
+	}
+	endpointID, err := sharing.ParsePrivateEndpointID(endpointPublicID)
+	if err != nil {
+		t.Fatalf("parse unstaged Private Endpoint ID: %v", err)
+	}
+	found := false
+	for _, candidate := range candidates {
+		if candidate.EndpointID == endpointID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("unstaged invalidated Private Endpoint %s was not selected", endpointID)
+	}
+	snapshot, err := store.ReadWithdrawalSnapshot(ctx, deploymentID, endpointID)
+	if err != nil {
+		t.Fatalf("read unstaged Private Endpoint withdrawal snapshot: %v", err)
+	}
+	if snapshot.RoutePresent || snapshot.RouteSnapshotHash != ([sha256.Size]byte{}) ||
+		snapshot.DNSPublicationVersion != 0 ||
+		snapshot.Reason != endpointpublication.WithdrawalInvalidated {
+		t.Fatalf("unstaged Private Endpoint withdrawal snapshot = %+v", snapshot)
+	}
+	terminalHash, err := snapshot.TerminalHash()
+	if err != nil {
+		t.Fatalf("hash unstaged Private Endpoint terminal state: %v", err)
+	}
+	if err := store.FinalizeWithdrawal(
+		ctx, snapshot, terminalHash, "integration-route-reconciler",
+	); err != nil {
+		t.Fatalf("finalize unstaged Private Endpoint: %v", err)
+	}
+
+	var contractState, importedState, nameState string
+	var contractVersion, importedVersion, nameVersion int64
+	if err := admin.QueryRow(ctx, `SELECT
+    endpoint.state, endpoint.version, contract.state, contract.version,
+    imported.state, imported.version, access_name.state, access_name.version,
+    lease.state, lease.version,
+    (SELECT pg_catalog.count(*) FROM mesh.imported_resource_dns_publication AS publication
+     WHERE publication.private_endpoint_id = endpoint.id)
+FROM mesh.private_endpoint AS endpoint
+JOIN mesh.trust_contract AS contract ON contract.id = endpoint.trust_contract_id
+JOIN mesh.imported_resource AS imported ON imported.id = endpoint.imported_resource_id
+JOIN mesh.imported_resource_access_name AS access_name ON access_name.id = endpoint.access_name_id
+JOIN mesh.federation_alias_lease AS lease ON lease.id = endpoint.alias_lease_id
+WHERE imported.public_id = $1::UUID`, importedResourceID.String()).Scan(
+		&endpointState, &endpointVersion, &contractState, &contractVersion,
+		&importedState, &importedVersion, &nameState, &nameVersion,
+		&aliasState, &aliasVersion, &dnsCount,
+	); err != nil {
+		t.Fatalf("query terminal unstaged Private Endpoint: %v", err)
+	}
+	if endpointState != "invalidated" || endpointVersion != 2 ||
+		contractState != "invalidated" || contractVersion != 3 ||
+		importedState != "invalidated" || importedVersion != 3 ||
+		nameState != "withdrawn" || nameVersion != 2 ||
+		aliasState != "withdrawn" || aliasVersion != 2 || dnsCount != 0 {
+		t.Fatal("unstaged Private Endpoint terminalization is not atomic")
 	}
 }
 
@@ -636,6 +960,17 @@ func assertPrivateEndpointPublication(
 	}
 	routeHash := sha256.Sum256(routeMaterial)
 	reconcilerID := "integration-route-reconciler"
+	intentID := newIntegrationPublicationID(t)
+	var stagedHash []byte
+	if err := worker.QueryRow(ctx, `SELECT mesh_ops.stage_private_endpoint_route_v1(
+    $1::UUID,$2::UUID,$3::BIGINT,$4::BIGINT,$5::UUID,$6::BYTEA,$7::TEXT,$8::TIMESTAMPTZ
+)`,
+		deploymentID, candidate.EndpointID, candidate.EndpointVersion,
+		candidate.EndpointGeneration, intentID.String(), routeHash[:], reconcilerID,
+		candidate.SnapshotAt,
+	).Scan(&stagedHash); err != nil || !bytes.Equal(stagedHash, routeHash[:]) {
+		t.Fatalf("stage Private Endpoint route intent: hash=%x err=%v", stagedHash, err)
+	}
 	providerAudit := integrationEndpointPublicationAuditPayload{
 		EndpointID: candidate.EndpointID, ReadinessID: readinessID.String(),
 		DNSPublicationID: dnsPublicationID.String(), AuthoritySide: "provider",
@@ -766,6 +1101,104 @@ WHERE imported.public_id = $1::UUID`, importedResourceID.String(), changeID.Stri
 		storedAliasVersion != 2 || publicationState != "published" || publicationVersion != 1 ||
 		publishedName != accessName.String() || evidenceCount != 2 {
 		t.Fatalf("published Private Endpoint state/evidence is inconsistent")
+	}
+}
+
+func assertPrivateEndpointPublicationViaAdapter(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	workerPool *postgresadapter.Pool,
+	importedResourceID sharing.ImportedResourceID,
+	accessName sharing.AccessName,
+	wantResourceAlias string,
+) {
+	t.Helper()
+	const deploymentPublicID = "01890f00-0000-7000-8000-000000000001"
+	deploymentID, err := deployment.ParseID(deploymentPublicID)
+	if err != nil {
+		t.Fatalf("parse publication Deployment ID: %v", err)
+	}
+	var endpointPublicID string
+	if err := admin.QueryRow(ctx, `SELECT endpoint.public_id::TEXT
+FROM mesh.private_endpoint AS endpoint
+JOIN mesh.imported_resource AS imported ON imported.id = endpoint.imported_resource_id
+WHERE imported.public_id = $1::UUID`, importedResourceID.String()).Scan(&endpointPublicID); err != nil {
+		t.Fatalf("locate adapter publication endpoint: %v", err)
+	}
+	endpointID, err := sharing.ParsePrivateEndpointID(endpointPublicID)
+	if err != nil {
+		t.Fatalf("parse adapter publication endpoint ID: %v", err)
+	}
+	store, err := postgresadapter.NewPrivateEndpointPublicationStore(workerPool)
+	if err != nil {
+		t.Fatalf("construct adapter publication store: %v", err)
+	}
+	candidates, err := store.ListPublicationCandidates(ctx, deploymentID, 128)
+	if err != nil {
+		t.Fatalf("list adapter publication candidates: %v", err)
+	}
+	found := false
+	for _, candidate := range candidates {
+		if candidate.EndpointID == endpointID && candidate.Generation == 1 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("adapter publication endpoint %s was not selected", endpointID)
+	}
+	snapshot, err := store.ReadPublicationSnapshot(ctx, deploymentID, endpointID)
+	if err != nil {
+		t.Fatalf("read adapter publication snapshot: %v", err)
+	}
+	if snapshot.ResourceAlias.String() != wantResourceAlias || snapshot.AccessName != accessName ||
+		len(snapshot.TargetAddresses) == 0 || len(snapshot.Traffic) == 0 {
+		t.Fatalf("adapter publication snapshot is incomplete: %+v", snapshot)
+	}
+	route, err := snapshot.Route()
+	if err != nil {
+		t.Fatalf("construct adapter publication route: %v", err)
+	}
+	routeHash, err := route.Hash()
+	if err != nil {
+		t.Fatalf("hash adapter publication route: %v", err)
+	}
+	if err := store.StagePublication(
+		ctx, snapshot, routeHash, "integration-route-reconciler",
+	); err != nil {
+		t.Fatalf("stage adapter publication: %v", err)
+	}
+	if err := store.ConfirmPublication(
+		ctx, snapshot, routeHash, "integration-route-reconciler",
+	); err != nil {
+		t.Fatalf("confirm adapter publication: %v", err)
+	}
+
+	var endpointState, aliasState, publicationState, publishedName string
+	var endpointVersion, aliasVersion, publicationVersion, evidenceCount int64
+	if err := admin.QueryRow(ctx, `SELECT
+    endpoint.state, endpoint.version, lease.state, lease.version,
+    publication.state, publication.version, publication.access_name,
+    (SELECT pg_catalog.count(*) FROM mesh_audit.audit_event AS event
+     WHERE event.target_kind = 'private_endpoint'
+       AND event.target_public_id = endpoint.public_id
+       AND event.action = 'private_endpoint.published')
+FROM mesh.private_endpoint AS endpoint
+JOIN mesh.federation_alias_lease AS lease ON lease.id = endpoint.alias_lease_id
+JOIN mesh.imported_resource AS imported ON imported.id = endpoint.imported_resource_id
+JOIN mesh.imported_resource_dns_publication AS publication
+  ON publication.private_endpoint_id = endpoint.id
+WHERE imported.public_id = $1::UUID`, importedResourceID.String()).Scan(
+		&endpointState, &endpointVersion, &aliasState, &aliasVersion,
+		&publicationState, &publicationVersion, &publishedName, &evidenceCount,
+	); err != nil {
+		t.Fatalf("query adapter-published Private Endpoint: %v", err)
+	}
+	if endpointState != "ready" || endpointVersion != 2 || aliasState != "active" ||
+		aliasVersion != 2 || publicationState != "published" || publicationVersion != 1 ||
+		publishedName != accessName.String() || evidenceCount != 2 {
+		t.Fatalf("adapter-published Private Endpoint state/evidence is inconsistent")
 	}
 }
 

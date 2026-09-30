@@ -298,7 +298,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		runtimePool,
 		workerConnection,
 	)
-	assertPostgreSQLResourceSharing(ctx, t, adminConnection, workerConnection, runtimePool)
+	assertPostgreSQLResourceSharing(
+		ctx, t, adminConnection, workerConnection, workerPool, runtimePool,
+	)
 	assertPostgreSQLLoginSubjectResolution(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLSessionIssuance(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLBrowserCallback(ctx, t, adminConnection, runtimePool)

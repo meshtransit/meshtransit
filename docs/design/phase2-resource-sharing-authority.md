@@ -97,9 +97,11 @@ This is mandatory for cross-Workspace sharing: two Workspaces may use the same
 CIDR, so exposing the provider Device address directly would create ambiguous
 routing and tenant-confusion risk. Executable cross-Workspace traffic requires
 a trusted Private Endpoint or gateway with a federation alias, explicit route
-authority, and contract-bound packet policy. Migration 55 provides the database
-boundary through which that trusted reconciler proves readiness; it does not
-implement the packet gateway itself.
+authority, and contract-bound packet policy. Migrations 55 and 56 provide the
+database boundary through which that trusted reconciler proves readiness and
+withdrawal. Core now implements that bounded reconciliation loop and its
+mutually authenticated route-agent client; the privileged packet gateway
+behind the route-agent API remains external.
 
 Within-Workspace direct Device access is also not claimed by this slice. It
 requires an explicit cross-Network peer/map projection and packet-filter path;
@@ -217,17 +219,55 @@ advances both route revisions plus the consumer DNS revision. The caller's
 original runtime scope is restored before the surrounding mutation continues,
 so later authorization, projection, audit, and idempotency reads remain scoped.
 
+Migration 56 and the `endpointpublication` worker complete the control-plane
+reconciliation lifecycle. Before the first external apply, the worker stores an
+immutable route intent containing the exact endpoint generation, Device target,
+canonical addresses, route hash, reconciler, and observation time. The
+readiness trigger rejects publication unless that intent matches the submitted
+route proof. The worker then calls one exact HTTPS route-agent origin over TLS
+1.3 mutual authentication. It disables environment proxies and redirects,
+bounds headers, body, and time, recomputes canonical request hashes before I/O,
+uses the hash as its idempotency key, and accepts only an empty `204` response
+that echoes the exact operation, generation, and proof.
+
+Publication follows `read -> stage intent -> apply route -> commit readiness`.
+If the final database commit loses its optimistic concurrency race, the worker
+best-effort withdraws the just-applied route and retries with bounded
+exponential backoff. DNS and readiness are therefore never committed before a
+route acknowledgement. Candidate rows are hints only; every effect uses a
+fresh exact snapshot and complete PostgreSQL CAS vector.
+
+The same worker scans expiry and invalidation before it considers new
+publication. Invalidation covers Deployment recovery epoch, Workspace/Network
+authority generation, contract/export/import/access-name/alias state, exact
+Resource version and target generation, Device/address state, route-intent
+drift, readiness, and DNS publication. When route evidence exists, it withdraws
+the route first. An invalidated or expired `provisioning` endpoint that never
+reached route staging skips the external effect and proceeds directly to the
+same terminal transaction. That transaction closes contract, import, access
+name, alias lease, endpoint, and DNS; advances both Networks' route/sharing
+revisions and the consumer DNS revision; and appends both hash-chained
+audit/outbox events. Deterministic Network lock ordering and optimistic versions
+allow only one concurrent finalizer to commit.
+
+Reconciliation is opt-in and bound to one Deployment and stable reconciler ID.
+One owned goroutine processes bounded batches sequentially, applies per-call
+deadlines, joins during shutdown, and keeps identifier-free bounded metrics for
+running state, passes, candidates, list failures, successful attempts, and
+deferred attempts. A failed withdrawal scan or deferred withdrawal blocks new
+publication in that pass.
+
 ## Non-claims
 
 - No graph database is required; PostgreSQL remains authoritative.
 - No Network merge, CIDR renumbering, or global CIDR uniqueness is introduced.
 - No UI is included in Phase 2.
 - No cross-Workspace packet path is enabled merely by storing a contract or
-  activating it; a trusted endpoint/gateway must reconcile the route and submit
-  the worker-only readiness proof.
+  activating it; the opt-in trusted worker must receive an exact route-agent
+  acknowledgement and commit the worker-only readiness proof.
 - No consumable DNS access name is published while the endpoint remains
   `provisioning`.
-- The migration defines the route/DNS publication authority and evidence, not
-  the external gateway or route-agent implementation.
+- Core implements the route-agent client and reconciliation authority, not the
+  privileged deployment-specific packet gateway or route-agent server.
 - No mandatory human separation-of-duty is inferred beyond the two independent
   Workspace authority checks.

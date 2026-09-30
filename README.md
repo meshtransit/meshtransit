@@ -67,18 +67,20 @@ both consent steps in both audit streams. Workspace address realms reject CIDR
 overlap internally while allowing isolated Workspaces to reuse CIDRs. No direct
 cross-Workspace packet edge is created. Activation now allocates a monotonic
 address from the Deployment Federation Alias pool and persists a generation-
-bound Private Endpoint in `provisioning`. A worker-only migration 55 boundary
-exposes an authoritative snapshot, accepts contract-bound route readiness, and
-atomically moves the endpoint and alias to `ready`/`active` while publishing
-the consumer DNS generation. Applications use a stable,
+bound Private Endpoint in `provisioning`. Migrations 55 and 56 plus the
+opt-in Private Endpoint worker now read exact PostgreSQL authority, stage an
+immutable route intent, apply or withdraw the route through an exact-origin
+mTLS route-agent client, and atomically publish or withdraw endpoint readiness,
+alias state, consumer DNS, revisions, audit, and outbox evidence. Applications
+use a stable,
 consumer-local DNS name that resolves to that endpoint alias; raw provider IPs
 are neither the user contract nor an authorization identity. Acceptance now
 validates and atomically reserves that consumer-local access name in its exact
 Network namespace. Reservation and endpoint provisioning are not DNS
 publication: the name remains non-resolving until a trusted worker confirms
 the alias path. This repository defines and qualifies that control-plane
-transaction; the gateway/route-agent implementation remains a deployment
-responsibility.
+transaction and the production reconciliation client; the privileged packet
+gateway behind the route-agent API remains a deployment responsibility.
 Design, security boundaries, acceptance evidence, and explicit non-claims are
 recorded in the
 [Phase 2 M1 Resource authority design](docs/design/phase2-m1-resource-authority.md)
@@ -223,7 +225,7 @@ The module path is `github.com/meshtransit/meshtransit`; the process binary
 is `meshcore`. Development and security gates run with Go 1.26.8.
 
 Run `meshcore version` for machine-readable build, revision, Go, and
-configuration-schema versions (currently 22). Run `meshcore config validate` to
+configuration-schema versions (currently 24). Run `meshcore config validate` to
 validate the selected role, bounded values, secret files, and CA bundles without
 opening a listener. Dependency-backed profiles also perform bounded connectivity
 checks; `role=identity` requires an exact prepared broker schema and never runs a
@@ -545,6 +547,29 @@ for load/publish/finish work without relying on an unbounded goroutine fan-out.
 | `MESHTRANSIT_NETWORK_REVISION_POLL_INTERVAL` | `1s` | Idle polling interval from 100ms through 1 minute. |
 | `MESHTRANSIT_NETWORK_REVISION_RETRY_DELAY` | `5s` | Delay after a failed delivery from 100ms through 24 hours. |
 | `MESHTRANSIT_NETWORK_REVISION_OPERATION_TIMEOUT` | `1s` | Per PostgreSQL or Redis call deadline from 100ms through 30 seconds. |
+
+Private Endpoint reconciliation is independently opt-in for `worker` and `all`
+roles. When disabled, all associated settings must be absent. When enabled, the
+worker processes bounded withdrawals before publications and blocks new
+publication for any pass whose stale-route scan or withdrawal is incomplete.
+The route-agent connection is TLS 1.3 with a pinned CA and client certificate;
+proxy discovery and redirects are disabled, response bodies are bounded, and a
+`204` acknowledgement must echo the exact operation hash and generation.
+
+| Environment variable | Default | Contract |
+| --- | --- | --- |
+| `MESHTRANSIT_PRIVATE_ENDPOINT_WORKER_ENABLED` | `false` | Exact Boolean opt-in; valid only for `worker` and `all`. |
+| `MESHTRANSIT_PRIVATE_ENDPOINT_DEPLOYMENT_PUBLIC_ID` | none | Exact UUIDv7 Deployment owned by this reconciler. |
+| `MESHTRANSIT_PRIVATE_ENDPOINT_RECONCILER_ID` | none | Stable 1–128 character non-secret identifier using letters, digits, `.`, `_`, `:`, or `-`. |
+| `MESHTRANSIT_PRIVATE_ENDPOINT_BATCH_SIZE` | `8` | Bounded sequential candidate count from 1 through 128. |
+| `MESHTRANSIT_PRIVATE_ENDPOINT_POLL_INTERVAL` | `1s` | Reconciliation interval from 100ms through 1 minute. |
+| `MESHTRANSIT_PRIVATE_ENDPOINT_OPERATION_TIMEOUT` | `5s` | Per database or route-agent operation deadline from 100ms through 30 seconds. |
+| `MESHTRANSIT_PRIVATE_ENDPOINT_INITIAL_RETRY_DELAY` | `1s` | Initial per-endpoint exponential retry delay from 100ms through 1 hour. |
+| `MESHTRANSIT_PRIVATE_ENDPOINT_MAXIMUM_RETRY_DELAY` | `1m` | Retry ceiling from the initial delay through 1 hour. |
+| `MESHTRANSIT_PRIVATE_ENDPOINT_AGENT_ORIGIN` | none | Exact HTTPS origin only; user info, paths, queries, and fragments are rejected. |
+| `MESHTRANSIT_PRIVATE_ENDPOINT_AGENT_CA_FILE` | none | Absolute path to the bounded route-agent CA bundle. |
+| `MESHTRANSIT_PRIVATE_ENDPOINT_AGENT_CERTIFICATE_FILE` | none | Absolute path to the worker client certificate. |
+| `MESHTRANSIT_PRIVATE_ENDPOINT_AGENT_PRIVATE_KEY_FILE` | none | Absolute path to the worker client private key; formatted and logged as redacted. |
 
 Passwords are never accepted as direct environment values or DSN fragments.
 Credential and CA files are loaded before listeners open, and file references

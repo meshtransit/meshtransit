@@ -138,8 +138,10 @@ func hashAccountSessionLogoutState(
 		encoded := value.Bytes()
 		input = append(input, encoded[:]...)
 	}
-	input = binary.BigEndian.AppendUint64(input, uint64(recoveryEpoch))
-	input = binary.BigEndian.AppendUint64(input, uint64(version))
+	// Values are validated positive above. Keep the unsigned fixed-width encoding
+	// stable because these bytes are part of the persisted audit hash contract.
+	input = binary.BigEndian.AppendUint64(input, uint64(recoveryEpoch)) //nolint:gosec // validated positive
+	input = binary.BigEndian.AppendUint64(input, uint64(version))       //nolint:gosec // validated positive
 	input = binary.AppendVarint(input, endedAt.UTC().UnixMicro())
 	input = append(input, accountSessionLogoutEndReason...)
 	return sha256.Sum256(input)

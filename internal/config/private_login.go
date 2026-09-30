@@ -90,9 +90,10 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 		return nil, ErrInvalid
 	}
 	expectedFields := 20
-	if version == 2 {
+	switch version {
+	case 2:
 		expectedFields = 22
-	} else if version == 3 {
+	case 3:
 		expectedFields = 24
 	}
 	if len(fields) != expectedFields {

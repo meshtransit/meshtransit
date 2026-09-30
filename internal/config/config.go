@@ -13,7 +13,7 @@ import (
 
 const (
 	// SchemaVersion identifies the validated environment configuration contract.
-	SchemaVersion = 23
+	SchemaVersion = 24
 
 	envRole            = "MESHTRANSIT_ROLE"
 	envHealthAddress   = "MESHTRANSIT_HEALTH_ADDRESS"
@@ -45,19 +45,20 @@ type LookupFunc func(string) (string, bool)
 
 // Config is the fully validated process configuration.
 type Config struct {
-	Role            app.Role
-	HealthAddress   string
-	ShutdownTimeout time.Duration
-	LogLevel        slog.Level
-	Dependencies    DependencyConfig
-	Storage         *StorageConfig
-	API             *APIConfig
-	Control         *ControlConfig
-	Enrollment      *EnrollmentConfig
-	RevisionWorker  *RevisionWorkerConfig
-	AuthExpiry      *AuthExpiryConfig
-	PrivateLogin    *PrivateLoginFile
-	Identity        *IdentityConfig
+	Role                  app.Role
+	HealthAddress         string
+	ShutdownTimeout       time.Duration
+	LogLevel              slog.Level
+	Dependencies          DependencyConfig
+	Storage               *StorageConfig
+	API                   *APIConfig
+	Control               *ControlConfig
+	Enrollment            *EnrollmentConfig
+	RevisionWorker        *RevisionWorkerConfig
+	PrivateEndpointWorker *PrivateEndpointWorkerConfig
+	AuthExpiry            *AuthExpiryConfig
+	PrivateLogin          *PrivateLoginFile
+	Identity              *IdentityConfig
 }
 
 // DependencyConfig bounds startup and periodic infrastructure checks.
@@ -95,6 +96,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, fmt.Errorf("%w: %s", ErrInvalid, envLogLevel)
 	}
 	authExpiryConfig, err := loadAuthExpiryConfig(lookup, role, shutdownTimeout)
+	if err != nil {
+		return Config{}, err
+	}
+	privateEndpointWorkerConfig, err := loadPrivateEndpointWorkerConfig(lookup, role)
 	if err != nil {
 		return Config{}, err
 	}
@@ -180,19 +185,20 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	return Config{
-		Role:            role,
-		HealthAddress:   healthAddress,
-		ShutdownTimeout: shutdownTimeout,
-		LogLevel:        logLevel,
-		Dependencies:    dependencyConfig,
-		Storage:         storageConfig,
-		API:             apiConfig,
-		Control:         controlConfig,
-		Enrollment:      enrollmentConfig,
-		RevisionWorker:  revisionWorkerConfig,
-		AuthExpiry:      authExpiryConfig,
-		PrivateLogin:    privateLoginFile,
-		Identity:        identityConfig,
+		Role:                  role,
+		HealthAddress:         healthAddress,
+		ShutdownTimeout:       shutdownTimeout,
+		LogLevel:              logLevel,
+		Dependencies:          dependencyConfig,
+		Storage:               storageConfig,
+		API:                   apiConfig,
+		Control:               controlConfig,
+		Enrollment:            enrollmentConfig,
+		RevisionWorker:        revisionWorkerConfig,
+		PrivateEndpointWorker: privateEndpointWorkerConfig,
+		AuthExpiry:            authExpiryConfig,
+		PrivateLogin:          privateLoginFile,
+		Identity:              identityConfig,
 	}, nil
 }
 

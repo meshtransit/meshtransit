@@ -95,11 +95,7 @@ func composePrivateIdentityFactory(
 	}
 	logoutStore, err := postgresadapter.NewAccountSessionLogoutStore(
 		dependencies.Runtime,
-		postgresadapter.AccountSessionLogoutOptions{
-			StatementTimeout: managementOptions.StatementTimeout,
-			LockTimeout:      managementOptions.LockTimeout,
-			IdleTimeout:      managementOptions.IdleTimeout,
-		},
+		postgresadapter.AccountSessionLogoutOptions(managementOptions),
 	)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition

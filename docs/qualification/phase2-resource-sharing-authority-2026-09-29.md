@@ -28,6 +28,13 @@
 | Same- and cross-Workspace publication are qualified | Container integration publishes `fd00:feed::1/128` into a second Network of the same Workspace and `fd00:feed::2/128` into Network 202 of a different Workspace, always through the stable consumer-local name. |
 | Worker cannot mutate authority tables directly | `mesh_worker` can execute only candidate, snapshot, and publish functions; it has no direct table or sequence write privilege. Runtime, observer, audit writer, and public roles cannot execute publication. |
 | Revoke withdraws without deleting evidence | After publication, contract revoke moves the access name and alias lease to `withdrawn`, the endpoint to `revoked`, and the DNS publication to `withdrawn`; readiness remains immutable and terminal timestamps remain attributable. |
+| Route application is proof-bound | The worker stages an immutable exact-generation intent before mTLS route application; readiness rejects a missing or mismatched intent, and ambiguous acknowledgements never reach publication. |
+| Withdrawal is prioritized and fail closed | Each bounded pass lists and processes withdrawal before publication. A list failure, invalid candidate, retry delay, or gateway withdrawal failure blocks publication for that pass. |
+| Expiry and authority drift withdraw automatically | Migration 56 evaluates recovery epoch, both authority generations, every contract/import/target/address dependency, route-intent drift, readiness, DNS, and exclusive expiry before returning a terminal snapshot. |
+| Pre-route invalidation cannot strand authority | Integration invalidates a `provisioning` endpoint with no intent, readiness, or DNS. It is selected and atomically terminalized without issuing a fictitious gateway withdrawal. |
+| Concurrent terminalization is serialized | Integration rotates the Deployment recovery epoch and runs two finalizers with one snapshot; exactly one commits and one loses the CAS race. Contract, import, access name, alias, endpoint, DNS, revisions, audit, and outbox move atomically. |
+| Route-agent transport is fail closed | Tests qualify exact HTTPS origin, TLS 1.3 mTLS material, disabled proxy/redirect behavior, canonical proof recomputation, bounded response handling, idempotency key, and exact acknowledgement headers. |
+| Worker recovery is bounded and observable | Tests qualify exponential retry ceilings, lifecycle join, publication compensation, identifier-free logs, and closed-label metrics for running state, candidates, list errors, successes, and deferrals. |
 
 ## Verification commands
 
@@ -36,17 +43,17 @@ go test ./migrations ./internal/sharing ./internal/adapter/httpapi ./internal/ad
 make integration-platform-container
 ```
 
-Observed results:
+Observed results after migration 56 and the production reconciliation worker:
 
-- full Go and race suites after migration 55: passed across 62 packages;
-- focused sharing race suite: 73 tests passed;
-- focused migration and PostgreSQL adapter suite: 415 tests passed;
-- PostgreSQL/container integration after migration 55: passed, including
+- focused worker, route-agent, configuration, HTTP metrics, PostgreSQL adapter,
+  command composition, and migration suites: passed;
+- PostgreSQL/container integration after migration 56: passed, including
   migration replay, privilege/RLS checks, v1 entry-point closure, scoped name
   reuse, same-Network collision rollback, sequential Federation Alias
   allocation, same- and cross-Workspace Private Endpoint publication,
-  DNS/route revision advancement, revoke withdrawal, CIDR isolation, bilateral
-  consent, dual-stream audit, and qualification tooling.
+  immutable intent staging, DNS/route revision advancement, explicit revoke,
+  recovery-epoch invalidation, concurrent finalizer rejection, CIDR isolation,
+  bilateral consent, dual-stream audit, and qualification tooling.
 
 ## Security conclusions
 
@@ -59,8 +66,10 @@ Observed results:
 - Effective access no longer accepts a free-standing endpoint-ready boolean or
   caller-supplied endpoint grant; it evaluates one validated, contract-bound
   Private Endpoint snapshot.
-- The implementation defines and qualifies the database transaction used by a
-  trusted Private Endpoint/gateway reconciler; it does not claim the external
-  packet gateway or route agent is implemented in this repository.
-- Explicit expiry/invalidation reconciliation and the production worker loop
-  that applies gateway routes are the next implementation slice.
+- The implementation defines and qualifies the database transaction, worker,
+  recovery loop, and mTLS client used by a trusted Private Endpoint route
+  reconciler. It does not claim the privileged packet gateway or route-agent
+  server is implemented in this repository.
+- Phase 2 backend scope is complete; UI and deployment-specific gateway rollout
+  remain later-phase/infrastructure work, and production SLO/failover evidence
+  remains a release gate rather than a code claim.

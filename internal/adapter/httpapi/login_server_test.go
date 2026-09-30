@@ -232,7 +232,14 @@ func TestLoginServerServesSessionPrepareOverOwnedTLS(t *testing.T) {
 	request.Header.Set("Origin", "https://console.example.test")
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-MeshTransit-Session", "v1")
-	request.AddCookie(&http.Cookie{Name: AccountSessionCookieName, Value: managementTokenFixture})
+	request.AddCookie(&http.Cookie{
+		Name:     AccountSessionCookieName,
+		Value:    managementTokenFixture,
+		Path:     "/",
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal("actual TLS session preparation failed", err)

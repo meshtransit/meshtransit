@@ -16,6 +16,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/config"
 	"github.com/meshtransit/meshtransit/internal/network/revisionworker"
 	"github.com/meshtransit/meshtransit/internal/observability"
+	"github.com/meshtransit/meshtransit/internal/sharing/endpointpublication"
 )
 
 func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (exitCode int) {
@@ -78,7 +79,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 	}()
 
 	checkers := make([]app.DependencyChecker, 0, len(readiness.RequiredComponents()))
-	additionalMetrics := make([]prometheus.Collector, 0, 5)
+	additionalMetrics := make([]prometheus.Collector, 0, 6)
 	var storagePools postgresPools
 	var redisClient *redisadapter.Client
 	if processConfig.Storage != nil {
@@ -164,6 +165,26 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			roleServices,
 			app.OwnedService{Name: "network-revision-worker", Service: workerService},
 		)
+	}
+	if processConfig.PrivateEndpointWorker != nil {
+		telemetry := endpointpublication.NewTelemetry()
+		workerService, gateway, workerMetrics, composeErr := composePrivateEndpointWorker(
+			*processConfig.PrivateEndpointWorker, storagePools.worker, telemetry, logger,
+		)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "private_endpoint_worker_composition_failure")
+			return 1
+		}
+		closeGateway := func(context.Context) error { gateway.CloseIdleConnections(); return nil }
+		if ownErr := resources.Add("private-endpoint-route-agent", closeGateway); ownErr != nil {
+			gateway.CloseIdleConnections()
+			logger.ErrorContext(ctx, "startup failed", "error_code", "private_endpoint_route_agent_ownership_failure")
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, workerMetrics)
+		roleServices = append(roleServices, app.OwnedService{
+			Name: "private-endpoint-worker", Service: workerService,
+		})
 	}
 	var privateFactory *privateIdentityFactory
 	if privateProfile != nil {
