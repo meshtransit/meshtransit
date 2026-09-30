@@ -108,7 +108,10 @@ func (service *Service) Request(
 	if err != nil {
 		return RequestResult{}, err
 	}
-	now := service.clock.Now().UTC()
+	// PostgreSQL retains microseconds. Use one canonical instant for the
+	// idempotency lease, approval lifetime and committed evidence comparison.
+	// Truncation never extends either deadline beyond the observed clock.
+	now := service.clock.Now().UTC().Truncate(time.Microsecond)
 	if now.IsZero() {
 		return RequestResult{}, ErrInvalidService
 	}
@@ -307,7 +310,7 @@ func (service *Service) Approve(
 	if err := ctx.Err(); err != nil {
 		return Result{}, errors.Join(ErrOperationFailed, err)
 	}
-	now := service.clock.Now().UTC()
+	now := service.clock.Now().UTC().Truncate(time.Microsecond)
 	if now.IsZero() {
 		return Result{}, ErrInvalidService
 	}

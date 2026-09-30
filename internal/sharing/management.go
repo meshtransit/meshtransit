@@ -105,7 +105,9 @@ type CreateOffer struct{ params CreateOfferParams }
 
 // NewCreateOffer validates one bounded, exact-scope offer request.
 func NewCreateOffer(params CreateOfferParams) (CreateOffer, error) {
-	params.ExpiresAt = params.ExpiresAt.UTC()
+	// PostgreSQL timestamps retain microseconds. Canonicalize before hashing,
+	// persistence and result matching, rounding down so expiry never extends.
+	params.ExpiresAt = params.ExpiresAt.UTC().Truncate(time.Microsecond)
 	command := CreateOffer{params: params}
 	if !command.IsValid() {
 		return CreateOffer{}, ErrInvalidManagementRequest

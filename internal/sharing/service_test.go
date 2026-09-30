@@ -47,6 +47,26 @@ func TestServiceRejectsMismatchedCommittedOffer(t *testing.T) {
 	}
 }
 
+func TestCreateOfferExpiryMatchesPostgreSQLPrecision(t *testing.T) {
+	t.Parallel()
+
+	command, result := sharingServiceCreateFixture(t)
+	params := command.params
+	params.ExpiresAt = params.ExpiresAt.Add(789 * time.Nanosecond)
+	canonical, err := NewCreateOffer(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !canonical.ExpiresAt().Equal(command.ExpiresAt()) ||
+		canonical.ExpiresAt().After(params.ExpiresAt) {
+		t.Fatalf("CreateOffer expiry = %s, input = %s", canonical.ExpiresAt(), params.ExpiresAt)
+	}
+	service := sharingServiceFixture(t, &sharingRepositoryFixture{createResult: result})
+	if _, err := service.CreateOffer(context.Background(), canonical); err != nil {
+		t.Fatalf("microsecond committed offer rejected: %v", err)
+	}
+}
+
 func TestServiceRejectsListItemFromWrongDirection(t *testing.T) {
 	t.Parallel()
 

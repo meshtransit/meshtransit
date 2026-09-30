@@ -3,6 +3,7 @@ package approval_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph/simulation"
 	"github.com/meshtransit/meshtransit/internal/network"
@@ -67,6 +68,36 @@ func TestServiceRequestsApprovalFromFreshCompilerIdenticalSimulation(t *testing.
 			retry,
 			transaction,
 		)
+	}
+}
+
+func TestRequestUsesPostgreSQLTimestampPrecision(t *testing.T) {
+	t.Parallel()
+
+	proposer := approvalSessionFixture(t, 401, 811)
+	simulated, request := approvalSimulationFixture(t, proposer)
+	instant := approvalTestTime().Add(789 * time.Nanosecond)
+	service := approvalServiceFixture(
+		t,
+		&approvalSimulatorFixture{result: simulated},
+		&requestTransactionsFixture{transactions: []*requestTransactionFixture{{}}},
+		&approvalTransactionsFixture{},
+		&approvalIDGeneratorFixture{requestIDs: approvalRequestMutationIDsFixture(t)},
+		&approvalClockFixture{now: instant},
+		&approvalRetryFixture{},
+		nil,
+		nil,
+	)
+	result, err := service.Request(
+		t.Context(), approvalRequestIntentFixture(t, proposer, simulated, request),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.CreatedAt().Equal(approvalTestTime()) ||
+		!result.ExpiresAt().Equal(approvalTestTime().Add(approval.RequestLifetime)) ||
+		result.ExpiresAt().After(instant.Add(approval.RequestLifetime)) {
+		t.Fatalf("request timestamps = %s / %s", result.CreatedAt(), result.ExpiresAt())
 	}
 }
 
