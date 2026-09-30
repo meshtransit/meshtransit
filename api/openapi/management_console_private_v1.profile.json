@@ -87,8 +87,18 @@
                   "permissions": {
                     "type": "array",
                     "minItems": 1,
-                    "maxItems": 1,
-                    "items": { "type": "string", "const": "policy.approve" }
+                    "maxItems": 5,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "policy.approve",
+                        "share.accept",
+                        "share.offer",
+                        "share.read",
+                        "share.revoke"
+                      ]
+                    }
                   }
                 }
               }

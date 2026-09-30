@@ -69,6 +69,8 @@ const (
 	resourceSharingPrivateEndpointDescription        = "Resource sharing Private Endpoint provisioning authority"
 	resourceSharingEndpointPublicationDescription    = "Resource sharing Private Endpoint readiness and DNS publication"
 	resourceSharingEndpointReconciliationDescription = "Resource sharing Private Endpoint route reconciliation and withdrawal"
+	consoleDeploymentCapabilitiesDescription         = "Console Deployment capability projection"
+	consoleSharingScopeDescription                   = "Console sharing management scope projection"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -239,6 +241,12 @@ var resourceSharingEndpointPublicationSQL string
 //go:embed 000056_resource_sharing_private_endpoint_reconciliation.up.sql
 var resourceSharingEndpointReconciliationSQL string
 
+//go:embed 000057_console_deployment_capability_projection.up.sql
+var consoleDeploymentCapabilitiesSQL string
+
+//go:embed 000058_console_management_share_scope_projection.up.sql
+var consoleSharingScopeSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -326,6 +334,8 @@ func Catalog() []Migration {
 			resourceSharingEndpointReconciliationDescription,
 			resourceSharingEndpointReconciliationSQL,
 		),
+		newMigration(57, consoleDeploymentCapabilitiesDescription, consoleDeploymentCapabilitiesSQL),
+		newMigration(58, consoleSharingScopeDescription, consoleSharingScopeSQL),
 	}
 }
 

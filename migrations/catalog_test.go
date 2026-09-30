@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 56 {
-		t.Fatalf("len(Catalog()) = %d, want 56", len(catalog))
+	if len(catalog) != 58 {
+		t.Fatalf("len(Catalog()) = %d, want 58", len(catalog))
 	}
 	reconciliation := catalog[55]
 	if reconciliation.Description != "Resource sharing Private Endpoint route reconciliation and withdrawal" {
@@ -85,6 +85,47 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	} {
 		if strings.Contains(endpointPublication.SQL, forbidden) {
 			t.Errorf("Resource Sharing endpoint publication SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	deploymentCapabilities := catalog[56]
+	if deploymentCapabilities.Description != "Console Deployment capability projection" {
+		t.Fatalf("migration 57 description = %q, want Console Deployment capability projection", deploymentCapabilities.Description)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.read_console_deployment_capabilities_v1",
+		"deployment.profile = 'self_hosted'",
+		"session.login_workspace_id",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_console_deployment_capabilities_v1",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(deploymentCapabilities.SQL, required) {
+			t.Errorf("Console Deployment capability SQL missing %q", required)
+		}
+	}
+	sharingScopes := catalog[57]
+	if sharingScopes.Description != "Console sharing management scope projection" {
+		t.Fatalf("migration 58 description = %q, want Console sharing management scope projection", sharingScopes.Description)
+	}
+	for _, required := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.read_console_management_scopes_v1",
+		"'policy.approve', 'share.accept', 'share.offer', 'share.read', 'share.revoke'",
+		"ARRAY(\n                SELECT DISTINCT permission.permission_key",
+		"binding.workspace_membership_id = authority.membership_id",
+		"pg_catalog.cardinality(scope_permissions.permissions) > 0",
+		"pg_catalog.to_jsonb(scopes.permissions)",
+		"REVOKE ALL ON FUNCTION mesh_ops.read_console_management_scopes_v1",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(sharingScopes.SQL, required) {
+			t.Errorf("Console sharing scope SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE",
+		"GRANT ALL", "BYPASSRLS", "ALTER DEFAULT PRIVILEGES", "DROP ",
+	} {
+		if strings.Contains(sharingScopes.SQL, forbidden) {
+			t.Errorf("Console sharing scope SQL contains excessive capability %q", forbidden)
 		}
 	}
 	publicationOwnership := ResourceSharingEndpointPublicationOwnershipSQL()
@@ -1533,8 +1574,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 56 {
-		t.Fatalf("LatestVersion() = %d, want 56", LatestVersion())
+	if LatestVersion() != 58 {
+		t.Fatalf("LatestVersion() = %d, want 58", LatestVersion())
 	}
 }
 

@@ -101,6 +101,12 @@ func TestManagementScopeRejectsInvalidProjectionAndCursorEvidence(t *testing.T) 
 		{name: "multiple permissions", displayName: "Core", permissions: []authorization.Permission{
 			authorization.PermissionPolicyApprove, authorization.PermissionPolicyApprove,
 		}},
+		{name: "unsorted permissions", displayName: "Core", permissions: []authorization.Permission{
+			authorization.PermissionShareRead, authorization.PermissionPolicyApprove,
+		}},
+		{name: "unsupported management permission", displayName: "Core", permissions: []authorization.Permission{
+			authorization.PermissionPolicyPublish,
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -112,6 +118,18 @@ func TestManagementScopeRejectsInvalidProjectionAndCursorEvidence(t *testing.T) 
 				t.Fatalf("NewManagementScope() error = %v, want ErrInvalidResult", err)
 			}
 		})
+	}
+	canonical, err := sessioncontext.NewManagementScope(
+		networkID,
+		"Core",
+		[]authorization.Permission{
+			authorization.PermissionPolicyApprove,
+			authorization.PermissionShareAccept,
+			authorization.PermissionShareRead,
+		},
+	)
+	if err != nil || len(canonical.Permissions()) != 3 {
+		t.Fatalf("NewManagementScope() with policy and sharing permissions = %+v/%v", canonical, err)
 	}
 
 	now := time.Date(2026, 9, 29, 9, 0, 0, 0, time.UTC)

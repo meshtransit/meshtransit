@@ -69,11 +69,33 @@ func (value ManagementScope) Permissions() []authorization.Permission {
 // IsValid reports whether the projection is safe and canonical.
 func (value ManagementScope) IsValid() bool {
 	if !value.networkID.IsValid() || !validDisplayName(value.displayName) ||
-		len(value.permissions) != 1 || value.permissions[0] != authorization.PermissionPolicyApprove {
+		len(value.permissions) < 1 || len(value.permissions) > 5 {
 		return false
 	}
-	definition, ok := authorization.LookupPermission(value.permissions[0])
-	return ok && definition.Permission() == value.permissions[0]
+	for index, permission := range value.permissions {
+		if !isConsoleManagementPermission(permission) ||
+			(index > 0 && value.permissions[index-1] >= permission) {
+			return false
+		}
+		definition, ok := authorization.LookupPermission(permission)
+		if !ok || definition.Permission() != permission {
+			return false
+		}
+	}
+	return true
+}
+
+func isConsoleManagementPermission(permission authorization.Permission) bool {
+	switch permission {
+	case authorization.PermissionPolicyApprove,
+		authorization.PermissionShareAccept,
+		authorization.PermissionShareOffer,
+		authorization.PermissionShareRead,
+		authorization.PermissionShareRevoke:
+		return true
+	default:
+		return false
+	}
 }
 
 // ReadResult is untrusted durable evidence returned to the validating service.

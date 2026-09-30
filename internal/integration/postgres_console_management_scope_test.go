@@ -4,7 +4,9 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -42,6 +44,20 @@ func assertPostgreSQLConsoleManagementScopes(
 			_ = transaction.Rollback(ctx)
 		}
 	}()
+	setIntegrationChange(ctx, t, transaction, "01890f00-0000-7000-8000-000000011000")
+	inserted, err := transaction.Exec(ctx, `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT addition.id, addition.public_id::UUID, 1, 103, 856, permission.id
+FROM (VALUES
+    (11001, '01890f00-0000-7000-8000-000000011001', 'share.accept'),
+    (11002, '01890f00-0000-7000-8000-000000011002', 'share.read')
+) AS addition(id, public_id, permission_key)
+JOIN mesh.permission AS permission
+  ON permission.permission_key = addition.permission_key`)
+	if err != nil || inserted.RowsAffected() != 2 {
+		t.Fatal("seed temporary sharing scope permissions", err)
+	}
 	if _, err := transaction.Exec(ctx, `SELECT
     pg_catalog.set_config('mesh.requested_workspace_public_id', 'prior-requested', TRUE),
     pg_catalog.set_config(
@@ -70,6 +86,16 @@ func assertPostgreSQLConsoleManagementScopes(
 		time.Now().UTC(),
 	).Scan(&directProjection); err != nil || directProjection == nil {
 		t.Fatal("direct Console management-scope function concealed seeded authority", err)
+	}
+	var projected struct {
+		Scopes []struct {
+			Permissions []string `json:"permissions"`
+		} `json:"scopes"`
+	}
+	if err := json.Unmarshal([]byte(*directProjection), &projected); err != nil ||
+		len(projected.Scopes) != 1 || !slices.Equal(projected.Scopes[0].Permissions,
+		[]string{"policy.approve", "share.accept", "share.read"}) {
+		t.Fatal("Console sharing scope projection lost canonical current permissions", err)
 	}
 	var requestedSetting, projectionSetting string
 	if err := transaction.QueryRow(ctx, `SELECT
@@ -109,8 +135,28 @@ func assertPostgreSQLConsoleManagementScopes(
 	}
 
 	page, err = service.List(ctx, managementRBACAccountSessionFixture(t), 100, network.ID{})
-	if err != nil || len(page.Items()) != 0 {
-		t.Fatal("Console management scopes widened policy.approve authority", err)
+	if err != nil {
+		t.Fatal("read sharing-only Console management scopes", err)
+	}
+	sharingItems := page.Items()
+	sharingNetworkIDs := []string{
+		"01890f00-0000-7000-8000-000000000203",
+		"01890f00-0000-7000-8000-000000000204",
+	}
+	sharingPermissions := []authorization.Permission{
+		authorization.PermissionShareAccept,
+		authorization.PermissionShareOffer,
+		authorization.PermissionShareRead,
+		authorization.PermissionShareRevoke,
+	}
+	if len(sharingItems) != len(sharingNetworkIDs) {
+		t.Fatalf("sharing-only Console scope count = %d, want %d", len(sharingItems), len(sharingNetworkIDs))
+	}
+	for index, item := range sharingItems {
+		if item.NetworkID().String() != sharingNetworkIDs[index] ||
+			!slices.Equal(item.Permissions(), sharingPermissions) {
+			t.Fatal("sharing-only Console scope changed network or exact authority")
+		}
 	}
 
 	var functionCount int
