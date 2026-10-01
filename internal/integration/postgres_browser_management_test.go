@@ -488,13 +488,17 @@ func publishPolicyOverBrowserManagement(
 		}
 		rules = append(rules, input)
 	}
+	var approvalEvidenceID string
+	if command.HasApprovalEvidence() {
+		approvalEvidenceID = command.ApprovalEvidenceID().String()
+	}
 	body, err := json.Marshal(struct {
 		Rules              []rule `json:"rules"`
 		Reason             string `json:"reason"`
-		ApprovalEvidenceID string `json:"approval_evidence_id"`
+		ApprovalEvidenceID string `json:"approval_evidence_id,omitempty"`
 	}{
 		Rules: rules, Reason: command.AuditReason().String(),
-		ApprovalEvidenceID: command.ApprovalEvidenceID().String(),
+		ApprovalEvidenceID: approvalEvidenceID,
 	})
 	if err != nil {
 		t.Fatal(err)

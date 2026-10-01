@@ -69,7 +69,7 @@ func (value ManagementScope) Permissions() []authorization.Permission {
 // IsValid reports whether the projection is safe and canonical.
 func (value ManagementScope) IsValid() bool {
 	if !value.networkID.IsValid() || !validDisplayName(value.displayName) ||
-		len(value.permissions) < 1 || len(value.permissions) > 5 {
+		len(value.permissions) < 1 || len(value.permissions) > 10 {
 		return false
 	}
 	for index, permission := range value.permissions {
@@ -87,7 +87,12 @@ func (value ManagementScope) IsValid() bool {
 
 func isConsoleManagementPermission(permission authorization.Permission) bool {
 	switch permission {
-	case authorization.PermissionPolicyApprove,
+	case authorization.PermissionDeviceRead,
+		authorization.PermissionNetworkRead,
+		authorization.PermissionPolicyApprove,
+		authorization.PermissionPolicyRead,
+		authorization.PermissionPolicyPublish,
+		authorization.PermissionPolicyValidate,
 		authorization.PermissionShareAccept,
 		authorization.PermissionShareOffer,
 		authorization.PermissionShareRead,

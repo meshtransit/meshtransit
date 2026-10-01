@@ -51,11 +51,15 @@ func assertPostgreSQLConsoleManagementScopes(
 SELECT addition.id, addition.public_id::UUID, 1, 103, 856, permission.id
 FROM (VALUES
     (11001, '01890f00-0000-7000-8000-000000011001', 'share.accept'),
-    (11002, '01890f00-0000-7000-8000-000000011002', 'share.read')
+    (11002, '01890f00-0000-7000-8000-000000011002', 'share.read'),
+    (11003, '01890f00-0000-7000-8000-000000011003', 'device.read'),
+    (11004, '01890f00-0000-7000-8000-000000011004', 'network.read'),
+    (11005, '01890f00-0000-7000-8000-000000011005', 'policy.publish'),
+    (11006, '01890f00-0000-7000-8000-000000011006', 'policy.validate')
 ) AS addition(id, public_id, permission_key)
 JOIN mesh.permission AS permission
   ON permission.permission_key = addition.permission_key`)
-	if err != nil || inserted.RowsAffected() != 2 {
+	if err != nil || inserted.RowsAffected() != 6 {
 		t.Fatal("seed temporary sharing scope permissions", err)
 	}
 	if _, err := transaction.Exec(ctx, `SELECT
@@ -94,7 +98,7 @@ JOIN mesh.permission AS permission
 	}
 	if err := json.Unmarshal([]byte(*directProjection), &projected); err != nil ||
 		len(projected.Scopes) != 1 || !slices.Equal(projected.Scopes[0].Permissions,
-		[]string{"policy.approve", "share.accept", "share.read"}) {
+		[]string{"device.read", "network.read", "policy.approve", "policy.publish", "policy.validate", "share.accept", "share.read"}) {
 		t.Fatal("Console sharing scope projection lost canonical current permissions", err)
 	}
 	var requestedSetting, projectionSetting string
@@ -144,6 +148,8 @@ JOIN mesh.permission AS permission
 		"01890f00-0000-7000-8000-000000000204",
 	}
 	sharingPermissions := []authorization.Permission{
+		authorization.PermissionPolicyPublish,
+		authorization.PermissionPolicyValidate,
 		authorization.PermissionShareAccept,
 		authorization.PermissionShareOffer,
 		authorization.PermissionShareRead,
@@ -155,7 +161,7 @@ JOIN mesh.permission AS permission
 	for index, item := range sharingItems {
 		if item.NetworkID().String() != sharingNetworkIDs[index] ||
 			!slices.Equal(item.Permissions(), sharingPermissions) {
-			t.Fatal("sharing-only Console scope changed network or exact authority")
+			t.Fatalf("Console scope %s permissions=%v, expected %v", item.NetworkID(), item.Permissions(), sharingPermissions)
 		}
 	}
 

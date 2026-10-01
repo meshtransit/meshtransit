@@ -14,6 +14,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/app"
 	"github.com/meshtransit/meshtransit/internal/buildinfo"
 	"github.com/meshtransit/meshtransit/internal/config"
+	"github.com/meshtransit/meshtransit/internal/enrollment"
 	"github.com/meshtransit/meshtransit/internal/network/revisionworker"
 	"github.com/meshtransit/meshtransit/internal/observability"
 	"github.com/meshtransit/meshtransit/internal/sharing/endpointpublication"
@@ -49,6 +50,23 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			return 1
 		}
 		privateComponents = append(privateComponents, app.ComponentPrivateLogin)
+	}
+	if processConfig.BrowserRegistration != nil && privateProfile != nil {
+		browser := processConfig.BrowserRegistration
+		if browser.Origin != privateProfile.Origin() ||
+			browser.DeploymentID != privateProfile.Route().DeploymentID() ||
+			browser.RecoveryEpoch != privateProfile.Route().RecoveryEpoch() {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "browser_registration_identity_mismatch")
+			return 1
+		}
+	}
+	var browserRegistrationKeys *enrollment.BrowserIntentKeyring
+	if processConfig.BrowserRegistration != nil {
+		browserRegistrationKeys, err = composeBrowserRegistrationKeys(processConfig.BrowserRegistration)
+		if err != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "browser_registration_key_failure")
+			return 1
+		}
 	}
 	readiness, err := app.NewRuntimeState(roles, privateComponents...)
 	if err != nil {
@@ -188,10 +206,17 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 	}
 	var privateFactory *privateIdentityFactory
 	if privateProfile != nil {
+		var browserRuntime []browserRegistrationRuntime
+		if processConfig.BrowserRegistration != nil {
+			browserRuntime = append(browserRuntime, browserRegistrationRuntime{
+				profile: processConfig.BrowserRegistration, keys: browserRegistrationKeys,
+			})
+		}
 		factory, loginService, composeErr := composePrivateIdentityRuntime(
 			ctx,
 			privateProfile,
 			privateIdentityFactoryDependencies{Runtime: storagePools.runtime, Redis: redisClient, Logger: logger},
+			browserRuntime...,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "private_login_composition_failure")
@@ -364,12 +389,27 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			)
 			return 1
 		}
+		var browserControl []browserControlServices
+		if processConfig.BrowserRegistration != nil {
+			issuer, completion, browserErr := composeBrowserControl(
+				processConfig.BrowserRegistration, browserRegistrationKeys,
+				processConfig.Enrollment.Registration, storagePools.runtime,
+			)
+			if browserErr != nil {
+				logger.ErrorContext(ctx, "startup failed", "error_code", "browser_control_composition_failure")
+				return 1
+			}
+			browserControl = append(browserControl, browserControlServices{
+				issuer: issuer, completion: completion,
+			})
+		}
 		controlListener, composeErr := composeControlListener(
 			*processConfig.Control,
 			registrationService,
 			mapSessionService,
 			mapStreamService,
 			logger,
+			browserControl...,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(

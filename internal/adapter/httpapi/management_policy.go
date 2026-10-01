@@ -25,7 +25,7 @@ const maximumPolicyPublicationBodyBytes = 8 * 1024 * 1024
 
 type publishPolicyRequest struct {
 	Reason             string                     `json:"reason"`
-	ApprovalEvidenceID string                     `json:"approval_evidence_id"`
+	ApprovalEvidenceID json.RawMessage            `json:"approval_evidence_id"`
 	Rules              []publishPolicyRuleRequest `json:"rules"`
 }
 
@@ -104,7 +104,7 @@ func (handler *ManagementHandler) publishPolicy(ctx context.Context, input manag
 		writeManagementError(ctx, handler.logger, response, correlationID, classified)
 		return classified.Code
 	}
-	command, err := policypublication.NewApprovedManagementCommand(policypublication.ManagementCommandParams{
+	command, err := policypublication.NewManagementCommand(policypublication.ManagementCommandParams{
 		Candidate: candidate, BasePolicyRevision: decoded.baseRevision,
 		AccountSession: session, ApprovalEvidenceID: decoded.approvalEvidenceID,
 		AuditReason: decoded.reason,
@@ -193,9 +193,16 @@ func decodePolicyPublicationRequest(
 		}
 		rules[index] = rule
 	}
-	approvalEvidenceID, err := policypublication.ParseApprovalEvidenceID(body.ApprovalEvidenceID)
-	if err != nil {
-		return decodedPolicyPublication{}, invalidManagementRequest()
+	var approvalEvidenceID policypublication.ApprovalEvidenceID
+	if len(body.ApprovalEvidenceID) > 0 {
+		var encodedEvidenceID string
+		if err := json.Unmarshal(body.ApprovalEvidenceID, &encodedEvidenceID); err != nil {
+			return decodedPolicyPublication{}, invalidManagementRequest()
+		}
+		approvalEvidenceID, err = policypublication.ParseApprovalEvidenceID(encodedEvidenceID)
+		if err != nil {
+			return decodedPolicyPublication{}, invalidManagementRequest()
+		}
 	}
 	compilationRequest, err := compilation.NewRequest(compilation.RequestParams{
 		Scope: scope, Revision: baseRevision + 1, Rules: rules,

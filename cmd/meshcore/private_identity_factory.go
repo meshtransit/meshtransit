@@ -13,6 +13,7 @@ import (
 	redisadapter "github.com/meshtransit/meshtransit/internal/adapter/redis"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
 	"github.com/meshtransit/meshtransit/internal/identity/sessioncontext"
+	"github.com/meshtransit/meshtransit/internal/node/inventory"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
 	policyapproval "github.com/meshtransit/meshtransit/internal/policy/approval"
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
@@ -105,6 +106,16 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	inventoryStore, err := postgresadapter.NewConsoleDeviceInventoryStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{
+		StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout,
+	})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	deviceInventory, err := inventory.NewService(inventoryStore, clock)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	managementCapabilities, err := sessioncontext.NewCapabilityService(authority, clock)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
@@ -123,6 +134,10 @@ func composePrivateIdentityFactory(
 		managementKeys: managementCompositionKeys{
 			sessions: keys.sessions, idempotency: keys.idempotency, rateLimit: keys.rateLimit,
 		},
+	}
+	activePolicies, err := postgresadapter.NewActivePolicyStore(dependencies.Runtime, postgresadapter.PolicySimulationOptions(managementOptions))
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
 	}
 	released := false
 	defer func() {
@@ -145,11 +160,12 @@ func composePrivateIdentityFactory(
 		Admission: transactions, Metadata: owner.discovery, Creations: transactions, Committed: transactions,
 		Pending: transactions, Claims: transactions, Failures: transactions, Issues: transactions,
 		Provider: owner.provider, Subjects: transactions, SessionAuthority: authority, SessionRevocations: logoutStore,
-		SessionScopes: managementScopes, SessionCapabilities: managementCapabilities,
+		SessionScopes: managementScopes, DeviceInventory: deviceInventory, SessionCapabilities: managementCapabilities,
 		StartIDs: oidcauth.SystemStartIDs{}, Secrets: oidcauth.SystemSecrets{},
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, PolicySimulations: policySimulator,
+		ActivePolicies:  activePolicies,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		RateLimiter:    dependencies.Redis,
 		CorrelationIDs: httpapi.PublicCorrelationIDGenerator{}, Clock: clock, Logger: dependencies.Logger,
@@ -210,7 +226,7 @@ func privateIdentityManagementServices(
 	}
 	policyStore, err := postgresadapter.NewPolicyPublicationStore(pool, postgresadapter.PolicyPublicationOptions{
 		StatementTimeout: options.StatementTimeout, LockTimeout: options.LockTimeout, IdleTimeout: options.IdleTimeout,
-		ApprovalMode: postgresadapter.PolicyPublicationApprovalModeRequired,
+		ApprovalMode: postgresadapter.PolicyPublicationApprovalModePublisherAuthorized,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition

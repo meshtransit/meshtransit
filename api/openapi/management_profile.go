@@ -26,6 +26,7 @@ const (
 		"devices/{device_id}/actions/revoke"
 	policyPublishPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"policy/actions/publish"
+	policyReadPath     = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy"
 	policySimulatePath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"policy/actions/simulate"
 	policyApprovalRequestPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
@@ -60,6 +61,7 @@ type consoleManagementProfile struct {
 	Logout                 json.RawMessage            `json:"logout"`
 	ManagementScopes       json.RawMessage            `json:"managementScopes"`
 	DeploymentCapabilities json.RawMessage            `json:"deploymentCapabilities"`
+	DeviceInventory        json.RawMessage            `json:"deviceInventory"`
 }
 
 // ManagementDocument returns independently owned deterministic OpenAPI bytes.
@@ -94,7 +96,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		return nil, ErrInvalidManagementProfile
 	}
 	paths, err := managementObject(document["paths"])
-	if err != nil || len(paths) != 27 {
+	if err != nil || len(paths) != 28 {
 		return nil, ErrInvalidManagementProfile
 	}
 	if len(fragment) == 0 || len(fragment) > maximumManagementDocumentBytes {
@@ -107,8 +109,9 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	validIdentity := profile.ID == ManagementProfileConsoleCookiePrivateV1 &&
 		profile.Format == "meshtransit-management-auth-profile/v1"
 	validTransport := len(profile.SecuritySchemes) == 2 && len(profile.Parameters) == 3
-	validShape := len(profile.Schemas) == 4 && len(profile.Prepare) > 0 && len(profile.Logout) > 0 &&
-		len(profile.ManagementScopes) > 0 && len(profile.DeploymentCapabilities) > 0
+	validShape := len(profile.Schemas) == 5 && len(profile.Prepare) > 0 && len(profile.Logout) > 0 &&
+		len(profile.ManagementScopes) > 0 && len(profile.DeploymentCapabilities) > 0 &&
+		len(profile.DeviceInventory) > 0
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
 	}
@@ -116,6 +119,9 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		return nil, ErrInvalidManagementProfile
 	}
 	if !consoleDeploymentCapabilitiesOperation(profile.DeploymentCapabilities) {
+		return nil, ErrInvalidManagementProfile
+	}
+	if !consoleDeviceInventoryOperation(profile.DeviceInventory) {
 		return nil, ErrInvalidManagementProfile
 	}
 	components, err := managementObject(document["components"])
@@ -130,6 +136,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		{deviceRevokePath, "post", "revokeDevice", true},
 		{policyPublishPath, "post", "publishPolicy", true},
 		{policySimulatePath, "post", "simulatePolicy", true},
+		{policyReadPath, "get", "getActivePolicy", false},
 		{policyApprovalRequestPath, "get", "listPolicyApprovalRequests", false},
 		{policyApprovalRequestPath, "post", "requestPolicyApproval", true},
 		{policyApprovalItemPath, "get", "getPolicyApprovalRequest", false},
@@ -187,6 +194,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths[consoleSessionLogoutPath] = profile.Logout
 	consolePaths[consoleSessionManagementScopesPath] = profile.ManagementScopes
 	consolePaths[consoleDeploymentCapabilitiesPath] = profile.DeploymentCapabilities
+	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices"] = profile.DeviceInventory
 	document["paths"], err = json.Marshal(consolePaths)
 	if err != nil {
 		return nil, ErrInvalidManagementProfile
@@ -350,4 +358,29 @@ func consoleDeploymentCapabilitiesOperation(item json.RawMessage) bool {
 	}
 	var parameters []json.RawMessage
 	return json.Unmarshal(operation["parameters"], &parameters) == nil && len(parameters) == 2
+}
+
+func consoleDeviceInventoryOperation(item json.RawMessage) bool {
+	methods, err := managementObject(item)
+	if err != nil || len(methods) != 1 {
+		return false
+	}
+	operation, err := managementObject(methods["get"])
+	if err != nil || operation["requestBody"] != nil {
+		return false
+	}
+	var operationID string
+	if json.Unmarshal(operation["operationId"], &operationID) != nil || operationID != "listConsoleDevices" {
+		return false
+	}
+	var security []map[string][]string
+	if json.Unmarshal(operation["security"], &security) != nil || len(security) != 1 || len(security[0]) != 1 {
+		return false
+	}
+	scopes, present := security[0]["accountSessionCookie"]
+	if !present || scopes == nil || len(scopes) != 0 {
+		return false
+	}
+	var parameters []json.RawMessage
+	return json.Unmarshal(operation["parameters"], &parameters) == nil && len(parameters) == 6
 }

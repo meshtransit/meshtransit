@@ -60,6 +60,7 @@ type privateIdentityPorts struct {
 	SessionAuthority      accountsession.Resolver
 	SessionRevocations    accountsession.Revoker
 	SessionScopes         httpapi.SessionManagementScopes
+	DeviceInventory       httpapi.SessionDeviceInventory
 	SessionCapabilities   httpapi.SessionDeploymentCapabilities
 	StartIDs              oidcauth.StartIDGenerator
 	Secrets               oidcauth.SecretsGenerator
@@ -70,6 +71,7 @@ type privateIdentityPorts struct {
 	PolicyCompilations    httpapi.PolicyCompiler
 	PolicyExplanations    httpapi.PolicyExplainer
 	PolicySimulations     httpapi.PolicySimulator
+	ActivePolicies        httpapi.ActivePolicyReader
 	PolicyApprovals       httpapi.PolicyApprovalWorkflow
 	PolicyApprovalCatalog httpapi.PolicyApprovalCatalog
 	RateLimiter           httpapi.ManagementRateLimiter
@@ -163,6 +165,7 @@ func composePrivateIdentity(
 		PolicyCompilations:    ports.PolicyCompilations,
 		PolicyExplanations:    ports.PolicyExplanations,
 		PolicySimulations:     ports.PolicySimulations,
+		ActivePolicies:        ports.ActivePolicies,
 		PolicyApprovals:       ports.PolicyApprovals,
 		PolicyApprovalCatalog: ports.PolicyApprovalCatalog,
 		Idempotency:           keys.idempotency, RateLimitSubjects: keys.rateLimit, RateLimiter: ports.RateLimiter,
@@ -174,7 +177,7 @@ func composePrivateIdentity(
 		return nil, errInvalidPrivateIdentityComposition
 	}
 	management, err := httpapi.NewBrowserManagement(httpapi.BrowserManagementOptions{
-		Management: resources, Logout: logout, Scopes: ports.SessionScopes,
+		Management: resources, Logout: logout, Scopes: ports.SessionScopes, Inventory: ports.DeviceInventory,
 		Capabilities: ports.SessionCapabilities,
 		DeploymentID: options.Route.DeploymentID(), Origin: options.Origin,
 		Key: keys.csrf, Clock: ports.Clock, ProofLifetime: managementOptions.ProofLifetime,

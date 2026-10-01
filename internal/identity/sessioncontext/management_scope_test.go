@@ -97,7 +97,7 @@ func TestManagementScopeRejectsInvalidProjectionAndCursorEvidence(t *testing.T) 
 	}{
 		{name: "empty label", permissions: []authorization.Permission{authorization.PermissionPolicyApprove}},
 		{name: "uncanonical label", displayName: " Core", permissions: []authorization.Permission{authorization.PermissionPolicyApprove}},
-		{name: "wrong permission", displayName: "Core", permissions: []authorization.Permission{authorization.PermissionPolicyPublish}},
+		{name: "wrong permission", displayName: "Core", permissions: []authorization.Permission{authorization.PermissionDeviceManage}},
 		{name: "multiple permissions", displayName: "Core", permissions: []authorization.Permission{
 			authorization.PermissionPolicyApprove, authorization.PermissionPolicyApprove,
 		}},
@@ -105,7 +105,7 @@ func TestManagementScopeRejectsInvalidProjectionAndCursorEvidence(t *testing.T) 
 			authorization.PermissionShareRead, authorization.PermissionPolicyApprove,
 		}},
 		{name: "unsupported management permission", displayName: "Core", permissions: []authorization.Permission{
-			authorization.PermissionPolicyPublish,
+			authorization.PermissionDeviceManage,
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -124,11 +124,13 @@ func TestManagementScopeRejectsInvalidProjectionAndCursorEvidence(t *testing.T) 
 		"Core",
 		[]authorization.Permission{
 			authorization.PermissionPolicyApprove,
+			authorization.PermissionPolicyPublish,
+			authorization.PermissionPolicyValidate,
 			authorization.PermissionShareAccept,
 			authorization.PermissionShareRead,
 		},
 	)
-	if err != nil || len(canonical.Permissions()) != 3 {
+	if err != nil || len(canonical.Permissions()) != 5 {
 		t.Fatalf("NewManagementScope() with policy and sharing permissions = %+v/%v", canonical, err)
 	}
 

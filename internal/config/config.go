@@ -13,7 +13,7 @@ import (
 
 const (
 	// SchemaVersion identifies the validated environment configuration contract.
-	SchemaVersion = 24
+	SchemaVersion = 25
 
 	envRole            = "MESHTRANSIT_ROLE"
 	envHealthAddress   = "MESHTRANSIT_HEALTH_ADDRESS"
@@ -58,6 +58,7 @@ type Config struct {
 	PrivateEndpointWorker *PrivateEndpointWorkerConfig
 	AuthExpiry            *AuthExpiryConfig
 	PrivateLogin          *PrivateLoginFile
+	BrowserRegistration   *BrowserRegistrationConfig
 	Identity              *IdentityConfig
 }
 
@@ -183,6 +184,26 @@ func Load(lookup LookupFunc) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	browserRegistration, err := loadBrowserRegistrationConfig(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	if browserRegistration != nil {
+		if role != app.RoleAll && role != app.RoleAPI && role != app.RoleControl {
+			return Config{}, settingError(envBrowserRegistrationOrigin)
+		}
+		if (role == app.RoleAll || role == app.RoleAPI) && privateLoginFile == nil {
+			return Config{}, settingError(envPrivateLoginConfigFile)
+		}
+		if controlConfig != nil && browserRegistration.KeyFile.path ==
+			enrollmentConfig.CredentialDigest.Active.MaterialFile.path {
+			return Config{}, settingError(envBrowserRegistrationKeyFile)
+		}
+		if apiConfig != nil && browserRegistration.KeyFile.path ==
+			apiConfig.AccountSessionDigest.Active.MaterialFile.path {
+			return Config{}, settingError(envBrowserRegistrationKeyFile)
+		}
+	}
 
 	return Config{
 		Role:                  role,
@@ -198,6 +219,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		PrivateEndpointWorker: privateEndpointWorkerConfig,
 		AuthExpiry:            authExpiryConfig,
 		PrivateLogin:          privateLoginFile,
+		BrowserRegistration:   browserRegistration,
 		Identity:              identityConfig,
 	}, nil
 }

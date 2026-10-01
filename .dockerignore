@@ -1,6 +1,8 @@
 **
 !go.mod
 !go.sum
+!LICENSE
+!COMMERCIAL-LICENSING.md
 !THIRD_PARTY_NOTICES.md
 !api/
 !api/**

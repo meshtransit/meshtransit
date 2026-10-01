@@ -10,6 +10,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/adapter/oidc"
 	"github.com/meshtransit/meshtransit/internal/app"
 	"github.com/meshtransit/meshtransit/internal/config"
+	"github.com/meshtransit/meshtransit/internal/enrollment"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
 )
@@ -22,14 +23,20 @@ var (
 	errPrivateIdentityDiscoveryTransport = errors.New("private identity discovery transport unavailable")
 )
 
+type browserRegistrationRuntime struct {
+	profile *config.BrowserRegistrationConfig
+	keys    *enrollment.BrowserIntentKeyring
+}
+
 // The process receives only a validated immutable configuration and its concrete
 // already-owned dependencies. No alternate clock/provider/handler can be bound.
 func composePrivateIdentityRuntime(
 	ctx context.Context,
 	profile *config.PrivateLoginConfig,
 	dependencies privateIdentityFactoryDependencies,
+	browserRegistration ...browserRegistrationRuntime,
 ) (*privateIdentityFactory, *httpapi.LoginServer, error) {
-	if profile == nil || ctx == nil || ctx.Err() != nil {
+	if profile == nil || ctx == nil || ctx.Err() != nil || len(browserRegistration) > 1 {
 		return nil, nil, errInvalidPrivateIdentityComposition
 	}
 	ctx, cancel := context.WithTimeout(ctx, privateIdentityConstructionTimeout)
@@ -63,6 +70,22 @@ func composePrivateIdentityRuntime(
 	factory, err := composePrivateIdentityFactory(ctx, keys, options, dependencies)
 	if err != nil {
 		return nil, nil, errInvalidPrivateIdentityComposition
+	}
+	if len(browserRegistration) == 1 {
+		page, pageErr := composeBrowserRegistrationPage(
+			browserRegistration[0].profile, browserRegistration[0].keys,
+			factory, dependencies.Runtime,
+		)
+		if pageErr != nil {
+			factory.Close()
+			return nil, nil, errInvalidPrivateIdentityComposition
+		}
+		dispatcher, dispatchErr := factory.identity.dispatcher.WithRegistration(page)
+		if dispatchErr != nil {
+			factory.Close()
+			return nil, nil, errInvalidPrivateIdentityComposition
+		}
+		factory.identity.dispatcher = dispatcher
 	}
 	service, err := composePrivateIdentityLoginService(factory, privateIdentityLoginServiceOptions{
 		Address: profile.Address(), CertificatePEM: material.CertificatePEM,

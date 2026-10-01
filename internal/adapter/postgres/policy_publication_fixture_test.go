@@ -166,6 +166,7 @@ func beginAuthorizedTestPolicyPublicationStore(
 	t.Helper()
 	options := testPolicyPublicationOptions()
 	options.AllowTrustedActor = false
+	options.ApprovalMode = PolicyPublicationApprovalModePublisherAuthorized
 	store, err := newPolicyPublicationStore(
 		&fakePolicyPublicationDatabase{transactions: []*fakePolicyPublicationTransaction{
 			databaseTransaction,

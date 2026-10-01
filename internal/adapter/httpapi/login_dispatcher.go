@@ -22,9 +22,10 @@ var (
 // error mapper. It accepts no alternate key, route, service or authentication
 // profile. Callers must preserve component response ownership on every return.
 type LoginDispatcher struct {
-	browser    *BrowserLogin
-	management *BrowserManagement
-	metrics    *loginDispatchTelemetry
+	browser      *BrowserLogin
+	management   *BrowserManagement
+	registration *BrowserRegistrationPage
+	metrics      *loginDispatchTelemetry
 }
 
 // NewLoginDispatcher accepts only coherent, already validated login and browser
@@ -46,6 +47,44 @@ func NewLoginDispatcher(browser *BrowserLogin, management *BrowserManagement) (*
 		return nil, ErrInvalidLoginDispatcher
 	}
 	return &LoginDispatcher{browser: browser, management: management, metrics: newLoginDispatchTelemetry()}, nil
+}
+
+// NewLoginDispatcherWithRegistration adds a read-only browser intent page to
+// the same private TLS host. The existing SSO and management routes stay owned
+// by their original handlers.
+func NewLoginDispatcherWithRegistration(
+	browser *BrowserLogin, management *BrowserManagement,
+	registration *BrowserRegistrationPage,
+) (*LoginDispatcher, error) {
+	dispatcher, err := NewLoginDispatcher(browser, management)
+	if err != nil || registration == nil || registration.host != browser.reader.host ||
+		!registration.keys.IsValid() || nilContinuationDependency(registration.choices) ||
+		registration.slots == nil || registration.loginPage == nil ||
+		registration.choicesPage == nil || registration.approvedPage == nil ||
+		((registration.management == nil) != nilContinuationDependency(registration.approval)) ||
+		(registration.management != nil && registration.management != management) {
+		return nil, ErrInvalidLoginDispatcher
+	}
+	dispatcher.registration = registration
+	return dispatcher, nil
+}
+
+// WithRegistration preserves the existing dispatch metrics while adding the
+// validated page before the listener is constructed.
+func (dispatcher *LoginDispatcher) WithRegistration(
+	registration *BrowserRegistrationPage,
+) (*LoginDispatcher, error) {
+	if dispatcher == nil || dispatcher.metrics == nil {
+		return nil, ErrInvalidLoginDispatcher
+	}
+	withPage, err := NewLoginDispatcherWithRegistration(
+		dispatcher.browser, dispatcher.management, registration,
+	)
+	if err != nil {
+		return nil, err
+	}
+	withPage.metrics = dispatcher.metrics
+	return withPage, nil
 }
 
 func validDispatcherCallbackPath(value string) bool {
@@ -91,6 +130,16 @@ func (dispatcher *LoginDispatcher) Handle(response http.ResponseWriter, request 
 	if isBrowserManagementOperation(request) {
 		operation = "management"
 		return dispatcher.management.Handle(response, request)
+	}
+	if dispatcher.registration != nil &&
+		(request.Method == http.MethodGet || request.Method == http.MethodPost) &&
+		strings.HasPrefix(request.URL.Path, browserRegistrationPagePrefix) {
+		operation = "registration_landing"
+		if request.Method == http.MethodPost {
+			operation = "registration_approval"
+		}
+		dispatcher.registration.ServeHTTP(response, request)
+		return nil
 	}
 	browser := dispatcher.browser
 	switch request.URL.Path {
@@ -146,6 +195,8 @@ func isBrowserManagementOperation(request *http.Request) bool {
 		return false
 	}
 	_, device := parseDeviceRevokePath(request)
+	_, inventory := parseDeviceInventoryPath(request)
+	_, activePolicy := parseActivePolicyPath(request)
 	_, policy := parsePolicyPublishPath(request)
 	_, simulation := parsePolicySimulationPath(request)
 	approvalPath, approval := parsePolicyApprovalPath(request)
@@ -156,7 +207,7 @@ func isBrowserManagementOperation(request *http.Request) bool {
 		return device || policy || simulation || accessGraph ||
 			approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.isAction())
 	}
-	return request.Method == http.MethodGet && (managementScopes || deploymentCapabilities ||
+	return request.Method == http.MethodGet && (activePolicy || inventory || managementScopes || deploymentCapabilities ||
 		approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.kind == policyApprovalPathItem))
 }
 
@@ -188,9 +239,12 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 	approvalList := approval && request.Method == http.MethodGet &&
 		approvalPath.kind == policyApprovalPathCollection
 	managementScopes := target.Path == AccountSessionManagementScopesPath && request.Method == http.MethodGet
+	_, inventoryRead := parseDeviceInventoryPath(request)
 	deploymentCapabilities := target.Path == DeploymentCapabilitiesPath && request.Method == http.MethodGet &&
 		target.RawQuery == ""
-	return callback || approvalList || managementScopes || deploymentCapabilities || target.RawQuery == ""
+	registrationRead := dispatcher.registration != nil && request.Method == http.MethodGet &&
+		dispatcher.registration.validRequest(request)
+	return callback || approvalList || managementScopes || inventoryRead || deploymentCapabilities || registrationRead || target.RawQuery == ""
 }
 
 // MetricsCollector permits private root registration only, never a public endpoint.

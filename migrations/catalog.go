@@ -13,64 +13,80 @@ const (
 	// this binary. It advances only with a reviewed compatibility change.
 	ApplicationGeneration int64 = 1
 
-	platformFoundationDescription                    = "platform migration foundation"
-	authorityFoundationDescription                   = "tenancy and address authority foundation"
-	integrityFoundationDescription                   = "audit and outbox integrity foundation"
-	outboxDeliveryDescription                        = "outbox worker delivery capability"
-	registrationAuthorityDescription                 = "node enrollment and registration authority"
-	registrationIntentHashDescription                = "registration intent semantic hash"
-	transactionNetworkScopeDescription               = "transaction-local public network scope"
-	networkAuditStreamHeadDescription                = "transaction-local network audit stream head"
-	networkInventoryAdvanceDescription               = "transaction-local network inventory revision advance"
-	registrationReplayDescription                    = "registration idempotency replay evidence"
-	networkRevisionLockDescription                   = "transaction-local network revision lock"
-	registrationTransactionLocksDescription          = "registration transaction scoped lock helpers"
-	registrationIntakeScopeDescription               = "registration intake scope resolution"
-	registrationIntakeScopeQueryDescription          = "registration intake scope query correction"
-	mapSessionScopeDescription                       = "map session scope resolution"
-	mapSessionPeerCandidatesDescription              = "bounded map session peer candidate projection"
-	identityProviderAuthorityDescription             = "identity provider authority foundation"
-	accountIdentityPermissionDescription             = "account identity and permission catalog foundation"
-	humanAuthenticationSessionDescription            = "human authentication and account session authority"
-	compiledPacketPolicyDescription                  = "compiled packet policy authority"
-	atomicPacketPolicyPublicationDescription         = "atomic packet policy publication"
-	mapPeerProtocolIdentityDescription               = "map peer protocol identity projection"
-	networkIdempotencyDescription                    = "network idempotency record foundation"
-	accountSessionResolutionDescription              = "deployment-bound account session resolution"
-	networkManagementRBACDescription                 = "network management RBAC authority"
-	nodeKeyRotationAuthorityDescription              = "authenticated Node-key rotation authority"
-	oidcAuthTransactionPersistenceDescription        = "OIDC authentication transaction persistence"
-	oidcLoginRouteAdmissionDescription               = "durable OIDC login route admission"
-	oidcPendingBrowserEvidenceDescription            = "read-only OIDC pending browser evidence"
-	oidcBrowserClaimDescription                      = "single-use OIDC browser transaction claim"
-	oidcBrowserFailureDescription                    = "OIDC browser failure terminal proof erasure"
-	oidcLoginSubjectResolutionDescription            = "read-only exact OIDC login subject resolution"
-	oidcSessionIssuanceDescription                   = "atomic existing-subject OIDC session issuance"
-	oidcBrowserExpiryDescription                     = "bounded abandoned OIDC browser expiry"
-	accountSessionLogoutDescription                  = "deployment-bound local account session logout"
-	accountSessionLogoutEvidenceDescription          = "audited account session logout evidence"
-	resourceGroupAuthorityDescription                = "Resource and Resource Group authority foundation"
-	resourceManagementReadDescription                = "Resource management read API"
-	resourceLifecycleAuthorityDescription            = "Resource lifecycle authority"
-	resourceTargetRebindingDescription               = "Resource target rebinding authority"
-	resourceGroupReplacementDescription              = "Resource Group definition replacement authority"
-	resourceAuthorityChangeDescription               = "protected Resource ownership and custody authority"
-	policyResourceDestinationDescription             = "policy Resource destination provenance"
-	policyResourceGroupDestinationDescription        = "policy Resource Group destination provenance"
-	accessGraphPolicyExplanationDescription          = "Access Graph active policy explanation"
-	policySimulationBaselineDescription              = "Policy simulation active baseline"
-	policyApprovalPersistenceDescription             = "Policy approval persistence"
-	policyApprovalPublicationGateDescription         = "Policy approval publication gate"
-	policyApprovalManagementReadDescription          = "Policy approval management read API"
-	consoleManagementScopeDescription                = "Console management scope projection"
-	resourceSharingAuthorityDescription              = "Resource sharing authority foundation"
-	policyImportedResourceDescription                = "policy Imported Resource destination provenance"
-	resourceSharingAccessNameDescription             = "Resource sharing consumer access-name authority"
-	resourceSharingPrivateEndpointDescription        = "Resource sharing Private Endpoint provisioning authority"
-	resourceSharingEndpointPublicationDescription    = "Resource sharing Private Endpoint readiness and DNS publication"
-	resourceSharingEndpointReconciliationDescription = "Resource sharing Private Endpoint route reconciliation and withdrawal"
-	consoleDeploymentCapabilitiesDescription         = "Console Deployment capability projection"
-	consoleSharingScopeDescription                   = "Console sharing management scope projection"
+	platformFoundationDescription                     = "platform migration foundation"
+	authorityFoundationDescription                    = "tenancy and address authority foundation"
+	integrityFoundationDescription                    = "audit and outbox integrity foundation"
+	outboxDeliveryDescription                         = "outbox worker delivery capability"
+	registrationAuthorityDescription                  = "node enrollment and registration authority"
+	registrationIntentHashDescription                 = "registration intent semantic hash"
+	transactionNetworkScopeDescription                = "transaction-local public network scope"
+	networkAuditStreamHeadDescription                 = "transaction-local network audit stream head"
+	networkInventoryAdvanceDescription                = "transaction-local network inventory revision advance"
+	registrationReplayDescription                     = "registration idempotency replay evidence"
+	networkRevisionLockDescription                    = "transaction-local network revision lock"
+	registrationTransactionLocksDescription           = "registration transaction scoped lock helpers"
+	registrationIntakeScopeDescription                = "registration intake scope resolution"
+	registrationIntakeScopeQueryDescription           = "registration intake scope query correction"
+	mapSessionScopeDescription                        = "map session scope resolution"
+	mapSessionPeerCandidatesDescription               = "bounded map session peer candidate projection"
+	identityProviderAuthorityDescription              = "identity provider authority foundation"
+	accountIdentityPermissionDescription              = "account identity and permission catalog foundation"
+	humanAuthenticationSessionDescription             = "human authentication and account session authority"
+	compiledPacketPolicyDescription                   = "compiled packet policy authority"
+	atomicPacketPolicyPublicationDescription          = "atomic packet policy publication"
+	mapPeerProtocolIdentityDescription                = "map peer protocol identity projection"
+	networkIdempotencyDescription                     = "network idempotency record foundation"
+	accountSessionResolutionDescription               = "deployment-bound account session resolution"
+	networkManagementRBACDescription                  = "network management RBAC authority"
+	nodeKeyRotationAuthorityDescription               = "authenticated Node-key rotation authority"
+	oidcAuthTransactionPersistenceDescription         = "OIDC authentication transaction persistence"
+	oidcLoginRouteAdmissionDescription                = "durable OIDC login route admission"
+	oidcPendingBrowserEvidenceDescription             = "read-only OIDC pending browser evidence"
+	oidcBrowserClaimDescription                       = "single-use OIDC browser transaction claim"
+	oidcBrowserFailureDescription                     = "OIDC browser failure terminal proof erasure"
+	oidcLoginSubjectResolutionDescription             = "read-only exact OIDC login subject resolution"
+	oidcSessionIssuanceDescription                    = "atomic existing-subject OIDC session issuance"
+	oidcBrowserExpiryDescription                      = "bounded abandoned OIDC browser expiry"
+	accountSessionLogoutDescription                   = "deployment-bound local account session logout"
+	accountSessionLogoutEvidenceDescription           = "audited account session logout evidence"
+	resourceGroupAuthorityDescription                 = "Resource and Resource Group authority foundation"
+	resourceManagementReadDescription                 = "Resource management read API"
+	resourceLifecycleAuthorityDescription             = "Resource lifecycle authority"
+	resourceTargetRebindingDescription                = "Resource target rebinding authority"
+	resourceGroupReplacementDescription               = "Resource Group definition replacement authority"
+	resourceAuthorityChangeDescription                = "protected Resource ownership and custody authority"
+	policyResourceDestinationDescription              = "policy Resource destination provenance"
+	policyResourceGroupDestinationDescription         = "policy Resource Group destination provenance"
+	accessGraphPolicyExplanationDescription           = "Access Graph active policy explanation"
+	policySimulationBaselineDescription               = "Policy simulation active baseline"
+	policyApprovalPersistenceDescription              = "Policy approval persistence"
+	policyApprovalPublicationGateDescription          = "Policy approval publication gate"
+	policyApprovalManagementReadDescription           = "Policy approval management read API"
+	consoleManagementScopeDescription                 = "Console management scope projection"
+	resourceSharingAuthorityDescription               = "Resource sharing authority foundation"
+	policyImportedResourceDescription                 = "policy Imported Resource destination provenance"
+	resourceSharingAccessNameDescription              = "Resource sharing consumer access-name authority"
+	resourceSharingPrivateEndpointDescription         = "Resource sharing Private Endpoint provisioning authority"
+	resourceSharingEndpointPublicationDescription     = "Resource sharing Private Endpoint readiness and DNS publication"
+	resourceSharingEndpointReconciliationDescription  = "Resource sharing Private Endpoint route reconciliation and withdrawal"
+	consoleDeploymentCapabilitiesDescription          = "Console Deployment capability projection"
+	consoleSharingScopeDescription                    = "Console sharing management scope projection"
+	networkEnrollmentMembershipDescription            = "Network enrollment membership authority"
+	browserRegistrationIntentDescription              = "pre-Network browser registration intent"
+	interactiveEnrollmentProfileDescription           = "explicit interactive enrollment profile gate"
+	browserEnrollmentNetworkChoicesDescription        = "session-bound browser enrollment Network choices"
+	browserRegistrationIntentIssueDescription         = "durable browser registration intent issuance"
+	browserRegistrationIntentFollowupDescription      = "machine-bound browser registration followup"
+	browserRegistrationLandingDescription             = "session-bound browser registration landing"
+	browserRegistrationApprovalAuthorityDescription   = "locked browser registration approval authority"
+	browserRegistrationApprovalRecordDescription      = "atomic browser registration approval record"
+	browserRegistrationCompletionAuthorityDescription = "machine-bound browser registration completion authority"
+	browserWorkspaceChoicesDescription                = "session-bound browser Workspace and scoped Network choices"
+	browserWorkspaceApprovalDescription               = "exact chosen Workspace browser approval authority"
+	browserWorkspaceCompletionDescription             = "chosen Workspace browser completion reauthorization"
+	consoleInventoryScopeDescription                  = "Console inventory management scope projection"
+	consoleDeviceInventoryDescription                 = "Console exact-scope Device inventory read"
+	consolePolicyAuthoringScopeDescription            = "Console policy authoring management scope projection"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -247,6 +263,59 @@ var consoleDeploymentCapabilitiesSQL string
 //go:embed 000058_console_management_share_scope_projection.up.sql
 var consoleSharingScopeSQL string
 
+//go:embed 000059_network_enrollment_membership.up.sql
+var networkEnrollmentMembershipSQL string
+
+//go:embed 000060_browser_registration_intent.up.sql
+var browserRegistrationIntentSQL string
+
+//go:embed 000061_interactive_enrollment_profile.up.sql
+var interactiveEnrollmentProfileSQL string
+
+//go:embed 000062_browser_enrollment_network_choices.up.sql
+var browserEnrollmentNetworkChoicesSQL string
+
+//go:embed 000063_browser_registration_intent_issue.up.sql
+var browserRegistrationIntentIssueSQL string
+
+//go:embed 000064_browser_registration_intent_followup.up.sql
+var browserRegistrationIntentFollowupSQL string
+
+//go:embed 000065_browser_registration_landing.up.sql
+var browserRegistrationLandingSQL string
+
+//go:embed 000066_browser_registration_approval_authority.up.sql
+var browserRegistrationApprovalAuthoritySQL string
+
+//go:embed 000067_browser_registration_approval_record.up.sql
+var browserRegistrationApprovalRecordSQL string
+
+//go:embed 000068_browser_registration_completion_authority.up.sql
+var browserRegistrationCompletionAuthoritySQL string
+
+//go:embed 000069_browser_workspace_enrollment_choices.up.sql
+var browserWorkspaceChoicesSQL string
+
+//go:embed 000070_browser_workspace_approval_authority.up.sql
+var browserWorkspaceApprovalSQL string
+
+//go:embed 000071_browser_workspace_completion_authority.up.sql
+var browserWorkspaceCompletionSQL string
+
+//go:embed 000072_console_inventory_scope_projection.up.sql
+var consoleInventoryScopeSQL string
+
+//go:embed 000073_console_device_inventory.up.sql
+var consoleDeviceInventorySQL string
+
+//go:embed 000074_console_policy_authoring_scope.up.sql
+var consolePolicyAuthoringScopeSQL string
+
+//go:embed 000075_active_policy_read.up.sql
+var activePolicyReadSQL string
+
+const activePolicyReadDescription = "active policy read"
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -336,6 +405,23 @@ func Catalog() []Migration {
 		),
 		newMigration(57, consoleDeploymentCapabilitiesDescription, consoleDeploymentCapabilitiesSQL),
 		newMigration(58, consoleSharingScopeDescription, consoleSharingScopeSQL),
+		newMigration(59, networkEnrollmentMembershipDescription, networkEnrollmentMembershipSQL),
+		newMigration(60, browserRegistrationIntentDescription, browserRegistrationIntentSQL),
+		newMigration(61, interactiveEnrollmentProfileDescription, interactiveEnrollmentProfileSQL),
+		newMigration(62, browserEnrollmentNetworkChoicesDescription, browserEnrollmentNetworkChoicesSQL),
+		newMigration(63, browserRegistrationIntentIssueDescription, browserRegistrationIntentIssueSQL),
+		newMigration(64, browserRegistrationIntentFollowupDescription, browserRegistrationIntentFollowupSQL),
+		newMigration(65, browserRegistrationLandingDescription, browserRegistrationLandingSQL),
+		newMigration(66, browserRegistrationApprovalAuthorityDescription, browserRegistrationApprovalAuthoritySQL),
+		newMigration(67, browserRegistrationApprovalRecordDescription, browserRegistrationApprovalRecordSQL),
+		newMigration(68, browserRegistrationCompletionAuthorityDescription, browserRegistrationCompletionAuthoritySQL),
+		newMigration(69, browserWorkspaceChoicesDescription, browserWorkspaceChoicesSQL),
+		newMigration(70, browserWorkspaceApprovalDescription, browserWorkspaceApprovalSQL),
+		newMigration(71, browserWorkspaceCompletionDescription, browserWorkspaceCompletionSQL),
+		newMigration(72, consoleInventoryScopeDescription, consoleInventoryScopeSQL),
+		newMigration(73, consoleDeviceInventoryDescription, consoleDeviceInventorySQL),
+		newMigration(74, consolePolicyAuthoringScopeDescription, consolePolicyAuthoringScopeSQL),
+		newMigration(75, activePolicyReadDescription, activePolicyReadSQL),
 	}
 }
 

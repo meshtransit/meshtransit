@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
@@ -77,6 +78,26 @@ func TestManagementHandlerPublishesPolicy(t *testing.T) {
 		body.Data.NetworkRevision != 8 || len(body.Data.SemanticHash) != 64 ||
 		body.Data.RuleCount != 4 || body.CorrelationID != managementCorrelationID() {
 		t.Fatalf("response body = %+v", body)
+	}
+}
+
+func TestManagementHandlerPublishesDirectPolicyWithAuthenticatedPublisher(t *testing.T) {
+	t.Parallel()
+	session := managementSessionFixture(t)
+	var captured policypublication.Command
+	handler := managementHandlerFixture(t, managementHandlerFixtureOptions{
+		session: session,
+		publish: func(_ context.Context, command policypublication.Command) (policypublication.Result, error) {
+			captured = command
+			return managementPolicyResultFixture(t, command), nil
+		},
+	})
+	body := strings.Replace(validPolicyPublishBody(), `"approval_evidence_id":"01890f00-0000-7000-8000-000000000551",`, "", 1)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, newManagementRequest(t, http.MethodPost, validPolicyPublishPath(), body))
+	if response.Code != http.StatusOK || !captured.HasAccountSession() || captured.HasApprovalEvidence() ||
+		captured.AccountSession().ID() != session.ID() || len(captured.Candidate().Snapshot().Rules()) != 4 {
+		t.Fatalf("direct publication status=%d command=%+v", response.Code, captured)
 	}
 }
 
@@ -231,8 +252,13 @@ func TestManagementHandlerPolicyPublicationFailsClosed(t *testing.T) {
 			status: http.StatusBadRequest, code: "invalid_request",
 		},
 		{
-			name:   "missing approval evidence",
-			body:   `{"reason":"deny all","rules":[]}`,
+			name:   "null approval evidence",
+			body:   `{"reason":"deny all","approval_evidence_id":null,"rules":[]}`,
+			status: http.StatusBadRequest, code: "invalid_request",
+		},
+		{
+			name:   "empty approval evidence",
+			body:   `{"reason":"deny all","approval_evidence_id":"","rules":[]}`,
 			status: http.StatusBadRequest, code: "invalid_request",
 		},
 		{

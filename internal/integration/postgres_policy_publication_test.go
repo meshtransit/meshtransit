@@ -202,12 +202,12 @@ LIMIT 1`).Scan(
 	if compiledResourceCandidate.SemanticHash() != resourceCandidate.SemanticHash() {
 		t.Fatal("PostgreSQL Resource compilation changed exact pinned candidate")
 	}
-	resourceApproval := approveIntegrationPolicyCandidate(
-		ctx, t, runtimePool, resourceCompilation, session, 201,
-	)
-	resourcePublication := newApprovedIntegrationManagementCommand(
-		t, resourceCandidate, 3, session, resourceReason, resourceApproval,
-	)
+	resourcePublication, err := publication.NewManagementCommand(publication.ManagementCommandParams{
+		Candidate: resourceCandidate, BasePolicyRevision: 3, AccountSession: session, AuditReason: resourceReason,
+	})
+	if err != nil {
+		t.Fatalf("construct direct authorized Resource publication: %v", err)
+	}
 	resourcePublished := publishPolicyOverBrowserManagement(
 		ctx,
 		t,
@@ -220,9 +220,16 @@ LIMIT 1`).Scan(
 		resourcePublished.SemanticHash() != resourceCandidate.SemanticHash() {
 		t.Fatalf("Resource policy publication = %+v", resourcePublished)
 	}
-	assertConsumedPolicyApproval(
-		ctx, t, adminConnection, resourceApproval, resourcePublished,
-	)
+	var directAuditCount int
+	if err := adminConnection.QueryRow(ctx, `SELECT count(*)::INTEGER
+FROM mesh_audit.audit_event
+WHERE workspace_id = 103 AND network_id = 203
+  AND target_kind = 'policy_release' AND target_public_id = $1::UUID
+  AND action = 'policy.published' AND permission = 'policy.publish'
+  AND payload ->> 'account_session_id' = $2
+  AND NOT (payload ? 'approval_evidence_id')`, resourcePublished.ReleaseID().String(), session.ID().String()).Scan(&directAuditCount); err != nil || directAuditCount != 1 {
+		t.Fatalf("direct authorized publication audit count=%d error=%v", directAuditCount, err)
+	}
 	assertCommittedPolicyResourceDestination(
 		ctx,
 		t,
@@ -918,7 +925,7 @@ func newIntegrationManagementPolicyPublicationService(
 			StatementTimeout: 5 * time.Second,
 			LockTimeout:      2 * time.Second,
 			IdleTimeout:      10 * time.Second,
-			ApprovalMode:     postgresadapter.PolicyPublicationApprovalModeRequired,
+			ApprovalMode:     postgresadapter.PolicyPublicationApprovalModePublisherAuthorized,
 		},
 	)
 	if err != nil {

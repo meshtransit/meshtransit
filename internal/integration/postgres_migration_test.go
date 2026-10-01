@@ -172,6 +172,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertAuthorityMutationAtomicity(ctx, t, adminConnection)
 	assertAuthorityConstraints(ctx, t, adminConnection)
 	assertDatabasePrivilegeContract(ctx, t, adminConnection)
+	assertBrowserRegistrationSchemaIsolation(ctx, t, adminConnection)
 	assertCompiledPacketPolicyPrivilegeContract(ctx, t, adminConnection)
 	assertPolicyApprovalPersistencePrivilegeContract(ctx, t, adminConnection)
 	registrationReplayCommand := seedRegistrationAuthority(ctx, t, adminConnection)
@@ -290,6 +291,11 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	)
 	assertNetworkManagementRBACAuthority(ctx, t, adminConnection, runtimeConnection)
 	assertPostgreSQLConsoleManagementScopes(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLConsoleDeviceInventory(ctx, t, adminConnection, runtimePool)
+	assertBrowserEnrollmentNetworkChoices(ctx, t, adminConnection)
+	assertBrowserRegistrationIntentIssue(ctx, t, adminConnection)
+	assertPostgreSQLBrowserRegistrationApproval(ctx, t, adminConnection, runtimeConnection, runtimePool)
+	assertPostgreSQLBrowserWorkspaceSelection(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLResourceAuthority(
 		ctx,
 		t,

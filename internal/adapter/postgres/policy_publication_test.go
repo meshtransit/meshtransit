@@ -573,6 +573,12 @@ func TestPolicyPublicationStoreRejectsUnsafeConstruction(t *testing.T) {
 	); !errors.Is(err, ErrInvalidPolicyPublicationStore) {
 		t.Fatalf("newPolicyPublicationStore() unknown approval mode error = %v", err)
 	}
+	options = testPolicyPublicationOptions()
+	options.ApprovalMode = PolicyPublicationApprovalModePublisherAuthorized
+	options.AllowTrustedActor = true
+	if _, err := newPolicyPublicationStore(&fakePolicyPublicationDatabase{}, options, nil); !errors.Is(err, ErrInvalidPolicyPublicationStore) {
+		t.Fatalf("publisher-authorized mode accepted a trusted actor: %v", err)
+	}
 }
 
 func TestNewPolicyPublicationStoreRequiresRuntimePool(t *testing.T) {

@@ -55,6 +55,7 @@ type BrowserManagementOptions struct {
 	Management    *ManagementHandler
 	Logout        AccountSessionLogout
 	Scopes        SessionManagementScopes
+	Inventory     SessionDeviceInventory
 	Capabilities  SessionDeploymentCapabilities
 	DeploymentID  deployment.ID
 	Origin        string
@@ -69,6 +70,7 @@ type BrowserManagement struct {
 	management   *ManagementHandler
 	logout       AccountSessionLogout
 	scopes       SessionManagementScopes
+	inventory    SessionDeviceInventory
 	capabilities SessionDeploymentCapabilities
 	deploymentID deployment.ID
 	origin, host string
@@ -128,7 +130,7 @@ func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement,
 	if !validLifetime {
 		return nil, ErrInvalidBrowserManagement
 	}
-	browser := &BrowserManagement{management: handler, logout: options.Logout, scopes: options.Scopes,
+	browser := &BrowserManagement{management: handler, logout: options.Logout, scopes: options.Scopes, inventory: options.Inventory,
 		capabilities: options.Capabilities,
 		deploymentID: options.DeploymentID,
 		origin:       options.Origin, host: origin.Host, keyID: options.Key.ID, clock: options.Clock,
@@ -240,15 +242,18 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	prepare := request.URL.Path == AccountSessionCSRFPreparePath
 	logout := request.URL.Path == AccountSessionLogoutPath
 	managementScopes := request.URL.Path == AccountSessionManagementScopesPath && request.Method == http.MethodGet
+	inventoryScope, inventoryMatched := parseDeviceInventoryPath(request)
+	inventoryRead := inventoryMatched && !nilContinuationDependency(browser.inventory)
 	deploymentCapabilities := request.URL.Path == DeploymentCapabilitiesPath && request.Method == http.MethodGet
 	_, device := parseDeviceRevokePath(request)
 	_, policy := parsePolicyPublishPath(request)
 	_, simulation := parsePolicySimulationPath(request)
+	_, policyRead := parseActivePolicyPath(request)
 	approvalPath, approvalMatched := parsePolicyApprovalPath(request)
 	approval := approvalMatched && approvalPath.allowedMethod(request.Method) == request.Method
 	_, accessGraph := parseAccessGraphExplainPath(request)
-	if !prepare && !logout && !managementScopes && !deploymentCapabilities && !device && !policy && !simulation &&
-		!approval && !accessGraph {
+	if !prepare && !logout && !managementScopes && !inventoryRead && !deploymentCapabilities && !device && !policy && !simulation &&
+		!approval && !accessGraph && !policyRead {
 		return ErrInvalidBrowserManagement
 	}
 	operation = "mutation"
@@ -291,6 +296,10 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		}
 	} else if managementScopes {
 		if err := browser.readManagementScopes(ctx, candidate, request, admission); err != nil {
+			return err
+		}
+	} else if inventoryRead {
+		if err := browser.readDeviceInventory(ctx, candidate, request, admission, inventoryScope); err != nil {
 			return err
 		}
 	} else if deploymentCapabilities {
@@ -430,12 +439,16 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	approvalRead := approvalMatched && request.Method == http.MethodGet &&
 		(approvalPath.kind == policyApprovalPathCollection || approvalPath.kind == policyApprovalPathItem)
 	managementScopeRead := request.Method == http.MethodGet && target.Path == AccountSessionManagementScopesPath
+	_, inventoryMatched := parseDeviceInventoryPath(request)
+	inventoryRead := inventoryMatched && !nilContinuationDependency(browser.inventory)
 	deploymentCapabilityRead := request.Method == http.MethodGet && target.Path == DeploymentCapabilitiesPath
-	safeRead := approvalRead || managementScopeRead || deploymentCapabilityRead
+	_, policyMatched := parseActivePolicyPath(request)
+	policyRead := policyMatched && request.Method == http.MethodGet
+	safeRead := approvalRead || managementScopeRead || inventoryRead || deploymentCapabilityRead || policyRead
 	if request.Method == http.MethodGet && !safeRead {
 		return false
 	}
-	queryAllowed := approvalRead && approvalPath.kind == policyApprovalPathCollection || managementScopeRead
+	queryAllowed := approvalRead && approvalPath.kind == policyApprovalPathCollection || managementScopeRead || inventoryRead
 	if (!queryAllowed && target.RawQuery != "") || len(target.RawQuery) > maximumCallbackQueryBytes {
 		return false
 	}

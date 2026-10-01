@@ -49,6 +49,10 @@ const (
 	PolicyPublicationApprovalModeRequired
 	// PolicyPublicationApprovalModeQualificationBypass is only for offline compatibility tests.
 	PolicyPublicationApprovalModeQualificationBypass
+	// PolicyPublicationApprovalModePublisherAuthorized permits direct publication
+	// only after fresh exact-scope policy.publish AccountSession authorization.
+	// Any supplied approval evidence still invokes the durable approval gate.
+	PolicyPublicationApprovalModePublisherAuthorized
 )
 
 // PolicyPublicationOptions bounds every database wait in a publication transaction.
@@ -287,12 +291,16 @@ func (store *PolicyPublicationStore) configureAndScope(
 }
 
 func validPolicyPublicationOptions(options PolicyPublicationOptions) bool {
+	if options.ApprovalMode == PolicyPublicationApprovalModePublisherAuthorized && options.AllowTrustedActor {
+		return false
+	}
 	return options.StatementTimeout > 0 &&
 		options.StatementTimeout <= maxPolicyPublicationStatementTimeout &&
 		options.LockTimeout > 0 && options.LockTimeout <= maxPolicyPublicationLockTimeout &&
 		options.IdleTimeout > 0 && options.IdleTimeout <= maxPolicyPublicationIdleTimeout &&
 		(options.ApprovalMode == PolicyPublicationApprovalModeRequired ||
-			options.ApprovalMode == PolicyPublicationApprovalModeQualificationBypass)
+			options.ApprovalMode == PolicyPublicationApprovalModeQualificationBypass ||
+			options.ApprovalMode == PolicyPublicationApprovalModePublisherAuthorized)
 }
 
 func rollbackPolicyPublicationSetup(transaction policyPublicationDatabaseTransaction) error {

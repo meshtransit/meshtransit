@@ -15,6 +15,7 @@ const (
 	registrationConflict
 	registrationCanceled
 	registrationUnavailable
+	registrationPending
 )
 
 type registrationMetrics struct {
@@ -66,14 +67,15 @@ func (metrics registrationMetrics) finish(startedAt time.Time, result registrati
 	metrics.duration.WithLabelValues(label).Observe(time.Since(startedAt).Seconds())
 }
 
-func allRegistrationResults() [6]registrationResult {
-	return [6]registrationResult{
+func allRegistrationResults() [7]registrationResult {
+	return [7]registrationResult{
 		registrationAuthorized,
 		registrationInvalidRequest,
 		registrationAuthenticationFailed,
 		registrationConflict,
 		registrationCanceled,
 		registrationUnavailable,
+		registrationPending,
 	}
 }
 
@@ -91,6 +93,8 @@ func (result registrationResult) label() string {
 		return "canceled"
 	case registrationUnavailable:
 		return "unavailable"
+	case registrationPending:
+		return "pending"
 	default:
 		return "internal_failure"
 	}

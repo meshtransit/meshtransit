@@ -144,7 +144,7 @@ func composeManagementAPIWithKeys(
 			StatementTimeout: managementStatementTimeout,
 			LockTimeout:      managementLockTimeout,
 			IdleTimeout:      managementTransactionIdle,
-			ApprovalMode:     postgresadapter.PolicyPublicationApprovalModeRequired,
+			ApprovalMode:     postgresadapter.PolicyPublicationApprovalModePublisherAuthorized,
 		},
 	)
 	if err != nil {
@@ -326,6 +326,12 @@ func composeManagementAPIWithKeys(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
+	activePolicies, err := postgresadapter.NewActivePolicyStore(runtimePool, postgresadapter.PolicySimulationOptions{
+		StatementTimeout: managementStatementTimeout, LockTimeout: managementLockTimeout, IdleTimeout: managementTransactionIdle,
+	})
+	if err != nil {
+		return nil, nil, errors.Join(errInvalidManagementComposition, err)
+	}
 	policySimulator, err := simulation.NewService(simulation.Dependencies{
 		Baselines: policySimulationStore, Compiler: policyCompiler, Clock: simulation.SystemClock{},
 	})
@@ -377,6 +383,7 @@ func composeManagementAPIWithKeys(
 		PolicySimulations:     policySimulator,
 		PolicyApprovals:       policyApprovals,
 		PolicyApprovalCatalog: policyApprovalCatalog,
+		ActivePolicies:        activePolicies,
 		ResourceCreations:     resourceCreations, ResourceLifecycles: resourceLifecycles,
 		ResourceRebindings: resourceRebindings, ResourceCatalog: resourceCatalog,
 		ResourceGroupReplacements: resourceGroupReplacements,

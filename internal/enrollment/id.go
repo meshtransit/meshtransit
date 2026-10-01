@@ -19,6 +19,9 @@ type CredentialID publicid.ID
 // RegistrationID identifies one idempotent registration intent.
 type RegistrationID publicid.ID
 
+// BrowserIntentID identifies one pre-Network browser registration intent.
+type BrowserIntentID publicid.ID
+
 // ParseProfileID validates and returns an Enrollment Profile ID.
 func ParseProfileID(value string) (ProfileID, error) {
 	id, err := publicid.Parse(value)
@@ -46,6 +49,15 @@ func ParseRegistrationID(value string) (RegistrationID, error) {
 	return RegistrationID(id), nil
 }
 
+// ParseBrowserIntentID validates a browser registration intent ID.
+func ParseBrowserIntentID(value string) (BrowserIntentID, error) {
+	id, err := publicid.Parse(value)
+	if err != nil {
+		return BrowserIntentID{}, ErrInvalidID
+	}
+	return BrowserIntentID(id), nil
+}
+
 // String returns the canonical Profile ID.
 func (id ProfileID) String() string { return publicid.ID(id).String() }
 
@@ -66,3 +78,12 @@ func (id RegistrationID) String() string { return publicid.ID(id).String() }
 
 // IsValid reports whether the Registration ID is valid.
 func (id RegistrationID) IsValid() bool { return publicid.ID(id).IsValid() }
+
+// String returns the canonical browser intent ID.
+func (id BrowserIntentID) String() string { return publicid.ID(id).String() }
+
+// Bytes returns a copy of the browser intent's UUID bytes.
+func (id BrowserIntentID) Bytes() [16]byte { return publicid.ID(id).Bytes() }
+
+// IsValid reports whether the browser intent ID is valid.
+func (id BrowserIntentID) IsValid() bool { return publicid.ID(id).IsValid() }

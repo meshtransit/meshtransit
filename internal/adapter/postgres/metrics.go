@@ -97,6 +97,7 @@ const (
 	postgresOperationNodeKeyRotationRollback   postgresOperation = "node_key_rotation_rollback"
 	postgresOperationAccountSessionResolve     postgresOperation = "account_session_resolve"
 	postgresOperationAccountSessionScopes      postgresOperation = "account_session_scopes"
+	postgresOperationConsoleDeviceInventory    postgresOperation = "console_device_inventory"
 	postgresOperationAccountSessionCaps        postgresOperation = "account_session_capabilities"
 	postgresOperationAccountSessionLogout      postgresOperation = "account_session_logout"
 	postgresOperationOutboxBacklog             postgresOperation = "outbox_backlog"
@@ -190,6 +191,7 @@ var (
 		postgresOperationNodeKeyRotationRollback,
 		postgresOperationAccountSessionResolve,
 		postgresOperationAccountSessionScopes,
+		postgresOperationConsoleDeviceInventory,
 		postgresOperationAccountSessionCaps,
 		postgresOperationAccountSessionLogout,
 		postgresOperationOutboxBacklog,
@@ -491,6 +493,7 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationNodeKeyRotationRollback ||
 			operation == postgresOperationAccountSessionResolve ||
 			operation == postgresOperationAccountSessionScopes ||
+			operation == postgresOperationConsoleDeviceInventory ||
 			operation == postgresOperationAccountSessionCaps ||
 			operation == postgresOperationAccountSessionLogout
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
 	policyapproval "github.com/meshtransit/meshtransit/internal/policy/approval"
+	policycatalog "github.com/meshtransit/meshtransit/internal/policy/catalog"
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
@@ -38,6 +39,7 @@ const (
 	deviceRevokeOperation                   = "device_revoke"
 	policyPublishOperation                  = "policy_publish"
 	policySimulateOperation                 = "policy_simulate"
+	policyReadOperation                     = "policy_read"
 	policyExplainOperation                  = "policy_explain"
 	policyApprovalRequestOperation          = "policy_approval_request"
 	policyApprovalListOperation             = "policy_approval_list"
@@ -114,6 +116,11 @@ type PolicyExplainer interface {
 // PolicySimulator derives a compiler-identical impact without publishing authority.
 type PolicySimulator interface {
 	Simulate(context.Context, accountsession.Session, compilation.Request) (simulation.Result, error)
+}
+
+// ActivePolicyReader returns complete compiled evidence after current policy.read.
+type ActivePolicyReader interface {
+	ReadActivePolicy(context.Context, accountsession.Session, network.Scope, time.Time) (policycatalog.Snapshot, error)
 }
 
 // PolicyApprovalWorkflow persists proposals and independent human decisions.
@@ -216,6 +223,7 @@ type ManagementHandlerOptions struct {
 	PolicyCompilations        PolicyCompiler
 	PolicyExplanations        PolicyExplainer
 	PolicySimulations         PolicySimulator
+	ActivePolicies            ActivePolicyReader
 	PolicyApprovals           PolicyApprovalWorkflow
 	PolicyApprovalCatalog     PolicyApprovalCatalog
 	ResourceCreations         ResourceCreator
@@ -245,6 +253,7 @@ type ManagementHandler struct {
 	policyCompiler            PolicyCompiler
 	policyExplainer           PolicyExplainer
 	policySimulator           PolicySimulator
+	activePolicies            ActivePolicyReader
 	policyApprovals           PolicyApprovalWorkflow
 	policyApprovalCatalog     PolicyApprovalCatalog
 	resourceCreations         ResourceCreator
@@ -297,6 +306,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		policyCompiler:            options.PolicyCompilations,
 		policyExplainer:           options.PolicyExplanations,
 		policySimulator:           options.PolicySimulations,
+		activePolicies:            options.ActivePolicies,
 		policyApprovals:           options.PolicyApprovals,
 		policyApprovalCatalog:     options.PolicyApprovalCatalog,
 		resourceCreations:         options.ResourceCreations,
@@ -386,12 +396,13 @@ func (handler *ManagementHandler) serveHTTP(
 	devicePath, deviceMatched := parseDeviceRevokePath(request)
 	policyPath, policyMatched := parsePolicyPublishPath(request)
 	policySimulationPath, policySimulationMatched := parsePolicySimulationPath(request)
+	policyReadPath, policyReadMatched := parseActivePolicyPath(request)
 	policyApprovalPath, policyApprovalMatched := parsePolicyApprovalPath(request)
 	accessGraphPath, accessGraphMatched := parseAccessGraphExplainPath(request)
 	resourcePath, resourceMatched := parseResourceManagementPath(request)
 	sharingPath, sharingMatched := parseResourceSharingPath(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
-		!accessGraphMatched && !resourceMatched && !sharingMatched {
+		!accessGraphMatched && !resourceMatched && !sharingMatched && !policyReadMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -405,6 +416,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = policyPublishOperation
 	} else if policySimulationMatched {
 		operation = policySimulateOperation
+	} else if policyReadMatched {
+		operation = policyReadOperation
 	} else if policyApprovalMatched {
 		operation = policyApprovalPath.operation(request.Method)
 	} else if accessGraphMatched {
@@ -415,7 +428,9 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = resourcePath.operation(request.Method)
 	}
 	allowedMethod := http.MethodPost
-	if policyApprovalMatched {
+	if policyReadMatched {
+		allowedMethod = http.MethodGet
+	} else if policyApprovalMatched {
 		allowedMethod = policyApprovalPath.allowedMethod(request.Method)
 	} else if resourceMatched {
 		allowedMethod = resourcePath.allowedMethod(request.Method)
@@ -498,6 +513,10 @@ func (handler *ManagementHandler) serveHTTP(
 			response: response, request: request, correlationID: correlationID,
 			path: policySimulationPath, session: session, browser: browser,
 		})
+		return
+	}
+	if policyReadMatched {
+		resultCode = handler.readActivePolicy(ctx, response, correlationID, policyReadPath, session)
 		return
 	}
 	if policyApprovalMatched {

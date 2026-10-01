@@ -34,31 +34,42 @@ func DecodeCredentialRegistration(
 	body io.Reader,
 	registrationID enrollment.RegistrationID,
 ) (control.RegistrationRequest, error) {
-	if body == nil || !registrationID.IsValid() {
+	if !registrationID.IsValid() {
 		return control.RegistrationRequest{}, ErrInvalidRegistrationRequest
+	}
+	wire, err := decodeRegistrationWire(body)
+	if err != nil {
+		return control.RegistrationRequest{}, err
+	}
+	return wire.toControl(registrationID)
+}
+
+func decodeRegistrationWire(body io.Reader) (registrationRequestWire, error) {
+	if body == nil {
+		return registrationRequestWire{}, ErrInvalidRegistrationRequest
 	}
 	encoded, err := io.ReadAll(io.LimitReader(body, maxRegistrationRequestBytes+1))
 	defer clear(encoded)
 	if err != nil {
-		return control.RegistrationRequest{}, ErrInvalidRegistrationRequest
+		return registrationRequestWire{}, ErrInvalidRegistrationRequest
 	}
 	if len(encoded) == 0 || len(encoded) > maxRegistrationRequestBytes {
-		return control.RegistrationRequest{}, ErrInvalidRegistrationRequest
+		return registrationRequestWire{}, ErrInvalidRegistrationRequest
 	}
 	if err := validateUniqueJSONNames(encoded); err != nil {
-		return control.RegistrationRequest{}, ErrInvalidRegistrationRequest
+		return registrationRequestWire{}, ErrInvalidRegistrationRequest
 	}
 
 	var wire registrationRequestWire
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
-		return control.RegistrationRequest{}, ErrInvalidRegistrationRequest
+		return registrationRequestWire{}, ErrInvalidRegistrationRequest
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return control.RegistrationRequest{}, ErrInvalidRegistrationRequest
+		return registrationRequestWire{}, ErrInvalidRegistrationRequest
 	}
-	return wire.toControl(registrationID)
+	return wire, nil
 }
 
 func validateUniqueJSONNames(encoded []byte) error {
@@ -195,8 +206,12 @@ func (wire registrationRequestWire) toControl(
 }
 
 func (wire registrationRequestWire) hasUnsupportedSemantics() bool {
+	return wire.hasUnsupportedSemanticsExceptFollowup() || wire.Followup != ""
+}
+
+func (wire registrationRequestWire) hasUnsupportedSemanticsExceptFollowup() bool {
 	return !isZeroTypedPublicKey(wire.NetworkLockKey, networkLockKeyPrefix) ||
-		!wire.Expiry.IsZero() || wire.Followup != "" || wire.Ephemeral ||
+		!wire.Expiry.IsZero() || wire.Ephemeral ||
 		len(wire.NodeKeySignature) != 0 || wire.SignatureType != 0 || wire.Timestamp != nil ||
 		len(wire.DeviceCert) != 0 || len(wire.Signature) != 0 || wire.NetworkSelector != ""
 }

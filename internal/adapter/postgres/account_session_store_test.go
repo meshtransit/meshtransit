@@ -167,6 +167,7 @@ func (database *fakeAccountSessionDatabase) Begin(
 
 type fakeAccountSessionTransaction struct {
 	row       fakeAccountSessionRow
+	rows      []fakeAccountSessionRow
 	arguments []any
 	commits   int
 	rollbacks int
@@ -182,6 +183,11 @@ func (transaction *fakeAccountSessionTransaction) QueryRow(
 	arguments ...any,
 ) accountSessionRow {
 	transaction.arguments = arguments
+	if len(transaction.rows) > 0 {
+		row := transaction.rows[0]
+		transaction.rows = transaction.rows[1:]
+		return row
+	}
 	return transaction.row
 }
 

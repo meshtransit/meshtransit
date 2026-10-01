@@ -22,19 +22,29 @@
       "in": "header",
       "required": true,
       "description": "One exact operator-configured HTTPS Origin, including canonical non-default port when configured. Missing/null/foreign Origin rejects; Referer, forwarded headers and normalization never replace it.",
-      "schema": { "type": "string", "minLength": 8, "maxLength": 256, "pattern": "^https://" }
+      "schema": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 256,
+        "pattern": "^https://"
+      }
     },
     "ConsoleSessionChannel": {
       "name": "X-MeshTransit-Session",
       "in": "header",
       "required": true,
-      "schema": { "type": "string", "const": "v1" }
+      "schema": {
+        "type": "string",
+        "const": "v1"
+      }
     },
     "ConsoleSessionProof": {
       "name": "X-MeshTransit-CSRF",
       "in": "header",
       "required": true,
-      "schema": { "$ref": "#/components/schemas/ConsoleSessionProof" }
+      "schema": {
+        "$ref": "#/components/schemas/ConsoleSessionProof"
+      }
     }
   },
   "schemas": {
@@ -48,30 +58,58 @@
     "ConsoleCSRFPrepared": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["csrf_token", "expires_at"],
+      "required": [
+        "csrf_token",
+        "expires_at"
+      ],
       "properties": {
-        "csrf_token": { "$ref": "#/components/schemas/ConsoleSessionProof" },
-        "expires_at": { "type": "string", "format": "date-time" }
+        "csrf_token": {
+          "$ref": "#/components/schemas/ConsoleSessionProof"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        }
       }
     },
     "ConsoleManagementScopePage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["data", "correlation_id"],
+      "required": [
+        "data",
+        "correlation_id"
+      ],
       "properties": {
         "data": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["principal_id", "workspace", "networks"],
+          "required": [
+            "principal_id",
+            "workspace",
+            "networks"
+          ],
           "properties": {
-            "principal_id": { "type": "string", "format": "uuid" },
+            "principal_id": {
+              "type": "string",
+              "format": "uuid"
+            },
             "workspace": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["id", "display_name"],
+              "required": [
+                "id",
+                "display_name"
+              ],
               "properties": {
-                "id": { "type": "string", "format": "uuid" },
-                "display_name": { "type": "string", "minLength": 1, "maxLength": 128 }
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "display_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
               }
             },
             "networks": {
@@ -80,19 +118,35 @@
               "items": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["id", "display_name", "permissions"],
+                "required": [
+                  "id",
+                  "display_name",
+                  "permissions"
+                ],
                 "properties": {
-                  "id": { "type": "string", "format": "uuid" },
-                  "display_name": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "display_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
                   "permissions": {
                     "type": "array",
                     "minItems": 1,
-                    "maxItems": 5,
+                    "maxItems": 10,
                     "uniqueItems": true,
                     "items": {
                       "type": "string",
                       "enum": [
+                        "device.read",
+                        "network.read",
                         "policy.approve",
+                        "policy.read",
+                        "policy.publish",
+                        "policy.validate",
                         "share.accept",
                         "share.offer",
                         "share.read",
@@ -105,8 +159,15 @@
             }
           }
         },
-        "next_page_token": { "type": "string", "minLength": 1, "maxLength": 512 },
-        "correlation_id": { "type": "string", "format": "uuid" }
+        "next_page_token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "correlation_id": {
+          "type": "string",
+          "format": "uuid"
+        }
       }
     },
     "ConsoleDeploymentCapabilities": {
@@ -122,13 +183,136 @@
         "capability_revision"
       ],
       "properties": {
-        "deployment_profile": { "type": "string", "const": "self_hosted" },
-        "workspace_mode": { "type": "string", "const": "single" },
-        "max_active_workspaces": { "type": "integer", "const": 1 },
-        "workspace_creation": { "type": "string", "const": "bootstrap_only" },
-        "cloud_billing": { "type": "boolean", "const": false },
-        "platform_operations": { "type": "boolean", "const": false },
-        "capability_revision": { "type": "integer", "minimum": 1 }
+        "deployment_profile": {
+          "type": "string",
+          "const": "self_hosted"
+        },
+        "workspace_mode": {
+          "type": "string",
+          "const": "single"
+        },
+        "max_active_workspaces": {
+          "type": "integer",
+          "const": 1
+        },
+        "workspace_creation": {
+          "type": "string",
+          "const": "bootstrap_only"
+        },
+        "cloud_billing": {
+          "type": "boolean",
+          "const": false
+        },
+        "platform_operations": {
+          "type": "boolean",
+          "const": false
+        },
+        "capability_revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "ConsoleDeviceInventoryPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data",
+        "correlation_id"
+      ],
+      "properties": {
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workspace_id",
+            "network_id",
+            "inventory_revision",
+            "devices"
+          ],
+          "properties": {
+            "workspace_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "network_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "inventory_revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "devices": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "hostname",
+                  "state",
+                  "is_ephemeral",
+                  "version",
+                  "created_at",
+                  "updated_at",
+                  "expires_at"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "hostname": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "expired",
+                      "revoked",
+                      "deleted"
+                    ]
+                  },
+                  "is_ephemeral": {
+                    "type": "boolean"
+                  },
+                  "version": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "correlation_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "next_page_token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
       }
     }
   },
@@ -137,26 +321,49 @@
       "operationId": "prepareConsoleSessionCSRF",
       "summary": "Prepare current-Session intent without issuing or renewing authority",
       "description": "Consume shared source/Session budgets and freshly authenticate the existing cookie before independent OS entropy. Return only the proof and exclusive expiry. No Set-Cookie, provider token, identity or resource grant. JSON whitespace around the literal empty object is allowed. Existing private transport/body/header/cookie/capacity/deadline bounds and zero-output pre-release failure apply.",
-      "security": [{ "accountSessionCookie": [] }],
+      "security": [
+        {
+          "accountSessionCookie": []
+        }
+      ],
       "parameters": [
-        { "$ref": "#/components/parameters/ConsoleOrigin" },
-        { "$ref": "#/components/parameters/ConsoleSessionChannel" }
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        }
       ],
       "requestBody": {
         "required": true,
         "x-meshtransit-max-bytes": 4096,
         "content": {
           "application/json": {
-            "schema": { "type": "object", "additionalProperties": false, "maxProperties": 0 }
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "maxProperties": 0
+            }
           }
         }
       },
       "responses": {
         "200": {
           "description": "No-grant proof for the current Session. Cookie is never set, renewed or cleared.",
-          "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } },
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
           "content": {
-            "application/json": { "schema": { "$ref": "#/components/schemas/ConsoleCSRFPrepared" } }
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsoleCSRFPrepared"
+              }
+            }
           }
         },
         "default": {
@@ -170,18 +377,33 @@
       "operationId": "logoutConsoleSession",
       "summary": "Durably revoke the current Core Session",
       "description": "Require the current host-only Session cookie and a fresh proof bound to that exact cookie, Origin and Deployment. Atomically revoke only the matching active Session in the current recovery epoch, then expire only __Host-mt_session. Concurrent or completed revocation is an idempotent no-match. No provider token, upstream logout, alternate cookie, redirect or authority renewal is performed. JSON whitespace around the literal empty object is allowed.",
-      "security": [{ "accountSessionCookie": [], "sessionCSRF": [] }],
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
       "parameters": [
-        { "$ref": "#/components/parameters/ConsoleOrigin" },
-        { "$ref": "#/components/parameters/ConsoleSessionChannel" },
-        { "$ref": "#/components/parameters/ConsoleSessionProof" }
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        }
       ],
       "requestBody": {
         "required": true,
         "x-meshtransit-max-bytes": 4096,
         "content": {
           "application/json": {
-            "schema": { "type": "object", "additionalProperties": false, "maxProperties": 0 }
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "maxProperties": 0
+            }
           }
         }
       },
@@ -189,7 +411,12 @@
         "204": {
           "description": "The current Core Session is durably ended and its browser cookie is expired. The response has no body.",
           "headers": {
-            "Cache-Control": { "schema": { "type": "string", "const": "no-store" } },
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            },
             "Set-Cookie": {
               "description": "Exact host-only deletion for the Core Session cookie; no Domain or other cookie is changed.",
               "schema": {
@@ -209,30 +436,58 @@
     "get": {
       "operationId": "listConsoleManagementScopes",
       "summary": "List current Session management scopes for Console navigation",
-      "description": "Return only the login Workspace and a UUIDv7-keyset page of active Networks where the current Principal freshly holds policy.approve. This projection is for navigation and user experience only; every approval catalog read and decision still performs current exact-Network authorization. No CSRF proof, request body, Authorization credential, Session identifier or provider claim is accepted or returned.",
-      "security": [{ "accountSessionCookie": [] }],
+      "description": "Return only the login Workspace and a UUIDv7-keyset page of active Networks with current explicitly bound inventory, policy or sharing permissions. Navigation is not authorization. Every inventory read and management action rechecks its exact permission and scope. No CSRF proof, request body, Authorization credential, Session identifier or provider claim is accepted or returned.",
+      "security": [
+        {
+          "accountSessionCookie": []
+        }
+      ],
       "parameters": [
-        { "$ref": "#/components/parameters/ConsoleOrigin" },
-        { "$ref": "#/components/parameters/ConsoleSessionChannel" },
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
         {
           "name": "page_size",
           "in": "query",
           "required": false,
-          "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 }
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50
+          }
         },
         {
           "name": "page_token",
           "in": "query",
           "required": false,
-          "schema": { "type": "string", "minLength": 1, "maxLength": 512 }
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
         }
       ],
       "responses": {
         "200": {
           "description": "Fresh server-authoritative management-scope projection for the current Session login Workspace.",
-          "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } },
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
           "content": {
-            "application/json": { "schema": { "$ref": "#/components/schemas/ConsoleManagementScopePage" } }
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsoleManagementScopePage"
+              }
+            }
           }
         },
         "default": {
@@ -246,21 +501,126 @@
       "operationId": "getConsoleDeploymentCapabilities",
       "summary": "Read the current server-authoritative Deployment capability projection",
       "description": "Return only the official self-hosted Deployment baseline and durable capability revision after fresh Session authentication. The projection is for Console navigation and route guards only. It grants no Workspace, platform, billing or operation authority; unknown, cloud, contradictory or stale authority fails closed.",
-      "security": [{ "accountSessionCookie": [] }],
+      "security": [
+        {
+          "accountSessionCookie": []
+        }
+      ],
       "parameters": [
-        { "$ref": "#/components/parameters/ConsoleOrigin" },
-        { "$ref": "#/components/parameters/ConsoleSessionChannel" }
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        }
       ],
       "responses": {
         "200": {
           "description": "Fresh non-secret Deployment capability projection for the authenticated Console Session.",
-          "headers": { "Cache-Control": { "schema": { "type": "string", "const": "no-store" } } },
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
           "content": {
-            "application/json": { "schema": { "$ref": "#/components/schemas/ConsoleDeploymentCapabilities" } }
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsoleDeploymentCapabilities"
+              }
+            }
           }
         },
         "default": {
           "description": "Bounded generic authentication, request, rate-limit, unsupported-profile or availability failure. No entitlement, installation key, Session or topology evidence is disclosed."
+        }
+      }
+    }
+  },
+  "deviceInventory": {
+    "get": {
+      "operationId": "listConsoleDevices",
+      "summary": "Read exact-Network durable Device inventory",
+      "description": "Fresh Session and exact device.read Role Binding are mandatory on every page. UUIDv7 keyset pagination binds both scope IDs and inventory revision; a changed revision rejects continuation. Registration state is not online presence or packet authority. No keys, credentials, endpoints or provider claims are disclosed.",
+      "security": [
+        {
+          "accountSessionCookie": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "network_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "page_size",
+          "in": "query",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50
+          }
+        },
+        {
+          "name": "page_token",
+          "in": "query",
+          "schema": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Fresh exact-scope Device inventory.",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsoleDeviceInventoryPage"
+              }
+            }
+          }
+        },
+        "403": {
+          "description": "Generic missing or unauthorized scope."
+        },
+        "409": {
+          "description": "Inventory changed. Read a new first page."
+        },
+        "default": {
+          "description": "Bounded authentication, request, budget or availability failure."
         }
       }
     }

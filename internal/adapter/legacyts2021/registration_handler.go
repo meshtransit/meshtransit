@@ -11,6 +11,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/enrollment"
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration"
 	"github.com/meshtransit/meshtransit/internal/enrollment/registration/intake"
+	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/node/keyrotation"
 )
 
@@ -37,36 +38,55 @@ type RegistrationIDGenerator interface {
 	NewRegistrationID() (enrollment.RegistrationID, error)
 }
 
+// BrowserRegistrationService issues and polls a machine-bound browser URL.
+type BrowserRegistrationService interface {
+	RegisterBrowser(context.Context, control.AuthenticatedMachine, node.Key,
+		node.Hostname, string) (string, error)
+}
+
+// BrowserCompletionService commits or replays a browser-approved Device.
+type BrowserCompletionService interface {
+	CompleteBrowser(context.Context, control.AuthenticatedMachine, node.Key,
+		node.Hostname, string) (registration.Result, bool, error)
+}
+
 // CredentialRegistrationHandlerOptions contains immutable endpoint dependencies.
 type CredentialRegistrationHandlerOptions struct {
-	Service   RegistrationService
-	IDs       RegistrationIDGenerator
-	Logger    *slog.Logger
-	Telemetry *ControlTelemetry
+	Service    RegistrationService
+	Browser    BrowserRegistrationService
+	Completion BrowserCompletionService
+	IDs        RegistrationIDGenerator
+	Logger     *slog.Logger
+	Telemetry  *ControlTelemetry
 }
 
 // CredentialRegistrationHandler handles credential enrollment and
 // machine-authenticated Node-key rotation. It starts no goroutines and retains
 // no request state.
 type CredentialRegistrationHandler struct {
-	service   RegistrationService
-	ids       RegistrationIDGenerator
-	logger    *slog.Logger
-	telemetry *ControlTelemetry
+	service    RegistrationService
+	browser    BrowserRegistrationService
+	completion BrowserCompletionService
+	ids        RegistrationIDGenerator
+	logger     *slog.Logger
+	telemetry  *ControlTelemetry
 }
 
 // NewCredentialRegistrationHandler validates and constructs the endpoint adapter.
 func NewCredentialRegistrationHandler(
 	options CredentialRegistrationHandlerOptions,
 ) (*CredentialRegistrationHandler, error) {
-	if options.Service == nil || options.IDs == nil || options.Logger == nil || options.Telemetry == nil {
+	if options.Service == nil || options.IDs == nil || options.Logger == nil || options.Telemetry == nil ||
+		(options.Completion != nil && options.Browser == nil) {
 		return nil, ErrInvalidCredentialRegistrationHandler
 	}
 	return &CredentialRegistrationHandler{
-		service:   options.Service,
-		ids:       options.IDs,
-		logger:    options.Logger,
-		telemetry: options.Telemetry,
+		service:    options.Service,
+		browser:    options.Browser,
+		completion: options.Completion,
+		ids:        options.IDs,
+		logger:     options.Logger,
+		telemetry:  options.Telemetry,
 	}, nil
 }
 
@@ -114,6 +134,15 @@ func (handler *CredentialRegistrationHandler) serveAuthenticated(
 		http.Error(response, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
 		return
 	}
+	wire, err := decodeRegistrationWire(request.Body)
+	if err != nil {
+		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	if wire.Auth == nil && isZeroTypedPublicKey(wire.OldNodeKey, nodeKeyPrefix) {
+		handler.serveBrowser(response, request, machine, wire, &telemetryResult)
+		return
+	}
 	registrationID, err := handler.ids.NewRegistrationID()
 	if err != nil || !registrationID.IsValid() {
 		telemetryResult = registrationUnavailable
@@ -121,7 +150,7 @@ func (handler *CredentialRegistrationHandler) serveAuthenticated(
 		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		return
 	}
-	registrationRequest, err := DecodeCredentialRegistration(request.Body, registrationID)
+	registrationRequest, err := wire.toControl(registrationID)
 	if err != nil {
 		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
@@ -149,6 +178,73 @@ func (handler *CredentialRegistrationHandler) serveAuthenticated(
 	response.WriteHeader(http.StatusOK)
 	if err := WriteAuthorizedRegistrationResponse(response); err != nil {
 		handler.logger.DebugContext(request.Context(), "registration response write failed", "error", err)
+	}
+}
+
+func (handler *CredentialRegistrationHandler) serveBrowser(
+	response http.ResponseWriter, request *http.Request,
+	machine control.AuthenticatedMachine, wire registrationRequestWire,
+	telemetryResult *registrationResult,
+) {
+	browserRequest, err := wire.toBrowserRegistration()
+	if err != nil {
+		http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	if handler.browser == nil {
+		*telemetryResult = registrationUnavailable
+		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		return
+	}
+	if browserRequest.IsFollowup() && handler.completion != nil {
+		result, found, err := handler.completion.CompleteBrowser(request.Context(), machine,
+			browserRequest.NodeKey(), browserRequest.Hostname(), browserRequest.FollowupURL())
+		if err != nil {
+			if errors.Is(err, control.ErrInvalidBrowserRegistration) {
+				http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+				return
+			}
+			*telemetryResult = registrationUnavailable
+			handler.logger.ErrorContext(request.Context(), "browser completion failed", "error", err)
+			http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		if found {
+			if !result.IsValid() {
+				*telemetryResult = registrationUnavailable
+				http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			response.Header().Set("Content-Type", "application/json")
+			*telemetryResult = registrationAuthorized
+			response.WriteHeader(http.StatusOK)
+			if err := WriteAuthorizedRegistrationResponse(response); err != nil {
+				handler.logger.DebugContext(request.Context(), "browser completion response write failed", "error", err)
+			}
+			return
+		}
+	}
+	authURL, err := handler.browser.RegisterBrowser(request.Context(), machine,
+		browserRequest.NodeKey(), browserRequest.Hostname(), browserRequest.FollowupURL())
+	if err != nil {
+		if errors.Is(err, control.ErrInvalidBrowserRegistration) {
+			http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		*telemetryResult = registrationUnavailable
+		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		return
+	}
+	if !validBrowserFollowupURL(authURL) {
+		*telemetryResult = registrationUnavailable
+		http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		return
+	}
+	response.Header().Set("Content-Type", "application/json")
+	*telemetryResult = registrationPending
+	response.WriteHeader(http.StatusOK)
+	if err := WritePendingBrowserRegistrationResponse(response, authURL); err != nil {
+		handler.logger.DebugContext(request.Context(), "browser registration response write failed", "error", err)
 	}
 }
 

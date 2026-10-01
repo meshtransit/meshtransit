@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 58 {
-		t.Fatalf("len(Catalog()) = %d, want 58", len(catalog))
+	if len(catalog) != 75 {
+		t.Fatalf("len(Catalog()) = %d, want 75", len(catalog))
 	}
 	reconciliation := catalog[55]
 	if reconciliation.Description != "Resource sharing Private Endpoint route reconciliation and withdrawal" {
@@ -1574,8 +1574,217 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 58 {
-		t.Fatalf("LatestVersion() = %d, want 58", LatestVersion())
+	if LatestVersion() != 75 {
+		t.Fatalf("LatestVersion() = %d, want 75", LatestVersion())
+	}
+}
+
+func TestNetworkEnrollmentMembershipMigrationKeepsExactScope(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[58]
+	if migration.Version != 59 || migration.Description != networkEnrollmentMembershipDescription {
+		t.Fatalf("migration 59 = %+v, want Network enrollment membership", migration)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.network_membership",
+		"CONSTRAINT network_membership_network_scope_fk FOREIGN KEY",
+		"CONSTRAINT network_membership_workspace_member_fk FOREIGN KEY",
+		"CREATE UNIQUE INDEX network_membership_current_uidx",
+		"CREATE TRIGGER network_membership_authority_mutation",
+		"ALTER TABLE mesh.network_membership FORCE ROW LEVEL SECURITY",
+		"workspace_id = mesh_ops.current_workspace_id()",
+		"network_id = mesh_ops.current_network_id()",
+		"WITH CHECK (",
+		"REVOKE ALL ON TABLE mesh.network_membership",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("Network membership SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "BYPASSRLS",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("Network membership SQL grants broad authority through %q", forbidden)
+		}
+	}
+}
+
+func TestBrowserIntentIssueUsesOnlyNarrowRuntimeFunction(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[62]
+	if migration.Version != 63 || migration.Description != browserRegistrationIntentIssueDescription {
+		t.Fatalf("migration 63 = %+v, want browser intent issuance", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.issue_browser_registration_intent_v1",
+		"SECURITY DEFINER",
+		"FOR SHARE",
+		"FOR UPDATE",
+		"ON CONFLICT DO NOTHING",
+		"current_intent.machine_key <> p_machine_key",
+		"current_intent.requested_node_key <> p_requested_node_key",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.issue_browser_registration_intent_v1",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("browser intent issuance SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "BYPASSRLS",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("browser intent issuance SQL grants broad authority through %q", forbidden)
+		}
+	}
+}
+
+func TestBrowserFollowupRequiresExactMachineAndNode(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[63]
+	if migration.Version != 64 || migration.Description != browserRegistrationIntentFollowupDescription {
+		t.Fatalf("migration 64 = %+v, want browser followup", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.read_browser_registration_followup_v1",
+		"SECURITY DEFINER",
+		"intent.token_digest = p_token_digest",
+		"intent.machine_key = p_machine_key",
+		"intent.machine_key_fingerprint = p_machine_key_fingerprint",
+		"intent.requested_node_key = p_requested_node_key",
+		"intent.issued_recovery_epoch = p_recovery_epoch",
+		"intent.expires_at > pg_catalog.transaction_timestamp()",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_browser_registration_followup_v1",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("browser followup SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "BYPASSRLS",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("browser followup SQL grants broad authority through %q", forbidden)
+		}
+	}
+}
+
+func TestBrowserLandingRequiresCurrentSSOSession(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[64]
+	if migration.Version != 65 || migration.Description != browserRegistrationLandingDescription {
+		t.Fatalf("migration 65 = %+v, want browser landing", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.read_browser_registration_landing_v1",
+		"SECURITY DEFINER",
+		"mesh_ops.resolve_account_session_v2(",
+		"intent.token_digest = p_intent_token_digest",
+		"intent.issued_recovery_epoch = admitted.deployment_recovery_epoch",
+		"admitted.login_workspace_public_id IS NOT NULL",
+		"intent.expires_at > pg_catalog.transaction_timestamp()",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_browser_registration_landing_v1",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("browser landing SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "BYPASSRLS",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("browser landing SQL grants broad authority through %q", forbidden)
+		}
+	}
+}
+
+func TestBrowserApprovalAuthorityLocksAndRechecksExactEligibility(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[65]
+	if migration.Version != 66 || migration.Description != browserRegistrationApprovalAuthorityDescription {
+		t.Fatalf("migration 66 = %+v, want browser approval authority", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.lock_browser_registration_approval_authority_v1",
+		"SECURITY DEFINER",
+		"FOR UPDATE OF intent",
+		"mesh_ops.lock_network_revision()",
+		"FOR SHARE OF subject, provider, client",
+		"mesh.network_membership",
+		"profile.interactive_authorization_enabled",
+		"mesh_ops.resolve_account_session_v2(",
+		"v_now := pg_catalog.clock_timestamp()",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.lock_browser_registration_approval_authority_v1",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("browser approval authority SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "GRANT DELETE", "BYPASSRLS",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("browser approval authority SQL grants broad authority through %q", forbidden)
+		}
+	}
+}
+
+func TestBrowserApprovalRecordRequiresNarrowAuthorityAndEvidence(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[66]
+	if migration.Version != 67 || migration.Description != browserRegistrationApprovalRecordDescription {
+		t.Fatalf("migration 67 = %+v, want browser approval record", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.record_browser_registration_approval_v1",
+		"SECURITY DEFINER",
+		"mesh_ops.lock_browser_registration_approval_authority_v1(",
+		"INSERT INTO mesh.pending_registration",
+		"'interactive'",
+		"'authorized'",
+		"UPDATE mesh.browser_registration_intent",
+		"state = 'approved'",
+		"mesh.change_public_id",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.record_browser_registration_approval_v1",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("browser approval record SQL missing %q", required)
+		}
+	}
+}
+
+func TestBrowserCompletionAuthorityBindsNoiseAndApprovedSession(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[67]
+	if migration.Version != 68 || migration.Description != browserRegistrationCompletionAuthorityDescription {
+		t.Fatalf("migration 68 = %+v, want browser completion authority", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.lock_browser_registration_completion_authority_v1",
+		"SECURITY DEFINER",
+		"intent.token_digest=p_intent_token_digest",
+		"intent.machine_key=p_machine_key",
+		"intent.requested_node_key=p_requested_node_key",
+		"intent.approved_session_public_id",
+		"mesh_ops.lock_browser_registration_approval_authority_v1(",
+		"FOR UPDATE",
+		"pending_row.state <> 'authorized'",
+		"pending_row.request_hash <> expected_request_hash",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.lock_browser_registration_completion_authority_v1",
+		"CREATE FUNCTION mesh_ops.complete_browser_registration_intent_v1",
+		"CREATE FUNCTION mesh_ops.read_completed_browser_registration_v1",
+		"intent.approved_workspace_public_id",
+		"mesh_ops.set_network_scope(",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("browser completion authority SQL missing %q", required)
+		}
 	}
 }
 

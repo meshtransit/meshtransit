@@ -10,6 +10,66 @@
     }
   ],
   "paths": {
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/policy": {
+      "get": {
+        "operationId": "getActivePolicy",
+        "summary": "Read active rules in one authorized Network",
+        "description": "Requires current policy.read. Only consumer-local rule IDs and selectors are returned. At most 1000 rows; incomplete or Resource-based snapshots cannot be edited as Device policy.",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current policy snapshot; ETag binds policy_revision",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Correlation-ID": {
+                "$ref": "#/components/headers/CorrelationID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivePolicyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/revoke": {
       "post": {
         "operationId": "revokeDevice",
@@ -1562,6 +1622,141 @@
       }
     },
     "schemas": {
+      "ActivePolicyRule": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "source_device_id",
+          "destination_device_id",
+          "protocol",
+          "destination_port_ranges",
+          "selector_kind",
+          "destination_selector_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "source_device_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "destination_device_id": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "tcp",
+              "udp",
+              "icmp"
+            ]
+          },
+          "destination_port_ranges": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "first",
+                "last"
+              ],
+              "properties": {
+                "first": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                "last": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                }
+              }
+            }
+          },
+          "selector_kind": {
+            "type": "string",
+            "enum": [
+              "device",
+              "resource",
+              "resource_group",
+              "imported_resource"
+            ]
+          },
+          "destination_selector_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ActivePolicyResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "correlation_id"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "workspace_id",
+              "network_id",
+              "policy_revision",
+              "semantic_hash",
+              "rule_count",
+              "complete",
+              "device_rules_only",
+              "rules"
+            ],
+            "properties": {
+              "workspace_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "network_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "policy_revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "semantic_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "rule_count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "device_rules_only": {
+                "type": "boolean"
+              },
+              "rules": {
+                "type": "array",
+                "maxItems": 1000,
+                "items": {
+                  "$ref": "#/components/schemas/ActivePolicyRule"
+                }
+              }
+            }
+          },
+          "correlation_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "PublicID": {
         "type": "string",
         "format": "uuid",
@@ -1642,7 +1837,6 @@
         "additionalProperties": false,
         "required": [
           "reason",
-          "approval_evidence_id",
           "rules"
         ],
         "properties": {
@@ -1652,6 +1846,7 @@
             "maxLength": 512
           },
           "approval_evidence_id": {
+            "description": "Optional for direct publication by an authorized policy publisher. When supplied, immutable approval evidence is freshly validated and consumed; invalid evidence is never ignored.",
             "$ref": "#/components/schemas/PublicID"
           },
           "rules": {

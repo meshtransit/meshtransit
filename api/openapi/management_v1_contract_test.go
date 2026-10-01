@@ -85,8 +85,8 @@ func TestManagementV1MutationContracts(t *testing.T) {
 		t.Fatalf("decode PublishPolicyRequest: %v", err)
 	}
 	if publishRequest.Properties["approval_evidence_id"] == nil ||
-		!slices.Contains(publishRequest.Required, "approval_evidence_id") {
-		t.Fatal("Policy publication does not require immutable approval evidence")
+		slices.Contains(publishRequest.Required, "approval_evidence_id") {
+		t.Fatal("Policy publication must permit direct authorized publication and retain optional immutable approval evidence")
 	}
 	const explainPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/access-graph/actions/explain"
 	explainOperation, ok := document.Paths[explainPath]

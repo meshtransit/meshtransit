@@ -13,15 +13,29 @@ import (
 
 var errInvalidControlComposition = errors.New("invalid control composition")
 
+type browserControlServices struct {
+	issuer     legacyts2021.BrowserRegistrationService
+	completion legacyts2021.BrowserCompletionService
+}
+
 func composeControlListener(
 	controlConfig config.ControlConfig,
 	registrationService legacyts2021.RegistrationService,
 	mapSessionService legacyts2021.MapSessionService,
 	mapStreamService legacyts2021.MapStreamService,
 	logger *slog.Logger,
+	browser ...browserControlServices,
 ) (*legacyts2021.ControlListener, error) {
-	if registrationService == nil || mapSessionService == nil || mapStreamService == nil || logger == nil {
+	if registrationService == nil || mapSessionService == nil || mapStreamService == nil ||
+		logger == nil || len(browser) > 1 {
 		return nil, errInvalidControlComposition
+	}
+	var browserServices browserControlServices
+	if len(browser) == 1 {
+		browserServices = browser[0]
+		if browserServices.issuer == nil || browserServices.completion == nil {
+			return nil, errInvalidControlComposition
+		}
 	}
 	telemetry, err := legacyts2021.NewControlTelemetry(
 		controlConfig.MaxSessions,
@@ -32,10 +46,12 @@ func composeControlListener(
 	}
 	handler, err := legacyts2021.NewCredentialRegistrationHandler(
 		legacyts2021.CredentialRegistrationHandlerOptions{
-			Service:   registrationService,
-			IDs:       intake.PublicRegistrationIDGenerator{},
-			Logger:    logger,
-			Telemetry: telemetry,
+			Service:    registrationService,
+			Browser:    browserServices.issuer,
+			Completion: browserServices.completion,
+			IDs:        intake.PublicRegistrationIDGenerator{},
+			Logger:     logger,
+			Telemetry:  telemetry,
 		},
 	)
 	if err != nil {

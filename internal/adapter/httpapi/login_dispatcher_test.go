@@ -172,6 +172,41 @@ func TestLoginDispatcherRejectsRoutingWithoutEffectsOrResponse(t *testing.T) {
 
 type dispatchBodySpy struct{ reads int }
 
+func TestLoginDispatcherRejectsRegistrationQueryOutsideCanonicalRead(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		method string
+		suffix string
+	}{
+		{name: "unknown filter", method: http.MethodGet, suffix: "?network=other"},
+		{name: "duplicate Workspace", method: http.MethodGet, suffix: "?workspace=x&workspace=y"},
+		{name: "malformed Workspace", method: http.MethodGet, suffix: "?workspace=other"},
+		{name: "empty query", method: http.MethodGet, suffix: "?"},
+		{name: "POST choice query", method: http.MethodPost,
+			suffix: "?workspace=01890f00-0000-7000-8000-000000000103"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			page, choices, _ := browserRegistrationPageFixture(t)
+			dispatcher, _, _ := dispatcherTestGraph(t)
+			withPage, err := dispatcher.WithRegistration(page)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := newBrowserRegistrationPageRequest(browserRegistrationPagePrefix+browserPageTestToken+test.suffix, "")
+			request.Method = test.method
+			body := &dispatchBodySpy{}
+			request.Body = body
+			response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+			if err := withPage.Handle(response, request); !errors.Is(err, ErrInvalidLoginDispatcher) ||
+				response.statusWrites != 0 || response.Body.Len() != 0 || choices.calls != 0 || body.reads != 0 {
+				t.Fatal("noncanonical chooser query reached authority or response", err)
+			}
+		})
+	}
+}
+
 func (body *dispatchBodySpy) Read([]byte) (int, error) {
 	body.reads++
 	return 0, io.EOF
@@ -307,6 +342,46 @@ func TestLoginDispatcherPreservesApprovalCatalogOwnership(t *testing.T) {
 	if management.auth != 2 || management.budgets != 4 ||
 		management.approvalGet != 1 || management.approvalList != 1 {
 		t.Fatal("approval catalog read skipped fresh private admission")
+	}
+}
+
+func TestLoginDispatcherPreservesActivePolicyReadAdmission(t *testing.T) {
+	t.Parallel()
+	path := "/api/v1/workspaces/01890f00-0000-7000-8000-000000000101/networks/01890f00-0000-7000-8000-000000000201/policy"
+	for _, test := range []struct {
+		name   string
+		method string
+		suffix string
+		valid  bool
+	}{
+		{name: "canonical read", method: http.MethodGet, valid: true},
+		{name: "POST alias", method: http.MethodPost},
+		{name: "HEAD alias", method: http.MethodHead},
+		{name: "query alias", method: http.MethodGet, suffix: "?revision=1"},
+		{name: "trailing path", method: http.MethodGet, suffix: "/"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			dispatcher, fixture, callback, management := dispatcherTestGraphWithManagement(t)
+			request := browserManagementReadRequest(t, path+test.suffix)
+			request.Method = test.method
+			response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+			err := dispatcher.Handle(response, request)
+			if !test.valid {
+				if !errors.Is(err, ErrInvalidLoginDispatcher) || management.auth != 0 ||
+					management.budgets != 0 || response.statusWrites != 0 {
+					t.Fatal("active policy alias reached authority or response", err)
+				}
+				return
+			}
+			// This fixture has no active-policy reader. Admission must reach the
+			// product handler and fail closed after fresh Session authentication.
+			if err != nil || response.Code != http.StatusServiceUnavailable || response.statusWrites != 1 ||
+				management.auth != 1 || management.budgets != 2 || len(fixture.calls) != 0 || callback.calls != 0 ||
+				response.Header().Get("Set-Cookie") != "" || response.Header().Get("Www-Authenticate") != "" {
+				t.Fatal("active policy read skipped admission or crossed owner boundaries", err)
+			}
+		})
 	}
 }
 
