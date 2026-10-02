@@ -4,6 +4,12 @@ const configureAccountSessionTransactionSQL = `SELECT
     pg_catalog.set_config('statement_timeout', $1, TRUE),
     pg_catalog.set_config('idle_in_transaction_session_timeout', $2, TRUE)`
 
+// Only read paths select generic plans. PostgreSQL still executes every
+// authority check against current rows; this caches no result or permission.
+// The setting is transaction-local and does not affect mutation plans.
+const configureAccountSessionReadTransactionSQL = configureAccountSessionTransactionSQL + `,
+    pg_catalog.set_config('plan_cache_mode', 'force_generic_plan', TRUE)`
+
 const resolveAccountSessionSQL = `SELECT
     session_public_id::TEXT,
     deployment_public_id::TEXT,

@@ -62,6 +62,9 @@ FROM (VALUES
 JOIN mesh.permission AS permission ON permission.permission_key=addition.permission_key`); err != nil {
 		t.Fatal("seed temporary read-only permissions", err)
 	}
+	if _, err := transaction.Exec(ctx, "SELECT pg_catalog.set_config('plan_cache_mode', 'force_generic_plan', TRUE)"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := transaction.Exec(ctx, "SET LOCAL ROLE mesh_runtime"); err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +82,11 @@ JOIN mesh.permission AS permission ON permission.permission_key=addition.permiss
 			t.Fatal("runtime Device read", err)
 		}
 		return encoded
+	}
+	for range 6 {
+		if read(networkID.String(), nil) == nil {
+			t.Fatal("generic plan lost current inventory authority")
+		}
 	}
 	first := read(networkID.String(), nil)
 	if first == nil {
@@ -133,7 +141,10 @@ JOIN mesh.permission AS permission ON permission.permission_key=addition.permiss
 		t.Fatal(err)
 	}
 	if _, err := transaction.Exec(ctx, `UPDATE mesh.role_permission SET state='revoked', version=version+1, updated_at=pg_catalog.now()
-WHERE id=12001`); err != nil {
+WHERE id IN (12001,12003)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transaction.Exec(ctx, "SELECT pg_catalog.set_config('plan_cache_mode', 'force_generic_plan', TRUE)"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := transaction.Exec(ctx, "SET LOCAL ROLE mesh_runtime"); err != nil {
@@ -141,6 +152,11 @@ WHERE id=12001`); err != nil {
 	}
 	if read(networkID.String(), nil) != nil {
 		t.Fatal("revoked device.read disclosed inventory")
+	}
+	if err := transaction.QueryRow(ctx, `SELECT mesh_ops.read_active_policy_v1(
+    $1::UUID,$2::UUID,$3::UUID,$4::UUID,$5::BIGINT,$6::BIGINT,$7::BIGINT,$8::BIGINT,$9::BIGINT,$10::UUID,$11::UUID,$12::TIMESTAMPTZ
+)::TEXT`, session.ID().String(), session.DeploymentID().String(), session.PrincipalID().String(), session.IdentitySubjectID().String(), session.Version(), session.PrincipalAuthorityGeneration(), session.AccountSessionGeneration(), session.ProviderGeneration(), session.DeploymentRecoveryEpoch(), workspaceID.String(), networkID.String(), time.Now().UTC()).Scan(&activePolicy); err != nil || activePolicy != nil {
+		t.Fatal("generic plan retained revoked policy.read", err)
 	}
 	if err := transaction.Rollback(ctx); err != nil {
 		t.Fatal(err)

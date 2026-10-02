@@ -22,6 +22,10 @@ import (
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
+// Reuse the parameterized read plan without caching authority or rule data.
+const configureActivePolicyReadTransactionSQL = configureResourceAuthoritySQL + `,
+    pg_catalog.set_config('plan_cache_mode', 'force_generic_plan', TRUE)`
+
 const readActivePolicySQL = `SELECT mesh_ops.read_active_policy_v1(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::BIGINT,
     $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
@@ -32,6 +36,7 @@ const readActivePolicySQL = `SELECT mesh_ops.read_active_policy_v1(
 type ActivePolicyStore struct {
 	database resourceAuthorityDatabase
 	options  PolicySimulationOptions
+	metrics  *postgresPoolMetrics
 }
 
 // NewActivePolicyStore accepts only a runtime-authenticated pool and bounded timeouts.
@@ -39,12 +44,18 @@ func NewActivePolicyStore(pool *Pool, options PolicySimulationOptions) (*ActiveP
 	if pool == nil || pool.role != PoolRoleRuntime || pool.resourceAuthorityDatabase == nil || !validPolicySimulationOptions(options) {
 		return nil, simulation.ErrUnavailable
 	}
-	return &ActivePolicyStore{database: pool.resourceAuthorityDatabase, options: options}, nil
+	return &ActivePolicyStore{database: pool.resourceAuthorityDatabase, options: options, metrics: pool.metrics}, nil
 }
 
 // ReadActivePolicy rechecks session generations and exact-scope policy.read with
 // authorization and revision locks in one bounded repeatable-read transaction.
 func (store *ActivePolicyStore) ReadActivePolicy(ctx context.Context, session accountsession.Session, scope network.Scope, evaluatedAt time.Time) (_ catalog.Snapshot, resultErr error) {
+	startedAt := time.Now()
+	defer func() {
+		if store != nil && store.metrics != nil {
+			store.metrics.observeOperation(postgresOperationActivePolicyRead, time.Since(startedAt), resultErr)
+		}
+	}()
 	if ctx == nil || !session.IsValid() || !scope.IsValid() || evaluatedAt.IsZero() {
 		return catalog.Snapshot{}, simulation.ErrInvalidRequest
 	}
@@ -52,8 +63,8 @@ func (store *ActivePolicyStore) ReadActivePolicy(ctx context.Context, session ac
 		return catalog.Snapshot{}, simulation.ErrUnavailable
 	}
 	transaction, err := store.database.BeginRepeatableRead(ctx)
-	if err != nil {
-		return catalog.Snapshot{}, policySimulationDatabaseError(ctx, err)
+	if err != nil || transaction == nil {
+		return catalog.Snapshot{}, policySimulationDatabaseError(ctx, errors.Join(err, simulation.ErrUnavailable))
 	}
 	committed := false
 	defer func() {
@@ -61,7 +72,7 @@ func (store *ActivePolicyStore) ReadActivePolicy(ctx context.Context, session ac
 			resultErr = errors.Join(resultErr, rollbackResourceAuthoritySetup(transaction))
 		}
 	}()
-	if err := transaction.Exec(ctx, configureResourceAuthoritySQL, postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.LockTimeout), postgresTimeout(store.options.IdleTimeout)); err != nil {
+	if err := transaction.Exec(ctx, configureActivePolicyReadTransactionSQL, postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.LockTimeout), postgresTimeout(store.options.IdleTimeout)); err != nil {
 		return catalog.Snapshot{}, policySimulationDatabaseError(ctx, err)
 	}
 	var ws, net int64

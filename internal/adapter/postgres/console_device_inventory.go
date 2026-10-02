@@ -63,7 +63,7 @@ func (store *ConsoleDeviceInventoryStore) ReadDevices(ctx context.Context, sessi
 			resultErr = errors.Join(resultErr, rollbackResourceAuthoritySetup(transaction))
 		}
 	}()
-	if err := transaction.Exec(ctx, configureAccountSessionTransactionSQL,
+	if err := transaction.Exec(ctx, configureAccountSessionReadTransactionSQL,
 		postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.IdleTimeout),
 	); err != nil {
 		return inventory.ReadResult{}, errors.Join(inventory.ErrUnavailable, err)

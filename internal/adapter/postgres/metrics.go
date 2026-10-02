@@ -98,6 +98,7 @@ const (
 	postgresOperationAccountSessionResolve     postgresOperation = "account_session_resolve"
 	postgresOperationAccountSessionScopes      postgresOperation = "account_session_scopes"
 	postgresOperationConsoleDeviceInventory    postgresOperation = "console_device_inventory"
+	postgresOperationActivePolicyRead          postgresOperation = "active_policy_read"
 	postgresOperationAccountSessionCaps        postgresOperation = "account_session_capabilities"
 	postgresOperationAccountSessionLogout      postgresOperation = "account_session_logout"
 	postgresOperationOutboxBacklog             postgresOperation = "outbox_backlog"
@@ -192,6 +193,7 @@ var (
 		postgresOperationAccountSessionResolve,
 		postgresOperationAccountSessionScopes,
 		postgresOperationConsoleDeviceInventory,
+		postgresOperationActivePolicyRead,
 		postgresOperationAccountSessionCaps,
 		postgresOperationAccountSessionLogout,
 		postgresOperationOutboxBacklog,
@@ -494,6 +496,7 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationAccountSessionResolve ||
 			operation == postgresOperationAccountSessionScopes ||
 			operation == postgresOperationConsoleDeviceInventory ||
+			operation == postgresOperationActivePolicyRead ||
 			operation == postgresOperationAccountSessionCaps ||
 			operation == postgresOperationAccountSessionLogout
 	}

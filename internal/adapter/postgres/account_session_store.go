@@ -105,7 +105,7 @@ func (store *AccountSessionStore) Resolve(
 
 	if err := transaction.Exec(
 		ctx,
-		configureAccountSessionTransactionSQL,
+		configureAccountSessionReadTransactionSQL,
 		postgresTimeout(store.options.StatementTimeout),
 		postgresTimeout(store.options.IdleTimeout),
 	); err != nil {
@@ -179,7 +179,7 @@ func (store *AccountSessionStore) ReadManagementScopes(
 	}()
 	if err := transaction.Exec(
 		ctx,
-		configureAccountSessionTransactionSQL,
+		configureAccountSessionReadTransactionSQL,
 		postgresTimeout(store.options.StatementTimeout),
 		postgresTimeout(store.options.IdleTimeout),
 	); err != nil {
@@ -258,7 +258,7 @@ func (store *AccountSessionStore) ReadDeploymentCapabilities(
 	}()
 	if err := transaction.Exec(
 		ctx,
-		configureAccountSessionTransactionSQL,
+		configureAccountSessionReadTransactionSQL,
 		postgresTimeout(store.options.StatementTimeout),
 		postgresTimeout(store.options.IdleTimeout),
 	); err != nil {
