@@ -216,7 +216,9 @@ func (r *Runtime) deactivateLocked() int {
 	r.registry.Deactivate()
 
 	removed := r.manager.Deactivate()
-	r.telemetry.RecordPendingInvalidated(uint64(removed))
+	if removed > 0 {
+		r.telemetry.RecordPendingInvalidated(uint64(removed))
+	}
 
 	return removed
 }

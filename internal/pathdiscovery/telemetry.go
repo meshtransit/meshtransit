@@ -77,18 +77,23 @@ func (t *ProbeTelemetry) RecordMapActivation() { addProbeCounter(&t.mapActivatio
 func (t *ProbeTelemetry) RecordActivationPreserved(count uint64) {
 	addProbeCounter(&t.activationPreserved, count)
 }
+
 func (t *ProbeTelemetry) RecordActivationRetired(count uint64) {
 	addProbeCounter(&t.activationRetired, count)
 }
+
 func (t *ProbeTelemetry) RecordAuthorityPeerSetChange(count uint64) {
 	addProbeCounter(&t.authorityPeerChanges, count)
 }
+
 func (t *ProbeTelemetry) RecordAuthorityNodeKeyChange(count uint64) {
 	addProbeCounter(&t.authorityNodeKeyChanges, count)
 }
+
 func (t *ProbeTelemetry) RecordAuthorityDiscoveryKeyChange(count uint64) {
 	addProbeCounter(&t.authorityDiscoveryKeyChanges, count)
 }
+
 func (t *ProbeTelemetry) RecordAuthorityEndpointChange(count uint64) {
 	addProbeCounter(&t.authorityEndpointChanges, count)
 }
@@ -113,18 +118,23 @@ func (t *ProbeTelemetry) RecordProbeCompletion()   { addProbeCounter(&t.probeCom
 func (t *ProbeTelemetry) RecordCompletionRejection() {
 	addProbeCounter(&t.completionRejections, 1)
 }
+
 func (t *ProbeTelemetry) RecordObservationQueued() {
 	addProbeCounter(&t.observationsQueued, 1)
 }
+
 func (t *ProbeTelemetry) RecordObservationDropped() {
 	addProbeCounter(&t.observationDrops, 1)
 }
+
 func (t *ProbeTelemetry) RecordObservationAccepted() {
 	addProbeCounter(&t.observationsAccepted, 1)
 }
+
 func (t *ProbeTelemetry) RecordObservationRejected() {
 	addProbeCounter(&t.observationRejected, 1)
 }
+
 func (t *ProbeTelemetry) RecordDirectExpiry(count uint64) {
 	addProbeCounter(&t.directExpirations, count)
 }
