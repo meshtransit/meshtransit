@@ -53,6 +53,13 @@ func ResourceSharingEndpointPublicationOwnershipSQL() string {
 	return resourceSharingEndpointPublicationOwnershipSQL
 }
 
+//go:embed operator/000080_direct_device_map_function_ownership.sql
+var directDeviceMapFunctionOwnershipSQL string
+
+// DirectDeviceMapFunctionOwnershipSQL assigns the bounded authenticated reader
+// to its isolated NOLOGIN owner. The operator provisions that role before migration 80.
+func DirectDeviceMapFunctionOwnershipSQL() string { return directDeviceMapFunctionOwnershipSQL }
+
 // DirectDeviceEndpointFunctionOwnershipSQL enables exact-scope direct readiness
 // and joint withdrawal while preserving supported rollback writer entry points.
 func DirectDeviceEndpointFunctionOwnershipSQL() string {

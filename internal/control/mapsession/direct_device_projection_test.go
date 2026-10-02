@@ -415,3 +415,33 @@ func shortDirectEndpoint(t *testing.T, authority sharing.EffectiveAccessParams, 
 	}
 	return endpoint
 }
+
+func TestDirectDeviceReadFailureWithdrawsBeforeGrantExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		provider, consumer, evidence := directDeviceFixtureAt(t, policy.ProtocolICMP, nil, time.Now())
+		projection, err := NewDirectDeviceProjection(directDeviceParams(t, provider, provider, consumer, evidence))
+		if err != nil {
+			t.Fatal(err)
+		}
+		initial, err := provider.WithDirectDeviceProjections([]DirectDeviceProjection{projection})
+		if err != nil {
+			t.Fatal(err)
+		}
+		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial}, failures: []error{nil, errors.New("controlled bilateral read failure")}}
+		service := newStreamServiceFixture(t, opener, &streamPresenceStore{})
+		service.options.ReconcileInterval = 2 * time.Second
+		sink := &recordingStreamSink{}
+		machine, request := authenticatedRequestFixture(t, initial)
+		result := make(chan error, 1)
+		go func() { result <- service.Serve(t.Context(), machine, request, sink) }()
+		synctest.Wait()
+		time.Sleep(2 * time.Second)
+		synctest.Wait()
+		if !initial.ProjectionExpiry().After(time.Now()) || len(sink.authorityWithdrawals()) != 1 {
+			t.Fatal("failed bilateral read retained unexpired sharing authority")
+		}
+		if err := <-result; !errors.Is(err, ErrStreamUnavailable) {
+			t.Fatal(err)
+		}
+	})
+}

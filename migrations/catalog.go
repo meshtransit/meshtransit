@@ -328,6 +328,9 @@ var workspaceRenameSQL string
 //go:embed 000079_direct_device_endpoint_authority.up.sql
 var directDeviceEndpointAuthoritySQL string
 
+//go:embed 000080_direct_device_map_authority.up.sql
+var directDeviceMapSQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -438,6 +441,7 @@ func Catalog() []Migration {
 		newMigration(77, "immutable Workspace and Network display identifiers", tenantDisplayIdentitySQL),
 		newMigration(78, "owner-authorized Workspace name changes", workspaceRenameSQL),
 		newMigration(79, "same-Workspace direct Device endpoint authority", directDeviceEndpointAuthoritySQL),
+		newMigration(80, "authenticated bilateral direct Device map authority", directDeviceMapSQL),
 	}
 }
 

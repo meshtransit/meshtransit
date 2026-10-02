@@ -318,7 +318,8 @@ func (service *StreamService) refresh(
 	next, err := service.openSnapshot(ctx, machine, request)
 	if err != nil {
 		cause := errors.Join(ErrStreamUnavailable, err)
-		if errors.Is(err, ErrUnauthorized) || !current.ProjectionExpiry().After(time.Now()) {
+		if errors.Is(err, ErrUnauthorized) || len(current.directDeviceProjections) != 0 ||
+			!current.ProjectionExpiry().After(time.Now()) {
 			return Snapshot{}, withdrawAuthority(ctx, sink, current, cause)
 		}
 		return Snapshot{}, cause

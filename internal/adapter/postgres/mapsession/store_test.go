@@ -52,6 +52,7 @@ func TestStoreLoadsConsistentScopedSnapshot(t *testing.T) {
 		loadSnapshotSQL,
 		loadPeerCandidatesSQL,
 		loadPacketPolicySQL,
+		loadDirectEdgesSQL,
 	}
 	if !reflect.DeepEqual(transaction.queries, wantQueries) {
 		t.Fatalf("queries = %v, want %v", transaction.queries, wantQueries)

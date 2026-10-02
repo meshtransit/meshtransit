@@ -168,6 +168,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		if _, err := adminConnection.Exec(ctx, migrations.DirectDeviceEndpointFunctionOwnershipSQL()); err != nil {
 			t.Fatalf("apply idempotent direct Device endpoint ownership hardening: %v", err)
 		}
+		if _, err := adminConnection.Exec(ctx, migrations.DirectDeviceMapFunctionOwnershipSQL()); err != nil {
+			t.Fatalf("apply direct map reader ownership: %v", err)
+		}
 	}
 	assertResourceSharingPrivilegeContract(ctx, t, adminConnection)
 	seedAuthorityFixture(ctx, t, adminConnection)

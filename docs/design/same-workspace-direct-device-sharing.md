@@ -6,10 +6,11 @@ The protocol/domain checkpoint now supports separately validated directional
 same-Workspace Device projections, exact traffic intersections, bounded host
 routes, full/delta removal and independent sharing expiry. Migration 79 adds
 distinct generation-bound direct Device readiness and transactional contract
-withdrawal. Cross-Network packet access is not enabled on a live deployment:
-the current PostgreSQL map reader still loads only same-Network candidates and
-rules. Imported Resource publication
-retains provenance until the dedicated bilateral direct reader is complete.
+withdrawal. Migration 80 connects a separately authenticated, bounded bilateral
+reader to the runtime map transaction, preserving ordinary Network-scoped
+inventory. Cross-Network packet access is not enabled on a live deployment:
+both-Network notification/dependency refresh and real encrypted packet evidence
+remain required.
 
 The canonical requirement is in
 `10-resource-sharing-and-private-endpoints.md` in the architecture set: Networks
@@ -116,9 +117,10 @@ bounds. Connectivity is accepted only for the resulting authorized peers and
 session generations. Expiry reconstructs authority independently of self expiry;
 authority reload failure withdraws sharing rather than retaining old grants.
 Notifications cannot create authority, and reconciliation repairs lost hints.
-The protocol checkpoint remains unconnected to the runtime map reader.
-Direct activation/withdrawal now has PostgreSQL/RLS integration; authenticated
-bilateral reads and both-Network refresh remain required before live enablement.
+The PostgreSQL reader now validates both map perspectives in one transaction.
+Direct activation/withdrawal and authenticated bilateral reads have
+PostgreSQL/RLS integration; both-Network refresh remains required before live
+enablement.
 
 ## Protocol checkpoint and required client deadline gate
 
@@ -158,6 +160,10 @@ adapter encoder. Fixture consumers must pin the producing Core revision and
 verify these frames with the client decoder. Database direct readiness,
 authenticated bilateral reads, both-Network revision wakeups and a real encrypted
 packet cycle remain prerequisites for live enablement.
+
+The authenticated runtime reader, explicit additional-ceiling profile and
+operator order are recorded in
+[`direct-device-map-reader-2026-10-02.md`](../qualification/direct-device-map-reader-2026-10-02.md).
 
 The durable readiness checkpoint and remaining runtime gates are recorded in
 [`direct-device-readiness-2026-10-02.md`](../qualification/direct-device-readiness-2026-10-02.md).

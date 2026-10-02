@@ -190,6 +190,10 @@ func (store *Store) Load(
 	if err != nil {
 		return appmapsession.Snapshot{}, err
 	}
+	snapshot, err = store.loadDirectEdges(ctx, transaction, snapshot, fingerprint[:], nodeKey[:])
+	if err != nil {
+		return appmapsession.Snapshot{}, err
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return appmapsession.Snapshot{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("commit read snapshot: %w", err))
 	}

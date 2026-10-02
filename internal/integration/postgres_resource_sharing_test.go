@@ -1613,6 +1613,7 @@ FROM mesh_ops.publish_compiled_policy(
 		t.Fatalf("Imported Resource publication evidence = provenance %d, local rules %d",
 			provenanceCount, localRuleCount)
 	}
+	assertDirectMapSQLProjection(ctx, t, transaction, destination)
 	if err := transaction.Rollback(ctx); err != nil {
 		t.Fatalf("rollback Imported Resource publication probe: %v", err)
 	}

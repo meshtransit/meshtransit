@@ -47,6 +47,7 @@ type fakeTransaction struct {
 	rollbackCalls int
 	candidateRows *peerCandidateRows
 	policyRows    *policyRuleRows
+	directRows    *directEdgeRows
 }
 
 func (transaction *fakeTransaction) Exec(
@@ -84,6 +85,11 @@ func (transaction *fakeTransaction) Query(
 			return &peerCandidateRows{}, nil
 		}
 		return transaction.candidateRows, nil
+	case loadDirectEdgesSQL:
+		if transaction.directRows == nil {
+			return &directEdgeRows{}, nil
+		}
+		return transaction.directRows, nil
 	case loadPacketPolicySQL:
 		if transaction.policyRows == nil {
 			return &policyRuleRows{}, nil
