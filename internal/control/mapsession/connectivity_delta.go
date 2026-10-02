@@ -26,6 +26,7 @@ func NewConnectivityDelta(current, next Snapshot) (ConnectivityDelta, error) {
 		current.NetworkRevision() != next.NetworkRevision() ||
 		!streamCanAdvance(current, next) ||
 		relayDirectoryChanged(current, next) ||
+		!equalDirectDeviceProjections(current.directDeviceProjections, next.directDeviceProjections) ||
 		!hasCompleteMapConnectivity(current) || !hasCompleteMapConnectivity(next) {
 		return ConnectivityDelta{}, ErrInvalidConnectivityDelta
 	}

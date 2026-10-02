@@ -232,14 +232,30 @@ func (service *StreamService) run(
 	defer reconcile.Stop()
 	authorityExpiry := time.NewTimer(time.Until(initial.KeyExpiry()))
 	defer authorityExpiry.Stop()
+	projectionExpiry := time.NewTimer(time.Hour)
+	projectionExpiry.Stop()
+	defer projectionExpiry.Stop()
 
 	current := initial
 	for {
+		var projectionDeadline <-chan time.Time
+		if deadline := current.ProjectionExpiry(); deadline.Before(current.KeyExpiry()) {
+			projectionExpiry.Reset(time.Until(deadline))
+			projectionDeadline = projectionExpiry.C
+		} else {
+			projectionExpiry.Stop()
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-authorityExpiry.C:
 			return withdrawAuthority(ctx, sink, current, ErrAuthorizationExpired)
+		case <-projectionDeadline:
+			next, err := service.refresh(ctx, machine, request, sink, current)
+			if err != nil {
+				return err
+			}
+			current = next
 		case <-renewal.C:
 			claimed, err := service.renewPresence(ctx, lease)
 			if err != nil {
@@ -302,7 +318,7 @@ func (service *StreamService) refresh(
 	next, err := service.openSnapshot(ctx, machine, request)
 	if err != nil {
 		cause := errors.Join(ErrStreamUnavailable, err)
-		if errors.Is(err, ErrUnauthorized) {
+		if errors.Is(err, ErrUnauthorized) || !current.ProjectionExpiry().After(time.Now()) {
 			return Snapshot{}, withdrawAuthority(ctx, sink, current, cause)
 		}
 		return Snapshot{}, cause
@@ -313,7 +329,9 @@ func (service *StreamService) refresh(
 	if !streamSnapshotChanged(current, next) {
 		return current, nil
 	}
-	if relayDirectoryChanged(current, next) {
+	if relayDirectoryChanged(current, next) ||
+		(current.NetworkRevision() == next.NetworkRevision() &&
+			!equalDirectDeviceProjections(current.directDeviceProjections, next.directDeviceProjections)) {
 		if err := sink.SendSnapshot(ctx, next); err != nil {
 			return Snapshot{}, errors.Join(ErrStreamWrite, err)
 		}
@@ -364,7 +382,11 @@ func (service *StreamService) openSnapshot(
 ) (Snapshot, error) {
 	operationCtx, cancel := context.WithTimeout(ctx, service.options.SnapshotTimeout)
 	defer cancel()
-	return service.snapshots.Open(operationCtx, machine, request)
+	snapshot, err := service.snapshots.Open(operationCtx, machine, request)
+	if err == nil && len(snapshot.directDeviceProjections) != 0 && !snapshot.ProjectionExpiry().After(time.Now()) {
+		return Snapshot{}, ErrStreamDiscontinuity
+	}
+	return snapshot, err
 }
 
 func (service *StreamService) acquirePresence(

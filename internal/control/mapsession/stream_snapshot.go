@@ -17,7 +17,7 @@ func streamCanAdvance(current, next Snapshot) bool {
 		next.SessionGeneration() != current.SessionGeneration() ||
 		!next.CreatedAt().Equal(current.CreatedAt()) ||
 		!next.KeyExpiry().Equal(current.KeyExpiry()) ||
-		!relayDirectoryCanAdvance(current, next) {
+		!relayDirectoryCanAdvance(current, next) || !directDeviceProjectionsCanAdvance(current, next) {
 		return false
 	}
 	if next.NetworkRevision() > current.NetworkRevision() {
@@ -34,6 +34,7 @@ func streamCanAdvance(current, next Snapshot) bool {
 func streamSnapshotChanged(current, next Snapshot) bool {
 	return current.NetworkRevision() != next.NetworkRevision() ||
 		relayDirectoryChanged(current, next) ||
+		!equalDirectDeviceProjections(current.directDeviceProjections, next.directDeviceProjections) ||
 		!equalMapConnectivity(current.NodeID(), current.connectivity, next.connectivity)
 }
 

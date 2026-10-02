@@ -88,6 +88,7 @@ func projectAuthorityDelta(
 	currentPeers := current.AuthorizedPeers()
 	nextPeers := next.AuthorizedPeers()
 	if current.PacketPolicy().Equal(next.PacketPolicy()) &&
+		equalDirectDeviceProjections(current.directDeviceProjections, next.directDeviceProjections) &&
 		equalPeerCandidates(currentPeers, nextPeers) {
 		return false, nil, nil, ErrInvalidAuthorityDelta
 	}

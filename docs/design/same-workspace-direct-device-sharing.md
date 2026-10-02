@@ -2,10 +2,12 @@
 
 ## Status and approved product boundary
 
-This is the implementation plan for the next sharing slice, not a claim that
-cross-Network packet access is already available. The current map reader accepts
-only same-Network candidates and rules. Imported Resource publication currently
-retains provenance without creating a packet edge.
+The protocol/domain checkpoint now supports separately validated directional
+same-Workspace Device projections, exact traffic intersections, bounded host
+routes, full/delta removal and independent sharing expiry. Cross-Network packet
+access is not enabled on a live deployment: the current PostgreSQL map reader
+still loads only same-Network candidates and rules. Imported Resource publication
+retains provenance until the dedicated bilateral direct reader is complete.
 
 The canonical requirement is in
 `10-resource-sharing-and-private-endpoints.md` in the architecture set: Networks
@@ -89,3 +91,65 @@ The next code change must include synthetic protocol fixtures, domain tests,
 PostgreSQL/RLS integration, full/delta/withdrawal conformance and a two-client
 same-Workspace packet test. DNS follows this sharing boundary; router and SSH
 remain outside this slice.
+
+## STRIDE: direct map projection boundary
+
+Assets are Device keys, host routes, exact packet tuples, contract/import
+versions and both Network revision vectors. An authenticated consumer, stale
+replica or forged notification may try to substitute a provider Device, widen
+ports, reveal siblings, retain an expired grant or transitively re-export it.
+
+The authority transition is from a consistent PostgreSQL bilateral resolution
+to an immutable map projection, then a single atomic protocol frame. Ordinary
+inventory remains exactly scoped. Separate immutable Imported Resource rule
+provenance binds the source, import and contract; a ready direct endpoint and
+current Resource target must independently agree. Address/key/numeric identity
+collisions reject the complete map. Cross-Workspace direct projections reject
+before encoding. The consumer receives no provider-initiated inbound rule.
+
+At most 256 direct projections are admitted, within existing peer/rule/frame
+bounds. Connectivity is accepted only for the resulting authorized peers and
+session generations. Expiry reconstructs authority independently of self expiry;
+authority reload failure withdraws sharing rather than retaining old grants.
+Notifications cannot create authority, and reconciliation repairs lost hints.
+The first protocol checkpoint remains unconnected to the runtime database
+reader until direct activation, bilateral lifecycle and RLS tests are complete.
+
+## Protocol checkpoint and required client deadline gate
+
+The separate projection preserves the foreign peer's real scope and never
+inserts a foreign Device into ordinary Network inventory or product policy.
+Only current exact Imported Resource rule provenance plus Resource, Export,
+contract, ready direct endpoint and independent ceilings can construct a grant.
+Provider maps receive an inbound tuple; consumer maps receive no reverse tuple.
+Both maps cap the peer's wire KeyExpiry by the earliest sharing deadline.
+
+Same-local-revision bilateral changes use a complete atomic map frame; a
+connectivity-only delta cannot carry a sharing authority change. Consecutive
+local authority revisions can withdraw a peer and its packet filter together.
+An independent deadline timer reloads sharing at expiry without expiring a live
+self Device; failed reload emits terminal withdrawal rather than retaining the
+expired grant. Per-Device maps admit at most 256 sharing projections and retain
+existing peer, rule and encoded-frame bounds. Repeated consumer rule identities
+or ambiguous numeric/key/address bindings fail the complete map closed.
+
+The old client does not enforce peer KeyExpiry at the TUN packet gate. Therefore
+this direct slice requires the client deadline gate before runtime activation.
+That gate checks each packet against self/peer deadlines before ACL or tracked
+replies, and invalidates tracked flows on mapped identity, key or deadline
+replacement. It adds no Network selector or sharing protocol fallback.
+
+`TestExportDirectSharingFrames` is an explicit synthetic fixture producer:
+
+```text
+go test -count=1 ./internal/adapter/legacyts2021 \
+  -run '^TestExportDirectSharingFrames$' \
+  -args -direct-sharing-fixture-output=<existing-output-directory>
+```
+
+Ordinary tests never rewrite fixtures. The producer emits full provider/consumer,
+full and delta share removal, and terminal withdrawal documents from the actual
+adapter encoder. Fixture consumers must pin the producing Core revision and
+verify these frames with the client decoder. Database direct readiness,
+authenticated bilateral reads, both-Network revision wakeups and a real encrypted
+packet cycle remain prerequisites for live enablement.

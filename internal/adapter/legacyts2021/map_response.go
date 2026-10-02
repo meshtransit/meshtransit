@@ -192,7 +192,7 @@ func fullMapPacketFilter(
 	candidates map[node.ID]mapsession.PeerCandidate,
 ) ([]tailcfg.FilterRule, error) {
 	rules := make([]tailcfg.FilterRule, 0)
-	for _, rule := range snapshot.PacketPolicy().Rules() {
+	for _, rule := range snapshot.InboundPacketRules() {
 		if rule.DestinationNodeID() != snapshot.NodeID() {
 			continue
 		}
@@ -223,7 +223,7 @@ func fullMapPacketFilter(
 
 func fullMapDestinations(
 	addresses []netip.Prefix,
-	rule policy.Rule,
+	rule mapsession.InboundPacketRule,
 ) ([]tailcfg.NetPortRange, []int, error) {
 	portRanges := rule.DestinationPortRanges()
 	protocols := make([]int, 0, 2)

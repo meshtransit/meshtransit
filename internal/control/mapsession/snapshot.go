@@ -28,46 +28,48 @@ var (
 
 // SnapshotParams contains authoritative facts read in one consistent database snapshot.
 type SnapshotParams struct {
-	Scope             network.Scope
-	NetworkName       network.DisplayName
-	NetworkRevision   int64
-	RecoveryEpoch     int64
-	SessionGeneration int64
-	NumericNodeID     int64
-	NumericOwnerID    int64
-	NodeID            node.ID
-	Hostname          node.Hostname
-	MachineKey        node.MachineKey
-	NodeKey           node.Key
-	Addresses         []netip.Prefix
-	CreatedAt         time.Time
-	KeyExpiry         time.Time
-	PeerCandidates    []PeerCandidate
-	PacketPolicy      policy.Snapshot
-	Connectivity      []Connectivity
-	RelayDirectory    relay.Directory
+	Scope                   network.Scope
+	NetworkName             network.DisplayName
+	NetworkRevision         int64
+	RecoveryEpoch           int64
+	SessionGeneration       int64
+	NumericNodeID           int64
+	NumericOwnerID          int64
+	NodeID                  node.ID
+	Hostname                node.Hostname
+	MachineKey              node.MachineKey
+	NodeKey                 node.Key
+	Addresses               []netip.Prefix
+	CreatedAt               time.Time
+	KeyExpiry               time.Time
+	PeerCandidates          []PeerCandidate
+	DirectDeviceProjections []DirectDeviceProjection
+	PacketPolicy            policy.Snapshot
+	Connectivity            []Connectivity
+	RelayDirectory          relay.Directory
 }
 
 // Snapshot is immutable authorization evidence for the first response of a map session.
 type Snapshot struct {
-	scope             network.Scope
-	networkName       network.DisplayName
-	networkRevision   int64
-	recoveryEpoch     int64
-	sessionGeneration int64
-	numericNodeID     int64
-	numericOwnerID    int64
-	nodeID            node.ID
-	hostname          node.Hostname
-	machineKey        node.MachineKey
-	nodeKey           node.Key
-	addresses         []netip.Prefix
-	createdAt         time.Time
-	keyExpiry         time.Time
-	peerCandidates    []PeerCandidate
-	packetPolicy      policy.Snapshot
-	connectivity      []Connectivity
-	relayDirectory    relay.Directory
+	scope                   network.Scope
+	networkName             network.DisplayName
+	networkRevision         int64
+	recoveryEpoch           int64
+	sessionGeneration       int64
+	numericNodeID           int64
+	numericOwnerID          int64
+	nodeID                  node.ID
+	hostname                node.Hostname
+	machineKey              node.MachineKey
+	nodeKey                 node.Key
+	addresses               []netip.Prefix
+	createdAt               time.Time
+	keyExpiry               time.Time
+	peerCandidates          []PeerCandidate
+	directDeviceProjections []DirectDeviceProjection
+	packetPolicy            policy.Snapshot
+	connectivity            []Connectivity
+	relayDirectory          relay.Directory
 }
 
 // NewSnapshot validates and copies one authoritative map snapshot.
@@ -76,29 +78,32 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		return Snapshot{}, errors.Join(ErrInvalidSnapshot, ErrPeerCandidateLimit)
 	}
 	params.PeerCandidates = canonicalPeerCandidates(params.PeerCandidates)
+	params.DirectDeviceProjections = slices.Clone(params.DirectDeviceProjections)
+	slices.SortFunc(params.DirectDeviceProjections, compareDirectDeviceProjections)
 	params.Connectivity = canonicalConnectivity(params.Connectivity)
 	if !validSnapshotParams(params) {
 		return Snapshot{}, ErrInvalidSnapshot
 	}
 	return Snapshot{
-		scope:             params.Scope,
-		networkName:       params.NetworkName,
-		networkRevision:   params.NetworkRevision,
-		recoveryEpoch:     params.RecoveryEpoch,
-		sessionGeneration: params.SessionGeneration,
-		numericNodeID:     params.NumericNodeID,
-		numericOwnerID:    params.NumericOwnerID,
-		nodeID:            params.NodeID,
-		hostname:          params.Hostname,
-		machineKey:        params.MachineKey,
-		nodeKey:           params.NodeKey,
-		addresses:         slices.Clone(params.Addresses),
-		createdAt:         params.CreatedAt,
-		keyExpiry:         params.KeyExpiry,
-		peerCandidates:    params.PeerCandidates,
-		packetPolicy:      params.PacketPolicy,
-		connectivity:      params.Connectivity,
-		relayDirectory:    params.RelayDirectory,
+		scope:                   params.Scope,
+		networkName:             params.NetworkName,
+		networkRevision:         params.NetworkRevision,
+		recoveryEpoch:           params.RecoveryEpoch,
+		sessionGeneration:       params.SessionGeneration,
+		numericNodeID:           params.NumericNodeID,
+		numericOwnerID:          params.NumericOwnerID,
+		nodeID:                  params.NodeID,
+		hostname:                params.Hostname,
+		machineKey:              params.MachineKey,
+		nodeKey:                 params.NodeKey,
+		addresses:               slices.Clone(params.Addresses),
+		createdAt:               params.CreatedAt,
+		keyExpiry:               params.KeyExpiry,
+		peerCandidates:          params.PeerCandidates,
+		directDeviceProjections: params.DirectDeviceProjections,
+		packetPolicy:            params.PacketPolicy,
+		connectivity:            params.Connectivity,
+		relayDirectory:          params.RelayDirectory,
 	}, nil
 }
 
@@ -194,6 +199,28 @@ func (snapshot Snapshot) AuthorizedPeers() []PeerCandidate {
 			peers = append(peers, candidate)
 		}
 	}
+	seen := make(map[node.ID]struct{}, len(peers))
+	for _, peer := range peers {
+		seen[peer.NodeID()] = struct{}{}
+	}
+	deadlines := make(map[node.ID]time.Time, len(snapshot.directDeviceProjections))
+	for _, projection := range snapshot.directDeviceProjections {
+		peer := projection.Peer()
+		if _, exists := seen[peer.NodeID()]; !exists {
+			peers = append(peers, peer)
+			seen[peer.NodeID()] = struct{}{}
+		}
+		deadline, exists := deadlines[peer.NodeID()]
+		if !exists || projection.ExpiresAt().Before(deadline) {
+			deadlines[peer.NodeID()] = projection.ExpiresAt()
+		}
+	}
+	for index, peer := range peers {
+		if deadline, exists := deadlines[peer.NodeID()]; exists && deadline.Before(peer.keyExpiry) {
+			peers[index].keyExpiry = deadline
+		}
+	}
+	slices.SortFunc(peers, comparePeerCandidates)
 	return peers
 }
 
@@ -202,24 +229,25 @@ func (snapshot Snapshot) IsValid() bool { return validSnapshotParams(snapshot.pa
 
 func (snapshot Snapshot) params() SnapshotParams {
 	return SnapshotParams{
-		Scope:             snapshot.scope,
-		NetworkName:       snapshot.networkName,
-		NetworkRevision:   snapshot.networkRevision,
-		RecoveryEpoch:     snapshot.recoveryEpoch,
-		SessionGeneration: snapshot.sessionGeneration,
-		NumericNodeID:     snapshot.numericNodeID,
-		NumericOwnerID:    snapshot.numericOwnerID,
-		NodeID:            snapshot.nodeID,
-		Hostname:          snapshot.hostname,
-		MachineKey:        snapshot.machineKey,
-		NodeKey:           snapshot.nodeKey,
-		Addresses:         slices.Clone(snapshot.addresses),
-		CreatedAt:         snapshot.createdAt,
-		KeyExpiry:         snapshot.keyExpiry,
-		PeerCandidates:    slices.Clone(snapshot.peerCandidates),
-		PacketPolicy:      snapshot.packetPolicy,
-		Connectivity:      slices.Clone(snapshot.connectivity),
-		RelayDirectory:    snapshot.relayDirectory,
+		Scope:                   snapshot.scope,
+		NetworkName:             snapshot.networkName,
+		NetworkRevision:         snapshot.networkRevision,
+		RecoveryEpoch:           snapshot.recoveryEpoch,
+		SessionGeneration:       snapshot.sessionGeneration,
+		NumericNodeID:           snapshot.numericNodeID,
+		NumericOwnerID:          snapshot.numericOwnerID,
+		NodeID:                  snapshot.nodeID,
+		Hostname:                snapshot.hostname,
+		MachineKey:              snapshot.machineKey,
+		NodeKey:                 snapshot.nodeKey,
+		Addresses:               slices.Clone(snapshot.addresses),
+		CreatedAt:               snapshot.createdAt,
+		KeyExpiry:               snapshot.keyExpiry,
+		PeerCandidates:          slices.Clone(snapshot.peerCandidates),
+		DirectDeviceProjections: slices.Clone(snapshot.directDeviceProjections),
+		PacketPolicy:            snapshot.packetPolicy,
+		Connectivity:            slices.Clone(snapshot.connectivity),
+		RelayDirectory:          snapshot.relayDirectory,
 	}
 }
 
@@ -238,11 +266,11 @@ func validSnapshotParams(params SnapshotParams) bool {
 		params.MachineKey,
 		params.NodeKey,
 	) && params.PacketPolicy.IsValid() && params.PacketPolicy.Scope() == params.Scope &&
-		validSnapshotConnectivity(params) && params.RelayDirectory.IsValid()
+		validDirectDeviceProjections(params) && validSnapshotConnectivity(params) && params.RelayDirectory.IsValid()
 }
 
 func validSnapshotConnectivity(params SnapshotParams) bool {
-	if params.Connectivity == nil || len(params.Connectivity) > len(params.PeerCandidates)+1 {
+	if params.Connectivity == nil || len(params.Connectivity) > len(params.PeerCandidates)+len(params.DirectDeviceProjections)+1 {
 		return params.Connectivity == nil
 	}
 	allowed := map[node.ID]int64{params.NodeID: params.SessionGeneration}
@@ -250,6 +278,10 @@ func validSnapshotConnectivity(params SnapshotParams) bool {
 		if params.PacketPolicy.AllowsPeer(params.NodeID, candidate.NodeID()) {
 			allowed[candidate.NodeID()] = candidate.SessionGeneration()
 		}
+	}
+	for _, projection := range params.DirectDeviceProjections {
+		peer := projection.Peer()
+		allowed[peer.NodeID()] = peer.SessionGeneration()
 	}
 	for index, connectivity := range params.Connectivity {
 		if !connectivity.IsValid() || allowed[connectivity.key.nodeID] != connectivity.key.generation ||
