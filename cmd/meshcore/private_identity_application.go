@@ -72,6 +72,7 @@ type privateIdentityPorts struct {
 	PolicyExplanations    httpapi.PolicyExplainer
 	PolicySimulations     httpapi.PolicySimulator
 	ActivePolicies        httpapi.ActivePolicyReader
+	WorkspaceRenames      httpapi.WorkspaceRenamer
 	PolicyApprovals       httpapi.PolicyApprovalWorkflow
 	PolicyApprovalCatalog httpapi.PolicyApprovalCatalog
 	RateLimiter           httpapi.ManagementRateLimiter
@@ -166,6 +167,7 @@ func composePrivateIdentity(
 		PolicyExplanations:    ports.PolicyExplanations,
 		PolicySimulations:     ports.PolicySimulations,
 		ActivePolicies:        ports.ActivePolicies,
+		WorkspaceRenames:      ports.WorkspaceRenames,
 		PolicyApprovals:       ports.PolicyApprovals,
 		PolicyApprovalCatalog: ports.PolicyApprovalCatalog,
 		Idempotency:           keys.idempotency, RateLimitSubjects: keys.rateLimit, RateLimiter: ports.RateLimiter,

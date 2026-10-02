@@ -328,6 +328,8 @@ type accountSessionManagementScopesRecord struct {
 	WorkspaceID          string                                `json:"workspace_id"`
 	WorkspaceDisplayName string                                `json:"workspace_display_name"`
 	WorkspaceDisplayCode string                                `json:"workspace_display_code"`
+	WorkspaceVersion     int64                                 `json:"workspace_version"`
+	WorkspaceCanRename   bool                                  `json:"workspace_can_rename"`
 	Scopes               []accountSessionManagementScopeRecord `json:"scopes"`
 }
 
@@ -350,7 +352,8 @@ func decodeAccountSessionManagementScopes(encoded string) (sessioncontext.ReadRe
 	result := sessioncontext.ReadResult{
 		WorkspaceID: workspaceID, WorkspaceDisplayName: record.WorkspaceDisplayName,
 		WorkspaceDisplayCode: identity.DisplayCode(record.WorkspaceDisplayCode),
-		Scopes:               make([]sessioncontext.ManagementScope, len(record.Scopes)),
+		WorkspaceVersion:     record.WorkspaceVersion, WorkspaceCanRename: record.WorkspaceCanRename,
+		Scopes: make([]sessioncontext.ManagementScope, len(record.Scopes)),
 	}
 	for index, item := range record.Scopes {
 		networkID, err := network.ParseID(item.NetworkID)

@@ -252,8 +252,9 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	approvalPath, approvalMatched := parsePolicyApprovalPath(request)
 	approval := approvalMatched && approvalPath.allowedMethod(request.Method) == request.Method
 	_, accessGraph := parseAccessGraphExplainPath(request)
+	_, workspaceRename := parseWorkspaceRenamePath(request)
 	if !prepare && !logout && !managementScopes && !inventoryRead && !deploymentCapabilities && !device && !policy && !simulation &&
-		!approval && !accessGraph && !policyRead {
+		!approval && !accessGraph && !policyRead && !workspaceRename {
 		return ErrInvalidBrowserManagement
 	}
 	operation = "mutation"

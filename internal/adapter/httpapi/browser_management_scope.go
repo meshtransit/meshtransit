@@ -107,6 +107,7 @@ func (browser *BrowserManagement) readManagementScopes(
 			Workspace: managementScopeWorkspace{
 				ID: page.WorkspaceID().String(), DisplayName: page.WorkspaceDisplayName(),
 				DisplayCode: page.WorkspaceDisplayCode().String(),
+				Version:     page.WorkspaceVersion(), CanRename: page.WorkspaceCanRename(),
 			},
 			Networks: networks,
 		},
@@ -201,6 +202,8 @@ func decodeManagementScopePageToken(encoded string, workspaceID workspace.ID) (n
 }
 
 type managementScopeWorkspace struct {
+	Version     int64  `json:"version,omitempty"`
+	CanRename   bool   `json:"can_rename,omitempty"`
 	ID          string `json:"id"`
 	DisplayName string `json:"display_name"`
 	DisplayCode string `json:"display_code,omitempty"`

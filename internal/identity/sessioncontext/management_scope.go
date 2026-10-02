@@ -123,6 +123,8 @@ type ReadResult struct {
 	WorkspaceID          workspace.ID
 	WorkspaceDisplayName string
 	WorkspaceDisplayCode identity.DisplayCode
+	WorkspaceVersion     int64
+	WorkspaceCanRename   bool
 	Scopes               []ManagementScope
 }
 
@@ -142,6 +144,8 @@ type Page struct {
 	workspaceID          workspace.ID
 	workspaceDisplayName string
 	workspaceDisplayCode identity.DisplayCode
+	workspaceVersion     int64
+	workspaceCanRename   bool
 	items                []ManagementScope
 	next                 network.ID
 }
@@ -154,6 +158,12 @@ func (page Page) WorkspaceDisplayName() string { return page.workspaceDisplayNam
 
 // WorkspaceDisplayCode returns the immutable label when available during rollout.
 func (page Page) WorkspaceDisplayCode() identity.DisplayCode { return page.workspaceDisplayCode }
+
+// WorkspaceVersion returns the current optimistic concurrency precondition.
+func (page Page) WorkspaceVersion() int64 { return page.workspaceVersion }
+
+// WorkspaceCanRename controls presentation only; mutations reauthorize the owner.
+func (page Page) WorkspaceCanRename() bool { return page.workspaceCanRename }
 
 // Items returns a defensive copy of the page.
 func (page Page) Items() []ManagementScope {
@@ -208,6 +218,7 @@ func (service *Service) List(
 	}
 	if result.WorkspaceID != workspaceID || !validDisplayName(result.WorkspaceDisplayName) ||
 		(result.WorkspaceDisplayCode != "" && !result.WorkspaceDisplayCode.IsValid()) ||
+		result.WorkspaceVersion < 0 || (result.WorkspaceCanRename && result.WorkspaceVersion == 0) ||
 		len(result.Scopes) > limit+1 {
 		return Page{}, ErrInvalidResult
 	}
@@ -221,7 +232,8 @@ func (service *Service) List(
 	page := Page{
 		workspaceID: workspaceID, workspaceDisplayName: result.WorkspaceDisplayName,
 		workspaceDisplayCode: result.WorkspaceDisplayCode,
-		items:                append([]ManagementScope(nil), result.Scopes...),
+		workspaceVersion:     result.WorkspaceVersion, workspaceCanRename: result.WorkspaceCanRename,
+		items: append([]ManagementScope(nil), result.Scopes...),
 	}
 	if len(page.items) > limit {
 		page.items = page.items[:limit]

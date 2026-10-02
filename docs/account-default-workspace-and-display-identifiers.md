@@ -28,8 +28,29 @@ adds labels only after the unchanged v1 authority projection has authorized the
 current session and exact Workspace/Network pair. Legacy v1 readers remain
 compatible. API display fields are additive and optional during rolling upgrades.
 
+## Workspace rename
+
+Migration 78 adds a separate owner-authorized rename operation. The runtime uses
+an explicit READ WRITE transaction port; Session and scope resolution remain READ
+ONLY. The operation locks the exact login Workspace, current SSO authority,
+active membership and Deployment audit head before a fresh expiry decision.
+Optimistic concurrency uses the projected version and strong `If-Match` header.
+The name change, immutable audit event and outbox record commit together. Unknown
+commit outcomes return no success and are never automatically retried.
+
+Names are unique among active Workspaces owned by the same Principal in one
+Deployment. Separate cloud owners can each use `Default`. This changes label
+uniqueness only; UUIDs, display codes, membership and owner authority remain
+unchanged. Self-hosted singleton enforcement remains authoritative.
+
+Console scope v3 adds optional `version` and `can_rename` metadata after the
+existing scope projection. The hint controls presentation, never mutation
+permission. The form asks only for a name; Console supplies the observed version
+and a fresh CSRF proof. A stale or uncertain response requires a fresh read.
+
 ## Delivery boundaries
 
 Display-code delivery does not create accounts, alter ownership, enroll Devices,
-or change packet policy. Default Workspace provisioning and rename must use
-separate audited application operations with generation/ownership validation.
+or change packet policy. Workspace rename is delivered separately. Cloud Default Workspace provisioning
+remains a separate verified, audited admission operation; unknown login subjects
+continue to be rejected until that operation is implemented.

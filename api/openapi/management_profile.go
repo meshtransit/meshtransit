@@ -62,6 +62,7 @@ type consoleManagementProfile struct {
 	ManagementScopes       json.RawMessage            `json:"managementScopes"`
 	DeploymentCapabilities json.RawMessage            `json:"deploymentCapabilities"`
 	DeviceInventory        json.RawMessage            `json:"deviceInventory"`
+	WorkspaceRename        json.RawMessage            `json:"workspaceRename"`
 }
 
 // ManagementDocument returns independently owned deterministic OpenAPI bytes.
@@ -111,7 +112,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	validTransport := len(profile.SecuritySchemes) == 2 && len(profile.Parameters) == 3
 	validShape := len(profile.Schemas) == 5 && len(profile.Prepare) > 0 && len(profile.Logout) > 0 &&
 		len(profile.ManagementScopes) > 0 && len(profile.DeploymentCapabilities) > 0 &&
-		len(profile.DeviceInventory) > 0
+		len(profile.DeviceInventory) > 0 && consoleWorkspaceRenameOperation(profile.WorkspaceRename)
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
 	}
@@ -190,6 +191,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 			return nil, ErrInvalidManagementProfile
 		}
 	}
+	consolePaths["/api/v1/workspaces/{workspace_id}/actions/rename"] = profile.WorkspaceRename
 	consolePaths[consoleSessionPreparePath] = profile.Prepare
 	consolePaths[consoleSessionLogoutPath] = profile.Logout
 	consolePaths[consoleSessionManagementScopesPath] = profile.ManagementScopes
@@ -383,4 +385,37 @@ func consoleDeviceInventoryOperation(item json.RawMessage) bool {
 	}
 	var parameters []json.RawMessage
 	return json.Unmarshal(operation["parameters"], &parameters) == nil && len(parameters) == 6
+}
+
+func consoleWorkspaceRenameOperation(item json.RawMessage) bool {
+	methods, err := managementObject(item)
+	if err != nil || len(methods) != 1 {
+		return false
+	}
+	operation, err := managementObject(methods["post"])
+	if err != nil || string(operation["operationId"]) != `"renameWorkspace"` || operation["requestBody"] == nil {
+		return false
+	}
+	var security []map[string][]string
+	if json.Unmarshal(operation["security"], &security) != nil || len(security) != 1 || len(security[0]) != 2 {
+		return false
+	}
+	for _, name := range []string{"accountSessionCookie", "sessionCSRF"} {
+		scopes, present := security[0][name]
+		if !present || scopes == nil || len(scopes) != 0 {
+			return false
+		}
+	}
+	var parameters []struct {
+		Reference string `json:"$ref"`
+	}
+	if json.Unmarshal(operation["parameters"], &parameters) != nil || len(parameters) != 5 {
+		return false
+	}
+	for index, name := range []string{"WorkspaceID", "IfMatch", "ConsoleOrigin", "ConsoleSessionChannel", "ConsoleSessionProof"} {
+		if parameters[index].Reference != "#/components/parameters/"+name {
+			return false
+		}
+	}
+	return true
 }

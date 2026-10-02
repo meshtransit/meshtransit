@@ -116,6 +116,15 @@
                   "maxLength": 12,
                   "pattern": "^[0-9]{12}$",
                   "description": "Immutable display label. UUID remains the canonical API and authorization identity."
+                },
+                "version": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "can_rename": {
+                  "type": "boolean",
+                  "description": "Presentation hint only. Rename rechecks live ownership."
                 }
               }
             },
@@ -635,6 +644,136 @@
         },
         "default": {
           "description": "Bounded authentication, request, budget or availability failure."
+        }
+      }
+    }
+  },
+  "workspaceRename": {
+    "post": {
+      "operationId": "renameWorkspace",
+      "summary": "Rename the current owned Workspace",
+      "description": "The current owner needs active SSO and Workspace membership. IDs and ownership remain unchanged. Unknown outcomes require a fresh read; do not automatically retry.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/IfMatch"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "display_name"
+              ],
+              "properties": {
+                "display_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "description": "Trimmed UTF-8 label, at most 128 bytes, without control characters."
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Confirmed name change",
+          "headers": {
+            "ETag": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "display_name",
+                      "display_code",
+                      "version"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "display_name": {
+                        "type": "string"
+                      },
+                      "display_code": {
+                        "type": "string",
+                        "pattern": "^[0-9]{12}$"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Invalid input"
+        },
+        "401": {
+          "description": "Inactive Session"
+        },
+        "403": {
+          "description": "Missing owner authority or CSRF proof"
+        },
+        "409": {
+          "description": "Stale version or duplicate owned name"
+        },
+        "428": {
+          "description": "If-Match is required"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable or uncertain outcome"
         }
       }
     }

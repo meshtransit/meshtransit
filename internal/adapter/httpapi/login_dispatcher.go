@@ -201,10 +201,11 @@ func isBrowserManagementOperation(request *http.Request) bool {
 	_, simulation := parsePolicySimulationPath(request)
 	approvalPath, approval := parsePolicyApprovalPath(request)
 	_, accessGraph := parseAccessGraphExplainPath(request)
+	_, workspaceRename := parseWorkspaceRenamePath(request)
 	managementScopes := request.URL != nil && request.URL.Path == AccountSessionManagementScopesPath
 	deploymentCapabilities := request.URL != nil && request.URL.Path == DeploymentCapabilitiesPath
 	if request.Method == http.MethodPost {
-		return device || policy || simulation || accessGraph ||
+		return device || policy || simulation || accessGraph || workspaceRename ||
 			approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.isAction())
 	}
 	return request.Method == http.MethodGet && (activePolicy || inventory || managementScopes || deploymentCapabilities ||

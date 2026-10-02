@@ -64,6 +64,7 @@ type Pool struct {
 	deviceRevocationDatabase        deviceRevocationDatabase
 	authTransactionDatabase         authTransactionDatabase
 	accountSessionDatabase          accountSessionDatabase
+	workspaceRenameDatabase         accountSessionDatabase
 	browserIntentDatabase           browserIntentDatabase
 	accountSessionLogoutDatabase    accountSessionLogoutDatabase
 	mapSessionStore                 func(
@@ -129,6 +130,7 @@ func Open(ctx context.Context, options Options) (*Pool, error) {
 		deviceRevocationDatabase:        pgxDeviceRevocationDatabase{pool: pool},
 		authTransactionDatabase:         pgxAuthTransactionDatabase{pool: pool},
 		accountSessionDatabase:          pgxAccountSessionDatabase{pool: pool},
+		workspaceRenameDatabase:         pgxWorkspaceRenameDatabase{pool: pool},
 		browserIntentDatabase:           pgxBrowserIntentDatabase{pool: pool},
 		accountSessionLogoutDatabase:    pgxAccountSessionLogoutDatabase{pool: pool},
 		mapSessionStore: func(

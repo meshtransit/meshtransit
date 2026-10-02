@@ -36,6 +36,7 @@ import (
 )
 
 const (
+	workspaceRenameOperation                = "workspace_rename"
 	deviceRevokeOperation                   = "device_revoke"
 	policyPublishOperation                  = "policy_publish"
 	policySimulateOperation                 = "policy_simulate"
@@ -224,6 +225,7 @@ type ManagementHandlerOptions struct {
 	PolicyExplanations        PolicyExplainer
 	PolicySimulations         PolicySimulator
 	ActivePolicies            ActivePolicyReader
+	WorkspaceRenames          WorkspaceRenamer
 	PolicyApprovals           PolicyApprovalWorkflow
 	PolicyApprovalCatalog     PolicyApprovalCatalog
 	ResourceCreations         ResourceCreator
@@ -254,6 +256,7 @@ type ManagementHandler struct {
 	policyExplainer           PolicyExplainer
 	policySimulator           PolicySimulator
 	activePolicies            ActivePolicyReader
+	workspaceRenames          WorkspaceRenamer
 	policyApprovals           PolicyApprovalWorkflow
 	policyApprovalCatalog     PolicyApprovalCatalog
 	resourceCreations         ResourceCreator
@@ -307,6 +310,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		policyExplainer:           options.PolicyExplanations,
 		policySimulator:           options.PolicySimulations,
 		activePolicies:            options.ActivePolicies,
+		workspaceRenames:          options.WorkspaceRenames,
 		policyApprovals:           options.PolicyApprovals,
 		policyApprovalCatalog:     options.PolicyApprovalCatalog,
 		resourceCreations:         options.ResourceCreations,
@@ -393,6 +397,7 @@ func (handler *ManagementHandler) serveHTTP(
 		return
 	}
 
+	workspaceRenamePath, workspaceRenameMatched := parseWorkspaceRenamePath(request)
 	devicePath, deviceMatched := parseDeviceRevokePath(request)
 	policyPath, policyMatched := parsePolicyPublishPath(request)
 	policySimulationPath, policySimulationMatched := parsePolicySimulationPath(request)
@@ -402,7 +407,7 @@ func (handler *ManagementHandler) serveHTTP(
 	resourcePath, resourceMatched := parseResourceManagementPath(request)
 	sharingPath, sharingMatched := parseResourceSharingPath(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
-		!accessGraphMatched && !resourceMatched && !sharingMatched && !policyReadMatched {
+		!accessGraphMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -410,7 +415,9 @@ func (handler *ManagementHandler) serveHTTP(
 		})
 		return
 	}
-	if deviceMatched {
+	if workspaceRenameMatched {
+		operation = workspaceRenameOperation
+	} else if deviceMatched {
 		operation = deviceRevokeOperation
 	} else if policyMatched {
 		operation = policyPublishOperation
@@ -499,6 +506,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}); limitErr != nil {
 		resultCode = limitErr.Code
 		writeManagementError(ctx, handler.logger, response, correlationID, *limitErr)
+		return
+	}
+	if workspaceRenameMatched {
+		resultCode = handler.renameWorkspace(ctx, response, request, correlationID, workspaceRenamePath, session)
 		return
 	}
 	if policyMatched {

@@ -19,6 +19,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/resource/catalog"
+	"github.com/meshtransit/meshtransit/internal/workspace/settings"
 )
 
 // The production binding accepts no replacement clock or effect/service ports.
@@ -102,6 +103,14 @@ func composePrivateIdentityFactory(
 		return nil, errInvalidPrivateIdentityComposition
 	}
 	clock := oidcauth.SystemStartClock{}
+	renameStore, err := postgresadapter.NewWorkspaceRenameStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	workspaceSettings, err := settings.NewService(renameStore, clock)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	managementScopes, err := sessioncontext.NewService(authority, clock)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
@@ -165,7 +174,7 @@ func composePrivateIdentityFactory(
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, PolicySimulations: policySimulator,
-		ActivePolicies:  activePolicies,
+		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		RateLimiter:    dependencies.Redis,
 		CorrelationIDs: httpapi.PublicCorrelationIDGenerator{}, Clock: clock, Logger: dependencies.Logger,
