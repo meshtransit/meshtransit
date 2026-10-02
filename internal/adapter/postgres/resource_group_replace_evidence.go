@@ -14,22 +14,23 @@ import (
 )
 
 type resourceGroupReplaceAuditPayload struct {
-	AuditReason                   string                          `json:"audit_reason"`
-	ExpectedGroupVersion          int64                           `json:"expected_group_version"`
-	PreviousDefinitionVersion     int64                           `json:"previous_definition_version"`
-	DefinitionVersion             int64                           `json:"definition_version"`
-	ImpactHash                    string                          `json:"impact_hash"`
-	AddedMembers                  []resourceGroupReferencePayload `json:"added_members"`
-	RemovedMembers                []resourceGroupReferencePayload `json:"removed_members"`
-	RetainedMembers               []resourceGroupReferencePayload `json:"retained_members"`
-	ApprovalStatus                string                          `json:"approval_status"`
-	AccountSessionID              string                          `json:"account_session_id"`
-	RoleBindingID                 string                          `json:"role_binding_id"`
-	RoleDefinitionID              string                          `json:"role_definition_id"`
-	ScopeAuthorityGeneration      int64                           `json:"scope_authority_generation"`
-	MembershipAuthorityGeneration int64                           `json:"membership_authority_generation"`
-	BindingAuthorityGeneration    int64                           `json:"binding_authority_generation"`
-	RoleAuthorityGeneration       int64                           `json:"role_authority_generation"`
+	AuditReason                       string                          `json:"audit_reason"`
+	ExpectedGroupVersion              int64                           `json:"expected_group_version"`
+	PreviousDefinitionVersion         int64                           `json:"previous_definition_version"`
+	DefinitionVersion                 int64                           `json:"definition_version"`
+	ImpactHash                        string                          `json:"impact_hash"`
+	AddedMembers                      []resourceGroupReferencePayload `json:"added_members"`
+	RemovedMembers                    []resourceGroupReferencePayload `json:"removed_members"`
+	RetainedMembers                   []resourceGroupReferencePayload `json:"retained_members"`
+	ApprovalStatus                    string                          `json:"approval_status"`
+	AccountSessionID                  string                          `json:"account_session_id"`
+	RoleBindingID                     string                          `json:"role_binding_id,omitempty"`
+	RoleDefinitionID                  string                          `json:"role_definition_id,omitempty"`
+	ScopeAuthorityGeneration          int64                           `json:"scope_authority_generation"`
+	MembershipAuthorityGeneration     int64                           `json:"membership_authority_generation"`
+	BindingAuthorityGeneration        int64                           `json:"binding_authority_generation"`
+	RoleAuthorityGeneration           int64                           `json:"role_authority_generation"`
+	WorkspaceOwnerAuthorityGeneration int64                           `json:"workspace_owner_authority_generation,omitempty"`
 }
 
 func encodeResourceGroupReplacementMembers(
@@ -76,20 +77,21 @@ func (transaction *resourceGroupReplaceTransaction) appendGroupReplaceEvidence(
 	impactHash := impact.Hash().Bytes()
 	auditPayload, err := json.Marshal(resourceGroupReplaceAuditPayload{
 		AuditReason: command.AuditReason().String(), ExpectedGroupVersion: command.ExpectedVersion(),
-		PreviousDefinitionVersion:     impact.CurrentRevision().DefinitionVersion(),
-		DefinitionVersion:             result.DefinitionVersion(),
-		ImpactHash:                    hex.EncodeToString(impactHash[:]),
-		AddedMembers:                  groupReferencePayloads(impact.AddedMembers()),
-		RemovedMembers:                groupReferencePayloads(impact.RemovedMembers()),
-		RetainedMembers:               groupReferencePayloads(impact.RetainedMembers()),
-		ApprovalStatus:                "not_required",
-		AccountSessionID:              transaction.authorization.accountSessionID.String(),
-		RoleBindingID:                 transaction.authorization.roleBindingID.String(),
-		RoleDefinitionID:              transaction.authorization.roleDefinitionID.String(),
-		ScopeAuthorityGeneration:      transaction.authorization.scopeAuthorityGeneration,
-		MembershipAuthorityGeneration: transaction.authorization.membershipAuthorityGeneration,
-		BindingAuthorityGeneration:    transaction.authorization.bindingAuthorityGeneration,
-		RoleAuthorityGeneration:       transaction.authorization.roleAuthorityGeneration,
+		PreviousDefinitionVersion:         impact.CurrentRevision().DefinitionVersion(),
+		DefinitionVersion:                 result.DefinitionVersion(),
+		ImpactHash:                        hex.EncodeToString(impactHash[:]),
+		AddedMembers:                      groupReferencePayloads(impact.AddedMembers()),
+		RemovedMembers:                    groupReferencePayloads(impact.RemovedMembers()),
+		RetainedMembers:                   groupReferencePayloads(impact.RetainedMembers()),
+		ApprovalStatus:                    "not_required",
+		AccountSessionID:                  transaction.authorization.accountSessionID.String(),
+		RoleBindingID:                     authorizationIDString(transaction.authorization.roleBindingID),
+		RoleDefinitionID:                  authorizationIDString(transaction.authorization.roleDefinitionID),
+		ScopeAuthorityGeneration:          transaction.authorization.scopeAuthorityGeneration,
+		MembershipAuthorityGeneration:     transaction.authorization.membershipAuthorityGeneration,
+		BindingAuthorityGeneration:        transaction.authorization.bindingAuthorityGeneration,
+		RoleAuthorityGeneration:           transaction.authorization.roleAuthorityGeneration,
+		WorkspaceOwnerAuthorityGeneration: transaction.authorization.workspaceOwnerAuthorityGeneration,
 	})
 	if err != nil {
 		return fmt.Errorf("encode Resource Group replacement audit payload: %w", err)

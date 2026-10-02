@@ -8,13 +8,14 @@ import (
 
 // AuthorizationEvidence identifies the current durable rows locked for device.manage.
 type AuthorizationEvidence struct {
-	accountSessionID              accountsession.ID
-	roleBindingID                 publicid.ID
-	roleDefinitionID              publicid.ID
-	scopeAuthorityGeneration      authorization.AuthorityGeneration
-	membershipAuthorityGeneration authorization.AuthorityGeneration
-	bindingAuthorityGeneration    authorization.AuthorityGeneration
-	roleAuthorityGeneration       authorization.AuthorityGeneration
+	accountSessionID                  accountsession.ID
+	roleBindingID                     publicid.ID
+	roleDefinitionID                  publicid.ID
+	scopeAuthorityGeneration          authorization.AuthorityGeneration
+	membershipAuthorityGeneration     authorization.AuthorityGeneration
+	bindingAuthorityGeneration        authorization.AuthorityGeneration
+	roleAuthorityGeneration           authorization.AuthorityGeneration
+	workspaceOwnerAuthorityGeneration authorization.AuthorityGeneration
 }
 
 // AuthorizationEvidenceParams contains one locked device.manage decision.
@@ -26,18 +27,21 @@ type AuthorizationEvidenceParams struct {
 	MembershipAuthorityGeneration authorization.AuthorityGeneration
 	BindingAuthorityGeneration    authorization.AuthorityGeneration
 	RoleAuthorityGeneration       authorization.AuthorityGeneration
+	// WorkspaceOwnerAuthorityGeneration is the current Workspace generation; no role is needed.
+	WorkspaceOwnerAuthorityGeneration authorization.AuthorityGeneration
 }
 
 // NewAuthorizationEvidence validates locked Account Session and RBAC evidence.
 func NewAuthorizationEvidence(params AuthorizationEvidenceParams) (AuthorizationEvidence, error) {
 	evidence := AuthorizationEvidence{
-		accountSessionID:              params.AccountSessionID,
-		roleBindingID:                 params.RoleBindingID,
-		roleDefinitionID:              params.RoleDefinitionID,
-		scopeAuthorityGeneration:      params.ScopeAuthorityGeneration,
-		membershipAuthorityGeneration: params.MembershipAuthorityGeneration,
-		bindingAuthorityGeneration:    params.BindingAuthorityGeneration,
-		roleAuthorityGeneration:       params.RoleAuthorityGeneration,
+		accountSessionID:                  params.AccountSessionID,
+		roleBindingID:                     params.RoleBindingID,
+		roleDefinitionID:                  params.RoleDefinitionID,
+		scopeAuthorityGeneration:          params.ScopeAuthorityGeneration,
+		membershipAuthorityGeneration:     params.MembershipAuthorityGeneration,
+		bindingAuthorityGeneration:        params.BindingAuthorityGeneration,
+		roleAuthorityGeneration:           params.RoleAuthorityGeneration,
+		workspaceOwnerAuthorityGeneration: params.WorkspaceOwnerAuthorityGeneration,
 	}
 	if !evidence.IsValid() {
 		return AuthorizationEvidence{}, ErrInvalidResolution
@@ -80,10 +84,18 @@ func (evidence AuthorizationEvidence) RoleAuthorityGeneration() authorization.Au
 	return evidence.roleAuthorityGeneration
 }
 
-// IsValid reports whether every locked authorization identity and generation is present.
+// WorkspaceOwnerAuthorityGeneration returns the locked Workspace ownership generation.
+func (evidence AuthorizationEvidence) WorkspaceOwnerAuthorityGeneration() authorization.AuthorityGeneration {
+	return evidence.workspaceOwnerAuthorityGeneration
+}
+
+// IsValid requires either current ownership or a complete direct role grant.
 func (evidence AuthorizationEvidence) IsValid() bool {
-	return evidence.accountSessionID.IsValid() && evidence.roleBindingID.IsValid() &&
-		evidence.roleDefinitionID.IsValid() && evidence.scopeAuthorityGeneration > 0 &&
-		evidence.membershipAuthorityGeneration > 0 && evidence.bindingAuthorityGeneration > 0 &&
-		evidence.roleAuthorityGeneration > 0
+	if !evidence.accountSessionID.IsValid() || evidence.scopeAuthorityGeneration == 0 || evidence.membershipAuthorityGeneration == 0 {
+		return false
+	}
+	if evidence.workspaceOwnerAuthorityGeneration > 0 {
+		return evidence.roleBindingID == (publicid.ID{}) && evidence.roleDefinitionID == (publicid.ID{}) && evidence.bindingAuthorityGeneration == 0 && evidence.roleAuthorityGeneration == 0
+	}
+	return evidence.roleBindingID.IsValid() && evidence.roleDefinitionID.IsValid() && evidence.bindingAuthorityGeneration > 0 && evidence.roleAuthorityGeneration > 0
 }

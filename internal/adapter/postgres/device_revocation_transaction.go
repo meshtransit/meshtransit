@@ -251,6 +251,7 @@ func resolveDeviceRevocationAuthorization(
 	session := command.AccountSession()
 	var bindingIDValue, roleIDValue string
 	var scopeGeneration, membershipGeneration, bindingGeneration, roleGeneration int64
+	var ownerGeneration int64
 	var hasExpiry bool
 	var expiresAt time.Time
 	err := database.QueryRow(
@@ -278,6 +279,7 @@ func resolveDeviceRevocationAuthorization(
 		&roleGeneration,
 		&hasExpiry,
 		&expiresAt,
+		&ownerGeneration,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return revocation.AuthorizationEvidence{}, revocation.ErrForbidden
@@ -285,13 +287,10 @@ func resolveDeviceRevocationAuthorization(
 	if err != nil {
 		return revocation.AuthorizationEvidence{}, fmt.Errorf("authorize device.manage: %w", err)
 	}
-	bindingID, err := publicid.Parse(bindingIDValue)
-	if err != nil {
-		return revocation.AuthorizationEvidence{}, ErrDeviceRevocationEvidence
-	}
-	roleID, err := publicid.Parse(roleIDValue)
+	bindingID, roleID, err := parseNetworkPermissionAuthority(bindingIDValue, roleIDValue, ownerGeneration)
 	if err != nil || scopeGeneration <= 0 || membershipGeneration <= 0 ||
-		bindingGeneration <= 0 || roleGeneration <= 0 {
+		bindingGeneration < 0 || roleGeneration < 0 || ownerGeneration < 0 ||
+		!validNetworkPermissionAuthority(bindingID, roleID, bindingGeneration, roleGeneration, ownerGeneration) {
 		return revocation.AuthorizationEvidence{}, ErrDeviceRevocationEvidence
 	}
 	target, err := authorization.NewNetworkScope(
@@ -328,13 +327,14 @@ func resolveDeviceRevocationAuthorization(
 		return revocation.AuthorizationEvidence{}, revocation.ErrForbidden
 	}
 	evidence, err := revocation.NewAuthorizationEvidence(revocation.AuthorizationEvidenceParams{
-		AccountSessionID:              session.ID(),
-		RoleBindingID:                 bindingID,
-		RoleDefinitionID:              roleID,
-		ScopeAuthorityGeneration:      authorization.AuthorityGeneration(scopeGeneration),
-		MembershipAuthorityGeneration: authorization.AuthorityGeneration(membershipGeneration),
-		BindingAuthorityGeneration:    authorization.AuthorityGeneration(bindingGeneration),
-		RoleAuthorityGeneration:       authorization.AuthorityGeneration(roleGeneration),
+		AccountSessionID:                  session.ID(),
+		RoleBindingID:                     bindingID,
+		RoleDefinitionID:                  roleID,
+		ScopeAuthorityGeneration:          authorization.AuthorityGeneration(scopeGeneration),
+		MembershipAuthorityGeneration:     authorization.AuthorityGeneration(membershipGeneration),
+		BindingAuthorityGeneration:        authorization.AuthorityGeneration(bindingGeneration),
+		RoleAuthorityGeneration:           authorization.AuthorityGeneration(roleGeneration),
+		WorkspaceOwnerAuthorityGeneration: authorization.AuthorityGeneration(ownerGeneration),
 	})
 	if err != nil {
 		return revocation.AuthorizationEvidence{}, ErrDeviceRevocationEvidence

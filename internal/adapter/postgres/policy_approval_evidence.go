@@ -18,20 +18,21 @@ const (
 )
 
 type policyApprovalAuditPayload struct {
-	AuditReason                   string `json:"audit_reason"`
-	AccountSessionID              string `json:"account_session_id"`
-	RoleBindingID                 string `json:"role_binding_id"`
-	RoleDefinitionID              string `json:"role_definition_id"`
-	ScopeAuthorityGeneration      int64  `json:"scope_authority_generation"`
-	MembershipAuthorityGeneration int64  `json:"membership_authority_generation"`
-	BindingAuthorityGeneration    int64  `json:"binding_authority_generation"`
-	RoleAuthorityGeneration       int64  `json:"role_authority_generation"`
-	CandidateSemanticHash         string `json:"candidate_semantic_hash"`
-	ImpactHash                    string `json:"impact_hash"`
-	BaselineNetworkRevision       int64  `json:"baseline_network_revision"`
-	BaselinePolicyRevision        int64  `json:"baseline_policy_revision"`
-	ProposedNetworkRevision       int64  `json:"proposed_network_revision"`
-	ProposedPolicyRevision        int64  `json:"proposed_policy_revision"`
+	AuditReason                       string `json:"audit_reason"`
+	AccountSessionID                  string `json:"account_session_id"`
+	RoleBindingID                     string `json:"role_binding_id,omitempty"`
+	RoleDefinitionID                  string `json:"role_definition_id,omitempty"`
+	ScopeAuthorityGeneration          int64  `json:"scope_authority_generation"`
+	MembershipAuthorityGeneration     int64  `json:"membership_authority_generation"`
+	BindingAuthorityGeneration        int64  `json:"binding_authority_generation"`
+	RoleAuthorityGeneration           int64  `json:"role_authority_generation"`
+	WorkspaceOwnerAuthorityGeneration int64  `json:"workspace_owner_authority_generation,omitempty"`
+	CandidateSemanticHash             string `json:"candidate_semantic_hash"`
+	ImpactHash                        string `json:"impact_hash"`
+	BaselineNetworkRevision           int64  `json:"baseline_network_revision"`
+	BaselinePolicyRevision            int64  `json:"baseline_policy_revision"`
+	ProposedNetworkRevision           int64  `json:"proposed_network_revision"`
+	ProposedPolicyRevision            int64  `json:"proposed_policy_revision"`
 }
 
 type policyApprovalOutboxPayload struct {
@@ -154,20 +155,21 @@ func appendPolicyApprovalAudit(
 	proposed := value.binding.ProposedVector()
 	authorization := transaction.authorization
 	auditPayload, err := json.Marshal(policyApprovalAuditPayload{
-		AuditReason:                   value.auditReason,
-		AccountSessionID:              authorization.accountSessionID.String(),
-		RoleBindingID:                 authorization.roleBindingID.String(),
-		RoleDefinitionID:              authorization.roleDefinitionID.String(),
-		ScopeAuthorityGeneration:      authorization.scopeAuthorityGeneration,
-		MembershipAuthorityGeneration: authorization.membershipAuthorityGeneration,
-		BindingAuthorityGeneration:    authorization.bindingAuthorityGeneration,
-		RoleAuthorityGeneration:       authorization.roleAuthorityGeneration,
-		CandidateSemanticHash:         hex.EncodeToString(candidateHash[:]),
-		ImpactHash:                    hex.EncodeToString(impactHash[:]),
-		BaselineNetworkRevision:       baseline.NetworkRevision(),
-		BaselinePolicyRevision:        baseline.PolicyRevision(),
-		ProposedNetworkRevision:       proposed.NetworkRevision(),
-		ProposedPolicyRevision:        proposed.PolicyRevision(),
+		AuditReason:                       value.auditReason,
+		AccountSessionID:                  authorization.accountSessionID.String(),
+		RoleBindingID:                     authorizationIDString(authorization.roleBindingID),
+		RoleDefinitionID:                  authorizationIDString(authorization.roleDefinitionID),
+		ScopeAuthorityGeneration:          authorization.scopeAuthorityGeneration,
+		MembershipAuthorityGeneration:     authorization.membershipAuthorityGeneration,
+		BindingAuthorityGeneration:        authorization.bindingAuthorityGeneration,
+		RoleAuthorityGeneration:           authorization.roleAuthorityGeneration,
+		WorkspaceOwnerAuthorityGeneration: authorization.workspaceOwnerAuthorityGeneration,
+		CandidateSemanticHash:             hex.EncodeToString(candidateHash[:]),
+		ImpactHash:                        hex.EncodeToString(impactHash[:]),
+		BaselineNetworkRevision:           baseline.NetworkRevision(),
+		BaselinePolicyRevision:            baseline.PolicyRevision(),
+		ProposedNetworkRevision:           proposed.NetworkRevision(),
+		ProposedPolicyRevision:            proposed.PolicyRevision(),
 	})
 	if err != nil {
 		return fmt.Errorf("encode Policy approval audit payload: %w", err)

@@ -17,19 +17,20 @@ import (
 )
 
 type resourceSharingAuditPayload struct {
-	AuditReason                   string `json:"audit_reason"`
-	ScopeRelation                 string `json:"scope_relation"`
-	AuthoritySide                 string `json:"authority_side"`
-	EvidenceNetwork               string `json:"evidence_network"`
-	ProviderNetwork               string `json:"provider_network"`
-	ConsumerNetwork               string `json:"consumer_network"`
-	AccountSessionID              string `json:"account_session_id"`
-	RoleBindingID                 string `json:"role_binding_id"`
-	RoleDefinitionID              string `json:"role_definition_id"`
-	ScopeAuthorityGeneration      int64  `json:"scope_authority_generation"`
-	MembershipAuthorityGeneration int64  `json:"membership_authority_generation"`
-	BindingAuthorityGeneration    int64  `json:"binding_authority_generation"`
-	RoleAuthorityGeneration       int64  `json:"role_authority_generation"`
+	AuditReason                       string `json:"audit_reason"`
+	ScopeRelation                     string `json:"scope_relation"`
+	AuthoritySide                     string `json:"authority_side"`
+	EvidenceNetwork                   string `json:"evidence_network"`
+	ProviderNetwork                   string `json:"provider_network"`
+	ConsumerNetwork                   string `json:"consumer_network"`
+	AccountSessionID                  string `json:"account_session_id"`
+	RoleBindingID                     string `json:"role_binding_id,omitempty"`
+	RoleDefinitionID                  string `json:"role_definition_id,omitempty"`
+	ScopeAuthorityGeneration          int64  `json:"scope_authority_generation"`
+	MembershipAuthorityGeneration     int64  `json:"membership_authority_generation"`
+	BindingAuthorityGeneration        int64  `json:"binding_authority_generation"`
+	RoleAuthorityGeneration           int64  `json:"role_authority_generation"`
+	WorkspaceOwnerAuthorityGeneration int64  `json:"workspace_owner_authority_generation,omitempty"`
 }
 
 type resourceSharingAuditTarget struct {
@@ -133,16 +134,17 @@ func appendResourceSharingMutationEvidence(
 		}
 		auditPayload, err := json.Marshal(resourceSharingAuditPayload{
 			AuditReason: reason.String(), ScopeRelation: relation.String(), AuthoritySide: authoritySide,
-			EvidenceNetwork:               resourceSharingScopeKey(target.state.scope),
-			ProviderNetwork:               resourceSharingScopeKey(locator.provider.scope),
-			ConsumerNetwork:               resourceSharingScopeKey(locator.consumer.scope),
-			AccountSessionID:              authorizationEvidence.accountSessionID.String(),
-			RoleBindingID:                 authorizationEvidence.roleBindingID.String(),
-			RoleDefinitionID:              authorizationEvidence.roleDefinitionID.String(),
-			ScopeAuthorityGeneration:      authorizationEvidence.scopeAuthorityGeneration,
-			MembershipAuthorityGeneration: authorizationEvidence.membershipAuthorityGeneration,
-			BindingAuthorityGeneration:    authorizationEvidence.bindingAuthorityGeneration,
-			RoleAuthorityGeneration:       authorizationEvidence.roleAuthorityGeneration,
+			EvidenceNetwork:                   resourceSharingScopeKey(target.state.scope),
+			ProviderNetwork:                   resourceSharingScopeKey(locator.provider.scope),
+			ConsumerNetwork:                   resourceSharingScopeKey(locator.consumer.scope),
+			AccountSessionID:                  authorizationEvidence.accountSessionID.String(),
+			RoleBindingID:                     authorizationIDString(authorizationEvidence.roleBindingID),
+			RoleDefinitionID:                  authorizationIDString(authorizationEvidence.roleDefinitionID),
+			ScopeAuthorityGeneration:          authorizationEvidence.scopeAuthorityGeneration,
+			MembershipAuthorityGeneration:     authorizationEvidence.membershipAuthorityGeneration,
+			BindingAuthorityGeneration:        authorizationEvidence.bindingAuthorityGeneration,
+			RoleAuthorityGeneration:           authorizationEvidence.roleAuthorityGeneration,
+			WorkspaceOwnerAuthorityGeneration: authorizationEvidence.workspaceOwnerAuthorityGeneration,
 		})
 		if err != nil {
 			return sharing.ErrUnavailable

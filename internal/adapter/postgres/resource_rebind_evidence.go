@@ -13,21 +13,22 @@ import (
 )
 
 type resourceRebindAuditPayload struct {
-	AuditReason                   string   `json:"audit_reason"`
-	ExpectedResourceVersion       int64    `json:"expected_resource_version"`
-	PreviousDeviceID              string   `json:"previous_device_id"`
-	DeviceID                      string   `json:"device_id"`
-	TargetGeneration              int64    `json:"target_generation"`
-	ImpactHash                    string   `json:"impact_hash"`
-	AffectedResourceGroupIDs      []string `json:"affected_resource_group_ids"`
-	ApprovalStatus                string   `json:"approval_status"`
-	AccountSessionID              string   `json:"account_session_id"`
-	RoleBindingID                 string   `json:"role_binding_id"`
-	RoleDefinitionID              string   `json:"role_definition_id"`
-	ScopeAuthorityGeneration      int64    `json:"scope_authority_generation"`
-	MembershipAuthorityGeneration int64    `json:"membership_authority_generation"`
-	BindingAuthorityGeneration    int64    `json:"binding_authority_generation"`
-	RoleAuthorityGeneration       int64    `json:"role_authority_generation"`
+	AuditReason                       string   `json:"audit_reason"`
+	ExpectedResourceVersion           int64    `json:"expected_resource_version"`
+	PreviousDeviceID                  string   `json:"previous_device_id"`
+	DeviceID                          string   `json:"device_id"`
+	TargetGeneration                  int64    `json:"target_generation"`
+	ImpactHash                        string   `json:"impact_hash"`
+	AffectedResourceGroupIDs          []string `json:"affected_resource_group_ids"`
+	ApprovalStatus                    string   `json:"approval_status"`
+	AccountSessionID                  string   `json:"account_session_id"`
+	RoleBindingID                     string   `json:"role_binding_id,omitempty"`
+	RoleDefinitionID                  string   `json:"role_definition_id,omitempty"`
+	ScopeAuthorityGeneration          int64    `json:"scope_authority_generation"`
+	MembershipAuthorityGeneration     int64    `json:"membership_authority_generation"`
+	BindingAuthorityGeneration        int64    `json:"binding_authority_generation"`
+	RoleAuthorityGeneration           int64    `json:"role_authority_generation"`
+	WorkspaceOwnerAuthorityGeneration int64    `json:"workspace_owner_authority_generation,omitempty"`
 }
 
 func (transaction *resourceRebindTransaction) appendRebindEvidence(
@@ -48,13 +49,14 @@ func (transaction *resourceRebindTransaction) appendRebindEvidence(
 		PreviousDeviceID: impact.CurrentDeviceID().String(), DeviceID: result.DeviceID().String(),
 		TargetGeneration: result.TargetGeneration(), ImpactHash: hex.EncodeToString(impactHash[:]),
 		AffectedResourceGroupIDs: affectedGroups, ApprovalStatus: "not_required",
-		AccountSessionID:              transaction.authorization.accountSessionID.String(),
-		RoleBindingID:                 transaction.authorization.roleBindingID.String(),
-		RoleDefinitionID:              transaction.authorization.roleDefinitionID.String(),
-		ScopeAuthorityGeneration:      transaction.authorization.scopeAuthorityGeneration,
-		MembershipAuthorityGeneration: transaction.authorization.membershipAuthorityGeneration,
-		BindingAuthorityGeneration:    transaction.authorization.bindingAuthorityGeneration,
-		RoleAuthorityGeneration:       transaction.authorization.roleAuthorityGeneration,
+		AccountSessionID:                  transaction.authorization.accountSessionID.String(),
+		RoleBindingID:                     authorizationIDString(transaction.authorization.roleBindingID),
+		RoleDefinitionID:                  authorizationIDString(transaction.authorization.roleDefinitionID),
+		ScopeAuthorityGeneration:          transaction.authorization.scopeAuthorityGeneration,
+		MembershipAuthorityGeneration:     transaction.authorization.membershipAuthorityGeneration,
+		BindingAuthorityGeneration:        transaction.authorization.bindingAuthorityGeneration,
+		RoleAuthorityGeneration:           transaction.authorization.roleAuthorityGeneration,
+		WorkspaceOwnerAuthorityGeneration: transaction.authorization.workspaceOwnerAuthorityGeneration,
 	})
 	if err != nil {
 		return fmt.Errorf("encode Resource rebind audit payload: %w", err)

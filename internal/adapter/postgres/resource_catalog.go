@@ -125,6 +125,7 @@ func (transaction *resourceCatalogTransaction) Authorize(
 	}
 	var bindingID, roleID string
 	var scopeGeneration, membershipGeneration, bindingGeneration, roleGeneration int64
+	var ownerGeneration int64
 	var hasExpiry bool
 	var expiresAt time.Time
 	err := transaction.database.QueryRow(
@@ -145,7 +146,7 @@ func (transaction *resourceCatalogTransaction) Authorize(
 		evaluatedAt,
 	).Scan(
 		&bindingID, &roleID, &scopeGeneration, &membershipGeneration,
-		&bindingGeneration, &roleGeneration, &hasExpiry, &expiresAt,
+		&bindingGeneration, &roleGeneration, &hasExpiry, &expiresAt, &ownerGeneration,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return catalog.ErrForbidden
@@ -153,11 +154,10 @@ func (transaction *resourceCatalogTransaction) Authorize(
 	if err != nil {
 		return resourceCatalogDatabaseError(ctx, err)
 	}
-	binding, bindingErr := publicid.Parse(bindingID)
-	role, roleErr := publicid.Parse(roleID)
-	if bindingErr != nil || roleErr != nil || !binding.IsValid() || !role.IsValid() ||
-		scopeGeneration <= 0 || membershipGeneration <= 0 || bindingGeneration <= 0 ||
-		roleGeneration <= 0 || (hasExpiry && !expiresAt.After(evaluatedAt)) {
+	binding, role, authorityErr := parseNetworkPermissionAuthority(bindingID, roleID, ownerGeneration)
+	if authorityErr != nil || scopeGeneration <= 0 || membershipGeneration <= 0 ||
+		!validNetworkPermissionAuthority(binding, role, bindingGeneration, roleGeneration, ownerGeneration) ||
+		(hasExpiry && !expiresAt.After(evaluatedAt)) {
 		return catalog.ErrForbidden
 	}
 	if permission == authorization.PermissionResourceRead {

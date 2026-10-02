@@ -298,6 +298,7 @@ func authorizeResourceSharing(
 		&evidence.roleAuthorityGeneration,
 		&hasExpiry,
 		&expiresAt,
+		&evidence.workspaceOwnerAuthorityGeneration,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return resourceAuthorityAuthorizationEvidence{}, sharing.ErrForbidden
@@ -305,12 +306,11 @@ func authorizeResourceSharing(
 	if err != nil {
 		return resourceAuthorityAuthorizationEvidence{}, resourceSharingDatabaseError(ctx, err)
 	}
-	bindingID, bindingErr := publicid.Parse(bindingIDValue)
-	roleID, roleErr := publicid.Parse(roleIDValue)
+	bindingID, roleID, authorityErr := parseNetworkPermissionAuthority(bindingIDValue, roleIDValue, evidence.workspaceOwnerAuthorityGeneration)
 	evidence.accountSessionID = publicid.ID(session.ID())
 	evidence.roleBindingID = bindingID
 	evidence.roleDefinitionID = roleID
-	if bindingErr != nil || roleErr != nil || !evidence.isValid() ||
+	if authorityErr != nil || !evidence.isValid() ||
 		(hasExpiry && !expiresAt.After(evaluatedAt)) {
 		return resourceAuthorityAuthorizationEvidence{}, sharing.ErrForbidden
 	}

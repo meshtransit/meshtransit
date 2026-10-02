@@ -140,6 +140,7 @@ func (transaction *policyPublicationTransaction) resolveApprovalAuthorization(
 ) (policyPublicationAuthorizationEvidence, error) {
 	var bindingIDValue, roleIDValue string
 	var scopeGeneration, membershipGeneration, bindingGeneration, roleGeneration int64
+	var ownerGeneration int64
 	var hasExpiry bool
 	var expiresAt time.Time
 	err := transaction.database.QueryRow(
@@ -160,7 +161,7 @@ func (transaction *policyPublicationTransaction) resolveApprovalAuthorization(
 		evaluatedAt,
 	).Scan(
 		&bindingIDValue, &roleIDValue, &scopeGeneration, &membershipGeneration,
-		&bindingGeneration, &roleGeneration, &hasExpiry, &expiresAt,
+		&bindingGeneration, &roleGeneration, &hasExpiry, &expiresAt, &ownerGeneration,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return policyPublicationAuthorizationEvidence{}, publication.ErrApprovalUnavailable
@@ -172,16 +173,16 @@ func (transaction *policyPublicationTransaction) resolveApprovalAuthorization(
 		return policyPublicationAuthorizationEvidence{}, publication.ErrApprovalUnavailable
 	}
 	sessionID, sessionErr := publicid.Parse(record.sessionID)
-	bindingID, bindingErr := publicid.Parse(bindingIDValue)
-	roleID, roleErr := publicid.Parse(roleIDValue)
+	bindingID, roleID, authorityErr := parseNetworkPermissionAuthority(bindingIDValue, roleIDValue, ownerGeneration)
 	evidence := policyPublicationAuthorizationEvidence{
 		accountSessionID: sessionID, roleBindingID: bindingID, roleDefinitionID: roleID,
-		scopeAuthorityGeneration:      scopeGeneration,
-		membershipAuthorityGeneration: membershipGeneration,
-		bindingAuthorityGeneration:    bindingGeneration,
-		roleAuthorityGeneration:       roleGeneration,
+		scopeAuthorityGeneration:          scopeGeneration,
+		membershipAuthorityGeneration:     membershipGeneration,
+		bindingAuthorityGeneration:        bindingGeneration,
+		roleAuthorityGeneration:           roleGeneration,
+		workspaceOwnerAuthorityGeneration: ownerGeneration,
 	}
-	if sessionErr != nil || bindingErr != nil || roleErr != nil || !evidence.isValid() {
+	if sessionErr != nil || authorityErr != nil || !evidence.isValid() {
 		return policyPublicationAuthorizationEvidence{}, ErrPolicyPublicationEvidence
 	}
 	return evidence, nil

@@ -64,29 +64,31 @@ type policyPublicationRulePayload struct {
 }
 
 type policyPublicationAuditPayload struct {
-	AuditReason                           string                                   `json:"audit_reason"`
-	BasePolicyRevision                    int64                                    `json:"base_policy_revision"`
-	CompilerFormatVersion                 int                                      `json:"compiler_format_version"`
-	RuleCount                             int                                      `json:"rule_count"`
-	AccountSessionID                      string                                   `json:"account_session_id,omitempty"`
-	RoleBindingID                         string                                   `json:"role_binding_id,omitempty"`
-	RoleDefinitionID                      string                                   `json:"role_definition_id,omitempty"`
-	ScopeAuthorityGeneration              int64                                    `json:"scope_authority_generation,omitempty"`
-	MembershipAuthorityGeneration         int64                                    `json:"membership_authority_generation,omitempty"`
-	BindingAuthorityGeneration            int64                                    `json:"binding_authority_generation,omitempty"`
-	RoleAuthorityGeneration               int64                                    `json:"role_authority_generation,omitempty"`
-	ApprovalRequestID                     string                                   `json:"approval_request_id,omitempty"`
-	ApprovalEvidenceID                    string                                   `json:"approval_evidence_id,omitempty"`
-	ApprovalImpactHash                    string                                   `json:"approval_impact_hash,omitempty"`
-	ApprovalBaselineVector                *policyPublicationAuthorityVectorPayload `json:"approval_baseline_vector,omitempty"`
-	ApprovalProposedVector                *policyPublicationAuthorityVectorPayload `json:"approval_proposed_vector,omitempty"`
-	ApproverAccountSessionID              string                                   `json:"approver_account_session_id,omitempty"`
-	ApproverRoleBindingID                 string                                   `json:"approver_role_binding_id,omitempty"`
-	ApproverRoleDefinitionID              string                                   `json:"approver_role_definition_id,omitempty"`
-	ApproverScopeAuthorityGeneration      int64                                    `json:"approver_scope_authority_generation,omitempty"`
-	ApproverMembershipAuthorityGeneration int64                                    `json:"approver_membership_authority_generation,omitempty"`
-	ApproverBindingAuthorityGeneration    int64                                    `json:"approver_binding_authority_generation,omitempty"`
-	ApproverRoleAuthorityGeneration       int64                                    `json:"approver_role_authority_generation,omitempty"`
+	AuditReason                               string                                   `json:"audit_reason"`
+	BasePolicyRevision                        int64                                    `json:"base_policy_revision"`
+	CompilerFormatVersion                     int                                      `json:"compiler_format_version"`
+	RuleCount                                 int                                      `json:"rule_count"`
+	AccountSessionID                          string                                   `json:"account_session_id,omitempty"`
+	RoleBindingID                             string                                   `json:"role_binding_id,omitempty"`
+	RoleDefinitionID                          string                                   `json:"role_definition_id,omitempty"`
+	ScopeAuthorityGeneration                  int64                                    `json:"scope_authority_generation,omitempty"`
+	MembershipAuthorityGeneration             int64                                    `json:"membership_authority_generation,omitempty"`
+	BindingAuthorityGeneration                int64                                    `json:"binding_authority_generation,omitempty"`
+	RoleAuthorityGeneration                   int64                                    `json:"role_authority_generation,omitempty"`
+	WorkspaceOwnerAuthorityGeneration         int64                                    `json:"workspace_owner_authority_generation,omitempty"`
+	ApprovalRequestID                         string                                   `json:"approval_request_id,omitempty"`
+	ApprovalEvidenceID                        string                                   `json:"approval_evidence_id,omitempty"`
+	ApprovalImpactHash                        string                                   `json:"approval_impact_hash,omitempty"`
+	ApprovalBaselineVector                    *policyPublicationAuthorityVectorPayload `json:"approval_baseline_vector,omitempty"`
+	ApprovalProposedVector                    *policyPublicationAuthorityVectorPayload `json:"approval_proposed_vector,omitempty"`
+	ApproverAccountSessionID                  string                                   `json:"approver_account_session_id,omitempty"`
+	ApproverRoleBindingID                     string                                   `json:"approver_role_binding_id,omitempty"`
+	ApproverRoleDefinitionID                  string                                   `json:"approver_role_definition_id,omitempty"`
+	ApproverScopeAuthorityGeneration          int64                                    `json:"approver_scope_authority_generation,omitempty"`
+	ApproverMembershipAuthorityGeneration     int64                                    `json:"approver_membership_authority_generation,omitempty"`
+	ApproverBindingAuthorityGeneration        int64                                    `json:"approver_binding_authority_generation,omitempty"`
+	ApproverRoleAuthorityGeneration           int64                                    `json:"approver_role_authority_generation,omitempty"`
+	ApproverWorkspaceOwnerAuthorityGeneration int64                                    `json:"approver_workspace_owner_authority_generation,omitempty"`
 }
 
 type policyPublicationAuthorityVectorPayload struct {
@@ -257,12 +259,13 @@ func (transaction *policyPublicationTransaction) appendPolicyPublicationEvidence
 	}
 	if transaction.authorization.isValid() {
 		auditEvidence.AccountSessionID = transaction.authorization.accountSessionID.String()
-		auditEvidence.RoleBindingID = transaction.authorization.roleBindingID.String()
-		auditEvidence.RoleDefinitionID = transaction.authorization.roleDefinitionID.String()
+		auditEvidence.RoleBindingID = authorizationIDString(transaction.authorization.roleBindingID)
+		auditEvidence.RoleDefinitionID = authorizationIDString(transaction.authorization.roleDefinitionID)
 		auditEvidence.ScopeAuthorityGeneration = transaction.authorization.scopeAuthorityGeneration
 		auditEvidence.MembershipAuthorityGeneration = transaction.authorization.membershipAuthorityGeneration
 		auditEvidence.BindingAuthorityGeneration = transaction.authorization.bindingAuthorityGeneration
 		auditEvidence.RoleAuthorityGeneration = transaction.authorization.roleAuthorityGeneration
+		auditEvidence.WorkspaceOwnerAuthorityGeneration = transaction.authorization.workspaceOwnerAuthorityGeneration
 	}
 	if command.HasApprovalEvidence() {
 		gate := change.Resolution().ApprovalGate()
@@ -278,12 +281,13 @@ func (transaction *policyPublicationTransaction) appendPolicyPublicationEvidence
 	if transaction.approvalAuthorization.isValid() {
 		authorization := transaction.approvalAuthorization
 		auditEvidence.ApproverAccountSessionID = authorization.accountSessionID.String()
-		auditEvidence.ApproverRoleBindingID = authorization.roleBindingID.String()
-		auditEvidence.ApproverRoleDefinitionID = authorization.roleDefinitionID.String()
+		auditEvidence.ApproverRoleBindingID = authorizationIDString(authorization.roleBindingID)
+		auditEvidence.ApproverRoleDefinitionID = authorizationIDString(authorization.roleDefinitionID)
 		auditEvidence.ApproverScopeAuthorityGeneration = authorization.scopeAuthorityGeneration
 		auditEvidence.ApproverMembershipAuthorityGeneration = authorization.membershipAuthorityGeneration
 		auditEvidence.ApproverBindingAuthorityGeneration = authorization.bindingAuthorityGeneration
 		auditEvidence.ApproverRoleAuthorityGeneration = authorization.roleAuthorityGeneration
+		auditEvidence.ApproverWorkspaceOwnerAuthorityGeneration = authorization.workspaceOwnerAuthorityGeneration
 	}
 	auditPayload, err := json.Marshal(auditEvidence)
 	if err != nil {

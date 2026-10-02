@@ -17,7 +17,6 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	approval "github.com/meshtransit/meshtransit/internal/policy/approval"
 	"github.com/meshtransit/meshtransit/internal/policy/publication"
-	"github.com/meshtransit/meshtransit/internal/publicid"
 )
 
 var _ approval.CatalogReader = (*PolicyApprovalStore)(nil)
@@ -163,6 +162,7 @@ func authorizePolicyApprovalCatalog(
 ) error {
 	var bindingID, roleID string
 	var scopeGeneration, membershipGeneration, bindingGeneration, roleGeneration int64
+	var ownerGeneration int64
 	var hasExpiry bool
 	var expiresAt time.Time
 	err := database.QueryRow(
@@ -190,6 +190,7 @@ func authorizePolicyApprovalCatalog(
 		&roleGeneration,
 		&hasExpiry,
 		&expiresAt,
+		&ownerGeneration,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return approval.ErrForbidden
@@ -197,11 +198,10 @@ func authorizePolicyApprovalCatalog(
 	if err != nil {
 		return errors.Join(approval.ErrCatalogUnavailable, classifyPolicyApprovalDatabaseError(ctx, err))
 	}
-	binding, bindingErr := publicid.Parse(bindingID)
-	role, roleErr := publicid.Parse(roleID)
-	if bindingErr != nil || roleErr != nil || !binding.IsValid() || !role.IsValid() ||
-		scopeGeneration <= 0 || membershipGeneration <= 0 || bindingGeneration <= 0 ||
-		roleGeneration <= 0 || (hasExpiry && !expiresAt.After(evaluatedAt)) {
+	binding, role, authorityErr := parseNetworkPermissionAuthority(bindingID, roleID, ownerGeneration)
+	if authorityErr != nil || scopeGeneration <= 0 || membershipGeneration <= 0 ||
+		!validNetworkPermissionAuthority(binding, role, bindingGeneration, roleGeneration, ownerGeneration) ||
+		(hasExpiry && !expiresAt.After(evaluatedAt)) {
 		return approval.ErrForbidden
 	}
 	return nil

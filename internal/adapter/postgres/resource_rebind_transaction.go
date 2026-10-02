@@ -40,6 +40,7 @@ func (transaction *resourceRebindTransaction) authorize(
 ) (resourceAuthorityAuthorizationEvidence, error) {
 	var bindingIDValue, roleIDValue string
 	var scopeGeneration, membershipGeneration, bindingGeneration, roleGeneration int64
+	var ownerGeneration int64
 	var hasExpiry bool
 	var expiresAt time.Time
 	err := transaction.database.QueryRow(
@@ -60,7 +61,7 @@ func (transaction *resourceRebindTransaction) authorize(
 		evaluatedAt,
 	).Scan(
 		&bindingIDValue, &roleIDValue, &scopeGeneration, &membershipGeneration,
-		&bindingGeneration, &roleGeneration, &hasExpiry, &expiresAt,
+		&bindingGeneration, &roleGeneration, &hasExpiry, &expiresAt, &ownerGeneration,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return resourceAuthorityAuthorizationEvidence{}, authority.ErrForbidden
@@ -71,20 +72,17 @@ func (transaction *resourceRebindTransaction) authorize(
 	if hasExpiry && !expiresAt.After(evaluatedAt) {
 		return resourceAuthorityAuthorizationEvidence{}, authority.ErrForbidden
 	}
-	bindingID, err := publicid.Parse(bindingIDValue)
-	if err != nil {
-		return resourceAuthorityAuthorizationEvidence{}, ErrResourceAuthorityEvidence
-	}
-	roleID, err := publicid.Parse(roleIDValue)
+	bindingID, roleID, err := parseNetworkPermissionAuthority(bindingIDValue, roleIDValue, ownerGeneration)
 	if err != nil {
 		return resourceAuthorityAuthorizationEvidence{}, ErrResourceAuthorityEvidence
 	}
 	evidence := resourceAuthorityAuthorizationEvidence{
 		accountSessionID: publicid.ID(session.ID()), roleBindingID: bindingID,
 		roleDefinitionID: roleID, scopeAuthorityGeneration: scopeGeneration,
-		membershipAuthorityGeneration: membershipGeneration,
-		bindingAuthorityGeneration:    bindingGeneration,
-		roleAuthorityGeneration:       roleGeneration,
+		membershipAuthorityGeneration:     membershipGeneration,
+		bindingAuthorityGeneration:        bindingGeneration,
+		roleAuthorityGeneration:           roleGeneration,
+		workspaceOwnerAuthorityGeneration: ownerGeneration,
 	}
 	if !evidence.isValid() {
 		return resourceAuthorityAuthorizationEvidence{}, ErrResourceAuthorityEvidence

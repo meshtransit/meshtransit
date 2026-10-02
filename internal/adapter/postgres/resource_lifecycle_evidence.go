@@ -13,16 +13,17 @@ import (
 )
 
 type resourceLifecycleAuditPayload struct {
-	AuditReason                   string `json:"audit_reason"`
-	ExpectedAggregateVersion      int64  `json:"expected_aggregate_version"`
-	TargetState                   string `json:"target_state"`
-	AccountSessionID              string `json:"account_session_id"`
-	RoleBindingID                 string `json:"role_binding_id"`
-	RoleDefinitionID              string `json:"role_definition_id"`
-	ScopeAuthorityGeneration      int64  `json:"scope_authority_generation"`
-	MembershipAuthorityGeneration int64  `json:"membership_authority_generation"`
-	BindingAuthorityGeneration    int64  `json:"binding_authority_generation"`
-	RoleAuthorityGeneration       int64  `json:"role_authority_generation"`
+	AuditReason                       string `json:"audit_reason"`
+	ExpectedAggregateVersion          int64  `json:"expected_aggregate_version"`
+	TargetState                       string `json:"target_state"`
+	AccountSessionID                  string `json:"account_session_id"`
+	RoleBindingID                     string `json:"role_binding_id,omitempty"`
+	RoleDefinitionID                  string `json:"role_definition_id,omitempty"`
+	ScopeAuthorityGeneration          int64  `json:"scope_authority_generation"`
+	MembershipAuthorityGeneration     int64  `json:"membership_authority_generation"`
+	BindingAuthorityGeneration        int64  `json:"binding_authority_generation"`
+	RoleAuthorityGeneration           int64  `json:"role_authority_generation"`
+	WorkspaceOwnerAuthorityGeneration int64  `json:"workspace_owner_authority_generation,omitempty"`
 }
 
 func (transaction *resourceLifecycleTransaction) appendLifecycleEvidence(
@@ -32,16 +33,17 @@ func (transaction *resourceLifecycleTransaction) appendLifecycleEvidence(
 ) error {
 	command := change.Command()
 	auditEvidence := resourceLifecycleAuditPayload{
-		AuditReason:                   command.AuditReason().String(),
-		ExpectedAggregateVersion:      command.ExpectedVersion(),
-		TargetState:                   resourceLifecycleState(result.State()),
-		AccountSessionID:              transaction.authorization.accountSessionID.String(),
-		RoleBindingID:                 transaction.authorization.roleBindingID.String(),
-		RoleDefinitionID:              transaction.authorization.roleDefinitionID.String(),
-		ScopeAuthorityGeneration:      transaction.authorization.scopeAuthorityGeneration,
-		MembershipAuthorityGeneration: transaction.authorization.membershipAuthorityGeneration,
-		BindingAuthorityGeneration:    transaction.authorization.bindingAuthorityGeneration,
-		RoleAuthorityGeneration:       transaction.authorization.roleAuthorityGeneration,
+		AuditReason:                       command.AuditReason().String(),
+		ExpectedAggregateVersion:          command.ExpectedVersion(),
+		TargetState:                       resourceLifecycleState(result.State()),
+		AccountSessionID:                  transaction.authorization.accountSessionID.String(),
+		RoleBindingID:                     authorizationIDString(transaction.authorization.roleBindingID),
+		RoleDefinitionID:                  authorizationIDString(transaction.authorization.roleDefinitionID),
+		ScopeAuthorityGeneration:          transaction.authorization.scopeAuthorityGeneration,
+		MembershipAuthorityGeneration:     transaction.authorization.membershipAuthorityGeneration,
+		BindingAuthorityGeneration:        transaction.authorization.bindingAuthorityGeneration,
+		RoleAuthorityGeneration:           transaction.authorization.roleAuthorityGeneration,
+		WorkspaceOwnerAuthorityGeneration: transaction.authorization.workspaceOwnerAuthorityGeneration,
 	}
 	aggregateKind := "resource"
 	permission := "resource.manage"

@@ -30,20 +30,23 @@ type policyPublicationAuditHead struct {
 }
 
 type policyPublicationAuthorizationEvidence struct {
-	accountSessionID              publicid.ID
-	roleBindingID                 publicid.ID
-	roleDefinitionID              publicid.ID
-	scopeAuthorityGeneration      int64
-	membershipAuthorityGeneration int64
-	bindingAuthorityGeneration    int64
-	roleAuthorityGeneration       int64
+	accountSessionID                  publicid.ID
+	roleBindingID                     publicid.ID
+	roleDefinitionID                  publicid.ID
+	scopeAuthorityGeneration          int64
+	membershipAuthorityGeneration     int64
+	bindingAuthorityGeneration        int64
+	roleAuthorityGeneration           int64
+	workspaceOwnerAuthorityGeneration int64
 }
 
 func (evidence policyPublicationAuthorizationEvidence) isValid() bool {
-	return evidence.accountSessionID.IsValid() && evidence.roleBindingID.IsValid() &&
-		evidence.roleDefinitionID.IsValid() && evidence.scopeAuthorityGeneration > 0 &&
-		evidence.membershipAuthorityGeneration > 0 && evidence.bindingAuthorityGeneration > 0 &&
-		evidence.roleAuthorityGeneration > 0
+	return evidence.accountSessionID.IsValid() && evidence.scopeAuthorityGeneration > 0 &&
+		evidence.membershipAuthorityGeneration > 0 && validNetworkPermissionAuthority(
+		evidence.roleBindingID, evidence.roleDefinitionID,
+		evidence.bindingAuthorityGeneration, evidence.roleAuthorityGeneration,
+		evidence.workspaceOwnerAuthorityGeneration,
+	)
 }
 
 type policyPublicationTransaction struct {
@@ -122,6 +125,7 @@ func (transaction *policyPublicationTransaction) resolveAuthorization(
 	session := command.AccountSession()
 	var bindingIDValue, roleIDValue string
 	var scopeGeneration, membershipGeneration, bindingGeneration, roleGeneration int64
+	var ownerGeneration int64
 	var hasExpiry bool
 	var expiresAt time.Time
 	err := transaction.database.QueryRow(
@@ -149,6 +153,7 @@ func (transaction *policyPublicationTransaction) resolveAuthorization(
 		&roleGeneration,
 		&hasExpiry,
 		&expiresAt,
+		&ownerGeneration,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return policyPublicationAuthorizationEvidence{}, publication.ErrForbidden
@@ -159,22 +164,19 @@ func (transaction *policyPublicationTransaction) resolveAuthorization(
 	if hasExpiry && !expiresAt.After(evaluatedAt) {
 		return policyPublicationAuthorizationEvidence{}, publication.ErrForbidden
 	}
-	bindingID, err := publicid.Parse(bindingIDValue)
-	if err != nil {
-		return policyPublicationAuthorizationEvidence{}, ErrPolicyPublicationEvidence
-	}
-	roleID, err := publicid.Parse(roleIDValue)
+	bindingID, roleID, err := parseNetworkPermissionAuthority(bindingIDValue, roleIDValue, ownerGeneration)
 	if err != nil {
 		return policyPublicationAuthorizationEvidence{}, ErrPolicyPublicationEvidence
 	}
 	evidence := policyPublicationAuthorizationEvidence{
-		accountSessionID:              publicid.ID(session.ID()),
-		roleBindingID:                 bindingID,
-		roleDefinitionID:              roleID,
-		scopeAuthorityGeneration:      scopeGeneration,
-		membershipAuthorityGeneration: membershipGeneration,
-		bindingAuthorityGeneration:    bindingGeneration,
-		roleAuthorityGeneration:       roleGeneration,
+		accountSessionID:                  publicid.ID(session.ID()),
+		roleBindingID:                     bindingID,
+		roleDefinitionID:                  roleID,
+		scopeAuthorityGeneration:          scopeGeneration,
+		membershipAuthorityGeneration:     membershipGeneration,
+		bindingAuthorityGeneration:        bindingGeneration,
+		roleAuthorityGeneration:           roleGeneration,
+		workspaceOwnerAuthorityGeneration: ownerGeneration,
 	}
 	if !evidence.isValid() {
 		return policyPublicationAuthorizationEvidence{}, ErrPolicyPublicationEvidence

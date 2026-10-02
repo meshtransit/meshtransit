@@ -30,20 +30,23 @@ type resourceAuthorityAuditHead struct {
 }
 
 type resourceAuthorityAuthorizationEvidence struct {
-	accountSessionID              publicid.ID
-	roleBindingID                 publicid.ID
-	roleDefinitionID              publicid.ID
-	scopeAuthorityGeneration      int64
-	membershipAuthorityGeneration int64
-	bindingAuthorityGeneration    int64
-	roleAuthorityGeneration       int64
+	accountSessionID                  publicid.ID
+	roleBindingID                     publicid.ID
+	roleDefinitionID                  publicid.ID
+	scopeAuthorityGeneration          int64
+	membershipAuthorityGeneration     int64
+	bindingAuthorityGeneration        int64
+	roleAuthorityGeneration           int64
+	workspaceOwnerAuthorityGeneration int64
 }
 
 func (evidence resourceAuthorityAuthorizationEvidence) isValid() bool {
-	return evidence.accountSessionID.IsValid() && evidence.roleBindingID.IsValid() &&
-		evidence.roleDefinitionID.IsValid() && evidence.scopeAuthorityGeneration > 0 &&
-		evidence.membershipAuthorityGeneration > 0 && evidence.bindingAuthorityGeneration > 0 &&
-		evidence.roleAuthorityGeneration > 0
+	return evidence.accountSessionID.IsValid() && evidence.scopeAuthorityGeneration > 0 &&
+		evidence.membershipAuthorityGeneration > 0 && validNetworkPermissionAuthority(
+		evidence.roleBindingID, evidence.roleDefinitionID,
+		evidence.bindingAuthorityGeneration, evidence.roleAuthorityGeneration,
+		evidence.workspaceOwnerAuthorityGeneration,
+	)
 }
 
 type resourceAuthorityTransaction struct {
@@ -111,6 +114,7 @@ func (transaction *resourceAuthorityTransaction) resolveAuthorization(
 	}
 	var bindingIDValue, roleIDValue string
 	var scopeGeneration, membershipGeneration, bindingGeneration, roleGeneration int64
+	var ownerGeneration int64
 	var hasExpiry bool
 	var expiresAt time.Time
 	err := transaction.database.QueryRow(
@@ -131,7 +135,7 @@ func (transaction *resourceAuthorityTransaction) resolveAuthorization(
 		evaluatedAt,
 	).Scan(
 		&bindingIDValue, &roleIDValue, &scopeGeneration, &membershipGeneration,
-		&bindingGeneration, &roleGeneration, &hasExpiry, &expiresAt,
+		&bindingGeneration, &roleGeneration, &hasExpiry, &expiresAt, &ownerGeneration,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return resourceAuthorityAuthorizationEvidence{}, authority.ErrForbidden
@@ -142,11 +146,7 @@ func (transaction *resourceAuthorityTransaction) resolveAuthorization(
 	if hasExpiry && !expiresAt.After(evaluatedAt) {
 		return resourceAuthorityAuthorizationEvidence{}, authority.ErrForbidden
 	}
-	bindingID, err := publicid.Parse(bindingIDValue)
-	if err != nil {
-		return resourceAuthorityAuthorizationEvidence{}, ErrResourceAuthorityEvidence
-	}
-	roleID, err := publicid.Parse(roleIDValue)
+	bindingID, roleID, err := parseNetworkPermissionAuthority(bindingIDValue, roleIDValue, ownerGeneration)
 	if err != nil {
 		return resourceAuthorityAuthorizationEvidence{}, ErrResourceAuthorityEvidence
 	}
@@ -155,6 +155,7 @@ func (transaction *resourceAuthorityTransaction) resolveAuthorization(
 		roleDefinitionID: roleID, scopeAuthorityGeneration: scopeGeneration,
 		membershipAuthorityGeneration: membershipGeneration,
 		bindingAuthorityGeneration:    bindingGeneration, roleAuthorityGeneration: roleGeneration,
+		workspaceOwnerAuthorityGeneration: ownerGeneration,
 	}
 	if !evidence.isValid() {
 		return resourceAuthorityAuthorizationEvidence{}, ErrResourceAuthorityEvidence

@@ -14,28 +14,29 @@ import (
 )
 
 type resourceAuthorityChangeAuditPayload struct {
-	AuditReason                   string   `json:"audit_reason"`
-	RequestID                     string   `json:"request_id"`
-	SubjectKind                   string   `json:"subject_kind"`
-	SubjectPublicID               string   `json:"subject_public_id"`
-	Action                        string   `json:"action"`
-	TargetPrincipalID             string   `json:"target_principal_id"`
-	ExpectedSubjectVersion        int64    `json:"expected_subject_version"`
-	ExpectedRequestVersion        int64    `json:"expected_request_version,omitempty"`
-	ImpactHash                    string   `json:"impact_hash"`
-	RequiredConfirmations         int      `json:"required_confirmations"`
-	RequestExpiresAt              string   `json:"request_expires_at"`
-	EvidenceRole                  string   `json:"evidence_role"`
-	AuthenticationTime            string   `json:"authentication_time"`
-	ACR                           string   `json:"acr"`
-	AMR                           []string `json:"amr"`
-	AccountSessionID              string   `json:"account_session_id"`
-	RoleBindingID                 string   `json:"role_binding_id"`
-	RoleDefinitionID              string   `json:"role_definition_id"`
-	ScopeAuthorityGeneration      int64    `json:"scope_authority_generation"`
-	MembershipAuthorityGeneration int64    `json:"membership_authority_generation"`
-	BindingAuthorityGeneration    int64    `json:"binding_authority_generation"`
-	RoleAuthorityGeneration       int64    `json:"role_authority_generation"`
+	AuditReason                       string   `json:"audit_reason"`
+	RequestID                         string   `json:"request_id"`
+	SubjectKind                       string   `json:"subject_kind"`
+	SubjectPublicID                   string   `json:"subject_public_id"`
+	Action                            string   `json:"action"`
+	TargetPrincipalID                 string   `json:"target_principal_id"`
+	ExpectedSubjectVersion            int64    `json:"expected_subject_version"`
+	ExpectedRequestVersion            int64    `json:"expected_request_version,omitempty"`
+	ImpactHash                        string   `json:"impact_hash"`
+	RequiredConfirmations             int      `json:"required_confirmations"`
+	RequestExpiresAt                  string   `json:"request_expires_at"`
+	EvidenceRole                      string   `json:"evidence_role"`
+	AuthenticationTime                string   `json:"authentication_time"`
+	ACR                               string   `json:"acr"`
+	AMR                               []string `json:"amr"`
+	AccountSessionID                  string   `json:"account_session_id"`
+	RoleBindingID                     string   `json:"role_binding_id,omitempty"`
+	RoleDefinitionID                  string   `json:"role_definition_id,omitempty"`
+	ScopeAuthorityGeneration          int64    `json:"scope_authority_generation"`
+	MembershipAuthorityGeneration     int64    `json:"membership_authority_generation"`
+	BindingAuthorityGeneration        int64    `json:"binding_authority_generation"`
+	RoleAuthorityGeneration           int64    `json:"role_authority_generation"`
+	WorkspaceOwnerAuthorityGeneration int64    `json:"workspace_owner_authority_generation,omitempty"`
 }
 
 func authorityChangeAuditIdentity(
@@ -69,13 +70,14 @@ func (transaction *resourceAuthorityChangeRequestTransaction) appendAuthorityCha
 		EvidenceRole:           "requester",
 		AuthenticationTime:     preview.AccountSession().AuthenticationTime().UTC().Format(time.RFC3339Nano),
 		ACR:                    preview.AccountSession().ACR(), AMR: preview.AccountSession().AMR(),
-		AccountSessionID:              transaction.authorization.accountSessionID.String(),
-		RoleBindingID:                 transaction.authorization.roleBindingID.String(),
-		RoleDefinitionID:              transaction.authorization.roleDefinitionID.String(),
-		ScopeAuthorityGeneration:      transaction.authorization.scopeAuthorityGeneration,
-		MembershipAuthorityGeneration: transaction.authorization.membershipAuthorityGeneration,
-		BindingAuthorityGeneration:    transaction.authorization.bindingAuthorityGeneration,
-		RoleAuthorityGeneration:       transaction.authorization.roleAuthorityGeneration,
+		AccountSessionID:                  transaction.authorization.accountSessionID.String(),
+		RoleBindingID:                     authorizationIDString(transaction.authorization.roleBindingID),
+		RoleDefinitionID:                  authorizationIDString(transaction.authorization.roleDefinitionID),
+		ScopeAuthorityGeneration:          transaction.authorization.scopeAuthorityGeneration,
+		MembershipAuthorityGeneration:     transaction.authorization.membershipAuthorityGeneration,
+		BindingAuthorityGeneration:        transaction.authorization.bindingAuthorityGeneration,
+		RoleAuthorityGeneration:           transaction.authorization.roleAuthorityGeneration,
+		WorkspaceOwnerAuthorityGeneration: transaction.authorization.workspaceOwnerAuthorityGeneration,
 	})
 	if err != nil {
 		return fmt.Errorf("encode Resource authority request audit payload: %w", err)
@@ -164,13 +166,14 @@ func (transaction *resourceAuthorityChangeConfirmationTransaction) appendAuthori
 		EvidenceRole:           "confirmer",
 		AuthenticationTime:     command.AccountSession().AuthenticationTime().UTC().Format(time.RFC3339Nano),
 		ACR:                    command.AccountSession().ACR(), AMR: command.AccountSession().AMR(),
-		AccountSessionID:              transaction.authorization.accountSessionID.String(),
-		RoleBindingID:                 transaction.authorization.roleBindingID.String(),
-		RoleDefinitionID:              transaction.authorization.roleDefinitionID.String(),
-		ScopeAuthorityGeneration:      transaction.authorization.scopeAuthorityGeneration,
-		MembershipAuthorityGeneration: transaction.authorization.membershipAuthorityGeneration,
-		BindingAuthorityGeneration:    transaction.authorization.bindingAuthorityGeneration,
-		RoleAuthorityGeneration:       transaction.authorization.roleAuthorityGeneration,
+		AccountSessionID:                  transaction.authorization.accountSessionID.String(),
+		RoleBindingID:                     authorizationIDString(transaction.authorization.roleBindingID),
+		RoleDefinitionID:                  authorizationIDString(transaction.authorization.roleDefinitionID),
+		ScopeAuthorityGeneration:          transaction.authorization.scopeAuthorityGeneration,
+		MembershipAuthorityGeneration:     transaction.authorization.membershipAuthorityGeneration,
+		BindingAuthorityGeneration:        transaction.authorization.bindingAuthorityGeneration,
+		RoleAuthorityGeneration:           transaction.authorization.roleAuthorityGeneration,
+		WorkspaceOwnerAuthorityGeneration: transaction.authorization.workspaceOwnerAuthorityGeneration,
 	})
 	if err != nil {
 		return fmt.Errorf("encode Resource authority confirmation audit payload: %w", err)

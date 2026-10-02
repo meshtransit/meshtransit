@@ -150,7 +150,7 @@ func assertPostgreSQLResourceAuthority(
 	)
 	unauthorizedCommand, err := authority.NewCreateDeviceCommand(
 		unauthorizedDefinition, inventory202, session,
-		resourceAuthorityReason(t, "reject missing Workspace membership"),
+		resourceAuthorityReason(t, "reject missing Resource management permission"),
 		resourceAuthorityProof(t, 6),
 	)
 	if err != nil {

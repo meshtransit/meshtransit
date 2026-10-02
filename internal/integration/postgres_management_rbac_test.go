@@ -258,6 +258,22 @@ WHERE workspace_id = 103 AND network_id = 203`).Scan(&networkRevision); err != n
 			arguments []any
 		}{
 			{
+				name: "independent Workspace owner",
+				query: `INSERT INTO mesh.principal (
+    id, public_id, deployment_id, kind, state
+) OVERRIDING SYSTEM VALUE VALUES (
+    14, '01890f00-0000-7000-8000-000000000014', 1, 'account', 'active'
+)`,
+			},
+			{
+				// The management actors are members, so the existing negative
+				// role tests continue to test delegated authority rather than owners.
+				name: "member-only management fixture ownership",
+				query: `UPDATE mesh.workspace SET owner_principal_id=14,
+    authority_generation=authority_generation+1, version=version+1,
+    updated_at=pg_catalog.transaction_timestamp() WHERE id IN (102,103)`,
+			},
+			{
 				name: "authority confirmer Principal",
 				query: `INSERT INTO mesh.principal (
     id, public_id, deployment_id, kind, state
