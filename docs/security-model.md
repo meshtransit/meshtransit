@@ -211,3 +211,18 @@ Before a Linux compatibility release:
    scan fails on High or Critical findings, while retaining the full report.
 5. Test auth-key registration, browser registration plus restart completion, reconnect, direct traffic, relay traffic, exit behavior, route cleanup, DNS rollback, and malicious netmaps against disposable hosts.
 6. Confirm traffic logs have no payloads, secrets, or cross-network identifiers outside server-authorized scope.
+
+## Peer authority deadlines at the packet gate
+
+A control transport interruption or delayed sharing withdrawal must not extend
+mapped packet authority. The TUN gate checks the self and exact peer exclusive
+KeyExpiry on every inbound and outbound packet, before consulting return-flow
+state or ACL rules. An explicit Expired flag denies immediately. A legacy zero
+deadline keeps its existing meaning; Core direct shares always publish a finite
+peer deadline capped by the complete sharing authority lifetime.
+
+Address membership alone cannot transfer a tracked flow to a replaced Device or
+Node key. Identity, key, expiry or policy replacement clears tracked flows;
+endpoint-only updates retain them. This change adds no timer, worker, API field,
+Network selector or log data. It prevents stale access while the stream is silent;
+route and peer inventory cleanup still follows authoritative map withdrawal.

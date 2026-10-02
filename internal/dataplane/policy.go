@@ -46,19 +46,20 @@ type flowState struct {
 // reduces packet filters to destinations owned by the receiving node, so
 // outbound authorization is enforced by the destination node.
 type policyFilter struct {
-	mu           sync.Mutex
-	self         map[netip.Addr]struct{}
-	peers        map[netip.Addr]struct{}
-	rules        []compiledRule
-	flows        map[flowKey]flowState
-	clock        func() time.Time
-	maximumFlows int
+	mu            sync.Mutex
+	self          map[netip.Addr]struct{}
+	peers         map[netip.Addr]packetAuthority
+	selfAuthority packetAuthority
+	rules         []compiledRule
+	flows         map[flowKey]flowState
+	clock         func() time.Time
+	maximumFlows  int
 }
 
 func newPolicyFilter() *policyFilter {
 	return &policyFilter{
 		self:         map[netip.Addr]struct{}{},
-		peers:        map[netip.Addr]struct{}{},
+		peers:        map[netip.Addr]packetAuthority{},
 		rules:        []compiledRule{},
 		flows:        map[flowKey]flowState{},
 		clock:        time.Now,
@@ -79,11 +80,11 @@ func (f *policyFilter) UpdateNetwork(snapshot networkmap.Snapshot) {
 			self[address] = struct{}{}
 		}
 	}
-	peers := make(map[netip.Addr]struct{})
+	peers := make(map[netip.Addr]packetAuthority)
 	for _, peer := range snapshot.Peers {
 		for _, prefix := range peer.Addresses {
 			if address := prefix.Addr().Unmap(); address.IsValid() {
-				peers[address] = struct{}{}
+				peers[address] = authorityFor(peer)
 			}
 		}
 	}
@@ -97,9 +98,12 @@ func (f *policyFilter) UpdateNetwork(snapshot networkmap.Snapshot) {
 	}
 
 	f.mu.Lock()
-	isUnchanged := maps.Equal(f.self, self) && maps.Equal(f.peers, peers) &&
+	selfAuthority := authorityFor(snapshot.Self)
+	isUnchanged := maps.Equal(f.self, self) && f.selfAuthority.equal(selfAuthority) &&
+		maps.EqualFunc(f.peers, peers, func(first, second packetAuthority) bool { return first.equal(second) }) &&
 		slices.EqualFunc(f.rules, rules, equalCompiledRule)
 	f.self = self
+	f.selfAuthority = selfAuthority
 	f.peers = peers
 	f.rules = rules
 	if !isUnchanged {
@@ -125,16 +129,19 @@ func (f *policyFilter) Allow(direction PacketDirection, packet []byte) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	if !f.selfAuthority.usableAt(now) {
+		return false
+	}
 	switch direction {
 	case PacketOutbound:
-		if !containsAddress(f.self, header.Source) || !containsAddress(f.peers, header.Destination) {
+		if !containsAddress(f.self, header.Source) || !f.peerUsableAt(header.Destination, now) {
 			return false
 		}
 		f.trackOutbound(header, now)
 
 		return true
 	case PacketInbound:
-		if !containsAddress(f.peers, header.Source) || !containsAddress(f.self, header.Destination) {
+		if !f.peerUsableAt(header.Source, now) || !containsAddress(f.self, header.Destination) {
 			return false
 		}
 		if f.isTrackedReply(header, now) {
@@ -374,4 +381,31 @@ func equalCompiledRule(left, right compiledRule) bool {
 	return slices.Equal(left.sources, right.sources) &&
 		slices.Equal(left.destinations, right.destinations) &&
 		slices.Equal(left.protocols, right.protocols)
+}
+
+// packetAuthority binds each host address to its mapped identity and exclusive
+// deadline. A zero deadline preserves the protocol's legacy no-expiry meaning.
+type packetAuthority struct {
+	nodeID    uint64
+	publicKey string
+	expiresAt time.Time
+	expired   bool
+}
+
+func authorityFor(value networkmap.Node) packetAuthority {
+	return packetAuthority{nodeID: value.ID, publicKey: value.PublicKey, expiresAt: value.KeyExpiry, expired: value.Expired}
+}
+
+func (authority packetAuthority) usableAt(now time.Time) bool {
+	return !authority.expired && (authority.expiresAt.IsZero() || now.Before(authority.expiresAt))
+}
+
+func (authority packetAuthority) equal(other packetAuthority) bool {
+	return authority.nodeID == other.nodeID && authority.publicKey == other.publicKey &&
+		authority.expired == other.expired && authority.expiresAt.Equal(other.expiresAt)
+}
+
+func (f *policyFilter) peerUsableAt(address netip.Addr, now time.Time) bool {
+	authority, found := f.peers[address]
+	return found && authority.usableAt(now)
 }
