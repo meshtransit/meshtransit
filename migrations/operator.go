@@ -17,6 +17,9 @@ var resourceSharingPrivateEndpointFunctionOwnershipSQL string
 //go:embed operator/000055_resource_sharing_private_endpoint_publication_ownership.sql
 var resourceSharingEndpointPublicationOwnershipSQL string
 
+//go:embed operator/000079_direct_device_endpoint_function_ownership.sql
+var directDeviceEndpointFunctionOwnershipSQL string
+
 // ResourceSharingFunctionOwnershipSQL returns the operator-only post-migration
 // hardening step that transfers the two-authority functions to a NOLOGIN owner
 // before exposing their bounded entry points to the runtime role.
@@ -48,4 +51,10 @@ func ResourceSharingPrivateEndpointFunctionOwnershipSQL() string {
 // step that closes the v3 revocation bypass and exposes DNS-aware revocation.
 func ResourceSharingEndpointPublicationOwnershipSQL() string {
 	return resourceSharingEndpointPublicationOwnershipSQL
+}
+
+// DirectDeviceEndpointFunctionOwnershipSQL enables exact-scope direct readiness
+// and joint withdrawal while preserving supported rollback writer entry points.
+func DirectDeviceEndpointFunctionOwnershipSQL() string {
+	return directDeviceEndpointFunctionOwnershipSQL
 }

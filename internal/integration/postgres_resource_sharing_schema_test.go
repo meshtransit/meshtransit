@@ -52,7 +52,7 @@ WHERE namespace.nspname = 'mesh'
   AND class.relname = ANY(ARRAY[
       'resource_export', 'resource_export_constraint', 'share_offer', 'share_offer_locator',
       'trust_contract', 'imported_resource', 'imported_resource_access_name',
-	  'federation_alias_lease', 'private_endpoint',
+	  'federation_alias_lease', 'private_endpoint', 'direct_device_endpoint',
 	  'private_endpoint_readiness', 'imported_resource_dns_publication'
   ]::TEXT[])`).Scan(
 		&tableCount,
@@ -65,7 +65,7 @@ WHERE namespace.nspname = 'mesh'
 	); err != nil {
 		t.Fatal("query Resource Sharing table privileges", err)
 	}
-	if tableCount != 11 || !allRLS || !allForceRLS || runtimeMutation || !runtimeReadBounded ||
+	if tableCount != 12 || !allRLS || !allForceRLS || runtimeMutation || !runtimeReadBounded ||
 		publicDML || !writerBounded {
 		t.Fatalf(
 			"Resource Sharing tables count=%d rls=%t force=%t runtime_mutation=%t runtime_read=%t public_dml=%t writer=%t",
@@ -112,8 +112,8 @@ WHERE namespace.nspname = 'mesh_ops'
   AND procedure.proname = ANY(ARRAY[
 		'create_resource_share_offer_v1',
 		'decide_resource_share_offer_v2',
-		'activate_resource_share_v2',
-		'revoke_resource_share_v4'
+		'activate_resource_share_v3',
+		'revoke_resource_share_v5'
   ]::TEXT[])`).Scan(
 		&functionCount,
 		&runtimeExecute,

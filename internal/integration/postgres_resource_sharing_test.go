@@ -44,7 +44,7 @@ func assertPostgreSQLResourceSharing(
 	session := managementRBACAccountSessionFixture(t)
 	providerScope := resourceAuthorityScope(t, 103, 203)
 	consumerScope := resourceAuthorityScope(t, 103, 204)
-	resourceID := activeIntegrationResourceID(ctx, t, admin, 103, 203)
+	resourceID := createDirectDeviceResourceFixture(ctx, t, admin, runtimePool)
 	maximumTraffic := integrationSharingTraffic(t)
 	reason, err := sharing.NewAuditReason("share production Resource with an exact consumer Network")
 	if err != nil {
@@ -158,6 +158,7 @@ func assertPostgreSQLResourceSharing(
 	if err != nil {
 		t.Fatalf("sharing.NewActivateContract() error = %v", err)
 	}
+	assertDirectReadinessFailures(ctx, t, admin, service, activateCommand)
 	activated, err := service.ActivateContract(ctx, activateCommand)
 	if err != nil {
 		t.Fatalf("Resource Sharing ActivateContract() error = %v", err)
@@ -167,10 +168,7 @@ func assertPostgreSQLResourceSharing(
 		activeContract.Version() != contract.Version()+1 || activated.ImportedResourceVersion() != 2 {
 		t.Fatalf("Resource Sharing activate result = %+v", activated)
 	}
-	assertPrivateEndpointProvisioning(
-		ctx, t, admin, activeContract.ImportedResourceID(), "provisioning", 1,
-		"reserved", 1, "fd00:feed::1",
-	)
+	assertDirectDeviceEndpoint(ctx, t, admin, activeContract.ImportedResourceID(), "ready", 1)
 	replayedActivation, err := service.ActivateContract(ctx, activateCommand)
 	if err != nil {
 		t.Fatalf("Resource Sharing ActivateContract() replay error = %v", err)
@@ -181,9 +179,6 @@ func assertPostgreSQLResourceSharing(
 		replayedActivation.ConsumerSharingRevision() != activated.ConsumerSharingRevision() {
 		t.Fatalf("Resource Sharing activate replay = %+v", replayedActivation)
 	}
-	assertPrivateEndpointPublication(
-		ctx, t, admin, worker, activeContract.ImportedResourceID(), accessName, "fd00:feed::1/128",
-	)
 	resolved, err := store.ResolveImportedPolicyDestinations(
 		ctx,
 		session,
@@ -201,6 +196,7 @@ func assertPostgreSQLResourceSharing(
 	crossWorkspaceImport := assertCrossWorkspaceResourceSharingConsent(
 		ctx, t, admin, workerPool, service, providerScope, resourceID, maximumTraffic, reason,
 	)
+	assertLegacyDirectContractWithdrawal(ctx, t, admin, activeContract)
 	revokeCommand, err := sharing.NewRevokeContract(sharing.RevokeContractParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		ContractID: activeContract.ID(), ExpectedContractVersion: activeContract.Version(),
@@ -223,17 +219,38 @@ func assertPostgreSQLResourceSharing(
 	assertImportedResourceAccessName(
 		ctx, t, admin, contract.ImportedResourceID(), accessName, "withdrawn", 2,
 	)
-	assertPrivateEndpointProvisioning(
-		ctx, t, admin, activeContract.ImportedResourceID(), "revoked", 3,
-		"withdrawn", 3, "fd00:feed::1",
+	assertDirectDeviceEndpoint(ctx, t, admin, activeContract.ImportedResourceID(), "revoked", 2)
+	foreignConsumerScope := resourceAuthorityScope(t, 102, 202)
+	foreignConsumerSession := authorityConfirmerAccountSessionFixture(t)
+	sqlPublicationContract := createUnstagedPrivateEndpointFixture(
+		ctx, t, service, session, foreignConsumerSession, providerScope, foreignConsumerScope,
+		resourceID, maximumTraffic, reason, 128,
 	)
-	assertPrivateEndpointPublicationWithdrawn(
-		ctx, t, admin, activeContract.ImportedResourceID(), accessName,
+	aliasAccessName, err := sharing.ParseAccessName("unstaged.shared.consumer.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPrivateEndpointPublication(ctx, t, admin, worker,
+		sqlPublicationContract.ImportedResourceID(), aliasAccessName, "fd00:feed::2/128")
+	aliasRevoke, err := sharing.NewRevokeContract(sharing.RevokeContractParams{
+		ProviderScope: providerScope, ConsumerScope: foreignConsumerScope,
+		ContractID: sqlPublicationContract.ID(), ExpectedContractVersion: sqlPublicationContract.Version(),
+		LocalScope: foreignConsumerScope, AccountSession: foreignConsumerSession,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 131),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RevokeContract(ctx, aliasRevoke); err != nil {
+		t.Fatal(err)
+	}
+	assertPrivateEndpointPublicationWithdrawn(ctx, t, admin,
+		sqlPublicationContract.ImportedResourceID(), aliasAccessName)
+	unstagedContract := createUnstagedPrivateEndpointFixture(
+		ctx, t, service, session, foreignConsumerSession, providerScope, foreignConsumerScope,
+		resourceID, maximumTraffic, reason, 125,
 	)
-	unstagedImport := createUnstagedPrivateEndpointFixture(
-		ctx, t, service, session, providerScope, consumerScope,
-		resourceID, maximumTraffic, reason,
-	)
+	unstagedImport := unstagedContract.ImportedResourceID()
 	assertAutomaticPrivateEndpointInvalidation(
 		ctx, t, admin, worker, workerPool, crossWorkspaceImport, unstagedImport,
 	)
@@ -263,15 +280,16 @@ func createUnstagedPrivateEndpointFixture(
 	ctx context.Context,
 	t *testing.T,
 	service *sharing.Service,
-	session accountsession.Session,
+	providerSession, consumerSession accountsession.Session,
 	providerScope, consumerScope network.Scope,
 	resourceID resource.ID,
 	maximumTraffic sharing.TrafficSet,
 	reason sharing.AuditReason,
-) sharing.ImportedResourceID {
+	proofMarker byte,
+) sharing.Contract {
 	t.Helper()
 	created, err := service.CreateOffer(ctx, mustCreateSharingOffer(
-		t, providerScope, consumerScope, resourceID, maximumTraffic, session, reason, 125,
+		t, providerScope, consumerScope, resourceID, maximumTraffic, providerSession, reason, proofMarker,
 	))
 	if err != nil {
 		t.Fatalf("create unstaged Private Endpoint offer: %v", err)
@@ -293,8 +311,8 @@ func createUnstagedPrivateEndpointFixture(
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		OfferID: offer.Offer().ID(), ExpectedOfferVersion: offer.Offer().Version(),
 		Token: token, Action: sharing.DecisionActionAccept,
-		ImportedDisplayName: name, AccessName: accessName, AccountSession: session,
-		Reason: reason, Idempotency: resourceAuthorityProof(t, 126),
+		ImportedDisplayName: name, AccessName: accessName, AccountSession: consumerSession,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, proofMarker+1),
 	})
 	if err != nil {
 		t.Fatalf("construct unstaged Private Endpoint acceptance: %v", err)
@@ -310,8 +328,8 @@ func createUnstagedPrivateEndpointFixture(
 	activation, err := sharing.NewActivateContract(sharing.ActivateContractParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		ContractID: contract.ID(), ExpectedContractVersion: contract.Version(),
-		AccountSession: session, Reason: reason,
-		Idempotency: resourceAuthorityProof(t, 127),
+		AccountSession: consumerSession, Reason: reason,
+		Idempotency: resourceAuthorityProof(t, proofMarker+2),
 	})
 	if err != nil {
 		t.Fatalf("construct unstaged Private Endpoint activation: %v", err)
@@ -324,7 +342,7 @@ func createUnstagedPrivateEndpointFixture(
 	if !hasContract || activeContract.State() != sharing.ContractStateActive {
 		t.Fatalf("unstaged Private Endpoint activation = %+v", activated)
 	}
-	return activeContract.ImportedResourceID()
+	return activeContract
 }
 
 func assertCrossWorkspaceResourceSharingConsent(
@@ -426,10 +444,10 @@ func assertCrossWorkspaceResourceSharingConsent(
 	}
 	assertPrivateEndpointProvisioning(
 		ctx, t, admin, activeContract.ImportedResourceID(), "provisioning", 1,
-		"reserved", 1, "fd00:feed::2",
+		"reserved", 1, "fd00:feed::1",
 	)
 	assertPrivateEndpointPublicationViaAdapter(
-		ctx, t, admin, workerPool, activeContract.ImportedResourceID(), accessName, "fd00:feed::2",
+		ctx, t, admin, workerPool, activeContract.ImportedResourceID(), accessName, "fd00:feed::1",
 	)
 	assertCrossWorkspaceSharingConsentEvidence(ctx, t, admin, offer.Offer().ID())
 
@@ -1681,37 +1699,6 @@ func newIntegrationResourceSharingStore(
 		t.Fatalf("postgres.NewResourceSharingStore() error = %v", err)
 	}
 	return store
-}
-
-func activeIntegrationResourceID(
-	ctx context.Context,
-	t *testing.T,
-	admin *pgx.Conn,
-	workspaceID, networkID int64,
-) resource.ID {
-	t.Helper()
-	var value string
-	if err := admin.QueryRow(ctx, `SELECT resource.public_id::TEXT
-FROM mesh.resource AS resource
-JOIN mesh.resource_device_target AS target
-  ON target.workspace_id = resource.workspace_id
- AND target.network_id = resource.network_id
- AND target.resource_id = resource.id
- AND target.target_generation = resource.target_generation
- AND target.state = 'active'
-WHERE resource.workspace_id = $1
-  AND resource.network_id = $2
-  AND resource.state = 'active'
-  AND resource.deleted_at IS NULL
-ORDER BY resource.created_at DESC, resource.id DESC
-LIMIT 1`, workspaceID, networkID).Scan(&value); err != nil {
-		t.Fatalf("query active Resource Sharing fixture: %v", err)
-	}
-	id, err := resource.ParseID(value)
-	if err != nil {
-		t.Fatalf("resource.ParseID() error = %v", err)
-	}
-	return id
 }
 
 func integrationSharingTraffic(t *testing.T) sharing.TrafficSet {

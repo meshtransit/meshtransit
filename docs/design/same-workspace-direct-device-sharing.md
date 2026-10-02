@@ -4,9 +4,11 @@
 
 The protocol/domain checkpoint now supports separately validated directional
 same-Workspace Device projections, exact traffic intersections, bounded host
-routes, full/delta removal and independent sharing expiry. Cross-Network packet
-access is not enabled on a live deployment: the current PostgreSQL map reader
-still loads only same-Network candidates and rules. Imported Resource publication
+routes, full/delta removal and independent sharing expiry. Migration 79 adds
+distinct generation-bound direct Device readiness and transactional contract
+withdrawal. Cross-Network packet access is not enabled on a live deployment:
+the current PostgreSQL map reader still loads only same-Network candidates and
+rules. Imported Resource publication
 retains provenance until the dedicated bilateral direct reader is complete.
 
 The canonical requirement is in
@@ -57,10 +59,12 @@ fails closed. Imported Resources cannot be re-exported through this slice.
 
 ## Durable lifecycle and Redis
 
-Direct readiness must use a distinct validated path. The current alias endpoint
-in `provisioning` cannot be reinterpreted as ready or have its route proof
-bypassed. Extend the endpoint authority boundary with a reviewed direct readiness
-contract before the map reader consumes direct grants.
+Direct readiness uses `mesh.direct_device_endpoint`, separately from federation
+alias provisioning. Activation pins current Resource/Device/key/primary-lease
+evidence in the existing two-Network transaction; a terminal contract transition
+withdraws that proof atomically. The alias endpoint in `provisioning` retains its
+route proof requirements. A ready direct proof grants no access until the
+authenticated bilateral reader validates current consumer policy and all ceilings.
 
 Activation and withdrawal commit state, both affected Network revisions,
 immutable audit and outbox records atomically, using deterministic Network lock
@@ -112,8 +116,9 @@ bounds. Connectivity is accepted only for the resulting authorized peers and
 session generations. Expiry reconstructs authority independently of self expiry;
 authority reload failure withdraws sharing rather than retaining old grants.
 Notifications cannot create authority, and reconciliation repairs lost hints.
-The first protocol checkpoint remains unconnected to the runtime database
-reader until direct activation, bilateral lifecycle and RLS tests are complete.
+The protocol checkpoint remains unconnected to the runtime map reader.
+Direct activation/withdrawal now has PostgreSQL/RLS integration; authenticated
+bilateral reads and both-Network refresh remain required before live enablement.
 
 ## Protocol checkpoint and required client deadline gate
 
@@ -153,3 +158,6 @@ adapter encoder. Fixture consumers must pin the producing Core revision and
 verify these frames with the client decoder. Database direct readiness,
 authenticated bilateral reads, both-Network revision wakeups and a real encrypted
 packet cycle remain prerequisites for live enablement.
+
+The durable readiness checkpoint and remaining runtime gates are recorded in
+[`direct-device-readiness-2026-10-02.md`](../qualification/direct-device-readiness-2026-10-02.md).

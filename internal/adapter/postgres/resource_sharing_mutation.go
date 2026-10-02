@@ -479,7 +479,8 @@ func (store *ResourceSharingStore) DecideOffer(
 }
 
 // ActivateContract revalidates every bilateral authority input and makes the
-// accepted contract eligible for policy compilation. It grants no endpoint path.
+// accepted contract eligible for policy compilation. Same-Workspace Device
+// readiness pins the current target; current consumer policy still grants access.
 func (store *ResourceSharingStore) ActivateContract(
 	ctx context.Context,
 	command sharing.ActivateContract,
@@ -621,8 +622,12 @@ func (store *ResourceSharingStore) ActivateContract(
 	); err != nil {
 		return sharing.MutationResult{}, resourceSharingDatabaseError(ctx, err)
 	}
+	expectedAliasVersion := int64(1)
+	if command.ProviderScope().WorkspaceID() == command.ConsumerScope().WorkspaceID() {
+		expectedAliasVersion = 0
+	}
 	if contractVersion != command.ExpectedContractVersion()+1 || revisions.importedVersion <= 1 ||
-		revisions.aliasLeaseVersion != 1 || revisions.endpointVersion != 1 {
+		revisions.aliasLeaseVersion != expectedAliasVersion || revisions.endpointVersion != 1 {
 		return sharing.MutationResult{}, sharing.ErrUnavailable
 	}
 	projection, err := readResourceSharingOffer(ctx, transaction, locator.offerID)
