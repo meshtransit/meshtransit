@@ -16,8 +16,10 @@ The canonical requirement is in
 `10-resource-sharing-and-private-endpoints.md` in the architecture set: Networks
 remain isolated, and sharing grants access only to an explicitly exported
 Resource. Within a Workspace, non-overlapping overlay prefixes permit direct
-Device projection. Across Workspaces, a Private Endpoint with federation aliases
-remains mandatory even when current prefixes happen not to overlap.
+Device projection. Across Workspaces, a logical Private Endpoint with federation
+aliases remains mandatory even when current prefixes happen not to overlap. For
+Device Resources, both participating clients implement the
+[peer alias path](device-alias-sharing.md); no additional gateway host is required.
 
 ## First executable slice
 

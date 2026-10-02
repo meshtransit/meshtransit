@@ -94,12 +94,14 @@ Within one Workspace, validated non-overlapping overlay prefixes permit the
 existing direct Device path. The endpoint is a logical imported destination;
 introducing a mandatory gateway hop for this case is unnecessary.
 
-Across Workspaces, the existing architecture requires consumer-local Resource
-and source aliases plus an authenticated provider agent or gateway, even when
-current prefixes happen not to overlap. The AWS endpoint model is a useful
-analogy for this isolation. Aliases, forwarding, return routing and their client
-capability are still MeshTransit implementation work; an imported UI row alone
-does not deliver this path.
+Across Workspaces, Resource and Consumer Source Aliases remain required even
+when current prefixes happen not to overlap. The product decision dated
+2026-10-02 uses the two participating Device clients for translation and
+enforcement, without another gateway host or application proxy. The Private
+Endpoint is a logical destination and lifecycle object. AWS's resource gateway
+is not adopted as the Device packet path. Alias and client capability work is
+specified in [Device sharing through peer aliases](../design/device-alias-sharing.md);
+an imported UI row alone does not deliver this path.
 
 DNS should identify the imported destination in the consumer's namespace and
 follow that endpoint's lifecycle. It must not import the provider's complete
@@ -158,8 +160,9 @@ principal. Imported Resources remain non-exportable through this slice.
    state and repair missed notifications through reconciliation.
 4. Qualify first-rule creation, removal, foreign target changes, revoke and
    expiry against two real encrypted clients before enabling live sharing.
-5. Complete scoped DNS. Cross-Workspace alias/gateway delivery and subnet work
-   require separate capability and packet qualification.
+5. Complete Device alias delivery using the participating clients and qualify
+   overlapping IPv4/IPv6 before scoped DNS. Resources without a client and subnet
+   work require separate capability and packet qualification.
 
 Relevant current design:
 [Same-Workspace direct Device sharing](../design/same-workspace-direct-device-sharing.md).

@@ -1,0 +1,180 @@
+# Device sharing through peer aliases
+
+## Status and product decision
+
+The product decision dated 2026-10-02 requires Device sharing to use the two
+participating Device clients. It introduces no additional gateway machine,
+application proxy, provider subnet route or packet hop. The consumer and provider
+remain members of their original Networks.
+
+This document specifies the required behavior. Alias allocation, client packet
+translation and cross-Workspace map delivery are not implemented or enabled on
+POC by this documentation checkpoint. The existing same-Workspace direct reader
+remains a separate implementation path.
+
+A Private Endpoint is the logical contract, local destination and lifecycle
+object. For a Device-backed Resource, the provider enforcement process is
+`meshd` on that Device. The architecture's agent role does not require another
+host. Resources without a client and routed Resources remain later work.
+
+WireGuard uses the authenticated direct path when available. The existing
+encrypted relay fallback can carry the same ciphertext when NAT prevents a
+direct path. Alias translation does not introduce a gateway or terminate
+end-to-end encryption at a relay or Core.
+
+## Address contract
+
+Each peer pair has four address roles, separately for IPv4 and IPv6:
+
+| Role | Meaning |
+| --- | --- |
+| Consumer canonical address | The consumer's address in its own Network |
+| Provider canonical address | The provider's address in its own Network |
+| Resource Alias | The provider destination visible to the consumer |
+| Consumer Source Alias | The consumer source visible to the provider |
+
+Both Workspaces may use identical canonical addresses. Cross-Workspace sharing
+always allocates both alias roles from collision-checked federation pools;
+current non-overlap is not a reason to expose canonical foreign addresses.
+Same-Workspace Device sharing keeps canonical host addresses where the existing
+address contract proves non-overlap.
+
+A Resource Alias remains bound to one contract, Resource and consumer Network.
+A Consumer Source Alias remains bound to one endpoint generation and consumer
+Node. Neither alias is a new Device, membership or identity. Alias ownership is
+bound to exact Node keys, key epochs, recovery epoch and exclusive deadlines.
+
+Alias allocation must exclude ordinary leases, configured overlay pools,
+reserved DNS addresses, active aliases and quarantined aliases. Configure IPv4
+and IPv6 alias pools explicitly; no fixed example prefix becomes a runtime
+allocation default. Install only exact host routes. Alias knowledge grants no
+permission, and no peer may claim another peer's source alias.
+
+## Packet behavior
+
+The following requirements are protocol independent:
+
+| Stage | Packet source | Packet destination |
+| --- | --- | --- |
+| Consumer kernel sends | Consumer canonical | Resource Alias |
+| Consumer client encrypts | Consumer Source Alias | Resource Alias |
+| Provider client delivers | Consumer Source Alias | Provider canonical |
+| Provider kernel replies | Provider canonical | Consumer Source Alias |
+| Provider client encrypts | Resource Alias | Consumer Source Alias |
+| Consumer client delivers | Resource Alias | Consumer canonical |
+
+The consumer rewrites its own source only for the selected provider peer. The
+provider rewrites its own source only for the selected consumer peer. On ingress,
+the receiving client accepts only its exact local alias for that authenticated
+peer and rewrites that destination to its canonical local address. Other local
+peers keep their canonical traffic and policy behavior.
+
+WireGuard cryptokey routing must bind each inbound source alias to the expected
+peer key before delivery. Validate the original alias destination before its
+rewrite; a packet addressed to a raw provider address must not become an
+implicit alias packet. The destination client enforces the effective inbound
+protocol/port tuple against the consumer source alias and local Resource.
+
+Translation preserves transport ports, TCP state and ICMP echo identifiers.
+It updates the IPv4 header checksum and applicable TCP, UDP and ICMPv6 checksums.
+IPv4 UDP's absent-checksum semantics must be preserved; invalid IPv6 UDP checksums
+fail closed. Malformed, fragmented or unsupported packet forms remain denied.
+ICMP error translation requires a separately tested contract for the quoted
+packet and cannot be inferred from echo support.
+
+## Policy after acceptance
+
+The provider sets the export maximum. The consumer publishes one ordinary
+Access Rule with local sources and the typed Imported Resource destination.
+Effective access remains the intersection of export maximum, consumer rule,
+both Guardrails, Resource constraints, active contract and endpoint grant.
+
+Accepting without a consumer rule grants no packet access. A permission holder
+can save and publish a rule directly. Console selects the imported destination;
+users do not enter aliases, revisions, generations or a second provider rule.
+
+The provider inbound projection is derived from that current intersection.
+Only the consumer may initiate. Provider replies require the admitted flow;
+provider initiation requires its own opposite-direction contract and rule.
+Ordinary local wildcard selectors must not absorb imported peers. A local allow
+rule or return-flow record cannot widen an alias grant or bypass its expiry.
+
+## Atomic state and withdrawal
+
+A client applies alias bindings, peer keys, routes, DNS and packet grants as one
+validated authority generation. A partial or ambiguous replacement closes the
+packet path. The same snapshot governs translation and policy; concurrent map
+updates cannot mix an old alias with a new peer or rule.
+
+Security changes invalidate tracked flows before replacement. Contract revoke,
+rule removal, target replacement, ownership or membership loss, expiry, Node-key
+change and recovery change withdraw the exact grant from both projections.
+Per-packet exclusive deadlines remain enforced during a silent map stream.
+
+Core commits authority, alias ownership, both Network revisions, audit and outbox
+atomically. Bounded dependency discovery includes accepted ready contracts before
+a consumer rule exists, so its first rule wakes the provider. Redis carries
+post-commit hints; authoritative reconciliation repairs missed notifications.
+Released aliases enter quarantine before any reuse. A new generation never
+inherits a flow, packet grant or deadline from a withdrawn generation.
+
+## Client and wire constraints
+
+Numeric legacy capability 142 alone does not prove alias translation support.
+The pinned current client drops the legacy per-peer self-alias fields during
+conversion and has no translation stage. Core must admit an alias projection
+only through an explicitly supported, versioned client contract, with both
+participating clients qualified for the required address families and grants.
+
+The legacy representation has one self alias per peer per address family, while
+current client maps require unique peer keys. The first alias profile must reject
+multiple incompatible active endpoint bindings for the same Node-key pair. It
+must not duplicate a peer key, choose one alias silently or combine unrelated
+generations. A richer multiple-Resource representation requires a separate
+versioned contract and conformance cases.
+
+The product contract includes exact contract/endpoint generations, directed
+packet grants and deadlines. Legacy masquerade fields describe address behavior
+only; they do not carry complete generation or permission evidence. They cannot
+substitute for the Resource endpoint capability or create a raw-address fallback.
+
+Use the existing 256-peer packet-engine bound and bounded grant counts. A map
+that exceeds a profile limit fails as a whole; truncating its authority is not
+permitted. The privileged helper still receives only validated host routes and
+canonical self addresses, with alias pools explicitly included in its allowed
+route pools. Packet translation remains in the unprivileged client.
+
+## Threat boundaries
+
+| Threat | Required control |
+| --- | --- |
+| Source spoofing | Exact source alias bound to the authenticated Node key |
+| Raw-address bypass | Verify the peer-specific alias destination before rewrite |
+| Cross-Workspace address collision | Separate alias allocation plus exact host routes |
+| Stale or mixed generations | Atomic snapshot, generation checks and packet deadlines |
+| Reverse or transitive access | Directed grants; stateful replies; imports cannot be re-exported |
+| Alias reuse | Durable quarantine covering stale session and projection lifetimes |
+| Resource exhaustion | Bounded peers, aliases, grants, parsing and flow state |
+| Redis loss or forgery | Hints never grant access; re-read PostgreSQL and reconcile |
+
+## Delivery gates
+
+1. Define a versioned product-owned alias projection and synthetic packet/map
+   vectors. Qualify observable legacy behavior independently where compatibility
+   is intended; no reference implementation source or schema is copied.
+2. Implement and qualify client alias validation, translation, checksums,
+   peer-specific policy and atomic replacement for IPv4 and IPv6.
+3. Add durable alias allocation, quarantine and bounded authenticated bilateral
+   map reads without widening ordinary Network inventory.
+4. Complete both-Network revision/connectivity dependencies, including first-rule
+   creation and lost-hint reconciliation.
+5. Use two real encrypted clients in distinct Networks. Test TCP, UDP and ICMP,
+   identical canonical IPv4/IPv6, adjacent denied ports, raw-address and spoofed
+   source rejection, reverse initiation, a third Network, policy narrowing,
+   revoke, expiry, key replacement, reconnect and alias quarantine.
+6. Qualify imported DNS names and lifecycle. Router and SSH remain deferred.
+
+Implementation evidence and the exact reference revisions are recorded in
+[the alias assessment](../research/custom-control-device-alias-assessment-2026-10-02.md).
+The existing runtime checkpoint is documented in
+[Same-Workspace direct Device sharing](same-workspace-direct-device-sharing.md).
