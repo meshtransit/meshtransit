@@ -7,9 +7,11 @@ participating Device clients. It introduces no additional gateway machine,
 application proxy, provider subnet route or packet hop. The consumer and provider
 remain members of their original Networks.
 
-This document specifies the required behavior. Alias allocation, client packet
-translation and cross-Workspace map delivery are not implemented or enabled on
-POC by this documentation checkpoint. The existing same-Workspace direct reader
+This document specifies the required behavior. Client alias validation and packet translation are implemented in
+`meshd` commit `bbe1ec7b77ea35e7217e53694bbe9f5201d82d89`, with the owned v1
+contract documented in that repository. The client does not advertise support.
+Durable alias allocation and cross-Workspace map delivery are not implemented
+or enabled on POC. The existing same-Workspace direct reader
 remains a separate implementation path.
 
 A Private Endpoint is the logical contract, local destination and lifecycle
@@ -121,8 +123,9 @@ inherits a flow, packet grant or deadline from a withdrawn generation.
 ## Client and wire constraints
 
 Numeric legacy capability 142 alone does not prove alias translation support.
-The pinned current client drops the legacy per-peer self-alias fields during
-conversion and has no translation stage. Core must admit an alias projection
+Client commit `bbe1ec7` validates the versioned v1 grant alongside the
+per-peer self-alias fields and translates at the packet gate. Earlier clients
+drop those fields during conversion and have no translation stage. Core must admit an alias projection
 only through an explicitly supported, versioned client contract, with both
 participating clients qualified for the required address families and grants.
 
@@ -178,3 +181,59 @@ Implementation evidence and the exact reference revisions are recorded in
 [the alias assessment](../research/custom-control-device-alias-assessment-2026-10-02.md).
 The existing runtime checkpoint is documented in
 [Same-Workspace direct Device sharing](same-workspace-direct-device-sharing.md).
+
+## Bounded alias allocation proposal
+
+Core implements `ipam.NextDeviceAliases` as a pure allocation
+proposal, not a lease or packet grant. Explicit IPv4 and/or IPv6 pools are
+mandatory. Each requested family yields both a Resource Alias and a Consumer
+Source Alias; failure in any family returns no pair. No runtime prefix defaults
+or inferred address family are permitted.
+
+The caller must supply one authoritative, transactionally locked snapshot of
+all excluded prefixes and in-use, quarantined and reserved addresses. Alias
+pools cannot overlap any excluded prefix. Address exclusions include ordinary
+leases and DNS reservations. Quarantined addresses remain excluded until a
+durable lifecycle transition releases them; clock passage alone cannot release
+an address. Duplicate exclusions are harmless and do not create identity.
+
+The proposal excludes unsafe address blocks, network addresses and IPv4
+broadcast addresses. It selects the lowest available hosts deterministically
+within a bounded search window. Limits are 4,096 excluded prefixes, 65,536
+combined excluded address entries and 65,536 candidates per individual host
+search. Four searches at most are needed for a dual-family pair. Exhaustion
+within that window does not prove the entire prefix is full.
+
+Threat controls before implementation:
+
+| STRIDE threat | Severity | Required boundary |
+| --- | --- | --- |
+| Spoofing/elevation through a proposed address | High | A proposal grants no authority; exact contract/generation/Node ownership remains mandatory |
+| Tampered or incomplete exclusion snapshot | High | Caller loads durable authority under the realm lock; no Redis-only snapshot |
+| Alias collision or stale-map reuse | High | Exclude ordinary/configured/DNS/active/quarantined addresses; durable uniqueness and quarantine remain mandatory |
+| Partial family allocation | High | Any error returns a zero proposal; persistence must commit both families atomically |
+| Work or memory exhaustion | Medium | Explicit collection and candidate bounds; no workers, timers or retries |
+| Repudiation/disclosure | Medium | Persistence later requires atomic audit/outbox; the proposal emits no logs or topology |
+
+This helper is not connected to runtime allocation. A future application use
+case must lock the durable realm, check existing idempotent ownership, persist
+both aliases with uniqueness constraints and exact generations, advance both
+Network revisions, and write audit/outbox in the same transaction. A proposal
+computed from stale state must never be retried or published independently.
+
+### Local verification of the allocation proposal
+
+The proposal is covered by complete-pair, explicit-family, immutable-input,
+quarantine, exhaustion and adversarial pool/bounds tests. A bounded ten-second
+fuzz run completed 1,543,739 executions. Whole-tree uncached race tests with
+shuffle, vet, lint and `go mod tidy -diff` pass. `govulncheck` reports no reachable
+or imported-package findings and three module-only findings outside the current
+call graph. No dependency is added by this increment.
+
+Full-tree and complete-history Gitleaks scans report six existing matches in
+Dex patches committed before this change: five public module checksums in
+`0003-security-dependency-updates.patch`, and the RSA test-key context hunk in
+`0008-inject-connector-http-client.patch` (`server/server_test.go`). They are
+outside this increment. No scanner baseline or exclusion is added. The full
+secret-scan gate remains unresolved; an increment-scoped scan is recorded
+separately. No release, migration or POC deployment is qualified by this proposal.

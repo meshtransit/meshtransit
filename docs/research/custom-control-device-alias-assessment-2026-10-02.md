@@ -8,8 +8,10 @@ sharing.
 
 - Read-only custom Headscale reference:
   `412b020d50ac18e1a5b2ba54da07b1aa1d7ac0e5`.
-- MeshTransit client:
+- MeshTransit client inspection baseline:
   `f60e40e8a1a9d3d83a5ce10b7b7dec25fbcfe885`.
+- Implemented client alias checkpoint:
+  `bbe1ec7b77ea35e7217e53694bbe9f5201d82d89`.
 - Client compatibility dependency: `tailscale.com v1.102.3`.
 - Core runtime baseline: `a70546e`; documentation baseline:
   `44cb533be5c378573f85db8cf50b01029ad6a998`.
@@ -44,7 +46,7 @@ No reference tests, oracle service or real cross-Workspace traffic were run for
 this assessment. Source and test assertions indicate intended wire output;
 black-box qualification remains a delivery gate.
 
-## Current client gap
+## Previous client gap (inspection baseline)
 
 `internal/compat/ts2021/netmap.go:convertNode` copies identity, host addresses,
 routes, endpoints and expiry. It does not transfer either per-peer masquerade
@@ -58,9 +60,35 @@ client that supplies masquerading on its behalf.
 
 Therefore ordinary meshd login/packet compatibility with this control reference
 must not be described as qualified cross-Workspace alias compatibility. Sending
-only peer alias addresses to the current client cannot implement the required
+only peer alias addresses to that baseline client cannot implement the required
 source rewrite or return path. A numeric capability of 142 does not prove that
 missing code exists.
+
+## Implemented client checkpoint
+
+Client commit `bbe1ec7` adds the independently specified v1 grant model, strict
+adapter decoding, per-peer atomic packet translation and engine replacement
+fencing. Exact keys, generation/revision/recovery, direction, service lists,
+local/remote address ownership and exclusive deadlines are validated. Legacy
+self-alias fields without the new grant are rejected. The feature is not yet
+advertised by clients or delivered by Core.
+
+Eight synthetic checksum vectors and six two-client roundtrip vectors cover
+both IP families with identical canonical addresses, TCP, UDP and ICMP echo.
+Tests cover raw destinations, spoofed sources, reverse initiation, grant expiry,
+revoke, replacement, full flow state and concurrent maps. Whole-tree race/vet/
+lint pass. Packet fuzzing completed 1,527,250 executions after retaining and
+fixing an invalid-original-address regression; strict grant fuzzing completed
+69,943 executions. Client tree/history secret checks are clean. These tests
+qualify the owned synthetic contract; they do not prove real encrypted sharing
+or parity with the isolated legacy oracle.
+
+The client contract and remaining gates are documented in its `docs/device-alias.md`.
+Outbound alias flow reporting is a known gap: observers see the translated
+source, which the current reporter does not index. Core allocation/quarantine,
+client admission, bilateral map delivery/wakeups, real encrypted isolation and
+imported DNS remain unfinished. Current Core work adds only a pure bounded
+allocation proposal, with no runtime lease or authority changes.
 
 ## Product decision
 
