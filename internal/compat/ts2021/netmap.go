@@ -1119,6 +1119,15 @@ func (a *mapAccumulator) apply(
 		}
 		candidate.dns = dnsConfig
 	}
+	if a.initialized {
+		for id, peer := range candidate.peers {
+			if previous, exists := a.peers[id]; exists {
+				if err := networkmap.ValidateAliasAdvance(previous.Alias, peer.Alias); err != nil {
+					return networkmap.Snapshot{}, false, fmt.Errorf("%w: %w", ErrNetmapInvalid, err)
+				}
+			}
+		}
+	}
 	if a.initialized && equalMapAccumulatorState(a, candidate) {
 		if _, err := networkmap.ValidateAndClone(candidate.snapshot(), now); err != nil {
 			return networkmap.Snapshot{}, false, fmt.Errorf("%w: %w", ErrNetmapInvalid, err)
@@ -1265,7 +1274,8 @@ func equalMapNode(left, right networkmap.Node) bool {
 		left.HomeRelay == right.HomeRelay &&
 		left.OnlineKnown == right.OnlineKnown && left.Online == right.Online &&
 		left.KeyExpiry.Equal(right.KeyExpiry) && left.Expired == right.Expired &&
-		left.MachineAuthorized == right.MachineAuthorized
+		left.MachineAuthorized == right.MachineAuthorized &&
+		networkmap.EqualAlias(left.Alias, right.Alias)
 }
 
 func equalRules(left, right []networkmap.Rule) bool {
@@ -1504,6 +1514,11 @@ func convertNode(node *tailcfg.Node) (networkmap.Node, error) {
 		Expired:           node.Expired,
 		MachineAuthorized: node.MachineAuthorized,
 	}
+	alias, err := convertAlias(node)
+	if err != nil {
+		return networkmap.Node{}, err
+	}
+	converted.Alias = alias
 	if !node.DiscoKey.IsZero() {
 		converted.DiscoveryKey = node.DiscoKey.String()
 	}
@@ -1685,6 +1700,11 @@ func convertRelayMap(raw *tailcfg.DERPMap) (map[int]networkmap.RelayRegion, erro
 }
 
 func cloneMapNode(node networkmap.Node) networkmap.Node {
+	if node.Alias != nil {
+		alias := *node.Alias
+		alias.Services = slices.Clone(alias.Services)
+		node.Alias = &alias
+	}
 	node.Addresses = append([]netip.Prefix(nil), node.Addresses...)
 	node.AllowedIPs = append([]netip.Prefix(nil), node.AllowedIPs...)
 	node.Endpoints = append([]netip.AddrPort(nil), node.Endpoints...)

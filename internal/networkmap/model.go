@@ -35,6 +35,7 @@ type Node struct {
 	KeyExpiry         time.Time
 	Expired           bool
 	MachineAuthorized bool
+	Alias             *AliasBinding
 }
 
 // SelectorKind identifies one bounded address selector representation.

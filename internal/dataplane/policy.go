@@ -54,6 +54,8 @@ type policyFilter struct {
 	flows         map[flowKey]flowState
 	clock         func() time.Time
 	maximumFlows  int
+	aliases       map[netip.Addr]aliasPacketGrant
+	suspended     bool
 }
 
 func newPolicyFilter() *policyFilter {
@@ -64,6 +66,7 @@ func newPolicyFilter() *policyFilter {
 		flows:        map[flowKey]flowState{},
 		clock:        time.Now,
 		maximumFlows: defaultMaximumTrackedFlows,
+		aliases:      map[netip.Addr]aliasPacketGrant{},
 	}
 }
 
@@ -74,6 +77,19 @@ func (f *policyFilter) UpdateNetwork(snapshot networkmap.Snapshot) {
 	if f == nil {
 		return
 	}
+	if snapshotHasAliases(snapshot) {
+		aliasTime := time.Time{}
+		if f.clock != nil {
+			aliasTime = f.clock().UTC()
+		}
+		validated, err := networkmap.ValidateAndClone(snapshot, aliasTime)
+		if err != nil {
+			snapshot = networkmap.Snapshot{}
+		} else {
+			snapshot = validated
+		}
+	}
+	aliases := aliasPacketGrants(snapshot)
 	self := make(map[netip.Addr]struct{}, len(snapshot.Self.Addresses))
 	for _, prefix := range snapshot.Self.Addresses {
 		if address := prefix.Addr().Unmap(); address.IsValid() {
@@ -98,14 +114,22 @@ func (f *policyFilter) UpdateNetwork(snapshot networkmap.Snapshot) {
 	}
 
 	f.mu.Lock()
+	if err := f.validateAliasTransitionLocked(snapshot); err != nil {
+		self = map[netip.Addr]struct{}{}
+		peers = map[netip.Addr]packetAuthority{}
+		aliases = map[netip.Addr]aliasPacketGrant{}
+		rules = nil
+		snapshot = networkmap.Snapshot{}
+	}
 	selfAuthority := authorityFor(snapshot.Self)
 	isUnchanged := maps.Equal(f.self, self) && f.selfAuthority.equal(selfAuthority) &&
 		maps.EqualFunc(f.peers, peers, func(first, second packetAuthority) bool { return first.equal(second) }) &&
-		slices.EqualFunc(f.rules, rules, equalCompiledRule)
+		slices.EqualFunc(f.rules, rules, equalCompiledRule) && equalAliasPacketGrants(f.aliases, aliases)
 	f.self = self
 	f.selfAuthority = selfAuthority
 	f.peers = peers
 	f.rules = rules
+	f.aliases = aliases
 	if !isUnchanged {
 		f.flows = map[flowKey]flowState{}
 	}
@@ -129,9 +153,20 @@ func (f *policyFilter) Allow(direction PacketDirection, packet []byte) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if !f.selfAuthority.usableAt(now) {
+	if f.suspended || !f.selfAuthority.usableAt(now) {
 		return false
 	}
+	address := header.Source
+	if direction == PacketOutbound {
+		address = header.Destination
+	}
+	if _, aliased := f.aliases[address]; aliased {
+		return false // Alias traffic requires the atomic translation boundary.
+	}
+	return f.allowOrdinaryLocked(direction, header, now)
+}
+
+func (f *policyFilter) allowOrdinaryLocked(direction PacketDirection, header packetmeta.Header, now time.Time) bool {
 	switch direction {
 	case PacketOutbound:
 		if !containsAddress(f.self, header.Source) || !f.peerUsableAt(header.Destination, now) {

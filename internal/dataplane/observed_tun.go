@@ -27,7 +27,7 @@ func (d *observedTUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) 
 		allowed := 0
 		for index := range count {
 			packet, valid := packetFromReadBuffer(bufs[index], sizes[index], offset)
-			if !valid || (d.filter != nil && !d.filter.Allow(PacketOutbound, packet)) {
+			if !valid || (d.filter != nil && !d.filter.ProcessPacket(PacketOutbound, packet)) {
 				continue
 			}
 			if allowed != index {
@@ -61,7 +61,7 @@ func (d *observedTUN) Write(bufs [][]byte, offset int) (int, error) {
 			continue
 		}
 		packet := buffer[offset:]
-		if d.filter != nil && !d.filter.Allow(PacketInbound, packet) {
+		if d.filter != nil && !d.filter.ProcessPacket(PacketInbound, packet) {
 			continue
 		}
 		allowed = append(allowed, buffer)

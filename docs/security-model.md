@@ -226,3 +226,23 @@ Node key. Identity, key, expiry or policy replacement clears tracked flows;
 endpoint-only updates retain them. This change adds no timer, worker, API field,
 Network selector or log data. It prevents stale access while the stream is silent;
 route and peer inventory cleanup still follows authoritative map withdrawal.
+
+## Device alias authority
+
+A versioned peer binding is required alongside alias addresses. Exact self/peer
+Node keys, contract/endpoint versions, direction, service grants and finite
+exclusive deadlines are validated before publication. Unknown or ambiguous
+JSON, invalid family/address ownership and regressed authority reject the
+candidate. Legacy address fields alone create no access.
+
+WireGuard checks source ownership before the TUN gate verifies the exact local
+alias destination. The gate rejects raw destinations, spoofed canonical sources,
+reverse initiation and expired grants before flow state or wildcard rules can
+widen access. Checksum-invalid or unsupported alias packets are denied without
+mutation. Admission pauses during key/route replacement; apply failure removes
+packet authority. Bounds cover peers, grants, decoder depth and reply state.
+
+This implementation is not yet advertised or deployed as sharing support.
+Durable alias ownership/quarantine, Core bilateral authority and wakeups, real
+encrypted overlap/isolation matrices, imported DNS and scoped alias telemetry
+remain gates. See [device-alias.md](device-alias.md).

@@ -250,6 +250,38 @@ func (e *WireGuardEngine) Apply(
 	snapshot networkmap.Snapshot,
 	privateKey NodePrivateKey,
 ) (State, error) {
+	if e == nil || e.filter == nil {
+		return StateFailed, errors.New("dataplane: packet engine is not initialized")
+	}
+	if snapshotHasAliases(snapshot) {
+		validated, err := networkmap.ValidateAndClone(snapshot, e.clock().UTC())
+		if err != nil {
+			_ = e.Close()
+			e.filter.UpdateNetwork(networkmap.Snapshot{})
+			return StateFailed, err
+		}
+		snapshot = validated
+	}
+	if err := e.filter.validateAliasTransition(snapshot); err != nil {
+		_ = e.Close()
+		e.filter.UpdateNetwork(networkmap.Snapshot{})
+		return StateFailed, err
+	}
+	e.filter.suspendFor(snapshot)
+	state, err := e.applySnapshot(ctx, snapshot, privateKey)
+	if err != nil {
+		e.filter.UpdateNetwork(networkmap.Snapshot{})
+		return state, err
+	}
+	e.filter.resume()
+	return state, nil
+}
+
+func (e *WireGuardEngine) applySnapshot(
+	ctx context.Context,
+	snapshot networkmap.Snapshot,
+	privateKey NodePrivateKey,
+) (State, error) {
 	if e == nil {
 		return StateFailed, errors.New("dataplane: wireguard engine is not initialized")
 	}

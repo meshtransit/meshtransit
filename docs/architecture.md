@@ -174,6 +174,19 @@ worker. Rapid authenticate-and-disconnect churn preserves exponential backoff;
 the retry sequence resets only after a connection remains established for
 thirty seconds.
 
+## Device alias boundary
+
+The client implements a versioned, peer-specific Device alias contract for both
+IP families. It binds translation to exact Node keys, endpoint generations,
+service grants and exclusive deadlines. Canonical self addresses stay on the
+TUN; remote aliases become exact peer host routes. The observed-TUN gate checks
+policy and rewrites packets under one authority lock, and the engine pauses
+admission while replacing alias keys/routes. No additional gateway host or
+packet hop is introduced. Core allocation/delivery and real encrypted sharing
+are not yet enabled or qualified. The client does not advertise this feature.
+See [the complete client contract](device-alias.md) for limits, packet behavior,
+evidence and remaining delivery gates.
+
 ## DNS boundary
 
 The compatibility adapter translates every non-nil DNS map into product-owned values and preserves nil-as-unchanged delta semantics inside a streaming session. Resolver order, locally authoritative empty routes, search domains, MagicDNS intent, and A/AAAA records are retained. Names are canonicalized to lowercase without a trailing dot and the entire candidate remains atomic with the rest of the network map. The initial resolver boundary accepts only classic IP resolvers on port 53. URL-based DoH/HTTP resolvers, bootstrap addresses, exit-node overrides, malformed names, duplicate routes/records, and unsafe resolver addresses fail closed.

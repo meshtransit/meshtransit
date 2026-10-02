@@ -83,6 +83,10 @@ func ValidateAndClone(snapshot Snapshot, now time.Time) (Snapshot, error) {
 		}
 	}
 
+	if err := validateAliases(snapshot, now); err != nil {
+		return Snapshot{}, fmt.Errorf("%w: alias: %w", ErrInvalid, err)
+	}
+
 	for index, rule := range snapshot.Policy {
 		if err := validateRule(rule); err != nil {
 			return Snapshot{}, fmt.Errorf("%w: policy rule %d: %w", ErrInvalid, index, err)
@@ -531,6 +535,7 @@ func cloneDNSConfig(config *DNSConfig) *DNSConfig {
 }
 
 func cloneNode(node Node) Node {
+	node.Alias = cloneAlias(node.Alias)
 	node.Addresses = append([]netip.Prefix(nil), node.Addresses...)
 	node.AllowedIPs = append([]netip.Prefix(nil), node.AllowedIPs...)
 	node.Endpoints = append([]netip.AddrPort(nil), node.Endpoints...)
