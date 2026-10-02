@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -178,7 +179,7 @@ FROM mesh_ops.read_browser_registration_landing_v1(
     '01890f00-0000-7000-8000-000000000001'::UUID,
     $1::BIGINT, $2::TEXT, $3::BYTEA, $4::BYTEA
 )`, epoch, sessionKeyID, session, token).Scan(&id, &state, &hostname)
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return "", "", ""
 		}
 		if err != nil {

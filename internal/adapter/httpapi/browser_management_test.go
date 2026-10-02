@@ -24,6 +24,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 
+	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/identity/sessioncontext"
 	"github.com/meshtransit/meshtransit/internal/network"
@@ -158,8 +159,9 @@ func TestBrowserManagementReadsServerAuthoritativeScopes(t *testing.T) {
 	expectedSession := managementSessionFixture(t)
 	validScope := body.Data.PrincipalID == expectedSession.PrincipalID().String() &&
 		body.Data.Workspace.ID == "01890f00-0000-7000-8000-000000000101" &&
-		body.Data.Workspace.DisplayName == "Primary" && len(body.Data.Networks) == 1 &&
+		body.Data.Workspace.DisplayName == "Primary" && body.Data.Workspace.DisplayCode == "000000000101" && len(body.Data.Networks) == 1 &&
 		body.Data.Networks[0].ID == "01890f00-0000-7000-8000-000000000202" &&
+		body.Data.Networks[0].DisplayCode == "000000000202" &&
 		reflect.DeepEqual(body.Data.Networks[0].Permissions, []string{"policy.approve"})
 	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" ||
 		response.Header().Get("Set-Cookie") != "" || response.Header().Get("Www-Authenticate") != "" ||
@@ -1133,9 +1135,14 @@ func browserManagementTestOptions(t *testing.T) (BrowserManagementOptions, *brow
 	if err != nil {
 		t.Fatal(err)
 	}
+	scope, err = scope.WithDisplayCode(identity.DisplayCode("000000000202"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	scopes, err := sessioncontext.NewService(
 		browserManagementScopeReader{result: sessioncontext.ReadResult{
-			WorkspaceID: workspaceID, WorkspaceDisplayName: "Primary", Scopes: []sessioncontext.ManagementScope{scope},
+			WorkspaceID: workspaceID, WorkspaceDisplayName: "Primary",
+			WorkspaceDisplayCode: identity.DisplayCode("000000000101"), Scopes: []sessioncontext.ManagementScope{scope},
 		}},
 		fixture,
 	)

@@ -327,12 +327,14 @@ func decodeAccountSessionDeploymentCapabilities(encoded string) (sessioncontext.
 type accountSessionManagementScopesRecord struct {
 	WorkspaceID          string                                `json:"workspace_id"`
 	WorkspaceDisplayName string                                `json:"workspace_display_name"`
+	WorkspaceDisplayCode string                                `json:"workspace_display_code"`
 	Scopes               []accountSessionManagementScopeRecord `json:"scopes"`
 }
 
 type accountSessionManagementScopeRecord struct {
 	NetworkID          string   `json:"network_id"`
 	NetworkDisplayName string   `json:"network_display_name"`
+	NetworkDisplayCode string   `json:"network_display_code"`
 	Permissions        []string `json:"permissions"`
 }
 
@@ -347,7 +349,8 @@ func decodeAccountSessionManagementScopes(encoded string) (sessioncontext.ReadRe
 	}
 	result := sessioncontext.ReadResult{
 		WorkspaceID: workspaceID, WorkspaceDisplayName: record.WorkspaceDisplayName,
-		Scopes: make([]sessioncontext.ManagementScope, len(record.Scopes)),
+		WorkspaceDisplayCode: identity.DisplayCode(record.WorkspaceDisplayCode),
+		Scopes:               make([]sessioncontext.ManagementScope, len(record.Scopes)),
 	}
 	for index, item := range record.Scopes {
 		networkID, err := network.ParseID(item.NetworkID)
@@ -365,6 +368,12 @@ func decodeAccountSessionManagementScopes(encoded string) (sessioncontext.ReadRe
 		)
 		if err != nil {
 			return sessioncontext.ReadResult{}, sessioncontext.ErrInvalidResult
+		}
+		if item.NetworkDisplayCode != "" {
+			value, err = value.WithDisplayCode(identity.DisplayCode(item.NetworkDisplayCode))
+			if err != nil {
+				return sessioncontext.ReadResult{}, sessioncontext.ErrInvalidResult
+			}
 		}
 		result.Scopes[index] = value
 	}

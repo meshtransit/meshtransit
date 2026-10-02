@@ -109,6 +109,13 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 128
+                },
+                "display_code": {
+                  "type": "string",
+                  "minLength": 12,
+                  "maxLength": 12,
+                  "pattern": "^[0-9]{12}$",
+                  "description": "Immutable display label. UUID remains the canonical API and authorization identity."
                 }
               }
             },
@@ -153,6 +160,13 @@
                         "share.revoke"
                       ]
                     }
+                  },
+                  "display_code": {
+                    "type": "string",
+                    "minLength": 12,
+                    "maxLength": 12,
+                    "pattern": "^[0-9]{12}$",
+                    "description": "Immutable display label. UUID remains the canonical API and authorization identity."
                   }
                 }
               }

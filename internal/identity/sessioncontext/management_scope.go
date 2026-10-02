@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/meshtransit/meshtransit/internal/authorization"
+	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/workspace"
@@ -36,6 +37,7 @@ var (
 type ManagementScope struct {
 	networkID   network.ID
 	displayName string
+	displayCode identity.DisplayCode
 	permissions []authorization.Permission
 }
 
@@ -61,6 +63,18 @@ func (value ManagementScope) NetworkID() network.ID { return value.networkID }
 // DisplayName returns the bounded current Network label.
 func (value ManagementScope) DisplayName() string { return value.displayName }
 
+// DisplayCode returns the immutable human-readable Network label when available.
+func (value ManagementScope) DisplayCode() identity.DisplayCode { return value.displayCode }
+
+// WithDisplayCode attaches a validated label without changing scope or permissions.
+func (value ManagementScope) WithDisplayCode(code identity.DisplayCode) (ManagementScope, error) {
+	if !value.IsValid() || !code.IsValid() {
+		return ManagementScope{}, ErrInvalidResult
+	}
+	value.displayCode = code
+	return value, nil
+}
+
 // Permissions returns a defensive copy of the projected UI permission set.
 func (value ManagementScope) Permissions() []authorization.Permission {
 	return append([]authorization.Permission(nil), value.permissions...)
@@ -69,6 +83,7 @@ func (value ManagementScope) Permissions() []authorization.Permission {
 // IsValid reports whether the projection is safe and canonical.
 func (value ManagementScope) IsValid() bool {
 	if !value.networkID.IsValid() || !validDisplayName(value.displayName) ||
+		(value.displayCode != "" && !value.displayCode.IsValid()) ||
 		len(value.permissions) < 1 || len(value.permissions) > 10 {
 		return false
 	}
@@ -107,6 +122,7 @@ func isConsoleManagementPermission(permission authorization.Permission) bool {
 type ReadResult struct {
 	WorkspaceID          workspace.ID
 	WorkspaceDisplayName string
+	WorkspaceDisplayCode identity.DisplayCode
 	Scopes               []ManagementScope
 }
 
@@ -125,6 +141,7 @@ type Reader interface {
 type Page struct {
 	workspaceID          workspace.ID
 	workspaceDisplayName string
+	workspaceDisplayCode identity.DisplayCode
 	items                []ManagementScope
 	next                 network.ID
 }
@@ -134,6 +151,9 @@ func (page Page) WorkspaceID() workspace.ID { return page.workspaceID }
 
 // WorkspaceDisplayName returns the bounded current Workspace label.
 func (page Page) WorkspaceDisplayName() string { return page.workspaceDisplayName }
+
+// WorkspaceDisplayCode returns the immutable label when available during rollout.
+func (page Page) WorkspaceDisplayCode() identity.DisplayCode { return page.workspaceDisplayCode }
 
 // Items returns a defensive copy of the page.
 func (page Page) Items() []ManagementScope {
@@ -187,6 +207,7 @@ func (service *Service) List(
 		return Page{}, err
 	}
 	if result.WorkspaceID != workspaceID || !validDisplayName(result.WorkspaceDisplayName) ||
+		(result.WorkspaceDisplayCode != "" && !result.WorkspaceDisplayCode.IsValid()) ||
 		len(result.Scopes) > limit+1 {
 		return Page{}, ErrInvalidResult
 	}
@@ -199,7 +220,8 @@ func (service *Service) List(
 	}
 	page := Page{
 		workspaceID: workspaceID, workspaceDisplayName: result.WorkspaceDisplayName,
-		items: append([]ManagementScope(nil), result.Scopes...),
+		workspaceDisplayCode: result.WorkspaceDisplayCode,
+		items:                append([]ManagementScope(nil), result.Scopes...),
 	}
 	if len(page.items) > limit {
 		page.items = page.items[:limit]

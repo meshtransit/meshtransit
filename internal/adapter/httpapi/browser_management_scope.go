@@ -90,6 +90,7 @@ func (browser *BrowserManagement) readManagementScopes(
 		}
 		networks[index] = managementScopeNetwork{
 			ID: item.NetworkID().String(), DisplayName: item.DisplayName(), Permissions: encodedPermissions,
+			DisplayCode: item.DisplayCode().String(),
 		}
 	}
 	next := ""
@@ -105,6 +106,7 @@ func (browser *BrowserManagement) readManagementScopes(
 			PrincipalID: session.PrincipalID().String(),
 			Workspace: managementScopeWorkspace{
 				ID: page.WorkspaceID().String(), DisplayName: page.WorkspaceDisplayName(),
+				DisplayCode: page.WorkspaceDisplayCode().String(),
 			},
 			Networks: networks,
 		},
@@ -201,11 +203,13 @@ func decodeManagementScopePageToken(encoded string, workspaceID workspace.ID) (n
 type managementScopeWorkspace struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"display_name"`
+	DisplayCode string `json:"display_code,omitempty"`
 }
 
 type managementScopeNetwork struct {
 	ID          string   `json:"id"`
 	DisplayName string   `json:"display_name"`
+	DisplayCode string   `json:"display_code,omitempty"`
 	Permissions []string `json:"permissions"`
 }
 

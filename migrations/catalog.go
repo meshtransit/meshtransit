@@ -319,6 +319,9 @@ const activePolicyReadDescription = "active policy read"
 //go:embed 000076_workspace_owner_authority.up.sql
 var workspaceOwnerAuthoritySQL string
 
+//go:embed 000077_tenant_display_identity.up.sql
+var tenantDisplayIdentitySQL string
+
 // Migration is one immutable, ordered, forward-only catalog entry.
 type Migration struct {
 	Version                 int64
@@ -426,6 +429,7 @@ func Catalog() []Migration {
 		newMigration(74, consolePolicyAuthoringScopeDescription, consolePolicyAuthoringScopeSQL),
 		newMigration(75, activePolicyReadDescription, activePolicyReadSQL),
 		newMigration(76, "Workspace owner tenant administration authority", workspaceOwnerAuthoritySQL),
+		newMigration(77, "immutable Workspace and Network display identifiers", tenantDisplayIdentitySQL),
 	}
 }
 
