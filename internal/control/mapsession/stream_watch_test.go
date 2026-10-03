@@ -20,7 +20,7 @@ func TestStreamSharingDependencyRefreshesBeforeFirstRuleAndReleasesRemovedScopes
 		if err != nil {
 			t.Fatal(err)
 		}
-		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial, provider}}
+		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial, initial, provider}}
 		revisions := newScopedRevisionFixture()
 		connectivity := newScopedConnectivityFixture()
 		service := newStreamServiceWithWatchersFixture(t, opener, &streamPresenceStore{}, revisions, connectivity)
@@ -37,7 +37,7 @@ func TestStreamSharingDependencyRefreshesBeforeFirstRuleAndReleasesRemovedScopes
 		}
 		revisions.channel(consumer.Scope().NetworkID()) <- revision
 		synctest.Wait()
-		if calls, _ := opener.state(); calls != 2 {
+		if calls, _ := opener.state(); calls != 4 {
 			t.Fatalf("opens=%d, want immediate remote refresh", calls)
 		}
 		if len(initial.AuthorizedPeers()) != len(provider.AuthorizedPeers()) || !initial.PacketPolicy().Equal(provider.PacketPolicy()) {
@@ -72,7 +72,7 @@ func TestStreamRemoteRuleRemovalSendsFullWithdrawalAtUnchangedLocalRevision(t *t
 		if err != nil {
 			t.Fatal(err)
 		}
-		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial, provider}}
+		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial, initial, provider}}
 		revisions := newScopedRevisionFixture()
 		connectivity := newScopedConnectivityFixture()
 		service := newStreamServiceWithWatchersFixture(t, opener, &streamPresenceStore{}, revisions, connectivity)
@@ -213,4 +213,87 @@ func (fixture *scopedConnectivityFixture) active() int {
 	fixture.mu.Lock()
 	defer fixture.mu.Unlock()
 	return fixture.count
+}
+
+func TestStreamInitialSharingCatchupNeverPublishesRevokedProjection(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		provider, consumer, evidence := directDeviceFixtureAt(t, policy.ProtocolICMP, nil, time.Now())
+		projection, err := NewDirectDeviceProjection(directDeviceParams(t, provider, provider, consumer, evidence))
+		if err != nil {
+			t.Fatal(err)
+		}
+		initial, err := provider.WithDirectDeviceProjections([]DirectDeviceProjection{projection})
+		if err != nil {
+			t.Fatal(err)
+		}
+		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial, provider}}
+		revisions := newScopedRevisionFixture()
+		connectivity := newScopedConnectivityFixture()
+		service := newStreamServiceWithWatchersFixture(t, opener, &streamPresenceStore{}, revisions, connectivity)
+		machine, request := authenticatedRequestFixture(t, initial)
+		sink := &recordingStreamSink{}
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan error, 1)
+		go func() { result <- service.Serve(ctx, machine, request, sink) }()
+		synctest.Wait()
+		maps, _ := sink.state()
+		if len(maps) != 1 || len(maps[0].AuthorizedPeers()) != 0 {
+			t.Fatal("pre-subscription grant escaped initial catchup")
+		}
+		if !slices.Equal(revisions.activeScopes(), []network.ID{provider.Scope().NetworkID()}) {
+			t.Fatal("removed initial scope leaked subscription")
+		}
+		cancel()
+		synctest.Wait()
+		if err := <-result; !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+		if connectivity.active() != 0 || len(revisions.activeScopes()) != 0 {
+			t.Fatal("catchup leaked watchers")
+		}
+	})
+}
+
+func TestStreamInitialSharingCatchupFailsClosedOnReadFailureAndChurn(t *testing.T) {
+	for _, name := range []string{"read failure", "scope churn"} {
+		synctest.Test(t, func(t *testing.T) {
+			provider, consumer, _ := directDeviceFixtureAt(t, policy.ProtocolICMP, nil, time.Now())
+			initial, err := provider.WithSharingDependencies([]network.Scope{consumer.Scope()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			otherID, err := network.ParseID("01890f00-0000-7000-8000-000000000999")
+			if err != nil {
+				t.Fatal(err)
+			}
+			otherScope, err := network.NewScope(provider.Scope().WorkspaceID(), otherID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			other, err := provider.WithSharingDependencies([]network.Scope{otherScope})
+			if err != nil {
+				t.Fatal(err)
+			}
+			opener := &streamSnapshotOpener{snapshots: []Snapshot{initial, other, initial, other, initial}}
+			if name == "read failure" {
+				opener.failures = []error{nil, ErrUnauthorized}
+			}
+			revisions := newScopedRevisionFixture()
+			connectivity := newScopedConnectivityFixture()
+			presence := &streamPresenceStore{}
+			service := newStreamServiceWithWatchersFixture(t, opener, presence, revisions, connectivity)
+			machine, request := authenticatedRequestFixture(t, initial)
+			sink := &recordingStreamSink{}
+			if err := service.Serve(t.Context(), machine, request, sink); err == nil {
+				t.Fatal("unsafe initial catchup succeeded")
+			}
+			maps, _ := sink.state()
+			if len(maps) != 0 || connectivity.active() != 0 || len(revisions.activeScopes()) != 0 {
+				t.Fatal("unsafe catchup released authority or leaked watchers")
+			}
+			if state := presence.state(); state.acquires != 0 {
+				t.Fatal("failed catchup acquired presence")
+			}
+		})
+	}
 }

@@ -27,3 +27,16 @@ Required next gates: guarded reservation/readiness worker, closed subscription
 startup gap, explicit runtime composition, current client claim, live Core/SSO
 client enrollment, encrypted isolation/withdrawal/reconnect tests and DNS.
 No deployed POC database, membership or packet rule changed in this increment.
+
+## Stream subscription catchup
+
+Before releasing an initial sharing map, Core subscribes to every derived scope
+and rereads PostgreSQL. A removed grant cannot escape through the initial map.
+Changed scope sets are resubscribed with at most four attempts; read failure,
+identity discontinuity or sustained churn releases no map or presence. Later
+subscription replacements queue a complete authority reconciliation after the
+new watches exist. Each replaced watcher is canceled, joined and released.
+
+Uncached race-enabled map-session regression tests and package lint passed.
+Tests cover removal between the first read and subscription without a Redis hint,
+bounded scope churn, read failure, expiry after startup and lifecycle cleanup.

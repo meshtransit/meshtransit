@@ -144,11 +144,14 @@ func (service *StreamService) Serve(
 		return ErrPresenceConflict
 	}
 	defer service.release(snapshot.NodeID())
-	watch, err := service.watchSnapshot(ctx, snapshot)
+	snapshot, watch, err := service.watchInitialSnapshot(ctx, machine, request, snapshot)
 	if err != nil {
 		return err
 	}
 	defer watch.close()
+	if !snapshot.KeyExpiry().After(time.Now()) {
+		return ErrAuthorizationExpired
+	}
 	lease, err := node.NewPresenceLease(
 		snapshot.NodeID(),
 		snapshot.SessionGeneration(),
@@ -227,6 +230,10 @@ func (service *StreamService) run(
 			}
 			watch.close()
 			watch = nextWatch
+			select {
+			case watch.updates <- streamWakeup{reconcile: true}:
+			default:
+			}
 		}
 		var projectionDeadline <-chan time.Time
 		if deadline := current.ProjectionExpiry(); deadline.Before(current.KeyExpiry()) {

@@ -3,9 +3,12 @@ package mapsession
 import (
 	"context"
 	"errors"
-	"github.com/meshtransit/meshtransit/internal/network"
 	"reflect"
+	"slices"
 	"sync"
+
+	"github.com/meshtransit/meshtransit/internal/control"
+	"github.com/meshtransit/meshtransit/internal/network"
 )
 
 type streamWakeup struct {
@@ -111,4 +114,44 @@ func (watch *streamWatch) close() {
 			release()
 		}
 	})
+}
+
+// Subscribe before the final authoritative read. Sharing scope churn is bounded;
+// no initial packet map is released until every returned scope is subscribed.
+func (service *StreamService) watchInitialSnapshot(ctx context.Context, machine control.AuthenticatedMachine, request Request, current Snapshot) (Snapshot, *streamWatch, error) {
+	for attempt := 0; attempt < 4; attempt++ {
+		watch, err := service.watchSnapshot(ctx, current)
+		if err != nil {
+			return Snapshot{}, nil, err
+		}
+		if len(current.SharingScopes()) == 0 {
+			return current, watch, nil
+		}
+		next, err := service.openSnapshot(ctx, machine, request)
+		if err != nil {
+			watch.close()
+			return Snapshot{}, nil, errors.Join(ErrStreamUnavailable, err)
+		}
+		if !streamCanAdvance(current, next) {
+			watch.close()
+			return Snapshot{}, nil, ErrStreamDiscontinuity
+		}
+		scopes := append([]network.Scope{next.Scope()}, next.SharingScopes()...)
+		if slices.Equal(scopes, watch.scopes) {
+			select {
+			case err := <-watch.failure:
+				watch.close()
+				return Snapshot{}, nil, err
+			default:
+			}
+			if err := ctx.Err(); err != nil {
+				watch.close()
+				return Snapshot{}, nil, err
+			}
+			return next, watch, nil
+		}
+		watch.close()
+		current = next
+	}
+	return Snapshot{}, nil, ErrStreamDiscontinuity
 }

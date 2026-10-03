@@ -347,7 +347,7 @@ func TestDirectDeviceExpiryReconstructsMapWithoutEndingSelf(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial, provider}}
+		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial, initial, provider}}
 		service := newStreamServiceFixture(t, opener, &streamPresenceStore{})
 		sink := &recordingStreamSink{}
 		machine, request := authenticatedRequestFixture(t, initial)
@@ -383,7 +383,7 @@ func TestDirectDeviceExpiryWithdrawsOnUnavailableAuthority(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial}, failures: []error{nil, errors.New("controlled authoritative read failure")}}
+		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial}, failures: []error{nil, nil, errors.New("controlled authoritative read failure")}}
 		service := newStreamServiceFixture(t, opener, &streamPresenceStore{})
 		sink := &recordingStreamSink{}
 		machine, request := authenticatedRequestFixture(t, initial)
@@ -427,7 +427,7 @@ func TestDirectDeviceReadFailureWithdrawsBeforeGrantExpiry(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial}, failures: []error{nil, errors.New("controlled bilateral read failure")}}
+		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial}, failures: []error{nil, nil, errors.New("controlled bilateral read failure")}}
 		service := newStreamServiceFixture(t, opener, &streamPresenceStore{})
 		service.options.ReconcileInterval = 2 * time.Second
 		sink := &recordingStreamSink{}
