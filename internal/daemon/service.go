@@ -1801,14 +1801,9 @@ func (s *Service) register(ctx context.Context, authKey, followupURL string) (Lo
 	if err != nil {
 		return Login{}, fmt.Errorf("reading identity for registration: %w", err)
 	}
-	if authKey == "" && followupURL == "" && record.HasPendingAuth() {
-		return Login{
-			ProfileID: active.ID,
-			State:     RegistrationPending,
-			AuthURL:   record.PendingAuthURL(),
-		}, nil
-	}
-
+	// An explicit login rechecks the pinned control plane. Only the server knows
+	// whether a persisted browser intent is still live or needs replacement.
+	// Failure leaves the previous pending URL and identity untouched.
 	return s.registerWithRecord(ctx, ctx, active, record, authKey, followupURL)
 }
 

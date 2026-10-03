@@ -87,6 +87,132 @@ func TestService_TrustAndBrowserRegistration(t *testing.T) {
 	}
 }
 
+// Explicit login must ask the pinned control plane for its current intent, even
+// after a pending URL was persisted. The server decides whether to replay a
+// live intent or replace an expired one; the client does not guess its expiry.
+func TestService_StartLoginRechecksPendingAuthorization(t *testing.T) {
+	t.Parallel()
+
+	const oldURL = "https://control.example.com/register/old"
+	const newURL = "https://control.example.com/register/new"
+	for _, test := range []struct {
+		name   string
+		result ts2021.RegistrationResult
+		state  string
+		url    string
+	}{
+		{
+			name: "live intent replay",
+			result: ts2021.RegistrationResult{
+				State: ts2021.RegistrationStateAuthorizationRequired, AuthURL: oldURL,
+			},
+			state: RegistrationPending, url: oldURL,
+		},
+		{
+			name: "expired intent replacement",
+			result: ts2021.RegistrationResult{
+				State: ts2021.RegistrationStateAuthorizationRequired, AuthURL: newURL,
+			},
+			state: RegistrationPending, url: newURL,
+		},
+		{
+			name: "already authorized",
+			result: ts2021.RegistrationResult{
+				State: ts2021.RegistrationStateAuthorized, MachineAuthorized: true,
+			},
+			state: RegistrationRegistered,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			service, identities, control, profileID, _ := newTestService(t)
+			if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+				t.Fatal(err)
+			}
+			control.registrationResults = []ts2021.RegistrationResult{
+				{State: ts2021.RegistrationStateAuthorizationRequired, AuthURL: oldURL},
+				test.result,
+			}
+			if _, err := service.StartLogin(t.Context(), ""); err != nil {
+				t.Fatal(err)
+			}
+			before, err := identities.Get(t.Context(), profileID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeMaterial := before.Material()
+			defer clearIdentityMaterial(beforeMaterial)
+			login, err := service.StartLogin(t.Context(), "")
+			if err != nil || login.State != test.state || login.AuthURL != test.url {
+				t.Fatalf("explicit login = %s, URL matches = %t, error = %v", login.State, login.AuthURL == test.url, err)
+			}
+			control.mu.Lock()
+			options := slices.Clone(control.registerOptions)
+			control.mu.Unlock()
+			if len(options) != 2 || options[1].AuthKey != "" || options[1].FollowupURL != "" ||
+				options[1].PinnedFingerprint != testFingerprint {
+				t.Fatal("explicit login did not recheck the current intent using pinned identity and no scope selector")
+			}
+			after, err := identities.Get(t.Context(), profileID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			afterMaterial := after.Material()
+			defer clearIdentityMaterial(afterMaterial)
+			if !bytes.Equal(beforeMaterial.MachinePrivateKey, afterMaterial.MachinePrivateKey) ||
+				!bytes.Equal(beforeMaterial.NodePrivateKey, afterMaterial.NodePrivateKey) ||
+				!bytes.Equal(beforeMaterial.ControlPublicKey, afterMaterial.ControlPublicKey) ||
+				after.ControlKeyFingerprint() != before.ControlKeyFingerprint() {
+				t.Fatal("explicit login changed identity or trust")
+			}
+			if after.PendingAuthURL() != test.url || after.IsRegistered() != (test.state == RegistrationRegistered) {
+				t.Fatal("server-confirmed login state was not persisted")
+			}
+		})
+	}
+}
+
+func TestService_StartLoginPreservesPendingAuthorizationOnFailure(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "temporary failure", err: ts2021.ErrRegistrationTemporary},
+		{name: "control key changed", err: ts2021.ErrControlKeyChanged},
+		{name: "rejected response", err: ts2021.ErrRegistration},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			service, identities, control, profileID, _ := newTestService(t)
+			if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+				t.Fatal(err)
+			}
+			const pendingURL = "https://control.example.com/register/old"
+			control.registrationResults = []ts2021.RegistrationResult{
+				{State: ts2021.RegistrationStateAuthorizationRequired, AuthURL: pendingURL},
+			}
+			if _, err := service.StartLogin(t.Context(), ""); err != nil {
+				t.Fatal(err)
+			}
+			control.registerFunc = func(context.Context, ts2021.RegisterOptions) (ts2021.RegistrationResult, error) {
+				return ts2021.RegistrationResult{}, test.err
+			}
+			if _, err := service.StartLogin(t.Context(), ""); !errors.Is(err, test.err) {
+				t.Fatalf("explicit login error = %v, want %v", err, test.err)
+			}
+			record, err := identities.Get(t.Context(), profileID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if record.PendingAuthURL() != pendingURL || record.IsRegistered() {
+				t.Fatal("failed recheck discarded or authorized pending state")
+			}
+		})
+	}
+}
+
 func TestService_RotateNodeKeyCommitsConfirmedKey(t *testing.T) {
 	t.Parallel()
 

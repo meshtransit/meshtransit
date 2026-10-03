@@ -77,7 +77,7 @@ Packet payloads are not an observability asset and must not be collected.
 - First enrollment is create-only. A caller-supplied canonical SHA-256 fingerprint must match before identity keys are created, and later operations verify both the stored raw control key and fingerprint before opening Noise.
 - Secret key wrappers redact their string and Go-string representations. Identity material is never returned by the local API.
 - Registration runs through the pinned Noise connection and a bounded HTTP/2 client; it refuses redirects and never falls back to plaintext transport.
-- Auth keys are transient and are not written to identity state. Browser follow-up URLs must be same-origin HTTPS registration paths and are cleared after authorization.
+- Auth keys are transient and are not written to identity state. Browser follow-up URLs must be same-origin HTTPS registration paths and are cleared after authorization. Explicit login asks the pinned control plane to replay its current intent or replace an expired one using the existing machine and Node keys. It never returns an unchecked cached URL. A failed recheck preserves pending state and never grants access.
 - The complete registration exchange, including response-body consumption, is
   capped at fifteen seconds. Browser completion has a three-second child
   deadline; both pending responses and temporary timeouts, truncated transport,
