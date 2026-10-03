@@ -3,6 +3,7 @@ package config
 import "time"
 
 const (
+	envControlMapDeviceAliases        = "MESHTRANSIT_DEVICE_ALIASES_ENABLED"
 	envControlMapRequestTimeout       = "MESHTRANSIT_CONTROL_MAP_REQUEST_TIMEOUT"
 	envControlMapStatementTimeout     = "MESHTRANSIT_CONTROL_MAP_STATEMENT_TIMEOUT"
 	envControlMapTransactionIdleLimit = "MESHTRANSIT_CONTROL_MAP_TRANSACTION_IDLE_LIMIT"
@@ -33,6 +34,7 @@ const (
 
 // ControlMapConfig bounds request and PostgreSQL work for one map snapshot.
 type ControlMapConfig struct {
+	EnableDeviceAliases  bool
 	RequestTimeout       time.Duration
 	StatementTimeout     time.Duration
 	TransactionIdleLimit time.Duration
@@ -44,6 +46,10 @@ type ControlMapConfig struct {
 }
 
 func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
+	aliases := valueOrDefault(lookup, envControlMapDeviceAliases, "false")
+	if aliases != "true" && aliases != "false" {
+		return ControlMapConfig{}, settingError(envControlMapDeviceAliases)
+	}
 	requestTimeout, err := parseDurationInRange(
 		valueOrDefault(
 			lookup,
@@ -121,6 +127,7 @@ func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
 		return ControlMapConfig{}, err
 	}
 	return ControlMapConfig{
+		EnableDeviceAliases:  aliases == "true",
 		RequestTimeout:       requestTimeout,
 		StatementTimeout:     statementTimeout,
 		TransactionIdleLimit: idleLimit,

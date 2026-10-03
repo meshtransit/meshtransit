@@ -204,6 +204,15 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			Name: "private-endpoint-worker", Service: workerService,
 		})
 	}
+	if processConfig.DeviceAliasWorker != nil {
+		workerService, workerMetrics, composeErr := composeDeviceAliasWorker(*processConfig.DeviceAliasWorker, storagePools.worker, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "device_alias_worker_composition_failure")
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, workerMetrics)
+		roleServices = append(roleServices, app.OwnedService{Name: "device-alias-worker", Service: workerService})
+	}
 	var privateFactory *privateIdentityFactory
 	if privateProfile != nil {
 		var browserRuntime []browserRegistrationRuntime

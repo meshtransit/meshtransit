@@ -27,11 +27,12 @@ func composeMapSession(
 	store, err := postgresadapter.NewMapSessionStore(
 		runtimePool,
 		postgresadapter.MapSessionOptions{
-			StatementTimeout:   mapConfig.StatementTimeout,
-			IdleTimeout:        mapConfig.TransactionIdleLimit,
-			PeerCandidateLimit: mapsession.MaximumPeerCandidates,
-			PolicyRuleLimit:    mapsession.MaximumPacketPolicyRules,
-			RelayDirectory:     relayDirectory,
+			EnableDeviceAliases: mapConfig.EnableDeviceAliases,
+			StatementTimeout:    mapConfig.StatementTimeout,
+			IdleTimeout:         mapConfig.TransactionIdleLimit,
+			PeerCandidateLimit:  mapsession.MaximumPeerCandidates,
+			PolicyRuleLimit:     mapsession.MaximumPacketPolicyRules,
+			RelayDirectory:      relayDirectory,
 		},
 	)
 	if err != nil {
