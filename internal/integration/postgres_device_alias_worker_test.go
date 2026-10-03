@@ -51,6 +51,7 @@ func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx
 			t.Fatal(err)
 		}
 	}
+	assertAliasWorkCandidates(ctx, t, tx, deploymentID, endpointID, consumerID)
 	assertAliasWorkerAuthorityRejections(ctx, t, tx, deploymentID, endpointID, consumerID, generation, providerEpoch, consumerEpoch)
 	for _, mode := range []string{"missing_evidence", "wrong_evidence", "complete", "readiness", "readiness_missing_evidence"} {
 		t.Run("guarded alias worker "+mode, func(t *testing.T) {

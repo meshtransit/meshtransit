@@ -29,6 +29,9 @@ func TestDeviceAliasWorkerOwnsCompleteChangeAndNeverRetriesUnknownCommit(t *test
 			if intent.Mode.Withdraws() {
 				intent.ProviderNodeEpoch, intent.ConsumerNodeEpoch = 0, 0
 			}
+			if intent.Mode == devicealias.QuarantineResource {
+				intent.ConsumerID = node.ID{}
+			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			transaction := &aliasWorkerTestTransaction{mode: name, intent: intent, cancel: cancel}
@@ -110,7 +113,7 @@ type aliasWorkerTestTransaction struct {
 
 func (transaction *aliasWorkerTestTransaction) QueryRow(ctx context.Context, query string, args ...any) outboxRow {
 	switch query {
-	case prepareDeviceAliasChangeSQL, prepareDeviceAliasWithdrawalSQL:
+	case prepareDeviceAliasChangeSQL, prepareDeviceAliasWithdrawalSQL, prepareDeviceAliasResourceQuarantineSQL:
 		transaction.prepares++
 		return fakeOutboxRow{scan: func(values ...any) error {
 			if transaction.mode == "query error" || transaction.mode == "cleanup" {
@@ -119,8 +122,14 @@ func (transaction *aliasWorkerTestTransaction) QueryRow(ctx context.Context, que
 			kind, aggregate := "device_alias_lease", "01890f00-0000-7000-8000-000000000801"
 			change, action := "", ""
 			if transaction.intent.Mode.Withdraws() {
-				change, action = args[4].(string), "sharing.device_alias."+string(transaction.intent.Mode)
+				if transaction.intent.Mode == devicealias.QuarantineResource {
+					change = args[3].(string)
+				} else {
+					change = args[4].(string)
+				}
+				action = "sharing.device_alias." + string(transaction.intent.Mode)
 			}
+
 			if !transaction.intent.Mode.Withdraws() {
 				aggregate, change, action = args[6].([]string)[0], args[8].(string), ""
 			}

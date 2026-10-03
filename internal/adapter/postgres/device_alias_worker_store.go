@@ -43,6 +43,8 @@ func NewDeviceAliasWorkerStore(pool *Pool) (*DeviceAliasWorkerStore, error) {
 
 const prepareDeviceAliasChangeSQL = `SELECT mesh_ops.prepare_device_alias_change_v1(
  $1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,$10::TEXT)`
+const prepareDeviceAliasResourceQuarantineSQL = `SELECT mesh_ops.prepare_device_alias_resource_quarantine_v1($1::UUID,$2::UUID,$3::BIGINT,$4::UUID)`
+
 const prepareDeviceAliasWithdrawalSQL = `SELECT mesh_ops.prepare_device_alias_withdrawal_v1($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::UUID,$6::TEXT)`
 const finalizeDeviceAliasWithdrawalSQL = `SELECT mesh_ops.finalize_device_alias_withdrawal_v1($1::UUID,$2::UUID,$3::BIGINT,$4::UUID,$5::TEXT,$6::JSONB)`
 
@@ -96,6 +98,10 @@ func (store *DeviceAliasWorkerStore) Change(ctx context.Context, intent deviceal
 	if intent.Mode.Withdraws() {
 		prepareQuery = prepareDeviceAliasWithdrawalSQL
 		prepareArgs = []any{intent.DeploymentID.String(), intent.EndpointID.String(), intent.ConsumerID.String(), intent.EndpointGeneration, ids[5].String(), string(intent.Mode)}
+	}
+	if intent.Mode == devicealias.QuarantineResource {
+		prepareQuery = prepareDeviceAliasResourceQuarantineSQL
+		prepareArgs = []any{intent.DeploymentID.String(), intent.EndpointID.String(), intent.EndpointGeneration, ids[5].String()}
 	}
 	if err := transaction.QueryRow(ctx, prepareQuery, prepareArgs...).Scan(&encoded); err != nil {
 		return false, errors.Join(ErrDeviceAliasChange, err)

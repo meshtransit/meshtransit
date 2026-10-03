@@ -96,3 +96,9 @@ var deviceAliasWithdrawalOwnershipSQL string
 
 // DeviceAliasWithdrawalOwnershipSQL enables no-grant worker lifecycle entry points.
 func DeviceAliasWithdrawalOwnershipSQL() string { return deviceAliasWithdrawalOwnershipSQL }
+
+//go:embed operator/000087_device_alias_work_ownership.sql
+var deviceAliasWorkOwnershipSQL string
+
+// DeviceAliasWorkOwnershipSQL enables bounded no-grant candidate discovery.
+func DeviceAliasWorkOwnershipSQL() string { return deviceAliasWorkOwnershipSQL }

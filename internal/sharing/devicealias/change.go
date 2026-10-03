@@ -35,7 +35,7 @@ type ChangeIntent struct {
 
 // IsValid rejects incomplete authority selectors before any durable effect.
 func (intent ChangeIntent) IsValid() bool {
-	return intent.DeploymentID.IsValid() && intent.EndpointID.IsValid() && intent.ConsumerID.IsValid() &&
+	return intent.DeploymentID.IsValid() && intent.EndpointID.IsValid() && (intent.ConsumerID.IsValid() || intent.Mode == QuarantineResource && intent.ConsumerID == (node.ID{})) &&
 		intent.EndpointGeneration > 0 && intent.Mode.IsValid() &&
 		(intent.Mode.Withdraws() || intent.ProviderNodeEpoch > 0 && intent.ConsumerNodeEpoch > 0)
 }
