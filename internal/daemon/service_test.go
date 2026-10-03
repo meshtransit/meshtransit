@@ -663,6 +663,7 @@ func TestService_RunPublishesLatestValidatedSnapshot(t *testing.T) {
 	dataPlane := &fakeDataPlane{}
 	dns := &fakeDNS{configured: true}
 	service.dataPlane = dataPlane
+	service.enableDeviceAliases = true
 	service.dns = dns
 	service.setSyncStatus(syncStatus{
 		state:     ControlSessionInactive,
@@ -696,6 +697,9 @@ func TestService_RunPublishesLatestValidatedSnapshot(t *testing.T) {
 	case <-control.streamPublished:
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for network snapshot")
+	}
+	if !latestStreamOptions(t, control).EnableDeviceAliases {
+		t.Fatal("daemon lost explicit alias declaration")
 	}
 	status, err := service.Status(t.Context())
 	if err != nil {
@@ -2678,3 +2682,12 @@ func latestStreamOptions(t *testing.T, control *fakeControl) ts2021.NetmapOption
 }
 
 var _ controlProber = (*fakeControl)(nil)
+
+func TestServiceRejectsAliasAdvertisementWithoutPacketEngine(t *testing.T) {
+	t.Parallel()
+	service, _, control, _, _ := newTestService(t)
+	_, err := New(service.profiles, service.identities, service.build, control, Options{Hostname: "node-a", EnableDeviceAliases: true})
+	if err == nil {
+		t.Fatal("unsupported alias advertisement accepted")
+	}
+}

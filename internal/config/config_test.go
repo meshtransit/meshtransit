@@ -240,3 +240,18 @@ func TestParseRejectsRemovedDevelopmentFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestDeviceAliasFlagRequiresPacketEngine(t *testing.T) {
+	t.Parallel()
+	if _, err := Parse([]string{"--enable-device-aliases"}, io.Discard); err == nil {
+		t.Fatal("aliases without packet engine accepted")
+	}
+	got, err := Parse([]string{"--enable-data-plane", "--wireguard-listen-port=42642", "--enable-device-aliases"}, io.Discard)
+	if err != nil || !got.EnableDeviceAliases {
+		t.Fatal("explicit alias opt-in rejected", err)
+	}
+	got, err = Parse(nil, io.Discard)
+	if err != nil || got.EnableDeviceAliases {
+		t.Fatal("alias support enabled by default", err)
+	}
+}

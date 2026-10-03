@@ -280,6 +280,7 @@ type Service struct {
 	dns                  DNSController
 	hostname             string
 	configuredCandidates pathdiscovery.Set
+	enableDeviceAliases  bool
 	clock                func() time.Time
 	runtimeRetryDelay    func(time.Duration) time.Duration
 	endpointRefreshDelay func() time.Duration
@@ -325,13 +326,14 @@ type endpointRefreshRequest struct {
 
 // Options contains host facts and injectable time for the daemon use cases.
 type Options struct {
-	Hostname           string
-	Clock              func() time.Time
-	DataPlane          DataPlaneController
-	DNS                DNSController
-	Logger             *slog.Logger
-	AdvertiseEndpoints []netip.AddrPort
-	NetworkChanges     <-chan struct{}
+	EnableDeviceAliases bool
+	Hostname            string
+	Clock               func() time.Time
+	DataPlane           DataPlaneController
+	DNS                 DNSController
+	Logger              *slog.Logger
+	AdvertiseEndpoints  []netip.AddrPort
+	NetworkChanges      <-chan struct{}
 }
 
 // New creates a daemon service from explicit dependencies.
@@ -353,6 +355,9 @@ func New(
 	}
 	if options.Hostname == "" {
 		return nil, errors.New("daemon: hostname is required")
+	}
+	if options.EnableDeviceAliases && options.DataPlane == nil {
+		return nil, errors.New("daemon: Device aliases require a packet engine")
 	}
 	if options.Clock == nil {
 		options.Clock = time.Now
@@ -394,6 +399,7 @@ func New(
 		dns:                  options.DNS,
 		hostname:             options.Hostname,
 		configuredCandidates: configuredSet,
+		enableDeviceAliases:  options.EnableDeviceAliases,
 		clock:                options.Clock,
 		runtimeRetryDelay:    jitteredRuntimeRetryDelay,
 		endpointRefreshDelay: randomEndpointRefreshDelay,
@@ -653,12 +659,13 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				active.ControlURL,
 				protocolMaterial,
 				ts2021.NetmapOptions{
-					Hostname:           s.hostname,
-					Version:            "meshd/" + s.build.Version,
-					PinnedFingerprint:  record.ControlKeyFingerprint(),
-					PeerProbePublicKey: probePublicKey.String(),
-					Candidates:         s.configuredCandidates,
-					EndpointUpdates:    endpointUpdates,
+					EnableDeviceAliases: s.enableDeviceAliases,
+					Hostname:            s.hostname,
+					Version:             "meshd/" + s.build.Version,
+					PinnedFingerprint:   record.ControlKeyFingerprint(),
+					PeerProbePublicKey:  probePublicKey.String(),
+					Candidates:          s.configuredCandidates,
+					EndpointUpdates:     endpointUpdates,
 				},
 				func(callbackCtx context.Context, snapshot networkmap.Snapshot) (callbackErr error) {
 					defer func() {

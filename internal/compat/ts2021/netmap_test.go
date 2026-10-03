@@ -1086,3 +1086,41 @@ func testWireNode(id tailcfg.NodeID, addressByte byte) *tailcfg.Node {
 		MachineAuthorized: true,
 	}
 }
+
+func TestDeviceAliasDeclarationPreservesEndpointSemantics(t *testing.T) {
+	t.Parallel()
+	for _, enabled := range []bool{false, true} {
+		for _, stream := range []bool{false, true} {
+			request := newMapRequest(key.NewNode(), key.NewDisco().Public(), NetmapOptions{EnableDeviceAliases: enabled}, stream)
+			encoded, err := marshalMapRequest(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &fields); err != nil {
+				t.Fatal(err)
+			}
+			version, present := fields["DeviceAliasVersion"]
+			if present != enabled || enabled && string(version) != "1" {
+				t.Fatal("support declaration lost")
+			}
+			endpoints, present := fields["Endpoints"]
+			if stream && present || !stream && (!present || string(endpoints) != "[]") {
+				t.Fatal("endpoint withdrawal semantics changed")
+			}
+			if _, present := fields["network_id"]; present {
+				t.Fatal("Network selector added")
+			}
+		}
+	}
+	snapshot := networkmap.Snapshot{Peers: []networkmap.Node{{Alias: &networkmap.AliasBinding{}}}}
+	if !errors.Is(validateRequestedDeviceAliases(snapshot, false), ErrNetmapInvalid) {
+		t.Fatal("unrequested alias map accepted")
+	}
+	if err := validateRequestedDeviceAliases(snapshot, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRequestedDeviceAliases(networkmap.Snapshot{}, false); err != nil {
+		t.Fatal("ordinary map rejected", err)
+	}
+}

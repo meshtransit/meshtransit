@@ -59,14 +59,16 @@ var (
 // NetmapOptions contains stable host facts, the persisted control-key pin, and
 // an optional active-session stream of complete candidate sets.
 type NetmapOptions struct {
-	Hostname           string
-	Version            string
-	PinnedFingerprint  string
-	PeerProbePublicKey string
-	Candidates         pathdiscovery.Set
-	PreferredRelay     int
-	HasPreferredRelay  bool
-	EndpointUpdates    <-chan EndpointUpdate
+	// EnableDeviceAliases explicitly advertises the qualified peer translation contract.
+	EnableDeviceAliases bool
+	Hostname            string
+	Version             string
+	PinnedFingerprint   string
+	PeerProbePublicKey  string
+	Candidates          pathdiscovery.Set
+	PreferredRelay      int
+	HasPreferredRelay   bool
+	EndpointUpdates     <-chan EndpointUpdate
 }
 
 // EndpointUpdate is one complete product-owned network presence update. The
@@ -339,6 +341,9 @@ func (c *Client) pollNetmapOnce(
 				"%w: self public key does not match the registered identity",
 				ErrNetmapInvalid,
 			)
+		}
+		if err := validateRequestedDeviceAliases(snapshot, options.EnableDeviceAliases); err != nil {
+			return receivedMap, err
 		}
 		if err := handler(ctx, snapshot); err != nil {
 			return receivedMap, fmt.Errorf("%w: %w", ErrNetmapConsumer, err)
@@ -628,7 +633,7 @@ func (c *Client) openMapExchange(
 	machineKey key.MachinePrivate,
 	nodeKey key.NodePrivate,
 	controlKey key.MachinePublic,
-	mapRequest tailcfg.MapRequest,
+	mapRequest controlMapRequest,
 ) (*mapExchange, error) {
 	encoded, err := marshalMapRequest(mapRequest)
 	if err != nil {
@@ -748,18 +753,25 @@ func (c *Client) openMapExchange(
 	}, nil
 }
 
-func marshalMapRequest(request tailcfg.MapRequest) ([]byte, error) {
+// controlMapRequest confines the product extension to the compatibility adapter.
+// The declaration is support only; Core derives authority from Noise identity.
+type controlMapRequest struct {
+	tailcfg.MapRequest
+	DeviceAliasVersion uint8 `json:"DeviceAliasVersion,omitempty"`
+}
+
+func marshalMapRequest(request controlMapRequest) ([]byte, error) {
 	if request.Stream || request.Endpoints == nil || len(request.Endpoints) != 0 {
 		return json.Marshal(request)
 	}
 	type requestWithEndpointWithdrawal struct {
-		tailcfg.MapRequest
+		controlMapRequest
 		Endpoints []netip.AddrPort `json:"Endpoints"`
 	}
 
 	return json.Marshal(requestWithEndpointWithdrawal{
-		MapRequest: request,
-		Endpoints:  []netip.AddrPort{},
+		controlMapRequest: request,
+		Endpoints:         []netip.AddrPort{},
 	})
 }
 
@@ -768,8 +780,8 @@ func newMapRequest(
 	discoKey key.DiscoPublic,
 	options NetmapOptions,
 	stream bool,
-) tailcfg.MapRequest {
-	request := tailcfg.MapRequest{
+) controlMapRequest {
+	request := controlMapRequest{MapRequest: tailcfg.MapRequest{
 		Version:   tailcfg.CurrentCapabilityVersion,
 		KeepAlive: true,
 		NodeKey:   nodeKey.Public(),
@@ -783,6 +795,9 @@ func newMapRequest(
 			GoVersion:       runtime.Version(),
 			NoLogsNoSupport: true,
 		},
+	}}
+	if options.EnableDeviceAliases {
+		request.DeviceAliasVersion = 1
 	}
 	if options.HasPreferredRelay {
 		request.Hostinfo.NetInfo = &tailcfg.NetInfo{
@@ -1723,4 +1738,17 @@ func cloneRules(rules []networkmap.Rule) []networkmap.Rule {
 	}
 
 	return cloned
+}
+
+// Unrequested alias authority is a permanent map error, before any consumer I/O.
+func validateRequestedDeviceAliases(snapshot networkmap.Snapshot, enabled bool) error {
+	if enabled {
+		return nil
+	}
+	for _, peer := range snapshot.Peers {
+		if peer.Alias != nil {
+			return fmt.Errorf("%w: Device aliases were not enabled", ErrNetmapInvalid)
+		}
+	}
+	return nil
 }

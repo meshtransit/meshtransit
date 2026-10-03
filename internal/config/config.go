@@ -36,6 +36,7 @@ type Config struct {
 	AllowedUIDs         []uint32
 	AllowSocketPeers    bool
 	EnableDataPlane     bool
+	EnableDeviceAliases bool
 	EnableDNS           bool
 	WireGuardListenPort uint16
 	AdvertiseEndpoints  []netip.AddrPort
@@ -75,6 +76,8 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 		false,
 		"enable the encrypted mesh packet path with fail-closed policy checks",
 	)
+	flags.BoolVar(&cfg.EnableDeviceAliases, "enable-device-aliases", false,
+		"enable qualification of peer-specific Device aliases; requires confined helper alias pools")
 	flags.BoolVar(
 		&cfg.EnableDNS,
 		"enable-dns",
@@ -210,6 +213,9 @@ func validate(cfg Config) error {
 		}
 	} else if cfg.WireGuardListenPort != 0 || len(cfg.AdvertiseEndpoints) != 0 {
 		return errors.New("packet endpoint options require --enable-data-plane")
+	}
+	if cfg.EnableDeviceAliases && !cfg.EnableDataPlane {
+		return errors.New("device aliases require --enable-data-plane")
 	}
 	if cfg.EnableFlowLogs {
 		if !cfg.EnableDataPlane {

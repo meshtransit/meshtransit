@@ -128,6 +128,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 	}
+	daemonOptions.EnableDeviceAliases = cfg.EnableDeviceAliases
 	if cfg.EnableDataPlane {
 		engine, err := dataplane.NewWireGuardWithObserver(
 			netAdminClient,

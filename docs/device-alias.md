@@ -9,11 +9,18 @@ remains outside the packet path. Canonical addresses may be identical in the
 consumer and provider Networks.
 
 This is a client implementation checkpoint, not an enabled sharing release.
-Core does not yet allocate or emit these grants. The client does not advertise
-alias support in registration or map requests. Numeric protocol capability 142
-is not evidence of this feature. Live encrypted traffic, bilateral authority
-updates, allocation/quarantine, imported DNS and alias flow reporting remain
-qualification gates.
+Core schemas 81–87 implement allocation, guarded readiness, withdrawal and map
+projection behind explicit runtime switches. The client advertises alias v1
+only when started with `--enable-device-aliases --enable-data-plane` and a fixed
+WireGuard port. The root helper must independently include the installation's
+alias pools in its allowed pools. No flag widens helper confinement or grants
+membership. Every streaming reconnect and non-streaming endpoint update sends
+`DeviceAliasVersion: 1`; the ordinary path omits the field. Explicit empty
+endpoint withdrawal remains unchanged. An unrequested alias map is rejected
+before the daemon consumer runs. Numeric protocol capability 142
+is not evidence of this feature. Complete Core/client runtime traffic, bilateral authority updates, imported
+DNS and alias flow reporting remain qualification gates. Earlier two-host
+checks used encrypted map fixtures and do not qualify Core runtime enrollment.
 
 ## Product authority and wire boundary
 
