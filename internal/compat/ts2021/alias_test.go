@@ -1,6 +1,7 @@
 package ts2021
 
 import (
+	"embed"
 	"encoding/json"
 	"errors"
 	"net/netip"
@@ -172,4 +173,56 @@ func FuzzAliasDocument(f *testing.F) {
 			t.Fatal("alias fields silently dropped")
 		}
 	})
+}
+
+//go:embed testdata/core-device-alias-v1/*.json
+var coreDeviceAliasFixtures embed.FS
+
+func TestCoreDeviceAliasV1Fixtures(t *testing.T) {
+	t.Parallel()
+	for _, role := range []string{"provider", "consumer"} {
+		for _, protocol := range []string{"tcp", "udp", "icmp"} {
+			t.Run(role+"/"+protocol, func(t *testing.T) {
+				t.Parallel()
+				body, err := coreDeviceAliasFixtures.ReadFile("testdata/core-device-alias-v1/" + role + "-" + protocol + ".json")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var response tailcfg.MapResponse
+				if err := json.Unmarshal(body, &response); err != nil {
+					t.Fatal(err)
+				}
+				now := time.Date(2026, 9, 14, 4, 0, 0, 0, time.UTC)
+				snapshot, changed, err := newMapAccumulator().apply(response, now)
+				if err != nil || !changed || len(snapshot.Peers) != 1 || snapshot.Peers[0].Alias == nil {
+					t.Fatalf("Core fixture: changed=%t error=%v", changed, err)
+				}
+				peer := snapshot.Peers[0]
+				grant := peer.Alias
+				if grant.Role != networkmap.AliasRole(role) || grant.GrantRevision != 14 || grant.SelfKey != snapshot.Self.PublicKey || grant.PeerKey != peer.PublicKey ||
+					snapshot.Self.Addresses[0] != netip.MustParsePrefix("100.64.0.1/32") || snapshot.Self.Addresses[1] != netip.MustParsePrefix("fd00:10::1/128") {
+					t.Fatal("Core and client alias contract disagree")
+				}
+				expected := uint8(6)
+				if protocol == "udp" {
+					expected = 17
+				}
+				if protocol == "icmp" {
+					expected = 1
+				}
+				if grant.Services[0].Protocol != expected || (protocol != "icmp" && (grant.Services[0].PortFrom != 8443 || grant.Services[0].PortTo != 8443)) {
+					t.Fatal("Core service widened")
+				}
+				if role == "consumer" {
+					if len(snapshot.Policy) != 0 {
+						t.Fatal("Core granted reverse initiation")
+					}
+					return
+				}
+				if len(snapshot.Policy) != 1 {
+					t.Fatal("provider has no exact inbound filter")
+				}
+			})
+		}
+	}
 }
