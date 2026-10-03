@@ -117,6 +117,12 @@ func TestComposePrivateIdentityRejectsTypedNilEffectsBeforeWork(t *testing.T) {
 		{name: "limiter", change: func(p *privateIdentityPorts) { p.RateLimiter = missing }},
 		{name: "correlation ids", change: func(p *privateIdentityPorts) { p.CorrelationIDs = missing }},
 		{name: "clock", change: func(p *privateIdentityPorts) { p.Clock = missing }},
+		{name: "resource creations", change: func(p *privateIdentityPorts) {
+			var missing *privateIdentityResourcePorts
+			p.ResourceCreations = missing
+		}},
+		{name: "resource catalog", change: func(p *privateIdentityPorts) { var missing *privateIdentityResourcePorts; p.ResourceCatalog = missing }},
+		{name: "resource sharing", change: func(p *privateIdentityPorts) { var missing *privateIdentityResourcePorts; p.ResourceSharing = missing }},
 		{name: "logger", change: func(p *privateIdentityPorts) { p.Logger = nil }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -672,7 +678,9 @@ func newPrivateIdentityFixture(t *testing.T) *privateIdentityFixture {
 		PolicyExplanations: fixture,
 		PolicySimulations:  fixture,
 		PolicyApprovals:    approvals, PolicyApprovalCatalog: approvals,
-		RateLimiter: fixture, CorrelationIDs: fixture,
+		ResourceCreations: privateIdentityResourcePorts{}, ResourceCatalog: privateIdentityResourcePorts{},
+		ResourceSharing: privateIdentityResourcePorts{},
+		RateLimiter:     fixture, CorrelationIDs: fixture,
 		Clock: fixture, Logger: discardCompositionLogger(),
 	}
 	return fixture

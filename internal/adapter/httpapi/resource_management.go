@@ -204,6 +204,7 @@ func (handler *ManagementHandler) handleResourceManagement(
 	correlationID publicid.ID,
 	path resourceManagementPath,
 	session accountsession.Session,
+	browser *browserManagementAdmission,
 ) string {
 	if path.isAction() {
 		if path.action == "preview-authority-change" ||
@@ -245,7 +246,7 @@ func (handler *ManagementHandler) handleResourceManagement(
 			return "operation_unavailable"
 		}
 		if path.kind == resourceManagementCollection {
-			return handler.createResource(ctx, response, request, correlationID, path, session)
+			return handler.createResource(ctx, response, request, correlationID, path, session, browser)
 		}
 		return handler.createResourceGroup(ctx, response, request, correlationID, path, session)
 	}
@@ -680,6 +681,7 @@ func (handler *ManagementHandler) createResource(
 	correlationID publicid.ID,
 	path resourceManagementPath,
 	session accountsession.Session,
+	browser *browserManagementAdmission,
 ) string {
 	if request.URL.RawQuery != "" {
 		return handler.writeResourceRequestError(ctx, response, correlationID)
@@ -718,6 +720,9 @@ func (handler *ManagementHandler) createResource(
 	)
 	if err != nil {
 		return handler.writeResourceRequestError(ctx, response, correlationID)
+	}
+	if resultCode := handler.validateBrowserResourceMutation(ctx, response, correlationID, browser); resultCode != "" {
+		return resultCode
 	}
 	result, err := handler.resourceCreations.Create(ctx, command)
 	if err != nil {

@@ -253,8 +253,9 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	approval := approvalMatched && approvalPath.allowedMethod(request.Method) == request.Method
 	_, accessGraph := parseAccessGraphExplainPath(request)
 	_, workspaceRename := parseWorkspaceRenamePath(request)
+	resourceSharing, _ := browserResourceSharingOperation(request)
 	if !prepare && !logout && !managementScopes && !inventoryRead && !deploymentCapabilities && !device && !policy && !simulation &&
-		!approval && !accessGraph && !policyRead && !workspaceRename {
+		!approval && !accessGraph && !policyRead && !workspaceRename && !resourceSharing {
 		return ErrInvalidBrowserManagement
 	}
 	operation = "mutation"
@@ -445,11 +446,13 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	deploymentCapabilityRead := request.Method == http.MethodGet && target.Path == DeploymentCapabilitiesPath
 	_, policyMatched := parseActivePolicyPath(request)
 	policyRead := policyMatched && request.Method == http.MethodGet
-	safeRead := approvalRead || managementScopeRead || inventoryRead || deploymentCapabilityRead || policyRead
+	resourceSharing, resourceSharingCollectionRead := browserResourceSharingOperation(request)
+	resourceSharingRead := resourceSharing && request.Method == http.MethodGet
+	safeRead := approvalRead || managementScopeRead || inventoryRead || deploymentCapabilityRead || policyRead || resourceSharingRead
 	if request.Method == http.MethodGet && !safeRead {
 		return false
 	}
-	queryAllowed := approvalRead && approvalPath.kind == policyApprovalPathCollection || managementScopeRead || inventoryRead
+	queryAllowed := approvalRead && approvalPath.kind == policyApprovalPathCollection || managementScopeRead || inventoryRead || resourceSharingCollectionRead
 	if (!queryAllowed && target.RawQuery != "") || len(target.RawQuery) > maximumCallbackQueryBytes {
 		return false
 	}

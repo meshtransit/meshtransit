@@ -158,3 +158,27 @@ func TestPrivateIdentityDispatcherCompletesOnlyConfirmedSession(t *testing.T) {
 		t.Fatal("single-use replay reached exchange/issuance")
 	}
 }
+
+func TestPrivateIdentityDispatcherDelegatesScopedResourceSharingReads(t *testing.T) {
+	t.Parallel()
+	for _, suffix := range []string{"resources?state=active&page_size=25", "share-offers?direction=incoming&state=offered&page_size=25"} {
+		t.Run(suffix, func(t *testing.T) {
+			fixture := newPrivateIdentityFixture(t)
+			root := fixture.compose(t)
+			issued := fixture.issue(t, root).Issued()
+			route := fixture.options.Route
+			path := "/api/v1/workspaces/" + route.WorkspaceID().String() + "/networks/01890f00-0000-7000-8000-000000000201/" + suffix
+			request := fixture.managementRequest(t, issued.Token(), path, "")
+			request.Method = http.MethodGet
+			request.Body = http.NoBody
+			request.ContentLength = 0
+			for _, header := range []string{"Content-Type", "If-Match", "Idempotency-Key"} {
+				request.Header.Del(header)
+			}
+			response := newPrivateIdentityResponse()
+			if err := root.dispatcher.Handle(response, request); err != nil || response.Code != http.StatusServiceUnavailable {
+				t.Fatal("private graph did not reach its fail-closed Resource/sharing port", err, response.Code)
+			}
+		})
+	}
+}

@@ -18,7 +18,6 @@ import (
 	policyapproval "github.com/meshtransit/meshtransit/internal/policy/approval"
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
-	"github.com/meshtransit/meshtransit/internal/resource/catalog"
 	"github.com/meshtransit/meshtransit/internal/workspace/settings"
 )
 
@@ -129,12 +128,17 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	resources, err := newPrivateIdentityResourceServices(dependencies.Runtime, managementOptions)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	revocations, policies, policyCompiler, policyExplainer, policySimulator,
 		policyApprovals, policyApprovalCatalog, err :=
 		privateIdentityManagementServices(
 			dependencies.Runtime,
 			managementOptions,
 			clock,
+			resources,
 		)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
@@ -176,6 +180,7 @@ func composePrivateIdentityFactory(
 		PolicyExplanations: policyExplainer, PolicySimulations: policySimulator,
 		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
+		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,
 		RateLimiter:    dependencies.Redis,
 		CorrelationIDs: httpapi.PublicCorrelationIDGenerator{}, Clock: clock, Logger: dependencies.Logger,
 	})
@@ -204,6 +209,7 @@ func privateIdentityManagementServices(
 	pool *postgresadapter.Pool,
 	options postgresadapter.AuthTransactionOptions,
 	clock oidcauth.StartClock,
+	resources privateIdentityResourceServices,
 ) (
 	*revocation.Service,
 	*policypublication.Service,
@@ -253,21 +259,7 @@ func privateIdentityManagementServices(
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
-	resourceCatalogStore, err := postgresadapter.NewResourceCatalogStore(
-		pool,
-		postgresadapter.ResourceCatalogOptions(options),
-	)
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
-	}
-	resourceCatalog, err := catalog.NewService(catalog.Dependencies{
-		Transactions: resourceCatalogStore,
-		Clock:        catalog.SystemClock{},
-	})
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
-	}
-	policyCompiler, err := compilation.NewService(resourceCatalog)
+	policyCompiler, err := compilation.NewService(resources.catalog, resources.imports)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}

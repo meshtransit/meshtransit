@@ -194,6 +194,9 @@ func isBrowserManagementOperation(request *http.Request) bool {
 	if request == nil {
 		return false
 	}
+	if resourceSharing, _ := browserResourceSharingOperation(request); resourceSharing {
+		return true
+	}
 	_, device := parseDeviceRevokePath(request)
 	_, inventory := parseDeviceInventoryPath(request)
 	_, activePolicy := parseActivePolicyPath(request)
@@ -245,7 +248,8 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 		target.RawQuery == ""
 	registrationRead := dispatcher.registration != nil && request.Method == http.MethodGet &&
 		dispatcher.registration.validRequest(request)
-	return callback || approvalList || managementScopes || inventoryRead || deploymentCapabilities || registrationRead || target.RawQuery == ""
+	_, resourceSharingCollectionRead := browserResourceSharingOperation(request)
+	return callback || approvalList || managementScopes || inventoryRead || deploymentCapabilities || registrationRead || resourceSharingCollectionRead || target.RawQuery == ""
 }
 
 // MetricsCollector permits private root registration only, never a public endpoint.

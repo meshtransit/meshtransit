@@ -65,8 +65,37 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal("private document retained deployment topology")
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
-	if len(basePaths) != 28 || len(paths) != 14 {
+	if len(basePaths) != 29 || len(paths) != 21 {
 		t.Fatal("private profile introduced another product resource API")
+	}
+	for path, raw := range paths {
+		if !strings.Contains(path, "/resources") && !strings.Contains(path, "/share-offers") && !strings.Contains(path, "/trust-contracts") {
+			continue
+		}
+		item := raw.(map[string]any)
+		for method := range item {
+			operation := profileMap(t, item, method)
+			baseOperation := profileMap(t, profileMap(t, basePaths, path), method)
+			security := map[string]any{"accountSessionCookie": []any{}}
+			additional := 2
+			if method == "post" {
+				security["sessionCSRF"] = []any{}
+				additional = 3
+			}
+			if !reflect.DeepEqual(operation["security"], []any{security}) {
+				t.Fatal("Resource/sharing profile gained a credential fallback")
+			}
+			for key, value := range baseOperation {
+				if key != "security" && key != "parameters" && !reflect.DeepEqual(operation[key], value) {
+					t.Fatal("Resource/sharing product contract drift", path, key)
+				}
+			}
+			oldParameters := profileArray(t, baseOperation, "parameters")
+			parameters := profileArray(t, operation, "parameters")
+			if len(parameters) != len(oldParameters)+additional || !reflect.DeepEqual(parameters[:len(oldParameters)], oldParameters) {
+				t.Fatal("Resource/sharing scope/precondition/idempotency changed")
+			}
+		}
 	}
 	for _, path := range []string{
 		"/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/revoke",

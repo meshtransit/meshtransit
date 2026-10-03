@@ -248,6 +248,7 @@ func (handler *ManagementHandler) handleResourceSharing(
 	correlationID publicid.ID,
 	path resourceSharingPath,
 	session accountsession.Session,
+	browser *browserManagementAdmission,
 ) string {
 	if handler.resourceSharing == nil {
 		writeManagementError(ctx, handler.logger, response, correlationID, sharingUnavailableError())
@@ -258,13 +259,13 @@ func (handler *ManagementHandler) handleResourceSharing(
 		if request.Method == http.MethodGet {
 			return handler.listShareOffers(ctx, response, request, correlationID, path, session)
 		}
-		return handler.createShareOffer(ctx, response, request, correlationID, path, session)
+		return handler.createShareOffer(ctx, response, request, correlationID, path, session, browser)
 	case resourceSharingOfferItem:
 		return handler.getShareOffer(ctx, response, request, correlationID, path, session)
 	case resourceSharingOfferAction:
-		return handler.decideShareOffer(ctx, response, request, correlationID, path, session)
+		return handler.decideShareOffer(ctx, response, request, correlationID, path, session, browser)
 	case resourceSharingContractAction:
-		return handler.changeTrustContract(ctx, response, request, correlationID, path, session)
+		return handler.changeTrustContract(ctx, response, request, correlationID, path, session, browser)
 	default:
 		return handler.writeSharingRequestError(ctx, response, correlationID)
 	}
@@ -277,6 +278,7 @@ func (handler *ManagementHandler) createShareOffer(
 	correlationID publicid.ID,
 	path resourceSharingPath,
 	session accountsession.Session,
+	browser *browserManagementAdmission,
 ) string {
 	if request.URL.RawQuery != "" || request.Body == nil ||
 		!validJSONContentType(singleHeader(request.Header, "Content-Type")) ||
@@ -325,6 +327,9 @@ func (handler *ManagementHandler) createShareOffer(
 	if err != nil {
 		return handler.writeSharingRequestError(ctx, response, correlationID)
 	}
+	if resultCode := handler.validateBrowserResourceMutation(ctx, response, correlationID, browser); resultCode != "" {
+		return resultCode
+	}
 	result, err := handler.resourceSharing.CreateOffer(ctx, command)
 	if err != nil {
 		return handler.writeSharingError(ctx, response, correlationID, err)
@@ -360,6 +365,7 @@ func (handler *ManagementHandler) decideShareOffer(
 	correlationID publicid.ID,
 	path resourceSharingPath,
 	session accountsession.Session,
+	browser *browserManagementAdmission,
 ) string {
 	if request.URL.RawQuery != "" || request.Body == nil ||
 		!validJSONContentType(singleHeader(request.Header, "Content-Type")) {
@@ -441,6 +447,9 @@ func (handler *ManagementHandler) decideShareOffer(
 	if err != nil {
 		return handler.writeSharingRequestError(ctx, response, correlationID)
 	}
+	if resultCode := handler.validateBrowserResourceMutation(ctx, response, correlationID, browser); resultCode != "" {
+		return resultCode
+	}
 	result, err := handler.resourceSharing.DecideOffer(ctx, command)
 	if err != nil {
 		return handler.writeSharingError(ctx, response, correlationID, err)
@@ -479,6 +488,7 @@ func (handler *ManagementHandler) changeTrustContract(
 	correlationID publicid.ID,
 	path resourceSharingPath,
 	session accountsession.Session,
+	browser *browserManagementAdmission,
 ) string {
 	if request.URL.RawQuery != "" || request.Body == nil ||
 		!validJSONContentType(singleHeader(request.Header, "Content-Type")) {
@@ -532,6 +542,9 @@ func (handler *ManagementHandler) changeTrustContract(
 		if commandErr != nil {
 			return handler.writeSharingRequestError(ctx, response, correlationID)
 		}
+		if resultCode := handler.validateBrowserResourceMutation(ctx, response, correlationID, browser); resultCode != "" {
+			return resultCode
+		}
 		result, err = handler.resourceSharing.ActivateContract(ctx, command)
 	} else {
 		command, commandErr := sharing.NewRevokeContract(sharing.RevokeContractParams{
@@ -541,6 +554,9 @@ func (handler *ManagementHandler) changeTrustContract(
 		})
 		if commandErr != nil {
 			return handler.writeSharingRequestError(ctx, response, correlationID)
+		}
+		if resultCode := handler.validateBrowserResourceMutation(ctx, response, correlationID, browser); resultCode != "" {
+			return resultCode
 		}
 		result, err = handler.resourceSharing.RevokeContract(ctx, command)
 	}

@@ -545,29 +545,35 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if resourceMatched {
 		if browser != nil {
-			resultCode = "not_found"
-			writeManagementError(ctx, handler.logger, response, correlationID, managementError{
-				Status: http.StatusNotFound, Code: resultCode,
-				Message: "the requested resource is unavailable",
-			})
-			return
+			admitted, _ := browserResourceSharingOperation(request)
+			if !admitted {
+				resultCode = "not_found"
+				writeManagementError(ctx, handler.logger, response, correlationID, managementError{
+					Status: http.StatusNotFound, Code: resultCode,
+					Message: "the requested resource is unavailable",
+				})
+				return
+			}
 		}
 		resultCode = handler.handleResourceManagement(
-			ctx, response, request, correlationID, resourcePath, session,
+			ctx, response, request, correlationID, resourcePath, session, browser,
 		)
 		return
 	}
 	if sharingMatched {
 		if browser != nil {
-			resultCode = "not_found"
-			writeManagementError(ctx, handler.logger, response, correlationID, managementError{
-				Status: http.StatusNotFound, Code: resultCode,
-				Message: "the requested resource is unavailable",
-			})
-			return
+			admitted, _ := browserResourceSharingOperation(request)
+			if !admitted {
+				resultCode = "not_found"
+				writeManagementError(ctx, handler.logger, response, correlationID, managementError{
+					Status: http.StatusNotFound, Code: resultCode,
+					Message: "the requested resource is unavailable",
+				})
+				return
+			}
 		}
 		resultCode = handler.handleResourceSharing(
-			ctx, response, request, correlationID, sharingPath, session,
+			ctx, response, request, correlationID, sharingPath, session, browser,
 		)
 		return
 	}

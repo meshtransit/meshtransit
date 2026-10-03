@@ -76,6 +76,9 @@ type privateIdentityPorts struct {
 	WorkspaceRenames      httpapi.WorkspaceRenamer
 	PolicyApprovals       httpapi.PolicyApprovalWorkflow
 	PolicyApprovalCatalog httpapi.PolicyApprovalCatalog
+	ResourceCreations     httpapi.ResourceCreator
+	ResourceCatalog       httpapi.ResourceCatalog
+	ResourceSharing       httpapi.ResourceSharingManagement
 	RateLimiter           httpapi.ManagementRateLimiter
 	CorrelationIDs        httpapi.PublicIDGenerator
 	Clock                 oidcauth.StartClock
@@ -171,7 +174,9 @@ func composePrivateIdentity(
 		WorkspaceRenames:      ports.WorkspaceRenames,
 		PolicyApprovals:       ports.PolicyApprovals,
 		PolicyApprovalCatalog: ports.PolicyApprovalCatalog,
-		Idempotency:           keys.idempotency, RateLimitSubjects: keys.rateLimit, RateLimiter: ports.RateLimiter,
+		ResourceCreations:     ports.ResourceCreations, ResourceCatalog: ports.ResourceCatalog,
+		ResourceSharing: ports.ResourceSharing,
+		Idempotency:     keys.idempotency, RateLimitSubjects: keys.rateLimit, RateLimiter: ports.RateLimiter,
 		TrustedProxyPrefixes: profile.TrustedProxyPrefixes, SourceRateLimit: managementOptions.SourceRateLimit,
 		SessionRateLimit: managementOptions.SessionRateLimit, CorrelationIDs: ports.CorrelationIDs, Logger: ports.Logger,
 		RequestTimeout: managementOptions.RequestTimeout, MaxConcurrentRequests: managementOptions.MaxConcurrent,
@@ -245,6 +250,7 @@ func completePrivateIdentityPorts(ports privateIdentityPorts) bool {
 		ports.PolicySimulations,
 		ports.PolicyApprovals,
 		ports.PolicyApprovalCatalog,
+		ports.ResourceCreations, ports.ResourceCatalog, ports.ResourceSharing,
 		ports.RateLimiter, ports.CorrelationIDs, ports.Clock, ports.Logger,
 	} {
 		if port == nil {
