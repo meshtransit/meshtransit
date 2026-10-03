@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,8 @@ import (
 	"tailscale.com/types/key"
 )
 
-const integrationEnrollmentCredentialFileEnv = "MESHTRANSIT_INTEGRATION_ENROLLMENT_CREDENTIAL_FILE"
+// This is an environment-variable name; credential contents are read from a private file.
+const integrationEnrollmentCredentialFileEnv = "MESHTRANSIT_INTEGRATION_ENROLLMENT_CREDENTIAL_FILE" // #nosec G101 -- environment key, not a credential value.
 
 func TestClient_RegisterAndReceiveInitialMap(t *testing.T) {
 	t.Parallel()
@@ -37,7 +39,6 @@ func TestClient_RegisterAndReceiveInitialMap(t *testing.T) {
 		PinnedFingerprint: expectedFingerprint,
 		AuthKey:           credential,
 	})
-	credential = ""
 	if err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
@@ -85,15 +86,19 @@ func readIntegrationEnrollmentCredential(t *testing.T) string {
 	if path == "" {
 		t.Skip("live enrollment credential file is not configured")
 	}
-	information, err := os.Lstat(path)
+	if !filepath.IsAbs(path) {
+		t.Fatal("enrollment credential path must be absolute")
+	}
+	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
-		t.Fatalf("Lstat(enrollment credential) error = %v", err)
+		t.Fatalf("OpenRoot(enrollment credential) error = %v", err)
 	}
-	if !information.Mode().IsRegular() || information.Mode().Perm() != 0o600 ||
-		information.Size() < 1 || information.Size() > maxCredentialBytes+1 {
-		t.Fatal("enrollment credential must be a bounded owner-only regular file")
-	}
-	file, err := os.Open(path)
+	defer func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("CloseRoot(enrollment credential) error = %v", err)
+		}
+	}()
+	file, err := root.Open(filepath.Base(path))
 	if err != nil {
 		t.Fatalf("Open(enrollment credential) error = %v", err)
 	}
@@ -102,6 +107,14 @@ func readIntegrationEnrollmentCredential(t *testing.T) string {
 			t.Errorf("Close(enrollment credential) error = %v", err)
 		}
 	}()
+	information, err := file.Stat()
+	if err != nil {
+		t.Fatalf("Stat(enrollment credential) error = %v", err)
+	}
+	if !information.Mode().IsRegular() || information.Mode().Perm() != 0o600 ||
+		information.Size() < 1 || information.Size() > maxCredentialBytes+1 {
+		t.Fatal("enrollment credential must be a bounded owner-only regular file")
+	}
 	encoded, err := io.ReadAll(io.LimitReader(file, maxCredentialBytes+2))
 	if err != nil {
 		t.Fatalf("Read(enrollment credential) error = %v", err)
