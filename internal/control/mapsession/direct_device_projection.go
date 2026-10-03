@@ -395,9 +395,13 @@ func (snapshot Snapshot) ProjectionExpiry() time.Time {
 }
 
 // SharingScopes returns only distinct remote Network scopes used by current
-// explicit grants. They are subscription hints, never read authorization.
+// explicit grants and accepted-contract dependencies. Subscription hints never
+// authorize peers, packets or cross-Network reads.
 func (snapshot Snapshot) SharingScopes() []network.Scope {
-	seen := make(map[network.Scope]struct{}, len(snapshot.directDeviceProjections))
+	seen := make(map[network.Scope]struct{}, len(snapshot.directDeviceProjections)+len(snapshot.sharingDependencies))
+	for _, scope := range snapshot.sharingDependencies {
+		seen[scope] = struct{}{}
+	}
 	for _, projection := range snapshot.directDeviceProjections {
 		seen[projection.Peer().Scope()] = struct{}{}
 	}
@@ -405,9 +409,7 @@ func (snapshot Snapshot) SharingScopes() []network.Scope {
 	for scope := range seen {
 		result = append(result, scope)
 	}
-	slices.SortFunc(result, func(first, second network.Scope) int {
-		return strings.Compare(first.NetworkID().String(), second.NetworkID().String())
-	})
+	slices.SortFunc(result, compareSharingScopes)
 	return result
 }
 

@@ -48,6 +48,7 @@ type fakeTransaction struct {
 	candidateRows *peerCandidateRows
 	policyRows    *policyRuleRows
 	directRows    *directEdgeRows
+	aliasRows     *directEdgeRows
 }
 
 func (transaction *fakeTransaction) Exec(
@@ -90,6 +91,11 @@ func (transaction *fakeTransaction) Query(
 			return &directEdgeRows{}, nil
 		}
 		return transaction.directRows, nil
+	case loadAliasEdgesSQL:
+		if transaction.aliasRows == nil {
+			return &directEdgeRows{}, nil
+		}
+		return transaction.aliasRows, nil
 	case loadPacketPolicySQL:
 		if transaction.policyRows == nil {
 			return &policyRuleRows{}, nil

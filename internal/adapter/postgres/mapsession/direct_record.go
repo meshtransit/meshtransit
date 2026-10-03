@@ -73,7 +73,8 @@ type directEdgeRecord struct {
 		Protocol string     `json:"protocol"`
 		Ranges   [][2]int64 `json:"ranges"`
 	} `json:"rule"`
-	Peer struct {
+	Aliases *aliasEdgeRecord `json:"aliases,omitempty"`
+	Peer    struct {
 		NumericNodeID     int64     `json:"numeric_node_id"`
 		NumericOwnerID    int64     `json:"numeric_owner_id"`
 		ID                string    `json:"id"`
@@ -110,6 +111,9 @@ func decodeDirectEdge(value []byte, self appmapsession.Snapshot) (appmapsession.
 	var record directEdgeRecord
 	if err := json.Unmarshal(value, &record); err != nil {
 		return appmapsession.DirectDeviceProjection{}, errors.Join(ErrSnapshotEvidence, err)
+	}
+	if record.Aliases != nil {
+		return appmapsession.DirectDeviceProjection{}, ErrSnapshotEvidence
 	}
 	return record.projection(self)
 }
@@ -182,8 +186,17 @@ func (record directEdgeRecord) projection(self appmapsession.Snapshot) (appmapse
 	if err != nil {
 		return appmapsession.DirectDeviceProjection{}, errors.Join(ErrSnapshotEvidence, err)
 	}
+	mode := sharing.EndpointModeDirect
+	var aliases appmapsession.DeviceAlias
+	if record.Aliases != nil {
+		mode = sharing.EndpointModeFederationAlias
+		aliases, err = record.Aliases.value(self, peer, contractID, endpointID, record.Endpoint.Generation, record.RecoveryEpoch)
+		if err != nil {
+			return appmapsession.DirectDeviceProjection{}, errors.Join(ErrSnapshotEvidence, err)
+		}
+	}
 	endpoint, err := sharing.NewPrivateEndpoint(sharing.PrivateEndpointParams{
-		ID: endpointID, Contract: contract, AccessName: accessName, Mode: sharing.EndpointModeDirect,
+		ID: endpointID, Contract: contract, AccessName: accessName, Mode: mode,
 		ResourceAlias: resourceAddress, Generation: record.Endpoint.Generation,
 		ImportedResourceVersion: record.Contract.ImportedResourceVersion, Grant: maximum,
 		ExpiresAt: record.Endpoint.ExpiresAt, State: sharing.EndpointStateReady,
@@ -192,7 +205,7 @@ func (record directEdgeRecord) projection(self appmapsession.Snapshot) (appmapse
 		return appmapsession.DirectDeviceProjection{}, errors.Join(ErrSnapshotEvidence, err)
 	}
 	projection, err := appmapsession.NewDirectDeviceProjection(appmapsession.DirectDeviceProjectionParams{
-		Self: self, Peer: peer, ProviderTarget: target, ProviderExport: export, ConsumerRule: rule,
+		Self: self, Peer: peer, Aliases: aliases, ProviderTarget: target, ProviderExport: export, ConsumerRule: rule,
 		ProviderNetworkRevision: record.ProviderNetworkRevision, ConsumerNetworkRevision: record.ConsumerNetworkRevision,
 		ConsumerPolicyRevision: record.ConsumerPolicyRevision,
 		Authority: sharing.EffectiveAccessParams{

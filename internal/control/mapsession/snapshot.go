@@ -44,6 +44,7 @@ type SnapshotParams struct {
 	KeyExpiry               time.Time
 	PeerCandidates          []PeerCandidate
 	DirectDeviceProjections []DirectDeviceProjection
+	SharingDependencies     []network.Scope
 	PacketPolicy            policy.Snapshot
 	Connectivity            []Connectivity
 	RelayDirectory          relay.Directory
@@ -67,6 +68,7 @@ type Snapshot struct {
 	keyExpiry               time.Time
 	peerCandidates          []PeerCandidate
 	directDeviceProjections []DirectDeviceProjection
+	sharingDependencies     []network.Scope
 	packetPolicy            policy.Snapshot
 	connectivity            []Connectivity
 	relayDirectory          relay.Directory
@@ -79,6 +81,8 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 	}
 	params.PeerCandidates = canonicalPeerCandidates(params.PeerCandidates)
 	params.DirectDeviceProjections = slices.Clone(params.DirectDeviceProjections)
+	params.SharingDependencies = slices.Clone(params.SharingDependencies)
+	slices.SortFunc(params.SharingDependencies, compareSharingScopes)
 	slices.SortFunc(params.DirectDeviceProjections, compareDirectDeviceProjections)
 	params.Connectivity = canonicalConnectivity(params.Connectivity)
 	if !validSnapshotParams(params) {
@@ -101,6 +105,7 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		keyExpiry:               params.KeyExpiry,
 		peerCandidates:          params.PeerCandidates,
 		directDeviceProjections: params.DirectDeviceProjections,
+		sharingDependencies:     params.SharingDependencies,
 		packetPolicy:            params.PacketPolicy,
 		connectivity:            params.Connectivity,
 		relayDirectory:          params.RelayDirectory,
@@ -245,6 +250,7 @@ func (snapshot Snapshot) params() SnapshotParams {
 		KeyExpiry:               snapshot.keyExpiry,
 		PeerCandidates:          slices.Clone(snapshot.peerCandidates),
 		DirectDeviceProjections: slices.Clone(snapshot.directDeviceProjections),
+		SharingDependencies:     slices.Clone(snapshot.sharingDependencies),
 		PacketPolicy:            snapshot.packetPolicy,
 		Connectivity:            slices.Clone(snapshot.connectivity),
 		RelayDirectory:          snapshot.relayDirectory,
@@ -266,7 +272,7 @@ func validSnapshotParams(params SnapshotParams) bool {
 		params.MachineKey,
 		params.NodeKey,
 	) && params.PacketPolicy.IsValid() && params.PacketPolicy.Scope() == params.Scope &&
-		validDirectDeviceProjections(params) && validSnapshotConnectivity(params) && params.RelayDirectory.IsValid()
+		validSharingDependencies(params) && validDirectDeviceProjections(params) && validSnapshotConnectivity(params) && params.RelayDirectory.IsValid()
 }
 
 func validSnapshotConnectivity(params SnapshotParams) bool {

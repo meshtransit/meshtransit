@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -143,30 +144,11 @@ func (service *StreamService) Serve(
 		return ErrPresenceConflict
 	}
 	defer service.release(snapshot.NodeID())
-	updates, stopWatching, err := service.revisions.WatchNetwork(snapshot.Scope().NetworkID())
+	watch, err := service.watchSnapshot(ctx, snapshot)
 	if err != nil {
-		return errors.Join(ErrStreamUnavailable, err)
+		return err
 	}
-	if updates == nil || stopWatching == nil {
-		if stopWatching != nil {
-			stopWatching()
-		}
-		return ErrStreamUnavailable
-	}
-	defer stopWatching()
-	connectivityUpdates, stopConnectivity, err := service.connectivity.WatchNetwork(
-		snapshot.Scope().NetworkID(),
-	)
-	if err != nil {
-		return errors.Join(ErrStreamUnavailable, err)
-	}
-	if connectivityUpdates == nil || stopConnectivity == nil {
-		if stopConnectivity != nil {
-			stopConnectivity()
-		}
-		return ErrStreamUnavailable
-	}
-	defer stopConnectivity()
+	defer watch.close()
 	lease, err := node.NewPresenceLease(
 		snapshot.NodeID(),
 		snapshot.SessionGeneration(),
@@ -193,8 +175,7 @@ func (service *StreamService) Serve(
 		sink,
 		lease,
 		snapshot,
-		updates,
-		connectivityUpdates,
+		watch,
 	)
 }
 
@@ -221,8 +202,7 @@ func (service *StreamService) run(
 	sink StreamSink,
 	lease node.PresenceLease,
 	initial Snapshot,
-	updates <-chan network.RevisionAdvanced,
-	connectivityUpdates <-chan ConnectivityChanged,
+	watch *streamWatch,
 ) error {
 	renewal := time.NewTicker(service.options.PresenceTTL / 3)
 	defer renewal.Stop()
@@ -236,8 +216,18 @@ func (service *StreamService) run(
 	projectionExpiry.Stop()
 	defer projectionExpiry.Stop()
 
+	defer func() { watch.close() }()
 	current := initial
 	for {
+		scopes := append([]network.Scope{current.Scope()}, current.SharingScopes()...)
+		if !slices.Equal(scopes, watch.scopes) {
+			nextWatch, err := service.watchSnapshot(ctx, current)
+			if err != nil {
+				return withdrawAuthority(ctx, sink, current, err)
+			}
+			watch.close()
+			watch = nextWatch
+		}
 		var projectionDeadline <-chan time.Time
 		if deadline := current.ProjectionExpiry(); deadline.Before(current.KeyExpiry()) {
 			projectionExpiry.Reset(time.Until(deadline))
@@ -268,30 +258,19 @@ func (service *StreamService) run(
 			if err := sink.SendKeepAlive(ctx); err != nil {
 				return errors.Join(ErrStreamWrite, err)
 			}
-		case revision, open := <-updates:
-			if !open {
-				return ErrStreamUnavailable
+		case err := <-watch.failure:
+			if len(current.directDeviceProjections) != 0 {
+				return withdrawAuthority(ctx, sink, current, err)
 			}
-			if !revision.IsValid() || revision.NetworkID() != current.Scope().NetworkID() {
-				return ErrStreamDiscontinuity
-			}
-			if revision.Number() <= current.NetworkRevision() {
-				continue
-			}
-			next, err := service.refresh(ctx, machine, request, sink, current)
-			if err != nil {
-				return err
-			}
-			current = next
-		case change, open := <-connectivityUpdates:
-			if !open {
-				return ErrStreamUnavailable
-			}
-			if !change.IsValid() || change.NetworkID() != current.Scope().NetworkID() {
-				return ErrStreamDiscontinuity
-			}
-			if !streamTracksConnectivity(current, change) {
-				continue
+			return err
+		case wake := <-watch.updates:
+			if !wake.reconcile {
+				if wake.revision.IsValid() && wake.revision.NetworkID() == current.Scope().NetworkID() && wake.revision.Number() <= current.NetworkRevision() {
+					continue
+				}
+				if wake.connectivity.IsValid() && !streamTracksConnectivity(current, wake.connectivity) {
+					continue
+				}
 			}
 			next, err := service.refresh(ctx, machine, request, sink, current)
 			if err != nil {
@@ -328,7 +307,7 @@ func (service *StreamService) refresh(
 		return Snapshot{}, withdrawAuthority(ctx, sink, current, ErrStreamDiscontinuity)
 	}
 	if !streamSnapshotChanged(current, next) {
-		return current, nil
+		return next, nil
 	}
 	if relayDirectoryChanged(current, next) ||
 		(current.NetworkRevision() == next.NetworkRevision() &&
