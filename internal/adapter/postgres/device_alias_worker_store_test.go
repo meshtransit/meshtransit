@@ -16,12 +16,18 @@ import (
 
 func TestDeviceAliasWorkerOwnsCompleteChangeAndNeverRetriesUnknownCommit(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"reserve", "ready", "idempotent", "missing changed", "null proof", "foreign endpoint", "wrong change", "duplicate stream", "malformed hash", "wrong kind", "query error", "cancel", "configure", "finalize", "commit", "cleanup", "begin"} {
+	for _, name := range []string{"reserve", "ready", "withdraw", "quarantine_consumer", "quarantine_resource", "wrong withdrawal action", "commit then cancel", "idempotent", "missing changed", "null proof", "foreign endpoint", "wrong change", "duplicate stream", "malformed hash", "wrong kind", "query error", "cancel", "configure", "finalize", "commit", "cleanup", "begin"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			intent := aliasWorkerIntentFixture(t)
-			if name == "ready" {
-				intent.Mode = devicealias.Ready
+			if devicealias.ChangeMode(name).IsValid() {
+				intent.Mode = devicealias.ChangeMode(name)
+			}
+			if name == "wrong withdrawal action" {
+				intent.Mode = devicealias.Withdraw
+			}
+			if intent.Mode.Withdraws() {
+				intent.ProviderNodeEpoch, intent.ConsumerNodeEpoch = 0, 0
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -40,7 +46,7 @@ func TestDeviceAliasWorkerOwnsCompleteChangeAndNeverRetriesUnknownCommit(t *test
 			}
 			store := &DeviceAliasWorkerStore{database: database}
 			changed, err := store.Change(ctx, intent)
-			valid := name == "reserve" || name == "ready" || name == "idempotent"
+			valid := devicealias.ChangeMode(name).IsValid() || name == "idempotent" || name == "commit then cancel"
 			if valid {
 				if err != nil || changed != (name != "idempotent") || !transaction.committed || transaction.rollbackCalls != 0 {
 					t.Fatal("incomplete alias change reported success", err)
@@ -104,17 +110,27 @@ type aliasWorkerTestTransaction struct {
 
 func (transaction *aliasWorkerTestTransaction) QueryRow(ctx context.Context, query string, args ...any) outboxRow {
 	switch query {
-	case prepareDeviceAliasChangeSQL:
+	case prepareDeviceAliasChangeSQL, prepareDeviceAliasWithdrawalSQL:
 		transaction.prepares++
 		return fakeOutboxRow{scan: func(values ...any) error {
 			if transaction.mode == "query error" || transaction.mode == "cleanup" {
 				return errors.New("synthetic prepare failure")
 			}
-			kind, aggregate := "device_alias_lease", args[6].([]string)[0]
-			if transaction.intent.Mode == devicealias.Ready {
-				kind, aggregate = "device_alias_client_readiness", args[7].(string)
+			kind, aggregate := "device_alias_lease", "01890f00-0000-7000-8000-000000000801"
+			change, action := "", ""
+			if transaction.intent.Mode.Withdraws() {
+				change, action = args[4].(string), "sharing.device_alias."+string(transaction.intent.Mode)
 			}
-			proof := deviceAliasChangeProof{Changed: true, TransactionID: "123", ChangeID: args[8].(string), EndpointID: transaction.intent.EndpointID.String(),
+			if !transaction.intent.Mode.Withdraws() {
+				aggregate, change, action = args[6].([]string)[0], args[8].(string), ""
+			}
+			if transaction.intent.Mode == devicealias.Ready || transaction.intent.Mode == devicealias.Withdraw {
+				kind = "device_alias_client_readiness"
+			}
+			if transaction.mode == "wrong withdrawal action" {
+				action = "sharing.device_alias.ready"
+			}
+			proof := deviceAliasChangeProof{Changed: true, TransactionID: "123", Action: action, ChangeID: change, EndpointID: transaction.intent.EndpointID.String(),
 				AggregateKind: kind, AggregateID: aggregate, AggregateVersion: 1, Deadline: time.Now().Add(time.Minute), Events: []deviceAliasEvidence{
 					{WorkspaceID: "01890f00-0000-7000-8000-000000000101", NetworkID: "01890f00-0000-7000-8000-000000000201", StreamID: 1, Sequence: 1, PreviousHash: strings.Repeat("00", 32), NetworkRevision: 2, SharingRevision: 2, AuditPayload: `{"network_revision":2}`, OutboxPayload: `{"subsystem":"sharing"}`},
 					{WorkspaceID: "01890f00-0000-7000-8000-000000000102", NetworkID: "01890f00-0000-7000-8000-000000000202", StreamID: 2, Sequence: 3, PreviousHash: strings.Repeat("11", 32), NetworkRevision: 4, SharingRevision: 4, AuditPayload: `{"network_revision":4}`, OutboxPayload: `{"subsystem":"sharing"}`},
@@ -148,7 +164,7 @@ func (transaction *aliasWorkerTestTransaction) QueryRow(ctx context.Context, que
 			*values[0].(*[]byte) = body
 			return nil
 		}}
-	case finalizeDeviceAliasChangeSQL:
+	case finalizeDeviceAliasChangeSQL, finalizeDeviceAliasWithdrawalSQL:
 		transaction.finalizes++
 		return fakeOutboxRow{scan: func(values ...any) error {
 			if transaction.mode == "finalize" {
@@ -169,4 +185,12 @@ func (transaction *aliasWorkerTestTransaction) QueryRow(ctx context.Context, que
 	default:
 		return fakeOutboxRow{scan: func(...any) error { return errors.New("unexpected alias query") }}
 	}
+}
+
+func (transaction *aliasWorkerTestTransaction) Commit(ctx context.Context) error {
+	err := transaction.fakeOutboxTransaction.Commit(ctx)
+	if err == nil && transaction.mode == "commit then cancel" {
+		transaction.cancel()
+	}
+	return err
 }

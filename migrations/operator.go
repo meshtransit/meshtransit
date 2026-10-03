@@ -90,3 +90,9 @@ var deviceAliasWorkerOwnershipSQL string
 
 // DeviceAliasWorkerOwnershipSQL enables only guarded worker entry points.
 func DeviceAliasWorkerOwnershipSQL() string { return deviceAliasWorkerOwnershipSQL }
+
+//go:embed operator/000086_device_alias_withdrawal_ownership.sql
+var deviceAliasWithdrawalOwnershipSQL string
+
+// DeviceAliasWithdrawalOwnershipSQL enables no-grant worker lifecycle entry points.
+func DeviceAliasWithdrawalOwnershipSQL() string { return deviceAliasWithdrawalOwnershipSQL }

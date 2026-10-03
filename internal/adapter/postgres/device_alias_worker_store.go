@@ -43,6 +43,9 @@ func NewDeviceAliasWorkerStore(pool *Pool) (*DeviceAliasWorkerStore, error) {
 
 const prepareDeviceAliasChangeSQL = `SELECT mesh_ops.prepare_device_alias_change_v1(
  $1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,$10::TEXT)`
+const prepareDeviceAliasWithdrawalSQL = `SELECT mesh_ops.prepare_device_alias_withdrawal_v1($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::UUID,$6::TEXT)`
+const finalizeDeviceAliasWithdrawalSQL = `SELECT mesh_ops.finalize_device_alias_withdrawal_v1($1::UUID,$2::UUID,$3::BIGINT,$4::UUID,$5::TEXT,$6::JSONB)`
+
 const finalizeDeviceAliasChangeSQL = `SELECT mesh_ops.finalize_device_alias_change_v1($1::UUID,$2::UUID,$3::BIGINT,$4::UUID,$5::TEXT,$6::JSONB)`
 
 // Change prepares state and locks authority before audit heads, hashes evidence
@@ -88,8 +91,13 @@ func (store *DeviceAliasWorkerStore) Change(ctx context.Context, intent deviceal
 	}
 	leases := []string{ids[0].String(), ids[1].String(), ids[2].String(), ids[3].String()}
 	var encoded []byte
-	if err := transaction.QueryRow(ctx, prepareDeviceAliasChangeSQL, intent.DeploymentID.String(), intent.EndpointID.String(), intent.ConsumerID.String(),
-		intent.EndpointGeneration, intent.ProviderNodeEpoch, intent.ConsumerNodeEpoch, leases, ids[4].String(), ids[5].String(), string(intent.Mode)).Scan(&encoded); err != nil {
+	prepareQuery := prepareDeviceAliasChangeSQL
+	prepareArgs := []any{intent.DeploymentID.String(), intent.EndpointID.String(), intent.ConsumerID.String(), intent.EndpointGeneration, intent.ProviderNodeEpoch, intent.ConsumerNodeEpoch, leases, ids[4].String(), ids[5].String(), string(intent.Mode)}
+	if intent.Mode.Withdraws() {
+		prepareQuery = prepareDeviceAliasWithdrawalSQL
+		prepareArgs = []any{intent.DeploymentID.String(), intent.EndpointID.String(), intent.ConsumerID.String(), intent.EndpointGeneration, ids[5].String(), string(intent.Mode)}
+	}
+	if err := transaction.QueryRow(ctx, prepareQuery, prepareArgs...).Scan(&encoded); err != nil {
 		return false, errors.Join(ErrDeviceAliasChange, err)
 	}
 	proof, err := decodeDeviceAliasChangeProof(encoded, intent, ids[5])
@@ -105,8 +113,12 @@ func (store *DeviceAliasWorkerStore) Change(ctx context.Context, intent deviceal
 			return false, errors.Join(ErrDeviceAliasChange, err)
 		}
 		var count int
-		if err := transaction.QueryRow(ctx, finalizeDeviceAliasChangeSQL, intent.DeploymentID.String(), intent.EndpointID.String(), intent.EndpointGeneration,
-			ids[5].String(), proof.AggregateKind, events).Scan(&count); err != nil || count != 2 {
+		finalizeQuery, selector := finalizeDeviceAliasChangeSQL, proof.AggregateKind
+		if intent.Mode.Withdraws() {
+			finalizeQuery, selector = finalizeDeviceAliasWithdrawalSQL, string(intent.Mode)
+		}
+		if err := transaction.QueryRow(ctx, finalizeQuery, intent.DeploymentID.String(), intent.EndpointID.String(), intent.EndpointGeneration,
+			ids[5].String(), selector, events).Scan(&count); err != nil || count != 2 {
 			return false, errors.Join(ErrDeviceAliasChange, err)
 		}
 	}
@@ -117,9 +129,6 @@ func (store *DeviceAliasWorkerStore) Change(ctx context.Context, intent deviceal
 		return false, errors.Join(ErrDeviceAliasChange, ErrDeviceAliasCommitUnknown, err)
 	}
 	committed = true
-	if err := ctx.Err(); err != nil {
-		return false, errors.Join(ErrDeviceAliasChange, err)
-	}
 	return proof.Changed, nil
 }
 
@@ -131,6 +140,7 @@ type deviceAliasChangeProof struct {
 	AggregateKind    string                `json:"aggregate_kind"`
 	AggregateID      string                `json:"aggregate_id"`
 	AggregateVersion int64                 `json:"aggregate_version"`
+	Action           string                `json:"action,omitempty"`
 	Deadline         time.Time             `json:"deadline"`
 	Events           []deviceAliasEvidence `json:"events"`
 }
@@ -170,7 +180,7 @@ func decodeDeviceAliasChangeProof(encoded []byte, intent devicealias.ChangeInten
 		return deviceAliasChangeProof{}, ErrDeviceAliasChange
 	}
 	if !proof.Changed {
-		if len(proof.Events) != 0 || proof.TransactionID != "" || proof.ChangeID != "" || proof.EndpointID != "" || proof.AggregateKind != "" || proof.AggregateID != "" || proof.AggregateVersion != 0 || !proof.Deadline.IsZero() {
+		if len(proof.Events) != 0 || proof.TransactionID != "" || proof.ChangeID != "" || proof.EndpointID != "" || proof.AggregateKind != "" || proof.AggregateID != "" || proof.AggregateVersion != 0 || proof.Action != "" || !proof.Deadline.IsZero() {
 			return deviceAliasChangeProof{}, ErrDeviceAliasChange
 		}
 		return proof, nil
@@ -180,8 +190,11 @@ func decodeDeviceAliasChangeProof(encoded []byte, intent devicealias.ChangeInten
 		return deviceAliasChangeProof{}, ErrDeviceAliasChange
 	}
 	wantKind := "device_alias_lease"
-	if intent.Mode == devicealias.Ready {
+	if intent.Mode == devicealias.Ready || intent.Mode == devicealias.Withdraw {
 		wantKind = "device_alias_client_readiness"
+	}
+	if intent.Mode.Withdraws() && proof.Action != "sharing.device_alias."+string(intent.Mode) || !intent.Mode.Withdraws() && proof.Action != "" {
+		return deviceAliasChangeProof{}, ErrDeviceAliasChange
 	}
 	if proof.AggregateKind != wantKind {
 		return deviceAliasChangeProof{}, ErrDeviceAliasChange
@@ -216,6 +229,9 @@ func hashDeviceAliasEvents(proof deviceAliasChangeProof, ids [10]publicid.ID) ([
 	action := "sharing.device_alias.reserve"
 	if proof.AggregateKind == "device_alias_client_readiness" {
 		action = "sharing.device_alias.ready"
+	}
+	if proof.Action != "" {
+		action = proof.Action
 	}
 	for index := range proof.Events {
 		event := &proof.Events[index]

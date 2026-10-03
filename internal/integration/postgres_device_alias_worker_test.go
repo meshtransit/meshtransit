@@ -143,6 +143,7 @@ func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx
 						}
 						assertAliasMapCount(ctx, t, tx, provider, 1)
 						assertAliasMapCount(ctx, t, tx, consumer, 1)
+						assertAliasWorkerWithdrawal(ctx, t, tx, deploymentID, endpointID, consumerID, generation, provider, consumer)
 					}
 				}
 			}
@@ -153,6 +154,7 @@ func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx
 type aliasWorkerProof struct {
 	Changed          bool               `json:"changed"`
 	ChangeID         string             `json:"change_id"`
+	Action           string             `json:"action,omitempty"`
 	AggregateKind    string             `json:"aggregate_kind"`
 	AggregateID      string             `json:"aggregate_id"`
 	AggregateVersion int64              `json:"aggregate_version"`
@@ -187,6 +189,9 @@ func hashIntegrationAliasEvidence(t *testing.T, proof aliasWorkerProof, marker i
 	action := "sharing.device_alias.reserve"
 	if proof.AggregateKind == "device_alias_client_readiness" {
 		action = "sharing.device_alias.ready"
+	}
+	if proof.Action != "" {
+		action = proof.Action
 	}
 	for index := range proof.Events {
 		event := &proof.Events[index]
@@ -270,5 +275,88 @@ func assertAliasWorkerAuthorityRejections(ctx context.Context, t *testing.T, tx 
 			}
 			requireDeviceAliasCode(t, err, code)
 		})
+	}
+}
+
+func assertAliasWorkerWithdrawal(ctx context.Context, t *testing.T, tx pgx.Tx, deploymentID, endpointID, consumerID string, generation int64, provider, consumer aliasMapIdentity) {
+	t.Helper()
+	for _, mode := range []string{"withdraw", "quarantine_consumer", "quarantine_resource"} {
+		for _, evidence := range []string{"missing", "complete", "expired"} {
+			if mode == "withdraw" && evidence == "expired" {
+				continue
+			}
+			t.Run(mode+" "+evidence, func(t *testing.T) {
+				if _, err := tx.Exec(ctx, `RESET ROLE; SAVEPOINT alias_withdrawal`); err != nil {
+					t.Fatal(err)
+				}
+				defer func() {
+					if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT alias_withdrawal`); err != nil {
+						t.Fatal(err)
+					}
+				}()
+				if evidence == "expired" {
+					if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role=replica;
+      UPDATE mesh.device_alias_lease SET expires_at=clock_timestamp()-INTERVAL '1 millisecond' WHERE private_endpoint_id=(SELECT id FROM mesh.private_endpoint WHERE public_id=$1::UUID);
+      SET LOCAL session_replication_role=origin`, pgx.QueryExecModeSimpleProtocol, endpointID); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_worker`); err != nil {
+					t.Fatal(err)
+				}
+				var body []byte
+				change := "01890fb0-0000-7000-8000-000000004201"
+				if err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_withdrawal_v1($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::UUID,$6::TEXT)`, deploymentID, endpointID, consumerID, generation, change, mode).Scan(&body); err != nil {
+					t.Fatal(err)
+				}
+				var proof aliasWorkerProof
+				if err := json.Unmarshal(body, &proof); err != nil || !proof.Changed || proof.Action != "sharing.device_alias."+mode {
+					t.Fatal("invalid withdrawal proof", err)
+				}
+				if evidence == "missing" {
+					_, err := tx.Exec(ctx, `SET CONSTRAINTS ALL IMMEDIATE`)
+					requireDeviceAliasCode(t, err, "23514")
+					return
+				}
+				events := hashIntegrationAliasEvidence(t, proof, 4220)
+				var count int
+				if err := tx.QueryRow(ctx, `SELECT mesh_ops.finalize_device_alias_withdrawal_v1($1::UUID,$2::UUID,$3::BIGINT,$4::UUID,$5::TEXT,$6::JSONB)`, deploymentID, endpointID, generation, change, mode, events).Scan(&count); err != nil || count != 2 {
+					t.Fatal("withdrawal finalization", err)
+				}
+				if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL IMMEDIATE; SET CONSTRAINTS ALL DEFERRED`); err != nil {
+					t.Fatal(err)
+				}
+				assertAliasMapCount(ctx, t, tx, provider, 0)
+				assertAliasMapCount(ctx, t, tx, consumer, 0)
+				if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {
+					t.Fatal(err)
+				}
+				var resources, sources int
+				var safe bool
+				if err := tx.QueryRow(ctx, `SELECT count(*) FILTER(WHERE alias_role='resource' AND state='reserved'),count(*) FILTER(WHERE alias_role='consumer_source' AND state='reserved'),
+      bool_and(state<>'quarantined' OR quarantine_until>=GREATEST(updated_at,expires_at)+INTERVAL '24 hours') FROM mesh.device_alias_lease WHERE private_endpoint_id=(SELECT id FROM mesh.private_endpoint WHERE public_id=$1::UUID)`, endpointID).Scan(&resources, &sources, &safe); err != nil || !safe {
+					t.Fatal("unsafe quarantine", err)
+				}
+				wantResources, wantSources := 2, 4
+				if mode == "quarantine_resource" {
+					wantResources = 0
+				}
+				if mode == "quarantine_consumer" {
+					wantSources = 2
+				}
+				if resources != wantResources || sources != wantSources {
+					t.Fatalf("withdrawal crossed alias role: resources=%d sources=%d", resources, sources)
+				}
+				if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_worker`); err != nil {
+					t.Fatal(err)
+				}
+				if err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_withdrawal_v1($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::UUID,$6::TEXT)`, deploymentID, endpointID, consumerID, generation, "01890fb0-0000-7000-8000-000000004231", mode).Scan(&body); err != nil {
+					t.Fatal(err)
+				}
+				if string(body) != `{"events": [], "changed": false}` {
+					t.Fatal("withdrawal replay mutated state")
+				}
+			})
+		}
 	}
 }

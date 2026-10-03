@@ -450,6 +450,7 @@ func Catalog() []Migration {
 		newMigration(83, "Device alias client readiness and authenticated map reader", deviceAliasMapReadinessSQL),
 		newMigration(84, "authenticated accepted Device sharing dependencies", deviceSharingDependenciesSQL),
 		newMigration(85, "guarded bilateral Device alias worker changes", deviceAliasGuardedWorkerSQL),
+		newMigration(86, "guarded Device alias withdrawal and quarantine", deviceAliasGuardedWithdrawalSQL),
 	}
 }
 
@@ -484,3 +485,6 @@ var deviceSharingDependenciesSQL string
 
 //go:embed 000085_device_alias_guarded_worker.up.sql
 var deviceAliasGuardedWorkerSQL string
+
+//go:embed 000086_device_alias_guarded_withdrawal.up.sql
+var deviceAliasGuardedWithdrawalSQL string

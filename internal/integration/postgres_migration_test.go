@@ -181,6 +181,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if _, err := adminConnection.Exec(ctx, migrations.DeviceAliasWorkerOwnershipSQL()); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := adminConnection.Exec(ctx, migrations.DeviceAliasWithdrawalOwnershipSQL()); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := adminConnection.Exec(ctx, migrations.DeviceSharingDependenciesOwnershipSQL()); err != nil {
 		t.Fatalf("harden sharing dependencies: %v", err)
 	}
