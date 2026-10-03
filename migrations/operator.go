@@ -78,3 +78,9 @@ var deviceAliasMapOwnershipSQL string
 
 // DeviceAliasMapOwnershipSQL confines alias reads to an isolated function owner.
 func DeviceAliasMapOwnershipSQL() string { return deviceAliasMapOwnershipSQL }
+
+//go:embed operator/000084_device_sharing_dependencies_ownership.sql
+var deviceSharingDependenciesOwnershipSQL string
+
+// DeviceSharingDependenciesOwnershipSQL confines refresh hints to the authenticated reader.
+func DeviceSharingDependenciesOwnershipSQL() string { return deviceSharingDependenciesOwnershipSQL }

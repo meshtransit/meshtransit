@@ -18,6 +18,13 @@ func (store *Store) loadDirectEdges(
 	ctx context.Context, transaction databaseTransaction, self appmapsession.Snapshot,
 	machineFingerprint, nodeKey []byte,
 ) (appmapsession.Snapshot, error) {
+	if store.options.EnableDeviceAliases {
+		var err error
+		self, err = loadSharingDependencies(ctx, transaction, self, machineFingerprint, nodeKey)
+		if err != nil {
+			return appmapsession.Snapshot{}, err
+		}
+	}
 	projections, err := readSharingEdges(ctx, transaction, self, machineFingerprint, nodeKey, loadDirectEdgesSQL, decodeDirectEdge)
 	if err != nil {
 		return appmapsession.Snapshot{}, err

@@ -37,18 +37,19 @@ func (database *fakeDatabase) Begin(context.Context) (databaseTransaction, error
 }
 
 type fakeTransaction struct {
-	rows          []databaseRow
-	queries       []string
-	arguments     [][]any
-	execErr       error
-	commitErr     error
-	rollbackErr   error
-	committed     bool
-	rollbackCalls int
-	candidateRows *peerCandidateRows
-	policyRows    *policyRuleRows
-	directRows    *directEdgeRows
-	aliasRows     *directEdgeRows
+	rows           []databaseRow
+	queries        []string
+	arguments      [][]any
+	execErr        error
+	commitErr      error
+	rollbackErr    error
+	committed      bool
+	rollbackCalls  int
+	candidateRows  *peerCandidateRows
+	policyRows     *policyRuleRows
+	directRows     *directEdgeRows
+	aliasRows      *directEdgeRows
+	dependencyRows *directEdgeRows
 }
 
 func (transaction *fakeTransaction) Exec(
@@ -91,6 +92,11 @@ func (transaction *fakeTransaction) Query(
 			return &directEdgeRows{}, nil
 		}
 		return transaction.directRows, nil
+	case loadSharingDependenciesSQL:
+		if transaction.dependencyRows == nil {
+			return &directEdgeRows{}, nil
+		}
+		return transaction.dependencyRows, nil
 	case loadAliasEdgesSQL:
 		if transaction.aliasRows == nil {
 			return &directEdgeRows{}, nil

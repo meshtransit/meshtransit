@@ -61,6 +61,9 @@ func assertDeviceAliasMapReadiness(ctx context.Context, t *testing.T, admin *pgx
      WHERE endpoint.public_id=$1::UUID`, endpointID, consumerID).Scan(&provider.workspace, &provider.network, &provider.id, &provider.machine, &provider.key, &consumer.workspace, &consumer.network, &consumer.id, &consumer.machine, &consumer.key); err != nil {
 				t.Fatal(err)
 			}
+			if mode == "both" {
+				assertSharingDependenciesBeforeRule(ctx, t, tx, provider, consumer)
+			}
 			assertAliasMapCount(ctx, t, tx, consumer, 0)
 			if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {
 				t.Fatal(err)
