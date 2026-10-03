@@ -3,6 +3,8 @@ package dataplane
 import (
 	"errors"
 
+	"github.com/meshtransit/meshd/internal/packetmeta"
+
 	"golang.zx2c4.com/wireguard/tun"
 )
 
@@ -19,15 +21,26 @@ func (d *observedTUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) 
 	if offset < 0 || len(sizes) < len(bufs) {
 		return 0, errors.New("dataplane: invalid tun read buffers")
 	}
+	metadataObserver, observesMetadata := d.observer.(PacketMetadataObserver)
 	for {
 		count, err := d.Device.Read(bufs, sizes, offset)
 		if count < 0 || count > len(bufs) || count > len(sizes) {
 			return 0, errors.New("dataplane: invalid tun read count")
 		}
 		allowed := 0
-		for index := range count {
+		for index := 0; index < count && index < len(bufs) && index < len(sizes); index++ {
 			packet, valid := packetFromReadBuffer(bufs[index], sizes[index], offset)
-			if !valid || (d.filter != nil && !d.filter.ProcessPacket(PacketOutbound, packet)) {
+			if !valid {
+				continue
+			}
+			// Capture only scalar headers before ProcessPacket can rewrite the
+			// source alias. Denied packets never reach either observer.
+			var header packetmeta.Header
+			var headerErr error
+			if observesMetadata {
+				header, headerErr = packetmeta.Parse(packet)
+			}
+			if d.filter != nil && !d.filter.ProcessPacket(PacketOutbound, packet) {
 				continue
 			}
 			if allowed != index {
@@ -37,7 +50,11 @@ func (d *observedTUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) 
 				copy(bufs[allowed][offset:], packet)
 			}
 			sizes[allowed] = len(packet)
-			if d.observer != nil {
+			if observesMetadata {
+				if headerErr == nil {
+					metadataObserver.ObservePacketMetadata(PacketOutbound, header)
+				}
+			} else if d.observer != nil {
 				d.observer.ObservePacket(
 					PacketOutbound,
 					bufs[allowed][offset:offset+len(packet)],

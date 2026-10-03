@@ -14,6 +14,7 @@ import (
 
 	"github.com/meshtransit/meshd/internal/dataplane"
 	"github.com/meshtransit/meshd/internal/networkmap"
+	"github.com/meshtransit/meshd/internal/packetmeta"
 )
 
 func TestReporterUploadsEstablishedTCPFlowWithoutPayload(t *testing.T) {
@@ -199,4 +200,116 @@ func stringContains(value, target string) bool {
 	}
 
 	return false
+}
+
+func TestReporterUploadsCanonicalAliasFlowMetadata(t *testing.T) {
+	t.Parallel()
+	received := make(chan nativeBatch, 1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body nativeBatch
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			http.Error(writer, "bad body", http.StatusBadRequest)
+			return
+		}
+		received <- body
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	credentials, err := networkmap.NewAuditCredentials(testToken(7, 11), testToken(7, 0), 11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reporter, err := New(Config{BaseURL: server.URL, Interval: time.Second, Timeout: time.Second, HTTPClient: server.Client(), Logger: slog.New(slog.DiscardHandler)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := testSnapshot(credentials)
+	snapshot.Peers[0].Addresses = []netip.Prefix{netip.MustParsePrefix("100.96.0.1/32")}
+	reporter.UpdateNetwork(snapshot)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- reporter.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	packet := testIPv4TCPPacket([4]byte{100, 64, 0, 3}, [4]byte{100, 96, 0, 1}, 48326, 18080, 0x02, []byte("alias-private-payload"))
+	header, err := packetmeta.Parse(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The admitted outbound header remains in TUN coordinates. Local source
+	// aliases, wrong directions and unrelated sources cannot identify self.
+	localAlias := header
+	localAlias.Source = netip.MustParseAddr("100.96.0.2")
+	reporter.ObservePacketMetadata(dataplane.PacketOutbound, localAlias)
+	reporter.ObservePacketMetadata(dataplane.PacketInbound, header)
+	reporter.ObservePacketMetadata(dataplane.PacketDirection(99), header)
+	reporter.ObservePacketMetadata(dataplane.PacketOutbound, header)
+	reporter.ObservePacket(dataplane.PacketInbound, testIPv4TCPPacket([4]byte{100, 96, 0, 1}, [4]byte{100, 64, 0, 3}, 18080, 48326, 0x12, nil))
+	select {
+	case body := <-received:
+		if len(body.Flows) != 1 {
+			t.Fatalf("flow count = %d", len(body.Flows))
+		}
+		flow := body.Flows[0]
+		if flow.Source != "100.64.0.3:48326" || flow.Destination != "100.96.0.1:18080" || flow.SourceToDestinationPackets != 1 || flow.DestinationToSourcePackets != 1 {
+			t.Fatalf("invalid alias flow coordinates or widened identity: %+v", flow)
+		}
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stringContains(string(encoded), "alias-private-payload") || stringContains(string(encoded), "100.96.0.2") {
+			t.Fatal("upload exposed payload or local translation alias")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for alias metadata upload")
+	}
+}
+
+func TestReporterUploadsIPv6AliasUDPMetadata(t *testing.T) {
+	t.Parallel()
+	received := make(chan nativeBatch, 1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body nativeBatch
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			http.Error(writer, "bad body", http.StatusBadRequest)
+			return
+		}
+		received <- body
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	credentials, err := networkmap.NewAuditCredentials(testToken(7, 11), testToken(7, 0), 11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reporter, err := New(Config{BaseURL: server.URL, Interval: time.Second, Timeout: time.Second, HTTPClient: server.Client(), Logger: slog.New(slog.DiscardHandler)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := testSnapshot(credentials)
+	snapshot.Self.Addresses = []netip.Prefix{netip.MustParsePrefix("fd00:1::1/128")}
+	snapshot.Peers[0].Addresses = []netip.Prefix{netip.MustParsePrefix("fd00:2::1/128")}
+	reporter.UpdateNetwork(snapshot)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- reporter.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	header := packetmeta.Header{Source: netip.MustParseAddr("fd00:1::1"), Destination: netip.MustParseAddr("fd00:2::1"), Length: 48, Protocol: packetmeta.ProtocolUDP, SourcePort: 42000, DestinationPort: 53}
+	reporter.ObservePacketMetadata(dataplane.PacketOutbound, header)
+	reply := header
+	reply.Source, reply.Destination = header.Destination, header.Source
+	reply.SourcePort, reply.DestinationPort = header.DestinationPort, header.SourcePort
+	reporter.ObservePacketMetadata(dataplane.PacketInbound, reply)
+	select {
+	case body := <-received:
+		if len(body.Flows) != 1 {
+			t.Fatalf("flow count = %d", len(body.Flows))
+		}
+		flow := body.Flows[0]
+		if flow.Protocol != packetmeta.ProtocolUDP || flow.Source != "[fd00:1::1]:42000" || flow.Destination != "[fd00:2::1]:53" || flow.SourceToDestinationPackets != 1 || flow.DestinationToSourcePackets != 1 || flow.SourceToDestinationBytes != 48 || flow.DestinationToSourceBytes != 48 {
+			t.Fatalf("IPv6 metadata serialization/aggregation = %+v", flow)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for IPv6 alias upload")
+	}
 }

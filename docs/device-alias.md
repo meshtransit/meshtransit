@@ -142,8 +142,12 @@ Core allocation/quarantine and authenticated bilateral authority, both-Network
 wakeups/reconciliation, overlapping-address encrypted traffic on disposable
 clients, policy/revoke/expiry latency, third-Network isolation and DNS lifecycle.
 
-Current packet observers see outbound translated sources and inbound canonical
-destinations. The existing flow reporter does not index local aliases, so
-outbound alias observations are omitted. Alias telemetry needs an explicit
-scope/identity contract and tests before release; it must not expose foreign
+An optional payload-free observer captures outbound headers in local TUN
+coordinates before translation and receives them only after policy admission.
+The flow reporter uses canonical self addresses and the remote alias addresses
+already projected into that client's map; local translation aliases do not
+become reporter identities. Inbound observations retain the translated canonical
+destination. Synthetic TCP/UDP upload tests verify these coordinates and payload
+exclusion. Core telemetry ingestion and cross-Workspace telemetry isolation
+remain release gates; this does not enable flow uploads or expose foreign
 Workspace identifiers through ordinary inventory or logs.

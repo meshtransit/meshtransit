@@ -19,6 +19,7 @@ import (
 
 	"github.com/meshtransit/meshd/internal/netadmin"
 	"github.com/meshtransit/meshd/internal/networkmap"
+	"github.com/meshtransit/meshd/internal/packetmeta"
 	"github.com/meshtransit/meshd/internal/pathdiscovery"
 	"github.com/meshtransit/meshd/internal/relay"
 )
@@ -152,6 +153,13 @@ const (
 type PacketObserver interface {
 	UpdateNetwork(networkmap.Snapshot)
 	ObservePacket(PacketDirection, []byte)
+}
+
+// PacketMetadataObserver optionally receives validated payload-free outbound
+// headers in local TUN coordinates, before alias translation. Observation occurs
+// only after packet admission and outside the policy authority lock.
+type PacketMetadataObserver interface {
+	ObservePacketMetadata(PacketDirection, packetmeta.Header)
 }
 
 type wireGuardPlan struct {

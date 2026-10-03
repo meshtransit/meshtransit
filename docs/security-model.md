@@ -242,7 +242,8 @@ widen access. Checksum-invalid or unsupported alias packets are denied without
 mutation. Admission pauses during key/route replacement; apply failure removes
 packet authority. Bounds cover peers, grants, decoder depth and reply state.
 
-This implementation is not yet advertised or deployed as sharing support.
+This implementation is advertised only with the explicit qualification opt-in
+and is disabled by default. It is not released as qualified sharing support.
 Durable alias ownership/quarantine, Core bilateral authority and wakeups, real
 encrypted overlap/isolation matrices, imported DNS and scoped alias telemetry
 remain gates. See [device-alias.md](device-alias.md).

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/meshtransit/meshd/internal/networkmap"
+	"github.com/meshtransit/meshd/internal/packetmeta"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
@@ -172,4 +173,45 @@ func (d *batchTUNDevice) Write(bufs [][]byte, offset int) (int, error) {
 	}
 
 	return len(bufs), nil
+}
+
+func TestObservedTUNMetadataPreservesCanonicalSourceAfterAliasAdmission(t *testing.T) {
+	t.Parallel()
+	for _, vector := range aliasRoundtripVectors(t) {
+		t.Run(vector.Name, func(t *testing.T) {
+			packet := aliasPacket(t, vector.ConsumerKernel)
+			expected, err := packetmeta.Parse(packet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			device := &batchTUNDevice{readPackets: [][]byte{aliasPacket(t, vector.DeniedConsumerKernel), packet}}
+			observer := &recordingMetadataObserver{}
+			wrapped := &observedTUN{Device: device, filter: newAliasFilter(t, networkmap.AliasConsumer), observer: observer}
+			buffers := [][]byte{make([]byte, 2048), make([]byte, 2048)}
+			sizes := make([]int, 2)
+			count, err := wrapped.Read(buffers, sizes, 4)
+			if err != nil || count != 1 {
+				t.Fatalf("Read() = %d, %v", count, err)
+			}
+			if !bytes.Equal(buffers[0][4:4+sizes[0]], aliasPacket(t, vector.ConsumerWire)) {
+				t.Fatal("packet forwarding lost alias translation")
+			}
+			if observer.packetCalls != 0 || len(observer.headers) != 1 || observer.headers[0] != expected {
+				t.Fatalf("observation leaked translated/denied bytes or lost canonical metadata: %+v", observer)
+			}
+		})
+	}
+}
+
+type recordingMetadataObserver struct {
+	headers     []packetmeta.Header
+	packetCalls int
+}
+
+func (*recordingMetadataObserver) UpdateNetwork(networkmap.Snapshot)       {}
+func (o *recordingMetadataObserver) ObservePacket(PacketDirection, []byte) { o.packetCalls++ }
+func (o *recordingMetadataObserver) ObservePacketMetadata(direction PacketDirection, header packetmeta.Header) {
+	if direction == PacketOutbound {
+		o.headers = append(o.headers, header)
+	}
 }

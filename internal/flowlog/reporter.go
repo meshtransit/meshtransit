@@ -21,6 +21,7 @@ import (
 
 	"github.com/meshtransit/meshd/internal/dataplane"
 	"github.com/meshtransit/meshd/internal/networkmap"
+	"github.com/meshtransit/meshd/internal/packetmeta"
 )
 
 const (
@@ -218,12 +219,32 @@ func (r *Reporter) ObservePacket(direction dataplane.PacketDirection, packet []b
 	if r == nil {
 		return
 	}
-	metadata := r.metadata.Load()
-	if metadata == nil {
-		return
-	}
 	header, err := parsePacketHeader(packet)
 	if err != nil {
+		return
+	}
+	r.observeHeader(direction, header)
+}
+
+// ObservePacketMetadata queues only accepted TCP/UDP headers in local TUN
+// coordinates. Local translation aliases never become reporter identities.
+func (r *Reporter) ObservePacketMetadata(direction dataplane.PacketDirection, header packetmeta.Header) {
+	if r == nil || (header.Protocol != protocolTCP && header.Protocol != protocolUDP) ||
+		!header.Source.IsValid() || !header.Destination.IsValid() ||
+		header.SourcePort == 0 || header.DestinationPort == 0 || header.Length <= 0 {
+		return
+	}
+	r.observeHeader(direction, packetHeader{
+		protocol: header.Protocol,
+		source:   netip.AddrPortFrom(header.Source, header.SourcePort),
+		dest:     netip.AddrPortFrom(header.Destination, header.DestinationPort),
+		bytes:    uint64(header.Length), tcpFlags: header.TCPFlags,
+	})
+}
+
+func (r *Reporter) observeHeader(direction dataplane.PacketDirection, header packetHeader) {
+	metadata := r.metadata.Load()
+	if metadata == nil || (direction != dataplane.PacketOutbound && direction != dataplane.PacketInbound) {
 		return
 	}
 	sourceNode, sourceKnown := metadata.nodes[header.source.Addr().Unmap()]

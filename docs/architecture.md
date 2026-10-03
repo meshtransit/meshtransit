@@ -182,8 +182,11 @@ service grants and exclusive deadlines. Canonical self addresses stay on the
 TUN; remote aliases become exact peer host routes. The observed-TUN gate checks
 policy and rewrites packets under one authority lock, and the engine pauses
 admission while replacing alias keys/routes. No additional gateway host or
-packet hop is introduced. Core allocation/delivery and real encrypted sharing
-are not yet enabled or qualified. The client does not advertise this feature.
+packet hop is introduced. An explicit `--enable-device-aliases` qualification
+flag advertises version 1 on every map reconnect and endpoint update; the flag
+requires the packet engine and a fixed UDP port. It remains disabled by default.
+Core allocation/delivery and the complete live sharing lifecycle are not yet
+qualified.
 See [the complete client contract](device-alias.md) for limits, packet behavior,
 evidence and remaining delivery gates.
 
