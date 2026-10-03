@@ -247,6 +247,7 @@ func assertPostgreSQLDeviceAliasReservation(
 	if after := deviceAliasSnapshot(ctx, t, admin, endpointID); !reflect.DeepEqual(beforeIncomplete, after) {
 		t.Fatal("wrong evidence batch committed")
 	}
+	assertDeviceAliasMapReadiness(ctx, t, admin, endpointID, consumerID)
 	assertDeviceAliasQuarantine(ctx, t, admin, endpointID, args)
 }
 

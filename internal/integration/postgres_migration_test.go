@@ -175,6 +175,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if _, err := adminConnection.Exec(ctx, migrations.DeviceAliasClientOwnershipSQL()); err != nil {
 		t.Fatalf("harden alias compatibility observer: %v", err)
 	}
+	if _, err := adminConnection.Exec(ctx, migrations.DeviceAliasMapOwnershipSQL()); err != nil {
+		t.Fatalf("harden alias map reader: %v", err)
+	}
 	assertResourceSharingPrivilegeContract(ctx, t, adminConnection)
 	seedAuthorityFixture(ctx, t, adminConnection)
 	assertAuthorityEvidenceFoundation(ctx, t, adminConnection)

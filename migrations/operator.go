@@ -72,3 +72,9 @@ var deviceAliasClientOwnershipSQL string
 // DeviceAliasClientOwnershipSQL assigns compatibility observation to its
 // isolated NOLOGIN owner before granting the authenticated runtime entry point.
 func DeviceAliasClientOwnershipSQL() string { return deviceAliasClientOwnershipSQL }
+
+//go:embed operator/000083_device_alias_map_ownership.sql
+var deviceAliasMapOwnershipSQL string
+
+// DeviceAliasMapOwnershipSQL confines alias reads to an isolated function owner.
+func DeviceAliasMapOwnershipSQL() string { return deviceAliasMapOwnershipSQL }

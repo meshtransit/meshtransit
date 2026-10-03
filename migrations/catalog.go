@@ -447,6 +447,7 @@ func Catalog() []Migration {
 		newMigration(80, "authenticated bilateral direct Device map authority", directDeviceMapSQL),
 		newMigration(81, "durable Device alias reservation foundation", deviceAliasReservationSQL),
 		newMigration(82, "Device alias authenticated client compatibility", deviceAliasClientVersionSQL),
+		newMigration(83, "Device alias client readiness and authenticated map reader", deviceAliasMapReadinessSQL),
 	}
 }
 
@@ -472,3 +473,6 @@ func newMigration(version int64, description, sql string) Migration {
 
 //go:embed 000082_device_alias_client_version.up.sql
 var deviceAliasClientVersionSQL string
+
+//go:embed 000083_device_alias_map_readiness.up.sql
+var deviceAliasMapReadinessSQL string
