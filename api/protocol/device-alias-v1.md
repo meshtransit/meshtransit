@@ -70,3 +70,26 @@ mismatch, raw peer addresses, alias collisions, incomplete families, no ordinary
 inventory union, no reverse filter, immutable grant copies, service limits and
 atomic grant replacement. Runtime SQL authority, notifications and live
 encrypted packet qualification remain separate required evidence.
+
+## Authenticated compatibility metadata — schema82
+
+The declaration is the exact root map-request field `DeviceAliasVersion`.
+Omission or numeric zero means unsupported; numeric one means v1. Null,
+strings, fractions, alternate casing, duplicates and unknown versions are
+invalid. The claim is authenticated only as coming from the current Noise
+machine/Node pair; it does not attest a trusted binary or grant packet access.
+
+The opt-in map store records one metadata row per Device through a separately
+owned NOLOGIN, NOBYPASSRLS observer. It derives scope from the authenticated
+pair, matches current session and key epochs, locks those identities and checks
+fresh expiry after waits. Caller scope is ignored and restored. Ordinary
+serving roles have no table access. The observer exposes only acceptance, never
+foreign identity or scope. Exact repeated claims cause no row mutation.
+
+Version changes remain compatibility observations, not authority mutations.
+They never allocate an alias, advance packet policy, create membership, or
+publish DNS. Future alias readers must match both current claims to the exact
+Device session and key epochs and independently validate every sharing
+permission. Node-key rotation cannot transfer a previous epoch's declaration.
+The feature remains disabled by default and is not yet advertised by the
+qualified client or connected to live alias projection.

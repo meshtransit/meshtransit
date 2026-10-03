@@ -172,6 +172,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 			t.Fatalf("apply direct map reader ownership: %v", err)
 		}
 	}
+	if _, err := adminConnection.Exec(ctx, migrations.DeviceAliasClientOwnershipSQL()); err != nil {
+		t.Fatalf("harden alias compatibility observer: %v", err)
+	}
 	assertResourceSharingPrivilegeContract(ctx, t, adminConnection)
 	seedAuthorityFixture(ctx, t, adminConnection)
 	assertAuthorityEvidenceFoundation(ctx, t, adminConnection)
@@ -210,6 +213,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		postgresConfig.CAFile,
 		processConfig.Dependencies.CheckTimeout,
 	)
+	assertPostgreSQLDeviceAliasClientVersion(ctx, t, adminConnection, runtimeConnection, runtimePool, registrationReplayCommand)
 	assertRuntimePublicNetworkScope(ctx, t, runtimeConnection)
 	assertRuntimeRejectsInvalidPublicNetworkScope(ctx, t, runtimeConnection)
 	assertRuntimeNetworkRevisionLock(ctx, t, runtimeConnection, runtimeContenderConnection)

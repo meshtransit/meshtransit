@@ -10,6 +10,8 @@ const (
 	OperationUnknown Operation = iota
 	// OperationLoad opens and reads one scoped repeatable-read snapshot.
 	OperationLoad
+	// OperationObserveClientVersion records a transport-bound compatibility claim.
+	OperationObserveClientVersion
 )
 
 // Observer records bounded operation latency and outcome without identity labels.

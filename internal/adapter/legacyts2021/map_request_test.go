@@ -58,3 +58,31 @@ func TestDecodeFullMapRequestRejectsUnsupportedOrAmbiguousInput(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeMapRequestDeviceAliasVersion(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, field string
+		version     uint8
+		valid       bool
+	}{
+		{"absent", "", 0, true}, {"unsupported", `,"DeviceAliasVersion":0`, 0, true}, {"v1", `,"DeviceAliasVersion":1`, 1, true},
+		{"future", `,"DeviceAliasVersion":2`, 0, false}, {"null", `,"DeviceAliasVersion":null`, 0, false},
+		{"string", `,"DeviceAliasVersion":"1"`, 0, false}, {"fraction", `,"DeviceAliasVersion":1.0`, 0, false},
+		{"negative", `,"DeviceAliasVersion":-1`, 0, false}, {"overflow", `,"DeviceAliasVersion":256`, 0, false},
+		{"case", `,"deviceAliasVersion":1`, 0, false}, {"duplicate", `,"DeviceAliasVersion":0,"DeviceAliasVersion":1`, 0, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			body := strings.Replace(mapRequestBody, `"Version":142`, `"Version":142`+test.field, 1)
+			request, _, err := DecodeMapRequest(strings.NewReader(body))
+			if test.valid {
+				if err != nil || request.DeviceAliasVersion() != test.version {
+					t.Fatalf("version=%d error=%v", request.DeviceAliasVersion(), err)
+				}
+			} else if !errors.Is(err, ErrInvalidMapRequest) {
+				t.Fatal("ambiguous capability admitted")
+			}
+		})
+	}
+}

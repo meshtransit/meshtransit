@@ -320,3 +320,19 @@ The six synthetic owned protocol fixtures and tests cover TCP, UDP and ICMP
 for both families. This model/codec checkpoint does not connect a runtime
 reader or worker and does not admit an unqualified client or enable POC sharing.
 See the owned [wire contract](../../api/protocol/device-alias-v1.md).
+
+## Compatibility observation checkpoint — schema82
+
+The authenticated map service accepts the owned DeviceAliasVersion claim and,
+only when alias support is explicitly enabled in its store, records the current
+session/key pins through a dedicated NOLOGIN observer. Claim metadata grants no
+access and ordinary serving roles cannot read or write its table. Repeated
+unchanged declarations do not update a row. Metrics are aggregate operation,
+latency and outcome only. No alias support is enabled by this schema increment.
+
+Disposable PostgreSQL tests exercise exact retry/downgrade, machine/Node epoch
+binding, a foreign key, caller scope poisoning/restoration and ownership/table
+privileges. Decoder tests reject ambiguous versions. Store tests prove disabled
+and canceled calls start no write, and write/unknown-commit failures join bounded
+rollback errors. Worker reservation and authenticated bilateral alias reads
+remain the next serving integration.

@@ -26,6 +26,12 @@ type SnapshotStore interface {
 	Load(context.Context, control.AuthenticatedNode) (Snapshot, error)
 }
 
+// DeviceAliasVersionObserver records only a transport-bound compatibility claim.
+// Implementations derive current scope and key/session epochs from PostgreSQL.
+type DeviceAliasVersionObserver interface {
+	ObserveDeviceAliasVersion(context.Context, control.AuthenticatedNode, uint8) error
+}
+
 // EndpointObserver records only generation-fenced transient connectivity.
 type EndpointObserver interface {
 	ObserveEndpoints(context.Context, network.Scope, node.EndpointObservation) (bool, error)
@@ -84,6 +90,13 @@ func (service *Service) Open(
 	if err != nil {
 		return Snapshot{}, errors.Join(ErrUnauthorized, err)
 	}
+	if observer, ok := service.store.(DeviceAliasVersionObserver); ok {
+		if err := observer.ObserveDeviceAliasVersion(ctx, identity, request.DeviceAliasVersion()); err != nil {
+			return Snapshot{}, fmt.Errorf("%w: record client compatibility: %w", ErrOpen, err)
+		}
+	} else if request.DeviceAliasVersion() != 0 {
+		return Snapshot{}, ErrOpen
+	}
 	snapshot, err := service.store.Load(ctx, identity)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("%w: load authoritative snapshot: %w", ErrOpen, err)
@@ -91,6 +104,13 @@ func (service *Service) Open(
 	if !snapshot.IsValid() || snapshot.NodeKey() != identity.NodeKey() ||
 		snapshot.MachineKey().Fingerprint() != identity.MachineFingerprint() {
 		return Snapshot{}, ErrOpen
+	}
+	if request.DeviceAliasVersion() == 0 {
+		for _, projection := range snapshot.directDeviceProjections {
+			if projection.aliases.IsValid() {
+				return Snapshot{}, ErrOpen
+			}
+		}
 	}
 	if err := service.observeEndpoints(ctx, snapshot, request); err != nil {
 		return Snapshot{}, err

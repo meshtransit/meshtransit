@@ -89,3 +89,11 @@ func (transaction pgxDatabaseTransaction) Commit(ctx context.Context) error {
 func (transaction pgxDatabaseTransaction) Rollback(ctx context.Context) error {
 	return transaction.transaction.Rollback(ctx)
 }
+
+func (database pgxDatabase) BeginWrite(ctx context.Context) (databaseTransaction, error) {
+	transaction, err := database.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted, AccessMode: pgx.ReadWrite})
+	if err != nil {
+		return nil, err
+	}
+	return pgxDatabaseTransaction{transaction: transaction}, nil
+}

@@ -32,8 +32,12 @@ func (metrics *postgresPoolMetrics) ObserveMapSession(
 	duration time.Duration,
 	err error,
 ) {
-	if operation != postgresmapsession.OperationLoad {
+	switch operation {
+	case postgresmapsession.OperationLoad:
+		metrics.observeOperation(postgresOperationMapSessionSnapshot, duration, err)
+	case postgresmapsession.OperationObserveClientVersion:
+		metrics.observeOperation(postgresOperationMapSessionClientVersion, duration, err)
+	case postgresmapsession.OperationUnknown:
 		return
 	}
-	metrics.observeOperation(postgresOperationMapSessionSnapshot, duration, err)
 }

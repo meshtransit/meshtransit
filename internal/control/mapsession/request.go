@@ -16,12 +16,13 @@ var ErrInvalidRequest = errors.New("map session: invalid request")
 // Request is the protocol-independent identity and compatibility input needed
 // to open one map session.
 type Request struct {
-	nodeKey           node.Key
-	capabilityVersion int
-	endpointSet       node.EndpointSet
-	hasEndpointSet    bool
-	preferredRelay    int
-	hasPreferredRelay bool
+	nodeKey            node.Key
+	capabilityVersion  int
+	deviceAliasVersion uint8
+	endpointSet        node.EndpointSet
+	hasEndpointSet     bool
+	preferredRelay     int
+	hasPreferredRelay  bool
 }
 
 // WithPreferredRelay returns a validated request carrying the complete client
@@ -75,7 +76,7 @@ func (request Request) PreferredRelay() (int, bool) {
 
 // IsValid reports whether the request is safe to authorize.
 func (request Request) IsValid() bool {
-	if !request.nodeKey.IsValid() || request.capabilityVersion <= 0 ||
+	if request.deviceAliasVersion > 1 || !request.nodeKey.IsValid() || request.capabilityVersion <= 0 ||
 		request.capabilityVersion > maximumCapabilityVersion ||
 		request.preferredRelay < 0 || request.preferredRelay > node.MaximumRelayRegionID ||
 		(!request.hasPreferredRelay && request.preferredRelay != 0) ||
@@ -84,3 +85,20 @@ func (request Request) IsValid() bool {
 	}
 	return !request.hasEndpointSet || request.endpointSet.IsValid()
 }
+
+// WithDeviceAliasVersion records an untrusted compatibility declaration.
+// Only versions zero (unsupported) and one have an owned contract; neither
+// grants access or substitutes for the authenticated bilateral reader.
+func (request Request) WithDeviceAliasVersion(version uint8) (Request, error) {
+	if version > 1 {
+		return Request{}, ErrInvalidRequest
+	}
+	request.deviceAliasVersion = version
+	if !request.IsValid() {
+		return Request{}, ErrInvalidRequest
+	}
+	return request, nil
+}
+
+// DeviceAliasVersion returns the declared compatibility contract, or zero.
+func (request Request) DeviceAliasVersion() uint8 { return request.deviceAliasVersion }

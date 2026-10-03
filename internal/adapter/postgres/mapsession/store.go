@@ -33,11 +33,12 @@ var (
 
 // Options bounds database work owned by one map snapshot load.
 type Options struct {
-	StatementTimeout   time.Duration
-	IdleTimeout        time.Duration
-	PeerCandidateLimit int
-	PolicyRuleLimit    int
-	RelayDirectory     relay.Directory
+	StatementTimeout    time.Duration
+	IdleTimeout         time.Duration
+	PeerCandidateLimit  int
+	PolicyRuleLimit     int
+	RelayDirectory      relay.Directory
+	EnableDeviceAliases bool
 }
 
 // Store loads exact-scope snapshots in read-only repeatable-read transactions.

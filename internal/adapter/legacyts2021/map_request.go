@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 
 	"tailscale.com/tailcfg"
 
@@ -58,13 +59,16 @@ func decodeMapRequest(
 		return mapsession.Request{}, false, mapResponseCompressionInvalid, ErrInvalidMapRequest
 	}
 
-	var wire tailcfg.MapRequest
+	var wire struct {
+		tailcfg.MapRequest
+		DeviceAliasVersion json.RawMessage `json:"DeviceAliasVersion"`
+	}
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&wire); err != nil {
 		return mapsession.Request{}, false, mapResponseCompressionInvalid, ErrInvalidMapRequest
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF || !validMapRequest(wire) {
+	if err := decoder.Decode(&struct{}{}); err != io.EOF || !validMapRequest(wire.MapRequest) {
 		return mapsession.Request{}, false, mapResponseCompressionInvalid, ErrInvalidMapRequest
 	}
 	// Read the legacy compatibility bit separately so validation remains strict
@@ -88,8 +92,16 @@ func decodeMapRequest(
 	if err != nil {
 		return mapsession.Request{}, false, mapResponseCompressionInvalid, ErrInvalidMapRequest
 	}
-	endpointSet, hasEndpointSet, err := decodeEndpointSet(wire)
-	preferredRelay, hasPreferredRelay, preferredRelayErr := decodePreferredRelay(wire)
+	aliasVersion, err := decodeDeviceAliasVersion(encoded, wire.DeviceAliasVersion)
+	if err != nil {
+		return mapsession.Request{}, false, mapResponseCompressionInvalid, ErrInvalidMapRequest
+	}
+	request, err = request.WithDeviceAliasVersion(aliasVersion)
+	if err != nil {
+		return mapsession.Request{}, false, mapResponseCompressionInvalid, ErrInvalidMapRequest
+	}
+	endpointSet, hasEndpointSet, err := decodeEndpointSet(wire.MapRequest)
+	preferredRelay, hasPreferredRelay, preferredRelayErr := decodePreferredRelay(wire.MapRequest)
 	if err != nil || preferredRelayErr != nil ||
 		wire.OmitPeers && (wire.Stream || !hasEndpointSet) ||
 		!wire.Stream && hasPreferredRelay && !hasEndpointSet {
@@ -147,4 +159,27 @@ func responseCompression(value string) mapResponseCompression {
 	default:
 		return mapResponseCompressionInvalid
 	}
+}
+
+func decodeDeviceAliasVersion(encoded []byte, value json.RawMessage) (uint8, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		return 0, ErrInvalidMapRequest
+	}
+	for name := range fields {
+		if strings.EqualFold(name, "DeviceAliasVersion") && name != "DeviceAliasVersion" {
+			return 0, ErrInvalidMapRequest
+		}
+	}
+	if len(value) == 0 {
+		return 0, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+		return 0, ErrInvalidMapRequest
+	}
+	var version uint8
+	if err := json.Unmarshal(value, &version); err != nil || version > 1 {
+		return 0, ErrInvalidMapRequest
+	}
+	return version, nil
 }

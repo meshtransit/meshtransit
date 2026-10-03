@@ -65,3 +65,10 @@ func DirectDeviceMapFunctionOwnershipSQL() string { return directDeviceMapFuncti
 func DirectDeviceEndpointFunctionOwnershipSQL() string {
 	return directDeviceEndpointFunctionOwnershipSQL
 }
+
+//go:embed operator/000082_device_alias_client_ownership.sql
+var deviceAliasClientOwnershipSQL string
+
+// DeviceAliasClientOwnershipSQL assigns compatibility observation to its
+// isolated NOLOGIN owner before granting the authenticated runtime entry point.
+func DeviceAliasClientOwnershipSQL() string { return deviceAliasClientOwnershipSQL }
