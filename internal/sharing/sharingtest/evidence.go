@@ -96,8 +96,12 @@ func New(t testing.TB, params Params) Evidence {
 	check(t, err)
 	accessName, err := sharing.ParseAccessName("device.shared.example.com")
 	check(t, err)
+	mode := sharing.EndpointModeDirect
+	if sharing.ClassifyScopeRelation(params.ProviderScope, params.ConsumerScope) == sharing.ScopeRelationCrossWorkspace {
+		mode = sharing.EndpointModeFederationAlias
+	}
 	endpoint, err := sharing.NewPrivateEndpoint(sharing.PrivateEndpointParams{
-		ID: endpointID, Contract: contract, AccessName: accessName, Mode: sharing.EndpointModeDirect,
+		ID: endpointID, Contract: contract, AccessName: accessName, Mode: mode,
 		ResourceAlias: params.ProviderAddress, Generation: 1, ImportedResourceVersion: 1,
 		Grant: traffic, ExpiresAt: contract.ExpiresAt(), State: sharing.EndpointStateReady,
 	})

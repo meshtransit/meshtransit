@@ -129,7 +129,7 @@ func fullMapPeers(
 	candidates := make(map[node.ID]mapsession.PeerCandidate, len(authorized))
 	for _, candidate := range authorized {
 		connectivity, found := snapshot.ConnectivityFor(candidate.NodeID())
-		peer, err := fullMapPeer(candidate, connectivity, found, capabilityVersion)
+		peer, err := fullMapPeer(snapshot, candidate, connectivity, found, capabilityVersion)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -150,6 +150,7 @@ func fullMapPeers(
 }
 
 func fullMapPeer(
+	snapshot mapsession.Snapshot,
 	candidate mapsession.PeerCandidate,
 	connectivity mapsession.Connectivity,
 	hasConnectivity bool,
@@ -178,6 +179,9 @@ func fullMapPeer(
 		Cap:               tailcfg.CapabilityVersion(capabilityVersion),
 		MachineAuthorized: true,
 		ComputedName:      candidate.Hostname().String(),
+	}
+	if err := applyDeviceAliasGrant(result, snapshot, candidate); err != nil {
+		return nil, err
 	}
 	if hasConnectivity {
 		if err := applyConnectivity(result, connectivity, false); err != nil {

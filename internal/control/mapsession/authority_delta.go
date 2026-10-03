@@ -111,7 +111,7 @@ func projectAuthorityDelta(
 			peer.NodeID(),
 			false,
 		)
-		if found && equalPeerCandidate(currentPeer, peer) && !isConnectivityChanged {
+		if found && equalPeerCandidate(currentPeer, peer) && !isConnectivityChanged && !aliasGrantChanged(current, next, peer.NodeID()) {
 			continue
 		}
 		changedPeers = append(changedPeers, peer)

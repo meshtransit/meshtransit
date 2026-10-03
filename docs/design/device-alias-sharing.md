@@ -306,3 +306,17 @@ early release rejection. These are storage tests, not a live encrypted sharing
 qualification. Worker admission, successor generations, automatic withdrawal,
 bilateral maps, post-commit Redis hints and live packet/DNS qualification remain
 required before activation.
+
+## Owned map encoder checkpoint
+
+Core now validates immutable Device alias ownership alongside each exact
+bilateral sharing projection and emits the owned v1 grant on full maps and
+complete peer replacements. Canonical cross-Workspace addresses may overlap;
+only aliases become remote peer routes. The provider filter uses the Consumer
+Source Alias and the canonical local destination after client normalization.
+Grant-only revision changes replace the peer in the same atomic policy delta.
+
+The six synthetic owned protocol fixtures and tests cover TCP, UDP and ICMP
+for both families. This model/codec checkpoint does not connect a runtime
+reader or worker and does not admit an unqualified client or enable POC sharing.
+See the owned [wire contract](../../api/protocol/device-alias-v1.md).

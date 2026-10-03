@@ -57,6 +57,7 @@ func encodeAuthorityDeltaMapResponse(
 			return nil, ErrMapResponse
 		}
 		peer, peerErr := fullMapPeer(
+			snapshot,
 			candidate,
 			connectivity,
 			true,
@@ -141,6 +142,7 @@ func encodeConnectivityDeltaMapResponse(
 			return nil, ErrMapResponse
 		}
 		peer, peerErr := fullMapPeer(
+			snapshot,
 			candidate,
 			connectivity,
 			true,

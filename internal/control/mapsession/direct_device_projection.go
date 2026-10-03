@@ -34,9 +34,10 @@ type DirectDeviceProjectionParams struct {
 	ProviderNetworkRevision int64
 	ConsumerNetworkRevision int64
 	ConsumerPolicyRevision  int64
+	Aliases                 DeviceAlias
 }
 
-// DirectDeviceProjection is a directional same-Workspace exception to ordinary
+// DirectDeviceProjection is a directional two-client exception to ordinary
 // Network isolation. It retains the peer's real scope and grants no membership.
 type DirectDeviceProjection struct {
 	self                    Snapshot
@@ -50,6 +51,7 @@ type DirectDeviceProjection struct {
 	consumerPolicyRevision  int64
 	traffic                 sharing.TrafficSet
 	expiresAt               time.Time
+	aliases                 DeviceAlias
 }
 
 // NewDirectDeviceProjection validates a ready direct endpoint and narrows one
@@ -67,6 +69,7 @@ func NewDirectDeviceProjection(params DirectDeviceProjectionParams) (DirectDevic
 		providerNetworkRevision: params.ProviderNetworkRevision,
 		consumerNetworkRevision: params.ConsumerNetworkRevision,
 		consumerPolicyRevision:  params.ConsumerPolicyRevision,
+		aliases:                 params.Aliases,
 	}
 	if !validDirectDeviceEvidence(projection) {
 		return DirectDeviceProjection{}, ErrInvalidDirectDeviceProjection
@@ -80,6 +83,9 @@ func NewDirectDeviceProjection(params DirectDeviceProjectionParams) (DirectDevic
 		params.Self.KeyExpiry(), params.Peer.KeyExpiry(),
 		params.Authority.Contract.ExpiresAt(), params.Authority.Endpoint.ExpiresAt(),
 	)
+	if projection.aliases.IsValid() {
+		projection.expiresAt = earliestDeadline(projection.expiresAt, projection.aliases.params.ExpiresAt)
+	}
 	return projection, nil
 }
 
@@ -112,11 +118,14 @@ func (projection DirectDeviceProjection) IsValid() bool {
 		return false
 	}
 	decision := sharing.EvaluateEffectiveAccess(projection.authority)
-	return decision.IsAllowed() && decision.Traffic().Hash() == projection.traffic.Hash() &&
-		projection.expiresAt.Equal(earliestDeadline(
-			projection.self.KeyExpiry(), projection.peer.KeyExpiry(),
-			projection.authority.Contract.ExpiresAt(), projection.authority.Endpoint.ExpiresAt(),
-		))
+	deadline := earliestDeadline(
+		projection.self.KeyExpiry(), projection.peer.KeyExpiry(),
+		projection.authority.Contract.ExpiresAt(), projection.authority.Endpoint.ExpiresAt(),
+	)
+	if projection.aliases.IsValid() {
+		deadline = earliestDeadline(deadline, projection.aliases.params.ExpiresAt)
+	}
+	return decision.IsAllowed() && decision.Traffic().Hash() == projection.traffic.Hash() && projection.expiresAt.Equal(deadline)
 }
 
 func validDirectDeviceEvidence(projection DirectDeviceProjection) bool {
@@ -131,8 +140,7 @@ func validDirectDeviceEvidence(projection DirectDeviceProjection) bool {
 		projection.export.Version() != projection.consumerRule.Resolution().ExportVersion() ||
 		!contract.MaximumTraffic().IsSubsetOf(projection.export.MaximumTraffic()) ||
 		contract.ExpiresAt().After(projection.export.ExpiresAt()) ||
-		contract.ScopeRelation() != sharing.ScopeRelationWithinWorkspace ||
-		authority.Endpoint.Mode() != sharing.EndpointModeDirect ||
+		!validDeviceProjectionMode(projection) ||
 		!projection.consumerRule.IsValid() || !directConsumerRuleMatches(projection) ||
 		projection.consumerRule.SourceNodeID() == target.DeviceID() ||
 		projection.providerNetworkRevision < target.ActivatedNetworkRevision() || projection.consumerNetworkRevision <= 0 ||
@@ -171,6 +179,9 @@ func validDirectDeviceEvidence(projection DirectDeviceProjection) bool {
 		providerAddresses = self.Addresses()
 	default:
 		return false
+	}
+	if projection.aliases.IsValid() {
+		return projection.aliases.matches(projection)
 	}
 	for _, local := range self.Addresses() {
 		for _, remote := range peer.Addresses() {
@@ -239,7 +250,7 @@ func equalDirectDeviceProjections(first, second []DirectDeviceProjection) bool {
 			left.consumerNetworkRevision == right.consumerNetworkRevision &&
 			left.consumerPolicyRevision == right.consumerPolicyRevision &&
 			left.traffic.Hash() == right.traffic.Hash() && left.expiresAt.Equal(right.expiresAt) &&
-			equalPeerCandidate(left.peer, right.peer)
+			equalPeerCandidate(left.peer, right.peer) && equalDeviceAliases(left.aliases, right.aliases)
 	})
 }
 
@@ -247,7 +258,7 @@ func validDirectDeviceProjections(params SnapshotParams) bool {
 	if len(params.DirectDeviceProjections) == 0 {
 		return true
 	}
-	if len(params.DirectDeviceProjections) > MaximumDirectDeviceProjections ||
+	if !validAliasGrantBounds(params) || len(params.DirectDeviceProjections) > MaximumDirectDeviceProjections ||
 		len(params.PeerCandidates)+len(params.DirectDeviceProjections) > MaximumPeerCandidates ||
 		len(params.PacketPolicy.Rules())+len(params.DirectDeviceProjections) > MaximumPacketPolicyRules {
 		return false
@@ -256,6 +267,8 @@ func validDirectDeviceProjections(params SnapshotParams) bool {
 	for _, rule := range params.PacketPolicy.Rules() {
 		ruleIDs[rule.ID()] = struct{}{}
 	}
+	bindings := make(map[node.ID]DeviceAlias, len(params.DirectDeviceProjections))
+	localAliases := make(map[netip.Addr]DirectDeviceProjection, 2*len(params.DirectDeviceProjections))
 	seen := make(map[node.ID]PeerCandidate, len(params.PeerCandidates)+len(params.DirectDeviceProjections))
 	numericIDs := map[int64]struct{}{params.NumericNodeID: {}}
 	machineKeys := map[node.MachineKey]struct{}{params.MachineKey: {}}
@@ -286,6 +299,29 @@ func validDirectDeviceProjections(params SnapshotParams) bool {
 		}
 		ruleIDs[projection.ConsumerRuleID()] = struct{}{}
 		peer := projection.Peer()
+		if projection.aliases.IsValid() {
+			if previous, exists := bindings[peer.NodeID()]; exists && !equalDeviceAliases(previous, projection.aliases) {
+				return false
+			}
+			bindings[peer.NodeID()] = projection.aliases
+			for _, address := range projection.aliases.LocalAddresses() {
+				if _, collision := addresses[address.Addr()]; collision {
+					return false
+				}
+				if previous, exists := localAliases[address.Addr()]; exists &&
+					(previous.Peer().NodeID() != peer.NodeID() && (params.Scope != projection.authority.Contract.ProviderScope() ||
+						previous.ContractID() != projection.ContractID() || previous.authority.Endpoint.ID() != projection.authority.Endpoint.ID() ||
+						previous.aliases.params.Generation != projection.aliases.params.Generation)) {
+					return false
+				}
+				localAliases[address.Addr()] = projection
+			}
+			for _, address := range peer.Addresses() {
+				if _, collision := localAliases[address.Addr()]; collision {
+					return false
+				}
+			}
+		}
 		if peer.NodeID() == params.NodeID || peer.NumericNodeID() == params.NumericNodeID ||
 			peer.MachineKey() == params.MachineKey || peer.NodeKey() == params.NodeKey {
 			return false
@@ -421,4 +457,12 @@ func directConsumerRuleMatches(projection DirectDeviceProjection) bool {
 	}
 	traffic, err := sharing.NewTrafficSet([]sharing.TrafficConstraint{constraint})
 	return err == nil && traffic.Hash() == projection.authority.ConsumerRule.Hash()
+}
+
+func validDeviceProjectionMode(projection DirectDeviceProjection) bool {
+	if projection.authority.Contract.ScopeRelation() == sharing.ScopeRelationCrossWorkspace {
+		return projection.aliases.IsValid() && projection.authority.Endpoint.Mode() == sharing.EndpointModeFederationAlias
+	}
+	return projection.aliases.isAbsent() &&
+		projection.authority.Contract.ScopeRelation() == sharing.ScopeRelationWithinWorkspace && projection.authority.Endpoint.Mode() == sharing.EndpointModeDirect
 }
