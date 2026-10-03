@@ -63,6 +63,7 @@ func assertDeviceAliasMapReadiness(ctx context.Context, t *testing.T, admin *pgx
 			}
 			if mode == "both" {
 				assertSharingDependenciesBeforeRule(ctx, t, tx, provider, consumer)
+				assertDeviceAliasGuardedWorker(ctx, t, tx, endpointID, consumerID, provider, consumer)
 			}
 			assertAliasMapCount(ctx, t, tx, consumer, 0)
 			if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {

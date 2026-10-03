@@ -84,3 +84,9 @@ var deviceSharingDependenciesOwnershipSQL string
 
 // DeviceSharingDependenciesOwnershipSQL confines refresh hints to the authenticated reader.
 func DeviceSharingDependenciesOwnershipSQL() string { return deviceSharingDependenciesOwnershipSQL }
+
+//go:embed operator/000085_device_alias_worker_ownership.sql
+var deviceAliasWorkerOwnershipSQL string
+
+// DeviceAliasWorkerOwnershipSQL enables only guarded worker entry points.
+func DeviceAliasWorkerOwnershipSQL() string { return deviceAliasWorkerOwnershipSQL }
