@@ -316,6 +316,7 @@ func TestSystemdCredentialPath(t *testing.T) {
 		expected bool
 	}{
 		{path: "/run/credentials/meshd.service/meshd.identity-key", expected: true},
+		{path: "/run/credentials/custom.service/meshd.identity-key", expected: true},
 		{path: "/run/credentials/meshd.service", expected: false},
 		{path: "/run/credentials/meshd.identity-key", expected: false},
 		{path: "/run/credentials/../meshd.service/meshd.identity-key", expected: false},

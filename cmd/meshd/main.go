@@ -315,7 +315,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func loadIdentityProtector(path string) (*secretstore.Protector, error) {
-	if path == config.DefaultIdentityKeyPath {
+	if strings.HasPrefix(path, "/run/credentials/") {
 		return secretstore.LoadSystemdCredential(path)
 	}
 
