@@ -137,7 +137,7 @@ func cookieStartResult(t *testing.T) (oidcauth.StartResult, time.Time) {
 	service, err := oidcauth.NewStartService(oidcauth.StartOptions{
 		RequestTimeout: time.Second, PendingLifetime: 5 * time.Minute, RollbackTimeout: time.Second, ResolveTimeout: time.Second,
 	}, oidcauth.StartDependencies{
-		Metadata: fixture, Transactions: fixture, Committed: fixture, Clock: fixture, Observer: fixture,
+		Metadata: fixture, Transactions: fixture, Committed: fixture, CreationClock: fixture, Clock: fixture, Observer: fixture,
 		IDs: oidcauth.SystemStartIDs{}, Secrets: oidcauth.SystemSecrets{}, DigestKey: key, VerifierCipher: cipher,
 	})
 	if err != nil {
@@ -151,6 +151,10 @@ func cookieStartResult(t *testing.T) (oidcauth.StartResult, time.Time) {
 }
 
 type cookieStartFixture struct{ now time.Time }
+
+func (fixture *cookieStartFixture) CreationTime(ctx context.Context) (time.Time, error) {
+	return fixture.now, ctx.Err()
+}
 
 func (fixture *cookieStartFixture) Now() time.Time                           { return fixture.now }
 func (*cookieStartFixture) StartOpened()                                     {}

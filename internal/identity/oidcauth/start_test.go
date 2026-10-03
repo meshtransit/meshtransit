@@ -46,6 +46,7 @@ func TestNewStartServiceRejectsUnsafeConstruction(t *testing.T) {
 		{name: "missing replay", mutate: func(_ *StartOptions, d *StartDependencies) { d.Committed = nil }},
 		{name: "missing ids", mutate: func(_ *StartOptions, d *StartDependencies) { d.IDs = nil }},
 		{name: "missing secrets", mutate: func(_ *StartOptions, d *StartDependencies) { d.Secrets = nil }},
+		{name: "missing creation clock", mutate: func(_ *StartOptions, d *StartDependencies) { d.CreationClock = nil }},
 		{name: "missing clock", mutate: func(_ *StartOptions, d *StartDependencies) { d.Clock = nil }},
 		{name: "missing observer", mutate: func(_ *StartOptions, d *StartDependencies) { d.Observer = nil }},
 		{name: "missing digest key", mutate: func(_ *StartOptions, d *StartDependencies) { d.DigestKey = DigestKey{} }},
@@ -96,6 +97,8 @@ type startFixture struct {
 	outcome        StartOutcome
 	metadataErr    error
 	idsErr         error
+	creationErr    error
+	creationTime   *time.Time
 	secretsErr     error
 	beginErr       error
 	createErr      error
@@ -123,7 +126,7 @@ func (fixture *startFixture) service(t *testing.T) *StartService {
 		RequestTimeout: 10 * time.Second, PendingLifetime: 5 * time.Minute,
 		RollbackTimeout: time.Second, ResolveTimeout: time.Second,
 	}, StartDependencies{
-		Metadata: fixture, Transactions: fixture, Committed: fixture,
+		Metadata: fixture, Transactions: fixture, Committed: fixture, CreationClock: fixture,
 		IDs: fixture, Secrets: fixture, Clock: fixture, Observer: fixture,
 		DigestKey: fixture.params.DigestKey, VerifierCipher: fixture.params.VerifierCipher,
 	})
@@ -147,6 +150,15 @@ func (fixture *startFixture) NewStartIDs() (TransactionID, MutationIDs, error) {
 func (fixture *startFixture) NewSecrets() (Secrets, error) {
 	fixture.calls = append(fixture.calls, "secrets")
 	return fixture.params.Secrets, fixture.secretsErr
+}
+
+func (fixture *startFixture) CreationTime(ctx context.Context) (time.Time, error) {
+	fixture.callHook(ctx, "creation clock")
+	at := fixture.now
+	if fixture.creationTime != nil {
+		at = *fixture.creationTime
+	}
+	return at, fixture.creationErr
 }
 
 func (fixture *startFixture) Now() time.Time { return fixture.now }
@@ -240,6 +252,7 @@ func TestStartServiceRejectsPreparationAndCreationFailures(t *testing.T) {
 		{name: "invalid generated secrets", mutate: func(f *startFixture) { f.params.Secrets = Secrets{} }, wantErr: ErrInvalidPending, wantEffects: []string{"metadata", "ids", "secrets"}},
 		{name: "missing independent cookie", mutate: func(f *startFixture) { f.params.Secrets.preAuthCookie = PreAuthCookie{} }, wantErr: ErrInvalidPending, wantEffects: []string{"metadata", "ids", "secrets"}},
 		{name: "cookie reused state", mutate: func(f *startFixture) { f.params.Secrets.preAuthCookie.value = f.params.Secrets.state.value }, wantErr: ErrInvalidPending, wantEffects: []string{"metadata", "ids", "secrets"}},
+		{name: "creation clock unavailable", mutate: func(f *startFixture) { f.creationErr = failure }, wantErr: failure, wantEffects: []string{"metadata", "ids", "secrets"}},
 		{name: "zero preparation clock", mutate: func(f *startFixture) { f.now = time.Time{} }, wantErr: ErrInvalidPending, wantEffects: []string{"metadata", "ids", "secrets"}},
 		{name: "begin unavailable", mutate: func(f *startFixture) { f.beginErr = failure; f.nilTransaction = true }, wantErr: failure, wantEffects: []string{"metadata", "ids", "secrets", "begin"}},
 		{name: "partially opened begin fails", mutate: func(f *startFixture) { f.beginErr = failure }, wantErr: failure, wantEffects: []string{"metadata", "ids", "secrets", "begin", "rollback"}},
@@ -489,6 +502,37 @@ func TestStartServiceCleanupAndResolutionBudgetsRejectLateDependencySuccess(t *t
 					t.Fatal("late lookup lost unknown outcome")
 				}
 			})
+		})
+	}
+}
+
+func TestStartUsesDatabaseCreationTimeAndRejectsUnsafeSkewBeforeCreate(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name        string
+		localOffset time.Duration
+		wantValid   bool
+	}{
+		{name: "app ahead", localOffset: time.Second, wantValid: true},
+		{name: "app behind within allowance", localOffset: -time.Second, wantValid: true},
+		{name: "app behind beyond allowance", localOffset: -31 * time.Second},
+		{name: "app reaches expiry", localOffset: 5 * time.Minute},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newStartFixture(t)
+			at := fixture.now
+			fixture.creationTime = &at
+			fixture.now = at.Add(test.localOffset)
+			result, err := fixture.service(t).Start(t.Context(), fixture.params.Route)
+			if test.wantValid {
+				if err != nil || !result.IsValid() || !result.Created().CreatedAt().Equal(at.Truncate(time.Microsecond)) ||
+					!result.Created().ExpiresAt().Equal(at.Add(5*time.Minute).Truncate(time.Microsecond)) {
+					t.Fatal("local clock changed immutable DB creation or expiry", err)
+				}
+			} else if !errors.Is(err, ErrStartExpired) || result.IsValid() || slices.Contains(fixture.calls, "begin") {
+				t.Fatal("unsafe clock committed stranded pending authority", err)
+			}
 		})
 	}
 }

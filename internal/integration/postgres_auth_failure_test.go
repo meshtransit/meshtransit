@@ -321,6 +321,10 @@ func assertBrowserFailureAuditWait(ctx context.Context, t *testing.T, admin *pgx
 
 type integrationFailureStartClock struct{ at time.Time }
 
+func (clock integrationFailureStartClock) CreationTime(ctx context.Context) (time.Time, error) {
+	return clock.at, ctx.Err()
+}
+
 func (clock integrationFailureStartClock) Now() time.Time { return clock.at }
 
 type integrationFailureTransactions struct {

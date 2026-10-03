@@ -34,7 +34,12 @@ type SecretsGenerator interface {
 	NewSecrets() (Secrets, error)
 }
 
-// StartClock supplies the login creation and release decision time.
+// CreationClock supplies authoritative creation time before pending evidence is sealed.
+type CreationClock interface {
+	CreationTime(context.Context) (time.Time, error)
+}
+
+// StartClock supplies the local release decision time.
 type StartClock interface {
 	Now() time.Time
 }
@@ -61,6 +66,7 @@ type StartDependencies struct {
 	Committed      CommittedCreationResolver
 	IDs            StartIDGenerator
 	Secrets        SecretsGenerator
+	CreationClock  CreationClock
 	Clock          StartClock
 	Observer       StartObserver
 	DigestKey      DigestKey
@@ -176,7 +182,21 @@ func (service *StartService) prepare(ctx context.Context, route Route) (prepared
 	if err := ctx.Err(); err != nil {
 		return preparedStart{}, err
 	}
-	now := service.dependencies.Clock.Now().UTC()
+	now, err := service.dependencies.CreationClock.CreationTime(ctx)
+	if err != nil {
+		return preparedStart{}, fmt.Errorf("read login creation time: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return preparedStart{}, err
+	}
+	now = now.UTC()
+	if now.IsZero() {
+		return preparedStart{}, ErrInvalidPending
+	}
+	localNow := service.dependencies.Clock.Now().UTC()
+	if !authorityTimeReached(localNow, now) || !localNow.Before(now.Add(service.options.PendingLifetime)) {
+		return preparedStart{}, ErrStartExpired
+	}
 	pending, err := NewPending(PendingParams{
 		TransactionID: transactionID, Route: route, Metadata: metadata,
 		Secrets: secrets, DigestKey: service.dependencies.DigestKey,
@@ -251,7 +271,7 @@ func validStartOptions(options StartOptions) bool {
 func validStartDependencies(dependencies StartDependencies) bool {
 	return dependencies.Metadata != nil && dependencies.Transactions != nil &&
 		dependencies.Committed != nil && dependencies.IDs != nil && dependencies.Secrets != nil &&
-		dependencies.Clock != nil && dependencies.Observer != nil && dependencies.DigestKey.isValid() &&
+		dependencies.CreationClock != nil && dependencies.Clock != nil && dependencies.Observer != nil && dependencies.DigestKey.isValid() &&
 		dependencies.VerifierCipher != nil && dependencies.VerifierCipher.ID().IsValid()
 }
 

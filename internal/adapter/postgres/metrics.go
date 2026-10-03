@@ -72,6 +72,7 @@ const (
 	postgresOperationAuthTransactionRollback   postgresOperation = "auth_transaction_rollback"
 	postgresOperationAuthTransactionReplay     postgresOperation = "auth_transaction_replay"
 	postgresOperationAuthTransactionAdmission  postgresOperation = "auth_transaction_admission"
+	postgresOperationAuthCreationClock         postgresOperation = "auth_transaction_creation_clock"
 	postgresOperationAuthTransactionPending    postgresOperation = "auth_transaction_pending"
 	postgresOperationAuthClaimBegin            postgresOperation = "auth_claim_begin"
 	postgresOperationAuthClaimApply            postgresOperation = "auth_claim_apply"
@@ -168,6 +169,7 @@ var (
 		postgresOperationAuthTransactionRollback,
 		postgresOperationAuthTransactionReplay,
 		postgresOperationAuthTransactionAdmission,
+		postgresOperationAuthCreationClock,
 		postgresOperationAuthTransactionPending,
 		postgresOperationAuthClaimBegin,
 		postgresOperationAuthClaimApply,
@@ -476,6 +478,7 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationAuthTransactionRollback ||
 			operation == postgresOperationAuthTransactionReplay ||
 			operation == postgresOperationAuthTransactionAdmission ||
+			operation == postgresOperationAuthCreationClock ||
 			operation == postgresOperationAuthTransactionPending ||
 			operation == postgresOperationAuthClaimBegin ||
 			operation == postgresOperationAuthClaimApply ||

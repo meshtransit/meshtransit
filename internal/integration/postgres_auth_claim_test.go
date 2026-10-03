@@ -132,7 +132,8 @@ func integrationClaimVerifiedWithNonce(ctx context.Context, t *testing.T, store 
 	lifetime := 5 * time.Minute
 	if remaining > 0 {
 		lifetime = time.Minute
-		dependencies.Clock = integrationFailureStartClock{time.Now().UTC().Add(-time.Minute + remaining)}
+		clock := integrationFailureStartClock{time.Now().UTC().Add(-time.Minute + remaining)}
+		dependencies.Clock, dependencies.CreationClock = clock, clock
 	}
 	start, err := oidcauth.NewStartService(oidcauth.StartOptions{RequestTimeout: 10 * time.Second, PendingLifetime: lifetime, RollbackTimeout: 2 * time.Second, ResolveTimeout: 2 * time.Second}, dependencies)
 	if err != nil {
@@ -167,7 +168,11 @@ func integrationClaimVerifiedWithNonce(ctx context.Context, t *testing.T, store 
 			t.Fatalf("durable browser verification error=%v; diagnostic digest failed", err)
 		}
 		snapshot, found, loadErr := store.LoadPending(ctx, template.Route(), digest)
+		binding, bindingErr := template.Route().Binding(snapshot.TransactionID())
+		proof, proofErr := dependencies.VerifierCipher.OpenBrowser(binding, snapshot.VerifierCiphertext())
+		cookieMatch := bindingErr == nil && proofErr == nil && dependencies.DigestKey.VerifyPreAuthCookie(binding, started.PreAuthCookie(), proof.CookieDigest())
 		now := time.Now().UTC()
+		t.Logf("browser diagnostic: binding_ok=%t proof_ok=%t cookie_ok=%t created_not_future=%t", bindingErr == nil, proofErr == nil, cookieMatch, !now.Before(snapshot.CreatedAt()))
 		t.Fatalf(
 			"durable browser verification error=%v; found=%t load_failed=%t route_match=%t "+
 				"created_offset=%s expiry_remaining=%s",

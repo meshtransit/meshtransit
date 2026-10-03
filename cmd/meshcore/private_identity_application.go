@@ -49,6 +49,7 @@ type privateIdentityManagementOptions struct {
 type privateIdentityPorts struct {
 	Admission             httpapi.LoginRouteAdmission
 	Metadata              oidcauth.MetadataResolver
+	CreationClock         oidcauth.CreationClock
 	Creations             oidcauth.Transactions
 	Committed             oidcauth.CommittedCreationResolver
 	Pending               oidcauth.PendingLoader
@@ -120,7 +121,7 @@ func composePrivateIdentity(
 	startMetrics, callbackMetrics := oidc.NewStartTelemetry(), oidc.NewCallbackTelemetry()
 	subjectMetrics, issueMetrics := oidc.NewSubjectTelemetry(), oidc.NewIssueTelemetry()
 	start, err := oidcauth.NewStartService(options.Start, oidcauth.StartDependencies{
-		Metadata: ports.Metadata, Transactions: ports.Creations, Committed: ports.Committed,
+		Metadata: ports.Metadata, Transactions: ports.Creations, Committed: ports.Committed, CreationClock: ports.CreationClock,
 		IDs: ports.StartIDs, Secrets: ports.Secrets, Clock: ports.Clock, Observer: startMetrics,
 		DigestKey: keys.transaction, VerifierCipher: keys.verifier,
 	})
@@ -235,7 +236,7 @@ func completePrivateIdentityKeys(keys *privateIdentityKeys) bool {
 
 func completePrivateIdentityPorts(ports privateIdentityPorts) bool {
 	for _, port := range []any{
-		ports.Admission, ports.Metadata, ports.Creations, ports.Committed, ports.Pending, ports.Claims,
+		ports.Admission, ports.Metadata, ports.CreationClock, ports.Creations, ports.Committed, ports.Pending, ports.Claims,
 		ports.Failures, ports.Issues, ports.Provider, ports.Subjects, ports.SessionAuthority, ports.StartIDs,
 		ports.SessionRevocations, ports.SessionScopes, ports.SessionCapabilities,
 		ports.Secrets, ports.ClaimIDs, ports.IssueMaterial, ports.Revocations, ports.PolicyPublications,

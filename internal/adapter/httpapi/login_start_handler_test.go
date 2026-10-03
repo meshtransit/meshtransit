@@ -120,7 +120,7 @@ func newLoginHTTPFixture(t *testing.T) *loginHTTPFixture {
 	}
 	service, err := oidcauth.NewStartService(oidcauth.StartOptions{
 		RequestTimeout: 10 * time.Second, PendingLifetime: 5 * time.Minute, RollbackTimeout: time.Second, ResolveTimeout: time.Second,
-	}, oidcauth.StartDependencies{Metadata: fixture, Transactions: fixture, Committed: fixture,
+	}, oidcauth.StartDependencies{Metadata: fixture, Transactions: fixture, Committed: fixture, CreationClock: fixture,
 		IDs: oidcauth.SystemStartIDs{}, Secrets: oidcauth.SystemSecrets{}, Clock: fixture, Observer: fixture,
 		DigestKey: digest, VerifierCipher: cipher})
 	if err != nil {
@@ -138,6 +138,10 @@ func (f *loginHTTPFixture) call(ctx context.Context, name string) {
 		f.hook(ctx, name)
 	}
 }
+func (f *loginHTTPFixture) CreationTime(ctx context.Context) (time.Time, error) {
+	return f.now, ctx.Err()
+}
+
 func (f *loginHTTPFixture) Now() time.Time                                 { return f.now }
 func (*loginHTTPFixture) StartOpened()                                     {}
 func (*loginHTTPFixture) StartClosed(oidcauth.StartOutcome, time.Duration) {}

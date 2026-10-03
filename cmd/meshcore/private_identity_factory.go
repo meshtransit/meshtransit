@@ -167,7 +167,7 @@ func composePrivateIdentityFactory(
 	}
 	owner.identity, err = composePrivateIdentity(ctx, keys, application, privateIdentityPorts{
 		Admission: transactions, Metadata: owner.discovery, Creations: transactions, Committed: transactions,
-		Pending: transactions, Claims: transactions, Failures: transactions, Issues: transactions,
+		CreationClock: transactions, Pending: transactions, Claims: transactions, Failures: transactions, Issues: transactions,
 		Provider: owner.provider, Subjects: transactions, SessionAuthority: authority, SessionRevocations: logoutStore,
 		SessionScopes: managementScopes, DeviceInventory: deviceInventory, SessionCapabilities: managementCapabilities,
 		StartIDs: oidcauth.SystemStartIDs{}, Secrets: oidcauth.SystemSecrets{},

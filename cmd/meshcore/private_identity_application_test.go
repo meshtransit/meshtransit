@@ -95,6 +95,7 @@ func TestComposePrivateIdentityRejectsTypedNilEffectsBeforeWork(t *testing.T) {
 	}{
 		{name: "admission", change: func(p *privateIdentityPorts) { p.Admission = missing }},
 		{name: "metadata", change: func(p *privateIdentityPorts) { p.Metadata = missingMetadata }},
+		{name: "creation clock", change: func(p *privateIdentityPorts) { p.CreationClock = missing }},
 		{name: "creation", change: func(p *privateIdentityPorts) { p.Creations = missing }},
 		{name: "committed lookup", change: func(p *privateIdentityPorts) { p.Committed = missing }},
 		{name: "pending", change: func(p *privateIdentityPorts) { p.Pending = missing }},
@@ -661,7 +662,7 @@ func newPrivateIdentityFixture(t *testing.T) *privateIdentityFixture {
 	approvals := privateIdentityPolicyApprovals{}
 	fixture.ports = privateIdentityPorts{
 		Admission: fixture, Metadata: &privateIdentityMetadata{fixture: fixture}, Creations: fixture, Committed: fixture,
-		Pending: fixture, Claims: fixture, Failures: fixture, Issues: fixture, Provider: fixture, Subjects: fixture,
+		CreationClock: fixture, Pending: fixture, Claims: fixture, Failures: fixture, Issues: fixture, Provider: fixture, Subjects: fixture,
 		SessionAuthority: authority, SessionRevocations: authority,
 		SessionScopes:       &privateIdentityManagementScopes{},
 		SessionCapabilities: &privateIdentityManagementCapabilities{},
@@ -800,6 +801,10 @@ func (fixture *privateIdentityFixture) record(ctx context.Context, effect string
 	if _, ok := ctx.Deadline(); !ok && effect != "session" {
 		fixture.t.Error("effect lacks finite context")
 	}
+}
+
+func (fixture *privateIdentityFixture) CreationTime(ctx context.Context) (time.Time, error) {
+	return fixture.now, ctx.Err()
 }
 
 func (fixture *privateIdentityFixture) Now() time.Time { fixture.clockReads++; return fixture.now }

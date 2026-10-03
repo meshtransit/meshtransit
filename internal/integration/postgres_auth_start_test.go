@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"net/url"
 	"testing"
 	"time"
 
@@ -25,7 +26,9 @@ func assertPostgreSQLAuthStart(
 		name          string
 		suffix        string
 		unknownCommit bool
+		appAhead      bool
 	}{
+		{name: "login start app ahead of DB", suffix: "955", appAhead: true},
 		{name: "login start acknowledged", suffix: "956"},
 		{name: "login start loses commit ack", suffix: "957", unknownCommit: true},
 	} {
@@ -41,6 +44,9 @@ func assertPostgreSQLAuthStart(
 			})
 			transactions := &integrationAuthStartTransactions{store: store, unknownCommit: test.unknownCommit}
 			dependencies := integrationAuthStartDependencies(t, template, store, transactions)
+			if test.appAhead {
+				dependencies.Clock = integrationFailureStartClock{time.Now().UTC().Add(time.Second)}
+			}
 			service, err := oidcauth.NewStartService(oidcauth.StartOptions{
 				RequestTimeout: 10 * time.Second, PendingLifetime: 5 * time.Minute,
 				RollbackTimeout: 2 * time.Second, ResolveTimeout: 2 * time.Second,
@@ -77,6 +83,23 @@ func assertPostgreSQLAuthStart(
 				t.Fatalf("durable creation lookup error = %v, want exact login-start evidence", err)
 			}
 			assertDurableBrowserProof(ctx, t, adminConnection, dependencies, pending, result)
+			location, parseErr := url.Parse(result.AuthorizationRequest().Location())
+			if parseErr != nil {
+				t.Fatal("invalid authorization location")
+			}
+			browserState, stateErr := oidcauth.ParseState(location.Query().Get("state"))
+			if stateErr != nil {
+				t.Fatal("invalid authorization state")
+			}
+			verification, verifyErr := oidcauth.NewBrowserVerificationService(oidcauth.BrowserVerificationOptions{RequestTimeout: 10 * time.Second}, oidcauth.BrowserVerificationDependencies{
+				Pending: store, DigestKey: dependencies.DigestKey, VerifierCipher: dependencies.VerifierCipher, Clock: dependencies.Clock,
+			})
+			if verifyErr != nil {
+				t.Fatal(verifyErr)
+			}
+			if _, verifyErr = verification.VerifyBrowser(ctx, template.Route(), browserState, result.PreAuthCookie()); verifyErr != nil {
+				t.Fatal("immediate committed browser proof unavailable", verifyErr)
+			}
 			assertBrowserProofTerminalErasure(ctx, t, adminConnection, pending,
 				"01890f04-0000-7000-8000-000000000"+test.suffix)
 		})
@@ -202,7 +225,7 @@ func integrationAuthStartDependencies(
 		t.Fatal(err)
 	}
 	return oidcauth.StartDependencies{
-		Metadata: integrationAuthStartMetadata{}, Transactions: transactions, Committed: store,
+		Metadata: integrationAuthStartMetadata{}, Transactions: transactions, Committed: store, CreationClock: store,
 		IDs: integrationAuthStartIDs{template: template}, Secrets: oidcauth.SystemSecrets{},
 		Clock: oidcauth.SystemStartClock{}, Observer: adapteroidc.NewStartTelemetry(),
 		DigestKey: key, VerifierCipher: cipher,
