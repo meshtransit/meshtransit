@@ -10,8 +10,9 @@ remain members of their original Networks.
 This document specifies the required behavior. Client alias validation and packet translation are implemented in
 `meshd` commit `bbe1ec7b77ea35e7217e53694bbe9f5201d82d89`, with the owned v1
 contract documented in that repository. The client does not advertise support.
-Durable alias allocation and cross-Workspace map delivery are not implemented
-or enabled on POC. The existing same-Workspace direct reader
+Schema 81 implements migration-only durable reservation and quarantine.
+The authenticated worker command, alias projection reader and cross-Workspace
+map delivery are not implemented or enabled on POC. The existing same-Workspace direct reader
 remains a separate implementation path.
 
 A Private Endpoint is the logical contract, local destination and lifecycle
@@ -237,3 +238,71 @@ Dex patches committed before this change: five public module checksums in
 outside this increment. No scanner baseline or exclusion is added. The full
 secret-scan gate remains unresolved; an increment-scoped scan is recorded
 separately. No release, migration or POC deployment is qualified by this proposal.
+
+## Durable reservation foundation — schema 81
+
+`mesh.device_alias_lease` retains one Resource alias per endpoint/family and one
+Consumer Source alias per endpoint/consumer Device/family. IPv4 and IPv6 remain
+explicit realm settings. Each enabled family requires exactly one active pool
+for each role. The existing endpoint's legacy Resource alias is adopted only
+under its exact owner; it is not replaced or allocated to a second owner.
+Additional consumers reuse Resource aliases and receive distinct source aliases.
+
+The internal reservation function is **SECURITY INVOKER**, executable only by the
+migration role. No runtime, worker, observer or share-writer role can read, insert
+or execute it. Deployment-local pool configuration policies apply solely to the
+migration role. Existing revision RLS stays scoped to one Network at a time.
+Derived ordinary and bilateral GUCs are restored on success and exception.
+The table itself has FORCE RLS and immutable identity/Node pins.
+
+The transaction locks both Network revision rows in scope order, the endpoint
+and contract, Resource/target, ordered Devices and key epochs, the active realm,
+and ordered pool cursors. Missing revision locks are errors. Fresh clock checks
+run after waits and before returning. Allocation pins the endpoint, Resource
+version/target generation, recovery epoch, Device session and machine/Node key
+epochs, public Node key and exclusive finite deadline. A changed pin fails the
+retry; this foundation does not rotate or renew an endpoint generation.
+
+Allocation uses the existing durable pool cursors, separately for each role.
+It rejects unsafe prefixes and overlap with configured ordinary/service pools,
+excludes ordinary active/quarantined addresses and all retained legacy alias
+addresses, and excludes reserved/quarantined new aliases throughout the
+Deployment, including a suspended previous realm. A unique retained-address
+index is the final arbiter. At most 65,536 candidates are inspected per lease;
+IPv4 pools are /8–/30 and IPv6 pools /67–/126. At most 256 consumer owner slots,
+including tombstones, exist per endpoint. Pool changes cannot expand the family
+set of an existing reservation silently. A disabled legacy alias family fails.
+
+Both Network and sharing revisions advance once per changed batch. All leases,
+cursors and revisions roll back together on an error in any family. An exact
+owner retry returns the stored addresses without extra leases, revision bumps
+or evidence. A retry after an unknown commit may resolve the same exact owner
+slot; it must not initiate a new generation or guess that the commit failed.
+
+Deferred DB checks require audit/outbox in both exact Network scopes, with the
+stored Network/sharing revisions. Audit payloads identify the endpoint and the
+complete sorted set of mutated lease public IDs and versions. An unrelated or
+incomplete batch cannot cover these mutations. Evidence is appended in the same
+transaction by the privileged caller. A future serving command must derive and
+validate its exact authority snapshot and evidence before this storage primitive
+receives a narrowly reviewed runtime capability.
+
+Quarantine is an explicit durable transition, never clock-based deletion. Its
+finite deadline must cover the later of endpoint expiry or the current decision
+plus at least 24 hours. Address ownership and owner slots remain retained.
+Release is forbidden before that deadline or while the endpoint remains current;
+no release worker or address reuse path is exposed by this increment. Allocation
+never makes an endpoint ready, publishes DNS, changes a packet ACL or advertises
+client support. The pure `NextDeviceAliases` proposal remains independent; the
+SQL foundation uses the schema's separate role pools.
+
+Verification uses a disposable PostgreSQL 18.6 database, with synthetic cloud
+Workspaces and existing sharing authority fixtures. Cases cover two families,
+explicit IPv6, legacy alias adoption, two consumers, exact owner replay, a
+competing writer's finite lock timeout, foreign/stale owners, missing/overlapping
+pools, final-family exhaustion, complete rollback, scope restoration, missing
+bilateral evidence, incorrect evidence membership, quarantine collisions and
+early release rejection. These are storage tests, not a live encrypted sharing
+qualification. Worker admission, successor generations, automatic withdrawal,
+bilateral maps, post-commit Redis hints and live packet/DNS qualification remain
+required before activation.

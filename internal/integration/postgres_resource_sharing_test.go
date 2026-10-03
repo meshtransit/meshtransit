@@ -449,6 +449,7 @@ func assertCrossWorkspaceResourceSharingConsent(
 	assertPrivateEndpointPublicationViaAdapter(
 		ctx, t, admin, workerPool, activeContract.ImportedResourceID(), accessName, "fd00:feed::1",
 	)
+	assertPostgreSQLDeviceAliasReservation(ctx, t, admin, activeContract.ImportedResourceID())
 	assertCrossWorkspaceSharingConsentEvidence(ctx, t, admin, offer.Offer().ID())
 
 	var networkCount int

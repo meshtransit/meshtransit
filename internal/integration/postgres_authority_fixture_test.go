@@ -34,6 +34,8 @@ type authorityEvidenceFixture struct {
 	action                 string
 	permission             string
 	outboxEventClass       string
+	auditPayload           string
+	outboxPayload          string
 }
 
 func seedAuthorityFixture(ctx context.Context, t *testing.T, connection *pgx.Conn) {
@@ -326,6 +328,13 @@ WHERE id = $1`, evidence.streamID).Scan(&expectedSequence, &previousHash); err !
 	hashInput = append(hashInput, evidence.eventPublicID...)
 	eventHash := sha256.Sum256(hashInput)
 
+	auditPayload, outboxPayload := evidence.auditPayload, evidence.outboxPayload
+	if auditPayload == "" {
+		auditPayload = "{}"
+	}
+	if outboxPayload == "" {
+		outboxPayload = "{}"
+	}
 	var appendedSequence int64
 	if err := transaction.QueryRow(ctx, `SELECT mesh_audit.append_authority_evidence(
     $1::BIGINT,
@@ -344,9 +353,9 @@ WHERE id = $1`, evidence.streamID).Scan(&expectedSequence, &previousHash); err !
     NULL::UUID,
     NULL::BYTEA,
     NULL::BYTEA,
-    '{}'::JSONB,
+    $15::JSONB,
     $14::TEXT,
-    '{}'::JSONB
+    $16::JSONB
 )`,
 		evidence.streamID,
 		evidence.eventPublicID,
@@ -362,6 +371,7 @@ WHERE id = $1`, evidence.streamID).Scan(&expectedSequence, &previousHash); err !
 		evidence.action,
 		evidence.permission,
 		evidence.outboxEventClass,
+		auditPayload, outboxPayload,
 	).Scan(&appendedSequence); err != nil {
 		t.Fatalf("append integration authority evidence: %v", err)
 	}

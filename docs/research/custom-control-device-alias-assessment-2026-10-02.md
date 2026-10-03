@@ -99,3 +99,15 @@ of the packet path. No separate gateway or application proxy is required.
 The independently specified requirements, known wire limits and delivery gates
 are in [Device sharing through peer aliases](../design/device-alias-sharing.md).
 Resources without a client and routed Resources remain outside this slice.
+
+## Durable storage checkpoint — 2026-10-03
+
+Core schema 81 adds migration-only alias reservation/quarantine with exact
+endpoint/Device/key pins, separate role/family pools, shared endpoint Resource
+aliases and distinct consumer source aliases. Legacy Resource ownership is
+adopted exactly. Both Network revisions and scoped audit/outbox commit atomically;
+partial family failures roll back and retained addresses survive realm changes.
+No worker/runtime capability, client advertisement, alias map emission, DNS
+publication, deployment or live packet qualification is enabled by this step.
+See [the owned design](../design/device-alias-sharing.md#durable-reservation-foundation--schema-81)
+for the bounded allocator, evidence, migration and verification contract.
