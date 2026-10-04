@@ -13,6 +13,10 @@ import (
 // Composition fixture has no authority; resource operations fail closed.
 type privateIdentityResourcePorts struct{}
 
+func (privateIdentityResourcePorts) GetContract(context.Context, accountsession.Session, network.Scope, sharing.ContractID) (sharing.ContractSnapshot, error) {
+	return sharing.ContractSnapshot{}, sharing.ErrUnavailable
+}
+
 func (privateIdentityResourcePorts) Create(context.Context, authority.Command) (authority.Result, error) {
 	return authority.Result{}, authority.ErrMutationFailed
 }

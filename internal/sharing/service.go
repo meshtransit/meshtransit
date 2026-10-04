@@ -13,6 +13,7 @@ import (
 // Implementations must authorize against current PostgreSQL authority and commit
 // lifecycle mutation, audit evidence, outbox evidence, and idempotency together.
 type Repository interface {
+	GetContract(context.Context, accountsession.Session, network.Scope, ContractID, time.Time) (ContractSnapshot, error)
 	CreateOffer(context.Context, CreateOffer, time.Time) (MutationResult, error)
 	DecideOffer(context.Context, DecideOffer, time.Time) (MutationResult, error)
 	ActivateContract(context.Context, ActivateContract, time.Time) (MutationResult, error)
@@ -313,3 +314,23 @@ type SystemClock struct{}
 
 // Now reads wall time.
 func (SystemClock) Now() time.Time { return time.Now().UTC() }
+
+// GetContract returns current consumer-local evidence after fresh share.read admission.
+func (service *Service) GetContract(ctx context.Context, session accountsession.Session, scope network.Scope, id ContractID) (ContractSnapshot, error) {
+	if ctx == nil || service == nil || service.repository == nil || service.clock == nil ||
+		!session.IsValid() || !scope.IsValid() || !id.IsValid() {
+		return ContractSnapshot{}, ErrInvalidManagementRequest
+	}
+	evaluatedAt, err := service.evaluatedAt(ctx)
+	if err != nil {
+		return ContractSnapshot{}, err
+	}
+	snapshot, err := service.repository.GetContract(ctx, session, scope, id, evaluatedAt)
+	if err != nil {
+		return ContractSnapshot{}, err
+	}
+	if !snapshot.IsValid() || snapshot.Contract().ID() != id || snapshot.Contract().ConsumerScope() != scope {
+		return ContractSnapshot{}, ErrUnavailable
+	}
+	return snapshot, nil
+}

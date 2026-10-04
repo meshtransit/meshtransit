@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -401,12 +402,13 @@ func TestSharingErrorsDoNotLeakAuthorityDetails(t *testing.T) {
 }
 
 type managementResourceSharingStub struct {
-	create   func(context.Context, sharing.CreateOffer) (sharing.MutationResult, error)
-	decide   func(context.Context, sharing.DecideOffer) (sharing.MutationResult, error)
-	activate func(context.Context, sharing.ActivateContract) (sharing.MutationResult, error)
-	revoke   func(context.Context, sharing.RevokeContract) (sharing.MutationResult, error)
-	get      func(context.Context, accountsession.Session, network.Scope, sharing.OfferID) (sharing.OfferSnapshot, error)
-	list     func(context.Context, accountsession.Session, network.Scope, sharing.Direction, sharing.OfferState, int, sharing.PageCursor) (sharing.OfferPage, error)
+	getContract func(context.Context, accountsession.Session, network.Scope, sharing.ContractID) (sharing.ContractSnapshot, error)
+	create      func(context.Context, sharing.CreateOffer) (sharing.MutationResult, error)
+	decide      func(context.Context, sharing.DecideOffer) (sharing.MutationResult, error)
+	activate    func(context.Context, sharing.ActivateContract) (sharing.MutationResult, error)
+	revoke      func(context.Context, sharing.RevokeContract) (sharing.MutationResult, error)
+	get         func(context.Context, accountsession.Session, network.Scope, sharing.OfferID) (sharing.OfferSnapshot, error)
+	list        func(context.Context, accountsession.Session, network.Scope, sharing.Direction, sharing.OfferState, int, sharing.PageCursor) (sharing.OfferPage, error)
 }
 
 func (stub *managementResourceSharingStub) CreateOffer(ctx context.Context, command sharing.CreateOffer) (sharing.MutationResult, error) {
@@ -594,4 +596,88 @@ func decodeManagementErrorCode(t *testing.T, payload []byte) string {
 		t.Fatalf("decode management error: %v", err)
 	}
 	return envelope.Error.Code
+}
+
+func TestManagementHandlerReadsCurrentConsumerContract(t *testing.T) {
+	t.Parallel()
+	fixture, contract, _ := managementSharingContractFixture(t, sharing.ContractStateActivating, 1)
+	displayName, err := resource.ParseDisplayName("database")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessName, err := sharing.ParseAccessName("database.shared.consumer.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := sharing.NewContractSnapshot(sharing.ContractSnapshotParams{
+		Contract: contract, ImportedDisplayName: displayName, ImportedResourceVersion: 1, AccessName: accessName,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := validManagementHandlerOptions(t)
+	options.ResourceSharing = &managementResourceSharingStub{
+		getContract: func(_ context.Context, session accountsession.Session, scope network.Scope, id sharing.ContractID) (sharing.ContractSnapshot, error) {
+			if !session.IsValid() || scope != fixture.consumer || id != contract.ID() {
+				t.Fatal("GET lost exact consumer or authenticated session")
+			}
+			return snapshot, nil
+		},
+	}
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/workspaces/" + fixture.consumer.WorkspaceID().String() +
+		"/networks/" + fixture.consumer.NetworkID().String() + "/trust-contracts/" + contract.ID().String()
+	newReadRequest := func(method, requestPath, body string) *http.Request {
+		request := newManagementRequest(t, method, requestPath, body)
+		if body == "" {
+			request.Body = http.NoBody
+		}
+		request.Header.Del("Content-Type")
+		request.Header.Del("If-Match")
+		request.Header.Del("Idempotency-Key")
+		return request
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, newReadRequest(http.MethodGet, path, ""))
+	var envelope shareContractDetailEnvelope
+	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"1"` || json.Unmarshal(response.Body.Bytes(), &envelope) != nil {
+		t.Fatalf("Contract GET status/header/body = %d/%s/%s", response.Code, response.Header().Get("ETag"), response.Body.String())
+	}
+	data := envelope.Data
+	if data.TrustContractID != contract.ID().String() || data.ImportedResourceID != contract.ImportedResourceID().String() ||
+		data.State != "activating" || data.Version != 1 || data.ImportedResourceVersion != 1 || data.AccessName != accessName.String() ||
+		data.ImportedDisplayName != displayName.String() || data.ConsumerWorkspaceID != fixture.consumer.WorkspaceID().String() ||
+		data.ConsumerNetworkID != fixture.consumer.NetworkID().String() || data.ProviderWorkspaceID != fixture.provider.WorkspaceID().String() ||
+		data.ResourceID != fixture.binding.ResourceID().String() || data.ResourceVersion != fixture.binding.ResourceVersion() ||
+		data.ScopeRelation != "cross_workspace" || len(data.MaximumTraffic) != 1 || !data.ExpiresAt.Equal(contract.ExpiresAt()) ||
+		strings.Contains(response.Body.String(), "offer_token") {
+		t.Fatal("Contract GET lost current scope/provenance or exposed a token")
+	}
+	for _, test := range []struct{ name, method, suffix, body, header string }{
+		{name: "query", method: http.MethodGet, suffix: "?state=active"},
+		{name: "body", method: http.MethodGet, body: "{}"},
+		{name: "mutation precondition", method: http.MethodGet, header: "If-Match"},
+		{name: "idempotency", method: http.MethodGet, header: "Idempotency-Key"},
+		{name: "wrong method", method: http.MethodPost},
+	} {
+		request := newReadRequest(test.method, path+test.suffix, test.body)
+		if test.header != "" {
+			request.Header.Set(test.header, "1")
+		}
+		denied := httptest.NewRecorder()
+		handler.ServeHTTP(denied, request)
+		if denied.Code == http.StatusOK {
+			t.Fatal("contract read admitted", test.name)
+		}
+	}
+}
+
+func (stub *managementResourceSharingStub) GetContract(ctx context.Context, session accountsession.Session, scope network.Scope, id sharing.ContractID) (sharing.ContractSnapshot, error) {
+	if stub.getContract == nil {
+		return sharing.ContractSnapshot{}, sharing.ErrUnavailable
+	}
+	return stub.getContract(ctx, session, scope, id)
 }

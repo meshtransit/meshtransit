@@ -73,6 +73,7 @@ const (
 	shareOfferRevokeOperation               = "share_offer_revoke"
 	shareContractRevokeOperation            = "share_contract_revoke"
 	shareContractActivateOperation          = "share_contract_activate"
+	shareContractGetOperation               = "share_contract_get"
 	unknownManagementOperation              = "unknown"
 	maximumManagementBodyBytes              = 64 * 1024
 	maximumManagementRequests               = 4096
@@ -175,6 +176,7 @@ type ResourceCatalog interface {
 
 // ResourceSharingManagement exposes bounded Resource-sharing commands and reads.
 type ResourceSharingManagement interface {
+	GetContract(context.Context, accountsession.Session, network.Scope, sharing.ContractID) (sharing.ContractSnapshot, error)
 	CreateOffer(context.Context, sharing.CreateOffer) (sharing.MutationResult, error)
 	DecideOffer(context.Context, sharing.DecideOffer) (sharing.MutationResult, error)
 	ActivateContract(context.Context, sharing.ActivateContract) (sharing.MutationResult, error)

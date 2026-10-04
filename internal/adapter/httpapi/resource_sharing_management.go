@@ -32,6 +32,7 @@ const (
 	resourceSharingOfferItem
 	resourceSharingOfferAction
 	resourceSharingContractAction
+	resourceSharingContractItem
 )
 
 type resourceSharingPath struct {
@@ -69,6 +70,11 @@ func parseResourceSharingPath(request *http.Request) (resourceSharingPath, bool)
 			path.action = segments[9]
 		}
 	case "trust-contracts":
+		if len(segments) == 8 {
+			path.kind = resourceSharingContractItem
+			path.publicID = segments[7]
+			break
+		}
 		if len(segments) != 10 || segments[8] != "actions" ||
 			(segments[9] != "activate" && segments[9] != "revoke") {
 			return resourceSharingPath{}, false
@@ -124,6 +130,8 @@ func (path resourceSharingPath) operation(requestMethod string) string {
 		return shareOfferCreateOperation
 	case resourceSharingOfferItem:
 		return shareOfferGetOperation
+	case resourceSharingContractItem:
+		return shareContractGetOperation
 	case resourceSharingContractAction:
 		if path.action == "activate" {
 			return shareContractActivateOperation
@@ -264,6 +272,8 @@ func (handler *ManagementHandler) handleResourceSharing(
 		return handler.getShareOffer(ctx, response, request, correlationID, path, session)
 	case resourceSharingOfferAction:
 		return handler.decideShareOffer(ctx, response, request, correlationID, path, session, browser)
+	case resourceSharingContractItem:
+		return handler.getTrustContract(ctx, response, request, correlationID, path, session)
 	case resourceSharingContractAction:
 		return handler.changeTrustContract(ctx, response, request, correlationID, path, session, browser)
 	default:

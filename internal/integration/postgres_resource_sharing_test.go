@@ -27,6 +27,18 @@ import (
 	"github.com/meshtransit/meshtransit/internal/sharing/endpointpublication"
 )
 
+func assertCurrentConsumerContractRead(ctx context.Context, t *testing.T, service *sharing.Service, session accountsession.Session, contract sharing.Contract, accessName sharing.AccessName, importedVersion int64) {
+	t.Helper()
+	current, err := service.GetContract(ctx, session, contract.ConsumerScope(), contract.ID())
+	if err != nil || !current.IsValid() || current.Contract().ID() != contract.ID() || current.Contract().Version() != contract.Version() ||
+		current.Contract().State() != contract.State() || current.ImportedResourceVersion() != importedVersion || current.AccessName() != accessName {
+		t.Fatal("consumer read lost current lifecycle, version or naming intent", err)
+	}
+	if _, err := service.GetContract(ctx, session, contract.ProviderScope(), contract.ID()); !errors.Is(err, sharing.ErrNotFound) {
+		t.Fatal("provider scope exposed consumer-local imported metadata", err)
+	}
+}
+
 func assertPostgreSQLResourceSharing(
 	ctx context.Context,
 	t *testing.T,
@@ -128,6 +140,7 @@ func assertPostgreSQLResourceSharing(
 	assertImportedResourceAccessName(
 		ctx, t, admin, contract.ImportedResourceID(), accessName, "reserved", 1,
 	)
+	assertCurrentConsumerContractRead(ctx, t, service, session, contract, accessName, 1)
 	replayedAccept, err := service.DecideOffer(ctx, acceptCommand)
 	if err != nil {
 		t.Fatalf("Resource Sharing DecideOffer() replay error = %v", err)
@@ -169,6 +182,7 @@ func assertPostgreSQLResourceSharing(
 		t.Fatalf("Resource Sharing activate result = %+v", activated)
 	}
 	assertDirectDeviceEndpoint(ctx, t, admin, activeContract.ImportedResourceID(), "ready", 1)
+	assertCurrentConsumerContractRead(ctx, t, service, session, activeContract, accessName, 2)
 	replayedActivation, err := service.ActivateContract(ctx, activateCommand)
 	if err != nil {
 		t.Fatalf("Resource Sharing ActivateContract() replay error = %v", err)
@@ -219,6 +233,7 @@ func assertPostgreSQLResourceSharing(
 	assertImportedResourceAccessName(
 		ctx, t, admin, contract.ImportedResourceID(), accessName, "withdrawn", 2,
 	)
+	assertCurrentConsumerContractRead(ctx, t, service, session, revokedContract, accessName, 3)
 	assertDirectDeviceEndpoint(ctx, t, admin, activeContract.ImportedResourceID(), "revoked", 2)
 	foreignConsumerScope := resourceAuthorityScope(t, 102, 202)
 	foreignConsumerSession := authorityConfirmerAccountSessionFixture(t)

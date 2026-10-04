@@ -1307,6 +1307,72 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/trust-contracts/{trust_contract_id}": {
+      "get": {
+        "operationId": "getTrustContract",
+        "summary": "Read one current consumer-local Trust Contract after fresh share.read admission",
+        "security": [
+          {
+            "accountSessionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceID"
+          },
+          {
+            "$ref": "#/components/parameters/NetworkID"
+          },
+          {
+            "$ref": "#/components/parameters/TrustContractID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current metadata in the exact Consumer Network. No offer token or packet authorization.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ShareOfferETag"
+              },
+              "X-Correlation-ID": {
+                "$ref": "#/components/headers/CorrelationID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrustContractDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/trust-contracts/{trust_contract_id}/actions/revoke": {
       "post": {
         "operationId": "revokeTrustContract",
@@ -3283,6 +3349,134 @@
           "state": {"type": "string", "enum": ["activating", "active", "revoked", "expired", "invalidated"]},
           "version": {"type": "integer", "format": "int64", "minimum": 1},
           "imported_resource_version": {"type": "integer", "format": "int64", "minimum": 1}
+        }
+      },
+      "TrustContractDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "trust_contract_id",
+          "imported_resource_id",
+          "access_name",
+          "offer_id",
+          "state",
+          "version",
+          "imported_resource_version",
+          "scope_relation",
+          "provider_workspace_id",
+          "provider_network_id",
+          "consumer_workspace_id",
+          "consumer_network_id",
+          "resource_id",
+          "resource_version",
+          "target_generation",
+          "maximum_traffic",
+          "expires_at",
+          "imported_display_name"
+        ],
+        "properties": {
+          "trust_contract_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "imported_resource_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "access_name": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 253,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$",
+            "readOnly": true
+          },
+          "offer_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "activating",
+              "active",
+              "revoked",
+              "expired",
+              "invalidated"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "imported_resource_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "scope_relation": {
+            "type": "string",
+            "enum": [
+              "within_workspace",
+              "cross_workspace"
+            ],
+            "readOnly": true
+          },
+          "provider_workspace_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "provider_network_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "consumer_workspace_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "consumer_network_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "resource_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "resource_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "target_generation": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "maximum_traffic": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 3,
+            "items": {
+              "$ref": "#/components/schemas/ShareTrafficConstraint"
+            }
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "imported_display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      },
+      "TrustContractDetailResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "correlation_id"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TrustContractDetail"
+          },
+          "correlation_id": {
+            "$ref": "#/components/schemas/PublicID"
+          }
         }
       },
       "TrustContractResponse": {

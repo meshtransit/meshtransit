@@ -11,6 +11,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
+	"github.com/meshtransit/meshtransit/internal/resource"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -103,10 +104,13 @@ func TestServiceStopsBeforeRepositoryOnCancelledContext(t *testing.T) {
 }
 
 type sharingRepositoryFixture struct {
-	createResult MutationResult
-	createErr    error
-	createAt     time.Time
-	listResult   OfferPage
+	contractResult ContractSnapshot
+	contractErr    error
+	contractAt     time.Time
+	createResult   MutationResult
+	createErr      error
+	createAt       time.Time
+	listResult     OfferPage
 }
 
 func (fixture *sharingRepositoryFixture) CreateOffer(
@@ -234,4 +238,62 @@ func sharingSessionFixture(t *testing.T) accountsession.Session {
 
 func sharingServiceNow() time.Time {
 	return time.Date(2026, time.September, 29, 1, 0, 0, 0, time.UTC)
+}
+
+func (fixture *sharingRepositoryFixture) GetContract(_ context.Context, _ accountsession.Session, _ network.Scope, _ ContractID, evaluatedAt time.Time) (ContractSnapshot, error) {
+	fixture.contractAt = evaluatedAt
+	return fixture.contractResult, fixture.contractErr
+}
+
+func TestGetContractRejectsMismatchedRepositoryEvidence(t *testing.T) {
+	t.Parallel()
+	contract := mustContract(t)
+	name, err := resource.ParseDisplayName("database")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessName, err := ParseAccessName("database.shared.consumer.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := NewContractSnapshot(ContractSnapshotParams{Contract: contract, ImportedDisplayName: name, ImportedResourceVersion: 2, AccessName: accessName})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID, err := ParseContractID(uuidWithSuffix(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		scope  network.Scope
+		id     ContractID
+		result ContractSnapshot
+		want   error
+	}{
+		{name: "current consumer", scope: contract.ConsumerScope(), id: contract.ID(), result: snapshot},
+		{name: "foreign consumer", scope: contract.ProviderScope(), id: contract.ID(), result: snapshot, want: ErrUnavailable},
+		{name: "wrong identity", scope: contract.ConsumerScope(), id: otherID, result: snapshot, want: ErrUnavailable},
+		{name: "empty snapshot", scope: contract.ConsumerScope(), id: contract.ID(), want: ErrUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			repository := &sharingRepositoryFixture{contractResult: test.result}
+			service := sharingServiceFixture(t, repository)
+			result, err := service.GetContract(context.Background(), sharingSessionFixture(t), test.scope, test.id)
+			if !errors.Is(err, test.want) || repository.contractAt != sharingServiceNow() {
+				t.Fatal("contract result or evaluation instant", err)
+			}
+			if test.want == nil && result.Contract().ID() != contract.ID() {
+				t.Fatal("current identity changed")
+			}
+		})
+	}
+	repository := &sharingRepositoryFixture{contractResult: snapshot}
+	service := sharingServiceFixture(t, repository)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := service.GetContract(ctx, sharingSessionFixture(t), contract.ConsumerScope(), contract.ID()); !errors.Is(err, context.Canceled) || !repository.contractAt.IsZero() {
+		t.Fatal("cancelled read reached authority repository", err)
+	}
 }

@@ -97,7 +97,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		return nil, ErrInvalidManagementProfile
 	}
 	paths, err := managementObject(document["paths"])
-	if err != nil || len(paths) != 29 {
+	if err != nil || len(paths) != 30 {
 		return nil, ErrInvalidManagementProfile
 	}
 	if len(fragment) == 0 || len(fragment) > maximumManagementDocumentBytes {
@@ -134,6 +134,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		mutation                  bool
 	}
 	operations := []consoleOperation{
+		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/trust-contracts/{trust_contract_id}", "get", "getTrustContract", false},
 		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources", "get", "listResources", false},
 		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources", "post", "createResource", true},
 		{"/api/v1/workspaces/{workspace_id}/networks/{network_id}/resources/{resource_id}", "get", "getResource", false},
