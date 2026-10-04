@@ -11,6 +11,11 @@ type accountSessionDatabase interface {
 	Begin(context.Context) (accountSessionTransaction, error)
 }
 
+type activityAccountSessionDatabase interface {
+	accountSessionDatabase
+	BeginActivity(context.Context) (accountSessionTransaction, error)
+}
+
 type accountSessionTransaction interface {
 	Exec(context.Context, string, ...any) error
 	QueryRow(context.Context, string, ...any) accountSessionRow
@@ -30,6 +35,19 @@ func (database pgxAccountSessionDatabase) Begin(
 	transaction, err := database.pool.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel:   pgx.ReadCommitted,
 		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return pgxAccountSessionTransaction{transaction: transaction}, nil
+}
+
+func (database pgxAccountSessionDatabase) BeginActivity(
+	ctx context.Context,
+) (accountSessionTransaction, error) {
+	transaction, err := database.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.ReadCommitted,
+		AccessMode: pgx.ReadWrite,
 	})
 	if err != nil {
 		return nil, err

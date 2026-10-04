@@ -198,7 +198,7 @@ func integrationBrowserCompletion(
 		case "backward clock after commit":
 			options.clock.set(result.Issued().Session().AuthenticationTime())
 		case "cookie subsecond after commit":
-			options.clock.set(result.Issued().Session().IdleExpiresAt().Add(-500 * time.Millisecond))
+			options.clock.set(result.Issued().Session().AbsoluteExpiresAt().Add(-500 * time.Millisecond))
 		case "canceled before response":
 			options.cancel()
 		}
@@ -359,8 +359,9 @@ func assertBrowserCompletionResponse(
 		if cookie.Name == httpapi.AccountSessionCookieName {
 			session := port.result.Issued().Session()
 			invalidToken := cookie.Value != port.result.Issued().Token().Encoded() || cookie.Value == "old-synthetic-session"
-			invalidLifetime := cookie.MaxAge < 1 || cookie.MaxAge > 60 ||
-				cookie.Expires.After(session.IdleExpiresAt()) || cookie.Expires.After(session.AbsoluteExpiresAt())
+			invalidLifetime := cookie.MaxAge < 1 || cookie.MaxAge > 60*60 ||
+				cookie.Expires.After(session.AbsoluteExpiresAt()) ||
+				cookie.Expires.Before(session.AbsoluteExpiresAt().Add(-time.Second))
 			if invalidToken || cookie.SameSite != http.SameSiteLaxMode || invalidLifetime {
 				t.Fatal("Session fixation or expiry/flags widening")
 			}

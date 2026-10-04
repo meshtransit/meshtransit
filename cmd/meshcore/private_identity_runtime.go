@@ -113,7 +113,7 @@ func privateIdentityRuntimeOptions(profile *config.PrivateLoginConfig) (privateI
 			Start: oidcauth.StartOptions{RequestTimeout: 5 * time.Second, PendingLifetime: 2 * time.Minute,
 				RollbackTimeout: time.Second, ResolveTimeout: time.Second},
 			Callback: oidcauth.CallbackOptions{RequestTimeout: 25 * time.Second, FailureTimeout: time.Second,
-				RollbackTimeout: time.Second, IdleLifetime: time.Hour, AbsoluteLifetime: 2 * time.Hour, MaxConcurrent: 16},
+				RollbackTimeout: time.Second, IdleLifetime: time.Hour, AbsoluteLifetime: 24 * time.Hour, MaxConcurrent: 16},
 			Browser: privateIdentityBrowserOptions{IntentLifetime: time.Minute, CaptureLifetime: time.Minute,
 				ContinuationLifetime: time.Minute, RequestTimeout: 5 * time.Second, CompletionTimeout: 25 * time.Second,
 				MaxConcurrent: 16, SourceRateLimit: source, StateRateLimit: state,

@@ -34,6 +34,20 @@ FROM mesh_ops.resolve_account_session_v2(
     $5::BYTEA
 )`
 
+const touchAccountSessionSQL = `SELECT session_version, last_used_at, idle_expires_at
+FROM mesh_ops.touch_account_session_v1(
+    $1::UUID, $2::BIGINT, $3::UUID, $4::BIGINT,
+    $5::TEXT, $6::TEXT, $7::BYTEA
+)`
+
+const appendAccountSessionTouchEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
+    $1::BIGINT, $2::UUID, $3::UUID, $4::BIGINT, $5::BYTEA, $6::BYTEA,
+    'account_session', $7::UUID, $8::BIGINT, NULL::BIGINT, $9::UUID,
+    'account_session.touched', 'identity.session', $7::UUID,
+    NULL::BYTEA, $10::BYTEA, $11::JSONB,
+    'identity.account_session.touched', $11::JSONB
+)`
+
 const readAccountSessionManagementScopesSQL = `SELECT
     mesh_ops.read_console_management_scopes_v3(
         $1::UUID, $2::UUID, $3::UUID, $4::UUID,

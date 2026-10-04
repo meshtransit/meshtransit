@@ -165,6 +165,12 @@ func (database *fakeAccountSessionDatabase) Begin(
 	return database.transaction, nil
 }
 
+func (database *fakeAccountSessionDatabase) BeginActivity(
+	ctx context.Context,
+) (accountSessionTransaction, error) {
+	return database.Begin(ctx)
+}
+
 type fakeAccountSessionTransaction struct {
 	row       fakeAccountSessionRow
 	rows      []fakeAccountSessionRow

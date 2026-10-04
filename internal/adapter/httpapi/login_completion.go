@@ -268,10 +268,9 @@ func confirmedSessionCookie(result oidcauth.CallbackResult, now time.Time) (*htt
 		return nil, ErrInvalidLoginCompletion
 	}
 	session := result.Issued().Session()
-	expiry := session.IdleExpiresAt()
-	if session.AbsoluteExpiresAt().Before(expiry) {
-		expiry = session.AbsoluteExpiresAt()
-	}
+	// Keep the opaque cookie until the absolute deadline. The server enforces
+	// the sliding idle deadline on every authenticated request.
+	expiry := session.AbsoluteExpiresAt()
 	expiry = expiry.UTC().Truncate(time.Second)
 	remaining := expiry.Sub(now.UTC()) / time.Second
 	validLifetime := remaining >= 1 && remaining <= 24*60*60 && expiry.Year() <= 9998

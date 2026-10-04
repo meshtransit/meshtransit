@@ -14,6 +14,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/identity/sessioncontext"
 	"github.com/meshtransit/meshtransit/internal/network"
+	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -40,7 +41,7 @@ type AccountSessionOptions struct {
 
 // AccountSessionStore resolves current session authority through a narrow function.
 type AccountSessionStore struct {
-	database accountSessionDatabase
+	database activityAccountSessionDatabase
 	options  AccountSessionOptions
 	metrics  *postgresPoolMetrics
 }
@@ -61,7 +62,7 @@ func NewAccountSessionStore(
 }
 
 func newAccountSessionStore(
-	database accountSessionDatabase,
+	database activityAccountSessionDatabase,
 	options AccountSessionOptions,
 	metrics *postgresPoolMetrics,
 ) (*AccountSessionStore, error) {
@@ -88,7 +89,11 @@ func (store *AccountSessionStore) Resolve(
 		recoveryEpoch <= 0 || !digest.IsValid() {
 		return accountsession.Session{}, false, ErrInvalidAccountSessionStore
 	}
-	transaction, err := store.database.Begin(ctx)
+	begin := store.database.Begin
+	if accountsession.IsActivity(ctx) {
+		begin = store.database.BeginActivity
+	}
+	transaction, err := begin(ctx)
 	if err != nil || transaction == nil {
 		if err == nil {
 			err = ErrInvalidAccountSessionStore
@@ -138,11 +143,95 @@ func (store *AccountSessionStore) Resolve(
 			ErrAccountSessionEvidence,
 		)
 	}
+	if accountsession.IsActivity(ctx) && shouldTouchAccountSession(session, time.Now().UTC()) {
+		session, err = touchResolvedAccountSession(ctx, transaction, session, digest)
+		if err != nil {
+			return accountsession.Session{}, false, errors.Join(ErrResolveAccountSession, err)
+		}
+	}
 	if err := transaction.Commit(ctx); err != nil {
 		return accountsession.Session{}, false, errors.Join(ErrResolveAccountSession, err)
 	}
 	closed = true
 	return session, true, nil
+}
+
+// A normal request can renew a live session after 15 minutes of use. This
+// check only avoids unnecessary write transactions; SQL enforces the boundary.
+func shouldTouchAccountSession(session accountsession.Session, now time.Time) bool {
+	return session.IsValid() && now.Before(session.AbsoluteExpiresAt()) &&
+		now.After(session.IdleExpiresAt().Add(-45*time.Minute))
+}
+
+func touchResolvedAccountSession(
+	ctx context.Context,
+	transaction accountSessionTransaction,
+	session accountsession.Session,
+	digest accountsession.Digest,
+) (accountsession.Session, error) {
+	ids, err := newAccountSessionLogoutEvidenceIDs(ctx)
+	if err != nil {
+		return accountsession.Session{}, err
+	}
+	if err := transaction.Exec(ctx, setAccountSessionLogoutChangeSQL, ids.changeID.String()); err != nil {
+		return accountsession.Session{}, err
+	}
+	digestBytes := digest.Bytes()
+	var version int64
+	var lastUsedAt, idleExpiresAt time.Time
+	err = transaction.QueryRow(ctx, touchAccountSessionSQL,
+		session.ID().String(), session.Version(), session.DeploymentID().String(),
+		session.DeploymentRecoveryEpoch(), digest.Algorithm(), digest.KeyID().String(), digestBytes[:],
+	).Scan(&version, &lastUsedAt, &idleExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return session, nil
+	}
+	if err != nil {
+		return accountsession.Session{}, err
+	}
+	if version != session.Version()+1 || !idleExpiresAt.After(lastUsedAt) ||
+		idleExpiresAt.After(session.AbsoluteExpiresAt()) {
+		return accountsession.Session{}, ErrAccountSessionEvidence
+	}
+	var head accountSessionLogoutAuditHead
+	var previousHash []byte
+	if err := transaction.QueryRow(ctx, lockAccountSessionLogoutAuditStreamSQL,
+		session.DeploymentID().String()).Scan(
+		&head.streamInternalID, &head.nextSequence, &previousHash,
+	); err != nil {
+		return accountsession.Session{}, err
+	}
+	if head.streamInternalID <= 0 || head.nextSequence <= 0 || len(previousHash) != len(head.previousHash) {
+		return accountsession.Session{}, ErrAccountSessionEvidence
+	}
+	copy(head.previousHash[:], previousHash)
+	evidence, err := buildAccountSessionTouchEvidence(ids, head, session.DeploymentID(),
+		session.DeploymentRecoveryEpoch(), session.ID(), publicid.ID(session.PrincipalID()),
+		version, lastUsedAt, idleExpiresAt)
+	if err != nil {
+		return accountsession.Session{}, err
+	}
+	var sequence int64
+	if err := transaction.QueryRow(ctx, appendAccountSessionTouchEvidenceSQL,
+		head.streamInternalID, ids.auditID.String(), ids.outboxID.String(), head.nextSequence,
+		head.previousHash[:], evidence.eventHash[:], session.ID().String(), version,
+		session.PrincipalID().String(), evidence.afterHash[:], evidence.payload,
+	).Scan(&sequence); err != nil {
+		return accountsession.Session{}, err
+	}
+	if sequence != head.nextSequence {
+		return accountsession.Session{}, ErrAccountSessionEvidence
+	}
+	refreshed, err := scanAccountSession(transaction.QueryRow(ctx, resolveAccountSessionSQL,
+		session.DeploymentID().String(), session.DeploymentRecoveryEpoch(), digest.Algorithm(),
+		digest.KeyID().String(), digestBytes[:],
+	))
+	if err != nil || refreshed.ID() != session.ID() || refreshed.Version() != version ||
+		refreshed.DeploymentID() != session.DeploymentID() ||
+		refreshed.DeploymentRecoveryEpoch() != session.DeploymentRecoveryEpoch() {
+		return accountsession.Session{}, errors.Join(ErrAccountSessionEvidence, err)
+	}
+	return refreshed, nil
 }
 
 // ReadManagementScopes returns one fresh login-Workspace policy-approval projection.

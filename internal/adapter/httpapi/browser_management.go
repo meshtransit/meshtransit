@@ -271,6 +271,9 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	if ctx.Err() != nil {
 		return ErrBrowserManagementUnavailable
 	}
+	if deploymentCapabilities {
+		ctx = accountsession.WithActivity(ctx)
+	}
 	select {
 	case browser.slots <- struct{}{}:
 		defer func() { <-browser.slots }()

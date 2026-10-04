@@ -232,6 +232,12 @@ func seedNetworkManagementRBACAuthority(
 		t.Fatalf("derive authority confirmer Account Session digest: %v", err)
 	}
 	approverTokenDigest := approverDigests[0].Bytes()
+	touchKeyring, touchToken, _ := integrationActivityAccountSessionSecurity(t)
+	touchDigests, err := touchKeyring.Digests(touchToken)
+	if err != nil || len(touchDigests) != 1 {
+		t.Fatal("derive activity Account Session digest", err)
+	}
+	touchTokenDigest := touchDigests[0].Bytes()
 	var networkRevision int64
 	if err := connection.QueryRow(ctx, `SELECT network_revision
 FROM mesh_ops.network_revision
@@ -358,6 +364,29 @@ WHERE workspace_id = 103 AND network_id = 203`).Scan(&networkRevision); err != n
     pg_catalog.transaction_timestamp() + INTERVAL '8 hours', 'active'
 )`,
 				arguments: []any{tokenDigest[:]},
+			},
+			{
+				name: "activity Account Session",
+				query: `INSERT INTO mesh.account_session (
+    id, public_id, deployment_id, principal_id, identity_provider_id,
+    identity_subject_id, identity_provider_client_id, login_workspace_id,
+    token_digest_algorithm, token_digest_key_id, token_digest,
+    provider_generation, authentication_time, acr, amr,
+    principal_authority_generation, account_session_generation,
+    deployment_recovery_epoch, issued_at, last_used_at, idle_expires_at,
+    absolute_expires_at, state, created_at
+) OVERRIDING SYSTEM VALUE VALUES (
+    814, '01890f00-0000-7000-8000-000000000814', 1, 11, 601, 711, 621, 103,
+    'hmac-sha256-v1', 'integration-v1', $1::BYTEA, 1,
+    pg_catalog.transaction_timestamp() - INTERVAL '21 minutes',
+    'urn:meshtransit:assurance:mfa', ARRAY['pwd', 'mfa'], 1, 2, 1,
+    pg_catalog.transaction_timestamp() - INTERVAL '20 minutes',
+    pg_catalog.transaction_timestamp() - INTERVAL '20 minutes',
+    pg_catalog.transaction_timestamp() + INTERVAL '40 minutes',
+    pg_catalog.transaction_timestamp() + INTERVAL '8 hours', 'active',
+    pg_catalog.transaction_timestamp() - INTERVAL '20 minutes'
+)`,
+				arguments: []any{touchTokenDigest[:]},
 			},
 			{
 				name: "Workspace membership",
@@ -622,6 +651,31 @@ func integrationManagementAccountSessionSecurity(
 	keyring, err := accountsession.NewKeyring(key)
 	if err != nil {
 		t.Fatalf("construct management Account Session keyring: %v", err)
+	}
+	return keyring, token, rawToken
+}
+
+func integrationActivityAccountSessionSecurity(
+	t *testing.T,
+) (*accountsession.Keyring, accountsession.Token, string) {
+	t.Helper()
+	rawToken := "mtas1.01890f00-0000-7000-8000-000000000001.1." +
+		base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x03}, 32))
+	token, err := accountsession.ParseToken(rawToken)
+	if err != nil {
+		t.Fatalf("parse activity Account Session token: %v", err)
+	}
+	keyID, err := accountsession.NewDigestKeyID("integration-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := accountsession.NewDigestKey(keyID, bytes.Repeat([]byte{0x77}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyring, err := accountsession.NewKeyring(key)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return keyring, token, rawToken
 }

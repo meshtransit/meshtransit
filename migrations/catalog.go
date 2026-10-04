@@ -455,6 +455,7 @@ func Catalog() []Migration {
 		newMigration(87, "bounded keyset Device alias work hints", deviceAliasWorkCandidatesSQL),
 		newMigration(88, "Consumer-scoped immutable Imported policy baseline evidence", importedPolicySimulationReaderSQL),
 		newMigration(89, expiredUnprovisionedShareCleanupDescription, expiredUnprovisionedShareCleanupSQL),
+		newMigration(90, "bounded Console Account Session activity renewal", accountSessionActivityRenewalSQL),
 	}
 }
 
@@ -501,3 +502,6 @@ var importedPolicySimulationReaderSQL string
 
 //go:embed 000089_expired_unprovisioned_share_cleanup.up.sql
 var expiredUnprovisionedShareCleanupSQL string
+
+//go:embed 000090_account_session_activity_renewal.up.sql
+var accountSessionActivityRenewalSQL string
