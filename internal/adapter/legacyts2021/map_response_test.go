@@ -163,6 +163,21 @@ func TestEncodeFullMapResponseProjectsAuthorizedPeerWithoutInboundAuthority(t *t
 	}
 }
 
+func TestEncodeFullMapResponseDropsRuleForUnavailablePeer(t *testing.T) {
+	t.Parallel()
+
+	params := mapSnapshotParams(mapSnapshotWithInboundPolicyFixture(t))
+	params.PeerCandidates = nil
+	snapshot, err := mapsession.NewSnapshot(params)
+	if err != nil {
+		t.Fatalf("mapsession.NewSnapshot() error = %v", err)
+	}
+	response := decodeFullMapResponseFixture(t, snapshot)
+	if len(response.Peers) != 0 || len(response.PacketFilter) != 0 {
+		t.Fatalf("expired peer retained map authority: peers=%d rules=%d", len(response.Peers), len(response.PacketFilter))
+	}
+}
+
 func TestEncodeFullMapResponseProjectsGenerationFencedConnectivity(t *testing.T) {
 	t.Parallel()
 

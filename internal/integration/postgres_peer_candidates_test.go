@@ -170,6 +170,16 @@ RETURNING id`, releasePublicID, policyRevision).Scan(&releaseID); err != nil {
 				protocol:      "icmp",
 				ports:         "{}",
 			},
+			{
+				// A compiled rule may outlive its source Device. It must
+				// never appear in the current packet policy projection.
+				projectionID:  integrationPublicID("01890f54-0000-7000-8000-", 3),
+				accessRuleID:  integrationPublicID("01890f55-0000-7000-8000-", 3),
+				sourceID:      955,
+				destinationID: 910,
+				protocol:      "icmp",
+				ports:         "{}",
+			},
 		}
 		for _, rule := range rules {
 			if _, err := transaction.Exec(ctx, `INSERT INTO mesh.compiled_policy_rule (

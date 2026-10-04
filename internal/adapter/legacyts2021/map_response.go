@@ -202,7 +202,9 @@ func fullMapPacketFilter(
 		}
 		candidate, ok := candidates[rule.SourceNodeID()]
 		if !ok {
-			return nil, ErrMapResponse
+			// A published rule may outlive its source Device. Peer selection is
+			// authoritative; without that peer, the rule grants no packet access.
+			continue
 		}
 		sources := candidate.Addresses()
 		sourceIPs := make([]string, 0, len(sources))

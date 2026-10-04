@@ -100,6 +100,24 @@ LEFT JOIN mesh.compiled_policy_rule AS rule
  AND rule.policy_release_id = release.id
  AND rule.policy_revision = release.policy_revision
  AND (rule.source_device_id = $1::BIGINT OR rule.destination_device_id = $1::BIGINT)
+ AND EXISTS (
+    SELECT 1 FROM mesh.device AS live_source
+    WHERE live_source.workspace_id = rule.workspace_id
+      AND live_source.network_id = rule.network_id
+      AND live_source.id = rule.source_device_id
+      AND live_source.state = 'active'
+      AND live_source.deleted_at IS NULL
+      AND live_source.expires_at > pg_catalog.transaction_timestamp()
+ )
+ AND EXISTS (
+    SELECT 1 FROM mesh.device AS live_destination
+    WHERE live_destination.workspace_id = rule.workspace_id
+      AND live_destination.network_id = rule.network_id
+      AND live_destination.id = rule.destination_device_id
+      AND live_destination.state = 'active'
+      AND live_destination.deleted_at IS NULL
+      AND live_destination.expires_at > pg_catalog.transaction_timestamp()
+ )
 LEFT JOIN mesh.device AS source
   ON source.workspace_id = rule.workspace_id
  AND source.network_id = rule.network_id
