@@ -113,7 +113,7 @@ WHERE namespace.nspname = 'mesh_ops'
 		'create_resource_share_offer_v1',
 		'decide_resource_share_offer_v2',
 		'activate_resource_share_v3',
-		'revoke_resource_share_v5'
+		'revoke_resource_share_v6'
   ]::TEXT[])`).Scan(
 		&functionCount,
 		&runtimeExecute,

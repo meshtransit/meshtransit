@@ -7,8 +7,8 @@ DECLARE
     expected RECORD;
     observed RECORD;
 BEGIN
-    IF (SELECT COALESCE(max(version), 0) FROM mesh_ops.schema_migration) < 88 THEN
-        RAISE EXCEPTION 'Device sharing requires schema 88 or later';
+    IF (SELECT COALESCE(max(version), 0) FROM mesh_ops.schema_migration) < 89 THEN
+        RAISE EXCEPTION 'Device sharing requires schema 89 or later';
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'mesh_share_writer'
@@ -26,7 +26,8 @@ BEGIN
         ('activate_resource_share_v2', TRUE),
         ('activate_resource_share_v3', TRUE),
         ('revoke_resource_share_v4', TRUE),
-        ('revoke_resource_share_v5', TRUE),
+        ('revoke_resource_share_v5', FALSE),
+        ('revoke_resource_share_v6', TRUE),
         ('resolve_imported_policy_destinations_v1', TRUE),
         ('set_share_scope_v1', FALSE),
         ('decide_resource_share_offer_v1', FALSE),

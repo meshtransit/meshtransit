@@ -290,6 +290,135 @@ func assertPostgreSQLResourceSharing(
 		t.Fatalf("cross-Workspace Resource Sharing list error = %v, want forbidden", err)
 	}
 	assertCommittedResourceSharingEvidence(ctx, t, admin, createdOffer.Offer().ID(), contract.ID())
+	assertExpiredUnprovisionedContractCleanup(
+		ctx, t, admin, store, session, providerScope, consumerScope, resourceID, maximumTraffic, reason,
+	)
+}
+
+func assertExpiredUnprovisionedContractCleanup(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	store *postgresadapter.ResourceSharingStore,
+	session accountsession.Session,
+	providerScope, consumerScope network.Scope,
+	resourceID resource.ID,
+	maximumTraffic sharing.TrafficSet,
+	reason sharing.AuditReason,
+) {
+	t.Helper()
+	base := time.Now().UTC()
+	firstExpiry := base.Add(2 * time.Minute)
+	firstCommand, err := sharing.NewCreateOffer(sharing.CreateOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		ResourceID: resourceID, MaximumTraffic: maximumTraffic,
+		ExpiresAt: firstExpiry, AccountSession: session,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 140),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstCreated, err := store.CreateOffer(ctx, firstCommand, base)
+	if err != nil {
+		t.Fatalf("create expiring unprovisioned Share Offer: %v", err)
+	}
+	firstOffer, hasOffer := firstCreated.Offer()
+	firstToken, hasToken := firstCreated.Token()
+	if !hasOffer || !hasToken {
+		t.Fatalf("expiring unprovisioned Share Offer = %+v", firstCreated)
+	}
+	importedName, err := resource.ParseDisplayName("Reusable expired Resource")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessName, err := sharing.ParseAccessName("expired-reuse.shared.consumer.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstDecision, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		OfferID: firstOffer.Offer().ID(), ExpectedOfferVersion: firstOffer.Offer().Version(),
+		Token: firstToken, Action: sharing.DecisionActionAccept,
+		ImportedDisplayName: importedName, AccessName: accessName, AccountSession: session,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 141),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstAccepted, err := store.DecideOffer(ctx, firstDecision, base.Add(time.Second))
+	if err != nil {
+		t.Fatalf("accept expiring unprovisioned Share Offer: %v", err)
+	}
+	firstContract, hasContract := firstAccepted.Contract()
+	if !hasContract || firstContract.State() != sharing.ContractStateActivating {
+		t.Fatalf("expiring unprovisioned Contract = %+v", firstAccepted)
+	}
+	firstRevoke, err := sharing.NewRevokeContract(sharing.RevokeContractParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		ContractID: firstContract.ID(), ExpectedContractVersion: firstContract.Version(),
+		LocalScope: consumerScope, AccountSession: session,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 142),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revoked, err := store.RevokeContract(
+		ctx,
+		firstRevoke,
+		firstContract.ExpiresAt().Add(time.Nanosecond),
+	)
+	if err != nil {
+		t.Fatalf("clean expired unprovisioned Trust Contract: %v", err)
+	}
+	revokedContract, hasContract := revoked.Contract()
+	if !hasContract || revokedContract.State() != sharing.ContractStateRevoked {
+		t.Fatalf("expired unprovisioned cleanup = %+v", revoked)
+	}
+	assertImportedResourceAccessName(
+		ctx, t, admin, firstContract.ImportedResourceID(), accessName, "withdrawn", 2,
+	)
+
+	secondAt := firstContract.ExpiresAt().Add(time.Second)
+	secondCommand, err := sharing.NewCreateOffer(sharing.CreateOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		ResourceID: resourceID, MaximumTraffic: maximumTraffic,
+		ExpiresAt: secondAt.Add(time.Hour), AccountSession: session,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 143),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondCreated, err := store.CreateOffer(ctx, secondCommand, secondAt)
+	if err != nil {
+		t.Fatalf("create replacement Share Offer: %v", err)
+	}
+	secondOffer, hasOffer := secondCreated.Offer()
+	secondToken, hasToken := secondCreated.Token()
+	if !hasOffer || !hasToken {
+		t.Fatalf("replacement Share Offer = %+v", secondCreated)
+	}
+	secondDecision, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		OfferID: secondOffer.Offer().ID(), ExpectedOfferVersion: secondOffer.Offer().Version(),
+		Token: secondToken, Action: sharing.DecisionActionAccept,
+		ImportedDisplayName: importedName, AccessName: accessName, AccountSession: session,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 144),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondAccepted, err := store.DecideOffer(ctx, secondDecision, secondAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("reuse withdrawn access name: %v", err)
+	}
+	secondContract, hasContract := secondAccepted.Contract()
+	if !hasContract || secondContract.State() != sharing.ContractStateActivating ||
+		secondContract.ImportedResourceID() == firstContract.ImportedResourceID() {
+		t.Fatalf("replacement accepted Contract = %+v", secondAccepted)
+	}
+	assertImportedResourceAccessName(
+		ctx, t, admin, secondContract.ImportedResourceID(), accessName, "reserved", 1,
+	)
 }
 
 func createUnstagedPrivateEndpointFixture(

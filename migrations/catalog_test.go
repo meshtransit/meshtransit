@@ -11,8 +11,41 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 88 {
-		t.Fatalf("len(Catalog()) = %d, want 88", len(catalog))
+	if len(catalog) != 89 {
+		t.Fatalf("len(Catalog()) = %d, want 89", len(catalog))
+	}
+	cleanup := catalog[88]
+	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
+		t.Fatalf("migration 89 description = %q, want expired Contract cleanup", cleanup.Description)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.revoke_resource_share_v6",
+		"FROM mesh_ops.revoke_resource_share_v5",
+		"p_occurred_at < contract_row.expires_at",
+		"expired Trust Contract requires endpoint reconciliation",
+		"state = 'withdrawn'",
+		"sharing_revision = revision.sharing_revision + 1",
+		"SECURITY DEFINER",
+	} {
+		if !strings.Contains(cleanup.SQL, required) {
+			t.Errorf("expired Trust Contract cleanup SQL missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"GRANT EXECUTE", "BYPASSRLS", "DROP "} {
+		if strings.Contains(cleanup.SQL, forbidden) {
+			t.Errorf("expired Trust Contract cleanup SQL contains unsafe capability %q", forbidden)
+		}
+	}
+	cleanupOwnership := ExpiredUnprovisionedShareCleanupOwnershipSQL()
+	for _, required := range []string{
+		"OWNER TO mesh_share_writer",
+		"REVOKE ALL ON FUNCTION mesh_ops.revoke_resource_share_v5",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.revoke_resource_share_v6",
+		"TO mesh_runtime",
+	} {
+		if !strings.Contains(cleanupOwnership, required) {
+			t.Errorf("expired Trust Contract cleanup ownership SQL missing %q", required)
+		}
 	}
 	reconciliation := catalog[55]
 	if reconciliation.Description != "Resource sharing Private Endpoint route reconciliation and withdrawal" {
@@ -1574,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 88 {
-		t.Fatalf("LatestVersion() = %d, want 88", LatestVersion())
+	if LatestVersion() != 89 {
+		t.Fatalf("LatestVersion() = %d, want 89", LatestVersion())
 	}
 }
 

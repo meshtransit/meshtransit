@@ -87,6 +87,7 @@ const (
 	consoleInventoryScopeDescription                  = "Console inventory management scope projection"
 	consoleDeviceInventoryDescription                 = "Console exact-scope Device inventory read"
 	consolePolicyAuthoringScopeDescription            = "Console policy authoring management scope projection"
+	expiredUnprovisionedShareCleanupDescription       = "expired unprovisioned Trust Contract cleanup"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -453,6 +454,7 @@ func Catalog() []Migration {
 		newMigration(86, "guarded Device alias withdrawal and quarantine", deviceAliasGuardedWithdrawalSQL),
 		newMigration(87, "bounded keyset Device alias work hints", deviceAliasWorkCandidatesSQL),
 		newMigration(88, "Consumer-scoped immutable Imported policy baseline evidence", importedPolicySimulationReaderSQL),
+		newMigration(89, expiredUnprovisionedShareCleanupDescription, expiredUnprovisionedShareCleanupSQL),
 	}
 }
 
@@ -496,3 +498,6 @@ var deviceAliasWorkCandidatesSQL string
 
 //go:embed 000088_imported_policy_simulation_reader.up.sql
 var importedPolicySimulationReaderSQL string
+
+//go:embed 000089_expired_unprovisioned_share_cleanup.up.sql
+var expiredUnprovisionedShareCleanupSQL string

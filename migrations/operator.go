@@ -111,3 +111,12 @@ var importedPolicySimulationReaderOwnershipSQL string
 func ImportedPolicySimulationReaderOwnershipSQL() string {
 	return importedPolicySimulationReaderOwnershipSQL
 }
+
+//go:embed operator/000089_expired_unprovisioned_share_cleanup_ownership.sql
+var expiredUnprovisionedShareCleanupOwnershipSQL string
+
+// ExpiredUnprovisionedShareCleanupOwnershipSQL exposes only the current
+// revocation entry point through the isolated Resource Sharing writer.
+func ExpiredUnprovisionedShareCleanupOwnershipSQL() string {
+	return expiredUnprovisionedShareCleanupOwnershipSQL
+}
