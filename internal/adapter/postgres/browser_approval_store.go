@@ -46,9 +46,9 @@ FROM mesh_ops.record_browser_registration_approval_v2(
 const appendBrowserApprovalEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
     $1::BIGINT, $2::UUID, $3::UUID, $4::BIGINT, $5::BYTEA, $6::BYTEA,
     'pending_registration', $7::UUID, $8::BIGINT, $9::BIGINT, $10::UUID,
-    'registration.browser.approved', 'device.register', $11::UUID,
-    NULL::BYTEA, $12::BYTEA, $13::JSONB,
-    'registration.browser.approved', $14::JSONB
+    $15::TEXT, 'device.register', $11::UUID,
+    $16::BYTEA, $12::BYTEA, $13::JSONB,
+    $15::TEXT, $14::JSONB
 )`
 
 var (
@@ -164,9 +164,18 @@ func (store *BrowserApprovalStore) approve(ctx context.Context, sessionDigest ac
 			sessionDigest.KeyID().String(), sessionBytes[:], intentBytes[:],
 			selectedWorkspace.String(), selectedNetwork.String(), registrationID.String(), changeID.String()}
 	}
+	expired, err := retireExpiredBrowserApproval(ctx, transaction, selectedWorkspace, changeID, arguments[:len(arguments)-2])
+	if err != nil {
+		return false, errors.Join(ErrBrowserApprovalUnavailable, err)
+	}
 	err = transaction.QueryRow(ctx, query, arguments...).Scan(&issuedRegistration, &version, &intent, &session, &principal,
 		&networkRevision, &requestHashBytes)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// The second authority check can expire while locks were held. Never
+		// commit a retired registration without the fresh approved successor.
+		if expired != nil {
+			return false, nil
+		}
 		if err := transaction.Commit(ctx); err != nil {
 			return false, errors.Join(ErrBrowserApprovalUnavailable, err)
 		}
@@ -188,6 +197,23 @@ func (store *BrowserApprovalStore) approve(ctx context.Context, sessionDigest ac
 	copy(requestHash[:], requestHashBytes)
 	if requestHash == ([sha256.Size]byte{}) {
 		return false, ErrBrowserApprovalEvidence
+	}
+	if expired != nil {
+		expiryEventID, eventErr := publicid.New()
+		expiryOutboxID, outboxErr := publicid.New()
+		if eventErr != nil || outboxErr != nil {
+			return false, errors.Join(ErrBrowserApprovalUnavailable, eventErr, outboxErr)
+		}
+		if err := appendBrowserApprovalEvidence(ctx, transaction, browserApprovalEvidence{
+			registrationID: expired.id, changeID: changeID,
+			eventID: expiryEventID, outboxID: expiryOutboxID, intentID: intentID,
+			sessionID: sessionID, principalID: principalID,
+			workspaceID: selectedWorkspace, networkID: selectedNetwork,
+			version: expired.version, networkRevision: networkRevision,
+			requestHash: expired.afterHash, beforeHash: expired.beforeHash, expired: true,
+		}); err != nil {
+			return false, errors.Join(ErrBrowserApprovalUnavailable, err)
+		}
 	}
 	if err := appendBrowserApprovalEvidence(ctx, transaction, browserApprovalEvidence{
 		registrationID: registrationID, changeID: changeID,
@@ -219,12 +245,23 @@ type browserApprovalEvidence struct {
 	version         int64
 	networkRevision int64
 	requestHash     [sha256.Size]byte
+	beforeHash      [sha256.Size]byte
+	expired         bool
 }
 
 func appendBrowserApprovalEvidence(
 	ctx context.Context, transaction accountSessionTransaction,
 	value browserApprovalEvidence,
 ) error {
+	action := "registration.browser.approved"
+	var beforeBytes []byte
+	if value.expired {
+		if value.version <= 1 || value.beforeHash == ([sha256.Size]byte{}) {
+			return ErrBrowserApprovalEvidence
+		}
+		action = "registration.expired"
+		beforeBytes = value.beforeHash[:]
+	}
 	var streamID, sequence int64
 	var previousBytes []byte
 	if err := transaction.QueryRow(ctx, lockBrowserApprovalAuditSQL).Scan(
@@ -259,11 +296,11 @@ func appendBrowserApprovalEvidence(
 		PreviousHash: previousHash, EventID: value.eventID, ChangeID: value.changeID,
 		AggregateKind: "pending_registration", AggregateID: value.registrationID,
 		AggregateVersion: value.version, NetworkRevision: value.networkRevision,
-		ActorPrincipalID: value.principalID, Action: "registration.browser.approved",
+		ActorPrincipalID: value.principalID, Action: action,
 		Permission: "device.register", CorrelationID: value.intentID,
-		AfterSemanticHash: value.requestHash,
+		BeforeSemanticHash: value.beforeHash, AfterSemanticHash: value.requestHash,
 		AuditPayloadHash:  sha256.Sum256(auditPayload),
-		OutboxEventClass:  "registration.browser.approved",
+		OutboxEventClass:  action,
 		OutboxPayloadHash: sha256.Sum256(outboxPayload),
 	})
 	if err != nil {
@@ -274,7 +311,7 @@ func appendBrowserApprovalEvidence(
 		streamID, value.eventID.String(), value.outboxID.String(), sequence,
 		previousHash[:], eventHash[:], value.registrationID.String(),
 		value.version, value.networkRevision, value.principalID.String(),
-		value.intentID.String(), value.requestHash[:], auditPayload, outboxPayload,
+		value.intentID.String(), value.requestHash[:], auditPayload, outboxPayload, action, beforeBytes,
 	).Scan(&appendedSequence); err != nil || appendedSequence != sequence {
 		return errors.Join(ErrBrowserApprovalEvidence, err)
 	}

@@ -39,3 +39,24 @@ No migration, RLS policy, grant or wire format changes are required. Creation
 keeps its existing response; renewal uses the already defined `resumed`
 disposition. Qualification covers PostgreSQL runtime/RLS creation, renewal,
 replay, lease retention and changed-key denial plus owner/key/state unit cases.
+
+## Abandoned approval expiry
+
+An abandoned `pending` or `authorized` registration may outlive its browser
+intent and hold the active machine uniqueness slot. Before a fresh approval,
+the adapter locks and rechecks the same SSO authority and exact Network scope.
+Only the matching slot whose `expires_at` has passed at PostgreSQL wall time
+may transition to `expired`. It keeps its identity and history; live slots
+cannot be displaced.
+
+Expiry and the new approval share one transaction and change ID. Each has its
+own canonical audit event and outbox entry; expiry includes before and after
+semantic hashes. The approval function rechecks authority after retirement.
+If that check, audit append or commit fails, both mutations roll back. The
+runtime uses existing RLS and column grants. No schema or privilege change is
+required. This extra authority read affects enrollment only, not Device or
+policy list calls.
+
+The PostgreSQL regression reproduces the unique-slot failure, verifies live
+slot and foreign-Network denial, blocks final audit to verify rollback, then
+checks a single expiry outbox and renewal of the original Device.

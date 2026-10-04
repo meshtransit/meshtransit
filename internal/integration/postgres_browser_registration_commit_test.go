@@ -18,6 +18,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/publicid"
+	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 func assertPostgreSQLBrowserRegistrationApproval(
@@ -499,6 +500,143 @@ WHERE aggregate_kind='device' AND aggregate_public_id=$1::UUID AND event_class='
 			}
 			previousVersion, previousExpiry = version, expiry
 		})
+	}
+
+	assertPostgreSQLAbandonedBrowserApproval(ctx, t, admin, intents, approvals, completion,
+		deploymentID, epoch, session, networkID, identity, hostname, created.NodeID().String())
+}
+
+func assertPostgreSQLAbandonedBrowserApproval(
+	ctx context.Context, t *testing.T, admin *pgx.Conn,
+	intents *postgresadapter.BrowserIntentStore, approvals *postgresadapter.BrowserApprovalStore,
+	completion *postgresadapter.BrowserCompletionStore,
+	deploymentID deployment.ID, epoch int64, session accountsession.Digest,
+	networkID network.ID, identity node.RegistrationIdentity, hostname node.Hostname, deviceID string,
+) {
+	t.Helper()
+	workspaceID, err := workspace.ParseID("01890f00-0000-7000-8000-000000000103")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var abandonedID string
+	var abandonedVersion, revision int64
+	fingerprint := identity.MachineKey().Fingerprint()
+	if err := admin.QueryRow(ctx, `SELECT public_id::TEXT,version FROM mesh.pending_registration
+WHERE workspace_id=103 AND network_id=203 AND machine_key_fingerprint=$1::BYTEA AND state='authorized'`, fingerprint[:]).Scan(&abandonedID, &abandonedVersion); err != nil {
+		t.Fatal(err)
+	}
+	var abandonedIntentID string
+	var abandonedIntentVersion int64
+	if err := admin.QueryRow(ctx, `SELECT public_id::TEXT,version FROM mesh.browser_registration_intent
+WHERE pending_registration_public_id=$1::UUID`, abandonedID).Scan(&abandonedIntentID, &abandonedIntentVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.QueryRow(ctx, `SELECT network_revision FROM mesh_ops.network_revision WHERE workspace_id=103 AND network_id=203`).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
+		changePublicID: "01890f01-0000-7000-8000-000000001697",
+		eventPublicID:  "01890f02-0000-7000-8000-000000001697",
+		outboxPublicID: "01890f03-0000-7000-8000-000000001697",
+		streamID:       203, aggregateKind: "browser_registration_intent", aggregatePublicID: abandonedIntentID,
+		aggregateVersion: abandonedIntentVersion + 1, networkRevision: revision,
+		actorPrincipalPublicID: "01890f00-0000-7000-8000-000000000011",
+		action:                 "browser.abandoned.fixture", permission: "system.bootstrap", outboxEventClass: "browser.abandoned.fixture",
+	}, func(tx pgx.Tx) {
+		if _, err := tx.Exec(ctx, `UPDATE mesh.browser_registration_intent SET state='expired',version=version+1,updated_at=pg_catalog.clock_timestamp() WHERE public_id=$1::UUID`, abandonedIntentID); err != nil {
+			t.Fatal(err)
+		}
+	})
+	id, err := publicid.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	intentID, err := enrollment.ParseBrowserIntentID(id.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce, err := enrollment.NewBrowserIntentNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := intents.Issue(ctx, deploymentID, epoch, identity, hostname, intentID, nonce, time.Now().Add(5*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A live approved registration cannot be displaced by another browser intent.
+	if approved, err := approvals.ApproveInWorkspace(ctx, session, token.Encoded(), workspaceID, networkID); err == nil || approved {
+		t.Fatalf("live pending registration displaced: %v/%v", approved, err)
+	}
+	if err := admin.QueryRow(ctx, `SELECT network_revision FROM mesh_ops.network_revision WHERE workspace_id=103 AND network_id=203`).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
+		changePublicID: "01890f01-0000-7000-8000-000000001698",
+		eventPublicID:  "01890f02-0000-7000-8000-000000001698",
+		outboxPublicID: "01890f03-0000-7000-8000-000000001698",
+		streamID:       203, aggregateKind: "pending_registration", aggregatePublicID: abandonedID,
+		aggregateVersion: abandonedVersion + 1, networkRevision: revision,
+		actorPrincipalPublicID: "01890f00-0000-7000-8000-000000000011",
+		action:                 "registration.expiry.fixture", permission: "system.bootstrap", outboxEventClass: "registration.expiry.fixture",
+	}, func(tx pgx.Tx) {
+		if _, err := tx.Exec(ctx, `UPDATE mesh.pending_registration SET expires_at=created_at+INTERVAL '1 microsecond',version=version+1,updated_at=pg_catalog.clock_timestamp() WHERE public_id=$1::UUID`, abandonedID); err != nil {
+			t.Fatal(err)
+		}
+	})
+	wrongNetwork, err := network.ParseID("01890f00-0000-7000-8000-000000000204")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved, err := approvals.ApproveInWorkspace(ctx, session, token.Encoded(), workspaceID, wrongNetwork); err != nil || approved {
+		t.Fatalf("foreign Network reached expiry cleanup: %v/%v", approved, err)
+	}
+	var state string
+	var version int64
+	if err := admin.QueryRow(ctx, `SELECT state,version FROM mesh.pending_registration WHERE public_id=$1::UUID`, abandonedID).Scan(&state, &version); err != nil || state != "authorized" || version != abandonedVersion+1 {
+		t.Fatalf("unauthorized expiry mutation: %s/%d/%v", state, version, err)
+	}
+	// Blocking the final audit append must roll back both the retired slot
+	// and the new authorized registration. No partial expiry may escape.
+	auditBlock, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auditBlock.Exec(ctx, `SELECT id FROM mesh_audit.audit_stream WHERE id=203 FOR UPDATE`); err != nil {
+		_ = auditBlock.Rollback(ctx)
+		t.Fatal(err)
+	}
+	blockedCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	blockedApproval, blockedErr := approvals.ApproveInWorkspace(blockedCtx, session, token.Encoded(), workspaceID, networkID)
+	cancel()
+	if err := auditBlock.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if blockedApproval || blockedErr == nil {
+		t.Fatalf("blocked audit committed approval: %v/%v", blockedApproval, blockedErr)
+	}
+	if err := admin.QueryRow(ctx, `SELECT state,version FROM mesh.pending_registration WHERE public_id=$1::UUID`, abandonedID).Scan(&state, &version); err != nil || state != "authorized" || version != abandonedVersion+1 {
+		t.Fatalf("failed audit leaked expiry: %s/%d/%v", state, version, err)
+	}
+	var rolledBackCount int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh.pending_registration WHERE browser_authorization_public_id=$1::UUID`, intentID.String()).Scan(&rolledBackCount); err != nil || rolledBackCount != 0 {
+		t.Fatalf("failed audit leaked successor: %d/%v", rolledBackCount, err)
+	}
+	if approved, err := approvals.ApproveInWorkspace(ctx, session, token.Encoded(), workspaceID, networkID); err != nil || !approved {
+		t.Fatalf("expired approval slot blocked fresh SSO: %v/%v", approved, err)
+	}
+	if err := admin.QueryRow(ctx, `SELECT state,version FROM mesh.pending_registration WHERE public_id=$1::UUID`, abandonedID).Scan(&state, &version); err != nil || state != "expired" || version != abandonedVersion+2 {
+		t.Fatalf("expired pending evidence: %s/%d/%v", state, version, err)
+	}
+	var count int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM mesh_ops.outbox_event WHERE aggregate_kind='pending_registration' AND aggregate_public_id=$1::UUID AND event_class='registration.expired'`, abandonedID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("expiry outbox count: %d/%v", count, err)
+	}
+	if approved, err := approvals.ApproveInWorkspace(ctx, session, token.Encoded(), workspaceID, networkID); err != nil || approved {
+		t.Fatalf("duplicate fresh approval: %v/%v", approved, err)
+	}
+	result, found, err := completion.Complete(ctx, identity, hostname, token.Encoded())
+	if err != nil || !found || result.NodeID().String() != deviceID || result.Disposition() != registration.DispositionResumed {
+		t.Fatalf("fresh SSO after abandoned approval: %+v/%v/%v", result, found, err)
 	}
 }
 
