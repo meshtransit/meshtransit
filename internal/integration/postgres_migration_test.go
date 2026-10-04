@@ -191,6 +191,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		t.Fatalf("harden sharing dependencies: %v", err)
 	}
 	assertResourceSharingPrivilegeContract(ctx, t, adminConnection)
+	assertDeviceSharingDeploymentPreflight(ctx, t, adminConnection)
 	seedAuthorityFixture(ctx, t, adminConnection)
 	assertAuthorityEvidenceFoundation(ctx, t, adminConnection)
 	assertAuthorityMutationAtomicity(ctx, t, adminConnection)
