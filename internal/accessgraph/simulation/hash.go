@@ -9,12 +9,19 @@ import (
 )
 
 const impactHashDomainV1 = "meshtransit/policy-simulation-impact/v1\x00"
+const impactHashDomainV2 = "meshtransit/policy-simulation-impact/v2\x00"
 
 type impactEncoder struct{ digest hash.Hash }
 
 func hashResult(result Result) ImpactHash {
 	encoder := impactEncoder{digest: sha256.New()}
-	encoder.write([]byte(impactHashDomainV1))
+	imported := result.baseline.candidate.CompilerFormatVersion() == 4 ||
+		result.proposedCandidate.CompilerFormatVersion() == 4
+	if imported {
+		encoder.write([]byte(impactHashDomainV2))
+	} else {
+		encoder.write([]byte(impactHashDomainV1))
+	}
 	encoder.writeText(result.baseline.scope.WorkspaceID().String())
 	encoder.writeText(result.baseline.scope.NetworkID().String())
 	encoder.writeRevisionVector(result.baseline.revisionVector)
@@ -36,6 +43,10 @@ func hashResult(result Result) ImpactHash {
 	encoder.writeRelationships(result.removedRelationships)
 	encoder.writeExplanations(result.addedExplanations)
 	encoder.writeExplanations(result.removedExplanations)
+	if imported {
+		encoder.writeImportedIntents(result.addedImportedIntents)
+		encoder.writeImportedIntents(result.removedImportedIntents)
+	}
 	encoder.writeUint64(uint64(len(result.affectedDevices)))
 	for _, id := range result.affectedDevices {
 		encoder.writeText(id.String())

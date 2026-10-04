@@ -12,9 +12,11 @@ import (
 	"github.com/meshtransit/meshtransit/internal/accessgraph/simulation"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
+	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
@@ -71,8 +73,97 @@ func TestManagementHandlerSimulatesPolicyWithoutPublishing(t *testing.T) {
 		body.Data.Proposed.RuleCount != 1 || body.Data.Impact.AddedRelationshipCount != 1 ||
 		len(body.Data.Impact.AddedRelationships) != 1 ||
 		len(body.Data.Impact.ImpactHash) != 64 || body.Data.Impact.StaleInputs ||
-		body.Data.Impact.Uncertain || body.CorrelationID != managementCorrelationID() {
+		body.Data.Impact.Uncertain || body.Data.Impact.ImportedIntentChanges != nil ||
+		body.CorrelationID != managementCorrelationID() {
 		t.Fatalf("response = %+v", body)
+	}
+}
+
+func TestPolicySimulationEncodesImportedIntentAndCountsWithoutPacketEdges(t *testing.T) {
+	t.Parallel()
+	fixture, contract, _ := managementSharingContractFixture(t, sharing.ContractStateActive, 2)
+	baseline := managementPolicySimulationBaseline(t, fixture.consumer)
+	resolution, err := sharing.NewPolicyDestination(sharing.PolicyDestinationParams{
+		ImportedResourceID: contract.ImportedResourceID(), ImportedResourceVersion: 2,
+		Contract: contract, ExportVersion: 1, ProviderInventoryRevision: 9,
+		ProviderSharingRevision: 50, ConsumerSharingRevision: 2, EvaluatedAt: fixture.snapshot.CreatedAt(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleID, _ := policy.ParseRuleID("01890f00-0000-7000-8000-000000000501")
+	sourceID, _ := node.ParseID("01890f00-0000-7000-8000-000000000301")
+	traffic := contract.MaximumTraffic().Constraints()[0]
+	intent, err := compilation.NewRuleIntent(compilation.RuleIntentParams{
+		ID: ruleID, Scope: fixture.consumer, SourceNodeID: sourceID,
+		DestinationImportedResourceID: contract.ImportedResourceID(), Protocol: traffic.Protocol(),
+		DestinationPortRanges: traffic.DestinationPortRanges(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := compilation.NewRequest(compilation.RequestParams{Scope: fixture.consumer, Revision: 2, Rules: []compilation.RuleIntent{intent}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination, err := policypublication.NewImportedResourceDestination(policypublication.ImportedResourceDestinationParams{
+		RuleID: ruleID, SourceNodeID: sourceID, Resolution: resolution,
+		Protocol: traffic.Protocol(), DestinationPortRanges: traffic.DestinationPortRanges(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := policy.NewSnapshot(policy.SnapshotParams{Scope: fixture.consumer, Revision: 2, Rules: []policy.Rule{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := policypublication.NewCandidateWithImportedResourceDestinations(snapshot, nil, nil, []policypublication.ImportedResourceDestination{destination})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &managementPolicySimulationReader{values: []simulation.Baseline{baseline, baseline}}
+	compiler := managementPolicyCompilerFunc(func(context.Context, accountsession.Session, compilation.Request) (policypublication.Candidate, error) {
+		return candidate, nil
+	})
+	service, err := simulation.NewService(simulation.Dependencies{Baselines: reader, Compiler: compiler, Clock: simulation.SystemClock{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Simulate(t.Context(), managementSessionFixture(t), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := encodePolicySimulationResult(result)
+	changes := encoded.Impact.ImportedIntentChanges
+	if changes == nil || changes.PacketAuthorityEvaluated || changes.AddedCount != 1 ||
+		len(changes.Added) != 1 || changes.RemovedCount != 0 || changes.Removed == nil ||
+		encoded.Proposed.RuleCount != 1 || encoded.Proposed.CompilerFormatVersion != 4 ||
+		encoded.Impact.AddedRelationshipCount != 0 || encoded.Impact.AddedExplanationCount != 0 ||
+		encoded.Impact.AffectedDeviceCount != 1 {
+		t.Fatalf("incomplete or synthetic imported impact: %+v", encoded)
+	}
+	item := changes.Added[0]
+	if item.ImportedResourceID != contract.ImportedResourceID().String() || item.ContractVersion != 2 ||
+		item.TrustContractID != contract.ID().String() || item.SourceDeviceID != sourceID.String() ||
+		item.ProviderWorkspaceID != fixture.provider.WorkspaceID().String() ||
+		item.ConsumerNetworkID != fixture.consumer.NetworkID().String() || item.ProviderSharingRevision != 50 ||
+		item.Resource.TargetGeneration != fixture.binding.TargetGeneration() || item.Resource.InventoryRevision != 9 ||
+		item.ExpiresAt != contract.ExpiresAt().UTC().Format(time.RFC3339Nano) ||
+		item.Protocol != traffic.Protocol().String() || len(item.MaximumTraffic) != len(contract.MaximumTraffic().Constraints()) {
+		t.Fatalf("lost pinned contract evidence: %+v", item)
+	}
+	body, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"destination_device_id", "address", "alias", "endpoint", "offer_token"} {
+		if _, found := fields[forbidden]; found {
+			t.Fatalf("preview disclosed %s", forbidden)
+		}
 	}
 }
 

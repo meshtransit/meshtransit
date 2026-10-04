@@ -138,6 +138,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		adminConfig.ConnectTimeout,
 	)
 	for range 2 {
+		if _, err := adminConnection.Exec(ctx, migrations.ImportedPolicySimulationReaderOwnershipSQL()); err != nil {
+			t.Fatalf("apply idempotent Imported policy baseline reader ownership: %v", err)
+		}
 		if _, err := adminConnection.Exec(ctx, migrations.ResourceSharingFunctionOwnershipSQL()); err != nil {
 			t.Fatalf("apply idempotent Resource Sharing function ownership hardening: %v", err)
 		}

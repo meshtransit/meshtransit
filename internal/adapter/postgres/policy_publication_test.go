@@ -279,6 +279,21 @@ func TestPolicyPublicationTransactionPublishesImportedResourceAtomically(t *test
 		len(rules[0].DestinationConstraintHash) != 64 {
 		t.Fatalf("published Imported Resource rules = %+v", rules)
 	}
+	var rawRules []map[string]json.RawMessage
+	if err := json.Unmarshal(publishCall.arguments[5].([]byte), &rawRules); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := rawRules[0]["destination_node_public_id"]; found {
+		t.Fatal("Imported Resource SQL payload must omit the local destination UUID instead of sending an empty string")
+	}
+	auditCall := findPolicyPublicationCall(t, databaseTransaction.calls, appendPolicyPublicationEvidenceSQL)
+	var auditEvidence policyPublicationAuditPayload
+	if err := json.Unmarshal(auditCall.arguments[len(auditCall.arguments)-2].([]byte), &auditEvidence); err != nil {
+		t.Fatal(err)
+	}
+	if auditEvidence.RuleCount != 1 {
+		t.Fatal("policy publication audit omitted Imported Resource rule count")
+	}
 }
 
 func TestPolicyPublicationTransactionAuthorizesManagementSessionUnderLock(t *testing.T) {

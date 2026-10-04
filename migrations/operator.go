@@ -102,3 +102,12 @@ var deviceAliasWorkOwnershipSQL string
 
 // DeviceAliasWorkOwnershipSQL enables bounded no-grant candidate discovery.
 func DeviceAliasWorkOwnershipSQL() string { return deviceAliasWorkOwnershipSQL }
+
+//go:embed operator/000088_imported_policy_simulation_reader_ownership.sql
+var importedPolicySimulationReaderOwnershipSQL string
+
+// ImportedPolicySimulationReaderOwnershipSQL confines immutable provenance
+// reconstruction to the existing bilateral reader and authorized baseline.
+func ImportedPolicySimulationReaderOwnershipSQL() string {
+	return importedPolicySimulationReaderOwnershipSQL
+}

@@ -14,6 +14,7 @@ SOURCES = (
     "000054_resource_sharing_private_endpoint_function_ownership.sql",
     "000055_resource_sharing_private_endpoint_publication_ownership.sql",
     "000079_direct_device_endpoint_function_ownership.sql",
+    "000088_imported_policy_simulation_reader_ownership.sql",
 )
 
 def without_boundaries(source, boundaries):

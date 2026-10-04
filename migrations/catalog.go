@@ -452,6 +452,7 @@ func Catalog() []Migration {
 		newMigration(85, "guarded bilateral Device alias worker changes", deviceAliasGuardedWorkerSQL),
 		newMigration(86, "guarded Device alias withdrawal and quarantine", deviceAliasGuardedWithdrawalSQL),
 		newMigration(87, "bounded keyset Device alias work hints", deviceAliasWorkCandidatesSQL),
+		newMigration(88, "Consumer-scoped immutable Imported policy baseline evidence", importedPolicySimulationReaderSQL),
 	}
 }
 
@@ -492,3 +493,6 @@ var deviceAliasGuardedWithdrawalSQL string
 
 //go:embed 000087_device_alias_work_candidates.up.sql
 var deviceAliasWorkCandidatesSQL string
+
+//go:embed 000088_imported_policy_simulation_reader.up.sql
+var importedPolicySimulationReaderSQL string

@@ -443,6 +443,7 @@ func assertImportedPolicyPrivilegeContract(ctx context.Context, t *testing.T, ad
 	t.Helper()
 
 	var rls, forceRLS, runtimeRead, runtimeWrite, foreignAccess, publicAccess bool
+	var readerRead, readerWrite bool
 	if err := admin.QueryRow(ctx, `SELECT
     class.relrowsecurity,
     class.relforcerowsecurity,
@@ -451,7 +452,7 @@ func assertImportedPolicyPrivilegeContract(ctx context.Context, t *testing.T, ad
     pg_catalog.has_table_privilege('mesh_worker', class.oid, 'SELECT,INSERT,UPDATE,DELETE')
     OR pg_catalog.has_table_privilege('mesh_observer', class.oid, 'SELECT,INSERT,UPDATE,DELETE')
     OR pg_catalog.has_table_privilege('mesh_audit_writer', class.oid, 'SELECT,INSERT,UPDATE,DELETE')
-    OR pg_catalog.has_table_privilege('mesh_share_writer', class.oid, 'SELECT,INSERT,UPDATE,DELETE'),
+    OR pg_catalog.has_table_privilege('mesh_share_writer', class.oid, 'INSERT,UPDATE,DELETE,TRUNCATE'),
     EXISTS (
         SELECT 1
         FROM pg_catalog.aclexplode(COALESCE(
@@ -460,7 +461,9 @@ func assertImportedPolicyPrivilegeContract(ctx context.Context, t *testing.T, ad
         )) AS privilege
         WHERE privilege.grantee = 0
           AND privilege.privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
-    )
+    ),
+    pg_catalog.has_table_privilege('mesh_share_writer', class.oid, 'SELECT'),
+    pg_catalog.has_table_privilege('mesh_share_writer', class.oid, 'INSERT,UPDATE,DELETE,TRUNCATE')
 FROM pg_catalog.pg_class AS class
 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = class.relnamespace
 WHERE namespace.nspname = 'mesh'
@@ -471,10 +474,12 @@ WHERE namespace.nspname = 'mesh'
 		&runtimeWrite,
 		&foreignAccess,
 		&publicAccess,
+		&readerRead,
+		&readerWrite,
 	); err != nil {
 		t.Fatal("query Imported Resource policy table privileges", err)
 	}
-	if !rls || !forceRLS || !runtimeRead || runtimeWrite || foreignAccess || publicAccess {
+	if !rls || !forceRLS || !runtimeRead || runtimeWrite || foreignAccess || publicAccess || !readerRead || readerWrite {
 		t.Fatalf(
 			"Imported Resource policy table rls=%t force=%t runtime_read=%t runtime_write=%t foreign=%t public=%t",
 			rls,
@@ -521,7 +526,8 @@ WHERE namespace.nspname = 'mesh'
         ELSE NOT pg_catalog.has_function_privilege('mesh_runtime', procedure.oid, 'EXECUTE')
     END),
     pg_catalog.bool_and(CASE
-        WHEN procedure.proname = 'lock_and_resolve_policy_imported_resources_internal_v1'
+        WHEN procedure.proname IN ('lock_and_resolve_policy_imported_resources_internal_v1',
+            'read_compiled_imported_policy_evidence_internal_v1')
             THEN pg_catalog.has_function_privilege('mesh_migrator', procedure.oid, 'EXECUTE')
         ELSE TRUE
     END),
@@ -547,7 +553,8 @@ WHERE namespace.nspname = 'mesh'
     pg_catalog.bool_and(CASE
         WHEN procedure.proname IN (
             'resolve_imported_policy_destinations_v1',
-            'lock_and_resolve_policy_imported_resources_internal_v1'
+            'lock_and_resolve_policy_imported_resources_internal_v1',
+            'read_compiled_imported_policy_evidence_internal_v1'
         )
             THEN owner.rolname = 'mesh_share_writer'
         ELSE owner.rolname = 'mesh_migrator'
@@ -574,6 +581,7 @@ WHERE namespace.nspname = 'mesh_ops'
       'publish_compiled_policy',
       'resolve_imported_policy_destinations_v1',
       'lock_and_resolve_policy_imported_resources_internal_v1',
+      'read_compiled_imported_policy_evidence_internal_v1',
       'read_policy_simulation_baseline_v2',
       'explain_active_policy_v2'
   ]::TEXT[])`).Scan(
@@ -591,7 +599,7 @@ WHERE namespace.nspname = 'mesh_ops'
 	); err != nil {
 		t.Fatal("query Imported Resource policy function privileges", err)
 	}
-	if functionCount != 7 || !runtimeContract || !migratorContract || foreignExecute || publicExecute ||
+	if functionCount != 8 || !runtimeContract || !migratorContract || foreignExecute || publicExecute ||
 		!securityContract || !ownerContract || !fixedSearchPath || !volatile || !obsoleteAbsent ||
 		!legacyExplainClosed {
 		t.Fatalf(

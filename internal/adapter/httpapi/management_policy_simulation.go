@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
 	"github.com/meshtransit/meshtransit/internal/accessgraph/simulation"
@@ -14,6 +15,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
+	"github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
@@ -60,25 +62,60 @@ type simulatedPolicyProposed struct {
 }
 
 type simulatedPolicyImpact struct {
-	ImpactHash               string                  `json:"impact_hash"`
-	AddedRelationshipCount   int                     `json:"added_relationship_count"`
-	AddedRelationships       []simulatedRelationship `json:"added_relationships"`
-	RemovedRelationshipCount int                     `json:"removed_relationship_count"`
-	RemovedRelationships     []simulatedRelationship `json:"removed_relationships"`
-	AddedExplanationCount    int                     `json:"added_explanation_count"`
-	AddedExplanations        []simulatedExplanation  `json:"added_explanations"`
-	RemovedExplanationCount  int                     `json:"removed_explanation_count"`
-	RemovedExplanations      []simulatedExplanation  `json:"removed_explanations"`
-	AffectedDeviceCount      int                     `json:"affected_device_count"`
-	AffectedDeviceIDs        []string                `json:"affected_device_ids"`
-	AffectedResourceCount    int                     `json:"affected_resource_count"`
-	AffectedResourceIDs      []string                `json:"affected_resource_ids"`
-	AffectedGroupCount       int                     `json:"affected_resource_group_count"`
-	AffectedGroupIDs         []string                `json:"affected_resource_group_ids"`
-	UnsupportedCapabilities  []string                `json:"unsupported_capabilities"`
-	Truncated                bool                    `json:"truncated"`
-	StaleInputs              bool                    `json:"stale_inputs"`
-	Uncertain                bool                    `json:"uncertain"`
+	ImportedIntentChanges    *simulatedImportedIntentChanges `json:"imported_intent_changes,omitempty"`
+	ImpactHash               string                          `json:"impact_hash"`
+	AddedRelationshipCount   int                             `json:"added_relationship_count"`
+	AddedRelationships       []simulatedRelationship         `json:"added_relationships"`
+	RemovedRelationshipCount int                             `json:"removed_relationship_count"`
+	RemovedRelationships     []simulatedRelationship         `json:"removed_relationships"`
+	AddedExplanationCount    int                             `json:"added_explanation_count"`
+	AddedExplanations        []simulatedExplanation          `json:"added_explanations"`
+	RemovedExplanationCount  int                             `json:"removed_explanation_count"`
+	RemovedExplanations      []simulatedExplanation          `json:"removed_explanations"`
+	AffectedDeviceCount      int                             `json:"affected_device_count"`
+	AffectedDeviceIDs        []string                        `json:"affected_device_ids"`
+	AffectedResourceCount    int                             `json:"affected_resource_count"`
+	AffectedResourceIDs      []string                        `json:"affected_resource_ids"`
+	AffectedGroupCount       int                             `json:"affected_resource_group_count"`
+	AffectedGroupIDs         []string                        `json:"affected_resource_group_ids"`
+	UnsupportedCapabilities  []string                        `json:"unsupported_capabilities"`
+	Truncated                bool                            `json:"truncated"`
+	StaleInputs              bool                            `json:"stale_inputs"`
+	Uncertain                bool                            `json:"uncertain"`
+}
+
+type simulatedImportedIntentChanges struct {
+	AddedCount               int                       `json:"added_count"`
+	Added                    []simulatedImportedIntent `json:"added"`
+	RemovedCount             int                       `json:"removed_count"`
+	Removed                  []simulatedImportedIntent `json:"removed"`
+	PacketAuthorityEvaluated bool                      `json:"packet_authority_evaluated"`
+}
+
+type simulatedImportedIntent struct {
+	AccessRuleID                string                          `json:"access_rule_id"`
+	SourceDeviceID              string                          `json:"source_device_id"`
+	ImportedResourceID          string                          `json:"imported_resource_id"`
+	ImportedResourceVersion     int64                           `json:"imported_resource_version"`
+	TrustContractID             string                          `json:"trust_contract_id"`
+	ContractVersion             int64                           `json:"contract_version"`
+	OfferID                     string                          `json:"offer_id"`
+	ExportID                    string                          `json:"export_id"`
+	ExportVersion               int64                           `json:"export_version"`
+	ProviderWorkspaceID         string                          `json:"provider_workspace_id"`
+	ProviderNetworkID           string                          `json:"provider_network_id"`
+	ConsumerWorkspaceID         string                          `json:"consumer_workspace_id"`
+	ConsumerNetworkID           string                          `json:"consumer_network_id"`
+	Resource                    simulatedResourceEvidence       `json:"resource"`
+	ProviderSharingRevision     int64                           `json:"provider_sharing_revision"`
+	ConsumerSharingRevision     int64                           `json:"consumer_sharing_revision"`
+	ProviderAuthorityGeneration int64                           `json:"provider_authority_generation"`
+	ConsumerAuthorityGeneration int64                           `json:"consumer_authority_generation"`
+	RecoveryEpoch               int64                           `json:"recovery_epoch"`
+	ExpiresAt                   string                          `json:"expires_at"`
+	MaximumTraffic              []sharingTrafficData            `json:"maximum_traffic"`
+	Protocol                    string                          `json:"protocol"`
+	DestinationPortRanges       []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
 }
 
 type simulatedRelationship struct {
@@ -279,16 +316,53 @@ func encodePolicySimulationResult(result simulation.Result) simulatedPolicy {
 	for _, capability := range result.UnsupportedCapabilities() {
 		impact.UnsupportedCapabilities = append(impact.UnsupportedCapabilities, capability.String())
 	}
+	if baselineCandidate.CompilerFormatVersion() == 4 || proposed.CompilerFormatVersion() == 4 {
+		impact.ImportedIntentChanges = &simulatedImportedIntentChanges{
+			AddedCount: result.AddedImportedIntentCount(), Added: encodeSimulatedImportedIntents(result.AddedImportedIntents()),
+			RemovedCount: result.RemovedImportedIntentCount(), Removed: encodeSimulatedImportedIntents(result.RemovedImportedIntents()),
+			PacketAuthorityEvaluated: false,
+		}
+	}
 	return simulatedPolicy{
 		Baseline: baselineEvidence,
 		Proposed: simulatedPolicyProposed{
 			RevisionVector:        encodePolicySimulationVector(result.ProposedRevisionVector()),
 			CompilerFormatVersion: proposed.CompilerFormatVersion(),
 			SemanticHash:          hex.EncodeToString(proposedHash[:]),
-			RuleCount:             len(proposed.Snapshot().Rules()),
+			RuleCount:             len(proposed.Snapshot().Rules()) + len(proposed.ImportedResourceDestinations()),
 		},
 		Impact: impact,
 	}
+}
+
+func encodeSimulatedImportedIntents(values []publication.ImportedResourceDestination) []simulatedImportedIntent {
+	encoded := make([]simulatedImportedIntent, len(values))
+	for index, value := range values {
+		resolution := value.Resolution()
+		contract := resolution.Contract()
+		resource := contract.Resource()
+		hash := resource.SemanticHash().Bytes()
+		ports := value.DestinationPortRanges()
+		encodedPorts := make([]publishPolicyPortRangeRequest, len(ports))
+		for portIndex, port := range ports {
+			encodedPorts[portIndex] = publishPolicyPortRangeRequest{First: int(port.First()), Last: int(port.Last())}
+		}
+		encoded[index] = simulatedImportedIntent{
+			AccessRuleID: value.RuleID().String(), SourceDeviceID: value.SourceNodeID().String(),
+			ImportedResourceID: resolution.ImportedResourceID().String(), ImportedResourceVersion: resolution.ImportedResourceVersion(),
+			TrustContractID: contract.ID().String(), ContractVersion: contract.Version(), OfferID: contract.OfferID().String(),
+			ExportID: contract.ExportID().String(), ExportVersion: resolution.ExportVersion(),
+			ProviderWorkspaceID: resolution.ProviderScope().WorkspaceID().String(), ProviderNetworkID: resolution.ProviderScope().NetworkID().String(),
+			ConsumerWorkspaceID: resolution.ConsumerScope().WorkspaceID().String(), ConsumerNetworkID: resolution.ConsumerScope().NetworkID().String(),
+			Resource: simulatedResourceEvidence{ResourceID: resource.ResourceID().String(), ResourceVersion: resource.ResourceVersion(),
+				TargetGeneration: resource.TargetGeneration(), InventoryRevision: resolution.ProviderInventoryRevision(), SemanticHash: hex.EncodeToString(hash[:])},
+			ProviderSharingRevision: resolution.ProviderSharingRevision(), ConsumerSharingRevision: resolution.ConsumerSharingRevision(),
+			ProviderAuthorityGeneration: contract.ProviderAuthorityGeneration(), ConsumerAuthorityGeneration: contract.ConsumerAuthorityGeneration(),
+			RecoveryEpoch: contract.RecoveryEpoch(), ExpiresAt: contract.ExpiresAt().UTC().Format(time.RFC3339Nano),
+			MaximumTraffic: sharingTrafficDataFromSet(contract.MaximumTraffic()), Protocol: value.Protocol().String(), DestinationPortRanges: encodedPorts,
+		}
+	}
+	return encoded
 }
 
 func encodePolicySimulationVector(vector accessgraph.RevisionVector) simulatedPolicyRevisionVector {

@@ -137,7 +137,7 @@ func (handler *ManagementHandler) publishPolicy(ctx context.Context, input manag
 			PolicyRevision:  result.PolicyRevision(),
 			NetworkRevision: result.NetworkRevision(),
 			SemanticHash:    hex.EncodeToString(semanticHash[:]),
-			RuleCount:       len(command.Candidate().Snapshot().Rules()),
+			RuleCount:       len(command.Candidate().Snapshot().Rules()) + len(command.Candidate().ImportedResourceDestinations()),
 		},
 		CorrelationID: correlationID.String(),
 	})

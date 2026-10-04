@@ -532,6 +532,7 @@ func publishPolicyOverBrowserManagement(
 func newIntegrationPolicyCompiler(
 	t *testing.T,
 	runtimePool *postgresadapter.Pool,
+	imported ...compilation.ImportedDestinationResolver,
 ) *compilation.Service {
 	t.Helper()
 	store, err := postgresadapter.NewResourceCatalogStore(
@@ -552,7 +553,7 @@ func newIntegrationPolicyCompiler(
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiler, err := compilation.NewService(resources)
+	compiler, err := compilation.NewService(resources, imported...)
 	if err != nil {
 		t.Fatal(err)
 	}

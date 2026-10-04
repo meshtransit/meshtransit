@@ -2390,6 +2390,7 @@
           "uncertain"
         ],
         "properties": {
+          "imported_intent_changes": {"$ref": "#/components/schemas/PolicySimulationImportedIntentChanges"},
           "impact_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
           "added_relationship_count": {"type": "integer", "minimum": 0},
           "added_relationships": {
@@ -2455,6 +2456,60 @@
           "stale_inputs": {"type": "boolean", "const": false},
           "uncertain": {"type": "boolean", "const": false}
         }
+      },
+      "PolicySimulationImportedIntentChanges": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Present exactly when either compiled candidate is format 4. Reports Consumer-local intent and bilateral provenance, not effective cross-scope packet access.",
+        "required": ["added_count", "added", "removed_count", "removed", "packet_authority_evaluated"],
+        "properties": {
+          "added_count": {"type": "integer", "minimum": 0, "maximum": 10000},
+          "added": {"type": "array", "maxItems": 256, "items": {"$ref": "#/components/schemas/PolicySimulationImportedIntent"}},
+          "removed_count": {"type": "integer", "minimum": 0, "maximum": 10000},
+          "removed": {"type": "array", "maxItems": 256, "items": {"$ref": "#/components/schemas/PolicySimulationImportedIntent"}},
+          "packet_authority_evaluated": {"type": "boolean", "const": false}
+        }
+      },
+      "PolicySimulationImportedIntent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "access_rule_id", "source_device_id", "imported_resource_id", "imported_resource_version",
+          "trust_contract_id", "contract_version", "offer_id", "export_id", "export_version",
+          "provider_workspace_id", "provider_network_id", "consumer_workspace_id", "consumer_network_id",
+          "resource", "provider_sharing_revision", "consumer_sharing_revision",
+          "provider_authority_generation", "consumer_authority_generation", "recovery_epoch",
+          "expires_at", "maximum_traffic", "protocol", "destination_port_ranges"
+        ],
+        "properties": {
+          "access_rule_id": {"$ref": "#/components/schemas/PublicID"},
+          "source_device_id": {"$ref": "#/components/schemas/PublicID"},
+          "imported_resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "imported_resource_version": {"type": "integer", "format": "int64", "minimum": 1},
+          "trust_contract_id": {"$ref": "#/components/schemas/PublicID"},
+          "contract_version": {"type": "integer", "format": "int64", "minimum": 1},
+          "offer_id": {"$ref": "#/components/schemas/PublicID"},
+          "export_id": {"$ref": "#/components/schemas/PublicID"},
+          "export_version": {"type": "integer", "format": "int64", "minimum": 1},
+          "provider_workspace_id": {"$ref": "#/components/schemas/PublicID"},
+          "provider_network_id": {"$ref": "#/components/schemas/PublicID"},
+          "consumer_workspace_id": {"$ref": "#/components/schemas/PublicID"},
+          "consumer_network_id": {"$ref": "#/components/schemas/PublicID"},
+          "resource": {"$ref": "#/components/schemas/PolicySimulationResourceEvidence"},
+          "provider_sharing_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "consumer_sharing_revision": {"type": "integer", "format": "int64", "minimum": 1},
+          "provider_authority_generation": {"type": "integer", "format": "int64", "minimum": 1},
+          "consumer_authority_generation": {"type": "integer", "format": "int64", "minimum": 1},
+          "recovery_epoch": {"type": "integer", "format": "int64", "minimum": 1},
+          "expires_at": {"type": "string", "format": "date-time"},
+          "maximum_traffic": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/components/schemas/ShareTrafficConstraint"}},
+          "protocol": {"type": "string", "enum": ["tcp", "udp", "icmp"]},
+          "destination_port_ranges": {"type": "array", "maxItems": 64, "items": {"$ref": "#/components/schemas/PortRange"}}
+        },
+        "oneOf": [
+          {"properties": {"protocol": {"const": "icmp"}, "destination_port_ranges": {"maxItems": 0}}},
+          {"properties": {"protocol": {"enum": ["tcp", "udp"]}, "destination_port_ranges": {"minItems": 1}}}
+        ]
       },
       "PolicySimulationRelationship": {
         "type": "object",

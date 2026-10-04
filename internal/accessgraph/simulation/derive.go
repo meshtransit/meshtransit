@@ -30,7 +30,8 @@ func newResult(baseline Baseline, proposed publication.Candidate) (Result, error
 	proposedVector, err := baseline.revisionVector.NextPolicy()
 	if err != nil || proposed.Snapshot().Revision() != proposedVector.PolicyRevision() ||
 		!candidateInputsWithin(proposed, baseline.revisionVector) ||
-		!candidateInputsWithin(baseline.candidate, baseline.revisionVector) {
+		!candidateInputsWithin(baseline.candidate, baseline.revisionVector) ||
+		!proposedImportedInputsCurrent(proposed, baseline.revisionVector) {
 		return Result{}, ErrInvalidResult
 	}
 
@@ -81,6 +82,9 @@ func newResult(baseline Baseline, proposed publication.Candidate) (Result, error
 			UnsupportedCapabilityRoutedServiceResources,
 		},
 	}
+	result.addedImportedIntents, result.removedImportedIntents = importedIntentChanges(
+		baseline.candidate.ImportedResourceDestinations(), proposed.ImportedResourceDestinations(),
+	)
 	result.affectedDevices, result.affectedResources, result.affectedGroups = affectedEntities(result)
 	result.hash = hashResult(result)
 	if !result.IsValid() {
@@ -106,6 +110,11 @@ func candidateInputsWithin(
 			if member.InventoryRevision() > vector.InventoryRevision() {
 				return false
 			}
+		}
+	}
+	for _, destination := range candidate.ImportedResourceDestinations() {
+		if destination.Resolution().ConsumerSharingRevision() > vector.SharingRevision() {
+			return false
 		}
 	}
 	return true
@@ -395,6 +404,13 @@ func affectedEntities(result Result) ([]node.ID, []resource.ID, []resource.Group
 		}
 	}
 	deviceIDs := make([]node.ID, 0, len(devices))
+	for _, values := range [][]publication.ImportedResourceDestination{
+		result.addedImportedIntents, result.removedImportedIntents,
+	} {
+		for _, value := range values {
+			devices[value.SourceNodeID()] = struct{}{}
+		}
+	}
 	for id := range devices {
 		deviceIDs = append(deviceIDs, id)
 	}

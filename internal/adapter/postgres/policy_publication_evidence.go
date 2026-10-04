@@ -19,7 +19,7 @@ type policyPublicationRulePayload struct {
 	ProjectionPublicID                         string                         `json:"projection_public_id"`
 	AccessRulePublicID                         string                         `json:"access_rule_public_id"`
 	SourceNodePublicID                         string                         `json:"source_node_public_id"`
-	DestinationNodePublicID                    string                         `json:"destination_node_public_id"`
+	DestinationNodePublicID                    string                         `json:"destination_node_public_id,omitempty"`
 	Protocol                                   string                         `json:"protocol"`
 	PortRangeFirst                             []int                          `json:"port_range_first"`
 	PortRangeLast                              []int                          `json:"port_range_last"`
@@ -255,7 +255,7 @@ func (transaction *policyPublicationTransaction) appendPolicyPublicationEvidence
 		AuditReason:           command.AuditReason().String(),
 		BasePolicyRevision:    command.BasePolicyRevision(),
 		CompilerFormatVersion: command.Candidate().CompilerFormatVersion(),
-		RuleCount:             len(command.Candidate().Snapshot().Rules()),
+		RuleCount:             len(command.Candidate().Snapshot().Rules()) + len(command.Candidate().ImportedResourceDestinations()),
 	}
 	if transaction.authorization.isValid() {
 		auditEvidence.AccountSessionID = transaction.authorization.accountSessionID.String()

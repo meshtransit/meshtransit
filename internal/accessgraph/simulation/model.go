@@ -358,18 +358,20 @@ func (hash ImpactHash) IsValid() bool { return hash != ImpactHash{} }
 
 // Result is a deterministic, read-only before/after policy impact.
 type Result struct {
-	baseline             Baseline
-	proposedCandidate    publication.Candidate
-	proposedVector       accessgraph.RevisionVector
-	addedRelationships   []Relationship
-	removedRelationships []Relationship
-	addedExplanations    []Explanation
-	removedExplanations  []Explanation
-	affectedDevices      []node.ID
-	affectedResources    []resource.ID
-	affectedGroups       []resource.GroupID
-	unsupported          []UnsupportedCapability
-	hash                 ImpactHash
+	baseline               Baseline
+	proposedCandidate      publication.Candidate
+	proposedVector         accessgraph.RevisionVector
+	addedRelationships     []Relationship
+	removedRelationships   []Relationship
+	addedExplanations      []Explanation
+	removedExplanations    []Explanation
+	addedImportedIntents   []publication.ImportedResourceDestination
+	removedImportedIntents []publication.ImportedResourceDestination
+	affectedDevices        []node.ID
+	affectedResources      []resource.ID
+	affectedGroups         []resource.GroupID
+	unsupported            []UnsupportedCapability
+	hash                   ImpactHash
 }
 
 // IsValid reports whether the immutable result and its canonical digest agree.
@@ -382,6 +384,8 @@ func (result Result) IsValid() bool {
 		!validRelationships(result.removedRelationships) ||
 		!validExplanations(result.addedExplanations) ||
 		!validExplanations(result.removedExplanations) ||
+		!validImportedIntents(result.addedImportedIntents, result.baseline.scope) ||
+		!validImportedIntents(result.removedImportedIntents, result.baseline.scope) ||
 		!validNodeIDs(result.affectedDevices) || !validResourceIDs(result.affectedResources) ||
 		!validGroupIDs(result.affectedGroups) || !validCapabilities(result.unsupported) ||
 		!result.hash.IsValid() {
@@ -438,6 +442,22 @@ func (result Result) RemovedExplanations() []Explanation {
 	return cloneExplanations(boundedClone(result.removedExplanations, MaximumReportedExplanations))
 }
 
+// AddedImportedIntentCount returns the complete added bilateral-intent count.
+func (result Result) AddedImportedIntentCount() int { return len(result.addedImportedIntents) }
+
+// AddedImportedIntents returns bounded Consumer-local intents, never packet edges.
+func (result Result) AddedImportedIntents() []publication.ImportedResourceDestination {
+	return boundedClone(result.addedImportedIntents, MaximumReportedExplanations)
+}
+
+// RemovedImportedIntentCount returns the complete removed bilateral-intent count.
+func (result Result) RemovedImportedIntentCount() int { return len(result.removedImportedIntents) }
+
+// RemovedImportedIntents returns bounded old intent and its immutable provenance.
+func (result Result) RemovedImportedIntents() []publication.ImportedResourceDestination {
+	return boundedClone(result.removedImportedIntents, MaximumReportedExplanations)
+}
+
 // AffectedDeviceCount returns the complete affected Device count.
 func (result Result) AffectedDeviceCount() int { return len(result.affectedDevices) }
 
@@ -473,6 +493,8 @@ func (result Result) Truncated() bool {
 		len(result.removedRelationships) > MaximumReportedRelationships ||
 		len(result.addedExplanations) > MaximumReportedExplanations ||
 		len(result.removedExplanations) > MaximumReportedExplanations ||
+		len(result.addedImportedIntents) > MaximumReportedExplanations ||
+		len(result.removedImportedIntents) > MaximumReportedExplanations ||
 		len(result.affectedDevices) > MaximumReportedEntities ||
 		len(result.affectedResources) > MaximumReportedEntities ||
 		len(result.affectedGroups) > MaximumReportedEntities

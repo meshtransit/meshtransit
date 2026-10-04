@@ -7,8 +7,8 @@ DECLARE
     expected RECORD;
     observed RECORD;
 BEGIN
-    IF (SELECT COALESCE(max(version), 0) FROM mesh_ops.schema_migration) < 87 THEN
-        RAISE EXCEPTION 'Device sharing requires schema 87 or later';
+    IF (SELECT COALESCE(max(version), 0) FROM mesh_ops.schema_migration) < 88 THEN
+        RAISE EXCEPTION 'Device sharing requires schema 88 or later';
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'mesh_share_writer'
@@ -35,6 +35,7 @@ BEGIN
         ('revoke_resource_share_v2', FALSE),
         ('revoke_resource_share_v3', FALSE),
         ('lock_and_resolve_policy_imported_resources_internal_v1', FALSE),
+        ('read_compiled_imported_policy_evidence_internal_v1', FALSE),
         ('assert_private_endpoint_scope_internal_v1', FALSE)
     ) AS functions(name, runtime_execute) LOOP
         SELECT count(*) AS count,
@@ -63,7 +64,8 @@ BEGIN
     FOR expected IN SELECT name FROM (VALUES
         ('resource_export'), ('resource_export_constraint'), ('share_offer'),
         ('share_offer_locator'), ('trust_contract'), ('imported_resource'),
-        ('imported_resource_access_name'), ('direct_device_endpoint')
+        ('imported_resource_access_name'), ('direct_device_endpoint'),
+        ('compiled_policy_imported_resource_destination')
     ) AS tables(name) LOOP
         IF NOT EXISTS (
             SELECT 1 FROM pg_catalog.pg_class AS relation
@@ -76,6 +78,14 @@ BEGIN
             RAISE EXCEPTION 'Device sharing table confinement failed: %', expected.name;
         END IF;
     END LOOP;
+    IF NOT pg_catalog.has_table_privilege('mesh_share_writer',
+        'mesh.compiled_policy_imported_resource_destination', 'SELECT')
+      OR pg_catalog.has_table_privilege('mesh_share_writer',
+        'mesh.compiled_policy_imported_resource_destination', 'INSERT,UPDATE,DELETE,TRUNCATE')
+      OR NOT pg_catalog.has_function_privilege('mesh_migrator',
+        'mesh_ops.read_compiled_imported_policy_evidence_internal_v1(bigint)', 'EXECUTE') THEN
+        RAISE EXCEPTION 'Imported policy baseline reader confinement failed';
+    END IF;
 END;
 $gate$;
 SELECT 'Device sharing database preflight passed' AS qualification;

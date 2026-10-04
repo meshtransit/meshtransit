@@ -226,8 +226,11 @@ func (record policySimulationBaselineRecord) baseline(
 		*record.CompilerFormatVersion,
 		record.Rules,
 	)
-	if err != nil || candidate.SemanticHash() != semanticHash {
-		return simulation.Baseline{}, simulation.ErrInvalidBaseline
+	if err != nil {
+		return simulation.Baseline{}, fmt.Errorf("reconstruct compiled baseline: %w", err)
+	}
+	if candidate.SemanticHash() != semanticHash {
+		return simulation.Baseline{}, fmt.Errorf("compiled baseline semantic hash differs: %w", simulation.ErrInvalidBaseline)
 	}
 	return simulation.NewBaseline(simulation.BaselineParams{
 		Scope: scope, RevisionVector: vector, HasActiveRelease: true,
@@ -273,7 +276,7 @@ func reconstructPolicySimulationCandidate(
 			}
 			destination, destinationErr := policySimulationImportedDestination(scope, record)
 			if destinationErr != nil {
-				return publication.Candidate{}, simulation.ErrInvalidBaseline
+				return publication.Candidate{}, destinationErr
 			}
 			importedDestinations = append(importedDestinations, destination)
 			continue
@@ -395,7 +398,7 @@ func policySimulationImportedDestination(
 	)
 	if ruleErr != nil || sourceErr != nil || !protocol.IsValid() || rangeErr != nil ||
 		expiresErr != nil || evaluatedErr != nil {
-		return publication.ImportedResourceDestination{}, simulation.ErrInvalidBaseline
+		return publication.ImportedResourceDestination{}, fmt.Errorf("decode imported baseline rule: %w", simulation.ErrInvalidBaseline)
 	}
 	resolution, err := (importedPolicyDestinationRecord{
 		ImportedResourceID:          record.DestinationImportedResourcePublicID,
@@ -424,7 +427,7 @@ func policySimulationImportedDestination(
 		Constraints:                 record.DestinationContractConstraints,
 	}).value(evaluatedAt, scope)
 	if err != nil {
-		return publication.ImportedResourceDestination{}, simulation.ErrInvalidBaseline
+		return publication.ImportedResourceDestination{}, fmt.Errorf("decode imported baseline authority: %w", simulation.ErrInvalidBaseline)
 	}
 	requestedConstraint, err := sharing.NewTrafficConstraint(sharing.TrafficConstraintParams{
 		Protocol: protocol, DestinationPortRanges: ranges,
@@ -434,7 +437,7 @@ func policySimulationImportedDestination(
 	}
 	requestedTraffic, err := sharing.NewTrafficSet([]sharing.TrafficConstraint{requestedConstraint})
 	if err != nil || !requestedTraffic.IsSubsetOf(resolution.Contract().MaximumTraffic()) {
-		return publication.ImportedResourceDestination{}, simulation.ErrInvalidBaseline
+		return publication.ImportedResourceDestination{}, fmt.Errorf("imported baseline traffic exceeds authority: %w", simulation.ErrInvalidBaseline)
 	}
 	destination, err := publication.NewImportedResourceDestination(
 		publication.ImportedResourceDestinationParams{

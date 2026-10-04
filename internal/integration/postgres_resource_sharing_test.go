@@ -207,6 +207,7 @@ func assertPostgreSQLResourceSharing(
 		t.Fatalf("ResolveImportedPolicyDestinations() = %+v, error = %v", resolved, err)
 	}
 	assertAtomicImportedPolicyPublication(ctx, t, admin, resolved[0])
+	assertImportedPolicySimulation(ctx, t, admin, runtimePool, store, session, resolved[0])
 	crossWorkspaceImport := assertCrossWorkspaceResourceSharingConsent(
 		ctx, t, admin, workerPool, service, providerScope, resourceID, maximumTraffic, reason,
 	)
