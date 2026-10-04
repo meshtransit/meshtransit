@@ -450,3 +450,28 @@ func profileReferences(t *testing.T, root map[string]any, value any) {
 		}
 	}
 }
+
+func TestShareAcceptanceContractRequiresConsumerNames(t *testing.T) {
+	t.Parallel()
+	for _, profile := range []openapi.ManagementProfile{
+		openapi.ManagementProfileBearerV1,
+		openapi.ManagementProfileConsoleCookiePrivateV1,
+	} {
+		document, err := openapi.ManagementDocument(profile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		schemas := profileMap(t, profileMap(t, profileObject(t, document), "components"), "schemas")
+		accept := profileMap(t, schemas, "AcceptShareOfferRequest")
+		parts := profileArray(t, accept, "allOf")
+		if len(parts) != 2 || !reflect.DeepEqual(parts[0], map[string]any{
+			"$ref": "#/components/schemas/DecideShareOfferRequest",
+		}) {
+			t.Fatal("acceptance lost the shared scope, token and reason contract")
+		}
+		names, ok := parts[1].(map[string]any)
+		if !ok || !reflect.DeepEqual(names["required"], []any{"imported_display_name", "access_name"}) {
+			t.Fatal("acceptance does not require both consumer names")
+		}
+	}
+}

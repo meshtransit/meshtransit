@@ -3193,6 +3193,20 @@
           "reason": {"type": "string", "minLength": 1, "maxLength": 512}
         }
       },
+      "AcceptShareOfferRequest": {
+        "description": "Acceptance-specific request: imported display name and canonical access name are required. Reject and revoke continue to use DecideShareOfferRequest and forbid both fields.",
+        "allOf": [
+          {"$ref": "#/components/schemas/DecideShareOfferRequest"},
+          {
+            "type": "object",
+            "required": ["imported_display_name", "access_name"],
+            "properties": {
+              "imported_display_name": {"$ref": "#/components/schemas/DecideShareOfferRequest/properties/imported_display_name"},
+              "access_name": {"$ref": "#/components/schemas/DecideShareOfferRequest/properties/access_name"}
+            }
+          }
+        ]
+      },
       "RevokeTrustContractRequest": {
         "type": "object",
         "additionalProperties": false,
