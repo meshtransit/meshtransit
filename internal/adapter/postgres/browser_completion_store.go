@@ -63,7 +63,7 @@ var (
 	ErrInvalidBrowserCompletion = errors.New("invalid browser registration completion")
 	// ErrBrowserCompletionUnavailable reports a closed completion dependency or transaction.
 	ErrBrowserCompletionUnavailable = errors.New("browser registration completion unavailable")
-	// ErrBrowserCompletionConflict reports a preexisting Device for this machine.
+	// ErrBrowserCompletionConflict reports incompatible existing Device authority.
 	ErrBrowserCompletionConflict = errors.New("browser registration Device already exists")
 )
 
@@ -194,7 +194,7 @@ func (store *BrowserCompletionStore) Complete(
 		return registration.Result{}, false, errors.Join(ErrBrowserCompletionUnavailable, err)
 	}
 	result, err := completeApprovedBrowserRegistration(ctx, tx, store.options,
-		identityValue, hostname, digest, authority, ids)
+		identityValue, hostname, digest, authority, ids, store.deploymentID, store.recoveryEpoch)
 	if err != nil {
 		return registration.Result{}, false, errors.Join(ErrBrowserCompletionUnavailable, err)
 	}
@@ -236,7 +236,8 @@ func (store *BrowserCompletionStore) readCompleted(
 	parsedDisposition, dispositionErr := registrationDisposition(disposition)
 	if registrationErr != nil || workspaceErr != nil || networkErr != nil ||
 		nodeErr != nil || hostnameErr != nil || dispositionErr != nil ||
-		parsedDisposition != registration.DispositionCreated || revision <= 0 {
+		(parsedDisposition != registration.DispositionCreated &&
+			parsedDisposition != registration.DispositionResumed) || revision <= 0 {
 		return registration.Result{}, false, ErrRegistrationEvidence
 	}
 	scope, err := network.NewScope(workspaceID, networkID)
@@ -256,7 +257,7 @@ func completeApprovedBrowserRegistration(
 	options RegistrationTransactionOptions, identityValue node.RegistrationIdentity,
 	requestedHostname node.Hostname, tokenDigest enrollment.BrowserIntentDigest,
 	authority browserCompletionAuthority,
-	ids browserCompletionIDs,
+	ids browserCompletionIDs, deploymentID deployment.ID, recoveryEpoch int64,
 ) (registration.Result, error) {
 	workspaceID, workspaceErr := workspace.ParseID(authority.workspacePublicID)
 	networkID, networkErr := network.ParseID(authority.networkPublicID)
@@ -286,18 +287,18 @@ func completeApprovedBrowserRegistration(
 		route <= 0 || sharing <= 0 || isolation <= 0 {
 		return registration.Result{}, errors.Join(ErrRegistrationEvidence, err)
 	}
-	var existing registrationDeviceRecord
-	machineFingerprint := identityValue.MachineKey().Fingerprint()
-	err = tx.QueryRow(ctx, lockRegistrationDeviceSQL,
-		machineFingerprint[:]).Scan(
-		&existing.internalID, &existing.publicID, &existing.profileInternalID,
-		&existing.hostname, &existing.version, &existing.machineKey, &existing.nodeKey,
-	)
-	if err == nil {
-		return registration.Result{}, ErrBrowserCompletionConflict
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	resumed, existing, err := lockBrowserResumeDevice(ctx, tx, identityValue, authority)
+	if err != nil {
 		return registration.Result{}, err
+	}
+	disposition := registration.DispositionCreated
+	if resumed {
+		id, parseErr := publicid.Parse(existing.publicID)
+		if parseErr != nil {
+			return registration.Result{}, ErrRegistrationEvidence
+		}
+		ids.device = id
+		disposition = registration.DispositionResumed
 	}
 	helper := &registrationTransaction{
 		database: tx, scope: scope,
@@ -305,8 +306,8 @@ func completeApprovedBrowserRegistration(
 		networkInternalID:   authority.networkInternalID,
 		candidateLimit:      options.AddressCandidateLimit,
 	}
-	if err := helper.lockAuditHead(ctx, &helper.locked); err != nil {
-		return registration.Result{}, err
+	if resumed {
+		helper.locked.device = existing
 	}
 	if err := helper.loadHostnames(ctx, &helper.locked); err != nil {
 		return registration.Result{}, err
@@ -318,11 +319,28 @@ func completeApprovedBrowserRegistration(
 	if err != nil {
 		return registration.Result{}, err
 	}
+	if resumed {
+		selectedHostname, err = node.ParseHostname(existing.hostname)
+		if err != nil {
+			return registration.Result{}, ErrRegistrationEvidence
+		}
+	}
 	leasing, err := helper.allocateRegistrationLeases()
 	if err != nil {
 		return registration.Result{}, err
 	}
-	occurredAt := time.Now().UTC()
+	// Lock audit heads after Device/key and address state, then recheck wall-clock authority.
+	if err := helper.lockAuditHead(ctx, &helper.locked); err != nil {
+		return registration.Result{}, err
+	}
+	if err := recheckBrowserCompletion(ctx, tx, deploymentID, recoveryEpoch,
+		identityValue, requestedHostname, tokenDigest, authority); err != nil {
+		return registration.Result{}, err
+	}
+	var occurredAt time.Time
+	if err := tx.QueryRow(ctx, browserCompletionTimeSQL).Scan(&occurredAt); err != nil || occurredAt.IsZero() {
+		return registration.Result{}, errors.Join(ErrRegistrationEvidence, err)
+	}
 	expiresAt := occurredAt.Add(time.Duration(authority.lifetimeSeconds) * time.Second)
 	if !expiresAt.After(occurredAt) {
 		return registration.Result{}, ErrRegistrationEvidence
@@ -330,32 +348,43 @@ func completeApprovedBrowserRegistration(
 	if _, err := tx.Exec(ctx, setRegistrationChangeSQL, ids.change.String()); err != nil {
 		return registration.Result{}, err
 	}
+	machineFingerprint := identityValue.MachineKey().Fingerprint()
 	var deviceInternalID, deviceVersion int64
-	if err := tx.QueryRow(ctx, insertBrowserCompletionDeviceSQL,
-		ids.device.String(), authority.workspaceInternalID, authority.networkInternalID,
-		authority.profileInternalID, authority.principalInternalID,
-		selectedHostname.String(), authority.ephemeralMode == "ephemeral",
-		expiresAt, occurredAt,
-	).Scan(&deviceInternalID, &deviceVersion); err != nil ||
-		deviceInternalID <= 0 || deviceVersion != 1 {
-		return registration.Result{}, errors.Join(ErrRegistrationEvidence, err)
-	}
-	machineKey := identityValue.MachineKey().Bytes()
-	nodeKey := identityValue.NodeKey().Bytes()
-	nodeFingerprint := identityValue.NodeKey().Fingerprint()
-	for _, key := range []struct {
-		query                 string
-		id                    publicid.ID
-		material, fingerprint [32]byte
-	}{
-		{insertRegistrationMachineKeySQL, ids.machineEpoch, machineKey, machineFingerprint},
-		{insertRegistrationNodeKeySQL, ids.nodeEpoch, nodeKey, nodeFingerprint},
-	} {
-		if _, err := tx.Exec(ctx, key.query, key.id.String(),
-			authority.workspaceInternalID, authority.networkInternalID,
-			deviceInternalID, key.material[:], key.fingerprint[:], occurredAt,
-		); err != nil {
-			return registration.Result{}, err
+	if resumed {
+		deviceInternalID = existing.internalID
+		if err := tx.QueryRow(ctx, resumeBrowserDeviceSQL,
+			deviceInternalID, expiresAt, occurredAt, existing.version,
+			authority.principalInternalID, authority.profileInternalID,
+		).Scan(&deviceVersion); err != nil || deviceVersion != existing.version+1 {
+			return registration.Result{}, errors.Join(ErrRegistrationEvidence, err)
+		}
+	} else {
+		if err := tx.QueryRow(ctx, insertBrowserCompletionDeviceSQL,
+			ids.device.String(), authority.workspaceInternalID, authority.networkInternalID,
+			authority.profileInternalID, authority.principalInternalID,
+			selectedHostname.String(), authority.ephemeralMode == "ephemeral",
+			expiresAt, occurredAt,
+		).Scan(&deviceInternalID, &deviceVersion); err != nil ||
+			deviceInternalID <= 0 || deviceVersion != 1 {
+			return registration.Result{}, errors.Join(ErrRegistrationEvidence, err)
+		}
+		machineKey := identityValue.MachineKey().Bytes()
+		nodeKey := identityValue.NodeKey().Bytes()
+		nodeFingerprint := identityValue.NodeKey().Fingerprint()
+		for _, key := range []struct {
+			query                 string
+			id                    publicid.ID
+			material, fingerprint [32]byte
+		}{
+			{insertRegistrationMachineKeySQL, ids.machineEpoch, machineKey, machineFingerprint},
+			{insertRegistrationNodeKeySQL, ids.nodeEpoch, nodeKey, nodeFingerprint},
+		} {
+			if _, err := tx.Exec(ctx, key.query, key.id.String(),
+				authority.workspaceInternalID, authority.networkInternalID,
+				deviceInternalID, key.material[:], key.fingerprint[:], occurredAt,
+			); err != nil {
+				return registration.Result{}, err
+			}
 		}
 	}
 	for _, lease := range leasing {
@@ -381,12 +410,13 @@ func completeApprovedBrowserRegistration(
 	}
 	updated, err := tx.Exec(ctx, completePendingRegistrationSQL,
 		authority.registrationInternalID, deviceInternalID, selectedHostname.String(),
-		"created", newNetworkRevision, occurredAt, authority.registrationVersion,
+		registrationDispositionValue(disposition), newNetworkRevision, occurredAt, authority.registrationVersion,
 	)
 	if err != nil || updated.RowsAffected() != 1 {
 		return registration.Result{}, errors.Join(ErrRegistrationEvidence, err)
 	}
 	tokenDigestBytes := tokenDigest.Bytes()
+	nodeKey := identityValue.NodeKey().Bytes()
 	var intentClosed bool
 	if err := tx.QueryRow(ctx, finishBrowserIntentSQL,
 		authority.intentPublicID, authority.registrationPublicID,
@@ -396,7 +426,7 @@ func completeApprovedBrowserRegistration(
 	}
 	if err := appendBrowserCompletionEvidence(ctx, tx, helper.locked.audit,
 		authority, ids, selectedHostname, deviceVersion,
-		newNetworkRevision, newInventoryRevision,
+		newNetworkRevision, newInventoryRevision, disposition,
 	); err != nil {
 		return registration.Result{}, err
 	}
@@ -405,7 +435,7 @@ func completeApprovedBrowserRegistration(
 		return registration.Result{}, ErrRegistrationEvidence
 	}
 	result, err := registration.NewResult(registrationID, scope, nodeID,
-		selectedHostname, registration.DispositionCreated, newNetworkRevision)
+		selectedHostname, disposition, newNetworkRevision)
 	if err != nil || !principalID.IsValid() {
 		return registration.Result{}, ErrRegistrationEvidence
 	}
@@ -416,8 +446,12 @@ func appendBrowserCompletionEvidence(
 	ctx context.Context, tx registrationDatabaseTransaction,
 	head registrationAuditHead, authority browserCompletionAuthority,
 	ids browserCompletionIDs, hostname node.Hostname,
-	deviceVersion, networkRevision, inventoryRevision int64,
+	deviceVersion, networkRevision, inventoryRevision int64, disposition registration.Disposition,
 ) error {
+	action := "device.registered"
+	if disposition == registration.DispositionResumed {
+		action = "device.resumed"
+	}
 	auditPayload, err := json.Marshal(struct {
 		Hostname       string `json:"hostname"`
 		RegistrationID string `json:"registration_id"`
@@ -445,7 +479,7 @@ func appendBrowserCompletionEvidence(
 		PreviousHash: head.previousHash, EventID: ids.event, ChangeID: ids.change,
 		AggregateKind: "device", AggregateID: ids.device,
 		AggregateVersion: deviceVersion, NetworkRevision: networkRevision,
-		ActorPrincipalID: principalID, Action: "device.registered",
+		ActorPrincipalID: principalID, Action: action,
 		Permission: "device.register", CorrelationID: registrationID,
 		AfterSemanticHash: semanticHash,
 		AuditPayloadHash:  sha256.Sum256(auditPayload),
@@ -460,7 +494,7 @@ func appendBrowserCompletionEvidence(
 		head.streamInternalID, ids.event.String(), ids.outbox.String(),
 		head.nextSequence, head.previousHash[:], eventHash[:],
 		ids.device.String(), deviceVersion, networkRevision,
-		authority.principalPublicID, "device.registered", authority.registrationPublicID,
+		authority.principalPublicID, action, authority.registrationPublicID,
 		semanticHash[:], auditPayload, outboxPayload,
 	).Scan(&sequence); err != nil || sequence != head.nextSequence {
 		return errors.Join(ErrRegistrationEvidence, err)

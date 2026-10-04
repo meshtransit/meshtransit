@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -12,9 +13,11 @@ import (
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/enrollment"
+	"github.com/meshtransit/meshtransit/internal/enrollment/registration"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/publicid"
 )
 
 func assertPostgreSQLBrowserRegistrationApproval(
@@ -359,4 +362,162 @@ WHERE aggregate_kind='device' AND aggregate_public_id=$1::UUID
 	).Scan(&completionOutboxCount); err != nil || completionOutboxCount != 1 {
 		t.Fatalf("replay duplicated Device outbox = %d: %v", completionOutboxCount, err)
 	}
+	// A fresh SSO approval must resume the same Device and primary leases.
+	// Expiry alone does not delete identity or permit a second Device.
+	assertPostgreSQLBrowserRelogin(ctx, t, admin, intentStore, approvalStore,
+		completionStore, deploymentID, recoveryEpoch, sessionDigest,
+		selectedNetwork, identity, hostname, completed)
+
+}
+
+func assertPostgreSQLBrowserRelogin(
+	ctx context.Context, t *testing.T, admin *pgx.Conn,
+	intents *postgresadapter.BrowserIntentStore,
+	approvals *postgresadapter.BrowserApprovalStore,
+	completion *postgresadapter.BrowserCompletionStore,
+	deploymentID deployment.ID, epoch int64, session accountsession.Digest,
+	networkID network.ID, identity node.RegistrationIdentity, hostname node.Hostname,
+	created registration.Result,
+) {
+	t.Helper()
+	var previousVersion int64
+	var previousExpiry time.Time
+	var previousLeases []string
+	if err := admin.QueryRow(ctx, `SELECT version, expires_at FROM mesh.device
+WHERE public_id=$1::UUID`, created.NodeID().String()).Scan(&previousVersion, &previousExpiry); err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.QueryRow(ctx, `SELECT pg_catalog.array_agg(lease.public_id::TEXT ORDER BY lease.public_id)
+FROM mesh.node_address_lease lease JOIN mesh.device device ON device.id=lease.device_id
+WHERE device.public_id=$1::UUID AND lease.state='active'`, created.NodeID().String()).Scan(&previousLeases); err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range []struct {
+		name     string
+		identity node.RegistrationIdentity
+		allow    bool
+		expire   bool
+	}{
+		{name: "same owner and keys", identity: identity, allow: true},
+		{name: "expired Device resumes", identity: identity, allow: true, expire: true},
+		{name: "different Node key denied", identity: browserReloginChangedNode(t, identity), allow: false},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			if scenario.expire {
+				var currentRevision int64
+				if err := admin.QueryRow(ctx, `SELECT network_revision FROM mesh_ops.network_revision
+WHERE workspace_id=103 AND network_id=203`).Scan(&currentRevision); err != nil {
+					t.Fatal(err)
+				}
+				commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
+					changePublicID: "01890f01-0000-7000-8000-000000001699",
+					eventPublicID:  "01890f02-0000-7000-8000-000000001699",
+					outboxPublicID: "01890f03-0000-7000-8000-000000001699",
+					streamID:       203, aggregateKind: "device", aggregatePublicID: created.NodeID().String(),
+					aggregateVersion: previousVersion + 1, networkRevision: currentRevision + 1,
+					actorPrincipalPublicID: "01890f00-0000-7000-8000-000000000011",
+					action:                 "browser.device.expiry.fixture", permission: "system.bootstrap",
+					outboxEventClass: "browser.device.expiry.fixture",
+				}, func(tx pgx.Tx) {
+					if _, err := tx.Exec(ctx, `UPDATE mesh.device
+SET expires_at=created_at+INTERVAL '1 microsecond',version=version+1,updated_at=pg_catalog.clock_timestamp()
+WHERE public_id=$1::UUID`, created.NodeID().String()); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.set_network_scope(
+'01890f00-0000-7000-8000-000000000103'::UUID,'01890f00-0000-7000-8000-000000000203'::UUID)`); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := tx.Exec(ctx, `SELECT * FROM mesh_ops.advance_network_inventory_revision()`); err != nil {
+						t.Fatal(err)
+					}
+				})
+				if err := admin.QueryRow(ctx, `SELECT version,expires_at FROM mesh.device WHERE public_id=$1::UUID`, created.NodeID().String()).Scan(&previousVersion, &previousExpiry); err != nil {
+					t.Fatal(err)
+				}
+				if !previousExpiry.Before(time.Now()) {
+					t.Fatal("expiry fixture did not expire Device")
+				}
+			}
+			id, err := publicid.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			intentID, err := enrollment.ParseBrowserIntentID(id.String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			nonce, err := enrollment.NewBrowserIntentNonce()
+			if err != nil {
+				t.Fatal(err)
+			}
+			token, err := intents.Issue(ctx, deploymentID, epoch, scenario.identity,
+				hostname, intentID, nonce, time.Now().Add(5*time.Minute))
+			if err != nil {
+				t.Fatal(err)
+			}
+			approved, err := approvals.Approve(ctx, session, token.Encoded(), networkID)
+			if err != nil || !approved {
+				t.Fatalf("fresh re-login approval = %v: %v", approved, err)
+			}
+			result, found, err := completion.Complete(ctx, scenario.identity, hostname, token.Encoded())
+			if !scenario.allow {
+				if err == nil || found {
+					t.Fatalf("changed key resumed Device: %v/%v", found, err)
+				}
+				return
+			}
+			if err != nil || !found || result.NodeID() != created.NodeID() ||
+				result.Disposition() != registration.DispositionResumed || result.Hostname() != created.Hostname() {
+				t.Fatalf("browser re-login did not resume exact Device: %+v/%v/%v", result, found, err)
+			}
+			replay, found, err := completion.Complete(ctx, scenario.identity, hostname, token.Encoded())
+			if err != nil || !found || replay != result {
+				t.Fatalf("renewal replay = %+v/%v/%v", replay, found, err)
+			}
+			var version, count int64
+			var expiry time.Time
+			var leases []string
+			if err := admin.QueryRow(ctx, `SELECT version, expires_at FROM mesh.device
+WHERE public_id=$1::UUID`, created.NodeID().String()).Scan(&version, &expiry); err != nil {
+				t.Fatal(err)
+			}
+			if version != previousVersion+1 || !expiry.After(previousExpiry) || expiry.After(time.Now().Add(time.Hour+time.Second)) {
+				t.Fatalf("renewal version/lifetime mismatch: %d/%v", version, expiry)
+			}
+			if err := admin.QueryRow(ctx, `SELECT pg_catalog.array_agg(lease.public_id::TEXT ORDER BY lease.public_id)
+FROM mesh.node_address_lease lease JOIN mesh.device device ON device.id=lease.device_id
+WHERE device.public_id=$1::UUID AND lease.state='active'`, created.NodeID().String()).Scan(&leases); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(previousLeases, leases) {
+				t.Fatal("re-login changed primary address leases")
+			}
+			if err := admin.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh_ops.outbox_event
+WHERE aggregate_kind='device' AND aggregate_public_id=$1::UUID AND event_class='network.revision.advanced'`, created.NodeID().String()).Scan(&count); err != nil || count != int64(2+boolBrowserExpiry(scenario.expire)) {
+				t.Fatalf("re-login/replay outbox count = %d: %v", count, err)
+			}
+			previousVersion, previousExpiry = version, expiry
+		})
+	}
+}
+
+func browserReloginChangedNode(t *testing.T, original node.RegistrationIdentity) node.RegistrationIdentity {
+	t.Helper()
+	key, err := node.NewKey([32]byte{0x94})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := node.NewRegistrationIdentity(original.MachineKey(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identity
+}
+
+func boolBrowserExpiry(expired bool) int {
+	if expired {
+		return 1
+	}
+	return 0
 }
