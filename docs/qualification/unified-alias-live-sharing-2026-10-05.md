@@ -44,6 +44,21 @@ Latencies are measured from the Console action to the first changed echo on a
 | Redis paused about 66 s | Data plane uninterrupted. Control ends map streams on presence loss; clients keep their last map and resynchronize after Redis returns without restart. Console sign-in fails (502), so no authority change is possible during the outage. |
 | Wakeups lost (worker scaled to 0) | Policy publish commits; the outbox event stays `pending`. Deny reaches the client in about 11 s and allow in about 25 s through the 30 s map reconciliation. On worker return every Network revision event is delivered. |
 
+## Creator-set labels (schema 94)
+
+Core 8a4afe2 and Console 26fb799 were deployed after schema 94 and its
+operator script; the database preflight passed. The existing unlabeled share
+kept working through the rollout. It was then revoked and replaced:
+
+- The New share form proposed the Device-name label; the creator set `poc01`.
+  Core returned the derived `<label>.<provider Workspace code>.<provider
+  Network code>.shared.mesh` name in the create response.
+- The consumer review showed that name and had no name input. Acceptance sent
+  no access name and reserved exactly the derived name.
+- After enable and a Consumer rule, the name resolved to the new Resource
+  Alias (`.3`/`::3`; earlier ones stay quarantined) and ping by name passed
+  over IPv4 and IPv6 on the direct path.
+
 ## Isolation packet matrix
 
 Each case sends three echoes bound to the named mesh interface. Kernel-refused
