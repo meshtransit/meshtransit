@@ -378,3 +378,43 @@ privileges. Decoder tests reject ambiguous versions. Store tests prove disabled
 and canceled calls start no write, and write/unknown-commit failures join bounded
 rollback errors. Worker reservation and authenticated bilateral alias reads
 remain the next serving integration.
+
+## Unified alias checkpoint — schema 92
+
+Schema 92 implements the 2026-10-05 decision in storage, activation, the map
+reader and the worker:
+
+- `activate_resource_share_v4` activates every Device share as an alias
+  endpoint (`provisioning`, legacy Resource Alias lease `reserved`) and never
+  writes `mesh.direct_device_endpoint`. It first requires the exported Device
+  to be active, unexpired and on current machine/Node keys, so an unusable
+  target fails closed before any allocation.
+- Workspace-inequality checks on alias leases, readiness and every worker or
+  reader guard become Network-inequality checks. The work scan no longer
+  requires the cloud Deployment profile, so self-hosted Deployments use the
+  same path.
+- The Deployment-wide unique address indexes are replaced by
+  `device_alias_network_uniqueness`: a new lease is rejected when its address
+  is retained (reserved/active legacy lease, reserved/quarantined client lease)
+  by any lease whose provider or consumer Network is either Network of the new
+  lease. Every writer already holds both Network revision row locks, so writers
+  that share a Network serialize. `allocate_network_scoped_alias_v1` returns the
+  lowest host free in that scope (at most 65,536 candidates) and checks pool
+  overlap with overlay and service pools.
+- `load_device_alias_map_edges_v2` selects local and remote aliases by Network.
+  v1 compared Workspaces, which gives both sides of a same-Workspace share the
+  provider's aliases; an integration test reproduces that failure.
+- The operator script `migrations/operator/000092_unified_device_alias_ownership.sql`
+  assigns the new functions to their NOLOGIN owners, grants the runtime and
+  worker entry points, and closes `activate_resource_share_v3`, the v1 map
+  reader and the v1 worker entry points.
+
+Integration coverage: same-Workspace activation creates an alias endpoint with
+no direct readiness; unusable targets fail before allocation; the rollback
+writer still withdraws the alias endpoint with both revisions; a live
+same-Workspace Resource Alias is unique in both Networks while an unrelated
+Network pair reuses an address another Network retains; and the v2 reader gives
+the consumer its Consumer Source Alias as local and the Resource Alias as the
+only remote route, and the reverse for the provider. Runtime enablement still
+needs the alias realm and pools on each Deployment, both alias runtime switches,
+alias-capable clients and live packet qualification.

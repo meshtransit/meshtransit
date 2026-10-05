@@ -101,7 +101,7 @@ func assertAliasMapCount(ctx context.Context, t *testing.T, tx pgx.Tx, self alia
 	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime; SELECT set_config('mesh.alias_map_provider_workspace_id','999',TRUE),set_config('mesh.alias_map_provider_network_id','999',TRUE),set_config('mesh.alias_map_consumer_workspace_id','999',TRUE),set_config('mesh.alias_map_consumer_network_id','999',TRUE),set_config('mesh.alias_map_endpoint_id','999',TRUE)`); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := tx.Query(ctx, `SELECT edge::TEXT FROM mesh_ops.load_device_alias_map_edges_v1($1::BYTEA,$2::BYTEA,257) AS edge`, self.machine, self.key)
+	rows, err := tx.Query(ctx, `SELECT edge::TEXT FROM mesh_ops.load_device_alias_map_edges_v2($1::BYTEA,$2::BYTEA,257) AS edge`, self.machine, self.key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func assertAliasMapCount(ctx context.Context, t *testing.T, tx pgx.Tx, self alia
 			t.Fatal("incomplete or inconsistent alias map proof")
 		}
 		for _, address := range record.Peer.Addresses {
-			if address != "100.96.0.1/32" && address != "100.96.0.9/32" && address != "fd00:feed::1/128" && address != "fd00:feed:1::1/128" {
+			if address != "100.96.0.1/32" && address != "100.96.0.9/32" && address != "fd00:feed::2/128" && address != "fd00:feed:1::1/128" {
 				rows.Close()
 				t.Fatal("foreign canonical or unexpected address escaped reader")
 			}
@@ -167,7 +167,7 @@ func assertAliasMapNegativePins(ctx context.Context, t *testing.T, tx pgx.Tx, en
 		{"withdrawn readiness", `UPDATE mesh.device_alias_client_readiness SET state='withdrawn'`},
 		{"changed policy", `UPDATE mesh_ops.network_revision SET policy_revision=policy_revision+1 WHERE workspace_id=102 AND network_id=202`},
 		{"changed recovery", `UPDATE mesh.deployment SET recovery_epoch=recovery_epoch+1`},
-		{"Resource lease differs from legacy", `UPDATE mesh.device_alias_lease SET address='fd00:feed::2' WHERE alias_role='resource' AND family=6`},
+		{"Resource lease differs from legacy", `UPDATE mesh.device_alias_lease SET address='fd00:feed::3' WHERE alias_role='resource' AND family=6`},
 		{"disabled alias pool", `UPDATE mesh.address_pool SET state='quarantined' WHERE id=2297`},
 		{"old endpoint generation", `UPDATE mesh.private_endpoint SET generation=generation+1 WHERE public_id=$1::UUID`},
 		{"expired readiness", `UPDATE mesh.device_alias_client_readiness SET created_at=transaction_timestamp()-interval '1 hour',updated_at=transaction_timestamp()-interval '1 hour',expires_at=transaction_timestamp()-interval '1 microsecond'`},
@@ -266,7 +266,7 @@ func assertAliasMapPrivileges(ctx context.Context, t *testing.T, admin *pgx.Conn
 		var read, write, execute bool
 		if err := admin.QueryRow(ctx, `SELECT has_table_privilege($1,'mesh.device_alias_client_readiness','SELECT'),
  has_table_privilege($1,'mesh.device_alias_client_readiness','INSERT,UPDATE,DELETE'),
- has_function_privilege($1,'mesh_ops.load_device_alias_map_edges_v1(bytea,bytea,integer)','EXECUTE')`, role).Scan(&read, &write, &execute); err != nil {
+ has_function_privilege($1,'mesh_ops.load_device_alias_map_edges_v2(bytea,bytea,integer)','EXECUTE')`, role).Scan(&read, &write, &execute); err != nil {
 			t.Fatal(err)
 		}
 		if read || write || execute != (role == "mesh_runtime") {
@@ -313,7 +313,7 @@ func assertAliasMapAuthentication(ctx context.Context, t *testing.T, tx pgx.Tx, 
 			if fault.query != "" {
 				_, err = tx.Exec(ctx, fault.query)
 			} else {
-				_, err = tx.Exec(ctx, `SELECT count(*) FROM mesh_ops.load_device_alias_map_edges_v1($1::BYTEA,$2::BYTEA,$3::INTEGER)`, fault.machine, fault.key, fault.limit)
+				_, err = tx.Exec(ctx, `SELECT count(*) FROM mesh_ops.load_device_alias_map_edges_v2($1::BYTEA,$2::BYTEA,$3::INTEGER)`, fault.machine, fault.key, fault.limit)
 			}
 			requireDeviceAliasCode(t, err, fault.code)
 			if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT alias_auth_fault`); err != nil {

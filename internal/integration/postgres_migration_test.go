@@ -199,6 +199,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if _, err := adminConnection.Exec(ctx, migrations.DeviceSharingDependenciesOwnershipSQL()); err != nil {
 		t.Fatalf("harden sharing dependencies: %v", err)
 	}
+	if _, err := adminConnection.Exec(ctx, migrations.UnifiedDeviceAliasOwnershipSQL()); err != nil {
+		t.Fatalf("harden unified Device alias entry points: %v", err)
+	}
 	assertResourceSharingPrivilegeContract(ctx, t, adminConnection)
 	assertDeviceSharingDeploymentPreflight(ctx, t, adminConnection)
 	seedAuthorityFixture(ctx, t, adminConnection)

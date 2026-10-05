@@ -27,6 +27,9 @@ type Params struct {
 	RecoveryEpoch    int64
 	Protocol         policy.Protocol
 	Ports            []policy.PortRange
+	// Mode forces the endpoint mode. The zero value keeps the historical
+	// choice: alias across Workspaces, direct within one Workspace.
+	Mode sharing.EndpointMode
 }
 
 // Evidence contains independent Resource, published rule and endpoint evidence.
@@ -99,6 +102,9 @@ func New(t testing.TB, params Params) Evidence {
 	mode := sharing.EndpointModeDirect
 	if sharing.ClassifyScopeRelation(params.ProviderScope, params.ConsumerScope) == sharing.ScopeRelationCrossWorkspace {
 		mode = sharing.EndpointModeFederationAlias
+	}
+	if params.Mode.IsValid() {
+		mode = params.Mode
 	}
 	endpoint, err := sharing.NewPrivateEndpoint(sharing.PrivateEndpointParams{
 		ID: endpointID, Contract: contract, AccessName: accessName, Mode: mode,

@@ -458,6 +458,7 @@ func Catalog() []Migration {
 		newMigration(89, expiredUnprovisionedShareCleanupDescription, expiredUnprovisionedShareCleanupSQL),
 		newMigration(90, "bounded Console Account Session activity renewal", accountSessionActivityRenewalSQL),
 		newMigration(91, resourceSharingNeverExpiryDescription, resourceSharingNeverExpirySQL),
+		newMigration(92, "one Network-scoped alias path for every Device share", unifiedDeviceAliasSharingSQL),
 	}
 }
 
@@ -510,3 +511,6 @@ var accountSessionActivityRenewalSQL string
 
 //go:embed 000091_resource_sharing_never_expiry.up.sql
 var resourceSharingNeverExpirySQL string
+
+//go:embed 000092_unified_device_alias_sharing.up.sql
+var unifiedDeviceAliasSharingSQL string

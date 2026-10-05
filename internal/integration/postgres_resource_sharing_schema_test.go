@@ -112,7 +112,7 @@ WHERE namespace.nspname = 'mesh_ops'
   AND procedure.proname = ANY(ARRAY[
 		'create_resource_share_offer_v2',
 		'decide_resource_share_offer_v3',
-		'activate_resource_share_v3',
+		'activate_resource_share_v4',
 		'revoke_resource_share_v6'
   ]::TEXT[])`).Scan(
 		&functionCount,

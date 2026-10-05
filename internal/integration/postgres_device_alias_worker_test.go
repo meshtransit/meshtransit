@@ -39,7 +39,7 @@ func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx
 	for _, test := range []struct{ name, query string }{
 		{"worker table read", `SET LOCAL ROLE mesh_worker; SELECT count(*) FROM mesh.device_alias_lease`},
 		{"worker readiness write", `SET LOCAL ROLE mesh_worker; DELETE FROM mesh.device_alias_client_readiness`},
-		{"runtime prepare", `SET LOCAL ROLE mesh_runtime; SELECT mesh_ops.prepare_device_alias_change_v1(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)`},
+		{"runtime prepare", `SET LOCAL ROLE mesh_runtime; SELECT mesh_ops.prepare_device_alias_change_v2(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)`},
 		{"worker inner allocator", `SET LOCAL ROLE mesh_worker; SELECT mesh_ops.reserve_device_aliases_internal_v1(NULL,NULL,NULL,NULL,NULL,NULL)`},
 	} {
 		if _, err := tx.Exec(ctx, `SAVEPOINT alias_worker_privilege`); err != nil {
@@ -78,7 +78,7 @@ func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx
 			}
 			prepare := func(change, readiness string, kind string) aliasWorkerProof {
 				var body []byte
-				err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_change_v1($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,$10::TEXT)`,
+				err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_change_v2($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,$10::TEXT)`,
 					deploymentID, endpointID, consumerID, generation, providerEpoch, consumerEpoch, []string{
 						"01890fb0-0000-7000-8000-000000004101", "01890fb0-0000-7000-8000-000000004102", "01890fb0-0000-7000-8000-000000004103", "01890fb0-0000-7000-8000-000000004104",
 					}, readiness, change, kind).Scan(&body)
@@ -135,7 +135,7 @@ func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx
 					}
 					if readinessMode {
 						var replay []byte
-						if err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_change_v1($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,'ready')`,
+						if err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_change_v2($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,'ready')`,
 							deploymentID, endpointID, consumerID, generation, providerEpoch, consumerEpoch, []string{"01890fb0-0000-7000-8000-000000004101", "01890fb0-0000-7000-8000-000000004102", "01890fb0-0000-7000-8000-000000004103", "01890fb0-0000-7000-8000-000000004104"}, "01890fb0-0000-7000-8000-000000004130", "01890fb0-0000-7000-8000-000000004131").Scan(&replay); err != nil {
 							t.Fatal(err)
 						}
@@ -268,7 +268,7 @@ func assertAliasWorkerAuthorityRejections(ctx context.Context, t *testing.T, tx 
 				t.Fatal(err)
 			}
 			var encoded []byte
-			err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_change_v1($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,$10::TEXT)`,
+			err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_change_v2($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,$10::TEXT)`,
 				deploymentID, endpointID, consumerID, generation, providerEpoch, epoch, []string{"01890fb0-0000-7000-8000-000000004101", "01890fb0-0000-7000-8000-000000004102", "01890fb0-0000-7000-8000-000000004103", "01890fb0-0000-7000-8000-000000004104"}, "01890fb0-0000-7000-8000-000000004180", "01890fb0-0000-7000-8000-000000004181", test.mode).Scan(&encoded)
 			code := "40001"
 			if test.name == "missing active rule" {
@@ -307,7 +307,7 @@ func assertAliasWorkerWithdrawal(ctx context.Context, t *testing.T, tx pgx.Tx, d
 				}
 				var body []byte
 				change := "01890fb0-0000-7000-8000-000000004201"
-				if err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_withdrawal_v1($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::UUID,$6::TEXT)`, deploymentID, endpointID, consumerID, generation, change, mode).Scan(&body); err != nil {
+				if err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_withdrawal_v2($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::UUID,$6::TEXT)`, deploymentID, endpointID, consumerID, generation, change, mode).Scan(&body); err != nil {
 					t.Fatal(err)
 				}
 				var proof aliasWorkerProof
@@ -321,7 +321,7 @@ func assertAliasWorkerWithdrawal(ctx context.Context, t *testing.T, tx pgx.Tx, d
 				}
 				events := hashIntegrationAliasEvidence(t, proof, 4220)
 				var count int
-				if err := tx.QueryRow(ctx, `SELECT mesh_ops.finalize_device_alias_withdrawal_v1($1::UUID,$2::UUID,$3::BIGINT,$4::UUID,$5::TEXT,$6::JSONB)`, deploymentID, endpointID, generation, change, mode, events).Scan(&count); err != nil || count != 2 {
+				if err := tx.QueryRow(ctx, `SELECT mesh_ops.finalize_device_alias_withdrawal_v2($1::UUID,$2::UUID,$3::BIGINT,$4::UUID,$5::TEXT,$6::JSONB)`, deploymentID, endpointID, generation, change, mode, events).Scan(&count); err != nil || count != 2 {
 					t.Fatal("withdrawal finalization", err)
 				}
 				if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL IMMEDIATE; SET CONSTRAINTS ALL DEFERRED`); err != nil {
@@ -351,7 +351,7 @@ func assertAliasWorkerWithdrawal(ctx context.Context, t *testing.T, tx pgx.Tx, d
 				if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_worker`); err != nil {
 					t.Fatal(err)
 				}
-				if err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_withdrawal_v1($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::UUID,$6::TEXT)`, deploymentID, endpointID, consumerID, generation, "01890fb0-0000-7000-8000-000000004231", mode).Scan(&body); err != nil {
+				if err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_withdrawal_v2($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::UUID,$6::TEXT)`, deploymentID, endpointID, consumerID, generation, "01890fb0-0000-7000-8000-000000004231", mode).Scan(&body); err != nil {
 					t.Fatal(err)
 				}
 				if string(body) != `{"events": [], "changed": false}` {

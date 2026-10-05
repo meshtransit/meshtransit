@@ -75,7 +75,7 @@ DELETE FROM mesh.compiled_policy_imported_resource_destination WHERE trust_contr
 			seen := map[string]bool{}
 			for pageNumber := 0; pageNumber < 32; pageNumber++ {
 				var body []byte
-				if err := tx.QueryRow(ctx, `SELECT mesh_ops.load_device_alias_work_v1($1::UUID,$2::UUID,$3::UUID,1)`, deploymentID, afterEndpoint, afterConsumer).Scan(&body); err != nil {
+				if err := tx.QueryRow(ctx, `SELECT mesh_ops.load_device_alias_work_v2($1::UUID,$2::UUID,$3::UUID,1)`, deploymentID, afterEndpoint, afterConsumer).Scan(&body); err != nil {
 					t.Fatal(err)
 				}
 				var page aliasWorkPage
@@ -123,7 +123,7 @@ DELETE FROM mesh.compiled_policy_imported_resource_destination WHERE trust_contr
 				}
 				var encoded []byte
 				change := "01890fb0-0000-7000-8000-000000004251"
-				if err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_resource_quarantine_v1($1::UUID,$2::UUID,$3::BIGINT,$4::UUID)`, deploymentID, endpointID, generation, change).Scan(&encoded); err != nil {
+				if err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_resource_quarantine_v2($1::UUID,$2::UUID,$3::BIGINT,$4::UUID)`, deploymentID, endpointID, generation, change).Scan(&encoded); err != nil {
 					t.Fatal(err)
 				}
 				var proof aliasWorkerProof
@@ -132,7 +132,7 @@ DELETE FROM mesh.compiled_policy_imported_resource_destination WHERE trust_contr
 				}
 				events := hashIntegrationAliasEvidence(t, proof, 4260)
 				var finalized int
-				if err := tx.QueryRow(ctx, `SELECT mesh_ops.finalize_device_alias_withdrawal_v1($1::UUID,$2::UUID,$3::BIGINT,$4::UUID,'quarantine_resource',$5::JSONB)`, deploymentID, endpointID, generation, change, events).Scan(&finalized); err != nil || finalized != 2 {
+				if err := tx.QueryRow(ctx, `SELECT mesh_ops.finalize_device_alias_withdrawal_v2($1::UUID,$2::UUID,$3::BIGINT,$4::UUID,'quarantine_resource',$5::JSONB)`, deploymentID, endpointID, generation, change, events).Scan(&finalized); err != nil || finalized != 2 {
 					t.Fatal("orphan resource evidence", err)
 				}
 				if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL IMMEDIATE;SET CONSTRAINTS ALL DEFERRED`); err != nil {
@@ -171,7 +171,7 @@ DELETE FROM mesh.compiled_policy_imported_resource_destination WHERE trust_contr
 			}
 		}
 		var body []byte
-		err := tx.QueryRow(ctx, `SELECT mesh_ops.load_device_alias_work_v1($1::UUID,NULL,NULL,$2::INTEGER)`, test.installation, test.limit).Scan(&body)
+		err := tx.QueryRow(ctx, `SELECT mesh_ops.load_device_alias_work_v2($1::UUID,NULL,NULL,$2::INTEGER)`, test.installation, test.limit).Scan(&body)
 		requireDeviceAliasCode(t, err, test.code)
 		if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT alias_work_denied`); err != nil {
 			t.Fatal(err)

@@ -88,7 +88,7 @@ func validAliasAddresses(values []netip.Prefix) bool {
 
 func (value DeviceAlias) matches(projection DirectDeviceProjection) bool {
 	p, self, peer, authority := value.params, projection.self, projection.peer, projection.authority
-	if !value.IsValid() || authority.Contract.ScopeRelation() != sharing.ScopeRelationCrossWorkspace ||
+	if !value.IsValid() || !authority.Contract.ScopeRelation().IsValid() ||
 		authority.Endpoint.Mode() != sharing.EndpointModeFederationAlias ||
 		p.ContractID != authority.Contract.ID() || p.EndpointID != authority.Endpoint.ID() ||
 		p.Generation != authority.Endpoint.Generation() || p.RecoveryEpoch != authority.RecoveryEpoch ||

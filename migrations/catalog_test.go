@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 91 {
-		t.Fatalf("len(Catalog()) = %d, want 91", len(catalog))
+	if len(catalog) != 92 {
+		t.Fatalf("len(Catalog()) = %d, want 92", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 91 {
-		t.Fatalf("LatestVersion() = %d, want 91", LatestVersion())
+	if LatestVersion() != 92 {
+		t.Fatalf("LatestVersion() = %d, want 92", LatestVersion())
 	}
 }
 
@@ -2443,6 +2443,66 @@ func TestAccessGraphExplanationIsBoundedAuthorizedAndReadOnly(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("Access Graph explanation SQL contains excessive capability %q", forbidden)
+		}
+	}
+}
+
+func TestUnifiedDeviceAliasMigrationScopesUniquenessToNetworks(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[91]
+	if migration.Version != 92 {
+		t.Fatalf("migration 92 = %+v, want unified alias sharing", migration)
+	}
+	for _, required := range []string{
+		"ADD CONSTRAINT device_alias_lease_network_scope_check",
+		"CHECK (provider_network_id <> consumer_network_id)",
+		"DROP INDEX mesh.device_alias_address_retained_uidx",
+		"DROP INDEX mesh.federation_alias_lease_current_address_uidx",
+		"CREATE TRIGGER device_alias_network_uniqueness BEFORE INSERT ON mesh.device_alias_lease",
+		"CREATE TRIGGER federation_alias_network_uniqueness BEFORE INSERT ON mesh.federation_alias_lease",
+		"OR lease.consumer_network_id IN (p_provider_network_id, p_consumer_network_id)",
+		"CREATE FUNCTION mesh_ops.allocate_network_scoped_alias_v1(",
+		"CREATE FUNCTION mesh_ops.activate_resource_share_v4(",
+		"allocated_alias := mesh_ops.allocate_network_scoped_alias_v1(",
+		"CREATE FUNCTION mesh_ops.reserve_device_aliases_internal_v2(",
+		"CREATE FUNCTION mesh_ops.load_device_alias_map_edges_v2(",
+		"CASE WHEN self_network=endpoint_row.provider_network_id THEN",
+		"CREATE FUNCTION mesh_ops.prepare_device_alias_change_v2(",
+		"mesh_ops.reserve_device_aliases_internal_v2(p_endpoint",
+		"mesh_ops.load_device_alias_map_edges_v2(fingerprint",
+		"CREATE FUNCTION mesh_ops.prepare_device_alias_withdrawal_v2(",
+		"CREATE FUNCTION mesh_ops.finalize_device_alias_withdrawal_v2(",
+		"CREATE FUNCTION mesh_ops.prepare_device_alias_resource_quarantine_v2(",
+		"CREATE FUNCTION mesh_ops.load_device_alias_work_v2(",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("migration 92 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"profile='cloud'",
+		"provider_workspace_id<>consumer_workspace_id AND",
+		"provider_workspace_id <> endpoint.consumer_workspace_id",
+		"endpoint.provider_workspace_id=endpoint.consumer_workspace_id",
+		"CASE WHEN self_workspace=",
+		"INSERT INTO mesh.direct_device_endpoint",
+		"BYPASSRLS",
+		"TO mesh_runtime",
+		"TO mesh_worker",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("migration 92 contains %q", forbidden)
+		}
+	}
+	ownership := UnifiedDeviceAliasOwnershipSQL()
+	for _, required := range []string{
+		"activate_resource_share_v3(\n    BIGINT, BIGINT, BIGINT, BIGINT, UUID, BIGINT, BIGINT, BIGINT, UUID, UUID, TIMESTAMPTZ\n) FROM mesh_runtime;",
+		"load_device_alias_map_edges_v1(BYTEA,BYTEA,INTEGER) FROM mesh_runtime;",
+		"load_device_alias_work_v1(UUID,UUID,UUID,INTEGER) FROM mesh_worker;",
+		"load_device_alias_work_v2(UUID,UUID,UUID,INTEGER) TO mesh_worker;",
+	} {
+		if !strings.Contains(ownership, required) {
+			t.Errorf("schema 92 ownership missing %q", required)
 		}
 	}
 }

@@ -171,7 +171,7 @@ func assertPostgreSQLResourceSharing(
 	if err != nil {
 		t.Fatalf("sharing.NewActivateContract() error = %v", err)
 	}
-	assertDirectReadinessFailures(ctx, t, admin, service, activateCommand)
+	assertShareTargetFailures(ctx, t, admin, service, activateCommand)
 	activated, err := service.ActivateContract(ctx, activateCommand)
 	if err != nil {
 		t.Fatalf("Resource Sharing ActivateContract() error = %v", err)
@@ -181,7 +181,7 @@ func assertPostgreSQLResourceSharing(
 		activeContract.Version() != contract.Version()+1 || activated.ImportedResourceVersion() != 2 {
 		t.Fatalf("Resource Sharing activate result = %+v", activated)
 	}
-	assertDirectDeviceEndpoint(ctx, t, admin, activeContract.ImportedResourceID(), "ready", 1)
+	assertSameWorkspaceAliasEndpoint(ctx, t, admin, activeContract.ImportedResourceID(), "provisioning", 1, "reserved")
 	assertCurrentConsumerContractRead(ctx, t, service, session, activeContract, accessName, 2)
 	replayedActivation, err := service.ActivateContract(ctx, activateCommand)
 	if err != nil {
@@ -211,7 +211,7 @@ func assertPostgreSQLResourceSharing(
 	crossWorkspaceImport := assertCrossWorkspaceResourceSharingConsent(
 		ctx, t, admin, workerPool, service, providerScope, resourceID, maximumTraffic, reason,
 	)
-	assertLegacyDirectContractWithdrawal(ctx, t, admin, activeContract)
+	assertLegacyRevokeWithdrawsSameWorkspaceAlias(ctx, t, admin, activeContract)
 	revokeCommand, err := sharing.NewRevokeContract(sharing.RevokeContractParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		ContractID: activeContract.ID(), ExpectedContractVersion: activeContract.Version(),
@@ -235,7 +235,7 @@ func assertPostgreSQLResourceSharing(
 		ctx, t, admin, contract.ImportedResourceID(), accessName, "withdrawn", 2,
 	)
 	assertCurrentConsumerContractRead(ctx, t, service, session, revokedContract, accessName, 3)
-	assertDirectDeviceEndpoint(ctx, t, admin, activeContract.ImportedResourceID(), "revoked", 2)
+	assertSameWorkspaceAliasEndpoint(ctx, t, admin, activeContract.ImportedResourceID(), "revoked", 2, "withdrawn")
 	foreignConsumerScope := resourceAuthorityScope(t, 102, 202)
 	foreignConsumerSession := authorityConfirmerAccountSessionFixture(t)
 	sqlPublicationContract := createUnstagedPrivateEndpointFixture(
@@ -246,8 +246,10 @@ func assertPostgreSQLResourceSharing(
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The revoked same-Workspace share released fd00:feed::1 (no client lease
+	// ever held it); the active cross-Workspace share still retains ::2.
 	assertPrivateEndpointPublication(ctx, t, admin, worker,
-		sqlPublicationContract.ImportedResourceID(), aliasAccessName, "fd00:feed::2/128")
+		sqlPublicationContract.ImportedResourceID(), aliasAccessName, "fd00:feed::1/128")
 	aliasRevoke, err := sharing.NewRevokeContract(sharing.RevokeContractParams{
 		ProviderScope: providerScope, ConsumerScope: foreignConsumerScope,
 		ContractID: sqlPublicationContract.ID(), ExpectedContractVersion: sqlPublicationContract.Version(),
@@ -293,6 +295,14 @@ func assertPostgreSQLResourceSharing(
 	assertExpiredUnprovisionedContractCleanup(
 		ctx, t, admin, store, session, providerScope, consumerScope, resourceID, maximumTraffic, reason,
 	)
+	// Alias pools for both roles exist from the cross-Workspace qualification;
+	// a fresh same-Workspace share now exercises the complete alias path.
+	sameWorkspaceShare := createUnstagedPrivateEndpointFixture(
+		ctx, t, service, session, session, providerScope, consumerScope,
+		resourceID, maximumTraffic, reason, 160,
+	)
+	assertSameWorkspaceAliasAllocation(ctx, t, admin, sameWorkspaceShare)
+	assertSameWorkspaceAliasMapProjection(ctx, t, admin, sameWorkspaceShare)
 }
 
 func assertExpiredUnprovisionedContractCleanup(
@@ -589,10 +599,12 @@ func assertCrossWorkspaceResourceSharingConsent(
 	}
 	assertPrivateEndpointProvisioning(
 		ctx, t, admin, activeContract.ImportedResourceID(), "provisioning", 1,
-		"reserved", 1, "fd00:feed::1",
+		// The same-Workspace share of this provider Device still retains
+		// fd00:feed::1 in provider Network 203, so the lowest free host is ::2.
+		"reserved", 1, "fd00:feed::2",
 	)
 	assertPrivateEndpointPublicationViaAdapter(
-		ctx, t, admin, workerPool, activeContract.ImportedResourceID(), accessName, "fd00:feed::1",
+		ctx, t, admin, workerPool, activeContract.ImportedResourceID(), accessName, "fd00:feed::2",
 	)
 	assertPostgreSQLDeviceAliasReservation(ctx, t, admin, activeContract.ImportedResourceID())
 	assertCrossWorkspaceSharingConsentEvidence(ctx, t, admin, offer.Offer().ID())

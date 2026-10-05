@@ -41,12 +41,12 @@ func NewDeviceAliasWorkerStore(pool *Pool) (*DeviceAliasWorkerStore, error) {
 	return &DeviceAliasWorkerStore{database: pool.outboxDatabase}, nil
 }
 
-const prepareDeviceAliasChangeSQL = `SELECT mesh_ops.prepare_device_alias_change_v1(
+const prepareDeviceAliasChangeSQL = `SELECT mesh_ops.prepare_device_alias_change_v2(
  $1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,$10::TEXT)`
-const prepareDeviceAliasResourceQuarantineSQL = `SELECT mesh_ops.prepare_device_alias_resource_quarantine_v1($1::UUID,$2::UUID,$3::BIGINT,$4::UUID)`
+const prepareDeviceAliasResourceQuarantineSQL = `SELECT mesh_ops.prepare_device_alias_resource_quarantine_v2($1::UUID,$2::UUID,$3::BIGINT,$4::UUID)`
 
-const prepareDeviceAliasWithdrawalSQL = `SELECT mesh_ops.prepare_device_alias_withdrawal_v1($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::UUID,$6::TEXT)`
-const finalizeDeviceAliasWithdrawalSQL = `SELECT mesh_ops.finalize_device_alias_withdrawal_v1($1::UUID,$2::UUID,$3::BIGINT,$4::UUID,$5::TEXT,$6::JSONB)`
+const prepareDeviceAliasWithdrawalSQL = `SELECT mesh_ops.prepare_device_alias_withdrawal_v2($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::UUID,$6::TEXT)`
+const finalizeDeviceAliasWithdrawalSQL = `SELECT mesh_ops.finalize_device_alias_withdrawal_v2($1::UUID,$2::UUID,$3::BIGINT,$4::UUID,$5::TEXT,$6::JSONB)`
 
 const finalizeDeviceAliasChangeSQL = `SELECT mesh_ops.finalize_device_alias_change_v1($1::UUID,$2::UUID,$3::BIGINT,$4::UUID,$5::TEXT,$6::JSONB)`
 
@@ -220,7 +220,7 @@ func decodeDeviceAliasChangeProof(encoded []byte, intent devicealias.ChangeInten
 		if previous, err := hex.DecodeString(event.PreviousHash); err != nil || len(previous) != sha256.Size {
 			return deviceAliasChangeProof{}, ErrDeviceAliasChange
 		}
-		if index == 1 && (event.WorkspaceID == proof.Events[0].WorkspaceID || event.NetworkID == proof.Events[0].NetworkID || event.StreamID == proof.Events[0].StreamID) {
+		if index == 1 && (event.NetworkID == proof.Events[0].NetworkID || event.StreamID == proof.Events[0].StreamID) {
 			return deviceAliasChangeProof{}, ErrDeviceAliasChange
 		}
 	}

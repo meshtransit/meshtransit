@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const loadDeviceAliasWorkSQL = `SELECT mesh_ops.load_device_alias_work_v1($1::UUID,$2::UUID,$3::UUID,$4::INTEGER)`
+const loadDeviceAliasWorkSQL = `SELECT mesh_ops.load_device_alias_work_v2($1::UUID,$2::UUID,$3::UUID,$4::INTEGER)`
 
 var _ devicealias.Work = (*DeviceAliasWorkerStore)(nil)
 

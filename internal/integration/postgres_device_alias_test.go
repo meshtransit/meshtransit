@@ -164,7 +164,7 @@ func assertPostgreSQLDeviceAliasReservation(
 			sourceAliases[row.Family] = row.Address
 		}
 	}
-	if resourceAliases[6] != "fd00:feed::1/128" || sourceAliases[6] != "fd00:feed:1::1/128" ||
+	if resourceAliases[6] != "fd00:feed::2/128" || sourceAliases[6] != "fd00:feed:1::1/128" ||
 		resourceAliases[4] != "100.96.0.1/32" || sourceAliases[4] != "100.96.0.9/32" {
 		t.Fatalf("role-separated alias pair resource=%v source=%v", resourceAliases, sourceAliases)
 	}

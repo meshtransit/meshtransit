@@ -129,3 +129,10 @@ var resourceSharingNeverExpiryOwnershipSQL string
 func ResourceSharingNeverExpiryOwnershipSQL() string {
 	return resourceSharingNeverExpiryOwnershipSQL
 }
+
+//go:embed operator/000092_unified_device_alias_ownership.sql
+var unifiedDeviceAliasOwnershipSQL string
+
+// UnifiedDeviceAliasOwnershipSQL exposes the Network-scoped alias entry points
+// and closes the earlier cross-Workspace-only and direct activation ones.
+func UnifiedDeviceAliasOwnershipSQL() string { return unifiedDeviceAliasOwnershipSQL }

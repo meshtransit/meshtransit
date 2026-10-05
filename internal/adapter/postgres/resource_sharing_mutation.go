@@ -624,12 +624,9 @@ func (store *ResourceSharingStore) ActivateContract(
 	); err != nil {
 		return sharing.MutationResult{}, resourceSharingDatabaseError(ctx, err)
 	}
-	expectedAliasVersion := int64(1)
-	if command.ProviderScope().WorkspaceID() == command.ConsumerScope().WorkspaceID() {
-		expectedAliasVersion = 0
-	}
+	// Every Device share activates the alias endpoint and its Resource Alias lease.
 	if contractVersion != command.ExpectedContractVersion()+1 || revisions.importedVersion <= 1 ||
-		revisions.aliasLeaseVersion != expectedAliasVersion || revisions.endpointVersion != 1 {
+		revisions.aliasLeaseVersion != 1 || revisions.endpointVersion != 1 {
 		return sharing.MutationResult{}, sharing.ErrUnavailable
 	}
 	projection, err := readResourceSharingOffer(ctx, transaction, locator.offerID)

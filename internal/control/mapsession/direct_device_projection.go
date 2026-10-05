@@ -461,10 +461,14 @@ func directConsumerRuleMatches(projection DirectDeviceProjection) bool {
 	return err == nil && traffic.Hash() == projection.authority.ConsumerRule.Hash()
 }
 
+// validDeviceProjectionMode admits the alias path for every Network pair. The
+// canonical-address direct path remains only for existing same-Workspace
+// readiness until it is withdrawn; it is never valid across Workspaces.
 func validDeviceProjectionMode(projection DirectDeviceProjection) bool {
-	if projection.authority.Contract.ScopeRelation() == sharing.ScopeRelationCrossWorkspace {
-		return projection.aliases.IsValid() && projection.authority.Endpoint.Mode() == sharing.EndpointModeFederationAlias
+	relation := projection.authority.Contract.ScopeRelation()
+	if projection.authority.Endpoint.Mode() == sharing.EndpointModeFederationAlias {
+		return relation.IsValid() && projection.aliases.IsValid()
 	}
 	return projection.aliases.isAbsent() &&
-		projection.authority.Contract.ScopeRelation() == sharing.ScopeRelationWithinWorkspace && projection.authority.Endpoint.Mode() == sharing.EndpointModeDirect
+		relation == sharing.ScopeRelationWithinWorkspace && projection.authority.Endpoint.Mode() == sharing.EndpointModeDirect
 }

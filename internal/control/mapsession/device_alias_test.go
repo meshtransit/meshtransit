@@ -8,6 +8,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 	"github.com/meshtransit/meshtransit/internal/sharing/sharingtest"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
@@ -143,4 +144,57 @@ func deviceAliasProjectionParams(t *testing.T, self, provider, consumer Snapshot
 	}
 	p.Aliases = aliases
 	return p
+}
+
+func TestDeviceAliasProjectionAdmitsSameWorkspaceShares(t *testing.T) {
+	t.Parallel()
+	provider, consumer, _ := directDeviceFixture(t, policy.ProtocolTCP, []policy.PortRange{mustDirectPort(t, 8443, 8443)})
+	if provider.Scope().WorkspaceID() != consumer.Scope().WorkspaceID() || provider.Scope() == consumer.Scope() {
+		t.Fatal("fixture is not two Networks of one Workspace")
+	}
+	pp := provider.params()
+	pp.Addresses = append(pp.Addresses, netip.MustParsePrefix("fd00:10::1/128"))
+	provider, err := NewSnapshot(pp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp := consumer.params()
+	cp.Addresses = append(cp.Addresses, netip.MustParsePrefix("fd00:20::1/128"))
+	consumer, err = NewSnapshot(cp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := sharingtest.New(t, sharingtest.Params{ProviderScope: provider.Scope(), ConsumerScope: consumer.Scope(),
+		ProviderDeviceID: provider.NodeID(), ConsumerDeviceID: consumer.NodeID(), ProviderAddress: netip.MustParseAddr("100.96.0.1"),
+		EvaluatedAt: provider.CreatedAt().Add(time.Hour), RecoveryEpoch: provider.RecoveryEpoch(), Protocol: policy.ProtocolTCP,
+		Ports: []policy.PortRange{mustDirectPort(t, 8443, 8443)}, Mode: sharing.EndpointModeFederationAlias})
+	for _, self := range []Snapshot{provider, consumer} {
+		params := deviceAliasProjectionParams(t, self, provider, consumer, evidence)
+		projection, err := NewDirectDeviceProjection(params)
+		if err != nil {
+			t.Fatalf("same-Workspace alias projection rejected for %v: %v", self.Scope(), err)
+		}
+		mapped, err := self.WithDirectDeviceProjections([]DirectDeviceProjection{projection})
+		if err != nil {
+			t.Fatal(err)
+		}
+		peers := mapped.AuthorizedPeers()
+		if len(peers) != 1 || !slices.Equal(peers[0].Addresses(), params.Aliases.RemoteAddresses()) {
+			t.Fatal("same-Workspace alias share exposed a canonical address")
+		}
+		grant, ok := mapped.DeviceAliasFor(peers[0].NodeID())
+		if !ok || grant.IsConsumer != (self.Scope() == consumer.Scope()) ||
+			!slices.Equal(grant.LocalAddresses, params.Aliases.LocalAddresses()) {
+			t.Fatal("same-Workspace alias grant has the wrong role or local alias")
+		}
+	}
+	// An alias pair never rides on a direct endpoint, and a direct endpoint
+	// never carries alias evidence.
+	direct := sharingtest.New(t, sharingtest.Params{ProviderScope: provider.Scope(), ConsumerScope: consumer.Scope(),
+		ProviderDeviceID: provider.NodeID(), ConsumerDeviceID: consumer.NodeID(), ProviderAddress: netip.MustParseAddr("100.96.0.1"),
+		EvaluatedAt: provider.CreatedAt().Add(time.Hour), RecoveryEpoch: provider.RecoveryEpoch(), Protocol: policy.ProtocolTCP,
+		Ports: []policy.PortRange{mustDirectPort(t, 8443, 8443)}, Mode: sharing.EndpointModeDirect})
+	if _, err := NewDirectDeviceProjection(deviceAliasProjectionParams(t, consumer, provider, consumer, direct)); err == nil {
+		t.Fatal("alias evidence admitted on a direct endpoint")
+	}
 }
