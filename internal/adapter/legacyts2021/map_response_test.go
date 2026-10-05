@@ -108,8 +108,8 @@ func TestEncodeAuthorityWithdrawalClearsRuntimeAuthority(t *testing.T) {
 	if err := json.Unmarshal(document, &fields); err != nil {
 		t.Fatalf("decode authority withdrawal fields: %v", err)
 	}
-	if len(fields) != 3 || string(fields["Peers"]) != "[]" ||
-		string(fields["PacketFilter"]) != "[]" {
+	if len(fields) != 4 || string(fields["Peers"]) != "[]" ||
+		string(fields["PacketFilter"]) != "[]" || string(fields["DNSConfig"]) != "{}" {
 		t.Fatalf("authority withdrawal fields = %s", document)
 	}
 	var response tailcfg.MapResponse

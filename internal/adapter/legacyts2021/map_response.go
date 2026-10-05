@@ -32,12 +32,14 @@ type fullMapResponseWire struct {
 	Peers        []*tailcfg.Node      `json:"Peers"`
 	PacketFilter []tailcfg.FilterRule `json:"PacketFilter"`
 	DERPMap      *tailcfg.DERPMap     `json:"DERPMap"`
+	DNSConfig    *tailcfg.DNSConfig   `json:"DNSConfig"`
 }
 
 type authorityWithdrawalMapResponseWire struct {
 	Node         *tailcfg.Node        `json:"Node"`
 	Peers        []*tailcfg.Node      `json:"Peers"`
 	PacketFilter []tailcfg.FilterRule `json:"PacketFilter"`
+	DNSConfig    *tailcfg.DNSConfig   `json:"DNSConfig"`
 }
 
 // EncodeFullMapResponse encodes one zstd-compressed length-delimited full map.
@@ -77,12 +79,17 @@ func encodeFullMapResponse(
 	if err != nil {
 		return nil, err
 	}
+	dnsConfig, err := mapDNSConfig(snapshot)
+	if err != nil {
+		return nil, err
+	}
 	document, err := json.Marshal(fullMapResponseWire{
 		Domain:       snapshot.NetworkName().String(),
 		Node:         self,
 		Peers:        peers,
 		PacketFilter: packetFilter,
 		DERPMap:      relayDirectory,
+		DNSConfig:    dnsConfig,
 	})
 	if err != nil {
 		clear(document)
@@ -112,6 +119,7 @@ func encodeAuthorityWithdrawalMapResponse(
 		Node:         self,
 		Peers:        []*tailcfg.Node{},
 		PacketFilter: []tailcfg.FilterRule{},
+		DNSConfig:    &tailcfg.DNSConfig{},
 	})
 	if err != nil {
 		clear(document)

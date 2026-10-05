@@ -24,9 +24,10 @@ func TestEncodeAuthorityDeltaMapResponseAddsPeerAndPolicyAtomically(t *testing.T
 		t.Fatalf("mapsession.NewAuthorityDelta() error = %v", err)
 	}
 	fields, response := decodeAuthorityDeltaFixture(t, delta)
-	if len(fields) != 2 || fields["PeersChanged"] == nil || fields["PacketFilter"] == nil ||
+	if len(fields) != 3 || fields["PeersChanged"] == nil || fields["PacketFilter"] == nil ||
+		string(fields["DNSConfig"]) != "{}" ||
 		fields["Node"] != nil || fields["Peers"] != nil || fields["PeersRemoved"] != nil {
-		t.Fatalf("authority delta fields = %v, want PeersChanged + PacketFilter", fields)
+		t.Fatalf("authority delta fields = %v, want PeersChanged + PacketFilter + complete DNSConfig", fields)
 	}
 	if len(response.PeersChanged) != 1 ||
 		response.PeersChanged[0].ID != tailcfg.NodeID(peer.NumericNodeID()) ||
@@ -66,8 +67,8 @@ func TestEncodeAuthorityDeltaMapResponseRevokesPeerAndClearsPolicy(t *testing.T)
 	}
 
 	fields, response := decodeAuthorityDeltaFixture(t, delta)
-	if len(fields) != 2 || fields["PeersRemoved"] == nil || fields["PacketFilter"] == nil ||
-		string(fields["PacketFilter"]) != "[]" || fields["PeersChanged"] != nil ||
+	if len(fields) != 3 || fields["PeersRemoved"] == nil || fields["PacketFilter"] == nil ||
+		string(fields["PacketFilter"]) != "[]" || string(fields["DNSConfig"]) != "{}" || fields["PeersChanged"] != nil ||
 		fields["Peers"] != nil || fields["Node"] != nil {
 		t.Fatalf("revocation delta fields = %v, want PeersRemoved + explicit empty PacketFilter", fields)
 	}
@@ -108,7 +109,7 @@ func TestEncodeAuthorityDeltaMapResponseReplacesPolicyWithoutPeerChurn(t *testin
 	}
 
 	fields, response := decodeAuthorityDeltaFixture(t, delta)
-	if len(fields) != 1 || fields["PacketFilter"] == nil || fields["Node"] != nil ||
+	if len(fields) != 2 || fields["PacketFilter"] == nil || string(fields["DNSConfig"]) != "{}" || fields["Node"] != nil ||
 		fields["PeersChanged"] != nil || fields["PeersRemoved"] != nil ||
 		fields["Peers"] != nil || len(response.PacketFilter) != 1 {
 		t.Fatalf("policy-only authority delta = fields %v response %+v", fields, response)

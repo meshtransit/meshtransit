@@ -15,6 +15,7 @@ type authorityDeltaMapResponseWire struct {
 	PeersChanged []*tailcfg.Node      `json:"PeersChanged,omitempty"`
 	PeersRemoved []tailcfg.NodeID     `json:"PeersRemoved,omitempty"`
 	PacketFilter []tailcfg.FilterRule `json:"PacketFilter"`
+	DNSConfig    *tailcfg.DNSConfig   `json:"DNSConfig"`
 }
 
 // EncodeAuthorityDeltaMapResponse encodes one contiguous durable authority
@@ -85,11 +86,16 @@ func encodeAuthorityDeltaMapResponse(
 	if err != nil {
 		return nil, err
 	}
+	dnsConfig, err := mapDNSConfig(snapshot)
+	if err != nil {
+		return nil, err
+	}
 	document, err := json.Marshal(authorityDeltaMapResponseWire{
 		Node:         self,
 		PeersChanged: peers,
 		PeersRemoved: removed,
 		PacketFilter: packetFilter,
+		DNSConfig:    dnsConfig,
 	})
 	if err != nil {
 		clear(document)
