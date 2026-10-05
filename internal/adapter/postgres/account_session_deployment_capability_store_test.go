@@ -64,3 +64,28 @@ func TestAccountSessionStoreDeploymentCapabilitiesConcealsStaleAuthority(t *test
 		t.Fatalf("transaction commit/rollback = %d/%d, want 1/0", transaction.commits, transaction.rollbacks)
 	}
 }
+
+func TestDecodeDeploymentCapabilitiesEntitlement(t *testing.T) {
+	t.Parallel()
+	const base = `{"deployment_id":"01890f00-0000-7000-8000-000000000001","profile":"cloud","revision":3,`
+	result, err := decodeAccountSessionDeploymentCapabilities(base + `"entitlement":{"id":"01890f00-0000-7000-8000-0000000e0001",
+"generation":2,"max_active_workspaces":50,"max_owned_workspaces_per_account":5,"capabilities":[],
+"expires_at":"2026-12-01T00:00:00+00:00","grace_seconds":0,"state":"active"}}`)
+	if err != nil || result.Entitlement == nil || result.Entitlement.MaxActiveWorkspaces != 50 ||
+		result.Entitlement.State != "active" {
+		t.Fatalf("entitlement decode = %+v, %v", result, err)
+	}
+	result, err = decodeAccountSessionDeploymentCapabilities(base + `"entitlement":null}`)
+	if err != nil || result.Entitlement != nil {
+		t.Fatalf("absent entitlement decode = %+v, %v", result, err)
+	}
+	for _, encoded := range []string{
+		base + `"entitlement":null,"extra":1}`,
+		base + `"entitlement":{"id":"bad","generation":1,"max_active_workspaces":1,"max_owned_workspaces_per_account":1,"capabilities":[],"expires_at":"x","grace_seconds":0,"state":"active"}}`,
+		base + `"entitlement":{"id":"01890f00-0000-7000-8000-0000000e0001","generation":1,"max_active_workspaces":1,"max_owned_workspaces_per_account":1,"expires_at":"x","grace_seconds":0,"state":"active"}}`,
+	} {
+		if _, err := decodeAccountSessionDeploymentCapabilities(encoded); err == nil {
+			t.Fatalf("accepted %s", encoded)
+		}
+	}
+}

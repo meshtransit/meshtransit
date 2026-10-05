@@ -56,7 +56,7 @@ const readAccountSessionManagementScopesSQL = `SELECT
     )::TEXT`
 
 const readAccountSessionDeploymentCapabilitiesSQL = `SELECT
-    mesh_ops.read_console_deployment_capabilities_v1(
+    mesh_ops.read_console_deployment_capabilities_v2(
         $1::UUID, $2::UUID, $3::UUID, $4::UUID,
         $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
         $10::UUID, $11::TIMESTAMPTZ

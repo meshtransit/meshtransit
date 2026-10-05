@@ -271,12 +271,12 @@ func TestManagementDocumentConsoleCapabilitiesAreAuthenticatedNavigationEvidence
 		t.Fatal("Deployment capability projection accepts unknown fields")
 	}
 	properties := profileMap(t, projection, "properties")
-	if len(properties) != 7 || profileMap(t, properties, "deployment_profile")["const"] != "self_hosted" ||
-		profileMap(t, properties, "workspace_mode")["const"] != "single" ||
-		profileMap(t, properties, "max_active_workspaces")["const"] != float64(1) ||
-		profileMap(t, properties, "cloud_billing")["const"] != false ||
-		profileMap(t, properties, "platform_operations")["const"] != false {
-		t.Fatal("Deployment capability projection widened the supported self-hosted baseline")
+	if len(properties) != 9 || profileMap(t, properties, "max_active_workspaces")["maximum"] != float64(1000000) ||
+		!reflect.DeepEqual(profileMap(t, properties, "workspace_mode")["enum"], []any{"single", "multi"}) ||
+		!reflect.DeepEqual(profileMap(t, properties, "entitlement_state")["enum"],
+			[]any{"none", "active", "grace", "expired"}) ||
+		len(profileArray(t, projection, "required")) != 9 {
+		t.Fatal("Deployment capability projection lost its bounded entitlement-derived shape")
 	}
 }
 

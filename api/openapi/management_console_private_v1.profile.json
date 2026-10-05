@@ -196,11 +196,14 @@
     "ConsoleDeploymentCapabilities": {
       "type": "object",
       "additionalProperties": false,
+      "description": "Navigation evidence only. Profiles share one feature set; limits come from the verified Deployment entitlement (ADR-050). Without an entitlement a self-hosted Deployment reports the single-Workspace baseline.",
       "required": [
         "deployment_profile",
         "workspace_mode",
         "max_active_workspaces",
+        "max_owned_workspaces_per_account",
         "workspace_creation",
+        "entitlement_state",
         "cloud_billing",
         "platform_operations",
         "capability_revision"
@@ -208,27 +211,50 @@
       "properties": {
         "deployment_profile": {
           "type": "string",
-          "const": "self_hosted"
+          "enum": [
+            "self_hosted",
+            "cloud"
+          ]
         },
         "workspace_mode": {
           "type": "string",
-          "const": "single"
+          "enum": [
+            "single",
+            "multi"
+          ]
         },
         "max_active_workspaces": {
           "type": "integer",
-          "const": 1
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "max_owned_workspaces_per_account": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
         },
         "workspace_creation": {
           "type": "string",
-          "const": "bootstrap_only"
+          "enum": [
+            "bootstrap_only",
+            "account",
+            "suspended"
+          ]
+        },
+        "entitlement_state": {
+          "type": "string",
+          "enum": [
+            "none",
+            "active",
+            "grace",
+            "expired"
+          ]
         },
         "cloud_billing": {
-          "type": "boolean",
-          "const": false
+          "type": "boolean"
         },
         "platform_operations": {
-          "type": "boolean",
-          "const": false
+          "type": "boolean"
         },
         "capability_revision": {
           "type": "integer",

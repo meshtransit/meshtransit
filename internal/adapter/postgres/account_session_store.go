@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -390,15 +391,29 @@ func (store *AccountSessionStore) ReadDeploymentCapabilities(
 	return result, nil
 }
 
+type accountSessionEntitlementRecord struct {
+	ID                           string   `json:"id"`
+	Generation                   int64    `json:"generation"`
+	MaxActiveWorkspaces          int64    `json:"max_active_workspaces"`
+	MaxOwnedWorkspacesPerAccount int64    `json:"max_owned_workspaces_per_account"`
+	Capabilities                 []string `json:"capabilities"`
+	ExpiresAt                    string   `json:"expires_at"`
+	GraceSeconds                 int64    `json:"grace_seconds"`
+	State                        string   `json:"state"`
+}
+
 type accountSessionDeploymentCapabilitiesRecord struct {
-	DeploymentID string `json:"deployment_id"`
-	Profile      string `json:"profile"`
-	Revision     int64  `json:"revision"`
+	DeploymentID string                           `json:"deployment_id"`
+	Profile      string                           `json:"profile"`
+	Revision     int64                            `json:"revision"`
+	Entitlement  *accountSessionEntitlementRecord `json:"entitlement"`
 }
 
 func decodeAccountSessionDeploymentCapabilities(encoded string) (sessioncontext.CapabilityReadResult, error) {
 	var record accountSessionDeploymentCapabilitiesRecord
-	if err := json.Unmarshal([]byte(encoded), &record); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(encoded))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&record); err != nil {
 		return sessioncontext.CapabilityReadResult{}, sessioncontext.ErrInvalidCapabilityResult
 	}
 	deploymentID, err := deployment.ParseID(record.DeploymentID)
@@ -406,11 +421,22 @@ func decodeAccountSessionDeploymentCapabilities(encoded string) (sessioncontext.
 	if err != nil || !profile.IsValid() || record.Revision <= 0 {
 		return sessioncontext.CapabilityReadResult{}, sessioncontext.ErrInvalidCapabilityResult
 	}
-	return sessioncontext.CapabilityReadResult{
+	result := sessioncontext.CapabilityReadResult{
 		DeploymentID: deploymentID,
 		Profile:      profile,
 		Revision:     record.Revision,
-	}, nil
+	}
+	if entitlement := record.Entitlement; entitlement != nil {
+		if _, err := publicid.Parse(entitlement.ID); err != nil || entitlement.Capabilities == nil {
+			return sessioncontext.CapabilityReadResult{}, sessioncontext.ErrInvalidCapabilityResult
+		}
+		result.Entitlement = &sessioncontext.EntitlementEvidence{
+			Generation: entitlement.Generation, MaxActiveWorkspaces: entitlement.MaxActiveWorkspaces,
+			MaxOwnedWorkspacesPerAccount: entitlement.MaxOwnedWorkspacesPerAccount,
+			Capabilities:                 entitlement.Capabilities, State: entitlement.State,
+		}
+	}
+	return result, nil
 }
 
 type accountSessionManagementScopesRecord struct {

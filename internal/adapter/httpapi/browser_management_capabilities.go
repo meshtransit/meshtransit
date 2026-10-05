@@ -69,7 +69,9 @@ func (browser *BrowserManagement) readDeploymentCapabilities(
 		DeploymentProfile:   string(capabilities.Profile()),
 		WorkspaceMode:       string(capabilities.WorkspaceMode()),
 		MaxActiveWorkspaces: capabilities.MaxActiveWorkspaces(),
+		MaxOwnedWorkspaces:  capabilities.MaxOwnedWorkspacesPerAccount(),
 		WorkspaceCreation:   string(capabilities.WorkspaceCreation()),
+		EntitlementState:    string(capabilities.EntitlementState()),
 		CloudBilling:        capabilities.CloudBilling(),
 		PlatformOperations:  capabilities.PlatformOperations(),
 		CapabilityRevision:  capabilities.Revision(),
@@ -98,7 +100,9 @@ type deploymentCapabilityResponse struct {
 	DeploymentProfile   string `json:"deployment_profile"`
 	WorkspaceMode       string `json:"workspace_mode"`
 	MaxActiveWorkspaces int    `json:"max_active_workspaces"`
+	MaxOwnedWorkspaces  int    `json:"max_owned_workspaces_per_account"`
 	WorkspaceCreation   string `json:"workspace_creation"`
+	EntitlementState    string `json:"entitlement_state"`
 	CloudBilling        bool   `json:"cloud_billing"`
 	PlatformOperations  bool   `json:"platform_operations"`
 	CapabilityRevision  int64  `json:"capability_revision"`
