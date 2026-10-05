@@ -777,5 +777,538 @@
         }
       }
     }
+  },
+  "workspaceMembers": {
+    "get": {
+      "operationId": "listWorkspaceMembers",
+      "summary": "List Workspace members and their built-in roles",
+      "description": "Requires member.read from the Workspace owner or a Workspace-scope built-in role. Members without a role hold the implicit member role. At most 1000 members are returned; truncated reports more.",
+      "security": [
+        {
+          "accountSessionCookie": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Current members",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "workspace_id",
+                      "members",
+                      "truncated"
+                    ],
+                    "properties": {
+                      "workspace_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "members": {
+                        "type": "array",
+                        "maxItems": 1000,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "principal_id",
+                            "display_name",
+                            "membership_state",
+                            "owner",
+                            "role_assignments"
+                          ],
+                          "properties": {
+                            "principal_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "display_name": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "membership_state": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "suspended"
+                              ]
+                            },
+                            "membership_expires_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "owner": {
+                              "type": "boolean"
+                            },
+                            "role_assignments": {
+                              "type": "array",
+                              "maxItems": 64,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "id",
+                                  "role",
+                                  "version",
+                                  "created_at"
+                                ],
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "format": "uuid"
+                                  },
+                                  "role": {
+                                    "type": "string",
+                                    "enum": [
+                                      "admin",
+                                      "network_admin",
+                                      "it_admin",
+                                      "billing_admin",
+                                      "auditor"
+                                    ]
+                                  },
+                                  "network_id": {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "description": "Present only for a Network-scope assignment; absent means every Network of the Workspace."
+                                  },
+                                  "expires_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  },
+                                  "version": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "created_at": {
+                                    "type": "string",
+                                    "format": "date-time"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "truncated": {
+                        "type": "boolean"
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "403": {
+          "description": "Missing member.read authority"
+        },
+        "400": {
+          "description": "Invalid input"
+        },
+        "401": {
+          "description": "Inactive Session"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable or uncertain outcome"
+        }
+      }
+    }
+  },
+  "workspaceRoleAssign": {
+    "post": {
+      "operationId": "assignWorkspaceRole",
+      "summary": "Grant one built-in role to a Workspace member",
+      "description": "Owners may grant every role; admin and it_admin may grant only the roles below them. Nobody changes their own roles and the owner holds no assignments. assignment_id is client-chosen: retrying the same request returns 200 with the original assignment, while reusing it for another request conflicts. Unknown outcomes require a fresh member read.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "assignment_id",
+                "principal_id",
+                "role"
+              ],
+              "properties": {
+                "assignment_id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "Client-chosen UUIDv7 idempotency key"
+                },
+                "principal_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "admin",
+                    "network_admin",
+                    "it_admin",
+                    "billing_admin",
+                    "auditor"
+                  ]
+                },
+                "network_id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "Limits network_admin, it_admin or auditor to one Network"
+                },
+                "expires_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Optional future expiry"
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "201": {
+          "description": "Role granted",
+          "headers": {
+            "ETag": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "role",
+                      "version",
+                      "created_at"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "admin",
+                          "network_admin",
+                          "it_admin",
+                          "billing_admin",
+                          "auditor"
+                        ]
+                      },
+                      "network_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Present only for a Network-scope assignment; absent means every Network of the Workspace."
+                      },
+                      "expires_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "200": {
+          "description": "Earlier identical grant replayed",
+          "headers": {
+            "ETag": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "role",
+                      "version",
+                      "created_at"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "admin",
+                          "network_admin",
+                          "it_admin",
+                          "billing_admin",
+                          "auditor"
+                        ]
+                      },
+                      "network_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Present only for a Network-scope assignment; absent means every Network of the Workspace."
+                      },
+                      "expires_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "403": {
+          "description": "Missing authority, above the delegation ceiling, self-change or missing CSRF proof"
+        },
+        "404": {
+          "description": "Unknown member or Network"
+        },
+        "409": {
+          "description": "Role already active or assignment_id reused"
+        },
+        "400": {
+          "description": "Invalid input"
+        },
+        "401": {
+          "description": "Inactive Session"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable or uncertain outcome"
+        }
+      }
+    }
+  },
+  "workspaceRoleRevoke": {
+    "post": {
+      "operationId": "revokeWorkspaceRole",
+      "summary": "Revoke one built-in role assignment",
+      "description": "Same delegation ceiling as granting. Revocation is terminal and takes effect for new authority checks immediately. Retrying with the reviewed version returns the same receipt.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "name": "assignment_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/IfMatch"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "maxProperties": 0
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Role revoked",
+          "headers": {
+            "ETag": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "state",
+                      "version"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "state": {
+                        "type": "string",
+                        "const": "revoked"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 2
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "403": {
+          "description": "Missing authority, above the delegation ceiling, self-change or missing CSRF proof"
+        },
+        "404": {
+          "description": "Unknown assignment"
+        },
+        "409": {
+          "description": "Stale version"
+        },
+        "428": {
+          "description": "If-Match is required"
+        },
+        "400": {
+          "description": "Invalid input"
+        },
+        "401": {
+          "description": "Inactive Session"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable or uncertain outcome"
+        }
+      }
+    }
   }
 }

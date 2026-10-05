@@ -253,9 +253,10 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	approval := approvalMatched && approvalPath.allowedMethod(request.Method) == request.Method
 	_, accessGraph := parseAccessGraphExplainPath(request)
 	_, workspaceRename := parseWorkspaceRenamePath(request)
+	workspaceRoles := isWorkspaceRoleOperation(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
 	if !prepare && !logout && !managementScopes && !inventoryRead && !deploymentCapabilities && !device && !policy && !simulation &&
-		!approval && !accessGraph && !policyRead && !workspaceRename && !resourceSharing {
+		!approval && !accessGraph && !policyRead && !workspaceRename && !workspaceRoles && !resourceSharing {
 		return ErrInvalidBrowserManagement
 	}
 	operation = "mutation"

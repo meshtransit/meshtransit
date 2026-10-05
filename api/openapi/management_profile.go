@@ -17,7 +17,7 @@ const (
 	// ManagementProfileConsoleCookiePrivateV1 is disabled private source preparation.
 	// Rendering it mounts no handler or documentation endpoint and enables no SSO.
 	ManagementProfileConsoleCookiePrivateV1 ManagementProfile = "console-cookie-csrf-private-v1"
-	maximumManagementDocumentBytes                            = 192 << 10
+	maximumManagementDocumentBytes                            = 256 << 10
 	consoleSessionPreparePath                                 = "/auth/v1/session/prepare"
 	consoleSessionLogoutPath                                  = "/auth/v1/session/logout"
 	consoleSessionManagementScopesPath                        = "/auth/v1/session/management-scopes"
@@ -63,6 +63,9 @@ type consoleManagementProfile struct {
 	DeploymentCapabilities json.RawMessage            `json:"deploymentCapabilities"`
 	DeviceInventory        json.RawMessage            `json:"deviceInventory"`
 	WorkspaceRename        json.RawMessage            `json:"workspaceRename"`
+	WorkspaceMembers       json.RawMessage            `json:"workspaceMembers"`
+	WorkspaceRoleAssign    json.RawMessage            `json:"workspaceRoleAssign"`
+	WorkspaceRoleRevoke    json.RawMessage            `json:"workspaceRoleRevoke"`
 }
 
 // ManagementDocument returns independently owned deterministic OpenAPI bytes.
@@ -112,7 +115,10 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	validTransport := len(profile.SecuritySchemes) == 2 && len(profile.Parameters) == 3
 	validShape := len(profile.Schemas) == 5 && len(profile.Prepare) > 0 && len(profile.Logout) > 0 &&
 		len(profile.ManagementScopes) > 0 && len(profile.DeploymentCapabilities) > 0 &&
-		len(profile.DeviceInventory) > 0 && consoleWorkspaceRenameOperation(profile.WorkspaceRename)
+		len(profile.DeviceInventory) > 0 && consoleWorkspaceRenameOperation(profile.WorkspaceRename) &&
+		consoleCookieOperation(profile.WorkspaceMembers, "get", "listWorkspaceMembers", false) &&
+		consoleCookieOperation(profile.WorkspaceRoleAssign, "post", "assignWorkspaceRole", true) &&
+		consoleCookieOperation(profile.WorkspaceRoleRevoke, "post", "revokeWorkspaceRole", true)
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
 	}
@@ -202,6 +208,9 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		}
 	}
 	consolePaths["/api/v1/workspaces/{workspace_id}/actions/rename"] = profile.WorkspaceRename
+	consolePaths["/api/v1/workspaces/{workspace_id}/members"] = profile.WorkspaceMembers
+	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments"] = profile.WorkspaceRoleAssign
+	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke"] = profile.WorkspaceRoleRevoke
 	consolePaths[consoleSessionPreparePath] = profile.Prepare
 	consolePaths[consoleSessionLogoutPath] = profile.Logout
 	consolePaths[consoleSessionManagementScopesPath] = profile.ManagementScopes
@@ -395,6 +404,38 @@ func consoleDeviceInventoryOperation(item json.RawMessage) bool {
 	}
 	var parameters []json.RawMessage
 	return json.Unmarshal(operation["parameters"], &parameters) == nil && len(parameters) == 6
+}
+
+// consoleCookieOperation checks one single-method Console operation: its ID,
+// cookie authentication, and CSRF proof plus a request body for mutations.
+func consoleCookieOperation(item json.RawMessage, method, operationID string, mutation bool) bool {
+	methods, err := managementObject(item)
+	if err != nil || len(methods) != 1 {
+		return false
+	}
+	operation, err := managementObject(methods[method])
+	if err != nil || (operation["requestBody"] != nil) != mutation {
+		return false
+	}
+	var id string
+	if json.Unmarshal(operation["operationId"], &id) != nil || id != operationID {
+		return false
+	}
+	schemes := []string{"accountSessionCookie"}
+	if mutation {
+		schemes = append(schemes, "sessionCSRF")
+	}
+	var security []map[string][]string
+	if json.Unmarshal(operation["security"], &security) != nil || len(security) != 1 || len(security[0]) != len(schemes) {
+		return false
+	}
+	for _, name := range schemes {
+		scopes, present := security[0][name]
+		if !present || scopes == nil || len(scopes) != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func consoleWorkspaceRenameOperation(item json.RawMessage) bool {

@@ -194,7 +194,7 @@ func isBrowserManagementOperation(request *http.Request) bool {
 	if request == nil {
 		return false
 	}
-	if resourceSharing, _ := browserResourceSharingOperation(request); resourceSharing {
+	if resourceSharing, _ := browserResourceSharingOperation(request); resourceSharing || isWorkspaceRoleOperation(request) {
 		return true
 	}
 	_, device := parseDeviceRevokePath(request)

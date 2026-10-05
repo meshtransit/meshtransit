@@ -37,6 +37,9 @@ import (
 
 const (
 	workspaceRenameOperation                = "workspace_rename"
+	workspaceMembersReadOperation           = "workspace_members_read"
+	workspaceRoleAssignOperation            = "workspace_role_assign"
+	workspaceRoleRevokeOperation            = "workspace_role_revoke"
 	deviceRevokeOperation                   = "device_revoke"
 	policyPublishOperation                  = "policy_publish"
 	policySimulateOperation                 = "policy_simulate"
@@ -228,6 +231,7 @@ type ManagementHandlerOptions struct {
 	PolicySimulations         PolicySimulator
 	ActivePolicies            ActivePolicyReader
 	WorkspaceRenames          WorkspaceRenamer
+	WorkspaceRoles            WorkspaceRoleManager
 	PolicyApprovals           PolicyApprovalWorkflow
 	PolicyApprovalCatalog     PolicyApprovalCatalog
 	ResourceCreations         ResourceCreator
@@ -259,6 +263,7 @@ type ManagementHandler struct {
 	policySimulator           PolicySimulator
 	activePolicies            ActivePolicyReader
 	workspaceRenames          WorkspaceRenamer
+	workspaceRoles            WorkspaceRoleManager
 	policyApprovals           PolicyApprovalWorkflow
 	policyApprovalCatalog     PolicyApprovalCatalog
 	resourceCreations         ResourceCreator
@@ -313,6 +318,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		policySimulator:           options.PolicySimulations,
 		activePolicies:            options.ActivePolicies,
 		workspaceRenames:          options.WorkspaceRenames,
+		workspaceRoles:            options.WorkspaceRoles,
 		policyApprovals:           options.PolicyApprovals,
 		policyApprovalCatalog:     options.PolicyApprovalCatalog,
 		resourceCreations:         options.ResourceCreations,
@@ -408,8 +414,10 @@ func (handler *ManagementHandler) serveHTTP(
 	accessGraphPath, accessGraphMatched := parseAccessGraphExplainPath(request)
 	resourcePath, resourceMatched := parseResourceManagementPath(request)
 	sharingPath, sharingMatched := parseResourceSharingPath(request)
+	workspaceRolePath, workspaceRoleMatched := parseWorkspaceRolePath(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
-		!accessGraphMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched {
+		!accessGraphMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
+		!workspaceRoleMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -419,6 +427,8 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if workspaceRenameMatched {
 		operation = workspaceRenameOperation
+	} else if workspaceRoleMatched {
+		operation = workspaceRolePath.operation()
 	} else if deviceMatched {
 		operation = deviceRevokeOperation
 	} else if policyMatched {
@@ -445,6 +455,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = resourcePath.allowedMethod(request.Method)
 	} else if sharingMatched {
 		allowedMethod = sharingPath.allowedMethod(request.Method)
+	} else if workspaceRoleMatched {
+		allowedMethod = workspaceRolePath.allowedMethod()
 	}
 	if allowedMethod == "" || request.Method != allowedMethod {
 		if policyApprovalMatched && policyApprovalPath.isCollection() {
@@ -512,6 +524,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if workspaceRenameMatched {
 		resultCode = handler.renameWorkspace(ctx, response, request, correlationID, workspaceRenamePath, session)
+		return
+	}
+	if workspaceRoleMatched {
+		resultCode = handler.handleWorkspaceRoles(ctx, response, request, correlationID, workspaceRolePath, session)
 		return
 	}
 	if policyMatched {

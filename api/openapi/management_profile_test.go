@@ -50,7 +50,7 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, err := openapi.ManagementDocument(openapi.ManagementProfileConsoleCookiePrivateV1)
-	if err != nil || len(body) > 192<<10 {
+	if err != nil || len(body) > 256<<10 {
 		t.Fatal("private document did not compose within its bound", err)
 	}
 	base, console := profileObject(t, baseBytes), profileObject(t, body)
@@ -65,7 +65,7 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal("private document retained deployment topology")
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
-	if len(basePaths) != 30 || len(paths) != 22 {
+	if len(basePaths) != 30 || len(paths) != 25 {
 		t.Fatal("private profile introduced another product resource API")
 	}
 	for path, raw := range paths {
@@ -393,7 +393,7 @@ func FuzzManagementDocumentProfile(f *testing.F) {
 			}
 			return
 		}
-		completeDocument := len(body) <= 192<<10 && json.Valid(body)
+		completeDocument := len(body) <= 256<<10 && json.Valid(body)
 		if err != nil || !completeDocument {
 			t.Fatal("known profile returned an incomplete or unbounded document", err)
 		}
@@ -474,6 +474,33 @@ func TestShareAcceptanceContractRequiresOnlyTheImportedName(t *testing.T) {
 		// consumer-local imported name stays required.
 		if !ok || !reflect.DeepEqual(names["required"], []any{"imported_display_name"}) {
 			t.Fatal("acceptance must require only the imported display name")
+		}
+	}
+}
+
+func TestManagementDocumentConsoleWorkspaceRolesAreCookieScoped(t *testing.T) {
+	t.Parallel()
+	body, err := openapi.ManagementDocument(openapi.ManagementProfileConsoleCookiePrivateV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := profileMap(t, profileObject(t, body), "paths")
+	for _, test := range []struct{ path, method, operationID string }{
+		{"/api/v1/workspaces/{workspace_id}/members", "get", "listWorkspaceMembers"},
+		{"/api/v1/workspaces/{workspace_id}/role-assignments", "post", "assignWorkspaceRole"},
+		{"/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke", "post", "revokeWorkspaceRole"},
+	} {
+		item := profileMap(t, paths, test.path)
+		if len(item) != 1 {
+			t.Fatal("role path exposes extra methods", test.path)
+		}
+		operation := profileMap(t, item, test.method)
+		security := map[string]any{"accountSessionCookie": []any{}}
+		if test.method == "post" {
+			security["sessionCSRF"] = []any{}
+		}
+		if operation["operationId"] != test.operationID || !reflect.DeepEqual(operation["security"], []any{security}) {
+			t.Fatal("role operation identity or credential drift", test.path)
 		}
 	}
 }

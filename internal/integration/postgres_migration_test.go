@@ -356,6 +356,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		ctx, t, adminConnection, workerConnection, workerPool, runtimePool,
 	)
 	assertPostgreSQLWorkspaceRename(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLWorkspaceRoles(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLLoginSubjectResolution(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLSessionIssuance(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	assertPostgreSQLBrowserCallback(ctx, t, adminConnection, runtimePool)
