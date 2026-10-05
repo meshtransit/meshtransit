@@ -291,7 +291,7 @@ func applyConfiguration(ctx context.Context, tx pgx.Tx, deploymentRow int64, opt
 	if err := tx.QueryRow(ctx, `SELECT id, next_sequence, latest_event_hash FROM mesh_audit.audit_stream
         WHERE deployment_id=$1 AND workspace_id IS NULL AND network_id IS NULL FOR UPDATE`,
 		deploymentRow).Scan(&stream, &sequence, &previousBytes); err != nil || len(previousBytes) != sha256.Size {
-		return errors.New("Deployment audit stream is unavailable")
+		return errors.New("deployment audit stream is unavailable")
 	}
 	var previous [sha256.Size]byte
 	copy(previous[:], previousBytes)
