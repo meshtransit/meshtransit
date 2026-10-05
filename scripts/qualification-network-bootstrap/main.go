@@ -189,7 +189,7 @@ AND pool.state='active' AND realm.state='active' AND realm.kind='workspace_overl
 	if _, err = tx.Exec(ctx, `INSERT INTO mesh.network_membership(public_id,deployment_id,workspace_id,network_id,principal_id,workspace_membership_id,state,valid_from) VALUES ($1::UUID,$2,$3,$4,$5,$6,'active',clock_timestamp())`, changes[3].id.String(), deployment, workspace, network, owner, membership); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO mesh.enrollment_profile(public_id,workspace_id,network_id,created_by_principal_id,display_name,name_key,node_lifetime_seconds,ephemeral_mode,credential_use_policy,state,interactive_authorization_enabled) VALUES ($1::UUID,$2,$3,$4,'Qualification browser login','qualification-browser-login',3600,'persistent','unlimited','active',TRUE)`, changes[4].id.String(), workspace, network, owner); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO mesh.enrollment_profile(public_id,workspace_id,network_id,created_by_principal_id,display_name,name_key,node_lifetime_seconds,ephemeral_mode,credential_use_policy,state,interactive_authorization_enabled) VALUES ($1::UUID,$2,$3,$4,'Qualification browser login','qualification-browser-login',2592000,'persistent','unlimited','active',TRUE)`, changes[4].id.String(), workspace, network, owner); err != nil {
 		return err
 	}
 	if err = tx.QueryRow(ctx, `INSERT INTO mesh_audit.audit_stream(deployment_id,workspace_id,network_id,scope_kind) VALUES ($1,$2,$3,'network') RETURNING id`, deployment, workspace, network).Scan(&stream); err != nil {
