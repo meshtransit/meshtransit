@@ -110,8 +110,8 @@ JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = procedure.pronamesp
 JOIN pg_catalog.pg_roles AS owner ON owner.oid = procedure.proowner
 WHERE namespace.nspname = 'mesh_ops'
   AND procedure.proname = ANY(ARRAY[
-		'create_resource_share_offer_v1',
-		'decide_resource_share_offer_v2',
+		'create_resource_share_offer_v2',
+		'decide_resource_share_offer_v3',
 		'activate_resource_share_v3',
 		'revoke_resource_share_v6'
   ]::TEXT[])`).Scan(

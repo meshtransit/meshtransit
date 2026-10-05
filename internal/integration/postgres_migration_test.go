@@ -174,6 +174,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		if _, err := adminConnection.Exec(ctx, migrations.ExpiredUnprovisionedShareCleanupOwnershipSQL()); err != nil {
 			t.Fatalf("apply idempotent expired Trust Contract cleanup ownership hardening: %v", err)
 		}
+		if _, err := adminConnection.Exec(ctx, migrations.ResourceSharingNeverExpiryOwnershipSQL()); err != nil {
+			t.Fatalf("apply idempotent never-expiring share ownership hardening: %v", err)
+		}
 		if _, err := adminConnection.Exec(ctx, migrations.DirectDeviceMapFunctionOwnershipSQL()); err != nil {
 			t.Fatalf("apply direct map reader ownership: %v", err)
 		}
