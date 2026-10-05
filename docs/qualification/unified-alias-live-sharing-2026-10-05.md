@@ -100,13 +100,14 @@ share names, alias addresses or host addresses. Map stream failures log only
   back to the relay after each direct reassert. With roaming pinned to the
   selected endpoint, three Provider restarts each returned to a direct path
   with 1.6–1.8 ms average RTT within 5 s.
-- meshd: a host running several clients advertises another client's TUN
-  address (here the Isolation overlay address) as a UDP endpoint candidate, so
-  peers send authenticated probes to it over the underlay. Endpoint candidates
-  should exclude mesh interfaces and overlay ranges.
-- Console: the rule-removal review reports "0 connections lose access" for an
-  active share; a rule pointing at a revoked imported Device remains listed as
-  published and causes later 409 conflicts.
+- Fixed in meshd 82657b0: a host running several clients advertised another
+  client's TUN address (here the Isolation overlay address) as a UDP endpoint
+  candidate, and peers probed it over the underlay. Host candidates now skip
+  point-to-point interfaces and the MeshTransit overlay ranges; 25 s captures
+  on both hosts show no underlay packet to an overlay or DNS-link address.
+- Fixed in Console b806cfd: the rule-removal review now reports shared-Device
+  access loss, and a rule pointing at an ended share is marked and must be
+  removed before other rule changes instead of causing a 409 conflict.
 - About 300 deployment-stream outbox events (identity, session, address pool)
   remain `pending` with no dispatcher.
 - Not covered: TCP/UDP shares, cross-Workspace shares, multi-replica map
