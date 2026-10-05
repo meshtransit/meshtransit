@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"testing"
 	"time"
 
@@ -112,15 +113,15 @@ func assertPostgreSQLResourceSharing(
 	if err != nil {
 		t.Fatalf("resource.ParseDisplayName() error = %v", err)
 	}
-	accessName, err := sharing.ParseAccessName("database.shared.consumer.example")
-	if err != nil {
-		t.Fatalf("sharing.ParseAccessName() error = %v", err)
-	}
+	// The offer carries the default label and the Core-derived name; the
+	// consumer accepts without typing one.
+	accessName := createdOffer.AccessName()
+	assertDerivedAccessName(t, createdOffer)
 	acceptCommand, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		OfferID: createdOffer.Offer().ID(), ExpectedOfferVersion: 1,
 		Token: token, Action: sharing.DecisionActionAccept,
-		ImportedDisplayName: importedName, AccessName: accessName, AccountSession: session,
+		ImportedDisplayName: importedName, AccountSession: session,
 		Reason: reason, Idempotency: resourceAuthorityProof(t, 112),
 	})
 	if err != nil {
@@ -238,14 +239,10 @@ func assertPostgreSQLResourceSharing(
 	assertSameWorkspaceAliasEndpoint(ctx, t, admin, activeContract.ImportedResourceID(), "revoked", 2, "withdrawn")
 	foreignConsumerScope := resourceAuthorityScope(t, 102, 202)
 	foreignConsumerSession := authorityConfirmerAccountSessionFixture(t)
-	sqlPublicationContract := createUnstagedPrivateEndpointFixture(
+	sqlPublicationContract, aliasAccessName := createUnstagedPrivateEndpointFixture(
 		ctx, t, service, session, foreignConsumerSession, providerScope, foreignConsumerScope,
 		resourceID, maximumTraffic, reason, 128,
 	)
-	aliasAccessName, err := sharing.ParseAccessName("unstaged.shared.consumer.example")
-	if err != nil {
-		t.Fatal(err)
-	}
 	// The revoked same-Workspace share released fd00:feed::1 (no client lease
 	// ever held it); the active cross-Workspace share still retains ::2.
 	assertPrivateEndpointPublication(ctx, t, admin, worker,
@@ -264,7 +261,7 @@ func assertPostgreSQLResourceSharing(
 	}
 	assertPrivateEndpointPublicationWithdrawn(ctx, t, admin,
 		sqlPublicationContract.ImportedResourceID(), aliasAccessName)
-	unstagedContract := createUnstagedPrivateEndpointFixture(
+	unstagedContract, _ := createUnstagedPrivateEndpointFixture(
 		ctx, t, service, session, foreignConsumerSession, providerScope, foreignConsumerScope,
 		resourceID, maximumTraffic, reason, 125,
 	)
@@ -297,12 +294,16 @@ func assertPostgreSQLResourceSharing(
 	)
 	// Alias pools for both roles exist from the cross-Workspace qualification;
 	// a fresh same-Workspace share now exercises the complete alias path.
-	sameWorkspaceShare := createUnstagedPrivateEndpointFixture(
+	sameWorkspaceShare, _ := createUnstagedPrivateEndpointFixture(
 		ctx, t, service, session, session, providerScope, consumerScope,
 		resourceID, maximumTraffic, reason, 160,
 	)
 	assertSameWorkspaceAliasAllocation(ctx, t, admin, sameWorkspaceShare)
 	assertSameWorkspaceAliasMapProjection(ctx, t, admin, sameWorkspaceShare)
+	assertShareAccessLabelRules(
+		ctx, t, admin, service, session, providerScope, consumerScope, foreignScope,
+		resourceID, maximumTraffic, reason,
+	)
 }
 
 func assertExpiredUnprovisionedContractCleanup(
@@ -341,10 +342,8 @@ func assertExpiredUnprovisionedContractCleanup(
 	if err != nil {
 		t.Fatal(err)
 	}
-	accessName, err := sharing.ParseAccessName("expired-reuse.shared.consumer.example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// A consumer may still send the derived name; it must match exactly.
+	accessName := firstOffer.AccessName()
 	firstDecision, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		OfferID: firstOffer.Offer().ID(), ExpectedOfferVersion: firstOffer.Offer().Version(),
@@ -441,10 +440,10 @@ func createUnstagedPrivateEndpointFixture(
 	maximumTraffic sharing.TrafficSet,
 	reason sharing.AuditReason,
 	proofMarker byte,
-) sharing.Contract {
+) (sharing.Contract, sharing.AccessName) {
 	t.Helper()
 	created, err := service.CreateOffer(ctx, mustCreateSharingOffer(
-		t, providerScope, consumerScope, resourceID, maximumTraffic, providerSession, reason, proofMarker,
+		t, providerScope, consumerScope, resourceID, maximumTraffic, providerSession, reason, proofMarker, "unstaged",
 	))
 	if err != nil {
 		t.Fatalf("create unstaged Private Endpoint offer: %v", err)
@@ -458,10 +457,7 @@ func createUnstagedPrivateEndpointFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
-	accessName, err := sharing.ParseAccessName("unstaged.shared.consumer.example")
-	if err != nil {
-		t.Fatal(err)
-	}
+	accessName := offer.AccessName()
 	decision, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		OfferID: offer.Offer().ID(), ExpectedOfferVersion: offer.Offer().Version(),
@@ -497,7 +493,7 @@ func createUnstagedPrivateEndpointFixture(
 	if !hasContract || activeContract.State() != sharing.ContractStateActive {
 		t.Fatalf("unstaged Private Endpoint activation = %+v", activated)
 	}
-	return activeContract
+	return activeContract, accessName
 }
 
 func assertCrossWorkspaceResourceSharingConsent(
@@ -540,10 +536,7 @@ func assertCrossWorkspaceResourceSharingConsent(
 	if err != nil {
 		t.Fatalf("parse cross-Workspace Imported Resource name: %v", err)
 	}
-	accessName, err := sharing.ParseAccessName("database.shared.consumer.example")
-	if err != nil {
-		t.Fatalf("parse cross-Workspace access name: %v", err)
-	}
+	accessName := offer.AccessName()
 	providerDecision, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		OfferID: offer.Offer().ID(), ExpectedOfferVersion: offer.Offer().Version(),
@@ -947,13 +940,22 @@ func mustCreateSharingOffer(
 	session accountsession.Session,
 	reason sharing.AuditReason,
 	proofMarker byte,
+	labels ...string,
 ) sharing.CreateOffer {
 	t.Helper()
+	var accessLabel sharing.AccessLabel
+	if len(labels) == 1 {
+		var err error
+		if accessLabel, err = sharing.ParseAccessLabel(labels[0]); err != nil {
+			t.Fatalf("parse share access label: %v", err)
+		}
+	}
 	command, err := sharing.NewCreateOffer(sharing.CreateOfferParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		ResourceID: resourceID, MaximumTraffic: maximumTraffic,
-		ExpiresAt: time.Now().UTC().Add(time.Hour), AccountSession: session,
-		Reason: reason, Idempotency: resourceAuthorityProof(t, proofMarker),
+		ExpiresAt: time.Now().UTC().Add(time.Hour), AccessLabel: accessLabel,
+		AccountSession: session,
+		Reason:         reason, Idempotency: resourceAuthorityProof(t, proofMarker),
 	})
 	if err != nil {
 		t.Fatalf("construct Resource Share Offer: %v", err)
@@ -1909,5 +1911,16 @@ func assertCommittedResourceSharingEvidence(
 			"Resource Sharing evidence offer=%d contract=%d import=%d audit=%d outbox=%d",
 			offerCount, contractCount, importCount, auditCount, outboxCount,
 		)
+	}
+}
+
+// assertDerivedAccessName checks that a new offer carries a frozen label and
+// the Core-derived <label>.<workspace code>.<network code>.shared.mesh name.
+func assertDerivedAccessName(t *testing.T, offer sharing.OfferSnapshot) {
+	t.Helper()
+	label := offer.AccessLabel()
+	pattern := regexp.MustCompile(`^` + regexp.QuoteMeta(label.String()) + `\.[0-9]{12}\.[0-9]{12}\.shared\.mesh$`)
+	if !label.IsValid() || !pattern.MatchString(offer.AccessName().String()) {
+		t.Fatalf("offer access label/name = %q/%q", label, offer.AccessName())
 	}
 }

@@ -205,6 +205,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if _, err := adminConnection.Exec(ctx, migrations.AliasMapReaderOwnershipSQL()); err != nil {
 		t.Fatalf("harden bounded alias map reader: %v", err)
 	}
+	if _, err := adminConnection.Exec(ctx, migrations.ShareOfferAccessLabelOwnershipSQL()); err != nil {
+		t.Fatalf("harden labeled share offer entry points: %v", err)
+	}
 	assertResourceSharingPrivilegeContract(ctx, t, adminConnection)
 	assertDeviceSharingDeploymentPreflight(ctx, t, adminConnection)
 	seedAuthorityFixture(ctx, t, adminConnection)

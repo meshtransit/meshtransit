@@ -167,6 +167,7 @@ type createShareOfferRequest struct {
 	MaximumTraffic      []sharingTrafficRequest `json:"maximum_traffic"`
 	ExpiresAt           string                  `json:"expires_at"`
 	NeverExpires        bool                    `json:"never_expires"`
+	AccessLabel         string                  `json:"access_label,omitempty"`
 	Reason              string                  `json:"reason"`
 }
 
@@ -214,6 +215,8 @@ type shareOfferData struct {
 	State                   string               `json:"state"`
 	Version                 int64                `json:"version"`
 	AcceptedTrustContractID string               `json:"accepted_trust_contract_id,omitempty"`
+	AccessLabel             string               `json:"access_label,omitempty"`
+	AccessName              string               `json:"access_name,omitempty"`
 	CreatedAt               time.Time            `json:"created_at"`
 	ExpiresAt               time.Time            `json:"expires_at"`
 	ShareExpiresAt          time.Time            `json:"share_expires_at"`
@@ -339,10 +342,17 @@ func (handler *ManagementHandler) createShareOffer(
 	if err != nil {
 		return handler.writeSharingRequestError(ctx, response, correlationID)
 	}
+	var accessLabel sharing.AccessLabel
+	if body.AccessLabel != "" {
+		accessLabel, err = sharing.ParseAccessLabel(body.AccessLabel)
+		if err != nil {
+			return handler.writeSharingRequestError(ctx, response, correlationID)
+		}
+	}
 	command, err := sharing.NewCreateOffer(sharing.CreateOfferParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope, ResourceID: resourceID,
-		MaximumTraffic: traffic, ExpiresAt: expiresAt, AccountSession: session,
-		Reason: reason, Idempotency: proof,
+		MaximumTraffic: traffic, ExpiresAt: expiresAt, AccessLabel: accessLabel,
+		AccountSession: session, Reason: reason, Idempotency: proof,
 	})
 	if err != nil {
 		return handler.writeSharingRequestError(ctx, response, correlationID)
@@ -360,7 +370,9 @@ func (handler *ManagementHandler) createShareOffer(
 	if !result.IsValid() || !hasOffer || !hasToken || hasContract ||
 		offer.Offer().ProviderScope() != providerScope || offer.Offer().ConsumerScope() != consumerScope ||
 		offer.Resource().ResourceID() != resourceID ||
-		offer.Offer().MaximumTraffic().Hash() != traffic.Hash() {
+		offer.Offer().MaximumTraffic().Hash() != traffic.Hash() ||
+		!offer.AccessLabel().IsValid() ||
+		(accessLabel.IsValid() && offer.AccessLabel() != accessLabel) {
 		return handler.writeSharingInternalError(ctx, response, correlationID)
 	}
 	data := shareOfferDataFromSnapshot(offer)
@@ -483,12 +495,20 @@ func (handler *ManagementHandler) decideShareOffer(
 		if !found || contract.State() != sharing.ContractStateActivating {
 			return handler.writeSharingInternalError(ctx, response, correlationID)
 		}
+		// A labeled offer's reserved name is the Core-derived one.
+		accessName := command.AccessName()
+		if derived := offer.AccessName(); derived.IsValid() {
+			accessName = derived
+		}
+		if !accessName.IsValid() {
+			return handler.writeSharingInternalError(ctx, response, correlationID)
+		}
 		response.Header().Set("ETag", strongVersionETag(contract.Version()))
 		writeManagementJSON(ctx, handler.logger, response, http.StatusOK, shareContractEnvelope{
 			Data: shareContractDataFromResult(
 				contract,
 				result.ImportedResourceVersion(),
-				command.AccessName(),
+				accessName,
 			),
 			CorrelationID: correlationID.String(),
 		})
@@ -959,6 +979,8 @@ func shareOfferDataFromSnapshot(snapshot sharing.OfferSnapshot) shareOfferData {
 	if contractID := offer.AcceptedContractID(); contractID.IsValid() {
 		data.AcceptedTrustContractID = contractID.String()
 	}
+	data.AccessLabel = snapshot.AccessLabel().String()
+	data.AccessName = snapshot.AccessName().String()
 	return data
 }
 

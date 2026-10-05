@@ -58,6 +58,18 @@ hostname. A label identifies exactly one Resource within its provider Network
 and is frozen once a share uses it. Consumers do not choose the name. Names are
 discovery metadata only; authorization remains the alias grant.
 
+Schema 94 implements this on the Share Offer. `create_resource_share_offer_v3`
+stores the canonical label (API `access_label`, defaulting to the shared
+Resource name) and rejects a label that a live offer or contract in the same
+provider Network uses for another Resource; the same Resource may reuse its
+label for other consumer Networks. A trigger freezes the column.
+`decide_resource_share_offer_v4` derives the name from the display codes and
+rejects a consumer-supplied name that differs. Offer reads return the label and
+the derived name only within the caller's exact Network scope. Offers created
+before schema 94 have no label and keep the consumer-typed name. The existing
+per-consumer-Network uniqueness of reserved names still rejects importing the
+same label twice into one Network.
+
 A Private Endpoint is the logical contract, local destination and lifecycle
 object. For a Device-backed Resource, the provider enforcement process is
 `meshd` on that Device. The architecture's agent role does not require another

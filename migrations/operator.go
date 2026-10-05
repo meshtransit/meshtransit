@@ -143,3 +143,10 @@ var aliasMapReaderOwnershipSQL string
 // AliasMapReaderOwnershipSQL moves the runtime alias map entry point to the
 // bounded-planning reader and closes the previous one.
 func AliasMapReaderOwnershipSQL() string { return aliasMapReaderOwnershipSQL }
+
+//go:embed operator/000094_share_offer_access_label_ownership.sql
+var shareOfferAccessLabelOwnershipSQL string
+
+// ShareOfferAccessLabelOwnershipSQL exposes the labeled offer creation and the
+// derived-name decision entry points to runtime through the sharing writer.
+func ShareOfferAccessLabelOwnershipSQL() string { return shareOfferAccessLabelOwnershipSQL }

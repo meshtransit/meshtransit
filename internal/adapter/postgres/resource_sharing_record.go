@@ -52,6 +52,8 @@ type resourceSharingOfferRecord struct {
 	OfferVersion                int64                          `json:"offer_version"`
 	OfferDecidedAt              *time.Time                     `json:"offer_decided_at"`
 	AcceptedContractID          *string                        `json:"accepted_contract_id"`
+	AccessLabel                 *string                        `json:"access_label"`
+	AccessName                  *string                        `json:"access_name"`
 	CreatedAt                   time.Time                      `json:"created_at"`
 	Constraints                 []resourceSharingTrafficRecord `json:"constraints"`
 	Contract                    *resourceSharingContractRecord `json:"contract"`
@@ -154,6 +156,10 @@ func (record resourceSharingOfferRecord) value() (resourceSharingProjection, err
 	snapshot, err := sharing.NewOfferSnapshot(offer, binding, record.ExportExpiresAt, record.CreatedAt)
 	if err != nil {
 		return resourceSharingProjection{}, sharing.ErrUnavailable
+	}
+	snapshot, err = record.withAccessNaming(snapshot)
+	if err != nil {
+		return resourceSharingProjection{}, err
 	}
 	projection := resourceSharingProjection{offer: snapshot}
 	if record.Contract == nil {
@@ -331,4 +337,30 @@ func resourceSharingOfferStateFilter(value sharing.OfferState) any {
 	default:
 		return errors.New("invalid Resource Sharing offer state")
 	}
+}
+
+// withAccessNaming attaches the stored label and the derived name. Both are
+// absent for unlabeled offers; a partial or malformed pair fails closed.
+func (record resourceSharingOfferRecord) withAccessNaming(
+	snapshot sharing.OfferSnapshot,
+) (sharing.OfferSnapshot, error) {
+	if (record.AccessLabel == nil) != (record.AccessName == nil) {
+		return sharing.OfferSnapshot{}, sharing.ErrUnavailable
+	}
+	if record.AccessLabel == nil {
+		return snapshot, nil
+	}
+	label, err := sharing.ParseAccessLabel(*record.AccessLabel)
+	if err != nil || label.String() != *record.AccessLabel {
+		return sharing.OfferSnapshot{}, sharing.ErrUnavailable
+	}
+	name, err := sharing.ParseAccessName(*record.AccessName)
+	if err != nil || name.String() != *record.AccessName {
+		return sharing.OfferSnapshot{}, sharing.ErrUnavailable
+	}
+	named, err := snapshot.WithAccessNaming(label, name)
+	if err != nil {
+		return sharing.OfferSnapshot{}, sharing.ErrUnavailable
+	}
+	return named, nil
 }

@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 93 {
-		t.Fatalf("len(Catalog()) = %d, want 93", len(catalog))
+	if len(catalog) != 94 {
+		t.Fatalf("len(Catalog()) = %d, want 94", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 93 {
-		t.Fatalf("LatestVersion() = %d, want 93", LatestVersion())
+	if LatestVersion() != 94 {
+		t.Fatalf("LatestVersion() = %d, want 94", LatestVersion())
 	}
 }
 
@@ -2527,5 +2527,79 @@ func TestAliasMapReaderBoundsPlanning(t *testing.T) {
 	}
 	if !strings.Contains(AliasMapReaderOwnershipSQL(), "load_device_alias_map_edges_v2(BYTEA,BYTEA,INTEGER) FROM mesh_runtime;") {
 		t.Fatal("schema 93 ownership must close the v2 runtime entry point")
+	}
+}
+
+func TestShareOfferAccessLabelMigrationFreezesProviderLabels(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[93]
+	if migration.Version != 94 {
+		t.Fatalf("migration 94 = %+v", migration)
+	}
+	previous := Catalog()[90].SQL
+	start := strings.Index(previous, "CREATE FUNCTION mesh_ops.create_resource_share_offer_v2(")
+	end := strings.Index(previous[start:], "$function$;\n")
+	if start < 0 || end < 0 {
+		t.Fatal("migration 91 offer creation not found")
+	}
+	// v3 must remain v2 apart from the label parameter, validation, binding
+	// check and stored column, so every v2 authority check is preserved.
+	want := previous[start : start+end]
+	for _, edit := range [][2]string{
+		{"create_resource_share_offer_v2(", "create_resource_share_offer_v3("},
+		{"    p_occurred_at TIMESTAMPTZ\n)", "    p_occurred_at TIMESTAMPTZ,\n    p_access_label TEXT\n)"},
+		{"expires_at, state, created_at, updated_at\n    ) VALUES (\n        p_offer_public_id",
+			"expires_at, state, created_at, updated_at, access_label\n    ) VALUES (\n        p_offer_public_id"},
+		{"'offered', p_occurred_at, p_occurred_at\n    ) RETURNING id, version INTO offer_internal_id",
+			"'offered', p_occurred_at, p_occurred_at, p_access_label\n    ) RETURNING id, version INTO offer_internal_id"},
+	} {
+		if !strings.Contains(want, edit[0]) {
+			t.Fatalf("v2 anchor %q not found", edit[0])
+		}
+		want = strings.Replace(want, edit[0], edit[1], 1)
+	}
+	for _, inserted := range []string{
+		"        RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'invalid share access label';\n    END IF;\n",
+		"    IF mesh_ops.share_access_label_conflicts_v1(\n        p_provider_workspace_id, p_provider_network_id,\n        p_access_label, resource_internal_id, p_occurred_at\n    ) THEN\n        RAISE EXCEPTION USING ERRCODE = '23505', MESSAGE = 'share access label names another Resource';\n    END IF;\n",
+	} {
+		if !strings.Contains(migration.SQL, inserted) {
+			t.Fatalf("schema 94 missing %q", inserted)
+		}
+	}
+	got := migration.SQL[strings.Index(migration.SQL, "CREATE FUNCTION mesh_ops.create_resource_share_offer_v3("):]
+	got = got[:strings.Index(got, "$function$;\n")]
+	for _, inserted := range []string{
+		"    IF p_access_label IS NULL\n        OR pg_catalog.char_length(p_access_label) NOT BETWEEN 1 AND 63\n        OR pg_catalog.octet_length(p_access_label) <> pg_catalog.char_length(p_access_label)\n        OR p_access_label !~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'\n        OR p_access_label ~ '^[0-9]+$' THEN\n        RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'invalid share access label';\n    END IF;\n",
+		"    IF mesh_ops.share_access_label_conflicts_v1(\n        p_provider_workspace_id, p_provider_network_id,\n        p_access_label, resource_internal_id, p_occurred_at\n    ) THEN\n        RAISE EXCEPTION USING ERRCODE = '23505', MESSAGE = 'share access label names another Resource';\n    END IF;\n",
+	} {
+		got = strings.Replace(got, inserted, "", 1)
+	}
+	if got != want {
+		t.Fatal("create v3 must be v2 plus only the label input, binding check and stored column")
+	}
+	for _, required := range []string{
+		"ALTER TABLE mesh.share_offer ADD COLUMN access_label TEXT;",
+		"CREATE TRIGGER share_offer_access_label_frozen\nBEFORE UPDATE ON mesh.share_offer",
+		"IF OLD.access_label IS DISTINCT FROM NEW.access_label THEN",
+		"RETURN p_access_label || '.' || workspace_code || '.' || network_code || '.shared.mesh';",
+		"AND locator.local_workspace_id = mesh_ops.current_workspace_id()\n     AND locator.local_network_id = mesh_ops.current_network_id()",
+		"IF p_access_name IS NOT NULL AND p_access_name <> effective_access_name THEN",
+		"FROM mesh_ops.decide_resource_share_offer_v3(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_share_offer_access_name_v1(UUID) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 94 missing %q", required)
+		}
+	}
+	ownership := ShareOfferAccessLabelOwnershipSQL()
+	for _, required := range []string{
+		"BYTEA, BYTEA, BIGINT, BIGINT, BIGINT, BIGINT, TIMESTAMPTZ, TIMESTAMPTZ, TEXT\n) OWNER TO mesh_share_writer;",
+		"BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, TIMESTAMPTZ\n) OWNER TO mesh_share_writer;",
+		"BYTEA, BYTEA, BIGINT, BIGINT, BIGINT, BIGINT, TIMESTAMPTZ, TIMESTAMPTZ, TEXT\n) TO mesh_runtime;",
+		"BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, TIMESTAMPTZ\n) TO mesh_runtime;",
+	} {
+		if !strings.Contains(ownership, required) {
+			t.Errorf("schema 94 ownership missing %q", required)
+		}
 	}
 }

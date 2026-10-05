@@ -127,6 +127,10 @@ func (store *ResourceSharingStore) CreateOffer(
 	if err != nil {
 		return sharing.MutationResult{}, err
 	}
+	accessLabel, err := resolveResourceSharingAccessLabel(ctx, transaction, command)
+	if err != nil {
+		return sharing.MutationResult{}, err
+	}
 	record, replay, err := store.claimResourceSharingIdempotency(
 		ctx,
 		transaction,
@@ -202,6 +206,7 @@ func (store *ResourceSharingStore) CreateOffer(
 		consumer.sharingRevision,
 		command.ExpiresAt(),
 		evaluatedAt,
+		accessLabel.String(),
 	).Scan(
 		&revisions.providerNetwork,
 		&revisions.providerSharing,
@@ -386,7 +391,10 @@ func (store *ResourceSharingStore) DecideOffer(
 		importedID = ids.importedResourceID.String()
 		importedName = command.ImportedDisplayName().String()
 		accessNameID = ids.accessNameID.String()
-		accessName = command.AccessName().String()
+		// A labeled offer derives its name in PostgreSQL; NULL asks for it.
+		if command.AccessName().IsValid() {
+			accessName = command.AccessName().String()
+		}
 	}
 	var revisions resourceSharingMutationRevisions
 	var offerVersion, contractVersion int64
@@ -898,6 +906,29 @@ func (store *ResourceSharingStore) resolveResourceSharingPreflight(
 	return state, head, nil
 }
 
+// resolveResourceSharingAccessLabel returns the requested label, or derives
+// the default from the shared Resource name read in the same transaction.
+func resolveResourceSharingAccessLabel(
+	ctx context.Context,
+	transaction resourceAuthorityDatabaseTransaction,
+	command sharing.CreateOffer,
+) (sharing.AccessLabel, error) {
+	if label := command.AccessLabel(); label.IsValid() {
+		return label, nil
+	}
+	var displayName string
+	err := transaction.QueryRow(
+		ctx, readResourceSharingDisplayNameSQL, command.ResourceID().String(),
+	).Scan(&displayName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sharing.AccessLabel{}, sharing.ErrNotFound
+	}
+	if err != nil {
+		return sharing.AccessLabel{}, resourceSharingDatabaseError(ctx, err)
+	}
+	return sharing.DefaultAccessLabel(displayName), nil
+}
+
 func readResourceSharingBinding(
 	ctx context.Context,
 	transaction resourceAuthorityDatabaseTransaction,
@@ -1271,14 +1302,16 @@ func resourceSharingCreateHash(command sharing.CreateOffer) ([sha256.Size]byte, 
 		ResourceID    string `json:"resource_id"`
 		TrafficHash   string `json:"traffic_hash"`
 		ExpiresAt     string `json:"expires_at"`
+		AccessLabel   string `json:"access_label,omitempty"`
 		Reason        string `json:"reason"`
 	}{
 		Operation:     resourceSharingCreateOperation,
 		ProviderScope: resourceSharingScopeKey(command.ProviderScope()),
 		ConsumerScope: resourceSharingScopeKey(command.ConsumerScope()),
 		ResourceID:    command.ResourceID().String(), TrafficHash: hex.EncodeToString(trafficHash[:]),
-		ExpiresAt: command.ExpiresAt().UTC().Format(time.RFC3339Nano),
-		Reason:    command.Reason().String(),
+		ExpiresAt:   command.ExpiresAt().UTC().Format(time.RFC3339Nano),
+		AccessLabel: command.AccessLabel().String(),
+		Reason:      command.Reason().String(),
 	})
 }
 

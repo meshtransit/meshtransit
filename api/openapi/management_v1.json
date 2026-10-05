@@ -3297,6 +3297,7 @@
           },
           "expires_at": {"type": "string", "format": "date-time", "description": "Share grant deadline. Omit when never_expires is true."},
           "never_expires": {"type": "boolean", "description": "Same-Workspace share remains valid until revoked; cannot be combined with expires_at."},
+          "access_label": {"type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$", "description": "First label of the consumer DNS name <label>.<provider Workspace code>.<provider Network code>.shared.mesh. Canonicalized to lower case; all-digit labels are rejected. Omit to derive it from the shared Resource name. Frozen after creation; within the provider Network a live label names one Resource."},
           "reason": {"type": "string", "minLength": 1, "maxLength": 512}
         }
       },
@@ -3311,17 +3312,17 @@
           "consumer_network_id": {"$ref": "#/components/schemas/PublicID"},
           "offer_token": {"type": "string", "minLength": 43, "maxLength": 43, "pattern": "^[A-Za-z0-9_-]{43}$"},
           "imported_display_name": {"type": "string", "minLength": 1, "maxLength": 128},
-          "access_name": {"type": "string", "minLength": 3, "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", "description": "Required for accept and forbidden for reject or revoke; canonical lower-case consumer-local DNS name."},
+          "access_name": {"type": "string", "minLength": 3, "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", "description": "Forbidden for reject or revoke. On accept of a labeled offer it may be omitted and, when present, must equal the offer access_name; an unlabeled offer requires it. Canonical lower-case consumer-local DNS name."},
           "reason": {"type": "string", "minLength": 1, "maxLength": 512}
         }
       },
       "AcceptShareOfferRequest": {
-        "description": "Acceptance-specific request: imported display name and canonical access name are required. Reject and revoke continue to use DecideShareOfferRequest and forbid both fields.",
+        "description": "Acceptance-specific request: the imported display name is required. The access name is derived from the provider label and may be omitted; an unlabeled offer still requires it. Reject and revoke continue to use DecideShareOfferRequest and forbid both fields.",
         "allOf": [
           {"$ref": "#/components/schemas/DecideShareOfferRequest"},
           {
             "type": "object",
-            "required": ["imported_display_name", "access_name"],
+            "required": ["imported_display_name"],
             "properties": {
               "imported_display_name": {"$ref": "#/components/schemas/DecideShareOfferRequest/properties/imported_display_name"},
               "access_name": {"$ref": "#/components/schemas/DecideShareOfferRequest/properties/access_name"}
@@ -3364,6 +3365,8 @@
           "state": {"type": "string", "enum": ["offered", "accepted", "rejected", "expired", "revoked"]},
           "version": {"type": "integer", "format": "int64", "minimum": 1},
           "accepted_trust_contract_id": {"$ref": "#/components/schemas/PublicID"},
+          "access_label": {"type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", "readOnly": true, "description": "Frozen provider label; absent for offers created before labels."},
+          "access_name": {"type": "string", "minLength": 3, "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", "readOnly": true, "description": "Consumer DNS name acceptance reserves; present exactly when access_label is."},
           "created_at": {"type": "string", "format": "date-time"},
           "expires_at": {"type": "string", "format": "date-time", "description": "Offer decision deadline, at most seven days after creation."},
           "share_expires_at": {"type": "string", "format": "date-time", "description": "Share grant deadline after acceptance; 2200-01-01T00:00:00Z represents until revoked."},

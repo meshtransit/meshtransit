@@ -231,7 +231,7 @@ func TestManagementHandlerAcceptsShareOfferIntoFailClosedContract(t *testing.T) 
 	}
 }
 
-func TestManagementHandlerRequiresAccessNameOnlyForShareAcceptance(t *testing.T) {
+func TestManagementHandlerRejectsMalformedOrMisplacedShareNames(t *testing.T) {
 	t.Parallel()
 
 	fixture := managementSharingFixture(t, sharing.OfferStateOffered)
@@ -247,14 +247,21 @@ func TestManagementHandlerRequiresAccessNameOnlyForShareAcceptance(t *testing.T)
 		body   string
 	}{
 		{
-			name:   "accept without access name",
+			name:   "accept with malformed access name",
 			action: "accept",
-			body:   baseBody + `,"imported_display_name":"production database"}`,
+			body: baseBody + `,"imported_display_name":"production database",` +
+				`"access_name":"database..example","reason":"accept reviewed share"}`,
 		},
 		{
 			name:   "reject with access name",
 			action: "reject",
-			body:   baseBody + `,"access_name":"database.shared.consumer.example"}`,
+			body: baseBody + `,"access_name":"database.shared.consumer.example",` +
+				`"reason":"reject reviewed share"}`,
+		},
+		{
+			name:   "reject with imported name",
+			action: "reject",
+			body:   baseBody + `,"imported_display_name":"production database","reason":"reject reviewed share"}`,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -502,6 +509,12 @@ func managementSharingFixture(t *testing.T, state sharing.OfferState) management
 	if err != nil {
 		t.Fatal(err)
 	}
+	label, _ := sharing.ParseAccessLabel("poc01")
+	name, _ := sharing.ParseAccessName("poc01.111111111111.222222222222.shared.mesh")
+	snapshot, err = snapshot.WithAccessNaming(label, name)
+	if err != nil {
+		t.Fatal(err)
+	}
 	token, err := sharing.NewOfferToken([32]byte{31: 3})
 	if err != nil {
 		t.Fatal(err)
@@ -680,4 +693,125 @@ func (stub *managementResourceSharingStub) GetContract(ctx context.Context, sess
 		return sharing.ContractSnapshot{}, sharing.ErrUnavailable
 	}
 	return stub.getContract(ctx, session, scope, id)
+}
+
+func TestManagementHandlerCreatesShareOfferWithProviderLabel(t *testing.T) {
+	t.Parallel()
+
+	fixture := managementSharingFixture(t, sharing.OfferStateOffered)
+	for _, test := range []struct {
+		name, label string
+		status      int
+	}{
+		{name: "requested label canonicalizes", label: `,"access_label":"POC01"`, status: http.StatusCreated},
+		{name: "omitted label uses the stored default", status: http.StatusCreated},
+		{name: "dotted label", label: `,"access_label":"poc.01"`, status: http.StatusBadRequest},
+		{name: "numeric label", label: `,"access_label":"0123"`, status: http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var captured sharing.CreateOffer
+			options := validManagementHandlerOptions(t)
+			options.ResourceSharing = &managementResourceSharingStub{
+				create: func(_ context.Context, command sharing.CreateOffer) (sharing.MutationResult, error) {
+					captured = command
+					return fixture.createResult, nil
+				},
+			}
+			handler, err := NewManagementHandler(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := newManagementRequest(t, http.MethodPost, sharingOfferCollectionPath(),
+				`{"consumer_workspace_id":"`+fixture.consumer.WorkspaceID().String()+
+					`","consumer_network_id":"`+fixture.consumer.NetworkID().String()+
+					`","resource_id":"`+fixture.binding.ResourceID().String()+
+					`","maximum_traffic":[{"protocol":"tcp","destination_port_ranges":[{"first":443,"last":443}]}],`+
+					`"expires_at":"2026-09-30T00:00:00Z"`+test.label+`,"reason":"share labeled device"}`,
+			)
+			request.Header.Del("If-Match")
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.status {
+				t.Fatalf("status = %d; body=%s", response.Code, response.Body.String())
+			}
+			if test.status != http.StatusCreated {
+				if captured.IsValid() {
+					t.Fatal("invalid label reached resource-sharing service")
+				}
+				return
+			}
+			wantLabel := ""
+			if test.label != "" {
+				wantLabel = "poc01"
+			}
+			var body shareOfferEnvelope
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil ||
+				captured.AccessLabel().String() != wantLabel ||
+				body.Data.AccessLabel != "poc01" ||
+				body.Data.AccessName != "poc01.111111111111.222222222222.shared.mesh" {
+				t.Fatalf("captured label %q, response %+v, error %v", captured.AccessLabel(), body.Data, err)
+			}
+		})
+	}
+}
+
+func TestManagementHandlerAcceptsLabeledShareOfferWithoutAccessName(t *testing.T) {
+	t.Parallel()
+
+	fixture, contract, result := managementSharingContractFixture(
+		t, sharing.ContractStateActivating, 1,
+	)
+	label, _ := sharing.ParseAccessLabel("poc01")
+	name, _ := sharing.ParseAccessName("poc01.111111111111.222222222222.shared.mesh")
+	labeled, err := fixture.snapshot.WithAccessNaming(label, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = sharing.NewMutationResult(sharing.MutationResultParams{
+		Offer: labeled, Contract: contract, HasOffer: true, HasContract: true,
+		ProviderNetworkRevision: result.ProviderNetworkRevision(),
+		ProviderSharingRevision: result.ProviderSharingRevision(),
+		ConsumerNetworkRevision: result.ConsumerNetworkRevision(),
+		ConsumerSharingRevision: result.ConsumerSharingRevision(),
+		ImportedResourceVersion: result.ImportedResourceVersion(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var captured sharing.DecideOffer
+	options := validManagementHandlerOptions(t)
+	options.ResourceSharing = &managementResourceSharingStub{
+		decide: func(_ context.Context, command sharing.DecideOffer) (sharing.MutationResult, error) {
+			captured = command
+			return result, nil
+		},
+	}
+	handler, err := NewManagementHandler(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := fixture.token.Bytes()
+	path := "/api/v1/workspaces/" + fixture.consumer.WorkspaceID().String() +
+		"/networks/" + fixture.consumer.NetworkID().String() + "/share-offers/" +
+		fixture.snapshot.Offer().ID().String() + "/actions/accept"
+	body := `{"provider_workspace_id":"` + fixture.provider.WorkspaceID().String() +
+		`","provider_network_id":"` + fixture.provider.NetworkID().String() +
+		`","consumer_workspace_id":"` + fixture.consumer.WorkspaceID().String() +
+		`","consumer_network_id":"` + fixture.consumer.NetworkID().String() +
+		`","offer_token":"` + base64.RawURLEncoding.EncodeToString(token[:]) +
+		`","imported_display_name":"poc01","reason":"accept reviewed share"}`
+	request := newManagementRequest(t, http.MethodPost, path, body)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	var envelope shareContractEnvelope
+	if response.Code != http.StatusOK || !captured.IsValid() || captured.AccessName() != (sharing.AccessName{}) ||
+		json.Unmarshal(response.Body.Bytes(), &envelope) != nil ||
+		envelope.Data.AccessName != "poc01.111111111111.222222222222.shared.mesh" {
+		t.Fatalf("status/command/body = %d/%+v/%s", response.Code, captured, response.Body.String())
+	}
 }

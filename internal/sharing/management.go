@@ -106,6 +106,9 @@ type CreateOfferParams struct {
 	ResourceID     resource.ID
 	MaximumTraffic TrafficSet
 	ExpiresAt      time.Time
+	// AccessLabel is the frozen first label of the consumer DNS name. The
+	// zero value derives it from the shared Resource name at creation.
+	AccessLabel    AccessLabel
 	AccountSession accountsession.Session
 	Reason         AuditReason
 	Idempotency    idempotency.Proof
@@ -144,6 +147,9 @@ func (command CreateOffer) MaximumTraffic() TrafficSet {
 // ExpiresAt returns the exclusive offer deadline.
 func (command CreateOffer) ExpiresAt() time.Time { return command.params.ExpiresAt }
 
+// AccessLabel returns the requested label; the zero value requests a default.
+func (command CreateOffer) AccessLabel() AccessLabel { return command.params.AccessLabel }
+
 // AccountSession returns the authenticated provider session.
 func (command CreateOffer) AccountSession() accountsession.Session {
 	return command.params.AccountSession
@@ -163,6 +169,7 @@ func (command CreateOffer) IsValid() bool {
 	return params.ProviderScope.IsValid() && params.ConsumerScope.IsValid() &&
 		params.ProviderScope != params.ConsumerScope && params.ResourceID.IsValid() &&
 		params.MaximumTraffic.IsValid() && !params.ExpiresAt.IsZero() &&
+		(params.AccessLabel == AccessLabel{} || params.AccessLabel.IsValid()) &&
 		params.AccountSession.IsValid() && params.Reason.IsValid() && params.Idempotency.IsValid()
 }
 
@@ -238,7 +245,8 @@ func (command DecideOffer) ImportedDisplayName() resource.DisplayName {
 	return command.params.ImportedDisplayName
 }
 
-// AccessName returns the separately validated consumer-local DNS name.
+// AccessName returns the consumer-supplied DNS name. It is empty when the
+// offer's provider label determines the name; a supplied name must match it.
 func (command DecideOffer) AccessName() AccessName { return command.params.AccessName }
 
 // AccountSession returns the authenticated decision session.
@@ -264,7 +272,9 @@ func (command DecideOffer) IsValid() bool {
 		return false
 	}
 	accept := params.Action == DecisionActionAccept
-	return accept == params.ImportedDisplayName.IsValid() && accept == params.AccessName.IsValid()
+	accessNameAbsent := params.AccessName == AccessName{}
+	return accept == params.ImportedDisplayName.IsValid() &&
+		(accessNameAbsent || accept && params.AccessName.IsValid())
 }
 
 // RevokeContractParams contains one version-bound bilateral revocation.
@@ -397,7 +407,30 @@ type OfferSnapshot struct {
 	resource       ResourceBinding
 	shareExpiresAt time.Time
 	createdAt      time.Time
+	accessLabel    AccessLabel
+	accessName     AccessName
 }
+
+// WithAccessNaming returns a copy carrying the provider label and the
+// Core-derived consumer name. Unlabeled offers carry neither; a labeled
+// offer's name always begins with its label.
+func (snapshot OfferSnapshot) WithAccessNaming(label AccessLabel, name AccessName) (OfferSnapshot, error) {
+	unlabeled := label == AccessLabel{} && name == AccessName{}
+	labeled := label.IsValid() && name.IsValid() && strings.HasPrefix(name.String(), label.String()+".")
+	if !unlabeled && !labeled {
+		return OfferSnapshot{}, ErrInvalidManagementRequest
+	}
+	snapshot.accessLabel = label
+	snapshot.accessName = name
+	return snapshot, nil
+}
+
+// AccessLabel returns the frozen provider label, or zero for an unlabeled offer.
+func (snapshot OfferSnapshot) AccessLabel() AccessLabel { return snapshot.accessLabel }
+
+// AccessName returns the name acceptance will reserve, or zero when the
+// consumer must supply one.
+func (snapshot OfferSnapshot) AccessName() AccessName { return snapshot.accessName }
 
 // NewOfferSnapshot validates one management-safe offer projection.
 func NewOfferSnapshot(offer Offer, binding ResourceBinding, shareExpiresAt, createdAt time.Time) (OfferSnapshot, error) {

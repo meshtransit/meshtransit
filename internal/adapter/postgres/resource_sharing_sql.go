@@ -19,6 +19,10 @@ const readResourceSharingResourceSQL = `SELECT
 FROM mesh_ops.read_resource_v2($1::UUID)
 WHERE resource_state = 'active'`
 
+const readResourceSharingDisplayNameSQL = `SELECT display_name
+FROM mesh_ops.read_resource_v2($1::UUID)
+WHERE resource_state = 'active'`
+
 const readResourceSharingLocatorSQL = `SELECT
     locator.provider_workspace_id,
     locator.provider_network_id,
@@ -111,6 +115,8 @@ const resourceSharingOfferProjectionSQL = `pg_catalog.jsonb_build_object(
     'offer_version', offer.version,
     'offer_decided_at', offer.decided_at,
     'accepted_contract_id', offer.accepted_contract_public_id,
+    'access_label', offer.access_label,
+    'access_name', mesh_ops.read_share_offer_access_name_v1(offer.public_id),
     'created_at', offer.created_at,
     'constraints', COALESCE((
         SELECT pg_catalog.jsonb_agg(
@@ -180,13 +186,13 @@ const createResourceShareOfferSQL = `SELECT
     consumer_sharing_revision,
     export_version,
     offer_version
-FROM mesh_ops.create_resource_share_offer_v2(
+FROM mesh_ops.create_resource_share_offer_v3(
     $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::BIGINT,
     $5::UUID, $6::UUID, $7::UUID, $8::UUID, $9::UUID,
     $10::BIGINT, $11::BIGINT, $12::BYTEA, $13::UUID, $14::UUID,
     $15::JSONB, $16::JSONB, $17::BYTEA, $18::BYTEA,
     $19::BIGINT, $20::BIGINT, $21::BIGINT, $22::BIGINT,
-    $23::TIMESTAMPTZ, $24::TIMESTAMPTZ
+    $23::TIMESTAMPTZ, $24::TIMESTAMPTZ, $25::TEXT
 )`
 
 const decideResourceShareOfferSQL = `SELECT
@@ -199,7 +205,7 @@ const decideResourceShareOfferSQL = `SELECT
     imported_resource_version,
     contract_state,
     access_name_version
-FROM mesh_ops.decide_resource_share_offer_v3(
+FROM mesh_ops.decide_resource_share_offer_v4(
     $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::BIGINT,
     $5::UUID, $6::UUID, $7::UUID, $8::UUID, $9::UUID,
     $10::BIGINT, $11::BYTEA, $12::TEXT, $13::UUID, $14::UUID,
