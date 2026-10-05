@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 94 {
-		t.Fatalf("len(Catalog()) = %d, want 94", len(catalog))
+	if len(catalog) != 95 {
+		t.Fatalf("len(Catalog()) = %d, want 95", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 94 {
-		t.Fatalf("LatestVersion() = %d, want 94", LatestVersion())
+	if LatestVersion() != 95 {
+		t.Fatalf("LatestVersion() = %d, want 95", LatestVersion())
 	}
 }
 
@@ -2600,6 +2600,49 @@ func TestShareOfferAccessLabelMigrationFreezesProviderLabels(t *testing.T) {
 	} {
 		if !strings.Contains(ownership, required) {
 			t.Errorf("schema 94 ownership missing %q", required)
+		}
+	}
+}
+
+func TestBuiltinWorkspaceRolesKeepOwnerAndLegacyResolution(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[94]
+	if migration.Version != 95 {
+		t.Fatalf("migration 95 = %+v", migration)
+	}
+	previous := Catalog()[75].SQL
+	start := strings.Index(previous, "CREATE FUNCTION mesh_ops.resolve_network_permission_v2(")
+	split := strings.Index(previous, "    -- Members retain the existing exact-Network role resolver and its locks.")
+	end := strings.Index(previous[start:], "$function$;\n")
+	if start < 0 || split < 0 || end < 0 {
+		t.Fatal("migration 76 resolver not found")
+	}
+	ownerBranch := strings.Replace(previous[start:split],
+		"CREATE FUNCTION mesh_ops.resolve_network_permission_v2(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.resolve_network_permission_v2(", 1)
+	legacyBranch := previous[split : start+end]
+	// The owner branch and the legacy custom-role fallback stay verbatim; the
+	// built-in branch is inserted between them.
+	if !strings.Contains(migration.SQL, ownerBranch) || !strings.Contains(migration.SQL, legacyBranch) {
+		t.Fatal("resolver v2 must keep the owner branch and legacy fallback verbatim")
+	}
+	if strings.Index(migration.SQL, ownerBranch) > strings.Index(migration.SQL, "JOIN mesh.workspace_role_assignment AS assignment") ||
+		strings.Index(migration.SQL, "JOIN mesh.workspace_role_assignment AS assignment") > strings.Index(migration.SQL, legacyBranch) {
+		t.Fatal("built-in branch must sit between ownership and the legacy fallback")
+	}
+	for _, required := range []string{
+		"CREATE TRIGGER builtin_role_immutable",
+		"CREATE TRIGGER builtin_role_permission_immutable",
+		"CREATE TRIGGER workspace_role_assignment_transition",
+		"mesh_audit.capture_authority_mutation(\n    'workspace_role_assignment', 'public_id'",
+		"network_id IS NULL OR role_key IN ('network_admin', 'it_admin', 'auditor')",
+		"AND (assignment.network_id IS NULL OR assignment.network_id = network.id)",
+		"AND assignment.network_id IS NULL\n     AND assignment.state = 'active'",
+		"CREATE OR REPLACE FUNCTION mesh_ops.read_console_management_scopes_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.resolve_workspace_permission_v1(",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 95 missing %q", required)
 		}
 	}
 }

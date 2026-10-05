@@ -461,6 +461,7 @@ func Catalog() []Migration {
 		newMigration(92, "one Network-scoped alias path for every Device share", unifiedDeviceAliasSharingSQL),
 		newMigration(93, "bounded planning for the alias map reader", aliasMapReaderBoundedPlanningSQL),
 		newMigration(94, "provider-chosen frozen Device share DNS labels", shareOfferAccessLabelSQL),
+		newMigration(95, "built-in Workspace roles and Workspace-scope assignments", builtinWorkspaceRolesSQL),
 	}
 }
 
@@ -522,3 +523,6 @@ var aliasMapReaderBoundedPlanningSQL string
 
 //go:embed 000094_share_offer_access_label.up.sql
 var shareOfferAccessLabelSQL string
+
+//go:embed 000095_builtin_workspace_roles.up.sql
+var builtinWorkspaceRolesSQL string
