@@ -88,6 +88,7 @@ const (
 	consoleDeviceInventoryDescription                 = "Console exact-scope Device inventory read"
 	consolePolicyAuthoringScopeDescription            = "Console policy authoring management scope projection"
 	expiredUnprovisionedShareCleanupDescription       = "expired unprovisioned Trust Contract cleanup"
+	resourceSharingNeverExpiryDescription             = "same-Workspace Resource sharing with separate offer and contract deadlines"
 )
 
 //go:embed 000001_platform_foundation.up.sql
@@ -456,6 +457,7 @@ func Catalog() []Migration {
 		newMigration(88, "Consumer-scoped immutable Imported policy baseline evidence", importedPolicySimulationReaderSQL),
 		newMigration(89, expiredUnprovisionedShareCleanupDescription, expiredUnprovisionedShareCleanupSQL),
 		newMigration(90, "bounded Console Account Session activity renewal", accountSessionActivityRenewalSQL),
+		newMigration(91, resourceSharingNeverExpiryDescription, resourceSharingNeverExpirySQL),
 	}
 }
 
@@ -505,3 +507,6 @@ var expiredUnprovisionedShareCleanupSQL string
 
 //go:embed 000090_account_session_activity_renewal.up.sql
 var accountSessionActivityRenewalSQL string
+
+//go:embed 000091_resource_sharing_never_expiry.up.sql
+var resourceSharingNeverExpirySQL string

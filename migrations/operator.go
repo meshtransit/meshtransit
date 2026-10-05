@@ -120,3 +120,12 @@ var expiredUnprovisionedShareCleanupOwnershipSQL string
 func ExpiredUnprovisionedShareCleanupOwnershipSQL() string {
 	return expiredUnprovisionedShareCleanupOwnershipSQL
 }
+
+//go:embed operator/000091_resource_sharing_never_expiry_ownership.sql
+var resourceSharingNeverExpiryOwnershipSQL string
+
+// ResourceSharingNeverExpiryOwnershipSQL confines the new sharing mutation
+// entry points to the isolated Resource Sharing writer.
+func ResourceSharingNeverExpiryOwnershipSQL() string {
+	return resourceSharingNeverExpiryOwnershipSQL
+}

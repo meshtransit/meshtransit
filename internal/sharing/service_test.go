@@ -68,6 +68,39 @@ func TestCreateOfferExpiryMatchesPostgreSQLPrecision(t *testing.T) {
 	}
 }
 
+func TestCreateOfferNeverExpiresKeepsDecisionDeadlineBounded(t *testing.T) {
+	t.Parallel()
+	command, result := sharingServiceCreateFixture(t)
+	command.params.ExpiresAt = NoExpiryTime()
+	previous, _ := result.Offer()
+	offerParams := previous.Offer().params
+	offerParams.ExpiresAt = previous.CreatedAt().Add(7 * 24 * time.Hour)
+	offer, err := NewOffer(offerParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := NewOfferSnapshot(offer, previous.Resource(), NoExpiryTime(), previous.CreatedAt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.offer = snapshot
+	if !createOfferResultMatches(result, command) {
+		t.Fatal("bounded offer and no-expiry share did not match")
+	}
+	offerParams.ExpiresAt = offerParams.ExpiresAt.Add(time.Microsecond)
+	offer, err = NewOffer(offerParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.offer, err = NewOfferSnapshot(offer, previous.Resource(), NoExpiryTime(), previous.CreatedAt())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createOfferResultMatches(result, command) {
+		t.Fatal("offer bearer deadline beyond seven days was accepted")
+	}
+}
+
 func TestServiceRejectsListItemFromWrongDirection(t *testing.T) {
 	t.Parallel()
 
@@ -184,7 +217,7 @@ func sharingServiceCreateFixture(t *testing.T) (CreateOffer, MutationResult) {
 	t.Helper()
 	offer := mustOffer(t)
 	binding := mustResourceBinding(t, offer.ProviderScope())
-	snapshot, err := NewOfferSnapshot(offer, binding, sharingServiceNow().Add(-time.Hour))
+	snapshot, err := NewOfferSnapshot(offer, binding, offer.ExpiresAt(), sharingServiceNow().Add(-time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}

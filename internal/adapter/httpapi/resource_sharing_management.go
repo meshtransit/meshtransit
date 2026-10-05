@@ -166,6 +166,7 @@ type createShareOfferRequest struct {
 	ResourceID          string                  `json:"resource_id"`
 	MaximumTraffic      []sharingTrafficRequest `json:"maximum_traffic"`
 	ExpiresAt           string                  `json:"expires_at"`
+	NeverExpires        bool                    `json:"never_expires"`
 	Reason              string                  `json:"reason"`
 }
 
@@ -215,6 +216,7 @@ type shareOfferData struct {
 	AcceptedTrustContractID string               `json:"accepted_trust_contract_id,omitempty"`
 	CreatedAt               time.Time            `json:"created_at"`
 	ExpiresAt               time.Time            `json:"expires_at"`
+	ShareExpiresAt          time.Time            `json:"share_expires_at"`
 	ProviderNetworkRevision int64                `json:"provider_network_revision,omitempty"`
 	ProviderSharingRevision int64                `json:"provider_sharing_revision,omitempty"`
 	ConsumerNetworkRevision int64                `json:"consumer_network_revision,omitempty"`
@@ -321,9 +323,17 @@ func (handler *ManagementHandler) createShareOffer(
 	if err != nil {
 		return handler.writeSharingRequestError(ctx, response, correlationID)
 	}
-	expiresAt, err := time.Parse(time.RFC3339Nano, body.ExpiresAt)
-	if err != nil || expiresAt.Format(time.RFC3339Nano) != body.ExpiresAt {
-		return handler.writeSharingRequestError(ctx, response, correlationID)
+	var expiresAt time.Time
+	if body.NeverExpires {
+		if body.ExpiresAt != "" {
+			return handler.writeSharingRequestError(ctx, response, correlationID)
+		}
+		expiresAt = sharing.NoExpiryTime()
+	} else {
+		expiresAt, err = time.Parse(time.RFC3339Nano, body.ExpiresAt)
+		if err != nil || expiresAt.Format(time.RFC3339Nano) != body.ExpiresAt || sharing.HasNoExpiry(expiresAt) {
+			return handler.writeSharingRequestError(ctx, response, correlationID)
+		}
 	}
 	reason, err := sharing.NewAuditReason(body.Reason)
 	if err != nil {
@@ -944,7 +954,7 @@ func shareOfferDataFromSnapshot(snapshot sharing.OfferSnapshot) shareOfferData {
 		TargetGeneration: binding.TargetGeneration(),
 		MaximumTraffic:   sharingTrafficDataFromSet(offer.MaximumTraffic()),
 		State:            sharingOfferStateString(offer.State()), Version: offer.Version(),
-		CreatedAt: snapshot.CreatedAt(), ExpiresAt: offer.ExpiresAt(),
+		CreatedAt: snapshot.CreatedAt(), ExpiresAt: offer.ExpiresAt(), ShareExpiresAt: snapshot.ShareExpiresAt(),
 	}
 	if contractID := offer.AcceptedContractID(); contractID.IsValid() {
 		data.AcceptedTrustContractID = contractID.String()

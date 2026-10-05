@@ -68,7 +68,9 @@ func (store *ResourceSharingStore) CreateOffer(
 ) (_ sharing.MutationResult, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !command.IsValid() ||
 		evaluatedAt.IsZero() || !command.ExpiresAt().After(evaluatedAt) ||
-		command.ExpiresAt().After(evaluatedAt.Add(30*24*time.Hour)) ||
+		(command.ExpiresAt().After(evaluatedAt.Add(30*24*time.Hour)) &&
+			(!sharing.HasNoExpiry(command.ExpiresAt()) ||
+				command.ProviderScope().WorkspaceID() != command.ConsumerScope().WorkspaceID())) ||
 		!validResourceSharingOptions(store.options) {
 		return sharing.MutationResult{}, sharing.ErrInvalidManagementRequest
 	}

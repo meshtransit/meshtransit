@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 90 {
-		t.Fatalf("len(Catalog()) = %d, want 90", len(catalog))
+	if len(catalog) != 91 {
+		t.Fatalf("len(Catalog()) = %d, want 91", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,51 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 90 {
-		t.Fatalf("LatestVersion() = %d, want 90", LatestVersion())
+	if LatestVersion() != 91 {
+		t.Fatalf("LatestVersion() = %d, want 91", LatestVersion())
+	}
+}
+
+func TestResourceSharingNeverExpiryMigrationSeparatesOfferDeadline(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[90]
+	if migration.Version != 91 || migration.Description != resourceSharingNeverExpiryDescription {
+		t.Fatalf("migration 91 = %+v, want separate sharing deadlines", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.create_resource_share_offer_v2",
+		"CREATE FUNCTION mesh_ops.decide_resource_share_offer_base_v2",
+		"CREATE FUNCTION mesh_ops.decide_resource_share_offer_v3",
+		"p_provider_workspace_id = p_consumer_workspace_id",
+		"p_expires_at = TIMESTAMPTZ '2200-01-01 00:00:00+00'",
+		"p_occurred_at + INTERVAL '168 hours'",
+		"ELSE p_expires_at",
+		"OR NOT p_occurred_at < offer_row.expires_at",
+		"WHEN export_row.expires_at = TIMESTAMPTZ '2200-01-01 00:00:00+00'",
+		"ELSE LEAST(offer_row.expires_at, export_row.expires_at)",
+		"FROM mesh_ops.decide_resource_share_offer_base_v2",
+		"SECURITY DEFINER",
+		"SET search_path = pg_catalog, mesh, mesh_ops",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("migration 91 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"GRANT EXECUTE", "BYPASSRLS", "DROP "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("migration 91 contains unsafe capability %q", forbidden)
+		}
+	}
+	ownership := ResourceSharingNeverExpiryOwnershipSQL()
+	for _, required := range []string{
+		"OWNER TO mesh_share_writer",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.create_resource_share_offer_v2",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.decide_resource_share_offer_v3",
+		"REVOKE ALL ON FUNCTION mesh_ops.decide_resource_share_offer_base_v2",
+	} {
+		if !strings.Contains(ownership, required) {
+			t.Errorf("migration 91 ownership missing %q", required)
+		}
 	}
 }
 

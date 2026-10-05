@@ -180,7 +180,7 @@ const createResourceShareOfferSQL = `SELECT
     consumer_sharing_revision,
     export_version,
     offer_version
-FROM mesh_ops.create_resource_share_offer_v1(
+FROM mesh_ops.create_resource_share_offer_v2(
     $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::BIGINT,
     $5::UUID, $6::UUID, $7::UUID, $8::UUID, $9::UUID,
     $10::BIGINT, $11::BIGINT, $12::BYTEA, $13::UUID, $14::UUID,
@@ -199,7 +199,7 @@ const decideResourceShareOfferSQL = `SELECT
     imported_resource_version,
     contract_state,
     access_name_version
-FROM mesh_ops.decide_resource_share_offer_v2(
+FROM mesh_ops.decide_resource_share_offer_v3(
     $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::BIGINT,
     $5::UUID, $6::UUID, $7::UUID, $8::UUID, $9::UUID,
     $10::BIGINT, $11::BYTEA, $12::TEXT, $13::UUID, $14::UUID,

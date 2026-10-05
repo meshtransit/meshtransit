@@ -216,13 +216,21 @@ func createOfferResultMatches(result MutationResult, command CreateOffer) bool {
 	offer, hasOffer := result.Offer()
 	token, hasToken := result.Token()
 	_, hasContract := result.Contract()
-	return result.IsValid() && hasOffer && hasToken && token.IsValid() && !hasContract &&
+	if !result.IsValid() || !hasOffer || !hasToken || !token.IsValid() || hasContract {
+		return false
+	}
+	deadlineMatches := offer.Offer().ExpiresAt().Equal(command.ExpiresAt())
+	if HasNoExpiry(command.ExpiresAt()) {
+		deadlineMatches = offer.Offer().ExpiresAt().After(offer.CreatedAt()) &&
+			!offer.Offer().ExpiresAt().After(offer.CreatedAt().Add(7*24*time.Hour))
+	}
+	return deadlineMatches &&
 		offer.Offer().State() == OfferStateOffered && offer.Offer().Version() == 1 &&
 		offer.Offer().ProviderScope() == command.ProviderScope() &&
 		offer.Offer().ConsumerScope() == command.ConsumerScope() &&
 		offer.Resource().ResourceID() == command.ResourceID() &&
 		offer.Offer().MaximumTraffic().Hash() == command.MaximumTraffic().Hash() &&
-		offer.Offer().ExpiresAt().Equal(command.ExpiresAt())
+		offer.ShareExpiresAt().Equal(command.ExpiresAt())
 }
 
 func decideOfferResultMatches(result MutationResult, command DecideOffer) bool {

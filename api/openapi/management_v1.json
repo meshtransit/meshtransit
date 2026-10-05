@@ -3284,7 +3284,7 @@
       "CreateShareOfferRequest": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["consumer_workspace_id", "consumer_network_id", "resource_id", "maximum_traffic", "expires_at", "reason"],
+        "required": ["consumer_workspace_id", "consumer_network_id", "resource_id", "maximum_traffic", "reason"],
         "properties": {
           "consumer_workspace_id": {"$ref": "#/components/schemas/PublicID"},
           "consumer_network_id": {"$ref": "#/components/schemas/PublicID"},
@@ -3295,7 +3295,8 @@
             "maxItems": 3,
             "items": {"$ref": "#/components/schemas/ShareTrafficConstraint"}
           },
-          "expires_at": {"type": "string", "format": "date-time"},
+          "expires_at": {"type": "string", "format": "date-time", "description": "Share grant deadline. Omit when never_expires is true."},
+          "never_expires": {"type": "boolean", "description": "Same-Workspace share remains valid until revoked; cannot be combined with expires_at."},
           "reason": {"type": "string", "minLength": 1, "maxLength": 512}
         }
       },
@@ -3346,7 +3347,7 @@
         "required": [
           "offer_id", "export_id", "scope_relation", "provider_workspace_id", "provider_network_id",
           "consumer_workspace_id", "consumer_network_id", "resource_id", "resource_version",
-          "target_generation", "maximum_traffic", "state", "version", "created_at", "expires_at"
+          "target_generation", "maximum_traffic", "state", "version", "created_at", "expires_at", "share_expires_at"
         ],
         "properties": {
           "offer_id": {"$ref": "#/components/schemas/PublicID"},
@@ -3364,7 +3365,8 @@
           "version": {"type": "integer", "format": "int64", "minimum": 1},
           "accepted_trust_contract_id": {"$ref": "#/components/schemas/PublicID"},
           "created_at": {"type": "string", "format": "date-time"},
-          "expires_at": {"type": "string", "format": "date-time"},
+          "expires_at": {"type": "string", "format": "date-time", "description": "Offer decision deadline, at most seven days after creation."},
+          "share_expires_at": {"type": "string", "format": "date-time", "description": "Share grant deadline after acceptance; 2200-01-01T00:00:00Z represents until revoked."},
           "provider_network_revision": {"type": "integer", "format": "int64", "minimum": 1},
           "provider_sharing_revision": {"type": "integer", "format": "int64", "minimum": 1},
           "consumer_network_revision": {"type": "integer", "format": "int64", "minimum": 1},

@@ -151,7 +151,7 @@ func (record resourceSharingOfferRecord) value() (resourceSharingProjection, err
 	if err != nil {
 		return resourceSharingProjection{}, sharing.ErrUnavailable
 	}
-	snapshot, err := sharing.NewOfferSnapshot(offer, binding, record.CreatedAt)
+	snapshot, err := sharing.NewOfferSnapshot(offer, binding, record.ExportExpiresAt, record.CreatedAt)
 	if err != nil {
 		return resourceSharingProjection{}, sharing.ErrUnavailable
 	}

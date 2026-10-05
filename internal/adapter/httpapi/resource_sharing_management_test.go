@@ -498,7 +498,7 @@ func managementSharingFixture(t *testing.T, state sharing.OfferState) management
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := sharing.NewOfferSnapshot(offer, binding, createdAt)
+	snapshot, err := sharing.NewOfferSnapshot(offer, binding, offer.ExpiresAt(), createdAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -541,7 +541,7 @@ func managementSharingContractFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture.snapshot, err = sharing.NewOfferSnapshot(offer, fixture.binding, fixture.snapshot.CreatedAt())
+	fixture.snapshot, err = sharing.NewOfferSnapshot(offer, fixture.binding, fixture.snapshot.ShareExpiresAt(), fixture.snapshot.CreatedAt())
 	if err != nil {
 		t.Fatal(err)
 	}

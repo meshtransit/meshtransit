@@ -17,7 +17,18 @@ const (
 	// MaximumManagementPageSize bounds one sharing catalog page.
 	MaximumManagementPageSize = 100
 	maximumAuditReasonBytes   = 512
+	// NoExpiryTimestamp is the canonical representable ceiling for a share that
+	// remains valid until revoked. It stays within time.UnixNano's range.
+	NoExpiryTimestamp = "2200-01-01T00:00:00Z"
 )
+
+// NoExpiryTime returns the canonical ceiling for a share without a scheduled expiry.
+func NoExpiryTime() time.Time {
+	return time.Date(2200, time.January, 1, 0, 0, 0, 0, time.UTC)
+}
+
+// HasNoExpiry reports whether a share uses the canonical no-expiry ceiling.
+func HasNoExpiry(value time.Time) bool { return value.Equal(NoExpiryTime()) }
 
 var (
 	// ErrInvalidManagementRequest reports malformed management intent.
@@ -382,14 +393,15 @@ func (command ActivateContract) IsValid() bool {
 
 // OfferSnapshot binds management-visible offer state to exact Resource authority.
 type OfferSnapshot struct {
-	offer     Offer
-	resource  ResourceBinding
-	createdAt time.Time
+	offer          Offer
+	resource       ResourceBinding
+	shareExpiresAt time.Time
+	createdAt      time.Time
 }
 
 // NewOfferSnapshot validates one management-safe offer projection.
-func NewOfferSnapshot(offer Offer, binding ResourceBinding, createdAt time.Time) (OfferSnapshot, error) {
-	snapshot := OfferSnapshot{offer: offer, resource: binding, createdAt: createdAt.UTC()}
+func NewOfferSnapshot(offer Offer, binding ResourceBinding, shareExpiresAt, createdAt time.Time) (OfferSnapshot, error) {
+	snapshot := OfferSnapshot{offer: offer, resource: binding, shareExpiresAt: shareExpiresAt.UTC(), createdAt: createdAt.UTC()}
 	if !snapshot.IsValid() {
 		return OfferSnapshot{}, ErrInvalidManagementRequest
 	}
@@ -402,13 +414,18 @@ func (snapshot OfferSnapshot) Offer() Offer { return snapshot.offer }
 // Resource returns exact provider Resource provenance.
 func (snapshot OfferSnapshot) Resource() ResourceBinding { return snapshot.resource }
 
+// ShareExpiresAt is the exclusive grant ceiling after the offer is accepted.
+func (snapshot OfferSnapshot) ShareExpiresAt() time.Time { return snapshot.shareExpiresAt }
+
 // CreatedAt returns the offer creation time.
 func (snapshot OfferSnapshot) CreatedAt() time.Time { return snapshot.createdAt }
 
 // IsValid reports whether offer and Resource scopes agree.
 func (snapshot OfferSnapshot) IsValid() bool {
 	return snapshot.offer.IsValid() && snapshot.resource.IsValid() &&
-		snapshot.resource.Scope() == snapshot.offer.ProviderScope() && !snapshot.createdAt.IsZero()
+		snapshot.resource.Scope() == snapshot.offer.ProviderScope() &&
+		!snapshot.shareExpiresAt.IsZero() && !snapshot.shareExpiresAt.Before(snapshot.offer.ExpiresAt()) &&
+		!snapshot.createdAt.IsZero()
 }
 
 // MutationResult reports the exact post-commit revisions and optional authority.
