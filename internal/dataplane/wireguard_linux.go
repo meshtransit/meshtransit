@@ -106,7 +106,7 @@ func (f *officialWireGuardFactory) New(
 	}
 
 	return &officialWireGuardDevice{
-		device:    device.NewDevice(tunDevice, bind, logger),
+		device:    newEndpointAuthorityDevice(tunDevice, bind, logger),
 		discovery: discovery,
 		bind:      bind,
 		datagrams: datagrams,
@@ -176,7 +176,7 @@ func adoptPrivilegedTUNDescriptor(
 }
 
 func (d *officialWireGuardDevice) Configure(configuration io.Reader) error {
-	return d.device.IpcSetOperation(configuration)
+	return configureWithEndpointAuthority(d.device, configuration)
 }
 
 func (d *officialWireGuardDevice) Up() error { return d.device.Up() }
