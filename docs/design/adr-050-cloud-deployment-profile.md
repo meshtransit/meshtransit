@@ -70,8 +70,14 @@ those gaps for a first Cloud release.
   `max_active_workspaces=<entitlement>`, `workspace_creation=account`,
   `cloud_billing=false` (until billing exists), `platform_operations=false`,
   `entitlement_state=active|grace`, `revision=<capability revision>`.
-- Self-host keeps its exact current tuple. A second self-host Workspace is
-  rejected by the same guard (slot 0 only).
+- Amended 2026-10-05 by the product owner: self-host has exactly the same core
+  features as Cloud (multiple Workspaces, Workspace creation, switching,
+  cross-Workspace sharing). Profiles differ only in numeric limits
+  (`max_active_workspaces`, `max_owned_workspaces_per_account`, later Device
+  and Network counts) and in Cloud-only operations such as billing. Code has one
+  path; limits are data from the verified entitlement, never feature branches
+  on the profile name. Tightening self-host limits is a later, separate change;
+  until then the current self-host tuple stays as it is.
 - `read_console_deployment_capabilities_v2` derives the tuple from the
   Deployment row plus the current verified entitlement; v1 stays for rollback.
 
@@ -244,7 +250,8 @@ Approved by the product owner on 2026-10-05 with the recommended options:
 
 ## Consequences
 
-- Self-host behaviour and tests stay unchanged; Cloud adds parallel tuples.
+- Self-host behaviour stays unchanged for now. Cloud and self-host share one
+  feature path whose limits come from the entitlement (D2 amendment).
 - Existing SQL functions keep single-Workspace Session scoping; switching is a
   Session rebinding, not a multi-scope Session.
 - Signup, invitations, SSO just-in-time join, SCIM, Workspace suspension and
