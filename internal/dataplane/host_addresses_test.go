@@ -49,3 +49,55 @@ func TestHostAddress(t *testing.T) {
 		})
 	}
 }
+
+func TestUsableHostAddressesExcludeTunnelsAndMeshOverlays(t *testing.T) {
+	t.Parallel()
+
+	ipNet := func(value string, bits int) net.Addr {
+		ip := net.ParseIP(value)
+		size := 128
+		if ip.To4() != nil {
+			size = 32
+		}
+		return &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, size)}
+	}
+	interfaces := []hostInterface{
+		{
+			name:  "eth0",
+			flags: net.FlagUp | net.FlagBroadcast,
+			addresses: []net.Addr{
+				ipNet("203.0.113.10", 20), ipNet("10.15.0.6", 16), ipNet("2001:db8::10", 64),
+			},
+		},
+		// Another mesh client on this host, here an Isolation Network TUN.
+		{name: "meshiso0", flags: net.FlagUp | net.FlagPointToPoint, addresses: []net.Addr{
+			ipNet("100.64.30.1", 32), ipNet("fd7a:115c:a1e0:3::1", 128),
+		}},
+		// The local DNS link of a mesh client.
+		{name: "meshdns0", flags: net.FlagUp | net.FlagPointToPoint, addresses: []net.Addr{
+			ipNet("192.0.2.55", 32),
+		}},
+		// A mesh overlay address that a non-tunnel interface still carries.
+		{name: "bridge0", flags: net.FlagUp | net.FlagBroadcast, addresses: []net.Addr{
+			ipNet("172.17.0.1", 16), ipNet("100.70.0.9", 24), ipNet("fd7a:115c:a1e0:9::1", 64),
+		}},
+		{name: "lo", flags: net.FlagUp | net.FlagLoopback, addresses: []net.Addr{ipNet("127.0.0.1", 8)}},
+		{name: "eth9", flags: net.FlagBroadcast, addresses: []net.Addr{ipNet("198.51.100.7", 24)}},
+	}
+
+	got := usableHostAddresses(interfaces)
+	want := []netip.Addr{
+		netip.MustParseAddr("203.0.113.10"),
+		netip.MustParseAddr("10.15.0.6"),
+		netip.MustParseAddr("2001:db8::10"),
+		netip.MustParseAddr("172.17.0.1"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("usableHostAddresses() = %v, want %v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("usableHostAddresses() = %v, want %v", got, want)
+		}
+	}
+}
