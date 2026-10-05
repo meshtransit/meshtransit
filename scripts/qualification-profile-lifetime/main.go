@@ -59,9 +59,15 @@ func main() {
 	if err != nil {
 		fail(errors.New("qualification database connection failed"))
 	}
-	defer conn.Close(context.Background())
-	if err := run(ctx, conn, p); err != nil {
+	err = run(ctx, conn, p)
+	cleanup, stop := context.WithTimeout(context.Background(), 2*time.Second)
+	closeErr := conn.Close(cleanup)
+	stop()
+	if err != nil {
 		fail(err)
+	}
+	if closeErr != nil {
+		fail(errors.New("qualification database close failed"))
 	}
 }
 

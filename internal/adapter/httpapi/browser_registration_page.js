@@ -10,15 +10,13 @@
     if (started) return;
     const action = form.getAttribute("action");
     const selected = form.querySelector('input[name="network"]:checked');
-    const proof = form.querySelector('input[name="csrf"]');
     const workspace = form.querySelector('input[name="workspace"]');
     if (!selected) {
       status.textContent = "Choose a Network first.";
       return;
     }
     if (!/^\/register\/v1\/[A-Za-z0-9_-]{43}$/.test(action) ||
-        action !== window.location.pathname || !proof ||
-        !proof.value || proof.value.length > 1024 || !workspace ||
+        action !== window.location.pathname || !workspace ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(workspace.value)) {
       button.disabled = true;
       status.textContent = "Restart login from Mesh Client.";
@@ -33,6 +31,29 @@
     const timer = setTimeout(abort, 15000);
     window.addEventListener("pagehide", abort, { once: true });
     try {
+      // The landing page may have been open longer than the short CSRF lease.
+      // Read a fresh proof from the same intent and Workspace immediately
+      // before the POST; the server still rechecks every authority boundary.
+      const fresh = await fetch(window.location.href, {
+        method: "GET", mode: "same-origin", credentials: "same-origin",
+        redirect: "error", cache: "no-store", referrerPolicy: "no-referrer",
+        signal: controller.signal,
+      });
+      if (fresh.status !== 200 || fresh.redirected || fresh.type !== "basic" ||
+          fresh.headers.get("content-type") !== "text/html; charset=utf-8") {
+        throw new Error("fresh proof unavailable");
+      }
+      const page = new DOMParser().parseFromString(await fresh.text(), "text/html");
+      const refreshed = page.getElementById("registration-form");
+      const proof = refreshed?.querySelector('input[name="csrf"]');
+      const currentWorkspace = refreshed?.querySelector('input[name="workspace"]');
+      const currentNetworks = refreshed?.querySelectorAll('input[name="network"]');
+      if (refreshed?.getAttribute("action") !== action ||
+          currentWorkspace?.value !== workspace.value || !proof?.value ||
+          proof.value.length > 1024 ||
+          !Array.from(currentNetworks || []).some((choice) => choice.value === selected.value)) {
+        throw new Error("registration authority changed");
+      }
       const response = await fetch(action, {
         method: "POST", mode: "same-origin", credentials: "same-origin",
         redirect: "error", cache: "no-store", referrerPolicy: "no-referrer",

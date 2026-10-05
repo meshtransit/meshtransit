@@ -13,7 +13,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/enrollment"
 )
 
-const browserRegistrationTTL = 5 * time.Minute
+const browserRegistrationTTL = 15 * time.Minute
 
 var errInvalidBrowserRegistrationComposition = errors.New("invalid browser registration composition")
 

@@ -37,11 +37,26 @@ function harness(reply = {}, options = {}) {
     Object.defineProperty(element, "innerHTML", { set() { assert.fail("HTML injection"); } });
   }
   const window = {
-    location: { pathname: action, reload() { reloads++; } },
+    location: { pathname: action, href: `https://app.example.test${action}?workspace=${workspace}`, reload() { reloads++; } },
     addEventListener(name, handler) { pageEvents.set(name, handler); },
     removeEventListener(name, handler) { assert.equal(pageEvents.get(name), handler); pageEvents.delete(name); },
   };
   const sandbox = { document, window, AbortController, URLSearchParams,
+    DOMParser: class { parseFromString() { return { getElementById(id) {
+      assert.equal(id, "registration-form");
+      return {
+        getAttribute() { return options.freshAction ?? action; },
+        querySelector(selector) {
+          if (selector === 'input[name="csrf"]') return { value: options.freshProof ?? "fresh-proof" };
+          assert.equal(selector, 'input[name="workspace"]');
+          return { value: options.freshWorkspace ?? workspace };
+        },
+        querySelectorAll(selector) {
+          assert.equal(selector, 'input[name="network"]');
+          return options.noFreshNetwork ? [] : [{ value: network }];
+        },
+      };
+    } }; } },
     setTimeout(handler, delay) { assert.equal(delay, 15000); timers.set(1, handler); return 1; },
     clearTimeout(id) { timers.delete(id); },
     async fetch(destination, options) {
@@ -50,8 +65,12 @@ function harness(reply = {}, options = {}) {
       if (reply.pending) await new Promise((resolve, reject) => {
         options.signal.addEventListener("abort", () => reject(new Error("private timeout")), { once: true });
       });
-      return { status: reply.status ?? 200, redirected: reply.redirected ?? false, type: reply.type ?? "basic",
-        headers: { get(name) { assert.equal(name, "content-type"); return reply.contentType ?? "text/html; charset=utf-8"; } },
+      const isGet = options.method === "GET";
+      return { status: (isGet ? reply.getStatus : reply.status) ?? 200,
+        redirected: (isGet ? reply.getRedirected : reply.redirected) ?? false,
+        type: (isGet ? reply.getType : reply.type) ?? "basic",
+        headers: { get(name) { assert.equal(name, "content-type"); return (isGet ? reply.getContentType : reply.contentType) ?? "text/html; charset=utf-8"; } },
+        async text() { return "fresh same-origin registration page"; },
         body: { async cancel() {} },
       };
     },
@@ -69,23 +88,29 @@ test("GET does not automatically approve", () => {
   assert.equal(instance.reloads, 0);
 });
 
-test("explicit activation sends one exact same-origin approval and reloads", async () => {
+test("explicit activation refreshes proof then sends one exact same-origin approval", async () => {
   const instance = harness();
   const pending = instance.activate();
   await instance.activate("submit");
   await pending;
-  assert.equal(instance.calls.length, 1);
-  const call = instance.calls[0];
+  assert.equal(instance.calls.length, 2);
+  const refresh = instance.calls[0];
+  assert.equal(refresh.destination, `https://app.example.test${action}?workspace=${workspace}`);
+  assert.equal(refresh.options.method, "GET");
+  assert.equal(refresh.options.credentials, "same-origin");
+  assert.equal(refresh.options.referrerPolicy, "no-referrer");
+  const call = instance.calls[1];
   assert.equal(call.destination, action);
   assert.equal(call.options.method, "POST");
   assert.equal(call.options.mode, "same-origin");
   assert.equal(call.options.credentials, "same-origin");
   assert.equal(call.options.redirect, "error");
   assert.equal(call.options.referrerPolicy, "no-referrer");
-  assert.deepEqual([...new URLSearchParams(call.options.body)], [["csrf", "synthetic-proof"], ["workspace", workspace], ["network", network]]);
+  assert.deepEqual([...new URLSearchParams(call.options.body)], [["csrf", "fresh-proof"], ["workspace", workspace], ["network", network]]);
   assert.equal(instance.reloads, 1);
   assert.equal(instance.timers.size, 0);
   assert.equal(instance.pageEvents.size, 0);
+  assert.equal(refresh.options.signal.aborted, true);
   assert.equal(call.options.signal.aborted, true);
 });
 
@@ -98,7 +123,7 @@ for (const [name, reply] of [
     const instance = harness(reply);
     await instance.activate();
     await instance.activate();
-    assert.equal(instance.calls.length, 1);
+    assert.equal(instance.calls.length, reply.reject ? 1 : 2);
     assert.equal(instance.reloads, 0);
     assert.match(instance.status.textContent, /^Approval could not be confirmed/);
     assert.equal(instance.status.textContent.includes("private"), false);
@@ -113,6 +138,16 @@ test("missing selection and foreign action never send", async () => {
     const instance = harness({}, options);
     await instance.activate();
     assert.equal(instance.calls.length, 0);
+  }
+});
+
+test("changed Workspace or missing Network blocks POST after proof refresh", async () => {
+  for (const options of [{ freshWorkspace: "01890f00-0000-7000-8000-000000000102" },
+    { noFreshNetwork: true }, { freshAction: "/register/v1/" + "B".repeat(43) }]) {
+    const instance = harness({}, options);
+    await instance.activate();
+    assert.equal(instance.calls.length, 1);
+    assert.match(instance.status.textContent, /^Approval could not be confirmed/);
   }
 });
 
