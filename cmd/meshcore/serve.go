@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -147,6 +148,12 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		}
 		checkers = append(checkers, redisClient)
 		additionalMetrics = append(additionalMetrics, redisClient.MetricsCollector())
+	}
+	if code, entitlementErr := recordDeploymentEntitlement(
+		ctx, processConfig.DeploymentEntitlement, storagePools.runtime, logger, time.Now().UTC(),
+	); entitlementErr != nil {
+		logger.ErrorContext(ctx, "startup failed", "error_code", code)
+		return 1
 	}
 
 	var revisionWorkerTelemetry *revisionworker.Telemetry

@@ -61,6 +61,7 @@ type Config struct {
 	PrivateLogin          *PrivateLoginFile
 	BrowserRegistration   *BrowserRegistrationConfig
 	Identity              *IdentityConfig
+	DeploymentEntitlement *DeploymentEntitlementConfig
 }
 
 // DependencyConfig bounds startup and periodic infrastructure checks.
@@ -98,6 +99,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, fmt.Errorf("%w: %s", ErrInvalid, envLogLevel)
 	}
 	authExpiryConfig, err := loadAuthExpiryConfig(lookup, role, shutdownTimeout)
+	if err != nil {
+		return Config{}, err
+	}
+	deploymentEntitlementConfig, err := loadDeploymentEntitlementConfig(lookup, role)
 	if err != nil {
 		return Config{}, err
 	}
@@ -231,6 +236,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		PrivateLogin:          privateLoginFile,
 		BrowserRegistration:   browserRegistration,
 		Identity:              identityConfig,
+		DeploymentEntitlement: deploymentEntitlementConfig,
 	}, nil
 }
 

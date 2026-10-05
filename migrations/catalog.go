@@ -463,6 +463,7 @@ func Catalog() []Migration {
 		newMigration(94, "provider-chosen frozen Device share DNS labels", shareOfferAccessLabelSQL),
 		newMigration(95, "built-in Workspace roles and Workspace-scope assignments", builtinWorkspaceRolesSQL),
 		newMigration(96, "Workspace member and built-in role management", workspaceRoleManagementSQL),
+		newMigration(97, "signed Deployment entitlement authority and capabilities v2", deploymentEntitlementSQL),
 	}
 }
 
@@ -530,3 +531,6 @@ var builtinWorkspaceRolesSQL string
 
 //go:embed 000096_workspace_role_management.up.sql
 var workspaceRoleManagementSQL string
+
+//go:embed 000097_deployment_entitlement.up.sql
+var deploymentEntitlementSQL string

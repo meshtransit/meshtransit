@@ -180,8 +180,24 @@ func NewVerifier(keys map[string]ed25519.PublicKey) (*Verifier, error) {
 // existing tenants keep working while creation fails closed.
 func (verifier *Verifier) Verify(raw []byte, deploymentID deployment.ID, installation *Installation,
 	now time.Time) (Entitlement, error) {
-	if verifier == nil || installation == nil || !deploymentID.IsValid() || now.IsZero() ||
-		len(raw) == 0 || len(raw) > MaxEnvelopeBytes {
+	if installation == nil || !deploymentID.IsValid() {
+		return Entitlement{}, ErrInvalid
+	}
+	result, err := verifier.Parse(raw, now)
+	if err != nil {
+		return Entitlement{}, err
+	}
+	if result.DeploymentID != deploymentID || result.installationKey != installation.fingerprint() {
+		return Entitlement{}, ErrForeign
+	}
+	return result, nil
+}
+
+// Parse checks the signature, the claims and the time window without the
+// installation binding. The issuance tool uses it to self-check; meshcore
+// always calls Verify.
+func (verifier *Verifier) Parse(raw []byte, now time.Time) (Entitlement, error) {
+	if verifier == nil || now.IsZero() || len(raw) == 0 || len(raw) > MaxEnvelopeBytes {
 		return Entitlement{}, ErrInvalid
 	}
 	var outer envelope
@@ -206,9 +222,6 @@ func (verifier *Verifier) Verify(raw []byte, deploymentID deployment.ID, install
 	}
 	result.KeyID = outer.KeyID
 	result.ContentSHA256 = sha256.Sum256(payload)
-	if result.DeploymentID != deploymentID || result.installationKey != installation.fingerprint() {
-		return Entitlement{}, ErrForeign
-	}
 	if now.Add(maxClockSkew).Before(result.NotBefore) {
 		return Entitlement{}, ErrNotYetValid
 	}

@@ -196,3 +196,10 @@ func TestConstructorsRejectBadKeys(t *testing.T) {
 		t.Fatal("all-zero installation seed accepted")
 	}
 }
+
+func TestTrustedVerifierLoadsEmbeddedKeys(t *testing.T) {
+	t.Parallel()
+	if _, err := entitlement.TrustedVerifier(); err != nil {
+		t.Fatal(err)
+	}
+}
