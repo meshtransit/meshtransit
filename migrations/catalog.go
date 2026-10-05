@@ -464,6 +464,7 @@ func Catalog() []Migration {
 		newMigration(95, "built-in Workspace roles and Workspace-scope assignments", builtinWorkspaceRolesSQL),
 		newMigration(96, "Workspace member and built-in role management", workspaceRoleManagementSQL),
 		newMigration(97, "signed Deployment entitlement authority and capabilities v2", deploymentEntitlementSQL),
+		newMigration(98, "one reviewed Workspace provisioning path", workspaceProvisioningSQL),
 	}
 }
 
@@ -534,3 +535,6 @@ var workspaceRoleManagementSQL string
 
 //go:embed 000097_deployment_entitlement.up.sql
 var deploymentEntitlementSQL string
+
+//go:embed 000098_workspace_provisioning.up.sql
+var workspaceProvisioningSQL string

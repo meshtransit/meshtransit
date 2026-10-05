@@ -8,7 +8,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/config"
 )
 
-const usage = "Usage: meshcore [serve | version | config validate | identity fingerprint | migrate status | migrate up]\n"
+const usage = "Usage: meshcore [serve | version | config validate | identity fingerprint | migrate status | migrate up | bootstrap check | bootstrap apply]\n"
 
 func execute(
 	ctx context.Context,
@@ -30,6 +30,8 @@ func execute(
 		return runIdentityFingerprint(ctx, lookup, output, errorOutput)
 	case len(args) == 2 && args[0] == "migrate" && (args[1] == "status" || args[1] == "up"):
 		return runMigrate(ctx, args[1], lookup, output, errorOutput, openMigrationService)
+	case len(args) == 2 && args[0] == "bootstrap" && (args[1] == "check" || args[1] == "apply"):
+		return runBootstrap(ctx, args[1], lookup, output, errorOutput)
 	case len(args) == 1 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help"):
 		if _, err := io.WriteString(output, usage); err != nil {
 			_, _ = fmt.Fprintln(errorOutput, "meshcore: write help output failed")
