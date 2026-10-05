@@ -79,11 +79,16 @@ share names, alias addresses or host addresses. Map stream failures log only
 
 ## Open issues
 
-- meshd: after the Provider restarts, both sides report a direct path while all
-  data uses the relay (about 500 ms RTT) and does not self-heal. Relayed packets
-  in flight roam the WireGuard endpoint back to the relay after each direct
-  reassert; status reads meshd's own path record, not the device endpoint.
-  It recovered only when the map stream reopened.
+- Fixed in meshd a3cd965: after the Provider restarted, both sides reported a
+  direct path while all data used the relay (about 500 ms RTT) and did not
+  self-heal, because relayed packets in flight roamed the WireGuard endpoint
+  back to the relay after each direct reassert. With roaming pinned to the
+  selected endpoint, three Provider restarts each returned to a direct path
+  with 1.6–1.8 ms average RTT within 5 s.
+- meshd: a host running several clients advertises another client's TUN
+  address (here the Isolation overlay address) as a UDP endpoint candidate, so
+  peers send authenticated probes to it over the underlay. Endpoint candidates
+  should exclude mesh interfaces and overlay ranges.
 - Console: the rule-removal review reports "0 connections lose access" for an
   active share; a rule pointing at a revoked imported Device remains listed as
   published and causes later 409 conflicts.
