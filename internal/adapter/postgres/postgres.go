@@ -63,7 +63,7 @@ type Pool struct {
 	resourceAuthorityDatabase       resourceAuthorityDatabase
 	deviceRevocationDatabase        deviceRevocationDatabase
 	authTransactionDatabase         authTransactionDatabase
-	accountSessionDatabase          accountSessionDatabase
+	accountSessionDatabase          activityAccountSessionDatabase
 	workspaceRenameDatabase         accountSessionDatabase
 	browserIntentDatabase           browserIntentDatabase
 	accountSessionLogoutDatabase    accountSessionLogoutDatabase
