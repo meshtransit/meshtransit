@@ -1,5 +1,10 @@
 # Same-Workspace direct Device sharing
 
+> **Superseded 2026-10-05.** Every Device share now uses the peer-alias path;
+> see [Device sharing through peer aliases](device-alias-sharing.md#decision-2026-10-05-one-alias-technique-for-every-device-share).
+> This direct path stays only until the alias path passes the live
+> same-Workspace qualification, then it is withdrawn and removed.
+
 ## Status and approved product boundary
 
 The protocol/domain checkpoint now supports separately validated directional

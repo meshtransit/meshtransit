@@ -15,6 +15,49 @@ The authenticated worker command, alias projection reader and cross-Workspace
 map delivery are not implemented or enabled on POC. The existing same-Workspace direct reader
 remains a separate implementation path.
 
+## Decision 2026-10-05: one alias technique for every Device share
+
+This decision supersedes the canonical-address exception for same-Workspace
+Device sharing. Every Device share uses the peer-alias path, whether the two
+Networks are in one Workspace or in different Workspaces and whether or not
+their canonical prefixes overlap. One packet path is easier to verify and
+maintain than a direct path plus an alias path. The direct same-Workspace path
+remains only until the alias path passes the live same-Workspace qualification;
+it is then withdrawn and removed.
+
+Address ownership:
+
+- A Workspace owns its complete overlay space (`100.64.0.0/10` and its
+  configured IPv6 overlay prefix). Users partition Network prefixes inside it.
+  Alias pools therefore lie outside every Workspace overlay prefix.
+- Alias pools are Deployment data, not code defaults. The reference POC and
+  cloud values are IPv4 `198.18.0.0/16` (Resource Alias) and `198.19.0.0/16`
+  (Consumer Source Alias), and IPv6 `fd02:48de:ec1b:1::/96` and
+  `fd02:48de:ec1b:2::/96` from the random RFC 4193 prefix `fd02:48de:ec1b::/48`.
+  `198.18.0.0/15` is the RFC 2544 special-purpose block: it is not globally
+  reachable and does not conflict with RFC 1918 site prefixes.
+- One Resource Alias is reserved per Private Endpoint (one contract); one
+  Consumer Source Alias per endpoint and consumer Device.
+
+Alias uniqueness is scoped to participating Networks, not to the Deployment. A
+retained alias (reserved or quarantined) must be unique among every retained
+alias whose provider or consumer Network is either Network of the new lease.
+This is the exact condition the client enforces per map: a local alias cannot
+collide with a mapped address, and one local alias cannot have incompatible
+endpoint owners. A Device can be a provider and a consumer at once, so both
+sides of each lease are checked. Capacity is consequently bounded per Network
+instead of per Deployment, so one tenant cannot exhaust another tenant's pool.
+Quarantine is scoped the same way. Logs and audit identify an alias together
+with its Network.
+
+Consumer-visible names use the provider identity:
+`<label>.<provider-workspace-code>.<provider-network-code>.shared.mesh`, where
+the codes are the immutable twelve-digit display codes. The share creator sets
+the label when creating the share; the Console proposes a normalized Device
+hostname. A label identifies exactly one Resource within its provider Network
+and is frozen once a share uses it. Consumers do not choose the name. Names are
+discovery metadata only; authorization remains the alias grant.
+
 A Private Endpoint is the logical contract, local destination and lifecycle
 object. For a Device-backed Resource, the provider enforcement process is
 `meshd` on that Device. The architecture's agent role does not require another
@@ -36,11 +79,10 @@ Each peer pair has four address roles, separately for IPv4 and IPv6:
 | Resource Alias | The provider destination visible to the consumer |
 | Consumer Source Alias | The consumer source visible to the provider |
 
-Both Workspaces may use identical canonical addresses. Cross-Workspace sharing
-always allocates both alias roles from collision-checked federation pools;
-current non-overlap is not a reason to expose canonical foreign addresses.
-Same-Workspace Device sharing keeps canonical host addresses where the existing
-address contract proves non-overlap.
+Both Networks may use identical canonical addresses. Every Device share
+allocates both alias roles from collision-checked alias pools; current
+non-overlap is not a reason to expose canonical foreign addresses, including
+inside one Workspace.
 
 A Resource Alias remains bound to one contract, Resource and consumer Network.
 A Consumer Source Alias remains bound to one endpoint generation and consumer
@@ -154,7 +196,7 @@ route pools. Packet translation remains in the unprivileged client.
 | --- | --- |
 | Source spoofing | Exact source alias bound to the authenticated Node key |
 | Raw-address bypass | Verify the peer-specific alias destination before rewrite |
-| Cross-Workspace address collision | Separate alias allocation plus exact host routes |
+| Canonical address collision | Network-scoped alias allocation plus exact host routes |
 | Stale or mixed generations | Atomic snapshot, generation checks and packet deadlines |
 | Reverse or transitive access | Directed grants; stateful replies; imports cannot be re-exported |
 | Alias reuse | Durable quarantine covering stale session and projection lifetimes |
