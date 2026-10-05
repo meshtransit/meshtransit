@@ -6,6 +6,7 @@ import (
 	appmapsession "github.com/meshtransit/meshtransit/internal/control/mapsession"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 	"github.com/meshtransit/meshtransit/internal/sharing/sharingtest"
 	"net/netip"
 	"testing"
@@ -64,7 +65,6 @@ func TestAliasRecordRejectsAbsentOrMismatchedProof(t *testing.T) {
 		mutate func(*directEdgeRecord)
 	}{
 		{"missing aliases", func(record *directEdgeRecord) { record.Aliases = nil }},
-		{"same Workspace", func(record *directEdgeRecord) { record.ProviderWorkspaceID = record.ConsumerWorkspaceID }},
 		{"canonical self as local alias", func(record *directEdgeRecord) { record.Aliases.LocalAddresses = []string{"100.64.0.1/32"} }},
 		{"canonical foreign peer", func(record *directEdgeRecord) { record.Peer.Addresses = []string{"100.64.0.1/32"} }},
 		{"wrong remote address", func(record *directEdgeRecord) { record.Aliases.RemoteAddresses = []string{"100.96.0.2/32"} }},
@@ -110,5 +110,50 @@ func TestStoreLoadsAliasOnlyWhenEnabledInSameTransaction(t *testing.T) {
 		if present != enabled {
 			t.Fatal("alias enablement ignored")
 		}
+	}
+}
+
+// Same-Workspace shares use the alias path too. The fixture's Networks share
+// one Workspace; the Resource Alias is the IPv6 legacy lease, as on the POC.
+func TestAliasRecordAcceptsSameWorkspaceDualStackShare(t *testing.T) {
+	record, self := directRecordFixture(t)
+	if record.ProviderWorkspaceID != record.ConsumerWorkspaceID {
+		t.Fatal("fixture is not a same-Workspace share")
+	}
+	record.Endpoint.ResourceAddress = "fd02:48de:ec1b:1::1"
+	provider, err := scopeFromText(record.ProviderWorkspaceID, record.ProviderNetworkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peerID, err := node.ParseID(record.Target.DeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := policy.NewPortRange(443, 443)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := sharingtest.New(t, sharingtest.Params{ProviderScope: provider, ConsumerScope: self.Scope(), ProviderDeviceID: peerID,
+		ConsumerDeviceID: self.NodeID(), ProviderAddress: netip.MustParseAddr(record.Endpoint.ResourceAddress), EvaluatedAt: record.EvaluatedAt,
+		RecoveryEpoch: record.RecoveryEpoch, Protocol: policy.ProtocolTCP, Ports: []policy.PortRange{port}, Mode: sharing.EndpointModeFederationAlias})
+	hash := evidence.Target.SemanticHash().Bytes()
+	record.Target.SemanticHash = hex.EncodeToString(hash[:])
+	record.Peer.Addresses = []string{"198.18.0.1/32", "fd02:48de:ec1b:1::1/128"}
+	record.Aliases = &aliasEdgeRecord{LocalAddresses: []string{"198.19.0.1/32", "fd02:48de:ec1b:2::1/128"},
+		RemoteAddresses: []string{"198.18.0.1/32", "fd02:48de:ec1b:1::1/128"}, ExpiresAt: record.Contract.ExpiresAt}
+	projection, err := decodeAliasEdge([]byte(encodeDirectRecord(t, record)), self)
+	if err != nil {
+		t.Fatalf("same-Workspace alias edge rejected: %v", err)
+	}
+	snapshot, err := self.WithDirectDeviceProjections([]appmapsession.DirectDeviceProjection{projection})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias, ok := snapshot.DeviceAliasFor(projection.Peer().NodeID())
+	if !ok || !alias.IsConsumer || len(alias.LocalAddresses) != 2 || alias.LocalAddresses[0].String() != "198.19.0.1/32" {
+		t.Fatal("same-Workspace consumer grant has the wrong local alias")
+	}
+	if _, err := decodeDirectEdge([]byte(encodeDirectRecord(t, record)), self); !errors.Is(err, ErrSnapshotEvidence) {
+		t.Fatal("direct reader accepted alias proof")
 	}
 }

@@ -12,7 +12,7 @@ const loadDirectEdgesSQL = `SELECT edge::TEXT
 FROM mesh_ops.load_direct_share_map_edges_v1($1::BYTEA, $2::BYTEA, $3::INTEGER) AS edge`
 
 const loadAliasEdgesSQL = `SELECT edge::TEXT
-FROM mesh_ops.load_device_alias_map_edges_v2($1::BYTEA, $2::BYTEA, $3::INTEGER) AS edge`
+FROM mesh_ops.load_device_alias_map_edges_v3($1::BYTEA, $2::BYTEA, $3::INTEGER) AS edge`
 
 func (store *Store) loadDirectEdges(
 	ctx context.Context, transaction databaseTransaction, self appmapsession.Snapshot,

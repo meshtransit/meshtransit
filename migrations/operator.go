@@ -136,3 +136,10 @@ var unifiedDeviceAliasOwnershipSQL string
 // UnifiedDeviceAliasOwnershipSQL exposes the Network-scoped alias entry points
 // and closes the earlier cross-Workspace-only and direct activation ones.
 func UnifiedDeviceAliasOwnershipSQL() string { return unifiedDeviceAliasOwnershipSQL }
+
+//go:embed operator/000093_alias_map_reader_ownership.sql
+var aliasMapReaderOwnershipSQL string
+
+// AliasMapReaderOwnershipSQL moves the runtime alias map entry point to the
+// bounded-planning reader and closes the previous one.
+func AliasMapReaderOwnershipSQL() string { return aliasMapReaderOwnershipSQL }

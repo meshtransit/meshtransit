@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 92 {
-		t.Fatalf("len(Catalog()) = %d, want 92", len(catalog))
+	if len(catalog) != 93 {
+		t.Fatalf("len(Catalog()) = %d, want 93", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 92 {
-		t.Fatalf("LatestVersion() = %d, want 92", LatestVersion())
+	if LatestVersion() != 93 {
+		t.Fatalf("LatestVersion() = %d, want 93", LatestVersion())
 	}
 }
 
@@ -2504,5 +2504,28 @@ func TestUnifiedDeviceAliasMigrationScopesUniquenessToNetworks(t *testing.T) {
 		if !strings.Contains(ownership, required) {
 			t.Errorf("schema 92 ownership missing %q", required)
 		}
+	}
+}
+
+func TestAliasMapReaderBoundsPlanning(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[92]
+	if migration.Version != 93 {
+		t.Fatalf("migration 93 = %+v", migration)
+	}
+	previous := Catalog()[91].SQL
+	start := strings.Index(previous, "CREATE FUNCTION mesh_ops.load_device_alias_map_edges_v2(")
+	end := strings.Index(previous[start:], "$function$;\n")
+	if start < 0 || end < 0 {
+		t.Fatal("migration 92 reader not found")
+	}
+	want := strings.Replace(previous[start:start+end], "load_device_alias_map_edges_v2(", "load_device_alias_map_edges_v3(", 1)
+	want = strings.Replace(want, "SET search_path = pg_catalog, mesh, mesh_ops\n",
+		"SET search_path = pg_catalog, mesh, mesh_ops\nSET join_collapse_limit = 1\nSET from_collapse_limit = 1\nSET plan_cache_mode = force_generic_plan\n", 1)
+	if !strings.Contains(migration.SQL, want) {
+		t.Fatal("v3 must be v2 verbatim plus the three planner settings")
+	}
+	if !strings.Contains(AliasMapReaderOwnershipSQL(), "load_device_alias_map_edges_v2(BYTEA,BYTEA,INTEGER) FROM mesh_runtime;") {
+		t.Fatal("schema 93 ownership must close the v2 runtime entry point")
 	}
 }

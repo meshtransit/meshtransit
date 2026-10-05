@@ -101,7 +101,7 @@ func assertAliasMapCount(ctx context.Context, t *testing.T, tx pgx.Tx, self alia
 	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime; SELECT set_config('mesh.alias_map_provider_workspace_id','999',TRUE),set_config('mesh.alias_map_provider_network_id','999',TRUE),set_config('mesh.alias_map_consumer_workspace_id','999',TRUE),set_config('mesh.alias_map_consumer_network_id','999',TRUE),set_config('mesh.alias_map_endpoint_id','999',TRUE)`); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := tx.Query(ctx, `SELECT edge::TEXT FROM mesh_ops.load_device_alias_map_edges_v2($1::BYTEA,$2::BYTEA,257) AS edge`, self.machine, self.key)
+	rows, err := tx.Query(ctx, `SELECT edge::TEXT FROM mesh_ops.load_device_alias_map_edges_v3($1::BYTEA,$2::BYTEA,257) AS edge`, self.machine, self.key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func assertAliasMapPrivileges(ctx context.Context, t *testing.T, admin *pgx.Conn
 		var read, write, execute bool
 		if err := admin.QueryRow(ctx, `SELECT has_table_privilege($1,'mesh.device_alias_client_readiness','SELECT'),
  has_table_privilege($1,'mesh.device_alias_client_readiness','INSERT,UPDATE,DELETE'),
- has_function_privilege($1,'mesh_ops.load_device_alias_map_edges_v2(bytea,bytea,integer)','EXECUTE')`, role).Scan(&read, &write, &execute); err != nil {
+ has_function_privilege($1,'mesh_ops.load_device_alias_map_edges_v3(bytea,bytea,integer)','EXECUTE')`, role).Scan(&read, &write, &execute); err != nil {
 			t.Fatal(err)
 		}
 		if read || write || execute != (role == "mesh_runtime") {
@@ -313,7 +313,7 @@ func assertAliasMapAuthentication(ctx context.Context, t *testing.T, tx pgx.Tx, 
 			if fault.query != "" {
 				_, err = tx.Exec(ctx, fault.query)
 			} else {
-				_, err = tx.Exec(ctx, `SELECT count(*) FROM mesh_ops.load_device_alias_map_edges_v2($1::BYTEA,$2::BYTEA,$3::INTEGER)`, fault.machine, fault.key, fault.limit)
+				_, err = tx.Exec(ctx, `SELECT count(*) FROM mesh_ops.load_device_alias_map_edges_v3($1::BYTEA,$2::BYTEA,$3::INTEGER)`, fault.machine, fault.key, fault.limit)
 			}
 			requireDeviceAliasCode(t, err, fault.code)
 			if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT alias_auth_fault`); err != nil {
