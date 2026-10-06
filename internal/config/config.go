@@ -57,6 +57,7 @@ type Config struct {
 	RevisionWorker        *RevisionWorkerConfig
 	PrivateEndpointWorker *PrivateEndpointWorkerConfig
 	DeviceAliasWorker     *DeviceAliasWorkerConfig
+	ContractExpiryWorker  *ContractExpiryWorkerConfig
 	AuthExpiry            *AuthExpiryConfig
 	PrivateLogin          *PrivateLoginFile
 	BrowserRegistration   *BrowserRegistrationConfig
@@ -117,6 +118,11 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 	if deviceAliasWorkerConfig != nil && privateEndpointWorkerConfig != nil {
 		return Config{}, settingError(envDeviceAliasWorkerEnabled)
+	}
+
+	contractExpiryWorkerConfig, err := loadContractExpiryWorkerConfig(lookup, role)
+	if err != nil {
+		return Config{}, err
 	}
 
 	dependencyConfig, err := loadDependencyConfig(lookup)
@@ -232,6 +238,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		RevisionWorker:        revisionWorkerConfig,
 		PrivateEndpointWorker: privateEndpointWorkerConfig,
 		DeviceAliasWorker:     deviceAliasWorkerConfig,
+		ContractExpiryWorker:  contractExpiryWorkerConfig,
 		AuthExpiry:            authExpiryConfig,
 		PrivateLogin:          privateLoginFile,
 		BrowserRegistration:   browserRegistration,

@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 111 {
-		t.Fatalf("len(Catalog()) = %d, want 111", len(catalog))
+	if len(catalog) != 112 {
+		t.Fatalf("len(Catalog()) = %d, want 112", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 111 {
-		t.Fatalf("LatestVersion() = %d, want 111", LatestVersion())
+	if LatestVersion() != 112 {
+		t.Fatalf("LatestVersion() = %d, want 112", LatestVersion())
 	}
 }
 
@@ -2644,5 +2644,47 @@ func TestBuiltinWorkspaceRolesKeepOwnerAndLegacyResolution(t *testing.T) {
 		if !strings.Contains(migration.SQL, required) {
 			t.Errorf("schema 95 missing %q", required)
 		}
+	}
+}
+
+func TestTrustContractExpiryFinalizerIsWorkerOnly(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[111]
+	if migration.Version != 112 {
+		t.Fatalf("migration 112 = %+v", migration)
+	}
+	for _, required := range []string{
+		"WHERE state IN ('activating', 'active');",
+		"AND expires_at <= pg_catalog.clock_timestamp()",
+		"FOR UPDATE SKIP LOCKED;",
+		"OR v_contract.expires_at > pg_catalog.clock_timestamp() THEN",
+		"SET state = 'withdrawn', version = version + 1, updated_at = v_decision, withdrawn_at = v_decision",
+		"'trust_contract.expired',\n            'system.reconcile',",
+		"NULL::UUID,\n            'trust_contract.expired',",
+		"Trust Contract expiry mutation set is invalid",
+		"Trust Contract expiry evidence mismatch",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 112 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"TO mesh_worker", "TO mesh_runtime", "OWNER TO"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 112 must leave exposure to the operator step, found %q", forbidden)
+		}
+	}
+	ownership := TrustContractExpiryOwnershipSQL()
+	for _, required := range []string{
+		"list_expired_trust_contracts_v1(UUID, TIMESTAMPTZ, UUID, INTEGER)\n    OWNER TO mesh_share_writer;",
+		"prepare_trust_contract_expiry_v1(UUID, UUID, UUID)\n    OWNER TO mesh_share_writer;",
+		"finalize_trust_contract_expiry_v1(UUID, UUID, UUID, JSONB)\n    OWNER TO mesh_share_writer;",
+		"prepare_trust_contract_expiry_v1(UUID, UUID, UUID)\n    TO mesh_worker;",
+	} {
+		if !strings.Contains(ownership, required) {
+			t.Errorf("schema 112 ownership missing %q", required)
+		}
+	}
+	if strings.Contains(ownership, "TO mesh_runtime") {
+		t.Error("schema 112 ownership must not expose expiry to runtime")
 	}
 }

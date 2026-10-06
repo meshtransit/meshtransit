@@ -290,6 +290,10 @@ func assertPostgreSQLResourceSharing(
 		t.Fatalf("cross-Workspace Resource Sharing list error = %v, want forbidden", err)
 	}
 	assertCommittedResourceSharingEvidence(ctx, t, admin, createdOffer.Offer().ID(), contract.ID())
+	// Runs before the cleanup below, which future-dates sharing rows.
+	assertTrustContractExpiryReleasesAccessName(
+		ctx, t, admin, store, workerPool, session, providerScope, consumerScope, resourceID, maximumTraffic, reason,
+	)
 	assertExpiredUnprovisionedContractCleanup(
 		ctx, t, admin, store, session, providerScope, consumerScope, resourceID, maximumTraffic, reason,
 	)

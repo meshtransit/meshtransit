@@ -208,6 +208,9 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if _, err := adminConnection.Exec(ctx, migrations.ShareOfferAccessLabelOwnershipSQL()); err != nil {
 		t.Fatalf("harden labeled share offer entry points: %v", err)
 	}
+	if _, err := adminConnection.Exec(ctx, migrations.TrustContractExpiryOwnershipSQL()); err != nil {
+		t.Fatalf("harden Trust Contract expiry entry points: %v", err)
+	}
 	assertResourceSharingPrivilegeContract(ctx, t, adminConnection)
 	assertDeviceSharingDeploymentPreflight(ctx, t, adminConnection)
 	seedAuthorityFixture(ctx, t, adminConnection)

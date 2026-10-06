@@ -220,6 +220,15 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		additionalMetrics = append(additionalMetrics, workerMetrics)
 		roleServices = append(roleServices, app.OwnedService{Name: "device-alias-worker", Service: workerService})
 	}
+	if processConfig.ContractExpiryWorker != nil {
+		workerService, workerMetrics, composeErr := composeContractExpiryWorker(*processConfig.ContractExpiryWorker, storagePools.worker, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "contract_expiry_worker_composition_failure")
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, workerMetrics)
+		roleServices = append(roleServices, app.OwnedService{Name: "trust-contract-expiry-worker", Service: workerService})
+	}
 	var privateFactory *privateIdentityFactory
 	if privateProfile != nil {
 		var browserRuntime []browserRegistrationRuntime

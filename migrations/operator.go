@@ -150,3 +150,10 @@ var shareOfferAccessLabelOwnershipSQL string
 // ShareOfferAccessLabelOwnershipSQL exposes the labeled offer creation and the
 // derived-name decision entry points to runtime through the sharing writer.
 func ShareOfferAccessLabelOwnershipSQL() string { return shareOfferAccessLabelOwnershipSQL }
+
+//go:embed operator/000112_trust_contract_expiry_ownership.sql
+var trustContractExpiryOwnershipSQL string
+
+// TrustContractExpiryOwnershipSQL moves the expiry finalizer entry points to
+// the sharing writer and exposes them to the worker role only.
+func TrustContractExpiryOwnershipSQL() string { return trustContractExpiryOwnershipSQL }
