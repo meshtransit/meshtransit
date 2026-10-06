@@ -2,10 +2,10 @@ package httpapi
 
 import (
 	"encoding/hex"
-	"time"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
 	"github.com/meshtransit/meshtransit/internal/policy"
+	"github.com/meshtransit/meshtransit/internal/policy/publication"
 )
 
 // explainedPolicyContext tells a person why the decision came out as it did.
@@ -77,16 +77,30 @@ func newExplainedPolicyTarget(query accessgraph.Query) explainedPolicyTarget {
 
 func newExplainedPolicyEvidence(snapshot accessgraph.Snapshot) explainedPolicyEvidence {
 	releaseID, compilerFormat, semanticHash, hasActiveRelease := snapshot.ActiveRelease()
+	return newExplainedPolicyEvidenceFrom(
+		snapshot.RevisionVector(), releaseID.String(), compilerFormat, semanticHash, hasActiveRelease,
+	)
+}
+
+// newExplainedPolicyEvidenceFrom renders the authority vector and active
+// release shared by explanations and graph listings.
+func newExplainedPolicyEvidenceFrom(
+	revision accessgraph.RevisionVector,
+	releaseID string,
+	compilerFormat int,
+	semanticHash publication.SemanticHash,
+	hasActiveRelease bool,
+) explainedPolicyEvidence {
 	evidence := explainedPolicyEvidence{
-		NetworkRevision: snapshot.NetworkRevision(), InventoryRevision: snapshot.InventoryRevision(),
-		GroupRevision: snapshot.GroupRevision(), PolicyRevision: snapshot.PolicyRevision(),
-		DNSRevision: snapshot.DNSRevision(), RouteRevision: snapshot.RouteRevision(),
-		SharingRevision: snapshot.SharingRevision(), IsolationGeneration: snapshot.IsolationGeneration(),
+		NetworkRevision: revision.NetworkRevision(), InventoryRevision: revision.InventoryRevision(),
+		GroupRevision: revision.GroupRevision(), PolicyRevision: revision.PolicyRevision(),
+		DNSRevision: revision.DNSRevision(), RouteRevision: revision.RouteRevision(),
+		SharingRevision: revision.SharingRevision(), IsolationGeneration: revision.IsolationGeneration(),
 		HasActiveRelease: hasActiveRelease,
 	}
 	if hasActiveRelease {
 		hash := semanticHash.Bytes()
-		evidence.ReleaseID = releaseID.String()
+		evidence.ReleaseID = releaseID
 		evidence.CompilerFormatVersion = compilerFormat
 		evidence.SemanticHash = hex.EncodeToString(hash[:])
 	}
@@ -132,17 +146,7 @@ func newExplainedPolicyContext(snapshot accessgraph.Snapshot) explainedPolicyCon
 		},
 	}
 	if share, ok := snapshot.Share(); ok {
-		rendered := &explainedPolicyShare{
-			TrustContractID: share.ContractID().String(), State: sharingContractStateString(share.State()),
-			ProviderWorkspaceCode: share.ProviderWorkspaceCode().String(),
-			ProviderNetworkCode:   share.ProviderNetworkCode().String(),
-			AccessName:            optionalText(share.AccessName()),
-		}
-		if expiresAt, expires := share.ExpiresAt(); expires {
-			value := expiresAt.UTC().Format(time.RFC3339)
-			rendered.ExpiresAt = &value
-		}
-		context.Share = rendered
+		context.Share = newExplainedPolicyShare(share)
 	}
 	return context
 }

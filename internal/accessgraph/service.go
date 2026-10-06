@@ -31,12 +31,15 @@ func (SystemClock) Now() time.Time { return time.Now() }
 type Dependencies struct {
 	Reader Reader
 	Clock  Clock
+	// GraphReader lists the effective graph; nil makes Graph unavailable.
+	GraphReader GraphReader
 }
 
 // Service owns bounded, read-only policy explanation orchestration.
 type Service struct {
-	reader Reader
-	clock  Clock
+	reader      Reader
+	clock       Clock
+	graphReader GraphReader
 }
 
 // NewService validates and constructs an Access Graph service.
@@ -44,7 +47,9 @@ func NewService(dependencies Dependencies) (*Service, error) {
 	if dependencies.Reader == nil || dependencies.Clock == nil {
 		return nil, ErrUnavailable
 	}
-	return &Service{reader: dependencies.Reader, clock: dependencies.Clock}, nil
+	return &Service{
+		reader: dependencies.Reader, clock: dependencies.Clock, graphReader: dependencies.GraphReader,
+	}, nil
 }
 
 // Explain derives allow or deny exclusively from the active compiled policy.

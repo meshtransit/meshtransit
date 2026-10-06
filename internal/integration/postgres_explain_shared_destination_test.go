@@ -22,6 +22,7 @@ import (
 )
 
 type sharedExplanationPath struct {
+	ProjectionID                  string `json:"projection_id"`
 	AccessRuleID                  string `json:"access_rule_id"`
 	SourceDeviceID                string `json:"source_device_id"`
 	DestinationDeviceID           string `json:"destination_device_id"`
@@ -323,4 +324,153 @@ func containsJSONKey(document, key string) bool {
 		return false
 	}
 	return walk(decoded)
+}
+
+type sharedGraphListing struct {
+	matching int
+	hasMore  bool
+	paths    []sharedExplanationPath
+	nodes    []struct {
+		Kind  string `json:"kind"`
+		ID    string `json:"id"`
+		State string `json:"state"`
+		Share *struct {
+			TrustContractID       string `json:"trust_contract_id"`
+			State                 string `json:"state"`
+			ProviderWorkspaceCode string `json:"provider_workspace_code"`
+		} `json:"share"`
+	}
+}
+
+// assertSharedDestinationGraph lists the graph inside the transaction that
+// published a compiled imported rule: the shared Device appears as a node
+// with its contract, and filters and pages hold.
+func assertSharedDestinationGraph(
+	ctx context.Context,
+	t *testing.T,
+	transaction pgx.Tx,
+	session accountsession.Session,
+	destination sharing.PolicyDestination,
+	sourceNodeID string,
+	ruleID string,
+) {
+	t.Helper()
+	assertGraphListingRequiresReadAuthority(ctx, t, transaction, session, destination)
+	// The shared fixture role lacks policy.read and device.read; grant them
+	// only inside this rolled-back transaction.
+	for _, grant := range []struct {
+		id         int
+		permission string
+	}{{871, "policy.read"}, {872, "device.read"}} {
+		if _, err := transaction.Exec(ctx, `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT $1::BIGINT, ('01890f00-0000-7000-8000-' || lpad($1::TEXT, 12, '0'))::UUID, 1, 103, 842, permission.id
+FROM mesh.permission AS permission WHERE permission.permission_key = $2::TEXT`, grant.id, grant.permission); err != nil {
+			t.Fatalf("grant %s for the graph listing: %v", grant.permission, err)
+		}
+	}
+	all := listSharedGraph(ctx, t, transaction, session, destination, nil, nil, nil, 500)
+	if all.matching != 1 || all.hasMore || len(all.paths) != 1 || len(all.nodes) != 2 {
+		t.Fatalf("shared graph listing = %+v", all)
+	}
+	path := all.paths[0]
+	if path.SelectorKind != "imported_resource" || path.AccessRuleID != ruleID || path.SourceDeviceID != sourceNodeID ||
+		path.DestinationImportedResourceID != destination.ImportedResourceID().String() ||
+		path.TrustContractID != destination.Contract().ID().String() {
+		t.Fatalf("shared graph path = %+v", path)
+	}
+	device, imported := all.nodes[0], all.nodes[1]
+	if device.Kind != "device" || device.ID != sourceNodeID || device.State != "active" || device.Share != nil ||
+		imported.Kind != "imported_resource" || imported.ID != destination.ImportedResourceID().String() ||
+		imported.Share == nil || imported.Share.State != "active" || imported.Share.ProviderWorkspaceCode == "" {
+		t.Fatalf("shared graph nodes = %+v", all.nodes)
+	}
+
+	udp := "udp"
+	if filtered := listSharedGraph(ctx, t, transaction, session, destination, nil, &udp, nil, 500); filtered.matching != 0 ||
+		len(filtered.paths) != 0 || len(filtered.nodes) != 0 {
+		t.Fatalf("protocol-filtered graph = %+v", filtered)
+	}
+	if bySource := listSharedGraph(ctx, t, transaction, session, destination, &sourceNodeID, nil, nil, 500); bySource.matching != 1 ||
+		len(bySource.paths) != 1 {
+		t.Fatalf("Device-filtered graph = %+v", bySource)
+	}
+	projection := path.ProjectionID
+	if after := listSharedGraph(ctx, t, transaction, session, destination, nil, nil, &projection, 1); after.matching != 1 ||
+		after.hasMore || len(after.paths) != 0 || len(after.nodes) != 0 {
+		t.Fatalf("graph page after the last edge = %+v", after)
+	}
+}
+
+func listSharedGraph(
+	ctx context.Context,
+	t *testing.T,
+	transaction pgx.Tx,
+	session accountsession.Session,
+	destination sharing.PolicyDestination,
+	deviceID *string,
+	protocol *string,
+	afterProjection *string,
+	pageSize int,
+) sharedGraphListing {
+	t.Helper()
+	scope := destination.ConsumerScope()
+	var listing sharedGraphListing
+	var paths, nodes string
+	if err := transaction.QueryRow(ctx, `SELECT matching_paths, has_more, paths::TEXT, nodes::TEXT
+FROM mesh_ops.read_access_graph_v1(
+    $1::UUID, $2::UUID, $3::UUID, $4::UUID,
+    $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
+    $10::UUID, $11::UUID, $12::UUID, $13::TEXT, $14::UUID, $15::INTEGER, $16::TIMESTAMPTZ
+)`,
+		session.ID().String(), session.DeploymentID().String(), session.PrincipalID().String(),
+		session.IdentitySubjectID().String(), session.Version(), session.PrincipalAuthorityGeneration(),
+		session.AccountSessionGeneration(), session.ProviderGeneration(), session.DeploymentRecoveryEpoch(),
+		scope.WorkspaceID().String(), scope.NetworkID().String(), deviceID, protocol, afterProjection,
+		pageSize, time.Now().UTC(),
+	).Scan(&listing.matching, &listing.hasMore, &paths, &nodes); err != nil {
+		t.Fatalf("list shared graph: %v", err)
+	}
+	if err := json.Unmarshal([]byte(paths), &listing.paths); err != nil {
+		t.Fatalf("decode graph paths: %v", err)
+	}
+	if err := json.Unmarshal([]byte(nodes), &listing.nodes); err != nil {
+		t.Fatalf("decode graph nodes: %v", err)
+	}
+	return listing
+}
+
+// assertGraphListingRequiresReadAuthority proves the listing fails closed
+// while the session lacks policy.read and device.read.
+func assertGraphListingRequiresReadAuthority(
+	ctx context.Context,
+	t *testing.T,
+	transaction pgx.Tx,
+	session accountsession.Session,
+	destination sharing.PolicyDestination,
+) {
+	t.Helper()
+	savepoint, err := transaction.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin graph authority savepoint: %v", err)
+	}
+	scope := destination.ConsumerScope()
+	_, err = savepoint.Exec(ctx, `SELECT * FROM mesh_ops.read_access_graph_v1(
+    $1::UUID, $2::UUID, $3::UUID, $4::UUID,
+    $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
+    $10::UUID, $11::UUID, NULL, NULL, NULL, 100, $12::TIMESTAMPTZ
+)`,
+		session.ID().String(), session.DeploymentID().String(), session.PrincipalID().String(),
+		session.IdentitySubjectID().String(), session.Version(), session.PrincipalAuthorityGeneration(),
+		session.AccountSessionGeneration(), session.ProviderGeneration(), session.DeploymentRecoveryEpoch(),
+		scope.WorkspaceID().String(), scope.NetworkID().String(), time.Now().UTC(),
+	)
+	if rollbackErr := savepoint.Rollback(ctx); rollbackErr != nil {
+		t.Fatalf("rollback graph authority savepoint: %v", rollbackErr)
+	}
+	postgresError, ok := errors.AsType[*pgconn.PgError](err)
+	if !ok || postgresError.Code != "42501" {
+		t.Fatalf("graph listing without read authority error = %v, want 42501", err)
+	}
 }

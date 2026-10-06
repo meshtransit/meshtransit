@@ -252,13 +252,15 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	approvalPath, approvalMatched := parsePolicyApprovalPath(request)
 	approval := approvalMatched && approvalPath.allowedMethod(request.Method) == request.Method
 	_, accessGraph := parseAccessGraphExplainPath(request)
+	_, accessGraphListed := parseAccessGraphListPath(request)
+	accessGraphList := accessGraphListed && request.Method == http.MethodGet
 	_, workspaceRename := parseWorkspaceRenamePath(request)
 	workspaceRoles := isWorkspaceRoleOperation(request) ||
 		isWorkspaceCollectionPath(request) && request.Method == http.MethodPost ||
 		isNetworkCollectionPost(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
 	if !prepare && !logout && !managementScopes && !inventoryRead && !deploymentCapabilities && !device && !policy && !simulation &&
-		!approval && !accessGraph && !policyRead && !workspaceRename && !workspaceRoles && !resourceSharing {
+		!approval && !accessGraph && !accessGraphList && !policyRead && !workspaceRename && !workspaceRoles && !resourceSharing {
 		return ErrInvalidBrowserManagement
 	}
 	operation = "mutation"
@@ -452,17 +454,20 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	deploymentCapabilityRead := request.Method == http.MethodGet && target.Path == DeploymentCapabilitiesPath
 	_, policyMatched := parseActivePolicyPath(request)
 	policyRead := policyMatched && request.Method == http.MethodGet
+	_, accessGraphListed := parseAccessGraphListPath(request)
+	accessGraphRead := accessGraphListed && request.Method == http.MethodGet
 	resourceSharing, resourceSharingCollectionRead := browserResourceSharingOperation(request)
 	resourceSharingRead := resourceSharing && request.Method == http.MethodGet
 	// Member directory and switchable Workspaces are exact, query-free reads.
 	directoryRead := request.Method == http.MethodGet &&
 		(isWorkspaceRoleOperation(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request))
 	safeRead := approvalRead || managementScopeRead || inventoryRead || deploymentCapabilityRead || policyRead ||
-		resourceSharingRead || directoryRead
+		accessGraphRead || resourceSharingRead || directoryRead
 	if request.Method == http.MethodGet && !safeRead {
 		return false
 	}
-	queryAllowed := approvalRead && approvalPath.kind == policyApprovalPathCollection || managementScopeRead || inventoryRead || resourceSharingCollectionRead
+	queryAllowed := approvalRead && approvalPath.kind == policyApprovalPathCollection || managementScopeRead || inventoryRead ||
+		resourceSharingCollectionRead || accessGraphRead
 	if (!queryAllowed && target.RawQuery != "") || len(target.RawQuery) > maximumCallbackQueryBytes {
 		return false
 	}

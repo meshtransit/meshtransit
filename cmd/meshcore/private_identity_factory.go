@@ -222,7 +222,7 @@ func composePrivateIdentityFactory(
 		StartIDs: oidcauth.SystemStartIDs{}, Secrets: oidcauth.SystemSecrets{},
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
-		PolicyExplanations: policyExplainer, PolicySimulations: policySimulator,
+		PolicyExplanations: policyExplainer, AccessGraphs: policyExplainer, PolicySimulations: policySimulator,
 		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations,
 		SessionWorkspaces: sessionWorkspaces, ShareTargets: shareTargets,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
@@ -317,7 +317,7 @@ func privateIdentityManagementServices(
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition
 	}
 	policyExplainer, err := accessgraph.NewService(accessgraph.Dependencies{
-		Reader: accessGraphStore, Clock: accessgraph.SystemClock{},
+		Reader: accessGraphStore, Clock: accessgraph.SystemClock{}, GraphReader: accessGraphStore,
 	})
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, errInvalidPrivateIdentityComposition

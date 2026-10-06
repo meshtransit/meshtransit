@@ -213,7 +213,8 @@ func isBrowserManagementOperation(request *http.Request) bool {
 		return device || policy || simulation || accessGraph || workspaceRename ||
 			approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.isAction())
 	}
-	return request.Method == http.MethodGet && (activePolicy || inventory || managementScopes || deploymentCapabilities ||
+	_, accessGraphList := parseAccessGraphListPath(request)
+	return request.Method == http.MethodGet && (activePolicy || accessGraphList || inventory || managementScopes || deploymentCapabilities ||
 		approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.kind == policyApprovalPathItem))
 }
 
@@ -251,7 +252,10 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 	registrationRead := dispatcher.registration != nil && request.Method == http.MethodGet &&
 		dispatcher.registration.validRequest(request)
 	_, resourceSharingCollectionRead := browserResourceSharingOperation(request)
-	return callback || approvalList || managementScopes || inventoryRead || deploymentCapabilities || registrationRead || resourceSharingCollectionRead || target.RawQuery == ""
+	_, accessGraphListed := parseAccessGraphListPath(request)
+	accessGraphRead := accessGraphListed && request.Method == http.MethodGet
+	return callback || approvalList || managementScopes || inventoryRead || deploymentCapabilities || registrationRead ||
+		resourceSharingCollectionRead || accessGraphRead || target.RawQuery == ""
 }
 
 // MetricsCollector permits private root registration only, never a public endpoint.

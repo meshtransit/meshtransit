@@ -50,6 +50,7 @@ const (
 	policySimulateOperation                 = "policy_simulate"
 	policyReadOperation                     = "policy_read"
 	policyExplainOperation                  = "policy_explain"
+	accessGraphListOperation                = "access_graph_list"
 	policyApprovalRequestOperation          = "policy_approval_request"
 	policyApprovalListOperation             = "policy_approval_list"
 	policyApprovalGetOperation              = "policy_approval_get"
@@ -228,11 +229,13 @@ type PublicIDGenerator interface {
 
 // ManagementHandlerOptions contains immutable management-boundary dependencies.
 type ManagementHandlerOptions struct {
-	Sessions                  AccountSessionAuthenticator
-	Revocations               DeviceRevoker
-	PolicyPublications        PolicyPublisher
-	PolicyCompilations        PolicyCompiler
-	PolicyExplanations        PolicyExplainer
+	Sessions           AccountSessionAuthenticator
+	Revocations        DeviceRevoker
+	PolicyPublications PolicyPublisher
+	PolicyCompilations PolicyCompiler
+	PolicyExplanations PolicyExplainer
+	// AccessGraphs lists the effective graph; nil answers that route 503.
+	AccessGraphs              AccessGraphLister
 	PolicySimulations         PolicySimulator
 	ActivePolicies            ActivePolicyReader
 	WorkspaceRenames          WorkspaceRenamer
@@ -269,6 +272,7 @@ type ManagementHandler struct {
 	policies                  PolicyPublisher
 	policyCompiler            PolicyCompiler
 	policyExplainer           PolicyExplainer
+	accessGraphs              AccessGraphLister
 	policySimulator           PolicySimulator
 	activePolicies            ActivePolicyReader
 	workspaceRenames          WorkspaceRenamer
@@ -328,6 +332,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		policies:                  options.PolicyPublications,
 		policyCompiler:            options.PolicyCompilations,
 		policyExplainer:           options.PolicyExplanations,
+		accessGraphs:              options.AccessGraphs,
 		policySimulator:           options.PolicySimulations,
 		activePolicies:            options.ActivePolicies,
 		workspaceRenames:          options.WorkspaceRenames,
@@ -429,6 +434,7 @@ func (handler *ManagementHandler) serveHTTP(
 	policyReadPath, policyReadMatched := parseActivePolicyPath(request)
 	policyApprovalPath, policyApprovalMatched := parsePolicyApprovalPath(request)
 	accessGraphPath, accessGraphMatched := parseAccessGraphExplainPath(request)
+	accessGraphListPath, accessGraphListMatched := parseAccessGraphListPath(request)
 	resourcePath, resourceMatched := parseResourceManagementPath(request)
 	sharingPath, sharingMatched := parseResourceSharingPath(request)
 	workspaceRolePath, workspaceRoleMatched := parseWorkspaceRolePath(request)
@@ -437,7 +443,7 @@ func (handler *ManagementHandler) serveHTTP(
 	sessionWorkspaceMethod, sessionWorkspaceMatched := sessionWorkspaceRoute(request)
 	shareTargetPath, shareTargetMatched := parseShareTargetPath(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
-		!accessGraphMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
+		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
 		!shareTargetMatched {
 		resultCode = "not_found"
@@ -473,13 +479,15 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = policyApprovalPath.operation(request.Method)
 	} else if accessGraphMatched {
 		operation = policyExplainOperation
+	} else if accessGraphListMatched {
+		operation = accessGraphListOperation
 	} else if sharingMatched {
 		operation = sharingPath.operation(request.Method)
 	} else {
 		operation = resourcePath.operation(request.Method)
 	}
 	allowedMethod := http.MethodPost
-	if policyReadMatched {
+	if policyReadMatched || accessGraphListMatched {
 		allowedMethod = http.MethodGet
 	} else if policyApprovalMatched {
 		allowedMethod = policyApprovalPath.allowedMethod(request.Method)
@@ -604,6 +612,10 @@ func (handler *ManagementHandler) serveHTTP(
 		resultCode = handler.handlePolicyApproval(
 			ctx, response, request, correlationID, policyApprovalPath, session, browser,
 		)
+		return
+	}
+	if accessGraphListMatched {
+		resultCode = handler.listAccessGraph(ctx, response, request, correlationID, accessGraphListPath, session)
 		return
 	}
 	if accessGraphMatched {

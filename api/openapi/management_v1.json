@@ -474,6 +474,67 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/networks/{network_id}/access-graph": {
+      "get": {
+        "operationId": "listAccessGraph",
+        "summary": "List the effective access graph of one authorized Network",
+        "description": "Requires current policy.read and device.read. Edges are the compiled rules of the active release in projection order, local and to shared-in Devices, with the participants they connect. A page token is bound to the policy revision that issued it; a token from another revision answers 409.",
+        "security": [{"accountSessionBearer": []}],
+        "parameters": [
+          {"$ref": "#/components/parameters/WorkspaceID"},
+          {"$ref": "#/components/parameters/NetworkID"},
+          {
+            "name": "device_id",
+            "in": "query",
+            "required": false,
+            "description": "Keep only edges that start at this Device or end at it as a Device selector.",
+            "schema": {"$ref": "#/components/schemas/PublicID"}
+          },
+          {
+            "name": "protocol",
+            "in": "query",
+            "required": false,
+            "schema": {"type": "string", "enum": ["tcp", "udp", "icmp"]}
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100}
+          },
+          {
+            "name": "page_token",
+            "in": "query",
+            "required": false,
+            "description": "Opaque continuation token from next_page_token.",
+            "schema": {"type": "string", "minLength": 1, "maxLength": 256}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One bounded page of the effective graph tied to one authority revision vector.",
+            "headers": {
+              "ETag": {"$ref": "#/components/headers/PolicyETag"},
+              "Cache-Control": {
+                "description": "Graph pages contain authorization-sensitive topology and are never cached.",
+                "schema": {"type": "string", "const": "no-store"}
+              },
+              "X-Correlation-ID": {"$ref": "#/components/headers/CorrelationID"}
+            },
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AccessGraphListResponse"}}}
+          },
+          "400": {"$ref": "#/components/responses/InvalidRequest"},
+          "401": {"$ref": "#/components/responses/Unauthenticated"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "405": {"$ref": "#/components/responses/MethodNotAllowed"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "429": {"$ref": "#/components/responses/RateLimited"},
+          "500": {"$ref": "#/components/responses/InternalFailure"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/networks/{network_id}/access-graph/actions/explain": {
       "post": {
         "operationId": "explainActivePolicy",
@@ -2724,6 +2785,55 @@
         "description": "active is usable now; inactive exists but is inactive, deleted, key-expired or ended; missing does not exist in the Network.",
         "type": "string",
         "enum": ["active", "inactive", "missing"]
+      },
+      "AccessGraphListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "correlation_id"],
+        "properties": {
+          "data": {"$ref": "#/components/schemas/AccessGraphListing"},
+          "correlation_id": {"$ref": "#/components/schemas/PublicID"}
+        }
+      },
+      "AccessGraphListing": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidence", "nodes", "paths", "matching_paths", "next_page_token"],
+        "properties": {
+          "evidence": {"$ref": "#/components/schemas/ExplainedPolicyEvidence"},
+          "nodes": {
+            "description": "Exactly the participants the page's paths connect.",
+            "type": "array",
+            "maxItems": 1000,
+            "items": {"$ref": "#/components/schemas/AccessGraphNode"}
+          },
+          "paths": {
+            "type": "array",
+            "maxItems": 500,
+            "items": {"$ref": "#/components/schemas/ExplainedPolicyPath"}
+          },
+          "matching_paths": {
+            "description": "Every edge matching the filters in this revision, across all pages.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "next_page_token": {"type": ["string", "null"], "minLength": 1, "maxLength": 256}
+        }
+      },
+      "AccessGraphNode": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "id", "name", "state", "share"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["device", "resource", "imported_resource"]},
+          "id": {"$ref": "#/components/schemas/PublicID"},
+          "name": {"type": ["string", "null"], "maxLength": 255},
+          "state": {"type": "string", "enum": ["active", "inactive"]},
+          "share": {
+            "description": "The Trust Contract of a shared-in Device; null for other kinds.",
+            "oneOf": [{"$ref": "#/components/schemas/ExplainedPolicyShare"}, {"type": "null"}]
+          }
+        }
       },
       "ExplainedPolicyShare": {
         "type": "object",

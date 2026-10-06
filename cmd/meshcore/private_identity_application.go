@@ -71,6 +71,7 @@ type privateIdentityPorts struct {
 	PolicyPublications    httpapi.PolicyPublisher
 	PolicyCompilations    httpapi.PolicyCompiler
 	PolicyExplanations    httpapi.PolicyExplainer
+	AccessGraphs          httpapi.AccessGraphLister
 	PolicySimulations     httpapi.PolicySimulator
 	ActivePolicies        httpapi.ActivePolicyReader
 	WorkspaceRenames      httpapi.WorkspaceRenamer
@@ -174,6 +175,7 @@ func composePrivateIdentity(
 		Sessions: sessions, Revocations: ports.Revocations, PolicyPublications: ports.PolicyPublications,
 		PolicyCompilations:    ports.PolicyCompilations,
 		PolicyExplanations:    ports.PolicyExplanations,
+		AccessGraphs:          ports.AccessGraphs,
 		PolicySimulations:     ports.PolicySimulations,
 		ActivePolicies:        ports.ActivePolicies,
 		WorkspaceRenames:      ports.WorkspaceRenames,

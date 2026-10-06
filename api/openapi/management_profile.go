@@ -37,6 +37,7 @@ const (
 		"policy/approval-requests/{approval_request_id}/actions/approve"
 	accessGraphExplainPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"access-graph/actions/explain"
+	accessGraphListPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/access-graph"
 )
 
 // ErrInvalidManagementProfile conceals unknown selection or compiled-contract drift.
@@ -105,7 +106,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		return nil, ErrInvalidManagementProfile
 	}
 	paths, err := managementObject(document["paths"])
-	if err != nil || len(paths) != 30 {
+	if err != nil || len(paths) != 31 {
 		return nil, ErrInvalidManagementProfile
 	}
 	if len(fragment) == 0 || len(fragment) > maximumManagementDocumentBytes {
@@ -169,6 +170,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		{policyApprovalItemPath, "get", "getPolicyApprovalRequest", false},
 		{policyApprovalApprovePath, "post", "approvePolicyApprovalRequest", true},
 		{accessGraphExplainPath, "post", "explainActivePolicy", true},
+		{accessGraphListPath, "get", "listAccessGraph", false},
 	}
 	consolePathItems := make(map[string]map[string]json.RawMessage, 7)
 	for _, specification := range operations {

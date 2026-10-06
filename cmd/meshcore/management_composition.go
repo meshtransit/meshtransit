@@ -310,7 +310,7 @@ func composeManagementAPIWithKeys(
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
 	}
 	policyExplainer, err := accessgraph.NewService(accessgraph.Dependencies{
-		Reader: accessGraphStore, Clock: accessgraph.SystemClock{},
+		Reader: accessGraphStore, Clock: accessgraph.SystemClock{}, GraphReader: accessGraphStore,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidManagementComposition, err)
@@ -380,6 +380,7 @@ func composeManagementAPIWithKeys(
 		Sessions: sessions, Revocations: revocations, PolicyPublications: policyPublications,
 		PolicyCompilations:    policyCompiler,
 		PolicyExplanations:    policyExplainer,
+		AccessGraphs:          policyExplainer,
 		PolicySimulations:     policySimulator,
 		PolicyApprovals:       policyApprovals,
 		PolicyApprovalCatalog: policyApprovalCatalog,
