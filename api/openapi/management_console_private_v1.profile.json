@@ -1507,8 +1507,7 @@
               "required": [
                 "network_id",
                 "display_name",
-                "ipv4_prefix",
-                "ipv6_prefix"
+                "ipv4_prefix"
               ],
               "properties": {
                 "network_id": {
@@ -1528,7 +1527,7 @@
                 },
                 "ipv6_prefix": {
                   "type": "string",
-                  "description": "Canonical IPv6 CIDR /56–/112 inside the Workspace ULA pool",
+                  "description": "Optional canonical IPv6 CIDR /56–/112 inside the Workspace ULA pool; when omitted, Core assigns the first free /64",
                   "maxLength": 43
                 }
               }

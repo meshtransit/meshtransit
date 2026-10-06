@@ -44,24 +44,35 @@ const (
 // OverlayIPv4Range contains every Network IPv4 prefix.
 var OverlayIPv4Range = netip.MustParsePrefix("100.64.0.0/10")
 
-// ValidPrefixes reports canonical, correctly sized IPv4 and IPv6 prefixes;
-// the IPv4 prefix must lie inside OverlayIPv4Range.
-func ValidPrefixes(ipv4, ipv6 netip.Prefix) bool {
+// ValidIPv4Prefix reports a canonical, correctly sized prefix inside
+// OverlayIPv4Range.
+func ValidIPv4Prefix(ipv4 netip.Prefix) bool {
 	return ipv4.IsValid() && ipv4.Addr().Is4() && ipv4 == ipv4.Masked() &&
 		OverlayIPv4Range.Contains(ipv4.Addr()) && ipv4.Bits() >= OverlayIPv4Range.Bits() &&
-		ipv4.Bits() >= MinIPv4Bits && ipv4.Bits() <= MaxIPv4Bits &&
-		ipv6.IsValid() && ipv6.Addr().Is6() && !ipv6.Addr().Is4In6() && ipv6 == ipv6.Masked() &&
+		ipv4.Bits() >= MinIPv4Bits && ipv4.Bits() <= MaxIPv4Bits
+}
+
+// ValidIPv6Prefix reports a canonical, correctly sized native IPv6 prefix.
+func ValidIPv6Prefix(ipv6 netip.Prefix) bool {
+	return ipv6.IsValid() && ipv6.Addr().Is6() && !ipv6.Addr().Is4In6() && ipv6 == ipv6.Masked() &&
 		ipv6.Bits() >= MinIPv6Bits && ipv6.Bits() <= MaxIPv6Bits
+}
+
+// ValidPrefixes reports a valid IPv4 prefix and either a valid IPv6 prefix or
+// none; with none, PostgreSQL assigns the first free /64 of the Workspace pool.
+func ValidPrefixes(ipv4, ipv6 netip.Prefix) bool {
+	return ValidIPv4Prefix(ipv4) && (ipv6 == netip.Prefix{} || ValidIPv6Prefix(ipv6))
 }
 
 // Command creates one Network in the Session's login Workspace. NetworkID is
 // client-chosen so a retried request converges on one Network.
 type Command struct {
-	Session       accountsession.Session
-	WorkspaceID   workspace.ID
-	NetworkID     network.ID
-	DisplayName   string
-	IPv4Prefix    netip.Prefix
+	Session     accountsession.Session
+	WorkspaceID workspace.ID
+	NetworkID   network.ID
+	DisplayName string
+	IPv4Prefix  netip.Prefix
+	// IPv6Prefix is optional; the zero value asks Core to assign one.
 	IPv6Prefix    netip.Prefix
 	CorrelationID publicid.ID
 }
@@ -74,13 +85,24 @@ func (command Command) IsValid() bool {
 		ValidPrefixes(command.IPv4Prefix, command.IPv6Prefix) && command.CorrelationID.IsValid()
 }
 
-// Result is the durable Network; Replayed reports an earlier commit.
+// Result is the durable Network with its committed prefixes; Replayed
+// reports an earlier commit.
 type Result struct {
 	NetworkID   network.ID
 	DisplayCode identity.DisplayCode
+	IPv4Prefix  netip.Prefix
+	IPv6Prefix  netip.Prefix
 	Version     int64
 	CreatedAt   time.Time
 	Replayed    bool
+}
+
+// matches reports a receipt for this command: the same Network and IPv4
+// prefix, and the requested IPv6 prefix or a valid assigned one.
+func (result Result) matches(command Command) bool {
+	return result.NetworkID == command.NetworkID && result.DisplayCode.IsValid() && result.Version > 0 &&
+		!result.CreatedAt.IsZero() && result.IPv4Prefix == command.IPv4Prefix && ValidIPv6Prefix(result.IPv6Prefix) &&
+		(command.IPv6Prefix == netip.Prefix{} || result.IPv6Prefix == command.IPv6Prefix)
 }
 
 // Store commits with fresh authority and audit evidence.
@@ -118,8 +140,7 @@ func (service *Service) Create(ctx context.Context, command Command) (Result, er
 	if err != nil {
 		return Result{}, err
 	}
-	if result.NetworkID != command.NetworkID || !result.DisplayCode.IsValid() || result.Version <= 0 ||
-		result.CreatedAt.IsZero() {
+	if !result.matches(command) {
 		return Result{}, ErrInvalid
 	}
 	return result, nil

@@ -17,11 +17,11 @@ import (
 	"github.com/meshtransit/meshtransit/internal/publicid"
 )
 
-// assertPostgreSQLNetworkCreation drives schema 100 through the production
-// store in the fixture Workspace: create with owner membership, enrollment
-// profile and Network stream; replay; ID reuse; duplicate name; overlap with
-// an existing and a new Network in either family; a prefix outside the pools;
-// and missing network.create.
+// assertPostgreSQLNetworkCreation drives schemas 100 and 102 through the
+// production store in the fixture Workspace: create with owner membership,
+// enrollment profile and Network stream; replay; ID reuse; duplicate name;
+// overlap with an existing and a new Network in either family; prefixes
+// outside the pools; assigned IPv6 /64s; and missing network.create.
 func assertPostgreSQLNetworkCreation(ctx context.Context, t *testing.T, admin *pgx.Conn, runtimePool *postgresadapter.Pool) {
 	t.Helper()
 	store, err := postgresadapter.NewNetworkCreationStore(runtimePool,
@@ -57,7 +57,8 @@ WHERE w.public_id = $1::UUID AND p.family = 4 AND p.state = 'active' ORDER BY p.
 
 	first := newNetworkCommand(t, owner, "Office", "100.64.200.0/24", "fd42:42:42:200::/64")
 	created, err := service.Create(ctx, first)
-	if err != nil || created.Replayed || created.Version != 1 || !created.DisplayCode.IsValid() {
+	if err != nil || created.Replayed || created.Version != 1 || !created.DisplayCode.IsValid() ||
+		created.IPv6Prefix != first.IPv6Prefix || created.IPv4Prefix != first.IPv4Prefix {
 		t.Fatalf("create = %+v, %v", created, err)
 	}
 	if replay, err := service.Create(ctx, first); err != nil || !replay.Replayed || replay.DisplayCode != created.DisplayCode {
@@ -84,14 +85,18 @@ WHERE w.public_id = $1::UUID AND p.family = 4 AND p.state = 'active' ORDER BY p.
 	if _, err := service.Create(ctx, newNetworkCommand(t, owner, "Outside Pool", "100.65.0.0/24", "fd42:42:42:400::/64")); !errors.Is(err, provisioning.ErrPrefixOutsidePool) {
 		t.Fatalf("outside the Workspace pool: %v", err)
 	}
+	if _, err := service.Create(ctx, newNetworkCommand(t, owner, "Outside IPv6 Pool", "100.64.230.0/24", "fd99:1:2:3::/64")); !errors.Is(err, provisioning.ErrPrefixOutsidePool) {
+		t.Fatalf("outside the Workspace IPv6 pool: %v", err)
+	}
+	assertAssignedNetworkIPv6(ctx, t, service, owner)
 	if _, err := service.Create(ctx, newNetworkCommand(t, owner, "Not CGNAT", "10.10.0.0/24", "fd42:42:42:401::/64")); !errors.Is(err, provisioning.ErrInvalid) {
 		t.Fatalf("outside 100.64.0.0/10: %v", err)
 	}
 	if _, err := service.Create(ctx, newNetworkCommand(t, member, "Member Network", "100.64.220.0/24", "fd42:42:42:220::/64")); !errors.Is(err, provisioning.ErrForbidden) {
 		t.Fatalf("member without network.create: %v", err)
 	}
-	if countAuditTarget(ctx, t, admin, "network") != auditBefore+1 {
-		t.Fatal("the created Network needs exactly one audit event")
+	if countAuditTarget(ctx, t, admin, "network") != auditBefore+3 {
+		t.Fatal("each created Network needs exactly one audit event")
 	}
 	var memberships, profiles, streams, prefixes int64
 	if err := admin.QueryRow(ctx, `SELECT
@@ -107,6 +112,32 @@ FROM mesh.network n WHERE n.public_id = $1::UUID`, first.NetworkID.String()).Sca
 	}
 }
 
+// assertAssignedNetworkIPv6 omits the IPv6 prefix twice: Core assigns two
+// distinct free /64s of the Workspace /48, a replay returns the same one, and
+// an explicit request for an assigned range overlaps.
+func assertAssignedNetworkIPv6(ctx context.Context, t *testing.T, service *provisioning.Service, owner accountsession.Session) {
+	t.Helper()
+	pool := netip.MustParsePrefix("fd42:42:42::/48")
+	first := newNetworkCommand(t, owner, "Assigned A", "100.64.240.0/24", "")
+	created, err := service.Create(ctx, first)
+	if err != nil || created.IPv6Prefix.Bits() != 64 || !pool.Contains(created.IPv6Prefix.Addr()) {
+		t.Fatalf("assigned IPv6 = %+v, %v", created, err)
+	}
+	if replay, err := service.Create(ctx, first); err != nil || !replay.Replayed || replay.IPv6Prefix != created.IPv6Prefix {
+		t.Fatalf("assigned replay = %+v, %v", replay, err)
+	}
+	second, err := service.Create(ctx, newNetworkCommand(t, owner, "Assigned B", "100.64.241.0/24", ""))
+	if err != nil || second.IPv6Prefix == created.IPv6Prefix || !pool.Contains(second.IPv6Prefix.Addr()) ||
+		second.IPv6Prefix.Bits() != 64 {
+		t.Fatalf("second assigned IPv6 = %+v, %v (first %s)", second, err, created.IPv6Prefix)
+	}
+	taken := newNetworkCommand(t, owner, "Assigned Taken", "100.64.242.0/24", created.IPv6Prefix.String())
+	if _, err := service.Create(ctx, taken); !errors.Is(err, provisioning.ErrPrefixOverlap) {
+		t.Fatalf("explicit assigned range: %v", err)
+	}
+}
+
+// newNetworkCommand builds a request; an empty ipv6 asks Core to assign one.
 func newNetworkCommand(t *testing.T, session accountsession.Session, name, ipv4, ipv6 string) provisioning.Command {
 	t.Helper()
 	id, err := publicid.New()
@@ -118,8 +149,12 @@ func newNetworkCommand(t *testing.T, session accountsession.Session, name, ipv4,
 		t.Fatal(err)
 	}
 	workspaceID, _ := session.LoginWorkspaceID()
+	var ipv6Prefix netip.Prefix
+	if ipv6 != "" {
+		ipv6Prefix = netip.MustParsePrefix(ipv6)
+	}
 	return provisioning.Command{Session: session, WorkspaceID: workspaceID, NetworkID: network.ID(id), DisplayName: name,
-		IPv4Prefix: netip.MustParsePrefix(ipv4), IPv6Prefix: netip.MustParsePrefix(ipv6), CorrelationID: correlation}
+		IPv4Prefix: netip.MustParsePrefix(ipv4), IPv6Prefix: ipv6Prefix, CorrelationID: correlation}
 }
 
 // addFixtureIPv6OverlayPool gives the legacy fixture Workspace the IPv6 node

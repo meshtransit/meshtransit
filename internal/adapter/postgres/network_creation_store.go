@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -18,10 +19,11 @@ import (
 )
 
 const createNetworkSQL = `SELECT network_public_id::TEXT, network_display_code, network_version, network_created_at,
+ network_ipv4_prefix::TEXT, COALESCE(network_ipv6_prefix::TEXT,''),
  replayed, COALESCE(actor_binding_public_id::TEXT,''), COALESCE(actor_role_public_id::TEXT,''),
  actor_binding_generation, actor_membership_generation, actor_owner_generation
-FROM mesh_ops.create_network_v1(` + sessionArguments + `,
- $10::UUID,$11::UUID,$12::TEXT,$13::CIDR,$14::CIDR,$15::UUID,$16::UUID,$17::UUID,$18::UUID,$19::UUID)`
+FROM mesh_ops.create_network_v2(` + sessionArguments + `,
+ $10::UUID,$11::UUID,$12::TEXT,$13::CIDR,NULLIF($14::TEXT,'')::CIDR,$15::UUID,$16::UUID,$17::UUID,$18::UUID,$19::UUID)`
 
 const appendNetworkCreationEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
  $1::BIGINT,$2::UUID,$3::UUID,$4::BIGINT,$5::BYTEA,$6::BYTEA,
@@ -46,16 +48,16 @@ func NewNetworkCreationStore(pool *Pool, options AccountSessionOptions) (*Networ
 func networkCreationError(err error) error {
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) {
-		switch {
-		case pgError.Code == "42501":
+		switch pgError.Code {
+		case "42501":
 			return provisioning.ErrForbidden
-		case pgError.Code == "23P01":
+		case "23P01":
 			return provisioning.ErrPrefixOverlap
-		case pgError.Code == "23505":
+		case "23505":
 			return errors.Join(provisioning.ErrConflict, err)
-		case pgError.Code == "22023" && pgError.Message == "Network prefix is outside the Workspace address pools":
+		case "MTN01":
 			return provisioning.ErrPrefixOutsidePool
-		case pgError.Code == "22023":
+		case "22023":
 			return provisioning.ErrInvalid
 		}
 	}
@@ -65,8 +67,9 @@ func networkCreationError(err error) error {
 	return errors.Join(provisioning.ErrUnavailable, err)
 }
 
-// Create runs create_network_v1 and appends one audit/outbox record on the
-// new Network stream. A replay appends nothing.
+// Create runs create_network_v2 and appends one audit/outbox record on the
+// new Network stream. A replay appends nothing. An omitted IPv6 prefix is
+// assigned by PostgreSQL and returned in the result.
 func (store *NetworkCreationStore) Create(ctx context.Context, command provisioning.Command) (_ provisioning.Result, resultErr error) {
 	if ctx == nil || store == nil || store.database == nil || !command.IsValid() {
 		return provisioning.Result{}, provisioning.ErrInvalid
@@ -94,25 +97,32 @@ func (store *NetworkCreationStore) Create(ctx context.Context, command provision
 		postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.IdleTimeout)); err != nil {
 		return provisioning.Result{}, errors.Join(provisioning.ErrUnavailable, err)
 	}
+	requestedIPv6 := ""
+	if command.IPv6Prefix.IsValid() {
+		requestedIPv6 = command.IPv6Prefix.String()
+	}
 	args := append(sessionQueryArguments(command.Session), command.WorkspaceID.String(), command.NetworkID.String(),
-		command.DisplayName, command.IPv4Prefix.String(), command.IPv6Prefix.String(), ids[3].String(),
+		command.DisplayName, command.IPv4Prefix.String(), requestedIPv6, ids[3].String(),
 		ids[4].String(), ids[5].String(), ids[6].String(), change.String())
-	var networkID, displayCode string
+	var networkID, displayCode, ipv4Text, ipv6Text string
 	var version int64
 	var createdAt time.Time
 	var replayed bool
 	var actor workspaceRoleActorEvidence
 	if err := tx.QueryRow(ctx, createNetworkSQL, args...).Scan(&networkID, &displayCode, &version, &createdAt,
-		&replayed, &actor.BindingID, &actor.RoleID, &actor.BindingGeneration, &actor.MembershipGeneration,
-		&actor.OwnerGeneration); err != nil {
+		&ipv4Text, &ipv6Text, &replayed, &actor.BindingID, &actor.RoleID, &actor.BindingGeneration,
+		&actor.MembershipGeneration, &actor.OwnerGeneration); err != nil {
 		return provisioning.Result{}, networkCreationError(err)
 	}
 	code, err := identity.ParseDisplayCode(displayCode)
-	if err != nil || networkID != command.NetworkID.String() || version <= 0 || !actor.isValid() {
+	ipv4, ipv4Err := netip.ParsePrefix(ipv4Text)
+	ipv6, ipv6Err := netip.ParsePrefix(ipv6Text)
+	if errors.Join(err, ipv4Err, ipv6Err) != nil || networkID != command.NetworkID.String() || version <= 0 ||
+		!actor.isValid() || ipv4 != command.IPv4Prefix || !provisioning.ValidIPv6Prefix(ipv6) {
 		return provisioning.Result{}, provisioning.ErrInvalid
 	}
 	if !replayed {
-		if err := appendNetworkCreationEvidence(ctx, tx, command, change, event, outbox, code, actor); err != nil {
+		if err := appendNetworkCreationEvidence(ctx, tx, command, ipv6, change, event, outbox, code, actor); err != nil {
 			return provisioning.Result{}, errors.Join(provisioning.ErrUnavailable, err)
 		}
 	}
@@ -121,12 +131,12 @@ func (store *NetworkCreationStore) Create(ctx context.Context, command provision
 		return provisioning.Result{}, errors.Join(provisioning.ErrUnavailable, err)
 	}
 	committed = true
-	return provisioning.Result{NetworkID: command.NetworkID, DisplayCode: code, Version: version,
-		CreatedAt: createdAt.UTC(), Replayed: replayed}, nil
+	return provisioning.Result{NetworkID: command.NetworkID, DisplayCode: code, IPv4Prefix: ipv4, IPv6Prefix: ipv6,
+		Version: version, CreatedAt: createdAt.UTC(), Replayed: replayed}, nil
 }
 
 func appendNetworkCreationEvidence(ctx context.Context, tx accountSessionTransaction, command provisioning.Command,
-	change, event, outbox publicid.ID, code identity.DisplayCode, actor workspaceRoleActorEvidence) error {
+	ipv6 netip.Prefix, change, event, outbox publicid.ID, code identity.DisplayCode, actor workspaceRoleActorEvidence) error {
 	var streamID, sequence int64
 	var previous []byte
 	if err := tx.QueryRow(ctx, `SELECT stream_internal_id,next_sequence,latest_event_hash
@@ -145,7 +155,7 @@ FROM mesh_audit.lock_network_stream_head()`).Scan(&streamID, &sequence, &previou
 		SessionID   string                     `json:"session_id"`
 		Authority   workspaceRoleActorEvidence `json:"authority"`
 	}{command.WorkspaceID.String(), command.NetworkID.String(), code.String(), command.IPv4Prefix.String(),
-		command.IPv6Prefix.String(), command.Session.ID().String(), actor})
+		ipv6.String(), command.Session.ID().String(), actor})
 	if err != nil {
 		return err
 	}

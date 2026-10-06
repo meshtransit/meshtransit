@@ -468,6 +468,7 @@ func Catalog() []Migration {
 		newMigration(99, "Account-initiated Workspace creation within entitlement quotas", workspaceCreationSQL),
 		newMigration(100, "Network creation with non-overlapping Workspace prefixes", networkCreationSQL),
 		newMigration(101, "browser login with an Account-selected Workspace", accountSelectedLoginWorkspaceSQL),
+		newMigration(102, "stable provisioning error codes and assigned Network IPv6", provisioningErrorCodesSQL),
 	}
 }
 
@@ -550,3 +551,6 @@ var networkCreationSQL string
 
 //go:embed 000101_account_selected_login_workspace.up.sql
 var accountSelectedLoginWorkspaceSQL string
+
+//go:embed 000102_provisioning_error_codes.up.sql
+var provisioningErrorCodesSQL string

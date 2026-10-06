@@ -44,20 +44,20 @@ func NewWorkspaceCreationStore(pool *Pool, options AccountSessionOptions) (*Work
 func workspaceCreationError(err error) error {
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) {
-		switch {
-		case pgError.Code == "42501":
+		switch pgError.Code {
+		case "42501":
 			return creation.ErrForbidden
-		case pgError.Code == "55000" && pgError.Message == "deployment_entitlement_expired":
-			return creation.ErrEntitlementExpired
-		case pgError.Code == "55000":
+		case "MTE01":
 			return creation.ErrEntitlementMissing
-		case pgError.Code == "53400" && pgError.Message == "account_workspace_limit":
-			return creation.ErrAccountLimit
-		case pgError.Code == "53400":
+		case "MTE02":
+			return creation.ErrEntitlementExpired
+		case "MTL01":
 			return creation.ErrDeploymentLimit
-		case pgError.Code == "23505":
+		case "MTL02":
+			return creation.ErrAccountLimit
+		case "23505":
 			return creation.ErrConflict
-		case pgError.Code == "22023":
+		case "22023":
 			return creation.ErrInvalid
 		}
 	}

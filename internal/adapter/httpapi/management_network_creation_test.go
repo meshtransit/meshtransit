@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -21,18 +22,27 @@ func (function networkCreatorFunc) Create(ctx context.Context, command provision
 
 func TestNetworkCreationHTTPBoundary(t *testing.T) {
 	t.Parallel()
+	const omitted = "omitted"
 	body := func(ipv4, ipv6 string) string {
+		ipv6Field := `,"ipv6_prefix":"` + ipv6 + `"`
+		if ipv6 == omitted {
+			ipv6Field = ""
+		}
 		return `{"network_id":"01990f00-0000-7000-8000-000000000d01","display_name":"Office","ipv4_prefix":"` + ipv4 +
-			`","ipv6_prefix":"` + ipv6 + `"}`
+			`"` + ipv6Field + `}`
 	}
 	valid := body("100.64.10.0/24", "fd42:42:42:10::/64")
+	assigned := netip.MustParsePrefix("fd42:42:42::/64")
 	for _, test := range []struct {
 		name, body    string
 		failure       error
 		status, calls int
 		code          string
 	}{
-		{"created", valid, nil, 201, 1, ""},
+		{"created", valid, nil, 201, 1, `"ipv6_prefix":"fd42:42:42:10::/64"`},
+		{"IPv6 assigned", body("100.64.10.0/24", omitted), nil, 201, 1, `"ipv6_prefix":"fd42:42:42::/64"`},
+		{"empty IPv6", body("100.64.10.0/24", ""), nil, 400, 0, "invalid_request"},
+		{"IPv6 too large", body("100.64.10.0/24", "fd42:42:42::/48"), nil, 400, 0, "invalid_request"},
 		{"outside CGNAT", body("192.168.1.0/24", "fd42:42:42:10::/64"), nil, 400, 0, "invalid_request"},
 		{"host bits", body("100.64.10.1/24", "fd42:42:42:10::/64"), nil, 400, 0, "invalid_request"},
 		{"too large", body("100.64.0.0/12", "fd42:42:42:10::/64"), nil, 400, 0, "invalid_request"},
@@ -48,8 +58,12 @@ func TestNetworkCreationHTTPBoundary(t *testing.T) {
 			calls := 0
 			options.NetworkCreations = networkCreatorFunc(func(_ context.Context, command provisioning.Command) (provisioning.Result, error) {
 				calls++
+				ipv6 := command.IPv6Prefix
+				if !ipv6.IsValid() {
+					ipv6 = assigned
+				}
 				return provisioning.Result{NetworkID: command.NetworkID, DisplayCode: identity.DisplayCode("000000000888"),
-					Version: 1, CreatedAt: time.Unix(1, 0).UTC()}, test.failure
+					IPv4Prefix: command.IPv4Prefix, IPv6Prefix: ipv6, Version: 1, CreatedAt: time.Unix(1, 0).UTC()}, test.failure
 			})
 			handler, err := NewManagementHandler(options)
 			if err != nil {
@@ -62,7 +76,11 @@ func TestNetworkCreationHTTPBoundary(t *testing.T) {
 			if response.Code != test.status || calls != test.calls {
 				t.Fatalf("status/calls %d/%d, want %d/%d; %s", response.Code, calls, test.status, test.calls, response.Body)
 			}
-			if test.code != "" && !strings.Contains(response.Body.String(), `"`+test.code+`"`) {
+			want := test.code
+			if !strings.HasPrefix(want, `"`) {
+				want = `"` + want + `"`
+			}
+			if test.code != "" && !strings.Contains(response.Body.String(), want) {
 				t.Fatalf("missing %s in %s", test.code, response.Body)
 			}
 		})
