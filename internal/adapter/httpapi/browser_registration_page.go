@@ -25,8 +25,11 @@ const (
 	browserRegistrationStylesPath = "/register/v1/styles.css"
 	browserRegistrationScriptPath = "/register/v1/client.js"
 	browserRegistrationPageLimit  = 100
-	browserRegistrationBodyLimit  = 64 << 10
-	browserRegistrationPostLimit  = 2048
+	// browserRegistrationWorkspaceLimit bounds the Network reads one landing
+	// makes; a person rarely belongs to more Workspaces than this.
+	browserRegistrationWorkspaceLimit = 20
+	browserRegistrationBodyLimit      = 64 << 10
+	browserRegistrationPostLimit      = 2048
 )
 
 // ErrInvalidBrowserRegistrationPage reports invalid page composition or bounds.
@@ -119,7 +122,7 @@ func (page *BrowserRegistrationPage) ServeHTTP(response http.ResponseWriter, req
 	}
 	if request.URL.Path == browserRegistrationStylesPath {
 		response.Header().Set("Content-Type", "text/css; charset=utf-8")
-		_, _ = io.WriteString(response, browserRegistrationCSS+browserRegistrationWorkspaceCSS)
+		_, _ = io.WriteString(response, browserRegistrationCSS)
 		return
 	}
 	if request.URL.Path == browserRegistrationScriptPath {
@@ -142,7 +145,10 @@ func (page *BrowserRegistrationPage) ServeHTTP(response http.ResponseWriter, req
 		return
 	}
 	if len(request.Header.Values("Cookie")) == 0 {
-		page.render(response, page.loginPage, struct{ Path string }{Path: request.URL.Path})
+		page.render(response, page.loginPage, struct {
+			Path      string
+			AutoStart bool
+		}{Path: request.URL.Path, AutoStart: page.approval != nil})
 		return
 	}
 	token, err := readBrowserSessionCookie(request.Header)
@@ -156,7 +162,7 @@ func (page *BrowserRegistrationPage) ServeHTTP(response http.ResponseWriter, req
 		return
 	}
 	for _, digest := range digests {
-		landing, view, found, err := page.readChoices(ctx, digest, encodedToken, request)
+		landing, view, found, err := page.readChoices(ctx, digest, encodedToken)
 		if err != nil {
 			http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
@@ -168,7 +174,7 @@ func (page *BrowserRegistrationPage) ServeHTTP(response http.ResponseWriter, req
 			}
 			view.Hostname = landing.Hostname
 			view.Path = request.URL.Path
-			if page.approval != nil && len(view.Networks) > 0 {
+			if page.approval != nil && view.NetworkCount > 0 {
 				session, err := page.management.management.sessions.Authenticate(ctx, token)
 				if err != nil || !page.management.activeSession(token, session, page.management.clock.Now()) {
 					http.Error(response, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
@@ -200,91 +206,62 @@ type browserRegistrationNetworkView struct {
 }
 
 type browserRegistrationWorkspaceView struct {
-	Name string
-	Path string
+	ID           string
+	Name         string
+	Initial      string
+	Networks     []browserRegistrationNetworkView
+	MoreNetworks bool
 }
 
 type browserRegistrationChoiceView struct {
-	Hostname      string
-	Path          string
-	Workspaces    []browserRegistrationWorkspaceView
-	WorkspaceID   string
-	WorkspaceName string
-	Next          string
-	Networks      []browserRegistrationNetworkView
-	CSRF          string
-	Action        string
+	Hostname       string
+	Path           string
+	Workspaces     []browserRegistrationWorkspaceView
+	NetworkCount   int
+	MoreWorkspaces bool
+	CSRF           string
+	Action         string
 }
 
+// readChoices lists every Workspace the Session may enroll into together with
+// its joinable Networks, so one landing offers both choices at once.
 func (page *BrowserRegistrationPage) readChoices(ctx context.Context, digest accountsession.Digest,
-	encodedToken string, request *http.Request,
+	encodedToken string,
 ) (enrollment.BrowserIntentLanding, browserRegistrationChoiceView, bool, error) {
-	selected, workspaceAfter, networkAfter, err := browserRegistrationSelection(request.URL.RawQuery)
-	if err != nil {
+	workspaces, found, err := page.choices.ReadWorkspaces(ctx, digest, encodedToken,
+		workspace.ID{}, browserRegistrationPageLimit)
+	if err != nil || !found {
 		return enrollment.BrowserIntentLanding{}, browserRegistrationChoiceView{}, false, err
 	}
-	if !selected.IsValid() {
-		choicePage, found, err := page.choices.ReadWorkspaces(ctx, digest, encodedToken,
-			workspaceAfter, browserRegistrationPageLimit)
-		view := browserRegistrationChoiceView{}
-		for _, choice := range choicePage.Choices.Workspaces {
-			view.Workspaces = append(view.Workspaces, browserRegistrationWorkspaceView{
-				Name: choice.DisplayName,
-				Path: request.URL.Path + "?" + url.Values{"workspace": {choice.WorkspaceID.String()}}.Encode(),
-			})
+	view := browserRegistrationChoiceView{MoreWorkspaces: workspaces.HasMore}
+	for index, choice := range workspaces.Choices.Workspaces {
+		if index == browserRegistrationWorkspaceLimit {
+			view.MoreWorkspaces = true
+			break
 		}
-		if choicePage.HasMore && len(choicePage.Choices.Workspaces) > 0 {
-			last := choicePage.Choices.Workspaces[len(choicePage.Choices.Workspaces)-1]
-			view.Next = request.URL.Path + "?" + url.Values{"after": {last.WorkspaceID.String()}}.Encode()
+		networks, found, err := page.choices.ReadNetworks(ctx, digest, encodedToken,
+			choice.WorkspaceID, network.ID{}, browserRegistrationPageLimit)
+		if err != nil {
+			return enrollment.BrowserIntentLanding{}, browserRegistrationChoiceView{}, false, err
 		}
-		return choicePage.Landing, view, found, err
+		group := browserRegistrationWorkspaceView{
+			ID: choice.WorkspaceID.String(), Name: choice.DisplayName, Initial: workspaceInitial(choice.DisplayName),
+		}
+		if found {
+			group.Networks = browserRegistrationNetworks(networks)
+			group.MoreNetworks = networks.HasMore
+		}
+		view.NetworkCount += len(group.Networks)
+		view.Workspaces = append(view.Workspaces, group)
 	}
-	choicePage, found, err := page.choices.ReadNetworks(ctx, digest, encodedToken,
-		selected, networkAfter, browserRegistrationPageLimit)
-	view := browserRegistrationChoiceView{
-		WorkspaceID: selected.String(), WorkspaceName: choicePage.Choices.WorkspaceDisplayName,
-		Networks: browserRegistrationNetworks(choicePage),
-	}
-	if choicePage.HasMore && len(choicePage.Choices.Networks) > 0 {
-		last := choicePage.Choices.Networks[len(choicePage.Choices.Networks)-1]
-		view.Next = request.URL.Path + "?" + url.Values{
-			"workspace": {selected.String()}, "after": {last.NetworkID.String()},
-		}.Encode()
-	}
-	return choicePage.Landing, view, found, err
+	return workspaces.Landing, view, true, nil
 }
 
-func browserRegistrationSelection(rawQuery string) (workspace.ID, workspace.ID, network.ID, error) {
-	selected, workspaceAfter, networkAfter := workspace.ID{}, workspace.ID{}, network.ID{}
-	values, err := url.ParseQuery(rawQuery)
-	if err != nil || len(rawQuery) > 128 || values.Encode() != rawQuery || len(values) > 2 {
-		return selected, workspaceAfter, networkAfter, ErrInvalidBrowserRegistrationPage
+func workspaceInitial(name string) string {
+	for _, character := range strings.TrimSpace(name) {
+		return strings.ToUpper(string(character))
 	}
-	for name, entries := range values {
-		if (name != "workspace" && name != "after") || len(entries) != 1 || entries[0] == "" {
-			return selected, workspaceAfter, networkAfter, ErrInvalidBrowserRegistrationPage
-		}
-	}
-	if value := values.Get("workspace"); value != "" {
-		selected, err = workspace.ParseID(value)
-		if err != nil || selected.String() != value {
-			return selected, workspaceAfter, networkAfter, ErrInvalidBrowserRegistrationPage
-		}
-	}
-	if value := values.Get("after"); value != "" {
-		if selected.IsValid() {
-			networkAfter, err = network.ParseID(value)
-			if err != nil || networkAfter.String() != value {
-				return selected, workspaceAfter, networkAfter, ErrInvalidBrowserRegistrationPage
-			}
-		} else {
-			workspaceAfter, err = workspace.ParseID(value)
-			if err != nil || workspaceAfter.String() != value {
-				return selected, workspaceAfter, networkAfter, ErrInvalidBrowserRegistrationPage
-			}
-		}
-	}
-	return selected, workspaceAfter, networkAfter, nil
+	return "W"
 }
 
 func browserRegistrationNetworks(page control.BrowserChoicePage) []browserRegistrationNetworkView {
@@ -398,10 +375,7 @@ func (page *BrowserRegistrationPage) validRequest(request *http.Request) bool {
 	if request.URL.Path == browserRegistrationStylesPath || request.URL.Path == browserRegistrationScriptPath {
 		return request.Method == http.MethodGet && request.URL.RawQuery == ""
 	}
-	if request.Method == http.MethodPost && request.URL.RawQuery != "" {
-		return false
-	}
-	if _, _, _, err := browserRegistrationSelection(request.URL.RawQuery); err != nil {
+	if request.URL.RawQuery != "" {
 		return false
 	}
 	encodedToken, ok := strings.CutPrefix(request.URL.Path, browserRegistrationPagePrefix)
@@ -412,38 +386,49 @@ func (page *BrowserRegistrationPage) validRequest(request *http.Request) bool {
 	return err == nil
 }
 
-const browserRegistrationLoginHTML = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>Sign in to connect device | MeshTransit</title><link rel="stylesheet" href="/register/v1/styles.css"></head>
-<body><main><p class="eyebrow">MeshTransit · Device connection</p><h1>Sign in to continue</h1><p>Open Mesh Console to sign in. Return to this tab and reload after sign-in.</p><p><a class="action" href="/console" target="_blank" rel="noopener noreferrer">Open Mesh Console</a></p><p><a href="{{.Path}}">Reload this request</a></p></main></body></html>`
+const browserRegistrationHead = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer">`
 
-const browserRegistrationChoicesHTML = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>Choose {{if .WorkspaceID}}Network{{else}}Workspace{{end}} | MeshTransit</title><link rel="stylesheet" href="/register/v1/styles.css"></head>
-<body><main><p class="eyebrow">MeshTransit · Device connection</p>
-<p class="steps">{{if .WorkspaceID}}Step 2 of 2 · Network{{else}}Step 1 of 2 · Workspace{{end}}</p>
-<h1>Choose a {{if .WorkspaceID}}Network{{else}}Workspace{{end}}</h1><p>Device: <strong>{{.Hostname}}</strong></p>
-{{if .WorkspaceID}}<p>Workspace: <strong>{{.WorkspaceName}}</strong> · <a href="{{.Path}}">Change Workspace</a></p>
-{{if .Networks}}<p>Networks you can join in this Workspace:</p>
-{{if .CSRF}}<form id="registration-form" method="post" action="{{.Action}}" aria-busy="false">
-<input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="workspace" value="{{.WorkspaceID}}">
-<fieldset><legend>Select one Network</legend>{{range .Networks}}<label class="choice"><input type="radio" name="network" value="{{.ID}}" required><span>{{.Name}}</span></label>{{end}}</fieldset>
-<button id="registration-confirm" type="submit">Connect device</button><p id="registration-status" role="status" aria-live="polite"></p></form><script src="/register/v1/client.js" defer></script>
-{{else}}<ul>{{range .Networks}}<li>{{.Name}}</li>{{end}}</ul>{{end}}
-{{else}}<p>No Network is currently available to connect this device in this Workspace.</p>{{end}}
-{{else}}<p>Select a Workspace you belong to, including one shared with you.</p>
-{{if .Workspaces}}<ul>{{range .Workspaces}}<li class="workspace"><a class="choice" href="{{.Path}}">{{.Name}}<span aria-hidden="true">›</span></a></li>{{end}}</ul>
-{{else}}<p>No Workspace is currently available with this sign-in.</p>{{end}}{{end}}
-{{if .Next}}<p><a href="{{.Next}}">More {{if .WorkspaceID}}Networks{{else}}Workspaces{{end}}</a></p>{{end}}
-</main></body></html>`
+const browserRegistrationBrand = `<header class="brand"><span class="brand__mark" aria-hidden="true">›</span><span>MeshTransit</span></header>`
+
+const browserRegistrationLoginHTML = browserRegistrationHead + `<title>Sign in to connect device | MeshTransit</title><link rel="stylesheet" href="/register/v1/styles.css"></head>
+<body><main>` + browserRegistrationBrand + `<section class="card"><p class="eyebrow">Connect a device</p><h1>Sign in to continue</h1>
+{{if .AutoStart}}<p id="registration-signin" data-path="{{.Path}}" role="status" aria-live="polite">Taking you to sign-in…</p>
+<p class="muted">If nothing happens, <a href="/">sign in to Mesh Console</a>, then reopen the link from Mesh Client.</p><script src="/register/v1/client.js" defer></script>
+{{else}}<p class="muted">Sign in to Mesh Console in this browser, then reload this page.</p><p><a class="button" href="/">Sign in to Mesh Console</a></p><p><a href="{{.Path}}">Reload this request</a></p>{{end}}
+</section></main></body></html>`
+
+const browserRegistrationChoicesHTML = browserRegistrationHead + `<title>Connect device | MeshTransit</title><link rel="stylesheet" href="/register/v1/styles.css"></head>
+<body><main>` + browserRegistrationBrand + `<section class="card"><p class="eyebrow">Connect a device</p><h1>Choose where to connect</h1>
+<p class="device"><span class="device__label">Device</span><strong>{{.Hostname}}</strong></p>
+{{if .Workspaces}}{{if .CSRF}}<form id="registration-form" method="post" action="{{.Action}}" aria-busy="false">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+{{range .Workspaces}}<fieldset class="workspace"><legend><span class="avatar" aria-hidden="true">{{.Initial}}</span><span>{{.Name}}</span></legend>
+{{if .Networks}}{{$workspace := .ID}}{{range .Networks}}<label class="choice"><input type="radio" name="network" value="{{.ID}}" data-workspace="{{$workspace}}" required><span class="choice__dot" aria-hidden="true"></span><span>{{.Name}}</span></label>{{end}}
+{{if .MoreNetworks}}<p class="muted">More Networks exist; manage them in Mesh Console.</p>{{end}}{{else}}<p class="muted empty">No Network you can join in this Workspace.</p>{{end}}</fieldset>{{end}}
+<button id="registration-confirm" class="button" type="submit">Connect device</button><p id="registration-status" role="status" aria-live="polite"></p></form><script src="/register/v1/client.js" defer></script>
+{{else}}{{range .Workspaces}}<section class="workspace"><h2><span class="avatar" aria-hidden="true">{{.Initial}}</span><span>{{.Name}}</span></h2>
+{{if .Networks}}<ul>{{range .Networks}}<li class="choice">{{.Name}}</li>{{end}}</ul>{{else}}<p class="muted empty">No Network you can join in this Workspace.</p>{{end}}</section>{{end}}{{end}}
+{{if .MoreWorkspaces}}<p class="muted">Only your first Workspaces are shown.</p>{{end}}
+{{else}}<p class="muted">No Workspace is available with this sign-in. Ask an owner to invite you, or sign in with another account.</p>{{end}}
+</section></main></body></html>`
 
 //go:embed browser_registration_page.js
 var browserRegistrationScript string
 
-const browserRegistrationApprovedHTML = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>Device approved | MeshTransit</title><link rel="stylesheet" href="/register/v1/styles.css"></head>
-<body><main><p class="eyebrow">MeshTransit · Device connection</p><h1>Device approved</h1><p>Return to Mesh Client. It will finish connecting to the selected Network.</p></main></body></html>`
+const browserRegistrationApprovedHTML = browserRegistrationHead + `<title>Device approved | MeshTransit</title><link rel="stylesheet" href="/register/v1/styles.css"></head>
+<body><main>` + browserRegistrationBrand + `<section class="card"><span class="done" aria-hidden="true">✓</span><p class="eyebrow">Connect a device</p><h1>Device approved</h1><p class="muted">Return to Mesh Client. It will finish connecting to the selected Network.</p></section></main></body></html>`
 
-const browserRegistrationCSS = `:root{color-scheme:light;--ink:#17212f;--muted:#425166;--paper:#fff;--line:#cbd5e1;--focus:#1d4ed8}*{box-sizing:border-box}body{margin:0;padding:2rem 1rem;background:var(--paper);color:var(--ink);font:1rem/1.55 system-ui,sans-serif}main{max-width:36rem;margin:7vh auto}.eyebrow{font-size:.875rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}h1{font-size:clamp(1.75rem,5vw,2.25rem);line-height:1.2}p{max-width:62ch}ul{list-style:none;padding:0;margin:1.5rem 0}li,.choice{border:1px solid var(--line);border-radius:.75rem;padding:1rem 1.25rem;margin:.75rem 0;font-weight:600}.choice{display:flex;gap:.75rem;align-items:center;cursor:pointer}.choice input{width:1.25rem;height:1.25rem}fieldset{border:0;padding:0;margin:0}legend{font-weight:700}button{min-height:44px;border:0;border-radius:.5rem;padding:.65rem 1rem;background:var(--ink);color:var(--paper);font:inherit;font-weight:700;cursor:pointer}a{color:#1742a0}a:focus-visible,button:focus-visible,input:focus-visible{outline:3px solid var(--focus);outline-offset:4px}.action{display:inline-block;min-height:44px;padding:.65rem 1rem;border-radius:.5rem;background:var(--ink);color:var(--paper);font-weight:700;text-decoration:none}`
+// The tokens mirror Mesh Console's dark theme so the hand-off feels like one product.
+const browserRegistrationCSS = `:root{color-scheme:dark;--bg:#09090b;--surface:#141417;--raised:#1c1c21;--line:#27272a;--ink:#f4f4f5;--muted:#a1a1aa;--accent:#e5484d;--accent-ink:#fff;--focus:#f87171}` +
+	`*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:2rem 1rem;background:radial-gradient(60rem 30rem at 50% -10%,rgba(229,72,77,.12),transparent),var(--bg);color:var(--ink);font:1rem/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}` +
+	`main{max-width:32rem;margin:6vh auto}.brand{display:flex;align-items:center;gap:.6rem;margin-bottom:1.25rem;font-weight:700;font-size:1.05rem}.brand__mark{display:grid;place-items:center;width:1.9rem;height:1.9rem;border-radius:.55rem;background:rgba(229,72,77,.15);border:1px solid rgba(229,72,77,.35);color:var(--accent);font-weight:800}` +
+	`.card{padding:1.75rem;border:1px solid var(--line);border-radius:1rem;background:var(--surface)}.eyebrow{margin:0 0 .35rem;color:var(--accent);font-size:.75rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase}h1{margin:0 0 1rem;font-size:1.5rem;line-height:1.25}p{margin:.5rem 0}.muted{color:var(--muted);font-size:.925rem}` +
+	`.device{display:flex;flex-wrap:wrap;gap:.5rem;align-items:baseline;padding:.75rem 1rem;border-radius:.65rem;background:var(--raised);margin:0 0 1.25rem}.device__label{color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.08em}` +
+	`.workspace{border:0;padding:0;margin:0 0 1.25rem}.workspace legend,.workspace h2{display:flex;align-items:center;gap:.6rem;margin:0 0 .6rem;padding:0;font-size:.95rem;font-weight:700}.avatar{display:grid;place-items:center;width:1.6rem;height:1.6rem;border-radius:.45rem;background:var(--accent);color:var(--accent-ink);font-size:.8rem;font-weight:800}` +
+	`ul{list-style:none;padding:0;margin:0}.choice{display:flex;align-items:center;gap:.75rem;min-height:48px;padding:.7rem 1rem;margin:.45rem 0;border:1px solid var(--line);border-radius:.7rem;background:var(--raised);font-weight:600;cursor:pointer;transition:border-color .15s,background .15s}` +
+	`.choice:hover{border-color:#3f3f46}.choice input{position:absolute;opacity:0;width:1px;height:1px}.choice__dot{flex:none;width:1.1rem;height:1.1rem;border:2px solid #52525b;border-radius:50%}.choice:has(input:checked){border-color:var(--accent);background:rgba(229,72,77,.08)}.choice:has(input:checked) .choice__dot{border-color:var(--accent);box-shadow:inset 0 0 0 3px var(--raised);background:var(--accent)}.choice:has(input:focus-visible){outline:3px solid var(--focus);outline-offset:2px}` +
+	`.empty{padding:.25rem 0 0 2.2rem}.button{display:inline-flex;align-items:center;justify-content:center;width:100%;min-height:46px;margin-top:.5rem;border:0;border-radius:.6rem;padding:.7rem 1rem;background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:700;text-decoration:none;cursor:pointer}.button:disabled{opacity:.6;cursor:default}` +
+	`a{color:#fca5a5}a:focus-visible,.button:focus-visible{outline:3px solid var(--focus);outline-offset:3px}#registration-status{min-height:1.5rem;color:var(--muted)}.done{display:grid;place-items:center;width:2.5rem;height:2.5rem;margin-bottom:1rem;border-radius:50%;background:rgba(48,164,108,.15);color:#4cc38a;font-weight:800}`
 
 var _ http.Handler = (*BrowserRegistrationPage)(nil)
-
-const browserRegistrationWorkspaceCSS = `.steps{color:var(--muted);font-size:.875rem}.workspace{border:0;padding:0;font-weight:inherit}.workspace .choice{color:var(--ink);text-decoration:none;justify-content:space-between;min-height:44px}.workspace .choice:hover{border-color:var(--focus)}`

@@ -21,23 +21,25 @@ function harness(reply = {}, options = {}) {
     busy: "false",
     getAttribute(name) { assert.equal(name, "action"); return options.action ?? action; },
     querySelector(selector) {
-      if (selector === 'input[name="network"]:checked') return options.noSelection ? null : { value: network };
-      if (selector === 'input[name="workspace"]') return options.noWorkspace ? null : { value: workspace };
-      assert.equal(selector, 'input[name="csrf"]');
-      return { value: "synthetic-proof" };
+      assert.equal(selector, 'input[name="network"]:checked');
+      if (options.noSelection) return null;
+      const chosenWorkspace = options.noWorkspace ? null : workspace;
+      return { value: network, getAttribute(name) { assert.equal(name, "data-workspace"); return chosenWorkspace; } };
     },
     setAttribute(name, value) { assert.equal(name, "aria-busy"); this.busy = value; },
     addEventListener(name, handler) { events.set(name, handler); },
   };
   const document = { getElementById(id) {
-    return { "registration-form": form, "registration-confirm": button, "registration-status": status }[id];
+    return { "registration-form": form, "registration-confirm": button, "registration-status": status }[id] ?? null;
   } };
   Object.defineProperty(document, "cookie", { get() { assert.fail("cookie access"); } });
   for (const element of [status, form]) {
     Object.defineProperty(element, "innerHTML", { set() { assert.fail("HTML injection"); } });
   }
   const window = {
-    location: { pathname: action, href: `https://app.example.test${action}?workspace=${workspace}`, reload() { reloads++; } },
+    location: { pathname: action, href: `https://app.example.test${action}`, reload() { reloads++; },
+      replace() { assert.fail("approval page never navigates away"); } },
+    sessionStorage: { setItem() { assert.fail("approval page stores nothing"); } },
     addEventListener(name, handler) { pageEvents.set(name, handler); },
     removeEventListener(name, handler) { assert.equal(pageEvents.get(name), handler); pageEvents.delete(name); },
   };
@@ -47,13 +49,13 @@ function harness(reply = {}, options = {}) {
       return {
         getAttribute() { return options.freshAction ?? action; },
         querySelector(selector) {
-          if (selector === 'input[name="csrf"]') return { value: options.freshProof ?? "fresh-proof" };
-          assert.equal(selector, 'input[name="workspace"]');
-          return { value: options.freshWorkspace ?? workspace };
+          assert.equal(selector, 'input[name="csrf"]');
+          return { value: options.freshProof ?? "fresh-proof" };
         },
         querySelectorAll(selector) {
           assert.equal(selector, 'input[name="network"]');
-          return options.noFreshNetwork ? [] : [{ value: network }];
+          const freshWorkspace = options.freshWorkspace ?? workspace;
+          return options.noFreshNetwork ? [] : [{ value: network, getAttribute() { return freshWorkspace; } }];
         },
       };
     } }; } },
@@ -95,7 +97,7 @@ test("explicit activation refreshes proof then sends one exact same-origin appro
   await pending;
   assert.equal(instance.calls.length, 2);
   const refresh = instance.calls[0];
-  assert.equal(refresh.destination, `https://app.example.test${action}?workspace=${workspace}`);
+  assert.equal(refresh.destination, `https://app.example.test${action}`);
   assert.equal(refresh.options.method, "GET");
   assert.equal(refresh.options.credentials, "same-origin");
   assert.equal(refresh.options.referrerPolicy, "no-referrer");
@@ -159,4 +161,38 @@ test("pagehide cancels a pending approval", async () => {
   assert.equal(instance.calls[0].options.signal.aborted, true);
   assert.equal(instance.timers.size, 0);
   assert.equal(instance.reloads, 0);
+});
+
+function signinHarness(path, pathname = action, storage = {}) {
+  const navigation = [];
+  const stored = [];
+  const signin = { dataset: { path } };
+  const document = { getElementById(id) { return id === "registration-signin" ? signin : null; } };
+  const window = {
+    location: { pathname, replace(destination) { navigation.push(destination); } },
+    sessionStorage: { setItem(key, value) {
+      if (storage.blocked) throw new Error("storage disabled");
+      stored.push([key, JSON.parse(value)]);
+    } },
+  };
+  vm.runInNewContext(script, { document, window, Date: { now: () => 1234 } }, { timeout: 1000 });
+  return { navigation, stored };
+}
+
+test("signed-out landing remembers the exact intent in this tab and starts Console sign-in", () => {
+  const instance = signinHarness(action);
+  assert.deepEqual(instance.stored, [["meshtransit.registration.return", { path: action, at: 1234 }]]);
+  assert.deepEqual(instance.navigation, ["/"]);
+});
+
+test("signed-out landing ignores foreign or mismatched paths and blocked storage", () => {
+  for (const [path, pathname, storage] of [
+    ["https://evil.example.test/", action, {}],
+    ["/register/v1/" + "B".repeat(43), action, {}],
+    ["/console", "/console", {}],
+    [action, action, { blocked: true }],
+  ]) {
+    const instance = signinHarness(path, pathname, storage);
+    assert.deepEqual(instance.navigation, []);
+  }
 });

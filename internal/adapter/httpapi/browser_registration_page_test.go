@@ -81,19 +81,15 @@ func TestBrowserRegistrationPageRequiresSSOAndEscapesNetworkNames(t *testing.T) 
 	unauthenticated := serveBrowserRegistrationPage(page, path, "")
 	if unauthenticated.Code != http.StatusOK || reader.calls != 0 ||
 		!strings.Contains(unauthenticated.Body.String(), "Sign in to continue") ||
-		!strings.Contains(unauthenticated.Body.String(), `href="/console"`) {
+		!strings.Contains(unauthenticated.Body.String(), `href="/"`) ||
+		strings.Contains(unauthenticated.Body.String(), "client.js") {
 		t.Fatalf("unauthenticated landing = (%d, %q)", unauthenticated.Code, unauthenticated.Body.String())
 	}
+	// One landing reads the Workspaces and each Workspace's Networks together.
 	authenticated := serveBrowserRegistrationPage(page, path, session.Encoded())
-	if authenticated.Code != http.StatusOK || reader.calls != 1 ||
-		!strings.Contains(authenticated.Body.String(), "Choose a Workspace") ||
-		strings.Contains(authenticated.Body.String(), "Choose a Network") ||
-		strings.Contains(authenticated.Body.String(), "Connect device") {
-		t.Fatalf("Workspace first = (%d, %q)", authenticated.Code, authenticated.Body.String())
-	}
-	authenticated = serveBrowserRegistrationPage(page, path+"?workspace="+reader.page.Choices.WorkspaceID.String(), session.Encoded())
 	if authenticated.Code != http.StatusOK || reader.calls != 2 ||
-		!strings.Contains(authenticated.Body.String(), "Choose a Network") ||
+		!strings.Contains(authenticated.Body.String(), "Choose where to connect") ||
+		!strings.Contains(authenticated.Body.String(), "Member Workspace") ||
 		!strings.Contains(authenticated.Body.String(), "node-one.example") ||
 		!strings.Contains(authenticated.Body.String(), "&lt;img") ||
 		strings.Contains(authenticated.Body.String(), "<img") ||
@@ -210,9 +206,16 @@ func TestBrowserRegistrationPageApprovesOnlyWithCurrentSSOAndCSRF(t *testing.T) 
 	if landing.Code != http.StatusServiceUnavailable && landing.Code != http.StatusNotFound {
 		t.Fatalf("unrelated SSO Session reached approval form: %d", landing.Code)
 	}
-	landing = serveBrowserRegistrationPage(page, path+"?workspace="+reader.page.Choices.WorkspaceID.String(), boundToken.Encoded())
+	signedOut := serveBrowserRegistrationPage(page, path, "")
+	if signedOut.Code != http.StatusOK || !strings.Contains(signedOut.Body.String(), `id="registration-signin" data-path="`+path+`"`) ||
+		!strings.Contains(signedOut.Body.String(), `src="/register/v1/client.js"`) ||
+		!strings.Contains(signedOut.Header().Get("Content-Security-Policy"), "script-src 'self'") {
+		t.Fatalf("signed-out approval landing = (%d, %q)", signedOut.Code, signedOut.Body.String())
+	}
+	landing = serveBrowserRegistrationPage(page, path, boundToken.Encoded())
 	if landing.Code != http.StatusOK || !strings.Contains(landing.Body.String(), `<form id="registration-form" method="post"`) ||
-		!strings.Contains(landing.Body.String(), `value="`+selected.String()+`"`) ||
+		!strings.Contains(landing.Body.String(), `value="`+selected.String()+`" data-workspace="`+
+			reader.page.Choices.WorkspaceID.String()+`"`) ||
 		!strings.Contains(landing.Body.String(), `src="/register/v1/client.js"`) ||
 		!strings.Contains(landing.Header().Get("Content-Security-Policy"), "form-action 'self'") ||
 		!strings.Contains(landing.Header().Get("Content-Security-Policy"), "script-src 'self'; connect-src 'self'") {

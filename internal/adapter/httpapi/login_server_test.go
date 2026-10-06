@@ -167,37 +167,28 @@ func TestLoginServerBrowserWorkspaceSelection(t *testing.T) {
 	options.Dispatcher = dispatcher
 	server, client := startLoginTestServer(t, options)
 	path := browserRegistrationPagePrefix + browserPageTestToken
-	for _, step := range []struct {
-		name string
-		path string
-		want string
-	}{
-		{name: "Workspace", path: path, want: "Choose a Workspace"},
-		{name: "Network", path: path + "?workspace=" + choices.page.Choices.WorkspaceID.String(),
-			want: "Choose a Network"},
-	} {
-		t.Run(step.name, func(t *testing.T) {
-			request := loginServerTestRequest(t, server, http.MethodGet, step.path)
-			request.AddCookie(&http.Cookie{Name: AccountSessionCookieName, Value: session.Encoded(),
-				Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
-			response, err := client.Do(request)
-			if err != nil {
-				t.Fatal("chooser request lost its HTTP response", err)
-			}
-			defer func() {
-				if err := response.Body.Close(); err != nil {
-					t.Error("close chooser response", err)
-				}
-			}()
-			body, err := io.ReadAll(response.Body)
-			if err != nil || response.StatusCode != http.StatusOK ||
-				!strings.Contains(string(body), step.want) || response.Header.Get("Cache-Control") != "no-store" {
-				t.Fatalf("chooser response = (%d, %q, %v)", response.StatusCode, body, err)
-			}
-		})
+	// One chooser shows every Workspace with its Networks; no second step.
+	request := loginServerTestRequest(t, server, http.MethodGet, path)
+	request.AddCookie(&http.Cookie{Name: AccountSessionCookieName, Value: session.Encoded(),
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal("chooser request lost its HTTP response", err)
+	}
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Error("close chooser response", err)
+		}
+	}()
+	body, err := io.ReadAll(response.Body)
+	if err != nil || response.StatusCode != http.StatusOK ||
+		!strings.Contains(string(body), "Choose where to connect") ||
+		!strings.Contains(string(body), choices.page.Choices.WorkspaceDisplayName) ||
+		response.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("chooser response = (%d, %q, %v)", response.StatusCode, body, err)
 	}
 	if choices.calls != 2 {
-		t.Fatalf("chooser calls = %d, want 2", choices.calls)
+		t.Fatalf("chooser calls = %d, want Workspaces and Networks in one landing", choices.calls)
 	}
 }
 
