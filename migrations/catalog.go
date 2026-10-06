@@ -475,6 +475,7 @@ func Catalog() []Migration {
 		newMigration(106, "Workspace permissions in the Console management scope", managementScopeWorkspacePermissionsSQL),
 		newMigration(107, "cached written-order plans for session authority functions", sessionAuthorityPlanningSQL),
 		newMigration(108, "Policy Explain for shared destinations with denial context", explainSharedDestinationsSQL),
+		newMigration(109, "Policy Explain finds shares from another Workspace", explainCrossWorkspaceSharesSQL),
 	}
 }
 
@@ -578,3 +579,6 @@ var sessionAuthorityPlanningSQL string
 
 //go:embed 000108_explain_shared_destinations.up.sql
 var explainSharedDestinationsSQL string
+
+//go:embed 000109_explain_cross_workspace_shares.up.sql
+var explainCrossWorkspaceSharesSQL string

@@ -210,7 +210,7 @@ func assertPostgreSQLResourceSharing(
 	assertAtomicImportedPolicyPublication(ctx, t, admin, session, resolved[0])
 	assertImportedPolicySimulation(ctx, t, admin, runtimePool, store, session, resolved[0])
 	crossWorkspaceImport := assertCrossWorkspaceResourceSharingConsent(
-		ctx, t, admin, workerPool, service, providerScope, resourceID, maximumTraffic, reason,
+		ctx, t, admin, workerPool, runtimePool, service, providerScope, resourceID, maximumTraffic, reason,
 	)
 	assertLegacyRevokeWithdrawsSameWorkspaceAlias(ctx, t, admin, activeContract)
 	revokeCommand, err := sharing.NewRevokeContract(sharing.RevokeContractParams{
@@ -502,6 +502,7 @@ func assertCrossWorkspaceResourceSharingConsent(
 	t *testing.T,
 	admin *pgx.Conn,
 	workerPool *postgresadapter.Pool,
+	runtimePool *postgresadapter.Pool,
 	service *sharing.Service,
 	providerScope network.Scope,
 	resourceID resource.ID,
@@ -613,6 +614,9 @@ FROM mesh.network WHERE workspace_id = 103 AND state = 'active'`).Scan(&networkC
 	if networkCount < 2 {
 		t.Fatalf("active Networks in Workspace = %d, want at least 2", networkCount)
 	}
+	assertCrossWorkspaceShareExplained(
+		ctx, t, admin, runtimePool, consumerSession, consumerScope, activeContract.ImportedResourceID(),
+	)
 	return activeContract.ImportedResourceID()
 }
 
@@ -1605,6 +1609,14 @@ FROM mesh.permission AS permission WHERE permission.permission_key = 'share.acce
 ) OVERRIDING SYSTEM VALUE
 SELECT 868, '01890f00-0000-7000-8000-000000000868', 1, 102, 865, permission.id
 FROM mesh.permission AS permission WHERE permission.permission_key = 'share.revoke'`,
+			},
+			{
+				name: "cross-Workspace policy explain permission",
+				query: `INSERT INTO mesh.role_permission (
+    id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
+) OVERRIDING SYSTEM VALUE
+SELECT 870, '01890f00-0000-7000-8000-000000000870', 1, 102, 865, permission.id
+FROM mesh.permission AS permission WHERE permission.permission_key = 'policy.explain'`,
 			},
 			{
 				name: "cross-Workspace consumer Network binding",

@@ -173,6 +173,53 @@ LIMIT 1`).Scan(&sourceNodeID); err != nil {
 	}
 }
 
+// assertCrossWorkspaceShareExplained explains a share imported from another
+// Workspace. Provider tenant rows stay hidden from the consumer, so the answer
+// must still name the active share and the provider's display codes.
+func assertCrossWorkspaceShareExplained(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	runtimePool *postgresadapter.Pool,
+	session accountsession.Session,
+	scope network.Scope,
+	importedID sharing.ImportedResourceID,
+) {
+	t.Helper()
+	var sourceNodeID string
+	if err := admin.QueryRow(ctx, `SELECT device.public_id::TEXT
+FROM mesh.device AS device
+JOIN mesh.network AS network ON network.id = device.network_id
+WHERE network.public_id = $1::UUID
+  AND device.state = 'active'
+  AND pg_catalog.transaction_timestamp() < device.expires_at
+ORDER BY device.id
+LIMIT 1`, scope.NetworkID().String()).Scan(&sourceNodeID); err != nil {
+		t.Fatalf("query active cross-Workspace consumer Device: %v", err)
+	}
+	source, err := node.ParseID(sourceNodeID)
+	if err != nil {
+		t.Fatalf("parse cross-Workspace consumer Device: %v", err)
+	}
+	query, err := accessgraph.NewQuery(accessgraph.QueryParams{
+		Scope: scope, SourceNodeID: source, DestinationImportedResourceID: importedID,
+		Protocol: policy.ProtocolTCP, DestinationPort: 443,
+	})
+	if err != nil {
+		t.Fatalf("construct cross-Workspace explanation query: %v", err)
+	}
+	result, err := newIntegrationPolicyExplainer(t, runtimePool).Explain(ctx, session, query)
+	if err != nil {
+		t.Fatalf("explain cross-Workspace share: %v", err)
+	}
+	share, hasShare := result.Snapshot().Share()
+	if !result.IsValid() || !hasShare || share.State() != sharing.ContractStateActive ||
+		!share.ProviderWorkspaceCode().IsValid() || !share.ProviderNetworkCode().IsValid() ||
+		result.Snapshot().Target().State() != accessgraph.ParticipantStateActive {
+		t.Fatalf("cross-Workspace share explanation = %+v share=%+v", result.Snapshot(), share)
+	}
+}
+
 // assertSharedDestinationHiddenFromProvider asks about the consumer's imported
 // Resource from the provider Network. The definer function bypasses row-level
 // security, so it must fail closed by scope: either the session holds no
