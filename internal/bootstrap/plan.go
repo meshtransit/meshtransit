@@ -10,6 +10,8 @@ package bootstrap
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -59,8 +61,14 @@ type accountsFile struct {
 	Accounts         []accountLine `json:"accounts"`
 }
 
+// accountLine names one Account by its raw OIDC subject, or by the subject
+// digest already stored for it (lowercase hex). The digest form re-creates an
+// Account whose raw subject was never retained, for example when a deployment
+// is rebuilt with the same provider and subject key; it must have been
+// computed with the active subject key.
 type accountLine struct {
-	Subject       string `json:"subject"`
+	Subject       string `json:"subject,omitempty"`
+	SubjectDigest string `json:"subject_digest,omitempty"`
 	DisplayName   string `json:"display_name"`
 	WorkspaceName string `json:"workspace_name"`
 }
@@ -97,8 +105,7 @@ func NewPlan(contents []byte, route oidcauth.Route, key oidcauth.SubjectKey) (Pl
 			!settings.ValidName(line.WorkspaceName) {
 			return Plan{}, ErrInvalidPlan
 		}
-		digest, err := oidcauth.NewSubjectMigrationDigest(route.DeploymentID(), route.ProviderID(), key,
-			route.Issuer(), line.Subject)
+		digest, err := accountDigest(line, route, key)
 		if err != nil || seen[digest.Bytes()] {
 			return Plan{}, ErrInvalidPlan
 		}
@@ -108,6 +115,23 @@ func NewPlan(contents []byte, route oidcauth.Route, key oidcauth.SubjectKey) (Pl
 		})
 	}
 	return plan, nil
+}
+
+// accountDigest accepts exactly one of the raw subject and its stored digest.
+func accountDigest(line accountLine, route oidcauth.Route, key oidcauth.SubjectKey) (oidcauth.SubjectDigest, error) {
+	switch {
+	case line.Subject != "" && line.SubjectDigest == "":
+		return oidcauth.NewSubjectMigrationDigest(route.DeploymentID(), route.ProviderID(), key,
+			route.Issuer(), line.Subject)
+	case line.Subject == "" && line.SubjectDigest != "":
+		raw, err := hex.DecodeString(line.SubjectDigest)
+		if err != nil || len(raw) != sha256.Size || hex.EncodeToString(raw) != line.SubjectDigest {
+			return oidcauth.SubjectDigest{}, ErrInvalidPlan
+		}
+		return oidcauth.NewSubjectDigest(key.ID(), [sha256.Size]byte(raw))
+	default:
+		return oidcauth.SubjectDigest{}, ErrInvalidPlan
+	}
 }
 
 func validLabel(value string, maximum int) bool {

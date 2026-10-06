@@ -1,6 +1,7 @@
 package bootstrap_test
 
 import (
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -89,6 +90,36 @@ func TestNewPlanRejectsInvalidFiles(t *testing.T) {
 	} {
 		if _, err := bootstrap.NewPlan([]byte(contents), route(t), subjectKey(t, 1)); !errors.Is(err, bootstrap.ErrInvalidPlan) {
 			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestNewPlanAcceptsStoredSubjectDigests(t *testing.T) {
+	t.Parallel()
+	expected, err := oidcauth.NewSubjectMigrationDigest(route(t).DeploymentID(), route(t).ProviderID(),
+		subjectKey(t, 1), route(t).Issuer(), "abc-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := expected.Bytes()
+	encoded := hex.EncodeToString(raw[:])
+	plan, err := bootstrap.NewPlan([]byte(`{"format":"meshtransit-bootstrap/v1","profile":"cloud","accounts":[
+ {"subject_digest":"`+encoded+`","display_name":"Rebuilt","workspace_name":"Rebuilt"}]}`), route(t), subjectKey(t, 1))
+	if err != nil || plan.Accounts[0].SubjectDigest.Bytes() != expected.Bytes() ||
+		plan.Accounts[0].SubjectDigest.KeyID() != expected.KeyID() {
+		t.Fatalf("digest account = %+v, %v", plan, err)
+	}
+	for name, line := range map[string]string{
+		"both":      `{"subject":"abc-123","subject_digest":"` + encoded + `","display_name":"A","workspace_name":"A"}`,
+		"neither":   `{"display_name":"A","workspace_name":"A"}`,
+		"uppercase": `{"subject_digest":"` + strings.ToUpper(encoded) + `","display_name":"A","workspace_name":"A"}`,
+		"short":     `{"subject_digest":"abcd","display_name":"A","workspace_name":"A"}`,
+		"duplicate": `{"subject_digest":"` + encoded + `","display_name":"A","workspace_name":"A"},
+ {"subject":"abc-123","display_name":"B","workspace_name":"B"}`,
+	} {
+		contents := `{"format":"meshtransit-bootstrap/v1","profile":"cloud","accounts":[` + line + `]}`
+		if _, err := bootstrap.NewPlan([]byte(contents), route(t), subjectKey(t, 1)); !errors.Is(err, bootstrap.ErrInvalidPlan) {
+			t.Errorf("%s: error = %v", name, err)
 		}
 	}
 }
