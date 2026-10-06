@@ -118,6 +118,30 @@ func isConsoleManagementPermission(permission authorization.Permission) bool {
 	}
 }
 
+// WorkspacePresentationPermissions are the Workspace-level permissions the
+// Console uses to show or hide Workspace actions. Presentation only.
+var WorkspacePresentationPermissions = []authorization.Permission{
+	"network.create", "member.read", "role_binding.manage", "audit.read", "billing.read",
+}
+
+func validWorkspacePermissions(permissions []authorization.Permission) bool {
+	seen := make(map[authorization.Permission]struct{}, len(permissions))
+	for _, permission := range permissions {
+		if _, duplicate := seen[permission]; duplicate {
+			return false
+		}
+		seen[permission] = struct{}{}
+		known := false
+		for _, allowed := range WorkspacePresentationPermissions {
+			known = known || allowed == permission
+		}
+		if !known {
+			return false
+		}
+	}
+	return true
+}
+
 // ReadResult is untrusted durable evidence returned to the validating service.
 type ReadResult struct {
 	WorkspaceID          workspace.ID
@@ -125,6 +149,7 @@ type ReadResult struct {
 	WorkspaceDisplayCode identity.DisplayCode
 	WorkspaceVersion     int64
 	WorkspaceCanRename   bool
+	WorkspacePermissions []authorization.Permission
 	Scopes               []ManagementScope
 }
 
@@ -146,6 +171,7 @@ type Page struct {
 	workspaceDisplayCode identity.DisplayCode
 	workspaceVersion     int64
 	workspaceCanRename   bool
+	workspacePermissions []authorization.Permission
 	items                []ManagementScope
 	next                 network.ID
 }
@@ -164,6 +190,11 @@ func (page Page) WorkspaceVersion() int64 { return page.workspaceVersion }
 
 // WorkspaceCanRename controls presentation only; mutations reauthorize the owner.
 func (page Page) WorkspaceCanRename() bool { return page.workspaceCanRename }
+
+// WorkspacePermissions controls presentation only; mutations reauthorize.
+func (page Page) WorkspacePermissions() []authorization.Permission {
+	return append([]authorization.Permission(nil), page.workspacePermissions...)
+}
 
 // Items returns a defensive copy of the page.
 func (page Page) Items() []ManagementScope {
@@ -219,7 +250,7 @@ func (service *Service) List(
 	if result.WorkspaceID != workspaceID || !validDisplayName(result.WorkspaceDisplayName) ||
 		(result.WorkspaceDisplayCode != "" && !result.WorkspaceDisplayCode.IsValid()) ||
 		result.WorkspaceVersion < 0 || (result.WorkspaceCanRename && result.WorkspaceVersion == 0) ||
-		len(result.Scopes) > limit+1 {
+		len(result.Scopes) > limit+1 || !validWorkspacePermissions(result.WorkspacePermissions) {
 		return Page{}, ErrInvalidResult
 	}
 	for index, scope := range result.Scopes {
@@ -233,7 +264,8 @@ func (service *Service) List(
 		workspaceID: workspaceID, workspaceDisplayName: result.WorkspaceDisplayName,
 		workspaceDisplayCode: result.WorkspaceDisplayCode,
 		workspaceVersion:     result.WorkspaceVersion, workspaceCanRename: result.WorkspaceCanRename,
-		items: append([]ManagementScope(nil), result.Scopes...),
+		workspacePermissions: append([]authorization.Permission(nil), result.WorkspacePermissions...),
+		items:                append([]ManagementScope(nil), result.Scopes...),
 	}
 	if len(page.items) > limit {
 		page.items = page.items[:limit]

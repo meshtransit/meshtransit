@@ -49,7 +49,7 @@ const appendAccountSessionTouchEvidenceSQL = `SELECT mesh_audit.append_authority
 )`
 
 const readAccountSessionManagementScopesSQL = `SELECT
-    mesh_ops.read_console_management_scopes_v3(
+    mesh_ops.read_console_management_scopes_v4(
         $1::UUID, $2::UUID, $3::UUID, $4::UUID,
         $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
         $10::UUID, $11::TIMESTAMPTZ, $12::UUID, $13::INTEGER

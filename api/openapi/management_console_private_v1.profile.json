@@ -125,6 +125,22 @@
                 "can_rename": {
                   "type": "boolean",
                   "description": "Presentation hint only. Rename rechecks live ownership."
+                },
+                "permissions": {
+                  "type": "array",
+                  "maxItems": 5,
+                  "uniqueItems": true,
+                  "description": "Workspace-level permissions the Session holds, for presentation only; every action reauthorizes.",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "network.create",
+                      "member.read",
+                      "role_binding.manage",
+                      "audit.read",
+                      "billing.read"
+                    ]
+                  }
                 }
               }
             },

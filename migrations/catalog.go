@@ -472,6 +472,7 @@ func Catalog() []Migration {
 		newMigration(103, "Account Session Workspace switch", sessionWorkspaceSwitchSQL),
 		newMigration(104, "cross-Workspace shares without expiry", crossWorkspaceShareNoExpirySQL),
 		newMigration(105, "share target resolution by Network display code", shareTargetResolutionSQL),
+		newMigration(106, "Workspace permissions in the Console management scope", managementScopeWorkspacePermissionsSQL),
 	}
 }
 
@@ -566,3 +567,6 @@ var crossWorkspaceShareNoExpirySQL string
 
 //go:embed 000105_share_target_resolution.up.sql
 var shareTargetResolutionSQL string
+
+//go:embed 000106_management_scope_workspace_permissions.up.sql
+var managementScopeWorkspacePermissionsSQL string

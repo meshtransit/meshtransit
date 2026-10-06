@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -78,9 +79,16 @@ func assertPostgreSQLWorkspaceRename(ctx context.Context, t *testing.T, admin *p
 	if err != nil || page.WorkspaceDisplayName() != nextName || !page.WorkspaceCanRename() || page.WorkspaceVersion() != nextVersion {
 		t.Fatal("fresh projection lost owner name metadata", err)
 	}
+	if !slices.Contains(page.WorkspacePermissions(), "network.create") ||
+		!slices.Contains(page.WorkspacePermissions(), "member.read") {
+		t.Fatalf("owner projection lacks Workspace permissions: %v", page.WorkspacePermissions())
+	}
 	member, err := scopes.List(ctx, memberCommand.Session, 100, network.ID{})
 	if err != nil || member.WorkspaceCanRename() {
 		t.Fatal("member projection acquired owner hint", err)
+	}
+	if slices.Contains(member.WorkspacePermissions(), "role_binding.manage") {
+		t.Fatalf("member projection acquired role management: %v", member.WorkspacePermissions())
 	}
 	command.ExpectedVersion = nextVersion
 	assertWorkspaceRenameAuthorityDenials(ctx, t, admin, command)
