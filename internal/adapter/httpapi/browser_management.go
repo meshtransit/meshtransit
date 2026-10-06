@@ -254,7 +254,8 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	_, accessGraph := parseAccessGraphExplainPath(request)
 	_, workspaceRename := parseWorkspaceRenamePath(request)
 	workspaceRoles := isWorkspaceRoleOperation(request) ||
-		isWorkspaceCollectionPath(request) && request.Method == http.MethodPost
+		isWorkspaceCollectionPath(request) && request.Method == http.MethodPost ||
+		isNetworkCollectionPost(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
 	if !prepare && !logout && !managementScopes && !inventoryRead && !deploymentCapabilities && !device && !policy && !simulation &&
 		!approval && !accessGraph && !policyRead && !workspaceRename && !workspaceRoles && !resourceSharing {

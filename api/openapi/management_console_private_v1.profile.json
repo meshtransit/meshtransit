@@ -1471,5 +1471,165 @@
         }
       }
     }
+  },
+  "networkCreate": {
+    "post": {
+      "operationId": "createNetwork",
+      "summary": "Create a Network in the current Workspace",
+      "description": "Requires network.create (owner, admin or network_admin). The IPv4 prefix must be /16–/28 inside 100.64.0.0/10 and the IPv6 prefix /56–/112; both must lie inside the Workspace overlay pools and must not overlap any other Network of the Workspace. Other Workspaces may reuse the same ranges. The creator gets a Network membership and an interactive enrollment profile. network_id is client-chosen for safe retries.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "network_id",
+                "display_name",
+                "ipv4_prefix",
+                "ipv6_prefix"
+              ],
+              "properties": {
+                "network_id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "Client-chosen UUIDv7 idempotency key"
+                },
+                "display_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "ipv4_prefix": {
+                  "type": "string",
+                  "description": "Canonical IPv4 CIDR /16–/28 inside 100.64.0.0/10",
+                  "maxLength": 18
+                },
+                "ipv6_prefix": {
+                  "type": "string",
+                  "description": "Canonical IPv6 CIDR /56–/112 inside the Workspace ULA pool",
+                  "maxLength": 43
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "201": {
+          "description": "Network created",
+          "headers": {
+            "ETag": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "display_name",
+                      "display_code",
+                      "ipv4_prefix",
+                      "ipv6_prefix",
+                      "version",
+                      "created_at"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "display_name": {
+                        "type": "string"
+                      },
+                      "display_code": {
+                        "type": "string",
+                        "pattern": "^[0-9]{12}$"
+                      },
+                      "ipv4_prefix": {
+                        "type": "string"
+                      },
+                      "ipv6_prefix": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "200": {
+          "description": "Earlier identical request replayed"
+        },
+        "400": {
+          "description": "Invalid input or prefix outside 100.64.0.0/10"
+        },
+        "401": {
+          "description": "Inactive Session"
+        },
+        "403": {
+          "description": "Missing network.create or CSRF proof"
+        },
+        "409": {
+          "description": "network_prefix_overlap or resource_conflict"
+        },
+        "422": {
+          "description": "network_prefix_outside_pool"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable or uncertain outcome"
+        }
+      }
+    }
   }
 }

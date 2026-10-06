@@ -65,7 +65,7 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal("private document retained deployment topology")
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
-	if len(basePaths) != 30 || len(paths) != 26 {
+	if len(basePaths) != 30 || len(paths) != 27 {
 		t.Fatal("private profile introduced another product resource API")
 	}
 	for path, raw := range paths {
@@ -487,6 +487,7 @@ func TestManagementDocumentConsoleWorkspaceRolesAreCookieScoped(t *testing.T) {
 	paths := profileMap(t, profileObject(t, body), "paths")
 	for _, test := range []struct{ path, method, operationID string }{
 		{"/api/v1/workspaces", "post", "createWorkspace"},
+		{"/api/v1/workspaces/{workspace_id}/networks", "post", "createNetwork"},
 		{"/api/v1/workspaces/{workspace_id}/members", "get", "listWorkspaceMembers"},
 		{"/api/v1/workspaces/{workspace_id}/role-assignments", "post", "assignWorkspaceRole"},
 		{"/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke", "post", "revokeWorkspaceRole"},

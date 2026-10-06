@@ -41,6 +41,7 @@ const (
 	workspaceRoleAssignOperation            = "workspace_role_assign"
 	workspaceRoleRevokeOperation            = "workspace_role_revoke"
 	workspaceCreateOperation                = "workspace_create"
+	networkCreateOperation                  = "network_create"
 	deviceRevokeOperation                   = "device_revoke"
 	policyPublishOperation                  = "policy_publish"
 	policySimulateOperation                 = "policy_simulate"
@@ -234,6 +235,7 @@ type ManagementHandlerOptions struct {
 	WorkspaceRenames          WorkspaceRenamer
 	WorkspaceRoles            WorkspaceRoleManager
 	WorkspaceCreations        WorkspaceCreator
+	NetworkCreations          NetworkCreator
 	PolicyApprovals           PolicyApprovalWorkflow
 	PolicyApprovalCatalog     PolicyApprovalCatalog
 	ResourceCreations         ResourceCreator
@@ -267,6 +269,7 @@ type ManagementHandler struct {
 	workspaceRenames          WorkspaceRenamer
 	workspaceRoles            WorkspaceRoleManager
 	workspaceCreations        WorkspaceCreator
+	networkCreations          NetworkCreator
 	policyApprovals           PolicyApprovalWorkflow
 	policyApprovalCatalog     PolicyApprovalCatalog
 	resourceCreations         ResourceCreator
@@ -323,6 +326,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		workspaceRenames:          options.WorkspaceRenames,
 		workspaceRoles:            options.WorkspaceRoles,
 		workspaceCreations:        options.WorkspaceCreations,
+		networkCreations:          options.NetworkCreations,
 		policyApprovals:           options.PolicyApprovals,
 		policyApprovalCatalog:     options.PolicyApprovalCatalog,
 		resourceCreations:         options.ResourceCreations,
@@ -420,9 +424,10 @@ func (handler *ManagementHandler) serveHTTP(
 	sharingPath, sharingMatched := parseResourceSharingPath(request)
 	workspaceRolePath, workspaceRoleMatched := parseWorkspaceRolePath(request)
 	workspaceCollectionMatched := isWorkspaceCollectionPath(request)
+	networkCollectionPath, networkCollectionMatched := parseNetworkCollectionPath(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
 		!accessGraphMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
-		!workspaceRoleMatched && !workspaceCollectionMatched {
+		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -436,6 +441,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = workspaceRolePath.operation()
 	} else if workspaceCollectionMatched {
 		operation = workspaceCreateOperation
+	} else if networkCollectionMatched {
+		operation = networkCreateOperation
 	} else if deviceMatched {
 		operation = deviceRevokeOperation
 	} else if policyMatched {
@@ -539,6 +546,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if workspaceCollectionMatched {
 		resultCode = handler.createWorkspace(ctx, response, request, correlationID, session)
+		return
+	}
+	if networkCollectionMatched {
+		resultCode = handler.createNetwork(ctx, response, request, correlationID, networkCollectionPath, session)
 		return
 	}
 	if policyMatched {

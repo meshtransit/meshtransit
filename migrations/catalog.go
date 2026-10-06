@@ -466,6 +466,7 @@ func Catalog() []Migration {
 		newMigration(97, "signed Deployment entitlement authority and capabilities v2", deploymentEntitlementSQL),
 		newMigration(98, "one reviewed Workspace provisioning path", workspaceProvisioningSQL),
 		newMigration(99, "Account-initiated Workspace creation within entitlement quotas", workspaceCreationSQL),
+		newMigration(100, "Network creation with non-overlapping Workspace prefixes", networkCreationSQL),
 	}
 }
 
@@ -542,3 +543,6 @@ var workspaceProvisioningSQL string
 
 //go:embed 000099_workspace_creation.up.sql
 var workspaceCreationSQL string
+
+//go:embed 000100_network_creation.up.sql
+var networkCreationSQL string

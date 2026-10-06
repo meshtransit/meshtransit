@@ -13,6 +13,7 @@ import (
 	redisadapter "github.com/meshtransit/meshtransit/internal/adapter/redis"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
 	"github.com/meshtransit/meshtransit/internal/identity/sessioncontext"
+	"github.com/meshtransit/meshtransit/internal/network/provisioning"
 	"github.com/meshtransit/meshtransit/internal/node/inventory"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
 	policyapproval "github.com/meshtransit/meshtransit/internal/policy/approval"
@@ -128,6 +129,14 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	networkStore, err := postgresadapter.NewNetworkCreationStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	networkCreations, err := provisioning.NewService(networkStore, clock)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	managementScopes, err := sessioncontext.NewService(authority, clock)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
@@ -196,7 +205,7 @@ func composePrivateIdentityFactory(
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, PolicySimulations: policySimulator,
-		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations,
+		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,
 		RateLimiter:    dependencies.Redis,
