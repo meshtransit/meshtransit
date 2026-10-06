@@ -54,18 +54,23 @@ func newEntitlementFixture(t *testing.T) entitlementFixture {
 func (f entitlementFixture) verified(t *testing.T, id string, generation, maxActive int64, profile string) entitlement.Entitlement {
 	t.Helper()
 	now := time.Now().UTC().Truncate(time.Second)
-	owned := min(maxActive, 5)
+	return f.verifiedWindow(t, id, generation, maxActive, min(maxActive, 5), profile,
+		now.Add(-time.Minute), now.Add(30*24*time.Hour), 7*24*time.Hour)
+}
+
+func (f entitlementFixture) verifiedWindow(t *testing.T, id string, generation, maxActive, maxOwned int64,
+	profile string, notBefore, expires time.Time, grace time.Duration) entitlement.Entitlement {
+	t.Helper()
 	raw, err := issuer.Sign(issuer.Claims{
 		EntitlementID: id, DeploymentID: integrationDeploymentPublicID, InstallationPublicKey: f.installPub,
-		Profile: profile, MaxActiveWorkspaces: maxActive, MaxOwnedWorkspacesPerAccount: owned,
+		Profile: profile, MaxActiveWorkspaces: maxActive, MaxOwnedWorkspacesPerAccount: maxOwned,
 		Capabilities: []entitlement.Capability{}, Generation: generation,
-		IssuedAt: now.Add(-time.Minute), NotBefore: now.Add(-time.Minute), ExpiresAt: now.Add(30 * 24 * time.Hour),
-		Grace: 7 * 24 * time.Hour,
+		IssuedAt: notBefore, NotBefore: notBefore, ExpiresAt: expires, Grace: grace,
 	}, "integration", f.signing)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := f.verifier.Verify(raw, f.deploymentID, f.installation, now)
+	result, err := f.verifier.Verify(raw, f.deploymentID, f.installation, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}

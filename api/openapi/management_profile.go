@@ -66,6 +66,7 @@ type consoleManagementProfile struct {
 	WorkspaceMembers       json.RawMessage            `json:"workspaceMembers"`
 	WorkspaceRoleAssign    json.RawMessage            `json:"workspaceRoleAssign"`
 	WorkspaceRoleRevoke    json.RawMessage            `json:"workspaceRoleRevoke"`
+	WorkspaceCreate        json.RawMessage            `json:"workspaceCreate"`
 }
 
 // ManagementDocument returns independently owned deterministic OpenAPI bytes.
@@ -118,7 +119,8 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		len(profile.DeviceInventory) > 0 && consoleWorkspaceRenameOperation(profile.WorkspaceRename) &&
 		consoleCookieOperation(profile.WorkspaceMembers, "get", "listWorkspaceMembers", false) &&
 		consoleCookieOperation(profile.WorkspaceRoleAssign, "post", "assignWorkspaceRole", true) &&
-		consoleCookieOperation(profile.WorkspaceRoleRevoke, "post", "revokeWorkspaceRole", true)
+		consoleCookieOperation(profile.WorkspaceRoleRevoke, "post", "revokeWorkspaceRole", true) &&
+		consoleCookieOperation(profile.WorkspaceCreate, "post", "createWorkspace", true)
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
 	}
@@ -208,6 +210,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		}
 	}
 	consolePaths["/api/v1/workspaces/{workspace_id}/actions/rename"] = profile.WorkspaceRename
+	consolePaths["/api/v1/workspaces"] = profile.WorkspaceCreate
 	consolePaths["/api/v1/workspaces/{workspace_id}/members"] = profile.WorkspaceMembers
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments"] = profile.WorkspaceRoleAssign
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke"] = profile.WorkspaceRoleRevoke
