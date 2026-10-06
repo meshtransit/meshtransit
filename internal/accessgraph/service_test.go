@@ -331,14 +331,61 @@ func accessGraphSnapshotParams(
 	if err != nil {
 		t.Fatal(err)
 	}
-	return accessgraph.SnapshotParams{
+	params := accessgraph.SnapshotParams{
 		Scope: query.Scope(), NetworkRevision: 12, InventoryRevision: 8,
 		GroupRevision: 9, PolicyRevision: 6, DNSRevision: 2, RouteRevision: 2,
 		SharingRevision: 2, IsolationGeneration: 1, HasActiveRelease: true,
 		ReleaseID: releaseID, CompilerFormatVersion: 3, SemanticHash: hash,
 		TargetNodeID: accessGraphNodeID(t, 302), Paths: paths,
+		Source:     accessGraphParticipant(t, accessgraph.ParticipantStateActive, "poc-02"),
+		TargetKind: accessgraph.TargetKindDevice,
+		Target:     accessGraphParticipant(t, accessgraph.ParticipantStateActive, "poc-03"),
 	}
+	switch {
+	case query.DestinationResourceID().IsValid():
+		params.TargetKind = accessgraph.TargetKindResource
+	case query.DestinationImportedResourceID().IsValid():
+		share := accessGraphShareFixture(t, sharing.ContractStateActive)
+		params.TargetKind, params.TargetNodeID, params.Share = accessgraph.TargetKindImportedResource, node.ID{}, &share
+	}
+	return params
 }
+
+func accessGraphParticipant(t *testing.T, state accessgraph.ParticipantState, name string) accessgraph.Participant {
+	t.Helper()
+	participant, err := accessgraph.NewParticipant(state, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return participant
+}
+
+func accessGraphShareFixture(t *testing.T, state sharing.ContractState) accessgraph.ShareContext {
+	t.Helper()
+	contractID, err := sharing.ParseContractID(accessGraphContractPublicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceCode, err := identity.ParseDisplayCode("280133080243")
+	if err != nil {
+		t.Fatal(err)
+	}
+	networkCode, err := identity.ParseDisplayCode("467111232749")
+	if err != nil {
+		t.Fatal(err)
+	}
+	share, err := accessgraph.NewShareContext(accessgraph.ShareContextParams{
+		ContractID: contractID, State: state,
+		ProviderWorkspaceCode: workspaceCode, ProviderNetworkCode: networkCode,
+		AccessName: "poc01.280133080243.467111232749.shared.mesh",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return share
+}
+
+const accessGraphContractPublicID = "01890f00-0000-7000-8000-000000000851"
 
 func accessGraphPathFixture(
 	t *testing.T,

@@ -207,7 +207,7 @@ func assertPostgreSQLResourceSharing(
 		resolved[0].Contract().State() != sharing.ContractStateActive {
 		t.Fatalf("ResolveImportedPolicyDestinations() = %+v, error = %v", resolved, err)
 	}
-	assertAtomicImportedPolicyPublication(ctx, t, admin, resolved[0])
+	assertAtomicImportedPolicyPublication(ctx, t, admin, session, resolved[0])
 	assertImportedPolicySimulation(ctx, t, admin, runtimePool, store, session, resolved[0])
 	crossWorkspaceImport := assertCrossWorkspaceResourceSharingConsent(
 		ctx, t, admin, workerPool, service, providerScope, resourceID, maximumTraffic, reason,
@@ -236,6 +236,7 @@ func assertPostgreSQLResourceSharing(
 		ctx, t, admin, contract.ImportedResourceID(), accessName, "withdrawn", 2,
 	)
 	assertCurrentConsumerContractRead(ctx, t, service, session, revokedContract, accessName, 3)
+	assertRevokedShareExplained(ctx, t, admin, runtimePool, session, consumerScope, revokedContract)
 	assertSameWorkspaceAliasEndpoint(ctx, t, admin, activeContract.ImportedResourceID(), "revoked", 2, "withdrawn")
 	foreignConsumerScope := resourceAuthorityScope(t, 102, 202)
 	foreignConsumerSession := authorityConfirmerAccountSessionFixture(t)
@@ -1668,6 +1669,7 @@ func assertAtomicImportedPolicyPublication(
 	ctx context.Context,
 	t *testing.T,
 	admin *pgx.Conn,
+	session accountsession.Session,
 	destination sharing.PolicyDestination,
 ) {
 	t.Helper()
@@ -1776,6 +1778,7 @@ FROM mesh_ops.publish_compiled_policy(
 			provenanceCount, localRuleCount)
 	}
 	assertDirectMapSQLProjection(ctx, t, transaction, destination)
+	assertSharedDestinationExplanation(ctx, t, transaction, session, destination, sourceNodeID, ruleID)
 	if err := transaction.Rollback(ctx); err != nil {
 		t.Fatalf("rollback Imported Resource publication probe: %v", err)
 	}

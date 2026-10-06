@@ -2659,7 +2659,8 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "decision", "reason", "action", "subject", "target", "evidence", "paths", "truncated"
+          "decision", "reason", "action", "subject", "target", "evidence", "paths", "truncated",
+          "context"
         ],
         "properties": {
           "decision": {"type": "string", "enum": ["allow", "deny"]},
@@ -2667,6 +2668,15 @@
             "type": "string",
             "enum": ["matching_active_rule", "no_matching_active_rule"]
           },
+          "deny_reason": {
+            "description": "Present exactly when decision is deny. Classified in a fixed order: policy, source, share, target, then default deny.",
+            "type": "string",
+            "enum": [
+              "no_active_release", "source_inactive", "target_inactive", "share_activating",
+              "share_ended", "share_expired", "no_matching_active_rule"
+            ]
+          },
+          "context": {"$ref": "#/components/schemas/ExplainedPolicyContext"},
           "action": {"$ref": "#/components/schemas/ExplainedPolicyAction"},
           "subject": {"$ref": "#/components/schemas/ExplainedPolicySubject"},
           "target": {"$ref": "#/components/schemas/ExplainedPolicyTarget"},
@@ -2677,6 +2687,66 @@
             "items": {"$ref": "#/components/schemas/ExplainedPolicyPath"}
           },
           "truncated": {"type": "boolean"}
+        }
+      },
+      "ExplainedPolicyContext": {
+        "description": "Participants of the caller's Network and, for a shared target, the contract facts the consumer already sees. Provider Devices, addresses and Resources are never included.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "target", "share"],
+        "properties": {
+          "source": {"$ref": "#/components/schemas/ExplainedPolicyParticipant"},
+          "target": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "state", "name"],
+            "properties": {
+              "kind": {"type": "string", "enum": ["device", "resource", "imported_resource"]},
+              "state": {"$ref": "#/components/schemas/ExplainedPolicyParticipantState"},
+              "name": {"type": ["string", "null"], "maxLength": 255}
+            }
+          },
+          "share": {
+            "oneOf": [{"type": "null"}, {"$ref": "#/components/schemas/ExplainedPolicyShare"}]
+          }
+        }
+      },
+      "ExplainedPolicyParticipant": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["state", "name"],
+        "properties": {
+          "state": {"$ref": "#/components/schemas/ExplainedPolicyParticipantState"},
+          "name": {"type": ["string", "null"], "maxLength": 255}
+        }
+      },
+      "ExplainedPolicyParticipantState": {
+        "description": "active is usable now; inactive exists but is inactive, deleted, key-expired or ended; missing does not exist in the Network.",
+        "type": "string",
+        "enum": ["active", "inactive", "missing"]
+      },
+      "ExplainedPolicyShare": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "trust_contract_id", "state", "expires_at", "provider_workspace_code",
+          "provider_network_code", "access_name"
+        ],
+        "properties": {
+          "trust_contract_id": {"$ref": "#/components/schemas/PublicID"},
+          "state": {
+            "description": "Effective at evaluation time: an activating or active contract past its expiry is expired.",
+            "type": "string",
+            "enum": ["activating", "active", "revoked", "expired", "invalidated"]
+          },
+          "expires_at": {
+            "description": "Null when the share never expires.",
+            "type": ["string", "null"],
+            "format": "date-time"
+          },
+          "provider_workspace_code": {"type": "string", "pattern": "^[0-9]{12}$"},
+          "provider_network_code": {"type": "string", "pattern": "^[0-9]{12}$"},
+          "access_name": {"type": ["string", "null"], "maxLength": 253}
         }
       },
       "ExplainedPolicyAction": {
@@ -2762,21 +2832,43 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "projection_id", "access_rule_id", "source_device_id", "destination_device_id",
+          "projection_id", "access_rule_id", "source_device_id",
           "protocol", "destination_port_ranges", "selector_kind"
+        ],
+        "oneOf": [
+          {
+            "required": ["destination_device_id"],
+            "properties": {"selector_kind": {"enum": ["device", "resource", "resource_group"]}},
+            "not": {"anyOf": [
+              {"required": ["destination_imported_resource_id"]}, {"required": ["trust_contract_id"]}
+            ]}
+          },
+          {
+            "required": ["destination_imported_resource_id", "trust_contract_id"],
+            "properties": {"selector_kind": {"const": "imported_resource"}},
+            "not": {"anyOf": [
+              {"required": ["destination_device_id"]}, {"required": ["destination_resource_id"]},
+              {"required": ["destination_resource_group_id"]}
+            ]}
+          }
         ],
         "properties": {
           "projection_id": {"$ref": "#/components/schemas/PublicID"},
           "access_rule_id": {"$ref": "#/components/schemas/PublicID"},
           "source_device_id": {"$ref": "#/components/schemas/PublicID"},
           "destination_device_id": {"$ref": "#/components/schemas/PublicID"},
+          "destination_imported_resource_id": {"$ref": "#/components/schemas/PublicID"},
+          "trust_contract_id": {"$ref": "#/components/schemas/PublicID"},
           "protocol": {"type": "string", "enum": ["tcp", "udp", "icmp"]},
           "destination_port_ranges": {
             "type": "array",
             "maxItems": 64,
             "items": {"$ref": "#/components/schemas/PortRange"}
           },
-          "selector_kind": {"type": "string", "enum": ["device", "resource", "resource_group"]},
+          "selector_kind": {
+            "type": "string",
+            "enum": ["device", "resource", "resource_group", "imported_resource"]
+          },
           "destination_resource_id": {"$ref": "#/components/schemas/PublicID"},
           "destination_resource_group_id": {"$ref": "#/components/schemas/PublicID"}
         }

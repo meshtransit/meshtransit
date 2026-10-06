@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math"
@@ -37,14 +36,17 @@ type explainPolicyResponse struct {
 }
 
 type explainedPolicy struct {
-	Decision  string                  `json:"decision"`
-	Reason    string                  `json:"reason"`
-	Action    explainedPolicyAction   `json:"action"`
-	Subject   explainedPolicySubject  `json:"subject"`
-	Target    explainedPolicyTarget   `json:"target"`
-	Evidence  explainedPolicyEvidence `json:"evidence"`
-	Paths     []explainedPolicyPath   `json:"paths"`
-	Truncated bool                    `json:"truncated"`
+	Decision string `json:"decision"`
+	Reason   string `json:"reason"`
+	// DenyReason is present exactly when Decision is deny.
+	DenyReason *string                 `json:"deny_reason,omitempty"`
+	Action     explainedPolicyAction   `json:"action"`
+	Subject    explainedPolicySubject  `json:"subject"`
+	Target     explainedPolicyTarget   `json:"target"`
+	Evidence   explainedPolicyEvidence `json:"evidence"`
+	Paths      []explainedPolicyPath   `json:"paths"`
+	Truncated  bool                    `json:"truncated"`
+	Context    explainedPolicyContext  `json:"context"`
 }
 
 type explainedPolicyAction struct {
@@ -79,15 +81,19 @@ type explainedPolicyEvidence struct {
 }
 
 type explainedPolicyPath struct {
-	ProjectionID          string                          `json:"projection_id"`
-	AccessRuleID          string                          `json:"access_rule_id"`
-	SourceDeviceID        string                          `json:"source_device_id"`
-	DestinationDeviceID   string                          `json:"destination_device_id"`
-	Protocol              string                          `json:"protocol"`
-	DestinationPortRanges []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
-	SelectorKind          string                          `json:"selector_kind"`
-	DestinationResourceID string                          `json:"destination_resource_id,omitempty"`
-	DestinationGroupID    string                          `json:"destination_resource_group_id,omitempty"`
+	ProjectionID   string `json:"projection_id"`
+	AccessRuleID   string `json:"access_rule_id"`
+	SourceDeviceID string `json:"source_device_id"`
+	// DestinationDeviceID is absent for a path to a shared Device, which names
+	// DestinationImportedResourceID and TrustContractID instead.
+	DestinationDeviceID           string                          `json:"destination_device_id,omitempty"`
+	Protocol                      string                          `json:"protocol"`
+	DestinationPortRanges         []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
+	SelectorKind                  string                          `json:"selector_kind"`
+	DestinationResourceID         string                          `json:"destination_resource_id,omitempty"`
+	DestinationGroupID            string                          `json:"destination_resource_group_id,omitempty"`
+	DestinationImportedResourceID string                          `json:"destination_imported_resource_id,omitempty"`
+	TrustContractID               string                          `json:"trust_contract_id,omitempty"`
 }
 
 type accessGraphExplainPath struct {
@@ -147,63 +153,10 @@ func (handler *ManagementHandler) explainPolicy(
 	}
 
 	snapshot := result.Snapshot()
-	releaseID, compilerFormat, semanticHash, hasActiveRelease := snapshot.ActiveRelease()
-	evidence := explainedPolicyEvidence{
-		NetworkRevision: snapshot.NetworkRevision(), InventoryRevision: snapshot.InventoryRevision(),
-		GroupRevision: snapshot.GroupRevision(), PolicyRevision: snapshot.PolicyRevision(),
-		DNSRevision: snapshot.DNSRevision(), RouteRevision: snapshot.RouteRevision(),
-		SharingRevision: snapshot.SharingRevision(), IsolationGeneration: snapshot.IsolationGeneration(),
-		HasActiveRelease: hasActiveRelease,
-	}
-	if hasActiveRelease {
-		hash := semanticHash.Bytes()
-		evidence.ReleaseID = releaseID.String()
-		evidence.CompilerFormatVersion = compilerFormat
-		evidence.SemanticHash = hex.EncodeToString(hash[:])
-	}
-	action := explainedPolicyAction{Name: "network.connect", Protocol: query.Protocol().String()}
-	if query.Protocol() != policy.ProtocolICMP {
-		port := int(query.DestinationPort())
-		action.DestinationPort = &port
-	}
-	target := explainedPolicyTarget{}
-	if query.DestinationNodeID().IsValid() {
-		target.DeviceID = query.DestinationNodeID().String()
-	} else if query.DestinationResourceID().IsValid() {
-		target.ResourceID = query.DestinationResourceID().String()
-	} else {
-		target.ImportedResourceID = query.DestinationImportedResourceID().String()
-	}
-	paths := make([]explainedPolicyPath, len(result.Paths()))
-	for index, path := range result.Paths() {
-		ranges := path.DestinationPortRanges()
-		ports := make([]publishPolicyPortRangeRequest, len(ranges))
-		for rangeIndex, portRange := range ranges {
-			ports[rangeIndex] = publishPolicyPortRangeRequest{
-				First: int(portRange.First()), Last: int(portRange.Last()),
-			}
-		}
-		paths[index] = explainedPolicyPath{
-			ProjectionID: path.ProjectionID().String(), AccessRuleID: path.RuleID().String(),
-			SourceDeviceID: path.SourceNodeID().String(), DestinationDeviceID: path.DestinationNodeID().String(),
-			Protocol: path.Protocol().String(), DestinationPortRanges: ports,
-			SelectorKind: path.SelectorKind().String(),
-		}
-		if path.DestinationResourceID().IsValid() {
-			paths[index].DestinationResourceID = path.DestinationResourceID().String()
-		}
-		if path.DestinationGroupID().IsValid() {
-			paths[index].DestinationGroupID = path.DestinationGroupID().String()
-		}
-	}
 	input.response.Header().Set("ETag", strongVersionETag(snapshot.PolicyRevision()))
 	input.response.Header().Set("Cache-Control", "no-store")
 	writeManagementJSON(ctx, handler.logger, input.response, http.StatusOK, explainPolicyResponse{
-		Data: explainedPolicy{
-			Decision: result.Decision().String(), Reason: result.Reason().String(),
-			Action: action, Subject: explainedPolicySubject{DeviceID: query.SourceNodeID().String()},
-			Target: target, Evidence: evidence, Paths: paths, Truncated: result.Truncated(),
-		},
+		Data:          newExplainedPolicy(query, result),
 		CorrelationID: input.correlationID.String(),
 	})
 	return "success"

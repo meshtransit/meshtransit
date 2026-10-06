@@ -710,6 +710,13 @@ func assertPostgreSQLActivePolicyExplanation(
 		semanticHash != published.SemanticHash() || result.Snapshot().PolicyRevision() != published.PolicyRevision() {
 		t.Fatalf("active policy explanation = %+v, paths=%+v", result, paths)
 	}
+	if _, denied := result.DenyReason(); denied ||
+		result.Snapshot().Source().State() != accessgraph.ParticipantStateActive ||
+		result.Snapshot().TargetKind() != accessgraph.TargetKindResource ||
+		result.Snapshot().Target().State() != accessgraph.ParticipantStateActive ||
+		result.Snapshot().Target().Name() == "" {
+		t.Fatalf("active policy explanation context = %+v", result.Snapshot())
+	}
 
 	denyQuery, err := accessgraph.NewQuery(accessgraph.QueryParams{
 		Scope: scope, SourceNodeID: template.SourceNodeID(), DestinationResourceID: resourceID,
@@ -725,6 +732,9 @@ func assertPostgreSQLActivePolicyExplanation(
 	if !denied.IsValid() || denied.Decision() != accessgraph.DecisionDeny ||
 		denied.Reason() != accessgraph.ReasonNoMatchingActiveRule || len(denied.Paths()) != 0 {
 		t.Fatalf("default-deny explanation = %+v", denied)
+	}
+	if reason, isDenied := denied.DenyReason(); !isDenied || reason != accessgraph.DenyReasonNoMatchingActiveRule {
+		t.Fatalf("default-deny reason = %v, denied = %t", reason, isDenied)
 	}
 
 	importedID, err := sharing.ParseImportedResourceID(
@@ -753,6 +763,12 @@ func assertPostgreSQLActivePolicyExplanation(
 		!importedHasRelease || importedReleaseID != published.ReleaseID() || importedFormat != 3 ||
 		importedHash != published.SemanticHash() {
 		t.Fatalf("Imported Resource fail-closed explanation = %+v", importedDenied)
+	}
+	_, hasShare := importedDenied.Snapshot().Share()
+	if reason, isDenied := importedDenied.DenyReason(); !isDenied || reason != accessgraph.DenyReasonTargetInactive ||
+		hasShare || importedDenied.Snapshot().TargetKind() != accessgraph.TargetKindImportedResource ||
+		importedDenied.Snapshot().Target().State() != accessgraph.ParticipantStateMissing {
+		t.Fatalf("unknown Imported Resource explanation context = %+v", importedDenied.Snapshot())
 	}
 }
 

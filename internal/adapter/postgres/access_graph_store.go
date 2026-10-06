@@ -14,6 +14,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/resource"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 )
 
 // AccessGraphOptions bounds one effective-policy explanation transaction.
@@ -108,7 +109,7 @@ func (store *AccessGraphStore) ReadActive(
 	var releaseID, targetNodeID *string
 	var compilerFormatVersion *int
 	var semanticHash []byte
-	var paths string
+	var paths, explanationContext string
 	err = transaction.QueryRow(
 		ctx,
 		explainActivePolicySQL,
@@ -146,6 +147,7 @@ func (store *AccessGraphStore) ReadActive(
 		&semanticHash,
 		&targetNodeID,
 		&paths,
+		&explanationContext,
 	)
 	if err != nil {
 		return accessgraph.Snapshot{}, accessGraphDatabaseError(ctx, err)
@@ -156,6 +158,9 @@ func (store *AccessGraphStore) ReadActive(
 	record.TargetNodeID = targetNodeID
 	if err := json.Unmarshal([]byte(paths), &record.Paths); err != nil {
 		return accessgraph.Snapshot{}, accessgraph.ErrInvalidSnapshot
+	}
+	if record.Context, err = decodeAccessGraphContext(explanationContext); err != nil {
+		return accessgraph.Snapshot{}, err
 	}
 	snapshot, err = record.snapshot(query)
 	if err != nil {
@@ -183,6 +188,7 @@ type accessGraphSnapshotRecord struct {
 	SemanticHash          []byte
 	TargetNodeID          *string
 	Paths                 []accessGraphPathRecord
+	Context               accessGraphContextRecord
 }
 
 type accessGraphPathRecord struct {
@@ -196,6 +202,9 @@ type accessGraphPathRecord struct {
 	SelectorKind              string `json:"selector_kind"`
 	DestinationResourceID     string `json:"destination_resource_id"`
 	DestinationGroupID        string `json:"destination_resource_group_id"`
+	// Set only for paths to a shared Device, which carry no destination Device.
+	DestinationImportedResourceID string `json:"destination_imported_resource_id"`
+	TrustContractID               string `json:"trust_contract_id"`
 }
 
 func (record accessGraphSnapshotRecord) snapshot(query accessgraph.Query) (accessgraph.Snapshot, error) {
@@ -233,6 +242,9 @@ func (record accessGraphSnapshotRecord) snapshot(query accessgraph.Query) (acces
 		}
 		params.TargetNodeID = targetNodeID
 	}
+	if err := record.Context.apply(&params); err != nil {
+		return accessgraph.Snapshot{}, err
+	}
 	params.Paths = make([]accessgraph.Path, len(record.Paths))
 	for index, pathRecord := range record.Paths {
 		path, err := pathRecord.path()
@@ -248,7 +260,11 @@ func (record accessGraphPathRecord) path() (accessgraph.Path, error) {
 	projectionID, projectionErr := publication.ParseProjectionID(record.ProjectionID)
 	ruleID, ruleErr := policy.ParseRuleID(record.RuleID)
 	sourceNodeID, sourceErr := node.ParseID(record.SourceNodeID)
-	destinationNodeID, destinationErr := node.ParseID(record.DestinationNodeID)
+	var destinationNodeID node.ID
+	var destinationErr error
+	if record.DestinationNodeID != "" {
+		destinationNodeID, destinationErr = node.ParseID(record.DestinationNodeID)
+	}
 	protocol := parseAccessGraphProtocol(record.Protocol)
 	if projectionErr != nil || ruleErr != nil || sourceErr != nil || destinationErr != nil ||
 		!protocol.IsValid() || len(record.DestinationPortRangeFirst) != len(record.DestinationPortRangeLast) {
@@ -282,13 +298,22 @@ func (record accessGraphPathRecord) path() (accessgraph.Path, error) {
 		}
 		groupID = parsed
 	}
-	return accessgraph.NewPath(accessgraph.PathParams{
+	params := accessgraph.PathParams{
 		ProjectionID: projectionID, RuleID: ruleID,
 		SourceNodeID: sourceNodeID, DestinationNodeID: destinationNodeID,
 		Protocol: protocol, DestinationPortRanges: ranges,
 		SelectorKind:          parseAccessGraphSelectorKind(record.SelectorKind),
 		DestinationResourceID: resourceID, DestinationGroupID: groupID,
-	})
+	}
+	if record.DestinationImportedResourceID != "" || record.TrustContractID != "" {
+		importedID, importedErr := sharing.ParseImportedResourceID(record.DestinationImportedResourceID)
+		contractID, contractErr := sharing.ParseContractID(record.TrustContractID)
+		if importedErr != nil || contractErr != nil {
+			return accessgraph.Path{}, accessgraph.ErrInvalidSnapshot
+		}
+		params.DestinationImportedResourceID, params.TrustContractID = importedID, contractID
+	}
+	return accessgraph.NewPath(params)
 }
 
 func parseAccessGraphProtocol(value string) policy.Protocol {
@@ -312,6 +337,8 @@ func parseAccessGraphSelectorKind(value string) accessgraph.SelectorKind {
 		return accessgraph.SelectorKindResource
 	case "resource_group":
 		return accessgraph.SelectorKindResourceGroup
+	case "imported_resource":
+		return accessgraph.SelectorKindImportedResource
 	default:
 		return accessgraph.SelectorKindUnknown
 	}

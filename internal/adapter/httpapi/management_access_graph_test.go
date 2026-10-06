@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
+	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/resource"
+	"github.com/meshtransit/meshtransit/internal/sharing"
 )
 
 func TestManagementHandlerExplainsActiveResourceGroupPolicy(t *testing.T) {
@@ -67,12 +69,14 @@ func TestManagementHandlerExplainsActiveResourceGroupPolicy(t *testing.T) {
 		len(body.Data.Paths) != 1 || body.Data.Paths[0].SelectorKind != "resource_group" ||
 		body.Data.Paths[0].DestinationResourceID != managementResourceID() ||
 		body.Data.Paths[0].DestinationGroupID != managementResourceGroupID() ||
+		body.Data.DenyReason != nil || body.Data.Context.Target.Kind != "resource" ||
+		body.Data.Context.Source.State != "active" || body.Data.Context.Share != nil ||
 		response.Header().Get("ETag") != `"6"` || response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("response = %+v; headers = %+v", body, response.Header())
 	}
 }
 
-func TestManagementHandlerExplainsImportedResourceAsFailClosed(t *testing.T) {
+func TestManagementHandlerExplainsSharedDeviceNotTurnedOn(t *testing.T) {
 	t.Parallel()
 
 	reader := managementAccessGraphReaderFunc(func(
@@ -119,8 +123,22 @@ func TestManagementHandlerExplainsImportedResourceAsFailClosed(t *testing.T) {
 		body.Data.Target.ImportedResourceID != importedID || body.Data.Target.DeviceID != "" ||
 		body.Data.Target.ResourceID != "" || len(body.Data.Paths) != 0 || body.Data.Truncated ||
 		body.Data.Evidence.CompilerFormatVersion != 4 ||
+		body.Data.DenyReason == nil || *body.Data.DenyReason != "share_activating" ||
+		body.Data.Context.Target.Kind != "imported_resource" || body.Data.Context.Share == nil ||
+		body.Data.Context.Share.State != "activating" ||
+		body.Data.Context.Share.ExpiresAt == nil || *body.Data.Context.Share.ExpiresAt != "2026-10-13T07:58:34Z" ||
+		body.Data.Context.Share.ProviderWorkspaceCode != "280133080243" ||
 		response.Header().Get("ETag") != `"6"` || response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("response = %+v; headers = %+v", body, response.Header())
+	}
+	var raw struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw.Data["deny_reason"]; !ok {
+		t.Fatal("a denial must carry deny_reason")
 	}
 }
 
@@ -319,6 +337,9 @@ func managementAccessGraphSnapshot(
 		SharingRevision: 2, IsolationGeneration: 1, HasActiveRelease: true,
 		ReleaseID: releaseID, CompilerFormatVersion: 3, SemanticHash: semanticHash,
 		TargetNodeID: targetNodeID, Paths: []accessgraph.Path{path},
+		Source:     managementAccessGraphParticipant(t, "poc-02"),
+		TargetKind: accessgraph.TargetKindResource,
+		Target:     managementAccessGraphParticipant(t, "database"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -346,12 +367,50 @@ func managementImportedAccessGraphSnapshot(
 		GroupRevision: 9, PolicyRevision: 6, DNSRevision: 2, RouteRevision: 2,
 		SharingRevision: 3, IsolationGeneration: 1, HasActiveRelease: true,
 		ReleaseID: releaseID, CompilerFormatVersion: 4, SemanticHash: semanticHash,
-		Paths: []accessgraph.Path{},
+		Paths:      []accessgraph.Path{},
+		Source:     managementAccessGraphParticipant(t, "poc-02"),
+		TargetKind: accessgraph.TargetKindImportedResource,
+		Target:     managementAccessGraphParticipant(t, "poc01"),
+		Share:      managementAccessGraphShare(t, sharing.ContractStateActivating),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return snapshot
+}
+
+func managementAccessGraphParticipant(t *testing.T, name string) accessgraph.Participant {
+	t.Helper()
+	participant, err := accessgraph.NewParticipant(accessgraph.ParticipantStateActive, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return participant
+}
+
+func managementAccessGraphShare(t *testing.T, state sharing.ContractState) *accessgraph.ShareContext {
+	t.Helper()
+	contractID, err := sharing.ParseContractID("01890f00-0000-7000-8000-000000000851")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceCode, err := identity.ParseDisplayCode("280133080243")
+	if err != nil {
+		t.Fatal(err)
+	}
+	networkCode, err := identity.ParseDisplayCode("467111232749")
+	if err != nil {
+		t.Fatal(err)
+	}
+	share, err := accessgraph.NewShareContext(accessgraph.ShareContextParams{
+		ContractID: contractID, State: state, ExpiresAt: time.Date(2026, 10, 13, 7, 58, 34, 0, time.UTC),
+		ProviderWorkspaceCode: workspaceCode, ProviderNetworkCode: networkCode,
+		AccessName: "poc01.280133080243.467111232749.shared.mesh",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &share
 }
 
 func validAccessGraphExplainPath() string {

@@ -521,7 +521,8 @@ WHERE namespace.nspname = 'mesh'
             'publish_compiled_policy',
             'resolve_imported_policy_destinations_v1',
             'read_policy_simulation_baseline_v2',
-            'explain_active_policy_v2'
+            'explain_active_policy_v2',
+            'explain_active_policy_v3'
         ) THEN pg_catalog.has_function_privilege('mesh_runtime', procedure.oid, 'EXECUTE')
         ELSE NOT pg_catalog.has_function_privilege('mesh_runtime', procedure.oid, 'EXECUTE')
     END),
@@ -583,7 +584,8 @@ WHERE namespace.nspname = 'mesh_ops'
       'lock_and_resolve_policy_imported_resources_internal_v1',
       'read_compiled_imported_policy_evidence_internal_v1',
       'read_policy_simulation_baseline_v2',
-      'explain_active_policy_v2'
+      'explain_active_policy_v2',
+      'explain_active_policy_v3'
   ]::TEXT[])`).Scan(
 		&functionCount,
 		&runtimeContract,
@@ -599,7 +601,7 @@ WHERE namespace.nspname = 'mesh_ops'
 	); err != nil {
 		t.Fatal("query Imported Resource policy function privileges", err)
 	}
-	if functionCount != 8 || !runtimeContract || !migratorContract || foreignExecute || publicExecute ||
+	if functionCount != 9 || !runtimeContract || !migratorContract || foreignExecute || publicExecute ||
 		!securityContract || !ownerContract || !fixedSearchPath || !volatile || !obsoleteAbsent ||
 		!legacyExplainClosed {
 		t.Fatalf(

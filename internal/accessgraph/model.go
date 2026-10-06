@@ -126,6 +126,9 @@ const (
 	SelectorKindResource
 	// SelectorKindResourceGroup identifies a Resource Group member expansion.
 	SelectorKindResourceGroup
+	// SelectorKindImportedResource identifies a Device shared into the Network
+	// through a Trust Contract. Its path names no consumer-side Device.
+	SelectorKindImportedResource
 )
 
 // String returns the stable wire spelling.
@@ -137,6 +140,8 @@ func (kind SelectorKind) String() string {
 		return "resource"
 	case SelectorKindResourceGroup:
 		return "resource_group"
+	case SelectorKindImportedResource:
+		return "imported_resource"
 	default:
 		return ""
 	}
@@ -153,19 +158,25 @@ type PathParams struct {
 	SelectorKind          SelectorKind
 	DestinationResourceID resource.ID
 	DestinationGroupID    resource.GroupID
+	// DestinationImportedResourceID and TrustContractID are set only for
+	// SelectorKindImportedResource, which leaves DestinationNodeID zero.
+	DestinationImportedResourceID sharing.ImportedResourceID
+	TrustContractID               sharing.ContractID
 }
 
 // Path explains one effective compiled allow edge.
 type Path struct {
-	projectionID          publication.ProjectionID
-	ruleID                policy.RuleID
-	sourceNodeID          node.ID
-	destinationNodeID     node.ID
-	protocol              policy.Protocol
-	destinationPortRanges []policy.PortRange
-	selectorKind          SelectorKind
-	destinationResourceID resource.ID
-	destinationGroupID    resource.GroupID
+	projectionID                  publication.ProjectionID
+	ruleID                        policy.RuleID
+	sourceNodeID                  node.ID
+	destinationNodeID             node.ID
+	protocol                      policy.Protocol
+	destinationPortRanges         []policy.PortRange
+	selectorKind                  SelectorKind
+	destinationResourceID         resource.ID
+	destinationGroupID            resource.GroupID
+	destinationImportedResourceID sharing.ImportedResourceID
+	trustContractID               sharing.ContractID
 }
 
 // NewPath validates one immutable explanation path.
@@ -175,7 +186,9 @@ func NewPath(params PathParams) (Path, error) {
 		sourceNodeID: params.SourceNodeID, destinationNodeID: params.DestinationNodeID,
 		protocol: params.Protocol, destinationPortRanges: slices.Clone(params.DestinationPortRanges),
 		selectorKind: params.SelectorKind, destinationResourceID: params.DestinationResourceID,
-		destinationGroupID: params.DestinationGroupID,
+		destinationGroupID:            params.DestinationGroupID,
+		destinationImportedResourceID: params.DestinationImportedResourceID,
+		trustContractID:               params.TrustContractID,
 	}
 	if !path.IsValid() {
 		return Path{}, ErrInvalidSnapshot
@@ -212,11 +225,28 @@ func (path Path) DestinationResourceID() resource.ID { return path.destinationRe
 // DestinationGroupID returns Resource Group provenance, when present.
 func (path Path) DestinationGroupID() resource.GroupID { return path.destinationGroupID }
 
+// DestinationImportedResourceID returns the shared target, when present.
+func (path Path) DestinationImportedResourceID() sharing.ImportedResourceID {
+	return path.destinationImportedResourceID
+}
+
+// TrustContractID returns the contract that carries a shared path, when present.
+func (path Path) TrustContractID() sharing.ContractID { return path.trustContractID }
+
 // IsValid reports whether one path has complete canonical provenance.
 func (path Path) IsValid() bool {
 	if !path.projectionID.IsValid() || !path.ruleID.IsValid() || !path.sourceNodeID.IsValid() ||
-		!path.destinationNodeID.IsValid() || path.sourceNodeID == path.destinationNodeID ||
 		!path.protocol.IsValid() || len(path.destinationPortRanges) > policy.MaximumPortRangesPerRule {
+		return false
+	}
+	shared := path.selectorKind == SelectorKindImportedResource
+	if shared {
+		if path.destinationNodeID.IsValid() || !path.destinationImportedResourceID.IsValid() ||
+			!path.trustContractID.IsValid() {
+			return false
+		}
+	} else if !path.destinationNodeID.IsValid() || path.sourceNodeID == path.destinationNodeID ||
+		path.destinationImportedResourceID.IsValid() || path.trustContractID.IsValid() {
 		return false
 	}
 	switch path.selectorKind {
@@ -230,6 +260,10 @@ func (path Path) IsValid() bool {
 		}
 	case SelectorKindResourceGroup:
 		if !path.destinationResourceID.IsValid() || !path.destinationGroupID.IsValid() {
+			return false
+		}
+	case SelectorKindImportedResource:
+		if path.destinationResourceID.IsValid() || path.destinationGroupID.IsValid() {
 			return false
 		}
 	default:
@@ -253,8 +287,14 @@ func (path Path) IsValid() bool {
 }
 
 func (path Path) matches(query Query, targetNodeID node.ID) bool {
-	if path.sourceNodeID != query.sourceNodeID || path.destinationNodeID != targetNodeID ||
-		path.protocol != query.protocol {
+	if path.sourceNodeID != query.sourceNodeID || path.protocol != query.protocol {
+		return false
+	}
+	if path.selectorKind == SelectorKindImportedResource {
+		if path.destinationImportedResourceID != query.destinationImportedResourceID {
+			return false
+		}
+	} else if path.destinationNodeID != targetNodeID {
 		return false
 	}
 	if query.protocol == policy.ProtocolICMP {
@@ -285,6 +325,13 @@ type SnapshotParams struct {
 	SemanticHash          publication.SemanticHash
 	TargetNodeID          node.ID
 	Paths                 []Path
+	// Source and Target describe the participants inside the explained
+	// Network. TargetKind must match the query. Share is set exactly when the
+	// target is an existing shared Device.
+	Source     Participant
+	TargetKind TargetKind
+	Target     Participant
+	Share      *ShareContext
 }
 
 // Snapshot is one exact revision vector plus matching compiled paths.
@@ -304,6 +351,11 @@ type Snapshot struct {
 	semanticHash          publication.SemanticHash
 	targetNodeID          node.ID
 	paths                 []Path
+	source                Participant
+	targetKind            TargetKind
+	target                Participant
+	share                 ShareContext
+	hasShare              bool
 }
 
 // NewSnapshot validates and canonicalizes authoritative explanation evidence.
@@ -319,6 +371,10 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		hasActiveRelease:    params.HasActiveRelease, releaseID: params.ReleaseID,
 		compilerFormatVersion: params.CompilerFormatVersion, semanticHash: params.SemanticHash,
 		targetNodeID: params.TargetNodeID, paths: paths,
+		source: params.Source, targetKind: params.TargetKind, target: params.Target,
+	}
+	if params.Share != nil {
+		snapshot.share, snapshot.hasShare = *params.Share, true
 	}
 	if !snapshot.IsValid() {
 		return Snapshot{}, ErrInvalidSnapshot
@@ -347,19 +403,46 @@ func (snapshot Snapshot) IsValid() bool {
 		snapshot.semanticHash.IsValid() || len(snapshot.paths) > 0 {
 		return false
 	}
-	if len(snapshot.paths) > 0 && !snapshot.targetNodeID.IsValid() {
+	if !snapshot.validContext() {
+		return false
+	}
+	shared := snapshot.targetKind == TargetKindImportedResource
+	if len(snapshot.paths) > 0 && !shared && !snapshot.targetNodeID.IsValid() {
 		return false
 	}
 	projectionIDs := make(map[publication.ProjectionID]struct{}, len(snapshot.paths))
 	for index, path := range snapshot.paths {
 		_, duplicateProjection := projectionIDs[path.projectionID]
 		if !path.IsValid() || duplicateProjection ||
+			(path.selectorKind == SelectorKindImportedResource) != shared ||
+			(shared && path.trustContractID != snapshot.share.contractID) ||
 			(index > 0 && comparePaths(snapshot.paths[index-1], path) >= 0) {
 			return false
 		}
 		projectionIDs[path.projectionID] = struct{}{}
 	}
 	return true
+}
+
+// validContext checks participants and share against each other and against
+// the paths: a path exists only while the source, the target and any share
+// are usable now.
+func (snapshot Snapshot) validContext() bool {
+	if !snapshot.source.IsValid() || !snapshot.target.IsValid() ||
+		snapshot.targetKind == TargetKindUnknown || snapshot.targetKind > TargetKindImportedResource {
+		return false
+	}
+	shared := snapshot.targetKind == TargetKindImportedResource
+	if snapshot.hasShare != (shared && snapshot.target.state != ParticipantStateMissing) ||
+		(snapshot.hasShare && !snapshot.share.IsValid()) ||
+		(shared && snapshot.targetNodeID.IsValid()) {
+		return false
+	}
+	if len(snapshot.paths) == 0 {
+		return true
+	}
+	return snapshot.source.state == ParticipantStateActive && snapshot.target.state == ParticipantStateActive &&
+		(!shared || snapshot.share.state == sharing.ContractStateActive)
 }
 
 // Scope returns the exact graph scope.
@@ -415,6 +498,18 @@ func (snapshot Snapshot) TargetNodeID() node.ID { return snapshot.targetNodeID }
 
 // Paths returns caller-owned canonical matching paths.
 func (snapshot Snapshot) Paths() []Path { return clonePaths(snapshot.paths) }
+
+// Source returns the source Device as seen in the explained Network.
+func (snapshot Snapshot) Source() Participant { return snapshot.source }
+
+// TargetKind returns what the explained connection is aimed at.
+func (snapshot Snapshot) TargetKind() TargetKind { return snapshot.targetKind }
+
+// Target returns the target as seen in the explained Network.
+func (snapshot Snapshot) Target() Participant { return snapshot.target }
+
+// Share returns the contract context of a shared target and whether it exists.
+func (snapshot Snapshot) Share() (ShareContext, bool) { return snapshot.share, snapshot.hasShare }
 
 func clonePaths(paths []Path) []Path {
 	cloned := make([]Path, len(paths))
@@ -485,16 +580,18 @@ func (reason Reason) String() string {
 
 // Result is one bounded, revision-bound effective-policy explanation.
 type Result struct {
-	query     Query
-	snapshot  Snapshot
-	decision  Decision
-	reason    Reason
-	paths     []Path
-	truncated bool
+	query      Query
+	snapshot   Snapshot
+	decision   Decision
+	reason     Reason
+	denyReason DenyReason
+	paths      []Path
+	truncated  bool
 }
 
 func newResult(query Query, snapshot Snapshot) (Result, error) {
-	if !query.IsValid() || !snapshot.IsValid() || snapshot.scope != query.scope {
+	if !query.IsValid() || !snapshot.IsValid() || snapshot.scope != query.scope ||
+		snapshot.targetKind != query.targetKind() {
 		return Result{}, ErrInvalidSnapshot
 	}
 	if query.destinationNodeID.IsValid() && snapshot.targetNodeID.IsValid() &&
@@ -511,12 +608,12 @@ func newResult(query Query, snapshot Snapshot) (Result, error) {
 	if truncated {
 		paths = paths[:MaximumExplanationPaths]
 	}
-	decision, reason := DecisionDeny, ReasonNoMatchingActiveRule
+	decision, reason, denyReason := DecisionDeny, ReasonNoMatchingActiveRule, denyReasonFor(snapshot)
 	if len(paths) > 0 {
-		decision, reason = DecisionAllow, ReasonMatchingActiveRule
+		decision, reason, denyReason = DecisionAllow, ReasonMatchingActiveRule, DenyReasonUnknown
 	}
 	return Result{
-		query: query, snapshot: snapshot, decision: decision, reason: reason,
+		query: query, snapshot: snapshot, decision: decision, reason: reason, denyReason: denyReason,
 		paths: clonePaths(paths), truncated: truncated,
 	}, nil
 }
@@ -529,8 +626,11 @@ func (result Result) IsValid() bool {
 		len(result.paths) > MaximumExplanationPaths {
 		return false
 	}
-	return (result.decision == DecisionAllow) == (len(result.paths) > 0) &&
-		(result.reason == ReasonMatchingActiveRule) == (len(result.paths) > 0)
+	allowed := len(result.paths) > 0
+	return (result.decision == DecisionAllow) == allowed &&
+		(result.reason == ReasonMatchingActiveRule) == allowed &&
+		(result.denyReason == DenyReasonUnknown) == allowed &&
+		result.denyReason <= DenyReasonNoMatchingActiveRule
 }
 
 // Query returns the exact explanation question.
@@ -544,6 +644,11 @@ func (result Result) Decision() Decision { return result.decision }
 
 // Reason returns the stable explanation classification.
 func (result Result) Reason() Reason { return result.reason }
+
+// DenyReason returns why the connection is denied, and false for an allow.
+func (result Result) DenyReason() (DenyReason, bool) {
+	return result.denyReason, result.decision == DecisionDeny
+}
 
 // Paths returns caller-owned matching paths.
 func (result Result) Paths() []Path { return clonePaths(result.paths) }

@@ -37,6 +37,8 @@ func TestAccessGraphSnapshotRecordDecodesResourceGroupProvenance(t *testing.T) {
 			DestinationResourceID: "01890f00-0000-7000-8000-000000000601",
 			DestinationGroupID:    "01890f00-0000-7000-8000-000000000651",
 		}},
+		Context: postgresAccessGraphContextFixture(t, `{"source":{"state":"active","name":"poc-02"},
+"target":{"kind":"resource","state":"active","name":"database"},"share":null}`),
 	}
 
 	snapshot, err := record.snapshot(query)
