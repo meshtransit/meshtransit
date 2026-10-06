@@ -30,7 +30,9 @@ func TestRoleControlProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 		t.Fatalf("config.Load() error = %v", err)
 	}
 	adminConfig := loadIntegrationAdminConfig(t)
-	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	// The overall budget covers process start-up plus the largest revision
+	// backlog wait.
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second+processRevisionMaxWait)
 	defer cancel()
 	adminConnection := openIntegrationPostgreSQLConnection(
 		ctx,
@@ -472,6 +474,23 @@ func parseProcessMetric(body, name string) (uint64, bool) {
 	return 0, false
 }
 
+// Revision delivery budget: the worker claims one event per poll in
+// available_at order, so earlier tests' backlog in the shared database is
+// delivered first. The deadline grows with the backlog ahead of the Device
+// event, up to processRevisionMaxWait.
+const (
+	processRevisionBaseWait = 10 * time.Second
+	processRevisionPerEvent = 250 * time.Millisecond
+	processRevisionMaxWait  = 90 * time.Second
+)
+
+func processRevisionDeliveryWait(ahead int64) time.Duration {
+	if ahead <= 0 {
+		return processRevisionBaseWait
+	}
+	return min(processRevisionBaseWait+time.Duration(ahead)*processRevisionPerEvent, processRevisionMaxWait)
+}
+
 func waitForProcessRevisionDelivery(
 	parent context.Context,
 	t *testing.T,
@@ -480,30 +499,45 @@ func waitForProcessRevisionDelivery(
 	nodePublicID string,
 ) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+	var ahead int64
+	if err := adminConnection.QueryRow(parent, `SELECT pg_catalog.count(*)
+FROM mesh_ops.outbox_event AS event
+WHERE event.completed_at IS NULL
+  AND event.network_revision IS NOT NULL
+  AND event.id <= (
+      SELECT pg_catalog.max(device.id) FROM mesh_ops.outbox_event AS device
+      WHERE device.aggregate_kind = 'device' AND device.aggregate_public_id = $1::UUID
+  )`, nodePublicID).Scan(&ahead); err != nil {
+		running.process.forceStop(t)
+		t.Fatalf("read process revision backlog: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(parent, processRevisionDeliveryWait(ahead))
 	defer cancel()
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
+	pending := int64(-1)
+	var readErr error
 	for {
-		var pending int64
-		err := adminConnection.QueryRow(ctx, `SELECT pg_catalog.count(*)
+		var current int64
+		readErr = adminConnection.QueryRow(ctx, `SELECT pg_catalog.count(*)
 FROM mesh_ops.outbox_event
 WHERE workspace_id = 101
   AND network_id = 201
   AND aggregate_kind = 'device'
   AND aggregate_public_id = $1::UUID
   AND network_revision IS NOT NULL
-  AND completed_at IS NULL`, nodePublicID).Scan(&pending)
-		if err == nil && pending == 0 {
-			return
+  AND completed_at IS NULL`, nodePublicID).Scan(&current)
+		if readErr == nil {
+			pending = current
+			if pending == 0 {
+				return
+			}
 		}
 		select {
 		case <-ctx.Done():
 			running.process.forceStop(t)
-			if err != nil {
-				t.Fatalf("read process revision delivery state: %v", err)
-			}
-			t.Fatalf("process left %d Network revision events undelivered", pending)
+			t.Fatalf("process left %d Network revision events undelivered behind a backlog of %d (last read error: %v); worker stderr: %s",
+				pending, ahead, readErr, running.worker.stderr.String())
 		case <-ticker.C:
 		}
 	}
