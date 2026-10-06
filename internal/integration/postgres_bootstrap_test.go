@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
@@ -19,11 +20,22 @@ const (
 	bootstrapProviderPublicID = "01890f00-0000-7000-8000-00000000b101"
 	bootstrapClientPublicID   = "01890f00-0000-7000-8000-00000000b201"
 	bootstrapIssuer           = "https://bootstrap.example.test/realms/main"
+	// A Deployment that does not exist yet: the reset path on an empty
+	// database creates it, its audit stream and the provider together.
+	bootstrapFreshDeploymentPublicID = "01890f00-0000-7000-8000-00000000b301"
 )
 
 func bootstrapRoute(t *testing.T, issuer string) oidcauth.Route {
 	t.Helper()
-	deploymentID, _ := deployment.ParseID(integrationDeploymentPublicID)
+	return bootstrapDeploymentRoute(t, integrationDeploymentPublicID, issuer)
+}
+
+func bootstrapDeploymentRoute(t *testing.T, deploymentPublicID, issuer string) oidcauth.Route {
+	t.Helper()
+	deploymentID, err := deployment.ParseID(deploymentPublicID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	providerID, _ := oidcauth.ParseProviderID(bootstrapProviderPublicID)
 	clientID, _ := oidcauth.ParseClientID(bootstrapClientPublicID)
 	// #nosec G101 -- synthetic OIDC metadata, no credentials.
@@ -155,6 +167,58 @@ WHERE ip.public_id = $1::UUID`, bootstrapProviderPublicID).Scan(&workspaces, &me
 	differing := bootstrapPlan(t, bootstrapRoute(t, "https://other.example.test/realms/main"))
 	if _, err := postgresadapter.ApplyBootstrap(ctx, options, differing, true); !errors.Is(err, postgresadapter.ErrBootstrapConflict) {
 		t.Fatalf("differing provider route: %v", err)
+	}
+	assertPostgreSQLBootstrapFreshDeployment(ctx, t, admin, migrationConfig, options)
+}
+
+// assertPostgreSQLBootstrapFreshDeployment migrates a separate empty database
+// with the real runner, as the reset does, and dry-runs a plan there: the
+// Deployment, its audit stream, the provider and both Accounts with their
+// Workspaces are created, every deferred evidence constraint holds, and the
+// transaction rolls back. A Deployment allows one active row, so the shared
+// integration database cannot host this path.
+func assertPostgreSQLBootstrapFreshDeployment(ctx context.Context, t *testing.T, admin *pgx.Conn,
+	migrationConfig config.MigrationConfig, options postgresadapter.MigrationOptions) {
+	t.Helper()
+	var database string
+	if err := admin.QueryRow(ctx, `SELECT 'mesh_bootstrap_fresh_'||replace(gen_random_uuid()::TEXT,'-','')`).Scan(&database); err != nil {
+		t.Fatal(err)
+	}
+	quoted := pgx.Identifier{database}.Sanitize()
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+quoted+" OWNER mesh_migrator TEMPLATE template0"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if _, err := admin.Exec(cleanupCtx, "DROP DATABASE "+quoted+" WITH (FORCE)"); err != nil {
+			t.Errorf("remove fresh bootstrap database: %v", err)
+		}
+	})
+	extensionConfig := admin.Config().Copy()
+	extensionConfig.Database = database
+	extensionConnection, err := pgx.ConnectConfig(ctx, extensionConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := extensionConnection.Exec(ctx, "CREATE EXTENSION btree_gist"); err != nil {
+		t.Fatal(err)
+	}
+	if err := extensionConnection.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	freshConfig := migrationConfig
+	freshConfig.PostgreSQL.Database = database
+	if _, err := openIntegrationMigrationRunner(ctx, t, freshConfig).Up(ctx); err != nil {
+		t.Fatalf("migrate fresh bootstrap database: %v", err)
+	}
+	freshOptions := options
+	freshOptions.Database = database
+	plan := bootstrapPlan(t, bootstrapDeploymentRoute(t, bootstrapFreshDeploymentPublicID, bootstrapIssuer))
+	report, err := postgresadapter.ApplyBootstrap(ctx, freshOptions, plan, false)
+	if err != nil || !report.DeploymentCreated || !report.ProviderCreated || report.AccountsCreated != 2 ||
+		report.WorkspacesCreated != 2 {
+		t.Fatalf("fresh Deployment dry run = %+v, %v", report, err)
 	}
 }
 
