@@ -98,12 +98,31 @@ func composePrivateIdentityRuntime(
 	return factory, service, nil
 }
 
+// Sign-in admission stays tight: a browser starts a login rarely. Console
+// management reads are many small calls per page, so a person switching tabs
+// quickly must stay well inside its per-Session budget, and an office behind
+// one NAT address shares the per-source budget.
+const (
+	loginSourceBurst, loginStateBurst             = 30, 10
+	managementSourceBurst, managementSessionBurst = 240, 60
+	managementSourceRefill                        = 50 * time.Millisecond
+	managementSessionRefill                       = 200 * time.Millisecond
+)
+
 func privateIdentityRuntimeOptions(profile *config.PrivateLoginConfig) (privateIdentityFactoryOptions, error) {
-	source, err := ratelimit.NewPolicy(30, time.Second)
+	source, err := ratelimit.NewPolicy(loginSourceBurst, time.Second)
 	if err != nil {
 		return privateIdentityFactoryOptions{}, errInvalidPrivateIdentityComposition
 	}
-	state, err := ratelimit.NewPolicy(10, time.Second)
+	state, err := ratelimit.NewPolicy(loginStateBurst, time.Second)
+	if err != nil {
+		return privateIdentityFactoryOptions{}, errInvalidPrivateIdentityComposition
+	}
+	managementSource, err := ratelimit.NewPolicy(managementSourceBurst, managementSourceRefill)
+	if err != nil {
+		return privateIdentityFactoryOptions{}, errInvalidPrivateIdentityComposition
+	}
+	managementSession, err := ratelimit.NewPolicy(managementSessionBurst, managementSessionRefill)
 	if err != nil {
 		return privateIdentityFactoryOptions{}, errInvalidPrivateIdentityComposition
 	}
@@ -119,7 +138,7 @@ func privateIdentityRuntimeOptions(profile *config.PrivateLoginConfig) (privateI
 				MaxConcurrent: 16, SourceRateLimit: source, StateRateLimit: state,
 				TrustedProxyPrefixes: profile.TrustedProxyPrefixes()},
 			Management: privateIdentityManagementOptions{RequestTimeout: 5 * time.Second, ProofLifetime: time.Minute,
-				MaxConcurrent: 16, SourceRateLimit: source, SessionRateLimit: state},
+				MaxConcurrent: 16, SourceRateLimit: managementSource, SessionRateLimit: managementSession},
 		},
 		Discovery: oidc.Options{Timeout: 2 * time.Second, MaxMetadataBytes: 64 * 1024},
 		Token: privateIdentityTokenOptions{
