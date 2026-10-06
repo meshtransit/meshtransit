@@ -212,7 +212,7 @@ func (command IssueCommand) SemanticHash() [32]byte {
 	if !command.IsValid() {
 		return [32]byte{}
 	}
-	input := []byte("meshtransit/oidc-auth/session-issuance-command/v1\x00")
+	input := []byte("meshtransit/oidc-auth/session-issuance-command/v2\x00")
 	binding := command.lookup.Snapshot().SemanticHash()
 	input = append(input, binding[:]...)
 	for _, id := range command.ids.values() {
@@ -221,7 +221,7 @@ func (command IssueCommand) SemanticHash() [32]byte {
 	}
 	for _, id := range []publicid.ID{
 		publicid.ID(command.subject.PrincipalID()), publicid.ID(command.subject.IdentitySubjectID()),
-		publicid.ID(command.subject.MembershipID()),
+		publicid.ID(command.subject.MembershipID()), publicid.ID(command.subject.WorkspaceID()),
 	} {
 		value := id.Bytes()
 		input = append(input, value[:]...)
@@ -315,7 +315,7 @@ func NewIssued(params IssuedParams) (Issued, error) {
 	route, subject := command.lookup.Snapshot().Route(), command.subject
 	session, err := accountsession.NewSession(accountsession.Params{
 		ID: id, DeploymentID: route.DeploymentID(), PrincipalID: subject.PrincipalID(),
-		IdentitySubjectID: subject.IdentitySubjectID(), LoginWorkspaceID: route.WorkspaceID(), HasLoginWorkspace: true,
+		IdentitySubjectID: subject.IdentitySubjectID(), LoginWorkspaceID: subject.WorkspaceID(), HasLoginWorkspace: true,
 		AuthenticationTime: command.AuthenticationTime(), ACR: command.ACR(), AMR: command.AMR(), Version: version,
 		PrincipalAuthorityGeneration: subject.PrincipalAuthorityGeneration(),
 		AccountSessionGeneration:     subject.AccountSessionGeneration(),

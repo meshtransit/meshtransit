@@ -234,13 +234,22 @@ func (provider *privateFactoryMetadataProvider) route(t *testing.T, suffix byte)
 	return privateFactoryRoute(t, provider.server.URL, suffix)
 }
 
+// privateFactoryLoginWorkspaceID names the fixture Workspace whose routing and
+// active membership let the fixture Account sign in. Routes name no Workspace;
+// the fixture keeps one owned identity per provider, one byte below it.
+func privateFactoryLoginWorkspaceID(t *testing.T, route oidcauth.Route) workspace.ID {
+	t.Helper()
+	provider := route.ProviderID().Bytes()
+	return workspace.ID(privateIdentityID(t, provider[15]-1))
+}
+
 func privateFactoryRoute(t *testing.T, origin string, suffix byte) oidcauth.Route {
 	t.Helper()
 	base := origin + "/realm"
 	route, err := oidcauth.NewRoute(oidcauth.RouteParams{
-		DeploymentID: deployment.ID(privateIdentityID(t, 1)), WorkspaceID: workspace.ID(privateIdentityID(t, suffix)),
-		ProviderID: oidcauth.ProviderID(privateIdentityID(t, suffix+1)), ClientID: oidcauth.ClientID(privateIdentityID(t, suffix+2)),
-		ProviderGeneration: 1, RecoveryEpoch: 1, Issuer: base, DiscoveryURI: base + "/discovery",
+		DeploymentID: deployment.ID(privateIdentityID(t, 1)), ProviderID: oidcauth.ProviderID(privateIdentityID(t, suffix+1)),
+		ClientID: oidcauth.ClientID(privateIdentityID(t, suffix+2)), ProviderGeneration: 1,
+		RecoveryEpoch: 1, Issuer: base, DiscoveryURI: base + "/discovery",
 		AuthorizationEndpoint: base + "/authorize", TokenEndpoint: base + "/token", JWKSURI: base + "/jwks",
 		OIDCClientID: "private-browser-client", ClientKind: "confidential", ClientAuthMethod: "client_secret_basic",
 		Scopes: []string{"openid"}, AllowedAlgorithms: []string{"RS256"}, RedirectID: "browser-callback",

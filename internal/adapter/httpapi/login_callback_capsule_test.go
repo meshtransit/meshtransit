@@ -20,7 +20,6 @@ import (
 	"github.com/meshtransit/meshtransit/internal/adapter/oidc"
 	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
-	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 func TestLoginCallbackCapsuleRejectsUnsafeConstruction(t *testing.T) {
@@ -219,10 +218,6 @@ func TestLoginCallbackCapsuleBindsEveryRouteDimensionAndKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wid, err := workspace.ParseID("01890f00-0000-7000-8000-000000000042")
-	if err != nil {
-		t.Fatal(err)
-	}
 	pid, err := oidcauth.ParseProviderID("01890f00-0000-7000-8000-000000000043")
 	if err != nil {
 		t.Fatal(err)
@@ -240,7 +235,6 @@ func TestLoginCallbackCapsuleBindsEveryRouteDimensionAndKey(t *testing.T) {
 		mutate func(*oidcauth.RouteParams)
 	}{
 		{name: "Deployment", mutate: func(p *oidcauth.RouteParams) { p.DeploymentID = did }},
-		{name: "Workspace", mutate: func(p *oidcauth.RouteParams) { p.WorkspaceID = wid }},
 		{name: "provider", mutate: func(p *oidcauth.RouteParams) { p.ProviderID = pid }},
 		{name: "client", mutate: func(p *oidcauth.RouteParams) { p.ClientID = cid }},
 		{name: "provider generation", mutate: func(p *oidcauth.RouteParams) { p.ProviderGeneration++ }},
@@ -491,7 +485,7 @@ func capsuleTestOptions(route oidcauth.Route) LoginCallbackCapsuleOptions {
 
 func capsuleTestRouteParams(route oidcauth.Route) oidcauth.RouteParams {
 	return oidcauth.RouteParams{
-		DeploymentID: route.DeploymentID(), WorkspaceID: route.WorkspaceID(), ProviderID: route.ProviderID(),
+		DeploymentID: route.DeploymentID(), ProviderID: route.ProviderID(),
 		ClientID: route.ClientID(), ProviderGeneration: route.ProviderGeneration(), RecoveryEpoch: route.RecoveryEpoch(),
 		Issuer: route.Issuer(), DiscoveryURI: route.DiscoveryURI(), AuthorizationEndpoint: route.AuthorizationEndpoint(),
 		TokenEndpoint: route.TokenEndpoint(), JWKSURI: route.JWKSURI(), OIDCClientID: route.OIDCClientID(),

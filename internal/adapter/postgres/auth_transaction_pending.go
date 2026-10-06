@@ -22,11 +22,11 @@ const loadPendingAuthTransactionSQL = `SELECT
     transaction_nonce_algorithm, transaction_nonce_key_id, transaction_nonce_digest,
     transaction_cipher_algorithm, transaction_cipher_key_id, transaction_ciphertext,
     transaction_binding_hash, transaction_created_at, transaction_expires_at
-FROM mesh_ops.load_oidc_pending_browser_v1(
-    $1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::BIGINT, $6::BIGINT,
-    $7::TEXT, $8::TEXT, $9::TEXT, $10::TEXT, $11::TEXT,
-    $12::TEXT, $13::TEXT, $14::TEXT[], $15::TEXT[], $16::TEXT,
-    $17::TEXT, $18::TEXT, $19::BYTEA, $20::TEXT, $21::TEXT
+FROM mesh_ops.load_oidc_pending_browser_v2(
+    $1::UUID, $2::UUID, $3::UUID, $4::BIGINT, $5::BIGINT,
+    $6::TEXT, $7::TEXT, $8::TEXT, $9::TEXT, $10::TEXT,
+    $11::TEXT, $12::TEXT, $13::TEXT[], $14::TEXT[], $15::TEXT,
+    $16::TEXT, $17::TEXT, $18::BYTEA, $19::TEXT, $20::TEXT
 )`
 
 // LoadPending closes an owned bounded read-only unit before returning immutable
@@ -80,7 +80,7 @@ func (store *AuthTransactionStore) LoadPending(ctx context.Context, route oidcau
 	}
 	state := digest.Bytes()
 	row := transaction.QueryRow(ctx, loadPendingAuthTransactionSQL,
-		route.DeploymentID().String(), route.WorkspaceID().String(), route.ProviderID().String(), route.ClientID().String(),
+		route.DeploymentID().String(), route.ProviderID().String(), route.ClientID().String(),
 		route.ProviderGeneration(), route.RecoveryEpoch(), route.Issuer(), route.DiscoveryURI(),
 		route.AuthorizationEndpoint(), route.TokenEndpoint(), route.JWKSURI(), route.OIDCClientID(),
 		route.ClientAuthMethod(), route.Scopes(), route.AllowedAlgorithms(), route.RedirectURI(),

@@ -8,19 +8,17 @@ import (
 	"github.com/meshtransit/meshtransit/internal/bootstrap"
 	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
-	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 func route(t *testing.T) oidcauth.Route {
 	t.Helper()
 	deploymentID, _ := deployment.ParseID("01890f00-0000-7000-8000-000000000001")
-	workspaceID, _ := workspace.ParseID("01890f00-0000-7000-8000-000000000101")
 	providerID, _ := oidcauth.ParseProviderID("01890f00-0000-7000-8000-000000000601")
 	clientID, _ := oidcauth.ParseClientID("01890f00-0000-7000-8000-000000000621")
 	issuer := "https://idp.example.test/realms/main"
 	// #nosec G101 -- synthetic OIDC metadata, no credentials.
 	value, err := oidcauth.NewRoute(oidcauth.RouteParams{
-		DeploymentID: deploymentID, WorkspaceID: workspaceID, ProviderID: providerID, ClientID: clientID,
+		DeploymentID: deploymentID, ProviderID: providerID, ClientID: clientID,
 		ProviderGeneration: 1, RecoveryEpoch: 1, Issuer: issuer,
 		DiscoveryURI: issuer + "/.well-known/openid-configuration", AuthorizationEndpoint: issuer + "/auth",
 		TokenEndpoint: issuer + "/token", JWKSURI: issuer + "/certs", OIDCClientID: "meshtransit-console",

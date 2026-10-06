@@ -107,7 +107,7 @@ func assertPostgreSQLBrowserClaim(ctx context.Context, t *testing.T, admin, runt
 		}
 	})
 	verified := integrationClaimVerified(ctx, t, store, "975")
-	assertBrowserClaimScopeAndCAS(ctx, t, runtime, verified)
+	assertBrowserClaimScopeAndCAS(ctx, t, admin, runtime, verified)
 }
 
 func integrationClaimVerified(ctx context.Context, t *testing.T, store *postgresadapter.AuthTransactionStore, suffix string) oidcauth.VerifiedBrowser {
@@ -123,7 +123,7 @@ func integrationClaimVerifiedRemaining(ctx context.Context, t *testing.T, store 
 
 func integrationClaimVerifiedWithNonce(ctx context.Context, t *testing.T, store *postgresadapter.AuthTransactionStore, suffix string, remaining time.Duration) (oidcauth.VerifiedBrowser, oidcauth.Nonce) {
 	t.Helper()
-	template := integrationAuthTransactionPending(t, integrationAuthRouteParams{providerGeneration: 1, recoveryEpoch: 1, workspacePublicID: "01890f00-0000-7000-8000-000000000101"}, [4]string{
+	template := integrationAuthTransactionPending(t, integrationAuthRouteParams{providerGeneration: 1, recoveryEpoch: 1}, [4]string{
 		"01890f00-0000-7000-8000-000000000" + suffix, "01890f01-0000-7000-8000-000000000" + suffix,
 		"01890f02-0000-7000-8000-000000000" + suffix, "01890f03-0000-7000-8000-000000000" + suffix,
 	})
@@ -197,7 +197,8 @@ func assertBrowserClaimEvidence(ctx context.Context, t *testing.T, admin *pgx.Co
 	var noActor, noNetwork, noResult bool
 	if err := admin.QueryRow(ctx, `SELECT auth.state, auth.version, auth.consumed_at, auth.binding_semantic_hash,
     auth.pkce_verifier_ciphertext, audit.action, audit.before_semantic_hash, audit.after_semantic_hash,
-    audit.actor_principal_public_id IS NULL, outbox.event_class, outbox.aggregate_version,
+    audit.actor_principal_public_id IS NULL AND NOT (audit.payload ? 'workspace_public_id')
+      AND NOT (outbox.payload ? 'workspace_public_id'), outbox.event_class, outbox.aggregate_version,
     outbox.network_revision IS NULL AND audit.network_id IS NULL,
     auth.principal_id IS NULL AND auth.consumed_result_kind IS NULL AND auth.failure_class IS NULL,
     mutation.operation, mutation.before_version, mutation.after_version
@@ -235,7 +236,7 @@ func assertBrowserClaimPrivileges(ctx context.Context, t *testing.T, admin *pgx.
     pg_catalog.has_table_privilege('mesh_runtime', 'mesh.auth_transaction', 'SELECT') OR pg_catalog.has_table_privilege('mesh_runtime', 'mesh.auth_transaction', 'UPDATE')
 FROM pg_catalog.pg_proc AS function JOIN pg_catalog.pg_namespace AS schema ON schema.oid=function.pronamespace
 JOIN pg_catalog.pg_roles AS owner ON owner.oid=function.proowner
-WHERE schema.nspname='mesh_ops' AND function.proname='claim_oidc_browser_v1'`).Scan(&hardened, &runtimeAllowed, &workerAllowed, &observerAllowed, &tableAllowed); err != nil {
+WHERE schema.nspname='mesh_ops' AND function.proname='claim_oidc_browser_v2'`).Scan(&hardened, &runtimeAllowed, &workerAllowed, &observerAllowed, &tableAllowed); err != nil {
 		t.Fatal(err)
 	}
 	if !hardened || !runtimeAllowed || workerAllowed || observerAllowed || tableAllowed {
@@ -243,22 +244,22 @@ WHERE schema.nspname='mesh_ops' AND function.proname='claim_oidc_browser_v1'`).S
 	}
 }
 
-func assertBrowserClaimScopeAndCAS(ctx context.Context, t *testing.T, runtime *pgx.Conn, verified oidcauth.VerifiedBrowser) {
+func assertBrowserClaimScopeAndCAS(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn, verified oidcauth.VerifiedBrowser) {
 	t.Helper()
 	snapshot := verified.Snapshot()
 	digest, hash := snapshot.StateDigest().Bytes(), snapshot.SemanticHash()
 	args := append(integrationLoginRouteArguments(snapshot.Route()), snapshot.StateDigest().Algorithm(), snapshot.StateDigest().KeyID().String(), digest[:], snapshot.Route().RedirectID(), snapshot.Route().ReturnRouteID(), snapshot.TransactionID().String(), snapshot.Version(), hash[:])
-	const countSQL = `SELECT pg_catalog.count(*) FROM mesh_ops.claim_oidc_browser_v1(
-    $1::UUID,$2::UUID,$3::UUID,$4::UUID,$5::BIGINT,$6::BIGINT,$7::TEXT,$8::TEXT,$9::TEXT,$10::TEXT,$11::TEXT,$12::TEXT,
-    $13::TEXT,$14::TEXT[],$15::TEXT[],$16::TEXT,$17::TEXT,$18::TEXT,$19::BYTEA,$20::TEXT,$21::TEXT,$22::UUID,$23::BIGINT,$24::BYTEA)`
+	const countSQL = `SELECT pg_catalog.count(*) FROM mesh_ops.claim_oidc_browser_v2(
+    $1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::TEXT,$7::TEXT,$8::TEXT,$9::TEXT,$10::TEXT,$11::TEXT,
+    $12::TEXT,$13::TEXT[],$14::TEXT[],$15::TEXT,$16::TEXT,$17::TEXT,$18::BYTEA,$19::TEXT,$20::TEXT,$21::UUID,$22::BIGINT,$23::BYTEA)`
 	for _, candidate := range []struct {
 		name  string
 		index int
 		value any
 	}{
-		{"workspace", 1, "01890f00-0000-7000-8000-000000000102"}, {"generation", 4, int64(2)}, {"epoch", 5, int64(2)},
-		{"state", 18, make([]byte, 32)}, {"redirect label", 19, "other-callback"}, {"return label", 20, "other-return"},
-		{"transaction", 21, "01890f00-0000-7000-8000-000000000966"}, {"version", 22, int64(2)}, {"hash", 23, make([]byte, 32)},
+		{"generation", 3, int64(2)}, {"epoch", 4, int64(2)},
+		{"state", 17, make([]byte, 32)}, {"redirect label", 18, "other-callback"}, {"return label", 19, "other-return"},
+		{"transaction", 20, "01890f00-0000-7000-8000-000000000966"}, {"version", 21, int64(2)}, {"hash", 22, make([]byte, 32)},
 		{"valid rollback probe", -1, nil},
 	} {
 		t.Run("browser claim scope "+candidate.name, func(t *testing.T) {
@@ -289,6 +290,34 @@ func assertBrowserClaimScopeAndCAS(ctx context.Context, t *testing.T, runtime *p
 			assertAdmissionScopeCleared(ctx, t, probe)
 		})
 	}
+	t.Run("browser claim rejects Workspace-scoped v1 transaction", func(t *testing.T) {
+		probe, err := admin.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Rollback-only: a v1 row (workspace_id NOT NULL) cannot be claimed by v2.
+		defer rollbackIntegrationTransaction(ctx, t, probe)
+		if _, err := probe.Exec(ctx, `SELECT pg_catalog.set_config('mesh.change_public_id','01890f01-0000-7000-8000-000000000978',TRUE)`); err != nil {
+			t.Fatal(err)
+		}
+		copyDigest := integrationFilledBytes(0x78, 32)
+		insertIntegrationWorkspaceScopedAuthCopy(ctx, t, probe, snapshot.TransactionID().String(),
+			"01890f00-0000-7000-8000-000000000978", copyDigest, false)
+		scoped := append([]any(nil), args...)
+		scoped[17], scoped[20] = copyDigest, "01890f00-0000-7000-8000-000000000978"
+		var count int
+		if err := probe.QueryRow(ctx, countSQL, scoped...).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("v2 claim of Workspace-scoped transaction count=%d err=%v, want none", count, err)
+		}
+		assertAdmissionScopeCleared(ctx, t, probe)
+		const legacySQL = `SELECT pg_catalog.count(*) FROM mesh_ops.claim_oidc_browser_v1(
+    $1::UUID,$2::UUID,$3::UUID,$4::UUID,$5::BIGINT,$6::BIGINT,$7::TEXT,$8::TEXT,$9::TEXT,$10::TEXT,$11::TEXT,$12::TEXT,
+    $13::TEXT,$14::TEXT[],$15::TEXT[],$16::TEXT,$17::TEXT,$18::TEXT,$19::BYTEA,$20::TEXT,$21::TEXT,$22::UUID,$23::BIGINT,$24::BYTEA)`
+		legacy := append([]any{scoped[0], "01890f00-0000-7000-8000-000000000101"}, scoped[1:]...)
+		if err := probe.QueryRow(ctx, legacySQL, legacy...).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("v1 control claim of Workspace-scoped copy count=%d err=%v, want 1", count, err)
+		}
+	})
 	t.Run("browser claim cannot commit without audit and outbox", func(t *testing.T) {
 		probe, err := runtime.Begin(ctx)
 		if err != nil {
@@ -308,7 +337,7 @@ func assertBrowserClaimScopeAndCAS(ctx context.Context, t *testing.T, runtime *p
 		}
 		// Deferred coverage must roll back the entire claim, not strand consuming
 		// state when the mandatory evidence append is omitted.
-		if err := runtime.QueryRow(ctx, integrationPendingBrowserCountSQL, args[:21]...).Scan(&count); err != nil || count != 1 {
+		if err := runtime.QueryRow(ctx, integrationPendingBrowserCountSQL, args[:20]...).Scan(&count); err != nil || count != 1 {
 			t.Fatal("missing evidence did not atomically roll back consumption")
 		}
 	})

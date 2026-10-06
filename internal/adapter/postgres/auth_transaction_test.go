@@ -52,8 +52,8 @@ func TestAuthTransactionCreateAppendsAtomicEvidenceAndCommits(t *testing.T) {
 			t.Fatalf("database call %d query mismatch", index)
 		}
 	}
-	if len(databaseTransaction.calls[2].arguments) != 31 {
-		t.Fatalf("create argument count = %d, want 31", len(databaseTransaction.calls[2].arguments))
+	if len(databaseTransaction.calls[2].arguments) != 30 {
+		t.Fatalf("create argument count = %d, want 30", len(databaseTransaction.calls[2].arguments))
 	}
 	evidence := databaseTransaction.calls[4]
 	if len(evidence.arguments) != 12 {

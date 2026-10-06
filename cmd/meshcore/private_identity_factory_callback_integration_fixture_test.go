@@ -68,7 +68,7 @@ FROM mesh.identity_provider WHERE public_id=$4::UUID`,
 			privateFactoryExec(ctx, t, tx, `INSERT INTO mesh.workspace_membership
 (public_id,deployment_id,workspace_id,principal_id,state,authority_generation,valid_from)
 SELECT $1::UUID,1,id,11,'active',1,pg_catalog.transaction_timestamp()-INTERVAL '1 minute'
-FROM mesh.workspace WHERE public_id=$2::UUID`, privateIdentityID(t, suffix+4).String(), route.WorkspaceID().String())
+FROM mesh.workspace WHERE public_id=$2::UUID`, privateIdentityID(t, suffix+4).String(), privateFactoryLoginWorkspaceID(t, route).String())
 		})
 	}
 }
@@ -225,7 +225,7 @@ JOIN mesh.identity_provider_client client ON client.id=s.identity_provider_clien
 JOIN mesh.workspace workspace ON workspace.id=s.login_workspace_id
 WHERE s.public_id=$1::UUID`,
 		session.ID().String(), session.IdentitySubjectID().String(), route.ProviderID().String(),
-		route.ClientID().String(), route.WorkspaceID().String(), digest.Algorithm(), digest.KeyID().String(),
+		route.ClientID().String(), privateFactoryLoginWorkspaceID(t, route).String(), digest.Algorithm(), digest.KeyID().String(),
 		value[:], session.AuthenticationTime(), "urn:meshtransit:assurance:mfa",
 		route.ProviderGeneration(), route.RecoveryEpoch()).Scan(&exact); err != nil || !exact {
 		t.Fatal("persisted Session lost exact identity/client/scope/digest/fences")
@@ -237,7 +237,8 @@ func assertPrivateFactorySession(t *testing.T, session accountsession.Session, r
 	workspaceID, hasWorkspace := session.LoginWorkspaceID()
 	exactIdentity := session.PrincipalID().String() == privateIdentityID(t, 2).String() &&
 		session.IdentitySubjectID().String() == privateIdentityID(t, suffix+3).String()
-	exactScope := session.DeploymentID() == route.DeploymentID() && hasWorkspace && workspaceID == route.WorkspaceID()
+	exactScope := session.DeploymentID() == route.DeploymentID() && hasWorkspace &&
+		workspaceID == privateFactoryLoginWorkspaceID(t, route)
 	freshVersion := session.Version() == 1 && session.PrincipalAuthorityGeneration() == 1 &&
 		session.AccountSessionGeneration() == 1
 	exactFences := session.ProviderGeneration() == route.ProviderGeneration() &&

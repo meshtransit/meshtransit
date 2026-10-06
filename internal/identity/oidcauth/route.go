@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/meshtransit/meshtransit/internal/deployment"
-	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 const (
@@ -27,7 +26,6 @@ var (
 // RouteParams contains one exact Core-controlled browser login route.
 type RouteParams struct {
 	DeploymentID          deployment.ID
-	WorkspaceID           workspace.ID
 	ProviderID            ProviderID
 	ClientID              ClientID
 	ProviderGeneration    int64
@@ -48,10 +46,10 @@ type RouteParams struct {
 	ReturnRouteID         string
 }
 
-// Route is an immutable provider/client/Workspace login trust decision.
+// Route is an immutable provider/client login trust decision. It names no
+// Workspace: Core binds each Session to a Workspace chosen for the Account.
 type Route struct {
 	deploymentID          deployment.ID
-	workspaceID           workspace.ID
 	providerID            ProviderID
 	clientID              ClientID
 	providerGeneration    int64
@@ -73,7 +71,7 @@ type Route struct {
 
 // NewRoute validates and defensively copies one configured browser route.
 func NewRoute(params RouteParams) (Route, error) {
-	if !params.DeploymentID.IsValid() || !params.WorkspaceID.IsValid() ||
+	if !params.DeploymentID.IsValid() ||
 		!params.ProviderID.IsValid() || !params.ClientID.IsValid() ||
 		params.ProviderGeneration <= 0 || params.RecoveryEpoch <= 0 ||
 		params.ClientKind != "confidential" || !validClientAuthMethod(params.ClientAuthMethod) ||
@@ -89,7 +87,6 @@ func NewRoute(params RouteParams) (Route, error) {
 	}
 	return Route{
 		deploymentID:          params.DeploymentID,
-		workspaceID:           params.WorkspaceID,
 		providerID:            params.ProviderID,
 		clientID:              params.ClientID,
 		providerGeneration:    params.ProviderGeneration,
@@ -113,8 +110,8 @@ func NewRoute(params RouteParams) (Route, error) {
 // Binding returns the exact authority authenticated by a verifier envelope.
 func (route Route) Binding(transactionID TransactionID) (Binding, error) {
 	binding := Binding{
-		DeploymentID: route.deploymentID, WorkspaceID: route.workspaceID,
-		ProviderID: route.providerID, ClientID: route.clientID,
+		DeploymentID: route.deploymentID,
+		ProviderID:   route.providerID, ClientID: route.clientID,
 		TransactionID: transactionID, ProviderGeneration: route.providerGeneration,
 		RecoveryEpoch: route.recoveryEpoch, RedirectID: route.redirectID,
 		ReturnRouteID: route.returnRouteID,
@@ -127,9 +124,6 @@ func (route Route) Binding(transactionID TransactionID) (Binding, error) {
 
 // DeploymentID returns the exact Deployment owning this login route.
 func (route Route) DeploymentID() deployment.ID { return route.deploymentID }
-
-// WorkspaceID returns the exact Workspace selected before provider redirect.
-func (route Route) WorkspaceID() workspace.ID { return route.workspaceID }
 
 // ProviderID returns the exact configured provider identity.
 func (route Route) ProviderID() ProviderID { return route.providerID }
@@ -188,8 +182,8 @@ func (route Route) ReturnRouteID() string { return route.returnRouteID }
 // IsValid reports whether the immutable route still satisfies browser-login policy.
 func (route Route) IsValid() bool {
 	validated, err := NewRoute(RouteParams{
-		DeploymentID: route.deploymentID, WorkspaceID: route.workspaceID,
-		ProviderID: route.providerID, ClientID: route.clientID,
+		DeploymentID: route.deploymentID,
+		ProviderID:   route.providerID, ClientID: route.clientID,
 		ProviderGeneration: route.providerGeneration, RecoveryEpoch: route.recoveryEpoch,
 		Issuer: route.issuer, DiscoveryURI: route.discoveryURI,
 		AuthorizationEndpoint: route.authorizationEndpoint, TokenEndpoint: route.tokenEndpoint,

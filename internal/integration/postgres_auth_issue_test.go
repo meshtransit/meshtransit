@@ -78,6 +78,12 @@ func assertPostgreSQLSessionIssuance(ctx context.Context, t *testing.T, admin, r
 			if err != nil {
 				t.Fatal(err)
 			}
+			// The login Workspace holds the Account's most recent Session (seeded by
+			// subject resolution, then renewed by every committed issuance here).
+			if snapshot.WorkspaceID().String() != integrationLoginWorkspacePublicID ||
+				snapshot.MembershipID().String() != integrationLoginMembershipPublicID {
+				t.Fatalf("issuance subject chose Workspace %s, want the most recent Session's", snapshot.WorkspaceID())
+			}
 			transactions := &integrationIssueTransactions{store: store, hideACK: scenario == "lost commit ACK", rejectAfterIssue: scenario == "rollback after evidence"}
 			var material oidcauth.IssueMaterialGenerator = oidcauth.SystemIssueMaterial{}
 			if scenario == "second outbox failure" {
@@ -102,6 +108,7 @@ func assertPostgreSQLSessionIssuance(ctx context.Context, t *testing.T, admin, r
 					t.Fatalf("confirmed issuance failed: %v", issueErr)
 				}
 				assertIssuedSessionAuthenticates(ctx, t, pool, sessions, result)
+				assertIssuedSessionLoginWorkspace(ctx, t, admin, snapshot, result)
 				if scenario == "bounded membership" &&
 					(!result.Session().IdleExpiresAt().Equal(snapshot.MembershipExpiresAt()) ||
 						!result.Session().AbsoluteExpiresAt().Equal(snapshot.MembershipExpiresAt())) {
@@ -240,6 +247,22 @@ FROM mesh.account_session WHERE public_id=$1::UUID`, command.IDs().SessionID().S
 	assertIssueEvidenceChain(ctx, t, admin, command)
 }
 
+// assertIssuedSessionLoginWorkspace proves the durable Session is bound to the
+// Workspace Core chose for the Account, not to any configured route Workspace.
+func assertIssuedSessionLoginWorkspace(ctx context.Context, t *testing.T, admin *pgx.Conn, snapshot oidcauth.LoginSubjectSnapshot, result oidcauth.IssueResult) {
+	t.Helper()
+	var loginWorkspace string
+	if err := admin.QueryRow(ctx, `SELECT workspace.public_id::TEXT FROM mesh.account_session AS session
+JOIN mesh.workspace AS workspace ON workspace.deployment_id = session.deployment_id AND workspace.id = session.login_workspace_id
+WHERE session.public_id = $1::UUID`, result.Session().ID().String()).Scan(&loginWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspace, hasWorkspace := result.Session().LoginWorkspaceID()
+	if loginWorkspace != snapshot.WorkspaceID().String() || !hasWorkspace || sessionWorkspace != snapshot.WorkspaceID() {
+		t.Fatalf("issued Session login Workspace = %s, want chosen %s", loginWorkspace, snapshot.WorkspaceID())
+	}
+}
+
 const integrationIssueCountSQL = `SELECT count(*) FROM mesh_ops.issue_oidc_existing_subject_v1(
     $1::UUID,$2::UUID,$3::UUID,$4::UUID,$5::BIGINT,$6::BIGINT,
     $7::TEXT,$8::TEXT,$9::TEXT,$10::TEXT,$11::TEXT,$12::TEXT,$13::TEXT,$14::TEXT[],$15::TEXT[],$16::TEXT,
@@ -256,10 +279,14 @@ func integrationIssueArguments(command oidcauth.IssueCommand) []any {
 	if !subject.MembershipExpiresAt().IsZero() {
 		expiry = subject.MembershipExpiresAt()
 	}
-	return append(integrationSubjectArguments(command.Lookup()), subject.PrincipalID().String(), subject.IdentitySubjectID().String(), subject.MembershipID().String(),
+	// issue_oidc_existing_subject_v1 keeps its released shape: the Workspace is
+	// the one resolve_oidc_login_subject_v2 chose, never a configured route value.
+	lookup := integrationSubjectArguments(command.Lookup())
+	args := append(append([]any{lookup[0], subject.WorkspaceID().String()}, lookup[1:]...), subject.PrincipalID().String(), subject.IdentitySubjectID().String(), subject.MembershipID().String(),
 		subject.SubjectVersion(), subject.AccountVersion(), subject.MembershipVersion(), subject.PrincipalAuthorityGeneration(), subject.AccountSessionGeneration(), subject.MembershipAuthorityGeneration(), expiry, subject.EvaluatedAt(),
 		command.IDs().SessionID().String(), command.TokenDigest().Algorithm(), command.TokenDigest().KeyID().String(), token[:],
 		command.ProviderSessionDigest().Algorithm(), command.ProviderSessionDigest().KeyID().String(), sid[:], command.AuthenticationTime(), command.ACR(), command.AMR(), command.ProviderExpiresAt(), int64(command.IdleLifetime()/time.Second), int64(command.AbsoluteLifetime()/time.Second))
+	return args
 }
 
 func assertIssueSQLRechecks(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn, command oidcauth.IssueCommand) {
@@ -289,7 +316,7 @@ func assertIssueSQLRechecks(ctx context.Context, t *testing.T, admin, runtime *p
 			case "duplicate SID half":
 				args[43] = nil
 			case "terminal claim":
-				if _, err := tx.Exec(ctx, `SELECT count(*) FROM mesh_ops.fail_oidc_browser_v1($1::UUID,$2::UUID,$3::UUID,$4::UUID,$5::BIGINT,$6::BIGINT,$7::UUID,2,$8::BYTEA,$9::TIMESTAMPTZ)`, args[0], args[1], args[2], args[3], args[4], args[5], args[16], args[18], args[19]); err != nil {
+				if _, err := tx.Exec(ctx, `SELECT count(*) FROM mesh_ops.fail_oidc_browser_v2($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::UUID,2,$7::BYTEA,$8::TIMESTAMPTZ)`, args[0], args[2], args[3], args[4], args[5], args[16], args[18], args[19]); err != nil {
 					t.Fatal(err)
 				}
 			case "account quarantine":

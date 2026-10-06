@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/meshtransit/meshtransit/internal/deployment"
-	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 func TestSubjectDigestsFixExactStableNamespace(t *testing.T) {
@@ -86,14 +85,12 @@ func TestSubjectNamespaceSeparatesIdentityFromAuthorityFences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"workspace", "client", "generation", "epoch", "deployment", "provider"} {
+	for _, name := range []string{"client", "generation", "epoch", "deployment", "provider"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			other := route
 			var parseErr error
 			switch name {
-			case "workspace":
-				other.workspaceID, parseErr = workspace.ParseID("01890f00-0000-7000-8000-000000000777")
 			case "client":
 				other.clientID, parseErr = ParseClientID("01890f00-0000-7000-8000-000000000777")
 			case "generation":

@@ -226,7 +226,6 @@ func validAuthTransactionOptions(options AuthTransactionOptions) bool {
 
 func sameAuthTransactionRoute(left, right oidcauth.Route) bool {
 	return left.DeploymentID() == right.DeploymentID() &&
-		left.WorkspaceID() == right.WorkspaceID() &&
 		left.ProviderID() == right.ProviderID() &&
 		left.ClientID() == right.ClientID() &&
 		left.ProviderGeneration() == right.ProviderGeneration() &&

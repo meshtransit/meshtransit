@@ -251,10 +251,13 @@ func (storage *privateFactoryIntegrationStorage) openRuntime(t *testing.T) *post
 
 func (storage *privateFactoryIntegrationStorage) seedRoute(t *testing.T, route oidcauth.Route) {
 	t.Helper()
-	storage.seed(t, "workspace", route.WorkspaceID().String(), func(ctx context.Context, tx pgx.Tx) {
+	// The login Workspace is fixture authority: Core chooses it for the Account
+	// because it routes this provider/client and holds the Account's membership.
+	loginWorkspace := privateFactoryLoginWorkspaceID(t, route).String()
+	storage.seed(t, "workspace", loginWorkspace, func(ctx context.Context, tx pgx.Tx) {
 		privateFactoryExec(ctx, t, tx, `INSERT INTO mesh.workspace
 (public_id,deployment_id,owner_principal_id,display_name,name_key,state)
-VALUES ($1::UUID,1,11,'Private factory fixture',$2,'active')`, route.WorkspaceID().String(), "fixture-"+route.WorkspaceID().String())
+VALUES ($1::UUID,1,11,'Private factory fixture',$2,'active')`, loginWorkspace, "fixture-"+loginWorkspace)
 	})
 	storage.seed(t, "identity_provider", route.ProviderID().String(), func(ctx context.Context, tx pgx.Tx) {
 		// This resident fixture-only issuer key is not an external-subject key.
@@ -294,7 +297,7 @@ FROM mesh.identity_provider WHERE public_id=$6::UUID`, route.ClientID().String()
 SELECT $1::UUID,1,w.id,p.id,c.id,'invitation_only','urn:meshtransit:assurance:mfa',10,'active'
 FROM mesh.workspace w,mesh.identity_provider p,mesh.identity_provider_client c
 WHERE w.public_id=$2::UUID AND p.public_id=$3::UUID AND c.public_id=$4::UUID`,
-			bindingID.String(), route.WorkspaceID().String(), route.ProviderID().String(), route.ClientID().String())
+			bindingID.String(), loginWorkspace, route.ProviderID().String(), route.ClientID().String())
 	})
 }
 

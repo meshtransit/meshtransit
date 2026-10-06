@@ -299,7 +299,7 @@ func validLoginHostname(hostname string) bool {
 }
 
 func loginRouteParams(route oidcauth.Route) oidcauth.RouteParams {
-	return oidcauth.RouteParams{DeploymentID: route.DeploymentID(), WorkspaceID: route.WorkspaceID(),
+	return oidcauth.RouteParams{DeploymentID: route.DeploymentID(),
 		ProviderID: route.ProviderID(), ClientID: route.ClientID(), ProviderGeneration: route.ProviderGeneration(),
 		RecoveryEpoch: route.RecoveryEpoch(), Issuer: route.Issuer(), DiscoveryURI: route.DiscoveryURI(),
 		AuthorizationEndpoint: route.AuthorizationEndpoint(), TokenEndpoint: route.TokenEndpoint(), JWKSURI: route.JWKSURI(),

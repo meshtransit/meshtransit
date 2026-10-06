@@ -12,6 +12,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/workspace"
 	"go.uber.org/goleak"
 )
 
@@ -85,7 +86,7 @@ func TestSubjectResolutionAcceptsBoundedAuthorityClockSkew(t *testing.T) {
 
 func TestSubjectResolutionRejectsStaleMalformedAndFailedReads(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"zero exchange", "canceled before", "expired before", "dependency", "no access", "cleanup after rejection", "wrong digest", "wrong key", "bad principal", "zero generation", "wrong claim", "noncanonical time", "future DB time", "canceled after", "claim expired after", "token expired after", "member expired after"} {
+	for _, name := range []string{"zero exchange", "canceled before", "expired before", "dependency", "no access", "cleanup after rejection", "wrong digest", "wrong key", "bad principal", "missing workspace", "zero generation", "wrong claim", "noncanonical time", "future DB time", "canceled after", "claim expired after", "token expired after", "member expired after"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			exchange := subjectExchangeFixture(t)
@@ -133,6 +134,8 @@ func TestSubjectResolutionRejectsStaleMalformedAndFailedReads(t *testing.T) {
 						params.Digest, err = NewSubjectDigest(id, params.Digest.Bytes())
 					case "bad principal":
 						params.PrincipalID = identity.PrincipalID{}
+					case "missing workspace":
+						params.WorkspaceID = workspace.ID{}
 					case "zero generation":
 						params.AccountSessionGeneration = 0
 					case "wrong claim":
@@ -289,6 +292,7 @@ func subjectSnapshotParamsFixture(t *testing.T, query SubjectLookup, at time.Tim
 		t.Fatal(err)
 	}
 	return LoginSubjectParams{Lookup: query, Digest: query.Digests()[0], PrincipalID: principal, IdentitySubjectID: subject, MembershipID: member,
+		WorkspaceID:    mustWorkspaceID(t, "01890f00-0000-7000-8000-000000000101"),
 		SubjectVersion: 1, AccountVersion: 1, MembershipVersion: 1, PrincipalAuthorityGeneration: 1, AccountSessionGeneration: 1, MembershipAuthorityGeneration: 1, EvaluatedAt: at}
 }
 

@@ -232,7 +232,6 @@ func routeParamsFixture(t *testing.T) RouteParams {
 	// #nosec G101 -- synthetic OIDC client metadata contains no credential material.
 	return RouteParams{
 		DeploymentID:       mustDeploymentID(t, "01890f00-0000-7000-8000-000000000001"),
-		WorkspaceID:        mustWorkspaceID(t, "01890f00-0000-7000-8000-000000000002"),
 		ProviderID:         mustProviderID(t, "01890f00-0000-7000-8000-000000000003"),
 		ClientID:           mustClientID(t, "01890f00-0000-7000-8000-000000000004"),
 		ProviderGeneration: 3, RecoveryEpoch: 7,

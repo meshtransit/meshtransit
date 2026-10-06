@@ -367,7 +367,7 @@ func assertCallbackInputRedacted(t *testing.T, input LoginCallbackInput, request
 		input,
 	) + log.String()
 	for _, private := range []string{callbackReaderHandle(0x61), callbackReaderHandle(0x62),
-		"synthetic-code", "private-upstream", request.Host, input.Route().WorkspaceID().String()} {
+		"synthetic-code", "private-upstream", request.Host, input.Route().ProviderID().String()} {
 		if strings.Contains(formatted, private) {
 			t.Fatal("callback formatting/logging leaked input")
 		}

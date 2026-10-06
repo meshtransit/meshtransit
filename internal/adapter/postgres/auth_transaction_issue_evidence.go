@@ -38,7 +38,7 @@ func (unit *authIssueTransaction) appendIssueEvidence(
 	route, ids := command.Lookup().Snapshot().Route(), command.IDs()
 	payload, err := json.Marshal(authIssuePayload{
 		TransactionID: command.Lookup().Claimed().TransactionID().String(), SessionID: ids.SessionID().String(),
-		WorkspaceID: route.WorkspaceID().String(), ProviderID: route.ProviderID().String(),
+		WorkspaceID: command.Subject().WorkspaceID().String(), ProviderID: route.ProviderID().String(),
 		ClientID: route.ClientID().String(), PrincipalID: issued.Session().PrincipalID().String(),
 		ProviderGeneration: route.ProviderGeneration(), RecoveryEpoch: route.RecoveryEpoch(),
 		IssuedAt: issued.IssuedAt(), IdleExpiresAt: issued.Session().IdleExpiresAt(),

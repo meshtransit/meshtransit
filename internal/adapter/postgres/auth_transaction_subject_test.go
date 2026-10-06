@@ -41,16 +41,16 @@ func TestSubjectReadUsesExactBoundedReadOnlyUnit(t *testing.T) {
 			digests := query.Digests()
 			active := digests[0].Bytes()
 			args := transaction.calls[1].arguments
-			want := []any{route.DeploymentID().String(), route.WorkspaceID().String(), route.ProviderID().String(), route.ClientID().String(), route.ProviderGeneration(), route.RecoveryEpoch(), route.Issuer(), route.DiscoveryURI(), route.AuthorizationEndpoint(), route.TokenEndpoint(), route.JWKSURI(), route.OIDCClientID(), route.ClientAuthMethod(), route.Scopes(), route.AllowedAlgorithms(), route.RedirectURI(), query.Snapshot().TransactionID().String(), int64(2), hash[:], query.Claimed().ConsumedAt(), route.RedirectID(), route.ReturnRouteID(), digests[0].Algorithm(), digests[0].KeyID().String(), active[:]}
-			if len(args) != 27 || !reflect.DeepEqual(args[:25], want) {
+			want := []any{route.DeploymentID().String(), route.ProviderID().String(), route.ClientID().String(), route.ProviderGeneration(), route.RecoveryEpoch(), route.Issuer(), route.DiscoveryURI(), route.AuthorizationEndpoint(), route.TokenEndpoint(), route.JWKSURI(), route.OIDCClientID(), route.ClientAuthMethod(), route.Scopes(), route.AllowedAlgorithms(), route.RedirectURI(), query.Snapshot().TransactionID().String(), int64(2), hash[:], query.Claimed().ConsumedAt(), route.RedirectID(), route.ReturnRouteID(), digests[0].Algorithm(), digests[0].KeyID().String(), active[:]}
+			if len(args) != 26 || !reflect.DeepEqual(args[:24], want) {
 				t.Fatal("claim/route/digest substitution in SQL arguments")
 			}
 			if previous {
 				previousDigest := digests[1].Bytes()
-				if args[25].(*string) == nil || *args[25].(*string) != digests[1].KeyID().String() || !reflect.DeepEqual(args[26], previousDigest[:]) {
+				if args[24].(*string) == nil || *args[24].(*string) != digests[1].KeyID().String() || !reflect.DeepEqual(args[25], previousDigest[:]) {
 					t.Fatal("previous candidate omitted or reordered")
 				}
-			} else if args[25].(*string) != nil || args[26].([]byte) != nil {
+			} else if args[24].(*string) != nil || args[25].([]byte) != nil {
 				t.Fatal("absent previous candidate invented")
 			}
 		})
@@ -321,6 +321,7 @@ func authSubjectRow(query oidcauth.SubjectLookup, mutate func([]any)) authTransa
 		*destinations[15].(*[]byte) = value[:]
 		*destinations[16].(*time.Time) = query.Claimed().ConsumedAt()
 		*destinations[17].(**time.Time) = nil
+		*destinations[18].(*string) = "01890f00-0000-7000-8000-000000000002"
 		if mutate != nil {
 			mutate(destinations)
 		}

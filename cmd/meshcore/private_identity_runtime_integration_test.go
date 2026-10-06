@@ -385,7 +385,10 @@ func privateRuntimeProfileFile(
 	route := provider.route(t, 100)
 	document := map[string]any{
 		"version": 1, "address": address,
-		"deployment_id": route.DeploymentID().String(), "workspace_id": route.WorkspaceID().String(),
+		// Version 1 still requires a valid workspace_id, which Core now ignores;
+		// it deliberately differs from the seeded login Workspace. Version 4 would
+		// need a named non-IP origin this loopback fixture cannot serve.
+		"deployment_id": route.DeploymentID().String(), "workspace_id": privateIdentityID(t, 0xfe).String(),
 		"provider_id": route.ProviderID().String(), "client_id": route.ClientID().String(),
 		"provider_generation": route.ProviderGeneration(),
 		"recovery_epoch":      route.RecoveryEpoch(), "issuer": route.Issuer(), "discovery_uri": route.DiscoveryURI(),

@@ -104,7 +104,7 @@ func (unit *authClaimTransaction) Claim(ctx context.Context, command oidcauth.Cl
 	snapshot, route := command.Snapshot(), command.Snapshot().Route()
 	digest, hash := snapshot.StateDigest().Bytes(), snapshot.SemanticHash()
 	row := unit.database.QueryRow(ctx, claimAuthTransactionSQL,
-		route.DeploymentID().String(), route.WorkspaceID().String(), route.ProviderID().String(), route.ClientID().String(), route.ProviderGeneration(), route.RecoveryEpoch(),
+		route.DeploymentID().String(), route.ProviderID().String(), route.ClientID().String(), route.ProviderGeneration(), route.RecoveryEpoch(),
 		route.Issuer(), route.DiscoveryURI(), route.AuthorizationEndpoint(), route.TokenEndpoint(), route.JWKSURI(), route.OIDCClientID(), route.ClientAuthMethod(), route.Scopes(), route.AllowedAlgorithms(), route.RedirectURI(),
 		snapshot.StateDigest().Algorithm(), snapshot.StateDigest().KeyID().String(), digest[:], route.RedirectID(), route.ReturnRouteID(), snapshot.TransactionID().String(), snapshot.Version(), hash[:],
 	)

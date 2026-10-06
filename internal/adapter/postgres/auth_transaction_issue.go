@@ -144,7 +144,7 @@ func authIssueArguments(command oidcauth.IssueCommand) []any {
 		methods = []string{}
 	}
 	return []any{
-		route.DeploymentID().String(), route.WorkspaceID().String(), route.ProviderID().String(),
+		route.DeploymentID().String(), command.Subject().WorkspaceID().String(), route.ProviderID().String(),
 		route.ClientID().String(), route.ProviderGeneration(), route.RecoveryEpoch(),
 		route.Issuer(), route.DiscoveryURI(), route.AuthorizationEndpoint(), route.TokenEndpoint(),
 		route.JWKSURI(), route.OIDCClientID(), route.ClientAuthMethod(), route.Scopes(),

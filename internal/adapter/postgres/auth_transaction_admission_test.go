@@ -34,7 +34,7 @@ func TestAuthTransactionAdmitUsesExactReadOnlyRoute(t *testing.T) {
 		t.Fatal("admission must only configure timeouts and read exact route")
 	}
 	want := []any{
-		route.DeploymentID().String(), route.WorkspaceID().String(),
+		route.DeploymentID().String(),
 		route.ProviderID().String(), route.ClientID().String(),
 		route.ProviderGeneration(), route.RecoveryEpoch(),
 		route.Issuer(), route.DiscoveryURI(), route.AuthorizationEndpoint(),

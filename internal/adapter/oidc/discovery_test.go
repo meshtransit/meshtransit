@@ -10,7 +10,6 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
-	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 const validDiscoveryBody = `{
@@ -205,10 +204,6 @@ func discoveryRoute(t testing.TB) oidcauth.Route {
 	if err != nil {
 		t.Fatalf("deployment.ParseID() error = %v", err)
 	}
-	workspaceID, err := workspace.ParseID("01890f00-0000-7000-8000-000000000002")
-	if err != nil {
-		t.Fatalf("workspace.ParseID() error = %v", err)
-	}
 	providerID, err := oidcauth.ParseProviderID("01890f00-0000-7000-8000-000000000003")
 	if err != nil {
 		t.Fatalf("oidcauth.ParseProviderID() error = %v", err)
@@ -219,8 +214,8 @@ func discoveryRoute(t testing.TB) oidcauth.Route {
 	}
 	// #nosec G101 -- synthetic OIDC client metadata contains no credential material.
 	route, err := oidcauth.NewRoute(oidcauth.RouteParams{
-		DeploymentID: deploymentID, WorkspaceID: workspaceID,
-		ProviderID: providerID, ClientID: clientID,
+		DeploymentID: deploymentID,
+		ProviderID:   providerID, ClientID: clientID,
 		ProviderGeneration: 3, RecoveryEpoch: 7,
 		Issuer:                "https://login.example.test/realms/meshtransit",
 		DiscoveryURI:          "https://login.example.test/realms/meshtransit/.well-known/openid-configuration",

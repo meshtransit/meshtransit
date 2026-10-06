@@ -11,6 +11,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
+	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 const resolveLoginSubjectSQL = `SELECT transaction_public_id::TEXT, transaction_version,
@@ -18,12 +19,13 @@ const resolveLoginSubjectSQL = `SELECT transaction_public_id::TEXT, transaction_
     principal_public_id::TEXT, subject_public_id::TEXT, membership_public_id::TEXT,
     subject_version, account_version, membership_version,
     principal_authority_generation, account_session_generation, membership_authority_generation,
-    subject_algorithm, subject_key_id, subject_digest, evaluated_at, membership_expires_at
-FROM mesh_ops.resolve_oidc_login_subject_v1(
-    $1::UUID,$2::UUID,$3::UUID,$4::UUID,$5::BIGINT,$6::BIGINT,
-    $7::TEXT,$8::TEXT,$9::TEXT,$10::TEXT,$11::TEXT,$12::TEXT,$13::TEXT,$14::TEXT[],$15::TEXT[],$16::TEXT,
-    $17::UUID,$18::BIGINT,$19::BYTEA,$20::TIMESTAMPTZ,$21::TEXT,$22::TEXT,
-    $23::TEXT,$24::TEXT,$25::BYTEA,$26::TEXT,$27::BYTEA
+    subject_algorithm, subject_key_id, subject_digest, evaluated_at, membership_expires_at,
+    workspace_public_id::TEXT
+FROM mesh_ops.resolve_oidc_login_subject_v2(
+    $1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,
+    $6::TEXT,$7::TEXT,$8::TEXT,$9::TEXT,$10::TEXT,$11::TEXT,$12::TEXT,$13::TEXT[],$14::TEXT[],$15::TEXT,
+    $16::UUID,$17::BIGINT,$18::BYTEA,$19::TIMESTAMPTZ,$20::TEXT,$21::TEXT,
+    $22::TEXT,$23::TEXT,$24::BYTEA,$25::TEXT,$26::BYTEA
 )`
 
 var _ oidcauth.LoginSubjectResolver = (*AuthTransactionStore)(nil)
@@ -88,7 +90,7 @@ func (store *AuthTransactionStore) ResolveLoginSubject(
 		previousBytes = previous[:]
 	}
 	hash := snapshot.SemanticHash()
-	var transactionID, principalID, subjectID, membershipID, algorithm, keyID string
+	var transactionID, principalID, subjectID, membershipID, algorithm, keyID, workspaceID string
 	var version int64
 	var consumedAt, evaluatedAt time.Time
 	var membershipExpiresAt *time.Time
@@ -99,7 +101,6 @@ func (store *AuthTransactionStore) ResolveLoginSubject(
 		ctx,
 		resolveLoginSubjectSQL,
 		route.DeploymentID().String(),
-		route.WorkspaceID().String(),
 		route.ProviderID().String(),
 		route.ClientID().String(),
 		route.ProviderGeneration(),
@@ -144,6 +145,7 @@ func (store *AuthTransactionStore) ResolveLoginSubject(
 		&digestBytes,
 		&evaluatedAt,
 		&membershipExpiresAt,
+		&workspaceID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, oidcauth.ErrSubjectResolutionRejected
@@ -165,6 +167,10 @@ func (store *AuthTransactionStore) ResolveLoginSubject(
 		return result, oidcauth.ErrSubjectResolutionRejected
 	}
 	params.MembershipID, err = oidcauth.ParseLoginMembershipID(membershipID)
+	if err != nil {
+		return result, oidcauth.ErrSubjectResolutionRejected
+	}
+	params.WorkspaceID, err = workspace.ParseID(workspaceID)
 	if err != nil {
 		return result, oidcauth.ErrSubjectResolutionRejected
 	}

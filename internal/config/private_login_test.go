@@ -384,3 +384,41 @@ func FuzzPrivateLoginConfig(f *testing.F) {
 		}
 	})
 }
+
+func TestPrivateLoginConfigVersion4HasNoWorkspace(t *testing.T) {
+	t.Parallel()
+	process, document := privateLoginTestDocument(t)
+	document["version"] = 4
+	document["connector_id"] = "google-v1"
+	document["scopes"] = []string{"openid", "federated:id"}
+	delete(document, "workspace_id")
+	profile, err := parsePrivateLoginConfig(privateLoginTestJSON(t, document), process)
+	if err != nil || profile == nil || profile.Route().ConnectorID() != "google-v1" {
+		t.Fatalf("version 4 without workspace_id rejected: %v", err)
+	}
+	for name, change := range map[string]func(map[string]any){
+		"version 4 with workspace_id": func(candidate map[string]any) {
+			candidate["workspace_id"] = "01890f00-0000-7000-8000-000000000002"
+		},
+		"version 3 without workspace_id": func(candidate map[string]any) { candidate["version"] = 3 },
+		"version 5":                      func(candidate map[string]any) { candidate["version"] = 5 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, candidate := privateLoginTestDocument(t)
+			candidate["version"] = 4
+			candidate["connector_id"] = "google-v1"
+			candidate["scopes"] = []string{"openid", "federated:id"}
+			delete(candidate, "workspace_id")
+			change(candidate)
+			if profile, err := parsePrivateLoginConfig(privateLoginTestJSON(t, candidate), process); profile != nil || !errors.Is(err, ErrInvalid) {
+				t.Fatal("invalid version/workspace combination accepted")
+			}
+		})
+	}
+	_, legacy := privateLoginTestDocument(t)
+	legacy["workspace_id"] = "not-a-workspace"
+	if profile, err := parsePrivateLoginConfig(privateLoginTestJSON(t, legacy), process); profile != nil || !errors.Is(err, ErrInvalid) {
+		t.Fatal("version 2 accepted a malformed ignored workspace_id")
+	}
+}

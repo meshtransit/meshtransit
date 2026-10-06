@@ -62,7 +62,7 @@ func TestPrivateIdentityDispatcherRejectsForeignNamespaceBeforeEffects(t *testin
 
 func privateIdentityDispatchRouteParams(route oidcauth.Route) oidcauth.RouteParams {
 	return oidcauth.RouteParams{
-		DeploymentID: route.DeploymentID(), WorkspaceID: route.WorkspaceID(), ProviderID: route.ProviderID(),
+		DeploymentID: route.DeploymentID(), ProviderID: route.ProviderID(),
 		ClientID: route.ClientID(), ProviderGeneration: route.ProviderGeneration(), RecoveryEpoch: route.RecoveryEpoch(),
 		Issuer: route.Issuer(), DiscoveryURI: route.DiscoveryURI(), AuthorizationEndpoint: route.AuthorizationEndpoint(),
 		TokenEndpoint: route.TokenEndpoint(), JWKSURI: route.JWKSURI(), OIDCClientID: route.OIDCClientID(),
@@ -166,8 +166,7 @@ func TestPrivateIdentityDispatcherDelegatesScopedResourceSharingReads(t *testing
 			fixture := newPrivateIdentityFixture(t)
 			root := fixture.compose(t)
 			issued := fixture.issue(t, root).Issued()
-			route := fixture.options.Route
-			path := "/api/v1/workspaces/" + route.WorkspaceID().String() + "/networks/01890f00-0000-7000-8000-000000000201/" + suffix
+			path := "/api/v1/workspaces/01890f00-0000-7000-8000-000000000002/networks/01890f00-0000-7000-8000-000000000201/" + suffix
 			request := fixture.managementRequest(t, issued.Token(), path, "")
 			request.Method = http.MethodGet
 			request.Body = http.NoBody

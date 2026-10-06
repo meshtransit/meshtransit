@@ -121,7 +121,7 @@ func applyBootstrapPlan(ctx context.Context, tx pgx.Tx, plan bootstrap.Plan) (Bo
 		return BootstrapReport{}, err
 	}
 	report.ProviderCreated = created
-	for index, account := range plan.Accounts {
+	for _, account := range plan.Accounts {
 		principalID, created, err := ensureBootstrapAccount(ctx, tx, plan, deploymentID, providerID, account)
 		if err != nil {
 			return BootstrapReport{}, err
@@ -131,13 +131,9 @@ func applyBootstrapPlan(ctx context.Context, tx pgx.Tx, plan bootstrap.Plan) (Bo
 			continue
 		}
 		report.AccountsCreated++
-		// The first Account owns the configured login Workspace until login
-		// selects Workspaces per Account (implementation step 6).
-		workspaceID := publicid.ID(plan.Route.WorkspaceID())
-		if index > 0 {
-			if workspaceID, err = publicid.New(); err != nil {
-				return BootstrapReport{}, ErrBootstrapUnavailable
-			}
+		workspaceID, err := publicid.New()
+		if err != nil {
+			return BootstrapReport{}, ErrBootstrapUnavailable
 		}
 		if err := provisionBootstrapWorkspace(ctx, tx, plan, deploymentID, principalID, providerID, clientID,
 			workspaceID, account.WorkspaceName); err != nil {

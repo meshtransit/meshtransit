@@ -11,6 +11,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/publicid"
+	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 var (
@@ -99,6 +100,7 @@ type LoginSubjectParams struct {
 	PrincipalID                                                                           identity.PrincipalID
 	IdentitySubjectID                                                                     accountsession.IdentitySubjectID
 	MembershipID                                                                          LoginMembershipID
+	WorkspaceID                                                                           workspace.ID
 	SubjectVersion, AccountVersion, MembershipVersion                                     int64
 	PrincipalAuthorityGeneration, AccountSessionGeneration, MembershipAuthorityGeneration int64
 	EvaluatedAt, MembershipExpiresAt                                                      time.Time
@@ -137,7 +139,10 @@ func (snapshot LoginSubjectSnapshot) IdentitySubjectID() accountsession.Identity
 	return snapshot.params.IdentitySubjectID
 }
 
-// MembershipID returns only the exact login Workspace's existing membership.
+// WorkspaceID returns the Workspace Core chose for this Account's Session.
+func (snapshot LoginSubjectSnapshot) WorkspaceID() workspace.ID { return snapshot.params.WorkspaceID }
+
+// MembershipID returns the Account's existing membership in WorkspaceID.
 func (snapshot LoginSubjectSnapshot) MembershipID() LoginMembershipID {
 	return snapshot.params.MembershipID
 }
@@ -182,7 +187,8 @@ func (snapshot LoginSubjectSnapshot) Digest() SubjectDigest { return snapshot.pa
 // IsValid checks shape and bounded exact match, not current membership authority.
 func (snapshot LoginSubjectSnapshot) IsValid() bool {
 	p := snapshot.params
-	validIDs := p.PrincipalID.IsValid() && p.IdentitySubjectID.IsValid() && p.MembershipID.IsValid()
+	validIDs := p.PrincipalID.IsValid() && p.IdentitySubjectID.IsValid() && p.MembershipID.IsValid() &&
+		p.WorkspaceID.IsValid()
 	validVersions := p.SubjectVersion > 0 && p.AccountVersion > 0 && p.MembershipVersion > 0
 	validGenerations := p.PrincipalAuthorityGeneration > 0 && p.AccountSessionGeneration > 0 && p.MembershipAuthorityGeneration > 0
 	if !validIDs || !validVersions || !validGenerations || !p.Lookup.IsValid() {

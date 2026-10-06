@@ -145,10 +145,6 @@ func authTransactionBrowserFixture(t *testing.T) (oidcauth.Pending, oidcauth.Sec
 	if err != nil {
 		t.Fatalf("deployment.ParseID() error = %v", err)
 	}
-	workspaceID, err := workspace.ParseID("01890f00-0000-7000-8000-000000000002")
-	if err != nil {
-		t.Fatalf("workspace.ParseID() error = %v", err)
-	}
 	providerID, err := oidcauth.ParseProviderID("01890f00-0000-7000-8000-000000000003")
 	if err != nil {
 		t.Fatalf("oidcauth.ParseProviderID() error = %v", err)
@@ -160,7 +156,6 @@ func authTransactionBrowserFixture(t *testing.T) (oidcauth.Pending, oidcauth.Sec
 	// #nosec G101 -- synthetic OIDC metadata contains only an auth-method identifier, no credentials.
 	route, err := oidcauth.NewRoute(oidcauth.RouteParams{
 		DeploymentID:          deploymentID,
-		WorkspaceID:           workspaceID,
 		ProviderID:            providerID,
 		ClientID:              clientID,
 		ProviderGeneration:    3,
@@ -305,4 +300,14 @@ func secretEncodings(pending oidcauth.Pending) []string {
 		base64.RawURLEncoding.EncodeToString(stateDigest[:]),
 		base64.RawURLEncoding.EncodeToString(nonceDigest[:]),
 	}
+}
+
+// authTransactionTestWorkspaceID is the Workspace a subject snapshot binds to.
+func authTransactionTestWorkspaceID(t *testing.T) workspace.ID {
+	t.Helper()
+	workspaceID, err := workspace.ParseID("01890f00-0000-7000-8000-000000000002")
+	if err != nil {
+		t.Fatalf("workspace.ParseID() error = %v", err)
+	}
+	return workspaceID
 }

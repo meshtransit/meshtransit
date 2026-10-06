@@ -75,7 +75,6 @@ func TestProviderSessionDigestPreservesExactOpaqueNamespace(t *testing.T) {
 	}
 	route.providerGeneration++
 	route.recoveryEpoch++
-	route.workspaceID[15] ^= 1
 	route.clientID[15] ^= 1
 	same, err := key.session(route, identity)
 	if err != nil || same != digest {

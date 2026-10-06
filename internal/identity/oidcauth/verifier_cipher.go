@@ -12,14 +12,13 @@ import (
 	"log/slog"
 
 	"github.com/meshtransit/meshtransit/internal/deployment"
-	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 const (
 	// VerifierEncryptionAlgorithmAES256GCMV1 identifies the durable envelope format.
 	VerifierEncryptionAlgorithmAES256GCMV1 = "aead-aes-256-gcm-v1"
 	verifierEncryptionKeyBytes             = 32
-	verifierBindingDomain                  = "meshtransit/oidc-auth/pkce-verifier/v1\x00"
+	verifierBindingDomain                  = "meshtransit/oidc-auth/pkce-verifier/v2\x00"
 	maximumRedirectIDBytes                 = 128
 )
 
@@ -54,7 +53,6 @@ func (id VerifierEncryptionKeyID) IsValid() bool { return validKeyID(id.value) }
 // Binding fixes encrypted verifier custody to one exact authority context.
 type Binding struct {
 	DeploymentID       deployment.ID
-	WorkspaceID        workspace.ID
 	ProviderID         ProviderID
 	ClientID           ClientID
 	TransactionID      TransactionID
@@ -66,7 +64,7 @@ type Binding struct {
 
 // IsValid reports whether every authority dimension is exact and bounded.
 func (binding Binding) IsValid() bool {
-	return binding.DeploymentID.IsValid() && binding.WorkspaceID.IsValid() &&
+	return binding.DeploymentID.IsValid() &&
 		binding.ProviderID.IsValid() && binding.ClientID.IsValid() &&
 		binding.TransactionID.IsValid() && binding.ProviderGeneration > 0 &&
 		binding.RecoveryEpoch > 0 && validRouteID(binding.RedirectID) &&
@@ -234,12 +232,10 @@ func verifierBindingBytes(binding Binding) []byte {
 	buffer := bytes.NewBuffer(make([]byte, 0, 192))
 	buffer.WriteString(verifierBindingDomain)
 	deploymentID := binding.DeploymentID.Bytes()
-	workspaceID := binding.WorkspaceID.Bytes()
 	providerID := binding.ProviderID.Bytes()
 	clientID := binding.ClientID.Bytes()
 	transactionID := binding.TransactionID.Bytes()
 	buffer.Write(deploymentID[:])
-	buffer.Write(workspaceID[:])
 	buffer.Write(providerID[:])
 	buffer.Write(clientID[:])
 	buffer.Write(transactionID[:])

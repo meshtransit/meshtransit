@@ -117,7 +117,6 @@ func (unit *authFailureTransaction) Fail(
 		ctx,
 		failAuthTransactionSQL,
 		route.DeploymentID().String(),
-		route.WorkspaceID().String(),
 		route.ProviderID().String(),
 		route.ClientID().String(),
 		route.ProviderGeneration(),

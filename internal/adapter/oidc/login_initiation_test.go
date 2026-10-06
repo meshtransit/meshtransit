@@ -12,7 +12,6 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
-	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 func initiationFixture(t testing.TB) (*LoginInitiationGuard, time.Time) {
@@ -268,13 +267,6 @@ func TestLoginInitiationFixesEveryConfiguredTrustDimension(t *testing.T) {
 				t.Fatal(err)
 			}
 			p.DeploymentID = value
-		}},
-		{name: "workspace", mutate: func(p *oidcauth.RouteParams) {
-			value, err := workspace.ParseID("01890f00-0000-7000-8000-000000000009")
-			if err != nil {
-				t.Fatal(err)
-			}
-			p.WorkspaceID = value
 		}},
 		{name: "provider", mutate: func(p *oidcauth.RouteParams) {
 			value, err := oidcauth.ParseProviderID("01890f00-0000-7000-8000-000000000009")

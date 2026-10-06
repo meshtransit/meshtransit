@@ -21,8 +21,8 @@ const privateFactoryRecoveryEvidence = "fixture://provider-recovery/unproven-v2"
 func privateFactoryRouteGeneration(t *testing.T, route oidcauth.Route, generation int64) oidcauth.Route {
 	t.Helper()
 	updated, err := oidcauth.NewRoute(oidcauth.RouteParams{
-		DeploymentID: route.DeploymentID(), WorkspaceID: route.WorkspaceID(),
-		ProviderID: route.ProviderID(), ClientID: route.ClientID(), ProviderGeneration: generation,
+		DeploymentID: route.DeploymentID(), ProviderID: route.ProviderID(),
+		ClientID: route.ClientID(), ProviderGeneration: generation,
 		RecoveryEpoch: route.RecoveryEpoch(), Issuer: route.Issuer(), DiscoveryURI: route.DiscoveryURI(),
 		AuthorizationEndpoint: route.AuthorizationEndpoint(), TokenEndpoint: route.TokenEndpoint(),
 		JWKSURI: route.JWKSURI(), OIDCClientID: route.OIDCClientID(), ConnectorID: route.ConnectorID(), ClientKind: "confidential",

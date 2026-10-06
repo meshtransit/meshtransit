@@ -392,7 +392,7 @@ func (codec *LoginCallbackCapsuleCodec) additionalData(prefix []byte, cookie oid
 
 func callbackRouteFingerprint(route oidcauth.Route) ([sha256.Size]byte, error) {
 	value, err := json.Marshal(oidcauth.RouteParams{
-		DeploymentID: route.DeploymentID(), WorkspaceID: route.WorkspaceID(), ProviderID: route.ProviderID(),
+		DeploymentID: route.DeploymentID(), ProviderID: route.ProviderID(),
 		ClientID: route.ClientID(), ProviderGeneration: route.ProviderGeneration(), RecoveryEpoch: route.RecoveryEpoch(),
 		Issuer: route.Issuer(), DiscoveryURI: route.DiscoveryURI(), AuthorizationEndpoint: route.AuthorizationEndpoint(),
 		TokenEndpoint: route.TokenEndpoint(), JWKSURI: route.JWKSURI(), OIDCClientID: route.OIDCClientID(),

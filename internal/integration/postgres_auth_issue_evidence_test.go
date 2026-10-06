@@ -134,6 +134,11 @@ WHERE i.public_id=$1::UUID AND i.change_public_id=$3::UUID`,
 				t.Fatal("payload changed or secret field added")
 			}
 		}
+		var payloadWorkspace string
+		if err := json.Unmarshal(payload["workspace_public_id"], &payloadWorkspace); err != nil ||
+			payloadWorkspace != command.Subject().WorkspaceID().String() {
+			t.Fatal("issuance payload does not name the Workspace Core chose")
+		}
 		var previousHash [32]byte
 		copy(previousHash[:], previous)
 		// SQL stores canonical JSONB, whereas hashes bind the original encoded
@@ -151,7 +156,7 @@ WHERE i.public_id=$1::UUID AND i.change_public_id=$3::UUID`,
 			IdleExpiresAt      time.Time `json:"idle_expires_at"`
 			AbsoluteExpiresAt  time.Time `json:"absolute_expires_at"`
 		}{command.Lookup().Claimed().TransactionID().String(), ids.SessionID().String(),
-			command.Lookup().Snapshot().Route().WorkspaceID().String(), command.Lookup().Snapshot().Route().ProviderID().String(),
+			command.Subject().WorkspaceID().String(), command.Lookup().Snapshot().Route().ProviderID().String(),
 			command.Lookup().Snapshot().Route().ClientID().String(), command.Subject().PrincipalID().String(),
 			command.Lookup().Snapshot().Route().ProviderGeneration(), command.Lookup().Snapshot().Route().RecoveryEpoch(), at, idle, absolute})
 		if err != nil {

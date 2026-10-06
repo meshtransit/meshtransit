@@ -13,7 +13,6 @@ import (
 	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
 	"github.com/meshtransit/meshtransit/internal/publicid"
-	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 const integrationCreatedAuthTransactionPublicID = "01890f00-0000-7000-8000-000000000951"
@@ -21,7 +20,6 @@ const integrationCreatedAuthTransactionPublicID = "01890f00-0000-7000-8000-00000
 type integrationAuthRouteParams struct {
 	providerGeneration int64
 	recoveryEpoch      int64
-	workspacePublicID  string
 }
 
 func assertPostgreSQLAuthTransaction(
@@ -49,7 +47,6 @@ func assertPostgreSQLAuthTransaction(
 		integrationAuthRouteParams{
 			providerGeneration: 1,
 			recoveryEpoch:      1,
-			workspacePublicID:  "01890f00-0000-7000-8000-000000000101",
 		},
 		[4]string{
 			integrationCreatedAuthTransactionPublicID,
@@ -80,16 +77,19 @@ func assertPostgreSQLAuthTransaction(
 
 	var state, action, eventClass string
 	var stateDigestBytes, nonceDigestBytes, ciphertextBytes, bindingHashBytes int
-	var actorAbsent, networkRevisionAbsent bool
+	var actorAbsent, networkRevisionAbsent, workspaceAbsent bool
 	var mutationCount int64
 	if err := adminConnection.QueryRow(ctx, `SELECT
     auth.state,
+    auth.workspace_id IS NULL,
     pg_catalog.octet_length(auth.state_digest),
     pg_catalog.octet_length(auth.nonce_digest),
     pg_catalog.octet_length(auth.pkce_verifier_ciphertext),
     pg_catalog.octet_length(auth.binding_semantic_hash),
     audit.action,
-    audit.actor_principal_public_id IS NULL,
+    audit.actor_principal_public_id IS NULL
+      AND NOT (audit.payload ? 'workspace_public_id')
+      AND NOT (outbox.payload ? 'workspace_public_id'),
     outbox.event_class,
     outbox.network_revision IS NULL,
     (
@@ -109,6 +109,7 @@ WHERE auth.public_id = $1::UUID`,
 		pending.MutationIDs().ChangeID().String(),
 	).Scan(
 		&state,
+		&workspaceAbsent,
 		&stateDigestBytes,
 		&nonceDigestBytes,
 		&ciphertextBytes,
@@ -120,6 +121,9 @@ WHERE auth.public_id = $1::UUID`,
 		&mutationCount,
 	); err != nil {
 		t.Fatalf("query persisted OIDC auth transaction evidence: %v", err)
+	}
+	if !workspaceAbsent {
+		t.Fatal("Workspace-less browser login persisted a Workspace before Account selection")
 	}
 	if state != "pending" || stateDigestBytes != 32 || nonceDigestBytes != 32 ||
 		ciphertextBytes < 29 || bindingHashBytes != 32 ||
@@ -159,7 +163,6 @@ WHERE auth.public_id = $1::UUID`,
 			route: integrationAuthRouteParams{
 				providerGeneration: 2,
 				recoveryEpoch:      1,
-				workspacePublicID:  "01890f00-0000-7000-8000-000000000101",
 			},
 		},
 		{
@@ -168,16 +171,6 @@ WHERE auth.public_id = $1::UUID`,
 			route: integrationAuthRouteParams{
 				providerGeneration: 1,
 				recoveryEpoch:      2,
-				workspacePublicID:  "01890f00-0000-7000-8000-000000000101",
-			},
-		},
-		{
-			name:   "unmapped Workspace",
-			suffix: "954",
-			route: integrationAuthRouteParams{
-				providerGeneration: 1,
-				recoveryEpoch:      1,
-				workspacePublicID:  "01890f00-0000-7000-8000-000000000102",
 			},
 		},
 	} {
@@ -234,7 +227,7 @@ func assertIntegrationAuthRoute(
 	route oidcauth.Route,
 ) {
 	t.Helper()
-	var deploymentOK, workspaceOK, providerOK, generationOK, clientOK, bindingOK bool
+	var deploymentOK, providerOK, generationOK, clientOK, bindingOK bool
 	if err := connection.QueryRow(ctx, `SELECT
     EXISTS (
         SELECT 1 FROM mesh.deployment AS deployment
@@ -242,36 +235,28 @@ func assertIntegrationAuthRoute(
           AND deployment.state = 'active'
           AND deployment.recovery_state = 'verified'
           AND deployment.deleted_at IS NULL
-          AND deployment.recovery_epoch = $6::BIGINT
-    ),
-    EXISTS (
-        SELECT 1 FROM mesh.workspace AS workspace
-        JOIN mesh.deployment AS deployment ON deployment.id = workspace.deployment_id
-        WHERE deployment.installation_public_id = $1::UUID
-          AND workspace.public_id = $2::UUID
-          AND workspace.state = 'active'
-          AND workspace.deleted_at IS NULL
+          AND deployment.recovery_epoch = $5::BIGINT
     ),
     EXISTS (
         SELECT 1 FROM mesh.identity_provider AS provider
         JOIN mesh.deployment AS deployment ON deployment.id = provider.deployment_id
         WHERE deployment.installation_public_id = $1::UUID
-          AND provider.public_id = $3::UUID
+          AND provider.public_id = $2::UUID
           AND provider.state = 'active'
           AND provider.recovery_state = 'verified'
           AND provider.deleted_at IS NULL
-          AND provider.current_generation = $5::BIGINT
-          AND provider.issuer = $7::TEXT
-          AND provider.discovery_uri = $8::TEXT
-          AND provider.authorization_endpoint = $9::TEXT
-          AND provider.token_endpoint = $10::TEXT
-          AND provider.jwks_uri = $11::TEXT
+          AND provider.current_generation = $4::BIGINT
+          AND provider.issuer = $6::TEXT
+          AND provider.discovery_uri = $7::TEXT
+          AND provider.authorization_endpoint = $8::TEXT
+          AND provider.token_endpoint = $9::TEXT
+          AND provider.jwks_uri = $10::TEXT
     ),
     EXISTS (
         SELECT 1 FROM mesh.identity_provider_generation AS generation
         JOIN mesh.identity_provider AS provider ON provider.id = generation.identity_provider_id
-        WHERE provider.public_id = $3::UUID
-          AND generation.generation = $5::BIGINT
+        WHERE provider.public_id = $2::UUID
+          AND generation.generation = $4::BIGINT
           AND generation.state = 'current'
           AND generation.valid_from <= pg_catalog.transaction_timestamp()
           AND generation.valid_until IS NULL
@@ -279,18 +264,18 @@ func assertIntegrationAuthRoute(
     EXISTS (
         SELECT 1 FROM mesh.identity_provider_client AS client
         JOIN mesh.identity_provider AS provider ON provider.id = client.identity_provider_id
-        WHERE provider.public_id = $3::UUID
-          AND client.public_id = $4::UUID
+        WHERE provider.public_id = $2::UUID
+          AND client.public_id = $3::UUID
           AND client.state = 'active'
           AND client.deleted_at IS NULL
           AND client.client_kind = 'confidential'
-          AND client.client_id = $12::TEXT
-          AND client.client_auth_method = $13::TEXT
+          AND client.client_id = $11::TEXT
+          AND client.client_auth_method = $12::TEXT
           AND client.pkce_s256_required
           AND 'authorization_code' = ANY (client.allowed_flows)
-          AND client.allowed_scopes = $14::TEXT[]
-          AND client.allowed_algorithms = $15::TEXT[]
-          AND $16::TEXT = ANY (client.redirect_uris)
+          AND client.allowed_scopes = $13::TEXT[]
+          AND client.allowed_algorithms = $14::TEXT[]
+          AND $15::TEXT = ANY (client.redirect_uris)
     ),
     EXISTS (
         SELECT 1 FROM mesh.workspace_identity_provider AS binding
@@ -298,9 +283,10 @@ func assertIntegrationAuthRoute(
         JOIN mesh.identity_provider AS provider ON provider.id = binding.identity_provider_id
         JOIN mesh.identity_provider_client AS client
           ON client.id = binding.identity_provider_client_id
-        WHERE workspace.public_id = $2::UUID
-          AND provider.public_id = $3::UUID
-          AND client.public_id = $4::UUID
+        WHERE workspace.state = 'active'
+          AND workspace.deleted_at IS NULL
+          AND provider.public_id = $2::UUID
+          AND client.public_id = $3::UUID
           AND binding.state = 'active'
           AND binding.deleted_at IS NULL
           AND binding.organization_digest_algorithm IS NULL
@@ -308,7 +294,6 @@ func assertIntegrationAuthRoute(
           AND binding.organization_digest IS NULL
     )`,
 		route.DeploymentID().String(),
-		route.WorkspaceID().String(),
 		route.ProviderID().String(),
 		route.ClientID().String(),
 		route.ProviderGeneration(),
@@ -325,7 +310,6 @@ func assertIntegrationAuthRoute(
 		route.RedirectURI(),
 	).Scan(
 		&deploymentOK,
-		&workspaceOK,
 		&providerOK,
 		&generationOK,
 		&clientOK,
@@ -333,11 +317,10 @@ func assertIntegrationAuthRoute(
 	); err != nil {
 		t.Fatalf("query integration OIDC route preconditions: %v", err)
 	}
-	if !deploymentOK || !workspaceOK || !providerOK || !generationOK || !clientOK || !bindingOK {
+	if !deploymentOK || !providerOK || !generationOK || !clientOK || !bindingOK {
 		t.Fatalf(
-			"integration OIDC route deployment=%t workspace=%t provider=%t generation=%t client=%t binding=%t",
+			"integration OIDC route deployment=%t provider=%t generation=%t client=%t binding=%t",
 			deploymentOK,
-			workspaceOK,
 			providerOK,
 			generationOK,
 			clientOK,
@@ -356,10 +339,6 @@ func integrationAuthTransactionPending(
 	if err != nil {
 		t.Fatalf("parse integration Deployment: %v", err)
 	}
-	workspaceID, err := workspace.ParseID(routeParams.workspacePublicID)
-	if err != nil {
-		t.Fatalf("parse integration Workspace: %v", err)
-	}
 	providerID, err := oidcauth.ParseProviderID(integrationIdentityProviderPublicID)
 	if err != nil {
 		t.Fatalf("parse integration provider: %v", err)
@@ -371,7 +350,6 @@ func integrationAuthTransactionPending(
 	// #nosec G101 -- synthetic OIDC metadata contains only an auth-method identifier, no credentials.
 	route, err := oidcauth.NewRoute(oidcauth.RouteParams{
 		DeploymentID:          deploymentID,
-		WorkspaceID:           workspaceID,
 		ProviderID:            providerID,
 		ClientID:              clientID,
 		ProviderGeneration:    routeParams.providerGeneration,

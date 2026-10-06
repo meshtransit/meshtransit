@@ -24,14 +24,14 @@ func (unit *authClaimTransaction) appendClaimEvidence(ctx context.Context, comma
 	snapshot, ids := command.Snapshot(), command.MutationIDs()
 	route := snapshot.Route()
 	payload, err := json.Marshal(authClaimAuditPayload{authTransactionAuditPayload: authTransactionAuditPayload{
-		WorkspacePublicID: route.WorkspaceID().String(), ProviderPublicID: route.ProviderID().String(), ClientPublicID: route.ClientID().String(),
+		ProviderPublicID: route.ProviderID().String(), ClientPublicID: route.ClientID().String(),
 		ProviderGeneration: route.ProviderGeneration(), RecoveryEpoch: route.RecoveryEpoch(), RedirectID: route.RedirectID(), ReturnRouteID: route.ReturnRouteID(), ExpiresAt: snapshot.ExpiresAt(),
 	}, ConsumedAt: claimed.ConsumedAt()})
 	if err != nil {
 		return err
 	}
 	outbox, err := json.Marshal(authClaimOutboxPayload{authTransactionOutboxPayload: authTransactionOutboxPayload{
-		TransactionPublicID: snapshot.TransactionID().String(), WorkspacePublicID: route.WorkspaceID().String(), ProviderPublicID: route.ProviderID().String(),
+		TransactionPublicID: snapshot.TransactionID().String(), ProviderPublicID: route.ProviderID().String(),
 		ProviderGeneration: route.ProviderGeneration(), RecoveryEpoch: route.RecoveryEpoch(), ExpiresAt: snapshot.ExpiresAt(),
 	}, ConsumedAt: claimed.ConsumedAt()})
 	if err != nil {

@@ -13,11 +13,11 @@ import (
 // ErrAdmitAuthTransactionRoute classifies failed durable login-route admission.
 var ErrAdmitAuthTransactionRoute = errors.New("admit postgres auth transaction route")
 
-const admitAuthTransactionRouteSQL = `SELECT mesh_ops.admit_oidc_login_route_v1(
-    $1::UUID, $2::UUID, $3::UUID, $4::UUID,
-    $5::BIGINT, $6::BIGINT,
-    $7::TEXT, $8::TEXT, $9::TEXT, $10::TEXT, $11::TEXT,
-    $12::TEXT, $13::TEXT, $14::TEXT[], $15::TEXT[], $16::TEXT
+const admitAuthTransactionRouteSQL = `SELECT mesh_ops.admit_oidc_login_route_v2(
+    $1::UUID, $2::UUID, $3::UUID,
+    $4::BIGINT, $5::BIGINT,
+    $6::TEXT, $7::TEXT, $8::TEXT, $9::TEXT, $10::TEXT,
+    $11::TEXT, $12::TEXT, $13::TEXT[], $14::TEXT[], $15::TEXT
 )`
 
 // Admit checks one current durable route without granting membership or session
@@ -69,7 +69,6 @@ func (store *AuthTransactionStore) Admit(ctx context.Context, route oidcauth.Rou
 		ctx,
 		admitAuthTransactionRouteSQL,
 		route.DeploymentID().String(),
-		route.WorkspaceID().String(),
 		route.ProviderID().String(),
 		route.ClientID().String(),
 		route.ProviderGeneration(),

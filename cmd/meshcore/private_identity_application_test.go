@@ -626,8 +626,8 @@ func newPrivateIdentityFixture(t *testing.T) *privateIdentityFixture {
 		t.Fatal(err)
 	}
 	route, err := oidcauth.NewRoute(oidcauth.RouteParams{
-		DeploymentID: dep, WorkspaceID: workspace.ID(privateIdentityID(t, 2)),
-		ProviderID: oidcauth.ProviderID(privateIdentityID(t, 3)), ClientID: oidcauth.ClientID(privateIdentityID(t, 4)),
+		DeploymentID: dep,
+		ProviderID:   oidcauth.ProviderID(privateIdentityID(t, 3)), ClientID: oidcauth.ClientID(privateIdentityID(t, 4)),
 		ProviderGeneration: 2, RecoveryEpoch: 7,
 		Issuer: providerBase.String(), DiscoveryURI: providerBase.JoinPath("discovery").String(),
 		AuthorizationEndpoint: providerBase.JoinPath("authorize").String(),
@@ -973,6 +973,7 @@ func (fixture *privateIdentityFixture) ResolveLoginSubject(
 		Lookup: lookup, Digest: lookup.Digests()[0], PrincipalID: identity.PrincipalID(privateIdentityID(fixture.t, 5)),
 		IdentitySubjectID: accountsession.IdentitySubjectID(privateIdentityID(fixture.t, 6)),
 		MembershipID:      oidcauth.LoginMembershipID(privateIdentityID(fixture.t, 7)),
+		WorkspaceID:       workspace.ID(privateIdentityID(fixture.t, 2)),
 		SubjectVersion:    1, AccountVersion: 1, MembershipVersion: 1,
 		PrincipalAuthorityGeneration: 1, AccountSessionGeneration: 1,
 		MembershipAuthorityGeneration: 1, EvaluatedAt: fixture.now,
@@ -1133,8 +1134,8 @@ func (fixture *privateIdentityFixture) managementRequest(
 	})
 	return request
 }
-func privateIdentityRevokePath(route oidcauth.Route) string {
-	return "/api/v1/workspaces/" + route.WorkspaceID().String() +
+func privateIdentityRevokePath(_ oidcauth.Route) string {
+	return "/api/v1/workspaces/01890f00-0000-7000-8000-000000000002" +
 		"/networks/01890f00-0000-7000-8000-000000000008/devices/" +
 		"01890f00-0000-7000-8000-000000000009/actions/revoke"
 }

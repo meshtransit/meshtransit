@@ -90,7 +90,6 @@ func (transaction *authTransactionTransaction) createLocked(
 		createAuthTransactionSQL,
 		pending.TransactionID().String(),
 		route.DeploymentID().String(),
-		route.WorkspaceID().String(),
 		route.ProviderID().String(),
 		route.ClientID().String(),
 		route.ProviderGeneration(),

@@ -73,15 +73,15 @@ AND pkce_verifier_ciphertext IS NOT NULL`, pending.TransactionID().String(), pen
 	}
 	evidence := storage.consumingLifecycleEvidence(t, snapshot, 2)
 	wantAudit := privateFactoryClaimAuditPayload{
-		WorkspaceID: route.WorkspaceID().String(), ProviderID: route.ProviderID().String(),
-		ClientID: route.ClientID().String(), ProviderGeneration: route.ProviderGeneration(),
-		RecoveryEpoch: route.RecoveryEpoch(), RedirectID: route.RedirectID(), ReturnRouteID: route.ReturnRouteID(),
+		ProviderID: route.ProviderID().String(), ClientID: route.ClientID().String(),
+		ProviderGeneration: route.ProviderGeneration(), RecoveryEpoch: route.RecoveryEpoch(),
+		RedirectID: route.RedirectID(), ReturnRouteID: route.ReturnRouteID(),
 		ExpiresAt: snapshot.ExpiresAt(), ConsumedAt: snapshot.ConsumedAt(),
 	}
 	wantOutbox := privateFactoryClaimOutboxPayload{
-		TransactionID: snapshot.TransactionID().String(), WorkspaceID: route.WorkspaceID().String(),
-		ProviderID: route.ProviderID().String(), ProviderGeneration: route.ProviderGeneration(),
-		RecoveryEpoch: route.RecoveryEpoch(), ExpiresAt: snapshot.ExpiresAt(), ConsumedAt: snapshot.ConsumedAt(),
+		TransactionID: snapshot.TransactionID().String(), ProviderID: route.ProviderID().String(),
+		ProviderGeneration: route.ProviderGeneration(), RecoveryEpoch: route.RecoveryEpoch(),
+		ExpiresAt: snapshot.ExpiresAt(), ConsumedAt: snapshot.ConsumedAt(),
 	}
 	var decodedAudit privateFactoryClaimAuditPayload
 	var decodedOutbox privateFactoryClaimOutboxPayload
@@ -225,8 +225,8 @@ func privateFactoryCanonicalPayload(t *testing.T, decoded, expected any) []byte 
 	return want
 }
 
+// Pre-issue lifecycle payloads name no Workspace: none is chosen before issue.
 type privateFactoryClaimAuditPayload struct {
-	WorkspaceID        string    `json:"workspace_public_id"`
 	ProviderID         string    `json:"provider_public_id"`
 	ClientID           string    `json:"client_public_id"`
 	ProviderGeneration int64     `json:"provider_generation"`
@@ -239,7 +239,6 @@ type privateFactoryClaimAuditPayload struct {
 
 type privateFactoryClaimOutboxPayload struct {
 	TransactionID      string    `json:"transaction_public_id"`
-	WorkspaceID        string    `json:"workspace_public_id"`
 	ProviderID         string    `json:"provider_public_id"`
 	ProviderGeneration int64     `json:"provider_generation"`
 	RecoveryEpoch      int64     `json:"deployment_recovery_epoch"`

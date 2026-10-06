@@ -222,7 +222,7 @@ func integrationCallbackStart(
 ) (oidcauth.CallbackCommandParams, oidcauth.Nonce, oidcauth.StartDependencies) {
 	t.Helper()
 	template := integrationAuthTransactionPending(t, integrationAuthRouteParams{
-		providerGeneration: 1, recoveryEpoch: 1, workspacePublicID: "01890f00-0000-7000-8000-000000000101",
+		providerGeneration: 1, recoveryEpoch: 1,
 	}, [4]string{
 		"01890f00-0000-7000-8000-000000000" + suffix, "01890f01-0000-7000-8000-000000000" + suffix,
 		"01890f02-0000-7000-8000-000000000" + suffix, "01890f03-0000-7000-8000-000000000" + suffix,

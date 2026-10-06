@@ -15,7 +15,6 @@ import (
 const authTransactionOutboxEventClass = "identity.auth_transaction.created"
 
 type authTransactionAuditPayload struct {
-	WorkspacePublicID  string    `json:"workspace_public_id"`
 	ProviderPublicID   string    `json:"provider_public_id"`
 	ClientPublicID     string    `json:"client_public_id"`
 	ProviderGeneration int64     `json:"provider_generation"`
@@ -27,7 +26,6 @@ type authTransactionAuditPayload struct {
 
 type authTransactionOutboxPayload struct {
 	TransactionPublicID string    `json:"transaction_public_id"`
-	WorkspacePublicID   string    `json:"workspace_public_id"`
 	ProviderPublicID    string    `json:"provider_public_id"`
 	ProviderGeneration  int64     `json:"provider_generation"`
 	RecoveryEpoch       int64     `json:"deployment_recovery_epoch"`
@@ -41,7 +39,6 @@ func (transaction *authTransactionTransaction) appendAuthTransactionEvidence(
 ) error {
 	route := pending.Route()
 	auditPayload, err := json.Marshal(authTransactionAuditPayload{
-		WorkspacePublicID:  route.WorkspaceID().String(),
 		ProviderPublicID:   route.ProviderID().String(),
 		ClientPublicID:     route.ClientID().String(),
 		ProviderGeneration: route.ProviderGeneration(),
@@ -55,7 +52,6 @@ func (transaction *authTransactionTransaction) appendAuthTransactionEvidence(
 	}
 	outboxPayload, err := json.Marshal(authTransactionOutboxPayload{
 		TransactionPublicID: created.TransactionID().String(),
-		WorkspacePublicID:   route.WorkspaceID().String(),
 		ProviderPublicID:    route.ProviderID().String(),
 		ProviderGeneration:  route.ProviderGeneration(),
 		RecoveryEpoch:       route.RecoveryEpoch(),

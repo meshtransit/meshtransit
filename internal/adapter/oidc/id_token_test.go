@@ -366,7 +366,7 @@ func tokenRoute(t *testing.T, original oidcauth.Route, algorithm, endpoint, jwks
 		jwksURI = original.JWKSURI()
 	}
 	route, err := oidcauth.NewRoute(oidcauth.RouteParams{
-		DeploymentID: original.DeploymentID(), WorkspaceID: original.WorkspaceID(), ProviderID: original.ProviderID(), ClientID: original.ClientID(),
+		DeploymentID: original.DeploymentID(), ProviderID: original.ProviderID(), ClientID: original.ClientID(),
 		ProviderGeneration: original.ProviderGeneration(), RecoveryEpoch: original.RecoveryEpoch(), Issuer: original.Issuer(), DiscoveryURI: original.DiscoveryURI(),
 		AuthorizationEndpoint: original.AuthorizationEndpoint(), TokenEndpoint: endpoint, JWKSURI: jwksURI, OIDCClientID: original.OIDCClientID(),
 		ConnectorID: original.ConnectorID(),

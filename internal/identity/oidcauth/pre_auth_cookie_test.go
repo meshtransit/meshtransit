@@ -49,7 +49,6 @@ func TestCookieDigestBindsEveryAuthorityDimensionAndPurpose(t *testing.T) {
 		mutate func(*Binding)
 	}{
 		{name: "deployment", mutate: func(b *Binding) { b.DeploymentID = mustDeploymentID(t, "01890f00-0000-7000-8000-000000000099") }},
-		{name: "workspace", mutate: func(b *Binding) { b.WorkspaceID = mustWorkspaceID(t, "01890f00-0000-7000-8000-000000000099") }},
 		{name: "provider", mutate: func(b *Binding) { b.ProviderID = mustProviderID(t, "01890f00-0000-7000-8000-000000000099") }},
 		{name: "client", mutate: func(b *Binding) { b.ClientID = mustClientID(t, "01890f00-0000-7000-8000-000000000099") }},
 		{name: "transaction", mutate: func(b *Binding) { b.TransactionID = mustTransactionID(t, "01890f00-0000-7000-8000-000000000099") }},

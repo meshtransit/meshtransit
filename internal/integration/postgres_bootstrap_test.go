@@ -13,25 +13,22 @@ import (
 	"github.com/meshtransit/meshtransit/internal/config"
 	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
-	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 const (
-	bootstrapWorkspacePublicID = "01890f00-0000-7000-8000-00000000b001"
-	bootstrapProviderPublicID  = "01890f00-0000-7000-8000-00000000b101"
-	bootstrapClientPublicID    = "01890f00-0000-7000-8000-00000000b201"
-	bootstrapIssuer            = "https://bootstrap.example.test/realms/main"
+	bootstrapProviderPublicID = "01890f00-0000-7000-8000-00000000b101"
+	bootstrapClientPublicID   = "01890f00-0000-7000-8000-00000000b201"
+	bootstrapIssuer           = "https://bootstrap.example.test/realms/main"
 )
 
 func bootstrapRoute(t *testing.T, issuer string) oidcauth.Route {
 	t.Helper()
 	deploymentID, _ := deployment.ParseID(integrationDeploymentPublicID)
-	workspaceID, _ := workspace.ParseID(bootstrapWorkspacePublicID)
 	providerID, _ := oidcauth.ParseProviderID(bootstrapProviderPublicID)
 	clientID, _ := oidcauth.ParseClientID(bootstrapClientPublicID)
 	// #nosec G101 -- synthetic OIDC metadata, no credentials.
 	route, err := oidcauth.NewRoute(oidcauth.RouteParams{
-		DeploymentID: deploymentID, WorkspaceID: workspaceID, ProviderID: providerID, ClientID: clientID,
+		DeploymentID: deploymentID, ProviderID: providerID, ClientID: clientID,
 		ProviderGeneration: 1, RecoveryEpoch: 1, Issuer: issuer,
 		DiscoveryURI:          issuer + "/.well-known/openid-configuration",
 		AuthorizationEndpoint: issuer + "/protocol/openid-connect/auth",
@@ -121,19 +118,33 @@ WHERE ip.public_id = $1::UUID`, bootstrapProviderPublicID).Scan(&workspaces, &me
 		t.Fatalf("Workspaces=%d memberships=%d routes=%d realms=%d pools=%d codes=%d",
 			workspaces, memberships, routes, realms, pools, codes)
 	}
-	// The first Account can sign in through the configured route: its subject
-	// resolves to an active membership in the login Workspace with routing.
+	// The route names no Workspace. The first Account can sign in because its
+	// subject resolves to an active membership in exactly one Workspace it owns
+	// (its own Default Workspace) that routes this provider and client.
 	ownerDigest := plan.Accounts[0].SubjectDigest.Bytes()
-	var loginReady bool
-	if err := admin.QueryRow(ctx, `SELECT EXISTS (
- SELECT 1 FROM mesh.identity_subject s
+	var loginWorkspaces int64
+	if err := admin.QueryRow(ctx, `SELECT count(DISTINCT w.id)
+ FROM mesh.identity_subject s
+ JOIN mesh.principal p ON p.id = s.principal_id AND p.kind = 'account' AND p.state = 'active'
  JOIN mesh.account a ON a.principal_id = s.principal_id AND a.recovery_state = 'verified'
- JOIN mesh.workspace w ON w.public_id = $1::UUID AND w.owner_principal_id = s.principal_id
+ JOIN mesh.workspace w ON w.deployment_id = s.deployment_id AND w.owner_principal_id = s.principal_id
+  AND w.state = 'active' AND w.deleted_at IS NULL
  JOIN mesh.workspace_membership m ON m.workspace_id = w.id AND m.principal_id = s.principal_id AND m.state = 'active'
+  AND m.valid_from <= pg_catalog.clock_timestamp() AND (m.expires_at IS NULL OR m.expires_at > pg_catalog.clock_timestamp())
+ JOIN mesh.identity_provider_client c ON c.identity_provider_id = s.identity_provider_id AND c.public_id = $2::UUID
  JOIN mesh.workspace_identity_provider r ON r.workspace_id = w.id AND r.identity_provider_id = s.identity_provider_id
- WHERE s.subject_digest = $2 AND s.subject_digest_key_id = 'subject-bootstrap' AND s.state = 'active')`,
-		bootstrapWorkspacePublicID, ownerDigest[:]).Scan(&loginReady); err != nil || !loginReady {
-		t.Fatalf("bootstrapped owner cannot resolve through the login route: %v", err)
+  AND r.identity_provider_client_id = c.id AND r.state = 'active' AND r.deleted_at IS NULL AND r.organization_digest IS NULL
+ WHERE s.subject_digest = $1 AND s.subject_digest_key_id = 'subject-bootstrap' AND s.state = 'active'`,
+		ownerDigest[:], bootstrapClientPublicID).Scan(&loginWorkspaces); err != nil || loginWorkspaces != 1 {
+		t.Fatalf("bootstrapped owner sign-in Workspaces = %d, want its own Default Workspace: %v", loginWorkspaces, err)
+	}
+	var distinctOwners int64
+	if err := admin.QueryRow(ctx, `SELECT count(DISTINCT w.owner_principal_id)
+ FROM mesh.identity_provider ip
+ JOIN mesh.workspace_identity_provider r ON r.identity_provider_id = ip.id AND r.state = 'active'
+ JOIN mesh.workspace w ON w.id = r.workspace_id
+ WHERE ip.public_id = $1::UUID`, bootstrapProviderPublicID).Scan(&distinctOwners); err != nil || distinctOwners != 2 {
+		t.Fatalf("each bootstrapped Account must own its own Default Workspace: owners=%d %v", distinctOwners, err)
 	}
 
 	report, err = postgresadapter.ApplyBootstrap(ctx, options, plan, true)

@@ -37,7 +37,6 @@ func assertPostgreSQLBrowserLoginHTTP(ctx context.Context, t *testing.T, admin *
 		t.Run(candidate.name, func(t *testing.T) {
 			template := integrationAuthTransactionPending(t, integrationAuthRouteParams{
 				providerGeneration: candidate.generation, recoveryEpoch: 1,
-				workspacePublicID: "01890f00-0000-7000-8000-000000000101",
 			}, [4]string{
 				"01890f00-0000-7000-8000-000000000" + candidate.suffix,
 				"01890f01-0000-7000-8000-000000000" + candidate.suffix,

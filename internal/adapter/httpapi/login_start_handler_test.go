@@ -19,7 +19,6 @@ import (
 	"github.com/meshtransit/meshtransit/internal/deployment"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
 	"github.com/meshtransit/meshtransit/internal/ratelimit"
-	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 type loginHTTPFixture struct {
@@ -51,10 +50,6 @@ func newLoginHTTPFixture(t *testing.T) *loginHTTPFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wid, err := workspace.ParseID("01890f00-0000-7000-8000-000000000002")
-	if err != nil {
-		t.Fatal(err)
-	}
 	pid, err := oidcauth.ParseProviderID("01890f00-0000-7000-8000-000000000003")
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +60,7 @@ func newLoginHTTPFixture(t *testing.T) *loginHTTPFixture {
 	}
 	// #nosec G101 -- synthetic client authentication-method metadata, not a credential.
 	route, err := oidcauth.NewRoute(oidcauth.RouteParams{
-		DeploymentID: did, WorkspaceID: wid, ProviderID: pid, ClientID: cid,
+		DeploymentID: did, ProviderID: pid, ClientID: cid,
 		ProviderGeneration: 3, RecoveryEpoch: 7,
 		Issuer:       "https://login.example.test/realms/meshtransit",
 		DiscoveryURI: "https://login.example.test/discovery", AuthorizationEndpoint: "https://login.example.test/auth",
@@ -150,7 +145,7 @@ func (f *loginHTTPFixture) ObserveLoginHTTP(outcome LoginHTTPOutcome, _ time.Dur
 }
 func (f *loginHTTPFixture) Admit(ctx context.Context, route oidcauth.Route) error {
 	f.call(ctx, "admission")
-	if route.WorkspaceID() != f.options.Initiation.Route().WorkspaceID() {
+	if route.ClientID() != f.options.Initiation.Route().ClientID() {
 		return errors.New("wrong route")
 	}
 	return f.admissionErr

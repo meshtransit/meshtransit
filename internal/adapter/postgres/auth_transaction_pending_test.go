@@ -28,9 +28,9 @@ func TestLoadPendingClosesReadOnlyUnitBeforeReturningEvidence(t *testing.T) {
 		t.Fatal("positive snapshot escaped an incomplete read-only unit")
 	}
 	query := transaction.calls[len(transaction.calls)-1]
-	if query.query != loadPendingAuthTransactionSQL || len(query.arguments) != 21 ||
-		query.arguments[19] != pending.Route().RedirectID() ||
-		query.arguments[20] != pending.Route().ReturnRouteID() {
+	if query.query != loadPendingAuthTransactionSQL || len(query.arguments) != 20 ||
+		query.arguments[18] != pending.Route().RedirectID() ||
+		query.arguments[19] != pending.Route().ReturnRouteID() {
 		t.Fatal("pending lookup omitted exact route labels")
 	}
 }

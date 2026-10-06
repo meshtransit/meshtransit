@@ -84,7 +84,6 @@ func TestPendingSnapshotRejectsEveryConfiguredRouteSubstitution(t *testing.T) {
 		mutate func(*RouteParams)
 	}{
 		{"deployment", func(p *RouteParams) { p.DeploymentID = mustDeploymentID(t, "01890f00-0000-7000-8000-000000000101") }},
-		{"workspace", func(p *RouteParams) { p.WorkspaceID = mustWorkspaceID(t, "01890f00-0000-7000-8000-000000000102") }},
 		{"provider", func(p *RouteParams) { p.ProviderID = mustProviderID(t, "01890f00-0000-7000-8000-000000000103") }},
 		{"client", func(p *RouteParams) { p.ClientID = mustClientID(t, "01890f00-0000-7000-8000-000000000104") }},
 		{"generation", func(p *RouteParams) { p.ProviderGeneration++ }},

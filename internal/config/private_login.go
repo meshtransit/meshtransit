@@ -86,15 +86,19 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 		return nil, ErrInvalid
 	}
 	var version int
-	if !privateLoginField(fields, "version", &version) || version != 1 && version != 2 && version != 3 {
+	if !privateLoginField(fields, "version", &version) || version < 1 || version > 4 {
 		return nil, ErrInvalid
 	}
+	// Version 4 drops workspace_id: Core chooses each Account's Workspace at
+	// login. Versions 1-3 still require a valid workspace_id, which is ignored.
 	expectedFields := 20
 	switch version {
 	case 2:
 		expectedFields = 22
 	case 3:
 		expectedFields = 24
+	case 4:
+		expectedFields = 23
 	}
 	if len(fields) != expectedFields {
 		return nil, ErrInvalid
@@ -140,11 +144,19 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 		RedirectURI: result.Origin() + "/auth/v1/callback",
 	}
 	var dep, work, provider, client string
+	if version < 4 {
+		if !privateLoginField(fields, "workspace_id", &work) {
+			return nil, ErrInvalid
+		}
+		if _, err := workspace.ParseID(work); err != nil {
+			return nil, ErrInvalid
+		}
+	}
 	for _, field := range []struct {
 		name        string
 		destination *string
 	}{
-		{name: "deployment_id", destination: &dep}, {name: "workspace_id", destination: &work},
+		{name: "deployment_id", destination: &dep},
 		{name: "provider_id", destination: &provider}, {name: "client_id", destination: &client},
 		{name: "issuer", destination: &params.Issuer}, {name: "discovery_uri", destination: &params.DiscoveryURI},
 		{name: "authorization_endpoint", destination: &params.AuthorizationEndpoint},
@@ -160,10 +172,6 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 	if err != nil {
 		return nil, ErrInvalid
 	}
-	params.WorkspaceID, err = workspace.ParseID(work)
-	if err != nil {
-		return nil, ErrInvalid
-	}
 	params.ProviderID, err = oidcauth.ParseProviderID(provider)
 	if err != nil {
 		return nil, ErrInvalid
@@ -172,7 +180,7 @@ func parsePrivateLoginConfig(contents []byte, process Config) (*PrivateLoginConf
 	if err != nil {
 		return nil, ErrInvalid
 	}
-	if version == 3 {
+	if version >= 3 {
 		if !privateLoginField(fields, "connector_id", &params.ConnectorID) ||
 			!privateLoginField(fields, "scopes", &params.Scopes) {
 			return nil, ErrInvalid

@@ -290,7 +290,7 @@ AND auth.consumed_result_kind='account_session' AND auth.consumed_result_public_
 AND auth.pkce_verifier_encryption_algorithm IS NULL AND auth.pkce_verifier_encryption_key_id IS NULL
 AND auth.pkce_verifier_ciphertext IS NULL AND s.state='active' AND s.version=1
 AND s.principal_id=11 AND s.identity_provider_id=auth.identity_provider_id
-AND s.identity_provider_client_id=auth.identity_provider_client_id AND s.login_workspace_id=auth.workspace_id
+AND s.identity_provider_client_id=auth.identity_provider_client_id AND auth.workspace_id IS NULL
 AND s.provider_generation=1 AND s.deployment_recovery_epoch=1 AND s.deployment_id=auth.deployment_id
 AND s.principal_authority_generation=1 AND s.account_session_generation=1
 AND s.token_digest_algorithm='hmac-sha256-v1' AND s.token_digest_key_id IS NOT NULL
@@ -310,7 +310,7 @@ FROM mesh.auth_transaction auth JOIN mesh.account_session s ON s.public_id=auth.
 	JOIN mesh.identity_provider_client c ON c.id=s.identity_provider_client_id
 	JOIN mesh.identity_subject subject ON subject.id=s.identity_subject_id
 WHERE auth.public_id=$1::UUID`, pending.TransactionID().String(), pending.CreatedAt(),
-		pending.ExpiresAt(), hash[:], route.DeploymentID().String(), route.WorkspaceID().String(),
+		pending.ExpiresAt(), hash[:], route.DeploymentID().String(), privateFactoryLoginWorkspaceID(t, route).String(),
 		route.ProviderID().String(), route.ClientID().String()).Scan(
 		&result.id, &result.updated, &result.version, &digest, &exact,
 	) != nil ||

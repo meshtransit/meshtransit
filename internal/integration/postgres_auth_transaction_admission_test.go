@@ -14,10 +14,10 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
 )
 
-const integrationAdmitLoginRouteSQL = `SELECT mesh_ops.admit_oidc_login_route_v1(
-    $1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::BIGINT, $6::BIGINT,
-    $7::TEXT, $8::TEXT, $9::TEXT, $10::TEXT, $11::TEXT,
-    $12::TEXT, $13::TEXT, $14::TEXT[], $15::TEXT[], $16::TEXT
+const integrationAdmitLoginRouteSQL = `SELECT mesh_ops.admit_oidc_login_route_v2(
+    $1::UUID, $2::UUID, $3::UUID, $4::BIGINT, $5::BIGINT,
+    $6::TEXT, $7::TEXT, $8::TEXT, $9::TEXT, $10::TEXT,
+    $11::TEXT, $12::TEXT, $13::TEXT[], $14::TEXT[], $15::TEXT
 )`
 
 func assertPostgreSQLAuthTransactionAdmission(
@@ -30,7 +30,6 @@ func assertPostgreSQLAuthTransactionAdmission(
 	t.Helper()
 	template := integrationAuthTransactionPending(t, integrationAuthRouteParams{
 		providerGeneration: 1, recoveryEpoch: 1,
-		workspacePublicID: "01890f00-0000-7000-8000-000000000101",
 	}, [4]string{
 		"01890f00-0000-7000-8000-000000000958", "01890f01-0000-7000-8000-000000000958",
 		"01890f02-0000-7000-8000-000000000958", "01890f03-0000-7000-8000-000000000958",
@@ -60,28 +59,27 @@ func assertPostgreSQLAuthTransactionAdmission(
 		value any
 	}{
 		{name: "other deployment", index: 0, value: "01890f00-0000-7000-8000-000000000002"},
-		{name: "unmapped workspace", index: 1, value: "01890f00-0000-7000-8000-000000000102"},
-		{name: "other provider", index: 2, value: "01890f00-0000-7000-8000-000000000602"},
-		{name: "other client", index: 3, value: "01890f00-0000-7000-8000-000000000622"},
-		{name: "stale provider generation", index: 4, value: int64(2)},
-		{name: "stale recovery epoch", index: 5, value: int64(2)},
-		{name: "issuer", index: 6, value: "https://other.example.test/realms/main"},
-		{name: "discovery", index: 7, value: "https://other.example.test/discovery"},
-		{name: "authorization endpoint", index: 8, value: "https://other.example.test/auth"},
-		{name: "token endpoint", index: 9, value: "https://other.example.test/token"},
-		{name: "jwks endpoint", index: 10, value: "https://other.example.test/jwks"},
-		{name: "oidc client id", index: 11, value: "other-client"},
-		{name: "client authentication", index: 12, value: "private_key_jwt"},
-		{name: "scope ordering", index: 13, value: []string{"profile", "openid"}},
-		{name: "scope widening", index: 13, value: []string{"openid", "profile", "email"}},
-		{name: "algorithm", index: 14, value: []string{"ES256"}},
-		{name: "unregistered callback", index: 15, value: "https://console.example.test/other-callback"},
-		{name: "null scope", index: 13, value: nil},
-		{name: "empty scope", index: 13, value: []string{}},
-		{name: "oversized scope", index: 13, value: []string{"openid", strings.Repeat("x", 129)}},
-		{name: "oversized issuer", index: 6, value: "https://" + strings.Repeat("x", 2049)},
-		{name: "invalid uuid version", index: 1, value: "01890f00-0000-4000-8000-000000000101"},
-		{name: "invalid uuid variant", index: 1, value: "01890f00-0000-7000-c000-000000000101"},
+		{name: "other provider", index: 1, value: "01890f00-0000-7000-8000-000000000602"},
+		{name: "other client", index: 2, value: "01890f00-0000-7000-8000-000000000622"},
+		{name: "stale provider generation", index: 3, value: int64(2)},
+		{name: "stale recovery epoch", index: 4, value: int64(2)},
+		{name: "issuer", index: 5, value: "https://other.example.test/realms/main"},
+		{name: "discovery", index: 6, value: "https://other.example.test/discovery"},
+		{name: "authorization endpoint", index: 7, value: "https://other.example.test/auth"},
+		{name: "token endpoint", index: 8, value: "https://other.example.test/token"},
+		{name: "jwks endpoint", index: 9, value: "https://other.example.test/jwks"},
+		{name: "oidc client id", index: 10, value: "other-client"},
+		{name: "client authentication", index: 11, value: "private_key_jwt"},
+		{name: "scope ordering", index: 12, value: []string{"profile", "openid"}},
+		{name: "scope widening", index: 12, value: []string{"openid", "profile", "email"}},
+		{name: "algorithm", index: 13, value: []string{"ES256"}},
+		{name: "unregistered callback", index: 14, value: "https://console.example.test/other-callback"},
+		{name: "null scope", index: 12, value: nil},
+		{name: "empty scope", index: 12, value: []string{}},
+		{name: "oversized scope", index: 12, value: []string{"openid", strings.Repeat("x", 129)}},
+		{name: "oversized issuer", index: 5, value: "https://" + strings.Repeat("x", 2049)},
+		{name: "invalid uuid version", index: 1, value: "01890f00-0000-4000-8000-000000000601"},
+		{name: "invalid uuid variant", index: 2, value: "01890f00-0000-7000-c000-000000000621"},
 	} {
 		t.Run("route admission "+candidate.name, func(t *testing.T) {
 			changed := append([]any(nil), arguments...)
@@ -114,7 +112,6 @@ func assertPostgreSQLAuthTransactionAdmission(
 	// not permission to create a transaction using a later stale generation.
 	stale := integrationAuthTransactionPending(t, integrationAuthRouteParams{
 		providerGeneration: 2, recoveryEpoch: 1,
-		workspacePublicID: "01890f00-0000-7000-8000-000000000101",
 	}, [4]string{
 		"01890f00-0000-7000-8000-000000000959", "01890f01-0000-7000-8000-000000000959",
 		"01890f02-0000-7000-8000-000000000959", "01890f03-0000-7000-8000-000000000959",
@@ -136,7 +133,6 @@ func assertAdmissionRevocationDuringDiscovery(
 	t.Run("provider revoked after admission during discovery", func(t *testing.T) {
 		template := integrationAuthTransactionPending(t, integrationAuthRouteParams{
 			providerGeneration: 1, recoveryEpoch: 1,
-			workspacePublicID: "01890f00-0000-7000-8000-000000000101",
 		}, [4]string{
 			"01890f00-0000-7000-8000-000000000963", "01890f01-0000-7000-8000-000000000963",
 			"01890f02-0000-7000-8000-000000000963", "01890f03-0000-7000-8000-000000000963",
@@ -215,8 +211,6 @@ func assertLoginRouteAdmissionLifecycle(ctx context.Context, t *testing.T, admin
 		{name: "deployment suspended", query: "UPDATE mesh.deployment SET state = 'suspended' WHERE id = 1"},
 		{name: "deployment quarantined", query: "UPDATE mesh.deployment SET recovery_state = 'quarantined' WHERE id = 1"},
 		{name: "recovery epoch changed", query: "UPDATE mesh.deployment SET recovery_epoch = 2 WHERE id = 1"},
-		{name: "workspace suspended", query: "UPDATE mesh.workspace SET state = 'suspended' WHERE id = 101"},
-		{name: "workspace deleted", query: "UPDATE mesh.workspace SET state = 'deleted', deleted_at = pg_catalog.transaction_timestamp() WHERE id = 101"},
 		{name: "provider suspended", query: "UPDATE mesh.identity_provider SET state = 'suspended' WHERE id = 601"},
 		{name: "provider quarantined", query: "UPDATE mesh.identity_provider SET recovery_state = 'quarantined' WHERE id = 601"},
 		{name: "legacy endpoints absent", query: "UPDATE mesh.identity_provider SET authorization_endpoint = NULL, token_endpoint = NULL WHERE id = 601"},
@@ -260,7 +254,7 @@ func assertLoginRouteAdmissionLifecycle(ctx context.Context, t *testing.T, admin
 
 func integrationLoginRouteArguments(route oidcauth.Route) []any {
 	return []any{
-		route.DeploymentID().String(), route.WorkspaceID().String(), route.ProviderID().String(), route.ClientID().String(),
+		route.DeploymentID().String(), route.ProviderID().String(), route.ClientID().String(),
 		route.ProviderGeneration(), route.RecoveryEpoch(), route.Issuer(), route.DiscoveryURI(),
 		route.AuthorizationEndpoint(), route.TokenEndpoint(), route.JWKSURI(), route.OIDCClientID(),
 		route.ClientAuthMethod(), route.Scopes(), route.AllowedAlgorithms(), route.RedirectURI(),
@@ -310,7 +304,7 @@ func assertLoginRouteAdmissionPrivileges(ctx context.Context, t *testing.T, admi
 FROM pg_catalog.pg_proc AS function
 JOIN pg_catalog.pg_namespace AS schema ON schema.oid = function.pronamespace
 JOIN pg_catalog.pg_roles AS owner ON owner.oid = function.proowner
-WHERE schema.nspname = 'mesh_ops' AND function.proname = 'admit_oidc_login_route_v1'
+WHERE schema.nspname = 'mesh_ops' AND function.proname = 'admit_oidc_login_route_v2'
 `).Scan(&hardened, &runtimeAllowed, &workerAllowed, &observerAllowed, &tableAllowed); err != nil {
 		t.Fatal(err)
 	}

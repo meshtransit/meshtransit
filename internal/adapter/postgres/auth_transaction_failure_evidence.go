@@ -33,14 +33,14 @@ func (unit *authFailureTransaction) appendFailureEvidence(
 	snapshot, ids := command.Snapshot(), command.MutationIDs()
 	route := snapshot.Route()
 	payload, err := json.Marshal(authFailureAuditPayload{authClaimAuditPayload: authClaimAuditPayload{authTransactionAuditPayload: authTransactionAuditPayload{
-		WorkspacePublicID: route.WorkspaceID().String(), ProviderPublicID: route.ProviderID().String(), ClientPublicID: route.ClientID().String(),
+		ProviderPublicID: route.ProviderID().String(), ClientPublicID: route.ClientID().String(),
 		ProviderGeneration: route.ProviderGeneration(), RecoveryEpoch: route.RecoveryEpoch(), RedirectID: route.RedirectID(), ReturnRouteID: route.ReturnRouteID(), ExpiresAt: snapshot.ExpiresAt(),
 	}, ConsumedAt: command.Claimed().ConsumedAt()}, State: terminal.State(), FailureClass: terminal.FailureClass(), TerminatedAt: terminal.TerminatedAt()})
 	if err != nil {
 		return err
 	}
 	outbox, err := json.Marshal(authFailureOutboxPayload{authClaimOutboxPayload: authClaimOutboxPayload{authTransactionOutboxPayload: authTransactionOutboxPayload{
-		TransactionPublicID: snapshot.TransactionID().String(), WorkspacePublicID: route.WorkspaceID().String(), ProviderPublicID: route.ProviderID().String(),
+		TransactionPublicID: snapshot.TransactionID().String(), ProviderPublicID: route.ProviderID().String(),
 		ProviderGeneration: route.ProviderGeneration(), RecoveryEpoch: route.RecoveryEpoch(), ExpiresAt: snapshot.ExpiresAt(),
 	}, ConsumedAt: command.Claimed().ConsumedAt()}, State: terminal.State(), FailureClass: terminal.FailureClass(), TerminatedAt: terminal.TerminatedAt()})
 	if err != nil {

@@ -13,7 +13,7 @@ import (
 
 const (
 	maximumPendingLifetime = 10 * time.Minute
-	pendingHashDomain      = "meshtransit/oidc-auth/pending/v1\x00"
+	pendingHashDomain      = "meshtransit/oidc-auth/pending/v2\x00"
 )
 
 var (
@@ -308,11 +308,9 @@ func hashPending(pending Pending) [sha256.Size]byte {
 	writePendingField(&encoded, transactionID[:])
 	route := pending.route
 	deploymentID := route.DeploymentID().Bytes()
-	workspaceID := route.WorkspaceID().Bytes()
 	providerID := route.ProviderID().Bytes()
 	clientID := route.ClientID().Bytes()
 	writePendingField(&encoded, deploymentID[:])
-	writePendingField(&encoded, workspaceID[:])
 	writePendingField(&encoded, providerID[:])
 	writePendingField(&encoded, clientID[:])
 	for _, value := range []string{

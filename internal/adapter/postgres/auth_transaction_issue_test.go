@@ -652,6 +652,7 @@ func authIssueApplicationFixture(t *testing.T, transactions oidcauth.IssueTransa
 	}
 	subject, err := oidcauth.NewLoginSubjectSnapshot(oidcauth.LoginSubjectParams{
 		Lookup: lookup, Digest: digests[1], PrincipalID: principal, IdentitySubjectID: subjectID, MembershipID: membership,
+		WorkspaceID:    authTransactionTestWorkspaceID(t),
 		SubjectVersion: 2, AccountVersion: 3, MembershipVersion: 4,
 		PrincipalAuthorityGeneration: 5, AccountSessionGeneration: 6, MembershipAuthorityGeneration: 7,
 		EvaluatedAt: clock.at, MembershipExpiresAt: clock.at.Add(90 * time.Second),

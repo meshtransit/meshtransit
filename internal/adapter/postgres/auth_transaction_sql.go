@@ -16,16 +16,16 @@ const createAuthTransactionSQL = `SELECT
     transaction_version,
     transaction_created_at,
     transaction_expires_at
-FROM mesh_ops.create_oidc_auth_transaction_v1(
-    $1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::UUID,
-    $6::BIGINT, $7::BIGINT,
-    $8::TEXT, $9::TEXT, $10::TEXT, $11::TEXT, $12::TEXT,
-    $13::TEXT, $14::TEXT, $15::TEXT[], $16::TEXT[],
-    $17::TEXT, $18::TEXT, $19::TEXT,
-    $20::TEXT, $21::TEXT, $22::BYTEA,
-    $23::TEXT, $24::TEXT, $25::BYTEA,
-    $26::TEXT, $27::TEXT, $28::BYTEA,
-    $29::BYTEA, $30::TIMESTAMPTZ, $31::TIMESTAMPTZ
+FROM mesh_ops.create_oidc_auth_transaction_v2(
+    $1::UUID, $2::UUID, $3::UUID, $4::UUID,
+    $5::BIGINT, $6::BIGINT,
+    $7::TEXT, $8::TEXT, $9::TEXT, $10::TEXT, $11::TEXT,
+    $12::TEXT, $13::TEXT, $14::TEXT[], $15::TEXT[],
+    $16::TEXT, $17::TEXT, $18::TEXT,
+    $19::TEXT, $20::TEXT, $21::BYTEA,
+    $22::TEXT, $23::TEXT, $24::BYTEA,
+    $25::TEXT, $26::TEXT, $27::BYTEA,
+    $28::BYTEA, $29::TIMESTAMPTZ, $30::TIMESTAMPTZ
 )`
 
 const lockAuthTransactionAuditStreamSQL = `SELECT

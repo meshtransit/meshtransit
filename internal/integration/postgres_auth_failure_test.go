@@ -15,7 +15,12 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
 )
 
-const integrationFailureCountSQL = `SELECT pg_catalog.count(*) FROM mesh_ops.fail_oidc_browser_v1(
+const integrationFailureCountSQL = `SELECT pg_catalog.count(*) FROM mesh_ops.fail_oidc_browser_v2(
+    $1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::UUID,$7::BIGINT,$8::BYTEA,$9::TIMESTAMPTZ)`
+
+// integrationFailureV1CountSQL is the retained rollback-era terminal function,
+// used only as a control proving a Workspace-scoped copy is otherwise terminable.
+const integrationFailureV1CountSQL = `SELECT pg_catalog.count(*) FROM mesh_ops.fail_oidc_browser_v1(
     $1::UUID,$2::UUID,$3::UUID,$4::UUID,$5::BIGINT,$6::BIGINT,$7::UUID,$8::BIGINT,$9::BYTEA,$10::TIMESTAMPTZ)`
 
 func assertPostgreSQLBrowserFailure(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn, pool *postgresadapter.Pool) {
@@ -147,7 +152,7 @@ func integrationFailureArguments(t *testing.T, receipt oidcauth.ClaimResult) []a
 	}
 	snapshot, route := command.Snapshot(), command.Snapshot().Route()
 	hash := snapshot.SemanticHash()
-	return []any{route.DeploymentID().String(), route.WorkspaceID().String(), route.ProviderID().String(), route.ClientID().String(), route.ProviderGeneration(), route.RecoveryEpoch(), snapshot.TransactionID().String(), int64(2), hash[:], command.Claimed().ConsumedAt()}
+	return []any{route.DeploymentID().String(), route.ProviderID().String(), route.ClientID().String(), route.ProviderGeneration(), route.RecoveryEpoch(), snapshot.TransactionID().String(), int64(2), hash[:], command.Claimed().ConsumedAt()}
 }
 func assertBrowserFailureScopeAndCoverage(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn, receipt oidcauth.ClaimResult) {
 	t.Helper()
@@ -157,7 +162,7 @@ func assertBrowserFailureScopeAndCoverage(ctx context.Context, t *testing.T, adm
 		index int
 		value any
 	}{
-		{"deployment", 0, "01890f00-0000-7000-8000-000000000002"}, {"workspace", 1, "01890f00-0000-7000-8000-000000000102"}, {"provider", 2, "01890f00-0000-7000-8000-000000000602"}, {"client", 3, "01890f00-0000-7000-8000-000000000622"}, {"generation", 4, int64(2)}, {"epoch", 5, int64(2)}, {"transaction", 6, "01890f00-0000-7000-8000-000000000966"}, {"version", 7, int64(3)}, {"hash", 8, make([]byte, 32)}, {"claim time", 9, receipt.Claimed().ConsumedAt().Add(time.Microsecond)}, {"null", 8, nil}, {"valid rollback", -1, nil},
+		{"deployment", 0, "01890f00-0000-7000-8000-000000000002"}, {"provider", 1, "01890f00-0000-7000-8000-000000000602"}, {"client", 2, "01890f00-0000-7000-8000-000000000622"}, {"generation", 3, int64(2)}, {"epoch", 4, int64(2)}, {"transaction", 5, "01890f00-0000-7000-8000-000000000966"}, {"version", 6, int64(3)}, {"hash", 7, make([]byte, 32)}, {"claim time", 8, receipt.Claimed().ConsumedAt().Add(time.Microsecond)}, {"null", 7, nil}, {"valid rollback", -1, nil},
 	} {
 		t.Run("browser failure scope "+candidate.name, func(t *testing.T) {
 			probe, err := runtime.Begin(ctx)
@@ -202,8 +207,32 @@ func assertBrowserFailureScopeAndCoverage(ctx context.Context, t *testing.T, adm
 		if err := probe.Commit(ctx); err == nil {
 			t.Fatal("unaudited terminal committed")
 		}
-		if err := admin.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh.auth_transaction WHERE public_id=$1::UUID AND state='consuming' AND version=2 AND pkce_verifier_ciphertext IS NOT NULL`, args[6]).Scan(&count); err != nil || count != 1 {
+		if err := admin.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh.auth_transaction WHERE public_id=$1::UUID AND state='consuming' AND version=2 AND pkce_verifier_ciphertext IS NOT NULL`, args[5]).Scan(&count); err != nil || count != 1 {
 			t.Fatal("erasure not atomic")
+		}
+	})
+	t.Run("browser failure rejects Workspace-scoped v1 transaction", func(t *testing.T) {
+		probe, err := admin.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Rollback-only: a consuming v1 row (workspace_id NOT NULL) is not v2 scope.
+		defer rollbackIntegrationTransaction(ctx, t, probe)
+		if _, err := probe.Exec(ctx, `SELECT pg_catalog.set_config('mesh.change_public_id','01890f01-0000-7000-8000-000000000f8c',TRUE)`); err != nil {
+			t.Fatal(err)
+		}
+		const copyID = "01890f00-0000-7000-8000-000000000f8c"
+		insertIntegrationWorkspaceScopedAuthCopy(ctx, t, probe, args[5].(string), copyID, integrationFilledBytes(0x8c, 32), true)
+		scoped := append([]any(nil), args...)
+		scoped[5] = copyID
+		var count int
+		if err := probe.QueryRow(ctx, integrationFailureCountSQL, scoped...).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("v2 failure of Workspace-scoped transaction count=%d err=%v, want none", count, err)
+		}
+		assertAdmissionScopeCleared(ctx, t, probe)
+		legacy := append([]any{scoped[0], "01890f00-0000-7000-8000-000000000101"}, scoped[1:]...)
+		if err := probe.QueryRow(ctx, integrationFailureV1CountSQL, legacy...).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("v1 control failure of Workspace-scoped copy count=%d err=%v, want 1", count, err)
 		}
 	})
 	t.Run("browser failure revoked Workspace rollback probe", func(t *testing.T) {
@@ -234,7 +263,8 @@ func assertBrowserFailureEvidence(ctx context.Context, t *testing.T, admin *pgx.
 	var erased, noGrant, versions bool
 	if err := admin.QueryRow(ctx, `SELECT auth.state,auth.failure_class,(audit.payload->>'terminated_at')::TIMESTAMPTZ,auth.binding_semantic_hash,audit.before_semantic_hash,audit.after_semantic_hash,
  auth.pkce_verifier_encryption_algorithm IS NULL AND auth.pkce_verifier_encryption_key_id IS NULL AND auth.pkce_verifier_ciphertext IS NULL,
- auth.principal_id IS NULL AND auth.consumed_result_kind IS NULL AND auth.consumed_result_public_id IS NULL AND audit.actor_principal_public_id IS NULL AND audit.network_id IS NULL AND outbox.network_revision IS NULL,
+ auth.principal_id IS NULL AND auth.consumed_result_kind IS NULL AND auth.consumed_result_public_id IS NULL AND audit.actor_principal_public_id IS NULL AND audit.network_id IS NULL AND outbox.network_revision IS NULL
+   AND NOT (audit.payload ? 'workspace_public_id') AND NOT (outbox.payload ? 'workspace_public_id'),
  auth.version=3 AND mutation.before_version=2 AND mutation.after_version=3 AND outbox.aggregate_version=3,audit.action,outbox.event_class
  FROM mesh.auth_transaction AS auth
  JOIN mesh_audit.authority_mutation AS mutation ON mutation.row_public_id=auth.public_id AND mutation.aggregate_kind='auth_transaction' AND mutation.change_public_id=$2::UUID
@@ -260,7 +290,7 @@ func assertBrowserFailurePrivileges(ctx context.Context, t *testing.T, admin *pg
  pg_catalog.has_function_privilege('mesh_runtime',function.oid,'EXECUTE'),pg_catalog.has_function_privilege('mesh_worker',function.oid,'EXECUTE'),pg_catalog.has_function_privilege('mesh_observer',function.oid,'EXECUTE'),
  pg_catalog.has_table_privilege('mesh_runtime','mesh.auth_transaction','SELECT') OR pg_catalog.has_table_privilege('mesh_runtime','mesh.auth_transaction','UPDATE'),
  EXISTS(SELECT 1 FROM pg_catalog.aclexplode(function.proacl) AS acl WHERE acl.grantee=0 AND acl.privilege_type='EXECUTE')
- FROM pg_catalog.pg_proc AS function JOIN pg_catalog.pg_namespace AS schema ON schema.oid=function.pronamespace JOIN pg_catalog.pg_roles AS owner ON owner.oid=function.proowner WHERE schema.nspname='mesh_ops' AND function.proname='fail_oidc_browser_v1'`).Scan(&hardened, &runtimeAllowed, &workerAllowed, &observerAllowed, &tableAllowed, &publicAllowed); err != nil {
+ FROM pg_catalog.pg_proc AS function JOIN pg_catalog.pg_namespace AS schema ON schema.oid=function.pronamespace JOIN pg_catalog.pg_roles AS owner ON owner.oid=function.proowner WHERE schema.nspname='mesh_ops' AND function.proname='fail_oidc_browser_v2'`).Scan(&hardened, &runtimeAllowed, &workerAllowed, &observerAllowed, &tableAllowed, &publicAllowed); err != nil {
 		t.Fatal(err)
 	}
 	if !hardened || !runtimeAllowed || workerAllowed || observerAllowed || tableAllowed || publicAllowed {
@@ -274,7 +304,7 @@ func assertBrowserFailureAuditWait(ctx context.Context, t *testing.T, admin *pgx
 		receipt := integrationFailureReceipt(ctx, t, store, "f8b", 3*time.Second)
 		args := integrationFailureArguments(t, receipt)
 		var expiresAt time.Time
-		if err := admin.QueryRow(ctx, `SELECT expires_at FROM mesh.auth_transaction WHERE public_id=$1::UUID`, args[6]).Scan(&expiresAt); err != nil {
+		if err := admin.QueryRow(ctx, `SELECT expires_at FROM mesh.auth_transaction WHERE public_id=$1::UUID`, args[5]).Scan(&expiresAt); err != nil {
 			t.Fatal(err)
 		}
 		held, err := admin.Begin(ctx)
