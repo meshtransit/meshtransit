@@ -21,6 +21,7 @@ import (
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/workspace/creation"
 	"github.com/meshtransit/meshtransit/internal/workspace/roles"
+	"github.com/meshtransit/meshtransit/internal/workspace/selection"
 	"github.com/meshtransit/meshtransit/internal/workspace/settings"
 )
 
@@ -137,6 +138,14 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	sessionWorkspaceStore, err := postgresadapter.NewSessionWorkspaceStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	sessionWorkspaces, err := selection.NewService(sessionWorkspaceStore, clock)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	managementScopes, err := sessioncontext.NewService(authority, clock)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
@@ -206,7 +215,8 @@ func composePrivateIdentityFactory(
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, PolicySimulations: policySimulator,
 		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations,
-		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
+		SessionWorkspaces: sessionWorkspaces,
+		PolicyApprovals:   policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,
 		RateLimiter:    dependencies.Redis,
 		CorrelationIDs: httpapi.PublicCorrelationIDGenerator{}, Clock: clock, Logger: dependencies.Logger,

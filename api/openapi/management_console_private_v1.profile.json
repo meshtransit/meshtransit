@@ -1630,5 +1630,210 @@
         }
       }
     }
+  },
+  "sessionWorkspaces": {
+    "get": {
+      "operationId": "listSessionWorkspaces",
+      "summary": "List the Workspaces the current Session may switch to",
+      "description": "Return at most 100 Workspaces where the signed-in Account holds an active membership, the Workspace is active, and it routes the Session's identity provider and client: the same rules as browser login. current marks the Workspace bound to the Session. Listing grants nothing; every management action rechecks its own permission.",
+      "security": [
+        {
+          "accountSessionCookie": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Switchable Workspaces ordered by name",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "id",
+                        "display_name",
+                        "display_code",
+                        "owner",
+                        "current"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "display_name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "display_code": {
+                          "type": "string",
+                          "pattern": "^[0-9]{12}$"
+                        },
+                        "owner": {
+                          "type": "boolean"
+                        },
+                        "current": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "401": {
+          "description": "No active Session"
+        },
+        "403": {
+          "description": "permission_denied: the Session has ended"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Temporarily unavailable"
+        }
+      }
+    }
+  },
+  "sessionWorkspaceSwitch": {
+    "post": {
+      "operationId": "switchSessionWorkspace",
+      "summary": "Move the current Session to another Workspace",
+      "description": "Rebind the current Session to a Workspace from listSessionWorkspaces without signing in again. The Session version increments, so requests still bound to the previous Workspace fail their exact-version check and the Console reloads its scope. Switching to the current Workspace returns replayed true and changes nothing. A committed switch appends one audit record.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "workspace_id"
+              ],
+              "properties": {
+                "workspace_id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "A Workspace from listSessionWorkspaces"
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "The Session is bound to the Workspace",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "workspace_id",
+                      "replayed"
+                    ],
+                    "properties": {
+                      "workspace_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "replayed": {
+                        "type": "boolean"
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Invalid input"
+        },
+        "401": {
+          "description": "No active Session"
+        },
+        "403": {
+          "description": "permission_denied: the Session has ended"
+        },
+        "404": {
+          "description": "workspace_unavailable: not a Workspace this Account may enter"
+        },
+        "409": {
+          "description": "session_changed: the Session changed concurrently"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Temporarily unavailable or uncertain; refresh before retrying"
+        }
+      }
+    }
   }
 }

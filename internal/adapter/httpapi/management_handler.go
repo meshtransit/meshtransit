@@ -41,6 +41,8 @@ const (
 	workspaceRoleAssignOperation            = "workspace_role_assign"
 	workspaceRoleRevokeOperation            = "workspace_role_revoke"
 	workspaceCreateOperation                = "workspace_create"
+	sessionWorkspaceListOperation           = "session_workspace_list"
+	sessionWorkspaceSwitchOperation         = "session_workspace_switch"
 	networkCreateOperation                  = "network_create"
 	deviceRevokeOperation                   = "device_revoke"
 	policyPublishOperation                  = "policy_publish"
@@ -235,6 +237,7 @@ type ManagementHandlerOptions struct {
 	WorkspaceRenames          WorkspaceRenamer
 	WorkspaceRoles            WorkspaceRoleManager
 	WorkspaceCreations        WorkspaceCreator
+	SessionWorkspaces         SessionWorkspaceSelector
 	NetworkCreations          NetworkCreator
 	PolicyApprovals           PolicyApprovalWorkflow
 	PolicyApprovalCatalog     PolicyApprovalCatalog
@@ -269,6 +272,7 @@ type ManagementHandler struct {
 	workspaceRenames          WorkspaceRenamer
 	workspaceRoles            WorkspaceRoleManager
 	workspaceCreations        WorkspaceCreator
+	sessionWorkspaces         SessionWorkspaceSelector
 	networkCreations          NetworkCreator
 	policyApprovals           PolicyApprovalWorkflow
 	policyApprovalCatalog     PolicyApprovalCatalog
@@ -326,6 +330,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		workspaceRenames:          options.WorkspaceRenames,
 		workspaceRoles:            options.WorkspaceRoles,
 		workspaceCreations:        options.WorkspaceCreations,
+		sessionWorkspaces:         options.SessionWorkspaces,
 		networkCreations:          options.NetworkCreations,
 		policyApprovals:           options.PolicyApprovals,
 		policyApprovalCatalog:     options.PolicyApprovalCatalog,
@@ -425,9 +430,10 @@ func (handler *ManagementHandler) serveHTTP(
 	workspaceRolePath, workspaceRoleMatched := parseWorkspaceRolePath(request)
 	workspaceCollectionMatched := isWorkspaceCollectionPath(request)
 	networkCollectionPath, networkCollectionMatched := parseNetworkCollectionPath(request)
+	sessionWorkspaceMethod, sessionWorkspaceMatched := sessionWorkspaceRoute(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
 		!accessGraphMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
-		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched {
+		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -443,6 +449,10 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = workspaceCreateOperation
 	} else if networkCollectionMatched {
 		operation = networkCreateOperation
+	} else if sessionWorkspaceMatched && sessionWorkspaceMethod == http.MethodGet {
+		operation = sessionWorkspaceListOperation
+	} else if sessionWorkspaceMatched {
+		operation = sessionWorkspaceSwitchOperation
 	} else if deviceMatched {
 		operation = deviceRevokeOperation
 	} else if policyMatched {
@@ -471,6 +481,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = sharingPath.allowedMethod(request.Method)
 	} else if workspaceRoleMatched {
 		allowedMethod = workspaceRolePath.allowedMethod()
+	} else if sessionWorkspaceMatched {
+		allowedMethod = sessionWorkspaceMethod
 	}
 	if allowedMethod == "" || request.Method != allowedMethod {
 		if policyApprovalMatched && policyApprovalPath.isCollection() {
@@ -550,6 +562,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if networkCollectionMatched {
 		resultCode = handler.createNetwork(ctx, response, request, correlationID, networkCollectionPath, session)
+		return
+	}
+	if sessionWorkspaceMatched {
+		resultCode = handler.handleSessionWorkspace(ctx, response, request, correlationID, session)
 		return
 	}
 	if policyMatched {

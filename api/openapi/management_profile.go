@@ -68,6 +68,8 @@ type consoleManagementProfile struct {
 	WorkspaceRoleRevoke    json.RawMessage            `json:"workspaceRoleRevoke"`
 	WorkspaceCreate        json.RawMessage            `json:"workspaceCreate"`
 	NetworkCreate          json.RawMessage            `json:"networkCreate"`
+	SessionWorkspaces      json.RawMessage            `json:"sessionWorkspaces"`
+	SessionWorkspaceSwitch json.RawMessage            `json:"sessionWorkspaceSwitch"`
 }
 
 // ManagementDocument returns independently owned deterministic OpenAPI bytes.
@@ -122,7 +124,9 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.WorkspaceRoleAssign, "post", "assignWorkspaceRole", true) &&
 		consoleCookieOperation(profile.WorkspaceRoleRevoke, "post", "revokeWorkspaceRole", true) &&
 		consoleCookieOperation(profile.WorkspaceCreate, "post", "createWorkspace", true) &&
-		consoleCookieOperation(profile.NetworkCreate, "post", "createNetwork", true)
+		consoleCookieOperation(profile.NetworkCreate, "post", "createNetwork", true) &&
+		consoleCookieOperation(profile.SessionWorkspaces, "get", "listSessionWorkspaces", false) &&
+		consoleCookieOperation(profile.SessionWorkspaceSwitch, "post", "switchSessionWorkspace", true)
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
 	}
@@ -214,6 +218,8 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths["/api/v1/workspaces/{workspace_id}/actions/rename"] = profile.WorkspaceRename
 	consolePaths["/api/v1/workspaces"] = profile.WorkspaceCreate
 	consolePaths["/api/v1/workspaces/{workspace_id}/networks"] = profile.NetworkCreate
+	consolePaths["/auth/v1/session/workspaces"] = profile.SessionWorkspaces
+	consolePaths["/auth/v1/session/workspace"] = profile.SessionWorkspaceSwitch
 	consolePaths["/api/v1/workspaces/{workspace_id}/members"] = profile.WorkspaceMembers
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments"] = profile.WorkspaceRoleAssign
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke"] = profile.WorkspaceRoleRevoke

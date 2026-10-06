@@ -77,6 +77,7 @@ type privateIdentityPorts struct {
 	WorkspaceRoles        httpapi.WorkspaceRoleManager
 	WorkspaceCreations    httpapi.WorkspaceCreator
 	NetworkCreations      httpapi.NetworkCreator
+	SessionWorkspaces     httpapi.SessionWorkspaceSelector
 	PolicyApprovals       httpapi.PolicyApprovalWorkflow
 	PolicyApprovalCatalog httpapi.PolicyApprovalCatalog
 	ResourceCreations     httpapi.ResourceCreator
@@ -178,6 +179,7 @@ func composePrivateIdentity(
 		WorkspaceRoles:        ports.WorkspaceRoles,
 		WorkspaceCreations:    ports.WorkspaceCreations,
 		NetworkCreations:      ports.NetworkCreations,
+		SessionWorkspaces:     ports.SessionWorkspaces,
 		PolicyApprovals:       ports.PolicyApprovals,
 		PolicyApprovalCatalog: ports.PolicyApprovalCatalog,
 		ResourceCreations:     ports.ResourceCreations, ResourceCatalog: ports.ResourceCatalog,

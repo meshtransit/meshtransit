@@ -255,7 +255,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	_, workspaceRename := parseWorkspaceRenamePath(request)
 	workspaceRoles := isWorkspaceRoleOperation(request) ||
 		isWorkspaceCollectionPath(request) && request.Method == http.MethodPost ||
-		isNetworkCollectionPost(request)
+		isNetworkCollectionPost(request) || isSessionWorkspaceOperation(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
 	if !prepare && !logout && !managementScopes && !inventoryRead && !deploymentCapabilities && !device && !policy && !simulation &&
 		!approval && !accessGraph && !policyRead && !workspaceRename && !workspaceRoles && !resourceSharing {
@@ -454,7 +454,11 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	policyRead := policyMatched && request.Method == http.MethodGet
 	resourceSharing, resourceSharingCollectionRead := browserResourceSharingOperation(request)
 	resourceSharingRead := resourceSharing && request.Method == http.MethodGet
-	safeRead := approvalRead || managementScopeRead || inventoryRead || deploymentCapabilityRead || policyRead || resourceSharingRead
+	// Member directory and switchable Workspaces are exact, query-free reads.
+	directoryRead := request.Method == http.MethodGet &&
+		(isWorkspaceRoleOperation(request) || isSessionWorkspaceOperation(request))
+	safeRead := approvalRead || managementScopeRead || inventoryRead || deploymentCapabilityRead || policyRead ||
+		resourceSharingRead || directoryRead
 	if request.Method == http.MethodGet && !safeRead {
 		return false
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/network/provisioning"
 	"github.com/meshtransit/meshtransit/internal/workspace/creation"
+	"github.com/meshtransit/meshtransit/internal/workspace/selection"
 )
 
 // Provisioning outcomes map by SQLSTATE alone; the message never matters.
@@ -46,5 +47,23 @@ func TestProvisioningErrorsMapBySQLState(t *testing.T) {
 	}
 	if !errors.Is(networkCreationError(pgx.ErrNoRows), provisioning.ErrForbidden) {
 		t.Error("no Network row must conceal as forbidden")
+	}
+}
+
+func TestSessionWorkspaceErrorsMapBySQLState(t *testing.T) {
+	t.Parallel()
+	for code, want := range map[string]error{
+		"42501": selection.ErrForbidden,
+		"22023": selection.ErrInvalid,
+		"P0002": selection.ErrNotAvailable,
+		"40001": selection.ErrSessionChanged,
+		"57014": selection.ErrUnavailable,
+	} {
+		if got := sessionWorkspaceError(&pgconn.PgError{Code: code, Message: "any text"}); !errors.Is(got, want) {
+			t.Errorf("%s = %v, want %v", code, got, want)
+		}
+	}
+	if !errors.Is(sessionWorkspaceError(pgx.ErrNoRows), selection.ErrForbidden) {
+		t.Error("no row must conceal as forbidden")
 	}
 }
