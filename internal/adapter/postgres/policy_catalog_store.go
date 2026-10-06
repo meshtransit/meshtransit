@@ -48,8 +48,15 @@ func NewActivePolicyStore(pool *Pool, options PolicySimulationOptions) (*ActiveP
 }
 
 // ReadActivePolicy rechecks session generations and exact-scope policy.read with
-// authorization and revision locks in one bounded repeatable-read transaction.
-func (store *ActivePolicyStore) ReadActivePolicy(ctx context.Context, session accountsession.Session, scope network.Scope, evaluatedAt time.Time) (_ catalog.Snapshot, resultErr error) {
+// authorization and revision locks in one bounded repeatable-read transaction,
+// rerun on a fresh snapshot when a concurrent publish holds the revision row.
+func (store *ActivePolicyStore) ReadActivePolicy(ctx context.Context, session accountsession.Session, scope network.Scope, evaluatedAt time.Time) (catalog.Snapshot, error) {
+	return retryReadConflict(ctx, func() (catalog.Snapshot, error) {
+		return store.readActivePolicyOnce(ctx, session, scope, evaluatedAt)
+	})
+}
+
+func (store *ActivePolicyStore) readActivePolicyOnce(ctx context.Context, session accountsession.Session, scope network.Scope, evaluatedAt time.Time) (_ catalog.Snapshot, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
 		if store != nil && store.metrics != nil {

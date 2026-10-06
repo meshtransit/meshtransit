@@ -57,8 +57,20 @@ func validPolicySimulationOptions(options PolicySimulationOptions) bool {
 }
 
 // ReadSimulationBaseline freshly authorizes policy.validate and reconstructs the
-// current complete compiled artifact inside one repeatable-read transaction.
+// current complete compiled artifact inside one repeatable-read transaction,
+// rerun on a fresh snapshot when a concurrent publish holds the revision row.
 func (store *PolicySimulationStore) ReadSimulationBaseline(
+	ctx context.Context,
+	session accountsession.Session,
+	scope network.Scope,
+	evaluatedAt time.Time,
+) (simulation.Baseline, error) {
+	return retryReadConflict(ctx, func() (simulation.Baseline, error) {
+		return store.readSimulationBaselineOnce(ctx, session, scope, evaluatedAt)
+	})
+}
+
+func (store *PolicySimulationStore) readSimulationBaselineOnce(
 	ctx context.Context,
 	session accountsession.Session,
 	scope network.Scope,

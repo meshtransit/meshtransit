@@ -36,8 +36,17 @@ func NewConsoleDeviceInventoryStore(pool *Pool, options AccountSessionOptions) (
 	return &ConsoleDeviceInventoryStore{database: pool.resourceAuthorityDatabase, options: options, metrics: pool.metrics}, nil
 }
 
-// ReadDevices loads a bounded exact-scope page after current device.read checks.
+// ReadDevices loads a bounded exact-scope page after current device.read checks,
+// rerun on a fresh snapshot when a concurrent change holds the revision row.
 func (store *ConsoleDeviceInventoryStore) ReadDevices(ctx context.Context, session accountsession.Session,
+	scope network.Scope, after node.ID, limit int, evaluatedAt time.Time,
+) (inventory.ReadResult, error) {
+	return retryReadConflict(ctx, func() (inventory.ReadResult, error) {
+		return store.readDevicesOnce(ctx, session, scope, after, limit, evaluatedAt)
+	})
+}
+
+func (store *ConsoleDeviceInventoryStore) readDevicesOnce(ctx context.Context, session accountsession.Session,
 	scope network.Scope, after node.ID, limit int, evaluatedAt time.Time,
 ) (_ inventory.ReadResult, resultErr error) {
 	startedAt := time.Now()
