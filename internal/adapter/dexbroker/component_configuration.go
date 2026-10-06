@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"slices"
 
 	dexoidc "github.com/dexidp/dex/connector/oidc"
@@ -15,6 +16,13 @@ import (
 const (
 	oidcConnectorType = "oidc"
 	pkceS256          = "S256"
+	// upstreamAccountPrompt asks the upstream provider to show its account
+	// chooser on every sign-in. Without it Google reuses the browser's
+	// signed-in account, so signing out of MeshTransit never lets a person
+	// pick another account. Dex sends prompt only with offline_access, which
+	// MeshTransit never requests, so the broker adds it to the authorization
+	// URL itself.
+	upstreamAccountPrompt = "select_account"
 )
 
 var errImmutableConfiguration = errors.New("immutable broker configuration")
@@ -57,13 +65,17 @@ func withImmutableConfiguration(
 		wrapped.clientsByID[value.ID] = value
 	}
 	for _, connector := range configuration.connectors {
+		authorizationURL, err := withAccountPrompt(connector.endpoints.AuthorizationURL)
+		if err != nil {
+			return nil, errImmutableConfiguration
+		}
 		encoded, err := json.Marshal(dexoidc.Config{ //nolint:gosec // Required transient Dex connector input; immutable storage never persists it.
 			Issuer: connector.issuer, ClientID: connector.clientID,
 			ClientSecret: connector.clientSecret,
 			RedirectURI:  brokerIssuer + "/callback",
 			Scopes:       []string{"profile", "email"}, PKCEChallenge: pkceS256,
 			ProviderDiscoveryOverrides: dexoidc.ProviderDiscoveryOverrides{
-				AuthURL:  connector.endpoints.AuthorizationURL,
+				AuthURL:  authorizationURL,
 				TokenURL: connector.endpoints.TokenURL,
 				JWKSURL:  connector.endpoints.JWKSURL,
 			},
@@ -82,6 +94,19 @@ func withImmutableConfiguration(
 		wrapped.connectorsByID[value.ID] = value
 	}
 	return wrapped, nil
+}
+
+// withAccountPrompt returns the authorization URL with the account chooser
+// prompt. Any prompt already present is replaced, never combined.
+func withAccountPrompt(authorizationURL string) (string, error) {
+	parsed, err := url.Parse(authorizationURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Fragment != "" {
+		return "", errImmutableConfiguration
+	}
+	query := parsed.Query()
+	query.Set("prompt", upstreamAccountPrompt)
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }
 
 func (configured *immutableConfigurationStorage) GetClient(

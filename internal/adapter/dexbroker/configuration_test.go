@@ -95,7 +95,7 @@ func TestImmutableConfigurationMapsExactOIDCPolicyAndHidesDynamicRecords(t *test
 	}
 	if oidcConfig.Issuer != "https://accounts.google.com" ||
 		oidcConfig.RedirectURI != "https://id.example.test/oauth2/callback" ||
-		oidcConfig.ProviderDiscoveryOverrides.AuthURL != googleAuthorizationURL ||
+		oidcConfig.ProviderDiscoveryOverrides.AuthURL != googleAuthorizationURL+"?prompt=select_account" ||
 		oidcConfig.ProviderDiscoveryOverrides.TokenURL != googleTokenURL ||
 		oidcConfig.ProviderDiscoveryOverrides.JWKSURL != googleJWKSURL ||
 		oidcConfig.PKCEChallenge != pkceS256 ||
@@ -128,5 +128,35 @@ func TestImmutableConfigurationMapsExactOIDCPolicyAndHidesDynamicRecords(t *test
 	baseClients, err := base.ListClients(t.Context())
 	if err != nil || len(baseClients) != 1 || baseClients[0].ID != "dynamic-client" {
 		t.Fatal("static client was persisted to backing storage")
+	}
+}
+
+func TestAuthorizationURLAlwaysAsksForAccountChoice(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{name: "plain endpoint", input: googleAuthorizationURL, want: googleAuthorizationURL + "?prompt=select_account"},
+		{
+			name:  "existing prompt is replaced",
+			input: googleAuthorizationURL + "?hd=example.test&prompt=consent",
+			want:  googleAuthorizationURL + "?hd=example.test&prompt=select_account",
+		},
+		{name: "plain HTTP", input: "http://accounts.google.com/o/oauth2/v2/auth", wantErr: true},
+		{name: "fragment", input: googleAuthorizationURL + "#x", wantErr: true},
+		{name: "relative", input: "/o/oauth2/v2/auth", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := withAccountPrompt(test.input)
+			if (err != nil) != test.wantErr || got != test.want {
+				t.Fatalf("withAccountPrompt(%q) = %q, %v", test.input, got, err)
+			}
+		})
 	}
 }

@@ -170,6 +170,7 @@ func fingerprintConfiguration(
 	material = appendFingerprintField(material, codeResponseType)
 	material = appendFingerprintField(material, "openid profile email")
 	material = appendFingerprintField(material, "S256")
+	material = appendFingerprintField(material, "prompt="+upstreamAccountPrompt)
 	material = appendFingerprintField(material, outboundHTTPPolicyVersion)
 	material = appendFingerprintField(material, outboundRequestTimeout.String())
 	material = appendFingerprintField(material, outboundDialTimeout.String())
