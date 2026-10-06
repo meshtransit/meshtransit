@@ -23,6 +23,7 @@ func TestBrowserCookieReadsReachWorkspaceDirectories(t *testing.T) {
 	for _, path := range []string{
 		SessionWorkspacesPath,
 		"/api/v1/workspaces/" + managementWorkspaceID() + "/members",
+		shareTargetTestPath("798657066103"),
 	} {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
@@ -30,6 +31,7 @@ func TestBrowserCookieReadsReachWorkspaceDirectories(t *testing.T) {
 			options.Management.sessionWorkspaces = &sessionWorkspaceSelectorStub{candidates: []selection.Candidate{
 				{WorkspaceID: current, DisplayName: "Engineering", DisplayCode: code, Current: true}}}
 			options.Management.workspaceRoles = &workspaceRoleManagerStub{}
+			options.Management.shareTargets = &shareTargetResolverStub{}
 			browser, err := NewBrowserManagement(options)
 			if err != nil {
 				t.Fatal(err)

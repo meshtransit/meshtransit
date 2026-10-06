@@ -470,6 +470,8 @@ func Catalog() []Migration {
 		newMigration(101, "browser login with an Account-selected Workspace", accountSelectedLoginWorkspaceSQL),
 		newMigration(102, "stable provisioning error codes and assigned Network IPv6", provisioningErrorCodesSQL),
 		newMigration(103, "Account Session Workspace switch", sessionWorkspaceSwitchSQL),
+		newMigration(104, "cross-Workspace shares without expiry", crossWorkspaceShareNoExpirySQL),
+		newMigration(105, "share target resolution by Network display code", shareTargetResolutionSQL),
 	}
 }
 
@@ -558,3 +560,9 @@ var provisioningErrorCodesSQL string
 
 //go:embed 000103_session_workspace_switch.up.sql
 var sessionWorkspaceSwitchSQL string
+
+//go:embed 000104_cross_workspace_share_no_expiry.up.sql
+var crossWorkspaceShareNoExpirySQL string
+
+//go:embed 000105_share_target_resolution.up.sql
+var shareTargetResolutionSQL string

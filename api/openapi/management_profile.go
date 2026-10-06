@@ -70,6 +70,7 @@ type consoleManagementProfile struct {
 	NetworkCreate          json.RawMessage            `json:"networkCreate"`
 	SessionWorkspaces      json.RawMessage            `json:"sessionWorkspaces"`
 	SessionWorkspaceSwitch json.RawMessage            `json:"sessionWorkspaceSwitch"`
+	ShareTargetResolve     json.RawMessage            `json:"shareTargetResolve"`
 }
 
 // ManagementDocument returns independently owned deterministic OpenAPI bytes.
@@ -126,7 +127,8 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.WorkspaceCreate, "post", "createWorkspace", true) &&
 		consoleCookieOperation(profile.NetworkCreate, "post", "createNetwork", true) &&
 		consoleCookieOperation(profile.SessionWorkspaces, "get", "listSessionWorkspaces", false) &&
-		consoleCookieOperation(profile.SessionWorkspaceSwitch, "post", "switchSessionWorkspace", true)
+		consoleCookieOperation(profile.SessionWorkspaceSwitch, "post", "switchSessionWorkspace", true) &&
+		consoleCookieOperation(profile.ShareTargetResolve, "get", "resolveShareTarget", false)
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
 	}
@@ -220,6 +222,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths["/api/v1/workspaces/{workspace_id}/networks"] = profile.NetworkCreate
 	consolePaths["/auth/v1/session/workspaces"] = profile.SessionWorkspaces
 	consolePaths["/auth/v1/session/workspace"] = profile.SessionWorkspaceSwitch
+	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/share-targets/{network_display_code}"] = profile.ShareTargetResolve
 	consolePaths["/api/v1/workspaces/{workspace_id}/members"] = profile.WorkspaceMembers
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments"] = profile.WorkspaceRoleAssign
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke"] = profile.WorkspaceRoleRevoke

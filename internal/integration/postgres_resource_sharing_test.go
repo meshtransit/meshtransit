@@ -512,6 +512,8 @@ func assertCrossWorkspaceResourceSharingConsent(
 	providerSession := managementRBACAccountSessionFixture(t)
 	consumerSession := authorityConfirmerAccountSessionFixture(t)
 	consumerScope := resourceAuthorityScope(t, 102, 202)
+	assertCrossWorkspaceNoExpiryOffer(ctx, t, service, providerScope, consumerScope, resourceID, maximumTraffic,
+		reason, providerSession, consumerSession)
 	createCommand, err := sharing.NewCreateOffer(sharing.CreateOfferParams{
 		ProviderScope: providerScope, ConsumerScope: consumerScope,
 		ResourceID: resourceID, MaximumTraffic: maximumTraffic,
@@ -1922,5 +1924,64 @@ func assertDerivedAccessName(t *testing.T, offer sharing.OfferSnapshot) {
 	pattern := regexp.MustCompile(`^` + regexp.QuoteMeta(label.String()) + `\.[0-9]{12}\.[0-9]{12}\.shared\.mesh$`)
 	if !label.IsValid() || !pattern.MatchString(offer.AccessName().String()) {
 		t.Fatalf("offer access label/name = %q/%q", label, offer.AccessName())
+	}
+}
+
+// assertCrossWorkspaceNoExpiryOffer covers the owner decision of 2026-10-06:
+// a cross-Workspace share may have no scheduled expiry, while any other
+// deadline stays within 30 days. The consumer rejects the offer so the
+// finite share below proceeds alone.
+func assertCrossWorkspaceNoExpiryOffer(
+	ctx context.Context,
+	t *testing.T,
+	service *sharing.Service,
+	providerScope, consumerScope network.Scope,
+	resourceID resource.ID,
+	maximumTraffic sharing.TrafficSet,
+	reason sharing.AuditReason,
+	providerSession, consumerSession accountsession.Session,
+) {
+	t.Helper()
+	tooLong, err := sharing.NewCreateOffer(sharing.CreateOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		ResourceID: resourceID, MaximumTraffic: maximumTraffic,
+		ExpiresAt: time.Now().UTC().Add(31 * 24 * time.Hour), AccountSession: providerSession,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 221),
+	})
+	if err == nil {
+		if _, err = service.CreateOffer(ctx, tooLong); !errors.Is(err, sharing.ErrInvalidManagementRequest) {
+			t.Fatalf("cross-Workspace 31-day share: error = %v, want invalid", err)
+		}
+	}
+	command, err := sharing.NewCreateOffer(sharing.CreateOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		ResourceID: resourceID, MaximumTraffic: maximumTraffic,
+		ExpiresAt: sharing.NoExpiryTime(), AccountSession: providerSession,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 222),
+	})
+	if err != nil {
+		t.Fatalf("construct cross-Workspace share without expiry: %v", err)
+	}
+	created, err := service.CreateOffer(ctx, command)
+	if err != nil {
+		t.Fatalf("create cross-Workspace share without expiry: %v", err)
+	}
+	offer, hasOffer := created.Offer()
+	token, hasToken := created.Token()
+	if !hasOffer || !hasToken || offer.Offer().ScopeRelation() != sharing.ScopeRelationCrossWorkspace ||
+		!sharing.HasNoExpiry(offer.ShareExpiresAt()) {
+		t.Fatalf("cross-Workspace share without expiry = %+v", created)
+	}
+	reject, err := sharing.NewDecideOffer(sharing.DecideOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		OfferID: offer.Offer().ID(), ExpectedOfferVersion: offer.Offer().Version(),
+		Token: token, Action: sharing.DecisionActionReject, AccountSession: consumerSession,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 223),
+	})
+	if err != nil {
+		t.Fatalf("construct cross-Workspace rejection: %v", err)
+	}
+	if _, err := service.DecideOffer(ctx, reject); err != nil {
+		t.Fatalf("reject cross-Workspace share without expiry: %v", err)
 	}
 }

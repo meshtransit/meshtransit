@@ -1835,5 +1835,133 @@
         }
       }
     }
+  },
+  "shareTargetResolve": {
+    "get": {
+      "operationId": "resolveShareTarget",
+      "summary": "Resolve a share's consumer Network by its 12-digit display code",
+      "description": "Lets a caller holding share.offer on the provider Network address a Network in any Workspace of the same Deployment by display code. Only existence is revealed: public IDs and display codes, never names. cross_workspace reports a target outside the provider Workspace; such a share is accepted separately in the consumer Workspace.",
+      "security": [
+        {
+          "accountSessionCookie": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "network_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "network_display_code",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9]{12}$"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "An active Network in this Deployment",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "workspace_id",
+                      "network_id",
+                      "workspace_display_code",
+                      "network_display_code",
+                      "cross_workspace"
+                    ],
+                    "properties": {
+                      "workspace_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "network_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "workspace_display_code": {
+                        "type": "string",
+                        "pattern": "^[0-9]{12}$"
+                      },
+                      "network_display_code": {
+                        "type": "string",
+                        "pattern": "^[0-9]{12}$"
+                      },
+                      "cross_workspace": {
+                        "type": "boolean"
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Invalid scope or display code"
+        },
+        "401": {
+          "description": "No active Session"
+        },
+        "403": {
+          "description": "permission_denied: no share.offer on the provider Network"
+        },
+        "404": {
+          "description": "share_target_not_found: no active Network has this display code"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Temporarily unavailable"
+        }
+      }
+    }
   }
 }

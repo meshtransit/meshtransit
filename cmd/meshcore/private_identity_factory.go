@@ -19,6 +19,7 @@ import (
 	policyapproval "github.com/meshtransit/meshtransit/internal/policy/approval"
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	policypublication "github.com/meshtransit/meshtransit/internal/policy/publication"
+	"github.com/meshtransit/meshtransit/internal/sharing/target"
 	"github.com/meshtransit/meshtransit/internal/workspace/creation"
 	"github.com/meshtransit/meshtransit/internal/workspace/roles"
 	"github.com/meshtransit/meshtransit/internal/workspace/selection"
@@ -146,6 +147,14 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	shareTargetStore, err := postgresadapter.NewShareTargetStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	shareTargets, err := target.NewService(shareTargetStore, clock)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	managementScopes, err := sessioncontext.NewService(authority, clock)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
@@ -215,8 +224,8 @@ func composePrivateIdentityFactory(
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, PolicySimulations: policySimulator,
 		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations,
-		SessionWorkspaces: sessionWorkspaces,
-		PolicyApprovals:   policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
+		SessionWorkspaces: sessionWorkspaces, ShareTargets: shareTargets,
+		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,
 		RateLimiter:    dependencies.Redis,
 		CorrelationIDs: httpapi.PublicCorrelationIDGenerator{}, Clock: clock, Logger: dependencies.Logger,

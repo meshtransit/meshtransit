@@ -43,6 +43,7 @@ const (
 	workspaceCreateOperation                = "workspace_create"
 	sessionWorkspaceListOperation           = "session_workspace_list"
 	sessionWorkspaceSwitchOperation         = "session_workspace_switch"
+	shareTargetResolveOperation             = "share_target_resolve"
 	networkCreateOperation                  = "network_create"
 	deviceRevokeOperation                   = "device_revoke"
 	policyPublishOperation                  = "policy_publish"
@@ -238,6 +239,7 @@ type ManagementHandlerOptions struct {
 	WorkspaceRoles            WorkspaceRoleManager
 	WorkspaceCreations        WorkspaceCreator
 	SessionWorkspaces         SessionWorkspaceSelector
+	ShareTargets              ShareTargetResolver
 	NetworkCreations          NetworkCreator
 	PolicyApprovals           PolicyApprovalWorkflow
 	PolicyApprovalCatalog     PolicyApprovalCatalog
@@ -273,6 +275,7 @@ type ManagementHandler struct {
 	workspaceRoles            WorkspaceRoleManager
 	workspaceCreations        WorkspaceCreator
 	sessionWorkspaces         SessionWorkspaceSelector
+	shareTargets              ShareTargetResolver
 	networkCreations          NetworkCreator
 	policyApprovals           PolicyApprovalWorkflow
 	policyApprovalCatalog     PolicyApprovalCatalog
@@ -331,6 +334,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		workspaceRoles:            options.WorkspaceRoles,
 		workspaceCreations:        options.WorkspaceCreations,
 		sessionWorkspaces:         options.SessionWorkspaces,
+		shareTargets:              options.ShareTargets,
 		networkCreations:          options.NetworkCreations,
 		policyApprovals:           options.PolicyApprovals,
 		policyApprovalCatalog:     options.PolicyApprovalCatalog,
@@ -431,9 +435,11 @@ func (handler *ManagementHandler) serveHTTP(
 	workspaceCollectionMatched := isWorkspaceCollectionPath(request)
 	networkCollectionPath, networkCollectionMatched := parseNetworkCollectionPath(request)
 	sessionWorkspaceMethod, sessionWorkspaceMatched := sessionWorkspaceRoute(request)
+	shareTargetPath, shareTargetMatched := parseShareTargetPath(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
 		!accessGraphMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
-		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched {
+		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
+		!shareTargetMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -453,6 +459,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = sessionWorkspaceListOperation
 	} else if sessionWorkspaceMatched {
 		operation = sessionWorkspaceSwitchOperation
+	} else if shareTargetMatched {
+		operation = shareTargetResolveOperation
 	} else if deviceMatched {
 		operation = deviceRevokeOperation
 	} else if policyMatched {
@@ -483,6 +491,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = workspaceRolePath.allowedMethod()
 	} else if sessionWorkspaceMatched {
 		allowedMethod = sessionWorkspaceMethod
+	} else if shareTargetMatched {
+		allowedMethod = http.MethodGet
 	}
 	if allowedMethod == "" || request.Method != allowedMethod {
 		if policyApprovalMatched && policyApprovalPath.isCollection() {
@@ -566,6 +576,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if sessionWorkspaceMatched {
 		resultCode = handler.handleSessionWorkspace(ctx, response, request, correlationID, session)
+		return
+	}
+	if shareTargetMatched {
+		resultCode = handler.resolveShareTarget(ctx, response, correlationID, shareTargetPath, session)
 		return
 	}
 	if policyMatched {
