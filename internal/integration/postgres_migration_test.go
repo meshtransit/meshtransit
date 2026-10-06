@@ -359,6 +359,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLWorkspaceRoles(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLDeploymentEntitlement(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLBootstrap(ctx, t, adminConnection, migrationConfig)
+	assertSessionAuthorityPlanning(ctx, t, adminConnection)
 	assertPostgreSQLWorkspaceCreation(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLNetworkCreation(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLSessionWorkspace(ctx, t, adminConnection, runtimePool)
