@@ -130,7 +130,6 @@ WHERE table_schema = 'mesh' AND table_name = 'account_session'
 		aggregatePublicID: switchSessionPublicID, aggregateVersion: 1,
 		action: "account_session.issued", permission: "identity.session", outboxEventClass: "identity.account_session.issued",
 	}, func(transaction pgx.Tx) {
-		//nolint:gosec // column names come from information_schema, not input
 		if _, err := transaction.Exec(ctx, `INSERT INTO mesh.account_session (public_id, token_digest, version, `+list+`)
 SELECT $1::UUID, pg_catalog.sha256(pg_catalog.convert_to($1::TEXT, 'UTF8')), 1, `+list+`
 FROM mesh.account_session WHERE public_id = $2::UUID`, switchSessionPublicID, fixture.ID().String()); err != nil {

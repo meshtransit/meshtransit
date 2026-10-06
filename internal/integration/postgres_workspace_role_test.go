@@ -133,7 +133,7 @@ func assertPostgreSQLWorkspaceRoles(ctx context.Context, t *testing.T, admin *pg
 	}
 }
 
-func newAssignCommand(t *testing.T, session accountsession.Session, workspaceID interface{ String() string },
+func newAssignCommand(t *testing.T, session accountsession.Session, _ interface{ String() string },
 	principal publicid.ID, role authorization.BuiltinRole, networkID network.ID) roles.AssignCommand {
 	t.Helper()
 	command := roles.AssignCommand{Session: session, PrincipalID: principal, Role: role, NetworkID: networkID}
@@ -148,7 +148,7 @@ func newAssignCommand(t *testing.T, session accountsession.Session, workspaceID 
 	return command
 }
 
-func newRevokeCommand(t *testing.T, session accountsession.Session, workspaceID interface{ String() string },
+func newRevokeCommand(t *testing.T, session accountsession.Session, _ interface{ String() string },
 	assignment publicid.ID, version int64) roles.RevokeCommand {
 	t.Helper()
 	command := roles.RevokeCommand{Session: session, AssignmentID: assignment, ExpectedVersion: version}
