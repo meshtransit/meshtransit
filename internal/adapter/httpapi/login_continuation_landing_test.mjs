@@ -10,26 +10,28 @@ const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 const path = "/auth/v1/login/continue";
 const prepared = '{"csrf_token":"syntheticProof_1","expires_in":60}';
 const completed = '{"return_path":"/console"}';
-const failure = "Sign-in could not be completed. Close this page and restart sign-in.";
+const failure = "Sign-in could not be completed. Restart sign-in to try again.";
 
-function harness(replies = [{ text: prepared }, { text: completed }], expectedPath = "/console") {
-  const events = new Map();
+function harness(replies = [{ text: prepared }, { text: completed }], expectedPath = "/console",
+  { visibilityState = "visible", prerendering = false } = {}) {
   const pageEvents = new Map();
+  const documentEvents = new Map();
   const timers = new Map();
   const calls = [];
   const navigation = [];
   const history = [];
   const releases = [];
-  const button = { disabled: true, dataset: { returnPath: expectedPath },
-    addEventListener(name, handler) { events.set(name, handler); } };
   const status = { textContent: "" };
-  const panel = { busy: "false", setAttribute(name, value) { assert.equal(name, "aria-busy"); this.busy = value; } };
-  for (const element of [button, status, panel]) {
+  const restart = { hidden: true };
+  const panel = { busy: "true", dataset: { returnPath: expectedPath },
+    setAttribute(name, value) { assert.equal(name, "aria-busy"); this.busy = value; } };
+  for (const element of [status, panel, restart]) {
     Object.defineProperty(element, "innerHTML", { set() { assert.fail("dynamic HTML"); } });
   }
-  const document = { getElementById(id) {
-    return { "login-confirm": button, "login-status": status, "login-panel": panel }[id];
-  } };
+  const document = { visibilityState, prerendering,
+    getElementById(id) { return { "login-status": status, "login-panel": panel, "login-restart": restart }[id]; },
+    addEventListener(name, handler) { documentEvents.set(name, handler); },
+    removeEventListener(name, handler) { assert.equal(documentEvents.get(name), handler); documentEvents.delete(name); } };
   Object.defineProperty(document, "cookie", { get() { assert.fail("cookie read"); } });
   const location = { replace(destination) { navigation.push(destination); } };
   for (const name of ["search", "hash", "href", "pathname"]) {
@@ -77,37 +79,37 @@ function harness(replies = [{ text: prepared }, { text: completed }], expectedPa
       };
     } };
   vm.runInNewContext(script, sandbox, { timeout: 1000 });
-  return { button, status, panel, events, pageEvents, timers, calls, navigation, history, releases,
-    click() { return events.get("click")?.(); },
+  return { status, panel, restart, pageEvents, documentEvents, timers, calls, navigation, history, releases,
+    // Drain every queued microtask and immediate so the chain reaches a fixture wait or its end.
+    async settle() { for (let turn = 0; turn < 10; turn++) await new Promise(resolve => setImmediate(resolve)); },
+    show() { document.visibilityState = "visible"; documentEvents.get("visibilitychange")?.(); },
+    activate() { document.prerendering = false; documentEvents.get("prerenderingchange")?.(); },
     hide() { pageEvents.get("pagehide")?.(); } };
 }
 
-function assertTerminal(instance) {
-  assert.equal(instance.button.disabled, true);
-  assert.equal(instance.panel.busy, "false");
+function assertSettled(instance) {
   assert.equal(instance.timers.size, 0);
   assert.equal(instance.pageEvents.size, 0);
+  assert.equal(instance.documentEvents.size, 0);
   for (const call of instance.calls) {
     assert.equal(call.options.signal.aborted, true, "joined fetch cleanup");
   }
 }
 
-test("clean GET script never automatically posts or reads credential/location/storage", () => {
+function assertFailed(instance) {
+  assertSettled(instance);
+  assert.equal(instance.status.textContent, failure);
+  assert.equal(instance.restart.hidden, false);
+  assert.equal(instance.panel.busy, "false");
+  assert.deepEqual(instance.navigation, []);
+}
+
+test("a shown page completes exactly one fixed prepare/continue chain without interaction", async () => {
   const instance = harness();
   assert.deepEqual(instance.history, [[null, "", path]]);
-  assert.equal(instance.calls.length, 0);
-  assert.equal(instance.button.disabled, false);
-  assert.equal(instance.status.textContent, "Ready to confirm sign-in.");
-});
-
-test("explicit double activation admits exactly one fixed prepare/continue chain", async () => {
-  const instance = harness();
-  const joined = instance.click();
-  assert.equal(instance.button.disabled, true);
-  assert.equal(instance.panel.busy, "true");
-  await instance.click();
-  await joined;
-  await instance.click();
+  await instance.settle();
+  instance.show();
+  await instance.settle();
   assert.equal(instance.calls.length, 2);
   assert.deepEqual(instance.calls.map(call => call.destination), [path + "/prepare", path]);
   for (const call of instance.calls) {
@@ -126,8 +128,42 @@ test("explicit double activation admits exactly one fixed prepare/continue chain
   assert.equal(instance.calls[1].options.headers["X-MeshTransit-CSRF"], "syntheticProof_1");
   assert.deepEqual(instance.navigation, ["/console"]);
   assert.equal(instance.status.textContent.includes("syntheticProof"), false);
+  assert.equal(instance.restart.hidden, true);
   assert.equal(instance.releases.length, 2);
-  assertTerminal(instance);
+  assertSettled(instance);
+});
+
+test("a background tab waits until it is shown, then starts once", async () => {
+  const instance = harness(undefined, "/console", { visibilityState: "hidden" });
+  await instance.settle();
+  assert.equal(instance.calls.length, 0);
+  instance.show();
+  instance.show();
+  await instance.settle();
+  assert.equal(instance.calls.length, 2);
+  assert.deepEqual(instance.navigation, ["/console"]);
+  assertSettled(instance);
+});
+
+test("a prerendered page never posts until activation", async () => {
+  const instance = harness(undefined, "/console", { prerendering: true });
+  await instance.settle();
+  assert.equal(instance.calls.length, 0);
+  instance.activate();
+  await instance.settle();
+  assert.equal(instance.calls.length, 2);
+  assert.deepEqual(instance.navigation, ["/console"]);
+  assertSettled(instance);
+});
+
+test("pagehide before the page is shown ends without any POST", async () => {
+  const instance = harness([], "/console", { visibilityState: "hidden" });
+  instance.hide();
+  instance.show();
+  await instance.settle();
+  assert.equal(instance.calls.length, 0);
+  assert.equal(instance.status.textContent, failure);
+  assert.equal(instance.restart.hidden, false);
 });
 
 for (const [name, reply] of [
@@ -153,12 +189,11 @@ for (const [name, reply] of [
 ]) {
   test(`prepare ${name} stops once, generic message, no continue/retry`, async () => {
     const instance = harness([reply]);
-    await instance.click();
-    await instance.click();
+    await instance.settle();
+    instance.show();
+    await instance.settle();
     assert.equal(instance.calls.length, 1);
-    assert.equal(instance.status.textContent, failure);
-    assert.deepEqual(instance.navigation, []);
-    assertTerminal(instance);
+    assertFailed(instance);
   });
 }
 
@@ -177,21 +212,20 @@ for (const [name, reply] of [
 ]) {
   test(`completion ${name} never retries or claims non-commit`, async () => {
     const instance = harness([{ text: prepared }, reply]);
-    await instance.click();
-    await instance.click();
+    await instance.settle();
+    instance.show();
+    await instance.settle();
     assert.equal(instance.calls.length, 2);
-    assert.equal(instance.status.textContent, failure);
-    assert.deepEqual(instance.navigation, []);
-    assertTerminal(instance);
+    assertFailed(instance);
   });
 }
 
 test("fragmented bounded canonical responses preserve exact bytes", async () => {
   const fragment = text => Array.from(new TextEncoder().encode(text), byte => new Uint8Array([byte]));
   const instance = harness([{ chunks: fragment(prepared) }, { chunks: fragment(completed) }]);
-  await instance.click();
+  await instance.settle();
   assert.deepEqual(instance.navigation, ["/console"]);
-  assertTerminal(instance);
+  assertSettled(instance);
 });
 
 for (const phase of ["prepare", "continue"]) {
@@ -199,18 +233,15 @@ for (const phase of ["prepare", "continue"]) {
     test(`${reason} aborts and joins pending ${phase}, no repeat`, async () => {
       const replies = phase === "prepare" ? [{ pending: true }] : [{ text: prepared }, { pending: true }];
       const instance = harness(replies);
-      const joined = instance.click();
-      // Drain bounded microtasks until the deterministic fetch fixture is waiting.
-      for (let attempt = 0; attempt < 20 && instance.calls.length < replies.length; attempt++) await Promise.resolve();
+      await instance.settle();
       assert.equal(instance.calls.length, replies.length);
       if (reason === "timeout") instance.timers.get(1)();
       else instance.hide();
-      await joined;
-      await instance.click();
+      await instance.settle();
+      instance.show();
+      await instance.settle();
       assert.equal(instance.calls.length, replies.length);
-      assert.equal(instance.status.textContent, failure);
-      assert.deepEqual(instance.navigation, []);
-      assertTerminal(instance);
+      assertFailed(instance);
     });
   }
 }
@@ -219,33 +250,30 @@ for (const phase of ["prepare", "continue"]) {
   test(`whole timeout aborts a pending ${phase} response body, no replay`, async () => {
     const replies = phase === "prepare" ? [{ pendingRead: true }] : [{ text: prepared }, { pendingRead: true }];
     const instance = harness(replies);
-    const joined = instance.click();
-    for (let attempt = 0; attempt < 30; attempt++) await Promise.resolve();
+    await instance.settle();
     assert.equal(instance.calls.length, replies.length);
     instance.timers.get(1)();
-    await joined;
-    assert.equal(instance.status.textContent, failure);
+    await instance.settle();
     assert.equal(instance.releases.length, replies.length);
-    assert.deepEqual(instance.navigation, []);
-    assertTerminal(instance);
+    assertFailed(instance);
   });
 }
 
 for (const expectedPath of ["/", "/console/nodes", "/" + "x".repeat(255)]) {
   test(`exact canonical mapping ${expectedPath} remains Core-owned`, async () => {
     const instance = harness([{ text: prepared }, { text: JSON.stringify({ return_path: expectedPath }) }], expectedPath);
-    await instance.click();
+    await instance.settle();
     assert.deepEqual(instance.navigation, [expectedPath]);
-    assertTerminal(instance);
+    assertSettled(instance);
   });
 }
 
 for (const expectedPath of ["//evil.example.test", "/auth", "/x/../console", "/console?code=a", "/console/", "", "/" + "x".repeat(256)]) {
-  test(`unsafe mapping ${expectedPath || "empty"} disables interaction before POST`, async () => {
+  test(`unsafe mapping ${expectedPath || "empty"} fails before any POST`, async () => {
     const instance = harness([], expectedPath);
-    await instance.click();
-    assert.equal(instance.button.disabled, true);
+    await instance.settle();
     assert.equal(instance.calls.length, 0);
     assert.equal(instance.status.textContent, failure);
+    assert.equal(instance.restart.hidden, false);
   });
 }
