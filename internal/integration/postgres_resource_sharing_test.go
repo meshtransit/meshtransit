@@ -617,6 +617,11 @@ FROM mesh.network WHERE workspace_id = 103 AND state = 'active'`).Scan(&networkC
 	assertCrossWorkspaceShareExplained(
 		ctx, t, admin, runtimePool, consumerSession, consumerScope, activeContract.ImportedResourceID(),
 	)
+	assertProviderSeesWhoAccesses(ctx, t, service, providerSession, providerScope, offer.Offer().ID(), activeContract)
+	assertImportedDeviceCannotBeReshared(
+		ctx, t, service, consumerSession, consumerScope, providerScope,
+		activeContract.ImportedResourceID(), maximumTraffic, reason,
+	)
 	return activeContract.ImportedResourceID()
 }
 

@@ -409,6 +409,9 @@ type OfferSnapshot struct {
 	createdAt      time.Time
 	accessLabel    AccessLabel
 	accessName     AccessName
+	contract       Contract
+	hasContract    bool
+	displayCodes   OfferDisplayCodes
 }
 
 // WithAccessNaming returns a copy carrying the provider label and the

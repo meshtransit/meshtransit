@@ -215,6 +215,11 @@ type shareOfferData struct {
 	State                   string               `json:"state"`
 	Version                 int64                `json:"version"`
 	AcceptedTrustContractID string               `json:"accepted_trust_contract_id,omitempty"`
+	TrustContract           *shareOfferContract  `json:"trust_contract,omitempty"`
+	ProviderWorkspaceCode   string               `json:"provider_workspace_code,omitempty"`
+	ProviderNetworkCode     string               `json:"provider_network_code,omitempty"`
+	ConsumerWorkspaceCode   string               `json:"consumer_workspace_code,omitempty"`
+	ConsumerNetworkCode     string               `json:"consumer_network_code,omitempty"`
 	AccessLabel             string               `json:"access_label,omitempty"`
 	AccessName              string               `json:"access_name,omitempty"`
 	CreatedAt               time.Time            `json:"created_at"`
@@ -225,6 +230,15 @@ type shareOfferData struct {
 	ConsumerNetworkRevision int64                `json:"consumer_network_revision,omitempty"`
 	ConsumerSharingRevision int64                `json:"consumer_sharing_revision,omitempty"`
 	OfferToken              string               `json:"offer_token,omitempty"`
+}
+
+// shareOfferContract is the lifecycle of the contract an offer was accepted
+// into, which both sides may see.
+type shareOfferContract struct {
+	TrustContractID string    `json:"trust_contract_id"`
+	State           string    `json:"state"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	Version         int64     `json:"version"`
 }
 
 type shareContractData struct {
@@ -981,6 +995,15 @@ func shareOfferDataFromSnapshot(snapshot sharing.OfferSnapshot) shareOfferData {
 	}
 	data.AccessLabel = snapshot.AccessLabel().String()
 	data.AccessName = snapshot.AccessName().String()
+	if contract, accepted := snapshot.Contract(); accepted {
+		data.TrustContract = &shareOfferContract{
+			TrustContractID: contract.ID().String(), State: sharingContractStateString(contract.State()),
+			ExpiresAt: contract.ExpiresAt().UTC(), Version: contract.Version(),
+		}
+	}
+	codes := snapshot.DisplayCodes()
+	data.ProviderWorkspaceCode, data.ProviderNetworkCode = codes.ProviderWorkspace.String(), codes.ProviderNetwork.String()
+	data.ConsumerWorkspaceCode, data.ConsumerNetworkCode = codes.ConsumerWorkspace.String(), codes.ConsumerNetwork.String()
 	return data
 }
 

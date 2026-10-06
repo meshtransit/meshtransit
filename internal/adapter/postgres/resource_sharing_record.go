@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/resource"
@@ -57,6 +58,39 @@ type resourceSharingOfferRecord struct {
 	CreatedAt                   time.Time                      `json:"created_at"`
 	Constraints                 []resourceSharingTrafficRecord `json:"constraints"`
 	Contract                    *resourceSharingContractRecord `json:"contract"`
+	DisplayCodes                *resourceSharingDisplayCodes   `json:"display_codes"`
+}
+
+// resourceSharingDisplayCodes names both ends of an offer; a code is null when
+// its tenant has none.
+type resourceSharingDisplayCodes struct {
+	ProviderWorkspace *string `json:"provider_workspace_code"`
+	ProviderNetwork   *string `json:"provider_network_code"`
+	ConsumerWorkspace *string `json:"consumer_workspace_code"`
+	ConsumerNetwork   *string `json:"consumer_network_code"`
+}
+
+func (codes *resourceSharingDisplayCodes) value() (sharing.OfferDisplayCodes, error) {
+	if codes == nil {
+		return sharing.OfferDisplayCodes{}, nil
+	}
+	parse := func(value *string) (identity.DisplayCode, error) {
+		if value == nil {
+			return "", nil
+		}
+		return identity.ParseDisplayCode(*value)
+	}
+	providerWorkspace, providerWorkspaceErr := parse(codes.ProviderWorkspace)
+	providerNetwork, providerNetworkErr := parse(codes.ProviderNetwork)
+	consumerWorkspace, consumerWorkspaceErr := parse(codes.ConsumerWorkspace)
+	consumerNetwork, consumerNetworkErr := parse(codes.ConsumerNetwork)
+	if err := errors.Join(providerWorkspaceErr, providerNetworkErr, consumerWorkspaceErr, consumerNetworkErr); err != nil {
+		return sharing.OfferDisplayCodes{}, sharing.ErrUnavailable
+	}
+	return sharing.OfferDisplayCodes{
+		ProviderWorkspace: providerWorkspace, ProviderNetwork: providerNetwork,
+		ConsumerWorkspace: consumerWorkspace, ConsumerNetwork: consumerNetwork,
+	}, nil
 }
 
 type resourceSharingProjection struct {
@@ -161,6 +195,13 @@ func (record resourceSharingOfferRecord) value() (resourceSharingProjection, err
 	if err != nil {
 		return resourceSharingProjection{}, err
 	}
+	codes, err := record.DisplayCodes.value()
+	if err != nil {
+		return resourceSharingProjection{}, err
+	}
+	if snapshot, err = snapshot.WithDisplayCodes(codes); err != nil {
+		return resourceSharingProjection{}, sharing.ErrUnavailable
+	}
 	projection := resourceSharingProjection{offer: snapshot}
 	if record.Contract == nil {
 		return projection, nil
@@ -191,6 +232,9 @@ func (record resourceSharingOfferRecord) value() (resourceSharingProjection, err
 		return resourceSharingProjection{}, sharing.ErrUnavailable
 	}
 	projection.contract = contract
+	if projection.offer, err = projection.offer.WithContract(contract); err != nil {
+		return resourceSharingProjection{}, sharing.ErrUnavailable
+	}
 	return projection, nil
 }
 

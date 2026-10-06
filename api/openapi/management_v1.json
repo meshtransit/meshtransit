@@ -3567,6 +3567,22 @@
           "state": {"type": "string", "enum": ["offered", "accepted", "rejected", "expired", "revoked"]},
           "version": {"type": "integer", "format": "int64", "minimum": 1},
           "accepted_trust_contract_id": {"$ref": "#/components/schemas/PublicID"},
+          "trust_contract": {
+            "description": "The Trust Contract this offer was accepted into, as both sides see it.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["trust_contract_id", "state", "expires_at", "version"],
+            "properties": {
+              "trust_contract_id": {"$ref": "#/components/schemas/PublicID"},
+              "state": {"type": "string", "enum": ["activating", "active", "revoked", "expired", "invalidated"]},
+              "expires_at": {"type": "string", "format": "date-time"},
+              "version": {"type": "integer", "format": "int64", "minimum": 1}
+            }
+          },
+          "provider_workspace_code": {"type": "string", "pattern": "^[0-9]{12}$"},
+          "provider_network_code": {"type": "string", "pattern": "^[0-9]{12}$"},
+          "consumer_workspace_code": {"type": "string", "pattern": "^[0-9]{12}$"},
+          "consumer_network_code": {"type": "string", "pattern": "^[0-9]{12}$"},
           "access_label": {"type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", "readOnly": true, "description": "Frozen provider label; absent for offers created before labels."},
           "access_name": {"type": "string", "minLength": 3, "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", "readOnly": true, "description": "Consumer DNS name acceptance reserves; present exactly when access_label is."},
           "created_at": {"type": "string", "format": "date-time"},

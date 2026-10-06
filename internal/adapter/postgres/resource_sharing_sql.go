@@ -117,6 +117,7 @@ const resourceSharingOfferProjectionSQL = `pg_catalog.jsonb_build_object(
     'accepted_contract_id', offer.accepted_contract_public_id,
     'access_label', offer.access_label,
     'access_name', mesh_ops.read_share_offer_access_name_v1(offer.public_id),
+    'display_codes', mesh_ops.read_share_offer_display_codes_v1(offer.public_id),
     'created_at', offer.created_at,
     'constraints', COALESCE((
         SELECT pg_catalog.jsonb_agg(
