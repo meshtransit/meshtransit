@@ -195,7 +195,13 @@ func (handler *MapSessionHandler) serveStream(
 		http.Error(response, http.StatusText(failure.status), failure.status)
 		return result
 	}
-	if result == mapStreamClosed || result == mapAuthorityChanged {
+	if result == mapStreamClosed {
+		return result
+	}
+	if result == mapAuthorityChanged {
+		// The client was told its authority ended (withdrawal or expiry); record
+		// why, since it stays offline until it reconnects.
+		handler.logger.WarnContext(request.Context(), "map stream ended authority", "error", err)
 		return result
 	}
 	if err == nil {
