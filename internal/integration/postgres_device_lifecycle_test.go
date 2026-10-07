@@ -127,9 +127,15 @@ func assertPostgreSQLDeviceLifecycle(ctx context.Context, t *testing.T, admin *p
 	if _, err := lifecycle.Change(ctx, owner, stale); !errors.Is(err, devicelifecycle.ErrVersionConflict) {
 		t.Fatalf("stale resume: %v", err)
 	}
+	if !mapSessionSuspended(ctx, t, admin, device) {
+		t.Fatal("schema 126 must report the suspended Device to its own map session")
+	}
 	if resumed, err := change(owner, devicelifecycle.Request{Action: devicelifecycle.ActionResume,
 		Reason: "Found it"}); err != nil || resumed.After.State != "active" {
 		t.Fatalf("resume = %+v, %v", resumed, err)
+	}
+	if mapSessionSuspended(ctx, t, admin, device) {
+		t.Fatal("schema 126 must not report an active Device as suspended")
 	}
 
 	// A handover needs an active member of the Workspace and Network.
@@ -276,4 +282,41 @@ func assertPostgreSQLBrowserHandover(
 		row.expiresAt.Year() == 2200 || countDeviceAudit(ctx, t, admin, device, "device.handover_completed") != 1 {
 		t.Fatalf("completed handover = %+v", row)
 	}
+}
+
+// mapSessionSuspended asks schema 126, as the runtime role, whether the
+// Device's current machine and node key belong to a suspended Device.
+func mapSessionSuspended(ctx context.Context, t *testing.T, admin *pgx.Conn, device node.ID) bool {
+	t.Helper()
+	transaction, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+	var fingerprint, nodeKey []byte
+	if err := transaction.QueryRow(ctx, `SELECT machine.fingerprint, node_key.public_key
+FROM mesh.device AS device
+JOIN mesh.device_machine_key_epoch AS machine
+  ON machine.workspace_id = device.workspace_id AND machine.network_id = device.network_id
+ AND machine.device_id = device.id AND machine.epoch = device.current_machine_key_epoch
+JOIN mesh.device_node_key_epoch AS node_key
+  ON node_key.workspace_id = device.workspace_id AND node_key.network_id = device.network_id
+ AND node_key.device_id = device.id AND node_key.epoch = device.current_node_key_epoch
+WHERE device.public_id = $1::UUID`, device.String()).Scan(&fingerprint, &nodeKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transaction.Exec(ctx, "SET LOCAL ROLE mesh_runtime"); err != nil {
+		t.Fatal(err)
+	}
+	var suspended bool
+	if err := transaction.QueryRow(ctx, `SELECT mesh_ops.map_session_suspended_v1($1::BYTEA, $2::BYTEA)`,
+		fingerprint, nodeKey).Scan(&suspended); err != nil {
+		t.Fatal(err)
+	}
+	var wrongKey bool
+	if err := transaction.QueryRow(ctx, `SELECT mesh_ops.map_session_suspended_v1($1::BYTEA, $2::BYTEA)`,
+		fingerprint, make([]byte, 32)).Scan(&wrongKey); err != nil || wrongKey {
+		t.Fatalf("another node key must never learn the suspension: %t, %v", wrongKey, err)
+	}
+	return suspended
 }

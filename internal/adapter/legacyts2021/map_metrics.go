@@ -18,6 +18,7 @@ const (
 	mapAuthenticationFailed
 	mapCanceled
 	mapUnavailable
+	mapSuspended
 )
 
 type mapMetrics struct {
@@ -73,8 +74,8 @@ func (metrics mapMetrics) streamOpened() { metrics.streams.Inc() }
 
 func (metrics mapMetrics) streamClosed() { metrics.streams.Dec() }
 
-func allMapResults() [8]mapResult {
-	return [8]mapResult{
+func allMapResults() [9]mapResult {
+	return [9]mapResult{
 		mapAuthorized,
 		mapStreamClosed,
 		mapAuthorityChanged,
@@ -83,6 +84,7 @@ func allMapResults() [8]mapResult {
 		mapAuthenticationFailed,
 		mapCanceled,
 		mapUnavailable,
+		mapSuspended,
 	}
 }
 
@@ -104,6 +106,8 @@ func (result mapResult) label() string {
 		return "canceled"
 	case mapUnavailable:
 		return "unavailable"
+	case mapSuspended:
+		return "suspended"
 	default:
 		return "internal_failure"
 	}

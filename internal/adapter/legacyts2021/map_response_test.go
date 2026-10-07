@@ -129,6 +129,33 @@ func TestEncodeAuthorityWithdrawalClearsRuntimeAuthority(t *testing.T) {
 	}
 }
 
+func TestEncodeAuthorityPauseKeepsIdentityButNoAuthority(t *testing.T) {
+	t.Parallel()
+
+	snapshot := mapSnapshotWithCandidateFixture(t)
+	encoded, err := encodeAuthorityPauseMapResponse(snapshot, 142, mapResponseCompressionZstd)
+	if err != nil {
+		t.Fatalf("encodeAuthorityPauseMapResponse() error = %v", err)
+	}
+	document, err := zstdframe.AppendDecode(
+		nil,
+		encoded[4:],
+		zstdframe.MaxDecodedSize(maxMapResponseBytes),
+	)
+	if err != nil {
+		t.Fatalf("decode authority pause: %v", err)
+	}
+	var response tailcfg.MapResponse
+	if err := json.Unmarshal(document, &response); err != nil {
+		t.Fatalf("decode typed authority pause: %v", err)
+	}
+	if response.Node == nil || response.Node.Expired || response.Node.MachineAuthorized ||
+		response.Peers == nil || len(response.Peers) != 0 ||
+		response.PacketFilter == nil || len(response.PacketFilter) != 0 {
+		t.Fatalf("authority pause = %+v", response)
+	}
+}
+
 func TestEncodeAuthorityWithdrawalRejectsInvalidInput(t *testing.T) {
 	t.Parallel()
 

@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 125 {
-		t.Fatalf("len(Catalog()) = %d, want 125", len(catalog))
+	if len(catalog) != 126 {
+		t.Fatalf("len(Catalog()) = %d, want 126", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 125 {
-		t.Fatalf("LatestVersion() = %d, want 125", LatestVersion())
+	if LatestVersion() != 126 {
+		t.Fatalf("LatestVersion() = %d, want 126", LatestVersion())
 	}
 }
 
@@ -3002,5 +3002,27 @@ func TestDeviceLifecycle(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "GRANT SELECT") {
 		t.Error("schema 125 must not grant direct table access")
+	}
+}
+
+func TestMapSessionSuspension(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[125]
+	if migration.Version != 126 {
+		t.Fatalf("migration 126 = %+v", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.map_session_suspended_v1(",
+		"AND device.state = 'suspended'",
+		"AND machine.epoch = device.current_machine_key_epoch",
+		"AND node_key.epoch = device.current_node_key_epoch",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.map_session_suspended_v1(BYTEA, BYTEA) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 126 missing %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "GRANT SELECT") {
+		t.Error("schema 126 must not grant direct table access")
 	}
 }

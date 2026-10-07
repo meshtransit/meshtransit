@@ -141,7 +141,8 @@ func projectAuthorityDelta(
 }
 
 func stableSelfAuthority(current, next Snapshot) bool {
-	return current.NumericOwnerID() == next.NumericOwnerID() &&
+	return current.KeyExpiry().Equal(next.KeyExpiry()) &&
+		current.NumericOwnerID() == next.NumericOwnerID() &&
 		current.NetworkName() == next.NetworkName() &&
 		current.Hostname() == next.Hostname() &&
 		slices.Equal(current.Addresses(), next.Addresses())

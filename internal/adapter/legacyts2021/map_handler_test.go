@@ -186,3 +186,23 @@ func serveMap(t *testing.T, handler http.Handler, body string) *httptest.Respons
 	handler.ServeHTTP(response, request)
 	return response
 }
+
+func TestMapSuspensionIsRetryableAndCounted(t *testing.T) {
+	t.Parallel()
+
+	failure := classifyMapFailure(errors.Join(mapsession.ErrSuspended, errors.New("wrapped")))
+	if failure.status != http.StatusLocked || failure.result != mapSuspended {
+		t.Fatalf("classifyMapFailure(suspended) = %+v, want 423 suspended", failure)
+	}
+	for _, started := range []bool{false, true} {
+		if result := classifyMapStreamResult(mapsession.ErrSuspended, started); result != mapSuspended {
+			t.Fatalf("classifyMapStreamResult(suspended, %t) = %v", started, result)
+		}
+	}
+	if classifyMapFailure(mapsession.ErrUnauthorized).status != http.StatusUnauthorized {
+		t.Fatal("an identity without authority must still be refused")
+	}
+	if mapSuspended.label() != "suspended" {
+		t.Fatalf("label = %q", mapSuspended.label())
+	}
+}

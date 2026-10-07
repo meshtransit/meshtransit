@@ -641,6 +641,91 @@ func TestStreamServiceWithdrawsAuthorityWhenRefreshIsUnauthorized(t *testing.T) 
 	})
 }
 
+func TestStreamServicePausesSuspendedDevice(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		initial := snapshotFixture(t)
+		opener := &streamSnapshotOpener{
+			snapshots: []Snapshot{initial},
+			failures:  []error{nil, ErrSuspended},
+		}
+		sink := &recordingStreamSink{}
+		service := newStreamServiceFixture(t, opener, &streamPresenceStore{})
+		machine, request := authenticatedRequestFixture(t, initial)
+		result := make(chan error, 1)
+		go func() { result <- service.Serve(t.Context(), machine, request, sink) }()
+
+		synctest.Wait()
+		time.Sleep(5 * time.Second)
+		synctest.Wait()
+		if err := <-result; !errors.Is(err, ErrSuspended) || errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("Serve() error = %v, want suspension", err)
+		}
+		sink.mu.Lock()
+		defer sink.mu.Unlock()
+		if len(sink.pauses) != 1 || sink.pauses[0].NodeID() != initial.NodeID() ||
+			len(sink.withdrawals) != 0 {
+			t.Fatalf("suspended refresh pauses %d, withdrawals %d; want 1 and 0",
+				len(sink.pauses), len(sink.withdrawals))
+		}
+	})
+}
+
+func TestStreamServiceFollowsAMovedAuthorityDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		params := snapshotFixture(t).params()
+		params.CreatedAt = time.Now().Add(-time.Hour)
+		params.KeyExpiry = time.Now().Add(7 * time.Second)
+		initial, err := NewSnapshot(params)
+		if err != nil {
+			t.Fatalf("NewSnapshot() error = %v", err)
+		}
+		params.NetworkRevision++
+		params.KeyExpiry = time.Now().Add(time.Hour)
+		extended, err := NewSnapshot(params)
+		if err != nil {
+			t.Fatalf("NewSnapshot() error = %v", err)
+		}
+		if !streamCanAdvance(initial, extended) {
+			t.Fatal("a later revision with a new deadline must advance")
+		}
+		if _, err := NewAuthorityDelta(initial, extended); err == nil {
+			t.Fatal("a new deadline must not be delta-encoded")
+		}
+		same := initial.params()
+		same.KeyExpiry = time.Now().Add(time.Hour)
+		sameRevision, err := NewSnapshot(same)
+		if err != nil {
+			t.Fatalf("NewSnapshot() error = %v", err)
+		}
+		if streamCanAdvance(initial, sameRevision) {
+			t.Fatal("a new deadline without a new revision must not advance")
+		}
+
+		opener := &streamSnapshotOpener{snapshots: []Snapshot{initial, extended}}
+		sink := &recordingStreamSink{}
+		service := newStreamServiceFixture(t, opener, &streamPresenceStore{})
+		machine, request := authenticatedRequestFixture(t, initial)
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan error, 1)
+		go func() { result <- service.Serve(ctx, machine, request, sink) }()
+
+		synctest.Wait()
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+		snapshots, _ := sink.state()
+		if len(snapshots) != 2 || !snapshots[1].KeyExpiry().Equal(extended.KeyExpiry()) {
+			t.Fatalf("sent %d snapshots, want the initial and the extended one", len(snapshots))
+		}
+		if withdrawals := sink.authorityWithdrawals(); len(withdrawals) != 0 {
+			t.Fatalf("extended authority sent %d withdrawals, want 0", len(withdrawals))
+		}
+		cancel()
+		if err := <-result; !errors.Is(err, context.Canceled) {
+			t.Fatalf("Serve() error = %v, want cancellation", err)
+		}
+	})
+}
+
 func TestStreamSnapshotRequiresStableCandidatesAtSameRevision(t *testing.T) {
 	currentParams := snapshotFixture(t).params()
 	currentParams.PeerCandidates = []PeerCandidate{peerCandidateFixture(
@@ -1093,6 +1178,7 @@ type recordingStreamSink struct {
 	authorityDeltas []AuthorityDelta
 	deltas          []ConnectivityDelta
 	withdrawals     []Snapshot
+	pauses          []Snapshot
 	keepAlives      int
 }
 
@@ -1130,6 +1216,16 @@ func (sink *recordingStreamSink) SendAuthorityWithdrawal(
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
 	sink.withdrawals = append(sink.withdrawals, snapshot)
+	return nil
+}
+
+func (sink *recordingStreamSink) SendAuthorityPause(
+	_ context.Context,
+	snapshot Snapshot,
+) error {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	sink.pauses = append(sink.pauses, snapshot)
 	return nil
 }
 

@@ -16,14 +16,15 @@ func streamCanAdvance(current, next Snapshot) bool {
 		next.RecoveryEpoch() != current.RecoveryEpoch() ||
 		next.SessionGeneration() != current.SessionGeneration() ||
 		!next.CreatedAt().Equal(current.CreatedAt()) ||
-		!next.KeyExpiry().Equal(current.KeyExpiry()) ||
 		!relayDirectoryCanAdvance(current, next) || !directDeviceProjectionsCanAdvance(current, next) {
 		return false
 	}
 	if next.NetworkRevision() > current.NetworkRevision() {
 		return true
 	}
-	return next.NumericOwnerID() == current.NumericOwnerID() &&
+	// A new deadline always comes with a new revision (transfer, extension).
+	return next.KeyExpiry().Equal(current.KeyExpiry()) &&
+		next.NumericOwnerID() == current.NumericOwnerID() &&
 		next.NetworkName() == current.NetworkName() &&
 		next.Hostname() == current.Hostname() &&
 		slices.Equal(next.Addresses(), current.Addresses()) &&

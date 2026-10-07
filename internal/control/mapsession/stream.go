@@ -50,6 +50,9 @@ type StreamSink interface {
 	SendAuthorityDelta(context.Context, AuthorityDelta) error
 	SendConnectivityDelta(context.Context, ConnectivityDelta) error
 	SendAuthorityWithdrawal(context.Context, Snapshot) error
+	// SendAuthorityPause clears every peer and rule but tells the client its
+	// identity stands, so it retries until the Device is resumed.
+	SendAuthorityPause(context.Context, Snapshot) error
 	SendKeepAlive(context.Context) error
 }
 
@@ -215,6 +218,7 @@ func (service *StreamService) run(
 	defer reconcile.Stop()
 	authorityExpiry := time.NewTimer(time.Until(initial.KeyExpiry()))
 	defer authorityExpiry.Stop()
+	expiry := initial.KeyExpiry()
 	projectionExpiry := time.NewTimer(time.Hour)
 	projectionExpiry.Stop()
 	defer projectionExpiry.Stop()
@@ -222,6 +226,18 @@ func (service *StreamService) run(
 	defer func() { watch.close() }()
 	current := initial
 	for {
+		if !current.KeyExpiry().Equal(expiry) {
+			// An owner change or extension moved the deadline; the new snapshot
+			// already carries it to the client.
+			expiry = current.KeyExpiry()
+			if !authorityExpiry.Stop() {
+				select {
+				case <-authorityExpiry.C:
+				default:
+				}
+			}
+			authorityExpiry.Reset(time.Until(expiry))
+		}
 		scopes := append([]network.Scope{current.Scope()}, current.SharingScopes()...)
 		if !slices.Equal(scopes, watch.scopes) {
 			nextWatch, err := service.watchSnapshot(ctx, current)
@@ -302,6 +318,12 @@ func (service *StreamService) refresh(
 	current Snapshot,
 ) (Snapshot, error) {
 	next, err := service.openSnapshot(ctx, machine, request)
+	if errors.Is(err, ErrSuspended) {
+		if sendErr := sink.SendAuthorityPause(ctx, current); sendErr != nil {
+			return Snapshot{}, errors.Join(err, ErrStreamWrite, sendErr)
+		}
+		return Snapshot{}, err
+	}
 	if err != nil {
 		cause := errors.Join(ErrStreamUnavailable, err)
 		if errors.Is(err, ErrUnauthorized) || len(current.directDeviceProjections) != 0 ||

@@ -198,6 +198,11 @@ func (handler *MapSessionHandler) serveStream(
 	if result == mapStreamClosed {
 		return result
 	}
+	if result == mapSuspended {
+		// The client keeps its identity and retries until the Device resumes.
+		handler.logger.InfoContext(request.Context(), "map stream paused for a suspended Device")
+		return result
+	}
 	if result == mapAuthorityChanged {
 		// The client was told its authority ended (withdrawal or expiry); record
 		// why, since it stays offline until it reconnects.
@@ -218,6 +223,9 @@ type mapFailure struct {
 
 func classifyMapFailure(err error) mapFailure {
 	switch {
+	case errors.Is(err, mapsession.ErrSuspended):
+		// 423 tells the client its identity stands and it should retry later.
+		return mapFailure{status: http.StatusLocked, result: mapSuspended}
 	case errors.Is(err, mapsession.ErrUnauthorized), errors.Is(err, control.ErrInvalidAuthenticatedNode):
 		return mapFailure{status: http.StatusUnauthorized, result: mapAuthenticationFailed}
 	case errors.Is(err, mapsession.ErrInvalidRequest):
@@ -231,6 +239,8 @@ func classifyMapFailure(err error) mapFailure {
 
 func classifyMapStreamResult(err error, started bool) mapResult {
 	switch {
+	case errors.Is(err, mapsession.ErrSuspended):
+		return mapSuspended
 	case started && errors.Is(err, mapsession.ErrUnauthorized):
 		return mapAuthorityChanged
 	case errors.Is(err, mapsession.ErrUnauthorized),

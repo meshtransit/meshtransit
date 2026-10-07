@@ -81,7 +81,7 @@ func TestStoreLoadsConsistentScopedSnapshot(t *testing.T) {
 
 func TestStoreMapsUnknownIdentityToUnauthorized(t *testing.T) {
 	store, _, transaction, observer, identity := validStoreFixture(t)
-	transaction.rows = []databaseRow{errorRow{err: pgx.ErrNoRows}}
+	transaction.rows = []databaseRow{errorRow{err: pgx.ErrNoRows}, suspendedRow{}}
 
 	if _, err := store.Load(t.Context(), identity); !errors.Is(err, appmapsession.ErrUnauthorized) {
 		t.Fatalf("Load() error = %v, want mapsession.ErrUnauthorized", err)
@@ -261,5 +261,25 @@ func TestStoreFailsClosedWhenPeerCandidateBoundIsExceeded(t *testing.T) {
 	}
 	if transaction.committed || transaction.rollbackCalls != 1 {
 		t.Fatalf("transaction committed=%t rollbacks=%d, want false/1", transaction.committed, transaction.rollbackCalls)
+	}
+}
+
+func TestStoreTellsASuspendedDeviceApart(t *testing.T) {
+	store, _, transaction, observer, identity := validStoreFixture(t)
+	transaction.rows = []databaseRow{errorRow{err: pgx.ErrNoRows}, suspendedRow{suspended: true}}
+
+	_, err := store.Load(t.Context(), identity)
+	if !errors.Is(err, appmapsession.ErrSuspended) || errors.Is(err, appmapsession.ErrUnauthorized) {
+		t.Fatalf("Load() error = %v, want mapsession.ErrSuspended", err)
+	}
+	fingerprint := identity.MachineFingerprint()
+	nodeKey := identity.NodeKey().Bytes()
+	last := len(transaction.queries) - 1
+	if transaction.queries[last] != mapSessionSuspendedSQL ||
+		!reflect.DeepEqual(transaction.arguments[last], []any{fingerprint[:], nodeKey[:]}) {
+		t.Fatal("suspension read was not pinned to the authenticated keys")
+	}
+	if transaction.committed || observer.calls != 1 {
+		t.Fatalf("committed=%t observer calls=%d, want false/1", transaction.committed, observer.calls)
 	}
 }

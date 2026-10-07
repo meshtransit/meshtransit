@@ -111,6 +111,26 @@ func encodeAuthorityWithdrawalMapResponse(
 	capabilityVersion int,
 	compression mapResponseCompression,
 ) ([]byte, error) {
+	return encodeAuthorityEndMapResponse(snapshot, capabilityVersion, compression, true)
+}
+
+// encodeAuthorityPauseMapResponse tells a suspended client to drop every
+// peer and rule but keep its identity: the self node is unauthorized yet not
+// expired, so the client waits and retries instead of stopping for good.
+func encodeAuthorityPauseMapResponse(
+	snapshot mapsession.Snapshot,
+	capabilityVersion int,
+	compression mapResponseCompression,
+) ([]byte, error) {
+	return encodeAuthorityEndMapResponse(snapshot, capabilityVersion, compression, false)
+}
+
+func encodeAuthorityEndMapResponse(
+	snapshot mapsession.Snapshot,
+	capabilityVersion int,
+	compression mapResponseCompression,
+	expired bool,
+) ([]byte, error) {
 	if !snapshot.IsValid() || capabilityVersion != supportedCapabilityVersion {
 		return nil, ErrMapResponse
 	}
@@ -118,7 +138,7 @@ func encodeAuthorityWithdrawalMapResponse(
 	if err != nil {
 		return nil, err
 	}
-	self.Expired = true
+	self.Expired = expired
 	self.MachineAuthorized = false
 	self.DiscoKey = key.DiscoPublic{}
 	self.Endpoints = nil

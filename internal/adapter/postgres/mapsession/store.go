@@ -110,7 +110,12 @@ func (store *Store) Load(
 		&recoveryEpoch,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return appmapsession.Snapshot{}, appmapsession.ErrUnauthorized
+			return appmapsession.Snapshot{}, suspendedOrUnauthorized(
+				ctx,
+				transaction,
+				fingerprint[:],
+				nodeKey[:],
+			)
 		}
 		return appmapsession.Snapshot{}, errors.Join(
 			ErrLoadSnapshot,
@@ -378,4 +383,22 @@ func rollback(transaction databaseTransaction) error {
 		return fmt.Errorf("roll back map snapshot: %w", err)
 	}
 	return nil
+}
+
+// suspendedOrUnauthorized tells a suspended Device apart from one without
+// authority, so the client waits instead of stopping for good.
+func suspendedOrUnauthorized(
+	ctx context.Context,
+	transaction databaseTransaction,
+	fingerprint []byte,
+	nodeKey []byte,
+) error {
+	var suspended bool
+	if err := transaction.QueryRow(ctx, mapSessionSuspendedSQL, fingerprint, nodeKey).Scan(&suspended); err != nil {
+		return errors.Join(ErrLoadSnapshot, fmt.Errorf("read suspension: %w", err))
+	}
+	if suspended {
+		return appmapsession.ErrSuspended
+	}
+	return appmapsession.ErrUnauthorized
 }

@@ -15,6 +15,9 @@ var (
 	ErrInvalidService = errors.New("map session: invalid service")
 	// ErrUnauthorized reports that the bound identity has no active Node authority.
 	ErrUnauthorized = errors.New("map session: unauthorized")
+	// ErrSuspended reports that the bound identity's Device is suspended: it
+	// has no authority now but keeps its identity and may be resumed.
+	ErrSuspended = errors.New("map session: device suspended")
 	// ErrOpen classifies a map session that could not be opened safely.
 	ErrOpen = errors.New("map session: open failed")
 	// ErrEndpointObservationRejected reports a stale transient endpoint update.

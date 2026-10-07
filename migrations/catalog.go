@@ -492,6 +492,7 @@ func Catalog() []Migration {
 		newMigration(123, "Access Graph edges of group and tag rules", accessGraphGroupEdgesSQL),
 		newMigration(124, "Tags a person may apply in one Network", networkTagOptionsSQL),
 		newMigration(125, "Device ownership, suspension, transfer and rename", deviceLifecycleSQL),
+		newMigration(126, "Suspended Devices wait instead of stopping", mapSessionSuspensionSQL),
 	}
 }
 
@@ -646,3 +647,6 @@ var networkTagOptionsSQL string
 
 //go:embed 000125_device_lifecycle.up.sql
 var deviceLifecycleSQL string
+
+//go:embed 000126_map_session_suspension.up.sql
+var mapSessionSuspensionSQL string

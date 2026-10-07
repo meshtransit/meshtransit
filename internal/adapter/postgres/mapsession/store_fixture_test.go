@@ -181,6 +181,21 @@ type errorRow struct{ err error }
 
 func (row errorRow) Scan(...any) error { return row.err }
 
+// suspendedRow answers schema 126 map_session_suspended_v1.
+type suspendedRow struct{ suspended bool }
+
+func (row suspendedRow) Scan(destinations ...any) error {
+	if len(destinations) != 1 {
+		return errors.New("unexpected suspension destinations")
+	}
+	value, ok := destinations[0].(*bool)
+	if !ok {
+		return errors.New("unexpected suspension destination")
+	}
+	*value = row.suspended
+	return nil
+}
+
 type peerCandidateRows struct {
 	records []peerCandidateRecord
 	index   int
