@@ -15,14 +15,16 @@ import (
 func assertAuthorityEvidenceFoundation(ctx context.Context, t *testing.T, connection *pgx.Conn) {
 	t.Helper()
 
-	var mutations, identities, payloads, outboxEvents, streams int64
+	var mutations, identities, payloads, outboxEvents, streams, workspaceStreams int64
 	var mutationsWithoutAudit, mutationsWithoutOutbox, brokenHashLinks int64
 	if err := connection.QueryRow(ctx, `SELECT
     (SELECT pg_catalog.count(*) FROM mesh_audit.authority_mutation),
     (SELECT pg_catalog.count(*) FROM mesh_audit.audit_event_identity),
     (SELECT pg_catalog.count(*) FROM mesh_audit.audit_event),
     (SELECT pg_catalog.count(*) FROM mesh_ops.outbox_event),
-    (SELECT pg_catalog.count(*) FROM mesh_audit.audit_stream),
+    -- Schema 115 adds one stream per Workspace; this fixture seeds two.
+    (SELECT pg_catalog.count(*) FROM mesh_audit.audit_stream WHERE scope_kind <> 'workspace'),
+    (SELECT pg_catalog.count(*) FROM mesh_audit.audit_stream WHERE scope_kind = 'workspace'),
     (
         SELECT pg_catalog.count(*)
         FROM mesh_audit.authority_mutation AS mutation
@@ -68,13 +70,14 @@ func assertAuthorityEvidenceFoundation(ctx context.Context, t *testing.T, connec
 		&payloads,
 		&outboxEvents,
 		&streams,
+		&workspaceStreams,
 		&mutationsWithoutAudit,
 		&mutationsWithoutOutbox,
 		&brokenHashLinks,
 	); err != nil {
 		t.Fatalf("query authority evidence foundation: %v", err)
 	}
-	if mutations != 14 || identities != 5 || payloads != 5 || outboxEvents != 5 || streams != 3 {
+	if mutations != 14 || identities != 5 || payloads != 5 || outboxEvents != 5 || streams != 3 || workspaceStreams != 2 {
 		t.Fatalf(
 			"authority evidence counts: mutations=%d identities=%d payloads=%d outbox=%d streams=%d",
 			mutations,

@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 114 {
-		t.Fatalf("len(Catalog()) = %d, want 114", len(catalog))
+	if len(catalog) != 115 {
+		t.Fatalf("len(Catalog()) = %d, want 115", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 114 {
-		t.Fatalf("LatestVersion() = %d, want 114", LatestVersion())
+	if LatestVersion() != 115 {
+		t.Fatalf("LatestVersion() = %d, want 115", LatestVersion())
 	}
 }
 
@@ -2751,5 +2751,29 @@ func TestAliasMapReachableSharesIsVerbatimExceptSelection(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "TO mesh_runtime") {
 		t.Error("schema 114 must leave runtime exposure to the operator step")
+	}
+}
+
+func TestAuditPartitionsAndWorkspaceStreams(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[114]
+	if migration.Version != 115 {
+		t.Fatalf("migration 115 = %+v", migration)
+	}
+	for _, required := range []string{
+		"SELECT mesh_ops.ensure_audit_event_partitions_v1(24);",
+		"'CREATE TABLE mesh_audit.%I PARTITION OF mesh_audit.audit_event FOR VALUES FROM (%L) TO (%L)'",
+		"'ALTER TABLE mesh_audit.%I FORCE ROW LEVEL SECURITY'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.ensure_audit_event_partitions_v1(INTEGER) TO mesh_worker;",
+		"ADD CONSTRAINT audit_stream_public_id_key UNIQUE (public_id)",
+		"AFTER INSERT ON mesh.workspace",
+		"DROP POLICY workspace_audit_stream_backfill ON mesh.workspace;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 115 missing %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "TO mesh_runtime") {
+		t.Error("schema 115 must not expose audit storage to runtime")
 	}
 }

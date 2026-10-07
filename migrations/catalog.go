@@ -481,6 +481,7 @@ func Catalog() []Migration {
 		newMigration(112, "Expired Trust Contracts release their access names", trustContractExpiryFinalizerSQL),
 		newMigration(113, "Receiving Networks choose their shared Device alias range", networkAliasRangeSQL),
 		newMigration(114, "Alias maps count only shares a Device may reach", aliasMapReachableSharesSQL),
+		newMigration(115, "Audit partitions stay ahead and every Workspace has a stream", auditPartitionsWorkspaceStreamsSQL),
 	}
 }
 
@@ -602,3 +603,6 @@ var networkAliasRangeSQL string
 
 //go:embed 000114_alias_map_reachable_shares.up.sql
 var aliasMapReachableSharesSQL string
+
+//go:embed 000115_audit_partitions_workspace_streams.up.sql
+var auditPartitionsWorkspaceStreamsSQL string

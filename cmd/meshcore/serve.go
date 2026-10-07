@@ -190,6 +190,12 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			roleServices,
 			app.OwnedService{Name: "network-revision-worker", Service: workerService},
 		)
+		auditPartitions, composeErr := composeAuditPartitionMaintainer(storagePools.worker, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "audit_partition_composition_failure")
+			return 1
+		}
+		roleServices = append(roleServices, app.OwnedService{Name: "audit-partition-maintainer", Service: auditPartitions})
 	}
 	if processConfig.PrivateEndpointWorker != nil {
 		telemetry := endpointpublication.NewTelemetry()
