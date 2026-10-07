@@ -58,7 +58,7 @@ func (store *Store) ObserveDeviceAliasVersion(ctx context.Context, identity cont
 		return fmt.Errorf("%w: record alias compatibility: %w", ErrLoadSnapshot, err)
 	}
 	if !accepted {
-		return appmapsession.ErrUnauthorized
+		return suspendedOrUnauthorized(ctx, transaction, machine[:], key[:])
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return errors.Join(ErrLoadSnapshot, err)

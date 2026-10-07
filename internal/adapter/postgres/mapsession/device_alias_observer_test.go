@@ -29,10 +29,11 @@ func TestObserveDeviceAliasVersionBindsIdentityAndJoinsCleanupFailures(t *testin
 	t.Parallel()
 	for _, test := range []struct {
 		name                                string
-		accepted                            bool
+		accepted, suspended                 bool
 		commitError, errorRow, cleanupError bool
 	}{
-		{name: "accepted", accepted: true}, {name: "foreign identity"}, {name: "read failure", errorRow: true},
+		{name: "accepted", accepted: true}, {name: "foreign identity"}, {name: "suspended", suspended: true},
+		{name: "read failure", errorRow: true},
 		{name: "unknown commit", accepted: true, commitError: true}, {name: "joined rollback", errorRow: true, cleanupError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -42,7 +43,10 @@ func TestObserveDeviceAliasVersionBindsIdentityAndJoinsCleanupFailures(t *testin
 			store.database = &aliasVersionDatabase{fakeDatabase: database}
 			failure := errors.New("controlled write failure")
 			cleanup := errors.New("controlled cleanup failure")
-			transaction.rows = []databaseRow{aliasVersionRow{accepted: test.accepted}}
+			transaction.rows = []databaseRow{
+				aliasVersionRow{accepted: test.accepted},
+				suspendedRow{suspended: test.suspended},
+			}
 			if test.errorRow {
 				transaction.rows = []databaseRow{errorRow{err: failure}}
 			}
@@ -63,8 +67,11 @@ func TestObserveDeviceAliasVersionBindsIdentityAndJoinsCleanupFailures(t *testin
 			if test.cleanupError && (!errors.Is(err, failure) || !errors.Is(err, cleanup)) {
 				t.Fatal("cleanup failure discarded")
 			}
-			if !test.accepted && !test.errorRow && !errors.Is(err, appmapsession.ErrUnauthorized) {
+			if !test.accepted && !test.errorRow && !test.suspended && !errors.Is(err, appmapsession.ErrUnauthorized) {
 				t.Fatal("identity denial misclassified")
+			}
+			if test.suspended && (!errors.Is(err, appmapsession.ErrSuspended) || errors.Is(err, appmapsession.ErrUnauthorized)) {
+				t.Fatalf("suspension misclassified: %v", err)
 			}
 			args := transaction.arguments[1]
 			machine, key := identity.MachineFingerprint(), identity.NodeKey().Bytes()
