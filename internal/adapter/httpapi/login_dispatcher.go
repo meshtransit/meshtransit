@@ -258,7 +258,7 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 	accessGraphRead := accessGraphListed && request.Method == http.MethodGet
 	return callback || approvalList || managementScopes || inventoryRead || deploymentCapabilities || registrationRead ||
 		resourceSharingCollectionRead || accessGraphRead || isAuditEventListRead(request) ||
-		isAuditEventExportRead(request) || target.RawQuery == ""
+		isAuditEventExportRead(request) || isDeviceGroupRead(request) || target.RawQuery == ""
 }
 
 // MetricsCollector permits private root registration only, never a public endpoint.

@@ -385,6 +385,48 @@ func TestLoginDispatcherPreservesActivePolicyReadAdmission(t *testing.T) {
 	}
 }
 
+func TestLoginDispatcherAdmitsOnlyTheBoundedDeviceGroupMemberQuery(t *testing.T) {
+	t.Parallel()
+	groups := "/api/v1/workspaces/01890f00-0000-7000-8000-000000000101/networks/01890f00-0000-7000-8000-000000000201/device-groups"
+	members := groups + "/01890f00-0000-7000-8000-000000000301/members"
+	for _, test := range []struct {
+		name  string
+		path  string
+		valid bool
+	}{
+		{name: "first page", path: members + "?limit=100", valid: true},
+		{name: "next page", path: members + "?after=01890f00-0000-7000-8000-000000000401&limit=2", valid: true},
+		{name: "default page", path: members, valid: true},
+		{name: "list with query", path: groups + "?limit=1"},
+		{name: "unknown key", path: members + "?state=active"},
+		{name: "repeated key", path: members + "?limit=1&limit=2"},
+		{name: "limit above page", path: members + "?limit=501"},
+		{name: "noncanonical cursor", path: members + "?after=01890F00-0000-7000-8000-000000000401"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			dispatcher, fixture, callback, management := dispatcherTestGraphWithManagement(t)
+			request := browserManagementReadRequest(t, test.path)
+			response := &continuationStatusRecorder{loginHTTPRecorder: newLoginHTTPRecorder()}
+			err := dispatcher.Handle(response, request)
+			if !test.valid {
+				if !errors.Is(err, ErrInvalidLoginDispatcher) || management.auth != 0 ||
+					management.budgets != 0 || response.statusWrites != 0 {
+					t.Fatal("device group query alias reached authority or response", err)
+				}
+				return
+			}
+			// This fixture has no Device Group manager: admission must reach the
+			// product handler and fail closed after fresh Session authentication.
+			if err != nil || response.Code != http.StatusServiceUnavailable || response.statusWrites != 1 ||
+				management.auth != 1 || len(fixture.calls) != 0 || callback.calls != 0 ||
+				response.Header().Get("Set-Cookie") != "" {
+				t.Fatal("device group member read skipped admission or crossed owner boundaries", err)
+			}
+		})
+	}
+}
+
 func TestLoginDispatcherPreservesManagementScopeOwnership(t *testing.T) {
 	t.Parallel()
 	dispatcher, fixture, callback, management := dispatcherTestGraphWithManagement(t)
