@@ -233,7 +233,7 @@ func TestPathEndpointControllerActivationReconcilesRetiredSelection(t *testing.T
 	t.Cleanup(controller.Close)
 	if err := controller.Activate(
 		t.Context(),
-		networkmap.Snapshot{Revision: generation.MapRevision},
+		networkmap.Snapshot{Revision: generation.MapRevision, Peers: []networkmap.Node{{ID: 2}}},
 		generation,
 	); err != nil {
 		t.Fatalf("Activate() error = %v", err)
@@ -250,6 +250,70 @@ func TestPathEndpointControllerActivationReconcilesRetiredSelection(t *testing.T
 		snapshot.AuthorityDiscoveryKeyChanges != 4 ||
 		snapshot.AuthorityEndpointChanges != 5 || snapshot.SocketChanges != 1 {
 		t.Fatalf("activation telemetry = %#v", snapshot)
+	}
+}
+
+// A map that removes a peer also removes its WireGuard state, so a selection
+// retired with it has nothing to restore and must not stop the session.
+func TestPathEndpointControllerActivationSkipsRemovedPeer(t *testing.T) {
+	t.Parallel()
+
+	generation := pathEndpointGeneration()
+	retiredGeneration := generation
+	retiredGeneration.MapRevision--
+	now := time.Now()
+	retired := func(peerID uint64) pathdiscovery.PathChange {
+		return pathdiscovery.PathChange{PeerID: peerID, Previous: pathdiscovery.PathSelection{
+			PeerID:                peerID,
+			Generation:            retiredGeneration,
+			RemoteEndpoint:        netip.MustParseAddrPort("203.0.113.30:41641"),
+			ObservedLocalEndpoint: netip.MustParseAddrPort("198.51.100.30:41641"),
+			RoundTrip:             time.Millisecond,
+			ConfirmedAt:           now,
+			ExpiresAt:             now.Add(time.Second),
+		}}
+	}
+	selector := &scriptedPathSelector{activateResult: pathdiscovery.PathSelectionResult{
+		Activation: pathdiscovery.PathActivationSummary{SelectionsRetired: 2, PeerSetChanges: 1},
+		Changes:    []pathdiscovery.PathChange{retired(2), retired(3)},
+	}}
+	dataPlane := newRecordingPreferredEndpointDataPlane()
+	dataPlane.restoreErrFor = map[uint64]error{3: errors.New("peer 3 is not installed")}
+	ctx, cancel := context.WithCancel(t.Context())
+	controller, err := newPathEndpointController(
+		ctx,
+		selector,
+		dataPlane,
+		&sync.Mutex{},
+		pathdiscovery.NewProbeTelemetry(),
+		time.Now,
+		cancel,
+	)
+	if err != nil {
+		t.Fatalf("newPathEndpointController() error = %v", err)
+	}
+	t.Cleanup(controller.Close)
+	// Peer 3 left the map; peer 2 (for example a shared Device) stays.
+	if err := controller.Activate(
+		t.Context(),
+		networkmap.Snapshot{Revision: generation.MapRevision, Peers: []networkmap.Node{{ID: 2}}},
+		generation,
+	); err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	restored := waitForEndpointUpdate(t, dataPlane.updates)
+	if !restored.restore || restored.peerID != 2 {
+		t.Fatalf("activation endpoint update = %#v", restored)
+	}
+	select {
+	case update := <-dataPlane.updates:
+		t.Fatalf("removed peer was restored: %#v", update)
+	case <-ctx.Done():
+		t.Fatalf("session stopped: %v", controller.Err())
+	case <-time.After(20 * time.Millisecond):
+	}
+	if controller.Err() != nil {
+		t.Fatalf("controller error = %v", controller.Err())
 	}
 }
 
@@ -387,9 +451,10 @@ type endpointUpdate struct {
 }
 
 type recordingPreferredEndpointDataPlane struct {
-	updates    chan endpointUpdate
-	setErr     error
-	restoreErr error
+	updates       chan endpointUpdate
+	setErr        error
+	restoreErr    error
+	restoreErrFor map[uint64]error
 }
 
 func newRecordingPreferredEndpointDataPlane() *recordingPreferredEndpointDataPlane {
@@ -420,6 +485,9 @@ func (d *recordingPreferredEndpointDataPlane) RestorePreferredEndpoint(
 		revision: revision,
 		peerID:   peerID,
 		restore:  true,
+	}
+	if err, found := d.restoreErrFor[peerID]; found {
+		return err
 	}
 
 	return d.restoreErr

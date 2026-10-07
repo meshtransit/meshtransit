@@ -845,6 +845,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				return fmt.Errorf("detaching peer-probe transport: %w", err)
 			}
 			pathErr := pathController.Err()
+			// The controller cancels the session itself, so the stream only
+			// reports cancellation; record the controller's own cause.
+			s.logControlSessionFailure("path endpoint controller stopped the session", pathErr)
 			dataPlaneState := s.currentDataPlaneState()
 			dnsState := s.currentDNSState()
 			runtimeStopErr := s.stopRuntime()
@@ -911,6 +914,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				return fmt.Errorf("detaching peer-probe transport: %w", err)
 			}
 			pathErr := pathController.Err()
+			// The controller cancels the session itself, so the stream only
+			// reports cancellation; record the controller's own cause.
+			s.logControlSessionFailure("path endpoint controller stopped the session", pathErr)
 			dataPlaneState := s.currentDataPlaneState()
 			dnsState := s.currentDNSState()
 			runtimeStopErr := s.stopRuntime()

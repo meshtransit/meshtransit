@@ -318,7 +318,10 @@ func (c *pathEndpointController) handleCommand(
 			if activation.SocketChanged {
 				c.telemetry.RecordSocketChange()
 			}
-			err = c.applyActivationChanges(command.generation, result.Changes)
+			err = c.applyActivationChanges(
+				command.generation,
+				changesForMapPeers(command.snapshot, result.Changes),
+			)
 		}
 		if err != nil {
 			return paused, generation, nil, fmt.Errorf(
@@ -343,6 +346,29 @@ func (c *pathEndpointController) handleCommand(
 			"daemon: path endpoint command is invalid",
 		)
 	}
+}
+
+// changesForMapPeers drops retired selections of peers the activated map no
+// longer contains. Applying that map already removed their WireGuard state, so
+// there is no endpoint left to restore; restoring one would fail and stop the
+// session of a Device that still has other peers.
+func changesForMapPeers(
+	snapshot networkmap.Snapshot,
+	changes []pathdiscovery.PathChange,
+) []pathdiscovery.PathChange {
+	present := make(map[uint64]struct{}, len(snapshot.Peers))
+	for _, peer := range snapshot.Peers {
+		present[peer.ID] = struct{}{}
+	}
+	kept := make([]pathdiscovery.PathChange, 0, len(changes))
+	for _, change := range changes {
+		if _, found := present[change.PeerID]; !found && !change.Current.IsValid() {
+			continue
+		}
+		kept = append(kept, change)
+	}
+
+	return kept
 }
 
 func countRetiredPaths(changes []pathdiscovery.PathChange) uint64 {
