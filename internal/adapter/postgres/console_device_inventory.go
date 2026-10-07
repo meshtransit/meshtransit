@@ -12,10 +12,11 @@ import (
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/node/inventory"
+	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
-const readConsoleDeviceInventorySQL = `SELECT mesh_ops.read_console_devices_v1(
+const readConsoleDeviceInventorySQL = `SELECT mesh_ops.read_console_devices_v2(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::UUID, $14::INTEGER
@@ -123,7 +124,25 @@ type consoleDeviceInventoryWire struct {
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 		ExpiresAt time.Time `json:"expires_at"`
+		// Schema 125 lifecycle.
+		Ownership       string                        `json:"ownership"`
+		Owner           *consoleDeviceInventoryMember `json:"owner"`
+		SuspendedReason *string                       `json:"suspended_reason"`
+		HandoverTo      *consoleDeviceInventoryMember `json:"handover_to"`
 	} `json:"devices"`
+}
+
+type consoleDeviceInventoryMember struct {
+	PrincipalID string `json:"principal_id"`
+	DisplayName string `json:"display_name"`
+}
+
+func (member *consoleDeviceInventoryMember) parse() (inventory.Member, bool) {
+	if member == nil {
+		return inventory.Member{}, true
+	}
+	id, err := publicid.Parse(member.PrincipalID)
+	return inventory.Member{PrincipalID: id, DisplayName: member.DisplayName}, err == nil && len(member.DisplayName) <= 255
 }
 
 func decodeConsoleDeviceInventory(encoded string) (inventory.ReadResult, error) {
@@ -155,7 +174,16 @@ func decodeConsoleDeviceInventory(encoded string) (inventory.ReadResult, error) 
 		hostname, hostnameErr := node.ParseHostname(item.Hostname)
 		device, deviceErr := inventory.NewDevice(id, hostname, item.State, *item.Ephemeral,
 			item.Version, item.CreatedAt, item.UpdatedAt, item.ExpiresAt)
-		if idErr != nil || hostnameErr != nil || deviceErr != nil {
+		owner, ownerOK := item.Owner.parse()
+		handover, handoverOK := item.HandoverTo.parse()
+		if idErr != nil || hostnameErr != nil || deviceErr != nil || !ownerOK || !handoverOK {
+			return inventory.ReadResult{}, inventory.ErrInvalidResult
+		}
+		lifecycle := inventory.Lifecycle{Ownership: item.Ownership, Owner: owner, HandoverTo: handover}
+		if item.SuspendedReason != nil {
+			lifecycle.SuspendedReason = *item.SuspendedReason
+		}
+		if device, deviceErr = device.WithLifecycle(lifecycle); deviceErr != nil {
 			return inventory.ReadResult{}, inventory.ErrInvalidResult
 		}
 		result.Devices[index] = device

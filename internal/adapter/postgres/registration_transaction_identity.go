@@ -133,6 +133,9 @@ func (transaction *registrationTransaction) lockExistingDevice(
 		&record.version,
 		&record.machineKey,
 		&record.nodeKey,
+		&record.hostnameLocked,
+		&record.workspaceOwned,
+		&record.expiresAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return node.ID{}, nil

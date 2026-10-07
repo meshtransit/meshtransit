@@ -9,6 +9,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
+	"github.com/meshtransit/meshtransit/internal/publicid"
 )
 
 // MaximumPageSize bounds each authenticated inventory page.
@@ -35,7 +36,65 @@ type Device struct {
 	ephemeral                       bool
 	version                         int64
 	createdAt, updatedAt, expiresAt time.Time
+	lifecycle                       Lifecycle
 }
+
+// Member names one member a Device belongs to or is handed over to.
+type Member struct {
+	PrincipalID publicid.ID
+	DisplayName string
+}
+
+// Lifecycle is who owns a Device and why it is suspended (schema 125).
+type Lifecycle struct {
+	// Ownership is "member" or "workspace".
+	Ownership string
+	// Owner is set for a member Device.
+	Owner Member
+	// SuspendedReason is "admin" or "handover" for a suspended Device.
+	SuspendedReason string
+	// HandoverTo is the member a handover waits for.
+	HandoverTo Member
+}
+
+// IsValid reports a consistent lifecycle for a Device in state.
+func (lifecycle Lifecycle) IsValid(state string) bool {
+	switch lifecycle.Ownership {
+	case "member":
+		if !lifecycle.Owner.PrincipalID.IsValid() {
+			return false
+		}
+	case "workspace":
+		if lifecycle.Owner != (Member{}) {
+			return false
+		}
+	default:
+		return false
+	}
+	if (state == "suspended") != (lifecycle.SuspendedReason != "") {
+		return false
+	}
+	switch lifecycle.SuspendedReason {
+	case "", "admin":
+		return lifecycle.HandoverTo == (Member{})
+	case "handover":
+		return lifecycle.HandoverTo.PrincipalID.IsValid()
+	default:
+		return false
+	}
+}
+
+// WithLifecycle returns the Device with its ownership and suspension.
+func (device Device) WithLifecycle(lifecycle Lifecycle) (Device, error) {
+	if !device.IsValid() || !lifecycle.IsValid(device.state) {
+		return Device{}, ErrInvalidResult
+	}
+	device.lifecycle = lifecycle
+	return device, nil
+}
+
+// Lifecycle returns who owns the Device and why it is suspended.
+func (device Device) Lifecycle() Lifecycle { return device.lifecycle }
 
 // NewDevice validates a non-secret durable projection.
 func NewDevice(id node.ID, hostname node.Hostname, state string, ephemeral bool,
@@ -75,7 +134,7 @@ func (device Device) ExpiresAt() time.Time { return device.expiresAt }
 
 // IsValid checks the entire safe registration projection.
 func (device Device) IsValid() bool {
-	validState := device.state == "active" || device.state == "expired" ||
+	validState := device.state == "active" || device.state == "expired" || device.state == "suspended" ||
 		device.state == "revoked" || device.state == "deleted"
 	return device.id.IsValid() && device.hostname.IsValid() && validState && device.version > 0 &&
 		!device.createdAt.IsZero() && !device.updatedAt.Before(device.createdAt) &&

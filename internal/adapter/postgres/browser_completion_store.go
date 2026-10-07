@@ -352,7 +352,11 @@ func completeApprovedBrowserRegistration(
 	var deviceInternalID, deviceVersion int64
 	if resumed {
 		deviceInternalID = existing.internalID
-		if err := tx.QueryRow(ctx, resumeBrowserDeviceSQL,
+		resumeSQL := resumeBrowserDeviceSQL
+		if existing.handover {
+			resumeSQL = handoverBrowserDeviceSQL
+		}
+		if err := tx.QueryRow(ctx, resumeSQL,
 			deviceInternalID, expiresAt, occurredAt, existing.version,
 			authority.principalInternalID, authority.profileInternalID,
 		).Scan(&deviceVersion); err != nil || deviceVersion != existing.version+1 {
@@ -426,7 +430,7 @@ func completeApprovedBrowserRegistration(
 	}
 	if err := appendBrowserCompletionEvidence(ctx, tx, helper.locked.audit,
 		authority, ids, selectedHostname, deviceVersion,
-		newNetworkRevision, newInventoryRevision, disposition,
+		newNetworkRevision, newInventoryRevision, disposition, resumed && existing.handover,
 	); err != nil {
 		return registration.Result{}, err
 	}
@@ -447,10 +451,14 @@ func appendBrowserCompletionEvidence(
 	head registrationAuditHead, authority browserCompletionAuthority,
 	ids browserCompletionIDs, hostname node.Hostname,
 	deviceVersion, networkRevision, inventoryRevision int64, disposition registration.Disposition,
+	handover bool,
 ) error {
 	action := "device.registered"
 	if disposition == registration.DispositionResumed {
 		action = "device.resumed"
+	}
+	if handover {
+		action = "device.handover_completed"
 	}
 	auditPayload, err := json.Marshal(struct {
 		Hostname       string `json:"hostname"`

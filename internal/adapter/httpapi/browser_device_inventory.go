@@ -109,7 +109,42 @@ type deviceInventoryItem struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	ExpiresAt time.Time `json:"expires_at"`
+	// Ownership is "member" or "workspace"; Owner is set for a member Device.
+	Ownership       string                 `json:"ownership"`
+	Owner           *deviceInventoryMember `json:"owner"`
+	SuspendedReason *string                `json:"suspended_reason"`
+	HandoverTo      *deviceInventoryMember `json:"handover_to"`
 }
+
+type deviceInventoryMember struct {
+	PrincipalID string `json:"principal_id"`
+	DisplayName string `json:"display_name"`
+}
+
+func newDeviceInventoryMember(member inventory.Member) *deviceInventoryMember {
+	if !member.PrincipalID.IsValid() {
+		return nil
+	}
+	return &deviceInventoryMember{PrincipalID: member.PrincipalID.String(), DisplayName: member.DisplayName}
+}
+
+func newDeviceInventoryItem(device inventory.Device) deviceInventoryItem {
+	lifecycle := device.Lifecycle()
+	item := deviceInventoryItem{ID: device.ID().String(), Hostname: device.Hostname(),
+		State: device.State(), Ephemeral: device.Ephemeral(), Version: device.Version(),
+		CreatedAt: device.CreatedAt(), UpdatedAt: device.UpdatedAt(), ExpiresAt: device.ExpiresAt(),
+		Ownership: lifecycle.Ownership, Owner: newDeviceInventoryMember(lifecycle.Owner),
+		HandoverTo: newDeviceInventoryMember(lifecycle.HandoverTo)}
+	if item.Ownership == "" {
+		item.Ownership = "member"
+	}
+	if lifecycle.SuspendedReason != "" {
+		reason := lifecycle.SuspendedReason
+		item.SuspendedReason = &reason
+	}
+	return item
+}
+
 type deviceInventoryData struct {
 	WorkspaceID string                `json:"workspace_id"`
 	NetworkID   string                `json:"network_id"`
@@ -183,9 +218,7 @@ func (browser *BrowserManagement) readDeviceInventory(ctx context.Context, respo
 	data := deviceInventoryData{WorkspaceID: scope.WorkspaceID().String(), NetworkID: scope.NetworkID().String(),
 		Revision: page.Revision(), Devices: make([]deviceInventoryItem, 0, limit)}
 	for _, device := range page.Devices() {
-		data.Devices = append(data.Devices, deviceInventoryItem{ID: device.ID().String(), Hostname: device.Hostname(),
-			State: device.State(), Ephemeral: device.Ephemeral(), Version: device.Version(),
-			CreatedAt: device.CreatedAt(), UpdatedAt: device.UpdatedAt(), ExpiresAt: device.ExpiresAt()})
+		data.Devices = append(data.Devices, newDeviceInventoryItem(device))
 	}
 	next := ""
 	if cursor, ok := page.Next(); ok {

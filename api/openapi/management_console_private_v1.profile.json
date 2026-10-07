@@ -323,7 +323,11 @@
                   "version",
                   "created_at",
                   "updated_at",
-                  "expires_at"
+                  "expires_at",
+                  "ownership",
+                  "owner",
+                  "suspended_reason",
+                  "handover_to"
                 ],
                 "properties": {
                   "id": {
@@ -340,6 +344,7 @@
                     "enum": [
                       "active",
                       "expired",
+                      "suspended",
                       "revoked",
                       "deleted"
                     ]
@@ -363,6 +368,70 @@
                   "expires_at": {
                     "type": "string",
                     "format": "date-time"
+                  },
+                  "ownership": {
+                    "type": "string",
+                    "enum": [
+                      "member",
+                      "workspace"
+                    ],
+                    "description": "A member Device expires per profile and joins its owner's user groups; a Workspace Device never expires and survives staff changes."
+                  },
+                  "owner": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "additionalProperties": false,
+                    "required": [
+                      "principal_id",
+                      "display_name"
+                    ],
+                    "properties": {
+                      "principal_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "display_name": {
+                        "type": "string",
+                        "maxLength": 255
+                      }
+                    },
+                    "description": "The owning member; null for a Workspace Device."
+                  },
+                  "suspended_reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "admin",
+                      "handover",
+                      null
+                    ],
+                    "description": "admin: suspended by an administrator; handover: transferred to a member who has not yet signed in on the Device."
+                  },
+                  "handover_to": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "additionalProperties": false,
+                    "required": [
+                      "principal_id",
+                      "display_name"
+                    ],
+                    "properties": {
+                      "principal_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "display_name": {
+                        "type": "string",
+                        "maxLength": 255
+                      }
+                    },
+                    "description": "The member a handover waits for."
                   }
                 }
               }
@@ -7919,6 +7988,952 @@
         },
         "503": {
           "description": "Unavailable"
+        }
+      }
+    }
+  },
+  "networkDeviceSuspend": {
+    "post": {
+      "operationId": "suspendNetworkDevice",
+      "summary": "Suspend a Device",
+      "description": "Requires device.quarantine. The Device keeps its identity, addresses, tags and groups but leaves every map at once. Answers the Device; ETag is its version.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "network_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "device_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        },
+        {
+          "name": "If-Match",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^\"[1-9][0-9]*\"$"
+          }
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reason"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "The Device after the change",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            },
+            "ETag": {
+              "schema": {
+                "type": "string",
+                "pattern": "^\"[1-9][0-9]*\"$"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "device",
+                      "network_revision"
+                    ],
+                    "properties": {
+                      "device": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "device_id",
+                          "hostname",
+                          "state",
+                          "ownership",
+                          "owner_principal_id",
+                          "suspended_reason",
+                          "handover_principal_id",
+                          "expires_at",
+                          "version"
+                        ],
+                        "properties": {
+                          "device_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "hostname": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "suspended"
+                            ]
+                          },
+                          "ownership": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "workspace"
+                            ]
+                          },
+                          "owner_principal_id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "uuid"
+                          },
+                          "suspended_reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "admin",
+                              "handover",
+                              null
+                            ]
+                          },
+                          "handover_principal_id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "uuid"
+                          },
+                          "expires_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "network_revision": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "404": {
+          "description": "not_found"
+        },
+        "409": {
+          "description": "conflict"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        },
+        "412": {
+          "description": "version_conflict"
+        },
+        "428": {
+          "description": "precondition_required"
+        },
+        "422": {
+          "description": "owner_not_eligible"
+        }
+      }
+    }
+  },
+  "networkDeviceResume": {
+    "post": {
+      "operationId": "resumeNetworkDevice",
+      "summary": "Resume a suspended Device",
+      "description": "Requires device.quarantine. Resuming a Device that waits for handover cancels the handover; the owner is unchanged.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "network_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "device_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        },
+        {
+          "name": "If-Match",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^\"[1-9][0-9]*\"$"
+          }
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reason"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "The Device after the change",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            },
+            "ETag": {
+              "schema": {
+                "type": "string",
+                "pattern": "^\"[1-9][0-9]*\"$"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "device",
+                      "network_revision"
+                    ],
+                    "properties": {
+                      "device": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "device_id",
+                          "hostname",
+                          "state",
+                          "ownership",
+                          "owner_principal_id",
+                          "suspended_reason",
+                          "handover_principal_id",
+                          "expires_at",
+                          "version"
+                        ],
+                        "properties": {
+                          "device_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "hostname": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "suspended"
+                            ]
+                          },
+                          "ownership": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "workspace"
+                            ]
+                          },
+                          "owner_principal_id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "uuid"
+                          },
+                          "suspended_reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "admin",
+                              "handover",
+                              null
+                            ]
+                          },
+                          "handover_principal_id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "uuid"
+                          },
+                          "expires_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "network_revision": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "404": {
+          "description": "not_found"
+        },
+        "409": {
+          "description": "conflict"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        },
+        "412": {
+          "description": "version_conflict"
+        },
+        "428": {
+          "description": "precondition_required"
+        },
+        "422": {
+          "description": "owner_not_eligible"
+        }
+      }
+    }
+  },
+  "networkDeviceTransfer": {
+    "post": {
+      "operationId": "transferNetworkDevice",
+      "summary": "Transfer a Device",
+      "description": "Requires device.transfer. To the Workspace: takes effect at once, the Device stops expiring and leaves its former owner's user groups. To a member (an active member of the Workspace and Network): the Device is suspended until that member signs in on it, which completes the handover.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "network_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "device_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        },
+        {
+          "name": "If-Match",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^\"[1-9][0-9]*\"$"
+          }
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "to",
+                "reason"
+              ],
+              "properties": {
+                "to": {
+                  "type": "string",
+                  "enum": [
+                    "workspace",
+                    "member"
+                  ]
+                },
+                "principal_id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "The new owner; required when to is member"
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "The Device after the change",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            },
+            "ETag": {
+              "schema": {
+                "type": "string",
+                "pattern": "^\"[1-9][0-9]*\"$"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "device",
+                      "network_revision"
+                    ],
+                    "properties": {
+                      "device": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "device_id",
+                          "hostname",
+                          "state",
+                          "ownership",
+                          "owner_principal_id",
+                          "suspended_reason",
+                          "handover_principal_id",
+                          "expires_at",
+                          "version"
+                        ],
+                        "properties": {
+                          "device_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "hostname": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "suspended"
+                            ]
+                          },
+                          "ownership": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "workspace"
+                            ]
+                          },
+                          "owner_principal_id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "uuid"
+                          },
+                          "suspended_reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "admin",
+                              "handover",
+                              null
+                            ]
+                          },
+                          "handover_principal_id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "uuid"
+                          },
+                          "expires_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "network_revision": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "404": {
+          "description": "not_found"
+        },
+        "409": {
+          "description": "conflict"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        },
+        "412": {
+          "description": "version_conflict"
+        },
+        "428": {
+          "description": "precondition_required"
+        },
+        "422": {
+          "description": "owner_not_eligible"
+        }
+      }
+    }
+  },
+  "networkDeviceRename": {
+    "post": {
+      "operationId": "renameNetworkDevice",
+      "summary": "Rename a Device",
+      "description": "Requires device.manage. Sets the hostname (unique in the Network) and keeps it when the client signs in again.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "network_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "device_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        },
+        {
+          "name": "If-Match",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^\"[1-9][0-9]*\"$"
+          }
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "hostname"
+              ],
+              "properties": {
+                "hostname": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 253
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "The Device after the change",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            },
+            "ETag": {
+              "schema": {
+                "type": "string",
+                "pattern": "^\"[1-9][0-9]*\"$"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "device",
+                      "network_revision"
+                    ],
+                    "properties": {
+                      "device": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "device_id",
+                          "hostname",
+                          "state",
+                          "ownership",
+                          "owner_principal_id",
+                          "suspended_reason",
+                          "handover_principal_id",
+                          "expires_at",
+                          "version"
+                        ],
+                        "properties": {
+                          "device_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "hostname": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "suspended"
+                            ]
+                          },
+                          "ownership": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "workspace"
+                            ]
+                          },
+                          "owner_principal_id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "uuid"
+                          },
+                          "suspended_reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "admin",
+                              "handover",
+                              null
+                            ]
+                          },
+                          "handover_principal_id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "uuid"
+                          },
+                          "expires_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "network_revision": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "404": {
+          "description": "not_found"
+        },
+        "409": {
+          "description": "conflict"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        },
+        "412": {
+          "description": "version_conflict"
+        },
+        "428": {
+          "description": "precondition_required"
+        },
+        "422": {
+          "description": "owner_not_eligible"
         }
       }
     }

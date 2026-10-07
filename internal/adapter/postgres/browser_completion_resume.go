@@ -18,7 +18,8 @@ const lockBrowserResumeDeviceSQL = `SELECT
     device.hostname, device.version, machine.public_key,
     device.owner_principal_id, device.state, machine.state,
     device.deleted_at IS NULL AND machine.valid_from <= pg_catalog.clock_timestamp()
-      AND device.is_ephemeral=$2::BOOLEAN
+      AND device.is_ephemeral=$2::BOOLEAN,
+    COALESCE(device.suspended_reason, ''), COALESCE(device.handover_principal_id, 0)
 FROM mesh.device_machine_key_epoch machine
 JOIN mesh.device device ON device.workspace_id=machine.workspace_id
  AND device.network_id=machine.network_id AND device.id=machine.device_id
@@ -40,20 +41,32 @@ WHERE id=$1::BIGINT AND version=$4::BIGINT
   AND state='active' AND deleted_at IS NULL
 RETURNING version`
 
+// Completes a handover: the member the Device waited for becomes its owner,
+// and its old sessions end (schema 125).
+const handoverBrowserDeviceSQL = `UPDATE mesh.device
+SET owner_principal_id=$5::BIGINT, custodian_principal_id=$5::BIGINT, ownership='member',
+    state='active', suspended_reason=NULL, handover_principal_id=NULL,
+    expires_at=$2::TIMESTAMPTZ, session_generation=session_generation+1,
+    updated_at=$3::TIMESTAMPTZ, version=version+1
+WHERE id=$1::BIGINT AND version=$4::BIGINT
+  AND state='suspended' AND suspended_reason='handover' AND handover_principal_id=$5::BIGINT
+  AND enrollment_profile_id=$6::BIGINT AND deleted_at IS NULL
+RETURNING version`
+
 const browserCompletionTimeSQL = `SELECT pg_catalog.clock_timestamp()`
 
 func lockBrowserResumeDevice(ctx context.Context, tx registrationDatabaseTransaction,
 	identity node.RegistrationIdentity, authority browserCompletionAuthority,
 ) (bool, registrationDeviceRecord, error) {
 	var record registrationDeviceRecord
-	var owner int64
-	var deviceState, machineState string
+	var owner, handoverTo int64
+	var deviceState, machineState, suspendedReason string
 	var current bool
 	fingerprint := identity.MachineKey().Fingerprint()
 	err := tx.QueryRow(ctx, lockBrowserResumeDeviceSQL, fingerprint[:], authority.ephemeralMode == "ephemeral").Scan(
 		&record.internalID, &record.publicID, &record.profileInternalID,
 		&record.hostname, &record.version, &record.machineKey, &owner,
-		&deviceState, &machineState, &current,
+		&deviceState, &machineState, &current, &suspendedReason, &handoverTo,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, registrationDeviceRecord{}, nil
@@ -62,9 +75,14 @@ func lockBrowserResumeDevice(ctx context.Context, tx registrationDatabaseTransac
 		return false, registrationDeviceRecord{}, err
 	}
 	machine := identity.MachineKey().Bytes()
-	if record.internalID <= 0 || record.version <= 0 || !current ||
-		owner != authority.principalInternalID || record.profileInternalID != authority.profileInternalID ||
-		deviceState != "active" || machineState != "active" || !bytes.Equal(record.machineKey, machine[:]) {
+	// The owner resumes an active Device; the member a handover waits for
+	// resumes the suspended Device and becomes its owner.
+	ownerResume := owner == authority.principalInternalID && deviceState == "active"
+	record.handover = deviceState == "suspended" && suspendedReason == "handover" &&
+		handoverTo == authority.principalInternalID
+	if record.internalID <= 0 || record.version <= 0 || !current || (!ownerResume && !record.handover) ||
+		record.profileInternalID != authority.profileInternalID ||
+		machineState != "active" || !bytes.Equal(record.machineKey, machine[:]) {
 		return false, registrationDeviceRecord{}, ErrBrowserCompletionConflict
 	}
 	if err := tx.QueryRow(ctx, lockBrowserResumeNodeSQL, record.internalID).Scan(&record.nodeKey); err != nil {

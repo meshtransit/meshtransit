@@ -368,6 +368,9 @@ WHERE aggregate_kind='device' AND aggregate_public_id=$1::UUID
 	assertPostgreSQLBrowserRelogin(ctx, t, admin, intentStore, approvalStore,
 		completionStore, deploymentID, recoveryEpoch, sessionDigest,
 		selectedNetwork, identity, hostname, completed)
+	assertPostgreSQLBrowserHandover(ctx, t, admin, runtime, intentStore, approvalStore,
+		completionStore, deploymentID, recoveryEpoch, sessionDigest,
+		selectedNetwork, identity, hostname, completed)
 
 }
 

@@ -18,11 +18,22 @@ func TestLockBrowserResumeDevice(t *testing.T) {
 		current                                         bool
 		changedMachine, changedNode, absent, nodeAbsent bool
 		allow                                           bool
+		reason                                          string
+		handoverTo                                      int64
+		handover                                        bool
 	}{
 		{name: "same owner profile and keys", owner: 11, profile: 601, device: "active", machine: "active", current: true, allow: true},
 		{name: "other owner", owner: 12, profile: 601, device: "active", machine: "active", current: true},
 		{name: "other profile", owner: 11, profile: 602, device: "active", machine: "active", current: true},
-		{name: "suspended Device", owner: 11, profile: 601, device: "suspended", machine: "active", current: true},
+		{name: "suspended Device", owner: 11, profile: 601, device: "suspended", machine: "active", current: true, reason: "admin"},
+		{name: "handover to the signing member", owner: 12, profile: 601, device: "suspended", machine: "active",
+			current: true, reason: "handover", handoverTo: 11, allow: true, handover: true},
+		{name: "handover to someone else", owner: 12, profile: 601, device: "suspended", machine: "active",
+			current: true, reason: "handover", handoverTo: 13},
+		{name: "old owner during handover", owner: 11, profile: 601, device: "suspended", machine: "active",
+			current: true, reason: "handover", handoverTo: 13},
+		{name: "handover on another profile", owner: 12, profile: 602, device: "suspended", machine: "active",
+			current: true, reason: "handover", handoverTo: 11},
 		{name: "revoked machine", owner: 11, profile: 601, device: "active", machine: "revoked", current: true},
 		{name: "expired machine", owner: 11, profile: 601, device: "active", machine: "expired", current: true},
 		{name: "deleted Device or future machine", owner: 11, profile: 601, device: "active", machine: "active"},
@@ -61,6 +72,8 @@ func TestLockBrowserResumeDevice(t *testing.T) {
 				*d[7].(*string) = scenario.device
 				*d[8].(*string) = scenario.machine
 				*d[9].(*bool) = scenario.current
+				*d[10].(*string) = scenario.reason
+				*d[11].(*int64) = scenario.handoverTo
 				return nil
 			}}
 			if scenario.absent {
@@ -88,6 +101,9 @@ func TestLockBrowserResumeDevice(t *testing.T) {
 			}
 			if err != nil || resumed == scenario.absent {
 				t.Fatalf("resume = %v/%v", resumed, err)
+			}
+			if record.handover != scenario.handover {
+				t.Fatalf("handover = %t, want %t", record.handover, scenario.handover)
 			}
 			if resumed && (!bytes.Equal(record.nodeKey, []byte{2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}) || record.publicID != testRegistrationNodePublicID) {
 				t.Fatal("identity was not preserved")

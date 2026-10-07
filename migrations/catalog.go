@@ -491,6 +491,7 @@ func Catalog() []Migration {
 		newMigration(122, "Access Rules that select Identity Groups and tags", identityAndTagRulesSQL),
 		newMigration(123, "Access Graph edges of group and tag rules", accessGraphGroupEdgesSQL),
 		newMigration(124, "Tags a person may apply in one Network", networkTagOptionsSQL),
+		newMigration(125, "Device ownership, suspension, transfer and rename", deviceLifecycleSQL),
 	}
 }
 
@@ -642,3 +643,6 @@ var accessGraphGroupEdgesSQL string
 
 //go:embed 000124_network_tag_options.up.sql
 var networkTagOptionsSQL string
+
+//go:embed 000125_device_lifecycle.up.sql
+var deviceLifecycleSQL string

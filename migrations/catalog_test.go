@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 124 {
-		t.Fatalf("len(Catalog()) = %d, want 124", len(catalog))
+	if len(catalog) != 125 {
+		t.Fatalf("len(Catalog()) = %d, want 125", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 124 {
-		t.Fatalf("LatestVersion() = %d, want 124", LatestVersion())
+	if LatestVersion() != 125 {
+		t.Fatalf("LatestVersion() = %d, want 125", LatestVersion())
 	}
 }
 
@@ -2979,5 +2979,28 @@ func TestNetworkTagOptions(t *testing.T) {
 		if !strings.Contains(migration.SQL, required) {
 			t.Errorf("schema 124 missing %q", required)
 		}
+	}
+}
+
+func TestDeviceLifecycle(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[124]
+	if migration.Version != 125 {
+		t.Fatalf("migration 125 = %+v", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.change_device_lifecycle_v1(",
+		"CREATE FUNCTION mesh_ops.read_console_devices_v2(",
+		"WHEN 'transfer_member' THEN 'device.transfer'",
+		"WHEN 'suspend' THEN 'device.quarantine'",
+		"GRANT UPDATE (ownership, suspended_reason, handover_principal_id, hostname_locked)",
+		"REFERENCES mesh.principal (id) ON DELETE RESTRICT",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 125 missing %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "GRANT SELECT") {
+		t.Error("schema 125 must not grant direct table access")
 	}
 }

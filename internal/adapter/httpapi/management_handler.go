@@ -257,7 +257,9 @@ type ManagementHandlerOptions struct {
 	// IdentityGroups lists and changes Workspace Identity Groups; nil answers 503.
 	IdentityGroups IdentityGroupManager
 	// DeviceTags lists and changes the device tag catalog and Device tags; nil answers 503.
-	DeviceTags                DeviceTagManager
+	DeviceTags DeviceTagManager
+	// DeviceLifecycle suspends, resumes, transfers and renames Devices; nil answers 503.
+	DeviceLifecycle           DeviceLifecycleManager
 	PolicyApprovals           PolicyApprovalWorkflow
 	PolicyApprovalCatalog     PolicyApprovalCatalog
 	ResourceCreations         ResourceCreator
@@ -302,6 +304,7 @@ type ManagementHandler struct {
 	deviceGroups              DeviceGroupManager
 	identityGroups            IdentityGroupManager
 	deviceTags                DeviceTagManager
+	deviceLifecycle           DeviceLifecycleManager
 	policyApprovals           PolicyApprovalWorkflow
 	policyApprovalCatalog     PolicyApprovalCatalog
 	resourceCreations         ResourceCreator
@@ -369,6 +372,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		deviceGroups:              options.DeviceGroups,
 		identityGroups:            options.IdentityGroups,
 		deviceTags:                options.DeviceTags,
+		deviceLifecycle:           options.DeviceLifecycle,
 		policyApprovals:           options.PolicyApprovals,
 		policyApprovalCatalog:     options.PolicyApprovalCatalog,
 		resourceCreations:         options.ResourceCreations,
@@ -476,11 +480,13 @@ func (handler *ManagementHandler) serveHTTP(
 	guardrailPathValue, guardrailMatched := parseGuardrailPath(request)
 	deviceGroupPathValue, deviceGroupMatched := parseDeviceGroupPath(request)
 	identityCatalogPathValue, identityCatalogMatched := parseIdentityCatalogPath(request)
+	deviceLifecyclePathValue, deviceLifecycleMatched := parseDeviceLifecyclePath(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
 		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
 		!shareTargetMatched && !aliasRangeMatched && !auditEventMatched &&
-		!auditExportMatched && !guardrailMatched && !deviceGroupMatched && !identityCatalogMatched {
+		!auditExportMatched && !guardrailMatched && !deviceGroupMatched && !identityCatalogMatched &&
+		!deviceLifecycleMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -514,6 +520,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = deviceGroupPathValue.operation()
 	} else if identityCatalogMatched {
 		operation = identityCatalogPathValue.operation()
+	} else if deviceLifecycleMatched {
+		operation = deviceLifecyclePathValue.operation()
 	} else if deviceMatched {
 		operation = deviceRevokeOperation
 	} else if policyMatched {
@@ -667,6 +675,11 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if identityCatalogMatched {
 		resultCode = handler.handleIdentityCatalog(ctx, response, request, correlationID, identityCatalogPathValue,
+			session)
+		return
+	}
+	if deviceLifecycleMatched {
+		resultCode = handler.handleDeviceLifecycle(ctx, response, request, correlationID, deviceLifecyclePathValue,
 			session)
 		return
 	}

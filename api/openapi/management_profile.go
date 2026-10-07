@@ -100,6 +100,10 @@ type consoleManagementProfile struct {
 	DeviceTagDelete         json.RawMessage            `json:"workspaceDeviceTagDelete"`
 	NetworkDeviceTags       json.RawMessage            `json:"networkDeviceTags"`
 	NetworkDeviceTagOptions json.RawMessage            `json:"networkDeviceTagOptions"`
+	NetworkDeviceSuspend    json.RawMessage            `json:"networkDeviceSuspend"`
+	NetworkDeviceResume     json.RawMessage            `json:"networkDeviceResume"`
+	NetworkDeviceTransfer   json.RawMessage            `json:"networkDeviceTransfer"`
+	NetworkDeviceRename     json.RawMessage            `json:"networkDeviceRename"`
 	NetworkDeviceTagChange  json.RawMessage            `json:"networkDeviceChangeTags"`
 }
 
@@ -185,6 +189,10 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.DeviceTagDelete, "post", "deleteWorkspaceDeviceTag", true) &&
 		consoleCookieOperation(profile.NetworkDeviceTags, "get", "listNetworkDeviceTags", false) &&
 		consoleCookieOperation(profile.NetworkDeviceTagOptions, "get", "listNetworkTagOptions", false) &&
+		consoleCookieOperation(profile.NetworkDeviceSuspend, "post", "suspendNetworkDevice", true) &&
+		consoleCookieOperation(profile.NetworkDeviceResume, "post", "resumeNetworkDevice", true) &&
+		consoleCookieOperation(profile.NetworkDeviceTransfer, "post", "transferNetworkDevice", true) &&
+		consoleCookieOperation(profile.NetworkDeviceRename, "post", "renameNetworkDevice", true) &&
 		consoleCookieOperation(profile.NetworkDeviceTagChange, "post", "changeNetworkDeviceTags", true)
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
@@ -314,6 +322,11 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		profile.NetworkDeviceTagOptions
 	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/change-tags"] =
 		profile.NetworkDeviceTagChange
+	deviceActions := "/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/"
+	consolePaths[deviceActions+"suspend"] = profile.NetworkDeviceSuspend
+	consolePaths[deviceActions+"resume"] = profile.NetworkDeviceResume
+	consolePaths[deviceActions+"transfer"] = profile.NetworkDeviceTransfer
+	consolePaths[deviceActions+"rename"] = profile.NetworkDeviceRename
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments"] = profile.WorkspaceRoleAssign
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke"] = profile.WorkspaceRoleRevoke
 	consolePaths[consoleSessionPreparePath] = profile.Prepare

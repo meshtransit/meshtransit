@@ -54,7 +54,10 @@ const lockRegistrationDeviceSQL = `SELECT
     device.hostname,
     device.version,
     machine.public_key,
-    node_key.public_key
+    node_key.public_key,
+    device.hostname_locked,
+    device.ownership = 'workspace',
+    device.expires_at
 FROM mesh.device_machine_key_epoch AS machine
 JOIN mesh.device AS device
   ON device.workspace_id = machine.workspace_id

@@ -192,6 +192,14 @@ type registrationDeviceRecord struct {
 	version           int64
 	machineKey        []byte
 	nodeKey           []byte
+	// handover reports a browser resume by the member a suspended Device
+	// is being handed over to (schema 125); the resume makes them its owner.
+	handover bool
+	// hostnameLocked keeps an administrator's rename across client logins;
+	// workspaceOwned keeps a Workspace Device's never-expiring lifetime.
+	hostnameLocked bool
+	workspaceOwned bool
+	expiresAt      time.Time
 }
 
 type registrationLockedState struct {

@@ -260,7 +260,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		isNetworkCollectionPost(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
 		isNetworkAliasRangeOperation(request) || isAuditEventListRead(request) ||
 		isAuditEventExportRead(request) || isGuardrailOperation(request) || isDeviceGroupOperation(request) ||
-		isIdentityCatalogOperation(request)
+		isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
 	if !prepare && !logout && !managementScopes && !inventoryRead && !deploymentCapabilities && !device && !policy && !simulation &&
 		!approval && !accessGraph && !accessGraphList && !policyRead && !workspaceRename && !workspaceRoles && !resourceSharing {
