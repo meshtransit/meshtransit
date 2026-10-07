@@ -186,8 +186,21 @@ func (service *Service) Compile(
 		0,
 		len(importedIDs),
 	)
+	var groupRules []publication.GroupRule
 	for _, intent := range request.rules {
 		destinationNodeID := intent.destinationNodeID
+		if intent.SelectsDeviceGroup() {
+			rule, err := publication.NewGroupRule(publication.GroupRuleParams{
+				RuleID: intent.id, SourceNodeID: intent.sourceNodeID, SourceGroupID: intent.sourceGroupID,
+				DestinationNodeID: intent.destinationNodeID, DestinationGroupID: intent.destinationDeviceGroupID,
+				Protocol: intent.protocol, DestinationPortRanges: intent.destinationPortRanges,
+			})
+			if err != nil {
+				return publication.Candidate{}, ErrInvalidRequest
+			}
+			groupRules = append(groupRules, rule)
+			continue
+		}
 		if intent.destinationImportedResourceID.IsValid() {
 			resolved, found := resolvedImported[intent.destinationImportedResourceID]
 			if !found {
@@ -282,6 +295,23 @@ func (service *Service) Compile(
 	if err != nil {
 		return publication.Candidate{}, ErrInvalidRequest
 	}
+	candidate, err := candidateWithDestinations(snapshot, destinations, groupDestinations, importedDestinations)
+	if err != nil || len(groupRules) == 0 {
+		return candidate, err
+	}
+	withGroups, err := candidate.WithGroupRules(groupRules)
+	if err != nil {
+		return publication.Candidate{}, ErrInvalidRequest
+	}
+	return withGroups, nil
+}
+
+func candidateWithDestinations(
+	snapshot policy.Snapshot,
+	destinations []publication.ResourceDestination,
+	groupDestinations []publication.ResourceGroupDestination,
+	importedDestinations []publication.ImportedResourceDestination,
+) (publication.Candidate, error) {
 	if len(importedDestinations) > 0 {
 		return publication.NewCandidateWithImportedResourceDestinations(
 			snapshot, destinations, groupDestinations, importedDestinations,

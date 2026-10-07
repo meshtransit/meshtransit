@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
 	"github.com/meshtransit/meshtransit/internal/accessgraph/simulation"
+	"github.com/meshtransit/meshtransit/internal/devicegroup"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
@@ -120,7 +121,7 @@ func (store *PolicySimulationStore) readSimulationBaselineOnce(
 	var record policySimulationBaselineRecord
 	var releaseID *string
 	var compilerFormatVersion *int
-	var rules string
+	var rules, groupRules, groupMembers string
 	err = transaction.QueryRow(
 		ctx,
 		readPolicySimulationBaselineSQL,
@@ -151,6 +152,8 @@ func (store *PolicySimulationStore) readSimulationBaselineOnce(
 		&compilerFormatVersion,
 		&record.SemanticHash,
 		&rules,
+		&groupRules,
+		&groupMembers,
 	)
 	if err != nil {
 		return simulation.Baseline{}, policySimulationDatabaseError(ctx, err)
@@ -158,6 +161,13 @@ func (store *PolicySimulationStore) readSimulationBaselineOnce(
 	record.ReleaseID = releaseID
 	record.CompilerFormatVersion = compilerFormatVersion
 	if err := json.Unmarshal([]byte(rules), &record.Rules); err != nil {
+		return simulation.Baseline{}, simulation.ErrInvalidBaseline
+	}
+	if err := json.Unmarshal([]byte(groupRules), &record.GroupRules); err != nil ||
+		len(record.GroupRules) > policy.MaximumRules {
+		return simulation.Baseline{}, simulation.ErrInvalidBaseline
+	}
+	if err := json.Unmarshal([]byte(groupMembers), &record.GroupMembers); err != nil {
 		return simulation.Baseline{}, simulation.ErrInvalidBaseline
 	}
 	baseline, err = record.baseline(scope)
@@ -185,6 +195,97 @@ type policySimulationBaselineRecord struct {
 	CompilerFormatVersion *int
 	SemanticHash          []byte
 	Rules                 []policyPublicationRulePayload
+	GroupRules            []policyGroupRulePayload
+	GroupMembers          []struct {
+		GroupID   string   `json:"group_id"`
+		DeviceIDs []string `json:"device_ids"`
+	}
+}
+
+func (record policySimulationBaselineRecord) groupMembers() (map[devicegroup.ID][]node.ID, error) {
+	members := make(map[devicegroup.ID][]node.ID, len(record.GroupMembers))
+	for _, item := range record.GroupMembers {
+		id, err := devicegroup.ParseID(item.GroupID)
+		if err != nil || item.DeviceIDs == nil {
+			return nil, simulation.ErrInvalidBaseline
+		}
+		if _, duplicate := members[id]; duplicate {
+			return nil, simulation.ErrInvalidBaseline
+		}
+		devices := make([]node.ID, len(item.DeviceIDs))
+		for index, text := range item.DeviceIDs {
+			if devices[index], err = node.ParseID(text); err != nil {
+				return nil, simulation.ErrInvalidBaseline
+			}
+		}
+		members[id] = devices
+	}
+	return members, nil
+}
+
+// decodePolicyGroupRules rebuilds group rules from the attach payload shape.
+func decodePolicyGroupRules(payloads []policyGroupRulePayload) ([]publication.GroupRule, error) {
+	rules := make([]publication.GroupRule, 0, len(payloads))
+	for _, payload := range payloads {
+		ruleID, err := policy.ParseRuleID(payload.AccessRulePublicID)
+		if err != nil || len(payload.PortRangeFirst) != len(payload.PortRangeLast) {
+			return nil, simulation.ErrInvalidBaseline
+		}
+		params := publication.GroupRuleParams{RuleID: ruleID, Protocol: parsePolicyRuleProtocol(payload.Protocol)}
+		parse := func(text string, target *node.ID) error {
+			if text == "" {
+				return nil
+			}
+			value, parseErr := node.ParseID(text)
+			*target = value
+			return parseErr
+		}
+		parseGroup := func(text string, target *devicegroup.ID) error {
+			if text == "" {
+				return nil
+			}
+			value, parseErr := devicegroup.ParseID(text)
+			*target = value
+			return parseErr
+		}
+		if errors.Join(parse(payload.SourceNodePublicID, &params.SourceNodeID),
+			parseGroup(payload.SourceDeviceGroupPublicID, &params.SourceGroupID),
+			parse(payload.DestinationNodePublicID, &params.DestinationNodeID),
+			parseGroup(payload.DestinationDeviceGroupPublicID, &params.DestinationGroupID)) != nil {
+			return nil, simulation.ErrInvalidBaseline
+		}
+		for index := range payload.PortRangeFirst {
+			first, last := payload.PortRangeFirst[index], payload.PortRangeLast[index]
+			if first < 1 || first > 65535 || last < first || last > 65535 {
+				return nil, simulation.ErrInvalidBaseline
+			}
+			// Both bounds were checked to lie in 1..65535 above.
+			portRange, rangeErr := policy.NewPortRange(uint16(first), uint16(last)) //nolint:gosec // bounded above
+			if rangeErr != nil {
+				return nil, simulation.ErrInvalidBaseline
+			}
+			params.DestinationPortRanges = append(params.DestinationPortRanges, portRange)
+		}
+		rule, err := publication.NewGroupRule(params)
+		if err != nil {
+			return nil, simulation.ErrInvalidBaseline
+		}
+		rules = append(rules, rule)
+	}
+	return rules, nil
+}
+
+func parsePolicyRuleProtocol(value string) policy.Protocol {
+	switch value {
+	case "tcp":
+		return policy.ProtocolTCP
+	case "udp":
+		return policy.ProtocolUDP
+	case "icmp":
+		return policy.ProtocolICMP
+	default:
+		return policy.ProtocolUnknown
+	}
 }
 
 func (record policySimulationBaselineRecord) baseline(
@@ -211,11 +312,12 @@ func (record policySimulationBaselineRecord) baseline(
 			return simulation.Baseline{}, simulation.ErrInvalidBaseline
 		}
 		candidate, candidateErr := publication.NewCandidate(snapshot, 1)
-		if candidateErr != nil {
+		members, membersErr := record.groupMembers()
+		if candidateErr != nil || membersErr != nil || len(record.GroupRules) != 0 {
 			return simulation.Baseline{}, simulation.ErrInvalidBaseline
 		}
 		return simulation.NewBaseline(simulation.BaselineParams{
-			Scope: scope, RevisionVector: vector, Candidate: candidate,
+			Scope: scope, RevisionVector: vector, Candidate: candidate, GroupMembers: members,
 		})
 	}
 	if record.ReleaseID == nil || record.CompilerFormatVersion == nil ||
@@ -241,12 +343,25 @@ func (record policySimulationBaselineRecord) baseline(
 	if err != nil {
 		return simulation.Baseline{}, fmt.Errorf("reconstruct compiled baseline: %w", err)
 	}
+	if len(record.GroupRules) > 0 {
+		groupRules, groupErr := decodePolicyGroupRules(record.GroupRules)
+		if groupErr != nil {
+			return simulation.Baseline{}, groupErr
+		}
+		if candidate, err = candidate.WithGroupRules(groupRules); err != nil {
+			return simulation.Baseline{}, fmt.Errorf("reconstruct group rules: %w", simulation.ErrInvalidBaseline)
+		}
+	}
+	members, err := record.groupMembers()
+	if err != nil {
+		return simulation.Baseline{}, err
+	}
 	if candidate.SemanticHash() != semanticHash {
 		return simulation.Baseline{}, fmt.Errorf("compiled baseline semantic hash differs: %w", simulation.ErrInvalidBaseline)
 	}
 	return simulation.NewBaseline(simulation.BaselineParams{
 		Scope: scope, RevisionVector: vector, HasActiveRelease: true,
-		ReleaseID: releaseID, SemanticHash: semanticHash, Candidate: candidate,
+		ReleaseID: releaseID, SemanticHash: semanticHash, Candidate: candidate, GroupMembers: members,
 	})
 }
 
@@ -630,6 +745,9 @@ func policySimulationDatabaseError(ctx context.Context, err error) error {
 	var databaseError *pgconn.PgError
 	if errors.As(err, &databaseError) && databaseError.Code == "42501" {
 		return simulation.ErrForbidden
+	}
+	if errors.As(err, &databaseError) && databaseError.Code == "MTD07" {
+		return simulation.ErrTooLarge
 	}
 	return errors.Join(simulation.ErrUnavailable, fmt.Errorf("read policy simulation baseline: %w", err))
 }

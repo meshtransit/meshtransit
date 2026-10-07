@@ -13,8 +13,10 @@ const readPolicySimulationBaselineSQL = `SELECT
     release_public_id::TEXT,
     compiler_format_version,
     release_semantic_hash,
-    rules::TEXT
-FROM mesh_ops.read_policy_simulation_baseline_v2(
+    rules::TEXT,
+    group_rules::TEXT,
+    group_members::TEXT
+FROM mesh_ops.read_policy_simulation_baseline_v3(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ, $13::INTEGER

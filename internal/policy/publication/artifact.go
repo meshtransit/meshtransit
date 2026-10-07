@@ -15,6 +15,7 @@ const (
 	policyHashDomainV2               = "meshtransit/policy-release/v2\x00"
 	policyHashDomainV3               = "meshtransit/policy-release/v3\x00"
 	policyHashDomainV4               = "meshtransit/policy-release/v4\x00"
+	policyHashDomainV5               = "meshtransit/policy-release/v5\x00"
 	resourceCompilerFormatV2         = 2
 	resourceGroupCompilerFormatV3    = 3
 	importedResourceCompilerFormatV4 = 4
@@ -53,6 +54,7 @@ type Candidate struct {
 	resourceDestinations         []ResourceDestination
 	resourceGroupDestinations    []ResourceGroupDestination
 	importedResourceDestinations []ImportedResourceDestination
+	groupRules                   []GroupRule
 }
 
 // NewCandidate validates and hashes one compiled policy artifact.
@@ -187,6 +189,32 @@ func (candidate Candidate) ImportedResourceDestinations() []ImportedResourceDest
 	return cloneImportedResourceDestinations(candidate.importedResourceDestinations)
 }
 
+// WithGroupRules returns the candidate with Access Rules that select Device
+// Groups. Each rule ID is unique and used by no other rule of the candidate,
+// and the candidate stays within MaximumRules facts.
+func (candidate Candidate) WithGroupRules(rules []GroupRule) (Candidate, error) {
+	if !candidate.IsValid() || len(candidate.groupRules) > 0 {
+		return Candidate{}, ErrInvalidCandidate
+	}
+	extended := candidate
+	extended.groupRules = cloneGroupRules(rules)
+	slices.SortFunc(extended.groupRules, compareGroupRules)
+	extended.semanticHash = hashCandidate(extended)
+	if !extended.IsValid() {
+		return Candidate{}, ErrInvalidCandidate
+	}
+	return extended, nil
+}
+
+// ProjectionCount is how many stored rule facts the release holds: compiled
+// Device pairs, Imported Resource selectors and group rules, in that order.
+func (candidate Candidate) ProjectionCount() int {
+	return len(candidate.snapshot.Rules()) + len(candidate.importedResourceDestinations) + len(candidate.groupRules)
+}
+
+// GroupRules returns caller-owned rules that select Device Groups.
+func (candidate Candidate) GroupRules() []GroupRule { return cloneGroupRules(candidate.groupRules) }
+
 // IsValid reports whether all candidate fields and their digest agree.
 func (candidate Candidate) IsValid() bool {
 	return candidate.snapshot.IsValid() && candidate.compilerFormatVersion > 0 &&
@@ -194,8 +222,35 @@ func (candidate Candidate) IsValid() bool {
 		validResourceDestinations(candidate) &&
 		validResourceGroupDestinations(candidate) &&
 		validImportedResourceDestinations(candidate) &&
+		validGroupRules(candidate) &&
 		candidate.semanticHash.IsValid() &&
 		candidate.semanticHash == hashCandidate(candidate)
+}
+
+func validGroupRules(candidate Candidate) bool {
+	if len(candidate.groupRules) == 0 {
+		return true
+	}
+	snapshotRules := candidate.snapshot.Rules()
+	if len(snapshotRules)+len(candidate.importedResourceDestinations)+len(candidate.groupRules) > policy.MaximumRules {
+		return false
+	}
+	taken := make(map[policy.RuleID]struct{}, len(snapshotRules)+len(candidate.importedResourceDestinations))
+	for _, rule := range snapshotRules {
+		taken[rule.ID()] = struct{}{}
+	}
+	for _, destination := range candidate.importedResourceDestinations {
+		taken[destination.ruleID] = struct{}{}
+	}
+	for index, rule := range candidate.groupRules {
+		if !rule.IsValid() || (index > 0 && compareGroupRules(candidate.groupRules[index-1], rule) >= 0) {
+			return false
+		}
+		if _, used := taken[rule.ruleID]; used {
+			return false
+		}
+	}
+	return true
 }
 
 func validImportedResourceDestinations(candidate Candidate) bool {
@@ -327,7 +382,9 @@ func validResourceGroupDestinations(candidate Candidate) bool {
 func hashCandidate(candidate Candidate) SemanticHash {
 	rules := candidate.snapshot.Rules()
 	domain := policyHashDomainV1
-	if len(candidate.importedResourceDestinations) > 0 {
+	if len(candidate.groupRules) > 0 {
+		domain = policyHashDomainV5
+	} else if len(candidate.importedResourceDestinations) > 0 {
 		domain = policyHashDomainV4
 	} else if len(candidate.resourceGroupDestinations) > 0 {
 		domain = policyHashDomainV3
@@ -451,7 +508,34 @@ func hashCandidate(candidate Candidate) SemanticHash {
 			}
 		}
 	}
+	if len(candidate.groupRules) > 0 {
+		encoded = appendUint64(encoded, uint64(len(candidate.groupRules)))
+		for _, rule := range candidate.groupRules {
+			ruleID := publicid.ID(rule.ruleID).Bytes()
+			encoded = append(encoded, ruleID[:]...)
+			encoded = appendGroupRuleSide(encoded, publicid.ID(rule.sourceNodeID), publicid.ID(rule.sourceGroupID))
+			encoded = appendGroupRuleSide(encoded, publicid.ID(rule.destinationNodeID),
+				publicid.ID(rule.destinationGroupID))
+			encoded = append(encoded, byte(rule.protocol))
+			encoded = appendUint64(encoded, uint64(len(rule.destinationPortRanges)))
+			for _, portRange := range rule.destinationPortRanges {
+				encoded = appendUint16(encoded, portRange.First())
+				encoded = appendUint16(encoded, portRange.Last())
+			}
+		}
+	}
 	return SemanticHash(sha256.Sum256(encoded))
+}
+
+// appendGroupRuleSide tags a rule side as a Device (1) or a Device Group (2)
+// before its identity, so a Device and a group with equal bytes differ.
+func appendGroupRuleSide(output []byte, device, group publicid.ID) []byte {
+	if group.IsValid() {
+		groupID := group.Bytes()
+		return append(append(output, 2), groupID[:]...)
+	}
+	deviceID := device.Bytes()
+	return append(append(output, 1), deviceID[:]...)
 }
 
 func appendUint16(output []byte, value uint16) []byte {

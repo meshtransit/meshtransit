@@ -77,7 +77,57 @@ const loadPeerCandidatesSQL = `SELECT
     addresses
 FROM mesh_ops.load_map_peer_candidates_v2($1::BYTEA, $2::BYTEA, $3::INTEGER)`
 
-const loadPacketPolicySQL = `SELECT
+// loadPacketPolicySQL reads the Device's edges of the active release:
+// Device-to-Device rules plus group rules resolved from current membership
+// (schema 120), each only while both ends are live. One row with null rule
+// columns means the release exists and gives this Device nothing.
+const loadPacketPolicySQL = `WITH release AS (
+    SELECT release.id, release.workspace_id, release.network_id, release.policy_revision
+    FROM mesh.policy_release AS release
+    WHERE release.workspace_id = mesh_ops.current_workspace_id()
+      AND release.network_id = mesh_ops.current_network_id()
+      AND release.policy_revision = $2::BIGINT
+      AND release.state = 'active'
+),
+edge AS (
+    SELECT rule.id AS ordinal, rule.access_rule_public_id, rule.source_device_id,
+           rule.destination_device_id, rule.protocol, rule.destination_ports
+    FROM release
+    JOIN mesh.compiled_policy_rule AS rule
+      ON rule.workspace_id = release.workspace_id
+     AND rule.network_id = release.network_id
+     AND rule.policy_release_id = release.id
+     AND rule.policy_revision = release.policy_revision
+     AND (rule.source_device_id = $1::BIGINT OR rule.destination_device_id = $1::BIGINT)
+    UNION ALL
+    SELECT 0, grouped.access_rule_public_id, grouped.source_device_id,
+           grouped.destination_device_id, grouped.protocol, grouped.destination_ports
+    FROM release
+    CROSS JOIN LATERAL mesh_ops.resolve_group_policy_edges_v1($1::BIGINT) AS grouped
+),
+live_edge AS (
+    SELECT edge.*
+    FROM edge
+    JOIN release ON TRUE
+    WHERE EXISTS (
+        SELECT 1 FROM mesh.device AS live_source
+        WHERE live_source.workspace_id = release.workspace_id
+          AND live_source.network_id = release.network_id
+          AND live_source.id = edge.source_device_id
+          AND live_source.state = 'active'
+          AND live_source.deleted_at IS NULL
+          AND live_source.expires_at > pg_catalog.transaction_timestamp()
+    ) AND EXISTS (
+        SELECT 1 FROM mesh.device AS live_destination
+        WHERE live_destination.workspace_id = release.workspace_id
+          AND live_destination.network_id = release.network_id
+          AND live_destination.id = edge.destination_device_id
+          AND live_destination.state = 'active'
+          AND live_destination.deleted_at IS NULL
+          AND live_destination.expires_at > pg_catalog.transaction_timestamp()
+    )
+)
+SELECT
     release.policy_revision,
     rule.access_rule_public_id::TEXT,
     source.public_id::TEXT,
@@ -93,42 +143,15 @@ const loadPacketPolicySQL = `SELECT
         FROM pg_catalog.unnest(rule.destination_ports) AS port_range
         ORDER BY pg_catalog.lower(port_range), pg_catalog.upper(port_range)
     )
-FROM mesh.policy_release AS release
-LEFT JOIN mesh.compiled_policy_rule AS rule
-  ON rule.workspace_id = release.workspace_id
- AND rule.network_id = release.network_id
- AND rule.policy_release_id = release.id
- AND rule.policy_revision = release.policy_revision
- AND (rule.source_device_id = $1::BIGINT OR rule.destination_device_id = $1::BIGINT)
- AND EXISTS (
-    SELECT 1 FROM mesh.device AS live_source
-    WHERE live_source.workspace_id = rule.workspace_id
-      AND live_source.network_id = rule.network_id
-      AND live_source.id = rule.source_device_id
-      AND live_source.state = 'active'
-      AND live_source.deleted_at IS NULL
-      AND live_source.expires_at > pg_catalog.transaction_timestamp()
- )
- AND EXISTS (
-    SELECT 1 FROM mesh.device AS live_destination
-    WHERE live_destination.workspace_id = rule.workspace_id
-      AND live_destination.network_id = rule.network_id
-      AND live_destination.id = rule.destination_device_id
-      AND live_destination.state = 'active'
-      AND live_destination.deleted_at IS NULL
-      AND live_destination.expires_at > pg_catalog.transaction_timestamp()
- )
+FROM release
+LEFT JOIN live_edge AS rule ON TRUE
 LEFT JOIN mesh.device AS source
-  ON source.workspace_id = rule.workspace_id
- AND source.network_id = rule.network_id
+  ON source.workspace_id = release.workspace_id
+ AND source.network_id = release.network_id
  AND source.id = rule.source_device_id
 LEFT JOIN mesh.device AS destination
-  ON destination.workspace_id = rule.workspace_id
- AND destination.network_id = rule.network_id
+  ON destination.workspace_id = release.workspace_id
+ AND destination.network_id = release.network_id
  AND destination.id = rule.destination_device_id
-WHERE release.workspace_id = mesh_ops.current_workspace_id()
-  AND release.network_id = mesh_ops.current_network_id()
-  AND release.policy_revision = $2::BIGINT
-  AND release.state = 'active'
-ORDER BY rule.access_rule_public_id, rule.source_device_id, rule.destination_device_id, rule.id
+ORDER BY rule.access_rule_public_id, rule.source_device_id, rule.destination_device_id, rule.ordinal
 LIMIT $3::INTEGER`

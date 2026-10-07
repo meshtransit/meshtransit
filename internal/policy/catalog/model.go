@@ -46,8 +46,14 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 			return Snapshot{}, ErrInvalidSnapshot
 		}
 		device := row.Intent.DestinationNodeID().IsValid()
+		deviceGroup := row.Intent.DestinationDeviceGroupID().IsValid()
 		imported := row.Intent.DestinationImportedResourceID().IsValid()
-		if params.DeviceRulesOnly && !device || device && row.DestinationNodeID != row.Intent.DestinationNodeID() || imported && row.DestinationNodeID.IsValid() || !imported && !row.DestinationNodeID.IsValid() {
+		// A row names its compiled Device destination except when it selects
+		// an Imported Resource or a Device Group destination.
+		named := !imported && !deviceGroup
+		if params.DeviceRulesOnly && !device && !deviceGroup ||
+			device && row.DestinationNodeID != row.Intent.DestinationNodeID() ||
+			!named && row.DestinationNodeID.IsValid() || named && !row.DestinationNodeID.IsValid() {
 			return Snapshot{}, ErrInvalidSnapshot
 		}
 	}
@@ -70,7 +76,8 @@ func (snapshot Snapshot) RuleCount() int { return snapshot.params.RuleCount }
 // Complete reports whether every compiled row fits in this projection.
 func (snapshot Snapshot) Complete() bool { return snapshot.RuleCount() <= MaximumRows }
 
-// DeviceRulesOnly reports whether appending Device intent preserves every selector.
+// DeviceRulesOnly reports whether every row selects only Devices and Device
+// Groups, so appending such intent preserves every selector.
 func (snapshot Snapshot) DeviceRulesOnly() bool { return snapshot.params.DeviceRulesOnly }
 
 // Rows returns an independently owned slice of immutable typed intent.

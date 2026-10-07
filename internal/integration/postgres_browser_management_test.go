@@ -444,13 +444,15 @@ func publishPolicyOverBrowserManagement(
 		Last  uint16 `json:"last"`
 	}
 	type rule struct {
-		ID                    string      `json:"id"`
-		SourceDeviceID        string      `json:"source_device_id"`
-		DestinationDeviceID   string      `json:"destination_device_id,omitempty"`
-		DestinationResourceID string      `json:"destination_resource_id,omitempty"`
-		DestinationGroupID    string      `json:"destination_resource_group_id,omitempty"`
-		Protocol              string      `json:"protocol"`
-		DestinationPortRanges []portRange `json:"destination_port_ranges"`
+		ID                       string      `json:"id"`
+		SourceDeviceID           string      `json:"source_device_id,omitempty"`
+		SourceDeviceGroupID      string      `json:"source_device_group_id,omitempty"`
+		DestinationDeviceID      string      `json:"destination_device_id,omitempty"`
+		DestinationDeviceGroupID string      `json:"destination_device_group_id,omitempty"`
+		DestinationResourceID    string      `json:"destination_resource_id,omitempty"`
+		DestinationGroupID       string      `json:"destination_resource_group_id,omitempty"`
+		Protocol                 string      `json:"protocol"`
+		DestinationPortRanges    []portRange `json:"destination_port_ranges"`
 	}
 	resourceDestinations := make(map[string]publication.ResourceDestination)
 	for _, destination := range command.Candidate().ResourceDestinations() {
@@ -485,6 +487,25 @@ func publishPolicyOverBrowserManagement(
 			input.DestinationDeviceID = ""
 			input.DestinationGroupID = destination.ResourceGroupID().String()
 			emittedGroups[compiled.ID().String()] = struct{}{}
+		}
+		rules = append(rules, input)
+	}
+	for _, grouped := range command.Candidate().GroupRules() {
+		ranges := grouped.DestinationPortRanges()
+		ports := make([]portRange, len(ranges))
+		for index, value := range ranges {
+			ports[index] = portRange{First: value.First(), Last: value.Last()}
+		}
+		input := rule{ID: grouped.RuleID().String(), Protocol: grouped.Protocol().String(), DestinationPortRanges: ports}
+		if grouped.SourceGroupID().IsValid() {
+			input.SourceDeviceGroupID = grouped.SourceGroupID().String()
+		} else {
+			input.SourceDeviceID = grouped.SourceNodeID().String()
+		}
+		if grouped.DestinationGroupID().IsValid() {
+			input.DestinationDeviceGroupID = grouped.DestinationGroupID().String()
+		} else {
+			input.DestinationDeviceID = grouped.DestinationNodeID().String()
 		}
 		rules = append(rules, input)
 	}

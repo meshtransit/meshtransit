@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
+	"github.com/meshtransit/meshtransit/internal/devicegroup"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/policy/publication"
@@ -35,19 +36,27 @@ func newResult(baseline Baseline, proposed publication.Candidate) (Result, error
 		return Result{}, ErrInvalidResult
 	}
 
-	currentRelationships, err := effectiveRelationships(baseline.candidate)
+	currentRules, err := resolvedRules(baseline.candidate, baseline.groupMembers)
 	if err != nil {
 		return Result{}, err
 	}
-	proposedRelationships, err := effectiveRelationships(proposed)
+	proposedRules, err := resolvedRules(proposed, baseline.groupMembers)
 	if err != nil {
 		return Result{}, err
 	}
-	currentExplanations, err := explanations(baseline.candidate)
+	currentRelationships, err := effectiveRelationships(currentRules)
 	if err != nil {
 		return Result{}, err
 	}
-	proposedExplanations, err := explanations(proposed)
+	proposedRelationships, err := effectiveRelationships(proposedRules)
+	if err != nil {
+		return Result{}, err
+	}
+	currentExplanations, err := explanations(baseline.candidate, currentRules)
+	if err != nil {
+		return Result{}, err
+	}
+	proposedExplanations, err := explanations(proposed, proposedRules)
 	if err != nil {
 		return Result{}, err
 	}
@@ -120,9 +129,56 @@ func candidateInputsWithin(
 	return true
 }
 
-func effectiveRelationships(candidate publication.Candidate) ([]Relationship, error) {
+// resolvedRules is the candidate's Device pairs plus its group rules
+// resolved from the baseline membership. A group the baseline does not know
+// changed since the baseline was read.
+func resolvedRules(candidate publication.Candidate, members map[devicegroup.ID][]node.ID) ([]policy.Rule, error) {
+	rules := candidate.Snapshot().Rules()
+	scope := candidate.Snapshot().Scope()
+	side := func(device node.ID, group devicegroup.ID) ([]node.ID, error) {
+		if !group.IsValid() {
+			return []node.ID{device}, nil
+		}
+		devices, known := members[group]
+		if !known {
+			return nil, ErrStaleInputs
+		}
+		return devices, nil
+	}
+	for _, groupRule := range candidate.GroupRules() {
+		sources, err := side(groupRule.SourceNodeID(), groupRule.SourceGroupID())
+		if err != nil {
+			return nil, err
+		}
+		destinations, err := side(groupRule.DestinationNodeID(), groupRule.DestinationGroupID())
+		if err != nil {
+			return nil, err
+		}
+		if len(rules)+len(sources)*len(destinations) > MaximumResolvedRelationships {
+			return nil, ErrTooLarge
+		}
+		for _, source := range sources {
+			for _, destination := range destinations {
+				if source == destination {
+					continue
+				}
+				rule, err := policy.NewRule(policy.RuleParams{
+					ID: groupRule.RuleID(), Scope: scope, SourceNodeID: source, DestinationNodeID: destination,
+					Protocol: groupRule.Protocol(), DestinationPortRanges: groupRule.DestinationPortRanges(),
+				})
+				if err != nil {
+					return nil, ErrInvalidResult
+				}
+				rules = append(rules, rule)
+			}
+		}
+	}
+	return rules, nil
+}
+
+func effectiveRelationships(rules []policy.Rule) ([]Relationship, error) {
 	byKey := make(map[relationshipKey][]policy.PortRange)
-	for _, rule := range candidate.Snapshot().Rules() {
+	for _, rule := range rules {
 		key := relationshipKey{
 			source: rule.SourceNodeID(), destination: rule.DestinationNodeID(), protocol: rule.Protocol(),
 		}
@@ -136,7 +192,7 @@ func effectiveRelationships(candidate publication.Candidate) ([]Relationship, er
 		keys = append(keys, key)
 	}
 	slices.SortFunc(keys, compareRelationshipKeys)
-	values := make([]Relationship, 0, len(candidate.Snapshot().Rules()))
+	values := make([]Relationship, 0, len(rules))
 	for _, key := range keys {
 		if key.protocol == policy.ProtocolICMP {
 			value, err := newRelationship(key.source, key.destination, key.protocol, 0, 0)
@@ -322,7 +378,7 @@ func subtractPortRanges(source, excluded []policy.PortRange) []policy.PortRange 
 	return remaining
 }
 
-func explanations(candidate publication.Candidate) ([]Explanation, error) {
+func explanations(candidate publication.Candidate, rules []policy.Rule) ([]Explanation, error) {
 	direct := make(map[policy.RuleID]publication.ResourceDestination)
 	for _, destination := range candidate.ResourceDestinations() {
 		direct[destination.RuleID()] = destination
@@ -335,8 +391,8 @@ func explanations(candidate publication.Candidate) ([]Explanation, error) {
 			}] = groupMemberEvidence{group: destination, member: member}
 		}
 	}
-	values := make([]Explanation, 0, len(candidate.Snapshot().Rules()))
-	for _, rule := range candidate.Snapshot().Rules() {
+	values := make([]Explanation, 0, len(rules))
+	for _, rule := range rules {
 		value := Explanation{
 			scope: rule.Scope(), ruleID: rule.ID(), sourceNodeID: rule.SourceNodeID(),
 			destinationNodeID: rule.DestinationNodeID(), protocol: rule.Protocol(),

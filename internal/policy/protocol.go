@@ -130,3 +130,17 @@ func validCanonicalPortRanges(ranges []PortRange) bool {
 	}
 	return true
 }
+
+// CanonicalTraffic validates one rule's protocol and destination ports and
+// returns the ports sorted and merged as every compiled rule stores them.
+// ICMP takes no ports; TCP and UDP take 1 to MaximumPortRangesPerRule.
+func CanonicalTraffic(protocol Protocol, ranges []PortRange) ([]PortRange, bool) {
+	if !protocol.IsValid() || len(ranges) > MaximumPortRangesPerRule {
+		return nil, false
+	}
+	ports := canonicalPortRanges(ranges)
+	if protocol == ProtocolICMP {
+		return ports, len(ports) == 0
+	}
+	return ports, validCanonicalPortRanges(ports)
+}

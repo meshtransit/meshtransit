@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
+	"github.com/meshtransit/meshtransit/internal/devicegroup"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
@@ -205,6 +206,9 @@ type accessGraphPathRecord struct {
 	// Set only for paths to a shared Device, which carry no destination Device.
 	DestinationImportedResourceID string `json:"destination_imported_resource_id"`
 	TrustContractID               string `json:"trust_contract_id"`
+	// Set only for paths through a group rule (schema 120).
+	SourceDeviceGroupID      string `json:"source_device_group_id"`
+	DestinationDeviceGroupID string `json:"destination_device_group_id"`
 }
 
 func (record accessGraphSnapshotRecord) snapshot(query accessgraph.Query) (accessgraph.Snapshot, error) {
@@ -312,6 +316,19 @@ func (record accessGraphPathRecord) path() (accessgraph.Path, error) {
 			return accessgraph.Path{}, accessgraph.ErrInvalidSnapshot
 		}
 		params.DestinationImportedResourceID, params.TrustContractID = importedID, contractID
+	}
+	for _, side := range []struct {
+		text   string
+		target *devicegroup.ID
+	}{{record.SourceDeviceGroupID, &params.SourceDeviceGroupID}, {record.DestinationDeviceGroupID, &params.DestinationDeviceGroupID}} {
+		if side.text == "" {
+			continue
+		}
+		parsed, err := devicegroup.ParseID(side.text)
+		if err != nil {
+			return accessgraph.Path{}, accessgraph.ErrInvalidSnapshot
+		}
+		*side.target = parsed
 	}
 	return accessgraph.NewPath(params)
 }

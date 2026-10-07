@@ -133,6 +133,12 @@ func newExplainedPolicyPaths(paths []accessgraph.Path) []explainedPolicyPath {
 			rendered[index].DestinationImportedResourceID = path.DestinationImportedResourceID().String()
 			rendered[index].TrustContractID = path.TrustContractID().String()
 		}
+		if path.SourceDeviceGroupID().IsValid() {
+			rendered[index].SourceDeviceGroupID = path.SourceDeviceGroupID().String()
+		}
+		if path.DestinationDeviceGroupID().IsValid() {
+			rendered[index].DestinationDeviceGroupID = path.DestinationDeviceGroupID().String()
+		}
 	}
 	return rendered
 }

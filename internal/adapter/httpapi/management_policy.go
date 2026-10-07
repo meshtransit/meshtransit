@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/meshtransit/meshtransit/internal/devicegroup"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
@@ -32,7 +33,9 @@ type publishPolicyRequest struct {
 type publishPolicyRuleRequest struct {
 	ID                            string                          `json:"id"`
 	SourceDeviceID                string                          `json:"source_device_id"`
+	SourceDeviceGroupID           string                          `json:"source_device_group_id"`
 	DestinationDeviceID           string                          `json:"destination_device_id"`
+	DestinationDeviceGroupID      string                          `json:"destination_device_group_id"`
 	DestinationResourceID         string                          `json:"destination_resource_id"`
 	DestinationGroupID            string                          `json:"destination_resource_group_id"`
 	DestinationImportedResourceID string                          `json:"destination_imported_resource_id"`
@@ -137,7 +140,7 @@ func (handler *ManagementHandler) publishPolicy(ctx context.Context, input manag
 			PolicyRevision:  result.PolicyRevision(),
 			NetworkRevision: result.NetworkRevision(),
 			SemanticHash:    hex.EncodeToString(semanticHash[:]),
-			RuleCount:       len(command.Candidate().Snapshot().Rules()) + len(command.Candidate().ImportedResourceDestinations()),
+			RuleCount:       command.Candidate().ProjectionCount(),
 		},
 		CorrelationID: correlationID.String(),
 	})
@@ -227,9 +230,22 @@ func decodePolicyRuleIntent(
 	if err != nil {
 		return compilation.RuleIntent{}, err
 	}
-	sourceID, err := node.ParseID(input.SourceDeviceID)
-	if err != nil {
-		return compilation.RuleIntent{}, err
+	var sourceID node.ID
+	if input.SourceDeviceID != "" {
+		if sourceID, err = node.ParseID(input.SourceDeviceID); err != nil {
+			return compilation.RuleIntent{}, err
+		}
+	}
+	var sourceGroupID, destinationDeviceGroupID devicegroup.ID
+	if input.SourceDeviceGroupID != "" {
+		if sourceGroupID, err = devicegroup.ParseID(input.SourceDeviceGroupID); err != nil {
+			return compilation.RuleIntent{}, err
+		}
+	}
+	if input.DestinationDeviceGroupID != "" {
+		if destinationDeviceGroupID, err = devicegroup.ParseID(input.DestinationDeviceGroupID); err != nil {
+			return compilation.RuleIntent{}, err
+		}
 	}
 	var destinationID node.ID
 	if input.DestinationDeviceID != "" {
@@ -278,7 +294,8 @@ func decodePolicyRuleIntent(
 		portRanges[index] = portRange
 	}
 	return compilation.NewRuleIntent(compilation.RuleIntentParams{
-		ID: ruleID, Scope: scope, SourceNodeID: sourceID, DestinationNodeID: destinationID,
+		ID: ruleID, Scope: scope, SourceNodeID: sourceID, SourceGroupID: sourceGroupID,
+		DestinationNodeID: destinationID, DestinationDeviceGroupID: destinationDeviceGroupID,
 		DestinationResourceID: destinationResourceID, DestinationGroupID: destinationGroupID,
 		DestinationImportedResourceID: destinationImportedResourceID,
 		Protocol:                      protocol, DestinationPortRanges: portRanges,
@@ -331,6 +348,11 @@ func classifyPolicyPublicationError(err error) managementError {
 		return managementError{
 			Status: http.StatusPreconditionFailed, Code: "precondition_failed",
 			Message: "the Policy revision precondition is stale",
+		}
+	case errors.Is(err, policypublication.ErrEdgeBudget):
+		return managementError{
+			Status: http.StatusConflict, Code: "device_policy_edge_limit",
+			Message: "a Device would reach more than 10,000 rule edges; narrow the rules or split the group",
 		}
 	case errors.Is(err, policypublication.ErrApprovalRequired),
 		errors.Is(err, policypublication.ErrApprovalUnavailable):

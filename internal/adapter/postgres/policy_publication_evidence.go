@@ -113,7 +113,7 @@ func encodePolicyPublicationRules(change publication.Change) ([]byte, error) {
 	rules := candidate.Snapshot().Rules()
 	importedDestinations := candidate.ImportedResourceDestinations()
 	projectionIDs := change.MutationIDs().ProjectionIDs()
-	if len(projectionIDs) != len(rules)+len(importedDestinations) {
+	if len(projectionIDs) != candidate.ProjectionCount() {
 		return nil, ErrPolicyPublicationEvidence
 	}
 	type destinationKey struct{ ruleID, nodeID string }
@@ -256,7 +256,7 @@ func (transaction *policyPublicationTransaction) appendPolicyPublicationEvidence
 		AuditReason:           command.AuditReason().String(),
 		BasePolicyRevision:    command.BasePolicyRevision(),
 		CompilerFormatVersion: command.Candidate().CompilerFormatVersion(),
-		RuleCount:             len(command.Candidate().Snapshot().Rules()) + len(command.Candidate().ImportedResourceDestinations()),
+		RuleCount:             command.Candidate().ProjectionCount(),
 		GuardrailFindings:     guardrailFindingsEvidence(transaction.guardrailFindings),
 	}
 	if transaction.authorization.isValid() {
@@ -377,4 +377,56 @@ func policyPublicationAuthorityVectorAuditPayload(
 		SharingRevision:     vector.SharingRevision(),
 		IsolationGeneration: vector.IsolationGeneration(),
 	}
+}
+
+type policyGroupRulePayload struct {
+	ProjectionPublicID             string `json:"projection_public_id"`
+	AccessRulePublicID             string `json:"access_rule_public_id"`
+	SourceNodePublicID             string `json:"source_node_public_id,omitempty"`
+	SourceDeviceGroupPublicID      string `json:"source_device_group_public_id,omitempty"`
+	DestinationNodePublicID        string `json:"destination_node_public_id,omitempty"`
+	DestinationDeviceGroupPublicID string `json:"destination_device_group_public_id,omitempty"`
+	Protocol                       string `json:"protocol"`
+	PortRangeFirst                 []int  `json:"port_range_first"`
+	PortRangeLast                  []int  `json:"port_range_last"`
+}
+
+// encodePolicyGroupRules encodes the candidate's group rules for
+// attach_policy_group_rules_v1, using the projection identities that follow
+// the Device pairs and Imported Resource selectors. Nil means none.
+func encodePolicyGroupRules(change publication.Change) ([]byte, error) {
+	candidate := change.Command().Candidate()
+	groupRules := candidate.GroupRules()
+	if len(groupRules) == 0 {
+		return nil, nil
+	}
+	projectionIDs := change.MutationIDs().ProjectionIDs()
+	offset := len(candidate.Snapshot().Rules()) + len(candidate.ImportedResourceDestinations())
+	if len(projectionIDs) != offset+len(groupRules) {
+		return nil, ErrPolicyPublicationEvidence
+	}
+	payload := make([]policyGroupRulePayload, len(groupRules))
+	for index, rule := range groupRules {
+		ports := rule.DestinationPortRanges()
+		first, last := make([]int, len(ports)), make([]int, len(ports))
+		for portIndex, portRange := range ports {
+			first[portIndex], last[portIndex] = int(portRange.First()), int(portRange.Last())
+		}
+		item := policyGroupRulePayload{
+			ProjectionPublicID: projectionIDs[offset+index].String(), AccessRulePublicID: rule.RuleID().String(),
+			Protocol: rule.Protocol().String(), PortRangeFirst: first, PortRangeLast: last,
+		}
+		if rule.SourceGroupID().IsValid() {
+			item.SourceDeviceGroupPublicID = rule.SourceGroupID().String()
+		} else {
+			item.SourceNodePublicID = rule.SourceNodeID().String()
+		}
+		if rule.DestinationGroupID().IsValid() {
+			item.DestinationDeviceGroupPublicID = rule.DestinationGroupID().String()
+		} else {
+			item.DestinationNodePublicID = rule.DestinationNodeID().String()
+		}
+		payload[index] = item
+	}
+	return json.Marshal(payload)
 }

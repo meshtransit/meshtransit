@@ -35,6 +35,9 @@ var (
 	ErrNameTaken = errors.New("device group: name taken")
 	// ErrInUse reports a group the active policy release still selects.
 	ErrInUse = errors.New("device group: selected by active rules")
+	// ErrEdgeBudget reports a change that would give one Device more rule
+	// edges than its map can carry.
+	ErrEdgeBudget = errors.New("device group: a Device would exceed its rule edge limit")
 	// ErrUnavailable reports an unavailable or uncertain durable operation.
 	ErrUnavailable = errors.New("device group: unavailable")
 )

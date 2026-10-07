@@ -329,7 +329,7 @@ func encodePolicySimulationResult(result simulation.Result) simulatedPolicy {
 			RevisionVector:        encodePolicySimulationVector(result.ProposedRevisionVector()),
 			CompilerFormatVersion: proposed.CompilerFormatVersion(),
 			SemanticHash:          hex.EncodeToString(proposedHash[:]),
-			RuleCount:             len(proposed.Snapshot().Rules()) + len(proposed.ImportedResourceDestinations()),
+			RuleCount:             proposed.ProjectionCount(),
 		},
 		Impact: impact,
 	}
@@ -438,6 +438,11 @@ func classifyPolicySimulationError(err error) managementError {
 		return managementError{
 			Status: http.StatusForbidden, Code: "forbidden",
 			Message: "the request is not authorized",
+		}
+	case errors.Is(err, simulation.ErrTooLarge):
+		return managementError{
+			Status: http.StatusUnprocessableEntity, Code: "simulation_too_large",
+			Message: "the Device Groups or group rules are too large to preview Device by Device",
 		}
 	case errors.Is(err, simulation.ErrStaleInputs):
 		return managementError{

@@ -337,6 +337,70 @@ $function$;
 REVOKE ALL ON FUNCTION mesh_ops.device_group_member_hash_internal_v1(BIGINT)
     FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
 
+-- The most rule edges any one Device would load into its map from the
+-- Network's active release: Device-to-Device rules plus, for each group
+-- rule, the size of the other side. Self-pairs and inactive Devices are
+-- counted too, so the bound is conservative. Writes that would push a
+-- Device past the map's 10,000-edge limit are refused (MTD06) instead of
+-- leaving that Device without a map.
+CREATE FUNCTION mesh_ops.max_device_policy_edges_internal_v1(p_workspace_id BIGINT, p_network_id BIGINT)
+RETURNS BIGINT
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog
+AS $function$
+    WITH release AS (
+        SELECT release.id
+        FROM mesh_ops.network_revision AS revision
+        JOIN mesh.policy_release AS release
+          ON release.workspace_id = revision.workspace_id AND release.network_id = revision.network_id
+         AND release.policy_revision = revision.policy_revision AND release.state = 'active'
+        WHERE revision.workspace_id = p_workspace_id AND revision.network_id = p_network_id
+    ),
+    group_size AS (
+        SELECT member.device_group_id, pg_catalog.count(*) AS size
+        FROM mesh.device_group_member AS member
+        WHERE member.workspace_id = p_workspace_id AND member.network_id = p_network_id
+        GROUP BY member.device_group_id
+    ),
+    rule AS (
+        SELECT group_rule.*,
+               CASE WHEN group_rule.source_device_id IS NOT NULL THEN 1
+                    ELSE COALESCE((SELECT size FROM group_size
+                                   WHERE group_size.device_group_id = group_rule.source_device_group_id), 0)
+               END AS source_size,
+               CASE WHEN group_rule.destination_device_id IS NOT NULL THEN 1
+                    ELSE COALESCE((SELECT size FROM group_size
+                                   WHERE group_size.device_group_id = group_rule.destination_device_group_id), 0)
+               END AS destination_size
+        FROM release
+        JOIN mesh.compiled_policy_group_rule AS group_rule ON group_rule.policy_release_id = release.id
+    ),
+    per_device AS (
+        SELECT COALESCE(rule.destination_device_id, member.device_id) AS device_id, rule.source_size AS edges
+        FROM rule
+        LEFT JOIN mesh.device_group_member AS member ON member.device_group_id = rule.destination_device_group_id
+        UNION ALL
+        SELECT COALESCE(rule.source_device_id, member.device_id), rule.destination_size
+        FROM rule
+        LEFT JOIN mesh.device_group_member AS member ON member.device_group_id = rule.source_device_group_id
+        UNION ALL
+        SELECT device_rule.source_device_id, 1
+        FROM release JOIN mesh.compiled_policy_rule AS device_rule ON device_rule.policy_release_id = release.id
+        UNION ALL
+        SELECT device_rule.destination_device_id, 1
+        FROM release JOIN mesh.compiled_policy_rule AS device_rule ON device_rule.policy_release_id = release.id
+    )
+    SELECT COALESCE(pg_catalog.max(total.edges), 0)::BIGINT
+    FROM (
+        SELECT per_device.device_id, pg_catalog.sum(per_device.edges) AS edges
+        FROM per_device WHERE per_device.device_id IS NOT NULL
+        GROUP BY per_device.device_id
+    ) AS total
+$function$;
+REVOKE ALL ON FUNCTION mesh_ops.max_device_policy_edges_internal_v1(BIGINT, BIGINT)
+    FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
+
 CREATE FUNCTION mesh_ops.device_group_document_internal_v1(p_group mesh.device_group)
 RETURNS JSONB
 LANGUAGE sql
@@ -741,6 +805,11 @@ BEGIN
         WHERE revision.workspace_id = v_scope.workspace_id AND revision.network_id = v_scope.network_id
         RETURNING revision.network_revision, revision.group_revision
         INTO v_network_revision, v_group_revision;
+        IF v_added > 0 AND mesh_ops.device_group_rule_count_internal_v1(v_group.id) > 0
+            AND mesh_ops.max_device_policy_edges_internal_v1(v_scope.workspace_id, v_scope.network_id) > 10000 THEN
+            RAISE EXCEPTION USING ERRCODE = 'MTD06',
+                MESSAGE = 'a Device would load more than 10000 rule edges';
+        END IF;
     END IF;
     v_hash_after := mesh_ops.device_group_member_hash_internal_v1(v_group.id);
     RETURN pg_catalog.jsonb_build_object(
@@ -894,6 +963,9 @@ BEGIN
     IF v_inserted <> v_expected THEN
         RAISE EXCEPTION USING ERRCODE = 'MT001', MESSAGE = 'a Device or Device Group changed during publication';
     END IF;
+    IF mesh_ops.max_device_policy_edges_internal_v1(v_workspace, v_network) > 10000 THEN
+        RAISE EXCEPTION USING ERRCODE = 'MTD06', MESSAGE = 'a Device would load more than 10000 rule edges';
+    END IF;
     RETURN v_inserted;
 END;
 $function$;
@@ -994,3 +1066,388 @@ GRANT EXECUTE ON FUNCTION mesh_ops.attach_policy_group_rules_v1(UUID, TIMESTAMPT
 REVOKE ALL ON FUNCTION mesh_ops.resolve_group_policy_edges_v1(BIGINT)
     FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
 GRANT EXECUTE ON FUNCTION mesh_ops.resolve_group_policy_edges_v1(BIGINT) TO mesh_runtime;
+
+-- The active policy projection with group rules (schema 120): each row also
+-- names its source as a Device or a Device Group. device_rules_only now
+-- means every row selects Devices or Device Groups only, so a Console that
+-- understands both can rewrite the whole policy without losing a selector.
+CREATE FUNCTION mesh_ops.read_active_policy_v2(
+    p_session_public_id UUID,
+    p_deployment_public_id UUID,
+    p_principal_public_id UUID,
+    p_identity_subject_public_id UUID,
+    p_session_version BIGINT,
+    p_principal_authority_generation BIGINT,
+    p_account_session_generation BIGINT,
+    p_provider_generation BIGINT,
+    p_deployment_recovery_epoch BIGINT,
+    p_workspace_public_id UUID,
+    p_network_public_id UUID,
+    p_evaluated_at TIMESTAMPTZ
+)
+RETURNS JSONB
+LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE SECURITY DEFINER
+SET search_path = pg_catalog, mesh, mesh_ops
+AS $function$
+DECLARE
+    current_revision BIGINT;
+    current_release_id BIGINT;
+    current_hash BYTEA;
+    row_count BIGINT;
+    only_devices BOOLEAN;
+    result_rows JSONB;
+BEGIN
+    IF p_evaluated_at IS NULL THEN
+        RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'Invalid active policy read';
+    END IF;
+    PERFORM permission.role_binding_public_id
+    FROM mesh_ops.resolve_network_permission_v2(
+        p_session_public_id, p_deployment_public_id, p_principal_public_id,
+        p_identity_subject_public_id, p_session_version,
+        p_principal_authority_generation, p_account_session_generation,
+        p_provider_generation, p_deployment_recovery_epoch,
+        p_workspace_public_id, p_network_public_id, 'policy.read', p_evaluated_at
+    ) AS permission;
+    IF NOT FOUND THEN RETURN NULL; END IF;
+
+    SELECT revision.policy_revision INTO current_revision
+    FROM mesh_ops.network_revision AS revision
+    WHERE revision.workspace_id = mesh_ops.current_workspace_id()
+      AND revision.network_id = mesh_ops.current_network_id()
+    FOR SHARE;
+    IF NOT FOUND THEN RETURN NULL; END IF;
+
+    SELECT release.id, release.semantic_hash
+    INTO current_release_id, current_hash
+    FROM mesh.policy_release AS release
+    WHERE release.workspace_id = mesh_ops.current_workspace_id()
+      AND release.network_id = mesh_ops.current_network_id()
+      AND release.policy_revision = current_revision AND release.state = 'active';
+    IF current_revision > 1 AND current_release_id IS NULL THEN
+        RAISE EXCEPTION USING ERRCODE = 'MT001', MESSAGE = 'Active policy is unavailable';
+    END IF;
+
+    WITH local_rule AS (
+        SELECT rule.access_rule_public_id AS id, rule.public_id AS projection_id,
+            source.public_id AS source_id, destination.public_id AS destination_id,
+            rule.protocol, rule.destination_ports,
+            CASE WHEN group_provenance.id IS NOT NULL THEN 'resource_group'
+                 WHEN resource_provenance.id IS NOT NULL THEN 'resource'
+                 ELSE 'device' END AS selector_kind,
+            COALESCE(resource_group.public_id, resource.public_id, destination.public_id) AS selector_id,
+            'device'::TEXT AS source_kind, source.public_id AS source_selector_id
+        FROM mesh.compiled_policy_rule AS rule
+        JOIN mesh.device AS source ON source.workspace_id = rule.workspace_id
+            AND source.network_id = rule.network_id AND source.id = rule.source_device_id
+        JOIN mesh.device AS destination ON destination.workspace_id = rule.workspace_id
+            AND destination.network_id = rule.network_id AND destination.id = rule.destination_device_id
+        LEFT JOIN mesh.compiled_policy_resource_destination AS resource_provenance
+            ON resource_provenance.workspace_id = rule.workspace_id
+            AND resource_provenance.network_id = rule.network_id
+            AND resource_provenance.compiled_policy_rule_id = rule.id
+        LEFT JOIN mesh.resource AS resource ON resource.workspace_id = rule.workspace_id
+            AND resource.network_id = rule.network_id AND resource.id = resource_provenance.destination_resource_id
+        LEFT JOIN mesh.compiled_policy_resource_group_destination AS group_provenance
+            ON group_provenance.workspace_id = rule.workspace_id
+            AND group_provenance.network_id = rule.network_id
+            AND group_provenance.compiled_policy_rule_id = rule.id
+        LEFT JOIN mesh.resource_group AS resource_group ON resource_group.workspace_id = rule.workspace_id
+            AND resource_group.network_id = rule.network_id AND resource_group.id = group_provenance.destination_resource_group_id
+        WHERE rule.workspace_id = mesh_ops.current_workspace_id()
+            AND rule.network_id = mesh_ops.current_network_id()
+            AND rule.policy_release_id = current_release_id AND rule.policy_revision = current_revision
+    ), imported_rule AS (
+        SELECT rule.access_rule_public_id AS id, rule.public_id AS projection_id,
+            source.public_id AS source_id, NULL::UUID AS destination_id,
+            rule.protocol, rule.destination_ports, 'imported_resource'::TEXT AS selector_kind,
+            imported.public_id AS selector_id,
+            'device'::TEXT AS source_kind, source.public_id AS source_selector_id
+        FROM mesh.compiled_policy_imported_resource_destination AS rule
+        JOIN mesh.device AS source ON source.workspace_id = rule.workspace_id
+            AND source.network_id = rule.network_id AND source.id = rule.source_device_id
+        JOIN mesh.imported_resource AS imported ON imported.workspace_id = rule.workspace_id
+            AND imported.network_id = rule.network_id AND imported.id = rule.imported_resource_id
+        WHERE rule.workspace_id = mesh_ops.current_workspace_id()
+            AND rule.network_id = mesh_ops.current_network_id()
+            AND rule.policy_release_id = current_release_id AND rule.policy_revision = current_revision
+    ), group_rule AS (
+        SELECT rule.access_rule_public_id AS id, rule.public_id AS projection_id,
+            source_device.public_id AS source_id, destination_device.public_id AS destination_id,
+            rule.protocol, rule.destination_ports,
+            CASE WHEN rule.destination_device_group_id IS NOT NULL THEN 'device_group' ELSE 'device' END
+                AS selector_kind,
+            COALESCE(destination_group.public_id, destination_device.public_id) AS selector_id,
+            CASE WHEN rule.source_device_group_id IS NOT NULL THEN 'device_group' ELSE 'device' END
+                AS source_kind,
+            COALESCE(source_group.public_id, source_device.public_id) AS source_selector_id
+        FROM mesh.compiled_policy_group_rule AS rule
+        LEFT JOIN mesh.device AS source_device ON source_device.id = rule.source_device_id
+        LEFT JOIN mesh.device_group AS source_group ON source_group.id = rule.source_device_group_id
+        LEFT JOIN mesh.device AS destination_device ON destination_device.id = rule.destination_device_id
+        LEFT JOIN mesh.device_group AS destination_group ON destination_group.id = rule.destination_device_group_id
+        WHERE rule.workspace_id = mesh_ops.current_workspace_id()
+            AND rule.network_id = mesh_ops.current_network_id()
+            AND rule.policy_release_id = current_release_id AND rule.policy_revision = current_revision
+    ), all_rule AS (
+        SELECT * FROM local_rule UNION ALL SELECT * FROM imported_rule UNION ALL SELECT * FROM group_rule
+    ),
+    bounded AS (
+        SELECT * FROM all_rule ORDER BY id, source_id, destination_id, projection_id LIMIT 1000
+    )
+    SELECT (SELECT count(*) FROM all_rule),
+        NOT EXISTS (SELECT 1 FROM all_rule WHERE selector_kind NOT IN ('device', 'device_group')),
+        COALESCE((SELECT jsonb_agg(jsonb_build_object(
+            'id', bounded.id, 'source_device_id', COALESCE(bounded.source_id::TEXT, ''),
+            'source_kind', bounded.source_kind, 'source_selector_id', bounded.source_selector_id,
+            'destination_device_id', COALESCE(bounded.destination_id::TEXT, ''),
+            'protocol', bounded.protocol, 'selector_kind', bounded.selector_kind,
+            'destination_selector_id', bounded.selector_id,
+            'destination_port_ranges', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                'first', lower(port)::INTEGER, 'last', (upper(port)-1)::INTEGER
+            ) ORDER BY lower(port)) FROM unnest(bounded.destination_ports) AS port), '[]'::JSONB)
+        ) ORDER BY bounded.id, bounded.source_id, bounded.destination_id, bounded.projection_id)
+        FROM bounded), '[]'::JSONB)
+    INTO row_count, only_devices, result_rows;
+    RETURN jsonb_build_object('workspace_id', p_workspace_public_id,
+        'network_id', p_network_public_id, 'policy_revision', current_revision,
+        'semantic_hash', encode(current_hash, 'hex'), 'rule_count', row_count,
+        'device_rules_only', only_devices, 'rules', result_rows);
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION mesh_ops.read_active_policy_v2(
+    UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT,
+    UUID, UUID, TIMESTAMPTZ
+) FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
+GRANT EXECUTE ON FUNCTION mesh_ops.read_active_policy_v2(
+    UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT,
+    UUID, UUID, TIMESTAMPTZ
+) TO mesh_runtime;
+
+-- The simulation baseline with group rules (schema 120): v2 plus the group
+-- rules of the active release, in the attach payload shape, and the live
+-- members of every active group of the Network so a draft can be compared
+-- Device pair by Device pair. The group revision in the vector moves with
+-- every membership change, so a baseline read twice detects one. More than
+-- 100,000 live memberships is too large to simulate (MTD07).
+CREATE FUNCTION mesh_ops.read_policy_simulation_baseline_v3(
+    p_session_public_id UUID, p_deployment_public_id UUID,
+    p_principal_public_id UUID, p_identity_subject_public_id UUID,
+    p_session_version BIGINT, p_principal_authority_generation BIGINT,
+    p_account_session_generation BIGINT, p_provider_generation BIGINT,
+    p_deployment_recovery_epoch BIGINT, p_workspace_public_id UUID,
+    p_network_public_id UUID, p_evaluated_at TIMESTAMPTZ, p_rule_limit INTEGER
+)
+RETURNS TABLE (
+    network_revision BIGINT, inventory_revision BIGINT, group_revision BIGINT,
+    policy_revision BIGINT, dns_revision BIGINT, route_revision BIGINT,
+    sharing_revision BIGINT, isolation_generation BIGINT,
+    has_active_release BOOLEAN, release_public_id UUID,
+    compiler_format_version INTEGER, release_semantic_hash BYTEA, rules JSONB,
+    group_rules JSONB, group_members JSONB
+)
+LANGUAGE plpgsql
+VOLATILE
+PARALLEL UNSAFE
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $function$
+DECLARE
+    baseline RECORD;
+    v_rules JSONB;
+    v_members JSONB;
+    v_member_count BIGINT;
+BEGIN
+    SELECT value.* INTO baseline
+    FROM mesh_ops.read_policy_simulation_baseline_v2(
+        p_session_public_id, p_deployment_public_id, p_principal_public_id,
+        p_identity_subject_public_id, p_session_version, p_principal_authority_generation,
+        p_account_session_generation, p_provider_generation, p_deployment_recovery_epoch,
+        p_workspace_public_id, p_network_public_id, p_evaluated_at, p_rule_limit
+    ) AS value;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'Policy simulation baseline is unavailable';
+    END IF;
+
+    SELECT COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_strip_nulls(pg_catalog.jsonb_build_object(
+               'projection_public_id', rule.public_id,
+               'access_rule_public_id', rule.access_rule_public_id,
+               'source_node_public_id', source_device.public_id,
+               'source_device_group_public_id', source_group.public_id,
+               'destination_node_public_id', destination_device.public_id,
+               'destination_device_group_public_id', destination_group.public_id,
+               'protocol', rule.protocol,
+               'port_range_first', ARRAY(
+                   SELECT pg_catalog.lower(port_range)::INTEGER
+                   FROM pg_catalog.unnest(rule.destination_ports) AS port_range
+                   ORDER BY pg_catalog.lower(port_range)),
+               'port_range_last', ARRAY(
+                   SELECT (pg_catalog.upper(port_range) - 1)::INTEGER
+                   FROM pg_catalog.unnest(rule.destination_ports) AS port_range
+                   ORDER BY pg_catalog.lower(port_range))
+           )) ORDER BY rule.access_rule_public_id), '[]'::JSONB)
+    INTO v_rules
+    FROM mesh.policy_release AS release
+    JOIN mesh.compiled_policy_group_rule AS rule ON rule.policy_release_id = release.id
+    LEFT JOIN mesh.device AS source_device ON source_device.id = rule.source_device_id
+    LEFT JOIN mesh.device_group AS source_group ON source_group.id = rule.source_device_group_id
+    LEFT JOIN mesh.device AS destination_device ON destination_device.id = rule.destination_device_id
+    LEFT JOIN mesh.device_group AS destination_group ON destination_group.id = rule.destination_device_group_id
+    WHERE release.workspace_id = mesh_ops.current_workspace_id()
+      AND release.network_id = mesh_ops.current_network_id()
+      AND release.public_id = baseline.release_public_id
+      AND release.state = 'active';
+
+    SELECT pg_catalog.count(*) INTO v_member_count
+    FROM mesh.device_group AS device_group
+    JOIN mesh.device_group_member AS member ON member.device_group_id = device_group.id
+    WHERE device_group.workspace_id = mesh_ops.current_workspace_id()
+      AND device_group.network_id = mesh_ops.current_network_id()
+      AND device_group.state = 'active';
+    IF v_member_count > 100000 THEN
+        RAISE EXCEPTION USING ERRCODE = 'MTD07', MESSAGE = 'Device Groups are too large to simulate';
+    END IF;
+    SELECT COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+               'group_id', grouped.public_id, 'device_ids', grouped.device_ids
+           ) ORDER BY grouped.public_id::TEXT), '[]'::JSONB)
+    INTO v_members
+    FROM (
+        SELECT device_group.public_id,
+               COALESCE(pg_catalog.jsonb_agg(device.public_id ORDER BY device.public_id::TEXT)
+                   FILTER (WHERE device.id IS NOT NULL), '[]'::JSONB) AS device_ids
+        FROM mesh.device_group AS device_group
+        LEFT JOIN mesh.device_group_member AS member ON member.device_group_id = device_group.id
+        LEFT JOIN mesh.device AS device
+          ON device.id = member.device_id AND device.state = 'active' AND device.deleted_at IS NULL
+         AND device.expires_at > p_evaluated_at
+        WHERE device_group.workspace_id = mesh_ops.current_workspace_id()
+          AND device_group.network_id = mesh_ops.current_network_id()
+          AND device_group.state = 'active'
+        GROUP BY device_group.public_id
+    ) AS grouped;
+
+    RETURN QUERY SELECT baseline.network_revision, baseline.inventory_revision, baseline.group_revision,
+        baseline.policy_revision, baseline.dns_revision, baseline.route_revision, baseline.sharing_revision,
+        baseline.isolation_generation, baseline.has_active_release, baseline.release_public_id,
+        baseline.compiler_format_version, baseline.release_semantic_hash, baseline.rules,
+        v_rules, v_members;
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION mesh_ops.read_policy_simulation_baseline_v3(
+    UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, UUID, UUID, TIMESTAMPTZ, INTEGER
+) FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
+GRANT EXECUTE ON FUNCTION mesh_ops.read_policy_simulation_baseline_v3(
+    UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, UUID, UUID, TIMESTAMPTZ, INTEGER
+) TO mesh_runtime;
+
+-- Policy Explain with group rules (schema 120): v3 plus the group rules
+-- whose resolved Device pairs carry the question, each naming the Device
+-- Groups it matched through. Paths stay Device paths; the Explain decision
+-- is unchanged in kind. Group paths are added only when the question names
+-- a local Device and v3 found both ends active.
+CREATE FUNCTION mesh_ops.explain_active_policy_v4(
+    p_session_public_id UUID, p_deployment_public_id UUID, p_principal_public_id UUID,
+    p_identity_subject_public_id UUID, p_session_version BIGINT,
+    p_principal_authority_generation BIGINT, p_account_session_generation BIGINT,
+    p_provider_generation BIGINT, p_deployment_recovery_epoch BIGINT,
+    p_workspace_public_id UUID, p_network_public_id UUID,
+    p_source_device_public_id UUID, p_destination_device_public_id UUID,
+    p_destination_resource_public_id UUID, p_destination_imported_resource_public_id UUID,
+    p_protocol TEXT, p_destination_port INTEGER, p_evaluated_at TIMESTAMPTZ, p_path_limit INTEGER
+)
+RETURNS TABLE (
+    network_revision BIGINT, inventory_revision BIGINT, group_revision BIGINT,
+    policy_revision BIGINT, dns_revision BIGINT, route_revision BIGINT,
+    sharing_revision BIGINT, isolation_generation BIGINT,
+    has_active_release BOOLEAN, release_public_id UUID,
+    compiler_format_version INTEGER, release_semantic_hash BYTEA,
+    target_device_public_id UUID, paths JSONB, context JSONB
+)
+LANGUAGE plpgsql
+VOLATILE
+PARALLEL UNSAFE
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $function$
+DECLARE
+    base RECORD;
+    v_source BIGINT;
+    v_target BIGINT;
+    v_group_paths JSONB := '[]'::JSONB;
+BEGIN
+    SELECT value.* INTO base
+    FROM mesh_ops.explain_active_policy_v3(
+        p_session_public_id, p_deployment_public_id, p_principal_public_id,
+        p_identity_subject_public_id, p_session_version, p_principal_authority_generation,
+        p_account_session_generation, p_provider_generation, p_deployment_recovery_epoch,
+        p_workspace_public_id, p_network_public_id, p_source_device_public_id,
+        p_destination_device_public_id, p_destination_resource_public_id,
+        p_destination_imported_resource_public_id, p_protocol, p_destination_port,
+        p_evaluated_at, p_path_limit
+    ) AS value;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'Access Graph explanation is unavailable';
+    END IF;
+
+    IF p_destination_device_public_id IS NOT NULL AND base.target_device_public_id IS NOT NULL
+        AND base.context #>> '{source,state}' = 'active'
+        AND base.context #>> '{target,state}' = 'active'
+        AND pg_catalog.jsonb_array_length(base.paths) < p_path_limit THEN
+        SELECT device.id INTO v_source FROM mesh.device AS device
+        WHERE device.workspace_id = mesh_ops.current_workspace_id()
+          AND device.network_id = mesh_ops.current_network_id()
+          AND device.public_id = p_source_device_public_id;
+        SELECT device.id INTO v_target FROM mesh.device AS device
+        WHERE device.workspace_id = mesh_ops.current_workspace_id()
+          AND device.network_id = mesh_ops.current_network_id()
+          AND device.public_id = base.target_device_public_id;
+        SELECT COALESCE(pg_catalog.jsonb_agg(path.value ORDER BY path.rule_id), '[]'::JSONB)
+        INTO v_group_paths
+        FROM (
+            SELECT edge.access_rule_public_id::TEXT AS rule_id,
+                   pg_catalog.jsonb_strip_nulls(pg_catalog.jsonb_build_object(
+                       'projection_id', edge.rule_public_id,
+                       'access_rule_id', edge.access_rule_public_id,
+                       'source_device_id', p_source_device_public_id,
+                       'destination_device_id', base.target_device_public_id,
+                       'protocol', edge.protocol,
+                       'destination_port_range_first', ARRAY(
+                           SELECT pg_catalog.lower(port_range)::INTEGER
+                           FROM pg_catalog.unnest(edge.destination_ports) AS port_range
+                           ORDER BY pg_catalog.lower(port_range)),
+                       'destination_port_range_last', ARRAY(
+                           SELECT (pg_catalog.upper(port_range) - 1)::INTEGER
+                           FROM pg_catalog.unnest(edge.destination_ports) AS port_range
+                           ORDER BY pg_catalog.lower(port_range)),
+                       'selector_kind', 'device',
+                       'source_device_group_id', edge.source_device_group_public_id,
+                       'destination_device_group_id', edge.destination_device_group_public_id
+                   )) AS value
+            FROM mesh_ops.resolve_group_policy_edges_v1(v_source) AS edge
+            WHERE edge.source_device_id = v_source
+              AND edge.destination_device_id = v_target
+              AND edge.protocol = p_protocol
+              AND ((p_protocol = 'icmp' AND pg_catalog.isempty(edge.destination_ports))
+                   OR edge.destination_ports @> p_destination_port)
+            ORDER BY edge.access_rule_public_id
+            LIMIT p_path_limit - pg_catalog.jsonb_array_length(base.paths)
+        ) AS path;
+    END IF;
+
+    RETURN QUERY SELECT base.network_revision, base.inventory_revision, base.group_revision,
+        base.policy_revision, base.dns_revision, base.route_revision, base.sharing_revision,
+        base.isolation_generation, base.has_active_release, base.release_public_id,
+        base.compiler_format_version, base.release_semantic_hash, base.target_device_public_id,
+        base.paths || v_group_paths, base.context;
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION mesh_ops.explain_active_policy_v4(
+    UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT,
+    UUID, UUID, UUID, UUID, UUID, UUID, TEXT, INTEGER, TIMESTAMPTZ, INTEGER
+) FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
+GRANT EXECUTE ON FUNCTION mesh_ops.explain_active_policy_v4(
+    UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT,
+    UUID, UUID, UUID, UUID, UUID, UUID, TEXT, INTEGER, TIMESTAMPTZ, INTEGER
+) TO mesh_runtime;

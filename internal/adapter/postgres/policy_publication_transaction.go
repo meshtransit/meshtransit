@@ -386,6 +386,23 @@ func (transaction *policyPublicationTransaction) applyLocked(
 			return publication.Result{}, ErrPolicyPublicationEvidence
 		}
 	}
+	if groupRules, err := encodePolicyGroupRules(change); err != nil {
+		return publication.Result{}, err
+	} else if groupRules != nil {
+		var attachedCount int
+		if err := transaction.database.QueryRow(
+			ctx,
+			attachPolicyGroupRulesSQL,
+			change.MutationIDs().ReleaseID().String(),
+			change.OccurredAt(),
+			groupRules,
+		).Scan(&attachedCount); err != nil {
+			return publication.Result{}, fmt.Errorf("attach policy group rules: %w", err)
+		}
+		if attachedCount != len(command.Candidate().GroupRules()) {
+			return publication.Result{}, ErrPolicyPublicationEvidence
+		}
+	}
 	if command.HasApprovalEvidence() {
 		impactHash := change.Resolution().ApprovalGate().ImpactHash().Bytes()
 		var consumedRequestVersion int64

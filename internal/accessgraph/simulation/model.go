@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
+	"github.com/meshtransit/meshtransit/internal/devicegroup"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
@@ -39,7 +40,14 @@ var (
 	ErrForbidden = errors.New("policy simulation: forbidden")
 	// ErrUnavailable reports a missing or unavailable simulation dependency.
 	ErrUnavailable = errors.New("policy simulation: unavailable")
+	// ErrTooLarge reports Device Groups or group rules too large to compare
+	// Device pair by Device pair.
+	ErrTooLarge = errors.New("policy simulation: too large to simulate")
 )
+
+// MaximumResolvedRelationships bounds the Device pairs one candidate may
+// expand to when group rules are resolved for a simulation.
+const MaximumResolvedRelationships = 200_000
 
 // BaselineParams contains the complete current effective-policy evidence.
 type BaselineParams struct {
@@ -49,6 +57,9 @@ type BaselineParams struct {
 	ReleaseID        publication.ReleaseID
 	SemanticHash     publication.SemanticHash
 	Candidate        publication.Candidate
+	// GroupMembers are the live members of every active Device Group of the
+	// Network, used to resolve group rules of the baseline and the draft.
+	GroupMembers map[devicegroup.ID][]node.ID
 }
 
 // Baseline is one immutable active release plus its complete authority vector.
@@ -60,14 +71,22 @@ type Baseline struct {
 	releaseID        publication.ReleaseID
 	semanticHash     publication.SemanticHash
 	candidate        publication.Candidate
+	groupMembers     map[devicegroup.ID][]node.ID
 }
 
 // NewBaseline validates current effective-policy evidence.
 func NewBaseline(params BaselineParams) (Baseline, error) {
+	members := make(map[devicegroup.ID][]node.ID, len(params.GroupMembers))
+	for id, devices := range params.GroupMembers {
+		if !id.IsValid() {
+			return Baseline{}, ErrInvalidBaseline
+		}
+		members[id] = slices.Clone(devices)
+	}
 	baseline := Baseline{
 		scope: params.Scope, revisionVector: params.RevisionVector,
 		hasActiveRelease: params.HasActiveRelease, releaseID: params.ReleaseID,
-		semanticHash: params.SemanticHash, candidate: params.Candidate,
+		semanticHash: params.SemanticHash, candidate: params.Candidate, groupMembers: members,
 	}
 	if !baseline.IsValid() {
 		return Baseline{}, ErrInvalidBaseline

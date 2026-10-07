@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph/simulation"
+	"github.com/meshtransit/meshtransit/internal/devicegroup"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
@@ -26,7 +27,7 @@ import (
 const configureActivePolicyReadTransactionSQL = configureResourceAuthoritySQL + `,
     pg_catalog.set_config('plan_cache_mode', 'force_generic_plan', TRUE)`
 
-const readActivePolicySQL = `SELECT mesh_ops.read_active_policy_v1(
+const readActivePolicySQL = `SELECT mesh_ops.read_active_policy_v2(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID, $5::BIGINT,
     $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::TIMESTAMPTZ
@@ -120,6 +121,8 @@ type activePolicyWire struct {
 type activePolicyRuleWire struct {
 	ID            string `json:"id"`
 	SourceID      string `json:"source_device_id"`
+	SourceKind    string `json:"source_kind"`
+	SourceSelect  string `json:"source_selector_id"`
 	DestinationID string `json:"destination_device_id"`
 	Protocol      string `json:"protocol"`
 	SelectorKind  string `json:"selector_kind"`
@@ -183,12 +186,25 @@ func decodeActivePolicy(encoded string) (catalog.Snapshot, error) {
 
 func (row activePolicyRuleWire) parse(scope network.Scope) (catalog.Row, error) {
 	id, err := policy.ParseRuleID(row.ID)
-	source, sourceErr := node.ParseID(row.SourceID)
 	protocol := map[string]policy.Protocol{"tcp": policy.ProtocolTCP, "udp": policy.ProtocolUDP, "icmp": policy.ProtocolICMP}[row.Protocol]
-	if err != nil || sourceErr != nil || !protocol.IsValid() || row.Ports == nil || len(row.Ports) > 64 {
+	if err != nil || !protocol.IsValid() || row.Ports == nil || len(row.Ports) > 64 {
 		return catalog.Row{}, catalog.ErrInvalidSnapshot
 	}
-	params := compilation.RuleIntentParams{ID: id, Scope: scope, SourceNodeID: source, Protocol: protocol, DestinationPortRanges: make([]policy.PortRange, 0, len(row.Ports))}
+	params := compilation.RuleIntentParams{ID: id, Scope: scope, Protocol: protocol, DestinationPortRanges: make([]policy.PortRange, 0, len(row.Ports))}
+	switch row.SourceKind {
+	case "device":
+		params.SourceNodeID, err = node.ParseID(row.SourceSelect)
+		if err != nil || row.SourceID != row.SourceSelect {
+			return catalog.Row{}, catalog.ErrInvalidSnapshot
+		}
+	case "device_group":
+		params.SourceGroupID, err = devicegroup.ParseID(row.SourceSelect)
+		if err != nil || row.SourceID != "" {
+			return catalog.Row{}, catalog.ErrInvalidSnapshot
+		}
+	default:
+		return catalog.Row{}, catalog.ErrInvalidSnapshot
+	}
 	for _, port := range row.Ports {
 		if port.First < 1 || port.First > 65535 || port.Last < 1 || port.Last > 65535 || port.First > port.Last {
 			return catalog.Row{}, catalog.ErrInvalidSnapshot
@@ -209,6 +225,8 @@ func (row activePolicyRuleWire) parse(scope network.Scope) (catalog.Row, error) 
 	switch row.SelectorKind {
 	case "device":
 		params.DestinationNodeID, err = node.ParseID(row.SelectorID)
+	case "device_group":
+		params.DestinationDeviceGroupID, err = devicegroup.ParseID(row.SelectorID)
 	case "resource":
 		params.DestinationResourceID, err = resource.ParseID(row.SelectorID)
 	case "resource_group":

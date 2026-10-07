@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/meshtransit/meshtransit/internal/devicegroup"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
@@ -162,6 +163,10 @@ type PathParams struct {
 	// SelectorKindImportedResource, which leaves DestinationNodeID zero.
 	DestinationImportedResourceID sharing.ImportedResourceID
 	TrustContractID               sharing.ContractID
+	// SourceDeviceGroupID and DestinationDeviceGroupID name the Device
+	// Groups a group rule matched through, on a Device path.
+	SourceDeviceGroupID      devicegroup.ID
+	DestinationDeviceGroupID devicegroup.ID
 }
 
 // Path explains one effective compiled allow edge.
@@ -177,6 +182,8 @@ type Path struct {
 	destinationGroupID            resource.GroupID
 	destinationImportedResourceID sharing.ImportedResourceID
 	trustContractID               sharing.ContractID
+	sourceDeviceGroupID           devicegroup.ID
+	destinationDeviceGroupID      devicegroup.ID
 }
 
 // NewPath validates one immutable explanation path.
@@ -189,6 +196,8 @@ func NewPath(params PathParams) (Path, error) {
 		destinationGroupID:            params.DestinationGroupID,
 		destinationImportedResourceID: params.DestinationImportedResourceID,
 		trustContractID:               params.TrustContractID,
+		sourceDeviceGroupID:           params.SourceDeviceGroupID,
+		destinationDeviceGroupID:      params.DestinationDeviceGroupID,
 	}
 	if !path.IsValid() {
 		return Path{}, ErrInvalidSnapshot
@@ -233,6 +242,12 @@ func (path Path) DestinationImportedResourceID() sharing.ImportedResourceID {
 // TrustContractID returns the contract that carries a shared path, when present.
 func (path Path) TrustContractID() sharing.ContractID { return path.trustContractID }
 
+// SourceDeviceGroupID returns the source Device Group of a group rule path.
+func (path Path) SourceDeviceGroupID() devicegroup.ID { return path.sourceDeviceGroupID }
+
+// DestinationDeviceGroupID returns the destination Device Group of a group rule path.
+func (path Path) DestinationDeviceGroupID() devicegroup.ID { return path.destinationDeviceGroupID }
+
 // IsValid reports whether one path has complete canonical provenance.
 func (path Path) IsValid() bool {
 	if !path.projectionID.IsValid() || !path.ruleID.IsValid() || !path.sourceNodeID.IsValid() ||
@@ -247,6 +262,10 @@ func (path Path) IsValid() bool {
 		}
 	} else if !path.destinationNodeID.IsValid() || path.sourceNodeID == path.destinationNodeID ||
 		path.destinationImportedResourceID.IsValid() || path.trustContractID.IsValid() {
+		return false
+	}
+	if (path.sourceDeviceGroupID.IsValid() || path.destinationDeviceGroupID.IsValid()) &&
+		path.selectorKind != SelectorKindDevice {
 		return false
 	}
 	switch path.selectorKind {

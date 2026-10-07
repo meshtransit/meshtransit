@@ -35,6 +35,8 @@ type activePolicyData struct {
 type activePolicyRule struct {
 	ID                    string                          `json:"id"`
 	SourceDeviceID        string                          `json:"source_device_id"`
+	SourceKind            string                          `json:"source_kind"`
+	SourceSelectorID      string                          `json:"source_selector_id"`
 	DestinationDeviceID   string                          `json:"destination_device_id"`
 	Protocol              string                          `json:"protocol"`
 	DestinationPortRanges []publishPolicyPortRangeRequest `json:"destination_port_ranges"`
@@ -99,6 +101,9 @@ func activePolicyProjection(snapshot catalog.Snapshot) activePolicyData {
 	for _, item := range snapshot.Rows() {
 		rule := item.Intent
 		kind, selector := "device", rule.DestinationNodeID().String()
+		if rule.DestinationDeviceGroupID().IsValid() {
+			kind, selector = "device_group", rule.DestinationDeviceGroupID().String()
+		}
 		if rule.DestinationResourceID().IsValid() {
 			kind, selector = "resource", rule.DestinationResourceID().String()
 		}
@@ -112,7 +117,11 @@ func activePolicyProjection(snapshot catalog.Snapshot) activePolicyData {
 		if item.DestinationNodeID.IsValid() {
 			destination = item.DestinationNodeID.String()
 		}
-		data.Rules = append(data.Rules, activePolicyRule{ID: rule.ID().String(), SourceDeviceID: rule.SourceNodeID().String(), DestinationDeviceID: destination, Protocol: rule.Protocol().String(), DestinationPortRanges: activePolicyPorts(rule.DestinationPortRanges()), SelectorKind: kind, DestinationSelectorID: selector})
+		sourceKind, sourceSelector, sourceDevice := "device", rule.SourceNodeID().String(), rule.SourceNodeID().String()
+		if rule.SourceGroupID().IsValid() {
+			sourceKind, sourceSelector, sourceDevice = "device_group", rule.SourceGroupID().String(), ""
+		}
+		data.Rules = append(data.Rules, activePolicyRule{ID: rule.ID().String(), SourceDeviceID: sourceDevice, SourceKind: sourceKind, SourceSelectorID: sourceSelector, DestinationDeviceID: destination, Protocol: rule.Protocol().String(), DestinationPortRanges: activePolicyPorts(rule.DestinationPortRanges()), SelectorKind: kind, DestinationSelectorID: selector})
 	}
 	return data
 }

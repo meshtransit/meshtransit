@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"strconv"
+	"strings"
 
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -19,8 +21,14 @@ import (
 )
 
 const (
-	maxMapResponseBytes    = 256 << 10
+	// maxMapResponseBytes bounds one encoded map document. Devices reached
+	// through large Device Groups carry many peers; clients accept frames up
+	// to 16 MiB.
+	maxMapResponseBytes    = 4 << 20
 	mapResponseContentType = "application/octet-stream"
+	// maxFilterRuleSources is the most source addresses one FilterRule
+	// carries; meshd rejects a rule with more than 1,024.
+	maxFilterRuleSources = 1024
 )
 
 // ErrMapResponse reports invalid authority evidence or a failed bounded encoding.
@@ -199,11 +207,22 @@ func fullMapPeer(
 	return result, nil
 }
 
+// fullMapPacketFilter builds this Device's inbound filter. Rules that open
+// the same traffic to this Device are merged into one FilterRule whose
+// sources are every allowed peer address, split at maxFilterRuleSources, so
+// a rule selecting a large Device Group stays compact.
 func fullMapPacketFilter(
 	snapshot mapsession.Snapshot,
 	candidates map[node.ID]mapsession.PeerCandidate,
 ) ([]tailcfg.FilterRule, error) {
-	rules := make([]tailcfg.FilterRule, 0)
+	type merged struct {
+		destinations []tailcfg.NetPortRange
+		protocols    []int
+		sources      []string
+		seen         map[string]struct{}
+	}
+	var order []string
+	groups := make(map[string]*merged)
 	for _, rule := range snapshot.InboundPacketRules() {
 		if rule.DestinationNodeID() != snapshot.NodeID() {
 			continue
@@ -214,25 +233,65 @@ func fullMapPacketFilter(
 			// authoritative; without that peer, the rule grants no packet access.
 			continue
 		}
-		sources := candidate.Addresses()
-		sourceIPs := make([]string, 0, len(sources))
-		for _, source := range sources {
-			sourceIPs = append(sourceIPs, source.Addr().String())
-		}
-		destinations, protocols, err := fullMapDestinations(
-			snapshot.Addresses(),
-			rule,
-		)
+		destinations, protocols, err := fullMapDestinations(snapshot.Addresses(), rule)
 		if err != nil {
 			return nil, err
 		}
-		rules = append(rules, tailcfg.FilterRule{
-			SrcIPs:   sourceIPs,
-			DstPorts: destinations,
-			IPProto:  protocols,
-		})
+		key := filterTrafficKey(destinations, protocols)
+		group, exists := groups[key]
+		if !exists {
+			group = &merged{destinations: destinations, protocols: protocols, seen: make(map[string]struct{})}
+			groups[key] = group
+			order = append(order, key)
+		}
+		for _, source := range candidate.Addresses() {
+			address := source.Addr().String()
+			if _, duplicate := group.seen[address]; duplicate {
+				continue
+			}
+			group.seen[address] = struct{}{}
+			group.sources = append(group.sources, address)
+		}
+	}
+	rules := make([]tailcfg.FilterRule, 0, len(order))
+	for _, key := range order {
+		group := groups[key]
+		for _, sources := range splitFilterSources(group.sources) {
+			rules = append(rules, tailcfg.FilterRule{
+				SrcIPs: sources, DstPorts: group.destinations, IPProto: group.protocols,
+			})
+		}
 	}
 	return rules, nil
+}
+
+// splitFilterSources cuts sources into consecutive runs of at most
+// maxFilterRuleSources, each its own copy.
+func splitFilterSources(sources []string) [][]string {
+	runs := make([][]string, 0, (len(sources)+maxFilterRuleSources-1)/maxFilterRuleSources)
+	for start := 0; start < len(sources); start += maxFilterRuleSources {
+		runs = append(runs, slices.Clone(sources[start:min(start+maxFilterRuleSources, len(sources))]))
+	}
+	return runs
+}
+
+// filterTrafficKey identifies the traffic a FilterRule opens.
+func filterTrafficKey(destinations []tailcfg.NetPortRange, protocols []int) string {
+	var builder strings.Builder
+	for _, protocol := range protocols {
+		builder.WriteString(strconv.Itoa(protocol))
+		builder.WriteByte(',')
+	}
+	builder.WriteByte('|')
+	for _, destination := range destinations {
+		builder.WriteString(destination.IP)
+		builder.WriteByte(':')
+		builder.WriteString(strconv.Itoa(int(destination.Ports.First)))
+		builder.WriteByte('-')
+		builder.WriteString(strconv.Itoa(int(destination.Ports.Last)))
+		builder.WriteByte(';')
+	}
+	return builder.String()
 }
 
 func fullMapDestinations(

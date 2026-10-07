@@ -82,6 +82,12 @@ FROM mesh_ops.attach_policy_resource_group_destinations(
     $3::JSONB
 )`
 
+const attachPolicyGroupRulesSQL = `SELECT mesh_ops.attach_policy_group_rules_v1(
+    $1::UUID,
+    $2::TIMESTAMPTZ,
+    $3::JSONB
+)`
+
 const consumePolicyPublicationApprovalSQL = `SELECT
     mesh_ops.consume_policy_approval_for_publication_v1(
         $1::UUID, $2::UUID, $3::BYTEA, $4::INTEGER,

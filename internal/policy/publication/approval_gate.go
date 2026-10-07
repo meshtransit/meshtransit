@@ -20,6 +20,9 @@ var (
 	ErrInvalidApprovalGate = errors.New("policy publication: invalid approval gate")
 	// ErrApprovalRequired reports that a management publication omitted durable approval evidence.
 	ErrApprovalRequired = errors.New("policy publication: approval evidence required")
+	// ErrEdgeBudget reports a release that would give one Device more rule
+	// edges than its map can carry.
+	ErrEdgeBudget = errors.New("policy publication: a Device would exceed its rule edge limit")
 	// ErrApprovalUnavailable conceals stale, expired, consumed, or unauthorized approval evidence.
 	ErrApprovalUnavailable = errors.New("policy publication: approval evidence unavailable")
 )
