@@ -1756,6 +1756,8 @@
         "required": [
           "id",
           "source_device_id",
+          "source_kind",
+          "source_selector_id",
           "destination_device_id",
           "protocol",
           "destination_port_ranges",
@@ -1769,7 +1771,19 @@
           },
           "source_device_id": {
             "type": "string",
-            "format": "uuid"
+            "description": "The source Device; empty when the source is a Device Group."
+          },
+          "source_kind": {
+            "type": "string",
+            "enum": [
+              "device",
+              "device_group"
+            ]
+          },
+          "source_selector_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The source Device or Device Group."
           },
           "destination_device_id": {
             "type": "string"
@@ -1810,6 +1824,7 @@
             "type": "string",
             "enum": [
               "device",
+              "device_group",
               "resource",
               "resource_group",
               "imported_resource"
@@ -1991,9 +2006,17 @@
         "additionalProperties": false,
         "required": [
           "id",
-          "source_device_id",
           "protocol",
           "destination_port_ranges"
+        ],
+        "description": "Exactly one source (a Device or a Device Group) and one destination. A Device Group source takes a Device or Device Group destination only.",
+        "allOf": [
+          {
+            "oneOf": [
+              {"required": ["source_device_id"], "not": {"required": ["source_device_group_id"]}},
+              {"required": ["source_device_group_id"], "not": {"required": ["source_device_id"]}}
+            ]
+          }
         ],
         "oneOf": [
           {
@@ -2002,6 +2025,20 @@
             ],
             "not": {
               "anyOf": [
+                {"required": ["destination_resource_id"]},
+                {"required": ["destination_resource_group_id"]},
+                {"required": ["destination_imported_resource_id"]},
+                {"required": ["destination_device_group_id"]}
+              ]
+            }
+          },
+          {
+            "required": [
+              "destination_device_group_id"
+            ],
+            "not": {
+              "anyOf": [
+                {"required": ["destination_device_id"]},
                 {"required": ["destination_resource_id"]},
                 {"required": ["destination_resource_group_id"]},
                 {"required": ["destination_imported_resource_id"]}
@@ -2016,7 +2053,8 @@
               "anyOf": [
                 {"required": ["destination_device_id"]},
                 {"required": ["destination_resource_group_id"]},
-                {"required": ["destination_imported_resource_id"]}
+                {"required": ["destination_imported_resource_id"]},
+                {"required": ["destination_device_group_id"]}
               ]
             }
           },
@@ -2028,7 +2066,8 @@
               "anyOf": [
                 {"required": ["destination_device_id"]},
                 {"required": ["destination_resource_id"]},
-                {"required": ["destination_imported_resource_id"]}
+                {"required": ["destination_imported_resource_id"]},
+                {"required": ["destination_device_group_id"]}
               ]
             }
           },
@@ -2040,7 +2079,8 @@
               "anyOf": [
                 {"required": ["destination_device_id"]},
                 {"required": ["destination_resource_id"]},
-                {"required": ["destination_resource_group_id"]}
+                {"required": ["destination_resource_group_id"]},
+                {"required": ["destination_device_group_id"]}
               ]
             }
           }
@@ -2050,6 +2090,12 @@
             "$ref": "#/components/schemas/PublicID"
           },
           "source_device_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "source_device_group_id": {
+            "$ref": "#/components/schemas/PublicID"
+          },
+          "destination_device_group_id": {
             "$ref": "#/components/schemas/PublicID"
           },
           "destination_device_id": {
@@ -2969,6 +3015,14 @@
           "destination_device_id": {"$ref": "#/components/schemas/PublicID"},
           "destination_imported_resource_id": {"$ref": "#/components/schemas/PublicID"},
           "trust_contract_id": {"$ref": "#/components/schemas/PublicID"},
+          "source_device_group_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "The source Device Group, when the path comes from a group rule."
+          },
+          "destination_device_group_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "The destination Device Group, when the path comes from a group rule."
+          },
           "protocol": {"type": "string", "enum": ["tcp", "udp", "icmp"]},
           "destination_port_ranges": {
             "type": "array",

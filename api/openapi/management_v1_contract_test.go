@@ -154,7 +154,10 @@ func TestManagementV1MutationContracts(t *testing.T) {
 	var policyRule struct {
 		Required   []string                   `json:"required"`
 		Properties map[string]json.RawMessage `json:"properties"`
-		OneOf      []struct {
+		AllOf      []struct {
+			OneOf []json.RawMessage `json:"oneOf"`
+		} `json:"allOf"`
+		OneOf []struct {
 			Required []string `json:"required"`
 			Not      struct {
 				AnyOf []struct {
@@ -166,35 +169,33 @@ func TestManagementV1MutationContracts(t *testing.T) {
 	if err := json.Unmarshal(document.Components.Schemas["CompiledPolicyRule"], &policyRule); err != nil {
 		t.Fatalf("decode CompiledPolicyRule: %v", err)
 	}
-	if len(policyRule.OneOf) != 4 || policyRule.Properties["destination_device_id"] == nil ||
-		policyRule.Properties["destination_resource_id"] == nil ||
-		policyRule.Properties["destination_resource_group_id"] == nil ||
-		policyRule.Properties["destination_imported_resource_id"] == nil ||
-		len(policyRule.OneOf[0].Required) != 1 ||
-		policyRule.OneOf[0].Required[0] != "destination_device_id" ||
-		len(policyRule.OneOf[0].Not.AnyOf) != 3 ||
-		policyRule.OneOf[0].Not.AnyOf[0].Required[0] != "destination_resource_id" ||
-		policyRule.OneOf[0].Not.AnyOf[1].Required[0] != "destination_resource_group_id" ||
-		policyRule.OneOf[0].Not.AnyOf[2].Required[0] != "destination_imported_resource_id" ||
-		len(policyRule.OneOf[1].Required) != 1 ||
-		policyRule.OneOf[1].Required[0] != "destination_resource_id" ||
-		len(policyRule.OneOf[1].Not.AnyOf) != 3 ||
-		policyRule.OneOf[1].Not.AnyOf[0].Required[0] != "destination_device_id" ||
-		policyRule.OneOf[1].Not.AnyOf[1].Required[0] != "destination_resource_group_id" ||
-		policyRule.OneOf[1].Not.AnyOf[2].Required[0] != "destination_imported_resource_id" ||
-		len(policyRule.OneOf[2].Required) != 1 ||
-		policyRule.OneOf[2].Required[0] != "destination_resource_group_id" ||
-		len(policyRule.OneOf[2].Not.AnyOf) != 3 ||
-		policyRule.OneOf[2].Not.AnyOf[0].Required[0] != "destination_device_id" ||
-		policyRule.OneOf[2].Not.AnyOf[1].Required[0] != "destination_resource_id" ||
-		policyRule.OneOf[2].Not.AnyOf[2].Required[0] != "destination_imported_resource_id" ||
-		len(policyRule.OneOf[3].Required) != 1 ||
-		policyRule.OneOf[3].Required[0] != "destination_imported_resource_id" ||
-		len(policyRule.OneOf[3].Not.AnyOf) != 3 ||
-		policyRule.OneOf[3].Not.AnyOf[0].Required[0] != "destination_device_id" ||
-		policyRule.OneOf[3].Not.AnyOf[1].Required[0] != "destination_resource_id" ||
-		policyRule.OneOf[3].Not.AnyOf[2].Required[0] != "destination_resource_group_id" {
-		t.Fatalf("CompiledPolicyRule typed destination contract = %+v", policyRule)
+	// Each destination alternative requires its own key and excludes every other one.
+	destinations := []string{
+		"destination_device_id", "destination_device_group_id", "destination_resource_id",
+		"destination_resource_group_id", "destination_imported_resource_id",
+	}
+	if len(policyRule.OneOf) != len(destinations) || len(policyRule.AllOf) != 1 ||
+		len(policyRule.AllOf[0].OneOf) != 2 || policyRule.Properties["source_device_id"] == nil ||
+		policyRule.Properties["source_device_group_id"] == nil {
+		t.Fatalf("CompiledPolicyRule typed selector contract = %+v", policyRule)
+	}
+	seen := map[string]bool{}
+	for _, alternative := range policyRule.OneOf {
+		if len(alternative.Required) != 1 || policyRule.Properties[alternative.Required[0]] == nil ||
+			len(alternative.Not.AnyOf) != len(destinations)-1 {
+			t.Fatalf("CompiledPolicyRule typed destination contract = %+v", policyRule)
+		}
+		seen[alternative.Required[0]] = true
+		for _, excluded := range alternative.Not.AnyOf {
+			if len(excluded.Required) != 1 || excluded.Required[0] == alternative.Required[0] {
+				t.Fatalf("CompiledPolicyRule destination %s exclusions = %+v", alternative.Required[0], alternative.Not.AnyOf)
+			}
+		}
+	}
+	for _, destination := range destinations {
+		if !seen[destination] {
+			t.Fatalf("CompiledPolicyRule lacks destination %s", destination)
+		}
 	}
 	for _, contract := range []struct {
 		path, getOperation, postOperation string

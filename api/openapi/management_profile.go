@@ -81,6 +81,12 @@ type consoleManagementProfile struct {
 	GuardrailCreate        json.RawMessage            `json:"workspaceGuardrailCreate"`
 	GuardrailUpdate        json.RawMessage            `json:"workspaceGuardrailUpdate"`
 	GuardrailDelete        json.RawMessage            `json:"workspaceGuardrailDelete"`
+	DeviceGroups           json.RawMessage            `json:"networkDeviceGroups"`
+	DeviceGroupCreate      json.RawMessage            `json:"networkDeviceGroupCreate"`
+	DeviceGroupMembers     json.RawMessage            `json:"networkDeviceGroupMembers"`
+	DeviceGroupUpdate      json.RawMessage            `json:"networkDeviceGroupUpdate"`
+	DeviceGroupDelete      json.RawMessage            `json:"networkDeviceGroupDelete"`
+	DeviceGroupMembership  json.RawMessage            `json:"networkDeviceGroupChangeMembers"`
 }
 
 // ManagementDocument returns independently owned deterministic OpenAPI bytes.
@@ -146,7 +152,13 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.WorkspaceGuardrails, "get", "listWorkspaceGuardrails", false) &&
 		consoleCookieOperation(profile.GuardrailCreate, "post", "createWorkspaceGuardrail", true) &&
 		consoleCookieOperation(profile.GuardrailUpdate, "post", "updateWorkspaceGuardrail", true) &&
-		consoleCookieOperation(profile.GuardrailDelete, "post", "deleteWorkspaceGuardrail", true)
+		consoleCookieOperation(profile.GuardrailDelete, "post", "deleteWorkspaceGuardrail", true) &&
+		consoleCookieOperation(profile.DeviceGroups, "get", "listNetworkDeviceGroups", false) &&
+		consoleCookieOperation(profile.DeviceGroupCreate, "post", "createNetworkDeviceGroup", true) &&
+		consoleCookieOperation(profile.DeviceGroupMembers, "get", "listNetworkDeviceGroupMembers", false) &&
+		consoleCookieOperation(profile.DeviceGroupUpdate, "post", "updateNetworkDeviceGroup", true) &&
+		consoleCookieOperation(profile.DeviceGroupDelete, "post", "deleteNetworkDeviceGroup", true) &&
+		consoleCookieOperation(profile.DeviceGroupMembership, "post", "changeNetworkDeviceGroupMembers", true)
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
 	}
@@ -251,6 +263,13 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails/actions/create"] = profile.GuardrailCreate
 	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails/{guardrail_id}/actions/update"] = profile.GuardrailUpdate
 	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails/{guardrail_id}/actions/delete"] = profile.GuardrailDelete
+	deviceGroups := "/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-groups"
+	consolePaths[deviceGroups] = profile.DeviceGroups
+	consolePaths[deviceGroups+"/actions/create"] = profile.DeviceGroupCreate
+	consolePaths[deviceGroups+"/{group_id}/members"] = profile.DeviceGroupMembers
+	consolePaths[deviceGroups+"/{group_id}/actions/update"] = profile.DeviceGroupUpdate
+	consolePaths[deviceGroups+"/{group_id}/actions/delete"] = profile.DeviceGroupDelete
+	consolePaths[deviceGroups+"/{group_id}/actions/change-members"] = profile.DeviceGroupMembership
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments"] = profile.WorkspaceRoleAssign
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke"] = profile.WorkspaceRoleRevoke
 	consolePaths[consoleSessionPreparePath] = profile.Prepare
