@@ -1229,6 +1229,52 @@ func TestService_RunDoesNotRetryPermanentControlFailure(t *testing.T) {
 	}
 }
 
+func TestService_RunWaitsWhileSuspendedAndRetries(t *testing.T) {
+	t.Parallel()
+
+	service, _, control, _, _ := newTestService(t)
+	var retryBases []time.Duration
+	var mu sync.Mutex
+	service.runtimeRetryDelay = func(base time.Duration) time.Duration {
+		mu.Lock()
+		defer mu.Unlock()
+		retryBases = append(retryBases, base)
+
+		return 0
+	}
+	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
+		t.Fatalf("TrustControl() error = %v", err)
+	}
+	control.registrationResults = []ts2021.RegistrationResult{{
+		State:             ts2021.RegistrationStateAuthorized,
+		MachineAuthorized: true,
+	}}
+	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
+		t.Fatalf("StartLogin() error = %v", err)
+	}
+	control.mu.Lock()
+	control.streamError = fmt.Errorf("%w: control endpoint returned http 423", ts2021.ErrNetmapAuthorityPaused)
+	control.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	runResult := make(chan error, 1)
+	go func() { runResult <- service.Run(ctx) }()
+	waitForStreamStart(t, control)
+	waitForStreamStart(t, control)
+	cancel()
+	if err := <-runResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context cancellation", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(retryBases) == 0 || retryBases[0] != suspendedRetry {
+		t.Fatalf("retry bases = %v, want the suspended retry", retryBases)
+	}
+	if failures := service.runtimeFailures.Load(); failures != 0 {
+		t.Fatalf("suspension counted %d runtime failures, want 0", failures)
+	}
+}
+
 func TestService_RunRejectsConcurrentSupervisor(t *testing.T) {
 	t.Parallel()
 

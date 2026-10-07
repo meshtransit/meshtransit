@@ -81,12 +81,17 @@ const (
 	// ControlSessionSynchronized means a validated snapshot has been published.
 	ControlSessionSynchronized = "synchronized"
 	// ControlSessionBlocked means a permanent trust, registration, or map error stopped sync.
-	ControlSessionBlocked  = "blocked"
+	ControlSessionBlocked = "blocked"
+	// ControlSessionSuspended means an administrator suspended this Device; it
+	// keeps its identity and retries until the Device is resumed.
+	ControlSessionSuspended = "suspended"
+
 	completionPollTimeout  = 3 * time.Second
 	rotationPersistTimeout = 5 * time.Second
 	dnsCleanupTimeout      = 5 * time.Second
 	minRuntimeRetry        = time.Second
 	maxRuntimeRetry        = 30 * time.Second
+	suspendedRetry         = 30 * time.Second
 	runtimeRetryReset      = 30 * time.Second
 	minEndpointRefresh     = 20 * time.Second
 	maxEndpointRefresh     = 26 * time.Second
@@ -866,8 +871,12 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				dnsState = DNSInactive
 			}
 			recoverable := errors.Is(streamErr, errRuntimeRecovery)
+			suspended := errors.Is(streamErr, ts2021.ErrNetmapAuthorityPaused)
 			controlState := ControlSessionBlocked
-			if recoverable {
+			switch {
+			case suspended:
+				controlState = ControlSessionSuspended
+			case recoverable:
 				controlState = ControlSessionConnecting
 			}
 			s.setSyncStatus(syncStatus{
@@ -881,6 +890,15 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					"stopping runtime after map stream failure: %w",
 					runtimeStopErr,
 				)
+			}
+			if suspended {
+				// Not a failure: wait for an administrator to resume the Device.
+				if _, err := s.waitForRuntimeRecovery(ctx, suspendedRetry); err != nil {
+					return err
+				}
+				runtimeRetry = minRuntimeRetry
+
+				continue
 			}
 			if recoverable {
 				s.runtimeFailures.Add(1)

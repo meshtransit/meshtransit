@@ -561,6 +561,37 @@ func TestMapAccumulator_AuthorityRevocationIsTerminalAndAtomic(t *testing.T) {
 	}
 }
 
+func TestMapAccumulator_AuthorityPauseKeepsStateAndRetries(t *testing.T) {
+	t.Parallel()
+
+	self := testWireNode(1, 1)
+	accumulator := newMapAccumulator()
+	initial, changed, err := accumulator.apply(tailcfg.MapResponse{
+		Node:         self,
+		Peers:        []*tailcfg.Node{testWireNode(2, 2)},
+		PacketFilter: []tailcfg.FilterRule{},
+	}, time.Now())
+	if err != nil || !changed {
+		t.Fatalf("initial apply() = changed %t, error %v", changed, err)
+	}
+	paused := *self
+	paused.MachineAuthorized = false
+	if _, changed, err := accumulator.apply(tailcfg.MapResponse{
+		Node:         &paused,
+		Peers:        []*tailcfg.Node{},
+		PacketFilter: []tailcfg.FilterRule{},
+	}, time.Now()); !errors.Is(err, ErrNetmapAuthorityPaused) ||
+		errors.Is(err, ErrNetmapAuthorityRevoked) || changed {
+		t.Fatalf("pause apply() = changed %t, error %v", changed, err)
+	}
+	if accumulator.revision != initial.Revision || len(accumulator.peers) != 1 {
+		t.Fatalf("accumulator mutated after pause: %#v", accumulator)
+	}
+	if !isPermanentNetmapError(ErrNetmapAuthorityPaused) {
+		t.Fatal("a pause must end the session so the daemon clears the data plane")
+	}
+}
+
 func TestMapAccumulator_RejectsMalformedAuthorityRevocation(t *testing.T) {
 	t.Parallel()
 

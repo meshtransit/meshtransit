@@ -52,6 +52,9 @@ var (
 	// ErrNetmapAuthorityRevoked indicates that an authenticated control stream
 	// explicitly withdrew the active session's authority.
 	ErrNetmapAuthorityRevoked = errors.New("ts2021: netmap authority revoked")
+	// ErrNetmapAuthorityPaused indicates that control suspended this Device:
+	// it keeps its identity and should retry until an administrator resumes it.
+	ErrNetmapAuthorityPaused = errors.New("ts2021: netmap authority paused")
 	// ErrEndpointUpdate indicates that a candidate publication did not complete.
 	ErrEndpointUpdate = errors.New("ts2021: endpoint update failed")
 )
@@ -730,6 +733,9 @@ func (c *Client) openMapExchange(
 		}
 		body, _ := io.ReadAll(io.LimitReader(response.Body, maxNetmapErrorBytes))
 		message := sanitizeServerError(string(body))
+		if response.StatusCode == http.StatusLocked {
+			return nil, fmt.Errorf("%w: control endpoint returned http 423", ErrNetmapAuthorityPaused)
+		}
 		if response.StatusCode >= 400 && response.StatusCode < 500 {
 			return nil, fmt.Errorf(
 				"%w: control endpoint returned http %d: %s",
@@ -930,6 +936,9 @@ func isPermanentNetmapError(err error) bool {
 		errors.Is(err, ErrNetmapRejected) ||
 		errors.Is(err, ErrNetmapInvalid) ||
 		errors.Is(err, ErrNetmapAuthorityRevoked) ||
+		// A pause ends this session; the daemon clears the data plane and
+		// retries on its own schedule.
+		errors.Is(err, ErrNetmapAuthorityPaused) ||
 		errors.Is(err, ErrNetmapConsumer) ||
 		errors.Is(err, networkmap.ErrInvalid)
 }
@@ -996,6 +1005,9 @@ func (a *mapAccumulator) apply(
 	}
 	if a.isAuthorityRevocation(response) {
 		return networkmap.Snapshot{}, false, ErrNetmapAuthorityRevoked
+	}
+	if a.isAuthorityPause(response) {
+		return networkmap.Snapshot{}, false, ErrNetmapAuthorityPaused
 	}
 
 	candidate := a.clone()
@@ -1169,6 +1181,18 @@ func (a *mapAccumulator) isAuthorityRevocation(response tailcfg.MapResponse) boo
 		uint64(response.Node.ID) == a.self.ID &&
 		response.Node.Key.String() == a.self.PublicKey &&
 		response.Node.Expired && !response.Node.MachineAuthorized &&
+		response.Peers != nil && len(response.Peers) == 0 &&
+		response.PacketFilter != nil && len(response.PacketFilter) == 0
+}
+
+// isAuthorityPause matches a withdrawal that keeps the identity: the self node
+// is unauthorized but not expired, with every peer and rule cleared.
+func (a *mapAccumulator) isAuthorityPause(response tailcfg.MapResponse) bool {
+	return a.initialized && response.Node != nil &&
+		response.Node.ID > 0 &&
+		uint64(response.Node.ID) == a.self.ID &&
+		response.Node.Key.String() == a.self.PublicKey &&
+		!response.Node.Expired && !response.Node.MachineAuthorized &&
 		response.Peers != nil && len(response.Peers) == 0 &&
 		response.PacketFilter != nil && len(response.PacketFilter) == 0
 }
