@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 116 {
-		t.Fatalf("len(Catalog()) = %d, want 116", len(catalog))
+	if len(catalog) != 117 {
+		t.Fatalf("len(Catalog()) = %d, want 117", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 116 {
-		t.Fatalf("LatestVersion() = %d, want 116", LatestVersion())
+	if LatestVersion() != 117 {
+		t.Fatalf("LatestVersion() = %d, want 117", LatestVersion())
 	}
 }
 
@@ -2800,5 +2800,28 @@ func TestAuditEventSealV2(t *testing.T) {
 	}
 	if strings.Count(migration.SQL, "TO mesh_runtime") != 1 {
 		t.Error("schema 116 may grant runtime only the Workspace stream head lock")
+	}
+}
+
+func TestWorkspaceAuditHistory(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[116]
+	if migration.Version != 117 {
+		t.Fatalf("migration 117 = %+v", migration)
+	}
+	for _, required := range []string{
+		"mesh_ops.session_bound_to_workspace_v1(p_session_public_id, scoped_workspace_id)",
+		"p_workspace_public_id, 'audit.read', evaluated_at",
+		"p_workspace_public_id, p_network_public_id, 'audit.read', evaluated_at",
+		"(event.occurred_at, identity.public_id) < (p_cursor_occurred_at, p_cursor_event_public_id)",
+		"ORDER BY event.occurred_at DESC, identity.public_id DESC",
+		"OR p_limit IS NULL OR p_limit < 1 OR p_limit > 100",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 117 missing %q", required)
+		}
+	}
+	if strings.Count(migration.SQL, "TO mesh_runtime;") != 1 {
+		t.Error("schema 117 may grant runtime only the history read")
 	}
 }

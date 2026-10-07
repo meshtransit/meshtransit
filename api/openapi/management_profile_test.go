@@ -65,9 +65,9 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal("private document retained deployment topology")
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
-	// The private document adds only Console session routes and the two
-	// receiving-Network alias range routes to the shared resource contract.
-	if len(basePaths) != 31 || len(paths) != 33 {
+	// The private document adds only Console session routes, the two
+	// receiving-Network alias range routes and the Workspace audit history.
+	if len(basePaths) != 31 || len(paths) != 34 {
 		t.Fatal("private profile introduced another product resource API")
 	}
 	for path, raw := range paths {

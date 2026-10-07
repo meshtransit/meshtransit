@@ -258,7 +258,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	workspaceRoles := isWorkspaceRoleOperation(request) ||
 		isWorkspaceCollectionPath(request) && request.Method == http.MethodPost ||
 		isNetworkCollectionPost(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
-		isNetworkAliasRangeOperation(request)
+		isNetworkAliasRangeOperation(request) || isAuditEventListRead(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
 	if !prepare && !logout && !managementScopes && !inventoryRead && !deploymentCapabilities && !device && !policy && !simulation &&
 		!approval && !accessGraph && !accessGraphList && !policyRead && !workspaceRename && !workspaceRoles && !resourceSharing {
@@ -463,13 +463,14 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	directoryRead := request.Method == http.MethodGet &&
 		(isWorkspaceRoleOperation(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
 			isNetworkAliasRangeRead(request))
+	auditRead := isAuditEventListRead(request)
 	safeRead := approvalRead || managementScopeRead || inventoryRead || deploymentCapabilityRead || policyRead ||
-		accessGraphRead || resourceSharingRead || directoryRead
+		accessGraphRead || resourceSharingRead || directoryRead || auditRead
 	if request.Method == http.MethodGet && !safeRead {
 		return false
 	}
 	queryAllowed := approvalRead && approvalPath.kind == policyApprovalPathCollection || managementScopeRead || inventoryRead ||
-		resourceSharingCollectionRead || accessGraphRead
+		resourceSharingCollectionRead || accessGraphRead || auditRead
 	if (!queryAllowed && target.RawQuery != "") || len(target.RawQuery) > maximumCallbackQueryBytes {
 		return false
 	}

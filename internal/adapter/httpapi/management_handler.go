@@ -245,7 +245,9 @@ type ManagementHandlerOptions struct {
 	ShareTargets       ShareTargetResolver
 	NetworkCreations   NetworkCreator
 	// AliasRanges reads and sets receiving-Network alias ranges; nil answers 503.
-	AliasRanges               NetworkAliasRanges
+	AliasRanges NetworkAliasRanges
+	// AuditHistory lists Workspace audit history; nil answers 503.
+	AuditHistory              AuditHistoryReader
 	PolicyApprovals           PolicyApprovalWorkflow
 	PolicyApprovalCatalog     PolicyApprovalCatalog
 	ResourceCreations         ResourceCreator
@@ -284,6 +286,7 @@ type ManagementHandler struct {
 	shareTargets              ShareTargetResolver
 	networkCreations          NetworkCreator
 	aliasRanges               NetworkAliasRanges
+	auditHistory              AuditHistoryReader
 	policyApprovals           PolicyApprovalWorkflow
 	policyApprovalCatalog     PolicyApprovalCatalog
 	resourceCreations         ResourceCreator
@@ -345,6 +348,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		shareTargets:              options.ShareTargets,
 		networkCreations:          options.NetworkCreations,
 		aliasRanges:               options.AliasRanges,
+		auditHistory:              options.AuditHistory,
 		policyApprovals:           options.PolicyApprovals,
 		policyApprovalCatalog:     options.PolicyApprovalCatalog,
 		resourceCreations:         options.ResourceCreations,
@@ -447,10 +451,11 @@ func (handler *ManagementHandler) serveHTTP(
 	sessionWorkspaceMethod, sessionWorkspaceMatched := sessionWorkspaceRoute(request)
 	shareTargetPath, shareTargetMatched := parseShareTargetPath(request)
 	aliasRangePath, aliasRangeMatched := parseNetworkAliasRangePath(request)
+	auditEventPath, auditEventMatched := parseAuditEventListPath(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
 		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
-		!shareTargetMatched && !aliasRangeMatched {
+		!shareTargetMatched && !aliasRangeMatched && !auditEventMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -474,6 +479,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = shareTargetResolveOperation
 	} else if aliasRangeMatched {
 		operation = aliasRangePath.operation()
+	} else if auditEventMatched {
+		operation = auditEventListOperation
 	} else if deviceMatched {
 		operation = deviceRevokeOperation
 	} else if policyMatched {
@@ -494,7 +501,7 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = resourcePath.operation(request.Method)
 	}
 	allowedMethod := http.MethodPost
-	if policyReadMatched || accessGraphListMatched {
+	if policyReadMatched || accessGraphListMatched || auditEventMatched {
 		allowedMethod = http.MethodGet
 	} else if policyApprovalMatched {
 		allowedMethod = policyApprovalPath.allowedMethod(request.Method)
@@ -601,6 +608,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if aliasRangeMatched {
 		resultCode = handler.handleNetworkAliasRanges(ctx, response, request, correlationID, aliasRangePath, session)
+		return
+	}
+	if auditEventMatched {
+		resultCode = handler.listAuditEvents(ctx, response, request, correlationID, auditEventPath, session)
 		return
 	}
 	if policyMatched {

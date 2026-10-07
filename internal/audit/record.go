@@ -25,6 +25,8 @@ const (
 const (
 	IntegritySealed         = "sealed"
 	IntegrityLegacyUnsealed = "legacy_unsealed"
+	// IntegritySealMismatch marks a stored seal that does not recompute.
+	IntegritySealMismatch = "seal_mismatch"
 )
 
 // Actor kinds. An event without a principal was written by MeshCore itself.

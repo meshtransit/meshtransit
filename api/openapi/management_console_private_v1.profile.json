@@ -2402,5 +2402,399 @@
         }
       }
     }
+  },
+  "workspaceAuditEvents": {
+    "get": {
+      "operationId": "listWorkspaceAuditEvents",
+      "summary": "List a Workspace's audit history",
+      "description": "Requires audit.read on the Workspace (Workspace stream and every Network stream), or audit.read on the Network named by network_id (that Network's stream only). Records are audit record v2, newest first; sealed records were rechecked by Core and a record whose seal does not recompute reports seal_mismatch. Without since/until the last 90 days are read.",
+      "security": [
+        {
+          "accountSessionCookie": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "network_id",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": "Only this Network's stream"
+        },
+        {
+          "name": "since",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": "Inclusive lower bound; default until minus 90 days"
+        },
+        {
+          "name": "until",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": "Exclusive upper bound; default now"
+        },
+        {
+          "name": "target_kind",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 1040
+          },
+          "description": "Comma-separated target kinds, at most 16"
+        },
+        {
+          "name": "target_id",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": "Only events about this object"
+        },
+        {
+          "name": "actor_id",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": "Only events by this principal"
+        },
+        {
+          "name": "actor_kind",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "principal",
+              "system"
+            ]
+          },
+          "description": "Only people or only MeshTransit itself"
+        },
+        {
+          "name": "action",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "description": "Exact action"
+        },
+        {
+          "name": "result",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "denied",
+              "failed"
+            ]
+          },
+          "description": "Exact result"
+        },
+        {
+          "name": "correlation_id",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": "Only events of this request"
+        },
+        {
+          "name": "change_id",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": "Only events of this change"
+        },
+        {
+          "name": "page_size",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "description": "Default 50"
+        },
+        {
+          "name": "page_token",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "maxLength": 131
+          },
+          "description": "next_page_token from the previous page; keep the other parameters unchanged"
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "One page of audit records",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "records",
+                      "actors",
+                      "next_page_token",
+                      "since",
+                      "until"
+                    ],
+                    "properties": {
+                      "records": {
+                        "type": "array",
+                        "maxItems": 100,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "record_version",
+                            "event_id",
+                            "event_time",
+                            "stream_id",
+                            "sequence",
+                            "change_id",
+                            "actor_kind",
+                            "action",
+                            "permission",
+                            "result",
+                            "target_kind",
+                            "target_id",
+                            "payload_version",
+                            "payload",
+                            "payload_canonical",
+                            "integrity"
+                          ],
+                          "properties": {
+                            "record_version": {
+                              "type": "integer",
+                              "const": 2
+                            },
+                            "event_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "event_time": {
+                              "type": "string",
+                              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$"
+                            },
+                            "stream_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "sequence": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "workspace_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "network_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "change_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "actor_kind": {
+                              "type": "string",
+                              "enum": [
+                                "principal",
+                                "system"
+                              ]
+                            },
+                            "actor_principal_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "action": {
+                              "type": "string",
+                              "maxLength": 128
+                            },
+                            "permission": {
+                              "type": "string",
+                              "maxLength": 128
+                            },
+                            "result": {
+                              "type": "string",
+                              "enum": [
+                                "succeeded",
+                                "denied",
+                                "failed"
+                              ]
+                            },
+                            "target_kind": {
+                              "type": "string",
+                              "maxLength": 64
+                            },
+                            "target_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "correlation_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "before_semantic_hash": {
+                              "type": "string",
+                              "pattern": "^([0-9a-f]{64})?$"
+                            },
+                            "after_semantic_hash": {
+                              "type": "string",
+                              "pattern": "^([0-9a-f]{64})?$"
+                            },
+                            "payload_version": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "payload": {
+                              "type": "object"
+                            },
+                            "payload_canonical": {
+                              "type": "string",
+                              "maxLength": 16384,
+                              "description": "The exact payload text covered by the seal"
+                            },
+                            "integrity": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "status"
+                              ],
+                              "properties": {
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "sealed",
+                                    "legacy_unsealed",
+                                    "seal_mismatch"
+                                  ]
+                                },
+                                "hash_version": {
+                                  "type": "integer",
+                                  "const": 2
+                                },
+                                "previous_seal": {
+                                  "type": "string",
+                                  "pattern": "^([0-9a-f]{64})?$"
+                                },
+                                "seal": {
+                                  "type": "string",
+                                  "pattern": "^([0-9a-f]{64})?$"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "actors": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string",
+                          "maxLength": 256
+                        },
+                        "description": "Display names of actors on this page who are or were members of the Workspace, keyed by principal id"
+                      },
+                      "next_page_token": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "maxLength": 131
+                      },
+                      "since": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "until": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        }
+      }
+    }
   }
 }

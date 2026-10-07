@@ -311,6 +311,7 @@ func assertPostgreSQLResourceSharing(
 	)
 	assertNetworkAliasRanges(ctx, t, admin, runtimePool, session, providerScope, consumerScope)
 	assertAuditPartitionsAndStreams(ctx, t, admin, workerPool)
+	assertAuditHistory(ctx, t, admin, runtimePool, session, providerScope, consumerScope, foreignScope)
 }
 
 func assertExpiredUnprovisionedContractCleanup(

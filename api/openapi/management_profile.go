@@ -75,6 +75,7 @@ type consoleManagementProfile struct {
 	ShareTargetResolve     json.RawMessage            `json:"shareTargetResolve"`
 	NetworkAliasRanges     json.RawMessage            `json:"networkAliasRanges"`
 	NetworkAliasRangeEdit  json.RawMessage            `json:"networkAliasRangeUpdate"`
+	WorkspaceAuditEvents   json.RawMessage            `json:"workspaceAuditEvents"`
 }
 
 // ManagementDocument returns independently owned deterministic OpenAPI bytes.
@@ -134,7 +135,8 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.SessionWorkspaceSwitch, "post", "switchSessionWorkspace", true) &&
 		consoleCookieOperation(profile.ShareTargetResolve, "get", "resolveShareTarget", false) &&
 		consoleCookieOperation(profile.NetworkAliasRanges, "get", "getNetworkAliasRanges", false) &&
-		consoleCookieOperation(profile.NetworkAliasRangeEdit, "post", "updateNetworkAliasRanges", true)
+		consoleCookieOperation(profile.NetworkAliasRangeEdit, "post", "updateNetworkAliasRanges", true) &&
+		consoleCookieOperation(profile.WorkspaceAuditEvents, "get", "listWorkspaceAuditEvents", false)
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
 	}
@@ -233,6 +235,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths["/api/v1/workspaces/{workspace_id}/members"] = profile.WorkspaceMembers
 	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/alias-ranges"] = profile.NetworkAliasRanges
 	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/alias-ranges/actions/update"] = profile.NetworkAliasRangeEdit
+	consolePaths["/api/v1/workspaces/{workspace_id}/audit-events"] = profile.WorkspaceAuditEvents
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments"] = profile.WorkspaceRoleAssign
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke"] = profile.WorkspaceRoleRevoke
 	consolePaths[consoleSessionPreparePath] = profile.Prepare
