@@ -487,6 +487,7 @@ func Catalog() []Migration {
 		newMigration(118, "Workspace administrators export verifiable audit evidence", workspaceAuditExportSQL),
 		newMigration(119, "Workspace guardrails bound what rules and shares may open", workspaceGuardrailsSQL),
 		newMigration(120, "Network Device Groups and rules that select them", networkDeviceGroupsSQL),
+		newMigration(121, "Workspace Identity Groups and device tags", identityGroupsAndDeviceTagsSQL),
 	}
 }
 
@@ -626,3 +627,6 @@ var workspaceGuardrailsSQL string
 
 //go:embed 000120_network_device_groups.up.sql
 var networkDeviceGroupsSQL string
+
+//go:embed 000121_identity_groups_and_device_tags.up.sql
+var identityGroupsAndDeviceTagsSQL string

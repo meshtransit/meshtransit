@@ -259,7 +259,8 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		isWorkspaceCollectionPath(request) && request.Method == http.MethodPost ||
 		isNetworkCollectionPost(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
 		isNetworkAliasRangeOperation(request) || isAuditEventListRead(request) ||
-		isAuditEventExportRead(request) || isGuardrailOperation(request) || isDeviceGroupOperation(request)
+		isAuditEventExportRead(request) || isGuardrailOperation(request) || isDeviceGroupOperation(request) ||
+		isIdentityCatalogOperation(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
 	if !prepare && !logout && !managementScopes && !inventoryRead && !deploymentCapabilities && !device && !policy && !simulation &&
 		!approval && !accessGraph && !accessGraphList && !policyRead && !workspaceRename && !workspaceRoles && !resourceSharing {
@@ -464,7 +465,8 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	directoryRead := request.Method == http.MethodGet &&
 		(isWorkspaceRoleOperation(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
 			isNetworkAliasRangeRead(request) || isGuardrailRead(request))
-	auditRead := isAuditEventListRead(request) || isAuditEventExportRead(request) || isDeviceGroupRead(request)
+	auditRead := isAuditEventListRead(request) || isAuditEventExportRead(request) || isDeviceGroupRead(request) ||
+		isIdentityCatalogRead(request)
 	safeRead := approvalRead || managementScopeRead || inventoryRead || deploymentCapabilityRead || policyRead ||
 		accessGraphRead || resourceSharingRead || directoryRead || auditRead
 	if request.Method == http.MethodGet && !safeRead {

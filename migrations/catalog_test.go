@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 120 {
-		t.Fatalf("len(Catalog()) = %d, want 120", len(catalog))
+	if len(catalog) != 121 {
+		t.Fatalf("len(Catalog()) = %d, want 121", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 120 {
-		t.Fatalf("LatestVersion() = %d, want 120", LatestVersion())
+	if LatestVersion() != 121 {
+		t.Fatalf("LatestVersion() = %d, want 121", LatestVersion())
 	}
 }
 
@@ -2892,5 +2892,33 @@ func TestNetworkDeviceGroups(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "GRANT SELECT") {
 		t.Error("schema 120 must not grant direct table access")
+	}
+}
+
+func TestIdentityGroupsAndDeviceTags(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[120]
+	if migration.Version != 121 {
+		t.Fatalf("migration 121 = %+v", migration)
+	}
+	for _, required := range []string{
+		"mesh_audit.capture_authority_mutation('identity_group', 'public_id')",
+		"mesh_audit.capture_authority_mutation('identity_group_member', 'public_id')",
+		"mesh_audit.capture_authority_mutation('device_tag', 'public_id')",
+		"mesh_audit.capture_authority_mutation('device_tag_owner', 'public_id')",
+		"mesh_audit.capture_authority_mutation('device_tag_assignment', 'public_id')",
+		"'identity_group.manage', p_evaluated_at",
+		"'device_tag.manage', p_evaluated_at",
+		"ERRCODE = 'MTI05'",
+		"ERRCODE = 'MTT05'",
+		"v_device.owner_principal_id <> v_principal AND NOT v_manage_devices",
+		"GRANT EXECUTE ON FUNCTION mesh_audit.lock_workspace_network_stream_head_v1(UUID) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 121 missing %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "GRANT SELECT") {
+		t.Error("schema 121 must not grant direct table access")
 	}
 }

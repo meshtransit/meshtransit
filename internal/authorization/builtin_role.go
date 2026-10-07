@@ -55,7 +55,8 @@ var builtinRoleCatalog = map[BuiltinRole]builtinRoleDefinition{
 		permissions: permissionsOf(
 			"workspace.read", "workspace.update", "network.create",
 			"member.read", "member.invite", "member.manage",
-			"identity_provider.manage", "identity_group.manage",
+			"identity_provider.manage", "identity_group.manage", "identity_group.read",
+			"device_tag.read", "device_tag.manage",
 			"role_definition.read", "role_binding.read", "role_binding.manage",
 			"approval_policy.manage", "access_review.manage", "support.grant.read",
 			"billing.read", "billing.manage",
@@ -81,6 +82,7 @@ var builtinRoleCatalog = map[BuiltinRole]builtinRoleDefinition{
 		assignableBy:        []RoleAssigner{RoleAssignerOwner, RoleAssignerAdmin, RoleAssignerITAdmin},
 		permissions: permissionsOf(
 			"workspace.read", "network.create", "member.read", "role_binding.read",
+			"identity_group.read", "device_tag.read",
 			"isolation.read", "guardrail.read", "audit.read",
 			"network.read", "network.update", "dns.manage",
 			"device.read", "device_group.read", "device_group.manage", "device_group.members.manage",
@@ -98,7 +100,8 @@ var builtinRoleCatalog = map[BuiltinRole]builtinRoleDefinition{
 		assignableBy:        []RoleAssigner{RoleAssignerOwner, RoleAssignerAdmin, RoleAssignerITAdmin},
 		permissions: permissionsOf(
 			"workspace.read", "member.read", "member.invite", "member.manage",
-			"identity_provider.manage", "identity_group.manage",
+			"identity_provider.manage", "identity_group.manage", "identity_group.read",
+			"device_tag.read", "device_tag.manage",
 			"role_definition.read", "role_binding.read", "role_binding.manage", "access_review.manage",
 			"isolation.read", "guardrail.read", "audit.read",
 			"network.read", "device.read", "device.manage", "device.transfer", "device.quarantine",
@@ -121,6 +124,7 @@ var builtinRoleCatalog = map[BuiltinRole]builtinRoleDefinition{
 		permissions: permissionsOf(
 			"workspace.read", "member.read", "role_definition.read", "role_binding.read",
 			"support.grant.read", "billing.read", "isolation.read", "guardrail.read",
+			"identity_group.read", "device_tag.read",
 			"audit.read", "audit.export",
 			"network.read", "device.read", "enrollment_profile.read", "device_group.read",
 			"policy.read", "policy.validate", "policy.explain", "route.read", "connector.read",
@@ -132,6 +136,7 @@ var builtinRoleCatalog = map[BuiltinRole]builtinRoleDefinition{
 		permissions: permissionsOf(
 			"workspace.read", "member.read", "role_definition.read", "role_binding.read",
 			"isolation.read", "guardrail.read", "guardrail.manage", "guardrail.weaken",
+			"identity_group.read", "device_tag.read",
 			"audit.read", "audit.export",
 			"network.read", "device.read", "policy.read", "policy.explain",
 			"resource.read", "resource_group.read", "share.read",

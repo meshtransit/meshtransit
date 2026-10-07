@@ -83,6 +83,8 @@ type privateIdentityPorts struct {
 	AuditExports          httpapi.AuditExporter
 	Guardrails            httpapi.GuardrailManager
 	DeviceGroups          httpapi.DeviceGroupManager
+	IdentityGroups        httpapi.IdentityGroupManager
+	DeviceTags            httpapi.DeviceTagManager
 	SessionWorkspaces     httpapi.SessionWorkspaceSelector
 	ShareTargets          httpapi.ShareTargetResolver
 	PolicyApprovals       httpapi.PolicyApprovalWorkflow
@@ -192,6 +194,8 @@ func composePrivateIdentity(
 		AuditExports:          ports.AuditExports,
 		Guardrails:            ports.Guardrails,
 		DeviceGroups:          ports.DeviceGroups,
+		IdentityGroups:        ports.IdentityGroups,
+		DeviceTags:            ports.DeviceTags,
 		SessionWorkspaces:     ports.SessionWorkspaces,
 		ShareTargets:          ports.ShareTargets,
 		PolicyApprovals:       ports.PolicyApprovals,

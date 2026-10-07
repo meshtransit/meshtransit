@@ -11,8 +11,8 @@ func TestPermissions(t *testing.T) {
 	t.Parallel()
 
 	permissions := authorization.Permissions()
-	if len(permissions) != 74 {
-		t.Fatalf("len(Permissions()) = %d, want 74", len(permissions))
+	if len(permissions) != 77 {
+		t.Fatalf("len(Permissions()) = %d, want 77", len(permissions))
 	}
 	permissionPattern := regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*$`)
 	seen := make(map[authorization.Permission]struct{}, len(permissions))

@@ -17,8 +17,9 @@ const (
 	// ManagementProfileConsoleCookiePrivateV1 is disabled private source preparation.
 	// Rendering it mounts no handler or documentation endpoint and enables no SSO.
 	ManagementProfileConsoleCookiePrivateV1 ManagementProfile = "console-cookie-csrf-private-v1"
-	// Bounds every compiled document; the composed Console contract is ~260 KiB.
-	maximumManagementDocumentBytes     = 384 << 10
+	// Bounds every compiled document; the composed Console contract is ~420 KiB
+	// indented since schema 121 added user groups and device tags.
+	maximumManagementDocumentBytes     = 512 << 10
 	consoleSessionPreparePath          = "/auth/v1/session/prepare"
 	consoleSessionLogoutPath           = "/auth/v1/session/logout"
 	consoleSessionManagementScopesPath = "/auth/v1/session/management-scopes"
@@ -53,40 +54,52 @@ var managementV1Contract string
 var consolePrivateProfile string
 
 type consoleManagementProfile struct {
-	ID                     ManagementProfile          `json:"id"`
-	Format                 string                     `json:"format"`
-	Description            string                     `json:"description"`
-	SecuritySchemes        map[string]json.RawMessage `json:"securitySchemes"`
-	Parameters             map[string]json.RawMessage `json:"parameters"`
-	Schemas                map[string]json.RawMessage `json:"schemas"`
-	Prepare                json.RawMessage            `json:"prepare"`
-	Logout                 json.RawMessage            `json:"logout"`
-	ManagementScopes       json.RawMessage            `json:"managementScopes"`
-	DeploymentCapabilities json.RawMessage            `json:"deploymentCapabilities"`
-	DeviceInventory        json.RawMessage            `json:"deviceInventory"`
-	WorkspaceRename        json.RawMessage            `json:"workspaceRename"`
-	WorkspaceMembers       json.RawMessage            `json:"workspaceMembers"`
-	WorkspaceRoleAssign    json.RawMessage            `json:"workspaceRoleAssign"`
-	WorkspaceRoleRevoke    json.RawMessage            `json:"workspaceRoleRevoke"`
-	WorkspaceCreate        json.RawMessage            `json:"workspaceCreate"`
-	NetworkCreate          json.RawMessage            `json:"networkCreate"`
-	SessionWorkspaces      json.RawMessage            `json:"sessionWorkspaces"`
-	SessionWorkspaceSwitch json.RawMessage            `json:"sessionWorkspaceSwitch"`
-	ShareTargetResolve     json.RawMessage            `json:"shareTargetResolve"`
-	NetworkAliasRanges     json.RawMessage            `json:"networkAliasRanges"`
-	NetworkAliasRangeEdit  json.RawMessage            `json:"networkAliasRangeUpdate"`
-	WorkspaceAuditEvents   json.RawMessage            `json:"workspaceAuditEvents"`
-	WorkspaceAuditExport   json.RawMessage            `json:"workspaceAuditExport"`
-	WorkspaceGuardrails    json.RawMessage            `json:"workspaceGuardrails"`
-	GuardrailCreate        json.RawMessage            `json:"workspaceGuardrailCreate"`
-	GuardrailUpdate        json.RawMessage            `json:"workspaceGuardrailUpdate"`
-	GuardrailDelete        json.RawMessage            `json:"workspaceGuardrailDelete"`
-	DeviceGroups           json.RawMessage            `json:"networkDeviceGroups"`
-	DeviceGroupCreate      json.RawMessage            `json:"networkDeviceGroupCreate"`
-	DeviceGroupMembers     json.RawMessage            `json:"networkDeviceGroupMembers"`
-	DeviceGroupUpdate      json.RawMessage            `json:"networkDeviceGroupUpdate"`
-	DeviceGroupDelete      json.RawMessage            `json:"networkDeviceGroupDelete"`
-	DeviceGroupMembership  json.RawMessage            `json:"networkDeviceGroupChangeMembers"`
+	ID                      ManagementProfile          `json:"id"`
+	Format                  string                     `json:"format"`
+	Description             string                     `json:"description"`
+	SecuritySchemes         map[string]json.RawMessage `json:"securitySchemes"`
+	Parameters              map[string]json.RawMessage `json:"parameters"`
+	Schemas                 map[string]json.RawMessage `json:"schemas"`
+	Prepare                 json.RawMessage            `json:"prepare"`
+	Logout                  json.RawMessage            `json:"logout"`
+	ManagementScopes        json.RawMessage            `json:"managementScopes"`
+	DeploymentCapabilities  json.RawMessage            `json:"deploymentCapabilities"`
+	DeviceInventory         json.RawMessage            `json:"deviceInventory"`
+	WorkspaceRename         json.RawMessage            `json:"workspaceRename"`
+	WorkspaceMembers        json.RawMessage            `json:"workspaceMembers"`
+	WorkspaceRoleAssign     json.RawMessage            `json:"workspaceRoleAssign"`
+	WorkspaceRoleRevoke     json.RawMessage            `json:"workspaceRoleRevoke"`
+	WorkspaceCreate         json.RawMessage            `json:"workspaceCreate"`
+	NetworkCreate           json.RawMessage            `json:"networkCreate"`
+	SessionWorkspaces       json.RawMessage            `json:"sessionWorkspaces"`
+	SessionWorkspaceSwitch  json.RawMessage            `json:"sessionWorkspaceSwitch"`
+	ShareTargetResolve      json.RawMessage            `json:"shareTargetResolve"`
+	NetworkAliasRanges      json.RawMessage            `json:"networkAliasRanges"`
+	NetworkAliasRangeEdit   json.RawMessage            `json:"networkAliasRangeUpdate"`
+	WorkspaceAuditEvents    json.RawMessage            `json:"workspaceAuditEvents"`
+	WorkspaceAuditExport    json.RawMessage            `json:"workspaceAuditExport"`
+	WorkspaceGuardrails     json.RawMessage            `json:"workspaceGuardrails"`
+	GuardrailCreate         json.RawMessage            `json:"workspaceGuardrailCreate"`
+	GuardrailUpdate         json.RawMessage            `json:"workspaceGuardrailUpdate"`
+	GuardrailDelete         json.RawMessage            `json:"workspaceGuardrailDelete"`
+	DeviceGroups            json.RawMessage            `json:"networkDeviceGroups"`
+	DeviceGroupCreate       json.RawMessage            `json:"networkDeviceGroupCreate"`
+	DeviceGroupMembers      json.RawMessage            `json:"networkDeviceGroupMembers"`
+	DeviceGroupUpdate       json.RawMessage            `json:"networkDeviceGroupUpdate"`
+	DeviceGroupDelete       json.RawMessage            `json:"networkDeviceGroupDelete"`
+	DeviceGroupMembership   json.RawMessage            `json:"networkDeviceGroupChangeMembers"`
+	IdentityGroups          json.RawMessage            `json:"workspaceIdentityGroups"`
+	IdentityGroupCreate     json.RawMessage            `json:"workspaceIdentityGroupCreate"`
+	IdentityGroupMembers    json.RawMessage            `json:"workspaceIdentityGroupMembers"`
+	IdentityGroupUpdate     json.RawMessage            `json:"workspaceIdentityGroupUpdate"`
+	IdentityGroupDelete     json.RawMessage            `json:"workspaceIdentityGroupDelete"`
+	IdentityGroupMembership json.RawMessage            `json:"workspaceIdentityGroupChangeMembers"`
+	DeviceTags              json.RawMessage            `json:"workspaceDeviceTags"`
+	DeviceTagCreate         json.RawMessage            `json:"workspaceDeviceTagCreate"`
+	DeviceTagUpdate         json.RawMessage            `json:"workspaceDeviceTagUpdate"`
+	DeviceTagDelete         json.RawMessage            `json:"workspaceDeviceTagDelete"`
+	NetworkDeviceTags       json.RawMessage            `json:"networkDeviceTags"`
+	NetworkDeviceTagChange  json.RawMessage            `json:"networkDeviceChangeTags"`
 }
 
 // ManagementDocument returns independently owned deterministic OpenAPI bytes.
@@ -158,7 +171,19 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.DeviceGroupMembers, "get", "listNetworkDeviceGroupMembers", false) &&
 		consoleCookieOperation(profile.DeviceGroupUpdate, "post", "updateNetworkDeviceGroup", true) &&
 		consoleCookieOperation(profile.DeviceGroupDelete, "post", "deleteNetworkDeviceGroup", true) &&
-		consoleCookieOperation(profile.DeviceGroupMembership, "post", "changeNetworkDeviceGroupMembers", true)
+		consoleCookieOperation(profile.DeviceGroupMembership, "post", "changeNetworkDeviceGroupMembers", true) &&
+		consoleCookieOperation(profile.IdentityGroups, "get", "listWorkspaceIdentityGroups", false) &&
+		consoleCookieOperation(profile.IdentityGroupCreate, "post", "createWorkspaceIdentityGroup", true) &&
+		consoleCookieOperation(profile.IdentityGroupMembers, "get", "listWorkspaceIdentityGroupMembers", false) &&
+		consoleCookieOperation(profile.IdentityGroupUpdate, "post", "updateWorkspaceIdentityGroup", true) &&
+		consoleCookieOperation(profile.IdentityGroupDelete, "post", "deleteWorkspaceIdentityGroup", true) &&
+		consoleCookieOperation(profile.IdentityGroupMembership, "post", "changeWorkspaceIdentityGroupMembers", true) &&
+		consoleCookieOperation(profile.DeviceTags, "get", "listWorkspaceDeviceTags", false) &&
+		consoleCookieOperation(profile.DeviceTagCreate, "post", "createWorkspaceDeviceTag", true) &&
+		consoleCookieOperation(profile.DeviceTagUpdate, "post", "updateWorkspaceDeviceTag", true) &&
+		consoleCookieOperation(profile.DeviceTagDelete, "post", "deleteWorkspaceDeviceTag", true) &&
+		consoleCookieOperation(profile.NetworkDeviceTags, "get", "listNetworkDeviceTags", false) &&
+		consoleCookieOperation(profile.NetworkDeviceTagChange, "post", "changeNetworkDeviceTags", true)
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
 	}
@@ -270,6 +295,21 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths[deviceGroups+"/{group_id}/actions/update"] = profile.DeviceGroupUpdate
 	consolePaths[deviceGroups+"/{group_id}/actions/delete"] = profile.DeviceGroupDelete
 	consolePaths[deviceGroups+"/{group_id}/actions/change-members"] = profile.DeviceGroupMembership
+	identityGroups := "/api/v1/workspaces/{workspace_id}/identity-groups"
+	consolePaths[identityGroups] = profile.IdentityGroups
+	consolePaths[identityGroups+"/actions/create"] = profile.IdentityGroupCreate
+	consolePaths[identityGroups+"/{group_id}/members"] = profile.IdentityGroupMembers
+	consolePaths[identityGroups+"/{group_id}/actions/update"] = profile.IdentityGroupUpdate
+	consolePaths[identityGroups+"/{group_id}/actions/delete"] = profile.IdentityGroupDelete
+	consolePaths[identityGroups+"/{group_id}/actions/change-members"] = profile.IdentityGroupMembership
+	deviceTags := "/api/v1/workspaces/{workspace_id}/device-tags"
+	consolePaths[deviceTags] = profile.DeviceTags
+	consolePaths[deviceTags+"/actions/create"] = profile.DeviceTagCreate
+	consolePaths[deviceTags+"/{tag_id}/actions/update"] = profile.DeviceTagUpdate
+	consolePaths[deviceTags+"/{tag_id}/actions/delete"] = profile.DeviceTagDelete
+	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-tags"] = profile.NetworkDeviceTags
+	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/change-tags"] =
+		profile.NetworkDeviceTagChange
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments"] = profile.WorkspaceRoleAssign
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke"] = profile.WorkspaceRoleRevoke
 	consolePaths[consoleSessionPreparePath] = profile.Prepare

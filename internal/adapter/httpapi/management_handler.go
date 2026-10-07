@@ -253,7 +253,11 @@ type ManagementHandlerOptions struct {
 	// Guardrails lists and changes Workspace guardrails; nil answers 503.
 	Guardrails GuardrailManager
 	// DeviceGroups lists and changes Network Device Groups; nil answers 503.
-	DeviceGroups              DeviceGroupManager
+	DeviceGroups DeviceGroupManager
+	// IdentityGroups lists and changes Workspace Identity Groups; nil answers 503.
+	IdentityGroups IdentityGroupManager
+	// DeviceTags lists and changes the device tag catalog and Device tags; nil answers 503.
+	DeviceTags                DeviceTagManager
 	PolicyApprovals           PolicyApprovalWorkflow
 	PolicyApprovalCatalog     PolicyApprovalCatalog
 	ResourceCreations         ResourceCreator
@@ -296,6 +300,8 @@ type ManagementHandler struct {
 	auditExports              AuditExporter
 	guardrails                GuardrailManager
 	deviceGroups              DeviceGroupManager
+	identityGroups            IdentityGroupManager
+	deviceTags                DeviceTagManager
 	policyApprovals           PolicyApprovalWorkflow
 	policyApprovalCatalog     PolicyApprovalCatalog
 	resourceCreations         ResourceCreator
@@ -361,6 +367,8 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		auditExports:              options.AuditExports,
 		guardrails:                options.Guardrails,
 		deviceGroups:              options.DeviceGroups,
+		identityGroups:            options.IdentityGroups,
+		deviceTags:                options.DeviceTags,
 		policyApprovals:           options.PolicyApprovals,
 		policyApprovalCatalog:     options.PolicyApprovalCatalog,
 		resourceCreations:         options.ResourceCreations,
@@ -467,11 +475,12 @@ func (handler *ManagementHandler) serveHTTP(
 	auditExportPath, auditExportMatched := parseAuditEventExportPath(request)
 	guardrailPathValue, guardrailMatched := parseGuardrailPath(request)
 	deviceGroupPathValue, deviceGroupMatched := parseDeviceGroupPath(request)
+	identityCatalogPathValue, identityCatalogMatched := parseIdentityCatalogPath(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
 		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
 		!shareTargetMatched && !aliasRangeMatched && !auditEventMatched &&
-		!auditExportMatched && !guardrailMatched && !deviceGroupMatched {
+		!auditExportMatched && !guardrailMatched && !deviceGroupMatched && !identityCatalogMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -503,6 +512,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = guardrailPathValue.operation(request.Method)
 	} else if deviceGroupMatched {
 		operation = deviceGroupPathValue.operation()
+	} else if identityCatalogMatched {
+		operation = identityCatalogPathValue.operation()
 	} else if deviceMatched {
 		operation = deviceRevokeOperation
 	} else if policyMatched {
@@ -543,6 +554,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = guardrailPathValue.allowedMethod(request.Method)
 	} else if deviceGroupMatched {
 		allowedMethod = deviceGroupPathValue.allowedMethod()
+	} else if identityCatalogMatched {
+		allowedMethod = identityCatalogPathValue.allowedMethod()
 	}
 	if allowedMethod == "" || request.Method != allowedMethod {
 		if policyApprovalMatched && policyApprovalPath.isCollection() {
@@ -650,6 +663,11 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if deviceGroupMatched {
 		resultCode = handler.handleDeviceGroups(ctx, response, request, correlationID, deviceGroupPathValue, session)
+		return
+	}
+	if identityCatalogMatched {
+		resultCode = handler.handleIdentityCatalog(ctx, response, request, correlationID, identityCatalogPathValue,
+			session)
 		return
 	}
 	if policyMatched {

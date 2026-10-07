@@ -52,6 +52,12 @@ const (
 	PermissionIdentityProviderManage Permission = "identity_provider.manage"
 	// PermissionIdentityGroupManage changes workspace identity groups.
 	PermissionIdentityGroupManage Permission = "identity_group.manage"
+	// PermissionIdentityGroupRead reads workspace identity groups.
+	PermissionIdentityGroupRead Permission = "identity_group.read"
+	// PermissionDeviceTagRead reads the workspace device tag catalog.
+	PermissionDeviceTagRead Permission = "device_tag.read"
+	// PermissionDeviceTagManage changes the device tag catalog and applies any tag.
+	PermissionDeviceTagManage Permission = "device_tag.manage"
 
 	// PermissionRoleDefinitionRead reads role definitions.
 	PermissionRoleDefinitionRead Permission = "role_definition.read"
@@ -250,5 +256,8 @@ func Permissions() []Permission {
 		PermissionBillingManage,
 		PermissionResourceTransfer,
 		PermissionResourceGroupTransfer,
+		PermissionIdentityGroupRead,
+		PermissionDeviceTagRead,
+		PermissionDeviceTagManage,
 	}
 }

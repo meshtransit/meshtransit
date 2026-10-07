@@ -198,7 +198,7 @@ func isBrowserManagementOperation(request *http.Request) bool {
 		isWorkspaceCollectionPath(request) && request.Method == http.MethodPost || isNetworkCollectionPost(request) ||
 		isSessionWorkspaceOperation(request) || isShareTargetRead(request) || isNetworkAliasRangeOperation(request) ||
 		isAuditEventListRead(request) || isAuditEventExportRead(request) || isGuardrailOperation(request) ||
-		isDeviceGroupOperation(request) {
+		isDeviceGroupOperation(request) || isIdentityCatalogOperation(request) {
 		return true
 	}
 	_, device := parseDeviceRevokePath(request)
@@ -258,7 +258,8 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 	accessGraphRead := accessGraphListed && request.Method == http.MethodGet
 	return callback || approvalList || managementScopes || inventoryRead || deploymentCapabilities || registrationRead ||
 		resourceSharingCollectionRead || accessGraphRead || isAuditEventListRead(request) ||
-		isAuditEventExportRead(request) || isDeviceGroupRead(request) || target.RawQuery == ""
+		isAuditEventExportRead(request) || isDeviceGroupRead(request) || isIdentityCatalogRead(request) ||
+		target.RawQuery == ""
 }
 
 // MetricsCollector permits private root registration only, never a public endpoint.
