@@ -82,7 +82,7 @@ FROM mesh_ops.attach_policy_resource_group_destinations(
     $3::JSONB
 )`
 
-const attachPolicyGroupRulesSQL = `SELECT mesh_ops.attach_policy_group_rules_v1(
+const attachPolicyGroupRulesSQL = `SELECT mesh_ops.attach_policy_group_rules_v2(
     $1::UUID,
     $2::TIMESTAMPTZ,
     $3::JSONB

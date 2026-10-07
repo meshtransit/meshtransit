@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
-	"github.com/meshtransit/meshtransit/internal/devicegroup"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/policy/publication"
@@ -36,11 +35,11 @@ func newResult(baseline Baseline, proposed publication.Candidate) (Result, error
 		return Result{}, ErrInvalidResult
 	}
 
-	currentRules, err := resolvedRules(baseline.candidate, baseline.groupMembers)
+	currentRules, err := resolvedRules(baseline.candidate, baseline.selectorMembers)
 	if err != nil {
 		return Result{}, err
 	}
-	proposedRules, err := resolvedRules(proposed, baseline.groupMembers)
+	proposedRules, err := resolvedRules(proposed, baseline.selectorMembers)
 	if err != nil {
 		return Result{}, err
 	}
@@ -132,28 +131,19 @@ func candidateInputsWithin(
 // resolvedRules is the candidate's Device pairs plus its group rules
 // resolved from the baseline membership. A group the baseline does not know
 // changed since the baseline was read.
-func resolvedRules(candidate publication.Candidate, members map[devicegroup.ID][]node.ID) ([]policy.Rule, error) {
+func resolvedRules(candidate publication.Candidate, members map[publication.RuleSide][]node.ID) ([]policy.Rule, error) {
 	rules := candidate.Snapshot().Rules()
 	scope := candidate.Snapshot().Scope()
-	side := func(device node.ID, group devicegroup.ID) ([]node.ID, error) {
-		if !group.IsValid() {
-			return []node.ID{device}, nil
+	// A selector with no live Device is absent from members: it selects none.
+	side := func(selected publication.RuleSide) []node.ID {
+		if selected.Kind() == publication.SideDevice {
+			return []node.ID{node.ID(selected.ID())}
 		}
-		devices, known := members[group]
-		if !known {
-			return nil, ErrStaleInputs
-		}
-		return devices, nil
+		return members[selected]
 	}
 	for _, groupRule := range candidate.GroupRules() {
-		sources, err := side(groupRule.SourceNodeID(), groupRule.SourceGroupID())
-		if err != nil {
-			return nil, err
-		}
-		destinations, err := side(groupRule.DestinationNodeID(), groupRule.DestinationGroupID())
-		if err != nil {
-			return nil, err
-		}
+		sources := side(groupRule.Source())
+		destinations := side(groupRule.Destination())
 		if len(rules)+len(sources)*len(destinations) > MaximumResolvedRelationships {
 			return nil, ErrTooLarge
 		}

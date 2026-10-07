@@ -139,6 +139,15 @@ func newExplainedPolicyPaths(paths []accessgraph.Path) []explainedPolicyPath {
 		if path.DestinationDeviceGroupID().IsValid() {
 			rendered[index].DestinationDeviceGroupID = path.DestinationDeviceGroupID().String()
 		}
+		if path.SourceIdentityGroupID().IsValid() {
+			rendered[index].SourceIdentityGroupID = path.SourceIdentityGroupID().String()
+		}
+		if path.SourceTagID().IsValid() {
+			rendered[index].SourceDeviceTagID = path.SourceTagID().String()
+		}
+		if path.DestinationTagID().IsValid() {
+			rendered[index].DestinationDeviceTagID = path.DestinationTagID().String()
+		}
 	}
 	return rendered
 }

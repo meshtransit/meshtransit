@@ -104,6 +104,9 @@ func activePolicyProjection(snapshot catalog.Snapshot) activePolicyData {
 		if rule.DestinationDeviceGroupID().IsValid() {
 			kind, selector = "device_group", rule.DestinationDeviceGroupID().String()
 		}
+		if rule.DestinationTagID().IsValid() {
+			kind, selector = "device_tag", rule.DestinationTagID().String()
+		}
 		if rule.DestinationResourceID().IsValid() {
 			kind, selector = "resource", rule.DestinationResourceID().String()
 		}
@@ -118,8 +121,13 @@ func activePolicyProjection(snapshot catalog.Snapshot) activePolicyData {
 			destination = item.DestinationNodeID.String()
 		}
 		sourceKind, sourceSelector, sourceDevice := "device", rule.SourceNodeID().String(), rule.SourceNodeID().String()
-		if rule.SourceGroupID().IsValid() {
+		switch {
+		case rule.SourceGroupID().IsValid():
 			sourceKind, sourceSelector, sourceDevice = "device_group", rule.SourceGroupID().String(), ""
+		case rule.SourceIdentityGroupID().IsValid():
+			sourceKind, sourceSelector, sourceDevice = "identity_group", rule.SourceIdentityGroupID().String(), ""
+		case rule.SourceTagID().IsValid():
+			sourceKind, sourceSelector, sourceDevice = "device_tag", rule.SourceTagID().String(), ""
 		}
 		data.Rules = append(data.Rules, activePolicyRule{ID: rule.ID().String(), SourceDeviceID: sourceDevice, SourceKind: sourceKind, SourceSelectorID: sourceSelector, DestinationDeviceID: destination, Protocol: rule.Protocol().String(), DestinationPortRanges: activePolicyPorts(rule.DestinationPortRanges()), SelectorKind: kind, DestinationSelectorID: selector})
 	}

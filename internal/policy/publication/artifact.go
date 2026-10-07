@@ -513,9 +513,8 @@ func hashCandidate(candidate Candidate) SemanticHash {
 		for _, rule := range candidate.groupRules {
 			ruleID := publicid.ID(rule.ruleID).Bytes()
 			encoded = append(encoded, ruleID[:]...)
-			encoded = appendGroupRuleSide(encoded, publicid.ID(rule.sourceNodeID), publicid.ID(rule.sourceGroupID))
-			encoded = appendGroupRuleSide(encoded, publicid.ID(rule.destinationNodeID),
-				publicid.ID(rule.destinationGroupID))
+			encoded = appendGroupRuleSide(encoded, rule.source)
+			encoded = appendGroupRuleSide(encoded, rule.destination)
 			encoded = append(encoded, byte(rule.protocol))
 			encoded = appendUint64(encoded, uint64(len(rule.destinationPortRanges)))
 			for _, portRange := range rule.destinationPortRanges {
@@ -527,15 +526,12 @@ func hashCandidate(candidate Candidate) SemanticHash {
 	return SemanticHash(sha256.Sum256(encoded))
 }
 
-// appendGroupRuleSide tags a rule side as a Device (1) or a Device Group (2)
-// before its identity, so a Device and a group with equal bytes differ.
-func appendGroupRuleSide(output []byte, device, group publicid.ID) []byte {
-	if group.IsValid() {
-		groupID := group.Bytes()
-		return append(append(output, 2), groupID[:]...)
-	}
-	deviceID := device.Bytes()
-	return append(append(output, 1), deviceID[:]...)
+// appendGroupRuleSide tags a rule side with its kind (Device 1, Device
+// Group 2, Identity Group 3, tag 4) before its identity, so selectors with
+// equal bytes differ. Kinds 1 and 2 keep the encoding of schema 120.
+func appendGroupRuleSide(output []byte, side RuleSide) []byte {
+	id := side.id.Bytes()
+	return append(append(output, byte(side.kind)), id[:]...)
 }
 
 func appendUint16(output []byte, value uint16) []byte {

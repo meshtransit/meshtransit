@@ -12,11 +12,14 @@ import (
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
 	"github.com/meshtransit/meshtransit/internal/accessgraph/simulation"
 	"github.com/meshtransit/meshtransit/internal/devicegroup"
+	"github.com/meshtransit/meshtransit/internal/devicetag"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/identitygroup"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/policy/publication"
+	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/resource"
 	"github.com/meshtransit/meshtransit/internal/sharing"
 )
@@ -167,7 +170,7 @@ func (store *PolicySimulationStore) readSimulationBaselineOnce(
 		len(record.GroupRules) > policy.MaximumRules {
 		return simulation.Baseline{}, simulation.ErrInvalidBaseline
 	}
-	if err := json.Unmarshal([]byte(groupMembers), &record.GroupMembers); err != nil {
+	if err := json.Unmarshal([]byte(groupMembers), &record.SelectorMembers); err != nil {
 		return simulation.Baseline{}, simulation.ErrInvalidBaseline
 	}
 	baseline, err = record.baseline(scope)
@@ -196,20 +199,31 @@ type policySimulationBaselineRecord struct {
 	SemanticHash          []byte
 	Rules                 []policyPublicationRulePayload
 	GroupRules            []policyGroupRulePayload
-	GroupMembers          []struct {
-		GroupID   string   `json:"group_id"`
-		DeviceIDs []string `json:"device_ids"`
+	SelectorMembers       []struct {
+		Kind       string   `json:"kind"`
+		SelectorID string   `json:"selector_id"`
+		DeviceIDs  []string `json:"device_ids"`
 	}
 }
 
-func (record policySimulationBaselineRecord) groupMembers() (map[devicegroup.ID][]node.ID, error) {
-	members := make(map[devicegroup.ID][]node.ID, len(record.GroupMembers))
-	for _, item := range record.GroupMembers {
-		id, err := devicegroup.ParseID(item.GroupID)
-		if err != nil || item.DeviceIDs == nil {
+var selectorKinds = map[string]publication.SideKind{
+	"device_group": publication.SideDeviceGroup, "identity_group": publication.SideIdentityGroup,
+	"device_tag": publication.SideDeviceTag,
+}
+
+func (record policySimulationBaselineRecord) selectorMembers() (map[publication.RuleSide][]node.ID, error) {
+	members := make(map[publication.RuleSide][]node.ID, len(record.SelectorMembers))
+	for _, item := range record.SelectorMembers {
+		kind, known := selectorKinds[item.Kind]
+		id, err := publicid.Parse(item.SelectorID)
+		if !known || err != nil || item.DeviceIDs == nil {
 			return nil, simulation.ErrInvalidBaseline
 		}
-		if _, duplicate := members[id]; duplicate {
+		side, err := publication.NewRuleSide(kind, id)
+		if err != nil {
+			return nil, simulation.ErrInvalidBaseline
+		}
+		if _, duplicate := members[side]; duplicate {
 			return nil, simulation.ErrInvalidBaseline
 		}
 		devices := make([]node.ID, len(item.DeviceIDs))
@@ -218,7 +232,7 @@ func (record policySimulationBaselineRecord) groupMembers() (map[devicegroup.ID]
 				return nil, simulation.ErrInvalidBaseline
 			}
 		}
-		members[id] = devices
+		members[side] = devices
 	}
 	return members, nil
 }
@@ -248,10 +262,29 @@ func decodePolicyGroupRules(payloads []policyGroupRulePayload) ([]publication.Gr
 			*target = value
 			return parseErr
 		}
+		parseIdentity := func(text string, target *identitygroup.ID) error {
+			if text == "" {
+				return nil
+			}
+			value, parseErr := identitygroup.ParseID(text)
+			*target = value
+			return parseErr
+		}
+		parseTag := func(text string, target *devicetag.ID) error {
+			if text == "" {
+				return nil
+			}
+			value, parseErr := devicetag.ParseID(text)
+			*target = value
+			return parseErr
+		}
 		if errors.Join(parse(payload.SourceNodePublicID, &params.SourceNodeID),
 			parseGroup(payload.SourceDeviceGroupPublicID, &params.SourceGroupID),
+			parseIdentity(payload.SourceIdentityGroupPublicID, &params.SourceIdentityGroupID),
+			parseTag(payload.SourceDeviceTagPublicID, &params.SourceTagID),
 			parse(payload.DestinationNodePublicID, &params.DestinationNodeID),
-			parseGroup(payload.DestinationDeviceGroupPublicID, &params.DestinationGroupID)) != nil {
+			parseGroup(payload.DestinationDeviceGroupPublicID, &params.DestinationGroupID),
+			parseTag(payload.DestinationDeviceTagPublicID, &params.DestinationTagID)) != nil {
 			return nil, simulation.ErrInvalidBaseline
 		}
 		for index := range payload.PortRangeFirst {
@@ -312,12 +345,12 @@ func (record policySimulationBaselineRecord) baseline(
 			return simulation.Baseline{}, simulation.ErrInvalidBaseline
 		}
 		candidate, candidateErr := publication.NewCandidate(snapshot, 1)
-		members, membersErr := record.groupMembers()
+		members, membersErr := record.selectorMembers()
 		if candidateErr != nil || membersErr != nil || len(record.GroupRules) != 0 {
 			return simulation.Baseline{}, simulation.ErrInvalidBaseline
 		}
 		return simulation.NewBaseline(simulation.BaselineParams{
-			Scope: scope, RevisionVector: vector, Candidate: candidate, GroupMembers: members,
+			Scope: scope, RevisionVector: vector, Candidate: candidate, SelectorMembers: members,
 		})
 	}
 	if record.ReleaseID == nil || record.CompilerFormatVersion == nil ||
@@ -352,7 +385,7 @@ func (record policySimulationBaselineRecord) baseline(
 			return simulation.Baseline{}, fmt.Errorf("reconstruct group rules: %w", simulation.ErrInvalidBaseline)
 		}
 	}
-	members, err := record.groupMembers()
+	members, err := record.selectorMembers()
 	if err != nil {
 		return simulation.Baseline{}, err
 	}
@@ -361,7 +394,7 @@ func (record policySimulationBaselineRecord) baseline(
 	}
 	return simulation.NewBaseline(simulation.BaselineParams{
 		Scope: scope, RevisionVector: vector, HasActiveRelease: true,
-		ReleaseID: releaseID, SemanticHash: semanticHash, Candidate: candidate, GroupMembers: members,
+		ReleaseID: releaseID, SemanticHash: semanticHash, Candidate: candidate, SelectorMembers: members,
 	})
 }
 

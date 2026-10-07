@@ -10,7 +10,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
 	"github.com/meshtransit/meshtransit/internal/devicegroup"
+	"github.com/meshtransit/meshtransit/internal/devicetag"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/identitygroup"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/policy/publication"
@@ -209,6 +211,10 @@ type accessGraphPathRecord struct {
 	// Set only for paths through a group rule (schema 120).
 	SourceDeviceGroupID      string `json:"source_device_group_id"`
 	DestinationDeviceGroupID string `json:"destination_device_group_id"`
+	// Set only for paths through an Identity Group or tag rule (schema 122).
+	SourceIdentityGroupID  string `json:"source_identity_group_id"`
+	SourceDeviceTagID      string `json:"source_device_tag_id"`
+	DestinationDeviceTagID string `json:"destination_device_tag_id"`
 }
 
 func (record accessGraphSnapshotRecord) snapshot(query accessgraph.Query) (accessgraph.Snapshot, error) {
@@ -325,6 +331,26 @@ func (record accessGraphPathRecord) path() (accessgraph.Path, error) {
 			continue
 		}
 		parsed, err := devicegroup.ParseID(side.text)
+		if err != nil {
+			return accessgraph.Path{}, accessgraph.ErrInvalidSnapshot
+		}
+		*side.target = parsed
+	}
+	if record.SourceIdentityGroupID != "" {
+		parsed, err := identitygroup.ParseID(record.SourceIdentityGroupID)
+		if err != nil {
+			return accessgraph.Path{}, accessgraph.ErrInvalidSnapshot
+		}
+		params.SourceIdentityGroupID = parsed
+	}
+	for _, side := range []struct {
+		text   string
+		target *devicetag.ID
+	}{{record.SourceDeviceTagID, &params.SourceTagID}, {record.DestinationDeviceTagID, &params.DestinationTagID}} {
+		if side.text == "" {
+			continue
+		}
+		parsed, err := devicetag.ParseID(side.text)
 		if err != nil {
 			return accessgraph.Path{}, accessgraph.ErrInvalidSnapshot
 		}

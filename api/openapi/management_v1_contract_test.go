@@ -155,29 +155,30 @@ func TestManagementV1MutationContracts(t *testing.T) {
 		Required   []string                   `json:"required"`
 		Properties map[string]json.RawMessage `json:"properties"`
 		AllOf      []struct {
-			OneOf []json.RawMessage `json:"oneOf"`
+			OneOf []exclusiveAlternative `json:"oneOf"`
 		} `json:"allOf"`
-		OneOf []struct {
-			Required []string `json:"required"`
-			Not      struct {
-				AnyOf []struct {
-					Required []string `json:"required"`
-				} `json:"anyOf"`
-			} `json:"not"`
-		} `json:"oneOf"`
+		OneOf []exclusiveAlternative `json:"oneOf"`
 	}
 	if err := json.Unmarshal(document.Components.Schemas["CompiledPolicyRule"], &policyRule); err != nil {
 		t.Fatalf("decode CompiledPolicyRule: %v", err)
 	}
 	// Each destination alternative requires its own key and excludes every other one.
 	destinations := []string{
-		"destination_device_id", "destination_device_group_id", "destination_resource_id",
-		"destination_resource_group_id", "destination_imported_resource_id",
+		"destination_device_id", "destination_device_group_id", "destination_device_tag_id",
+		"destination_resource_id", "destination_resource_group_id", "destination_imported_resource_id",
+	}
+	sources := []string{
+		"source_device_id", "source_device_group_id", "source_identity_group_id", "source_device_tag_id",
 	}
 	if len(policyRule.OneOf) != len(destinations) || len(policyRule.AllOf) != 1 ||
-		len(policyRule.AllOf[0].OneOf) != 2 || policyRule.Properties["source_device_id"] == nil ||
-		policyRule.Properties["source_device_group_id"] == nil {
+		len(policyRule.AllOf[0].OneOf) != len(sources) {
 		t.Fatalf("CompiledPolicyRule typed selector contract = %+v", policyRule)
+	}
+	for index, alternative := range policyRule.AllOf[0].OneOf {
+		if len(alternative.Required) != 1 || alternative.Required[0] != sources[index] ||
+			policyRule.Properties[sources[index]] == nil || len(alternative.Not.AnyOf) != len(sources)-1 {
+			t.Fatalf("CompiledPolicyRule typed source contract = %+v", alternative)
+		}
 	}
 	seen := map[string]bool{}
 	for _, alternative := range policyRule.OneOf {
@@ -421,4 +422,15 @@ func TestManagementV1MutationContracts(t *testing.T) {
 	if !ok || bearer.Type != "http" || bearer.Scheme != "bearer" {
 		t.Fatalf("Account Session security scheme = %+v, found=%t", bearer, ok)
 	}
+}
+
+// exclusiveAlternative is a oneOf branch that requires one key and excludes
+// the others.
+type exclusiveAlternative struct {
+	Required []string `json:"required"`
+	Not      struct {
+		AnyOf []struct {
+			Required []string `json:"required"`
+		} `json:"anyOf"`
+	} `json:"not"`
 }

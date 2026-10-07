@@ -1771,19 +1771,21 @@
           },
           "source_device_id": {
             "type": "string",
-            "description": "The source Device; empty when the source is a Device Group."
+            "description": "The source Device; empty when the source is a selector."
           },
           "source_kind": {
             "type": "string",
             "enum": [
               "device",
-              "device_group"
+              "device_group",
+              "identity_group",
+              "device_tag"
             ]
           },
           "source_selector_id": {
             "type": "string",
             "format": "uuid",
-            "description": "The source Device or Device Group."
+            "description": "The source Device, Device Group, Identity Group or tag."
           },
           "destination_device_id": {
             "type": "string"
@@ -1825,6 +1827,7 @@
             "enum": [
               "device",
               "device_group",
+              "device_tag",
               "resource",
               "resource_group",
               "imported_resource"
@@ -2009,81 +2012,24 @@
           "protocol",
           "destination_port_ranges"
         ],
-        "description": "Exactly one source (a Device or a Device Group) and one destination. A Device Group source takes a Device or Device Group destination only.",
+        "description": "Exactly one source (a Device, Device Group, Identity Group or tag) and one destination. A selector source takes a Device, Device Group or tag destination only, an Identity Group is a source only, and a Device-to-Device rule names no selector.",
         "allOf": [
           {
             "oneOf": [
-              {"required": ["source_device_id"], "not": {"required": ["source_device_group_id"]}},
-              {"required": ["source_device_group_id"], "not": {"required": ["source_device_id"]}}
+              {"required": ["source_device_id"], "not": {"anyOf": [{"required": ["source_device_group_id"]}, {"required": ["source_identity_group_id"]}, {"required": ["source_device_tag_id"]}]}},
+              {"required": ["source_device_group_id"], "not": {"anyOf": [{"required": ["source_device_id"]}, {"required": ["source_identity_group_id"]}, {"required": ["source_device_tag_id"]}]}},
+              {"required": ["source_identity_group_id"], "not": {"anyOf": [{"required": ["source_device_id"]}, {"required": ["source_device_group_id"]}, {"required": ["source_device_tag_id"]}]}},
+              {"required": ["source_device_tag_id"], "not": {"anyOf": [{"required": ["source_device_id"]}, {"required": ["source_device_group_id"]}, {"required": ["source_identity_group_id"]}]}}
             ]
           }
         ],
         "oneOf": [
-          {
-            "required": [
-              "destination_device_id"
-            ],
-            "not": {
-              "anyOf": [
-                {"required": ["destination_resource_id"]},
-                {"required": ["destination_resource_group_id"]},
-                {"required": ["destination_imported_resource_id"]},
-                {"required": ["destination_device_group_id"]}
-              ]
-            }
-          },
-          {
-            "required": [
-              "destination_device_group_id"
-            ],
-            "not": {
-              "anyOf": [
-                {"required": ["destination_device_id"]},
-                {"required": ["destination_resource_id"]},
-                {"required": ["destination_resource_group_id"]},
-                {"required": ["destination_imported_resource_id"]}
-              ]
-            }
-          },
-          {
-            "required": [
-              "destination_resource_id"
-            ],
-            "not": {
-              "anyOf": [
-                {"required": ["destination_device_id"]},
-                {"required": ["destination_resource_group_id"]},
-                {"required": ["destination_imported_resource_id"]},
-                {"required": ["destination_device_group_id"]}
-              ]
-            }
-          },
-          {
-            "required": [
-              "destination_resource_group_id"
-            ],
-            "not": {
-              "anyOf": [
-                {"required": ["destination_device_id"]},
-                {"required": ["destination_resource_id"]},
-                {"required": ["destination_imported_resource_id"]},
-                {"required": ["destination_device_group_id"]}
-              ]
-            }
-          },
-          {
-            "required": [
-              "destination_imported_resource_id"
-            ],
-            "not": {
-              "anyOf": [
-                {"required": ["destination_device_id"]},
-                {"required": ["destination_resource_id"]},
-                {"required": ["destination_resource_group_id"]},
-                {"required": ["destination_device_group_id"]}
-              ]
-            }
-          }
+          {"required": ["destination_device_id"], "not": {"anyOf": [{"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]}]}},
+          {"required": ["destination_device_group_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]}]}},
+          {"required": ["destination_device_tag_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_group_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]}]}},
+          {"required": ["destination_resource_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_group_id"]}, {"required": ["destination_imported_resource_id"]}]}},
+          {"required": ["destination_resource_group_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_imported_resource_id"]}]}},
+          {"required": ["destination_imported_resource_id"], "not": {"anyOf": [{"required": ["destination_device_id"]}, {"required": ["destination_device_group_id"]}, {"required": ["destination_device_tag_id"]}, {"required": ["destination_resource_id"]}, {"required": ["destination_resource_group_id"]}]}}
         ],
         "properties": {
           "id": {
@@ -2097,6 +2043,18 @@
           },
           "destination_device_group_id": {
             "$ref": "#/components/schemas/PublicID"
+          },
+          "source_identity_group_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "A Workspace Identity Group: the untagged Devices its active members own in the Network."
+          },
+          "source_device_tag_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "Every Device of the Network that carries the tag."
+          },
+          "destination_device_tag_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "Every Device of the Network that carries the tag."
           },
           "destination_device_id": {
             "$ref": "#/components/schemas/PublicID"
@@ -3022,6 +2980,18 @@
           "destination_device_group_id": {
             "$ref": "#/components/schemas/PublicID",
             "description": "The destination Device Group, when the path comes from a group rule."
+          },
+          "source_identity_group_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "The source Identity Group, when the path comes from an Identity Group rule."
+          },
+          "source_device_tag_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "The source tag, when the path comes from a tag rule."
+          },
+          "destination_device_tag_id": {
+            "$ref": "#/components/schemas/PublicID",
+            "description": "The destination tag, when the path comes from a tag rule."
           },
           "protocol": {"type": "string", "enum": ["tcp", "udp", "icmp"]},
           "destination_port_ranges": {

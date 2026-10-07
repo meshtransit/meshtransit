@@ -11,7 +11,9 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph/simulation"
 	"github.com/meshtransit/meshtransit/internal/devicegroup"
+	"github.com/meshtransit/meshtransit/internal/devicetag"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/identitygroup"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
@@ -202,6 +204,16 @@ func (row activePolicyRuleWire) parse(scope network.Scope) (catalog.Row, error) 
 		if err != nil || row.SourceID != "" {
 			return catalog.Row{}, catalog.ErrInvalidSnapshot
 		}
+	case "identity_group":
+		params.SourceIdentityGroupID, err = identitygroup.ParseID(row.SourceSelect)
+		if err != nil || row.SourceID != "" {
+			return catalog.Row{}, catalog.ErrInvalidSnapshot
+		}
+	case "device_tag":
+		params.SourceTagID, err = devicetag.ParseID(row.SourceSelect)
+		if err != nil || row.SourceID != "" {
+			return catalog.Row{}, catalog.ErrInvalidSnapshot
+		}
 	default:
 		return catalog.Row{}, catalog.ErrInvalidSnapshot
 	}
@@ -227,6 +239,8 @@ func (row activePolicyRuleWire) parse(scope network.Scope) (catalog.Row, error) 
 		params.DestinationNodeID, err = node.ParseID(row.SelectorID)
 	case "device_group":
 		params.DestinationDeviceGroupID, err = devicegroup.ParseID(row.SelectorID)
+	case "device_tag":
+		params.DestinationTagID, err = devicetag.ParseID(row.SelectorID)
 	case "resource":
 		params.DestinationResourceID, err = resource.ParseID(row.SelectorID)
 	case "resource_group":

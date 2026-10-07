@@ -10,7 +10,9 @@ import (
 	"strings"
 
 	"github.com/meshtransit/meshtransit/internal/devicegroup"
+	"github.com/meshtransit/meshtransit/internal/devicetag"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/identitygroup"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
@@ -34,8 +36,11 @@ type publishPolicyRuleRequest struct {
 	ID                            string                          `json:"id"`
 	SourceDeviceID                string                          `json:"source_device_id"`
 	SourceDeviceGroupID           string                          `json:"source_device_group_id"`
+	SourceIdentityGroupID         string                          `json:"source_identity_group_id"`
+	SourceDeviceTagID             string                          `json:"source_device_tag_id"`
 	DestinationDeviceID           string                          `json:"destination_device_id"`
 	DestinationDeviceGroupID      string                          `json:"destination_device_group_id"`
+	DestinationDeviceTagID        string                          `json:"destination_device_tag_id"`
 	DestinationResourceID         string                          `json:"destination_resource_id"`
 	DestinationGroupID            string                          `json:"destination_resource_group_id"`
 	DestinationImportedResourceID string                          `json:"destination_imported_resource_id"`
@@ -247,6 +252,23 @@ func decodePolicyRuleIntent(
 			return compilation.RuleIntent{}, err
 		}
 	}
+	var sourceIdentityGroupID identitygroup.ID
+	if input.SourceIdentityGroupID != "" {
+		if sourceIdentityGroupID, err = identitygroup.ParseID(input.SourceIdentityGroupID); err != nil {
+			return compilation.RuleIntent{}, err
+		}
+	}
+	var sourceTagID, destinationTagID devicetag.ID
+	if input.SourceDeviceTagID != "" {
+		if sourceTagID, err = devicetag.ParseID(input.SourceDeviceTagID); err != nil {
+			return compilation.RuleIntent{}, err
+		}
+	}
+	if input.DestinationDeviceTagID != "" {
+		if destinationTagID, err = devicetag.ParseID(input.DestinationDeviceTagID); err != nil {
+			return compilation.RuleIntent{}, err
+		}
+	}
 	var destinationID node.ID
 	if input.DestinationDeviceID != "" {
 		destinationID, err = node.ParseID(input.DestinationDeviceID)
@@ -295,7 +317,9 @@ func decodePolicyRuleIntent(
 	}
 	return compilation.NewRuleIntent(compilation.RuleIntentParams{
 		ID: ruleID, Scope: scope, SourceNodeID: sourceID, SourceGroupID: sourceGroupID,
+		SourceIdentityGroupID: sourceIdentityGroupID, SourceTagID: sourceTagID,
 		DestinationNodeID: destinationID, DestinationDeviceGroupID: destinationDeviceGroupID,
+		DestinationTagID:      destinationTagID,
 		DestinationResourceID: destinationResourceID, DestinationGroupID: destinationGroupID,
 		DestinationImportedResourceID: destinationImportedResourceID,
 		Protocol:                      protocol, DestinationPortRanges: portRanges,

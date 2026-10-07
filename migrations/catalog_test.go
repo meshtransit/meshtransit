@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 121 {
-		t.Fatalf("len(Catalog()) = %d, want 121", len(catalog))
+	if len(catalog) != 122 {
+		t.Fatalf("len(Catalog()) = %d, want 122", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 121 {
-		t.Fatalf("LatestVersion() = %d, want 121", LatestVersion())
+	if LatestVersion() != 122 {
+		t.Fatalf("LatestVersion() = %d, want 122", LatestVersion())
 	}
 }
 
@@ -2920,5 +2920,24 @@ func TestIdentityGroupsAndDeviceTags(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "GRANT SELECT") {
 		t.Error("schema 121 must not grant direct table access")
+	}
+}
+
+func TestIdentityAndTagRules(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[121]
+	if migration.Version != 122 {
+		t.Fatalf("migration 122 = %+v", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.attach_policy_group_rules_v2(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.resolve_group_policy_edges_v1(",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.resolve_group_policy_edges_v2(BIGINT) TO mesh_runtime;",
+		"SELECT 1 FROM mesh.device_tag_assignment AS assignment WHERE assignment.device_id = device.id",
+		"AND membership.state = 'active'",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 122 missing %q", required)
+		}
 	}
 }

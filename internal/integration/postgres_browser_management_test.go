@@ -449,6 +449,9 @@ func publishPolicyOverBrowserManagement(
 		SourceDeviceGroupID      string      `json:"source_device_group_id,omitempty"`
 		DestinationDeviceID      string      `json:"destination_device_id,omitempty"`
 		DestinationDeviceGroupID string      `json:"destination_device_group_id,omitempty"`
+		SourceIdentityGroupID    string      `json:"source_identity_group_id,omitempty"`
+		SourceDeviceTagID        string      `json:"source_device_tag_id,omitempty"`
+		DestinationDeviceTagID   string      `json:"destination_device_tag_id,omitempty"`
 		DestinationResourceID    string      `json:"destination_resource_id,omitempty"`
 		DestinationGroupID       string      `json:"destination_resource_group_id,omitempty"`
 		Protocol                 string      `json:"protocol"`
@@ -497,16 +500,16 @@ func publishPolicyOverBrowserManagement(
 			ports[index] = portRange{First: value.First(), Last: value.Last()}
 		}
 		input := rule{ID: grouped.RuleID().String(), Protocol: grouped.Protocol().String(), DestinationPortRanges: ports}
-		if grouped.SourceGroupID().IsValid() {
-			input.SourceDeviceGroupID = grouped.SourceGroupID().String()
-		} else {
-			input.SourceDeviceID = grouped.SourceNodeID().String()
+		sideTargets := map[publication.SideKind]*string{
+			publication.SideDevice: &input.SourceDeviceID, publication.SideDeviceGroup: &input.SourceDeviceGroupID,
+			publication.SideIdentityGroup: &input.SourceIdentityGroupID, publication.SideDeviceTag: &input.SourceDeviceTagID,
 		}
-		if grouped.DestinationGroupID().IsValid() {
-			input.DestinationDeviceGroupID = grouped.DestinationGroupID().String()
-		} else {
-			input.DestinationDeviceID = grouped.DestinationNodeID().String()
+		*sideTargets[grouped.Source().Kind()] = grouped.Source().ID().String()
+		sideTargets = map[publication.SideKind]*string{
+			publication.SideDevice: &input.DestinationDeviceID, publication.SideDeviceGroup: &input.DestinationDeviceGroupID,
+			publication.SideDeviceTag: &input.DestinationDeviceTagID,
 		}
+		*sideTargets[grouped.Destination().Kind()] = grouped.Destination().ID().String()
 		rules = append(rules, input)
 	}
 	var approvalEvidenceID string

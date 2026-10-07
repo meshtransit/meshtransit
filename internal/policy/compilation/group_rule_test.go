@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/meshtransit/meshtransit/internal/devicegroup"
+	"github.com/meshtransit/meshtransit/internal/devicetag"
+	"github.com/meshtransit/meshtransit/internal/identitygroup"
 	"github.com/meshtransit/meshtransit/internal/policy"
 	"github.com/meshtransit/meshtransit/internal/policy/compilation"
 	"github.com/meshtransit/meshtransit/internal/resource"
@@ -18,6 +20,8 @@ func TestRuleIntentGroupSelectors(t *testing.T) {
 	resourceID, _ := resource.ParseID("01890f00-0000-7000-8000-000000000b01")
 	importedID, _ := sharing.ParseImportedResourceID("01890f00-0000-7000-8000-000000000c01")
 	device := compilationNodeID(t, "000000000701")
+	people, _ := identitygroup.ParseID("01890f00-0000-7000-8000-000000000d01")
+	tag, _ := devicetag.ParseID("01890f00-0000-7000-8000-000000000e01")
 	ssh, _ := policy.NewPortRange(22, 22)
 	base := compilation.RuleIntentParams{
 		ID: ruleID, Scope: compilationScopeFixture(t), Protocol: policy.ProtocolTCP,
@@ -32,6 +36,11 @@ func TestRuleIntentGroupSelectors(t *testing.T) {
 		"group to group":  with(func(p *compilation.RuleIntentParams) { p.SourceGroupID, p.DestinationDeviceGroupID = group, group }),
 		"group to Device": with(func(p *compilation.RuleIntentParams) { p.SourceGroupID, p.DestinationNodeID = group, device }),
 		"Device to group": with(func(p *compilation.RuleIntentParams) { p.SourceNodeID, p.DestinationDeviceGroupID = device, group }),
+		"identity group to tag": with(func(p *compilation.RuleIntentParams) {
+			p.SourceIdentityGroupID, p.DestinationTagID = people, tag
+		}),
+		"tag to Device": with(func(p *compilation.RuleIntentParams) { p.SourceTagID, p.DestinationNodeID = tag, device }),
+		"Device to tag": with(func(p *compilation.RuleIntentParams) { p.SourceNodeID, p.DestinationTagID = device, tag }),
 	}
 	for name, params := range valid {
 		intent, err := compilation.NewRuleIntent(params)
@@ -51,6 +60,18 @@ func TestRuleIntentGroupSelectors(t *testing.T) {
 			p.SourceGroupID, p.DestinationNodeID, p.DestinationDeviceGroupID = group, device, group
 		}),
 		"no source": with(func(p *compilation.RuleIntentParams) { p.DestinationDeviceGroupID = group }),
+		"identity group to Resource": with(func(p *compilation.RuleIntentParams) {
+			p.SourceIdentityGroupID, p.DestinationResourceID = people, resourceID
+		}),
+		"tag to shared Device": with(func(p *compilation.RuleIntentParams) {
+			p.SourceTagID, p.DestinationImportedResourceID = tag, importedID
+		}),
+		"identity group and tag sources": with(func(p *compilation.RuleIntentParams) {
+			p.SourceIdentityGroupID, p.SourceTagID, p.DestinationTagID = people, tag, tag
+		}),
+		"tag and group destinations": with(func(p *compilation.RuleIntentParams) {
+			p.SourceTagID, p.DestinationTagID, p.DestinationDeviceGroupID = tag, tag, group
+		}),
 	}
 	for name, params := range invalid {
 		if _, err := compilation.NewRuleIntent(params); !errors.Is(err, compilation.ErrInvalidRequest) {

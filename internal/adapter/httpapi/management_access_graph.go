@@ -97,6 +97,9 @@ type explainedPolicyPath struct {
 	// Set when the path comes from a rule that selects Device Groups.
 	SourceDeviceGroupID      string `json:"source_device_group_id,omitempty"`
 	DestinationDeviceGroupID string `json:"destination_device_group_id,omitempty"`
+	SourceIdentityGroupID    string `json:"source_identity_group_id,omitempty"`
+	SourceDeviceTagID        string `json:"source_device_tag_id,omitempty"`
+	DestinationDeviceTagID   string `json:"destination_device_tag_id,omitempty"`
 }
 
 type accessGraphExplainPath struct {

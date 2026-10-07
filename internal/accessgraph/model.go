@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/meshtransit/meshtransit/internal/devicegroup"
+	"github.com/meshtransit/meshtransit/internal/devicetag"
+	"github.com/meshtransit/meshtransit/internal/identitygroup"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
@@ -163,10 +165,14 @@ type PathParams struct {
 	// SelectorKindImportedResource, which leaves DestinationNodeID zero.
 	DestinationImportedResourceID sharing.ImportedResourceID
 	TrustContractID               sharing.ContractID
-	// SourceDeviceGroupID and DestinationDeviceGroupID name the Device
-	// Groups a group rule matched through, on a Device path.
+	// The selectors a group rule matched through, on a Device path: at
+	// most one source (Device Group, Identity Group or tag) and at most one
+	// destination (Device Group or tag).
 	SourceDeviceGroupID      devicegroup.ID
+	SourceIdentityGroupID    identitygroup.ID
+	SourceTagID              devicetag.ID
 	DestinationDeviceGroupID devicegroup.ID
+	DestinationTagID         devicetag.ID
 }
 
 // Path explains one effective compiled allow edge.
@@ -183,7 +189,10 @@ type Path struct {
 	destinationImportedResourceID sharing.ImportedResourceID
 	trustContractID               sharing.ContractID
 	sourceDeviceGroupID           devicegroup.ID
+	sourceIdentityGroupID         identitygroup.ID
+	sourceTagID                   devicetag.ID
 	destinationDeviceGroupID      devicegroup.ID
+	destinationTagID              devicetag.ID
 }
 
 // NewPath validates one immutable explanation path.
@@ -197,7 +206,10 @@ func NewPath(params PathParams) (Path, error) {
 		destinationImportedResourceID: params.DestinationImportedResourceID,
 		trustContractID:               params.TrustContractID,
 		sourceDeviceGroupID:           params.SourceDeviceGroupID,
+		sourceIdentityGroupID:         params.SourceIdentityGroupID,
+		sourceTagID:                   params.SourceTagID,
 		destinationDeviceGroupID:      params.DestinationDeviceGroupID,
+		destinationTagID:              params.DestinationTagID,
 	}
 	if !path.IsValid() {
 		return Path{}, ErrInvalidSnapshot
@@ -248,6 +260,15 @@ func (path Path) SourceDeviceGroupID() devicegroup.ID { return path.sourceDevice
 // DestinationDeviceGroupID returns the destination Device Group of a group rule path.
 func (path Path) DestinationDeviceGroupID() devicegroup.ID { return path.destinationDeviceGroupID }
 
+// SourceIdentityGroupID returns the source Identity Group of a group rule path.
+func (path Path) SourceIdentityGroupID() identitygroup.ID { return path.sourceIdentityGroupID }
+
+// SourceTagID returns the source tag of a group rule path.
+func (path Path) SourceTagID() devicetag.ID { return path.sourceTagID }
+
+// DestinationTagID returns the destination tag of a group rule path.
+func (path Path) DestinationTagID() devicetag.ID { return path.destinationTagID }
+
 // IsValid reports whether one path has complete canonical provenance.
 func (path Path) IsValid() bool {
 	if !path.projectionID.IsValid() || !path.ruleID.IsValid() || !path.sourceNodeID.IsValid() ||
@@ -264,8 +285,10 @@ func (path Path) IsValid() bool {
 		path.destinationImportedResourceID.IsValid() || path.trustContractID.IsValid() {
 		return false
 	}
-	if (path.sourceDeviceGroupID.IsValid() || path.destinationDeviceGroupID.IsValid()) &&
-		path.selectorKind != SelectorKindDevice {
+	sources := countValid(path.sourceDeviceGroupID.IsValid(), path.sourceIdentityGroupID.IsValid(),
+		path.sourceTagID.IsValid())
+	destinations := countValid(path.destinationDeviceGroupID.IsValid(), path.destinationTagID.IsValid())
+	if sources > 1 || destinations > 1 || (sources+destinations > 0 && path.selectorKind != SelectorKindDevice) {
 		return false
 	}
 	switch path.selectorKind {
@@ -674,3 +697,13 @@ func (result Result) Paths() []Path { return clonePaths(result.paths) }
 
 // Truncated reports whether more matching paths existed than the response bound.
 func (result Result) Truncated() bool { return result.truncated }
+
+func countValid(values ...bool) int {
+	count := 0
+	for _, value := range values {
+		if value {
+			count++
+		}
+	}
+	return count
+}

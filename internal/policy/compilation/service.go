@@ -192,8 +192,10 @@ func (service *Service) Compile(
 		if intent.SelectsDeviceGroup() {
 			rule, err := publication.NewGroupRule(publication.GroupRuleParams{
 				RuleID: intent.id, SourceNodeID: intent.sourceNodeID, SourceGroupID: intent.sourceGroupID,
+				SourceIdentityGroupID: intent.sourceIdentityGroupID, SourceTagID: intent.sourceTagID,
 				DestinationNodeID: intent.destinationNodeID, DestinationGroupID: intent.destinationDeviceGroupID,
-				Protocol: intent.protocol, DestinationPortRanges: intent.destinationPortRanges,
+				DestinationTagID: intent.destinationTagID,
+				Protocol:         intent.protocol, DestinationPortRanges: intent.destinationPortRanges,
 			})
 			if err != nil {
 				return publication.Candidate{}, ErrInvalidRequest

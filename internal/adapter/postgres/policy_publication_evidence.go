@@ -384,15 +384,18 @@ type policyGroupRulePayload struct {
 	AccessRulePublicID             string `json:"access_rule_public_id"`
 	SourceNodePublicID             string `json:"source_node_public_id,omitempty"`
 	SourceDeviceGroupPublicID      string `json:"source_device_group_public_id,omitempty"`
+	SourceIdentityGroupPublicID    string `json:"source_identity_group_public_id,omitempty"`
+	SourceDeviceTagPublicID        string `json:"source_device_tag_public_id,omitempty"`
 	DestinationNodePublicID        string `json:"destination_node_public_id,omitempty"`
 	DestinationDeviceGroupPublicID string `json:"destination_device_group_public_id,omitempty"`
+	DestinationDeviceTagPublicID   string `json:"destination_device_tag_public_id,omitempty"`
 	Protocol                       string `json:"protocol"`
 	PortRangeFirst                 []int  `json:"port_range_first"`
 	PortRangeLast                  []int  `json:"port_range_last"`
 }
 
 // encodePolicyGroupRules encodes the candidate's group rules for
-// attach_policy_group_rules_v1, using the projection identities that follow
+// attach_policy_group_rules_v2, using the projection identities that follow
 // the Device pairs and Imported Resource selectors. Nil means none.
 func encodePolicyGroupRules(change publication.Change) ([]byte, error) {
 	candidate := change.Command().Candidate()
@@ -416,15 +419,24 @@ func encodePolicyGroupRules(change publication.Change) ([]byte, error) {
 			ProjectionPublicID: projectionIDs[offset+index].String(), AccessRulePublicID: rule.RuleID().String(),
 			Protocol: rule.Protocol().String(), PortRangeFirst: first, PortRangeLast: last,
 		}
-		if rule.SourceGroupID().IsValid() {
-			item.SourceDeviceGroupPublicID = rule.SourceGroupID().String()
-		} else {
-			item.SourceNodePublicID = rule.SourceNodeID().String()
+		source, destination := rule.Source(), rule.Destination()
+		switch source.Kind() {
+		case publication.SideDeviceGroup:
+			item.SourceDeviceGroupPublicID = source.ID().String()
+		case publication.SideIdentityGroup:
+			item.SourceIdentityGroupPublicID = source.ID().String()
+		case publication.SideDeviceTag:
+			item.SourceDeviceTagPublicID = source.ID().String()
+		default:
+			item.SourceNodePublicID = source.ID().String()
 		}
-		if rule.DestinationGroupID().IsValid() {
-			item.DestinationDeviceGroupPublicID = rule.DestinationGroupID().String()
-		} else {
-			item.DestinationNodePublicID = rule.DestinationNodeID().String()
+		switch destination.Kind() {
+		case publication.SideDeviceGroup:
+			item.DestinationDeviceGroupPublicID = destination.ID().String()
+		case publication.SideDeviceTag:
+			item.DestinationDeviceTagPublicID = destination.ID().String()
+		default:
+			item.DestinationNodePublicID = destination.ID().String()
 		}
 		payload[index] = item
 	}

@@ -488,6 +488,7 @@ func Catalog() []Migration {
 		newMigration(119, "Workspace guardrails bound what rules and shares may open", workspaceGuardrailsSQL),
 		newMigration(120, "Network Device Groups and rules that select them", networkDeviceGroupsSQL),
 		newMigration(121, "Workspace Identity Groups and device tags", identityGroupsAndDeviceTagsSQL),
+		newMigration(122, "Access Rules that select Identity Groups and tags", identityAndTagRulesSQL),
 	}
 }
 
@@ -630,3 +631,6 @@ var networkDeviceGroupsSQL string
 
 //go:embed 000121_identity_groups_and_device_tags.up.sql
 var identityGroupsAndDeviceTagsSQL string
+
+//go:embed 000122_identity_and_tag_rules.up.sql
+var identityAndTagRulesSQL string

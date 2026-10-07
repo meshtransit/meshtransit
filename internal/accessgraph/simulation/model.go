@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
-	"github.com/meshtransit/meshtransit/internal/devicegroup"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
@@ -57,9 +56,10 @@ type BaselineParams struct {
 	ReleaseID        publication.ReleaseID
 	SemanticHash     publication.SemanticHash
 	Candidate        publication.Candidate
-	// GroupMembers are the live members of every active Device Group of the
-	// Network, used to resolve group rules of the baseline and the draft.
-	GroupMembers map[devicegroup.ID][]node.ID
+	// SelectorMembers are the live Devices of every Device Group, Identity
+	// Group and tag of the Network that has any, used to resolve group rules
+	// of the baseline and the draft. A selector that is absent has none.
+	SelectorMembers map[publication.RuleSide][]node.ID
 }
 
 // Baseline is one immutable active release plus its complete authority vector.
@@ -71,22 +71,22 @@ type Baseline struct {
 	releaseID        publication.ReleaseID
 	semanticHash     publication.SemanticHash
 	candidate        publication.Candidate
-	groupMembers     map[devicegroup.ID][]node.ID
+	selectorMembers  map[publication.RuleSide][]node.ID
 }
 
 // NewBaseline validates current effective-policy evidence.
 func NewBaseline(params BaselineParams) (Baseline, error) {
-	members := make(map[devicegroup.ID][]node.ID, len(params.GroupMembers))
-	for id, devices := range params.GroupMembers {
-		if !id.IsValid() {
+	members := make(map[publication.RuleSide][]node.ID, len(params.SelectorMembers))
+	for side, devices := range params.SelectorMembers {
+		if !side.IsValid() || side.Kind() == publication.SideDevice {
 			return Baseline{}, ErrInvalidBaseline
 		}
-		members[id] = slices.Clone(devices)
+		members[side] = slices.Clone(devices)
 	}
 	baseline := Baseline{
 		scope: params.Scope, revisionVector: params.RevisionVector,
 		hasActiveRelease: params.HasActiveRelease, releaseID: params.ReleaseID,
-		semanticHash: params.SemanticHash, candidate: params.Candidate, groupMembers: members,
+		semanticHash: params.SemanticHash, candidate: params.Candidate, selectorMembers: members,
 	}
 	if !baseline.IsValid() {
 		return Baseline{}, ErrInvalidBaseline

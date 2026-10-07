@@ -6,6 +6,8 @@ import (
 	"slices"
 
 	"github.com/meshtransit/meshtransit/internal/devicegroup"
+	"github.com/meshtransit/meshtransit/internal/devicetag"
+	"github.com/meshtransit/meshtransit/internal/identitygroup"
 	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/policy"
@@ -25,15 +27,19 @@ var (
 )
 
 // RuleIntentParams contains one atomic Access Rule before destination resolution.
-// The source is one Device or one Device Group; a Device Group source takes a
-// Device or Device Group destination only.
+// The source is one Device, Device Group, Identity Group or tag. A source
+// other than a Device takes a Device, Device Group or tag destination only;
+// a tag destination needs no particular source.
 type RuleIntentParams struct {
 	ID                            policy.RuleID
 	Scope                         network.Scope
 	SourceNodeID                  node.ID
 	SourceGroupID                 devicegroup.ID
+	SourceIdentityGroupID         identitygroup.ID
+	SourceTagID                   devicetag.ID
 	DestinationNodeID             node.ID
 	DestinationDeviceGroupID      devicegroup.ID
+	DestinationTagID              devicetag.ID
 	DestinationResourceID         resource.ID
 	DestinationGroupID            resource.GroupID
 	DestinationImportedResourceID sharing.ImportedResourceID
@@ -47,8 +53,11 @@ type RuleIntent struct {
 	scope                         network.Scope
 	sourceNodeID                  node.ID
 	sourceGroupID                 devicegroup.ID
+	sourceIdentityGroupID         identitygroup.ID
+	sourceTagID                   devicetag.ID
 	destinationNodeID             node.ID
 	destinationDeviceGroupID      devicegroup.ID
+	destinationTagID              devicetag.ID
 	destinationResourceID         resource.ID
 	destinationGroupID            resource.GroupID
 	destinationImportedResourceID sharing.ImportedResourceID
@@ -61,8 +70,11 @@ func NewRuleIntent(params RuleIntentParams) (RuleIntent, error) {
 	intent := RuleIntent{
 		id: params.ID, scope: params.Scope, sourceNodeID: params.SourceNodeID,
 		sourceGroupID:                 params.SourceGroupID,
+		sourceIdentityGroupID:         params.SourceIdentityGroupID,
+		sourceTagID:                   params.SourceTagID,
 		destinationNodeID:             params.DestinationNodeID,
 		destinationDeviceGroupID:      params.DestinationDeviceGroupID,
+		destinationTagID:              params.DestinationTagID,
 		destinationResourceID:         params.DestinationResourceID,
 		destinationGroupID:            params.DestinationGroupID,
 		destinationImportedResourceID: params.DestinationImportedResourceID,
@@ -91,10 +103,23 @@ func (intent RuleIntent) DestinationDeviceGroupID() devicegroup.ID {
 	return intent.destinationDeviceGroupID
 }
 
-// SelectsDeviceGroup reports whether either side is a Device Group, so the
-// rule is resolved from membership instead of compiled to Device pairs.
+// SourceIdentityGroupID returns the initiating Identity Group, when the source is one.
+func (intent RuleIntent) SourceIdentityGroupID() identitygroup.ID {
+	return intent.sourceIdentityGroupID
+}
+
+// SourceTagID returns the initiating tag, when the source is a tag.
+func (intent RuleIntent) SourceTagID() devicetag.ID { return intent.sourceTagID }
+
+// DestinationTagID returns the tag destination, when selected.
+func (intent RuleIntent) DestinationTagID() devicetag.ID { return intent.destinationTagID }
+
+// SelectsDeviceGroup reports whether either side is a group or a tag, so the
+// rule is resolved from membership, ownership and tags when maps are built
+// instead of compiled to Device pairs.
 func (intent RuleIntent) SelectsDeviceGroup() bool {
-	return intent.sourceGroupID.IsValid() || intent.destinationDeviceGroupID.IsValid()
+	return intent.sourceGroupID.IsValid() || intent.destinationDeviceGroupID.IsValid() ||
+		intent.sourceIdentityGroupID.IsValid() || intent.sourceTagID.IsValid() || intent.destinationTagID.IsValid()
 }
 
 // DestinationNodeID returns the direct Device destination, when selected.
@@ -124,22 +149,24 @@ func (intent RuleIntent) DestinationPortRanges() []policy.PortRange {
 }
 
 // IsValid reports whether the intent has exactly one source and one typed
-// destination, and a Device Group source only with a Device or Device Group
-// destination.
+// destination, and a group or tag rule only between Devices, Device Groups,
+// Identity Groups (as a source) and tags.
 func (intent RuleIntent) IsValid() bool {
 	hasDevice := intent.destinationNodeID.IsValid()
 	hasDeviceGroup := intent.destinationDeviceGroupID.IsValid()
+	hasTag := intent.destinationTagID.IsValid()
 	hasResource := intent.destinationResourceID.IsValid()
 	hasGroup := intent.destinationGroupID.IsValid()
 	hasImported := intent.destinationImportedResourceID.IsValid()
 	if !intent.id.IsValid() || !intent.scope.IsValid() ||
-		boolCount(intent.sourceNodeID.IsValid(), intent.sourceGroupID.IsValid()) != 1 ||
-		boolCount(hasDevice, hasDeviceGroup, hasResource, hasGroup, hasImported) != 1 ||
+		boolCount(intent.sourceNodeID.IsValid(), intent.sourceGroupID.IsValid(),
+			intent.sourceIdentityGroupID.IsValid(), intent.sourceTagID.IsValid()) != 1 ||
+		boolCount(hasDevice, hasDeviceGroup, hasTag, hasResource, hasGroup, hasImported) != 1 ||
 		!intent.protocol.IsValid() || intent.destinationPortRanges == nil {
 		return false
 	}
 	if intent.SelectsDeviceGroup() {
-		if !hasDevice && !hasDeviceGroup {
+		if !hasDevice && !hasDeviceGroup && !hasTag {
 			return false
 		}
 		_, valid := policy.CanonicalTraffic(intent.protocol, intent.destinationPortRanges)
