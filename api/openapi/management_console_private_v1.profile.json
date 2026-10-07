@@ -3169,9 +3169,19 @@
                     "type": "object",
                     "additionalProperties": false,
                     "required": [
-                      "guardrails"
+                      "guardrails",
+                      "can_manage",
+                      "can_weaken"
                     ],
                     "properties": {
+                      "can_manage": {
+                        "type": "boolean",
+                        "description": "The reader holds guardrail.manage: create and narrow guardrails."
+                      },
+                      "can_weaken": {
+                        "type": "boolean",
+                        "description": "The reader holds guardrail.weaken: loosen, switch to audit or delete guardrails."
+                      },
                       "guardrails": {
                         "type": "array",
                         "maxItems": 100,

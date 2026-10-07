@@ -25,7 +25,7 @@ const (
 
 // GuardrailManager lists and changes Workspace guardrails.
 type GuardrailManager interface {
-	List(context.Context, accountsession.Session, workspace.ID) ([]guardrail.Guardrail, error)
+	List(context.Context, accountsession.Session, workspace.ID) (guardrail.Listing, error)
 	Create(context.Context, accountsession.Session, workspace.ID, guardrail.Spec, publicid.ID) (guardrail.Result, error)
 	Update(context.Context, accountsession.Session, workspace.ID, publicid.ID, int64, guardrail.Spec,
 		publicid.ID) (guardrail.Result, error)
@@ -186,12 +186,12 @@ func (handler *ManagementHandler) handleGuardrails(ctx context.Context, response
 		return failure.Code
 	}
 	if path.action == "" {
-		items, err := handler.guardrails.List(ctx, session, path.workspaceID)
+		listing, err := handler.guardrails.List(ctx, session, path.workspaceID)
 		if err != nil {
 			return fail(classifyGuardrailError(err))
 		}
-		bodies := make([]guardrailBody, 0, len(items))
-		for _, item := range items {
+		bodies := make([]guardrailBody, 0, len(listing.Guardrails))
+		for _, item := range listing.Guardrails {
 			body, err := newGuardrailBody(item)
 			if err != nil {
 				return fail(internalManagementError())
@@ -201,10 +201,13 @@ func (handler *ManagementHandler) handleGuardrails(ctx context.Context, response
 		var output struct {
 			Data struct {
 				Guardrails []guardrailBody `json:"guardrails"`
+				CanManage  bool            `json:"can_manage"`
+				CanWeaken  bool            `json:"can_weaken"`
 			} `json:"data"`
 			CorrelationID string `json:"correlation_id"`
 		}
 		output.Data.Guardrails, output.CorrelationID = bodies, correlationID.String()
+		output.Data.CanManage, output.Data.CanWeaken = listing.CanManage, listing.CanWeaken
 		response.Header().Set("Cache-Control", "no-store")
 		writeManagementJSON(ctx, handler.logger, response, http.StatusOK, output)
 		return "success"

@@ -160,42 +160,45 @@ func (store *GuardrailStore) begin(ctx context.Context) (accountSessionTransacti
 	return tx, nil
 }
 
-// List authorizes guardrail.read and returns the active guardrails.
+// List authorizes guardrail.read and returns the active guardrails with
+// whether the Session may manage and weaken them.
 func (store *GuardrailStore) List(ctx context.Context, session accountsession.Session,
-	workspaceID workspace.ID) (_ []guardrail.Guardrail, resultErr error) {
+	workspaceID workspace.ID) (_ guardrail.Listing, resultErr error) {
 	if !session.IsValid() || !workspaceID.IsValid() {
-		return nil, guardrail.ErrInvalid
+		return guardrail.Listing{}, guardrail.ErrInvalid
 	}
 	tx, err := store.begin(ctx)
 	if tx != nil {
 		defer func() { resultErr = errors.Join(resultErr, rollbackAccountSessionTransaction(tx)) }()
 	}
 	if err != nil {
-		return nil, err
+		return guardrail.Listing{}, err
 	}
 	var encoded *string
 	if err := tx.QueryRow(ctx, listWorkspaceGuardrailsSQL,
 		append(sessionQueryArguments(session), workspaceID.String())...).Scan(&encoded); err != nil {
-		return nil, guardrailDatabaseError(err)
+		return guardrail.Listing{}, guardrailDatabaseError(err)
 	}
 	if encoded == nil {
-		return nil, guardrail.ErrForbidden
+		return guardrail.Listing{}, guardrail.ErrForbidden
 	}
 	var envelope struct {
 		Guardrails []guardrailDocument `json:"guardrails"`
+		CanManage  bool                `json:"can_manage"`
+		CanWeaken  bool                `json:"can_weaken"`
 	}
 	if err := strictJSON([]byte(*encoded), &envelope); err != nil || envelope.Guardrails == nil {
-		return nil, guardrail.ErrInvalid
+		return guardrail.Listing{}, guardrail.ErrInvalid
 	}
 	guardrails := make([]guardrail.Guardrail, 0, len(envelope.Guardrails))
 	for _, document := range envelope.Guardrails {
 		item, err := document.guardrail()
 		if err != nil {
-			return nil, err
+			return guardrail.Listing{}, err
 		}
 		guardrails = append(guardrails, item)
 	}
-	return guardrails, nil
+	return guardrail.Listing{Guardrails: guardrails, CanManage: envelope.CanManage, CanWeaken: envelope.CanWeaken}, nil
 }
 
 type guardrailActorEvidence struct {

@@ -85,8 +85,9 @@ func assertPostgreSQLGuardrails(ctx context.Context, t *testing.T, admin *pgx.Co
 	memberPrincipal := publicid.ID(member.PrincipalID())
 	auditBefore := countGuardrailAudit(ctx, t, admin)
 
-	if items, err := service.List(ctx, owner, workspaceID); err != nil || len(items) != 0 {
-		t.Fatalf("owner guardrails = %+v, error = %v", items, err)
+	if listing, err := service.List(ctx, owner, workspaceID); err != nil || len(listing.Guardrails) != 0 ||
+		!listing.CanManage || !listing.CanWeaken {
+		t.Fatalf("owner guardrails = %+v, error = %v", listing, err)
 	}
 	if _, err := service.List(ctx, member, workspaceID); !errors.Is(err, guardrail.ErrForbidden) {
 		t.Fatalf("plain member listed guardrails: %v", err)
@@ -111,8 +112,9 @@ func assertPostgreSQLGuardrails(ctx context.Context, t *testing.T, admin *pgx.Co
 	if _, err := roleService.Assign(ctx, itAdmin); err != nil {
 		t.Fatalf("assign it_admin: %v", err)
 	}
-	if items, err := service.List(ctx, member, workspaceID); err != nil || len(items) != 1 || items[0].ID != id {
-		t.Fatalf("it_admin guardrails = %+v, error = %v", items, err)
+	if listing, err := service.List(ctx, member, workspaceID); err != nil || len(listing.Guardrails) != 1 ||
+		listing.Guardrails[0].ID != id || listing.CanManage || listing.CanWeaken {
+		t.Fatalf("it_admin guardrails = %+v, error = %v", listing, err)
 	}
 	narrowed := productionSharingLock(t, guardrail.ModeEnforce, guardrail.DirectionBoth)
 	if _, err := service.Update(ctx, member, workspaceID, id, 1, narrowed, newCorrelationID(t)); !errors.Is(err, guardrail.ErrForbidden) {
@@ -132,6 +134,9 @@ func assertPostgreSQLGuardrails(ctx context.Context, t *testing.T, admin *pgx.Co
 			t.Errorf("revoke security_admin: %v", err)
 		}
 	}()
+	if listing, err := service.List(ctx, member, workspaceID); err != nil || !listing.CanManage || !listing.CanWeaken {
+		t.Fatalf("security_admin guardrails = %+v, error = %v", listing, err)
+	}
 	updated, err := service.Update(ctx, member, workspaceID, id, 1, narrowed, newCorrelationID(t))
 	if err != nil || updated.Guardrail.Version != 2 || updated.Guardrail.Sharing.Direction != guardrail.DirectionBoth {
 		t.Fatalf("security_admin narrowed = %+v, error = %v", updated, err)
@@ -154,8 +159,8 @@ func assertPostgreSQLGuardrails(ctx context.Context, t *testing.T, admin *pgx.Co
 	if _, err := service.Delete(ctx, member, workspaceID, id, 4, newCorrelationID(t)); !errors.Is(err, guardrail.ErrNotFound) {
 		t.Fatalf("second delete: %v", err)
 	}
-	if items, err := service.List(ctx, owner, workspaceID); err != nil || len(items) != 0 {
-		t.Fatalf("guardrails after delete = %+v, error = %v", items, err)
+	if listing, err := service.List(ctx, owner, workspaceID); err != nil || len(listing.Guardrails) != 0 {
+		t.Fatalf("guardrails after delete = %+v, error = %v", listing, err)
 	}
 	if got := countGuardrailAudit(ctx, t, admin); got != auditBefore+4 {
 		t.Fatalf("guardrail audit events = %d, want %d", got-auditBefore, 4)

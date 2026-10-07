@@ -41,9 +41,16 @@ type Result struct {
 	UpdatedAt time.Time
 }
 
+// Listing is a Workspace's active guardrails and what the reader may do.
+type Listing struct {
+	Guardrails []Guardrail
+	CanManage  bool
+	CanWeaken  bool
+}
+
 // Store reads and changes guardrails; PostgreSQL authorizes each call.
 type Store interface {
-	List(ctx context.Context, session accountsession.Session, workspaceID workspace.ID) ([]Guardrail, error)
+	List(ctx context.Context, session accountsession.Session, workspaceID workspace.ID) (Listing, error)
 	Change(ctx context.Context, change Change) (Result, error)
 }
 
@@ -81,12 +88,12 @@ func (service *Service) admit(ctx context.Context, session accountsession.Sessio
 
 // List returns the active guardrails of a Workspace.
 func (service *Service) List(ctx context.Context, session accountsession.Session,
-	workspaceID workspace.ID) ([]Guardrail, error) {
+	workspaceID workspace.ID) (Listing, error) {
 	if err := service.admit(ctx, session); err != nil {
-		return nil, err
+		return Listing{}, err
 	}
 	if !workspaceID.IsValid() {
-		return nil, ErrInvalid
+		return Listing{}, ErrInvalid
 	}
 	return service.store.List(ctx, session, workspaceID)
 }
@@ -112,11 +119,11 @@ func (service *Service) Create(ctx context.Context, session accountsession.Sessi
 
 func (service *Service) current(ctx context.Context, session accountsession.Session, workspaceID workspace.ID,
 	id publicid.ID, expectedVersion int64) (Guardrail, error) {
-	guardrails, err := service.store.List(ctx, session, workspaceID)
+	listing, err := service.store.List(ctx, session, workspaceID)
 	if err != nil {
 		return Guardrail{}, err
 	}
-	for _, guardrail := range guardrails {
+	for _, guardrail := range listing.Guardrails {
 		if guardrail.ID == id {
 			if guardrail.Version != expectedVersion {
 				return Guardrail{}, ErrVersionConflict

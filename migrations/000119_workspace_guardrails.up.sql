@@ -145,7 +145,8 @@ REVOKE ALL ON FUNCTION mesh_ops.guardrail_document_internal_v1(mesh.guardrail)
 
 -- The active guardrails of a Workspace the Session may read
 -- (guardrail.read at Workspace scope; owners, admins, auditors and security
--- admins). NULL means not authorized.
+-- admins), with whether it may also manage and weaken them so the Console
+-- shows only actions Core would accept. NULL means not authorized.
 CREATE FUNCTION mesh_ops.list_workspace_guardrails_v1(
     p_session_public_id UUID,
     p_deployment_public_id UUID,
@@ -189,7 +190,17 @@ BEGIN
                 ORDER BY guardrail.created_at, guardrail.public_id)
             FROM mesh.guardrail AS guardrail
             WHERE guardrail.workspace_id = scoped_workspace_id AND guardrail.state = 'active'
-        ), '[]'::JSONB)
+        ), '[]'::JSONB),
+        'can_manage', EXISTS (SELECT 1 FROM mesh_ops.resolve_workspace_permission_v1(
+            p_session_public_id, p_deployment_public_id, p_principal_public_id,
+            p_identity_subject_public_id, p_session_version, p_principal_authority_generation,
+            p_account_session_generation, p_provider_generation, p_deployment_recovery_epoch,
+            p_workspace_public_id, 'guardrail.manage', evaluated_at)),
+        'can_weaken', EXISTS (SELECT 1 FROM mesh_ops.resolve_workspace_permission_v1(
+            p_session_public_id, p_deployment_public_id, p_principal_public_id,
+            p_identity_subject_public_id, p_session_version, p_principal_authority_generation,
+            p_account_session_generation, p_provider_generation, p_deployment_recovery_epoch,
+            p_workspace_public_id, 'guardrail.weaken', evaluated_at))
     );
 END;
 $function$;
