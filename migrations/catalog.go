@@ -482,6 +482,7 @@ func Catalog() []Migration {
 		newMigration(113, "Receiving Networks choose their shared Device alias range", networkAliasRangeSQL),
 		newMigration(114, "Alias maps count only shares a Device may reach", aliasMapReachableSharesSQL),
 		newMigration(115, "Audit partitions stay ahead and every Workspace has a stream", auditPartitionsWorkspaceStreamsSQL),
+		newMigration(116, "Audit events carry a database-computed seal a third party can verify", auditEventSealV2SQL),
 	}
 }
 
@@ -606,3 +607,6 @@ var aliasMapReachableSharesSQL string
 
 //go:embed 000115_audit_partitions_workspace_streams.up.sql
 var auditPartitionsWorkspaceStreamsSQL string
+
+//go:embed 000116_audit_event_seal_v2.up.sql
+var auditEventSealV2SQL string

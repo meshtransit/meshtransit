@@ -109,8 +109,7 @@ func appendWorkspaceRenameEvidence(ctx context.Context, tx accountSessionTransac
 	result settings.Result, previousName string, ownerGeneration, membershipGeneration int64, changeID, eventID, outboxID publicid.ID) error {
 	var streamID, sequence int64
 	var previous []byte
-	if err := tx.QueryRow(ctx, `SELECT stream_internal_id,next_sequence,latest_event_hash
-FROM mesh_audit.lock_deployment_stream_head($1::UUID)`, command.Session.DeploymentID().String()).Scan(&streamID, &sequence, &previous); err != nil {
+	if err := tx.QueryRow(ctx, lockWorkspaceStreamHeadSQL, command.Session.DeploymentID().String(), command.WorkspaceID.String()).Scan(&streamID, &sequence, &previous); err != nil {
 		return err
 	}
 	if streamID <= 0 || sequence <= 0 || len(previous) != sha256.Size {

@@ -393,8 +393,7 @@ func appendWorkspaceRoleEvidence(ctx context.Context, tx accountSessionTransacti
 	ids workspaceRoleEvidenceIDs) error {
 	var streamID, sequence int64
 	var previous []byte
-	if err := tx.QueryRow(ctx, `SELECT stream_internal_id,next_sequence,latest_event_hash
-FROM mesh_audit.lock_deployment_stream_head($1::UUID)`, change.Session.DeploymentID().String()).Scan(&streamID, &sequence, &previous); err != nil {
+	if err := tx.QueryRow(ctx, lockWorkspaceStreamHeadSQL, change.Session.DeploymentID().String(), change.WorkspaceID.String()).Scan(&streamID, &sequence, &previous); err != nil {
 		return err
 	}
 	if streamID <= 0 || sequence <= 0 || len(previous) != sha256.Size {

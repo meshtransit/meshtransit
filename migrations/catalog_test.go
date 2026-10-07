@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 115 {
-		t.Fatalf("len(Catalog()) = %d, want 115", len(catalog))
+	if len(catalog) != 116 {
+		t.Fatalf("len(Catalog()) = %d, want 116", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 115 {
-		t.Fatalf("LatestVersion() = %d, want 115", LatestVersion())
+	if LatestVersion() != 116 {
+		t.Fatalf("LatestVersion() = %d, want 116", LatestVersion())
 	}
 }
 
@@ -2775,5 +2775,30 @@ func TestAuditPartitionsAndWorkspaceStreams(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "TO mesh_runtime") {
 		t.Error("schema 115 must not expose audit storage to runtime")
+	}
+}
+
+func TestAuditEventSealV2(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[115]
+	if migration.Version != 116 {
+		t.Fatalf("migration 116 = %+v", migration)
+	}
+	for _, required := range []string{
+		"pg_catalog.convert_to('meshtransit/audit-event/v2', 'UTF8') || '\\x00'::BYTEA",
+		"BEFORE INSERT ON mesh_audit.audit_event",
+		"'audit seal is computed by the database'",
+		"'audit seal sequence is not contiguous'",
+		"ADD CONSTRAINT audit_stream_scope_public_id_check CHECK (",
+		"DROP POLICY audit_stream_scope_backfill_network ON mesh.network;",
+		"DROP POLICY audit_stream_scope_backfill_workspace ON mesh.workspace;",
+		"GRANT EXECUTE ON FUNCTION mesh_audit.lock_workspace_stream_head(UUID, UUID) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 116 missing %q", required)
+		}
+	}
+	if strings.Count(migration.SQL, "TO mesh_runtime") != 1 {
+		t.Error("schema 116 may grant runtime only the Workspace stream head lock")
 	}
 }

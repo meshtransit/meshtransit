@@ -164,7 +164,8 @@ func newBootstrapChange(ctx context.Context, tx pgx.Tx) (bootstrapChange, error)
 }
 
 // appendBootstrapEvidence records one system.bootstrap audit/outbox event for
-// the change's main aggregate on the Deployment stream.
+// the change's main aggregate on the Deployment stream, or on the new
+// Workspace's own stream when the aggregate is that Workspace.
 func appendBootstrapEvidence(ctx context.Context, tx pgx.Tx, deploymentPublicID string, ids bootstrapChange,
 	kind string, aggregate publicid.ID, payload any) error {
 	encoded, err := json.Marshal(payload)
@@ -173,8 +174,12 @@ func appendBootstrapEvidence(ctx context.Context, tx pgx.Tx, deploymentPublicID 
 	}
 	var streamID, sequence int64
 	var previous []byte
-	if err := tx.QueryRow(ctx, `SELECT stream_internal_id,next_sequence,latest_event_hash
-FROM mesh_audit.lock_deployment_stream_head($1::UUID)`, deploymentPublicID).Scan(&streamID, &sequence, &previous); err != nil {
+	headSQL, headArguments := `SELECT stream_internal_id,next_sequence,latest_event_hash
+FROM mesh_audit.lock_deployment_stream_head($1::UUID)`, []any{deploymentPublicID}
+	if kind == "workspace" {
+		headSQL, headArguments = lockWorkspaceStreamHeadSQL, []any{deploymentPublicID, aggregate.String()}
+	}
+	if err := tx.QueryRow(ctx, headSQL, headArguments...).Scan(&streamID, &sequence, &previous); err != nil {
 		return errors.Join(ErrBootstrapUnavailable, err)
 	}
 	if streamID <= 0 || sequence <= 0 || len(previous) != sha256.Size {

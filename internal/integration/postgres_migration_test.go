@@ -399,4 +399,6 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLAccountSessionActivity(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLAccountSessionLogout(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLRevokedConsoleManagementScopes(ctx, t, runtimePool)
+	// Last, so every evidence writer exercised above is covered.
+	assertAuditSealV2(ctx, t, adminConnection)
 }

@@ -129,12 +129,16 @@ func (store *WorkspaceCreationStore) Create(ctx context.Context, command creatio
 		Version: version, CreatedAt: createdAt.UTC(), Replayed: replayed}, nil
 }
 
+// lockWorkspaceStreamHeadSQL locks the Workspace's own audit stream, where
+// evidence about the Workspace itself (creation, name, roles) is chained.
+const lockWorkspaceStreamHeadSQL = `SELECT stream_internal_id,next_sequence,latest_event_hash
+FROM mesh_audit.lock_workspace_stream_head($1::UUID,$2::UUID)`
+
 func appendWorkspaceCreationEvidence(ctx context.Context, tx accountSessionTransaction, command creation.Command,
 	change, event, outbox publicid.ID, code identity.DisplayCode) error {
 	var streamID, sequence int64
 	var previous []byte
-	if err := tx.QueryRow(ctx, `SELECT stream_internal_id,next_sequence,latest_event_hash
-FROM mesh_audit.lock_deployment_stream_head($1::UUID)`, command.Session.DeploymentID().String()).Scan(&streamID, &sequence, &previous); err != nil {
+	if err := tx.QueryRow(ctx, lockWorkspaceStreamHeadSQL, command.Session.DeploymentID().String(), command.WorkspaceID.String()).Scan(&streamID, &sequence, &previous); err != nil {
 		return err
 	}
 	if streamID <= 0 || sequence <= 0 || len(previous) != sha256.Size {
