@@ -161,6 +161,9 @@ mesh.principal AS principal WHERE device.public_id = $1::UUID AND principal.publ
 		t.Fatalf("deleted a group that owns a tag: %v", err)
 	}
 
+	if _, err := tags.NetworkOptions(ctx, member, scope); !errors.Is(err, devicetag.ErrForbidden) {
+		t.Fatalf("plain member read tag options: %v", err)
+	}
 	// A plain member cannot read the Network's Devices, so it cannot tag.
 	if _, err := tags.ChangeAssignments(ctx, member, scope, devices[0], []devicetag.ID{tag}, nil,
 		newCorrelationID(t)); !errors.Is(err, devicetag.ErrForbidden) {
@@ -176,11 +179,43 @@ mesh.principal AS principal WHERE device.public_id = $1::UUID AND principal.publ
 		newCorrelationID(t)); !errors.Is(err, devicetag.ErrForbidden) {
 		t.Fatalf("tag owner tagged a Device it does not own: %v", err)
 	}
+	// Its options name the tag it owns, for its own Devices only, and hide
+	// the catalog otherwise until a Device here carries a tag.
+	hidden, err := tags.Create(ctx, owner, workspaceID, devicetag.Definition{Name: "audit-only"}, newCorrelationID(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, err := tags.NetworkOptions(ctx, member, scope)
+	if err != nil || len(options.Tags) != 1 || options.Tags[0].ID != tag ||
+		options.Tags[0].Apply != devicetag.ApplyOwnDevices || len(options.OwnedDevices) != 0 {
+		t.Fatalf("tag owner options = %+v, error = %v", options, err)
+	}
+	if _, err := tags.ChangeAssignments(ctx, owner, scope, devices[0], []devicetag.ID{hidden.Tag.ID}, nil,
+		newCorrelationID(t)); err != nil {
+		t.Fatal(err)
+	}
+	options, err = tags.NetworkOptions(ctx, member, scope)
+	if err != nil || len(options.Tags) != 2 || options.Tags[0].ID != hidden.Tag.ID ||
+		options.Tags[0].Apply != devicetag.ApplyNone {
+		t.Fatalf("options with a carried, unowned tag = %+v, error = %v", options, err)
+	}
+	ownerOptions, err := tags.NetworkOptions(ctx, owner, scope)
+	if err != nil || len(ownerOptions.Tags) != 2 || ownerOptions.Tags[1].Apply != devicetag.ApplyAnyDevice {
+		t.Fatalf("owner options = %+v, error = %v", ownerOptions, err)
+	}
+	if _, err := tags.ChangeAssignments(ctx, owner, scope, devices[0], nil, []devicetag.ID{hidden.Tag.ID},
+		newCorrelationID(t)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tags.Delete(ctx, owner, workspaceID, hidden.Tag.ID, 1, newCorrelationID(t)); err != nil {
+		t.Fatalf("delete audit-only: %v", err)
+	}
 	if _, err := roleService.Revoke(ctx, newRevokeCommand(t, owner, workspaceID, networkAdmin.AssignmentID, 1)); err != nil {
 		t.Fatalf("revoke network_admin: %v", err)
 	}
 
 	networkBefore, groupBefore := fixtureNetworkRevisions(ctx, t, admin)
+	wakeupsBefore := countRevisionWakeups(ctx, t, admin, "device_id", devices[0].String())
 	tagged, err := tags.ChangeAssignments(ctx, owner, scope, devices[0], []devicetag.ID{tag}, nil, newCorrelationID(t))
 	if err != nil || tagged.Added != 1 || len(tagged.Tags) != 1 || tagged.Tags[0] != tag {
 		t.Fatalf("tag Device = %+v, error = %v", tagged, err)
@@ -189,7 +224,7 @@ mesh.principal AS principal WHERE device.public_id = $1::UUID AND principal.publ
 	if networkAfter != networkBefore+1 || groupAfter != groupBefore+1 || tagged.NetworkRevision != networkAfter {
 		t.Fatalf("revisions %d/%d -> %d/%d", networkBefore, groupBefore, networkAfter, groupAfter)
 	}
-	if countRevisionWakeups(ctx, t, admin, "device_id", devices[0].String()) != 1 {
+	if countRevisionWakeups(ctx, t, admin, "device_id", devices[0].String()) != wakeupsBefore+1 {
 		t.Fatal("tagging must wake the Network's map sessions")
 	}
 	again, err := tags.ChangeAssignments(ctx, owner, scope, devices[0], []devicetag.ID{tag}, nil, newCorrelationID(t))

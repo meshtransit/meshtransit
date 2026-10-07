@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 123 {
-		t.Fatalf("len(Catalog()) = %d, want 123", len(catalog))
+	if len(catalog) != 124 {
+		t.Fatalf("len(Catalog()) = %d, want 124", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 123 {
-		t.Fatalf("LatestVersion() = %d, want 123", LatestVersion())
+	if LatestVersion() != 124 {
+		t.Fatalf("LatestVersion() = %d, want 124", LatestVersion())
 	}
 }
 
@@ -2960,5 +2960,24 @@ func TestAccessGraphGroupEdges(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "GRANT SELECT") {
 		t.Error("schema 123 must not grant direct table access")
+	}
+}
+
+func TestNetworkTagOptions(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[123]
+	if migration.Version != 124 {
+		t.Fatalf("migration 124 = %+v", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.read_network_tag_options_v1(",
+		"'device.read', p_evaluated_at",
+		"mesh_ops.device_tag_owned_by_internal_v1(",
+		"WHERE option.apply <> 'none' OR option.assigned",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 124 missing %q", required)
+		}
 	}
 }

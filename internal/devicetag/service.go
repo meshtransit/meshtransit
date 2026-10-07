@@ -18,6 +18,8 @@ type Store interface {
 	NetworkTags(ctx context.Context, session accountsession.Session, scope network.Scope,
 		at time.Time) ([]DeviceTags, error)
 	ChangeAssignments(ctx context.Context, change AssignmentChange) (AssignmentResult, error)
+	NetworkOptions(ctx context.Context, session accountsession.Session, scope network.Scope,
+		at time.Time) (NetworkOptions, error)
 }
 
 // Clock supplies the current time.
@@ -154,6 +156,20 @@ func (service *Service) NetworkTags(ctx context.Context, session accountsession.
 		return nil, ErrInvalid
 	}
 	return service.store.NetworkTags(ctx, session, scope, now)
+}
+
+// NetworkOptions returns the tags the session may apply in the Network, the
+// tags its Devices carry, and the Devices of the Network the session owns.
+func (service *Service) NetworkOptions(ctx context.Context, session accountsession.Session,
+	scope network.Scope) (NetworkOptions, error) {
+	now, err := service.now(ctx, session)
+	if err != nil {
+		return NetworkOptions{}, err
+	}
+	if !scope.IsValid() {
+		return NetworkOptions{}, ErrInvalid
+	}
+	return service.store.NetworkOptions(ctx, session, scope, now)
 }
 
 func uniqueTags(ids []ID) bool {

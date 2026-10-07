@@ -292,6 +292,8 @@ func (handler *ManagementHandler) handleDeviceTags(ctx context.Context, response
 		return "success"
 	case identityCatalogDeviceTags:
 		return handler.changeDeviceTags(ctx, response, request, correlationID, path, session, fail)
+	case identityCatalogTagOptions:
+		return handler.readTagOptions(ctx, response, correlationID, path, session, fail)
 	}
 	if path.action == "" {
 		listing, err := tags.List(ctx, session, path.workspaceID)
@@ -398,6 +400,43 @@ func (handler *ManagementHandler) changeDeviceTags(ctx context.Context, response
 	output.Data.DeviceID, output.Data.TagIDs = result.DeviceID.String(), tagIDTexts(result.Tags)
 	output.Data.Added, output.Data.Removed, output.CorrelationID = result.Added, result.Removed,
 		correlationID.String()
+	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, output)
+	return "success"
+}
+
+// readTagOptions answers the tags the session may apply in a Network, the
+// tags its Devices carry, and the Devices of the Network the session owns.
+func (handler *ManagementHandler) readTagOptions(ctx context.Context, response http.ResponseWriter,
+	correlationID publicid.ID, path identityCatalogPath, session accountsession.Session,
+	fail func(managementError) string) string {
+	options, err := handler.deviceTags.NetworkOptions(ctx, session, path.scope)
+	if err != nil {
+		return fail(classifyDeviceTagError(err))
+	}
+	type tagBody struct {
+		TagID       string `json:"tag_id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Apply       string `json:"apply"`
+	}
+	var output struct {
+		Data struct {
+			Tags           []tagBody `json:"tags"`
+			OwnedDeviceIDs []string  `json:"owned_device_ids"`
+		} `json:"data"`
+		CorrelationID string `json:"correlation_id"`
+	}
+	output.Data.Tags = make([]tagBody, 0, len(options.Tags))
+	for _, tag := range options.Tags {
+		output.Data.Tags = append(output.Data.Tags, tagBody{
+			TagID: tag.ID.String(), Name: tag.Name, Description: tag.Description, Apply: string(tag.Apply),
+		})
+	}
+	output.Data.OwnedDeviceIDs = make([]string, 0, len(options.OwnedDevices))
+	for _, device := range options.OwnedDevices {
+		output.Data.OwnedDeviceIDs = append(output.Data.OwnedDeviceIDs, device.String())
+	}
+	output.CorrelationID = correlationID.String()
 	writeManagementJSON(ctx, handler.logger, response, http.StatusOK, output)
 	return "success"
 }

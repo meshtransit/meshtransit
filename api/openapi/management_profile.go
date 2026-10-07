@@ -99,6 +99,7 @@ type consoleManagementProfile struct {
 	DeviceTagUpdate         json.RawMessage            `json:"workspaceDeviceTagUpdate"`
 	DeviceTagDelete         json.RawMessage            `json:"workspaceDeviceTagDelete"`
 	NetworkDeviceTags       json.RawMessage            `json:"networkDeviceTags"`
+	NetworkDeviceTagOptions json.RawMessage            `json:"networkDeviceTagOptions"`
 	NetworkDeviceTagChange  json.RawMessage            `json:"networkDeviceChangeTags"`
 }
 
@@ -183,6 +184,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.DeviceTagUpdate, "post", "updateWorkspaceDeviceTag", true) &&
 		consoleCookieOperation(profile.DeviceTagDelete, "post", "deleteWorkspaceDeviceTag", true) &&
 		consoleCookieOperation(profile.NetworkDeviceTags, "get", "listNetworkDeviceTags", false) &&
+		consoleCookieOperation(profile.NetworkDeviceTagOptions, "get", "listNetworkTagOptions", false) &&
 		consoleCookieOperation(profile.NetworkDeviceTagChange, "post", "changeNetworkDeviceTags", true)
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
@@ -308,6 +310,8 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths[deviceTags+"/{tag_id}/actions/update"] = profile.DeviceTagUpdate
 	consolePaths[deviceTags+"/{tag_id}/actions/delete"] = profile.DeviceTagDelete
 	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-tags"] = profile.NetworkDeviceTags
+	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/device-tags/options"] =
+		profile.NetworkDeviceTagOptions
 	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/devices/{device_id}/actions/change-tags"] =
 		profile.NetworkDeviceTagChange
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments"] = profile.WorkspaceRoleAssign

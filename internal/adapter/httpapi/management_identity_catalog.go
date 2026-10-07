@@ -42,6 +42,7 @@ type DeviceTagManager interface {
 	Delete(context.Context, accountsession.Session, workspace.ID, devicetag.ID, int64,
 		publicid.ID) (devicetag.Result, error)
 	NetworkTags(context.Context, accountsession.Session, network.Scope) ([]devicetag.DeviceTags, error)
+	NetworkOptions(context.Context, accountsession.Session, network.Scope) (devicetag.NetworkOptions, error)
 	ChangeAssignments(context.Context, accountsession.Session, network.Scope, node.ID, []devicetag.ID,
 		[]devicetag.ID, publicid.ID) (devicetag.AssignmentResult, error)
 }
@@ -55,6 +56,7 @@ const (
 	identityCatalogTags
 	identityCatalogNetworkTags
 	identityCatalogDeviceTags
+	identityCatalogTagOptions
 )
 
 type identityCatalogPath struct {
@@ -169,6 +171,9 @@ func (path *identityCatalogPath) matchNetwork(rest []string) bool {
 	case len(rest) == 2 && rest[1] == "device-tags":
 		path.kind = identityCatalogNetworkTags
 		return true
+	case len(rest) == 3 && rest[1] == "device-tags" && rest[2] == "options":
+		path.kind = identityCatalogTagOptions
+		return true
 	case len(rest) == 5 && rest[1] == "devices" && rest[3] == "actions" && rest[4] == "change-tags":
 		device, ok := canonicalPublicID(rest[2])
 		if !ok {
@@ -239,6 +244,8 @@ func (path identityCatalogPath) operation() string {
 		return "device_tag_" + path.action
 	case identityCatalogNetworkTags:
 		return "network_device_tags_read"
+	case identityCatalogTagOptions:
+		return "network_tag_options_read"
 	default:
 		return "device_tags_change"
 	}

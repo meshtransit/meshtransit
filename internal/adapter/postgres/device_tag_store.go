@@ -27,6 +27,9 @@ const changeDeviceTagSQL = `SELECT mesh_ops.change_device_tag_v1(` + sessionArgu
  $10::UUID,$11::TEXT,$12::UUID,$13::BIGINT,$14::TEXT,$15::TEXT,$16::UUID[],$17::TEXT[],$18::UUID[],
  $19::UUID,$20::TIMESTAMPTZ)::TEXT`
 
+const readNetworkTagOptionsSQL = `SELECT mesh_ops.read_network_tag_options_v1(` + sessionArguments + `,
+    $10::UUID, $11::UUID, $12::TIMESTAMPTZ)::TEXT`
+
 const readNetworkDeviceTagsSQL = `SELECT mesh_ops.read_network_device_tags_v1(` + sessionArguments + `,
  $10::UUID,$11::UUID,$12::TIMESTAMPTZ)::TEXT`
 
@@ -347,6 +350,70 @@ func (store *DeviceTagStore) Change(ctx context.Context, change devicetag.Change
 		return devicetag.Result{}, err
 	}
 	return result, nil
+}
+
+// NetworkOptions authorizes device.read and returns the tags the session may
+// apply in the Network, the tags its Devices carry, and the Devices it owns.
+func (store *DeviceTagStore) NetworkOptions(ctx context.Context, session accountsession.Session,
+	scope network.Scope, at time.Time) (devicetag.NetworkOptions, error) {
+	if !session.IsValid() || !scope.IsValid() || at.IsZero() {
+		return devicetag.NetworkOptions{}, devicetag.ErrInvalid
+	}
+	var options devicetag.NetworkOptions
+	err := store.transact(ctx, &scope, func(tx accountSessionTransaction) (bool, error) {
+		var encoded string
+		if err := tx.QueryRow(ctx, readNetworkTagOptionsSQL, append(sessionQueryArguments(session),
+			scope.WorkspaceID().String(), scope.NetworkID().String(), at)...).Scan(&encoded); err != nil {
+			return false, deviceTagDatabaseError(err)
+		}
+		parsed, err := decodeNetworkTagOptions(encoded)
+		options = parsed
+		return false, err
+	})
+	if err != nil {
+		return devicetag.NetworkOptions{}, err
+	}
+	return options, nil
+}
+
+func decodeNetworkTagOptions(encoded string) (devicetag.NetworkOptions, error) {
+	var envelope struct {
+		Tags []struct {
+			TagID       string `json:"tag_id"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Apply       string `json:"apply"`
+		} `json:"tags"`
+		OwnedDeviceIDs []string `json:"owned_device_ids"`
+	}
+	if err := decodeIdentityCatalogJSON([]byte(encoded), &envelope); err != nil || envelope.Tags == nil ||
+		envelope.OwnedDeviceIDs == nil || len(envelope.Tags) > devicetag.MaximumTags ||
+		len(envelope.OwnedDeviceIDs) > devicetag.MaximumOwnedDevices {
+		return devicetag.NetworkOptions{}, devicetag.ErrInvalid
+	}
+	options := devicetag.NetworkOptions{
+		Tags:         make([]devicetag.TagOption, 0, len(envelope.Tags)),
+		OwnedDevices: make([]node.ID, 0, len(envelope.OwnedDeviceIDs)),
+	}
+	for _, item := range envelope.Tags {
+		id, err := devicetag.ParseID(item.TagID)
+		apply := devicetag.Apply(item.Apply)
+		if err != nil || !devicetag.ValidName(item.Name) ||
+			(apply != devicetag.ApplyAnyDevice && apply != devicetag.ApplyOwnDevices && apply != devicetag.ApplyNone) {
+			return devicetag.NetworkOptions{}, devicetag.ErrInvalid
+		}
+		options.Tags = append(options.Tags, devicetag.TagOption{
+			ID: id, Name: item.Name, Description: item.Description, Apply: apply,
+		})
+	}
+	for _, text := range envelope.OwnedDeviceIDs {
+		device, err := node.ParseID(text)
+		if err != nil {
+			return devicetag.NetworkOptions{}, devicetag.ErrInvalid
+		}
+		options.OwnedDevices = append(options.OwnedDevices, device)
+	}
+	return options, nil
 }
 
 // NetworkTags authorizes device.read and returns the Network's tagged Devices.

@@ -7790,6 +7790,139 @@
       }
     }
   },
+  "networkDeviceTagOptions": {
+    "get": {
+      "operationId": "listNetworkTagOptions",
+      "summary": "The tags one may apply in a Network",
+      "description": "Requires device.read on the Network. Returns, by name, every tag the reader may apply here or that a Device of the Network carries, each with apply: any_device (device_tag.manage, or tag ownership with device.manage here), own_devices (tag ownership: only Devices the reader owns) or none (carried here, not changeable by the reader); and the active Devices of the Network the reader owns (at most 1,000). Lets tag owners without device_tag.read tag Devices.",
+      "security": [
+        {
+          "accountSessionCookie": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "network_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Tag options",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "tags",
+                      "owned_device_ids"
+                    ],
+                    "properties": {
+                      "tags": {
+                        "type": "array",
+                        "maxItems": 200,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "tag_id",
+                            "name",
+                            "description",
+                            "apply"
+                          ],
+                          "properties": {
+                            "tag_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "name": {
+                              "type": "string",
+                              "pattern": "^[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?$"
+                            },
+                            "description": {
+                              "type": "string",
+                              "maxLength": 280
+                            },
+                            "apply": {
+                              "type": "string",
+                              "enum": [
+                                "any_device",
+                                "own_devices",
+                                "none"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "owned_device_ids": {
+                        "type": "array",
+                        "maxItems": 1000,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        }
+      }
+    }
+  },
   "networkDeviceChangeTags": {
     "post": {
       "operationId": "changeNetworkDeviceTags",

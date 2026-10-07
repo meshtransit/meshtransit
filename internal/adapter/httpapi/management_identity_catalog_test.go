@@ -24,6 +24,7 @@ func TestParseIdentityCatalogPath(t *testing.T) {
 		{http.MethodGet, ws + "/device-tags", "device_tag_list", true},
 		{http.MethodPost, ws + "/device-tags/" + id + "/actions/update", "device_tag_update", true},
 		{http.MethodGet, net + "/device-tags", "network_device_tags_read", true},
+		{http.MethodGet, net + "/device-tags/options", "network_tag_options_read", true},
 		{http.MethodPost, net + "/devices/" + id + "/actions/change-tags", "device_tags_change", true},
 		{http.MethodGet, ws + "/identity-groups?limit=1", "", false},
 		{http.MethodGet, ws + "/device-tags/" + id + "/members", "", false},
@@ -33,6 +34,9 @@ func TestParseIdentityCatalogPath(t *testing.T) {
 		{http.MethodGet, ws + "/identity-groups/01890F00-0000-7000-8000-000000000301/members", "", false},
 		{http.MethodPost, net + "/devices/" + id + "/actions/revoke", "", false},
 		{http.MethodGet, net + "/device-tags?x=1", "", false},
+		{http.MethodGet, net + "/device-tags/options?x=1", "", false},
+		{http.MethodGet, net + "/device-tags/choices", "", false},
+		{http.MethodGet, net + "/device-tags/options/extra", "", false},
 	} {
 		request := httptest.NewRequestWithContext(t.Context(), test.method, test.path, nil)
 		path, ok := parseIdentityCatalogPath(request)

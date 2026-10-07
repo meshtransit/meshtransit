@@ -183,6 +183,38 @@ type DeviceTags struct {
 	Tags     []ID
 }
 
+// Apply is where a person may apply one tag in one Network.
+type Apply string
+
+// Apply scopes, matching the rule a tag change enforces.
+const (
+	// ApplyAnyDevice: device_tag.manage, or ownership with device.manage.
+	ApplyAnyDevice Apply = "any_device"
+	// ApplyOwnDevices: ownership only, on Devices the person owns.
+	ApplyOwnDevices Apply = "own_devices"
+	// ApplyNone: the tag is on a Device here, but the person may not change it.
+	ApplyNone Apply = "none"
+)
+
+// MaximumOwnedDevices bounds the owned Devices a tag options read returns.
+const MaximumOwnedDevices = 1000
+
+// TagOption is one tag a person may apply in a Network, or that a Device of
+// the Network carries.
+type TagOption struct {
+	ID          ID
+	Name        string
+	Description string
+	Apply       Apply
+}
+
+// NetworkOptions are the tags a person may apply in one Network, the tags
+// its Devices carry, and the Devices of the Network the person owns.
+type NetworkOptions struct {
+	Tags         []TagOption
+	OwnedDevices []node.ID
+}
+
 // AssignmentResult is a Device's tags after a change.
 type AssignmentResult struct {
 	DeviceID        node.ID
