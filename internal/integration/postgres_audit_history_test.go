@@ -126,6 +126,7 @@ func assertAuditHistory(ctx context.Context, t *testing.T, admin *pgx.Conn, runt
 		t.Fatalf("Workspace-wide history with a Network role error = %v, want ErrForbidden", err)
 	}
 	assertAuditExport(ctx, t, admin, store, session, providerScope)
+	assertShareCounterpartRedaction(ctx, t, admin)
 }
 
 // grantFixturePermission gives the shared fixture role one permission.
@@ -202,5 +203,35 @@ func assertAuditExport(ctx context.Context, t *testing.T, admin *pgx.Conn, store
 			record.Integrity.PreviousSeal != ordered[index-1].Integrity.Seal) {
 			t.Fatalf("export breaks between #%d and #%d", ordered[index-1].Sequence, record.Sequence)
 		}
+	}
+}
+
+// assertShareCounterpartRedaction checks that every share decision keeps the
+// acting side's reason and Session evidence in the acting Network's record
+// only; the other Network's record says where the details live.
+func assertShareCounterpartRedaction(ctx context.Context, t *testing.T, admin *pgx.Conn) {
+	t.Helper()
+	var acting, counterpart, leaked int
+	if err := admin.QueryRow(ctx, `WITH decisions AS (
+    SELECT payload,
+        payload ->> 'evidence_network' = CASE payload ->> 'authority_side'
+            WHEN 'provider' THEN payload ->> 'provider_network'
+            ELSE payload ->> 'consumer_network' END AS acting
+    FROM mesh_audit.audit_event
+    WHERE target_kind IN ('share_offer', 'trust_contract') AND actor_principal_public_id IS NOT NULL
+      AND payload ? 'authority_side'
+)
+SELECT
+    pg_catalog.count(*) FILTER (WHERE acting AND payload ? 'audit_reason'),
+    pg_catalog.count(*) FILTER (WHERE NOT acting
+        AND payload ->> 'acting_side_details' = 'recorded_in_acting_network'),
+    pg_catalog.count(*) FILTER (WHERE NOT acting
+        AND (payload ? 'audit_reason' OR payload ? 'account_session_id' OR payload ? 'role_binding_id'))
+FROM decisions`).Scan(&acting, &counterpart, &leaked); err != nil {
+		t.Fatal(err)
+	}
+	if acting == 0 || counterpart == 0 || leaked != 0 {
+		t.Fatalf("share decisions: %d acting records with reasons, %d counterpart records, %d counterpart records leaking acting-side details",
+			acting, counterpart, leaked)
 	}
 }

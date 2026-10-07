@@ -33,6 +33,23 @@ type resourceSharingAuditPayload struct {
 	WorkspaceOwnerAuthorityGeneration int64  `json:"workspace_owner_authority_generation,omitempty"`
 }
 
+// resourceSharingCounterpartAuditPayload is what the other side's Network
+// records about a decision. A share joins two parties that may belong to
+// different Workspaces, so the acting side's stated reason, Session and role
+// evidence stay in the acting Network's record only.
+type resourceSharingCounterpartAuditPayload struct {
+	ScopeRelation     string `json:"scope_relation"`
+	AuthoritySide     string `json:"authority_side"`
+	EvidenceNetwork   string `json:"evidence_network"`
+	ProviderNetwork   string `json:"provider_network"`
+	ConsumerNetwork   string `json:"consumer_network"`
+	ActingSideDetails string `json:"acting_side_details"`
+}
+
+// resourceSharingDetailsInActingNetwork tells a reader where the reason and
+// authorization evidence of a counterpart record live.
+const resourceSharingDetailsInActingNetwork = "recorded_in_acting_network"
+
 type resourceSharingAuditTarget struct {
 	state    resourceSharingNetworkState
 	head     resourceAuthorityAuditHead
@@ -132,20 +149,30 @@ func appendResourceSharingMutationEvidence(
 			target.head.nextSequence <= 0 || !target.auditID.IsValid() || !target.outboxID.IsValid() {
 			return sharing.ErrUnavailable
 		}
-		auditPayload, err := json.Marshal(resourceSharingAuditPayload{
-			AuditReason: reason.String(), ScopeRelation: relation.String(), AuthoritySide: authoritySide,
-			EvidenceNetwork:                   resourceSharingScopeKey(target.state.scope),
-			ProviderNetwork:                   resourceSharingScopeKey(locator.provider.scope),
-			ConsumerNetwork:                   resourceSharingScopeKey(locator.consumer.scope),
-			AccountSessionID:                  authorizationEvidence.accountSessionID.String(),
-			RoleBindingID:                     authorizationIDString(authorizationEvidence.roleBindingID),
-			RoleDefinitionID:                  authorizationIDString(authorizationEvidence.roleDefinitionID),
-			ScopeAuthorityGeneration:          authorizationEvidence.scopeAuthorityGeneration,
-			MembershipAuthorityGeneration:     authorizationEvidence.membershipAuthorityGeneration,
-			BindingAuthorityGeneration:        authorizationEvidence.bindingAuthorityGeneration,
-			RoleAuthorityGeneration:           authorizationEvidence.roleAuthorityGeneration,
-			WorkspaceOwnerAuthorityGeneration: authorizationEvidence.workspaceOwnerAuthorityGeneration,
-		})
+		var auditDocument any = resourceSharingCounterpartAuditPayload{
+			ScopeRelation: relation.String(), AuthoritySide: authoritySide,
+			EvidenceNetwork:   resourceSharingScopeKey(target.state.scope),
+			ProviderNetwork:   resourceSharingScopeKey(locator.provider.scope),
+			ConsumerNetwork:   resourceSharingScopeKey(locator.consumer.scope),
+			ActingSideDetails: resourceSharingDetailsInActingNetwork,
+		}
+		if target.state.scope == localScope {
+			auditDocument = resourceSharingAuditPayload{
+				AuditReason: reason.String(), ScopeRelation: relation.String(), AuthoritySide: authoritySide,
+				EvidenceNetwork:                   resourceSharingScopeKey(target.state.scope),
+				ProviderNetwork:                   resourceSharingScopeKey(locator.provider.scope),
+				ConsumerNetwork:                   resourceSharingScopeKey(locator.consumer.scope),
+				AccountSessionID:                  authorizationEvidence.accountSessionID.String(),
+				RoleBindingID:                     authorizationIDString(authorizationEvidence.roleBindingID),
+				RoleDefinitionID:                  authorizationIDString(authorizationEvidence.roleDefinitionID),
+				ScopeAuthorityGeneration:          authorizationEvidence.scopeAuthorityGeneration,
+				MembershipAuthorityGeneration:     authorizationEvidence.membershipAuthorityGeneration,
+				BindingAuthorityGeneration:        authorizationEvidence.bindingAuthorityGeneration,
+				RoleAuthorityGeneration:           authorizationEvidence.roleAuthorityGeneration,
+				WorkspaceOwnerAuthorityGeneration: authorizationEvidence.workspaceOwnerAuthorityGeneration,
+			}
+		}
+		auditPayload, err := json.Marshal(auditDocument)
 		if err != nil {
 			return sharing.ErrUnavailable
 		}
