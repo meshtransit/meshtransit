@@ -151,7 +151,13 @@ func classifyAccessGraphListError(err error) managementError {
 	if errors.Is(err, accessgraph.ErrStaleGraphCursor) {
 		return managementError{
 			Status: http.StatusConflict, Code: "stale_page_token",
-			Message: "the policy changed; start again from the first page",
+			Message: "the policy or its groups changed; start again from the first page",
+		}
+	}
+	if errors.Is(err, accessgraph.ErrGraphTooLarge) {
+		return managementError{
+			Status: http.StatusUnprocessableEntity, Code: "access_graph_too_large",
+			Message: "group rules allow too many connections to list; choose a Device",
 		}
 	}
 	return classifyAccessGraphError(err)

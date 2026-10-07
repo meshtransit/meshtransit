@@ -132,6 +132,7 @@ func TestManagementHandlerMapsAccessGraphListFailures(t *testing.T) {
 		want int
 	}{
 		{name: "stale page token", err: accessgraph.ErrStaleGraphCursor, want: http.StatusConflict},
+		{name: "too many group edges", err: accessgraph.ErrGraphTooLarge, want: http.StatusUnprocessableEntity},
 		{name: "forbidden", err: accessgraph.ErrForbidden, want: http.StatusForbidden},
 		{name: "unavailable", err: accessgraph.ErrUnavailable, want: http.StatusServiceUnavailable},
 		{name: "invalid snapshot", err: accessgraph.ErrInvalidSnapshot, want: http.StatusInternalServerError},

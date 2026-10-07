@@ -478,7 +478,7 @@
       "get": {
         "operationId": "listAccessGraph",
         "summary": "List the effective access graph of one authorized Network",
-        "description": "Requires current policy.read and device.read. Edges are the compiled rules of the active release in projection order, local and to shared-in Devices, with the participants they connect. A page token is bound to the policy revision that issued it; a token from another revision answers 409.",
+        "description": "Requires current policy.read and device.read. Edges are the compiled rules of the active release, local and to shared-in Devices, plus one edge per Device pair a Device Group, Identity Group or tag rule reaches at the current membership and tags (it names the selectors it matched through), in projection order, with the participants they connect. A page token is bound to the policy and group revisions that issued it; a token from another revision answers 409. Without device_id, group rules that expand to more than 100,000 pairs answer 422 access_graph_too_large.",
         "security": [{"accountSessionBearer": []}],
         "parameters": [
           {"$ref": "#/components/parameters/WorkspaceID"},
@@ -528,6 +528,7 @@
           "403": {"$ref": "#/components/responses/Forbidden"},
           "405": {"$ref": "#/components/responses/MethodNotAllowed"},
           "409": {"$ref": "#/components/responses/Conflict"},
+          "422": {"$ref": "#/components/responses/UnprocessableEntity"},
           "429": {"$ref": "#/components/responses/RateLimited"},
           "500": {"$ref": "#/components/responses/InternalFailure"},
           "503": {"$ref": "#/components/responses/Unavailable"},

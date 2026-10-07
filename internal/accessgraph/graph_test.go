@@ -20,7 +20,7 @@ func TestGraphCursorRoundTripsAndRejectsTampering(t *testing.T) {
 
 	page := graphPageFixture(t, graphQueryFixture(t, accessgraph.GraphQueryParams{PageSize: 1}), true)
 	next, hasNext := page.Next()
-	if !hasNext || next.PolicyRevision() != 6 {
+	if !hasNext || next.PolicyRevision() != 6 || next.GroupRevision() != 9 {
 		t.Fatalf("Next() = %+v, %t", next, hasNext)
 	}
 	parsed, err := accessgraph.ParseGraphCursor(next.String())
@@ -31,13 +31,16 @@ func TestGraphCursorRoundTripsAndRejectsTampering(t *testing.T) {
 		t.Fatalf("ParseGraphCursor(empty) = %+v, %v", first, err)
 	}
 	for name, token := range map[string]string{
-		"not base64":     "%%%",
-		"unknown field":  graphCursorToken(`{"v":1,"r":6,"p":"01890f00-0000-7000-8000-000000001001","x":1}`),
-		"wrong version":  graphCursorToken(`{"v":2,"r":6,"p":"01890f00-0000-7000-8000-000000001001"}`),
-		"zero revision":  graphCursorToken(`{"v":1,"r":0,"p":"01890f00-0000-7000-8000-000000001001"}`),
-		"bad projection": graphCursorToken(`{"v":1,"r":6,"p":"not-a-uuid"}`),
-		"trailing data":  graphCursorToken(`{"v":1,"r":6,"p":"01890f00-0000-7000-8000-000000001001"} {}`),
-		"oversized":      strings.Repeat("a", 300),
+		"not base64":       "%%%",
+		"unknown field":    graphCursorToken(`{"v":1,"r":6,"p":"01890f00-0000-7000-8000-000000001001","x":1}`),
+		"wrong version":    graphCursorToken(`{"v":3,"r":6,"g":1,"p":"01890f00-0000-7000-8000-000000001001"}`),
+		"v2 without group": graphCursorToken(`{"v":2,"r":6,"p":"01890f00-0000-7000-8000-000000001001"}`),
+		"v1 with group":    graphCursorToken(`{"v":1,"r":6,"g":1,"p":"01890f00-0000-7000-8000-000000001001"}`),
+		"negative group":   graphCursorToken(`{"v":2,"r":6,"g":-1,"p":"01890f00-0000-7000-8000-000000001001"}`),
+		"zero revision":    graphCursorToken(`{"v":1,"r":0,"p":"01890f00-0000-7000-8000-000000001001"}`),
+		"bad projection":   graphCursorToken(`{"v":1,"r":6,"p":"not-a-uuid"}`),
+		"trailing data":    graphCursorToken(`{"v":1,"r":6,"p":"01890f00-0000-7000-8000-000000001001"} {}`),
+		"oversized":        strings.Repeat("a", 300),
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -135,6 +138,22 @@ func TestGraphPageRejectsInconsistentPages(t *testing.T) {
 			name: "cursor from another policy revision",
 			query: accessgraph.GraphQueryParams{
 				Cursor: graphCursorFixture(t, 5, tcp.ProjectionID()),
+			},
+			params: graphPageParams(t, revision, release, graphDeviceNodes(t, 303, 302), []accessgraph.Path{udp}, 2),
+			want:   accessgraph.ErrStaleGraphCursor,
+		},
+		{
+			name: "cursor from another group revision",
+			query: accessgraph.GraphQueryParams{
+				Cursor: graphCursorAt(t, `{"v":2,"r":6,"g":8,"p":"`+tcp.ProjectionID().String()+`"}`),
+			},
+			params: graphPageParams(t, revision, release, graphDeviceNodes(t, 303, 302), []accessgraph.Path{udp}, 2),
+			want:   accessgraph.ErrStaleGraphCursor,
+		},
+		{
+			name: "cursor issued before group edges",
+			query: accessgraph.GraphQueryParams{
+				Cursor: graphCursorAt(t, `{"v":1,"r":6,"p":"`+tcp.ProjectionID().String()+`"}`),
 			},
 			params: graphPageParams(t, revision, release, graphDeviceNodes(t, 303, 302), []accessgraph.Path{udp}, 2),
 			want:   accessgraph.ErrStaleGraphCursor,
@@ -355,9 +374,12 @@ func graphReleaseFixture(t *testing.T) graphRelease {
 
 func graphCursorFixture(t *testing.T, policyRevision int64, after publication.ProjectionID) accessgraph.GraphCursor {
 	t.Helper()
-	cursor, err := accessgraph.ParseGraphCursor(graphCursorToken(
-		`{"v":1,"r":` + strconv.FormatInt(policyRevision, 10) + `,"p":"` + after.String() + `"}`,
-	))
+	return graphCursorAt(t, `{"v":2,"r":`+strconv.FormatInt(policyRevision, 10)+`,"g":9,"p":"`+after.String()+`"}`)
+}
+
+func graphCursorAt(t *testing.T, document string) accessgraph.GraphCursor {
+	t.Helper()
+	cursor, err := accessgraph.ParseGraphCursor(graphCursorToken(document))
 	if err != nil {
 		t.Fatal(err)
 	}

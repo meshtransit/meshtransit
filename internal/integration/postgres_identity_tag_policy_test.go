@@ -195,6 +195,16 @@ func assertPostgreSQLIdentityTagPolicy(ctx context.Context, t *testing.T, admin 
 		t.Fatalf("explain through an identity group and a tag = %+v, error = %v", explained, err)
 	}
 
+	edge := listedGroupEdge(ctx, t, runtimePool, owner, scope, node.ID{}, client, server)
+	if edge.SourceIdentityGroupID() != group || edge.DestinationTagID() != tag ||
+		edge.SelectorKind() != accessgraph.SelectorKindDevice {
+		t.Fatalf("listed group edge = %+v", edge)
+	}
+	if again := listedGroupEdge(ctx, t, runtimePool, owner, scope, client, client, server); again.ProjectionID() !=
+		edge.ProjectionID() {
+		t.Fatalf("group edge projection %s then %s, want one stable identity", edge.ProjectionID(), again.ProjectionID())
+	}
+
 	// Tagging the client makes it a service Device: the group no longer selects it.
 	networkBefore, _ := fixtureNetworkRevisions(ctx, t, admin)
 	if _, err := tags.ChangeAssignments(ctx, owner, scope, client, []devicetag.ID{tag}, nil, newCorrelationID(t)); err != nil {
@@ -242,4 +252,28 @@ func assertPostgreSQLIdentityTagPolicy(ctx context.Context, t *testing.T, admin 
 	if _, err := groups.Delete(ctx, owner, workspaceID, group, left.Group.Version, newCorrelationID(t)); err != nil {
 		t.Fatalf("delete released group: %v", err)
 	}
+}
+
+// listedGroupEdge lists the Access Graph, filtered to one Device when given,
+// and returns the edge from source to destination.
+func listedGroupEdge(ctx context.Context, t *testing.T, runtimePool *postgresadapter.Pool,
+	session accountsession.Session, scope network.Scope, filter, source, destination node.ID) accessgraph.Path {
+	t.Helper()
+	query, err := accessgraph.NewGraphQuery(accessgraph.GraphQueryParams{
+		Scope: scope, DeviceID: filter, PageSize: accessgraph.MaximumGraphPageSize,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := newIntegrationPolicyExplainer(t, runtimePool).Graph(ctx, session, query)
+	if err != nil {
+		t.Fatalf("list Access Graph: %v", err)
+	}
+	for _, path := range page.Paths() {
+		if path.SourceNodeID() == source && path.DestinationNodeID() == destination {
+			return path
+		}
+	}
+	t.Fatalf("Access Graph lacks %s -> %s among %d edges", source, destination, len(page.Paths()))
+	return accessgraph.Path{}
 }

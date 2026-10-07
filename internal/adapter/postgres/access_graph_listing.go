@@ -38,7 +38,7 @@ const readAccessGraphSQL = `SELECT
     has_more,
     paths::TEXT,
     nodes::TEXT
-FROM mesh_ops.read_access_graph_v1(
+FROM mesh_ops.read_access_graph_v2(
     $1::UUID, $2::UUID, $3::UUID, $4::UUID,
     $5::BIGINT, $6::BIGINT, $7::BIGINT, $8::BIGINT, $9::BIGINT,
     $10::UUID, $11::UUID, $12::UUID, $13::TEXT, $14::UUID, $15::INTEGER, $16::TIMESTAMPTZ
@@ -311,6 +311,9 @@ func accessGraphListingError(ctx context.Context, err error) error {
 	var databaseError *pgconn.PgError
 	if errors.As(err, &databaseError) && databaseError.Code == "22023" {
 		return accessgraph.ErrInvalidQuery
+	}
+	if errors.As(err, &databaseError) && databaseError.Code == "MTA01" {
+		return accessgraph.ErrGraphTooLarge
 	}
 	return accessGraphDatabaseError(ctx, err)
 }

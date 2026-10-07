@@ -601,7 +601,7 @@ func newIntegrationPolicyExplainer(
 		t.Fatal(err)
 	}
 	service, err := accessgraph.NewService(accessgraph.Dependencies{
-		Reader: store, Clock: accessgraph.SystemClock{},
+		Reader: store, Clock: accessgraph.SystemClock{}, GraphReader: store,
 	})
 	if err != nil {
 		t.Fatal(err)

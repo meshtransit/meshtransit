@@ -26,19 +26,33 @@ const (
 	MaximumGraphPageSize = 500
 	// maximumGraphCursorBytes bounds the opaque continuation token.
 	maximumGraphCursorBytes = 256
-	graphCursorVersion      = 1
+	graphCursorVersion      = 2
+	// legacyGraphCursorVersion tokens predate group edges; they read as stale.
+	legacyGraphCursorVersion = 1
+	// MaximumGroupEdges bounds the group rule pairs an unfiltered listing
+	// expands; beyond it the caller narrows the listing to one Device.
+	MaximumGroupEdges = 100000
 )
 
 // ErrStaleGraphCursor reports a continuation token issued for another active
-// policy revision. The caller must restart from the first page.
+// policy revision or group revision. The caller must restart from the first
+// page.
 var ErrStaleGraphCursor = errors.New("access graph: stale graph cursor")
 
-// GraphCursor continues one graph listing inside the policy revision that
-// issued it. Edges are ordered by their compiled projection identity.
+// ErrGraphTooLarge reports an unfiltered listing whose group rules expand to
+// more than MaximumGroupEdges Device pairs; the caller filters to a Device.
+var ErrGraphTooLarge = errors.New("access graph: too many group edges to list")
+
+// GraphCursor continues one graph listing inside the policy and group
+// revisions that issued it: group rule edges follow membership and tags,
+// which change without a new release. Edges are ordered by projection
+// identity.
 type GraphCursor struct {
 	policyRevision  int64
+	groupRevision   int64
 	afterProjection publication.ProjectionID
 	hasContinuation bool
+	legacy          bool
 }
 
 // PolicyRevision returns the active policy revision the cursor belongs to.
@@ -52,9 +66,13 @@ func (cursor GraphCursor) AfterProjection() publication.ProjectionID {
 // IsZero reports whether the cursor starts from the first page.
 func (cursor GraphCursor) IsZero() bool { return !cursor.hasContinuation }
 
+// GroupRevision returns the group revision the cursor belongs to.
+func (cursor GraphCursor) GroupRevision() int64 { return cursor.groupRevision }
+
 type graphCursorWire struct {
 	Version         int    `json:"v"`
 	PolicyRevision  int64  `json:"r"`
+	GroupRevision   *int64 `json:"g,omitempty"`
 	AfterProjection string `json:"p"`
 }
 
@@ -63,9 +81,10 @@ func (cursor GraphCursor) String() string {
 	if !cursor.hasContinuation {
 		return ""
 	}
+	groupRevision := cursor.groupRevision
 	encoded, err := json.Marshal(graphCursorWire{
 		Version: graphCursorVersion, PolicyRevision: cursor.policyRevision,
-		AfterProjection: cursor.afterProjection.String(),
+		GroupRevision: &groupRevision, AfterProjection: cursor.afterProjection.String(),
 	})
 	if err != nil {
 		return ""
@@ -93,12 +112,21 @@ func ParseGraphCursor(value string) (GraphCursor, error) {
 		return GraphCursor{}, ErrInvalidQuery
 	}
 	projection, err := publication.ParseProjectionID(wire.AfterProjection)
-	if err != nil || wire.Version != graphCursorVersion || wire.PolicyRevision < 1 {
+	if err != nil || wire.PolicyRevision < 1 {
 		return GraphCursor{}, ErrInvalidQuery
 	}
-	return GraphCursor{
+	cursor := GraphCursor{
 		policyRevision: wire.PolicyRevision, afterProjection: projection, hasContinuation: true,
-	}, nil
+	}
+	switch {
+	case wire.Version == legacyGraphCursorVersion && wire.GroupRevision == nil:
+		cursor.legacy = true
+	case wire.Version == graphCursorVersion && wire.GroupRevision != nil && *wire.GroupRevision >= 0:
+		cursor.groupRevision = *wire.GroupRevision
+	default:
+		return GraphCursor{}, ErrInvalidQuery
+	}
+	return cursor, nil
 }
 
 // GraphQueryParams selects one bounded page of the effective access graph.
@@ -331,7 +359,9 @@ func NewGraphPage(query GraphQuery, params GraphPageParams) (GraphPage, error) {
 		semanticHash: params.SemanticHash, nodes: slices.Clone(params.Nodes),
 		paths: clonePaths(params.Paths), matchingPaths: params.MatchingPaths,
 	}
-	if !query.cursor.IsZero() && query.cursor.policyRevision != params.Revision.PolicyRevision() {
+	if !query.cursor.IsZero() && (query.cursor.legacy ||
+		query.cursor.policyRevision != params.Revision.PolicyRevision() ||
+		query.cursor.groupRevision != params.Revision.GroupRevision()) {
 		return GraphPage{}, ErrStaleGraphCursor
 	}
 	if params.HasMore {
@@ -340,6 +370,7 @@ func NewGraphPage(query GraphQuery, params GraphPageParams) (GraphPage, error) {
 		}
 		page.next = GraphCursor{
 			policyRevision:  params.Revision.PolicyRevision(),
+			groupRevision:   params.Revision.GroupRevision(),
 			afterProjection: page.paths[len(page.paths)-1].ProjectionID(),
 			hasContinuation: true,
 		}

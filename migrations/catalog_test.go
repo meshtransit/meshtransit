@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 122 {
-		t.Fatalf("len(Catalog()) = %d, want 122", len(catalog))
+	if len(catalog) != 123 {
+		t.Fatalf("len(Catalog()) = %d, want 123", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 122 {
-		t.Fatalf("LatestVersion() = %d, want 122", LatestVersion())
+	if LatestVersion() != 123 {
+		t.Fatalf("LatestVersion() = %d, want 123", LatestVersion())
 	}
 }
 
@@ -2939,5 +2939,26 @@ func TestIdentityAndTagRules(t *testing.T) {
 		if !strings.Contains(migration.SQL, required) {
 			t.Errorf("schema 122 missing %q", required)
 		}
+	}
+}
+
+func TestAccessGraphGroupEdges(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[122]
+	if migration.Version != 123 {
+		t.Fatalf("migration 123 = %+v", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.read_access_graph_v2(",
+		"FROM mesh_ops.resolve_group_policy_edges_v2(v_device_internal) AS edge",
+		"ERRCODE = 'MTA01'",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 123 missing %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "GRANT SELECT") {
+		t.Error("schema 123 must not grant direct table access")
 	}
 }
