@@ -32,7 +32,7 @@ func TestParseDeviceGroupPath(t *testing.T) {
 		{http.MethodGet, "/api/v1/workspaces/01890f00-0000-7000-8000-000000000103/device-groups", "", 0, false},
 	}
 	for _, test := range cases {
-		request := httptest.NewRequest(test.method, test.target, nil)
+		request := httptest.NewRequestWithContext(t.Context(), test.method, test.target, nil)
 		path, ok := parseDeviceGroupPath(request)
 		if ok != test.ok || (ok && (path.operation() != test.operation || path.limit != test.limit)) {
 			t.Errorf("%s %s: ok=%v operation=%q limit=%d", test.method, test.target, ok, path.operation(), path.limit)
@@ -41,7 +41,7 @@ func TestParseDeviceGroupPath(t *testing.T) {
 			t.Errorf("%s %s: method not admitted", test.method, test.target)
 		}
 	}
-	wrongMethod := httptest.NewRequest(http.MethodPost, scope+"/device-groups", nil)
+	wrongMethod := httptest.NewRequestWithContext(t.Context(), http.MethodPost, scope+"/device-groups", nil)
 	if isDeviceGroupOperation(wrongMethod) {
 		t.Fatal("POST to the list must not be admitted")
 	}
