@@ -133,6 +133,7 @@ func TestListRejectsInvalidQueries(t *testing.T) {
 	cases := map[string]func(*history.Query){
 		"no workspace":    func(q *history.Query) { q.WorkspaceID = workspace.ID{} },
 		"reversed window": func(q *history.Query) { q.Since = now.Add(time.Hour) },
+		"window too long": func(q *history.Query) { q.Since = now.Add(-history.MaximumWindow - time.Hour) },
 		"page too large":  func(q *history.Query) { q.PageSize = history.MaximumPageSize + 1 },
 		"bad kind":        func(q *history.Query) { q.TargetKinds = []string{"Share Offer"} },
 		"bad action":      func(q *history.Query) { q.Action = "share offer" },

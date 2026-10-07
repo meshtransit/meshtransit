@@ -35,6 +35,10 @@ const (
 	MaximumTargetKinds = 16
 	// DefaultWindow is what the Console shows unless asked for older events.
 	DefaultWindow = 90 * 24 * time.Hour
+	// MaximumWindow bounds one query or export to about three months (a
+	// calendar quarter plus a day for time zones); older evidence is read
+	// window by window.
+	MaximumWindow = 93 * 24 * time.Hour
 )
 
 const cursorPrefix = "a1."
@@ -99,7 +103,7 @@ type Query struct {
 // IsValid reports a complete query with every default applied.
 func (query Query) IsValid() bool {
 	if !query.WorkspaceID.IsValid() || query.Since.IsZero() || query.Until.IsZero() ||
-		!query.Since.Before(query.Until) || query.PageSize < 1 || query.PageSize > MaximumPageSize ||
+		!query.Since.Before(query.Until) || query.Until.Sub(query.Since) > MaximumWindow || query.PageSize < 1 || query.PageSize > MaximumPageSize ||
 		len(query.TargetKinds) > MaximumTargetKinds {
 		return false
 	}
@@ -265,7 +269,7 @@ type ExportQuery struct {
 // IsValid reports a complete export query with defaults applied.
 func (query ExportQuery) IsValid() bool {
 	return query.WorkspaceID.IsValid() && !query.Since.IsZero() && !query.Until.IsZero() &&
-		query.Since.Before(query.Until) &&
+		query.Since.Before(query.Until) && query.Until.Sub(query.Since) <= MaximumWindow &&
 		(query.NetworkID == (network.ID{}) || query.NetworkID.IsValid())
 }
 
