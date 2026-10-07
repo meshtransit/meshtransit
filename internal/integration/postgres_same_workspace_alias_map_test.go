@@ -202,6 +202,7 @@ func assertSameWorkspaceAliasMapProjection(ctx context.Context, t *testing.T, ad
 		if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
 			t.Fatal(err)
 		}
+		assertReachableAliasMapMatches(ctx, t, tx, machine, key)
 		var encoded []string
 		edgeRows, err := tx.Query(ctx, `SELECT edge::TEXT FROM mesh_ops.load_device_alias_map_edges_v3($1::BYTEA,$2::BYTEA,257) AS edge`, machine, key)
 		if err != nil {

@@ -50,6 +50,8 @@ type fakeTransaction struct {
 	directRows     *directEdgeRows
 	aliasRows      *directEdgeRows
 	dependencyRows *directEdgeRows
+	// reachableAliases reports the schema 114 reader as granted.
+	reachableAliases bool
 }
 
 func (transaction *fakeTransaction) Exec(
@@ -97,7 +99,9 @@ func (transaction *fakeTransaction) Query(
 			return &directEdgeRows{}, nil
 		}
 		return transaction.dependencyRows, nil
-	case loadAliasEdgesSQL:
+	case reachableAliasEdgesGrantedSQL:
+		return &grantRows{granted: transaction.reachableAliases}, nil
+	case loadAliasEdgesSQL, loadReachableAliasEdgesSQL:
 		if transaction.aliasRows == nil {
 			return &directEdgeRows{}, nil
 		}
@@ -412,3 +416,32 @@ func filledBytes(value byte) [32]byte {
 
 var _ appmapsession.SnapshotStore = (*Store)(nil)
 var _ databaseRow = errorRow{err: pgx.ErrNoRows}
+
+type grantRows struct {
+	granted bool
+	done    bool
+}
+
+func (rows *grantRows) Next() bool {
+	if rows.done {
+		return false
+	}
+	rows.done = true
+	return true
+}
+
+func (rows *grantRows) Scan(destinations ...any) error {
+	if len(destinations) != 1 {
+		return errors.New("unexpected grant scan")
+	}
+	target, ok := destinations[0].(*bool)
+	if !ok {
+		return errors.New("unexpected grant target")
+	}
+	*target = rows.granted
+	return nil
+}
+
+func (*grantRows) Err() error { return nil }
+
+func (*grantRows) Close() {}

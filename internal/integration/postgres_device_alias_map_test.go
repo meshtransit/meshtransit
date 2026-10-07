@@ -101,6 +101,7 @@ func assertAliasMapCount(ctx context.Context, t *testing.T, tx pgx.Tx, self alia
 	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime; SELECT set_config('mesh.alias_map_provider_workspace_id','999',TRUE),set_config('mesh.alias_map_provider_network_id','999',TRUE),set_config('mesh.alias_map_consumer_workspace_id','999',TRUE),set_config('mesh.alias_map_consumer_network_id','999',TRUE),set_config('mesh.alias_map_endpoint_id','999',TRUE)`); err != nil {
 		t.Fatal(err)
 	}
+	assertReachableAliasMapMatches(ctx, t, tx, self.machine, self.key)
 	rows, err := tx.Query(ctx, `SELECT edge::TEXT FROM mesh_ops.load_device_alias_map_edges_v3($1::BYTEA,$2::BYTEA,257) AS edge`, self.machine, self.key)
 	if err != nil {
 		t.Fatal(err)
@@ -320,5 +321,34 @@ func assertAliasMapAuthentication(ctx context.Context, t *testing.T, tx pgx.Tx, 
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+// assertReachableAliasMapMatches proves schema 114 returns exactly the v3
+// edges: it only skips endpoints for which no edge could exist.
+func assertReachableAliasMapMatches(ctx context.Context, t *testing.T, tx pgx.Tx, machine, key []byte) {
+	t.Helper()
+	read := func(version string) []string {
+		rows, err := tx.Query(ctx, `SELECT edge::TEXT FROM mesh_ops.load_device_alias_map_edges_`+version+`($1::BYTEA,$2::BYTEA,257) AS edge`, machine, key)
+		if err != nil {
+			t.Fatalf("alias map %s: %v", version, err)
+		}
+		defer rows.Close()
+		var edges []string
+		for rows.Next() {
+			var value string
+			if err := rows.Scan(&value); err != nil {
+				t.Fatal(err)
+			}
+			edges = append(edges, value)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("alias map %s: %v", version, err)
+		}
+		return edges
+	}
+	previous, reachable := read("v3"), read("v4")
+	if !slices.Equal(previous, reachable) {
+		t.Fatalf("reachable alias map differs: v3 %d edges, v4 %d edges", len(previous), len(reachable))
 	}
 }

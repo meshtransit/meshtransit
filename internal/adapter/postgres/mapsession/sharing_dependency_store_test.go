@@ -59,3 +59,22 @@ func TestDependencyReaderRejectsUnsafeOrOverflow(t *testing.T) {
 		})
 	}
 }
+
+func TestStoreUsesReachableAliasReaderOnceGranted(t *testing.T) {
+	for _, granted := range []bool{false, true} {
+		store, _, tx, _, identity := validStoreFixture(t)
+		store.options.EnableDeviceAliases = true
+		tx.reachableAliases = granted
+		if _, err := store.Load(t.Context(), identity); err != nil {
+			t.Fatal(err)
+		}
+		want, other := loadAliasEdgesSQL, loadReachableAliasEdgesSQL
+		if granted {
+			want, other = other, want
+		}
+		if !slices.Contains(tx.queries, reachableAliasEdgesGrantedSQL) || !slices.Contains(tx.queries, want) ||
+			slices.Contains(tx.queries, other) {
+			t.Fatalf("granted=%v used queries %v", granted, tx.queries)
+		}
+	}
+}

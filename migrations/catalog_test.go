@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 113 {
-		t.Fatalf("len(Catalog()) = %d, want 113", len(catalog))
+	if len(catalog) != 114 {
+		t.Fatalf("len(Catalog()) = %d, want 114", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 113 {
-		t.Fatalf("LatestVersion() = %d, want 113", LatestVersion())
+	if LatestVersion() != 114 {
+		t.Fatalf("LatestVersion() = %d, want 114", LatestVersion())
 	}
 }
 
@@ -2715,5 +2715,41 @@ func TestNetworkAliasRangeKeepsAllocationContract(t *testing.T) {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 113 must keep writes inside its definer functions, found %q", forbidden)
 		}
+	}
+}
+
+func TestAliasMapReachableSharesIsVerbatimExceptSelection(t *testing.T) {
+	t.Parallel()
+	previous, migration := Catalog()[92], Catalog()[113]
+	if previous.Version != 93 || migration.Version != 114 {
+		t.Fatalf("migrations = %d, %d", previous.Version, migration.Version)
+	}
+	selection := "              AND self_rule.source_device_id = self_id\n" +
+		"                WHERE self_revision.workspace_id = self_workspace AND self_revision.network_id = self_network)"
+	if !strings.Contains(migration.SQL, selection) {
+		t.Fatal("v4 must filter receiving endpoints by this Device's compiled rules")
+	}
+	// Remove the added selection and rename v4: what remains is v3 verbatim.
+	start := strings.Index(migration.SQL, "              -- A receiving Device sees only shares")
+	end := strings.Index(migration.SQL, selection)
+	body := migration.SQL[:start] + migration.SQL[end+len(selection):]
+	body = strings.ReplaceAll(body, "load_device_alias_map_edges_v4", "load_device_alias_map_edges_v3")
+	body = strings.Replace(body, "network_id=self_network\n))\n        ORDER BY", "network_id=self_network))\n        ORDER BY", 1)
+	original := previous.SQL[strings.Index(previous.SQL, "CREATE FUNCTION mesh_ops.load_device_alias_map_edges_v3("):]
+	copied := body[strings.Index(body, "CREATE FUNCTION mesh_ops.load_device_alias_map_edges_v3("):]
+	if copied != original {
+		t.Fatal("v4 differs from v3 beyond the receiving-side selection")
+	}
+	ownership := AliasMapReachableSharesOwnershipSQL()
+	for _, required := range []string{
+		"load_device_alias_map_edges_v4(BYTEA,BYTEA,INTEGER) OWNER TO mesh_device_alias_map_reader;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_device_alias_map_edges_v4(BYTEA,BYTEA,INTEGER) TO mesh_runtime;",
+	} {
+		if !strings.Contains(ownership, required) {
+			t.Errorf("schema 114 ownership missing %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "TO mesh_runtime") {
+		t.Error("schema 114 must leave runtime exposure to the operator step")
 	}
 }

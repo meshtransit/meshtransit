@@ -157,3 +157,10 @@ var trustContractExpiryOwnershipSQL string
 // TrustContractExpiryOwnershipSQL moves the expiry finalizer entry points to
 // the sharing writer and exposes them to the worker role only.
 func TrustContractExpiryOwnershipSQL() string { return trustContractExpiryOwnershipSQL }
+
+//go:embed operator/000114_alias_map_reachable_shares_ownership.sql
+var aliasMapReachableSharesOwnershipSQL string
+
+// AliasMapReachableSharesOwnershipSQL moves the reachable-share alias map
+// reader to its NOLOGIN owner and exposes it to runtime.
+func AliasMapReachableSharesOwnershipSQL() string { return aliasMapReachableSharesOwnershipSQL }

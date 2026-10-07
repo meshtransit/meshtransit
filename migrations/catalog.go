@@ -480,6 +480,7 @@ func Catalog() []Migration {
 		newMigration(111, "Share offers name both ends by display code", shareOfferDisplayCodesSQL),
 		newMigration(112, "Expired Trust Contracts release their access names", trustContractExpiryFinalizerSQL),
 		newMigration(113, "Receiving Networks choose their shared Device alias range", networkAliasRangeSQL),
+		newMigration(114, "Alias maps count only shares a Device may reach", aliasMapReachableSharesSQL),
 	}
 }
 
@@ -598,3 +599,6 @@ var trustContractExpiryFinalizerSQL string
 
 //go:embed 000113_network_alias_range.up.sql
 var networkAliasRangeSQL string
+
+//go:embed 000114_alias_map_reachable_shares.up.sql
+var aliasMapReachableSharesSQL string
