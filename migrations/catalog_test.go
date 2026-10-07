@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 119 {
-		t.Fatalf("len(Catalog()) = %d, want 119", len(catalog))
+	if len(catalog) != 120 {
+		t.Fatalf("len(Catalog()) = %d, want 120", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 119 {
-		t.Fatalf("LatestVersion() = %d, want 119", LatestVersion())
+	if LatestVersion() != 120 {
+		t.Fatalf("LatestVersion() = %d, want 120", LatestVersion())
 	}
 }
 
@@ -2868,5 +2868,29 @@ func TestWorkspaceGuardrails(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "GRANT SELECT") {
 		t.Error("schema 119 must not grant direct table access")
+	}
+}
+
+func TestNetworkDeviceGroups(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[119]
+	if migration.Version != 120 {
+		t.Fatalf("migration 120 = %+v", migration)
+	}
+	for _, required := range []string{
+		"mesh_audit.capture_authority_mutation('device_group', 'public_id')",
+		"mesh_audit.capture_authority_mutation('device_group_member', 'public_id')",
+		"mesh_audit.capture_authority_mutation('compiled_policy_group_rule', 'public_id')",
+		"'device_group.members.manage', p_evaluated_at",
+		"ERRCODE = 'MTD05'",
+		"group_revision = revision.group_revision + 1",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.resolve_group_policy_edges_v1(BIGINT) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 120 missing %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "GRANT SELECT") {
+		t.Error("schema 120 must not grant direct table access")
 	}
 }

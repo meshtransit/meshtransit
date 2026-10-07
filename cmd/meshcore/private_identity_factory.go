@@ -12,6 +12,7 @@ import (
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	redisadapter "github.com/meshtransit/meshtransit/internal/adapter/redis"
 	"github.com/meshtransit/meshtransit/internal/audit/history"
+	"github.com/meshtransit/meshtransit/internal/devicegroup"
 	"github.com/meshtransit/meshtransit/internal/guardrail"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
 	"github.com/meshtransit/meshtransit/internal/identity/sessioncontext"
@@ -170,6 +171,14 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	deviceGroupStore, err := postgresadapter.NewDeviceGroupStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	deviceGroups, err := devicegroup.NewService(deviceGroupStore, clock, devicegroup.SystemIDs{})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	sessionWorkspaceStore, err := postgresadapter.NewSessionWorkspaceStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
@@ -254,7 +263,7 @@ func composePrivateIdentityFactory(
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, AccessGraphs: policyExplainer, PolicySimulations: policySimulator,
-		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails,
+		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, DeviceGroups: deviceGroups,
 		SessionWorkspaces: sessionWorkspaces, ShareTargets: shareTargets,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,
