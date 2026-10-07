@@ -34,6 +34,8 @@ FROM mesh_ops.change_workspace_guardrail_v1(` + sessionArguments + `,
 // the current transaction's verified scope.
 const activeWorkspaceGuardrailsSQL = `SELECT mesh_ops.active_workspace_guardrails_v1()::TEXT`
 
+const activeReleaseImportedPathsSQL = `SELECT mesh_ops.active_release_imported_paths_v1()::TEXT`
+
 const appendGuardrailEvidenceSQL = `SELECT mesh_audit.append_authority_evidence(
  $1::BIGINT,$2::UUID,$3::UUID,$4::BIGINT,$5::BYTEA,$6::BYTEA,
  'guardrail',$7::UUID,$8::BIGINT,NULL::BIGINT,$9::UUID,$10::TEXT,$11::TEXT,

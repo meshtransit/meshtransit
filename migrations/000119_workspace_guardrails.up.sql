@@ -387,6 +387,47 @@ BEGIN
 END;
 $function$;
 
+-- Paths the Network's active release already opens to shared Devices, as
+-- "<source Device>:<Imported Resource>" pairs. An enforced guardrail blocks
+-- only new paths: republishing rules that existed before it is not a
+-- retroactive block, and its findings are recorded instead.
+CREATE FUNCTION mesh_ops.active_release_imported_paths_v1()
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+PARALLEL UNSAFE
+SECURITY DEFINER
+SET search_path = pg_catalog, mesh, mesh_ops
+AS $function$
+DECLARE
+    scoped_workspace_id BIGINT := mesh_ops.current_workspace_id();
+    scoped_network_id BIGINT := mesh_ops.current_network_id();
+BEGIN
+    IF scoped_workspace_id IS NULL OR scoped_network_id IS NULL THEN
+        RAISE EXCEPTION USING ERRCODE = '42501', MESSAGE = 'transaction Network scope is unavailable';
+    END IF;
+    RETURN COALESCE((
+        SELECT pg_catalog.jsonb_agg(DISTINCT source.public_id::TEXT || ':' || imported.public_id::TEXT)
+        FROM mesh.policy_release AS release
+        JOIN mesh.compiled_policy_imported_resource_destination AS rule
+          ON rule.workspace_id = release.workspace_id
+         AND rule.network_id = release.network_id
+         AND rule.policy_release_id = release.id
+        JOIN mesh.device AS source
+          ON source.workspace_id = rule.workspace_id
+         AND source.network_id = rule.network_id
+         AND source.id = rule.source_device_id
+        JOIN mesh.imported_resource AS imported
+          ON imported.workspace_id = rule.workspace_id
+         AND imported.network_id = rule.network_id
+         AND imported.id = rule.imported_resource_id
+        WHERE release.workspace_id = scoped_workspace_id
+          AND release.network_id = scoped_network_id
+          AND release.state = 'active'
+    ), '[]'::JSONB);
+END;
+$function$;
+
 REVOKE ALL ON FUNCTION mesh_ops.list_workspace_guardrails_v1(
     UUID, UUID, UUID, UUID, BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, UUID
 ) FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
@@ -404,3 +445,6 @@ GRANT EXECUTE ON FUNCTION mesh_ops.change_workspace_guardrail_v1(
 REVOKE ALL ON FUNCTION mesh_ops.active_workspace_guardrails_v1()
     FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
 GRANT EXECUTE ON FUNCTION mesh_ops.active_workspace_guardrails_v1() TO mesh_runtime;
+REVOKE ALL ON FUNCTION mesh_ops.active_release_imported_paths_v1()
+    FROM PUBLIC, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;
+GRANT EXECUTE ON FUNCTION mesh_ops.active_release_imported_paths_v1() TO mesh_runtime;

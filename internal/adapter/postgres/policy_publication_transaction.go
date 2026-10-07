@@ -504,8 +504,10 @@ func policyPublicationSemanticHash(value []byte) (publication.SemanticHash, erro
 // checkGuardrails evaluates every rule that reaches a shared Device against
 // the Workspace's guardrails, under the publication locks, so a guardrail
 // added concurrently cannot be missed. Rules between Devices of this Network
-// cross no Network and are not affected. An enforced guardrail returns
-// *guardrail.ViolationError; audit-mode findings come back for the evidence.
+// cross no Network and are not affected. An enforced guardrail blocks only
+// paths the active release does not already open, returning
+// *guardrail.ViolationError: guardrails are not retroactive. Every finding,
+// including those on existing paths, comes back for the evidence.
 func (transaction *policyPublicationTransaction) checkGuardrails(
 	ctx context.Context,
 	change publication.Change,
@@ -522,19 +524,63 @@ func (transaction *policyPublicationTransaction) checkGuardrails(
 	if err != nil {
 		return nil, fmt.Errorf("read guardrails: %w", err)
 	}
-	findings := []guardrail.Finding{}
-	seen := map[publicid.ID]bool{}
+	if len(guardrails) == 0 {
+		return nil, nil
+	}
+	type pathFinding struct {
+		finding guardrail.Finding
+		path    string
+	}
+	var raised []pathFinding
 	for _, destination := range destinations {
 		edge := guardrail.ShareEdge{Provider: destination.Resolution().ProviderScope(), Consumer: transaction.scope}
+		path := destination.SourceNodeID().String() + ":" + destination.Resolution().ImportedResourceID().String()
 		for _, finding := range guardrail.Evaluate(guardrails, transaction.scope.WorkspaceID(), edge) {
-			if !seen[finding.GuardrailID] {
-				seen[finding.GuardrailID] = true
-				findings = append(findings, finding)
-			}
+			raised = append(raised, pathFinding{finding: finding, path: path})
 		}
 	}
-	if blocking := guardrail.Blocking(findings); len(blocking) > 0 {
+	var existing map[string]bool
+	for _, item := range raised {
+		if item.finding.Mode == guardrail.ModeEnforce {
+			if existing, err = transaction.activeImportedPaths(ctx); err != nil {
+				return nil, err
+			}
+			break
+		}
+	}
+	findings := []guardrail.Finding{}
+	blocking := []guardrail.Finding{}
+	seen, blocked := map[publicid.ID]bool{}, map[publicid.ID]bool{}
+	for _, item := range raised {
+		if !seen[item.finding.GuardrailID] {
+			seen[item.finding.GuardrailID] = true
+			findings = append(findings, item.finding)
+		}
+		if item.finding.Mode == guardrail.ModeEnforce && !existing[item.path] && !blocked[item.finding.GuardrailID] {
+			blocked[item.finding.GuardrailID] = true
+			blocking = append(blocking, item.finding)
+		}
+	}
+	if len(blocking) > 0 {
 		return findings, &guardrail.ViolationError{Findings: blocking}
 	}
 	return findings, nil
+}
+
+// activeImportedPaths reads the source-Device-to-Imported-Resource paths the
+// Network's active release already opens.
+func (transaction *policyPublicationTransaction) activeImportedPaths(ctx context.Context) (map[string]bool, error) {
+	var encoded string
+	if err := transaction.database.QueryRow(ctx, activeReleaseImportedPathsSQL).Scan(&encoded); err != nil {
+		return nil, fmt.Errorf("read active paths: %w", err)
+	}
+	var paths []string
+	if err := strictJSON([]byte(encoded), &paths); err != nil || paths == nil {
+		return nil, fmt.Errorf("read active paths: %w", ErrPolicyPublicationEvidence)
+	}
+	existing := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		existing[path] = true
+	}
+	return existing, nil
 }

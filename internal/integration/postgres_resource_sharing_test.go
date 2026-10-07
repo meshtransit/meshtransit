@@ -1813,6 +1813,8 @@ FROM mesh_ops.publish_compiled_policy(
 	assertDirectMapSQLProjection(ctx, t, transaction, destination)
 	assertSharedDestinationExplanation(ctx, t, transaction, session, destination, sourceNodeID, ruleID)
 	assertSharedDestinationGraph(ctx, t, transaction, session, destination, sourceNodeID, ruleID)
+	assertActiveReleaseImportedPath(ctx, t, transaction,
+		sourceNodeID+":"+destination.ImportedResourceID().String())
 	if err := transaction.Rollback(ctx); err != nil {
 		t.Fatalf("rollback Imported Resource publication probe: %v", err)
 	}

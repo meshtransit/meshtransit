@@ -299,38 +299,68 @@ func TestPolicyPublicationTransactionPublishesImportedResourceAtomically(t *test
 	}
 }
 
-// An enforced guardrail refuses a rule that reaches a Device shared from
-// another Workspace, before anything is published.
-func TestPolicyPublicationTransactionRefusesRuleBlockedByGuardrail(t *testing.T) {
-	t.Parallel()
-
-	command := policyImportedResourcePublicationCommandFixture(t)
-	databaseTransaction := newFakePolicyPublicationTransaction()
-	enqueuePolicyPublicationResolution(t, databaseTransaction, command, 5, 1)
-	enqueuePolicyPublicationApply(databaseTransaction, 6, 2)
-	enqueueActiveGuardrails(databaseTransaction, `[{"guardrail_id":"01890f00-0000-7000-8000-00000000e001",
+const externalSharingGuardrail = `[{"guardrail_id":"01890f00-0000-7000-8000-00000000e001",
 "kind":"external_sharing","name":"No external access","description":"","mode":"enforce",
 "params":{"direction":"incoming","networks":[],"allowed_workspaces":[]},"version":1,
-"created_at":"2026-10-07T00:00:00Z","updated_at":"2026-10-07T00:00:00Z"}]`)
-	store := beginTestPolicyPublicationStore(t, databaseTransaction)
-	value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
-	if err != nil {
-		t.Fatalf("Begin() error = %v", err)
-	}
-	transaction := value.(*policyPublicationTransaction)
-	resolution, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime)
-	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
-	}
-	_, err = transaction.Apply(t.Context(), policyPublicationChangeFixture(t, command, resolution))
-	var violation *guardrail.ViolationError
-	if !errors.As(err, &violation) || len(violation.Findings) != 1 ||
-		violation.Findings[0].Reason != guardrail.ReasonExternalSharing {
-		t.Fatalf("Apply() error = %v, want an external-sharing guardrail violation", err)
-	}
-	for _, call := range databaseTransaction.calls {
-		if call.query == publishCompiledPolicySQL || call.query == appendPolicyPublicationEvidenceSQL {
-			t.Fatalf("blocked publication still ran %q", call.query)
+"created_at":"2026-10-07T00:00:00Z","updated_at":"2026-10-07T00:00:00Z"}]`
+
+// An enforced guardrail refuses a new rule that reaches a Device shared from
+// another Workspace, before anything is published; a path the active release
+// already opens is not blocked retroactively, only recorded.
+func TestPolicyPublicationTransactionAppliesGuardrailsToNewPathsOnly(t *testing.T) {
+	t.Parallel()
+
+	for _, existing := range []bool{false, true} {
+		command := policyImportedResourcePublicationCommandFixture(t)
+		databaseTransaction := newFakePolicyPublicationTransaction()
+		enqueuePolicyPublicationResolution(t, databaseTransaction, command, 5, 1)
+		enqueuePolicyPublicationApply(databaseTransaction, 6, 2)
+		enqueueActiveGuardrails(databaseTransaction, externalSharingGuardrail)
+		paths := "[]"
+		if existing {
+			destination := command.Candidate().ImportedResourceDestinations()[0]
+			paths = `["` + destination.SourceNodeID().String() + ":" +
+				destination.Resolution().ImportedResourceID().String() + `"]`
+		}
+		databaseTransaction.enqueueRow(activeReleaseImportedPathsSQL, policyPublicationTestRow{
+			scan: func(destinations ...any) error {
+				*destinations[0].(*string) = paths
+				return nil
+			}})
+		store := beginTestPolicyPublicationStore(t, databaseTransaction)
+		value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
+		if err != nil {
+			t.Fatalf("Begin() error = %v", err)
+		}
+		transaction := value.(*policyPublicationTransaction)
+		resolution, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime)
+		if err != nil {
+			t.Fatalf("Resolve() error = %v", err)
+		}
+		_, err = transaction.Apply(t.Context(), policyPublicationChangeFixture(t, command, resolution))
+		if existing {
+			if err != nil {
+				t.Fatalf("Apply() on an existing path error = %v", err)
+			}
+			auditCall := findPolicyPublicationCall(t, databaseTransaction.calls, appendPolicyPublicationEvidenceSQL)
+			var evidence policyPublicationAuditPayload
+			if err := json.Unmarshal(auditCall.arguments[len(auditCall.arguments)-2].([]byte), &evidence); err != nil {
+				t.Fatal(err)
+			}
+			if len(evidence.GuardrailFindings) != 1 || evidence.GuardrailFindings[0].Mode != "enforce" {
+				t.Fatalf("existing-path findings = %+v, want the enforced guardrail recorded", evidence.GuardrailFindings)
+			}
+			continue
+		}
+		var violation *guardrail.ViolationError
+		if !errors.As(err, &violation) || len(violation.Findings) != 1 ||
+			violation.Findings[0].Reason != guardrail.ReasonExternalSharing {
+			t.Fatalf("Apply() error = %v, want an external-sharing guardrail violation", err)
+		}
+		for _, call := range databaseTransaction.calls {
+			if call.query == publishCompiledPolicySQL || call.query == appendPolicyPublicationEvidenceSQL {
+				t.Fatalf("blocked publication still ran %q", call.query)
+			}
 		}
 	}
 }

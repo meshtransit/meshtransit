@@ -267,3 +267,22 @@ WHERE event.target_kind = 'share_offer' AND event.target_public_id = $1::UUID
 		t.Fatalf("delete share guardrail: %v", err)
 	}
 }
+
+// assertActiveReleaseImportedPath checks, as the runtime role, that the
+// Network's active release reports the path its imported rule opens, so an
+// enforced guardrail does not block it retroactively. It switches the
+// transaction's role; call it last before rolling back.
+func assertActiveReleaseImportedPath(ctx context.Context, t *testing.T, transaction pgx.Tx, path string) {
+	t.Helper()
+	if _, err := transaction.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	if err := transaction.QueryRow(ctx, `SELECT mesh_ops.active_release_imported_paths_v1() ? $1::TEXT`,
+		path).Scan(&found); err != nil {
+		t.Fatalf("read active release paths: %v", err)
+	}
+	if !found {
+		t.Fatalf("active release paths omit %s", path)
+	}
+}
