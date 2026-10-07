@@ -81,6 +81,7 @@ type privateIdentityPorts struct {
 	AliasRanges           httpapi.NetworkAliasRanges
 	AuditHistory          httpapi.AuditHistoryReader
 	AuditExports          httpapi.AuditExporter
+	Guardrails            httpapi.GuardrailManager
 	SessionWorkspaces     httpapi.SessionWorkspaceSelector
 	ShareTargets          httpapi.ShareTargetResolver
 	PolicyApprovals       httpapi.PolicyApprovalWorkflow
@@ -188,6 +189,7 @@ func composePrivateIdentity(
 		AliasRanges:           ports.AliasRanges,
 		AuditHistory:          ports.AuditHistory,
 		AuditExports:          ports.AuditExports,
+		Guardrails:            ports.Guardrails,
 		SessionWorkspaces:     ports.SessionWorkspaces,
 		ShareTargets:          ports.ShareTargets,
 		PolicyApprovals:       ports.PolicyApprovals,

@@ -313,6 +313,9 @@ func parsePolicyIfMatch(values []string) (int64, *managementError) {
 }
 
 func classifyPolicyPublicationError(err error) managementError {
+	if violation, ok := guardrailViolation(err); ok {
+		return violation
+	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return managementError{

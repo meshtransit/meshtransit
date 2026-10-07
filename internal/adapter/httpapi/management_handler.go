@@ -249,7 +249,9 @@ type ManagementHandlerOptions struct {
 	// AuditHistory lists Workspace audit history; nil answers 503.
 	AuditHistory AuditHistoryReader
 	// AuditExports assembles audit exports; nil answers 503.
-	AuditExports              AuditExporter
+	AuditExports AuditExporter
+	// Guardrails lists and changes Workspace guardrails; nil answers 503.
+	Guardrails                GuardrailManager
 	PolicyApprovals           PolicyApprovalWorkflow
 	PolicyApprovalCatalog     PolicyApprovalCatalog
 	ResourceCreations         ResourceCreator
@@ -290,6 +292,7 @@ type ManagementHandler struct {
 	aliasRanges               NetworkAliasRanges
 	auditHistory              AuditHistoryReader
 	auditExports              AuditExporter
+	guardrails                GuardrailManager
 	policyApprovals           PolicyApprovalWorkflow
 	policyApprovalCatalog     PolicyApprovalCatalog
 	resourceCreations         ResourceCreator
@@ -353,6 +356,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		aliasRanges:               options.AliasRanges,
 		auditHistory:              options.AuditHistory,
 		auditExports:              options.AuditExports,
+		guardrails:                options.Guardrails,
 		policyApprovals:           options.PolicyApprovals,
 		policyApprovalCatalog:     options.PolicyApprovalCatalog,
 		resourceCreations:         options.ResourceCreations,
@@ -457,11 +461,12 @@ func (handler *ManagementHandler) serveHTTP(
 	aliasRangePath, aliasRangeMatched := parseNetworkAliasRangePath(request)
 	auditEventPath, auditEventMatched := parseAuditEventListPath(request)
 	auditExportPath, auditExportMatched := parseAuditEventExportPath(request)
+	guardrailPathValue, guardrailMatched := parseGuardrailPath(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
 		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
 		!shareTargetMatched && !aliasRangeMatched && !auditEventMatched &&
-		!auditExportMatched {
+		!auditExportMatched && !guardrailMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -489,6 +494,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = auditEventListOperation
 	} else if auditExportMatched {
 		operation = auditEventExportOperation
+	} else if guardrailMatched {
+		operation = guardrailPathValue.operation(request.Method)
 	} else if deviceMatched {
 		operation = deviceRevokeOperation
 	} else if policyMatched {
@@ -525,6 +532,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = http.MethodGet
 	} else if aliasRangeMatched {
 		allowedMethod = aliasRangePath.allowedMethod()
+	} else if guardrailMatched {
+		allowedMethod = guardrailPathValue.allowedMethod(request.Method)
 	}
 	if allowedMethod == "" || request.Method != allowedMethod {
 		if policyApprovalMatched && policyApprovalPath.isCollection() {
@@ -624,6 +633,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if auditExportMatched {
 		resultCode = handler.exportAuditEvents(ctx, response, request, correlationID, auditExportPath, session)
+		return
+	}
+	if guardrailMatched {
+		resultCode = handler.handleGuardrails(ctx, response, request, correlationID, guardrailPathValue, session)
 		return
 	}
 	if policyMatched {

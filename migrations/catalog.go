@@ -485,6 +485,7 @@ func Catalog() []Migration {
 		newMigration(116, "Audit events carry a database-computed seal a third party can verify", auditEventSealV2SQL),
 		newMigration(117, "Workspace administrators read their audit history", workspaceAuditHistorySQL),
 		newMigration(118, "Workspace administrators export verifiable audit evidence", workspaceAuditExportSQL),
+		newMigration(119, "Workspace guardrails bound what rules and shares may open", workspaceGuardrailsSQL),
 	}
 }
 
@@ -618,3 +619,6 @@ var workspaceAuditHistorySQL string
 
 //go:embed 000118_workspace_audit_export.up.sql
 var workspaceAuditExportSQL string
+
+//go:embed 000119_workspace_guardrails.up.sql
+var workspaceGuardrailsSQL string

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/meshtransit/meshtransit/internal/guardrail"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
 	"github.com/meshtransit/meshtransit/internal/publicid"
@@ -35,6 +36,16 @@ type managementError struct {
 	Code      string
 	Message   string
 	Retryable bool
+	// GuardrailFindings names the acting Workspace's guardrails that blocked
+	// a change (code guardrail_violation); empty otherwise.
+	GuardrailFindings []guardrailFindingBody
+}
+
+type guardrailFindingBody struct {
+	GuardrailID string `json:"guardrail_id"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	Reason      string `json:"reason"`
 }
 
 type managementErrorResponse struct {
@@ -42,10 +53,11 @@ type managementErrorResponse struct {
 }
 
 type managementErrorBody struct {
-	Code          string `json:"code"`
-	Message       string `json:"message"`
-	CorrelationID string `json:"correlation_id"`
-	Retryable     bool   `json:"retryable"`
+	Code              string                 `json:"code"`
+	Message           string                 `json:"message"`
+	CorrelationID     string                 `json:"correlation_id"`
+	Retryable         bool                   `json:"retryable"`
+	GuardrailFindings []guardrailFindingBody `json:"guardrail_findings,omitempty"`
 }
 
 func classifyAuthenticationError(err error) managementError {
@@ -147,6 +159,7 @@ func writeManagementError(
 		Error: managementErrorBody{
 			Code: apiError.Code, Message: apiError.Message,
 			CorrelationID: correlationID.String(), Retryable: apiError.Retryable,
+			GuardrailFindings: apiError.GuardrailFindings,
 		},
 	})
 }
@@ -169,4 +182,25 @@ func writeManagementJSON(
 	if _, err := response.Write(body); err != nil && logger != nil {
 		logger.DebugContext(ctx, "management response write failed", "error", err)
 	}
+}
+
+// guardrailViolation reports a change an enforced guardrail blocked, naming
+// each guardrail of the acting Workspace that applies, so the caller can show
+// which invariant it broke. ok is false for any other error.
+func guardrailViolation(err error) (managementError, bool) {
+	var violation *guardrail.ViolationError
+	if !errors.As(err, &violation) || len(violation.Findings) == 0 {
+		return managementError{}, false
+	}
+	findings := make([]guardrailFindingBody, len(violation.Findings))
+	for index, finding := range violation.Findings {
+		findings[index] = guardrailFindingBody{
+			GuardrailID: finding.GuardrailID.String(), Name: finding.Name,
+			Kind: string(finding.Kind), Reason: finding.Reason,
+		}
+	}
+	return managementError{
+		Status: http.StatusConflict, Code: "guardrail_violation",
+		Message: "a Workspace guardrail blocks this change", GuardrailFindings: findings,
+	}, true
 }

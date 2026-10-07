@@ -1073,6 +1073,9 @@ func (handler *ManagementHandler) writeSharingInternalError(
 }
 
 func classifySharingError(err error) managementError {
+	if violation, ok := guardrailViolation(err); ok {
+		return violation
+	}
 	switch {
 	case errors.Is(err, sharing.ErrInvalidManagementRequest):
 		return *invalidManagementRequest()

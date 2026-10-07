@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/meshtransit/meshtransit/internal/guardrail"
 	publication "github.com/meshtransit/meshtransit/internal/policy/publication"
 )
 
@@ -232,6 +233,7 @@ func TestPolicyPublicationTransactionPublishesImportedResourceAtomically(t *test
 	databaseTransaction := newFakePolicyPublicationTransaction()
 	enqueuePolicyPublicationResolution(t, databaseTransaction, command, 5, 1)
 	enqueuePolicyPublicationApply(databaseTransaction, 6, 2)
+	enqueueActiveGuardrails(databaseTransaction, "[]")
 	store := beginTestPolicyPublicationStore(t, databaseTransaction)
 	value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
 	if err != nil {
@@ -253,6 +255,7 @@ func TestPolicyPublicationTransactionPublishesImportedResourceAtomically(t *test
 		lockPolicyPublicationRevisionSQL,
 		lockActivePolicyReleaseSQL,
 		lockPolicyPublicationAuditStreamSQL,
+		activeWorkspaceGuardrailsSQL,
 		setPolicyPublicationChangeSQL,
 		publishCompiledPolicySQL,
 		appendPolicyPublicationEvidenceSQL,
@@ -294,6 +297,49 @@ func TestPolicyPublicationTransactionPublishesImportedResourceAtomically(t *test
 	if auditEvidence.RuleCount != 1 {
 		t.Fatal("policy publication audit omitted Imported Resource rule count")
 	}
+}
+
+// An enforced guardrail refuses a rule that reaches a Device shared from
+// another Workspace, before anything is published.
+func TestPolicyPublicationTransactionRefusesRuleBlockedByGuardrail(t *testing.T) {
+	t.Parallel()
+
+	command := policyImportedResourcePublicationCommandFixture(t)
+	databaseTransaction := newFakePolicyPublicationTransaction()
+	enqueuePolicyPublicationResolution(t, databaseTransaction, command, 5, 1)
+	enqueuePolicyPublicationApply(databaseTransaction, 6, 2)
+	enqueueActiveGuardrails(databaseTransaction, `[{"guardrail_id":"01890f00-0000-7000-8000-00000000e001",
+"kind":"external_sharing","name":"No external access","description":"","mode":"enforce",
+"params":{"direction":"incoming","networks":[],"allowed_workspaces":[]},"version":1,
+"created_at":"2026-10-07T00:00:00Z","updated_at":"2026-10-07T00:00:00Z"}]`)
+	store := beginTestPolicyPublicationStore(t, databaseTransaction)
+	value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	transaction := value.(*policyPublicationTransaction)
+	resolution, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	_, err = transaction.Apply(t.Context(), policyPublicationChangeFixture(t, command, resolution))
+	var violation *guardrail.ViolationError
+	if !errors.As(err, &violation) || len(violation.Findings) != 1 ||
+		violation.Findings[0].Reason != guardrail.ReasonExternalSharing {
+		t.Fatalf("Apply() error = %v, want an external-sharing guardrail violation", err)
+	}
+	for _, call := range databaseTransaction.calls {
+		if call.query == publishCompiledPolicySQL || call.query == appendPolicyPublicationEvidenceSQL {
+			t.Fatalf("blocked publication still ran %q", call.query)
+		}
+	}
+}
+
+func enqueueActiveGuardrails(transaction *fakePolicyPublicationTransaction, encoded string) {
+	transaction.enqueueRow(activeWorkspaceGuardrailsSQL, policyPublicationTestRow{scan: func(destinations ...any) error {
+		*destinations[0].(*string) = encoded
+		return nil
+	}})
 }
 
 func TestPolicyPublicationTransactionAuthorizesManagementSessionUnderLock(t *testing.T) {

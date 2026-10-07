@@ -68,6 +68,7 @@ type policyPublicationAuditPayload struct {
 	BasePolicyRevision                        int64                                    `json:"base_policy_revision"`
 	CompilerFormatVersion                     int                                      `json:"compiler_format_version"`
 	RuleCount                                 int                                      `json:"rule_count"`
+	GuardrailFindings                         []guardrailFindingEvidence               `json:"guardrail_findings,omitempty"`
 	AccountSessionID                          string                                   `json:"account_session_id,omitempty"`
 	RoleBindingID                             string                                   `json:"role_binding_id,omitempty"`
 	RoleDefinitionID                          string                                   `json:"role_definition_id,omitempty"`
@@ -256,6 +257,7 @@ func (transaction *policyPublicationTransaction) appendPolicyPublicationEvidence
 		BasePolicyRevision:    command.BasePolicyRevision(),
 		CompilerFormatVersion: command.Candidate().CompilerFormatVersion(),
 		RuleCount:             len(command.Candidate().Snapshot().Rules()) + len(command.Candidate().ImportedResourceDestinations()),
+		GuardrailFindings:     guardrailFindingsEvidence(transaction.guardrailFindings),
 	}
 	if transaction.authorization.isValid() {
 		auditEvidence.AccountSessionID = transaction.authorization.accountSessionID.String()

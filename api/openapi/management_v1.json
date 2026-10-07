@@ -3799,7 +3799,8 @@
           },
           "retryable": {
             "type": "boolean"
-          }
+          },
+          "guardrail_findings": {"type":"array","maxItems":100,"description":"With code guardrail_violation: the acting Workspace's enforced guardrails that blocked the change","items":{"type":"object","additionalProperties":false,"required":["guardrail_id","name","kind","reason"],"properties":{"guardrail_id":{"$ref":"#/components/schemas/PublicID"},"name":{"type":"string","maxLength":80},"kind":{"type":"string","enum":["network_isolation","network_sharing","external_sharing"]},"reason":{"type":"string","enum":["isolated_networks","network_sharing_locked","external_sharing_blocked"]}}}}
         }
       },
     "ActivateTrustContractRequest": {"type":"object","additionalProperties":false,"required":["provider_workspace_id","provider_network_id","consumer_workspace_id","consumer_network_id","reason"],"properties":{"provider_workspace_id":{"$ref":"#/components/schemas/PublicID"},"provider_network_id":{"$ref":"#/components/schemas/PublicID"},"consumer_workspace_id":{"$ref":"#/components/schemas/PublicID"},"consumer_network_id":{"$ref":"#/components/schemas/PublicID"},"reason":{"type":"string","minLength":1,"maxLength":512}}}

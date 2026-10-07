@@ -77,6 +77,10 @@ type consoleManagementProfile struct {
 	NetworkAliasRangeEdit  json.RawMessage            `json:"networkAliasRangeUpdate"`
 	WorkspaceAuditEvents   json.RawMessage            `json:"workspaceAuditEvents"`
 	WorkspaceAuditExport   json.RawMessage            `json:"workspaceAuditExport"`
+	WorkspaceGuardrails    json.RawMessage            `json:"workspaceGuardrails"`
+	GuardrailCreate        json.RawMessage            `json:"workspaceGuardrailCreate"`
+	GuardrailUpdate        json.RawMessage            `json:"workspaceGuardrailUpdate"`
+	GuardrailDelete        json.RawMessage            `json:"workspaceGuardrailDelete"`
 }
 
 // ManagementDocument returns independently owned deterministic OpenAPI bytes.
@@ -138,7 +142,11 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.NetworkAliasRanges, "get", "getNetworkAliasRanges", false) &&
 		consoleCookieOperation(profile.NetworkAliasRangeEdit, "post", "updateNetworkAliasRanges", true) &&
 		consoleCookieOperation(profile.WorkspaceAuditEvents, "get", "listWorkspaceAuditEvents", false) &&
-		consoleCookieOperation(profile.WorkspaceAuditExport, "get", "exportWorkspaceAuditEvents", false)
+		consoleCookieOperation(profile.WorkspaceAuditExport, "get", "exportWorkspaceAuditEvents", false) &&
+		consoleCookieOperation(profile.WorkspaceGuardrails, "get", "listWorkspaceGuardrails", false) &&
+		consoleCookieOperation(profile.GuardrailCreate, "post", "createWorkspaceGuardrail", true) &&
+		consoleCookieOperation(profile.GuardrailUpdate, "post", "updateWorkspaceGuardrail", true) &&
+		consoleCookieOperation(profile.GuardrailDelete, "post", "deleteWorkspaceGuardrail", true)
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
 	}
@@ -239,6 +247,10 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/alias-ranges/actions/update"] = profile.NetworkAliasRangeEdit
 	consolePaths["/api/v1/workspaces/{workspace_id}/audit-events"] = profile.WorkspaceAuditEvents
 	consolePaths["/api/v1/workspaces/{workspace_id}/audit-events/export"] = profile.WorkspaceAuditExport
+	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails"] = profile.WorkspaceGuardrails
+	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails/actions/create"] = profile.GuardrailCreate
+	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails/{guardrail_id}/actions/update"] = profile.GuardrailUpdate
+	consolePaths["/api/v1/workspaces/{workspace_id}/guardrails/{guardrail_id}/actions/delete"] = profile.GuardrailDelete
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments"] = profile.WorkspaceRoleAssign
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke"] = profile.WorkspaceRoleRevoke
 	consolePaths[consoleSessionPreparePath] = profile.Prepare

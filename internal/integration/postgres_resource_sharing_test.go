@@ -72,11 +72,20 @@ func assertPostgreSQLResourceSharing(
 	if err != nil {
 		t.Fatalf("sharing.NewCreateOffer() error = %v", err)
 	}
+	shareGuardrail := blockShareWithGuardrail(ctx, t, admin, runtimePool, service, sharing.CreateOfferParams{
+		ProviderScope: providerScope, ConsumerScope: consumerScope,
+		ResourceID: resourceID, MaximumTraffic: maximumTraffic,
+		ExpiresAt: time.Now().UTC().Add(time.Hour), AccountSession: session,
+		Reason: reason, Idempotency: resourceAuthorityProof(t, 241),
+	})
 	created, err := service.CreateOffer(ctx, createCommand)
 	if err != nil {
 		t.Fatalf("Resource Sharing CreateOffer() error = %v", err)
 	}
 	createdOffer, hasOffer := created.Offer()
+	if hasOffer {
+		retireShareGuardrail(ctx, t, admin, runtimePool, createdOffer.Offer().ID(), shareGuardrail)
+	}
 	token, hasToken := created.Token()
 	if !hasOffer || !hasToken || !token.IsValid() ||
 		createdOffer.Offer().State() != sharing.OfferStateOffered ||

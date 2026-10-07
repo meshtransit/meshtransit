@@ -25,6 +25,9 @@ const (
 	BuiltinRoleBillingAdmin BuiltinRole = "billing_admin"
 	// BuiltinRoleAuditor reads everything and exports audit.
 	BuiltinRoleAuditor BuiltinRole = "auditor"
+	// BuiltinRoleSecurityAdmin sets guardrails and reads everything else,
+	// separating who sets the limits from who operates Networks.
+	BuiltinRoleSecurityAdmin BuiltinRole = "security_admin"
 )
 
 // RoleAssigner names who may assign a role: Workspace ownership or a
@@ -123,6 +126,16 @@ var builtinRoleCatalog = map[BuiltinRole]builtinRoleDefinition{
 			"resource.read", "resource_group.read", "share.read",
 		),
 	},
+	BuiltinRoleSecurityAdmin: {
+		assignableBy: []RoleAssigner{RoleAssignerOwner, RoleAssignerAdmin},
+		permissions: permissionsOf(
+			"workspace.read", "member.read", "role_definition.read", "role_binding.read",
+			"isolation.read", "guardrail.read", "guardrail.manage", "guardrail.weaken",
+			"audit.read", "audit.export",
+			"network.read", "device.read", "policy.read", "policy.explain",
+			"resource.read", "resource_group.read", "share.read",
+		),
+	},
 }
 
 func permissionsOf(keys ...string) []Permission {
@@ -137,7 +150,7 @@ func permissionsOf(keys ...string) []Permission {
 func BuiltinRoles() []BuiltinRole {
 	return []BuiltinRole{
 		BuiltinRoleAdmin, BuiltinRoleNetworkAdmin, BuiltinRoleITAdmin,
-		BuiltinRoleBillingAdmin, BuiltinRoleAuditor,
+		BuiltinRoleBillingAdmin, BuiltinRoleAuditor, BuiltinRoleSecurityAdmin,
 	}
 }
 

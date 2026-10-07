@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/meshtransit/meshtransit/internal/authorization"
+	"github.com/meshtransit/meshtransit/internal/guardrail"
 	"github.com/meshtransit/meshtransit/internal/network"
 	publication "github.com/meshtransit/meshtransit/internal/policy/publication"
 	"github.com/meshtransit/meshtransit/internal/publicid"
@@ -62,6 +63,8 @@ type policyPublicationTransaction struct {
 	approvalAuthorization policyPublicationAuthorizationEvidence
 	requireAccountSession bool
 	requireApproval       bool
+	// guardrailFindings are audit-mode guardrails this publication breaks.
+	guardrailFindings []guardrail.Finding
 }
 
 var _ publication.Transaction = (*policyPublicationTransaction)(nil)
@@ -317,6 +320,9 @@ func (transaction *policyPublicationTransaction) applyLocked(
 	if err != nil {
 		return publication.Result{}, err
 	}
+	if transaction.guardrailFindings, err = transaction.checkGuardrails(ctx, change); err != nil {
+		return publication.Result{}, err
+	}
 	if err := transaction.database.Exec(
 		ctx,
 		setPolicyPublicationChangeSQL,
@@ -493,4 +499,42 @@ func policyPublicationSemanticHash(value []byte) (publication.SemanticHash, erro
 		return publication.SemanticHash{}, ErrPolicyPublicationEvidence
 	}
 	return hash, nil
+}
+
+// checkGuardrails evaluates every rule that reaches a shared Device against
+// the Workspace's guardrails, under the publication locks, so a guardrail
+// added concurrently cannot be missed. Rules between Devices of this Network
+// cross no Network and are not affected. An enforced guardrail returns
+// *guardrail.ViolationError; audit-mode findings come back for the evidence.
+func (transaction *policyPublicationTransaction) checkGuardrails(
+	ctx context.Context,
+	change publication.Change,
+) ([]guardrail.Finding, error) {
+	destinations := change.Command().Candidate().ImportedResourceDestinations()
+	if len(destinations) == 0 {
+		return nil, nil
+	}
+	var encoded string
+	if err := transaction.database.QueryRow(ctx, activeWorkspaceGuardrailsSQL).Scan(&encoded); err != nil {
+		return nil, fmt.Errorf("read guardrails: %w", err)
+	}
+	guardrails, err := decodeActiveGuardrails(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("read guardrails: %w", err)
+	}
+	findings := []guardrail.Finding{}
+	seen := map[publicid.ID]bool{}
+	for _, destination := range destinations {
+		edge := guardrail.ShareEdge{Provider: destination.Resolution().ProviderScope(), Consumer: transaction.scope}
+		for _, finding := range guardrail.Evaluate(guardrails, transaction.scope.WorkspaceID(), edge) {
+			if !seen[finding.GuardrailID] {
+				seen[finding.GuardrailID] = true
+				findings = append(findings, finding)
+			}
+		}
+	}
+	if blocking := guardrail.Blocking(findings); len(blocking) > 0 {
+		return findings, &guardrail.ViolationError{Findings: blocking}
+	}
+	return findings, nil
 }

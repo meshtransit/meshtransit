@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 118 {
-		t.Fatalf("len(Catalog()) = %d, want 118", len(catalog))
+	if len(catalog) != 119 {
+		t.Fatalf("len(Catalog()) = %d, want 119", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 118 {
-		t.Fatalf("LatestVersion() = %d, want 118", LatestVersion())
+	if LatestVersion() != 119 {
+		t.Fatalf("LatestVersion() = %d, want 119", LatestVersion())
 	}
 }
 
@@ -2844,5 +2844,29 @@ func TestWorkspaceAuditExport(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "p_target_kinds") || strings.Count(migration.SQL, "TO mesh_runtime;") != 1 {
 		t.Error("schema 118 exports whole streams and grants runtime only the export")
+	}
+}
+
+func TestWorkspaceGuardrails(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[118]
+	if migration.Version != 119 {
+		t.Fatalf("migration 119 = %+v", migration)
+	}
+	for _, required := range []string{
+		"'security_admin', '01a10e00-0000-7000-8000-000000000006', 'Security admin', FALSE",
+		"kind IN ('network_isolation', 'network_sharing', 'external_sharing')",
+		"mesh_audit.capture_authority_mutation('guardrail', 'public_id')",
+		"OR (p_operation = 'delete' AND p_permission <> 'guardrail.weaken')",
+		"p_workspace_public_id, p_permission, evaluated_at",
+		"ERRCODE = 'MTG01'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.active_workspace_guardrails_v1() TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 119 missing %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "GRANT SELECT") {
+		t.Error("schema 119 must not grant direct table access")
 	}
 }

@@ -31,6 +31,8 @@ type resourceSharingAuditPayload struct {
 	BindingAuthorityGeneration        int64  `json:"binding_authority_generation"`
 	RoleAuthorityGeneration           int64  `json:"role_authority_generation"`
 	WorkspaceOwnerAuthorityGeneration int64  `json:"workspace_owner_authority_generation,omitempty"`
+	// GuardrailFindings lists audit-mode guardrails the acting side's change broke.
+	GuardrailFindings []guardrailFindingEvidence `json:"guardrail_findings,omitempty"`
 }
 
 // resourceSharingCounterpartAuditPayload is what the other side's Network
@@ -123,6 +125,10 @@ func appendResourceSharingMutationEvidence(
 	if err != nil {
 		return sharing.ErrUnavailable
 	}
+	guardrailFindings, err := checkShareGuardrails(ctx, transaction, action, localScope, locator)
+	if err != nil {
+		return err
+	}
 	targets := []resourceSharingAuditTarget{
 		{
 			state: locator.provider, head: heads[locator.provider.scope],
@@ -170,6 +176,7 @@ func appendResourceSharingMutationEvidence(
 				BindingAuthorityGeneration:        authorizationEvidence.bindingAuthorityGeneration,
 				RoleAuthorityGeneration:           authorizationEvidence.roleAuthorityGeneration,
 				WorkspaceOwnerAuthorityGeneration: authorizationEvidence.workspaceOwnerAuthorityGeneration,
+				GuardrailFindings:                 guardrailFindingsEvidence(guardrailFindings),
 			}
 		}
 		auditPayload, err := json.Marshal(auditDocument)
