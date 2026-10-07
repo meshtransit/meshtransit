@@ -17,12 +17,13 @@ const (
 	// ManagementProfileConsoleCookiePrivateV1 is disabled private source preparation.
 	// Rendering it mounts no handler or documentation endpoint and enables no SSO.
 	ManagementProfileConsoleCookiePrivateV1 ManagementProfile = "console-cookie-csrf-private-v1"
-	maximumManagementDocumentBytes                            = 256 << 10
-	consoleSessionPreparePath                                 = "/auth/v1/session/prepare"
-	consoleSessionLogoutPath                                  = "/auth/v1/session/logout"
-	consoleSessionManagementScopesPath                        = "/auth/v1/session/management-scopes"
-	consoleDeploymentCapabilitiesPath                         = "/v1/system/capabilities"
-	deviceRevokePath                                          = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
+	// Bounds every compiled document; the composed Console contract is ~260 KiB.
+	maximumManagementDocumentBytes     = 384 << 10
+	consoleSessionPreparePath          = "/auth/v1/session/prepare"
+	consoleSessionLogoutPath           = "/auth/v1/session/logout"
+	consoleSessionManagementScopesPath = "/auth/v1/session/management-scopes"
+	consoleDeploymentCapabilitiesPath  = "/v1/system/capabilities"
+	deviceRevokePath                   = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"devices/{device_id}/actions/revoke"
 	policyPublishPath = "/api/v1/workspaces/{workspace_id}/networks/{network_id}/" +
 		"policy/actions/publish"
@@ -72,6 +73,8 @@ type consoleManagementProfile struct {
 	SessionWorkspaces      json.RawMessage            `json:"sessionWorkspaces"`
 	SessionWorkspaceSwitch json.RawMessage            `json:"sessionWorkspaceSwitch"`
 	ShareTargetResolve     json.RawMessage            `json:"shareTargetResolve"`
+	NetworkAliasRanges     json.RawMessage            `json:"networkAliasRanges"`
+	NetworkAliasRangeEdit  json.RawMessage            `json:"networkAliasRangeUpdate"`
 }
 
 // ManagementDocument returns independently owned deterministic OpenAPI bytes.
@@ -129,7 +132,9 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.NetworkCreate, "post", "createNetwork", true) &&
 		consoleCookieOperation(profile.SessionWorkspaces, "get", "listSessionWorkspaces", false) &&
 		consoleCookieOperation(profile.SessionWorkspaceSwitch, "post", "switchSessionWorkspace", true) &&
-		consoleCookieOperation(profile.ShareTargetResolve, "get", "resolveShareTarget", false)
+		consoleCookieOperation(profile.ShareTargetResolve, "get", "resolveShareTarget", false) &&
+		consoleCookieOperation(profile.NetworkAliasRanges, "get", "getNetworkAliasRanges", false) &&
+		consoleCookieOperation(profile.NetworkAliasRangeEdit, "post", "updateNetworkAliasRanges", true)
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
 	}
@@ -226,6 +231,8 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths["/auth/v1/session/workspace"] = profile.SessionWorkspaceSwitch
 	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/share-targets/{network_display_code}"] = profile.ShareTargetResolve
 	consolePaths["/api/v1/workspaces/{workspace_id}/members"] = profile.WorkspaceMembers
+	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/alias-ranges"] = profile.NetworkAliasRanges
+	consolePaths["/api/v1/workspaces/{workspace_id}/networks/{network_id}/alias-ranges/actions/update"] = profile.NetworkAliasRangeEdit
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments"] = profile.WorkspaceRoleAssign
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke"] = profile.WorkspaceRoleRevoke
 	consolePaths[consoleSessionPreparePath] = profile.Prepare

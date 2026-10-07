@@ -235,15 +235,17 @@ type ManagementHandlerOptions struct {
 	PolicyCompilations PolicyCompiler
 	PolicyExplanations PolicyExplainer
 	// AccessGraphs lists the effective graph; nil answers that route 503.
-	AccessGraphs              AccessGraphLister
-	PolicySimulations         PolicySimulator
-	ActivePolicies            ActivePolicyReader
-	WorkspaceRenames          WorkspaceRenamer
-	WorkspaceRoles            WorkspaceRoleManager
-	WorkspaceCreations        WorkspaceCreator
-	SessionWorkspaces         SessionWorkspaceSelector
-	ShareTargets              ShareTargetResolver
-	NetworkCreations          NetworkCreator
+	AccessGraphs       AccessGraphLister
+	PolicySimulations  PolicySimulator
+	ActivePolicies     ActivePolicyReader
+	WorkspaceRenames   WorkspaceRenamer
+	WorkspaceRoles     WorkspaceRoleManager
+	WorkspaceCreations WorkspaceCreator
+	SessionWorkspaces  SessionWorkspaceSelector
+	ShareTargets       ShareTargetResolver
+	NetworkCreations   NetworkCreator
+	// AliasRanges reads and sets receiving-Network alias ranges; nil answers 503.
+	AliasRanges               NetworkAliasRanges
 	PolicyApprovals           PolicyApprovalWorkflow
 	PolicyApprovalCatalog     PolicyApprovalCatalog
 	ResourceCreations         ResourceCreator
@@ -281,6 +283,7 @@ type ManagementHandler struct {
 	sessionWorkspaces         SessionWorkspaceSelector
 	shareTargets              ShareTargetResolver
 	networkCreations          NetworkCreator
+	aliasRanges               NetworkAliasRanges
 	policyApprovals           PolicyApprovalWorkflow
 	policyApprovalCatalog     PolicyApprovalCatalog
 	resourceCreations         ResourceCreator
@@ -341,6 +344,7 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		sessionWorkspaces:         options.SessionWorkspaces,
 		shareTargets:              options.ShareTargets,
 		networkCreations:          options.NetworkCreations,
+		aliasRanges:               options.AliasRanges,
 		policyApprovals:           options.PolicyApprovals,
 		policyApprovalCatalog:     options.PolicyApprovalCatalog,
 		resourceCreations:         options.ResourceCreations,
@@ -442,10 +446,11 @@ func (handler *ManagementHandler) serveHTTP(
 	networkCollectionPath, networkCollectionMatched := parseNetworkCollectionPath(request)
 	sessionWorkspaceMethod, sessionWorkspaceMatched := sessionWorkspaceRoute(request)
 	shareTargetPath, shareTargetMatched := parseShareTargetPath(request)
+	aliasRangePath, aliasRangeMatched := parseNetworkAliasRangePath(request)
 	if !deviceMatched && !policyMatched && !policySimulationMatched && !policyApprovalMatched &&
 		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
-		!shareTargetMatched {
+		!shareTargetMatched && !aliasRangeMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
 			Status: http.StatusNotFound, Code: resultCode,
@@ -467,6 +472,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = sessionWorkspaceSwitchOperation
 	} else if shareTargetMatched {
 		operation = shareTargetResolveOperation
+	} else if aliasRangeMatched {
+		operation = aliasRangePath.operation()
 	} else if deviceMatched {
 		operation = deviceRevokeOperation
 	} else if policyMatched {
@@ -501,6 +508,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = sessionWorkspaceMethod
 	} else if shareTargetMatched {
 		allowedMethod = http.MethodGet
+	} else if aliasRangeMatched {
+		allowedMethod = aliasRangePath.allowedMethod()
 	}
 	if allowedMethod == "" || request.Method != allowedMethod {
 		if policyApprovalMatched && policyApprovalPath.isCollection() {
@@ -588,6 +597,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if shareTargetMatched {
 		resultCode = handler.resolveShareTarget(ctx, response, correlationID, shareTargetPath, session)
+		return
+	}
+	if aliasRangeMatched {
+		resultCode = handler.handleNetworkAliasRanges(ctx, response, request, correlationID, aliasRangePath, session)
 		return
 	}
 	if policyMatched {

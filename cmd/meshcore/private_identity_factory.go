@@ -13,6 +13,7 @@ import (
 	redisadapter "github.com/meshtransit/meshtransit/internal/adapter/redis"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
 	"github.com/meshtransit/meshtransit/internal/identity/sessioncontext"
+	"github.com/meshtransit/meshtransit/internal/network/aliasrange"
 	"github.com/meshtransit/meshtransit/internal/network/provisioning"
 	"github.com/meshtransit/meshtransit/internal/node/inventory"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
@@ -139,6 +140,14 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	aliasRangeStore, err := postgresadapter.NewNetworkAliasRangeStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	aliasRanges, err := aliasrange.NewService(aliasRangeStore, clock)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	sessionWorkspaceStore, err := postgresadapter.NewSessionWorkspaceStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
@@ -223,7 +232,7 @@ func composePrivateIdentityFactory(
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, AccessGraphs: policyExplainer, PolicySimulations: policySimulator,
-		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations,
+		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges,
 		SessionWorkspaces: sessionWorkspaces, ShareTargets: shareTargets,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,

@@ -50,7 +50,7 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, err := openapi.ManagementDocument(openapi.ManagementProfileConsoleCookiePrivateV1)
-	if err != nil || len(body) > 256<<10 {
+	if err != nil || len(body) > 384<<10 {
 		t.Fatal("private document did not compose within its bound", err)
 	}
 	base, console := profileObject(t, baseBytes), profileObject(t, body)
@@ -65,7 +65,9 @@ func TestManagementDocumentConsoleUsesOneResourceContract(t *testing.T) {
 		t.Fatal("private document retained deployment topology")
 	}
 	basePaths, paths := profileMap(t, base, "paths"), profileMap(t, console, "paths")
-	if len(basePaths) != 31 || len(paths) != 31 {
+	// The private document adds only Console session routes and the two
+	// receiving-Network alias range routes to the shared resource contract.
+	if len(basePaths) != 31 || len(paths) != 33 {
 		t.Fatal("private profile introduced another product resource API")
 	}
 	for path, raw := range paths {
@@ -393,7 +395,7 @@ func FuzzManagementDocumentProfile(f *testing.F) {
 			}
 			return
 		}
-		completeDocument := len(body) <= 256<<10 && json.Valid(body)
+		completeDocument := len(body) <= 384<<10 && json.Valid(body)
 		if err != nil || !completeDocument {
 			t.Fatal("known profile returned an incomplete or unbounded document", err)
 		}

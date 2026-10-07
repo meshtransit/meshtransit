@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 112 {
-		t.Fatalf("len(Catalog()) = %d, want 112", len(catalog))
+	if len(catalog) != 113 {
+		t.Fatalf("len(Catalog()) = %d, want 113", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 112 {
-		t.Fatalf("LatestVersion() = %d, want 112", LatestVersion())
+	if LatestVersion() != 113 {
+		t.Fatalf("LatestVersion() = %d, want 113", LatestVersion())
 	}
 }
 
@@ -2686,5 +2686,34 @@ func TestTrustContractExpiryFinalizerIsWorkerOnly(t *testing.T) {
 	}
 	if strings.Contains(ownership, "TO mesh_runtime") {
 		t.Error("schema 112 ownership must not expose expiry to runtime")
+	}
+}
+
+func TestNetworkAliasRangeKeepsAllocationContract(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[112]
+	if migration.Version != 113 {
+		t.Fatalf("migration 113 = %+v", migration)
+	}
+	for _, required := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.allocate_network_scoped_alias_v1(\n    p_deployment_id BIGINT, p_pool_id BIGINT, p_provider_network_id BIGINT, p_consumer_network_id BIGINT\n)",
+		"IF pool_row.purpose = 'federation_resource_alias' THEN",
+		"IF NOT chosen_prefix <<= pool_row.prefix THEN",
+		"attempt_limit := LEAST(maximum_offset, 65536);",
+		"'network.update', p_evaluated_at",
+		"'network.read', p_evaluated_at",
+		"RAISE EXCEPTION USING ERRCODE = 'MTR02'",
+		"FOR EACH ROW EXECUTE FUNCTION mesh_audit.capture_authority_mutation('network_alias_range', 'public_id');",
+		"ALTER TABLE mesh.network_alias_range FORCE ROW LEVEL SECURITY;",
+		"GRANT SELECT ON mesh.network_alias_range TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 113 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"GRANT INSERT", "GRANT UPDATE", "TO mesh_worker", "OWNER TO"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 113 must keep writes inside its definer functions, found %q", forbidden)
+		}
 	}
 }

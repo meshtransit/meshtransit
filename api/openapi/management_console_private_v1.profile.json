@@ -1979,5 +1979,428 @@
         }
       }
     }
+  },
+  "networkAliasRanges": {
+    "get": {
+      "operationId": "getNetworkAliasRanges",
+      "summary": "Read where Devices shared into this Network appear",
+      "description": "Requires network.read. Returns, per address family, the Deployment's Resource Alias frame, the range this Network chose inside it (null: the whole frame) and how many aliases it retains, plus the live shares projected into the Network and the per-map limit.",
+      "security": [
+        {
+          "accountSessionCookie": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "network_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Current alias ranges",
+          "headers": {
+            "ETag": {
+              "schema": {
+                "type": "string",
+                "pattern": "^\"[1-9][0-9]*\"$"
+              }
+            },
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "network_id",
+                      "version",
+                      "ipv4",
+                      "ipv6",
+                      "live_shares",
+                      "share_limit"
+                    ],
+                    "properties": {
+                      "network_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "ipv4": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "frame",
+                          "prefix",
+                          "retained_aliases"
+                        ],
+                        "properties": {
+                          "frame": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 43,
+                            "description": "The Deployment's Resource Alias frame for this family; null when none is active"
+                          },
+                          "prefix": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 43,
+                            "description": "The chosen range; null means the whole frame"
+                          },
+                          "retained_aliases": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Aliases this Network holds as the receiving side, including quarantined ones"
+                          }
+                        }
+                      },
+                      "ipv6": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "frame",
+                          "prefix",
+                          "retained_aliases"
+                        ],
+                        "properties": {
+                          "frame": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 43,
+                            "description": "The Deployment's Resource Alias frame for this family; null when none is active"
+                          },
+                          "prefix": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 43,
+                            "description": "The chosen range; null means the whole frame"
+                          },
+                          "retained_aliases": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Aliases this Network holds as the receiving side, including quarantined ones"
+                          }
+                        }
+                      },
+                      "live_shares": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Shares currently projected into this Network"
+                      },
+                      "share_limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Live shares one map can carry"
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        }
+      }
+    }
+  },
+  "networkAliasRangeUpdate": {
+    "post": {
+      "operationId": "updateNetworkAliasRanges",
+      "summary": "Choose where Devices shared into this Network appear",
+      "description": "Requires network.update. Each prefix must lie inside the Deployment's Resource Alias frame for its family (IPv4 /16–/28, IPv6 /96–/124). An omitted key leaves that family unchanged; null returns it to the whole frame. Other Networks, in any Workspace, may choose the same range. Existing aliases are never renumbered: every alias this Network retains must stay inside the new range. Maps do not change.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "network_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        },
+        {
+          "name": "If-Match",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^\"[1-9][0-9]*\"$"
+          }
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "ipv4_prefix": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 18,
+                  "description": "Canonical IPv4 CIDR inside the frame, or null for the whole frame"
+                },
+                "ipv6_prefix": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 43,
+                  "description": "Canonical IPv6 CIDR inside the frame, or null for the whole frame"
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Committed alias ranges",
+          "headers": {
+            "ETag": {
+              "schema": {
+                "type": "string",
+                "pattern": "^\"[1-9][0-9]*\"$"
+              }
+            },
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "network_id",
+                      "version",
+                      "ipv4",
+                      "ipv6",
+                      "live_shares",
+                      "share_limit",
+                      "changed"
+                    ],
+                    "properties": {
+                      "network_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "ipv4": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "frame",
+                          "prefix",
+                          "retained_aliases"
+                        ],
+                        "properties": {
+                          "frame": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 43,
+                            "description": "The Deployment's Resource Alias frame for this family; null when none is active"
+                          },
+                          "prefix": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 43,
+                            "description": "The chosen range; null means the whole frame"
+                          },
+                          "retained_aliases": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Aliases this Network holds as the receiving side, including quarantined ones"
+                          }
+                        }
+                      },
+                      "ipv6": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "frame",
+                          "prefix",
+                          "retained_aliases"
+                        ],
+                        "properties": {
+                          "frame": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 43,
+                            "description": "The Deployment's Resource Alias frame for this family; null when none is active"
+                          },
+                          "prefix": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "maxLength": 43,
+                            "description": "The chosen range; null means the whole frame"
+                          },
+                          "retained_aliases": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Aliases this Network holds as the receiving side, including quarantined ones"
+                          }
+                        }
+                      },
+                      "live_shares": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Shares currently projected into this Network"
+                      },
+                      "share_limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Live shares one map can carry"
+                      },
+                      "changed": {
+                        "type": "boolean",
+                        "description": "False when the request matched the current ranges"
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "409": {
+          "description": "alias_range_in_use: a retained alias would fall outside the range"
+        },
+        "412": {
+          "description": "version_conflict"
+        },
+        "422": {
+          "description": "alias_range_outside_frame"
+        },
+        "428": {
+          "description": "precondition_required"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable or uncertain outcome"
+        }
+      }
+    }
   }
 }
