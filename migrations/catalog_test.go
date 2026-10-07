@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 117 {
-		t.Fatalf("len(Catalog()) = %d, want 117", len(catalog))
+	if len(catalog) != 118 {
+		t.Fatalf("len(Catalog()) = %d, want 118", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 117 {
-		t.Fatalf("LatestVersion() = %d, want 117", LatestVersion())
+	if LatestVersion() != 118 {
+		t.Fatalf("LatestVersion() = %d, want 118", LatestVersion())
 	}
 }
 
@@ -2823,5 +2823,26 @@ func TestWorkspaceAuditHistory(t *testing.T) {
 	}
 	if strings.Count(migration.SQL, "TO mesh_runtime;") != 1 {
 		t.Error("schema 117 may grant runtime only the history read")
+	}
+}
+
+func TestWorkspaceAuditExport(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[117]
+	if migration.Version != 118 {
+		t.Fatalf("migration 118 = %+v", migration)
+	}
+	for _, required := range []string{
+		"p_workspace_public_id, 'audit.export', evaluated_at",
+		"p_workspace_public_id, p_network_public_id, 'audit.export', evaluated_at",
+		"(event.occurred_at, identity.public_id) > (p_cursor_occurred_at, p_cursor_event_public_id)",
+		"ORDER BY event.occurred_at, identity.public_id",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 118 missing %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "p_target_kinds") || strings.Count(migration.SQL, "TO mesh_runtime;") != 1 {
+		t.Error("schema 118 exports whole streams and grants runtime only the export")
 	}
 }

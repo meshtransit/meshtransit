@@ -5,6 +5,8 @@ package integration
 import (
 	"context"
 	"errors"
+	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -43,7 +45,7 @@ func assertAuditHistory(ctx context.Context, t *testing.T, admin *pgx.Conn, runt
 	if _, err := list(provider); !errors.Is(err, history.ErrForbidden) {
 		t.Fatalf("history before audit.read error = %v, want ErrForbidden", err)
 	}
-	grantAuditRead(ctx, t, admin)
+	grantFixturePermission(ctx, t, admin, 890, "audit.read")
 	page, err := list(provider)
 	if err != nil {
 		t.Fatalf("list provider Network history: %v", err)
@@ -123,23 +125,25 @@ func assertAuditHistory(ctx context.Context, t *testing.T, admin *pgx.Conn, runt
 	if _, err := list(history.Query{WorkspaceID: providerScope.WorkspaceID()}); !errors.Is(err, history.ErrForbidden) {
 		t.Fatalf("Workspace-wide history with a Network role error = %v, want ErrForbidden", err)
 	}
+	assertAuditExport(ctx, t, admin, store, session, providerScope)
 }
 
-// grantAuditRead gives the shared fixture role audit.read.
-func grantAuditRead(ctx context.Context, t *testing.T, admin *pgx.Conn) {
+// grantFixturePermission gives the shared fixture role one permission.
+func grantFixturePermission(ctx context.Context, t *testing.T, admin *pgx.Conn, id int, permission string) {
 	t.Helper()
 	var networkRevision int64
 	if err := admin.QueryRow(ctx, `SELECT network_revision FROM mesh_ops.network_revision
 WHERE workspace_id = 103 AND network_id = 203`).Scan(&networkRevision); err != nil {
 		t.Fatal(err)
 	}
+	suffix := strconv.Itoa(id)
 	commitAuditedAuthorityFixture(ctx, t, admin, authorityEvidenceFixture{
-		changePublicID:         "01890f01-0000-7000-8000-000000000890",
-		eventPublicID:          "01890f02-0000-7000-8000-000000000890",
-		outboxPublicID:         "01890f03-0000-7000-8000-000000000890",
+		changePublicID:         "01890f01-0000-7000-8000-000000000" + suffix,
+		eventPublicID:          "01890f02-0000-7000-8000-000000000" + suffix,
+		outboxPublicID:         "01890f03-0000-7000-8000-000000000" + suffix,
 		streamID:               203,
 		aggregateKind:          "role_permission",
-		aggregatePublicID:      "01890f00-0000-7000-8000-000000000890",
+		aggregatePublicID:      "01890f00-0000-7000-8000-000000000" + suffix,
 		aggregateVersion:       1,
 		networkRevision:        networkRevision,
 		actorPrincipalPublicID: "01890f00-0000-7000-8000-000000000011",
@@ -150,9 +154,53 @@ WHERE workspace_id = 103 AND network_id = 203`).Scan(&networkRevision); err != n
 		if _, err := transaction.Exec(ctx, `INSERT INTO mesh.role_permission (
     id, public_id, deployment_id, workspace_id, role_definition_id, permission_id
 ) OVERRIDING SYSTEM VALUE
-SELECT 890, '01890f00-0000-7000-8000-000000000890'::UUID, 1, 103, 842, permission.id
-FROM mesh.permission AS permission WHERE permission.permission_key = 'audit.read'`); err != nil {
-			t.Fatalf("grant audit.read: %v", err)
+SELECT $1::BIGINT, ('01890f00-0000-7000-8000-' || lpad($1::TEXT, 12, '0'))::UUID, 1, 103, 842, permission.id
+FROM mesh.permission AS permission WHERE permission.permission_key = $2::TEXT`, id, permission); err != nil {
+			t.Fatalf("grant %s: %v", permission, err)
 		}
 	})
+}
+
+// assertAuditExport qualifies schema 118: export needs audit.export, returns
+// whole runs of each stream oldest first, and every sealed record verifies
+// and links to the one before it.
+func assertAuditExport(ctx context.Context, t *testing.T, admin *pgx.Conn, store *postgresadapter.AuditHistoryStore,
+	session accountsession.Session, providerScope network.Scope) {
+	t.Helper()
+	exporter, err := history.NewExporter(store, integrationClock{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := history.ExportQuery{WorkspaceID: providerScope.WorkspaceID(), NetworkID: providerScope.NetworkID()}
+	exportCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if _, err := exporter.Export(exportCtx, session, query); !errors.Is(err, history.ErrForbidden) {
+		t.Fatalf("export before audit.export error = %v, want ErrForbidden", err)
+	}
+	grantFixturePermission(ctx, t, admin, 891, "audit.export")
+	export, err := exporter.Export(exportCtx, session, query)
+	if err != nil || len(export.Records) == 0 {
+		t.Fatalf("export = %d records, %v", len(export.Records), err)
+	}
+	// Records are oldest first by commit start; sequences are assigned at
+	// append time, so a verifier orders each stream by sequence.
+	for index := 1; index < len(export.Records); index++ {
+		if export.Records[index].EventTime < export.Records[index-1].EventTime {
+			t.Fatalf("export is not oldest first at %d", index)
+		}
+	}
+	ordered := append([]audit.Record(nil), export.Records...)
+	sort.Slice(ordered, func(left, right int) bool { return ordered[left].Sequence < ordered[right].Sequence })
+	for index, record := range ordered {
+		if record.NetworkID != providerScope.NetworkID().String() || record.StreamID != ordered[0].StreamID {
+			t.Fatalf("export record %s is outside the provider Network stream", record.EventID)
+		}
+		if err := record.VerifySeal(); err != nil {
+			t.Fatalf("export record #%d does not verify: %v", record.Sequence, err)
+		}
+		if index > 0 && (record.Sequence != ordered[index-1].Sequence+1 ||
+			record.Integrity.PreviousSeal != ordered[index-1].Integrity.Seal) {
+			t.Fatalf("export breaks between #%d and #%d", ordered[index-1].Sequence, record.Sequence)
+		}
+	}
 }

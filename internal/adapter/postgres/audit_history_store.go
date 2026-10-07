@@ -14,6 +14,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/audit"
 	"github.com/meshtransit/meshtransit/internal/audit/history"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
+	"github.com/meshtransit/meshtransit/internal/network"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 )
 
@@ -25,6 +26,9 @@ const listWorkspaceAuditEventsSQL = `SELECT mesh_ops.list_workspace_audit_events
  $10::UUID,$11::UUID,$12::TIMESTAMPTZ,$13::TIMESTAMPTZ,$14::TEXT[],$15::UUID,$16::UUID,NULLIF($17::TEXT,''),
  NULLIF($18::TEXT,''),NULLIF($19::TEXT,''),$20::UUID,$21::UUID,$22::TIMESTAMPTZ,$23::UUID,$24::INTEGER)::TEXT`
 
+const exportWorkspaceAuditEventsSQL = `SELECT mesh_ops.export_workspace_audit_events_v1(` + sessionArguments + `,
+ $10::UUID,$11::UUID,$12::TIMESTAMPTZ,$13::TIMESTAMPTZ,$14::TIMESTAMPTZ,$15::UUID,$16::INTEGER)::TEXT`
+
 // AuditHistoryStore reads Workspace audit history through the runtime pool,
 // one short read-only transaction per page.
 type AuditHistoryStore struct {
@@ -32,7 +36,10 @@ type AuditHistoryStore struct {
 	options  AccountSessionOptions
 }
 
-var _ history.Store = (*AuditHistoryStore)(nil)
+var (
+	_ history.Store       = (*AuditHistoryStore)(nil)
+	_ history.ExportStore = (*AuditHistoryStore)(nil)
+)
 
 // NewAuditHistoryStore uses the runtime pool.
 func NewAuditHistoryStore(pool *Pool, options AccountSessionOptions) (*AuditHistoryStore, error) {
@@ -43,15 +50,41 @@ func NewAuditHistoryStore(pool *Pool, options AccountSessionOptions) (*AuditHist
 	return &AuditHistoryStore{database: pool.workspaceRenameDatabase, options: options}, nil
 }
 
-// List authorizes audit.read in PostgreSQL and returns one page. A Network
-// filter binds that exact Network scope first, so Network-bound roles can
-// read their own Network.
+// List authorizes audit.read in PostgreSQL and returns one page, newest first.
 func (store *AuditHistoryStore) List(ctx context.Context, session accountsession.Session,
-	query history.Query) (_ history.Page, resultErr error) {
+	query history.Query) (history.Page, error) {
 	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) ||
 		!session.IsValid() || !query.IsValid() {
 		return history.Page{}, history.ErrInvalid
 	}
+	return store.read(ctx, query.WorkspaceID.String(), query.NetworkID, listWorkspaceAuditEventsSQL,
+		auditHistoryArguments(session, query), query.PageSize)
+}
+
+// ExportChunk authorizes audit.export and returns up to limit records after
+// the cursor, oldest first.
+func (store *AuditHistoryStore) ExportChunk(ctx context.Context, session accountsession.Session,
+	query history.ExportQuery, after *history.Cursor, limit int) (history.Page, error) {
+	if ctx == nil || store == nil || store.database == nil || !validAccountSessionOptions(store.options) ||
+		!session.IsValid() || !query.IsValid() || limit < 1 || limit > history.ExportChunkSize ||
+		(after != nil && (after.OccurredAt.IsZero() || !after.EventID.IsValid())) {
+		return history.Page{}, history.ErrInvalid
+	}
+	var cursorAt *time.Time
+	var cursorID *string
+	if after != nil {
+		at, id := after.OccurredAt, after.EventID.String()
+		cursorAt, cursorID = &at, &id
+	}
+	args := append(sessionQueryArguments(session), query.WorkspaceID.String(),
+		optionalUUIDText(publicid.ID(query.NetworkID)), query.Since, query.Until, cursorAt, cursorID, limit)
+	return store.read(ctx, query.WorkspaceID.String(), query.NetworkID, exportWorkspaceAuditEventsSQL, args, limit)
+}
+
+// read runs one audit read in a short transaction. A Network filter binds
+// that exact Network scope first, so Network-bound roles can read it.
+func (store *AuditHistoryStore) read(ctx context.Context, workspaceID string, networkID network.ID,
+	sql string, args []any, limit int) (_ history.Page, resultErr error) {
 	tx, err := store.database.Begin(ctx)
 	if err != nil || tx == nil {
 		return history.Page{}, errors.Join(history.ErrUnavailable, err)
@@ -61,10 +94,10 @@ func (store *AuditHistoryStore) List(ctx context.Context, session accountsession
 		postgresTimeout(store.options.StatementTimeout), postgresTimeout(store.options.IdleTimeout)); err != nil {
 		return history.Page{}, errors.Join(history.ErrUnavailable, err)
 	}
-	if query.NetworkID.IsValid() {
+	if networkID.IsValid() {
 		var workspaceInternal, networkInternal int64
-		if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, query.WorkspaceID.String(),
-			query.NetworkID.String()).Scan(&workspaceInternal, &networkInternal); err != nil {
+		if err := tx.QueryRow(ctx, setResourceAuthorityScopeSQL, workspaceID,
+			networkID.String()).Scan(&workspaceInternal, &networkInternal); err != nil {
 			return history.Page{}, auditHistoryError(err)
 		}
 		if workspaceInternal <= 0 || networkInternal <= 0 {
@@ -72,13 +105,13 @@ func (store *AuditHistoryStore) List(ctx context.Context, session accountsession
 		}
 	}
 	var encoded *string
-	if err := tx.QueryRow(ctx, listWorkspaceAuditEventsSQL, auditHistoryArguments(session, query)...).Scan(&encoded); err != nil {
+	if err := tx.QueryRow(ctx, sql, args...).Scan(&encoded); err != nil {
 		return history.Page{}, auditHistoryError(err)
 	}
 	if encoded == nil {
 		return history.Page{}, history.ErrForbidden
 	}
-	return decodeAuditHistoryPage([]byte(*encoded), query.PageSize)
+	return decodeAuditHistoryPage([]byte(*encoded), limit)
 }
 
 func auditHistoryArguments(session accountsession.Session, query history.Query) []any {

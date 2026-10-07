@@ -240,3 +240,108 @@ func validAction(value string) bool {
 	}
 	return true
 }
+
+// Export bounds. A larger range must be split; an export never truncates
+// silently, because a verifier must see whole runs of each stream.
+const (
+	ExportChunkSize      = 500
+	MaximumExportRecords = 10000
+	// MaximumExportBytes approximates the encoded size an export may reach.
+	MaximumExportBytes = 14 << 20
+)
+
+// ErrExportTooLarge reports a range with more evidence than one export holds.
+var ErrExportTooLarge = errors.New("audit history: export too large")
+
+// ExportQuery selects whole streams of a Workspace, or of one Network, in a
+// time window. A zero window takes the default ending now.
+type ExportQuery struct {
+	WorkspaceID workspace.ID
+	NetworkID   network.ID
+	Since       time.Time
+	Until       time.Time
+}
+
+// IsValid reports a complete export query with defaults applied.
+func (query ExportQuery) IsValid() bool {
+	return query.WorkspaceID.IsValid() && !query.Since.IsZero() && !query.Until.IsZero() &&
+		query.Since.Before(query.Until) &&
+		(query.NetworkID == (network.ID{}) || query.NetworkID.IsValid())
+}
+
+// Export is every record in the window, oldest first, as stored. Seals are
+// left for the reader to verify; Export does not mark mismatches.
+type Export struct {
+	Query       ExportQuery
+	Records     []audit.Record
+	Actors      map[string]string
+	GeneratedAt time.Time
+}
+
+// ExportStore reads one authorized chunk oldest first.
+type ExportStore interface {
+	ExportChunk(ctx context.Context, session accountsession.Session, query ExportQuery,
+		after *Cursor, limit int) (Page, error)
+}
+
+// Exporter assembles bounded exports.
+type Exporter struct {
+	store ExportStore
+	clock Clock
+}
+
+// NewExporter requires a store and clock.
+func NewExporter(store ExportStore, clock Clock) (*Exporter, error) {
+	if store == nil || clock == nil {
+		return nil, ErrInvalid
+	}
+	return &Exporter{store: store, clock: clock}, nil
+}
+
+// Export reads the whole window chunk by chunk, or fails with
+// ErrExportTooLarge when it exceeds the record or size bound.
+func (exporter *Exporter) Export(ctx context.Context, session accountsession.Session, query ExportQuery) (Export, error) {
+	if ctx == nil || exporter == nil || exporter.store == nil || exporter.clock == nil {
+		return Export{}, ErrInvalid
+	}
+	now := exporter.clock.Now().UTC()
+	if now.IsZero() || !session.IsActiveAt(now) {
+		return Export{}, ErrForbidden
+	}
+	if query.Until.IsZero() {
+		query.Until = now
+	}
+	if query.Since.IsZero() {
+		query.Since = query.Until.Add(-DefaultWindow)
+	}
+	query.Since, query.Until = query.Since.UTC(), query.Until.UTC()
+	if !query.IsValid() {
+		return Export{}, ErrInvalid
+	}
+	result := Export{Query: query, Records: []audit.Record{}, Actors: map[string]string{}, GeneratedAt: now}
+	var after *Cursor
+	size := 0
+	for {
+		page, err := exporter.store.ExportChunk(ctx, session, query, after, ExportChunkSize)
+		if err != nil {
+			return Export{}, err
+		}
+		if len(page.Records) > ExportChunkSize {
+			return Export{}, ErrInvalid
+		}
+		for _, record := range page.Records {
+			size += 2*len(record.PayloadCanonical) + 1024
+		}
+		result.Records = append(result.Records, page.Records...)
+		for id, name := range page.Actors {
+			result.Actors[id] = name
+		}
+		if len(result.Records) > MaximumExportRecords || size > MaximumExportBytes {
+			return Export{}, ErrExportTooLarge
+		}
+		if page.Next == nil {
+			return result, nil
+		}
+		after = page.Next
+	}
+}
