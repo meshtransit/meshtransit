@@ -725,3 +725,21 @@ func FuzzLoginDispatcherRouting(f *testing.F) {
 		}
 	})
 }
+
+func TestLoginDispatcherRegistrationKeepsInvitations(t *testing.T) {
+	t.Parallel()
+	page, _, _ := browserRegistrationPageFixture(t)
+	dispatcher, _, _ := dispatcherTestGraph(t)
+	prepare, _ := newInvitationPrepareFixture(t)
+	withInvitations, err := dispatcher.WithInvitations(prepare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withPage, err := withInvitations.WithRegistration(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withPage.invitations != prepare || withPage.registration != page {
+		t.Fatal("adding the registration page dropped the invitation prepare endpoint")
+	}
+}

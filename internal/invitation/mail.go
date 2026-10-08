@@ -39,10 +39,12 @@ Sign in with the account of this email address. The link works once and expires 
 If you did not expect this invitation, you can ignore this email.
 `))
 
+// ses:no-track keeps SES click tracking from rewriting the link: the token
+// must reach only the Console, never a tracking redirect.
 var htmlBody = htmltemplate.Must(htmltemplate.New("html").Parse(`<!doctype html>
 <html><body style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#1f2328;line-height:1.5">
 <p><strong>{{.Inviter}}</strong> invited you to join the <strong>{{.Workspace}}</strong> Workspace on MeshTransit{{if .Role}} as {{.Role}}{{end}}.</p>
-<p><a href="{{.Link}}" style="display:inline-block;padding:10px 16px;background:#1f6feb;color:#ffffff;border-radius:6px;text-decoration:none">Accept invitation</a></p>
+<p><a ses:no-track href="{{.Link}}" style="display:inline-block;padding:10px 16px;background:#1f6feb;color:#ffffff;border-radius:6px;text-decoration:none">Accept invitation</a></p>
 <p style="color:#59636e;font-size:13px">Sign in with the account of this email address. The link works once and expires on {{.Expires}}.<br>If you did not expect this invitation, you can ignore this email.</p>
 </body></html>
 `))

@@ -170,7 +170,8 @@ func TestCreateEmailsTheLinkAndRecordsDelivery(t *testing.T) {
 	}
 	if len(mailer.mails) != 1 || mailer.mails[0].To != "member@example.com" ||
 		!strings.Contains(mailer.mails[0].Text, sent.Link) || !strings.Contains(mailer.mails[0].Text, "as Auditor") ||
-		strings.Contains(mailer.mails[0].HTML, "<script>") || !strings.Contains(mailer.mails[0].HTML, "Test &amp; Co") {
+		strings.Contains(mailer.mails[0].HTML, "<script>") || !strings.Contains(mailer.mails[0].HTML, "Test &amp; Co") ||
+		!strings.Contains(mailer.mails[0].HTML, `<a ses:no-track href="`+sent.Link+`"`) {
 		t.Fatalf("mail = %+v", mailer.mails)
 	}
 }

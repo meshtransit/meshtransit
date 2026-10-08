@@ -70,8 +70,8 @@ func NewLoginDispatcherWithRegistration(
 	return dispatcher, nil
 }
 
-// WithRegistration preserves the existing dispatch metrics while adding the
-// validated page before the listener is constructed.
+// WithRegistration preserves the existing dispatch metrics and invitation
+// endpoint while adding the validated page before the listener is constructed.
 func (dispatcher *LoginDispatcher) WithRegistration(
 	registration *BrowserRegistrationPage,
 ) (*LoginDispatcher, error) {
@@ -85,6 +85,7 @@ func (dispatcher *LoginDispatcher) WithRegistration(
 		return nil, err
 	}
 	withPage.metrics = dispatcher.metrics
+	withPage.invitations = dispatcher.invitations
 	return withPage, nil
 }
 
