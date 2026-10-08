@@ -254,3 +254,71 @@ func testRuntimeWithoutStaticConfiguration(
 	options.configuration = componentConfiguration{}
 	return newDexRuntime(ctx, options, resources)
 }
+
+func TestServiceRetriesATransientStartFailure(t *testing.T) {
+	previous := startRetryDelays
+	startRetryDelays = []time.Duration{time.Millisecond, time.Millisecond}
+	t.Cleanup(func() { startRetryDelays = previous })
+
+	serverStorage := newPostgreSQLResourceTestStorage(componentTestLogger())
+	if err := serverStorage.CreateConnector(t.Context(), storage.Connector{
+		ID: "mock", Type: "mockCallback", Name: "Mock", ResourceVersion: "1",
+	}); err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+	resource := openPostgreSQLResourceTestDouble(t, serverStorage)
+	t.Cleanup(func() { _ = resource.Shutdown(context.Background()) })
+	service, err := NewService(validServiceTestOptions(t), resource, componentTestLogger())
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	attempts := 0
+	service.newRuntime = func(ctx context.Context, options componentOptions, resources componentResources) (*Runtime, error) {
+		attempts++
+		if attempts < 3 {
+			return nil, ErrComponentStart
+		}
+		return testRuntimeWithoutStaticConfiguration(ctx, options, resources)
+	}
+	if err := service.Start(t.Context()); err != nil {
+		t.Fatalf("Start() error = %v after %d attempts", err, attempts)
+	}
+	if attempts != 3 || !service.Ready() {
+		t.Fatalf("attempts = %d ready = %t, want 3 and ready", attempts, service.Ready())
+	}
+	if err := service.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	<-service.Done()
+}
+
+func TestServiceStopsRetryingAfterTheBudget(t *testing.T) {
+	previous := startRetryDelays
+	startRetryDelays = []time.Duration{time.Millisecond}
+	t.Cleanup(func() { startRetryDelays = previous })
+
+	serverStorage := newPostgreSQLResourceTestStorage(componentTestLogger())
+	resource := openPostgreSQLResourceTestDouble(t, serverStorage)
+	t.Cleanup(func() { _ = resource.Shutdown(context.Background()) })
+	for _, failure := range []error{ErrComponentStart, ErrInvalidComponent} {
+		service, err := NewService(validServiceTestOptions(t), resource, componentTestLogger())
+		if err != nil {
+			t.Fatalf("NewService() error = %v", err)
+		}
+		attempts := 0
+		service.newRuntime = func(context.Context, componentOptions, componentResources) (*Runtime, error) {
+			attempts++
+			return nil, failure
+		}
+		if err := service.Start(t.Context()); !errors.Is(err, ErrServiceStart) {
+			t.Fatalf("Start() error = %v, want start failure", err)
+		}
+		want := 2
+		if errors.Is(failure, ErrInvalidComponent) {
+			want = 1
+		}
+		if attempts != want {
+			t.Fatalf("%v: attempts = %d, want %d", failure, attempts, want)
+		}
+	}
+}

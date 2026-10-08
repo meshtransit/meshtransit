@@ -137,26 +137,15 @@ func (service *Service) Start(ctx context.Context) error {
 	service.started = true
 	service.mu.Unlock()
 
-	configuration, err := service.resolveApprovedConfiguration()
-	if err != nil {
+	if _, err := service.resolveApprovedConfiguration(); err != nil {
 		return ErrServiceStart
 	}
 	storage, release, err := service.resource.borrowStorage(ctx)
 	if err != nil {
-		clearComponentConfiguration(&configuration)
 		return ErrServiceStart
 	}
 	ownedCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	runtime, err := service.newRuntime(ownedCtx, componentOptions{
-		issuer:                     service.options.Issuer,
-		configuration:              configuration,
-		idTokensValidFor:           service.options.IDTokenLifetime,
-		authRequestsValidFor:       service.options.AuthRequestLifetime,
-		signingKeysRotateAfter:     service.options.SigningKeyRotation,
-		garbageCollectionFrequency: service.options.GarbageCollectionInterval,
-		logger:                     service.logger,
-	}, componentResources{storage: storage})
-	clearComponentConfiguration(&configuration)
+	runtime, err := service.startRuntime(ctx, ownedCtx, componentResources{storage: storage})
 	if err != nil {
 		cancel()
 		release()
@@ -178,6 +167,55 @@ func (service *Service) Start(ctx context.Context) error {
 		close(done)
 	}()
 	return nil
+}
+
+// startRetryDelays bounds how long Start waits for a transient failure to
+// clear, such as connector discovery while a fresh node's network and DNS come
+// up. The total stays inside the startup probe window.
+var startRetryDelays = []time.Duration{
+	time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 15 * time.Second, 15 * time.Second,
+}
+
+// startRuntime builds the runtime, retrying a component start failure with a
+// fresh copy of the approved configuration each time. Invalid input fails at
+// once.
+func (service *Service) startRuntime(
+	ctx context.Context,
+	ownedCtx context.Context,
+	resources componentResources,
+) (*Runtime, error) {
+	for attempt := 0; ; attempt++ {
+		configuration, err := service.resolveApprovedConfiguration()
+		if err != nil {
+			return nil, err
+		}
+		runtime, err := service.newRuntime(ownedCtx, componentOptions{
+			issuer:                     service.options.Issuer,
+			configuration:              configuration,
+			idTokensValidFor:           service.options.IDTokenLifetime,
+			authRequestsValidFor:       service.options.AuthRequestLifetime,
+			signingKeysRotateAfter:     service.options.SigningKeyRotation,
+			garbageCollectionFrequency: service.options.GarbageCollectionInterval,
+			logger:                     service.logger,
+		}, resources)
+		clearComponentConfiguration(&configuration)
+		if err == nil {
+			return runtime, nil
+		}
+		if !errors.Is(err, ErrComponentStart) || attempt >= len(startRetryDelays) {
+			return nil, err
+		}
+		delay := startRetryDelays[attempt]
+		service.logger.WarnContext(ctx, "identity broker start failed; retrying",
+			"attempt", attempt+1, "retry_in", delay.String())
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func (service *Service) resolveApprovedConfiguration() (componentConfiguration, error) {
