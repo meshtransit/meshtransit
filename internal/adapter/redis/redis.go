@@ -55,6 +55,9 @@ type Client struct {
 	loadEndpoints    loadEndpointsFunc
 	loadConnectivity loadConnectivityFunc
 	applyRateLimit   rateLimitFunc
+	recordDelivery   recordDeliveryFunc
+	touchDelivery    touchDeliveryFunc
+	loadDeliveries   loadDeliveriesFunc
 	metrics          *redisMetrics
 	close            func() error
 	closeOnce        sync.Once
@@ -211,6 +214,31 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 			refillInterval time.Duration,
 		) ([]int64, error) {
 			return runRateLimitScript(rateLimitCtx, client, key, capacity, refillInterval)
+		},
+		recordDelivery: func(
+			recordCtx context.Context,
+			key string,
+			generation int64,
+			networkRevision int64,
+			policyRevision int64,
+			deliveredAt int64,
+			ttl time.Duration,
+		) (int64, error) {
+			return recordDeliveryScript.Run(recordCtx, client, []string{key}, generation, networkRevision,
+				policyRevision, deliveredAt, ttl.Milliseconds()).Int64()
+		},
+		touchDelivery: func(
+			touchCtx context.Context,
+			key string,
+			generation int64,
+			seenAt int64,
+			ttl time.Duration,
+		) (int64, error) {
+			return touchDeliveryScript.Run(touchCtx, client, []string{key}, generation, seenAt,
+				ttl.Milliseconds()).Int64()
+		},
+		loadDeliveries: func(loadCtx context.Context, keys []string) ([]any, error) {
+			return loadDeliveriesScript.Run(loadCtx, client, keys).Slice()
 		},
 		metrics: newRedisMetrics(options.PoolSize, client.PoolStats),
 		close:   client.Close,

@@ -499,6 +499,7 @@ func Catalog() []Migration {
 		newMigration(130, "Remove Workspace members with a Device plan", workspaceMemberRemovalSQL),
 		newMigration(131, "Self sign-up with a default Workspace", accountSelfSignupSQL),
 		newMigration(132, "Cloud sign-in before the first Workspace", cloudLoginWithoutWorkspaceSQL),
+		newMigration(133, "Read policy distribution status", deviceDistributionReadSQL),
 	}
 }
 
@@ -674,3 +675,6 @@ var accountSelfSignupSQL string
 
 //go:embed 000132_cloud_login_without_workspace.up.sql
 var cloudLoginWithoutWorkspaceSQL string
+
+//go:embed 000133_device_distribution_read.up.sql
+var deviceDistributionReadSQL string

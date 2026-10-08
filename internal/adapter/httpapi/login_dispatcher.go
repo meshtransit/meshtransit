@@ -234,6 +234,7 @@ func isBrowserManagementOperation(request *http.Request) bool {
 	}
 	_, device := parseDeviceRevokePath(request)
 	_, inventory := parseDeviceInventoryPath(request)
+	_, distribution := parseDeviceDistributionPath(request)
 	_, activePolicy := parseActivePolicyPath(request)
 	_, policy := parsePolicyPublishPath(request)
 	_, simulation := parsePolicySimulationPath(request)
@@ -247,7 +248,8 @@ func isBrowserManagementOperation(request *http.Request) bool {
 			approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.isAction())
 	}
 	_, accessGraphList := parseAccessGraphListPath(request)
-	return request.Method == http.MethodGet && (activePolicy || accessGraphList || inventory || managementScopes || deploymentCapabilities ||
+	return request.Method == http.MethodGet && (activePolicy || accessGraphList || inventory || distribution ||
+		managementScopes || deploymentCapabilities ||
 		approval && (approvalPath.kind == policyApprovalPathCollection || approvalPath.kind == policyApprovalPathItem))
 }
 
@@ -280,6 +282,7 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 		approvalPath.kind == policyApprovalPathCollection
 	managementScopes := target.Path == AccountSessionManagementScopesPath && request.Method == http.MethodGet
 	_, inventoryRead := parseDeviceInventoryPath(request)
+	_, distributionRead := parseDeviceDistributionPath(request)
 	deploymentCapabilities := target.Path == DeploymentCapabilitiesPath && request.Method == http.MethodGet &&
 		target.RawQuery == ""
 	registrationRead := dispatcher.registration != nil && request.Method == http.MethodGet &&
@@ -287,7 +290,8 @@ func (dispatcher *LoginDispatcher) validRequest(response http.ResponseWriter, re
 	_, resourceSharingCollectionRead := browserResourceSharingOperation(request)
 	_, accessGraphListed := parseAccessGraphListPath(request)
 	accessGraphRead := accessGraphListed && request.Method == http.MethodGet
-	return callback || approvalList || managementScopes || inventoryRead || deploymentCapabilities || registrationRead ||
+	return callback || approvalList || managementScopes || inventoryRead || distributionRead || deploymentCapabilities ||
+		registrationRead ||
 		resourceSharingCollectionRead || accessGraphRead || isAuditEventListRead(request) ||
 		isAuditEventExportRead(request) || isDeviceGroupRead(request) || isIdentityCatalogRead(request) ||
 		target.RawQuery == ""

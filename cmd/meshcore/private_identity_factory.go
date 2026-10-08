@@ -24,6 +24,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/memberlifecycle"
 	"github.com/meshtransit/meshtransit/internal/network/aliasrange"
 	"github.com/meshtransit/meshtransit/internal/network/provisioning"
+	"github.com/meshtransit/meshtransit/internal/node/distribution"
 	"github.com/meshtransit/meshtransit/internal/node/inventory"
 	"github.com/meshtransit/meshtransit/internal/node/revocation"
 	policyapproval "github.com/meshtransit/meshtransit/internal/policy/approval"
@@ -273,6 +274,17 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	distributionStore, err := postgresadapter.NewDeviceDistributionStore(dependencies.Runtime,
+		postgresadapter.AccountSessionOptions{
+			StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout,
+		})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	deviceDistribution, err := distribution.NewService(distributionStore, dependencies.Redis, clock)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	managementCapabilities, err := sessioncontext.NewCapabilityService(authority, clock)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
@@ -322,7 +334,7 @@ func composePrivateIdentityFactory(
 		Admission: transactions, Metadata: owner.discovery, Creations: transactions, Committed: transactions,
 		CreationClock: transactions, Pending: transactions, Claims: transactions, Failures: transactions, Issues: transactions,
 		Provider: owner.provider, Subjects: transactions, SessionAuthority: authority, SessionRevocations: logoutStore,
-		SessionScopes: managementScopes, DeviceInventory: deviceInventory, SessionCapabilities: managementCapabilities,
+		SessionScopes: managementScopes, DeviceInventory: deviceInventory, DeviceDistribution: deviceDistribution, SessionCapabilities: managementCapabilities,
 		StartIDs: oidcauth.SystemStartIDs{}, Secrets: oidcauth.SystemSecrets{},
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,

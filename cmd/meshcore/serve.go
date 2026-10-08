@@ -416,6 +416,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			redisClient,
 			revisionFeed,
 			connectivityFeed,
+			redisClient,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(

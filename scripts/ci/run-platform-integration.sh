@@ -322,10 +322,11 @@ docker exec --detach --user redis "${redis_container}" redis-server \
 	--user default off \
 	--user mesh_worker on ">redis-${redis_password}" resetkeys resetchannels \
 	"+ping" "+publish" "+subscribe" "+eval" "+evalsha" \
-	"+hget" "+hset" "+pexpire" "+del" \
+	"+hget" "+hset" "+hmget" "+exists" "+pexpire" "+del" \
 	"+get" "+set" "+time" \
 	"~meshtransit:v1:presence:node:*" \
 	"~meshtransit:v1:endpoints:node:*" \
+	"~meshtransit:v1:delivery:node:*" \
 	"~meshtransit:v1:ratelimit:management:*" \
 	"&meshtransit:v1:wakeup:network_revision_advanced" \
 	"&meshtransit:v1:wakeup:connectivity_changed"

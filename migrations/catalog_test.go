@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 132 {
-		t.Fatalf("len(Catalog()) = %d, want 132", len(catalog))
+	if len(catalog) != 133 {
+		t.Fatalf("len(Catalog()) = %d, want 133", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 132 {
-		t.Fatalf("LatestVersion() = %d, want 132", LatestVersion())
+	if LatestVersion() != 133 {
+		t.Fatalf("LatestVersion() = %d, want 133", LatestVersion())
 	}
 }
 
@@ -3167,5 +3167,28 @@ func TestCloudLoginWithoutWorkspace(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "GRANT ") {
 		t.Error("schema 132 keeps the existing grants")
+	}
+}
+
+func TestDeviceDistributionRead(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[132]
+	if migration.Version != 133 {
+		t.Fatalf("migration 133 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.read_device_distribution_v1(",
+		"SECURITY DEFINER",
+		"'device.read'",
+		"state IN ('active', 'suspended')",
+		"'network_revision', current_network_revision",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 133 must contain %q", want)
+		}
+	}
+	if strings.Contains(migration.SQL, "CREATE OR REPLACE") {
+		t.Error("schema 133 only adds a new read function")
 	}
 }

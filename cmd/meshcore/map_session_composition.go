@@ -65,12 +65,13 @@ func composeMapStream(
 	presence mapsession.PresenceStore,
 	revisions mapsession.RevisionWatcher,
 	connectivity mapsession.ConnectivityWatcher,
+	delivery mapsession.DeliveryRecorder,
 ) (*mapsession.StreamService, error) {
 	replicaID, err := publicid.New()
 	if err != nil {
 		return nil, errors.Join(errInvalidMapSessionComposition, err)
 	}
-	return newMapStreamService(
+	service, err := newMapStreamService(
 		mapConfig,
 		snapshots,
 		presence,
@@ -78,6 +79,15 @@ func composeMapStream(
 		connectivity,
 		replicaID,
 	)
+	if err != nil {
+		return nil, err
+	}
+	// Policy distribution status (R1-65): record what each Device last received.
+	recorded, err := service.WithDeliveryRecorder(delivery)
+	if err != nil {
+		return nil, errors.Join(errInvalidMapSessionComposition, err)
+	}
+	return recorded, nil
 }
 
 func newMapStreamService(

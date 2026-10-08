@@ -87,6 +87,7 @@ type StreamService struct {
 	revisions    RevisionWatcher
 	connectivity ConnectivityWatcher
 	options      StreamOptions
+	delivery     DeliveryRecorder
 
 	activeMu sync.Mutex
 	active   map[node.ID]struct{}
@@ -174,6 +175,7 @@ func (service *StreamService) Serve(
 	if err := sink.SendSnapshot(ctx, snapshot); err != nil {
 		return errors.Join(ErrStreamWrite, err)
 	}
+	service.recordDelivery(ctx, snapshot)
 	return service.run(
 		ctx,
 		machine,
@@ -225,6 +227,17 @@ func (service *StreamService) run(
 
 	defer func() { watch.close() }()
 	current := initial
+	delivered := initial.NetworkRevision()
+	lastTouch := time.Now()
+	// advance adopts a refreshed snapshot and records it when the client now
+	// holds a newer Network revision than it was last known to have.
+	advance := func(next Snapshot) {
+		current = next
+		if current.NetworkRevision() != delivered {
+			delivered = current.NetworkRevision()
+			service.recordDelivery(ctx, current)
+		}
+	}
 	for {
 		if !current.KeyExpiry().Equal(expiry) {
 			// An owner change or extension moved the deadline; the new snapshot
@@ -268,7 +281,7 @@ func (service *StreamService) run(
 			if err != nil {
 				return err
 			}
-			current = next
+			advance(next)
 		case <-renewal.C:
 			claimed, err := service.renewPresence(ctx, lease)
 			if err != nil {
@@ -276,6 +289,10 @@ func (service *StreamService) run(
 			}
 			if !claimed {
 				return ErrPresenceLost
+			}
+			if now := time.Now(); now.Sub(lastTouch) >= DeliveryTouchInterval {
+				lastTouch = now
+				service.touchDelivery(ctx, current, now)
 			}
 		case <-keepAlive.C:
 			if err := sink.SendKeepAlive(ctx); err != nil {
@@ -299,13 +316,13 @@ func (service *StreamService) run(
 			if err != nil {
 				return err
 			}
-			current = next
+			advance(next)
 		case <-reconcile.C:
 			next, err := service.refresh(ctx, machine, request, sink, current)
 			if err != nil {
 				return err
 			}
-			current = next
+			advance(next)
 		}
 	}
 }
