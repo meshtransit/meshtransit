@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 131 {
-		t.Fatalf("len(Catalog()) = %d, want 131", len(catalog))
+	if len(catalog) != 132 {
+		t.Fatalf("len(Catalog()) = %d, want 132", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 131 {
-		t.Fatalf("LatestVersion() = %d, want 131", LatestVersion())
+	if LatestVersion() != 132 {
+		t.Fatalf("LatestVersion() = %d, want 132", LatestVersion())
 	}
 }
 
@@ -3147,5 +3147,25 @@ func TestAccountSelfSignup(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "GRANT SELECT") {
 		t.Error("schema 131 must not grant direct table access")
+	}
+}
+
+func TestCloudLoginWithoutWorkspace(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[131]
+	if migration.Version != 132 {
+		t.Fatalf("migration 132 = %+v", migration)
+	}
+	for _, name := range []string{"admit_oidc_login_route_v2", "create_oidc_auth_transaction_v2",
+		"load_oidc_pending_browser_v2", "claim_oidc_browser_v2"} {
+		if !strings.Contains(migration.SQL, "CREATE OR REPLACE FUNCTION mesh_ops."+name+"(") {
+			t.Errorf("schema 132 must replace %s", name)
+		}
+	}
+	if strings.Count(migration.SQL, "AND ((deployment.profile = 'cloud' AND NOT EXISTS (") != 4 {
+		t.Error("schema 132 must relax exactly the four route checks")
+	}
+	if strings.Contains(migration.SQL, "GRANT ") {
+		t.Error("schema 132 keeps the existing grants")
 	}
 }

@@ -227,14 +227,35 @@ func assertPostgreSQLBootstrapFreshDeployment(ctx context.Context, t *testing.T,
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, err := postgresadapter.ApplyBootstrap(ctx, freshOptions, empty, false)
+	report, err := postgresadapter.ApplyBootstrap(ctx, freshOptions, empty, true)
 	if err != nil || !report.DeploymentCreated || !report.ProviderCreated || report.AccountsCreated != 0 ||
 		report.WorkspacesCreated != 0 {
 		t.Fatalf("fresh Deployment without Accounts = %+v, %v", report, err)
 	}
+	// Schema 132: with no Workspace routing the provider yet, a Cloud
+	// deployment still admits a sign-in, so the first person can sign up.
+	freshAdminConfig := admin.Config().Copy()
+	freshAdminConfig.Database = database
+	freshAdmin, err := pgx.ConnectConfig(ctx, freshAdminConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var admitted bool
+	if err := freshAdmin.QueryRow(ctx, `SELECT mesh_ops.admit_oidc_login_route_v2($1::UUID, $2::UUID, $3::UUID,
+ $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::TEXT[], $14::TEXT[], $15)`,
+		route.DeploymentID().String(), route.ProviderID().String(), route.ClientID().String(),
+		route.ProviderGeneration(), route.RecoveryEpoch(), route.Issuer(), route.DiscoveryURI(),
+		route.AuthorizationEndpoint(), route.TokenEndpoint(), route.JWKSURI(), route.OIDCClientID(),
+		route.ClientAuthMethod(), route.Scopes(), route.AllowedAlgorithms(), route.RedirectURI()).Scan(&admitted); err != nil ||
+		!admitted {
+		t.Fatalf("an empty Cloud deployment must admit sign-in: %t, %v", admitted, err)
+	}
+	if err := freshAdmin.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
 	plan := bootstrapPlan(t, route)
 	report, err = postgresadapter.ApplyBootstrap(ctx, freshOptions, plan, false)
-	if err != nil || !report.DeploymentCreated || !report.ProviderCreated || report.AccountsCreated != 2 ||
+	if err != nil || report.DeploymentCreated || report.ProviderCreated || report.AccountsCreated != 2 ||
 		report.WorkspacesCreated != 2 {
 		t.Fatalf("fresh Deployment dry run = %+v, %v", report, err)
 	}
