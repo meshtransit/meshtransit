@@ -112,6 +112,8 @@ func Run(
 	}
 
 	switch commandArgs[0] {
+	case "up":
+		return runUp(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	case "status":
 		return runStatus(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	case "profile":
@@ -875,6 +877,7 @@ func writeUsage(writer io.Writer) {
   meshctl [--socket PATH] [--timeout DURATION] [--json] COMMAND
 
 Commands:
+  up [--server U --fingerprint SHA256]    Connect this machine (MeshTransit Cloud by default)
   status                                  Show daemon and data-plane status
   profile list                            List configured profiles
   profile create --name N --control-url U Create an isolated profile

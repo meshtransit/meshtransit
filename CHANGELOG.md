@@ -6,6 +6,9 @@ All notable user-visible changes will be documented in this file.
 
 ### Added
 
+- `meshctl up`: one idempotent command that finds or creates the profile,
+  activates it, pins the control key (built-in for MeshTransit Cloud) and
+  registers, waiting for browser approval.
 - Linux quality, vulnerability, opt-in CodeQL, and cross-platform build
   workflows with pinned action and tool versions.
 - Go 1.26.8 toolchain baseline.

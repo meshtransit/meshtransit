@@ -33,6 +33,26 @@ Note: control synchronization is available; encrypted tunnel is not active
 
 ## Getting started
 
+On a machine with `meshd` running, one command connects it to MeshTransit
+Cloud and waits for you to approve it in the browser:
+
+```bash
+meshctl up
+```
+
+`meshctl up` finds or creates the profile for the server, makes it active,
+pins the control key and registers. Cloud packages carry the Cloud control key
+fingerprint, so nothing needs to be compared by hand. For a self-hosted server
+pass the URL and the fingerprint your administrator gives you:
+
+```bash
+meshctl up --server https://mesh.example.com --fingerprint sha256:...
+```
+
+Running `meshctl up` again on a connected machine changes nothing.
+
+### Building from source
+
 Requirements: Go 1.26.8 or newer and a running `meshd` from the matching API generation.
 
 ```bash
@@ -60,6 +80,8 @@ Global flags must appear before the command. `MESHCTL_SOCKET` and `MESHCTL_TIMEO
 
 ## Commands
 
+- `meshctl up`
+- `meshctl up --server HTTPS_URL --fingerprint sha256:... [--name NAME] [--no-wait]`
 - `meshctl status`
 - `meshctl profile list`
 - `meshctl profile create --name NAME --control-url HTTPS_URL`
