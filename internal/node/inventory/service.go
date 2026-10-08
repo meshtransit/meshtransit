@@ -51,7 +51,8 @@ type Lifecycle struct {
 	Ownership string
 	// Owner is set for a member Device.
 	Owner Member
-	// SuspendedReason is "admin" or "handover" for a suspended Device.
+	// SuspendedReason is "admin", "handover" or "member" for a suspended
+	// Device.
 	SuspendedReason string
 	// HandoverTo is the member a handover waits for.
 	HandoverTo Member
@@ -75,7 +76,7 @@ func (lifecycle Lifecycle) IsValid(state string) bool {
 		return false
 	}
 	switch lifecycle.SuspendedReason {
-	case "", "admin":
+	case "", "admin", "member":
 		return lifecycle.HandoverTo == (Member{})
 	case "handover":
 		return lifecycle.HandoverTo.PrincipalID.IsValid()

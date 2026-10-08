@@ -67,6 +67,9 @@ type SuspendedReason string
 const (
 	SuspendedByAdmin     SuspendedReason = "admin"
 	SuspendedForHandover SuspendedReason = "handover"
+	// SuspendedWithMember marks a Device suspended because its owner's
+	// membership is; it resumes with the member.
+	SuspendedWithMember SuspendedReason = "member"
 )
 
 // Change is one validated lifecycle change.

@@ -493,6 +493,7 @@ func Catalog() []Migration {
 		newMigration(124, "Tags a person may apply in one Network", networkTagOptionsSQL),
 		newMigration(125, "Device ownership, suspension, transfer and rename", deviceLifecycleSQL),
 		newMigration(126, "Suspended Devices wait instead of stopping", mapSessionSuspensionSQL),
+		newMigration(127, "Suspend and resume Workspace members", workspaceMemberSuspensionSQL),
 	}
 }
 
@@ -650,3 +651,6 @@ var deviceLifecycleSQL string
 
 //go:embed 000126_map_session_suspension.up.sql
 var mapSessionSuspensionSQL string
+
+//go:embed 000127_workspace_member_suspension.up.sql
+var workspaceMemberSuspensionSQL string

@@ -86,6 +86,7 @@ type privateIdentityPorts struct {
 	IdentityGroups        httpapi.IdentityGroupManager
 	DeviceTags            httpapi.DeviceTagManager
 	DeviceLifecycle       httpapi.DeviceLifecycleManager
+	MemberLifecycle       httpapi.MemberLifecycleManager
 	SessionWorkspaces     httpapi.SessionWorkspaceSelector
 	ShareTargets          httpapi.ShareTargetResolver
 	PolicyApprovals       httpapi.PolicyApprovalWorkflow
@@ -198,6 +199,7 @@ func composePrivateIdentity(
 		IdentityGroups:        ports.IdentityGroups,
 		DeviceTags:            ports.DeviceTags,
 		DeviceLifecycle:       ports.DeviceLifecycle,
+		MemberLifecycle:       ports.MemberLifecycle,
 		SessionWorkspaces:     ports.SessionWorkspaces,
 		ShareTargets:          ports.ShareTargets,
 		PolicyApprovals:       ports.PolicyApprovals,

@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 126 {
-		t.Fatalf("len(Catalog()) = %d, want 126", len(catalog))
+	if len(catalog) != 127 {
+		t.Fatalf("len(Catalog()) = %d, want 127", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 126 {
-		t.Fatalf("LatestVersion() = %d, want 126", LatestVersion())
+	if LatestVersion() != 127 {
+		t.Fatalf("LatestVersion() = %d, want 127", LatestVersion())
 	}
 }
 
@@ -3024,5 +3024,30 @@ func TestMapSessionSuspension(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "GRANT SELECT") {
 		t.Error("schema 126 must not grant direct table access")
+	}
+}
+
+func TestWorkspaceMemberSuspension(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[126]
+	if migration.Version != 127 {
+		t.Fatalf("migration 127 = %+v", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.change_workspace_member_v1(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.change_device_lifecycle_v1(",
+		"suspended_reason IN ('admin', 'handover', 'member')",
+		"'member.manage'",
+		"NOT (role.assignable_by && mesh_ops.workspace_role_assigners_v1(v_workspace, v_actor, v_now))",
+		"resume the member to resume this Device",
+		"AND session.login_workspace_id = v_workspace",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 127 missing %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "GRANT SELECT") {
+		t.Error("schema 127 must not grant direct table access")
 	}
 }

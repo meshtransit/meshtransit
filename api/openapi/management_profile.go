@@ -104,6 +104,8 @@ type consoleManagementProfile struct {
 	NetworkDeviceResume     json.RawMessage            `json:"networkDeviceResume"`
 	NetworkDeviceTransfer   json.RawMessage            `json:"networkDeviceTransfer"`
 	NetworkDeviceRename     json.RawMessage            `json:"networkDeviceRename"`
+	WorkspaceMemberSuspend  json.RawMessage            `json:"workspaceMemberSuspend"`
+	WorkspaceMemberResume   json.RawMessage            `json:"workspaceMemberResume"`
 	NetworkDeviceTagChange  json.RawMessage            `json:"networkDeviceChangeTags"`
 }
 
@@ -193,6 +195,8 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.NetworkDeviceResume, "post", "resumeNetworkDevice", true) &&
 		consoleCookieOperation(profile.NetworkDeviceTransfer, "post", "transferNetworkDevice", true) &&
 		consoleCookieOperation(profile.NetworkDeviceRename, "post", "renameNetworkDevice", true) &&
+		consoleCookieOperation(profile.WorkspaceMemberSuspend, "post", "suspendWorkspaceMember", true) &&
+		consoleCookieOperation(profile.WorkspaceMemberResume, "post", "resumeWorkspaceMember", true) &&
 		consoleCookieOperation(profile.NetworkDeviceTagChange, "post", "changeNetworkDeviceTags", true)
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
@@ -327,6 +331,9 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	consolePaths[deviceActions+"resume"] = profile.NetworkDeviceResume
 	consolePaths[deviceActions+"transfer"] = profile.NetworkDeviceTransfer
 	consolePaths[deviceActions+"rename"] = profile.NetworkDeviceRename
+	memberActions := "/api/v1/workspaces/{workspace_id}/members/{principal_id}/actions/"
+	consolePaths[memberActions+"suspend"] = profile.WorkspaceMemberSuspend
+	consolePaths[memberActions+"resume"] = profile.WorkspaceMemberResume
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments"] = profile.WorkspaceRoleAssign
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke"] = profile.WorkspaceRoleRevoke
 	consolePaths[consoleSessionPreparePath] = profile.Prepare

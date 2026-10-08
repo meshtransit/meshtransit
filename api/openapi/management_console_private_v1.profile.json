@@ -407,6 +407,7 @@
                     "enum": [
                       "admin",
                       "handover",
+                      "member",
                       null
                     ],
                     "description": "admin: suspended by an administrator; handover: transferred to a member who has not yet signed in on the Device."
@@ -8159,6 +8160,7 @@
                             "enum": [
                               "admin",
                               "handover",
+                              "member",
                               null
                             ]
                           },
@@ -8391,6 +8393,7 @@
                             "enum": [
                               "admin",
                               "handover",
+                              "member",
                               null
                             ]
                           },
@@ -8636,6 +8639,7 @@
                             "enum": [
                               "admin",
                               "handover",
+                              "member",
                               null
                             ]
                           },
@@ -8873,6 +8877,7 @@
                             "enum": [
                               "admin",
                               "handover",
+                              "member",
                               null
                             ]
                           },
@@ -8934,6 +8939,410 @@
         },
         "422": {
           "description": "owner_not_eligible"
+        }
+      }
+    }
+  },
+  "workspaceMemberSuspend": {
+    "post": {
+      "operationId": "suspendWorkspaceMember",
+      "summary": "Suspend a Workspace member",
+      "description": "Requires member.manage and a delegation ceiling covering every role the member holds. Nobody suspends the owner or themselves. The membership grants nothing while suspended, every active Device the member owns in this Workspace is suspended with the reason member, and the member's Console sessions in this Workspace end.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "principal_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reason"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "The member after the change and the Devices it changed",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "member",
+                      "devices",
+                      "sessions_ended",
+                      "network_count"
+                    ],
+                    "properties": {
+                      "member": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "principal_id",
+                          "membership_state",
+                          "membership_expires_at",
+                          "version"
+                        ],
+                        "properties": {
+                          "principal_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "membership_state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "suspended"
+                            ]
+                          },
+                          "membership_expires_at": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "date-time"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "devices": {
+                        "type": "array",
+                        "maxItems": 10000,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "device_id",
+                            "network_id",
+                            "hostname",
+                            "state"
+                          ],
+                          "properties": {
+                            "device_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "network_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "hostname": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "suspended"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "sessions_ended": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "network_count": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied or member_protected"
+        },
+        "404": {
+          "description": "member_not_found"
+        },
+        "409": {
+          "description": "member_state_conflict"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        }
+      }
+    }
+  },
+  "workspaceMemberResume": {
+    "post": {
+      "operationId": "resumeWorkspaceMember",
+      "summary": "Resume a suspended Workspace member",
+      "description": "Requires member.manage and the same delegation ceiling. Restores the membership and resumes exactly the Devices suspended with the member; a Device an administrator suspended on its own stays suspended.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "principal_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reason"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "The member after the change and the Devices it changed",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "member",
+                      "devices",
+                      "sessions_ended",
+                      "network_count"
+                    ],
+                    "properties": {
+                      "member": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "principal_id",
+                          "membership_state",
+                          "membership_expires_at",
+                          "version"
+                        ],
+                        "properties": {
+                          "principal_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "membership_state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "suspended"
+                            ]
+                          },
+                          "membership_expires_at": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "date-time"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "devices": {
+                        "type": "array",
+                        "maxItems": 10000,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "device_id",
+                            "network_id",
+                            "hostname",
+                            "state"
+                          ],
+                          "properties": {
+                            "device_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "network_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "hostname": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 253
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "active",
+                                "suspended"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "sessions_ended": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "network_count": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied or member_protected"
+        },
+        "404": {
+          "description": "member_not_found"
+        },
+        "409": {
+          "description": "member_state_conflict"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
         }
       }
     }
