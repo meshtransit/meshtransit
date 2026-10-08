@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/mail"
@@ -133,6 +132,22 @@ func (sender *Sender) Send(ctx context.Context, message Message) (string, error)
 	return *output.MessageId, nil
 }
 
+// Failure is a delivery failure that keeps only a stable reason: an SES
+// error code or a transport kind, never SES message text.
+type Failure struct {
+	kind   error
+	reason string
+}
+
+// Error returns the failure kind and reason.
+func (failure *Failure) Error() string { return failure.kind.Error() + ": " + failure.reason }
+
+// Unwrap returns ErrRejected or ErrUnavailable.
+func (failure *Failure) Unwrap() error { return failure.kind }
+
+// Reason returns the SES error code or transport kind.
+func (failure *Failure) Reason() string { return failure.reason }
+
 // classify keeps only a stable error code or transport kind: SES messages
 // can name addresses.
 func classify(err error) error {
@@ -141,21 +156,21 @@ func classify(err error) error {
 		switch apiError.ErrorCode() {
 		case "MessageRejected", "MailFromDomainNotVerifiedException", "AccountSuspendedException",
 			"SendingPausedException", "BadRequestException", "NotFoundException":
-			return fmt.Errorf("%w: %s", ErrRejected, apiError.ErrorCode())
+			return &Failure{kind: ErrRejected, reason: apiError.ErrorCode()}
 		default:
-			return fmt.Errorf("%w: %s", ErrUnavailable, apiError.ErrorCode())
+			return &Failure{kind: ErrUnavailable, reason: apiError.ErrorCode()}
 		}
 	}
 	var dnsError *net.DNSError
 	var certificateError *tls.CertificateVerificationError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		return fmt.Errorf("%w: timeout", ErrUnavailable)
+		return &Failure{kind: ErrUnavailable, reason: "timeout"}
 	case errors.As(err, &dnsError):
-		return fmt.Errorf("%w: dns", ErrUnavailable)
+		return &Failure{kind: ErrUnavailable, reason: "dns"}
 	case errors.As(err, &certificateError):
-		return fmt.Errorf("%w: tls", ErrUnavailable)
+		return &Failure{kind: ErrUnavailable, reason: "tls"}
 	default:
-		return fmt.Errorf("%w: transport", ErrUnavailable)
+		return &Failure{kind: ErrUnavailable, reason: "transport"}
 	}
 }

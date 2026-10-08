@@ -11,7 +11,6 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
@@ -166,7 +165,7 @@ func (sender *Sender) Send(ctx context.Context, message Message) error {
 	}
 	if sender.mode == TLSStartTLS {
 		if ok, _ := client.Extension("STARTTLS"); !ok {
-			return fmt.Errorf("%w: server does not offer STARTTLS", ErrUnavailable)
+			return &Failure{kind: ErrUnavailable, reason: "starttls_missing"}
 		}
 		if err := client.StartTLS(sender.tls); err != nil {
 			return ErrUnavailable
@@ -250,14 +249,31 @@ func writePart(parts *multipart.Writer, contentType, content string) error {
 	return encoder.Close()
 }
 
-// classify keeps only the reply class: server text can name addresses.
+// Failure is a delivery failure that keeps only a stable reason, such as
+// the SMTP reply code, never server text.
+type Failure struct {
+	kind   error
+	reason string
+}
+
+// Error returns the failure kind and reason.
+func (failure *Failure) Error() string { return failure.kind.Error() + ": " + failure.reason }
+
+// Unwrap returns ErrRejected or ErrUnavailable.
+func (failure *Failure) Unwrap() error { return failure.kind }
+
+// Reason returns a stable reason such as reply_550.
+func (failure *Failure) Reason() string { return failure.reason }
+
+// classify keeps only the reply code: server text can name addresses.
 func classify(err error) error {
 	var reply *textproto.Error
 	if errors.As(err, &reply) {
+		kind := ErrUnavailable
 		if reply.Code >= 500 && reply.Code < 600 {
-			return fmt.Errorf("%w: reply %d", ErrRejected, reply.Code)
+			kind = ErrRejected
 		}
-		return fmt.Errorf("%w: reply %d", ErrUnavailable, reply.Code)
+		return &Failure{kind: kind, reason: "reply_" + strconv.Itoa(reply.Code)}
 	}
 	return ErrUnavailable
 }

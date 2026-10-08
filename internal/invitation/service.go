@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
@@ -227,7 +228,7 @@ func (service *Service) rotate(ctx context.Context, change Change) (Sent, error)
 			// Transports report only a stable code or kind, never an address.
 			service.logger.WarnContext(ctx, "invitation email not delivered",
 				"invitation_id", result.Invitation.ID.String(), "error_class", deliveryClass(err),
-				"error", err.Error())
+				"error_code", deliveryReason(err))
 		}
 	}
 	recorded, err := service.store.Change(ctx, Change{
@@ -270,3 +271,23 @@ func deliveryClass(err error) string {
 // ErrMailRejected is what a Mailer wraps for a message the transport will
 // not send as it is; other errors may pass on a later attempt.
 var ErrMailRejected = errors.New("invitation: email rejected")
+
+// maximumDeliveryReasonBytes bounds a transport reason in logs.
+const maximumDeliveryReasonBytes = 64
+
+// deliveryReason returns the transport's stable reason, such as an SES error
+// code, or "unknown" when it is absent or not a short code.
+func deliveryReason(err error) string {
+	var reasoned interface{ Reason() string }
+	if !errors.As(err, &reasoned) {
+		return "unknown"
+	}
+	reason := reasoned.Reason()
+	unsafe := strings.IndexFunc(reason, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' && r != '.' && r != '-'
+	})
+	if reason == "" || len(reason) > maximumDeliveryReasonBytes || unsafe >= 0 {
+		return "unknown"
+	}
+	return reason
+}

@@ -226,7 +226,9 @@ func TestSendClassifiesARejectedRecipient(t *testing.T) {
 	t.Parallel()
 	server, pool := startServer(t, TLSImplicit, false, true)
 	err := testSender(t, server, pool, TLSImplicit).Send(context.Background(), testMessage)
-	if !errors.Is(err, ErrRejected) || strings.Contains(err.Error(), "member@example.com") {
+	var failure *Failure
+	if !errors.Is(err, ErrRejected) || strings.Contains(err.Error(), "member@example.com") ||
+		!errors.As(err, &failure) || !strings.HasPrefix(failure.Reason(), "reply_5") {
 		t.Fatalf("Send() error = %v, want rejected without the address", err)
 	}
 }

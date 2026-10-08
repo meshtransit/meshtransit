@@ -107,7 +107,9 @@ func TestSendClassifiesFailuresWithoutDetails(t *testing.T) {
 				map[string]string{"X-Amzn-Errortype": code}), nil
 		})
 		_, err := sender.Send(context.Background(), Message{To: "member@example.com", Subject: "s", Text: "t"})
-		if !errors.Is(err, want) || strings.Contains(err.Error(), "member@example.com") {
+		var failure *Failure
+		if !errors.Is(err, want) || strings.Contains(err.Error(), "member@example.com") ||
+			!errors.As(err, &failure) || failure.Reason() != code {
 			t.Errorf("%s: Send() error = %v, want %v without the address", code, err, want)
 		}
 	}

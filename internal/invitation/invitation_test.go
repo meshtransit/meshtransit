@@ -3,6 +3,7 @@ package invitation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -219,6 +220,30 @@ func TestNewServiceRequiresAnHTTPSOrigin(t *testing.T) {
 		if _, err := NewService(Options{Store: &fakeStore{}, Clock: clock{}, ConsoleOrigin: origin,
 			SendTimeout: time.Second, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}); !errors.Is(err, ErrInvalid) {
 			t.Errorf("origin %q accepted", origin)
+		}
+	}
+}
+
+type reasonedFailure string
+
+func (failure reasonedFailure) Error() string  { return "delivery failed" }
+func (failure reasonedFailure) Reason() string { return string(failure) }
+
+func TestDeliveryReasonIsBounded(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		err  error
+		want string
+	}{
+		"ses code":     {fmt.Errorf("send: %w", reasonedFailure("AccessDeniedException")), "AccessDeniedException"},
+		"joined":       {errors.Join(ErrMailRejected, reasonedFailure("reply_550")), "reply_550"},
+		"no reason":    {errors.New("down"), "unknown"},
+		"empty":        {reasonedFailure(""), "unknown"},
+		"address text": {reasonedFailure("member@example.com"), "unknown"},
+		"too long":     {reasonedFailure(strings.Repeat("A", 65)), "unknown"},
+	} {
+		if got := deliveryReason(test.err); got != test.want {
+			t.Errorf("%s: deliveryReason() = %q, want %q", name, got, test.want)
 		}
 	}
 }
