@@ -434,10 +434,11 @@ func normalizeAllowedPrefixes(values []netip.Prefix) ([]netip.Prefix, error) {
 			return nil, errors.New("netadmin: allowed prefix is invalid")
 		}
 		address := prefix.Addr().Unmap()
-		if prefix != prefix.Masked() || prefix.Addr() != address ||
-			!address.IsGlobalUnicast() || address.IsLinkLocalUnicast() ||
-			(address.Is4() && prefix.Bits() < 8) || (address.Is6() && prefix.Bits() < 32) {
+		if prefix != prefix.Masked() || prefix.Addr() != address {
 			return nil, errors.New("netadmin: allowed prefix is unsafe")
+		}
+		if !withinSafeOverlayFrame(prefix) {
+			return nil, errors.New("netadmin: allowed prefix is outside the overlay frame")
 		}
 		validated[index] = netip.PrefixFrom(address, prefix.Bits())
 	}

@@ -35,6 +35,18 @@ func TestNewServerRejectsUnsafeAllowedPrefixes(t *testing.T) {
 			prefixes: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/7")},
 		},
 		{
+			name:     "private LAN outside the overlay frame",
+			prefixes: []netip.Prefix{netip.MustParsePrefix("192.168.0.0/16")},
+		},
+		{
+			name:     "wider than the IPv6 overlay frame",
+			prefixes: []netip.Prefix{netip.MustParsePrefix("fc00::/7")},
+		},
+		{
+			name:     "global IPv6 outside the overlay frame",
+			prefixes: []netip.Prefix{netip.MustParsePrefix("2001:db8::/32")},
+		},
+		{
 			name: "overlapping pools",
 			prefixes: []netip.Prefix{
 				netip.MustParsePrefix("100.64.0.0/10"),
@@ -57,6 +69,40 @@ func TestNewServerRejectsUnsafeAllowedPrefixes(t *testing.T) {
 				t.Fatal("newServer() error = nil")
 			}
 		})
+	}
+}
+
+func TestNewServerAcceptsTheWholeOverlayFrame(t *testing.T) {
+	t.Parallel()
+
+	server, err := newServer(ServerOptions{
+		AllowedUID:      testEffectiveUID(t),
+		InterfaceName:   "mesh0",
+		MTU:             1280,
+		AllowedPrefixes: SafeOverlayFrame(),
+		Logger:          slog.New(slog.DiscardHandler),
+	}, &fakeTUNCreator{})
+	if err != nil {
+		t.Fatalf("newServer() error = %v", err)
+	}
+	// A random Workspace ULA, a shared-Device alias and a CGNAT address all
+	// fit without any per-Workspace configuration.
+	config := TUNConfig{
+		Addresses: []netip.Prefix{
+			netip.MustParsePrefix("100.64.0.7/32"),
+			netip.MustParsePrefix("fdc3:91a0:5e12::7/128"),
+		},
+		Routes: []netip.Prefix{
+			netip.MustParsePrefix("198.19.0.4/32"),
+			netip.MustParsePrefix("fd02:48de:ec1b:2::4/128"),
+		},
+	}
+	if err := validateAllowedTUNConfig(config, server.allowedPrefixes); err != nil {
+		t.Fatalf("validateAllowedTUNConfig() error = %v", err)
+	}
+	outside := TUNConfig{Routes: []netip.Prefix{netip.MustParsePrefix("10.1.2.3/32")}}
+	if err := validateAllowedTUNConfig(outside, server.allowedPrefixes); err == nil {
+		t.Fatal("validateAllowedTUNConfig() accepted a route outside the overlay frame")
 	}
 }
 

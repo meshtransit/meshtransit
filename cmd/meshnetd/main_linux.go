@@ -49,7 +49,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	flags.Var(
 		&allowedPrefixes,
 		"allow-prefix",
-		"overlay prefix within which meshd may request host addresses and routes; repeatable",
+		"overlay prefix within which meshd may request host addresses and routes; repeatable; "+
+			"must lie inside 100.64.0.0/10, 198.18.0.0/15 or fd00::/8, which is the default",
 	)
 	var allowedUID uint64
 	var hasAllowedUID bool
@@ -92,9 +93,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if len(allowedPrefixes) == 0 {
-		_, _ = fmt.Fprintln(stderr, "meshnetd: at least one --allow-prefix is required")
-
-		return 2
+		// Control assigns the Workspace ULA and alias pools; the fixed frame
+		// admits them all without a per-Workspace drop-in.
+		allowedPrefixes = netadmin.SafeOverlayFrame()
 	}
 	var dnsOptions *netadmin.DNSOptions
 	if *enableDNS {

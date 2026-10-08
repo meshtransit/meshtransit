@@ -17,28 +17,30 @@ Without `--enable-data-plane` the daemon remains control-only and reports `data_
 On a disposable Linux host, the privileged boundary can be exercised explicitly:
 
 ```console
-# meshnetd --allow-user meshd \
-    --allow-prefix 100.64.0.0/10 \
-    --allow-prefix fd7a:115c:a1e0::/48
+# meshnetd --allow-user meshd
 $ meshd --enable-data-plane \
     --wireguard-listen-port 41641
 ```
+
+Without `--allow-prefix` the helper admits the fixed overlay frame:
+`100.64.0.0/10`, the shared-Device alias range `198.18.0.0/15` and `fd00::/8`,
+where each Workspace draws its random IPv6 `/48`. Control picks the exact
+prefixes inside that frame, so a new Workspace or alias pool needs no local
+change. `--allow-prefix` can only narrow the frame; a prefix outside it is
+refused at startup.
 
 The daemon normally derives candidates from the shared WireGuard socket and
 the control-signed STUN map. `--advertise-endpoint` remains an optional,
 repeatable bootstrap or diagnostic input; it is not required for direct-path
 startup.
 
-`meshnetd` fixes the allowed UID, interface names, MTU, overlay pools, DNS endpoint, and `resolvectl` path at startup. The protocol contains only bounded TUN lifecycle, host-route replacement, and per-link DNS operations; it cannot carry commands, arbitrary paths, or keys. The helper rejects subnets, duplicates, self-route overlap, every prefix outside its root-configured pools, and non-canonical DNS domains. It returns descriptors through `SCM_RIGHTS` and never receives control or node private keys. `meshd` verifies TUN responses byte-for-byte, starts userspace WireGuard, and replaces peer routes on the live helper-owned interface when self identity and relay topology remain compatible. Address or relay-topology changes still recreate the non-persistent interface fail closed.
+`meshnetd` fixes the allowed UID, interface names, MTU, overlay pools, DNS endpoint, and `resolvectl` path at startup. The protocol contains only bounded TUN lifecycle, host-route replacement, and per-link DNS operations; it cannot carry commands, arbitrary paths, or keys. The helper rejects subnets, duplicates, self-route overlap, every prefix outside its overlay pools (the fixed frame or a root-configured narrower list), and non-canonical DNS domains. It returns descriptors through `SCM_RIGHTS` and never receives control or node private keys. `meshd` verifies TUN responses byte-for-byte, starts userspace WireGuard, and replaces peer routes on the live helper-owned interface when self identity and relay topology remain compatible. Address or relay-topology changes still recreate the non-persistent interface fail closed.
 
 MagicDNS is separately opt-in and requires `systemd-resolved` plus a root-owned,
 non-writable `/usr/bin/resolvectl`:
 
 ```console
-# meshnetd --allow-user meshd \
-    --allow-prefix 100.64.0.0/10 \
-    --allow-prefix fd7a:115c:a1e0::/48 \
-    --enable-dns
+# meshnetd --allow-user meshd --enable-dns
 $ meshd --enable-dns
 ```
 
