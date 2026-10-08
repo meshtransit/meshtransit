@@ -578,6 +578,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = deviceGroupPathValue.allowedMethod()
 	} else if identityCatalogMatched {
 		allowedMethod = identityCatalogPathValue.allowedMethod()
+	} else if invitationMatched {
+		allowedMethod = invitationPathValue.allowedMethod()
 	}
 	if allowedMethod == "" || request.Method != allowedMethod {
 		if policyApprovalMatched && policyApprovalPath.isCollection() {

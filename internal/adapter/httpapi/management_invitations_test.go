@@ -1,14 +1,18 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/invitation"
 	"github.com/meshtransit/meshtransit/internal/publicid"
+	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
 func TestParseInvitationPath(t *testing.T) {
@@ -78,5 +82,65 @@ func TestInvitationBodyAndErrors(t *testing.T) {
 		if got := classifyInvitationError(err); got.Code != want.code || got.Status != want.status {
 			t.Errorf("%v: = %s %d, want %s %d", err, got.Code, got.Status, want.code, want.status)
 		}
+	}
+}
+
+type invitationManagerStub struct {
+	listed []invitation.Invitation
+	lists  int
+}
+
+func (stub *invitationManagerStub) Create(context.Context, accountsession.Session, invitation.CreateRequest) (invitation.Sent, error) {
+	return invitation.Sent{}, invitation.ErrInvalid
+}
+
+func (stub *invitationManagerStub) Resend(context.Context, accountsession.Session, invitation.ActionRequest) (invitation.Sent, error) {
+	return invitation.Sent{}, invitation.ErrInvalid
+}
+
+func (stub *invitationManagerStub) Revoke(context.Context, accountsession.Session, invitation.ActionRequest) (invitation.Invitation, error) {
+	return invitation.Invitation{}, invitation.ErrInvalid
+}
+
+func (stub *invitationManagerStub) List(context.Context, accountsession.Session, workspace.ID) ([]invitation.Invitation, error) {
+	stub.lists++
+	return stub.listed, nil
+}
+
+func (stub *invitationManagerStub) MailConfigured() bool { return true }
+
+func TestInvitationHTTPMethods(t *testing.T) {
+	t.Parallel()
+	base := "/api/v1/workspaces/" + managementWorkspaceID() + "/invitations"
+	for _, test := range []struct {
+		name, method, path, body string
+		status, lists            int
+		allow, want              string
+	}{
+		{"list", http.MethodGet, base, "", 200, 1, "", `"invitations":[],"mail_configured":true`},
+		{"list by POST", http.MethodPost, base, "{}", 405, 0, http.MethodGet, "method_not_allowed"},
+		{"create by GET", http.MethodGet, base + "/actions/create", "", 405, 0, http.MethodPost, "method_not_allowed"},
+		{"revoke by GET", http.MethodGet, base + "/01890f00-0000-7000-8000-000000000a01/actions/revoke", "", 405, 0,
+			http.MethodPost, "method_not_allowed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			options := validManagementHandlerOptions(t)
+			stub := &invitationManagerStub{listed: []invitation.Invitation{}}
+			options.Invitations = stub
+			handler, err := NewManagementHandler(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := newManagementRequest(t, test.method, test.path, test.body)
+			request.Header.Del("If-Match")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.status || stub.lists != test.lists ||
+				response.Header().Get("Allow") != test.allow || !strings.Contains(response.Body.String(), test.want) {
+				t.Fatalf("status/lists/allow %d/%d/%q, want %d/%d/%q; %s", response.Code, stub.lists,
+					response.Header().Get("Allow"), test.status, test.lists, test.allow, response.Body)
+			}
+		})
 	}
 }

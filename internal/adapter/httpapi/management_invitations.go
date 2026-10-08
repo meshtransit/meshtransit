@@ -87,6 +87,14 @@ func isInvitationRead(request *http.Request) bool {
 	return ok && path.action == "" && request.Method == http.MethodGet
 }
 
+// allowedMethod is GET for the list and POST for every action.
+func (path invitationPath) allowedMethod() string {
+	if path.action == "" {
+		return http.MethodGet
+	}
+	return http.MethodPost
+}
+
 func (path invitationPath) operation() string {
 	if path.action == "" {
 		return "workspace_invitations_read"
@@ -105,12 +113,8 @@ func (handler *ManagementHandler) handleInvitations(ctx context.Context, respons
 		return fail(managementError{Status: http.StatusServiceUnavailable, Code: "temporarily_unavailable",
 			Message: "Invitations are temporarily unavailable", Retryable: true})
 	}
-	allowed := http.MethodPost
-	if path.action == "" {
-		allowed = http.MethodGet
-	}
 	if !isInvitationOperation(request) {
-		response.Header().Set("Allow", allowed)
+		response.Header().Set("Allow", path.allowedMethod())
 		return fail(managementError{Status: http.StatusMethodNotAllowed, Code: "method_not_allowed",
 			Message: "the method is not allowed"})
 	}
