@@ -6,8 +6,10 @@ package sesmail
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -131,7 +133,8 @@ func (sender *Sender) Send(ctx context.Context, message Message) (string, error)
 	return *output.MessageId, nil
 }
 
-// classify keeps only a stable error code: SES messages can name addresses.
+// classify keeps only a stable error code or transport kind: SES messages
+// can name addresses.
 func classify(err error) error {
 	var apiError smithy.APIError
 	if errors.As(err, &apiError) {
@@ -143,5 +146,16 @@ func classify(err error) error {
 			return fmt.Errorf("%w: %s", ErrUnavailable, apiError.ErrorCode())
 		}
 	}
-	return ErrUnavailable
+	var dnsError *net.DNSError
+	var certificateError *tls.CertificateVerificationError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("%w: timeout", ErrUnavailable)
+	case errors.As(err, &dnsError):
+		return fmt.Errorf("%w: dns", ErrUnavailable)
+	case errors.As(err, &certificateError):
+		return fmt.Errorf("%w: tls", ErrUnavailable)
+	default:
+		return fmt.Errorf("%w: transport", ErrUnavailable)
+	}
 }

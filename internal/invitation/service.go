@@ -224,8 +224,10 @@ func (service *Service) rotate(ctx context.Context, change Change) (Sent, error)
 		outcome = ActionDelivered
 		if err := service.send(ctx, result, link); err != nil {
 			outcome = ActionDeliveryFailed
+			// Transports report only a stable code or kind, never an address.
 			service.logger.WarnContext(ctx, "invitation email not delivered",
-				"invitation_id", result.Invitation.ID.String(), "error_class", deliveryClass(err))
+				"invitation_id", result.Invitation.ID.String(), "error_class", deliveryClass(err),
+				"error", err.Error())
 		}
 	}
 	recorded, err := service.store.Change(ctx, Change{

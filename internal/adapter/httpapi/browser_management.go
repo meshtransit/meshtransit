@@ -466,7 +466,7 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	// Member directory and switchable Workspaces are exact, query-free reads.
 	directoryRead := request.Method == http.MethodGet &&
 		(isWorkspaceRoleOperation(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
-			isNetworkAliasRangeRead(request) || isGuardrailRead(request))
+			isNetworkAliasRangeRead(request) || isGuardrailRead(request) || isInvitationRead(request))
 	auditRead := isAuditEventListRead(request) || isAuditEventExportRead(request) || isDeviceGroupRead(request) ||
 		isIdentityCatalogRead(request)
 	safeRead := approvalRead || managementScopeRead || inventoryRead || deploymentCapabilityRead || policyRead ||

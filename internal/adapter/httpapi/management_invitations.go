@@ -81,6 +81,12 @@ func isInvitationOperation(request *http.Request) bool {
 	return request.Method == http.MethodPost
 }
 
+// isInvitationRead admits the exact, query-free invitation list.
+func isInvitationRead(request *http.Request) bool {
+	path, ok := parseInvitationPath(request)
+	return ok && path.action == "" && request.Method == http.MethodGet
+}
+
 func (path invitationPath) operation() string {
 	if path.action == "" {
 		return "workspace_invitations_read"
