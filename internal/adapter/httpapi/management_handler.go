@@ -260,7 +260,8 @@ type ManagementHandlerOptions struct {
 	DeviceTags DeviceTagManager
 	// DeviceLifecycle suspends, resumes, transfers and renames Devices; nil answers 503.
 	DeviceLifecycle DeviceLifecycleManager
-	// MemberLifecycle suspends and resumes Workspace members; nil answers 503.
+	// MemberLifecycle suspends, resumes and removes Workspace members; nil
+	// answers 503.
 	MemberLifecycle MemberLifecycleManager
 	// Invitations invite people by email; nil answers 503.
 	Invitations               InvitationManager

@@ -106,6 +106,7 @@ type consoleManagementProfile struct {
 	NetworkDeviceRename     json.RawMessage            `json:"networkDeviceRename"`
 	WorkspaceMemberSuspend  json.RawMessage            `json:"workspaceMemberSuspend"`
 	WorkspaceMemberResume   json.RawMessage            `json:"workspaceMemberResume"`
+	WorkspaceMemberRemove   json.RawMessage            `json:"workspaceMemberRemove"`
 	WorkspaceInvitations    json.RawMessage            `json:"workspaceInvitations"`
 	InvitationCreate        json.RawMessage            `json:"workspaceInvitationCreate"`
 	InvitationResend        json.RawMessage            `json:"workspaceInvitationResend"`
@@ -201,6 +202,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.NetworkDeviceRename, "post", "renameNetworkDevice", true) &&
 		consoleCookieOperation(profile.WorkspaceMemberSuspend, "post", "suspendWorkspaceMember", true) &&
 		consoleCookieOperation(profile.WorkspaceMemberResume, "post", "resumeWorkspaceMember", true) &&
+		consoleCookieOperation(profile.WorkspaceMemberRemove, "post", "removeWorkspaceMember", true) &&
 		consoleCookieOperation(profile.WorkspaceInvitations, "get", "listWorkspaceInvitations", false) &&
 		consoleCookieOperation(profile.InvitationCreate, "post", "createWorkspaceInvitation", true) &&
 		consoleCookieOperation(profile.InvitationResend, "post", "resendWorkspaceInvitation", true) &&
@@ -342,6 +344,7 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	memberActions := "/api/v1/workspaces/{workspace_id}/members/{principal_id}/actions/"
 	consolePaths[memberActions+"suspend"] = profile.WorkspaceMemberSuspend
 	consolePaths[memberActions+"resume"] = profile.WorkspaceMemberResume
+	consolePaths[memberActions+"remove"] = profile.WorkspaceMemberRemove
 	invitations := "/api/v1/workspaces/{workspace_id}/invitations"
 	consolePaths[invitations] = profile.WorkspaceInvitations
 	consolePaths[invitations+"/actions/create"] = profile.InvitationCreate

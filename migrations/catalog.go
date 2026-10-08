@@ -496,6 +496,7 @@ func Catalog() []Migration {
 		newMigration(127, "Suspend and resume Workspace members", workspaceMemberSuspensionSQL),
 		newMigration(128, "Workspace invitations", workspaceInvitationsSQL),
 		newMigration(129, "Accept Workspace invitations at sign-in", workspaceInvitationAcceptanceSQL),
+		newMigration(130, "Remove Workspace members with a Device plan", workspaceMemberRemovalSQL),
 	}
 }
 
@@ -662,3 +663,6 @@ var workspaceInvitationsSQL string
 
 //go:embed 000129_workspace_invitation_acceptance.up.sql
 var workspaceInvitationAcceptanceSQL string
+
+//go:embed 000130_workspace_member_removal.up.sql
+var workspaceMemberRemovalSQL string

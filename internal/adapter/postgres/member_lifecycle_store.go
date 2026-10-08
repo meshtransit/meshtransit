@@ -83,6 +83,10 @@ func memberLifecycleDatabaseError(err error) error {
 			return memberlifecycle.ErrWrongState
 		case "MTM02":
 			return memberlifecycle.ErrProtected
+		case "MTM03":
+			return memberlifecycle.ErrPlan
+		case "MTM04":
+			return memberlifecycle.ErrNewOwner
 		case "22023", "22P02", "23514":
 			return memberlifecycle.ErrInvalid
 		}
@@ -102,7 +106,8 @@ type memberLifecycleDocument struct {
 
 func (document memberLifecycleDocument) member() (memberlifecycle.Member, error) {
 	principal, err := publicid.Parse(document.PrincipalID)
-	if err != nil || document.Version < 1 || (document.State != "active" && document.State != "suspended") {
+	if err != nil || document.Version < 1 ||
+		(document.State != "active" && document.State != "suspended" && document.State != "revoked") {
 		return memberlifecycle.Member{}, memberlifecycle.ErrInvalid
 	}
 	return memberlifecycle.Member{

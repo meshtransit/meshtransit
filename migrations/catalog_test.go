@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 129 {
-		t.Fatalf("len(Catalog()) = %d, want 129", len(catalog))
+	if len(catalog) != 130 {
+		t.Fatalf("len(Catalog()) = %d, want 130", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 129 {
-		t.Fatalf("LatestVersion() = %d, want 129", LatestVersion())
+	if LatestVersion() != 130 {
+		t.Fatalf("LatestVersion() = %d, want 130", LatestVersion())
 	}
 }
 
@@ -3094,5 +3094,32 @@ func TestWorkspaceInvitationAcceptance(t *testing.T) {
 		if !strings.Contains(migration.SQL, required) {
 			t.Errorf("schema 129 missing %q", required)
 		}
+	}
+}
+
+func TestWorkspaceMemberRemoval(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[129]
+	if migration.Version != 130 {
+		t.Fatalf("migration 130 = %+v", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.remove_workspace_member_v1(",
+		"CREATE FUNCTION mesh_ops.revoke_member_device_internal_v1(",
+		"'member.manage'",
+		"NOT (role.assignable_by && mesh_ops.workspace_role_assigners_v1(v_workspace, v_actor, v_now))",
+		"v_action := COALESCE(v_item.choice ->> 'action', 'revoke');",
+		"WHERE device.workspace_id = v_workspace AND device.handover_principal_id = v_member",
+		"credential.issuer_principal_id = v_member",
+		"DELETE FROM mesh.identity_group_member AS member",
+		"AND session.login_workspace_id = v_workspace",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 130 missing %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "GRANT SELECT") {
+		t.Error("schema 130 must not grant direct table access")
 	}
 }

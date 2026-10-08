@@ -1,9 +1,11 @@
-// Package memberlifecycle suspends and resumes Workspace members. Suspending
-// a member cuts them off in the Workspace at once: their membership grants
-// nothing, the Devices they own there are suspended, and their Console
-// sessions in the Workspace end. Resuming restores exactly what the
-// suspension took. PostgreSQL authorizes every change and records it with
-// audit evidence.
+// Package memberlifecycle suspends, resumes and removes Workspace members.
+// Suspending a member cuts them off in the Workspace at once: their
+// membership grants nothing, the Devices they own there are suspended, and
+// their Console sessions in the Workspace end. Resuming restores exactly what
+// the suspension took. Removing a member hands each of their Devices to the
+// Workspace or another member, or revokes it, and ends their keys, groups,
+// roles, sessions and membership. PostgreSQL authorizes every change and
+// records it with audit evidence.
 package memberlifecycle
 
 import (
@@ -45,6 +47,9 @@ type Action string
 const (
 	ActionSuspend Action = "suspend"
 	ActionResume  Action = "resume"
+	// ActionRemove names a removal, which travels as a Removal, never as a
+	// Change.
+	ActionRemove Action = "remove"
 )
 
 // Change is one validated member change.

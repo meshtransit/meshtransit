@@ -13,9 +13,11 @@ import (
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
 
-// MemberLifecycleManager suspends and resumes Workspace members.
+// MemberLifecycleManager suspends, resumes and removes Workspace members.
 type MemberLifecycleManager interface {
 	Change(context.Context, accountsession.Session, memberlifecycle.Request) (memberlifecycle.Result, error)
+	Remove(context.Context, accountsession.Session, memberlifecycle.RemovalRequest) (
+		memberlifecycle.RemovalResult, error)
 }
 
 type memberLifecyclePath struct {
@@ -26,7 +28,7 @@ type memberLifecyclePath struct {
 
 // parseMemberLifecyclePath matches, with no query,
 //
-//	POST /api/v1/workspaces/{ws}/members/{principal}/actions/{suspend|resume}
+//	POST /api/v1/workspaces/{ws}/members/{principal}/actions/{suspend|resume|remove}
 func parseMemberLifecyclePath(request *http.Request) (memberLifecyclePath, bool) {
 	if request == nil || request.URL == nil || request.URL.RawPath != "" || request.URL.RawQuery != "" {
 		return memberLifecyclePath{}, false
@@ -37,7 +39,8 @@ func parseMemberLifecyclePath(request *http.Request) (memberLifecyclePath, bool)
 		return memberLifecyclePath{}, false
 	}
 	action := memberlifecycle.Action(segments[7])
-	if action != memberlifecycle.ActionSuspend && action != memberlifecycle.ActionResume {
+	if action != memberlifecycle.ActionSuspend && action != memberlifecycle.ActionResume &&
+		action != memberlifecycle.ActionRemove {
 		return memberLifecyclePath{}, false
 	}
 	workspaceID, workspaceOK := canonicalPublicID(segments[3])
@@ -71,6 +74,9 @@ func (handler *ManagementHandler) handleMemberLifecycle(ctx context.Context, res
 		response.Header().Set("Allow", http.MethodPost)
 		return fail(managementError{Status: http.StatusMethodNotAllowed, Code: "method_not_allowed",
 			Message: "the method is not allowed"})
+	}
+	if path.action == memberlifecycle.ActionRemove {
+		return handler.handleMemberRemoval(ctx, response, request, correlationID, path, session)
 	}
 	var body struct {
 		Reason *string `json:"reason"`
@@ -140,7 +146,13 @@ func classifyMemberLifecycleError(err error) managementError {
 			Message: "You cannot make this change to the member"}
 	case errors.Is(err, memberlifecycle.ErrProtected):
 		return managementError{Status: http.StatusForbidden, Code: "member_protected",
-			Message: "Nobody can suspend the owner or themselves"}
+			Message: "Nobody can suspend or remove the owner or themselves"}
+	case errors.Is(err, memberlifecycle.ErrPlan):
+		return managementError{Status: http.StatusConflict, Code: "device_plan_conflict",
+			Message: "A Device in the plan is not the member's, or cannot take that action. Reload the Devices."}
+	case errors.Is(err, memberlifecycle.ErrNewOwner):
+		return managementError{Status: http.StatusConflict, Code: "new_owner_unavailable",
+			Message: "The new owner is not an active member of the Device's Network"}
 	case errors.Is(err, memberlifecycle.ErrNotFound):
 		return managementError{Status: http.StatusNotFound, Code: "member_not_found",
 			Message: "The member is no longer in this Workspace"}

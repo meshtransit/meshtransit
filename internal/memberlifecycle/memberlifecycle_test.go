@@ -11,6 +11,7 @@ import (
 	"github.com/meshtransit/meshtransit/internal/identity"
 	"github.com/meshtransit/meshtransit/internal/identity/accountsession"
 	"github.com/meshtransit/meshtransit/internal/memberlifecycle"
+	"github.com/meshtransit/meshtransit/internal/node"
 	"github.com/meshtransit/meshtransit/internal/publicid"
 	"github.com/meshtransit/meshtransit/internal/workspace"
 )
@@ -42,7 +43,16 @@ type fixedClock struct{ now time.Time }
 
 func (clock fixedClock) Now() time.Time { return clock.now }
 
-type recordingStore struct{ changes []memberlifecycle.Change }
+type recordingStore struct {
+	changes  []memberlifecycle.Change
+	removals []memberlifecycle.Removal
+}
+
+func (store *recordingStore) Remove(_ context.Context, removal memberlifecycle.Removal) (
+	memberlifecycle.RemovalResult, error) {
+	store.removals = append(store.removals, removal)
+	return memberlifecycle.RemovalResult{}, nil
+}
 
 func (store *recordingStore) Change(_ context.Context, change memberlifecycle.Change) (memberlifecycle.Result, error) {
 	store.changes = append(store.changes, change)
@@ -121,5 +131,84 @@ func TestServiceRefusesAnEndedSession(t *testing.T) {
 	}
 	if _, err := memberlifecycle.NewService(nil, fixedClock{}); !errors.Is(err, memberlifecycle.ErrInvalid) {
 		t.Fatal("a service needs a store")
+	}
+}
+
+func TestServiceValidatesRemovalPlans(t *testing.T) {
+	t.Parallel()
+	session := testSession(t)
+	deviceA, _ := node.ParseID("01890f00-0000-7000-8000-000000000c01")
+	deviceB, _ := node.ParseID("01890f00-0000-7000-8000-000000000c02")
+	newOwner, _ := publicid.Parse("01890f00-0000-7000-8000-000000000403")
+	base := baseRequest(t)
+	tests := []struct {
+		name    string
+		devices []memberlifecycle.DevicePlan
+		want    error
+	}{
+		{name: "empty plan revokes everything"},
+		{name: "each action", devices: []memberlifecycle.DevicePlan{
+			{DeviceID: deviceA, Action: memberlifecycle.DeviceTransferWorkspace},
+			{DeviceID: deviceB, Action: memberlifecycle.DeviceTransferMember, NewOwnerID: newOwner},
+		}},
+		{name: "duplicate Device", devices: []memberlifecycle.DevicePlan{
+			{DeviceID: deviceA, Action: memberlifecycle.DeviceRevoke},
+			{DeviceID: deviceA, Action: memberlifecycle.DeviceTransferWorkspace},
+		}, want: memberlifecycle.ErrInvalid},
+		{name: "handover without new owner", devices: []memberlifecycle.DevicePlan{
+			{DeviceID: deviceA, Action: memberlifecycle.DeviceTransferMember},
+		}, want: memberlifecycle.ErrInvalid},
+		{name: "new owner on revoke", devices: []memberlifecycle.DevicePlan{
+			{DeviceID: deviceA, Action: memberlifecycle.DeviceRevoke, NewOwnerID: newOwner},
+		}, want: memberlifecycle.ErrInvalid},
+		{name: "handover to the removed member", devices: []memberlifecycle.DevicePlan{
+			{DeviceID: deviceA, Action: memberlifecycle.DeviceTransferMember, NewOwnerID: base.MemberID},
+		}, want: memberlifecycle.ErrInvalid},
+		{name: "unknown action", devices: []memberlifecycle.DevicePlan{
+			{DeviceID: deviceA, Action: "keep"},
+		}, want: memberlifecycle.ErrInvalid},
+		{name: "too many", devices: make([]memberlifecycle.DevicePlan, memberlifecycle.MaximumPlanDevices+1),
+			want: memberlifecycle.ErrInvalid},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := &recordingStore{}
+			service, err := memberlifecycle.NewService(store, fixedClock{now: testNow})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = service.Remove(t.Context(), session, memberlifecycle.RemovalRequest{
+				WorkspaceID: base.WorkspaceID, MemberID: base.MemberID, Reason: "Left the company",
+				Devices: test.devices, CorrelationID: base.CorrelationID,
+			})
+			if !errors.Is(err, test.want) {
+				t.Fatalf("Remove() error = %v, want %v", err, test.want)
+			}
+			if test.want == nil && (len(store.removals) != 1 || !store.removals[0].EvaluatedAt.Equal(testNow) ||
+				len(store.removals[0].Devices) != len(test.devices)) {
+				t.Fatalf("store removals = %+v", store.removals)
+			}
+			if test.want != nil && len(store.removals) != 0 {
+				t.Fatal("an invalid removal reached the store")
+			}
+		})
+	}
+}
+
+func TestServiceRefusesRemovalWithoutReasonOrSession(t *testing.T) {
+	t.Parallel()
+	base := baseRequest(t)
+	request := memberlifecycle.RemovalRequest{
+		WorkspaceID: base.WorkspaceID, MemberID: base.MemberID, CorrelationID: base.CorrelationID,
+	}
+	service, _ := memberlifecycle.NewService(&recordingStore{}, fixedClock{now: testNow})
+	if _, err := service.Remove(t.Context(), testSession(t), request); !errors.Is(err, memberlifecycle.ErrInvalid) {
+		t.Fatalf("Remove() without a reason = %v", err)
+	}
+	request.Reason = "Left the company"
+	ended, _ := memberlifecycle.NewService(&recordingStore{}, fixedClock{now: testNow.Add(3 * time.Hour)})
+	if _, err := ended.Remove(t.Context(), testSession(t), request); !errors.Is(err, memberlifecycle.ErrForbidden) {
+		t.Fatalf("Remove() with an ended session = %v", err)
 	}
 }

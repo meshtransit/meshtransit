@@ -20,7 +20,7 @@ func TestParseMemberLifecyclePath(t *testing.T) {
 		"01890f00-0000-7000-8000-000000000402/actions/"
 	for path, valid := range map[string]bool{
 		prefix + "suspend": true, prefix + "resume": true,
-		prefix + "remove": false, prefix + "suspend?x=1": false, prefix + "suspend/now": false,
+		prefix + "remove": true, prefix + "delete": false, prefix + "suspend?x=1": false, prefix + "suspend/now": false,
 		strings.Replace(prefix, "01890f00-0000-7000-8000-000000000402", "01890F00-0000-7000-8000-000000000402", 1) +
 			"suspend": false,
 		"/api/v1/workspaces/01890f00-0000-7000-8000-000000000101/members": false,
