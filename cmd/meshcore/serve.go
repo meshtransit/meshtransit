@@ -243,10 +243,16 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				profile: processConfig.BrowserRegistration, keys: browserRegistrationKeys,
 			})
 		}
+		mailer, mailErr := composeInvitationMailer(processConfig.Mail)
+		if mailErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "mail_composition_failure")
+			return 1
+		}
 		factory, loginService, composeErr := composePrivateIdentityRuntime(
 			ctx,
 			privateProfile,
-			privateIdentityFactoryDependencies{Runtime: storagePools.runtime, Redis: redisClient, Logger: logger},
+			privateIdentityFactoryDependencies{Runtime: storagePools.runtime, Redis: redisClient, Logger: logger,
+				Mailer: mailer},
 			browserRuntime...,
 		)
 		if composeErr != nil {

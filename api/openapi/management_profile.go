@@ -17,9 +17,9 @@ const (
 	// ManagementProfileConsoleCookiePrivateV1 is disabled private source preparation.
 	// Rendering it mounts no handler or documentation endpoint and enables no SSO.
 	ManagementProfileConsoleCookiePrivateV1 ManagementProfile = "console-cookie-csrf-private-v1"
-	// Bounds every compiled document; the composed Console contract is ~420 KiB
-	// indented since schema 121 added user groups and device tags.
-	maximumManagementDocumentBytes     = 512 << 10
+	// Bounds every compiled document; the composed Console contract passed
+	// 512 KiB with member suspension and invitations (schemas 127 and 128).
+	maximumManagementDocumentBytes     = 1 << 20
 	consoleSessionPreparePath          = "/auth/v1/session/prepare"
 	consoleSessionLogoutPath           = "/auth/v1/session/logout"
 	consoleSessionManagementScopesPath = "/auth/v1/session/management-scopes"
@@ -106,6 +106,10 @@ type consoleManagementProfile struct {
 	NetworkDeviceRename     json.RawMessage            `json:"networkDeviceRename"`
 	WorkspaceMemberSuspend  json.RawMessage            `json:"workspaceMemberSuspend"`
 	WorkspaceMemberResume   json.RawMessage            `json:"workspaceMemberResume"`
+	WorkspaceInvitations    json.RawMessage            `json:"workspaceInvitations"`
+	InvitationCreate        json.RawMessage            `json:"workspaceInvitationCreate"`
+	InvitationResend        json.RawMessage            `json:"workspaceInvitationResend"`
+	InvitationRevoke        json.RawMessage            `json:"workspaceInvitationRevoke"`
 	NetworkDeviceTagChange  json.RawMessage            `json:"networkDeviceChangeTags"`
 }
 
@@ -197,6 +201,10 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 		consoleCookieOperation(profile.NetworkDeviceRename, "post", "renameNetworkDevice", true) &&
 		consoleCookieOperation(profile.WorkspaceMemberSuspend, "post", "suspendWorkspaceMember", true) &&
 		consoleCookieOperation(profile.WorkspaceMemberResume, "post", "resumeWorkspaceMember", true) &&
+		consoleCookieOperation(profile.WorkspaceInvitations, "get", "listWorkspaceInvitations", false) &&
+		consoleCookieOperation(profile.InvitationCreate, "post", "createWorkspaceInvitation", true) &&
+		consoleCookieOperation(profile.InvitationResend, "post", "resendWorkspaceInvitation", true) &&
+		consoleCookieOperation(profile.InvitationRevoke, "post", "revokeWorkspaceInvitation", true) &&
 		consoleCookieOperation(profile.NetworkDeviceTagChange, "post", "changeNetworkDeviceTags", true)
 	if !validIdentity || !validTransport || !validShape {
 		return nil, ErrInvalidManagementProfile
@@ -334,6 +342,11 @@ func composeConsoleManagementDocument(base, fragment string) ([]byte, error) {
 	memberActions := "/api/v1/workspaces/{workspace_id}/members/{principal_id}/actions/"
 	consolePaths[memberActions+"suspend"] = profile.WorkspaceMemberSuspend
 	consolePaths[memberActions+"resume"] = profile.WorkspaceMemberResume
+	invitations := "/api/v1/workspaces/{workspace_id}/invitations"
+	consolePaths[invitations] = profile.WorkspaceInvitations
+	consolePaths[invitations+"/actions/create"] = profile.InvitationCreate
+	consolePaths[invitations+"/{invitation_id}/actions/resend"] = profile.InvitationResend
+	consolePaths[invitations+"/{invitation_id}/actions/revoke"] = profile.InvitationRevoke
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments"] = profile.WorkspaceRoleAssign
 	consolePaths["/api/v1/workspaces/{workspace_id}/role-assignments/{assignment_id}/actions/revoke"] = profile.WorkspaceRoleRevoke
 	consolePaths[consoleSessionPreparePath] = profile.Prepare

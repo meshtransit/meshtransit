@@ -61,6 +61,8 @@ type Config struct {
 	AuthExpiry            *AuthExpiryConfig
 	PrivateLogin          *PrivateLoginFile
 	BrowserRegistration   *BrowserRegistrationConfig
+	// Mail sends Workspace invitations; it is accepted on api and all roles.
+	Mail                  *MailConfig
 	Identity              *IdentityConfig
 	DeploymentEntitlement *DeploymentEntitlementConfig
 }
@@ -208,6 +210,13 @@ func Load(lookup LookupFunc) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	mailConfig, err := loadMailConfig(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	if mailConfig != nil && (role != app.RoleAll && role != app.RoleAPI || privateLoginFile == nil) {
+		return Config{}, settingError(envMailTransport)
+	}
 	if browserRegistration != nil {
 		if role != app.RoleAll && role != app.RoleAPI && role != app.RoleControl {
 			return Config{}, settingError(envBrowserRegistrationOrigin)
@@ -242,6 +251,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		AuthExpiry:            authExpiryConfig,
 		PrivateLogin:          privateLoginFile,
 		BrowserRegistration:   browserRegistration,
+		Mail:                  mailConfig,
 		Identity:              identityConfig,
 		DeploymentEntitlement: deploymentEntitlementConfig,
 	}, nil

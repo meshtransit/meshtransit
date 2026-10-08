@@ -98,6 +98,9 @@ func validateDependencyConfiguration(ctx context.Context, processConfig config.C
 			}
 		}
 	}
+	if _, err := composeInvitationMailer(processConfig.Mail); err != nil {
+		return fmt.Errorf("validate mail settings: %w", err)
+	}
 	if processConfig.Storage == nil {
 		return nil
 	}

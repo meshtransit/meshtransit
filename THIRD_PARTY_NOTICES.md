@@ -143,3 +143,19 @@ This product includes software developed at SoundCloud Ltd.
 The Prometheus components listed above are licensed under the Apache License,
 Version 2.0. The full license text is available at
 <https://www.apache.org/licenses/LICENSE-2.0>.
+
+## AWS SDK for Go v2 and Smithy Go (Apache-2.0)
+
+Used only by `internal/adapter/sesmail` to send product email through the
+Amazon SES v2 API over HTTPS (`github.com/aws/aws-sdk-go-v2`,
+`.../credentials`, `.../service/sesv2` and `github.com/aws/smithy-go`).
+
+AWS SDK for Go  
+Copyright 2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.  
+Copyright 2014-2015 Stripe, Inc.
+
+Smithy Go  
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+These components are licensed under the Apache License, Version 2.0. The full
+license text is available at <https://www.apache.org/licenses/LICENSE-2.0>.

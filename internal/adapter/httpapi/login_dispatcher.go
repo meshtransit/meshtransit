@@ -199,7 +199,8 @@ func isBrowserManagementOperation(request *http.Request) bool {
 		isSessionWorkspaceOperation(request) || isShareTargetRead(request) || isNetworkAliasRangeOperation(request) ||
 		isAuditEventListRead(request) || isAuditEventExportRead(request) || isGuardrailOperation(request) ||
 		isDeviceGroupOperation(request) || isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request) ||
-		isMemberLifecycleOperation(request) {
+		isMemberLifecycleOperation(request) ||
+		isInvitationOperation(request) {
 		return true
 	}
 	_, device := parseDeviceRevokePath(request)

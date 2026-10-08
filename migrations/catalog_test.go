@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 127 {
-		t.Fatalf("len(Catalog()) = %d, want 127", len(catalog))
+	if len(catalog) != 128 {
+		t.Fatalf("len(Catalog()) = %d, want 128", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 127 {
-		t.Fatalf("LatestVersion() = %d, want 127", LatestVersion())
+	if LatestVersion() != 128 {
+		t.Fatalf("LatestVersion() = %d, want 128", LatestVersion())
 	}
 }
 
@@ -3049,5 +3049,30 @@ func TestWorkspaceMemberSuspension(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "GRANT SELECT") {
 		t.Error("schema 127 must not grant direct table access")
+	}
+}
+
+func TestWorkspaceInvitations(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[127]
+	if migration.Version != 128 {
+		t.Fatalf("migration 128 = %+v", migration)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.workspace_invitation (",
+		"token_digest BYTEA NOT NULL UNIQUE",
+		"WHERE state = 'pending'",
+		"'member.invite'",
+		"role exceeds the delegation ceiling",
+		"capture_authority_mutation('workspace_invitation', 'public_id')",
+		"CREATE FUNCTION mesh_ops.change_workspace_invitation_v1(",
+		"CREATE FUNCTION mesh_ops.list_workspace_invitations_v1(",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 128 missing %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "GRANT SELECT") || strings.Contains(migration.SQL, "token TEXT") {
+		t.Error("schema 128 must not grant table access or store a token")
 	}
 }

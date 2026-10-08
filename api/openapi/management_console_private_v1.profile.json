@@ -9347,6 +9347,904 @@
       }
     }
   },
+  "workspaceInvitations": {
+    "get": {
+      "operationId": "listWorkspaceInvitations",
+      "summary": "List Workspace invitations",
+      "description": "Requires member.invite. Pending invitations and those settled in the last 30 days, newest first, at most 500. A pending invitation past its expiry reads expired. mail_configured reports whether invitations are emailed.",
+      "security": [
+        {
+          "accountSessionCookie": []
+        }
+      ],
+      "parameters": [
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        }
+      ],
+      "responses": {
+        "200": {
+          "description": "Invitations",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "invitations",
+                      "mail_configured"
+                    ],
+                    "properties": {
+                      "invitations": {
+                        "type": "array",
+                        "maxItems": 500,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "invitation_id",
+                            "email",
+                            "role",
+                            "state",
+                            "expires_at",
+                            "invited_by",
+                            "delivery_state",
+                            "last_sent_at",
+                            "send_count",
+                            "created_at",
+                            "version"
+                          ],
+                          "properties": {
+                            "invitation_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "email": {
+                              "type": "string",
+                              "format": "email",
+                              "minLength": 3,
+                              "maxLength": 254
+                            },
+                            "role": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "enum": [
+                                "admin",
+                                "network_admin",
+                                "it_admin",
+                                "security_admin",
+                                "billing_admin",
+                                "auditor",
+                                null
+                              ]
+                            },
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "pending",
+                                "accepted",
+                                "revoked",
+                                "expired"
+                              ]
+                            },
+                            "expires_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "invited_by": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "principal_id",
+                                "display_name"
+                              ],
+                              "properties": {
+                                "principal_id": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "display_name": {
+                                  "type": "string",
+                                  "maxLength": 128
+                                }
+                              }
+                            },
+                            "delivery_state": {
+                              "type": "string",
+                              "enum": [
+                                "pending",
+                                "sent",
+                                "failed",
+                                "not_configured"
+                              ]
+                            },
+                            "last_sent_at": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "format": "date-time"
+                            },
+                            "send_count": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "created_at": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1
+                            }
+                          }
+                        }
+                      },
+                      "mail_configured": {
+                        "type": "boolean"
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        }
+      }
+    }
+  },
+  "workspaceInvitationCreate": {
+    "post": {
+      "operationId": "createWorkspaceInvitation",
+      "summary": "Invite a person by email",
+      "description": "Requires member.invite; a role must be one the inviter could grant. Creates a pending invitation valid for 7 days, emails the link when mail is configured, and answers the link once. One pending invitation per address.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "email"
+              ],
+              "properties": {
+                "email": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 254
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "admin",
+                    "network_admin",
+                    "it_admin",
+                    "security_admin",
+                    "billing_admin",
+                    "auditor"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "201": {
+          "description": "The invitation and its link",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            },
+            "ETag": {
+              "schema": {
+                "type": "string",
+                "pattern": "^\"[1-9][0-9]*\"$"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "invitation",
+                      "invite_url"
+                    ],
+                    "properties": {
+                      "invitation": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "invitation_id",
+                          "email",
+                          "role",
+                          "state",
+                          "expires_at",
+                          "invited_by",
+                          "delivery_state",
+                          "last_sent_at",
+                          "send_count",
+                          "created_at",
+                          "version"
+                        ],
+                        "properties": {
+                          "invitation_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "email": {
+                            "type": "string",
+                            "format": "email",
+                            "minLength": 3,
+                            "maxLength": 254
+                          },
+                          "role": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "admin",
+                              "network_admin",
+                              "it_admin",
+                              "security_admin",
+                              "billing_admin",
+                              "auditor",
+                              null
+                            ]
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "accepted",
+                              "revoked",
+                              "expired"
+                            ]
+                          },
+                          "expires_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "invited_by": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "principal_id",
+                              "display_name"
+                            ],
+                            "properties": {
+                              "principal_id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "display_name": {
+                                "type": "string",
+                                "maxLength": 128
+                              }
+                            }
+                          },
+                          "delivery_state": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "sent",
+                              "failed",
+                              "not_configured"
+                            ]
+                          },
+                          "last_sent_at": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "date-time"
+                          },
+                          "send_count": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "invite_url": {
+                        "type": "string",
+                        "format": "uri",
+                        "maxLength": 512,
+                        "description": "Shown once; carries the bearer token after #invite=."
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        },
+        "409": {
+          "description": "already_invited or too_many_invitations"
+        }
+      }
+    }
+  },
+  "workspaceInvitationResend": {
+    "post": {
+      "operationId": "resendWorkspaceInvitation",
+      "summary": "Resend an invitation with a new link",
+      "description": "Requires member.invite. Rotates the token so earlier links stop working, extends the expiry by 7 days and emails the new link; at most once a minute.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "invitation_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        },
+        {
+          "name": "If-Match",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^\"[1-9][0-9]*\"$"
+          }
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {}
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "The invitation after the change",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            },
+            "ETag": {
+              "schema": {
+                "type": "string",
+                "pattern": "^\"[1-9][0-9]*\"$"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "invitation",
+                      "invite_url"
+                    ],
+                    "properties": {
+                      "invitation": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "invitation_id",
+                          "email",
+                          "role",
+                          "state",
+                          "expires_at",
+                          "invited_by",
+                          "delivery_state",
+                          "last_sent_at",
+                          "send_count",
+                          "created_at",
+                          "version"
+                        ],
+                        "properties": {
+                          "invitation_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "email": {
+                            "type": "string",
+                            "format": "email",
+                            "minLength": 3,
+                            "maxLength": 254
+                          },
+                          "role": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "admin",
+                              "network_admin",
+                              "it_admin",
+                              "security_admin",
+                              "billing_admin",
+                              "auditor",
+                              null
+                            ]
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "accepted",
+                              "revoked",
+                              "expired"
+                            ]
+                          },
+                          "expires_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "invited_by": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "principal_id",
+                              "display_name"
+                            ],
+                            "properties": {
+                              "principal_id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "display_name": {
+                                "type": "string",
+                                "maxLength": 128
+                              }
+                            }
+                          },
+                          "delivery_state": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "sent",
+                              "failed",
+                              "not_configured"
+                            ]
+                          },
+                          "last_sent_at": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "format": "date-time"
+                          },
+                          "send_count": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "invite_url": {
+                        "type": "string",
+                        "format": "uri",
+                        "maxLength": 512,
+                        "description": "Shown once; carries the bearer token after #invite=."
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "429": {
+          "description": "resent_too_soon or rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        },
+        "404": {
+          "description": "invitation_not_found"
+        },
+        "409": {
+          "description": "invitation_not_pending"
+        },
+        "412": {
+          "description": "version_conflict"
+        },
+        "428": {
+          "description": "precondition_required"
+        }
+      }
+    }
+  },
+  "workspaceInvitationRevoke": {
+    "post": {
+      "operationId": "revokeWorkspaceInvitation",
+      "summary": "Revoke an invitation",
+      "description": "Requires member.invite. The link stops working at once.",
+      "security": [
+        {
+          "accountSessionCookie": [],
+          "sessionCSRF": []
+        }
+      ],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ConsoleOrigin"
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionChannel"
+        },
+        {
+          "name": "workspace_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "name": "invitation_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/ConsoleSessionProof"
+        },
+        {
+          "name": "If-Match",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^\"[1-9][0-9]*\"$"
+          }
+        }
+      ],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {}
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "The invitation after the change",
+          "headers": {
+            "Cache-Control": {
+              "schema": {
+                "type": "string",
+                "const": "no-store"
+              }
+            },
+            "ETag": {
+              "schema": {
+                "type": "string",
+                "pattern": "^\"[1-9][0-9]*\"$"
+              }
+            }
+          },
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "data",
+                  "correlation_id"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "invitation_id",
+                      "email",
+                      "role",
+                      "state",
+                      "expires_at",
+                      "invited_by",
+                      "delivery_state",
+                      "last_sent_at",
+                      "send_count",
+                      "created_at",
+                      "version"
+                    ],
+                    "properties": {
+                      "invitation_id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "email": {
+                        "type": "string",
+                        "format": "email",
+                        "minLength": 3,
+                        "maxLength": 254
+                      },
+                      "role": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "enum": [
+                          "admin",
+                          "network_admin",
+                          "it_admin",
+                          "security_admin",
+                          "billing_admin",
+                          "auditor",
+                          null
+                        ]
+                      },
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "pending",
+                          "accepted",
+                          "revoked",
+                          "expired"
+                        ]
+                      },
+                      "expires_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "invited_by": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "principal_id",
+                          "display_name"
+                        ],
+                        "properties": {
+                          "principal_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "display_name": {
+                            "type": "string",
+                            "maxLength": 128
+                          }
+                        }
+                      },
+                      "delivery_state": {
+                        "type": "string",
+                        "enum": [
+                          "pending",
+                          "sent",
+                          "failed",
+                          "not_configured"
+                        ]
+                      },
+                      "last_sent_at": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "format": "date-time"
+                      },
+                      "send_count": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "version": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "correlation_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "invalid_request"
+        },
+        "403": {
+          "description": "permission_denied"
+        },
+        "429": {
+          "description": "Rate limited"
+        },
+        "503": {
+          "description": "Unavailable"
+        },
+        "404": {
+          "description": "invitation_not_found"
+        },
+        "409": {
+          "description": "invitation_not_pending"
+        },
+        "412": {
+          "description": "version_conflict"
+        },
+        "428": {
+          "description": "precondition_required"
+        }
+      }
+    }
+  },
   "networkDeviceChangeTags": {
     "post": {
       "operationId": "changeNetworkDeviceTags",
