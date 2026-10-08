@@ -809,3 +809,30 @@ func TestLoginServerDiagnosticsConcealResidentServingProfile(t *testing.T) {
 		}
 	}
 }
+
+func TestLoginServerAnswersAStaleCallbackWithAPage(t *testing.T) {
+	t.Parallel()
+	options, fixture, callback := loginServerTestOptions(t)
+	server, client := startLoginTestServer(t, options)
+	// A reused or tampered provider redirect: the person gets words and a way
+	// back instead of a dropped connection, and no effect or cookie happens.
+	path := server.dispatcher.browser.reader.path + "?code=synthetic-private&state=synthetic-private"
+	response, err := client.Do(loginServerTestRequest(t, server, http.MethodGet, path))
+	if err != nil {
+		t.Fatal("stale callback dropped the connection", err)
+	}
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 32*1024))
+	if closeErr := response.Body.Close(); readErr != nil || closeErr != nil {
+		t.Fatal("refusal page not consumed/closed")
+	}
+	if response.StatusCode != http.StatusBadRequest || response.Header.Get("Set-Cookie") != "" ||
+		response.Header.Get("Location") != "" || response.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("stale callback answered %d with headers %v", response.StatusCode, response.Header)
+	}
+	if !bytes.Contains(body, []byte("This sign-in link has expired")) || bytes.Contains(body, []byte("synthetic-private")) {
+		t.Fatal("refusal page lost its words or echoed the request")
+	}
+	if len(fixture.calls) != 0 || callback.calls != 0 {
+		t.Fatal("stale callback reached authority or provider effects")
+	}
+}

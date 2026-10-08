@@ -172,7 +172,11 @@ func (dispatcher *LoginDispatcher) Handle(response http.ResponseWriter, request 
 			return ErrInvalidLoginDispatcher
 		}
 		operation = "capture"
-		return browser.Capture(response, request)
+		refused, err := serveLoginNavigation(response, request, browser.Capture)
+		if refused {
+			operation = "capture_refused"
+		}
+		return err
 	case InvitationPreparePath:
 		if request.Method != http.MethodPost || dispatcher.invitations == nil {
 			return ErrInvalidLoginDispatcher
@@ -202,7 +206,11 @@ func (dispatcher *LoginDispatcher) Handle(response http.ResponseWriter, request 
 		switch request.Method {
 		case http.MethodGet, http.MethodHead:
 			operation = "landing"
-			return browser.landing.Present(response, request)
+			refused, err := serveLoginNavigation(response, request, browser.landing.Present)
+			if refused {
+				operation = "landing_refused"
+			}
+			return err
 		case http.MethodPost:
 			operation = "complete"
 			return browser.completion.Complete(response, request)
