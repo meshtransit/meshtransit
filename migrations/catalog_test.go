@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 130 {
-		t.Fatalf("len(Catalog()) = %d, want 130", len(catalog))
+	if len(catalog) != 131 {
+		t.Fatalf("len(Catalog()) = %d, want 131", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 130 {
-		t.Fatalf("LatestVersion() = %d, want 130", LatestVersion())
+	if LatestVersion() != 131 {
+		t.Fatalf("LatestVersion() = %d, want 131", LatestVersion())
 	}
 }
 
@@ -3121,5 +3121,31 @@ func TestWorkspaceMemberRemoval(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "GRANT SELECT") {
 		t.Error("schema 130 must not grant direct table access")
+	}
+}
+
+func TestAccountSelfSignup(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[130]
+	if migration.Version != 131 {
+		t.Fatalf("migration 131 = %+v", migration)
+	}
+	for _, required := range []string{
+		"CREATE TABLE mesh.account_signup (",
+		"CREATE FUNCTION mesh_ops.sign_up_account_v1(",
+		"AND auth.state = 'consuming' AND auth.version = p_transaction_version",
+		"RETURN pg_catalog.jsonb_build_object('created', FALSE);",
+		"v_deployment.profile <> 'cloud'",
+		"ERRCODE = 'MTS02'",
+		"ERRCODE = 'MTS03'",
+		"v_workspace := mesh_ops.provision_workspace_v1(",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 131 missing %q", required)
+		}
+	}
+	if strings.Contains(migration.SQL, "GRANT SELECT") {
+		t.Error("schema 131 must not grant direct table access")
 	}
 }

@@ -453,3 +453,44 @@ func tokenJSON(t *testing.T, value any) string {
 }
 
 var _ oidcauth.StartClock = tokenClock{}
+
+func TestIDTokenProfileIsOptionalAndNeverRejects(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name            string
+		claims          map[string]any
+		wantName, email string
+	}{
+		{"absent", map[string]any{}, "", ""},
+		{"name and verified email", map[string]any{"name": "Lan Tran", "email": "lan@example.com",
+			"email_verified": true}, "Lan Tran", "lan@example.com"},
+		{"unverified email", map[string]any{"email": "lan@example.com", "email_verified": false}, "", ""},
+		{"verified flag as string", map[string]any{"email": "lan@example.com", "email_verified": "true"}, "", ""},
+		{"malformed name", map[string]any{"name": []string{"Lan"}}, "", ""},
+	} {
+		raw := map[string]json.RawMessage{}
+		for key, value := range test.claims {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw[key] = encoded
+		}
+		name, email := tokenProfile(raw)
+		if name != test.wantName || email != test.email {
+			t.Errorf("%s: profile = %q %q, want %q %q", test.name, name, email, test.wantName, test.email)
+		}
+	}
+	key, jwk := tokenKey(t, "RS256")
+	authenticator := tokenAuthenticator(t, "RS256")
+	authenticator.client = doerFunc(func(*http.Request) (*http.Response, error) {
+		return discoveryResponse(200, "application/json", tokenJSON(t, map[string]any{"keys": []any{jwk}})), nil
+	})
+	claims := tokenClaims(t)
+	claims["name"] = map[string]any{"bad": true}
+	claims["email_verified"] = "maybe"
+	if result, err := authenticator.validateIDToken(t.Context(), signedToken(t, key, "RS256", claims, nil)); err != nil ||
+		!result.IsValid() {
+		t.Fatalf("malformed profile claims rejected the token: %v", err)
+	}
+}

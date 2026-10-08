@@ -147,6 +147,7 @@ func (authenticator *Authenticator) decodeIDTokenClaims(raw []byte) (oidcauth.To
 			return oidcauth.TokenEvidence{}, ErrTokenRejected
 		}
 	}
+	params.ProfileName, params.VerifiedEmail = tokenProfile(claims)
 	evidence, err := oidcauth.NewTokenEvidence(params)
 	if err != nil {
 		return oidcauth.TokenEvidence{}, ErrTokenRejected
@@ -188,4 +189,22 @@ func tokenDate(claims map[string]json.RawMessage, name string) (time.Time, error
 		return time.Time{}, ErrTokenRejected
 	}
 	return time.Unix(seconds, 0).UTC(), nil
+}
+
+// tokenProfile reads the optional display name and an email the provider
+// marked verified. A missing or malformed claim yields "" and never rejects the
+// token: profile data only names a new Account.
+func tokenProfile(claims map[string]json.RawMessage) (string, string) {
+	var name, email string
+	var verified bool
+	if raw, present := claims["name"]; !present || json.Unmarshal(raw, &name) != nil {
+		name = ""
+	}
+	if raw, present := claims["email_verified"]; !present || json.Unmarshal(raw, &verified) != nil {
+		verified = false
+	}
+	if raw, present := claims["email"]; !verified || !present || json.Unmarshal(raw, &email) != nil {
+		email = ""
+	}
+	return name, email
 }

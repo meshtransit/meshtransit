@@ -252,7 +252,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			ctx,
 			privateProfile,
 			privateIdentityFactoryDependencies{Runtime: storagePools.runtime, Redis: redisClient, Logger: logger,
-				Mailer: mailer},
+				Mailer: mailer, Signup: processConfig.Signup},
 			browserRuntime...,
 		)
 		if composeErr != nil {

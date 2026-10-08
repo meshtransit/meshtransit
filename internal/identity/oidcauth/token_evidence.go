@@ -15,6 +15,9 @@ type TokenEvidenceParams struct {
 	Nonce                           Nonce
 	IssuedAt, ExpiresAt, AuthTime   time.Time
 	AMR                             []string
+	// ProfileName and VerifiedEmail are optional display data; an invalid
+	// value is dropped, never a reason to reject the sign-in.
+	ProfileName, VerifiedEmail string
 }
 
 // String redacts trusted adapter parameters, including raw subject and sid.
@@ -32,6 +35,7 @@ type ExternalIdentity struct {
 	issuer, subject, sessionID, acr string
 	issuedAt, expiresAt, authTime   time.Time
 	amr                             []string
+	profile                         Profile
 }
 
 // Issuer returns the exact validated configured issuer, without runtime normalization.
@@ -100,7 +104,7 @@ type TokenEvidence struct {
 
 // NewTokenEvidence validates/copies adapter output; it never accepts an IdP role.
 func NewTokenEvidence(params TokenEvidenceParams) (TokenEvidence, error) {
-	evidence := TokenEvidence{identity: ExternalIdentity{issuer: params.Issuer, subject: params.Subject, sessionID: params.SessionID, acr: params.ACR, issuedAt: params.IssuedAt.UTC(), expiresAt: params.ExpiresAt.UTC(), authTime: params.AuthTime.UTC(), amr: slices.Clone(params.AMR)}, nonce: params.Nonce}
+	evidence := TokenEvidence{identity: ExternalIdentity{issuer: params.Issuer, subject: params.Subject, sessionID: params.SessionID, acr: params.ACR, issuedAt: params.IssuedAt.UTC(), expiresAt: params.ExpiresAt.UTC(), authTime: params.AuthTime.UTC(), amr: slices.Clone(params.AMR), profile: NewProfile(params.ProfileName, params.VerifiedEmail)}, nonce: params.Nonce}
 	if !evidence.IsValid() {
 		return TokenEvidence{}, ErrExchangeRejected
 	}

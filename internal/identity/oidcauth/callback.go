@@ -72,6 +72,8 @@ func (service *CallbackService) CompleteBrowser(
 		if err := service.acceptInvitation(ctx, exchange, params.Invitation); err != nil {
 			return result, service.failBeforeIssue(ctx, receipt, err)
 		}
+	} else if err := service.signUp(ctx, exchange, params.SignupSource); err != nil {
+		return result, service.failBeforeIssue(ctx, receipt, err)
 	}
 	subject, err := service.subject.ResolveBrowser(ctx, exchange)
 	if err != nil {
@@ -121,7 +123,7 @@ func safeCallbackError(err error) error {
 	case errors.Is(err, ErrBrowserVerificationUnavailable), errors.Is(err, ErrClaimFailed),
 		errors.Is(err, ErrExchangeUnavailable), errors.Is(err, ErrSubjectResolutionUnavailable),
 		errors.Is(err, ErrIssueUnavailable), errors.Is(err, ErrFailureFailed),
-		errors.Is(err, ErrInvitationUnavailable):
+		errors.Is(err, ErrInvitationUnavailable), errors.Is(err, ErrSignupUnavailable):
 		category = ErrCallbackUnavailable
 	}
 	result := category

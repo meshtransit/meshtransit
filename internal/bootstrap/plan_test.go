@@ -77,16 +77,16 @@ func TestNewPlanDerivesLoginDigests(t *testing.T) {
 func TestNewPlanRejectsInvalidFiles(t *testing.T) {
 	t.Parallel()
 	for name, contents := range map[string]string{
-		"empty":            ``,
-		"wrong format":     strings.Replace(valid, "bootstrap/v1", "bootstrap/v2", 1),
-		"unknown profile":  strings.Replace(valid, `"cloud"`, `"enterprise"`, 1),
-		"unknown field":    strings.Replace(valid, `"profile"`, `"role":"x","profile"`, 1),
-		"no accounts":      `{"format":"meshtransit-bootstrap/v1","profile":"cloud","minimum_assurance":null,"accounts":[]}`,
-		"duplicate":        strings.Replace(valid, "def-456", "abc-123", 1),
-		"padded name":      strings.Replace(valid, `"Owner"`, `" Owner"`, 1),
-		"empty subject":    strings.Replace(valid, "abc-123", "", 1),
-		"bad workspace":    strings.Replace(valid, `"Team"`, `"Team\n"`, 1),
-		"trailing content": valid + `{}`,
+		"empty":                        ``,
+		"wrong format":                 strings.Replace(valid, "bootstrap/v1", "bootstrap/v2", 1),
+		"unknown profile":              strings.Replace(valid, `"cloud"`, `"enterprise"`, 1),
+		"unknown field":                strings.Replace(valid, `"profile"`, `"role":"x","profile"`, 1),
+		"self-hosted without accounts": `{"format":"meshtransit-bootstrap/v1","profile":"self_hosted","minimum_assurance":null,"accounts":[]}`,
+		"duplicate":                    strings.Replace(valid, "def-456", "abc-123", 1),
+		"padded name":                  strings.Replace(valid, `"Owner"`, `" Owner"`, 1),
+		"empty subject":                strings.Replace(valid, "abc-123", "", 1),
+		"bad workspace":                strings.Replace(valid, `"Team"`, `"Team\n"`, 1),
+		"trailing content":             valid + `{}`,
 	} {
 		if _, err := bootstrap.NewPlan([]byte(contents), route(t), subjectKey(t, 1)); !errors.Is(err, bootstrap.ErrInvalidPlan) {
 			t.Errorf("%s: %v", name, err)
@@ -121,5 +121,14 @@ func TestNewPlanAcceptsStoredSubjectDigests(t *testing.T) {
 		if _, err := bootstrap.NewPlan([]byte(contents), route(t), subjectKey(t, 1)); !errors.Is(err, bootstrap.ErrInvalidPlan) {
 			t.Errorf("%s: error = %v", name, err)
 		}
+	}
+}
+
+func TestNewPlanAllowsCloudWithoutAccounts(t *testing.T) {
+	t.Parallel()
+	plan, err := bootstrap.NewPlan([]byte(`{"format":"meshtransit-bootstrap/v1","profile":"cloud","accounts":[]}`),
+		route(t), subjectKey(t, 1))
+	if err != nil || len(plan.Accounts) != 0 {
+		t.Fatalf("cloud plan without accounts = %+v, %v", plan, err)
 	}
 }

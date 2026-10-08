@@ -39,6 +39,9 @@ type CallbackDependencies struct {
 	// Invitations accepts Workspace invitations at sign-in; nil refuses any
 	// sign-in that presents one.
 	Invitations InvitationAcceptor
+	// Signups gives a first sign-in without an invitation its own Account and
+	// Workspace; nil leaves self sign-up off.
+	Signups AccountSignupStore
 }
 
 // CallbackService owns bounded synchronous composition, not public admission.
@@ -56,6 +59,7 @@ type CallbackService struct {
 	issue        *IssueService
 	failure      *FailureService
 	invitations  InvitationAcceptor
+	signups      AccountSignupStore
 	subjectKeys  *SubjectKeyring
 }
 
@@ -131,7 +135,7 @@ func NewCallbackService(options CallbackOptions, deps CallbackDependencies) (*Ca
 	return &CallbackService{
 		options: options, clock: deps.Clock, observer: deps.Observer, active: make(chan struct{}, options.MaxConcurrent),
 		verification: verification, claim: claim, exchange: exchange, subject: subject, issue: issue, failure: failure,
-		invitations: deps.Invitations, subjectKeys: deps.SubjectKeys,
+		invitations: deps.Invitations, signups: deps.Signups, subjectKeys: deps.SubjectKeys,
 	}, nil
 }
 

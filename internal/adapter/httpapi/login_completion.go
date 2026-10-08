@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/meshtransit/meshtransit/internal/adapter/oidc"
 	"github.com/meshtransit/meshtransit/internal/identity/oidcauth"
+	"github.com/meshtransit/meshtransit/internal/ratelimit"
 )
 
 // AccountSessionCookieName carries only a freshly confirmed Core bearer.
@@ -192,6 +194,11 @@ func (completion *LoginCompletion) Complete(response http.ResponseWriter, reques
 			command = invited
 		}
 	}
+	if source, known := completion.signupSource(request); known {
+		if sourced, sourceErr := command.WithSignupSource(source); sourceErr == nil {
+			command = sourced
+		}
+	}
 	result, err := completion.options.Callback.CompleteBrowser(ctx, command)
 	if err != nil {
 		return safeCompletionError(err) // An error, including release failure, is never non-commit proof.
@@ -355,3 +362,33 @@ func completionOutcome(success LoginCompletionOutcome, err error) LoginCompletio
 }
 
 var _ BrowserLoginCompleter = (*oidcauth.CallbackService)(nil)
+
+// signupSource digests the network a completion came from (an IPv4 /24 or an
+// IPv6 /48) with the rate-limit key, so self sign-up can be bounded per
+// source without storing an address.
+func (completion *LoginCompletion) signupSource(request *http.Request) (oidcauth.SignupSource, bool) {
+	gate := completion.options.Admission
+	address, err := gate.clientIPs.Resolve(request)
+	if err != nil {
+		return oidcauth.SignupSource{}, false
+	}
+	bits := 48
+	if address.Unmap().Is4() {
+		address, bits = address.Unmap(), 24
+	}
+	network, err := address.Prefix(bits)
+	if err != nil {
+		return oidcauth.SignupSource{}, false
+	}
+	raw := "account-signup-source/v1\x00" + gate.options.CSRF.Route().DeploymentID().String() + "\x00" +
+		network.String()
+	subject, err := gate.options.RateLimitSubjects.Subject(ratelimit.SubjectSource, raw)
+	if err != nil {
+		return oidcauth.SignupSource{}, false
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(subject.DigestString())
+	if err != nil || len(decoded) != 32 {
+		return oidcauth.SignupSource{}, false
+	}
+	return oidcauth.NewSignupSource([32]byte(decoded)), true
+}

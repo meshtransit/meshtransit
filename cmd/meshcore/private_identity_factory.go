@@ -12,6 +12,7 @@ import (
 	postgresadapter "github.com/meshtransit/meshtransit/internal/adapter/postgres"
 	redisadapter "github.com/meshtransit/meshtransit/internal/adapter/redis"
 	"github.com/meshtransit/meshtransit/internal/audit/history"
+	"github.com/meshtransit/meshtransit/internal/config"
 	"github.com/meshtransit/meshtransit/internal/devicegroup"
 	"github.com/meshtransit/meshtransit/internal/devicelifecycle"
 	"github.com/meshtransit/meshtransit/internal/devicetag"
@@ -54,6 +55,8 @@ type privateIdentityFactoryDependencies struct {
 	Logger  *slog.Logger
 	// Mailer emails Workspace invitations; nil leaves them link-only.
 	Mailer invitation.Mailer
+	// Signup enables self sign-up with these limits; nil leaves it off.
+	Signup *config.SignupConfig
 }
 
 // This owner closes only its HTTP clients. Admission/drain and borrowed pool/
@@ -223,6 +226,16 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	var signups oidcauth.AccountSignupStore
+	if dependencies.Signup != nil {
+		signups, err = postgresadapter.NewAccountSignupStore(dependencies.Runtime, catalogOptions,
+			postgresadapter.SignupLimits{
+				SourcePerDay: dependencies.Signup.SourceDailyLimit, DeploymentPerHour: dependencies.Signup.HourlyLimit,
+			})
+		if err != nil {
+			return nil, errInvalidPrivateIdentityComposition
+		}
+	}
 	invitations, err := invitation.NewService(invitation.Options{
 		Store: invitationStore, Mailer: dependencies.Mailer, Clock: clock, ConsoleOrigin: application.Origin,
 		SendTimeout: 20 * time.Second, Logger: dependencies.Logger,
@@ -314,7 +327,7 @@ func composePrivateIdentityFactory(
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, AccessGraphs: policyExplainer, PolicySimulations: policySimulator,
-		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, DeviceGroups: deviceGroups, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore,
+		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, DeviceGroups: deviceGroups, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
 		SessionWorkspaces: sessionWorkspaces, ShareTargets: shareTargets,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,

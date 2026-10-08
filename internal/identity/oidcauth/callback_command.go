@@ -43,6 +43,9 @@ type CallbackCommandParams struct {
 	// Invitation is set when the browser presented a Workspace invitation;
 	// the sign-in then accepts it before resolving the subject.
 	Invitation InvitationProof
+	// SignupSource bounds self sign-up per source network; zero refuses a
+	// sign-up where one is enabled.
+	SignupSource SignupSource
 }
 
 // String redacts even invalid callback construction input.
@@ -81,7 +84,7 @@ func (command CallbackCommand) IsValid() bool {
 	case CallbackCodeReceived:
 		return params.Code.IsValid() && len(params.Code.value) <= maxCallbackCodeBytes
 	case CallbackProviderErrorReceived:
-		return params.Code == (Code{}) && !params.Invitation.IsValid()
+		return params.Code == (Code{}) && !params.Invitation.IsValid() && !params.SignupSource.IsValid()
 	default:
 		return false
 	}
@@ -111,3 +114,16 @@ func (CallbackCommand) LogValue() slog.Value { return slog.StringValue("[REDACTE
 
 // MarshalJSON refuses credential-bearing command serialization.
 func (CallbackCommand) MarshalJSON() ([]byte, error) { return nil, ErrInvalidCallback }
+
+// WithSignupSource returns the command with the source a first sign-in came
+// from; a provider error never carries one.
+func (command CallbackCommand) WithSignupSource(source SignupSource) (CallbackCommand, error) {
+	if !command.IsValid() || !source.IsValid() {
+		return CallbackCommand{}, ErrInvalidCallback
+	}
+	command.params.SignupSource = source
+	if !command.IsValid() {
+		return CallbackCommand{}, ErrInvalidCallback
+	}
+	return command, nil
+}

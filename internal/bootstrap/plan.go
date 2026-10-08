@@ -89,7 +89,10 @@ func NewPlan(contents []byte, route oidcauth.Route, key oidcauth.SubjectKey) (Pl
 		return Plan{}, ErrInvalidPlan
 	}
 	profile := deployment.Profile(file.Profile)
-	if !profile.IsValid() || len(file.Accounts) == 0 || len(file.Accounts) > maxAccounts {
+	// A Cloud deployment may start without Accounts: people sign up. A
+	// self-hosted one needs its first owner here.
+	noAccountsAllowed := profile == deployment.ProfileCloud
+	if !profile.IsValid() || (len(file.Accounts) == 0 && !noAccountsAllowed) || len(file.Accounts) > maxAccounts {
 		return Plan{}, ErrInvalidPlan
 	}
 	plan := Plan{Profile: profile, Route: route, Accounts: make([]Account, 0, len(file.Accounts))}

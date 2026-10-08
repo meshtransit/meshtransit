@@ -89,8 +89,11 @@ type privateIdentityPorts struct {
 	MemberLifecycle     httpapi.MemberLifecycleManager
 	Invitations         httpapi.InvitationManager
 	// InvitationPreviews and InvitationAcceptor serve links and sign-in.
-	InvitationPreviews    httpapi.InvitationPreviewer
-	InvitationAcceptor    oidcauth.InvitationAcceptor
+	InvitationPreviews httpapi.InvitationPreviewer
+	InvitationAcceptor oidcauth.InvitationAcceptor
+	// AccountSignups creates an Account at a first sign-in; nil leaves self
+	// sign-up off.
+	AccountSignups        oidcauth.AccountSignupStore
 	SessionWorkspaces     httpapi.SessionWorkspaceSelector
 	ShareTargets          httpapi.ShareTargetResolver
 	PolicyApprovals       httpapi.PolicyApprovalWorkflow
@@ -156,7 +159,7 @@ func composePrivateIdentity(
 		DigestKey: keys.transaction, VerifierCipher: keys.verifier, SubjectKeys: keys.subjects,
 		SessionKeys: keys.sessions, ProviderSessions: keys.providerSessions, Clock: ports.Clock,
 		Observer: callbackMetrics, SubjectObserver: subjectMetrics, IssueObserver: issueMetrics,
-		Invitations: ports.InvitationAcceptor,
+		Invitations: ports.InvitationAcceptor, Signups: ports.AccountSignups,
 	})
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
