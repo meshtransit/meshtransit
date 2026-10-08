@@ -57,7 +57,7 @@ func bootstrapDeploymentRoute(t *testing.T, deploymentPublicID, issuer string) o
 	return route
 }
 
-func bootstrapPlan(t *testing.T, route oidcauth.Route) bootstrap.Plan {
+func bootstrapSubjectKey(t *testing.T) oidcauth.SubjectKey {
 	t.Helper()
 	keyID, err := oidcauth.NewDigestKeyID("subject-bootstrap")
 	if err != nil {
@@ -69,6 +69,12 @@ func bootstrapPlan(t *testing.T, route oidcauth.Route) bootstrap.Plan {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return key
+}
+
+func bootstrapPlan(t *testing.T, route oidcauth.Route) bootstrap.Plan {
+	t.Helper()
+	key := bootstrapSubjectKey(t)
 	plan, err := bootstrap.NewPlan([]byte(`{"format":"meshtransit-bootstrap/v1","profile":"cloud",
 "minimum_assurance":null,"accounts":[
 {"subject":"owner-subject-1","display_name":"Owner One","workspace_name":"Default"},
@@ -214,8 +220,20 @@ func assertPostgreSQLBootstrapFreshDeployment(ctx context.Context, t *testing.T,
 	}
 	freshOptions := options
 	freshOptions.Database = database
-	plan := bootstrapPlan(t, bootstrapDeploymentRoute(t, bootstrapFreshDeploymentPublicID, bootstrapIssuer))
-	report, err := postgresadapter.ApplyBootstrap(ctx, freshOptions, plan, false)
+	route := bootstrapDeploymentRoute(t, bootstrapFreshDeploymentPublicID, bootstrapIssuer)
+	// A Cloud deployment can start with no Accounts and let people sign up.
+	empty, err := bootstrap.NewPlan([]byte(`{"format":"meshtransit-bootstrap/v1","profile":"cloud","accounts":[]}`),
+		route, bootstrapSubjectKey(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := postgresadapter.ApplyBootstrap(ctx, freshOptions, empty, false)
+	if err != nil || !report.DeploymentCreated || !report.ProviderCreated || report.AccountsCreated != 0 ||
+		report.WorkspacesCreated != 0 {
+		t.Fatalf("fresh Deployment without Accounts = %+v, %v", report, err)
+	}
+	plan := bootstrapPlan(t, route)
+	report, err = postgresadapter.ApplyBootstrap(ctx, freshOptions, plan, false)
 	if err != nil || !report.DeploymentCreated || !report.ProviderCreated || report.AccountsCreated != 2 ||
 		report.WorkspacesCreated != 2 {
 		t.Fatalf("fresh Deployment dry run = %+v, %v", report, err)

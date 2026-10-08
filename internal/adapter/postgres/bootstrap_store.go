@@ -44,7 +44,9 @@ type BootstrapReport struct {
 // constraint is evaluated, and it rolls back.
 func ApplyBootstrap(ctx context.Context, options MigrationOptions, plan bootstrap.Plan, commit bool) (
 	_ BootstrapReport, resultErr error) {
-	if ctx == nil || len(plan.Accounts) == 0 || !plan.Route.IsValid() {
+	// bootstrap.NewPlan already decides whether a plan may omit Accounts
+	// (Cloud may, self-hosted may not).
+	if ctx == nil || !plan.Profile.IsValid() || !plan.Route.IsValid() {
 		return BootstrapReport{}, ErrInvalidMigrationOptions
 	}
 	password, err := options.PasswordFile.Read()
