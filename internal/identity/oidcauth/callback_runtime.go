@@ -36,6 +36,9 @@ type CallbackDependencies struct {
 	Observer         CallbackObserver
 	SubjectObserver  SubjectResolutionObserver
 	IssueObserver    IssueObserver
+	// Invitations accepts Workspace invitations at sign-in; nil refuses any
+	// sign-in that presents one.
+	Invitations InvitationAcceptor
 }
 
 // CallbackService owns bounded synchronous composition, not public admission.
@@ -52,6 +55,8 @@ type CallbackService struct {
 	subject      *SubjectResolutionService
 	issue        *IssueService
 	failure      *FailureService
+	invitations  InvitationAcceptor
+	subjectKeys  *SubjectKeyring
 }
 
 // NewCallbackService validates all dependencies before effects. No service
@@ -126,6 +131,7 @@ func NewCallbackService(options CallbackOptions, deps CallbackDependencies) (*Ca
 	return &CallbackService{
 		options: options, clock: deps.Clock, observer: deps.Observer, active: make(chan struct{}, options.MaxConcurrent),
 		verification: verification, claim: claim, exchange: exchange, subject: subject, issue: issue, failure: failure,
+		invitations: deps.Invitations, subjectKeys: deps.SubjectKeys,
 	}, nil
 }
 

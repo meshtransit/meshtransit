@@ -184,6 +184,14 @@ func (completion *LoginCompletion) Complete(response http.ResponseWriter, reques
 	if err != nil {
 		return ErrInvalidLoginCompletion
 	}
+	// A provider error never accepts an invitation; the cookie then stays
+	// until it expires or the next completion clears it.
+	_, invitationCookieErr := request.Cookie(InvitationCookieName)
+	if token, presented := invitationProofFromRequest(request); presented {
+		if invited, inviteErr := command.WithInvitation(oidcauth.NewInvitationProof(token.Digest())); inviteErr == nil {
+			command = invited
+		}
+	}
 	result, err := completion.options.Callback.CompleteBrowser(ctx, command)
 	if err != nil {
 		return safeCompletionError(err) // An error, including release failure, is never non-commit proof.
@@ -202,6 +210,9 @@ func (completion *LoginCompletion) Complete(response http.ResponseWriter, reques
 	status := http.StatusForbidden
 	cookies := []*http.Cookie{oidc.ExpiredPreAuthCookie(), oidc.ExpiredLoginCallbackCookie(),
 		oidc.ExpiredLoginInitiationCookie()}
+	if invitationCookieErr == nil {
+		cookies = append(cookies, expiredInvitationCookie())
+	}
 	outcome = LoginCompletionNoGrant
 	if result.Issued().IsValid() {
 		body, err = json.Marshal(struct {

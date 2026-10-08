@@ -43,11 +43,12 @@ func composeLoginDocument(asset, callbackPath string) ([]byte, error) {
 		return nil, ErrInvalidLoginProfile
 	}
 	paths, err := managementObject(document["paths"])
-	if err != nil || len(paths) != 5 {
+	if err != nil || len(paths) != 6 {
 		return nil, ErrInvalidLoginProfile
 	}
 	for route, operations := range map[string]map[string]string{
 		"/auth/v1/login/prepare":          {"post": "prepareBrowserLogin"},
+		"/auth/v1/invitations/prepare":    {"post": "prepareInvitationSignIn"},
 		"/auth/v1/login/start":            {"post": "startBrowserLogin"},
 		loginCallbackTemplatePath:         {"get": "captureBrowserLoginCallback"},
 		"/auth/v1/login/continue/prepare": {"post": "prepareBrowserLoginContinuation"},
@@ -90,7 +91,8 @@ func composeLoginDocument(asset, callbackPath string) ([]byte, error) {
 func validLoginOperationSecurity(body json.RawMessage, operationID string) bool {
 	expected := []string{}
 	switch operationID {
-	case "prepareBrowserLogin", "presentBrowserLoginContinuation", "headBrowserLoginContinuation":
+	case "prepareBrowserLogin", "presentBrowserLoginContinuation", "headBrowserLoginContinuation",
+		"prepareInvitationSignIn":
 	case "startBrowserLogin":
 		expected = []string{"loginInitiationCookie", "loginIntentProof"}
 	case "captureBrowserLoginCallback":

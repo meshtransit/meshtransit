@@ -25,6 +25,7 @@ type LoginDispatcher struct {
 	browser      *BrowserLogin
 	management   *BrowserManagement
 	registration *BrowserRegistrationPage
+	invitations  *InvitationPrepareHandler
 	metrics      *loginDispatchTelemetry
 }
 
@@ -87,13 +88,25 @@ func (dispatcher *LoginDispatcher) WithRegistration(
 	return withPage, nil
 }
 
+// WithInvitations adds the invitation prepare endpoint on the same host.
+func (dispatcher *LoginDispatcher) WithInvitations(handler *InvitationPrepareHandler) (*LoginDispatcher, error) {
+	if dispatcher == nil || dispatcher.metrics == nil || handler == nil || handler.slots == nil ||
+		handler.host != dispatcher.browser.reader.host {
+		return nil, ErrInvalidLoginDispatcher
+	}
+	copied := *dispatcher
+	copied.invitations = handler
+	return &copied, nil
+}
+
 func validDispatcherCallbackPath(value string) bool {
 	if len(value) > 256 || !strings.HasPrefix(value, "/auth/") || !canonicalCallbackPath(value) {
 		return false
 	}
 	switch value {
 	case LoginPreparePath, LoginStartPath, LoginCallbackContinuePath, LoginContinuationPreparePath,
-		AccountSessionCSRFPreparePath, AccountSessionLogoutPath, AccountSessionManagementScopesPath:
+		AccountSessionCSRFPreparePath, AccountSessionLogoutPath, AccountSessionManagementScopesPath,
+		InvitationPreparePath:
 		return false
 	default:
 		return true
@@ -159,6 +172,13 @@ func (dispatcher *LoginDispatcher) Handle(response http.ResponseWriter, request 
 		}
 		operation = "capture"
 		return browser.Capture(response, request)
+	case InvitationPreparePath:
+		if request.Method != http.MethodPost || dispatcher.invitations == nil {
+			return ErrInvalidLoginDispatcher
+		}
+		operation = "invitation_prepare"
+		dispatcher.invitations.ServeHTTP(response, request)
+		return nil
 	case LoginContinuationPreparePath:
 		if request.Method != http.MethodPost {
 			return ErrInvalidLoginDispatcher

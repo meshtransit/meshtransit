@@ -73,6 +73,10 @@ func (store *fakeStore) Change(_ context.Context, change Change) (ChangeResult, 
 	}, nil
 }
 
+func (store *fakeStore) PreviewInvitation(context.Context, [32]byte, time.Time) (Preview, error) {
+	return Preview{WorkspaceName: "Test", Email: "member@example.com", ExpiresAt: testNow.Add(Lifetime)}, nil
+}
+
 func (store *fakeStore) List(context.Context, accountsession.Session, workspace.ID, time.Time) ([]Invitation, error) {
 	return []Invitation{}, nil
 }

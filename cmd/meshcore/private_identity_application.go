@@ -47,47 +47,50 @@ type privateIdentityManagementOptions struct {
 // Production binding must supply current durable authority and shared budgets;
 // this helper neither opens dependencies nor probes their operational readiness.
 type privateIdentityPorts struct {
-	Admission             httpapi.LoginRouteAdmission
-	Metadata              oidcauth.MetadataResolver
-	CreationClock         oidcauth.CreationClock
-	Creations             oidcauth.Transactions
-	Committed             oidcauth.CommittedCreationResolver
-	Pending               oidcauth.PendingLoader
-	Claims                oidcauth.ClaimTransactions
-	Failures              oidcauth.FailureTransactions
-	Issues                oidcauth.IssueTransactions
-	Provider              oidcauth.TokenAuthenticator
-	Subjects              oidcauth.LoginSubjectResolver
-	SessionAuthority      accountsession.Resolver
-	SessionRevocations    accountsession.Revoker
-	SessionScopes         httpapi.SessionManagementScopes
-	DeviceInventory       httpapi.SessionDeviceInventory
-	SessionCapabilities   httpapi.SessionDeploymentCapabilities
-	StartIDs              oidcauth.StartIDGenerator
-	Secrets               oidcauth.SecretsGenerator
-	ClaimIDs              oidcauth.ClaimIDGenerator
-	IssueMaterial         oidcauth.IssueMaterialGenerator
-	Revocations           httpapi.DeviceRevoker
-	PolicyPublications    httpapi.PolicyPublisher
-	PolicyCompilations    httpapi.PolicyCompiler
-	PolicyExplanations    httpapi.PolicyExplainer
-	AccessGraphs          httpapi.AccessGraphLister
-	PolicySimulations     httpapi.PolicySimulator
-	ActivePolicies        httpapi.ActivePolicyReader
-	WorkspaceRenames      httpapi.WorkspaceRenamer
-	WorkspaceRoles        httpapi.WorkspaceRoleManager
-	WorkspaceCreations    httpapi.WorkspaceCreator
-	NetworkCreations      httpapi.NetworkCreator
-	AliasRanges           httpapi.NetworkAliasRanges
-	AuditHistory          httpapi.AuditHistoryReader
-	AuditExports          httpapi.AuditExporter
-	Guardrails            httpapi.GuardrailManager
-	DeviceGroups          httpapi.DeviceGroupManager
-	IdentityGroups        httpapi.IdentityGroupManager
-	DeviceTags            httpapi.DeviceTagManager
-	DeviceLifecycle       httpapi.DeviceLifecycleManager
-	MemberLifecycle       httpapi.MemberLifecycleManager
-	Invitations           httpapi.InvitationManager
+	Admission           httpapi.LoginRouteAdmission
+	Metadata            oidcauth.MetadataResolver
+	CreationClock       oidcauth.CreationClock
+	Creations           oidcauth.Transactions
+	Committed           oidcauth.CommittedCreationResolver
+	Pending             oidcauth.PendingLoader
+	Claims              oidcauth.ClaimTransactions
+	Failures            oidcauth.FailureTransactions
+	Issues              oidcauth.IssueTransactions
+	Provider            oidcauth.TokenAuthenticator
+	Subjects            oidcauth.LoginSubjectResolver
+	SessionAuthority    accountsession.Resolver
+	SessionRevocations  accountsession.Revoker
+	SessionScopes       httpapi.SessionManagementScopes
+	DeviceInventory     httpapi.SessionDeviceInventory
+	SessionCapabilities httpapi.SessionDeploymentCapabilities
+	StartIDs            oidcauth.StartIDGenerator
+	Secrets             oidcauth.SecretsGenerator
+	ClaimIDs            oidcauth.ClaimIDGenerator
+	IssueMaterial       oidcauth.IssueMaterialGenerator
+	Revocations         httpapi.DeviceRevoker
+	PolicyPublications  httpapi.PolicyPublisher
+	PolicyCompilations  httpapi.PolicyCompiler
+	PolicyExplanations  httpapi.PolicyExplainer
+	AccessGraphs        httpapi.AccessGraphLister
+	PolicySimulations   httpapi.PolicySimulator
+	ActivePolicies      httpapi.ActivePolicyReader
+	WorkspaceRenames    httpapi.WorkspaceRenamer
+	WorkspaceRoles      httpapi.WorkspaceRoleManager
+	WorkspaceCreations  httpapi.WorkspaceCreator
+	NetworkCreations    httpapi.NetworkCreator
+	AliasRanges         httpapi.NetworkAliasRanges
+	AuditHistory        httpapi.AuditHistoryReader
+	AuditExports        httpapi.AuditExporter
+	Guardrails          httpapi.GuardrailManager
+	DeviceGroups        httpapi.DeviceGroupManager
+	IdentityGroups      httpapi.IdentityGroupManager
+	DeviceTags          httpapi.DeviceTagManager
+	DeviceLifecycle     httpapi.DeviceLifecycleManager
+	MemberLifecycle     httpapi.MemberLifecycleManager
+	Invitations         httpapi.InvitationManager
+	// InvitationPreviews and InvitationAcceptor serve links and sign-in.
+	InvitationPreviews    httpapi.InvitationPreviewer
+	InvitationAcceptor    oidcauth.InvitationAcceptor
 	SessionWorkspaces     httpapi.SessionWorkspaceSelector
 	ShareTargets          httpapi.ShareTargetResolver
 	PolicyApprovals       httpapi.PolicyApprovalWorkflow
@@ -153,6 +156,7 @@ func composePrivateIdentity(
 		DigestKey: keys.transaction, VerifierCipher: keys.verifier, SubjectKeys: keys.subjects,
 		SessionKeys: keys.sessions, ProviderSessions: keys.providerSessions, Clock: ports.Clock,
 		Observer: callbackMetrics, SubjectObserver: subjectMetrics, IssueObserver: issueMetrics,
+		Invitations: ports.InvitationAcceptor,
 	})
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
@@ -228,6 +232,20 @@ func composePrivateIdentity(
 	dispatcher, err := httpapi.NewLoginDispatcher(login, management)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
+	}
+	if ports.InvitationPreviews != nil {
+		invitationPrepare, prepareErr := httpapi.NewInvitationPrepareHandler(httpapi.InvitationPrepareOptions{
+			Origin: options.Origin, DeploymentID: options.Route.DeploymentID(), Previewer: ports.InvitationPreviews,
+			RateLimitSubjects: keys.rateLimit, RateLimiter: ports.RateLimiter,
+			SourceRateLimit: options.Browser.SourceRateLimit, TrustedProxyPrefixes: options.Browser.TrustedProxyPrefixes,
+			RequestTimeout: options.Browser.RequestTimeout, MaxConcurrentRequests: options.Browser.MaxConcurrent,
+		})
+		if prepareErr != nil {
+			return nil, errInvalidPrivateIdentityComposition
+		}
+		if dispatcher, err = dispatcher.WithInvitations(invitationPrepare); err != nil {
+			return nil, errInvalidPrivateIdentityComposition
+		}
 	}
 	loginDocument, err := openapi.LoginDocument(openapi.ManagementProfileConsoleCookiePrivateV1, dispatcher.CallbackPath())
 	if err != nil {

@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 128 {
-		t.Fatalf("len(Catalog()) = %d, want 128", len(catalog))
+	if len(catalog) != 129 {
+		t.Fatalf("len(Catalog()) = %d, want 129", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 128 {
-		t.Fatalf("LatestVersion() = %d, want 128", LatestVersion())
+	if LatestVersion() != 129 {
+		t.Fatalf("LatestVersion() = %d, want 129", LatestVersion())
 	}
 }
 
@@ -3074,5 +3074,25 @@ func TestWorkspaceInvitations(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "GRANT SELECT") || strings.Contains(migration.SQL, "token TEXT") {
 		t.Error("schema 128 must not grant table access or store a token")
+	}
+}
+
+func TestWorkspaceInvitationAcceptance(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[128]
+	if migration.Version != 129 {
+		t.Fatalf("migration 129 = %+v", migration)
+	}
+	for _, required := range []string{
+		"CREATE FUNCTION mesh_ops.preview_workspace_invitation_v1(",
+		"CREATE FUNCTION mesh_ops.accept_workspace_invitation_v1(",
+		"AND auth.state = 'consuming' AND auth.version = p_transaction_version",
+		"AND auth.principal_id IS NULL AND auth.binding_semantic_hash = p_binding_hash",
+		"a suspended member cannot accept an invitation",
+		"SET state = 'accepted'",
+	} {
+		if !strings.Contains(migration.SQL, required) {
+			t.Errorf("schema 129 missing %q", required)
+		}
 	}
 }

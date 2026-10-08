@@ -31,6 +31,128 @@
         }
       }
     },
+    "/auth/v1/invitations/prepare": {
+      "post": {
+        "operationId": "prepareInvitationSignIn",
+        "summary": "Preview a Workspace invitation and bind it to the next sign-in",
+        "description": "Shared source budget precedes the lookup. Answers only a pending, unexpired invitation: the Workspace, the inviter, the invited address and the role; anything else is 404 without detail. Issues __Host-mt_invite, Secure/HttpOnly/SameSite=Lax/Path=/, no Domain, lasting 10 minutes; the next sign-in completion in this browser accepts the invitation and clears it. Grants nothing by itself.",
+        "security": [],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LoginOrigin"
+          },
+          {
+            "$ref": "#/components/parameters/LoginChannel"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "x-meshtransit-max-bytes": 128,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "invitation"
+                ],
+                "properties": {
+                  "invitation": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{43}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The invitation a link names, and the invitation cookie.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/LoginNoStore"
+              },
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string",
+                  "maxLength": 4095
+                },
+                "description": "Only the host-only invitation binding, never a Core Session."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "workspace_name",
+                    "inviter_name",
+                    "email",
+                    "role",
+                    "expires_at"
+                  ],
+                  "properties": {
+                    "workspace_name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    },
+                    "inviter_name": {
+                      "type": "string",
+                      "maxLength": 128
+                    },
+                    "email": {
+                      "type": "string",
+                      "minLength": 3,
+                      "maxLength": 254
+                    },
+                    "role": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "admin",
+                        "network_admin",
+                        "it_admin",
+                        "security_admin",
+                        "billing_admin",
+                        "auditor",
+                        null
+                      ]
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/LoginHTTPDenied"
+          },
+          "403": {
+            "$ref": "#/components/responses/LoginHTTPDenied"
+          },
+          "429": {
+            "$ref": "#/components/responses/LoginHTTPLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/LoginHTTPDenied"
+          },
+          "default": {
+            "$ref": "#/components/responses/LoginDispatchFailure"
+          },
+          "404": {
+            "description": "invitation_unavailable: the link is unknown, used, revoked or expired."
+          }
+        }
+      }
+    },
     "/auth/v1/login/start": {
       "post": {
         "operationId": "startBrowserLogin",

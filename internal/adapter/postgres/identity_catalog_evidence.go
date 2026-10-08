@@ -71,6 +71,10 @@ type catalogEvent struct {
 	outboxClass    string
 	outbox         any
 	networkVersion int64
+	// actor and deployment replace the session's when no session exists yet,
+	// such as an invitation accepted at sign-in.
+	actor      publicid.ID
+	deployment string
 }
 
 func appendCatalogEvent(ctx context.Context, tx accountSessionTransaction, streamID, sequence int64,
@@ -105,6 +109,9 @@ func appendCatalogEvent(ctx context.Context, tx accountSessionTransaction, strea
 		networkRevision = event.networkVersion
 	}
 	principal := publicid.ID(event.session.PrincipalID())
+	if event.actor.IsValid() {
+		principal = event.actor
+	}
 	eventHash, err := audit.HashEvent(audit.EventHashMaterial{
 		PreviousHash: previousHash, EventID: eventID, ChangeID: event.changeID,
 		AggregateKind: event.aggregateKind, AggregateID: event.aggregateID, AggregateVersion: event.version,
@@ -134,7 +141,11 @@ func appendWorkspaceCatalogEvent(ctx context.Context, tx accountSessionTransacti
 	event catalogEvent) error {
 	var streamID, sequence int64
 	var previous []byte
-	if err := tx.QueryRow(ctx, lockWorkspaceStreamHeadSQL, event.session.DeploymentID().String(),
+	deployment := event.deployment
+	if deployment == "" {
+		deployment = event.session.DeploymentID().String()
+	}
+	if err := tx.QueryRow(ctx, lockWorkspaceStreamHeadSQL, deployment,
 		workspaceID.String()).Scan(&streamID, &sequence, &previous); err != nil {
 		return err
 	}

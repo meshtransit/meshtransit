@@ -13,11 +13,35 @@ import (
 )
 
 // Store applies one change or lists a Workspace's invitations; PostgreSQL
-// authorizes both.
+// authorizes both. PreviewInvitation answers only a pending, unexpired
+// invitation for the digest.
 type Store interface {
 	Change(ctx context.Context, change Change) (ChangeResult, error)
 	List(ctx context.Context, session accountsession.Session, workspaceID workspace.ID, now time.Time) (
 		[]Invitation, error)
+	PreviewInvitation(ctx context.Context, digest [32]byte, now time.Time) (Preview, error)
+}
+
+// Preview is what the holder of a link sees before signing in.
+type Preview struct {
+	WorkspaceName string
+	InviterName   string
+	Email         string
+	Role          string
+	ExpiresAt     time.Time
+}
+
+// Preview reads the invitation a link names. Any problem with the token is
+// ErrNotFound, so a link reveals nothing more than that it works.
+func (service *Service) Preview(ctx context.Context, token Token) (Preview, error) {
+	if ctx == nil || service == nil || !token.IsValid() {
+		return Preview{}, ErrNotFound
+	}
+	preview, err := service.store.PreviewInvitation(ctx, token.Digest(), service.clock.Now().UTC())
+	if errors.Is(err, ErrInvalid) {
+		return Preview{}, ErrNotFound
+	}
+	return preview, err
 }
 
 // Mailer delivers one rendered message (SES API or SMTP).

@@ -40,6 +40,9 @@ type CallbackCommandParams struct {
 	PreAuthCookie PreAuthCookie
 	Code          Code
 	Kind          CallbackKind
+	// Invitation is set when the browser presented a Workspace invitation;
+	// the sign-in then accepts it before resolving the subject.
+	Invitation InvitationProof
 }
 
 // String redacts even invalid callback construction input.
@@ -78,10 +81,23 @@ func (command CallbackCommand) IsValid() bool {
 	case CallbackCodeReceived:
 		return params.Code.IsValid() && len(params.Code.value) <= maxCallbackCodeBytes
 	case CallbackProviderErrorReceived:
-		return params.Code == (Code{})
+		return params.Code == (Code{}) && !params.Invitation.IsValid()
 	default:
 		return false
 	}
+}
+
+// WithInvitation returns the command with a presented invitation; a provider
+// error never carries one.
+func (command CallbackCommand) WithInvitation(proof InvitationProof) (CallbackCommand, error) {
+	if !command.IsValid() || !proof.IsValid() {
+		return CallbackCommand{}, ErrInvalidCallback
+	}
+	command.params.Invitation = proof
+	if !command.IsValid() {
+		return CallbackCommand{}, ErrInvalidCallback
+	}
+	return command, nil
 }
 
 // String prevents accidental callback credential disclosure.

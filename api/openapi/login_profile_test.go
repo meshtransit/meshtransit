@@ -64,7 +64,7 @@ func TestLoginDocumentDescribesExactPrivateMethodsAndIntent(t *testing.T) {
 		t.Fatal("document introduced deployment/provider topology")
 	}
 	paths := profileMap(t, document, "paths")
-	if len(paths) != 5 || paths["/auth/v1/login/callback"] != nil {
+	if len(paths) != 6 || paths["/auth/v1/login/callback"] != nil {
 		t.Fatal("callback remapping left an alias or added another route")
 	}
 	for _, test := range []struct {
@@ -72,6 +72,7 @@ func TestLoginDocumentDescribesExactPrivateMethodsAndIntent(t *testing.T) {
 		security         []any
 	}{
 		{path: "/auth/v1/login/prepare", method: "post", id: "prepareBrowserLogin", security: []any{}},
+		{path: "/auth/v1/invitations/prepare", method: "post", id: "prepareInvitationSignIn", security: []any{}},
 		{path: "/auth/v1/login/start", method: "post", id: "startBrowserLogin", security: []any{
 			map[string]any{"loginInitiationCookie": []any{}, "loginIntentProof": []any{}},
 		}},
@@ -104,7 +105,15 @@ func TestLoginDocumentDescribesExactPrivateMethodsAndIntent(t *testing.T) {
 		if test.method == "post" {
 			request := profileMap(t, operation, "requestBody")
 			schema := profileMap(t, profileMap(t, profileMap(t, request, "content"), "application/json"), "schema")
-			if request["required"] != true || request["x-meshtransit-max-bytes"] != float64(32) ||
+			if test.id == "prepareInvitationSignIn" {
+				// Exactly one bounded token; nothing selects a Workspace or route.
+				properties := profileMap(t, schema, "properties")
+				if request["required"] != true || request["x-meshtransit-max-bytes"] != float64(128) ||
+					schema["type"] != "object" || schema["additionalProperties"] != false || len(properties) != 1 ||
+					properties["invitation"] == nil {
+					t.Fatal("invitation prepare accepts selectors or an unbounded body")
+				}
+			} else if request["required"] != true || request["x-meshtransit-max-bytes"] != float64(32) ||
 				schema["type"] != "object" || schema["maxProperties"] != float64(0) || schema["additionalProperties"] != false {
 				t.Fatal("login POST accepts selectors or an unbounded body")
 			}
@@ -261,7 +270,7 @@ func FuzzLoginDocumentSelection(f *testing.F) {
 			t.Fatal("arbitrary selection widened bounded private contract")
 		}
 		paths := profileMap(t, profileObject(t, body), "paths")
-		if len(paths) != 5 || paths[path] == nil {
+		if len(paths) != 6 || paths[path] == nil {
 			t.Fatal("document callback diverged from selected path")
 		}
 	})
