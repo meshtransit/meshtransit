@@ -500,6 +500,7 @@ func Catalog() []Migration {
 		newMigration(131, "Self sign-up with a default Workspace", accountSelfSignupSQL),
 		newMigration(132, "Cloud sign-in before the first Workspace", cloudLoginWithoutWorkspaceSQL),
 		newMigration(133, "Read policy distribution status", deviceDistributionReadSQL),
+		newMigration(134, "Access edge ledger and history read", accessEdgeLedgerSQL),
 	}
 }
 
@@ -678,3 +679,6 @@ var cloudLoginWithoutWorkspaceSQL string
 
 //go:embed 000133_device_distribution_read.up.sql
 var deviceDistributionReadSQL string
+
+//go:embed 000134_access_edge_ledger.up.sql
+var accessEdgeLedgerSQL string

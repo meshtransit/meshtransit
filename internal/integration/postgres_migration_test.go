@@ -343,6 +343,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLConsoleManagementScopes(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLConsoleDeviceInventory(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLDeviceDistribution(ctx, t, adminConnection, runtimePool)
+	assertPostgreSQLAccessEdgeLedger(ctx, t, adminConnection, workerPool, runtimePool)
 	assertWorkspaceOwnerAuthority(ctx, t, adminConnection)
 	assertBuiltinWorkspaceRoles(ctx, t, adminConnection)
 	assertTenantDisplayIdentities(ctx, t, adminConnection)

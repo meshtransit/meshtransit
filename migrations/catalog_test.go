@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 133 {
-		t.Fatalf("len(Catalog()) = %d, want 133", len(catalog))
+	if len(catalog) != 134 {
+		t.Fatalf("len(Catalog()) = %d, want 134", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 133 {
-		t.Fatalf("LatestVersion() = %d, want 133", LatestVersion())
+	if LatestVersion() != 134 {
+		t.Fatalf("LatestVersion() = %d, want 134", LatestVersion())
 	}
 }
 
@@ -3190,5 +3190,37 @@ func TestDeviceDistributionRead(t *testing.T) {
 	}
 	if strings.Contains(migration.SQL, "CREATE OR REPLACE") {
 		t.Error("schema 133 only adds a new read function")
+	}
+}
+
+func TestAccessEdgeLedger(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[133]
+	if migration.Version != 134 {
+		t.Fatalf("migration 134 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh_ops.network_revision_history",
+		"AFTER INSERT OR UPDATE OF network_revision ON mesh_ops.network_revision",
+		"CREATE UNIQUE INDEX access_edge_history_open_uidx",
+		"mesh_audit.capture_authority_mutation('access_edge_snapshot', 'public_id')",
+		"pg_try_advisory_xact_lock",
+		"source.state = 'active' AND source.expires_at > p_now",
+		"contract.state = 'active' AND contract.expires_at > p_now",
+		"'access_graph.recorded', 'system.reconcile'",
+		"INTERVAL '13 months'",
+		"'policy.read'",
+		"'device.read'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.record_access_edges_v1(UUID, UUID, UUID, UUID, UUID) TO mesh_worker;",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 134 must contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 134 must not contain %q", forbidden)
+		}
 	}
 }

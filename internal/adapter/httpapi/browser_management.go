@@ -57,13 +57,15 @@ type BrowserManagementOptions struct {
 	Scopes     SessionManagementScopes
 	Inventory  SessionDeviceInventory
 	// Distribution is optional; without it the status route is not served.
-	Distribution  SessionDeviceDistribution
-	Capabilities  SessionDeploymentCapabilities
-	DeploymentID  deployment.ID
-	Origin        string
-	Key           BrowserLoginKey
-	Clock         accountsession.Clock
-	ProofLifetime time.Duration
+	Distribution SessionDeviceDistribution
+	// AccessGraphHistory is optional; without it the ledger route is not served.
+	AccessGraphHistory SessionAccessGraphHistory
+	Capabilities       SessionDeploymentCapabilities
+	DeploymentID       deployment.ID
+	Origin             string
+	Key                BrowserLoginKey
+	Clock              accountsession.Clock
+	ProofLifetime      time.Duration
 }
 
 // BrowserManagement owns cookie-only intent transport around the same resource API.
@@ -74,6 +76,7 @@ type BrowserManagement struct {
 	scopes       SessionManagementScopes
 	inventory    SessionDeviceInventory
 	distribution SessionDeviceDistribution
+	history      SessionAccessGraphHistory
 	capabilities SessionDeploymentCapabilities
 	deploymentID deployment.ID
 	origin, host string
@@ -134,7 +137,7 @@ func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement,
 		return nil, ErrInvalidBrowserManagement
 	}
 	browser := &BrowserManagement{management: handler, logout: options.Logout, scopes: options.Scopes, inventory: options.Inventory,
-		distribution: options.Distribution, capabilities: options.Capabilities,
+		distribution: options.Distribution, history: options.AccessGraphHistory, capabilities: options.Capabilities,
 		deploymentID: options.DeploymentID,
 		origin:       options.Origin, host: origin.Host, keyID: options.Key.ID, clock: options.Clock,
 		lifetime: options.ProofLifetime, entropy: rand.Reader, telemetry: NewBrowserManagementTelemetry(),
@@ -249,6 +252,8 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	inventoryRead := inventoryMatched && !nilContinuationDependency(browser.inventory)
 	distributionScope, distributionMatched := parseDeviceDistributionPath(request)
 	distributionRead := distributionMatched && !nilContinuationDependency(browser.distribution)
+	historyScope, historyMatched := parseAccessGraphHistoryPath(request)
+	historyRead := historyMatched && !nilContinuationDependency(browser.history)
 	deploymentCapabilities := request.URL.Path == DeploymentCapabilitiesPath && request.Method == http.MethodGet
 	_, device := parseDeviceRevokePath(request)
 	_, policy := parsePolicyPublishPath(request)
@@ -269,7 +274,8 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		isMemberLifecycleOperation(request) ||
 		isInvitationOperation(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
-	if !prepare && !logout && !managementScopes && !inventoryRead && !distributionRead && !deploymentCapabilities && !device && !policy && !simulation &&
+	if !prepare && !logout && !managementScopes && !inventoryRead && !distributionRead && !historyRead &&
+		!deploymentCapabilities && !device && !policy && !simulation &&
 		!approval && !accessGraph && !accessGraphList && !policyRead && !workspaceRename && !workspaceRoles && !resourceSharing {
 		return ErrInvalidBrowserManagement
 	}
@@ -324,6 +330,10 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		}
 	} else if distributionRead {
 		if err := browser.readDeviceDistribution(ctx, candidate, request, admission, distributionScope); err != nil {
+			return err
+		}
+	} else if historyRead {
+		if err := browser.readAccessGraphHistory(ctx, candidate, request, admission, historyScope); err != nil {
 			return err
 		}
 	} else if deploymentCapabilities {
@@ -467,6 +477,8 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	inventoryRead := inventoryMatched && !nilContinuationDependency(browser.inventory)
 	_, distributionMatched := parseDeviceDistributionPath(request)
 	distributionRead := distributionMatched && !nilContinuationDependency(browser.distribution)
+	_, historyMatched := parseAccessGraphHistoryPath(request)
+	historyRead := historyMatched && !nilContinuationDependency(browser.history)
 	deploymentCapabilityRead := request.Method == http.MethodGet && target.Path == DeploymentCapabilitiesPath
 	_, policyMatched := parseActivePolicyPath(request)
 	policyRead := policyMatched && request.Method == http.MethodGet
@@ -480,14 +492,15 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 			isNetworkAliasRangeRead(request) || isGuardrailRead(request) || isInvitationRead(request))
 	auditRead := isAuditEventListRead(request) || isAuditEventExportRead(request) || isDeviceGroupRead(request) ||
 		isIdentityCatalogRead(request)
-	safeRead := approvalRead || managementScopeRead || inventoryRead || distributionRead || deploymentCapabilityRead ||
+	safeRead := approvalRead || managementScopeRead || inventoryRead || distributionRead || historyRead ||
+		deploymentCapabilityRead ||
 		policyRead ||
 		accessGraphRead || resourceSharingRead || directoryRead || auditRead
 	if request.Method == http.MethodGet && !safeRead {
 		return false
 	}
 	queryAllowed := approvalRead && approvalPath.kind == policyApprovalPathCollection || managementScopeRead ||
-		inventoryRead || distributionRead ||
+		inventoryRead || distributionRead || historyRead ||
 		resourceSharingCollectionRead || accessGraphRead || auditRead
 	if (!queryAllowed && target.RawQuery != "") || len(target.RawQuery) > maximumCallbackQueryBytes {
 		return false

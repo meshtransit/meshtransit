@@ -63,6 +63,7 @@ type privateIdentityPorts struct {
 	SessionScopes       httpapi.SessionManagementScopes
 	DeviceInventory     httpapi.SessionDeviceInventory
 	DeviceDistribution  httpapi.SessionDeviceDistribution
+	AccessGraphHistory  httpapi.SessionAccessGraphHistory
 	SessionCapabilities httpapi.SessionDeploymentCapabilities
 	StartIDs            oidcauth.StartIDGenerator
 	Secrets             oidcauth.SecretsGenerator
@@ -226,7 +227,7 @@ func composePrivateIdentity(
 	}
 	management, err := httpapi.NewBrowserManagement(httpapi.BrowserManagementOptions{
 		Management: resources, Logout: logout, Scopes: ports.SessionScopes, Inventory: ports.DeviceInventory,
-		Distribution: ports.DeviceDistribution,
+		Distribution: ports.DeviceDistribution, AccessGraphHistory: ports.AccessGraphHistory,
 		Capabilities: ports.SessionCapabilities,
 		DeploymentID: options.Route.DeploymentID(), Origin: options.Origin,
 		Key: keys.csrf, Clock: ports.Clock, ProofLifetime: managementOptions.ProofLifetime,

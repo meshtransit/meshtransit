@@ -235,6 +235,15 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		additionalMetrics = append(additionalMetrics, workerMetrics)
 		roleServices = append(roleServices, app.OwnedService{Name: "trust-contract-expiry-worker", Service: workerService})
 	}
+	if processConfig.AccessLedgerWorker != nil {
+		workerService, workerMetrics, composeErr := composeAccessLedgerWorker(*processConfig.AccessLedgerWorker, storagePools.worker, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "access_ledger_worker_composition_failure")
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, workerMetrics)
+		roleServices = append(roleServices, app.OwnedService{Name: "access-ledger-worker", Service: workerService})
+	}
 	var privateFactory *privateIdentityFactory
 	if privateProfile != nil {
 		var browserRuntime []browserRegistrationRuntime

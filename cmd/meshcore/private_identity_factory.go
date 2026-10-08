@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/meshtransit/meshtransit/internal/accessgraph"
+	"github.com/meshtransit/meshtransit/internal/accessgraph/ledger"
 	"github.com/meshtransit/meshtransit/internal/accessgraph/simulation"
 	"github.com/meshtransit/meshtransit/internal/adapter/httpapi"
 	"github.com/meshtransit/meshtransit/internal/adapter/oidc"
@@ -285,6 +286,17 @@ func composePrivateIdentityFactory(
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
 	}
+	historyStore, err := postgresadapter.NewAccessGraphHistoryStore(dependencies.Runtime,
+		postgresadapter.AccountSessionOptions{
+			StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout,
+		})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	accessGraphHistory, err := ledger.NewService(historyStore, clock)
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
 	managementCapabilities, err := sessioncontext.NewCapabilityService(authority, clock)
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
@@ -334,7 +346,8 @@ func composePrivateIdentityFactory(
 		Admission: transactions, Metadata: owner.discovery, Creations: transactions, Committed: transactions,
 		CreationClock: transactions, Pending: transactions, Claims: transactions, Failures: transactions, Issues: transactions,
 		Provider: owner.provider, Subjects: transactions, SessionAuthority: authority, SessionRevocations: logoutStore,
-		SessionScopes: managementScopes, DeviceInventory: deviceInventory, DeviceDistribution: deviceDistribution, SessionCapabilities: managementCapabilities,
+		SessionScopes: managementScopes, DeviceInventory: deviceInventory, DeviceDistribution: deviceDistribution,
+		AccessGraphHistory: accessGraphHistory, SessionCapabilities: managementCapabilities,
 		StartIDs: oidcauth.SystemStartIDs{}, Secrets: oidcauth.SystemSecrets{},
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,

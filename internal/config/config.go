@@ -58,6 +58,7 @@ type Config struct {
 	PrivateEndpointWorker *PrivateEndpointWorkerConfig
 	DeviceAliasWorker     *DeviceAliasWorkerConfig
 	ContractExpiryWorker  *ContractExpiryWorkerConfig
+	AccessLedgerWorker    *AccessLedgerWorkerConfig
 	AuthExpiry            *AuthExpiryConfig
 	PrivateLogin          *PrivateLoginFile
 	BrowserRegistration   *BrowserRegistrationConfig
@@ -126,6 +127,11 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	contractExpiryWorkerConfig, err := loadContractExpiryWorkerConfig(lookup, role)
+	if err != nil {
+		return Config{}, err
+	}
+
+	accessLedgerWorkerConfig, err := loadAccessLedgerWorkerConfig(lookup, role)
 	if err != nil {
 		return Config{}, err
 	}
@@ -258,6 +264,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		PrivateEndpointWorker: privateEndpointWorkerConfig,
 		DeviceAliasWorker:     deviceAliasWorkerConfig,
 		ContractExpiryWorker:  contractExpiryWorkerConfig,
+		AccessLedgerWorker:    accessLedgerWorkerConfig,
 		AuthExpiry:            authExpiryConfig,
 		PrivateLogin:          privateLoginFile,
 		BrowserRegistration:   browserRegistration,
