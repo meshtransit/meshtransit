@@ -113,14 +113,26 @@ mac2       = BLAKE2s-128(key = cookie, frame bytes before mac2)   ; zero if no c
   keeps no state.
 - On streams the TCP/TLS handshake already proves the address; mac2 is zero
   and COOKIE is never sent.
+- RESPONSE carries mac1 computed with the same relay mac1 key and a zero
+  mac2. The client checks it before any Noise work, so a spoofed RESPONSE is
+  dropped cheaply.
+- A client that receives a COOKIE stores it and sends a **new** INIT (new
+  ephemeral key, new timestamp) with mac2; it never retransmits the old INIT.
+- ClientHello padding: on UDP the client pads with zeros so that the INIT
+  frame is at least 256 bytes (`MinUDPInit`); a RESPONSE (≈ 114 bytes) is
+  therefore always smaller than the INIT it answers.
 
 ### 4.2 Session keys
 
-After the handshake, Noise `Split()` gives one key per direction. CONTROL
+After the handshake, Noise `Split()` gives one key per direction (the first
+CipherState protects client→relay traffic on both sides). The Noise handshake
+hash is the session's channel binding. CONTROL
 frames use ChaCha20-Poly1305 with the Noise nonce encoding (32 zero bits
 followed by the 64-bit little-endian `counter`) and
 `aad = header || receiver_index || counter`. Each side keeps a sliding
-anti-replay window of 2048 counters per session. A session is re-established
+anti-replay window of 2048 counters per session, updated only after a frame
+authenticates. Counters start at 0; a session MUST NOT use counter 2^60 or
+above and is re-established instead. A session is re-established
 by a new handshake at least every 24 h and whenever the ticket changes zones.
 
 ## 5. CONTROL messages

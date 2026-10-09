@@ -19,6 +19,7 @@ require (
 )
 
 require (
+	github.com/flynn/noise v1.1.0 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 )
