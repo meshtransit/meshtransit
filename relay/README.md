@@ -27,11 +27,11 @@ meshrelay serve \
 | `--acme-host`, `--acme-cache` | none | Let's Encrypt certificate via TLS-ALPN-01 on the TLS port |
 | `--tls-cert`, `--tls-key` | none | Certificate files instead of ACME |
 | `--tls-self-signed` | off | Ephemeral certificate, for labs |
+| `--core-url` | none | Core control URL; the relay polls `/relay/v1/state` for trusted signing keys, revocations and drain (with it, `--trusted-signing-keys` only bootstraps trust) |
 
 Every flag can be set as `MESHRELAY_<FLAG>` (upper case, `_` for `-`). The key
 file must be mode 0600.
 
 TLS is not part of MTRP's trust model: clients authenticate the relay with
 the Noise handshake. A publicly trusted certificate still matters, because
-middleboxes and proxies pass it. The Core link for signing keys and
-revocations is being added (see the protocol roadmap).
+middleboxes and proxies pass it.

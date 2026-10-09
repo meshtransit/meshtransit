@@ -37,6 +37,7 @@ type serveConfig struct {
 	acmeEmail     string
 	tlsMaxConns   int
 	tlsMaxPerIP   int
+	coreURL       string
 }
 
 func parseServeConfig(args []string, env func(string) (string, bool), stderr io.Writer) (serveConfig, error) {
@@ -45,7 +46,8 @@ func parseServeConfig(args []string, env func(string) (string, bool), stderr io.
 	var cfg serveConfig
 	var signing, publicIP string
 	fs.StringVar(&cfg.keyFile, "key-file", "", "relay private key file written by `meshrelay genkey` (mode 0600)")
-	fs.StringVar(&signing, "trusted-signing-keys", "", "comma-separated Core signing keys (mtsign:...) whose tickets are accepted")
+	fs.StringVar(&signing, "trusted-signing-keys", "", "comma-separated Core signing keys (mtsign:...); with --core-url they only bootstrap trust")
+	fs.StringVar(&cfg.coreURL, "core-url", "", "Core control URL (https://...) to poll for signing keys, revocations and drain")
 	fs.StringVar(&cfg.udpAddr, "udp", "0.0.0.0:3479", "MTRP UDP listen address")
 	fs.IntVar(&cfg.udpReaders, "udp-readers", 4, "UDP reader goroutines")
 	fs.StringVar(&cfg.stunAddr, "stun", "0.0.0.0:3478", "STUN listen address (empty disables STUN)")

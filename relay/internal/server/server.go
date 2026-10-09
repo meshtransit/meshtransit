@@ -91,6 +91,14 @@ type Server struct {
 	draining   bool
 
 	routeMu sync.Mutex // serialises route creation and removal across sessions
+
+	revGeneration uint64 // last revocation generation swept; owned by sweep
+}
+
+// generational is implemented by revocation sources that can say when they
+// changed, so sweeps rescan sessions only after an update.
+type generational interface {
+	Generation() uint64
 }
 
 type (
@@ -336,13 +344,19 @@ func (s *Server) sweep() {
 	}
 	s.mu.RUnlock()
 
+	checkRevocations := s.cfg.Revocations != nil
+	if g, ok := s.cfg.Revocations.(generational); ok {
+		gen := g.Generation()
+		checkRevocations = gen != s.revGeneration
+		s.revGeneration = gen
+	}
 	idleBefore := now.Add(-s.cfg.IdleTimeout).UnixNano()
 	for _, sess := range sessions {
 		sess.mu.Lock()
 		ticket, notAfter := sess.ticket, sess.notAfter
 		sess.mu.Unlock()
 		switch {
-		case s.cfg.Revocations != nil && s.cfg.Revocations.Revoked(ticket):
+		case checkRevocations && s.cfg.Revocations.Revoked(ticket):
 			s.closeSession(sess, mtrp.SessionCloseRevoked, 0)
 		case !now.Before(notAfter):
 			s.closeSession(sess, mtrp.SessionCloseExpired, 0)

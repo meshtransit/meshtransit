@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"meshtransit.net/relay/internal/corelink"
 	"meshtransit.net/relay/internal/metrics"
 	"meshtransit.net/relay/internal/server"
 	"meshtransit.net/relay/internal/stream"
@@ -37,12 +38,30 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 		return err
 	}
 	defer func() { _ = udpListener.Close() }()
-	relay, err := server.New(server.Config{
-		Key:     relayKey,
-		Keys:    mtrp.NewStaticKeys(cfg.signingKeys...),
-		UDP:     udpListener,
-		Logger:  logger,
-		Metrics: m,
+	var (
+		relay *server.Server
+		link  *corelink.Link
+		keys  mtrp.KeySet = mtrp.NewStaticKeys(cfg.signingKeys...)
+		revs  mtrp.Revocations
+	)
+	if cfg.coreURL != "" {
+		link, err = corelink.New(corelink.Config{
+			CoreURL: cfg.coreURL, Bootstrap: cfg.signingKeys, Self: relayKey.Public(),
+			OnDrain: func() { relay.Drain(cfg.drainTimeout) },
+			Logger:  logger, Metrics: m.CoreLink,
+		})
+		if err != nil {
+			return err
+		}
+		keys, revs = link, link
+	}
+	relay, err = server.New(server.Config{
+		Key:         relayKey,
+		Keys:        keys,
+		Revocations: revs,
+		UDP:         udpListener,
+		Logger:      logger,
+		Metrics:     m,
 	})
 	if err != nil {
 		return err
@@ -91,7 +110,7 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 	runCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var wg sync.WaitGroup
-	errs := make(chan error, 5)
+	errs := make(chan error, 6)
 	wg.Go(func() { errs <- udpListener.Serve(runCtx, cfg.udpReaders, relay.HandleUDP) })
 	wg.Go(func() { errs <- ignoreCanceled(relay.Run(runCtx)) })
 	if stun != nil {
@@ -99,6 +118,16 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 	}
 	if streams != nil {
 		wg.Go(func() { errs <- streams.Serve(runCtx) })
+	}
+	if link != nil {
+		// A first poll before serving narrows the window in which revoked
+		// tickets could be accepted after a restart.
+		pollCtx, cancelPoll := context.WithTimeout(ctx, corelink.DefaultTimeout)
+		if err := link.Poll(pollCtx); err != nil {
+			logger.Warn("initial relay state poll failed; continuing with bootstrap keys", "error", err)
+		}
+		cancelPoll()
+		wg.Go(func() { errs <- link.Run(runCtx) })
 	}
 	wg.Go(func() { errs <- ignoreServerClosed(admin.server.Serve(admin.listener)) })
 
