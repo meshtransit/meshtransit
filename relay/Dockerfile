@@ -49,10 +49,14 @@ LABEL org.opencontainers.image.title="MeshTransit Interchange" \
       org.opencontainers.image.version="$VERSION" \
       org.opencontainers.image.revision="$REVISION"
 
+# CA roots: ACME (Let's Encrypt) and, later, the Core link use HTTPS.
+COPY --from=build --chown=65532:65532 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build --chown=65532:65532 /out/meshrelay /meshrelay
 COPY --chown=65532:65532 relay/LICENSE /licenses/LICENSE
 COPY --chown=65532:65532 COMMERCIAL-LICENSING.md /licenses/COMMERCIAL-LICENSING.md
 COPY --chown=65532:65532 relay/THIRD_PARTY_NOTICES.md /licenses/THIRD_PARTY_NOTICES.md
+
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 USER 65532:65532
 # MTRP UDP, STUN, STUN alternate port and TLS/WebSocket (with --tls); admin

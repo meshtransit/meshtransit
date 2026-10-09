@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/pem"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,23 +79,23 @@ func TestParseServeConfig(t *testing.T) {
 
 func TestTLSConfigModes(t *testing.T) {
 	t.Parallel()
-	if _, err := tlsConfig(serveConfig{}); err == nil {
+	if _, err := tlsConfig(serveConfig{}, slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("no certificate mode accepted")
 	}
-	if _, err := tlsConfig(serveConfig{tlsSelfSigned: true, acmeHost: "relay.example"}); err == nil {
+	if _, err := tlsConfig(serveConfig{tlsSelfSigned: true, acmeHost: "relay.example"}, slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("two certificate modes accepted")
 	}
-	if _, err := tlsConfig(serveConfig{acmeHost: "relay.example"}); err == nil {
+	if _, err := tlsConfig(serveConfig{acmeHost: "relay.example"}, slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("ACME without a cache directory accepted")
 	}
-	if _, err := tlsConfig(serveConfig{tlsCert: "missing.pem", tlsKey: "missing.key"}); err == nil {
+	if _, err := tlsConfig(serveConfig{tlsCert: "missing.pem", tlsKey: "missing.key"}, slog.New(slog.DiscardHandler)); err == nil {
 		t.Fatal("missing certificate files accepted")
 	}
-	c, err := tlsConfig(serveConfig{tlsSelfSigned: true})
+	c, err := tlsConfig(serveConfig{tlsSelfSigned: true}, slog.New(slog.DiscardHandler))
 	if err != nil || len(c.Certificates) != 1 {
 		t.Fatalf("self-signed: %v", err)
 	}
-	acme, err := tlsConfig(serveConfig{acmeHost: "relay.example", acmeCache: t.TempDir()})
+	acme, err := tlsConfig(serveConfig{acmeHost: "relay.example", acmeCache: t.TempDir()}, slog.New(slog.DiscardHandler))
 	if err != nil || acme.GetCertificate == nil {
 		t.Fatalf("acme: %v", err)
 	}

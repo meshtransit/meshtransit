@@ -9,9 +9,11 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/acme/autocert"
@@ -21,7 +23,7 @@ import (
 // part of MTRP's trust model (the Noise handshake authenticates the relay),
 // but a publicly trusted certificate lets middleboxes and proxies pass the
 // connection, so ACME or certificate files are preferred over self-signed.
-func tlsConfig(cfg serveConfig) (*tls.Config, error) {
+func tlsConfig(cfg serveConfig, logger *slog.Logger) (*tls.Config, error) {
 	modes := 0
 	for _, set := range []bool{cfg.tlsCert != "", cfg.acmeHost != "", cfg.tlsSelfSigned} {
 		if set {
@@ -57,13 +59,20 @@ func tlsConfig(cfg serveConfig) (*tls.Config, error) {
 		// Clients that dial the relay by address send no SNI; serve them the
 		// relay's own certificate instead of failing the handshake.
 		host := cfg.acmeHost
+		var lastLog atomic.Int64
 		c.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			if hello.ServerName == "" {
 				named := *hello
 				named.ServerName = host
 				hello = &named
 			}
-			return m.GetCertificate(hello)
+			cert, err := m.GetCertificate(hello)
+			// Issuance failures are otherwise invisible (each shows only as a
+			// failed TLS handshake); log them at most once a minute.
+			if err != nil && time.Now().Unix()-lastLog.Swap(time.Now().Unix()) >= 60 {
+				logger.Warn("acme certificate unavailable", "host", host, "error", err)
+			}
+			return cert, err
 		}
 		return c, nil
 	default:
