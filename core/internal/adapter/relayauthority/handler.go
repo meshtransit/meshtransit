@@ -142,6 +142,7 @@ func (h *Handler) allow(addr netip.Addr) bool {
 type Metrics struct {
 	refreshes   *prometheus.CounterVec
 	requests    *prometheus.CounterVec
+	tickets     *prometheus.CounterVec
 	revocations prometheus.Gauge
 	lastSuccess prometheus.Gauge
 }
@@ -154,6 +155,9 @@ func NewMetrics() *Metrics {
 		}, []string{"result"}),
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "meshtransit_relay_authority_requests_total", Help: "Relay state and map requests by outcome.",
+		}, []string{"result"}),
+		tickets: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshtransit_relay_authority_tickets_total", Help: "Relay tickets issued to nodes, by outcome.",
 		}, []string{"result"}),
 		revocations: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshtransit_relay_authority_revocations", Help: "Revocation entries in the published relay state.",
@@ -168,6 +172,7 @@ func NewMetrics() *Metrics {
 func (m *Metrics) Describe(ch chan<- *prometheus.Desc) {
 	m.refreshes.Describe(ch)
 	m.requests.Describe(ch)
+	m.tickets.Describe(ch)
 	m.revocations.Describe(ch)
 	m.lastSuccess.Describe(ch)
 }
@@ -176,6 +181,7 @@ func (m *Metrics) Describe(ch chan<- *prometheus.Desc) {
 func (m *Metrics) Collect(ch chan<- prometheus.Metric) {
 	m.refreshes.Collect(ch)
 	m.requests.Collect(ch)
+	m.tickets.Collect(ch)
 	m.revocations.Collect(ch)
 	m.lastSuccess.Collect(ch)
 }

@@ -119,6 +119,9 @@ func (l *Link) SigningKey(id key.KeyID) (key.SigningPublic, bool) {
 // Revoked implements mtrp.Revocations.
 func (l *Link) Revoked(t mtrp.Ticket) bool { return l.revoked.Load().Revoked(t) }
 
+// ZoneRevoked implements mtrp.ZoneRevocations.
+func (l *Link) ZoneRevoked(z mtrp.Zone) bool { return l.revoked.Load().ZoneRevoked(z) }
+
 // Generation increases whenever the revocations change, so the relay only
 // rescans its sessions when there is something new.
 func (l *Link) Generation() uint64 { return l.generation.Load() }

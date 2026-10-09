@@ -72,6 +72,7 @@ type Snapshot struct {
 	packetPolicy            policy.Snapshot
 	connectivity            []Connectivity
 	relayDirectory          relay.Directory
+	relayGrant              RelayGrant // set by the stream service, never by the store
 }
 
 // NewSnapshot validates and copies one authoritative map snapshot.

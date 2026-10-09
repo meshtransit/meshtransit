@@ -53,6 +53,9 @@ type StreamSink interface {
 	// SendAuthorityPause clears every peer and rule but tells the client its
 	// identity stands, so it retries until the Device is resumed.
 	SendAuthorityPause(context.Context, Snapshot) error
+	// SendRelayGrant delivers only the node's own entry, carrying a renewed
+	// relay grant, when nothing else in the map changed.
+	SendRelayGrant(context.Context, Snapshot) error
 	SendKeepAlive(context.Context) error
 }
 
@@ -76,6 +79,8 @@ type StreamOptions struct {
 	CoordinationTimeout time.Duration
 	KeepAliveInterval   time.Duration
 	ReconcileInterval   time.Duration
+	// RelayAccess, when set, issues each node's Interchange grant.
+	RelayAccess RelayAccess
 }
 
 // StreamService runs generation-fenced map streams synchronously. It owns no
@@ -156,6 +161,7 @@ func (service *StreamService) Serve(
 	if !snapshot.KeyExpiry().After(time.Now()) {
 		return ErrAuthorizationExpired
 	}
+	snapshot, _ = service.grantRelayAccess(ctx, Snapshot{}, snapshot)
 	lease, err := node.NewPresenceLease(
 		snapshot.NodeID(),
 		snapshot.SessionGeneration(),
@@ -224,6 +230,9 @@ func (service *StreamService) run(
 	projectionExpiry := time.NewTimer(time.Hour)
 	projectionExpiry.Stop()
 	defer projectionExpiry.Stop()
+	relayRenewal := time.NewTimer(time.Hour)
+	relayRenewal.Stop()
+	defer relayRenewal.Stop()
 
 	defer func() { watch.close() }()
 	current := initial
@@ -271,9 +280,24 @@ func (service *StreamService) run(
 		} else {
 			projectionExpiry.Stop()
 		}
+		var relayRenewalDue <-chan time.Time
+		// A renewal that failed leaves RenewAt in the past; it is retried by
+		// the reconcile ticker instead of a hot loop.
+		if grant := current.RelayGrant(); grant.IsValid() && grant.RenewAt().After(time.Now()) {
+			relayRenewal.Reset(time.Until(grant.RenewAt()))
+			relayRenewalDue = relayRenewal.C
+		} else {
+			relayRenewal.Stop()
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-relayRenewalDue:
+			next, err := service.refresh(ctx, machine, request, sink, current)
+			if err != nil {
+				return err
+			}
+			advance(next)
 		case <-authorityExpiry.C:
 			return withdrawAuthority(ctx, sink, current, ErrAuthorizationExpired)
 		case <-projectionDeadline:
@@ -352,41 +376,88 @@ func (service *StreamService) refresh(
 	if !streamCanAdvance(current, next) {
 		return Snapshot{}, withdrawAuthority(ctx, sink, current, ErrStreamDiscontinuity)
 	}
+	next, grantChanged := service.grantRelayAccess(ctx, current, next)
+	selfSent, err := service.deliver(ctx, sink, current, next)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if grantChanged && !selfSent {
+		if err := sink.SendRelayGrant(ctx, next); err != nil {
+			return Snapshot{}, errors.Join(ErrStreamWrite, err)
+		}
+	}
+	return next, nil
+}
+
+// deliver sends whatever moves the client from current to next and reports
+// whether that included the node's own entry (and so its relay grant).
+func (service *StreamService) deliver(
+	ctx context.Context,
+	sink StreamSink,
+	current, next Snapshot,
+) (bool, error) {
 	if !streamSnapshotChanged(current, next) {
-		return next, nil
+		return false, nil
 	}
 	if relayDirectoryChanged(current, next) ||
 		(current.NetworkRevision() == next.NetworkRevision() &&
 			!equalDirectDeviceProjections(current.directDeviceProjections, next.directDeviceProjections)) {
 		if err := sink.SendSnapshot(ctx, next); err != nil {
-			return Snapshot{}, errors.Join(ErrStreamWrite, err)
+			return false, errors.Join(ErrStreamWrite, err)
 		}
-		return next, nil
+		return true, nil
 	}
 	if current.NetworkRevision() == next.NetworkRevision() {
 		delta, deltaErr := NewConnectivityDelta(current, next)
 		if deltaErr != nil {
 			cause := errors.Join(ErrStreamDiscontinuity, deltaErr)
-			return Snapshot{}, withdrawAuthority(ctx, sink, current, cause)
+			return false, withdrawAuthority(ctx, sink, current, cause)
 		}
 		if err := sink.SendConnectivityDelta(ctx, delta); err != nil {
-			return Snapshot{}, errors.Join(ErrStreamWrite, err)
+			return false, errors.Join(ErrStreamWrite, err)
 		}
-		return next, nil
+		return delta.SelfChanged(), nil
 	}
 	if next.NetworkRevision() == current.NetworkRevision()+1 {
 		delta, deltaErr := NewAuthorityDelta(current, next)
 		if deltaErr == nil {
 			if err := sink.SendAuthorityDelta(ctx, delta); err != nil {
-				return Snapshot{}, errors.Join(ErrStreamWrite, err)
+				return false, errors.Join(ErrStreamWrite, err)
 			}
-			return next, nil
+			return delta.SelfChanged(), nil
 		}
 	}
 	if err := sink.SendSnapshot(ctx, next); err != nil {
-		return Snapshot{}, errors.Join(ErrStreamWrite, err)
+		return false, errors.Join(ErrStreamWrite, err)
 	}
-	return next, nil
+	return true, nil
+}
+
+// grantRelayAccess carries current's relay grant over to next while it still
+// covers next, and otherwise issues a new one. Without a disco key or when
+// issuing fails, the previous grant stays (it expires on its own) and the
+// next refresh tries again; relay access never ends a map stream.
+func (service *StreamService) grantRelayAccess(ctx context.Context, current, next Snapshot) (Snapshot, bool) {
+	access := service.options.RelayAccess
+	if isNilDependency(access) {
+		return next, false
+	}
+	now := time.Now()
+	previous := current.RelayGrant()
+	request, ok := next.RelayGrantRequest()
+	if !ok || relayGrantCurrent(previous, request, now) {
+		if previous.IsValid() && now.Before(previous.request.NotAfter) {
+			return next.WithRelayGrant(previous), false
+		}
+		return next, false
+	}
+	operationCtx, cancel := context.WithTimeout(ctx, service.options.SnapshotTimeout)
+	defer cancel()
+	grant, err := access.GrantRelayAccess(operationCtx, request)
+	if err != nil || !grant.IsValid() {
+		return next.WithRelayGrant(previous), false
+	}
+	return next.WithRelayGrant(grant), true
 }
 
 func withdrawAuthority(

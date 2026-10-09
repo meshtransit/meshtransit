@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/netip"
 	"sync"
 	"time"
@@ -356,12 +357,14 @@ func (s *Server) sweep() {
 		ticket, notAfter := sess.ticket, sess.notAfter
 		sess.mu.Unlock()
 		switch {
-		case checkRevocations && s.cfg.Revocations.Revoked(ticket):
+		case checkRevocations && mtrp.IsRevoked(ticket, s.cfg.Revocations):
 			s.closeSession(sess, mtrp.SessionCloseRevoked, 0)
 		case !now.Before(notAfter):
 			s.closeSession(sess, mtrp.SessionCloseExpired, 0)
 		case sess.lastRecv.Load() < idleBefore:
 			s.closeSession(sess, mtrp.SessionCloseIdle, 0)
+		case checkRevocations:
+			s.pruneRoutes(sess) // a withdrawn zone may end some of its routes
 		}
 	}
 
@@ -375,6 +378,17 @@ func (s *Server) sweep() {
 		}
 	}
 	s.mu.Unlock()
+}
+
+// pruneRoutes closes the routes of sess that no longer share a live zone.
+func (s *Server) pruneRoutes(sess *session) {
+	s.routeMu.Lock()
+	sess.mu.Lock()
+	routes := maps.Clone(sess.routes)
+	sess.mu.Unlock()
+	out := s.pruneRoutesLocked(sess, routes, nil)
+	s.routeMu.Unlock()
+	s.flush(out)
 }
 
 // closeSession removes a session, tells its client and closes its routes.

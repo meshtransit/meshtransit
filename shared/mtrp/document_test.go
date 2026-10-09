@@ -227,3 +227,43 @@ func FuzzParseRelayPayloads(f *testing.F) {
 		_, _ = ParseRelayMap(b, docNow)
 	})
 }
+
+func TestZoneRevocation(t *testing.T) {
+	t.Parallel()
+	network := Zone{Kind: ZoneNetwork, ID: [16]byte{5}}
+	contract := Zone{Kind: ZoneTrustContract, ID: [16]byte{9}}
+	s := sampleState(t)
+	s.Zones = []RevocationID{ZoneRevocationHash(contract)}
+	payload, err := s.Payload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseRelayState(payload)
+	if err != nil || len(got.Zones) != 1 {
+		t.Fatalf("zones round trip: %v, %v", got.Zones, err)
+	}
+	set := NewRevocationSet(got)
+	if !set.ZoneRevoked(contract) || set.ZoneRevoked(network) || set.Len() != 3 {
+		t.Fatal("zone revocation not indexed")
+	}
+
+	consumer := Ticket{ID: [16]byte{1}, Zones: []Zone{network, contract}}
+	provider := Ticket{ID: [16]byte{2}, Zones: []Zone{{Kind: ZoneNetwork, ID: [16]byte{6}}, contract}}
+	colleague := Ticket{ID: [16]byte{3}, Zones: []Zone{network}}
+	if !SharesZone(consumer, provider) || SharesLiveZone(consumer, provider, set) {
+		t.Fatal("a route through a withdrawn contract must not stay live")
+	}
+	if !SharesLiveZone(consumer, colleague, set) {
+		t.Fatal("the Network zone is unaffected")
+	}
+	onlyContract := Ticket{ID: [16]byte{4}, Zones: []Zone{contract}}
+	if IsRevoked(consumer, set) || !IsRevoked(onlyContract, set) || IsRevoked(onlyContract, nil) {
+		t.Fatal("a ticket is revoked only when every zone is withdrawn")
+	}
+
+	// Without zone revocations the wire keeps its previous shape.
+	plain, err := sampleState(t).Payload()
+	if err != nil || bytes.Contains(plain, []byte(`"zones"`)) {
+		t.Fatalf("empty zones serialised: %s", plain)
+	}
+}

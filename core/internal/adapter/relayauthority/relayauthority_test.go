@@ -131,12 +131,15 @@ func openState(t *testing.T, doc *document, keys ...key.SigningPublic) mtrp.Rela
 }
 
 type revocations struct {
-	err   error
-	nodes []mtrp.RevocationID
+	revoked Revoked
+	since   *time.Time
 }
 
-func (r revocations) RelayRevocations(context.Context, time.Time) (tickets, nodes, discos []mtrp.RevocationID, err error) {
-	return nil, r.nodes, nil, r.err
+func (r revocations) RelayRevocations(_ context.Context, since time.Time) (Revoked, error) {
+	if r.since != nil {
+		*r.since = since
+	}
+	return r.revoked, nil
 }
 
 func TestPublisherSignsStateAndMap(t *testing.T) {
@@ -146,10 +149,12 @@ func TestPublisherSignsStateAndMap(t *testing.T) {
 	c := newClock(t0)
 	m := testMap(t)
 	drained := key.RelayPublic{0x5e}
-	revoked := mtrp.RevocationHash(mtrp.RevokeNode, []byte{1})
+	revokedNode := [32]byte{1}
+	contract := [16]byte{0x0c}
+	var since time.Time
 	p := newPublisher(t, c, Options{
 		Signer: current, Next: &next, Map: &m, Drain: []key.RelayPublic{drained},
-		Revocations: revocations{nodes: []mtrp.RevocationID{revoked}},
+		Revocations: revocations{revoked: Revoked{NodeKeys: [][32]byte{revokedNode}, TrustContracts: [][16]byte{contract}}, since: &since},
 	})
 	if err := p.refresh(t.Context()); err != nil {
 		t.Fatal(err)
@@ -162,8 +167,13 @@ func TestPublisherSignsStateAndMap(t *testing.T) {
 		!s.SigningKeys[0].NotAfter.Equal(t0.Add(keyTrustWindow)) {
 		t.Fatalf("signing keys = %+v", s.SigningKeys)
 	}
-	if len(s.Drain) != 1 || s.Drain[0] != drained || len(s.Nodes) != 1 || s.Nodes[0] != revoked {
+	if len(s.Drain) != 1 || s.Drain[0] != drained || len(s.Nodes) != 1 ||
+		s.Nodes[0] != mtrp.RevocationHash(mtrp.RevokeNode, revokedNode[:]) ||
+		len(s.Zones) != 1 || s.Zones[0] != mtrp.ZoneRevocationHash(mtrp.Zone{Kind: mtrp.ZoneTrustContract, ID: contract}) {
 		t.Fatal("drain or revocations not published")
+	}
+	if !since.Equal(t0.Add(-RevocationWindow)) {
+		t.Fatalf("revocation window starts at %v", since)
 	}
 	if _, _, err := mtrp.OpenDocument(p.state.Load().body, mtrp.DocumentRelayState, mtrp.NewStaticKeys(next.Public())); err == nil {
 		t.Fatal("state verified with the next key, which must not sign")
@@ -266,11 +276,11 @@ func TestPublisherKeepsDocumentsWhenRevocationsFail(t *testing.T) {
 
 type failingSource struct{ fail atomic.Bool }
 
-func (f *failingSource) RelayRevocations(context.Context, time.Time) (tickets, nodes, discos []mtrp.RevocationID, err error) {
+func (f *failingSource) RelayRevocations(context.Context, time.Time) (Revoked, error) {
 	if f.fail.Load() {
-		return nil, nil, nil, errors.New("ledger unavailable")
+		return Revoked{}, errors.New("database unavailable")
 	}
-	return nil, nil, nil, nil
+	return Revoked{}, nil
 }
 
 func TestNewPublisherValidates(t *testing.T) {

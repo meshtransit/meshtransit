@@ -1179,6 +1179,7 @@ type recordingStreamSink struct {
 	deltas          []ConnectivityDelta
 	withdrawals     []Snapshot
 	pauses          []Snapshot
+	relayGrants     []Snapshot
 	keepAlives      int
 }
 
@@ -1226,6 +1227,13 @@ func (sink *recordingStreamSink) SendAuthorityPause(
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
 	sink.pauses = append(sink.pauses, snapshot)
+	return nil
+}
+
+func (sink *recordingStreamSink) SendRelayGrant(_ context.Context, snapshot Snapshot) error {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	sink.relayGrants = append(sink.relayGrants, snapshot)
 	return nil
 }
 

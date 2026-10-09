@@ -173,7 +173,8 @@ Plaintext: `type u8 || body`.
 
 - A client opens a route to a peer by node key. The relay grants it only if
   the peer has an active session on this relay **and** the two sessions'
-  tickets share at least one zone (same kind and ID). Otherwise ROUTE_ERROR.
+  tickets share at least one zone (same kind and ID) that Core has not
+  withdrawn (section 9). Otherwise ROUTE_ERROR.
 - The relay assigns a route number in each session's own namespace and tells
   the peer with ROUTE_INCOMING, so both sides send DATA with their own route
   number and learn who a DATA frame came from.
@@ -237,7 +238,8 @@ Verification rules:
 - Accept only if `issued_at − 60 s ≤ now < not_after` and the lifetime bound
   holds.
 - Zones MUST be sorted by `(kind, id)` without duplicates (canonical form).
-- Reject if `ticket_id`, `node` or `disco` is on a revocation list.
+- Reject if `ticket_id`, `node` or `disco` is on a revocation list, or if
+  every zone of the ticket is withdrawn.
 
 ## 7. Relay behaviour requirements
 
@@ -310,7 +312,8 @@ makes it trustworthy over any transport.
 {"version": 1, "sequence": 1760000000123,
  "issued_at_ms": 1760000000123, "expires_at_ms": 1760000600123,
  "signing_keys": [{"key": "mtsign:…", "not_after_ms": 1767000000000}],
- "revoked": {"tickets": ["<32 hex>"], "nodes": ["<32 hex>"], "discos": ["<32 hex>"]},
+ "revoked": {"tickets": ["<32 hex>"], "nodes": ["<32 hex>"], "discos": ["<32 hex>"],
+             "zones": ["<32 hex>"]},
  "drain": ["mtrelay:…"]}
 ```
 
@@ -326,9 +329,20 @@ makes it trustworthy over any transport.
   before Core signs with it.
 - A revocation entry is the first 16 bytes of
   `BLAKE2s-256("meshtransit/relay-revocation/v1" || 0x00 || kind || value)`
-  with kind 1 ticket ID, 2 node key, 3 disco key. Core lists every revoked
-  value whose tickets may still be valid (≤ 15 minutes plus skew); relays close
-  matching sessions and refuse matching tickets.
+  with kind 1 ticket ID, 2 node key, 3 disco key, 4 zone (`zone kind u8 ||
+  zone ID bytes[16]`). Core lists every revoked value whose tickets may still
+  be valid (≤ 15 minutes plus skew); relays close matching sessions and refuse
+  matching tickets. `zones` is omitted when empty.
+- A withdrawn zone (for example an ended Trust Contract) no longer counts
+  when two tickets are compared: relays close the routes whose sessions share
+  no other live zone (ROUTE_CLOSE revoked), refuse new ones, and treat a
+  ticket left without any live zone as revoked. Zone IDs are never reused, so
+  withdrawal needs no record of issued tickets.
+- Core derives the lists from durable state: node keys of key epochs that
+  ended (rotation, expiry, revocation) and the current key of every Device
+  that is not active, both within the window; and Trust Contracts that ended
+  or passed their expiry within it. A Device resumed within the window drops
+  out of the list, so its new tickets are accepted.
 - `drain` lists relay keys that must drain (SESSION_CLOSE draining) and stop
   accepting sessions.
 - Both documents are served with an `ETag` and `Cache-Control: no-cache`,
@@ -342,6 +356,32 @@ makes it trustworthy over any transport.
 
 Health and load reporting from relays to Core (for home-relay steering) needs
 relay authentication and is specified with the relay fleet work.
+
+### 9.1 Grants to nodes before MTCP
+
+Until MTCP (P4) carries `KeyUpdate`, the relay map and `RelayTicket`, Core
+delivers a node's Interchange access on its own entry of the legacy TS2021
+map, as the capability `https://meshtransit.io/cap/interchange-v1` (one JSON
+value, `shared/mtrp` `InterchangeGrant`):
+
+```json
+{"version": 1,
+ "signing_keys": [{"key": "mtsign:…", "not_after_ms": 1760600000000}],
+ "relay_map": "<base64 signed relay map>",
+ "ticket": "<base64 ticket>", "ticket_not_after_ms": 1760000900000}
+```
+
+- The control session is authenticated, so the keys need no other signature;
+  the node verifies the relay map with them before use and keeps the previous
+  map when verification fails.
+- Tickets bind the node and disco keys the node last reported and the zones
+  of its Network and of every Trust Contract it takes part in (at most 31).
+  They live 15 minutes, never past the node's authority deadline, and are
+  replaced 5 minutes before expiry, at once when the disco key or zones
+  change. A renewal that changes nothing else is sent as a map response with
+  only the node's own entry.
+- A node keeps its last grant until the ticket expires when a later entry
+  omits the capability.
 
 ## 10. Test vectors
 

@@ -31,9 +31,21 @@ const (
 	keyTrustWindow = 7 * 24 * time.Hour
 )
 
-// RevocationSource lists the revocation entries relays must enforce now.
+// RevocationWindow is how far back revocations are published: the longest
+// ticket lifetime plus the skew relays tolerate. Anything that ended earlier
+// can no longer appear in a valid ticket.
+const RevocationWindow = mtrp.MaxTicketLifetime + mtrp.MaxIssueSkew
+
+// Revoked lists what relays must stop honouring: node keys, and Trust
+// Contracts whose zones are withdrawn.
+type Revoked struct {
+	NodeKeys       [][32]byte
+	TrustContracts [][16]byte
+}
+
+// RevocationSource lists what ended at or after since.
 type RevocationSource interface {
-	RelayRevocations(ctx context.Context, now time.Time) (tickets, nodes, discos []mtrp.RevocationID, err error)
+	RelayRevocations(ctx context.Context, since time.Time) (Revoked, error)
 }
 
 // Options configures a Publisher.
@@ -170,23 +182,24 @@ func (p *Publisher) refresh(ctx context.Context) error {
 		return nil
 	}
 	state := mtrp.RelayState{
-		Sequence:  now.UnixMilli(),
-		IssuedAt:  now,
-		ExpiresAt: now.Add(StateLifetime),
-		Drain:     p.opts.Drain,
-		SigningKeys: []mtrp.TrustedKey{
-			{Key: p.opts.Signer.Public(), NotAfter: now.Add(keyTrustWindow)},
-		},
-	}
-	if p.opts.Next != nil {
-		state.SigningKeys = append(state.SigningKeys, mtrp.TrustedKey{Key: p.opts.Next.Public(), NotAfter: now.Add(keyTrustWindow)})
+		Sequence:    now.UnixMilli(),
+		IssuedAt:    now,
+		ExpiresAt:   now.Add(StateLifetime),
+		Drain:       p.opts.Drain,
+		SigningKeys: p.trustedKeys(now),
 	}
 	if p.opts.Revocations != nil {
-		var err error
-		state.Tickets, state.Nodes, state.Discos, err = p.opts.Revocations.RelayRevocations(ctx, now)
+		revoked, err := p.opts.Revocations.RelayRevocations(ctx, now.Add(-RevocationWindow))
 		if err != nil {
 			p.opts.Metrics.refreshes.WithLabelValues("revocations_failed").Inc()
 			return err
+		}
+		state.Nodes = make([]mtrp.RevocationID, len(revoked.NodeKeys))
+		for i, node := range revoked.NodeKeys {
+			state.Nodes[i] = mtrp.RevocationHash(mtrp.RevokeNode, node[:])
+		}
+		for _, contract := range revoked.TrustContracts {
+			state.Zones = append(state.Zones, mtrp.ZoneRevocationHash(mtrp.Zone{Kind: mtrp.ZoneTrustContract, ID: contract}))
 		}
 	}
 	stateDoc, err := p.sign(mtrp.DocumentRelayState, state.Payload)
@@ -210,7 +223,7 @@ func (p *Publisher) refresh(ctx context.Context) error {
 		p.relayMap.Store(mapDoc)
 	}
 	p.opts.Metrics.refreshes.WithLabelValues("ok").Inc()
-	p.opts.Metrics.revocations.Set(float64(len(state.Tickets) + len(state.Nodes) + len(state.Discos)))
+	p.opts.Metrics.revocations.Set(float64(len(state.Tickets) + len(state.Nodes) + len(state.Discos) + len(state.Zones)))
 	p.opts.Metrics.lastSuccess.Set(float64(now.Unix()))
 	return nil
 }
@@ -226,6 +239,16 @@ func (p *Publisher) sign(kind mtrp.DocumentKind, payload func() ([]byte, error))
 	}
 	sum := sha256.Sum256(signed)
 	return &document{body: signed, etag: `"` + hex.EncodeToString(sum[:16]) + `"`}, nil
+}
+
+// trustedKeys lists the current and next signing keys, trusted for
+// keyTrustWindow from now.
+func (p *Publisher) trustedKeys(now time.Time) []mtrp.TrustedKey {
+	keys := []mtrp.TrustedKey{{Key: p.opts.Signer.Public(), NotAfter: now.Add(keyTrustWindow)}}
+	if p.opts.Next != nil {
+		keys = append(keys, mtrp.TrustedKey{Key: p.opts.Next.Public(), NotAfter: now.Add(keyTrustWindow)})
+	}
+	return keys
 }
 
 // Metrics returns the publisher's and its handler's collectors.

@@ -140,6 +140,28 @@ func (sink *mapStreamSink) SendAuthorityPause(
 	return sink.write(encoded)
 }
 
+func (sink *mapStreamSink) SendRelayGrant(
+	ctx context.Context,
+	snapshot mapsession.Snapshot,
+) error {
+	if err := sink.validate(ctx); err != nil {
+		return err
+	}
+	if !sink.hasSnapshot {
+		return ErrMapStreamWrite
+	}
+	encoded, err := encodeRelayGrantMapResponse(
+		snapshot,
+		sink.capabilityVersion,
+		sink.compression,
+	)
+	if err != nil {
+		return err
+	}
+	defer clear(encoded)
+	return sink.write(encoded)
+}
+
 func (sink *mapStreamSink) SendKeepAlive(ctx context.Context) error {
 	if err := sink.validate(ctx); err != nil {
 		return err

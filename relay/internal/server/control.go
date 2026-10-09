@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"maps"
 
 	"meshtransit.net/shared/key"
 	"meshtransit.net/shared/mtrp"
@@ -169,7 +170,7 @@ func (s *Server) openRouteLocked(src *session, msg mtrp.ControlMessage) ([]outbo
 	s.mu.RLock()
 	peer := s.byNode[msg.Peer]
 	s.mu.RUnlock()
-	if peer == nil || !sharesZone(src, peer) {
+	if peer == nil || !sharesZone(src, peer, s.cfg.Revocations) {
 		return nil, mtrp.RouteErrorPeerAbsent
 	}
 
@@ -283,13 +284,20 @@ func (s *Server) updateTicket(sess *session, raw []byte) {
 	}
 	sess.ticket, sess.notAfter, sess.maxRoutes = ticket, ticket.NotAfter(), maxRoutes
 	sess.data.SetRate(bytesPerSecond, bytesPerSecond)
-	routes := make(map[uint32]route, len(sess.routes))
-	for n, r := range sess.routes {
-		routes[n] = r
-	}
+	routes := maps.Clone(sess.routes)
 	sess.mu.Unlock()
+	out = s.pruneRoutesLocked(sess, routes, out)
+	s.routeMu.Unlock()
+	s.flush(out)
+	s.sendControl(sess, mtrp.ControlMessage{Type: mtrp.ControlTicketAck, NotAfterMS: uint64(ticket.NotAfterMS)}) //nolint:gosec // validated positive by Verify
+}
+
+// pruneRoutesLocked closes, as revoked, the routes of sess (a snapshot of its
+// route table) whose peer no longer shares a live zone with it, and appends
+// the notifications to out. Called with routeMu held.
+func (s *Server) pruneRoutesLocked(sess *session, routes map[uint32]route, out []outbound) []outbound {
 	for n, r := range routes {
-		if sharesZone(sess, r.peer) {
+		if sharesZone(sess, r.peer, s.cfg.Revocations) {
 			continue
 		}
 		if removed, ok := s.removeRouteLocked(sess, n); ok {
@@ -299,7 +307,5 @@ func (s *Server) updateTicket(sess *session, raw []byte) {
 			)
 		}
 	}
-	s.routeMu.Unlock()
-	s.flush(out)
-	s.sendControl(sess, mtrp.ControlMessage{Type: mtrp.ControlTicketAck, NotAfterMS: uint64(ticket.NotAfterMS)}) //nolint:gosec // validated positive by Verify
+	return out
 }

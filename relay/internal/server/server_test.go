@@ -320,6 +320,47 @@ func TestRelayDrainAndRevocation(t *testing.T) {
 	}
 }
 
+func TestRelayWithdrawnZoneClosesRoutes(t *testing.T) {
+	t.Parallel()
+	h := newRelay(t, nil)
+	a, b, c := h.newClient(zoneA, zoneB), h.newClient(zoneB), h.newClient(zoneA)
+	rab, rba := openRoute(t, a, b)
+	rac, rca := openRoute(t, a, c)
+
+	// Core withdraws zone B (an ended Trust Contract): the a–b route closes,
+	// a–c over zone A stays, and b, left with no zone, is revoked.
+	h.revoked.withdraw(zoneB)
+	h.srv.sweep()
+	// Sessions are swept in map order: b sees its route close (as revoked)
+	// either from a's pass or as part of its own session close.
+	var bClosed bool
+	for m, ok := b.recvControl(); ok; m, ok = b.recvControl() {
+		switch {
+		case m.Type == mtrp.ControlRouteClose && m.Route == rba:
+		case m.Type == mtrp.ControlSessionClose && m.SessionClose == mtrp.SessionCloseRevoked:
+			bClosed = true
+		default:
+			t.Fatalf("b: unexpected %+v", m)
+		}
+	}
+	if !bClosed {
+		t.Fatal("b, left without a live zone, was not revoked")
+	}
+	if m := a.expectControl(mtrp.ControlRouteClose); m.Route != rab {
+		t.Fatalf("a: %+v", m)
+	}
+	a.sendData(a.addr, rac, []byte("still"))
+	if d, ok := c.recvData(); !ok || d.Route != rca {
+		t.Fatal("route over a live zone stopped forwarding")
+	}
+	// A new route over the withdrawn zone is refused.
+	d := h.newClient(zoneB, zoneA)
+	d.sendControl(mtrp.ControlMessage{Type: mtrp.ControlRouteOpen, Request: 9, Peer: a.node})
+	if m := d.expectControl(mtrp.ControlRouteOK); m.Request != 9 {
+		t.Fatalf("d over zone A: %+v", m)
+	}
+}
+
 func TestRelayIgnoresGarbage(t *testing.T) {
 	t.Parallel()
 	h := newRelay(t, nil)

@@ -181,3 +181,25 @@ func compareMapNodeIDs(first, second *tailcfg.Node) int {
 		return 0
 	}
 }
+
+// encodeRelayGrantMapResponse carries only the node's own entry: a renewed
+// relay grant when nothing else in the map changed.
+func encodeRelayGrantMapResponse(
+	snapshot mapsession.Snapshot,
+	capabilityVersion int,
+	compression mapResponseCompression,
+) ([]byte, error) {
+	if !snapshot.IsValid() || !snapshot.RelayGrant().IsValid() || capabilityVersion != supportedCapabilityVersion {
+		return nil, ErrMapResponse
+	}
+	self, err := fullMapNode(snapshot, capabilityVersion)
+	if err != nil {
+		return nil, err
+	}
+	document, err := json.Marshal(connectivityDeltaMapResponseWire{Node: self})
+	if err != nil {
+		clear(document)
+		return nil, ErrMapResponse
+	}
+	return encodeMapDocument(document, compression)
+}

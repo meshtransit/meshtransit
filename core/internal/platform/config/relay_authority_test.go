@@ -53,12 +53,14 @@ func TestRelayAuthorityConfigLoadsKeysMapAndDrain(t *testing.T) {
 		envRelayMapSHA256:        "sha256:" + strings.Repeat("1", 64),
 		envRelayDrain:            " " + drained.String() + " ",
 		envRelayTrustedProxies:   "10.0.0.0/8,fd00::/8",
+		envRelayDeploymentID:     "01890f00-0000-7000-8000-000000000123",
 	}), app.RoleAll)
 	if err != nil || cfg == nil {
 		t.Fatalf("loadRelayAuthorityConfig() error = %v", err)
 	}
 	if cfg.MapFile != "/etc/meshtransit/relay-map.json" || cfg.MapDigest[0] != 0x11 ||
-		len(cfg.Drain) != 1 || cfg.Drain[0] != drained || len(cfg.TrustedProxyPrefixes) != 2 {
+		len(cfg.Drain) != 1 || cfg.Drain[0] != drained || len(cfg.TrustedProxyPrefixes) != 2 ||
+		cfg.TicketDeployment == nil || cfg.TicketDeployment.String() != "01890f00-0000-7000-8000-000000000123" {
 		t.Fatal("map or drain settings not loaded")
 	}
 	signer, nextSigner, err := cfg.SigningKeys(t.Context())
@@ -100,6 +102,13 @@ func TestRelayAuthorityConfigRejectsInvalidSettings(t *testing.T) {
 		}), role: app.RoleControl},
 		{name: "bad drain", values: base(map[string]string{envRelayDrain: "relay-a"}), role: app.RoleControl},
 		{name: "unmasked proxy", values: base(map[string]string{envRelayTrustedProxies: "10.0.0.1/8"}), role: app.RoleControl},
+		{name: "bad deployment", values: base(map[string]string{
+			envRelayMapFile: "/etc/meshtransit/relay-map.json", envRelayMapSHA256: "sha256:" + strings.Repeat("1", 64),
+			envRelayDeploymentID: "not-an-id",
+		}), role: app.RoleControl},
+		{name: "deployment without map", values: base(map[string]string{
+			envRelayDeploymentID: "01890f00-0000-7000-8000-000000000123",
+		}), role: app.RoleControl},
 		{name: "empty drain entry", values: base(map[string]string{envRelayDrain: ""}), role: app.RoleControl},
 	}
 	for _, test := range tests {

@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"strings"
 
+	"meshtransit.net/core/internal/domain/deployment"
 	"meshtransit.net/core/internal/platform/app"
 	"meshtransit.net/shared/key"
 )
@@ -19,6 +20,7 @@ const (
 	envRelayMapSHA256        = "MESHTRANSIT_RELAY_MAP_SHA256"
 	envRelayDrain            = "MESHTRANSIT_RELAY_DRAIN"
 	envRelayTrustedProxies   = "MESHTRANSIT_RELAY_TRUSTED_PROXY_CIDRS"
+	envRelayDeploymentID     = "MESHTRANSIT_RELAY_DEPLOYMENT_PUBLIC_ID"
 
 	maxRelayDrainEntries = 64
 )
@@ -40,6 +42,9 @@ type RelayAuthorityConfig struct {
 	// TrustedProxyPrefixes are the reverse proxies whose X-Forwarded-For
 	// selects the client address for per-source rate limiting.
 	TrustedProxyPrefixes []netip.Prefix
+	// TicketDeployment, when set, makes Core issue relay tickets to nodes;
+	// it is the deployment public ID the tickets name (the entitlement's).
+	TicketDeployment *deployment.ID
 }
 
 // String redacts the configuration in generic formatting.
@@ -82,7 +87,7 @@ func loadRelayAuthorityConfig(lookup LookupFunc, role app.Role) (*RelayAuthority
 	if enabled != "true" && enabled != "false" {
 		return nil, settingError(envRelayAuthorityEnabled)
 	}
-	settings := []string{envRelaySigningKeyFile, envRelayNextSigningKey, envRelayMapFile, envRelayMapSHA256, envRelayDrain, envRelayTrustedProxies}
+	settings := []string{envRelaySigningKeyFile, envRelayNextSigningKey, envRelayMapFile, envRelayMapSHA256, envRelayDrain, envRelayTrustedProxies, envRelayDeploymentID}
 	if enabled == "false" {
 		for _, name := range settings {
 			if _, present := lookup(name); present {
@@ -139,5 +144,13 @@ func loadRelayAuthorityConfig(lookup LookupFunc, role app.Role) (*RelayAuthority
 		return nil, settingError(envRelayTrustedProxies)
 	}
 	cfg.TrustedProxyPrefixes = proxies
+	if value, present := lookup(envRelayDeploymentID); present {
+		id, err := deployment.ParseID(value)
+		if err != nil || cfg.MapFile == "" {
+			// Tickets are useless without a relay map to find relays in.
+			return nil, settingError(envRelayDeploymentID)
+		}
+		cfg.TicketDeployment = &id
+	}
 	return cfg, nil
 }

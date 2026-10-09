@@ -66,6 +66,7 @@ func composeMapStream(
 	revisions mapsession.RevisionWatcher,
 	connectivity mapsession.ConnectivityWatcher,
 	delivery mapsession.DeliveryRecorder,
+	relayAccess mapsession.RelayAccess,
 ) (*mapsession.StreamService, error) {
 	replicaID, err := publicid.New()
 	if err != nil {
@@ -87,7 +88,14 @@ func composeMapStream(
 	if err != nil {
 		return nil, errors.Join(errInvalidMapSessionComposition, err)
 	}
-	return recorded, nil
+	if relayAccess == nil {
+		return recorded, nil
+	}
+	granted, err := recorded.WithRelayAccess(relayAccess)
+	if err != nil {
+		return nil, errors.Join(errInvalidMapSessionComposition, err)
+	}
+	return granted, nil
 }
 
 func newMapStreamService(

@@ -13,6 +13,7 @@ import (
 	"meshtransit.net/core/internal/adapter/httpapi"
 	oidcadapter "meshtransit.net/core/internal/adapter/oidc"
 	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/network/revisionworker"
 	"meshtransit.net/core/internal/domain/sharing/endpointpublication"
@@ -420,6 +421,19 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			)
 			return 1
 		}
+		var relayAuthorityHandler http.Handler
+		var relayAccess mapsession.RelayAccess
+		if processConfig.RelayAuthority != nil {
+			authority, relayErr := composeRelayAuthority(ctx, *processConfig.RelayAuthority, storagePools.runtime, logger)
+			if relayErr != nil {
+				logger.ErrorContext(ctx, "startup failed", "error_code", "relay_authority_composition_failure", "error", relayErr)
+				return 1
+			}
+			relayAuthorityHandler, relayAccess = authority.handler, authority.access
+			additionalMetrics = append(additionalMetrics, authority.publisher.Metrics())
+			// Started before the listener, so the first documents exist when it opens.
+			roleServices = append(roleServices, app.OwnedService{Name: "relay-authority", Service: authority.publisher})
+		}
 		mapStreamService, composeErr := composeMapStream(
 			processConfig.Control.Map,
 			mapSessionService,
@@ -427,6 +441,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			revisionFeed,
 			connectivityFeed,
 			redisClient,
+			relayAccess,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(
@@ -450,18 +465,6 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			browserControl = append(browserControl, browserControlServices{
 				issuer: issuer, completion: completion,
 			})
-		}
-		var relayAuthorityHandler http.Handler
-		if processConfig.RelayAuthority != nil {
-			publisher, handler, relayErr := composeRelayAuthority(ctx, *processConfig.RelayAuthority, logger)
-			if relayErr != nil {
-				logger.ErrorContext(ctx, "startup failed", "error_code", "relay_authority_composition_failure", "error", relayErr)
-				return 1
-			}
-			relayAuthorityHandler = handler
-			additionalMetrics = append(additionalMetrics, publisher.Metrics())
-			// Started before the listener, so the first documents exist when it opens.
-			roleServices = append(roleServices, app.OwnedService{Name: "relay-authority", Service: publisher})
 		}
 		controlListener, composeErr := composeControlListener(
 			*processConfig.Control,

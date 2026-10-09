@@ -18,6 +18,7 @@ import (
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/shared/mtrp"
 )
 
 const (
@@ -413,6 +414,8 @@ func encodeMapDocument(
 	return framed, nil
 }
 
+const interchangeCapability = tailcfg.NodeCapability(mtrp.InterchangeCapability)
+
 func fullMapNode(snapshot mapsession.Snapshot, capabilityVersion int) (*tailcfg.Node, error) {
 	machineKey, err := machinePublicKey(snapshot.MachineKey())
 	if err != nil {
@@ -441,6 +444,12 @@ func fullMapNode(snapshot mapsession.Snapshot, capabilityVersion int) (*tailcfg.
 	if connectivity, found := snapshot.ConnectivityFor(snapshot.NodeID()); found {
 		if err := applyConnectivity(result, connectivity, true); err != nil {
 			return nil, err
+		}
+	}
+	if grant := snapshot.RelayGrant(); grant.IsValid() {
+		// Interchange access rides on the node's own entry until MTCP.
+		result.CapMap = tailcfg.NodeCapMap{
+			interchangeCapability: []tailcfg.RawMessage{tailcfg.RawMessage(grant.Payload())},
 		}
 	}
 	return result, nil

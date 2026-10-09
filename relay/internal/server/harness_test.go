@@ -105,6 +105,19 @@ type relayHarness struct {
 type revokedNodes struct {
 	mu    sync.Mutex
 	nodes map[key.NodePublic]bool
+	zones map[mtrp.Zone]bool
+}
+
+func (r *revokedNodes) ZoneRevoked(z mtrp.Zone) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.zones[z]
+}
+
+func (r *revokedNodes) withdraw(z mtrp.Zone) {
+	r.mu.Lock()
+	r.zones[z] = true
+	r.mu.Unlock()
 }
 
 func (r *revokedNodes) Revoked(t mtrp.Ticket) bool {
@@ -131,7 +144,7 @@ func newRelay(t testing.TB, tune func(*Config)) *relayHarness {
 	}
 	h := &relayHarness{
 		t: t, net: newFakeNet(), clock: newClock(), signer: signer,
-		metrics: &countingMetrics{}, revoked: &revokedNodes{nodes: map[key.NodePublic]bool{}},
+		metrics: &countingMetrics{}, revoked: &revokedNodes{nodes: map[key.NodePublic]bool{}, zones: map[mtrp.Zone]bool{}},
 	}
 	cfg := Config{
 		Key:         relayKey,

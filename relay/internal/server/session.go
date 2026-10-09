@@ -139,15 +139,16 @@ func (s *session) newRouteNumberLocked() (uint32, bool) {
 	return 0, false
 }
 
-// sharesZone reports whether two sessions' tickets share a zone.
-func sharesZone(a, b *session) bool {
+// sharesZone reports whether two sessions' tickets share a zone that Core
+// has not withdrawn (r may be nil).
+func sharesZone(a, b *session, r mtrp.Revocations) bool {
 	a.mu.Lock()
 	ta := a.ticket
 	a.mu.Unlock()
 	b.mu.Lock()
 	tb := b.ticket
 	b.mu.Unlock()
-	return mtrp.SharesZone(ta, tb)
+	return mtrp.SharesLiveZone(ta, tb, r)
 }
 
 type dropReason uint8

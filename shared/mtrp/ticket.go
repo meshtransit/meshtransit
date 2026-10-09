@@ -221,6 +221,12 @@ type Revocations interface {
 	Revoked(t Ticket) bool
 }
 
+// ZoneRevocations is implemented by revocation sources that also withdraw
+// zones (mtrp-v1 §9).
+type ZoneRevocations interface {
+	ZoneRevoked(z Zone) bool
+}
+
 // Verifier checks tickets against trusted keys, time and revocations.
 type Verifier struct {
 	Keys        KeySet
@@ -253,20 +259,43 @@ func (v Verifier) Verify(b []byte) (Ticket, error) {
 	if nowMS < t.IssuedAtMS-MaxIssueSkew.Milliseconds() || nowMS >= t.NotAfterMS {
 		return Ticket{}, ErrTicketTime
 	}
-	if v.Revocations != nil && v.Revocations.Revoked(t) {
+	if IsRevoked(t, v.Revocations) {
 		return Ticket{}, ErrTicketRevoked
 	}
 	return t, nil
 }
 
+// IsRevoked reports whether r revokes t: its ID, node or disco key is
+// listed, or every one of its zones is withdrawn so it can reach no one.
+// r may be nil.
+func IsRevoked(t Ticket, r Revocations) bool {
+	if r == nil {
+		return false
+	}
+	if r.Revoked(t) {
+		return true
+	}
+	zones, ok := r.(ZoneRevocations)
+	return ok && len(t.Zones) != 0 && !slices.ContainsFunc(t.Zones, func(z Zone) bool { return !zones.ZoneRevoked(z) })
+}
+
 // SharesZone reports whether two tickets share a zone. Zones are canonical
 // (sorted, unique), so a merge walk is linear.
-func SharesZone(a, b Ticket) bool {
+func SharesZone(a, b Ticket) bool { return SharesLiveZone(a, b, nil) }
+
+// SharesLiveZone reports whether two tickets share a zone that r has not
+// withdrawn. r may be nil or not implement ZoneRevocations.
+func SharesLiveZone(a, b Ticket, r Revocations) bool {
+	zones, _ := r.(ZoneRevocations)
 	i, j := 0, 0
 	for i < len(a.Zones) && j < len(b.Zones) {
 		switch c := compareZones(a.Zones[i], b.Zones[j]); {
 		case c == 0:
-			return true
+			if zones == nil || !zones.ZoneRevoked(a.Zones[i]) {
+				return true
+			}
+			i++
+			j++
 		case c < 0:
 			i++
 		default:

@@ -505,6 +505,7 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_RELAY_MAP_SHA256` | none | Required with the map file: canonical `sha256:<64 hex digits>` pin for it. |
 | `MESHTRANSIT_RELAY_DRAIN` | empty | Comma-separated relay public keys (`mtrelay:…`, at most 64) told to drain. |
 | `MESHTRANSIT_RELAY_TRUSTED_PROXY_CIDRS` | empty | Canonical CIDRs allowed to supply `X-Forwarded-For` for the relay documents' per-client rate limit; set it to the ingress controller's pod range. |
+| `MESHTRANSIT_RELAY_DEPLOYMENT_PUBLIC_ID` | none | Deployment public ID (the entitlement's) that relay tickets name. With it and a relay map, Core issues each node a 15-minute relay ticket on its map entry (docs/protocol/mtrp-v1.md §9.1); without it no tickets are issued. |
 
 The control role fails startup when the relay directory file is absent, unsafe,
 oversized, malformed, or does not match its digest pin. Core never fetches relay

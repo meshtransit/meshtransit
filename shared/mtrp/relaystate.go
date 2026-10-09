@@ -35,12 +35,21 @@ const (
 	RevokeTicket RevocationKind = 1 // ticket_id
 	RevokeNode   RevocationKind = 2 // node public key
 	RevokeDisco  RevocationKind = 3 // disco public key
+	RevokeZone   RevocationKind = 4 // zone kind || zone ID
 )
 
 // RevocationID is the published form of a revoked value: the first 16 bytes
 // of BLAKE2s-256("meshtransit/relay-revocation/v1" || 0x00 || kind || value).
 // Relays match tickets against it without the state listing keys.
 type RevocationID [16]byte
+
+// ZoneRevocationHash computes the RevocationID of a zone.
+func ZoneRevocationHash(z Zone) RevocationID {
+	var value [zoneSize]byte
+	value[0] = byte(z.Kind)
+	copy(value[1:], z.ID[:])
+	return RevocationHash(RevokeZone, value[:])
+}
 
 // RevocationHash computes the RevocationID of a value.
 func RevocationHash(kind RevocationKind, value []byte) RevocationID {
@@ -69,7 +78,11 @@ type RelayState struct {
 	Tickets     []RevocationID
 	Nodes       []RevocationID
 	Discos      []RevocationID
-	Drain       []key.RelayPublic
+	// Zones are withdrawn zones (for example an ended Trust Contract): a
+	// ticket keeps only its other zones, and routes that shared nothing else
+	// close.
+	Zones []RevocationID
+	Drain []key.RelayPublic
 }
 
 type relayStateWire struct {
@@ -91,6 +104,7 @@ type revokedWire struct {
 	Tickets []string `json:"tickets"`
 	Nodes   []string `json:"nodes"`
 	Discos  []string `json:"discos"`
+	Zones   []string `json:"zones,omitempty"`
 }
 
 // Payload validates s and encodes it as a signed-document payload.
@@ -101,11 +115,16 @@ func (s RelayState) Payload() ([]byte, error) {
 	w := relayStateWire{
 		Version: 1, Sequence: s.Sequence,
 		IssuedAtMS: s.IssuedAt.UnixMilli(), ExpiresAtMS: s.ExpiresAt.UnixMilli(),
-		Revoked: revokedWire{Tickets: hexIDs(s.Tickets), Nodes: hexIDs(s.Nodes), Discos: hexIDs(s.Discos)},
-		Drain:   s.Drain,
+		Revoked: revokedWire{
+			Tickets: hexIDs(s.Tickets), Nodes: hexIDs(s.Nodes), Discos: hexIDs(s.Discos),
+		},
+		Drain: s.Drain,
 	}
 	if w.Drain == nil {
 		w.Drain = []key.RelayPublic{}
+	}
+	if len(s.Zones) != 0 {
+		w.Revoked.Zones = hexIDs(s.Zones) // omitted when empty, as before zones existed
 	}
 	for _, k := range s.SigningKeys {
 		w.SigningKeys = append(w.SigningKeys, trustedKeyWire{Key: k.Key, NotAfterMS: k.NotAfter.UnixMilli()})
@@ -140,6 +159,9 @@ func ParseRelayState(payload []byte) (RelayState, error) {
 	if s.Discos, err = parseIDs(w.Revoked.Discos); err != nil {
 		return RelayState{}, err
 	}
+	if s.Zones, err = parseIDs(w.Revoked.Zones); err != nil {
+		return RelayState{}, err
+	}
 	if err := s.validate(); err != nil {
 		return RelayState{}, err
 	}
@@ -154,7 +176,7 @@ func (s RelayState) validate() error {
 		return fmt.Errorf("%w: relay state lifetime out of range", ErrDocumentMalformed)
 	case len(s.SigningKeys) == 0 || len(s.SigningKeys) > MaxTrustedSigningKeys:
 		return fmt.Errorf("%w: 1..%d signing keys required", ErrDocumentMalformed, MaxTrustedSigningKeys)
-	case len(s.Tickets)+len(s.Nodes)+len(s.Discos) > MaxRevocations:
+	case len(s.Tickets)+len(s.Nodes)+len(s.Discos)+len(s.Zones) > MaxRevocations:
 		return fmt.Errorf("%w: too many revocations", ErrDocumentMalformed)
 	case len(s.Drain) > 1024:
 		return fmt.Errorf("%w: too many drain entries", ErrDocumentMalformed)
@@ -199,7 +221,7 @@ func parseIDs(in []string) ([]RevocationID, error) {
 // RevocationSet answers Revoked for a relay state. It is immutable and safe
 // for concurrent use.
 type RevocationSet struct {
-	tickets, nodes, discos map[RevocationID]struct{}
+	tickets, nodes, discos, zones map[RevocationID]struct{}
 }
 
 // NewRevocationSet indexes a state's revocations.
@@ -211,10 +233,20 @@ func NewRevocationSet(s RelayState) *RevocationSet {
 		}
 		return m
 	}
-	return &RevocationSet{tickets: index(s.Tickets), nodes: index(s.Nodes), discos: index(s.Discos)}
+	return &RevocationSet{tickets: index(s.Tickets), nodes: index(s.Nodes), discos: index(s.Discos), zones: index(s.Zones)}
 }
 
-// Revoked implements Revocations.
+// ZoneRevoked implements ZoneRevocations.
+func (r *RevocationSet) ZoneRevoked(z Zone) bool {
+	if r == nil || len(r.zones) == 0 {
+		return false
+	}
+	_, ok := r.zones[ZoneRevocationHash(z)]
+	return ok
+}
+
+// Revoked implements Revocations for the listed ticket IDs, node and disco
+// keys. Use IsRevoked to include withdrawn zones.
 func (r *RevocationSet) Revoked(t Ticket) bool {
 	if r == nil {
 		return false
@@ -234,7 +266,7 @@ func (r *RevocationSet) Len() int {
 	if r == nil {
 		return 0
 	}
-	return len(r.tickets) + len(r.nodes) + len(r.discos)
+	return len(r.tickets) + len(r.nodes) + len(r.discos) + len(r.zones)
 }
 
 var errNoKeys = errors.New("mtrp: no trusted keys")

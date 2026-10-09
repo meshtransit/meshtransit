@@ -501,6 +501,7 @@ func Catalog() []Migration {
 		newMigration(132, "Cloud sign-in before the first Workspace", cloudLoginWithoutWorkspaceSQL),
 		newMigration(133, "Read policy distribution status", deviceDistributionReadSQL),
 		newMigration(134, "Access edge ledger and history read", accessEdgeLedgerSQL),
+		newMigration(135, "Relay revocation read", relayRevocationsReadSQL),
 	}
 }
 
@@ -682,3 +683,6 @@ var deviceDistributionReadSQL string
 
 //go:embed 000134_access_edge_ledger.up.sql
 var accessEdgeLedgerSQL string
+
+//go:embed 000135_relay_revocations_read.up.sql
+var relayRevocationsReadSQL string

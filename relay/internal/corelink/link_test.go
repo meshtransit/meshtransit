@@ -100,12 +100,17 @@ func TestLinkAppliesRotatesAndRevokes(t *testing.T) {
 	node := key.NodePublic{0x77}
 	s1 := state(1, mtrp.TrustedKey{Key: a.Public(), NotAfter: t0.Add(time.Hour)}, mtrp.TrustedKey{Key: b.Public(), NotAfter: t0.Add(24 * time.Hour)})
 	s1.Nodes = []mtrp.RevocationID{mtrp.RevocationHash(mtrp.RevokeNode, node[:])}
+	contract := mtrp.Zone{Kind: mtrp.ZoneTrustContract, ID: [16]byte{0x0c}}
+	s1.Zones = []mtrp.RevocationID{mtrp.ZoneRevocationHash(contract)}
 	core.set(t, s1, a, `"1"`)
 	if err := l.Poll(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if !l.Revoked(mtrp.Ticket{Node: node}) || l.Generation() != 1 {
 		t.Fatal("revocation not applied")
+	}
+	if !l.ZoneRevoked(contract) || l.ZoneRevoked(mtrp.Zone{Kind: mtrp.ZoneNetwork, ID: [16]byte{1}}) {
+		t.Fatal("zone withdrawal not applied")
 	}
 	if _, ok := l.SigningKey(b.Public().ID()); !ok {
 		t.Fatal("rotated-in key not trusted")
