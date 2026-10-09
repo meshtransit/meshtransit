@@ -39,7 +39,8 @@ aad         = magic || sender
 
 - Minimum envelope: 6 + 32 + 24 + 16 (tag) + 2 (version, type) = 80 bytes.
 - Maximum envelope: 1472 bytes (fits a 1500-byte IPv4 path without
-  fragmentation). Larger packets MUST be dropped unread.
+  fragmentation), so the plaintext is at most 1394 bytes. Larger packets or
+  plaintexts MUST be rejected; parsers enforce the plaintext bound themselves.
 - The magic cannot be confused with WireGuard (first byte 1–4 followed by three
   zero bytes), STUN (first two bits zero) or MTRP frames (first byte 1).
 - A receiver looks up `sender` in the current map. Unknown sender: drop.
