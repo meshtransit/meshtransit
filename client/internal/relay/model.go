@@ -26,7 +26,9 @@ const (
 // Key is one WireGuard-compatible node identity used only as a relay address.
 type Key [32]byte
 
-// Node is one TLS relay endpoint authorized by the control plane.
+// Node is one relay endpoint authorized by the control plane. Port is the
+// TLS port. Interchange (MTRP) nodes also carry their static relay key and
+// UDP port; legacy nodes leave them zero.
 type Node struct {
 	Name     string
 	HostName string
@@ -34,6 +36,8 @@ type Node struct {
 	IPv4     string
 	IPv6     string
 	Port     uint16
+	RelayKey [32]byte
+	UDPPort  uint16
 }
 
 // Region is an ordered failover group of relay nodes.
@@ -216,6 +220,8 @@ func encodeTopology(config Config) bytes.Buffer {
 			writeString(&encoded, node.IPv4)
 			writeString(&encoded, node.IPv6)
 			writeUint64(&encoded, uint64(node.Port))
+			encoded.Write(node.RelayKey[:])
+			writeUint64(&encoded, uint64(node.UDPPort))
 		}
 	}
 

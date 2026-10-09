@@ -156,6 +156,14 @@ func signingInput(body []byte) []byte {
 	return append(append(in, ticketDomain...), body...)
 }
 
+// ParseTicketUnverified decodes a ticket without checking its signature or
+// validity window. Nodes use it to learn which disco key and expiry the
+// ticket they were given carries; only relays verify tickets.
+func ParseTicketUnverified(b []byte) (Ticket, error) {
+	t, _, _, err := parseTicket(b)
+	return t, err
+}
+
 // parseTicket decodes a ticket and returns its signed body and signature.
 func parseTicket(b []byte) (Ticket, []byte, []byte, error) {
 	if len(b) < ticketFixedSize+zoneSize+ticketSignedSize || len(b) > MaxTicketSize || string(b[:4]) != ticketMagic {

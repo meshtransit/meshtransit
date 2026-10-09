@@ -46,6 +46,13 @@ func TestInterchangeGrantRoundTrip(t *testing.T) {
 	if !got.TicketNotAfter.Equal(g.TicketNotAfter) || string(got.Ticket) != string(g.Ticket) || len(got.SigningKeys) != 1 {
 		t.Fatalf("round trip: %+v", got)
 	}
+	ticket, err := ParseTicketUnverified(got.Ticket)
+	if err != nil || ticket.Disco != sampleTicket().Disco || ticket.NotAfterMS != sampleTicket().NotAfterMS {
+		t.Fatalf("ParseTicketUnverified = %+v, %v", ticket, err)
+	}
+	if _, err := ParseTicketUnverified(got.Ticket[:10]); err == nil {
+		t.Fatal("truncated ticket parsed")
+	}
 	m, err := got.OpenRelayMap(docNow)
 	if err != nil || m.Version != 3 {
 		t.Fatalf("OpenRelayMap = %+v, %v", m, err)
