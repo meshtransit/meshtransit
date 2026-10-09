@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install Go from go.mod
         uses: actions/setup-go@v6
@@ -46,7 +46,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install Go from go.mod
         uses: actions/setup-go@v6
@@ -66,7 +66,7 @@ jobs:
       REDIS_IMAGE: redis:8.8.0-trixie
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install Go from go.mod
         uses: actions/setup-go@v6
@@ -85,7 +85,7 @@ jobs:
       CONTAINER_TAG: ci
     steps:
       - name: Check out source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Build hardened image
         env:
