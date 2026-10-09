@@ -16,6 +16,7 @@ import (
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/network/revisionworker"
+	"meshtransit.net/core/internal/domain/relay"
 	"meshtransit.net/core/internal/domain/sharing/endpointpublication"
 	"meshtransit.net/core/internal/platform/app"
 	"meshtransit.net/core/internal/platform/buildinfo"
@@ -392,10 +393,30 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			)
 			return 1
 		}
-		relayDirectory, composeErr := loadRelayDirectory(
-			ctx,
-			processConfig.Control.Map.RelayDirectory,
-		)
+		var relayAuthorityHandler http.Handler
+		var relayAccess mapsession.RelayAccess
+		var relayAuthorityDirectory relay.Directory
+		if processConfig.RelayAuthority != nil {
+			authority, relayErr := composeRelayAuthority(ctx, *processConfig.RelayAuthority, storagePools.runtime, logger)
+			if relayErr != nil {
+				logger.ErrorContext(ctx, "startup failed", "error_code", "relay_authority_composition_failure", "error", relayErr)
+				return 1
+			}
+			relayAuthorityHandler, relayAccess = authority.handler, authority.access
+			relayAuthorityDirectory = authority.directory
+			additionalMetrics = append(additionalMetrics, authority.publisher.Metrics())
+			// Started before the listener, so the first documents exist when it opens.
+			roleServices = append(roleServices, app.OwnedService{Name: "relay-authority", Service: authority.publisher})
+		}
+		var relayDirectory relay.Directory
+		if relayAuthorityDirectory.IsValid() {
+			relayDirectory = relayAuthorityDirectory
+			if processConfig.Control.Map.RelayDirectory != nil {
+				logger.InfoContext(ctx, "relay directory file ignored: the relay map is the source of relay regions")
+			}
+		} else {
+			relayDirectory, composeErr = loadRelayDirectory(ctx, processConfig.Control.Map.RelayDirectory)
+		}
 		if composeErr != nil {
 			logger.ErrorContext(
 				ctx,
@@ -420,19 +441,6 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				"error", composeErr,
 			)
 			return 1
-		}
-		var relayAuthorityHandler http.Handler
-		var relayAccess mapsession.RelayAccess
-		if processConfig.RelayAuthority != nil {
-			authority, relayErr := composeRelayAuthority(ctx, *processConfig.RelayAuthority, storagePools.runtime, logger)
-			if relayErr != nil {
-				logger.ErrorContext(ctx, "startup failed", "error_code", "relay_authority_composition_failure", "error", relayErr)
-				return 1
-			}
-			relayAuthorityHandler, relayAccess = authority.handler, authority.access
-			additionalMetrics = append(additionalMetrics, authority.publisher.Metrics())
-			// Started before the listener, so the first documents exist when it opens.
-			roleServices = append(roleServices, app.OwnedService{Name: "relay-authority", Service: authority.publisher})
 		}
 		mapStreamService, composeErr := composeMapStream(
 			processConfig.Control.Map,

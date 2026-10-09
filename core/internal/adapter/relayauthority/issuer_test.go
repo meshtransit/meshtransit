@@ -110,3 +110,21 @@ func TestIssuerNeedsRelayMap(t *testing.T) {
 		t.Fatal("invalid issuer accepted")
 	}
 }
+
+func TestDirectoryFromRelayMap(t *testing.T) {
+	t.Parallel()
+
+	directory, err := Directory(testMap(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	region, found := directory.Region(1)
+	if !found || directory.Revision() != 3 || len(region.Nodes()) != 1 {
+		t.Fatalf("directory = %+v", directory)
+	}
+	node := region.Nodes()[0]
+	if node.HostName() != "relay-sgp1.meshtransit.net" || node.IPv4() != "18.142.253.199" ||
+		node.IPv6() != "none" || node.RelayPort() != 443 || node.STUNPort() != 3478 {
+		t.Fatalf("node = %s %s %s %d %d", node.HostName(), node.IPv4(), node.IPv6(), node.RelayPort(), node.STUNPort())
+	}
+}

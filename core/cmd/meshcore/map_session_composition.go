@@ -43,9 +43,9 @@ func composeMapSession(
 
 func loadRelayDirectory(
 	ctx context.Context,
-	directoryConfig config.RelayDirectoryConfig,
+	directoryConfig *config.RelayDirectoryConfig,
 ) (relay.Directory, error) {
-	if ctx == nil {
+	if ctx == nil || directoryConfig == nil {
 		return relay.Directory{}, errInvalidMapSessionComposition
 	}
 	path, digest, err := directoryConfig.Values()

@@ -14,7 +14,6 @@ import (
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
-	relaywire "meshtransit.net/client/internal/compat/derp"
 	compatstun "meshtransit.net/client/internal/compat/stun"
 	"meshtransit.net/client/internal/interchange"
 	"meshtransit.net/client/internal/pathdiscovery"
@@ -75,11 +74,12 @@ func (f *officialWireGuardFactory) New(
 	}
 	var relayPool *relay.Pool
 	if relayConfig != nil {
-		var dialer relay.Dialer = relaywire.NewDialer()
-		if usesInterchange(*relayConfig) && f.credentials != nil {
-			dialer = interchange.NewDialer(f.credentials)
+		if !usesInterchange(*relayConfig) || f.credentials == nil {
+			_ = tunDevice.Close()
+
+			return nil, errors.New("dataplane: relay configuration names no Interchange relay")
 		}
-		relayPool, err = relay.New(ctx, *relayConfig, dialer)
+		relayPool, err = relay.New(ctx, *relayConfig, interchange.NewDialer(f.credentials))
 		if err != nil {
 			_ = tunDevice.Close()
 

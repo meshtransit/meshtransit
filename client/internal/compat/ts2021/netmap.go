@@ -1139,13 +1139,8 @@ func (a *mapAccumulator) apply(
 			candidate.namedPolicies[name] = rules
 		}
 	}
-	if response.DERPMap != nil && response.DERPMap.Regions != nil {
-		relays, err := convertRelayMap(response.DERPMap)
-		if err != nil {
-			return networkmap.Snapshot{}, false, err
-		}
-		candidate.relays = relays
-	}
+	// A legacy DERP map is ignored: relays come only from the signed relay
+	// map in the node's Interchange grant.
 	if response.DNSConfig != nil {
 		dnsConfig, err := convertDNSConfig(response.DNSConfig)
 		if err != nil {
@@ -1711,41 +1706,6 @@ func convertProtocols(raw []int) ([]uint8, error) {
 		}
 		seen[value] = struct{}{}
 		converted = append(converted, value)
-	}
-
-	return converted, nil
-}
-
-func convertRelayMap(raw *tailcfg.DERPMap) (map[int]networkmap.RelayRegion, error) {
-	converted := make(map[int]networkmap.RelayRegion, len(raw.Regions))
-	for id, rawRegion := range raw.Regions {
-		if rawRegion == nil {
-			return nil, fmt.Errorf("%w: relay region is nil", ErrNetmapInvalid)
-		}
-		region := networkmap.RelayRegion{
-			ID:   rawRegion.RegionID,
-			Code: rawRegion.RegionCode,
-			Name: rawRegion.RegionName,
-		}
-		if rawRegion.RegionID != id {
-			return nil, fmt.Errorf("%w: relay region key/id mismatch", ErrNetmapInvalid)
-		}
-		for _, rawNode := range rawRegion.Nodes {
-			if rawNode == nil || rawNode.InsecureForTests {
-				return nil, fmt.Errorf("%w: relay node is nil or insecure", ErrNetmapInvalid)
-			}
-			region.Nodes = append(region.Nodes, networkmap.RelayNode{
-				Name:      rawNode.Name,
-				HostName:  rawNode.HostName,
-				CertName:  rawNode.CertName,
-				IPv4:      rawNode.IPv4,
-				IPv6:      rawNode.IPv6,
-				STUNPort:  rawNode.STUNPort,
-				RelayPort: rawNode.DERPPort,
-				STUNOnly:  rawNode.STUNOnly,
-			})
-		}
-		converted[id] = region
 	}
 
 	return converted, nil

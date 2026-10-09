@@ -9,6 +9,7 @@ import (
 	"meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/adapter/relayauthority"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/relay"
 	"meshtransit.net/core/internal/platform/clientip"
 	"meshtransit.net/core/internal/platform/config"
 	"meshtransit.net/shared/mtrp"
@@ -21,6 +22,7 @@ type relayAuthority struct {
 	publisher *relayauthority.Publisher
 	handler   *relayauthority.Handler
 	access    mapsession.RelayAccess // nil unless tickets are enabled
+	directory relay.Directory        // derived from the relay map, when there is one
 }
 
 // composeRelayAuthority builds the publisher that signs relay state and the
@@ -68,6 +70,13 @@ func composeRelayAuthority(
 		return relayAuthority{}, errors.Join(errInvalidRelayAuthorityComposition, err)
 	}
 	composed := relayAuthority{publisher: publisher, handler: relayauthority.NewHandler(publisher, clients)}
+	if relayMap != nil {
+		directory, err := relayauthority.Directory(*relayMap)
+		if err != nil {
+			return relayAuthority{}, errors.Join(errInvalidRelayAuthorityComposition, err)
+		}
+		composed.directory = directory
+	}
 	if cfg.TicketDeployment != nil {
 		issuer, err := relayauthority.NewIssuer(publisher, *cfg.TicketDeployment)
 		if err != nil {

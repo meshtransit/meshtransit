@@ -382,6 +382,8 @@ value, `shared/mtrp` `InterchangeGrant`):
   only the node's own entry.
 - A node keeps its last grant until the ticket expires when a later entry
   omits the capability.
+- The relay map is the only source of relay regions: Core validates the home
+  region a node reports against it and sends no legacy DERP map.
 
 ## 10. Test vectors
 

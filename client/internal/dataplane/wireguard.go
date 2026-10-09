@@ -1416,7 +1416,8 @@ func usableRelayRegion(
 		Nodes: make([]relay.Node, 0, len(region.Nodes)),
 	}
 	for _, node := range region.Nodes {
-		if node.STUNOnly {
+		// Only Interchange nodes, which carry a relay key, can be dialled.
+		if node.STUNOnly || node.RelayKey == ([32]byte{}) {
 			continue
 		}
 		port := node.RelayPort

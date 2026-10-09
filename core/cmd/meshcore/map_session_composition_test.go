@@ -34,7 +34,7 @@ func TestLoadRelayDirectoryUsesValidatedDigestPinnedFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config.NewRelayDirectoryConfig() error = %v", err)
 	}
-	directory, err := loadRelayDirectory(t.Context(), directoryConfig)
+	directory, err := loadRelayDirectory(t.Context(), &directoryConfig)
 	if err != nil || !directory.IsValid() || directory.Revision() != 7 {
 		t.Fatalf("loadRelayDirectory() = (%v, %v)", directory, err)
 	}

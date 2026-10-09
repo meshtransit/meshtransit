@@ -42,7 +42,7 @@ type ControlMapConfig struct {
 	CoordinationTimeout  time.Duration
 	KeepAliveInterval    time.Duration
 	ReconcileInterval    time.Duration
-	RelayDirectory       RelayDirectoryConfig
+	RelayDirectory       *RelayDirectoryConfig // nil when the relay map is the source
 }
 
 func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
@@ -122,9 +122,17 @@ func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
 	if err != nil {
 		return ControlMapConfig{}, settingError(envControlMapReconcileInterval)
 	}
-	relayDirectory, err := loadRelayDirectoryConfig(lookup)
-	if err != nil {
-		return ControlMapConfig{}, err
+	// The relay directory file is optional: a relay authority with a relay
+	// map supplies the directory instead (checked by Load).
+	var relayDirectory *RelayDirectoryConfig
+	_, hasFile := lookup(envRelayDirectoryFile)
+	_, hasDigest := lookup(envRelayDirectorySHA256)
+	if hasFile || hasDigest {
+		loaded, err := loadRelayDirectoryConfig(lookup)
+		if err != nil {
+			return ControlMapConfig{}, err
+		}
+		relayDirectory = &loaded
 	}
 	return ControlMapConfig{
 		EnableDeviceAliases:  aliases == "true",

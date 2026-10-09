@@ -3,6 +3,7 @@ package dataplane
 import (
 	"context"
 	"crypto/ecdh"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -1623,6 +1624,8 @@ func addTestRelay(snapshot networkmap.Snapshot) networkmap.Snapshot {
 				Name:      "relay-1",
 				HostName:  "relay.example.com",
 				RelayPort: 443,
+				UDPPort:   3479,
+				RelayKey:  [32]byte{0x01},
 			}},
 		},
 	}
@@ -1639,6 +1642,8 @@ func testRelayRegion(id int, hostName string) networkmap.RelayRegion {
 			Name:      fmt.Sprintf("relay-%d", id),
 			HostName:  hostName,
 			RelayPort: 443,
+			UDPPort:   3479,
+			RelayKey:  sha256.Sum256([]byte(hostName)),
 		}},
 	}
 }

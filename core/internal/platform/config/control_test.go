@@ -57,10 +57,14 @@ func TestLoadControlConfigForControlRoles(t *testing.T) {
 					CoordinationTimeout:  4 * time.Second,
 					KeepAliveInterval:    70 * time.Second,
 					ReconcileInterval:    20 * time.Second,
-					RelayDirectory:       relayDirectoryConfigFixture(t),
 				},
 			}
-			if *got.Control != want {
+			gotControl := *got.Control
+			if gotControl.Map.RelayDirectory == nil || *gotControl.Map.RelayDirectory != relayDirectoryConfigFixture(t) {
+				t.Fatal("relay directory file not loaded")
+			}
+			gotControl.Map.RelayDirectory = nil
+			if gotControl != want {
 				t.Fatalf("Control = %+v, want %+v", *got.Control, want)
 			}
 		})

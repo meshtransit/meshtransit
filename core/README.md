@@ -496,7 +496,7 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_MAP_COORDINATION_TIMEOUT` | `2s` | Redis presence and endpoint-operation deadline from 100ms through 30 seconds and below one third of the presence TTL. |
 | `MESHTRANSIT_CONTROL_MAP_KEEPALIVE_INTERVAL` | `30s` | Silent-stream keepalive interval from 1 second through 90 seconds. Keep it below every proxy idle timeout on the control path. |
 | `MESHTRANSIT_CONTROL_MAP_RECONCILE_INTERVAL` | `30s` | Authoritative PostgreSQL resync interval from 1 second through 5 minutes. |
-| `MESHTRANSIT_RELAY_DIRECTORY_FILE` | none | Absolute path to the bounded, product-schema relay directory snapshot loaded at control-role startup. |
+| `MESHTRANSIT_RELAY_DIRECTORY_FILE` | none | Absolute path to the bounded, product-schema relay directory snapshot loaded at control-role startup. Optional when the relay authority has a relay map: the map is then the only source of relay regions and this file is ignored. |
 | `MESHTRANSIT_RELAY_DIRECTORY_SHA256` | none | Canonical lowercase `sha256:<64 hex digits>` digest pin for the exact relay directory file. |
 | `MESHTRANSIT_RELAY_AUTHORITY_ENABLED` | `false` | `true` makes a `control` or `all` process the Interchange relay authority, serving signed `GET /relay/v1/state` and `GET /relay/v1/map` on the control listener (docs/protocol/mtrp-v1.md §8–§9). |
 | `MESHTRANSIT_RELAY_SIGNING_KEY_FILE` | none | Relay authority signing key: a 32-byte Ed25519 seed as 43 base64url characters, mode 0400/0440/0600/0640. Relays trust its public key (`meshrelay --trusted-signing-keys`). |

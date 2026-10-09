@@ -40,7 +40,6 @@ type fullMapResponseWire struct {
 	Node         *tailcfg.Node        `json:"Node"`
 	Peers        []*tailcfg.Node      `json:"Peers"`
 	PacketFilter []tailcfg.FilterRule `json:"PacketFilter"`
-	DERPMap      *tailcfg.DERPMap     `json:"DERPMap"`
 	DNSConfig    *tailcfg.DNSConfig   `json:"DNSConfig"`
 }
 
@@ -84,10 +83,6 @@ func encodeFullMapResponse(
 	if err != nil {
 		return nil, err
 	}
-	relayDirectory, err := mapRelayDirectory(snapshot.RelayDirectory())
-	if err != nil {
-		return nil, err
-	}
 	dnsConfig, err := mapDNSConfig(snapshot)
 	if err != nil {
 		return nil, err
@@ -97,7 +92,6 @@ func encodeFullMapResponse(
 		Node:         self,
 		Peers:        peers,
 		PacketFilter: packetFilter,
-		DERPMap:      relayDirectory,
 		DNSConfig:    dnsConfig,
 	})
 	if err != nil {

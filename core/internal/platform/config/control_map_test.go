@@ -31,9 +31,14 @@ func TestLoadControlMapDefaults(t *testing.T) {
 		CoordinationTimeout:  defaultControlMapCoordination,
 		KeepAliveInterval:    defaultControlMapKeepAlive,
 		ReconcileInterval:    defaultControlMapReconcile,
-		RelayDirectory:       relayDirectoryConfigFixture(t),
 	}
-	if got.Control.Map != want {
+	directory := got.Control.Map.RelayDirectory
+	if directory == nil || *directory != relayDirectoryConfigFixture(t) {
+		t.Fatal("Control.Map.RelayDirectory not loaded from the directory file")
+	}
+	gotMap := got.Control.Map
+	gotMap.RelayDirectory = nil
+	if gotMap != want {
 		t.Fatalf("Control.Map = %+v, want %+v", got.Control.Map, want)
 	}
 }
@@ -54,7 +59,12 @@ func TestLoadControlMapExplicitValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if got.Control == nil || got.Control.Map != (ControlMapConfig{
+	if got.Control == nil {
+		t.Fatal("Control missing")
+	}
+	gotMap := got.Control.Map
+	gotMap.RelayDirectory = nil
+	if gotMap != (ControlMapConfig{
 		RequestTimeout:       13 * time.Second,
 		StatementTimeout:     7 * time.Second,
 		TransactionIdleLimit: 11 * time.Second,
@@ -62,7 +72,6 @@ func TestLoadControlMapExplicitValues(t *testing.T) {
 		CoordinationTimeout:  4 * time.Second,
 		KeepAliveInterval:    70 * time.Second,
 		ReconcileInterval:    20 * time.Second,
-		RelayDirectory:       relayDirectoryConfigFixture(t),
 	}) {
 		t.Fatalf("Control.Map = %+v, want explicit values", got.Control)
 	}
@@ -125,6 +134,21 @@ func TestLoadControlMapRequiresRelayDirectoryReference(t *testing.T) {
 				t.Fatalf("Load() error = %v, want ErrInvalid naming %s", err, setting)
 			}
 		})
+	}
+	// Without both directory settings, a control process needs a relay map.
+	values := validProcessValues(map[string]string{envRole: "control"})
+	delete(values, envRelayDirectoryFile)
+	delete(values, envRelayDirectorySHA256)
+	if _, err := Load(mapLookup(values)); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), envRelayDirectoryFile) {
+		t.Fatalf("Load() without any relay source error = %v", err)
+	}
+	values[envRelayAuthorityEnabled] = "true"
+	values[envRelaySigningKeyFile] = writeSigningSeed(t, 0x31)
+	values[envRelayMapFile] = "/etc/meshtransit/relay-map.json"
+	values[envRelayMapSHA256] = "sha256:" + strings.Repeat("2", 64)
+	got, err := Load(mapLookup(values))
+	if err != nil || got.Control == nil || got.Control.Map.RelayDirectory != nil {
+		t.Fatalf("Load() with a relay map: %v", err)
 	}
 }
 

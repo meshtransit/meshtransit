@@ -171,6 +171,12 @@ func Load(lookup LookupFunc) (Config, error) {
 		if loadErr := validateControlSecretOwnership(loadedControl, loadedEnrollment); loadErr != nil {
 			return Config{}, loadErr
 		}
+		// Relay topology comes from the relay authority's map when there is
+		// one, and otherwise from the relay directory file.
+		if loadedControl.Map.RelayDirectory == nil &&
+			(relayAuthorityConfig == nil || relayAuthorityConfig.MapFile == "") {
+			return Config{}, settingError(envRelayDirectoryFile)
+		}
 		controlConfig = &loadedControl
 		enrollmentConfig = &loadedEnrollment
 	}
