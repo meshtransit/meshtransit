@@ -53,7 +53,7 @@ COPY --from=build --chown=65532:65532 /etc/ssl/certs/ca-certificates.crt /etc/ss
 COPY --from=build --chown=65532:65532 /out/meshcore /meshcore
 COPY --chown=65532:65532 core/LICENSE /licenses/LICENSE
 COPY --chown=65532:65532 COMMERCIAL-LICENSING.md /licenses/COMMERCIAL-LICENSING.md
-COPY --chown=65532:65532 THIRD_PARTY_NOTICES.md /licenses/THIRD_PARTY_NOTICES.md
+COPY --chown=65532:65532 core/THIRD_PARTY_NOTICES.md /licenses/THIRD_PARTY_NOTICES.md
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 

@@ -3,9 +3,12 @@
 Copyright 2026 The MeshTransit Authors
 
 Except for third-party components identified in
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), the community distribution
-of MeshTransit Core is licensed under `AGPL-3.0-only`, as stated in
-[`LICENSE`](LICENSE).
+[`core/THIRD_PARTY_NOTICES.md`](core/THIRD_PARTY_NOTICES.md), the community distribution
+of MeshTransit Core (`core/`) and MeshTransit Interchange (`relay/`) is licensed
+under `AGPL-3.0-only`, as stated in [`LICENSE`](LICENSE) and
+[`LICENSES/AGPL-3.0.txt`](LICENSES/AGPL-3.0.txt). Code under `client/`,
+`shared/` and `api/` is licensed under Apache-2.0 and needs no commercial
+license.
 
 MeshTransit may separately offer a commercial license for the same
 MeshTransit-owned code. A commercial license is effective only when the

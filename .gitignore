@@ -12,3 +12,6 @@
 *.pfx
 /credentials/
 /secrets/
+/bin/
+/dist/
+*.prof

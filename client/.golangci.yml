@@ -1,0 +1,60 @@
+version: "2"
+
+run:
+  concurrency: 4
+  timeout: 5m
+  tests: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 50
+
+linters:
+  enable:
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - copyloopvar
+    - depguard
+    - durationcheck
+    - errcheck
+    - errorlint
+    - errname
+    - forcetypeassert
+    - gocritic
+    - godot
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - noctx
+    - nolintlint
+    - predeclared
+    - reassign
+    - sloglint
+    - staticcheck
+    - unused
+    - usetesting
+  settings:
+    depguard:
+      rules:
+        apache-boundary:
+          deny:
+            - pkg: github.com/meshtransit/meshtransit/core
+              desc: Apache-2.0 client code must not import AGPL-3.0 Core code
+            - pkg: github.com/meshtransit/meshtransit/relay
+              desc: Apache-2.0 client code must not import AGPL-3.0 relay code
+    errcheck:
+      check-type-assertions: true
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      extra-rules: true

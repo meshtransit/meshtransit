@@ -2,7 +2,9 @@ GO := go
 GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
 GOVULNCHECK := $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.8.0
 ACTIONLINT := $(GO) run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-GO_FILES := $(shell find . -type f -name '*.go' -not -path './vendor/*')
+GO_FILES := $(shell find core client api shared relay -type f -name '*.go' 2>/dev/null)
+VERSION ?= 0.1.0~dev
+ARCH ?= amd64
 CONTAINER_IMAGE ?= manhdev2002/meshtransit-core
 CONTAINER_TAG ?= dev
 CONTAINER_PLATFORM ?= linux/$(shell $(GO) env GOARCH)
@@ -20,8 +22,41 @@ DEX_OLD_SOURCE ?=
 DEX_CURRENT_BINARY ?=
 DEX_CURRENT_BINARY_SHA256 ?=
 
-.PHONY: fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
+.PHONY: help build build-core build-client package-deb package-deb-meshd package-deb-meshctl lint-client check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
 	container-build container-build-multiarch container-push-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
+
+help:
+	@echo "Targets: build build-core build-client test test-race lint lint-client quality"
+	@echo "         check-boundaries integration-platform-container package-deb container-build"
+
+build: build-core build-client
+
+build-core:
+	mkdir -p bin
+	$(GO) build -trimpath -o bin/meshcore ./core/cmd/meshcore
+
+build-client:
+	mkdir -p bin
+	$(GO) build -trimpath -o bin/meshd ./client/cmd/meshd
+	$(GO) build -trimpath -o bin/meshnetd ./client/cmd/meshnetd
+	$(GO) build -trimpath -o bin/meshcred ./client/cmd/meshcred
+	$(GO) build -trimpath -o bin/meshctl ./client/cmd/meshctl
+
+package-deb: package-deb-meshd package-deb-meshctl
+
+package-deb-meshd:
+	bash packaging/linux/meshd/build-deb.sh "$(VERSION)" "$(ARCH)" dist
+	bash packaging/linux/meshd/verify-deb.sh "dist/meshd_$(VERSION)_$(ARCH).deb" "$(ARCH)"
+
+package-deb-meshctl:
+	bash packaging/linux/meshctl/build-deb.sh "$(VERSION)" "$(ARCH)" dist
+	bash packaging/linux/meshctl/verify-deb.sh "dist/meshctl_$(VERSION)_$(ARCH).deb" "$(ARCH)"
+
+check-boundaries:
+	bash hack/check-import-boundaries.sh
+
+scan-secrets:
+	bash hack/security/scan-secrets.sh
 
 fmt:
 	gofmt -w $(GO_FILES)
@@ -124,7 +159,10 @@ prepare-dex-workspace:
 		-workspace-module "$(CURDIR)"
 
 lint:
-	$(GOLANGCI_LINT) run ./...
+	$(GOLANGCI_LINT) run ./core/... ./api/...
+
+lint-client:
+	$(GOLANGCI_LINT) run --config client/.golangci.yml ./client/...
 
 lint-integration:
 	$(GOLANGCI_LINT) run --build-tags=integration \
@@ -138,7 +176,7 @@ vuln:
 workflow-lint:
 	$(ACTIONLINT)
 
-quality: fmt-check tidy-check vet test test-race lint lint-integration vuln workflow-lint
+quality: fmt-check tidy-check vet test test-race lint lint-integration vuln workflow-lint check-boundaries
 
 container-build:
 	docker build \

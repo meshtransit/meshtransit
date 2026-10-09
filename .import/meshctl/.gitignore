@@ -1,6 +1,0 @@
-/bin/
-/dist/
-/coverage.out
-*.prof
-*.test
-.DS_Store

@@ -1,0 +1,39 @@
+name: Bug report
+description: Something does not work as documented.
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security issues must be reported privately (see SECURITY.md), never here.
+        Do not paste keys, tokens, cookies, packet captures or production topology.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options: [Core, meshd, meshctl, Interchange (relay), Console, Packaging, Documentation, Other]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and version, architecture, deployment (Cloud or self-hosted), network notes.

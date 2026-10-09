@@ -1,0 +1,336 @@
+name: Client
+
+on:
+  pull_request:
+    paths:
+      - "client/**"
+      - "shared/**"
+      - "packaging/**"
+      - "hack/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/client.yml"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
+
+concurrency:
+  group: client-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Install Gitleaks
+        env:
+          GOBIN: ${{ runner.temp }}/mesh-tools
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@v8.30.1
+          printf '%s\n' "${GOBIN}" >>"${GITHUB_PATH}"
+
+      - name: Scan history and working tree for secrets
+        run: bash hack/security/scan-secrets.sh
+
+      - name: Verify module checksums
+        run: go mod verify
+
+      - name: Verify module metadata is tidy
+        shell: bash
+        run: |
+          go mod tidy
+          changes="$(git status --porcelain -- go.mod go.sum)"
+          if [[ -n "${changes}" ]]; then
+            printf '%s\n' "${changes}"
+            exit 1
+          fi
+
+      - name: Check formatting
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l client shared)"
+          if [[ -n "${unformatted}" ]]; then
+            printf '%s\n' "${unformatted}"
+            exit 1
+          fi
+
+      - name: Validate Linux qualification harness
+        run: |
+          bash -n \
+            client/tools/qualification/linux-restart.sh \
+            client/tools/qualification/test-linux-restart.sh \
+            client/tools/qualification/linux-crash-repeat.sh \
+            client/tools/qualification/test-linux-crash-repeat.sh \
+            client/tools/qualification/linux-reboot.sh \
+            client/tools/qualification/test-linux-reboot.sh \
+            client/tools/qualification/linux-network-change.sh \
+            client/tools/qualification/test-linux-network-change.sh \
+            client/tools/qualification/linux-helper-recovery-change.sh \
+            client/tools/qualification/test-linux-helper-recovery-change.sh \
+            client/tools/qualification/linux-runtime-recovery.sh \
+            client/tools/qualification/test-linux-runtime-recovery.sh \
+            client/tools/qualification/linux-runtime-recovery-repeat.sh \
+            client/tools/qualification/test-linux-runtime-recovery-repeat.sh \
+            client/tools/qualification/linux-runtime-recovery-traffic.sh \
+            client/tools/qualification/test-linux-runtime-recovery-traffic.sh \
+            client/tools/qualification/linux-soak.sh \
+            client/tools/qualification/linux-soak-systemd.sh \
+            client/tools/qualification/test-linux-soak.sh \
+            client/tools/qualification/test-linux-soak-systemd.sh \
+            client/tools/qualification/linux-relay-fallback.sh \
+            client/tools/qualification/test-linux-relay-fallback.sh \
+            client/tools/qualification/linux-dns.sh \
+            client/tools/qualification/test-linux-dns.sh \
+            client/tools/qualification/linux-policy.sh \
+            client/tools/qualification/test-linux-policy.sh \
+            client/tools/qualification/linux-service-readiness.sh \
+            client/tools/qualification/test-linux-service-readiness.sh \
+            client/tools/qualification/testdata/ping
+          shellcheck \
+            client/tools/qualification/linux-restart.sh \
+            client/tools/qualification/test-linux-restart.sh \
+            client/tools/qualification/linux-crash-repeat.sh \
+            client/tools/qualification/test-linux-crash-repeat.sh \
+            client/tools/qualification/linux-reboot.sh \
+            client/tools/qualification/test-linux-reboot.sh \
+            client/tools/qualification/linux-network-change.sh \
+            client/tools/qualification/test-linux-network-change.sh \
+            client/tools/qualification/linux-helper-recovery-change.sh \
+            client/tools/qualification/test-linux-helper-recovery-change.sh \
+            client/tools/qualification/linux-runtime-recovery.sh \
+            client/tools/qualification/test-linux-runtime-recovery.sh \
+            client/tools/qualification/linux-runtime-recovery-repeat.sh \
+            client/tools/qualification/test-linux-runtime-recovery-repeat.sh \
+            client/tools/qualification/linux-runtime-recovery-traffic.sh \
+            client/tools/qualification/test-linux-runtime-recovery-traffic.sh \
+            client/tools/qualification/linux-soak.sh \
+            client/tools/qualification/linux-soak-systemd.sh \
+            client/tools/qualification/test-linux-soak.sh \
+            client/tools/qualification/test-linux-soak-systemd.sh \
+            client/tools/qualification/linux-relay-fallback.sh \
+            client/tools/qualification/test-linux-relay-fallback.sh \
+            client/tools/qualification/linux-dns.sh \
+            client/tools/qualification/test-linux-dns.sh \
+            client/tools/qualification/linux-policy.sh \
+            client/tools/qualification/test-linux-policy.sh \
+            client/tools/qualification/linux-service-readiness.sh \
+            client/tools/qualification/test-linux-service-readiness.sh \
+            client/tools/qualification/testdata/ping
+          PYTHONPYCACHEPREFIX="${RUNNER_TEMP}/pycache" \
+            python3 -m py_compile client/tools/qualification/testdata/policy_peer.py
+          bash client/tools/qualification/test-linux-restart.sh
+          bash client/tools/qualification/test-linux-crash-repeat.sh
+          bash client/tools/qualification/test-linux-reboot.sh
+          bash client/tools/qualification/test-linux-network-change.sh
+          bash client/tools/qualification/test-linux-helper-recovery-change.sh
+          bash client/tools/qualification/test-linux-runtime-recovery.sh
+          bash client/tools/qualification/test-linux-runtime-recovery-repeat.sh
+          bash client/tools/qualification/test-linux-runtime-recovery-traffic.sh
+          bash client/tools/qualification/test-linux-soak.sh
+          bash client/tools/qualification/test-linux-soak-systemd.sh
+          bash client/tools/qualification/test-linux-relay-fallback.sh
+          bash client/tools/qualification/test-linux-dns.sh
+          bash client/tools/qualification/test-linux-policy.sh
+          bash client/tools/qualification/test-linux-service-readiness.sh
+
+      - name: Run vet
+        run: go vet ./client/... ./shared/...
+
+      - name: Run tests with race detection
+        run: go test -race -shuffle=on -coverprofile=coverage.out ./client/... ./shared/...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.12.2
+          args: --timeout=5m --config client/.golangci.yml ./client/...
+
+      - name: Install govulncheck
+        env:
+          GOBIN: ${{ runner.temp }}/mesh-tools
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+
+      - name: Scan reachable vulnerabilities
+        run: ${{ runner.temp }}/mesh-tools/govulncheck ./client/...
+
+  cross-build:
+    name: Build (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            goos: linux
+            goarch: amd64
+          - target: linux-arm64
+            goos: linux
+            goarch: arm64
+          - target: windows-amd64
+            goos: windows
+            goarch: amd64
+          - target: macos-arm64
+            goos: darwin
+            goarch: arm64
+          - target: macos-amd64
+            goos: darwin
+            goarch: amd64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Compile target
+        env:
+          CGO_ENABLED: "0"
+          GOTOOLCHAIN: local
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath ./client/...
+
+  linux-package:
+    name: Package Linux (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - amd64
+          - arm64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Validate packaging scripts
+        run: |
+          bash -n \
+            packaging/linux/meshd/build-deb.sh \
+            packaging/linux/meshd/verify-deb.sh \
+            packaging/linux/meshd/test-maintainer-scripts.sh \
+            hack/security/audit-release-binary.sh \
+            hack/security/test-audit-release-binary.sh \
+            hack/security/install-supply-chain-tools.sh \
+            hack/security/audit-linux-package.sh
+          dash -n packaging/linux/meshd/test-package-maintainers.sh packaging/linux/meshd/deb/*
+          shellcheck \
+            packaging/linux/meshd/build-deb.sh \
+            packaging/linux/meshd/verify-deb.sh \
+            packaging/linux/meshd/test-maintainer-scripts.sh \
+            packaging/linux/meshd/test-package-maintainers.sh \
+            packaging/linux/meshd/deb/* \
+            hack/security/audit-release-binary.sh \
+            hack/security/test-audit-release-binary.sh \
+            hack/security/install-supply-chain-tools.sh \
+            hack/security/audit-linux-package.sh
+
+      - name: Install pinned supply-chain tools
+        run: |
+          bash hack/security/install-supply-chain-tools.sh "${RUNNER_TEMP}/mesh-tools"
+          printf '%s\n' "${RUNNER_TEMP}/mesh-tools" >>"${GITHUB_PATH}"
+
+      - name: Test package maintainer lifecycle
+        run: |
+          bash packaging/linux/meshd/test-maintainer-scripts.sh
+          bash hack/security/test-audit-release-binary.sh
+
+      - name: Build and inspect package
+        run: |
+          bash packaging/linux/meshd/build-deb.sh "0.1.0~ci.${GITHUB_RUN_NUMBER}" "${{ matrix.arch }}" dist
+          bash packaging/linux/meshd/verify-deb.sh "dist/meshd_0.1.0~ci.${GITHUB_RUN_NUMBER}_${{ matrix.arch }}.deb" "${{ matrix.arch }}"
+
+      - name: Generate SBOM and scan packaged binaries
+        run: bash hack/security/audit-linux-package.sh "dist/meshd_0.1.0~ci.${GITHUB_RUN_NUMBER}_${{ matrix.arch }}.deb"
+
+      - name: Test packaged maintainer lifecycle
+        run: |
+          docker run --rm \
+            --volume "${PWD}:/src:ro" \
+            --workdir /src \
+            debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 \
+            /src/packaging/linux/meshd/test-package-maintainers.sh \
+            "/src/dist/meshd_0.1.0~ci.${GITHUB_RUN_NUMBER}_${{ matrix.arch }}.deb"
+
+      - name: Retain package security evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: meshd-linux-${{ matrix.arch }}
+          path: |
+            dist/meshd_0.1.0~ci.${{ github.run_number }}_${{ matrix.arch }}.deb
+            dist/meshd_0.1.0~ci.${{ github.run_number }}_${{ matrix.arch }}.deb.sha256
+            dist/meshd_0.1.0~ci.${{ github.run_number }}_${{ matrix.arch }}.deb.cdx.json
+            dist/meshd_0.1.0~ci.${{ github.run_number }}_${{ matrix.arch }}.deb.cdx.json.sha256
+            dist/meshd_0.1.0~ci.${{ github.run_number }}_${{ matrix.arch }}.deb.grype.json
+            dist/meshd_0.1.0~ci.${{ github.run_number }}_${{ matrix.arch }}.deb.grype.json.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  meshctl-package:
+    name: Package meshctl (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - amd64
+          - arm64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Validate packaging scripts
+        run: |
+          bash -n packaging/linux/meshctl/build-deb.sh packaging/linux/meshctl/verify-deb.sh
+          shellcheck packaging/linux/meshctl/build-deb.sh packaging/linux/meshctl/verify-deb.sh
+
+      - name: Build and inspect package
+        run: |
+          bash packaging/linux/meshctl/build-deb.sh "0.1.0~ci.${GITHUB_RUN_NUMBER}" "${{ matrix.arch }}" dist
+          bash packaging/linux/meshctl/verify-deb.sh "dist/meshctl_0.1.0~ci.${GITHUB_RUN_NUMBER}_${{ matrix.arch }}.deb" "${{ matrix.arch }}"
