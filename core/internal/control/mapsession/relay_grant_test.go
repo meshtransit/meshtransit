@@ -8,6 +8,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 )
 
@@ -164,4 +165,51 @@ func (sink *recordingStreamSink) relayGrantCount() int {
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
 	return len(sink.relayGrants)
+}
+
+// releasingPresence records explicit lease releases.
+type releasingPresence struct {
+	streamPresenceStore
+	released chan node.PresenceLease
+}
+
+func (store *releasingPresence) ReleasePresence(_ context.Context, _ network.Scope, lease node.PresenceLease) (bool, error) {
+	store.released <- lease
+	return true, nil
+}
+
+func TestStreamReleasesPresenceWhenDeviceIsSuspended(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		snapshot := snapshotFixture(t)
+		opener := &streamSnapshotOpener{snapshots: []Snapshot{snapshot}, failures: []error{nil, ErrSuspended}}
+		presence := &releasingPresence{released: make(chan node.PresenceLease, 1)}
+		service, err := NewStreamService(opener, presence, newStreamRevisionWatcher(), newStreamConnectivityWatcher(), streamOptionsFixture(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		machine, request := authenticatedRequestFixture(t, snapshot)
+		sink := &recordingStreamSink{}
+		result := make(chan error, 1)
+		go func() { result <- service.Serve(t.Context(), machine, request, sink) }()
+
+		time.Sleep(6 * time.Second) // the reconcile finds the Device suspended
+		synctest.Wait()
+		if err := <-result; !errors.Is(err, ErrSuspended) {
+			t.Fatalf("Serve() error = %v, want ErrSuspended", err)
+		}
+		select {
+		case lease := <-presence.released:
+			if lease.NodeID() != snapshot.NodeID() {
+				t.Fatal("released another node's lease")
+			}
+		default:
+			t.Fatal("presence left to expire after suspension")
+		}
+		sink.mu.Lock()
+		pauses := len(sink.pauses)
+		sink.mu.Unlock()
+		if pauses != 1 {
+			t.Fatalf("pause frames = %d", pauses)
+		}
+	})
 }

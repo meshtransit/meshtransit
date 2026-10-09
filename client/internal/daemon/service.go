@@ -94,10 +94,16 @@ const (
 	minRuntimeRetry        = time.Second
 	maxRuntimeRetry        = 30 * time.Second
 	suspendedRetry         = 30 * time.Second
-	runtimeRetryReset      = 30 * time.Second
-	minEndpointRefresh     = 20 * time.Second
-	maxEndpointRefresh     = 26 * time.Second
-	relayPreparationPoll   = 5 * time.Second
+	// A Device resumed soon after it was suspended reconnects within a few
+	// seconds; a long suspension costs Core one attempt every suspendedRetry.
+	suspendedRetryFast    = 3 * time.Second
+	suspendedRetryMedium  = 10 * time.Second
+	suspendedFastPeriod   = time.Minute
+	suspendedMediumPeriod = 5 * time.Minute
+	runtimeRetryReset     = 30 * time.Second
+	minEndpointRefresh    = 20 * time.Second
+	maxEndpointRefresh    = 26 * time.Second
+	relayPreparationPoll  = 5 * time.Second
 )
 
 // Status is the daemon-owned status model before it is mapped to a wire format.
@@ -464,6 +470,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 	default:
 	}
 	runtimeRetry := minRuntimeRetry
+	var suspendedSince time.Time
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -917,7 +924,11 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			}
 			if suspended {
 				// Not a failure: wait for an administrator to resume the Device.
-				if _, err := s.waitForRuntimeRecovery(ctx, suspendedRetry); err != nil {
+				now := s.clock()
+				if suspendedSince.IsZero() || !synchronizedAt.IsZero() {
+					suspendedSince = now // suspended in this session, or anew
+				}
+				if _, err := s.waitForRuntimeRecovery(ctx, suspendedRetryDelay(now.Sub(suspendedSince))); err != nil {
 					return err
 				}
 				runtimeRetry = minRuntimeRetry
@@ -2011,6 +2022,19 @@ func (s *Service) waitForRuntimeRecovery(
 		return false, nil
 	case <-timer.C:
 		return true, nil
+	}
+}
+
+// suspendedRetryDelay is how long a suspended Device waits before asking
+// again, given how long it has been suspended.
+func suspendedRetryDelay(suspendedFor time.Duration) time.Duration {
+	switch {
+	case suspendedFor < suspendedFastPeriod:
+		return suspendedRetryFast
+	case suspendedFor < suspendedMediumPeriod:
+		return suspendedRetryMedium
+	default:
+		return suspendedRetry
 	}
 }
 

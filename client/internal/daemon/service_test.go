@@ -1273,8 +1273,9 @@ func TestService_RunWaitsWhileSuspendedAndRetries(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(retryBases) == 0 || retryBases[0] != suspendedRetry {
-		t.Fatalf("retry bases = %v, want the suspended retry", retryBases)
+	// Just suspended: retry quickly so a resume takes effect within seconds.
+	if len(retryBases) == 0 || retryBases[0] != suspendedRetryFast {
+		t.Fatalf("retry bases = %v, want the fast suspended retry", retryBases)
 	}
 	if failures := service.runtimeFailures.Load(); failures != 0 {
 		t.Fatalf("suspension counted %d runtime failures, want 0", failures)
@@ -2830,5 +2831,25 @@ func TestServiceRejectsAliasAdvertisementWithoutPacketEngine(t *testing.T) {
 	_, err := New(service.profiles, service.identities, service.build, control, Options{Hostname: "node-a", EnableDeviceAliases: true})
 	if err == nil {
 		t.Fatal("unsupported alias advertisement accepted")
+	}
+}
+
+func TestSuspendedRetryDelaySlowsDown(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		suspendedFor time.Duration
+		want         time.Duration
+	}{
+		{0, 3 * time.Second},
+		{59 * time.Second, 3 * time.Second},
+		{time.Minute, 10 * time.Second},
+		{4 * time.Minute, 10 * time.Second},
+		{5 * time.Minute, 30 * time.Second},
+		{24 * time.Hour, 30 * time.Second},
+	} {
+		if got := suspendedRetryDelay(test.suspendedFor); got != test.want {
+			t.Errorf("suspendedRetryDelay(%s) = %s, want %s", test.suspendedFor, got, test.want)
+		}
 	}
 }

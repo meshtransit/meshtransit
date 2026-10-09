@@ -182,7 +182,7 @@ func (service *StreamService) Serve(
 		return errors.Join(ErrStreamWrite, err)
 	}
 	service.recordDelivery(ctx, snapshot)
-	return service.run(
+	err = service.run(
 		ctx,
 		machine,
 		request,
@@ -191,6 +191,30 @@ func (service *StreamService) Serve(
 		snapshot,
 		watch,
 	)
+	if errors.Is(err, ErrSuspended) || errors.Is(err, ErrUnauthorized) ||
+		errors.Is(err, ErrAuthorizationExpired) {
+		// The node lost its authority: show it offline now instead of when
+		// the lease expires. A reconnect races nothing, since it is refused.
+		service.releasePresence(ctx, snapshot.Scope(), lease)
+	}
+	return err
+}
+
+// PresenceReleaser is implemented by presence stores that can end a lease
+// at once.
+type PresenceReleaser interface {
+	ReleasePresence(context.Context, network.Scope, node.PresenceLease) (bool, error)
+}
+
+func (service *StreamService) releasePresence(ctx context.Context, scope network.Scope, lease node.PresenceLease) {
+	releaser, ok := service.presence.(PresenceReleaser)
+	if !ok {
+		return
+	}
+	operationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), service.options.CoordinationTimeout)
+	defer cancel()
+	// Best effort: the lease still expires on its own if this fails.
+	_, _ = releaser.ReleasePresence(operationCtx, scope, lease)
 }
 
 func (service *StreamService) admit(nodeID node.ID) bool {
