@@ -44,13 +44,13 @@ test-race:
 
 integration-deps:
 	$(GO) test -timeout=$(INTEGRATION_TEST_TIMEOUT) -tags=integration -count=1 \
-		-run '^TestTLSAuthenticatedDependencies$$' ./internal/integration
+		-run '^TestTLSAuthenticatedDependencies$$' ./core/test/integration
 
 integration-migrations:
-	$(GO) test -timeout=$(INTEGRATION_TEST_TIMEOUT) -tags=integration -count=1 -run '^TestPostgreSQLMigrations$$' ./internal/integration
+	$(GO) test -timeout=$(INTEGRATION_TEST_TIMEOUT) -tags=integration -count=1 -run '^TestPostgreSQLMigrations$$' ./core/test/integration
 
 integration-platform-container:
-	bash scripts/ci/run-platform-integration.sh
+	bash core/scripts/ci/run-platform-integration.sh
 
 qualification-dex:
 	@test -n "$(DEX_QUALIFICATION_BINARY)" || { \
@@ -60,16 +60,16 @@ qualification-dex:
 	MESHTRANSIT_TEST_DEX_BINARY="$(DEX_QUALIFICATION_BINARY)" \
 	MESHTRANSIT_TEST_DEX_RELEASE="$(DEX_QUALIFICATION_RELEASE)" \
 	$(GO) test -timeout=$(INTEGRATION_TEST_TIMEOUT) -tags=integration -count=1 \
-		-run '^TestDexBrokerCompatibilityGate$$' ./internal/integration
+		-run '^TestDexBrokerCompatibilityGate$$' ./core/test/integration
 
 qualification-dex-boundary:
 	$(GO) test -timeout=$(TEST_TIMEOUT) -count=1 \
-		-run '^TestDexImportsConfinedToAdapter$$' ./internal/adapter/dexbroker
+		-run '^TestDexImportsConfinedToAdapter$$' ./core/internal/adapter/dexbroker
 
 qualification-dex-compile:
 	@test -n "$(DEX_UPSTREAM_SOURCE)" || { echo "set DEX_UPSTREAM_SOURCE"; exit 2; }
 	@test -n "$(DEX_PREPARED_ROOT)" || { echo "set DEX_PREPARED_ROOT to the verified preparation directory"; exit 2; }
-	$(GO) run ./tools/qualification/dexcompile \
+	$(GO) run ./core/tools/qualification/dexcompile \
 		-upstream-source "$(DEX_UPSTREAM_SOURCE)" \
 		-candidate-source "$(DEX_PREPARED_ROOT)/source"
 
@@ -78,7 +78,7 @@ qualification-dex-workspace:
 	@test -f "$(DEX_PREPARED_ROOT)/go.work" || { echo "verified go.work is absent"; exit 2; }
 	@test "$$(GOWORK=off $(GO) env GOVERSION)" = "go1.26.8" || { echo "Go 1.26.8 is required"; exit 1; }
 	GOWORK="$(DEX_PREPARED_ROOT)/go.work" $(GO) test -timeout=$(TEST_TIMEOUT) -count=1 \
-		-tags=dexbroker ./internal/adapter/dexbroker ./cmd/meshcore
+		-tags=dexbroker ./core/internal/adapter/dexbroker ./core/cmd/meshcore
 
 qualification-dex-upgrade-restore:
 	@test -n "$(DEX_OLD_SOURCE)" || { echo "set DEX_OLD_SOURCE"; exit 2; }
@@ -89,13 +89,13 @@ qualification-dex-upgrade-restore:
 	DEX_PREPARED_ROOT="$(DEX_PREPARED_ROOT)" \
 	DEX_CURRENT_BINARY="$(DEX_CURRENT_BINARY)" \
 	DEX_CURRENT_BINARY_SHA256="$(DEX_CURRENT_BINARY_SHA256)" \
-	bash scripts/qualification/run-identity-broker-upgrade-restore.sh
+	bash core/scripts/qualification/run-identity-broker-upgrade-restore.sh
 
 verify-dex-artifact:
 	@test -n "$(DEX_ARTIFACT_MANIFEST)" || { echo "set DEX_ARTIFACT_MANIFEST"; exit 2; }
 	@test -n "$(DEX_UPSTREAM_SOURCE)" || { echo "set DEX_UPSTREAM_SOURCE"; exit 2; }
 	@test -n "$(DEX_ARTIFACT_BINARY)" || { echo "set DEX_ARTIFACT_BINARY"; exit 2; }
-	$(GO) run ./tools/qualification/dexartifact \
+	$(GO) run ./core/tools/qualification/dexartifact \
 		-manifest "$(DEX_ARTIFACT_MANIFEST)" \
 		-source "$(DEX_UPSTREAM_SOURCE)" \
 		-binary "$(DEX_ARTIFACT_BINARY)"
@@ -105,7 +105,7 @@ prepare-dex-source:
 	@test -n "$(DEX_UPSTREAM_SOURCE)" || { echo "set DEX_UPSTREAM_SOURCE"; exit 2; }
 	@test -n "$(DEX_ARTIFACT_BINARY)" || { echo "set DEX_ARTIFACT_BINARY"; exit 2; }
 	@test -n "$(DEX_PREPARED_ROOT)" || { echo "set DEX_PREPARED_ROOT to an existing empty directory"; exit 2; }
-	$(GO) run ./tools/qualification/dexartifact \
+	$(GO) run ./core/tools/qualification/dexartifact \
 		-manifest "$(DEX_ARTIFACT_MANIFEST)" \
 		-source "$(DEX_UPSTREAM_SOURCE)" \
 		-binary "$(DEX_ARTIFACT_BINARY)" \
@@ -116,7 +116,7 @@ prepare-dex-workspace:
 	@test -n "$(DEX_UPSTREAM_SOURCE)" || { echo "set DEX_UPSTREAM_SOURCE"; exit 2; }
 	@test -n "$(DEX_ARTIFACT_BINARY)" || { echo "set DEX_ARTIFACT_BINARY"; exit 2; }
 	@test -n "$(DEX_PREPARED_ROOT)" || { echo "set DEX_PREPARED_ROOT to an existing empty directory"; exit 2; }
-	$(GO) run ./tools/qualification/dexartifact \
+	$(GO) run ./core/tools/qualification/dexartifact \
 		-manifest "$(DEX_ARTIFACT_MANIFEST)" \
 		-source "$(DEX_UPSTREAM_SOURCE)" \
 		-binary "$(DEX_ARTIFACT_BINARY)" \
@@ -128,9 +128,9 @@ lint:
 
 lint-integration:
 	$(GOLANGCI_LINT) run --build-tags=integration \
-		./internal/adapter/legacyts2021/protocoltest \
-		./internal/integration \
-		./cmd/meshcore
+		./core/internal/adapter/legacyts2021/protocoltest \
+		./core/test/integration \
+		./core/cmd/meshcore
 
 vuln:
 	$(GOVULNCHECK) ./...
@@ -145,6 +145,7 @@ container-build:
 		--build-arg REVISION=$(CONTAINER_REVISION) \
 		--build-arg VERSION=$(CONTAINER_TAG) \
 		--platform $(CONTAINER_PLATFORM) \
+		--file core/Dockerfile \
 		--tag $(CONTAINER_IMAGE):$(CONTAINER_TAG) \
 		.
 
@@ -164,6 +165,7 @@ container-push-multiarch:
 		--provenance=mode=max \
 		--sbom=true \
 		--push \
+		--file core/Dockerfile \
 		--tag $(CONTAINER_IMAGE):$(CONTAINER_TAG) \
 		.
 
@@ -176,7 +178,7 @@ container-push-dexbroker-multiarch:
 		--build-context "dex=$(DEX_PREPARED_ROOT)/source" \
 		--build-arg REVISION=$(CONTAINER_REVISION) \
 		--build-arg VERSION=$(CONTAINER_TAG) \
-		--file Dockerfile.dexbroker \
+		--file core/Dockerfile.dexbroker \
 		--platform linux/amd64,linux/arm64 \
 		--provenance=mode=max \
 		--sbom=true \
