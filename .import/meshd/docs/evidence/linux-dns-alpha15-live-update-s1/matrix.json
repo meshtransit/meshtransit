@@ -1,0 +1,80 @@
+{
+  "schema": "meshtransit.linux-dns-live-update-qualification/v1",
+  "recorded_at": "2026-09-11T21:47:22Z",
+  "topology": {
+    "node_labels": [
+      "ubuntu-a",
+      "ubuntu-b"
+    ],
+    "node_count": 2,
+    "address_families": [
+      "ipv4",
+      "ipv6"
+    ]
+  },
+  "artifact": {
+    "version": "0.1.0~alpha15",
+    "commit": "3e6ed3aaadf228e248a5158f2a8cb87d85f80e23",
+    "sha256": "1766c157059c6b70918c49a4878767f3b38418316be3f762bf45e82b8ae0ac82",
+    "evidence_complete": true
+  },
+  "control": {
+    "updates_accepted": 3,
+    "update_complete_each_phase": true,
+    "baseline_restored": true,
+    "phase_transition_latency_measured": false
+  },
+  "phases": {
+    "split": {
+      "route_count": 1,
+      "resolver_count": 1,
+      "resolver_type": "classic_ipv4",
+      "default_route_disabled": true,
+      "route_installed_on_both_nodes": true,
+      "routed_query_over_mesh_resolver_on_both_nodes": true,
+      "unrelated_query_avoided_mesh_resolver_on_both_nodes": true,
+      "upstream_recursion_on_both_nodes": true,
+      "magicdns_on_both_nodes": true,
+      "direct_dual_stack_on_both_nodes": true
+    },
+    "explicit_default": {
+      "global_resolver_count": 1,
+      "resolver_type": "classic_ipv4",
+      "default_route_enabled": true,
+      "root_route_installed_on_both_nodes": true,
+      "public_queries_over_mesh_resolver_on_both_nodes": true,
+      "upstream_recursion_on_both_nodes": true,
+      "magicdns_on_both_nodes": true,
+      "direct_dual_stack_on_both_nodes": true
+    },
+    "rollback": {
+      "global_resolver_count": 0,
+      "split_route_count": 0,
+      "default_route_disabled": true,
+      "root_route_absent_on_both_nodes": true,
+      "test_route_absent_on_both_nodes": true,
+      "public_queries_avoided_mesh_resolver_on_both_nodes": true,
+      "public_forwarding_disabled_on_both_nodes": true,
+      "magicdns_on_both_nodes": true,
+      "direct_dual_stack_on_both_nodes": true
+    }
+  },
+  "service_continuity": {
+    "ubuntu-a": {
+      "pid_unchanged": true,
+      "restart_count": 0
+    },
+    "ubuntu-b": {
+      "pid_unchanged": true,
+      "restart_count": 0
+    }
+  },
+  "final": {
+    "services_active_on_both_nodes": true,
+    "control_synchronized_on_both_nodes": true,
+    "dns_configured_on_both_nodes": true,
+    "warning_journal_entries": 0
+  },
+  "failures": [],
+  "outcome": "pass"
+}

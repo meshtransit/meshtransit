@@ -1,0 +1,38 @@
+{
+  "schema": "meshtransit.linux-soak-observer-resilience-qualification/v1",
+  "recorded_date": "2026-09-12",
+  "candidate_commit": "618d851c599e63c484ca8138a36c3c91f7af3158",
+  "platform": {
+    "os": "Ubuntu 26.04 LTS",
+    "architecture": "x86_64",
+    "kernel": "7.0.0-27-generic",
+    "systemd": "259 (259.5-0ubuntu3.4)",
+    "bash": "5.3.9",
+    "shellcheck": "0.11.0",
+    "needrestart": "3.11"
+  },
+  "validation": {
+    "bash_syntax": true,
+    "shellcheck": true,
+    "soak_self_test": true,
+    "launcher_self_test": true,
+    "native_missing_unit_check": true,
+    "exact_candidate_launcher_started": true,
+    "manual_restart_refused": true,
+    "main_process_unchanged_after_restart_attempt": true,
+    "invocation_unchanged_after_restart_attempt": true,
+    "restart_count_after_attempt": 0,
+    "cleanup_verified": true
+  },
+  "verified_unit_properties": {
+    "refuse_manual_stop": true,
+    "restart": "no",
+    "protect_system": "strict",
+    "protect_home": "read-only",
+    "no_new_privileges": true
+  },
+  "result": {
+    "observer_lifecycle": "pass",
+    "continuous_72_hour_soak": "not_run"
+  }
+}

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+[[ -n "${FAKE_PING_STATE:-}" ]] || exit 2
+
+attempt=0
+if [[ -f "${FAKE_PING_STATE}" ]]; then
+  attempt="$(<"${FAKE_PING_STATE}")"
+fi
+attempt=$((attempt + 1))
+printf '%d\n' "${attempt}" >"${FAKE_PING_STATE}"
+
+if (( attempt == 2 )); then
+  exit 2
+fi

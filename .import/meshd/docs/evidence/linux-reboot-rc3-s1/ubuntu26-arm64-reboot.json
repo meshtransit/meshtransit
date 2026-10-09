@@ -1,0 +1,89 @@
+{
+  "schema": "meshtransit.linux-reboot-qualification/v1",
+  "started_at": "2026-09-12T15:45:56Z",
+  "topology": {
+    "target_label": "ubuntu26-arm64",
+    "observer_label": "ubuntu26-amd64",
+    "address_families": [
+      "ipv4",
+      "ipv6"
+    ]
+  },
+  "platform": {
+    "kernel_release": "7.0.0-1006-aws",
+    "architecture": "aarch64"
+  },
+  "artifact": {
+    "version": "0.1.0~rc3+69e5e2f",
+    "commit": "69e5e2f00f0fead79e5baf4848725ee3aa6590b6",
+    "sha256": "c3ac50a269cbf90605f4123834072630d985f9db9ab8f4ec44d2653d6621a0fd",
+    "evidence_complete": true
+  },
+  "scenario": {
+    "action": "reboot",
+    "reboot_command_exit_code": 0,
+    "reboot_command_duration_ms": 875
+  },
+  "baseline": {
+    "direct_peer_count": 1,
+    "relay_peer_count": 0
+  },
+  "observation": {
+    "lead_seconds": 3,
+    "recovery_timeout_seconds": 60,
+    "tail_seconds": 5,
+    "total_seconds": 75,
+    "ping_interval_seconds": 0.2,
+    "readiness_poll_interval_seconds": 1
+  },
+  "reboot_evidence": {
+    "ssh_unreachable_observed": true,
+    "ssh_unreachable_ms": 1656,
+    "ssh_ready_ms": 16907,
+    "boot_id_changed": true,
+    "boot_id_changed_ms": 16907
+  },
+  "readiness_ms": {
+    "services_active": 22049,
+    "data_interface_and_routes": 22895,
+    "daemon_online": 23689,
+    "magic_dns": 24411,
+    "outbound_dual_stack": 29333
+  },
+  "persistence": {
+    "active_profile_preserved": true,
+    "profile_count_preserved": true,
+    "self_addresses_preserved": true,
+    "runtime_artifact_preserved": true
+  },
+  "traffic": {
+    "ipv4": {
+      "command_exit_code": 0,
+      "parser_ok": true,
+      "transmitted": 370,
+      "received": 272,
+      "loss_percent": 26.4865,
+      "first_reply_after_reboot_command_ms": 21446,
+      "maximum_consecutive_loss": 98,
+      "missing_after_action": 98,
+      "replies_after_action": 251,
+      "stable_recovery_ms": 21446,
+      "consecutive_replies_at_end": 251
+    },
+    "ipv6": {
+      "command_exit_code": 0,
+      "parser_ok": true,
+      "transmitted": 370,
+      "received": 272,
+      "loss_percent": 26.4865,
+      "first_reply_after_reboot_command_ms": 21446,
+      "maximum_consecutive_loss": 98,
+      "missing_after_action": 98,
+      "replies_after_action": 251,
+      "stable_recovery_ms": 21446,
+      "consecutive_replies_at_end": 251
+    }
+  },
+  "failures": [],
+  "outcome": "pass"
+}

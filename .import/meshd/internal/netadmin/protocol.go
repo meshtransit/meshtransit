@@ -1,0 +1,423 @@
+// Package netadmin defines the narrow privileged boundary between meshd and meshnetd.
+package netadmin
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/netip"
+	"os"
+	"slices"
+	"strings"
+)
+
+const (
+	protocolVersion   = 5
+	maxMessageBytes   = 32 << 10
+	operationOpenTUN  = "open_tun"
+	operationSetTUN   = "set_tun_routes"
+	operationOpenDNS  = "open_dns"
+	operationSetDNS   = "set_dns"
+	operationResetDNS = "reset_dns"
+	maxTUNAddresses   = 8
+	maxTUNRoutes      = 512
+	maxAllowedPools   = 16
+	maxDNSDomains     = 256
+	maxDNSDomainBytes = 16 << 10
+	interfaceNameSize = 16
+)
+
+var (
+	// ErrProtocol indicates a malformed or unexpected helper response.
+	ErrProtocol = errors.New("netadmin: protocol error")
+	// ErrRemote indicates that meshnetd rejected a valid request.
+	ErrRemote = errors.New("netadmin: helper rejected request")
+	// ErrUnsupported indicates that privileged TUN setup is unavailable.
+	ErrUnsupported = errors.New("netadmin: unsupported platform")
+	// ErrTUNConfig indicates that requested addresses or routes are not safe host prefixes.
+	ErrTUNConfig = errors.New("netadmin: invalid tun configuration")
+)
+
+// TUNConfig contains only bounded host prefixes derived from a validated map.
+// Callers retain ownership of the input slices.
+type TUNConfig struct {
+	Addresses []netip.Prefix
+	Routes    []netip.Prefix
+}
+
+// TUN is an owned TUN descriptor returned by meshnetd.
+type TUN struct {
+	File      *os.File
+	Name      string
+	MTU       int
+	Addresses []netip.Prefix
+	Routes    []netip.Prefix
+}
+
+// DNSEndpoint identifies the dedicated systemd-resolved link and the local
+// unprivileged resolver endpoint opened for meshd by meshnetd.
+type DNSEndpoint struct {
+	InterfaceName string
+	Resolver      netip.AddrPort
+}
+
+// DNSLink owns the non-persistent TUN descriptor backing one DNS endpoint.
+// Closing File removes the dedicated link and its per-link resolved state.
+type DNSLink struct {
+	File     *os.File
+	Endpoint DNSEndpoint
+}
+
+// DNSConfig is the complete, bounded per-link systemd-resolved transaction.
+// Domain names are canonical lowercase names without trailing dots. A route
+// domain of "." represents the DNS root.
+type DNSConfig struct {
+	Endpoint      DNSEndpoint
+	SearchDomains []string
+	RouteDomains  []string
+	DefaultRoute  bool
+}
+
+type request struct {
+	Version         int      `json:"version"`
+	Operation       string   `json:"operation"`
+	Addresses       []string `json:"addresses"`
+	Routes          []string `json:"routes"`
+	InterfaceName   string   `json:"interface_name,omitempty"`
+	Resolver        string   `json:"resolver,omitempty"`
+	SearchDomains   []string `json:"search_domains"`
+	RouteDomains    []string `json:"route_domains"`
+	DNSDefaultRoute bool     `json:"dns_default_route,omitempty"`
+}
+
+type response struct {
+	Version       int      `json:"version"`
+	OK            bool     `json:"ok"`
+	Code          string   `json:"code,omitempty"`
+	Message       string   `json:"message,omitempty"`
+	InterfaceName string   `json:"interface_name,omitempty"`
+	MTU           int      `json:"mtu,omitempty"`
+	Addresses     []string `json:"addresses"`
+	Routes        []string `json:"routes"`
+	Resolver      string   `json:"resolver,omitempty"`
+}
+
+func decodeMessage(payload []byte, target any) error {
+	if len(payload) == 0 || len(payload) > maxMessageBytes {
+		return fmt.Errorf("%w: message size is outside the allowed range", ErrProtocol)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("%w: decoding message: %w", ErrProtocol, err)
+	}
+	var extra struct{}
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%w: message must contain one json value", ErrProtocol)
+	}
+
+	return nil
+}
+
+type validatedRequest struct {
+	operation string
+	tun       TUNConfig
+	dns       DNSConfig
+}
+
+func validateRequest(value request) (validatedRequest, error) {
+	if value.Version != protocolVersion {
+		return validatedRequest{}, fmt.Errorf("%w: unsupported protocol version", ErrProtocol)
+	}
+
+	switch value.Operation {
+	case operationOpenTUN, operationSetTUN:
+		if value.Addresses == nil || value.Routes == nil || hasDNSRequestFields(value) {
+			return validatedRequest{}, fmt.Errorf("%w: tun fields are invalid", ErrProtocol)
+		}
+		config, err := parseTUNConfig(value.Addresses, value.Routes)
+		if err != nil {
+			return validatedRequest{}, err
+		}
+		if !slices.Equal(value.Addresses, prefixStrings(config.Addresses)) ||
+			!slices.Equal(value.Routes, prefixStrings(config.Routes)) {
+			return validatedRequest{}, fmt.Errorf("%w: prefixes must be sorted and canonical", ErrTUNConfig)
+		}
+
+		return validatedRequest{operation: value.Operation, tun: config}, nil
+	case operationOpenDNS, operationResetDNS:
+		if value.Addresses != nil || value.Routes != nil || hasDNSConfigFields(value) {
+			return validatedRequest{}, fmt.Errorf("%w: dns lifecycle fields are invalid", ErrProtocol)
+		}
+
+		return validatedRequest{operation: value.Operation}, nil
+	case operationSetDNS:
+		if value.Addresses != nil || value.Routes != nil ||
+			value.SearchDomains == nil || value.RouteDomains == nil {
+			return validatedRequest{}, fmt.Errorf("%w: dns configuration fields are invalid", ErrProtocol)
+		}
+		endpoint, err := parseDNSEndpoint(value.InterfaceName, value.Resolver)
+		if err != nil {
+			return validatedRequest{}, err
+		}
+		config := DNSConfig{
+			Endpoint:      endpoint,
+			SearchDomains: append([]string(nil), value.SearchDomains...),
+			RouteDomains:  append([]string(nil), value.RouteDomains...),
+			DefaultRoute:  value.DNSDefaultRoute,
+		}
+		if err := validateDNSConfig(config); err != nil {
+			return validatedRequest{}, err
+		}
+
+		return validatedRequest{operation: value.Operation, dns: config}, nil
+	default:
+		return validatedRequest{}, fmt.Errorf("%w: unsupported operation", ErrProtocol)
+	}
+}
+
+func validateResponse(value response, operation string) error {
+	if value.Version != protocolVersion {
+		return fmt.Errorf("%w: unsupported protocol version", ErrProtocol)
+	}
+	if value.OK {
+		if value.Code != "" || value.Message != "" {
+			return fmt.Errorf("%w: malformed success response", ErrProtocol)
+		}
+		switch operation {
+		case operationOpenTUN:
+			if value.InterfaceName == "" || value.MTU == 0 || value.Addresses == nil ||
+				value.Routes == nil || value.Resolver != "" {
+				return fmt.Errorf("%w: malformed open tun response", ErrProtocol)
+			}
+		case operationSetTUN:
+			if value.InterfaceName != "" || value.Resolver != "" || value.MTU != 0 ||
+				value.Addresses != nil || value.Routes != nil {
+				return fmt.Errorf("%w: malformed set tun response", ErrProtocol)
+			}
+		case operationOpenDNS:
+			if value.InterfaceName == "" || value.Resolver == "" || value.MTU != 0 ||
+				value.Addresses != nil || value.Routes != nil {
+				return fmt.Errorf("%w: malformed open dns response", ErrProtocol)
+			}
+		case operationSetDNS, operationResetDNS:
+			if value.InterfaceName != "" || value.Resolver != "" || value.MTU != 0 ||
+				value.Addresses != nil || value.Routes != nil {
+				return fmt.Errorf("%w: malformed dns response", ErrProtocol)
+			}
+		default:
+			return fmt.Errorf("%w: unknown response operation", ErrProtocol)
+		}
+
+		return nil
+	}
+	if value.Code == "" || value.Message == "" || value.InterfaceName != "" || value.MTU != 0 ||
+		len(value.Addresses) != 0 || len(value.Routes) != 0 || value.Resolver != "" {
+		return fmt.Errorf("%w: malformed error response", ErrProtocol)
+	}
+
+	return nil
+}
+
+func hasDNSRequestFields(value request) bool {
+	return hasDNSConfigFields(value) || value.SearchDomains != nil || value.RouteDomains != nil
+}
+
+func hasDNSConfigFields(value request) bool {
+	return value.InterfaceName != "" || value.Resolver != "" || value.DNSDefaultRoute
+}
+
+func parseDNSEndpoint(interfaceName, resolver string) (DNSEndpoint, error) {
+	if !validInterfaceName(interfaceName) {
+		return DNSEndpoint{}, fmt.Errorf("%w: dns interface name is invalid", ErrProtocol)
+	}
+	address, err := netip.ParseAddrPort(resolver)
+	if err != nil || address.String() != resolver || address.Addr().Is4In6() ||
+		!address.Addr().IsGlobalUnicast() || address.Addr().IsLinkLocalUnicast() ||
+		address.Port() < 1024 {
+		return DNSEndpoint{}, fmt.Errorf("%w: dns resolver endpoint is invalid", ErrProtocol)
+	}
+
+	return DNSEndpoint{InterfaceName: interfaceName, Resolver: address}, nil
+}
+
+func validateDNSConfig(config DNSConfig) error {
+	endpoint, err := parseDNSEndpoint(config.Endpoint.InterfaceName, config.Endpoint.Resolver.String())
+	if err != nil || endpoint != config.Endpoint {
+		return fmt.Errorf("%w: dns endpoint is invalid", ErrProtocol)
+	}
+	if len(config.SearchDomains)+len(config.RouteDomains) == 0 ||
+		len(config.SearchDomains)+len(config.RouteDomains) > maxDNSDomains {
+		return fmt.Errorf("%w: dns domain count is outside the allowed range", ErrProtocol)
+	}
+	seen := make(map[string]struct{}, len(config.SearchDomains)+len(config.RouteDomains))
+	totalBytes := 0
+	for _, domain := range config.SearchDomains {
+		if !validDNSDomain(domain, false) {
+			return fmt.Errorf("%w: dns search domain is invalid", ErrProtocol)
+		}
+		if _, exists := seen[domain]; exists {
+			return fmt.Errorf("%w: dns domain is duplicated", ErrProtocol)
+		}
+		seen[domain] = struct{}{}
+		totalBytes += len(domain)
+	}
+	for _, domain := range config.RouteDomains {
+		if !validDNSDomain(domain, true) {
+			return fmt.Errorf("%w: dns route domain is invalid", ErrProtocol)
+		}
+		if _, exists := seen[domain]; exists {
+			return fmt.Errorf("%w: dns domain is duplicated", ErrProtocol)
+		}
+		seen[domain] = struct{}{}
+		totalBytes += len(domain)
+	}
+	if totalBytes > maxDNSDomainBytes {
+		return fmt.Errorf("%w: dns domain bytes exceed the allowed range", ErrProtocol)
+	}
+	hasRoot := slices.Contains(config.RouteDomains, ".")
+	if config.DefaultRoute != hasRoot {
+		return fmt.Errorf("%w: dns default route does not match root route", ErrProtocol)
+	}
+
+	return nil
+}
+
+func validDNSDomain(value string, allowRoot bool) bool {
+	if value == "." {
+		return allowRoot
+	}
+	if value == "" || len(value) > 253 || value != strings.ToLower(value) ||
+		strings.HasSuffix(value, ".") {
+		return false
+	}
+	for label := range strings.SplitSeq(value, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, character := range label {
+			if (character < 'a' || character > 'z') &&
+				(character < '0' || character > '9') && character != '-' {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+func validInterfaceName(name string) bool {
+	if len(name) < len("mesh0") || len(name) >= interfaceNameSize || name[:4] != "mesh" {
+		return false
+	}
+	for _, character := range name[4:] {
+		if (character < 'a' || character > 'z') &&
+			(character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') && character != '-' {
+			return false
+		}
+	}
+
+	return true
+}
+
+func parseTUNConfig(addressValues, routeValues []string) (TUNConfig, error) {
+	addresses, err := parsePrefixStrings(addressValues)
+	if err != nil {
+		return TUNConfig{}, fmt.Errorf("%w: address is malformed", ErrTUNConfig)
+	}
+	routes, err := parsePrefixStrings(routeValues)
+	if err != nil {
+		return TUNConfig{}, fmt.Errorf("%w: route is malformed", ErrTUNConfig)
+	}
+
+	return normalizeTUNConfig(TUNConfig{Addresses: addresses, Routes: routes})
+}
+
+func parsePrefixStrings(values []string) ([]netip.Prefix, error) {
+	prefixes := make([]netip.Prefix, 0, len(values))
+	for _, value := range values {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil || prefix.String() != value {
+			return nil, errors.New("prefix is not canonical")
+		}
+		prefixes = append(prefixes, prefix)
+	}
+
+	return prefixes, nil
+}
+
+func normalizeTUNConfig(config TUNConfig) (TUNConfig, error) {
+	addresses, err := normalizeHostPrefixes("address", config.Addresses, maxTUNAddresses)
+	if err != nil {
+		return TUNConfig{}, err
+	}
+	routes, err := normalizeHostPrefixes("route", config.Routes, maxTUNRoutes)
+	if err != nil {
+		return TUNConfig{}, err
+	}
+	if len(routes) != 0 && len(addresses) == 0 {
+		return TUNConfig{}, fmt.Errorf("%w: routes require an interface address", ErrTUNConfig)
+	}
+	addressSet := make(map[netip.Prefix]struct{}, len(addresses))
+	for _, address := range addresses {
+		addressSet[address] = struct{}{}
+	}
+	for _, route := range routes {
+		if _, exists := addressSet[route]; exists {
+			return TUNConfig{}, fmt.Errorf("%w: route overlaps an interface address", ErrTUNConfig)
+		}
+	}
+
+	return TUNConfig{Addresses: addresses, Routes: routes}, nil
+}
+
+func normalizeHostPrefixes(
+	kind string,
+	values []netip.Prefix,
+	maximum int,
+) ([]netip.Prefix, error) {
+	if len(values) > maximum {
+		return nil, fmt.Errorf("%w: too many %ss", ErrTUNConfig, kind)
+	}
+	prefixes := append([]netip.Prefix{}, values...)
+	for index, prefix := range prefixes {
+		if !prefix.IsValid() {
+			return nil, fmt.Errorf("%w: %s must be a canonical global host prefix", ErrTUNConfig, kind)
+		}
+		address := prefix.Addr().Unmap()
+		if prefix != prefix.Masked() || prefix.Addr() != address ||
+			prefix.Bits() != address.BitLen() || !address.IsGlobalUnicast() ||
+			address.IsLinkLocalUnicast() {
+			return nil, fmt.Errorf("%w: %s must be a canonical global host prefix", ErrTUNConfig, kind)
+		}
+		prefixes[index] = netip.PrefixFrom(address, address.BitLen())
+	}
+	slices.SortFunc(prefixes, comparePrefixes)
+	for index := 1; index < len(prefixes); index++ {
+		if prefixes[index] == prefixes[index-1] {
+			return nil, fmt.Errorf("%w: %s is duplicated", ErrTUNConfig, kind)
+		}
+	}
+
+	return prefixes, nil
+}
+
+func comparePrefixes(left, right netip.Prefix) int {
+	if comparison := left.Addr().Compare(right.Addr()); comparison != 0 {
+		return comparison
+	}
+
+	return left.Bits() - right.Bits()
+}
+
+func prefixStrings(prefixes []netip.Prefix) []string {
+	values := make([]string, len(prefixes))
+	for index, prefix := range prefixes {
+		values[index] = prefix.String()
+	}
+
+	return values
+}

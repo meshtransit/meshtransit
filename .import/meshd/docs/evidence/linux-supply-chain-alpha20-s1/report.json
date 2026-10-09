@@ -1,0 +1,50 @@
+{
+  "schema": "meshtransit.linux-supply-chain-qualification/v1",
+  "candidate": {
+    "version": "0.1.0~alpha20",
+    "git_commit": "33feb2e6136bfc2d545e015797b86f3121d365b7",
+    "build_date": "2026-09-12T04:33:58Z",
+    "source_archive_sha256": "295dfd2252ec1cae79bcb9ba5ae0736c981662de185e941fd7146ebcf17da467"
+  },
+  "environment": {
+    "builder": "ubuntu-26.04-x86_64",
+    "independent_verifier": "debian-13-x86_64",
+    "syft_version": "1.51.1",
+    "grype_version": "0.116.1",
+    "grype_database_schema": "v6.1.9",
+    "grype_database_built_at": "2026-09-11T06:29:40Z"
+  },
+  "artifacts": [
+    {
+      "architecture": "amd64",
+      "package_sha256": "b2873d555b74a9c31f29e18606911a517051d0241bbe2395a488e6d651a24c38",
+      "cyclonedx_sha256": "12a2b789bfec1706874d91e67a7ebc777587740f68d6f1b2e14b8abcd203c894",
+      "grype_report_sha256": "50b5f08d7a97c8caba10c2b7a2775795cfd54489d90e6fa210fce7a05171fff1",
+      "components": 23,
+      "go_components": 20,
+      "vulnerability_matches": 0,
+      "package_reproducible": true,
+      "sbom_reproducible": true,
+      "independent_verification": true
+    },
+    {
+      "architecture": "arm64",
+      "package_sha256": "7586519c176979af8359ccc4eb0e7038fe0e864bb71dc036d12da04a57d0b47d",
+      "cyclonedx_sha256": "c0f60a094730cc25f5957a10db17c984dca636a1298c5bc23f627148070b7fa1",
+      "grype_report_sha256": "c8a3dc5fb074db32b9e62913ab4e4631865853262ed9f5943558ed2ca69720c1",
+      "components": 23,
+      "go_components": 20,
+      "vulnerability_matches": 0,
+      "package_reproducible": true,
+      "sbom_reproducible": true,
+      "independent_verification": true
+    }
+  ],
+  "transfer_bundle_sha256": "632a7f86959931cc6d885e02e6be3b194a56935d8943da10e8b8279dfd308a9d",
+  "negative_tests": {
+    "modified_package_rejected": true,
+    "redirected_sidecar_filename_rejected": true
+  },
+  "outcome": "pass",
+  "release_candidate_eligible": false
+}

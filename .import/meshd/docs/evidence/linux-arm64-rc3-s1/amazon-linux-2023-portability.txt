@@ -1,0 +1,29 @@
+classification=supplemental-native-arm64-portability-gate
+official_release_compatibility=false
+source_commit=69e5e2f00f0fead79e5baf4848725ee3aa6590b6
+source_archive_sha256=157a416096962f60ea35920eddb422c82754bd8fe30d9e0a0505b518677717ca
+source_manifest_sha256=851993edcbc536949cce6da9fcc3381bdcd105d51987b25540182ebf8f40947c
+target=Amazon Linux 2023.12 aarch64
+kernel=6.18.44-99.149.amzn2023.aarch64
+systemd=252
+package_systemd_contract=>=255
+go=go1.26.8 linux/arm64
+go_test_race_shuffle=pass
+go_vet=pass
+qualification_self_tests=11/11 pass
+portable_shell_gates=pass
+release_binary_audit=pass
+systemd_staged_syntax_verify=pass
+systemd_runtime=not-run
+rpm_support=not-implemented
+services_installed=false
+services_started=false
+routes_changed=false
+dns_changed=false
+candidate_meshd_sha256=f5087b50feab1f3c95c248422b74b7bf9682301503db2eaebdc72c629b9761b1
+candidate_meshnetd_sha256=2839f5dcee7aea18f594a01821ab53b3a1bdcf1ba95da6bc950a34e2ef8e17b1
+candidate_meshcred_sha256=de8ef11a78099e5b4281185abb49456750716900af7f391470bfb7b2b94d1796
+candidate_hashes_match_ubuntu=true
+compatibility_gap_1=systemd 252 is below supported >=255 contract
+compatibility_gap_2=no RPM lifecycle or SELinux enforcing qualification
+compatibility_gap_3=static unit parsing does not prove runtime semantics

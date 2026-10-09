@@ -1,0 +1,46 @@
+#!/bin/sh
+set -e
+
+case "${DPKG_ROOT:-}" in
+    ""|/)
+        root_prefix=
+        ;;
+    /*)
+        root_prefix="${DPKG_ROOT%/}"
+        ;;
+    *)
+        printf 'DPKG_ROOT must be empty or an absolute path\n' >&2
+        exit 1
+        ;;
+esac
+
+if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
+    systemctl --system daemon-reload >/dev/null || true
+fi
+
+case "$1" in
+    remove|purge)
+        rm -f -- \
+            "${root_prefix}/run/meshd/meshd.sock" \
+            "${root_prefix}/run/meshnetd/meshnetd.sock"
+        rmdir -- \
+            "${root_prefix}/run/meshd" \
+            "${root_prefix}/run/meshnetd" 2>/dev/null || true
+        ;;
+esac
+
+if [ "$1" = "purge" ]; then
+    if command -v deb-systemd-helper >/dev/null; then
+        deb-systemd-helper purge meshcred.service meshnetd.service meshd.service >/dev/null || true
+    fi
+	rm -f -- "${root_prefix}/etc/meshd/.start-on-reinstall"
+	rm -f -- \
+		"${root_prefix}/etc/credstore.encrypted/meshd.identity-key" \
+		"${root_prefix}/etc/credstore.encrypted/meshd.identity-key.recovery"
+	rmdir -- "${root_prefix}/etc/meshd" 2>/dev/null || true
+	rmdir -- "${root_prefix}/etc/credstore.encrypted" 2>/dev/null || true
+    rm -rf -- \
+        "${root_prefix}/var/lib/meshd" \
+        "${root_prefix}/run/meshd" \
+        "${root_prefix}/run/meshnetd"
+fi

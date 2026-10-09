@@ -1,0 +1,97 @@
+{
+  "schema": "meshtransit.linux-dns-upstream-failure-qualification/v1",
+  "recorded_at": "2026-09-11T22:17:50Z",
+  "topology": {
+    "node_labels": [
+      "ubuntu-a",
+      "ubuntu-b"
+    ],
+    "node_count": 2,
+    "address_families": [
+      "ipv4",
+      "ipv6"
+    ]
+  },
+  "artifact": {
+    "version": "0.1.0~alpha16",
+    "commit": "fa246a10468b831b9cb83d29b1f46497a54ac20b",
+    "sha256": "51b32b18380122522e980812288fdedaa6efbf3f6d39823ece29be13b25ec159",
+    "independent_builds": 2,
+    "byte_identical": true,
+    "evidence_complete": true
+  },
+  "control": {
+    "updates_accepted": 3,
+    "update_complete_each_phase": true,
+    "baseline_restored": true
+  },
+  "phases": {
+    "ordered_timeout_failover": {
+      "split_route_count": 1,
+      "selected_resolver_count": 2,
+      "non_responsive_resolver_first": true,
+      "reachable_resolver_second": true,
+      "query_samples": 6,
+      "successful_queries": 6,
+      "latency_ms": {
+        "minimum": 1526,
+        "maximum": 1554
+      },
+      "split_route_on_both_nodes": true,
+      "unrelated_query_avoided_mesh_resolver_on_both_nodes": true
+    },
+    "fail_closed": {
+      "split_route_count": 1,
+      "selected_resolver_count": 1,
+      "non_responsive_resolver_only": true,
+      "query_samples": 6,
+      "server_failure_responses": 6,
+      "latency_ms": {
+        "minimum": 1531,
+        "maximum": 1543
+      },
+      "host_resolver_query_failed_on_both_nodes": true,
+      "captured_upstream_dns_packets": 12,
+      "unexpected_dns_destination_packets": 0,
+      "unrelated_query_avoided_mesh_resolver_on_both_nodes": true
+    },
+    "rollback": {
+      "global_resolver_count": 0,
+      "split_route_count": 0,
+      "default_route_disabled": true,
+      "temporary_route_absent_on_both_nodes": true,
+      "public_queries_avoided_mesh_resolver_on_both_nodes": true,
+      "public_forwarding_disabled_on_both_nodes": true
+    }
+  },
+  "implementation_verification": {
+    "timeout_retry_tested": true,
+    "server_failure_retry_tested": true,
+    "refused_retry_tested": true,
+    "nxdomain_is_terminal": true,
+    "all_selected_upstreams_failed_returns_server_failure": true
+  },
+  "service_continuity": {
+    "ubuntu-a": {
+      "pid_unchanged_during_dns_phases": true,
+      "restart_count": 0,
+      "identity_preserved": true
+    },
+    "ubuntu-b": {
+      "pid_unchanged_during_dns_phases": true,
+      "restart_count": 0,
+      "identity_preserved": true
+    }
+  },
+  "final": {
+    "services_active_on_both_nodes": true,
+    "control_synchronized_on_both_nodes": true,
+    "dns_configured_on_both_nodes": true,
+    "magic_dns_on_both_nodes": true,
+    "bidirectional_dual_stack_traffic": true,
+    "host_configuration_preserved": true,
+    "warning_journal_entries": 0
+  },
+  "failures": [],
+  "outcome": "pass"
+}

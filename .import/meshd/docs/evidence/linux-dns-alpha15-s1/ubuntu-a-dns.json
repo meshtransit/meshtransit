@@ -1,0 +1,58 @@
+{
+  "schema": "meshtransit.linux-dns-qualification/v1",
+  "started_at": "2026-09-11T21:35:20Z",
+  "topology": {
+    "node_label": "ubuntu-a",
+    "peer_label": "ubuntu-b",
+    "address_families": [
+      "ipv4",
+      "ipv6"
+    ]
+  },
+  "platform": {
+    "kernel_release": "6.8.0-139-generic",
+    "architecture": "x86_64"
+  },
+  "artifact": {
+    "version": "0.1.0~alpha15",
+    "commit": "3e6ed3aaadf228e248a5158f2a8cb87d85f80e23",
+    "sha256": "1766c157059c6b70918c49a4878767f3b38418316be3f762bf45e82b8ae0ac82",
+    "evidence_complete": true
+  },
+  "scenario": {
+    "action": "graceful_meshd_stop_start",
+    "dns_mode": "split_only",
+    "changes_host_dns_directly": false
+  },
+  "limits": {
+    "cleanup_and_recovery_timeout_seconds": 20
+  },
+  "cleanup": {
+    "stop_exit_code": 0,
+    "stop_duration_ms": 56,
+    "dedicated_link_and_listeners_removed": true,
+    "removal_ms": 67,
+    "non_mesh_dns_available": true
+  },
+  "recovery": {
+    "start_exit_code": 0,
+    "ready_ms": 3945,
+    "daemon_ready": true,
+    "split_routing_restored": true,
+    "udp_tcp_listeners_restored": true
+  },
+  "dns": {
+    "complete_suite": true,
+    "authoritative_a_udp": true,
+    "authoritative_aaaa_udp": true,
+    "authoritative_a_tcp": true,
+    "authoritative_nodata": true,
+    "authoritative_nxdomain": true,
+    "ptr_ipv4": true,
+    "ptr_ipv6": true,
+    "short_name_search": true,
+    "fqdn_system_resolution": true
+  },
+  "failures": [],
+  "outcome": "pass"
+}

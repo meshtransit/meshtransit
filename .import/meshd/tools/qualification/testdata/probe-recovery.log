@@ -1,0 +1,11 @@
+[1789123000.000000] probe_seq=1 reply
+[1789123000.200000] probe_seq=2 reply
+[1789123000.400000] probe_seq=3 reply
+[1789123000.600000] probe_seq=4 timeout
+[1789123000.800000] probe_seq=5 timeout
+[1789123001.000000] probe_seq=6 reply
+[1789123001.200000] probe_seq=7 reply
+[1789123001.400000] probe_seq=8 reply
+[1789123001.600000] probe_seq=9 reply
+[1789123001.800000] probe_seq=10 reply
+10 packets transmitted, 8 received, 20.0000% packet loss

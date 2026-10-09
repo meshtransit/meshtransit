@@ -1,0 +1,257 @@
+{
+  "schema": "meshtransit.linux-runtime-recovery-traffic-qualification/v1",
+  "started_at": "2026-09-12T23:02:40Z",
+  "topology": {
+    "node_label": "ubuntu26-arm64",
+    "peer_label": "ubuntu26-amd64",
+    "address_families": [
+      "ipv4",
+      "ipv6"
+    ],
+    "magic_dns": true
+  },
+  "artifact": {
+    "version": "0.1.0~rc5+35a452b",
+    "commit": "35a452b639cef650e11a24aaba3f668da6b33233",
+    "sha256": "fcaf252d402177de030a2d761055b371f90d3f4bff21a80d650214b74f38a93d",
+    "evidence_complete": true
+  },
+  "platform": {
+    "kernel_release": "7.0.0-1006-aws",
+    "architecture": "aarch64"
+  },
+  "scenario": {
+    "action": "helper_socket_permission_fault_at_startup_with_live_traffic",
+    "iterations_requested": 3,
+    "iterations_completed": 3,
+    "inter_run_seconds": 1,
+    "recovery_timeout_seconds": 30,
+    "resource_timeout_seconds": 5,
+    "lead_seconds": 2,
+    "tail_seconds": 5,
+    "probe_interval_seconds": 0.2
+  },
+  "samples": [
+    {
+      "iteration": 1,
+      "child_harness_exit_code": 0,
+      "child_report_valid": true,
+      "runtime": {
+        "artifact": {
+          "version": "0.1.0~rc5+35a452b",
+          "commit": "35a452b639cef650e11a24aaba3f668da6b33233",
+          "sha256": "fcaf252d402177de030a2d761055b371f90d3f4bff21a80d650214b74f38a93d",
+          "evidence_complete": true
+        },
+        "platform": {
+          "kernel_release": "7.0.0-1006-aws",
+          "architecture": "aarch64"
+        },
+        "scenario": {
+          "action": "helper_socket_permission_fault_at_startup",
+          "iterations_requested": 1,
+          "iterations_completed": 1,
+          "inter_run_seconds": 1,
+          "recovery_timeout_seconds": 30,
+          "resource_timeout_seconds": 5
+        },
+        "summary": {
+          "failure_observed_p95_ms": 1840,
+          "synchronized_p95_ms": 4089,
+          "resource_stable_p95_ms": 225
+        },
+        "outcome": "pass"
+      },
+      "traffic": {
+        "ipv4": {
+          "parser_ok": true,
+          "transmitted": 201,
+          "received": 188,
+          "loss_percent": 6.4677,
+          "first_reply_after_action_ms": 17,
+          "maximum_consecutive_loss": 13,
+          "missing_after_action": 13,
+          "replies_after_action": 179,
+          "stable_recovery_ms": 6173,
+          "consecutive_replies_at_end": 176
+        },
+        "ipv6": {
+          "parser_ok": true,
+          "transmitted": 209,
+          "received": 188,
+          "loss_percent": 10.0478,
+          "first_reply_after_action_ms": 20,
+          "maximum_consecutive_loss": 21,
+          "missing_after_action": 21,
+          "replies_after_action": 179,
+          "stable_recovery_ms": 6161,
+          "consecutive_replies_at_end": 176
+        },
+        "magic_dns": {
+          "parser_ok": true,
+          "transmitted": 145,
+          "received": 133,
+          "loss_percent": 8.2759,
+          "first_reply_after_action_ms": 67,
+          "maximum_consecutive_loss": 12,
+          "missing_after_action": 12,
+          "replies_after_action": 127,
+          "stable_recovery_ms": 4625,
+          "consecutive_replies_at_end": 125
+        }
+      },
+      "failures": [],
+      "outcome": "pass"
+    },
+    {
+      "iteration": 2,
+      "child_harness_exit_code": 0,
+      "child_report_valid": true,
+      "runtime": {
+        "artifact": {
+          "version": "0.1.0~rc5+35a452b",
+          "commit": "35a452b639cef650e11a24aaba3f668da6b33233",
+          "sha256": "fcaf252d402177de030a2d761055b371f90d3f4bff21a80d650214b74f38a93d",
+          "evidence_complete": true
+        },
+        "platform": {
+          "kernel_release": "7.0.0-1006-aws",
+          "architecture": "aarch64"
+        },
+        "scenario": {
+          "action": "helper_socket_permission_fault_at_startup",
+          "iterations_requested": 1,
+          "iterations_completed": 1,
+          "inter_run_seconds": 1,
+          "recovery_timeout_seconds": 30,
+          "resource_timeout_seconds": 5
+        },
+        "summary": {
+          "failure_observed_p95_ms": 1597,
+          "synchronized_p95_ms": 3943,
+          "resource_stable_p95_ms": 237
+        },
+        "outcome": "pass"
+      },
+      "traffic": {
+        "ipv4": {
+          "parser_ok": true,
+          "transmitted": 200,
+          "received": 185,
+          "loss_percent": 7.5000,
+          "first_reply_after_action_ms": 6,
+          "maximum_consecutive_loss": 15,
+          "missing_after_action": 15,
+          "replies_after_action": 176,
+          "stable_recovery_ms": 6978,
+          "consecutive_replies_at_end": 173
+        },
+        "ipv6": {
+          "parser_ok": true,
+          "transmitted": 208,
+          "received": 185,
+          "loss_percent": 11.0577,
+          "first_reply_after_action_ms": 220,
+          "maximum_consecutive_loss": 23,
+          "missing_after_action": 23,
+          "replies_after_action": 175,
+          "stable_recovery_ms": 6927,
+          "consecutive_replies_at_end": 173
+        },
+        "magic_dns": {
+          "parser_ok": true,
+          "transmitted": 145,
+          "received": 134,
+          "loss_percent": 7.5862,
+          "first_reply_after_action_ms": 62,
+          "maximum_consecutive_loss": 11,
+          "missing_after_action": 11,
+          "replies_after_action": 128,
+          "stable_recovery_ms": 4315,
+          "consecutive_replies_at_end": 126
+        }
+      },
+      "failures": [],
+      "outcome": "pass"
+    },
+    {
+      "iteration": 3,
+      "child_harness_exit_code": 0,
+      "child_report_valid": true,
+      "runtime": {
+        "artifact": {
+          "version": "0.1.0~rc5+35a452b",
+          "commit": "35a452b639cef650e11a24aaba3f668da6b33233",
+          "sha256": "fcaf252d402177de030a2d761055b371f90d3f4bff21a80d650214b74f38a93d",
+          "evidence_complete": true
+        },
+        "platform": {
+          "kernel_release": "7.0.0-1006-aws",
+          "architecture": "aarch64"
+        },
+        "scenario": {
+          "action": "helper_socket_permission_fault_at_startup",
+          "iterations_requested": 1,
+          "iterations_completed": 1,
+          "inter_run_seconds": 1,
+          "recovery_timeout_seconds": 30,
+          "resource_timeout_seconds": 5
+        },
+        "summary": {
+          "failure_observed_p95_ms": 1474,
+          "synchronized_p95_ms": 3470,
+          "resource_stable_p95_ms": 237
+        },
+        "outcome": "pass"
+      },
+      "traffic": {
+        "ipv4": {
+          "parser_ok": true,
+          "transmitted": 201,
+          "received": 188,
+          "loss_percent": 6.4677,
+          "first_reply_after_action_ms": 10,
+          "maximum_consecutive_loss": 13,
+          "missing_after_action": 13,
+          "replies_after_action": 179,
+          "stable_recovery_ms": 6187,
+          "consecutive_replies_at_end": 176
+        },
+        "ipv6": {
+          "parser_ok": true,
+          "transmitted": 209,
+          "received": 188,
+          "loss_percent": 10.0478,
+          "first_reply_after_action_ms": 8,
+          "maximum_consecutive_loss": 21,
+          "missing_after_action": 21,
+          "replies_after_action": 179,
+          "stable_recovery_ms": 6278,
+          "consecutive_replies_at_end": 176
+        },
+        "magic_dns": {
+          "parser_ok": true,
+          "transmitted": 145,
+          "received": 134,
+          "loss_percent": 7.5862,
+          "first_reply_after_action_ms": 52,
+          "maximum_consecutive_loss": 11,
+          "missing_after_action": 11,
+          "replies_after_action": 128,
+          "stable_recovery_ms": 4285,
+          "consecutive_replies_at_end": 126
+        }
+      },
+      "failures": [],
+      "outcome": "pass"
+    }
+  ],
+  "summary": {
+    "runtime_synchronized_p95_ms": 4089,
+    "ipv4_stable_recovery_p95_ms": 6978,
+    "ipv6_stable_recovery_p95_ms": 6927,
+    "magic_dns_stable_recovery_p95_ms": 4625
+  },
+  "failures": [],
+  "outcome": "pass"
+}
