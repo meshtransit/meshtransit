@@ -21,6 +21,7 @@ type Relay struct {
 	sessions   prometheus.Gauge
 	routes     prometheus.Gauge
 	stun       *prometheus.CounterVec
+	streams    *prometheus.CounterVec
 }
 
 // New registers the relay collectors and the Go runtime and process ones.
@@ -48,9 +49,12 @@ func New() *Relay {
 		stun: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "meshrelay_stun_requests_total", Help: "STUN requests by outcome.",
 		}, []string{"result"}),
+		streams: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshrelay_stream_events_total", Help: "TLS and WebSocket connection events by outcome.",
+		}, []string{"result"}),
 	}
 	r.registry.MustRegister(
-		r.handshakes, r.control, r.data, r.dataBytes, r.sessions, r.routes, r.stun,
+		r.handshakes, r.control, r.data, r.dataBytes, r.sessions, r.routes, r.stun, r.streams,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -81,6 +85,9 @@ func (r *Relay) Sessions(active int) { r.sessions.Set(float64(active)) }
 
 // Routes implements server.Metrics.
 func (r *Relay) Routes(delta int) { r.routes.Add(float64(delta)) }
+
+// Stream counts a stream transport event.
+func (r *Relay) Stream(result string) { r.streams.WithLabelValues(result).Inc() }
 
 // STUN counts a STUN request outcome.
 func (r *Relay) STUN(result string) { r.stun.WithLabelValues(result).Inc() }

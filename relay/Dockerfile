@@ -49,9 +49,9 @@ COPY --chown=65532:65532 COMMERCIAL-LICENSING.md /licenses/COMMERCIAL-LICENSING.
 COPY --chown=65532:65532 relay/THIRD_PARTY_NOTICES.md /licenses/THIRD_PARTY_NOTICES.md
 
 USER 65532:65532
-# MTRP UDP, STUN and STUN alternate port; admin (metrics) stays on localhost
-# unless --admin says otherwise.
-EXPOSE 3479/udp 3478/udp 3480/udp
+# MTRP UDP, STUN, STUN alternate port and TLS/WebSocket (with --tls); admin
+# (metrics) stays on localhost unless --admin says otherwise.
+EXPOSE 3479/udp 3478/udp 3480/udp 443/tcp
 
 ENTRYPOINT ["/meshrelay"]
 CMD ["serve"]

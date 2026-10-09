@@ -24,6 +24,17 @@ response, keeping whichever completes first; WebSocket is used when TLS cannot
 connect (for example only an HTTP proxy is reachable). A client keeps at most
 one active session per relay node.
 
+TLS and WebSocket share one TCP port. After a TLS 1.3 handshake the relay
+dispatches on ALPN: `mtrp/1` selects length-prefixed frames, `http/1.1`
+selects HTTP, where `GET /mtrp/v1` with subprotocol `mtrp.v1` upgrades to
+WebSocket. TLS is not part of the trust model: the Noise handshake
+authenticates the relay, so clients MAY skip certificate verification. Relays
+SHOULD still present a publicly trusted certificate (for example via ACME
+TLS-ALPN-01 on the same port) so that middleboxes and proxies accept the
+connection. Closing a stream ends the sessions bound to it. Relays bound
+connections per source address and in total, give the TLS handshake 10 s, and
+drop frames for a client whose send queue is full.
+
 ## 2. Keys and identities
 
 - Relay key: X25519 static key of each relay node, published in the signed

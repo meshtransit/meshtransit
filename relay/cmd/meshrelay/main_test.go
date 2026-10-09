@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"meshtransit.net/shared/key"
 )
@@ -70,5 +73,70 @@ func TestParseServeConfig(t *testing.T) {
 	var errOut bytes.Buffer
 	if code := run(context.Background(), []string{"nope"}, noEnv, &bytes.Buffer{}, &errOut); code != 2 {
 		t.Fatalf("unknown command exit %d", code)
+	}
+}
+
+func TestTLSConfigModes(t *testing.T) {
+	t.Parallel()
+	if _, err := tlsConfig(serveConfig{}); err == nil {
+		t.Fatal("no certificate mode accepted")
+	}
+	if _, err := tlsConfig(serveConfig{tlsSelfSigned: true, acmeHost: "relay.example"}); err == nil {
+		t.Fatal("two certificate modes accepted")
+	}
+	if _, err := tlsConfig(serveConfig{acmeHost: "relay.example"}); err == nil {
+		t.Fatal("ACME without a cache directory accepted")
+	}
+	if _, err := tlsConfig(serveConfig{tlsCert: "missing.pem", tlsKey: "missing.key"}); err == nil {
+		t.Fatal("missing certificate files accepted")
+	}
+	c, err := tlsConfig(serveConfig{tlsSelfSigned: true})
+	if err != nil || len(c.Certificates) != 1 {
+		t.Fatalf("self-signed: %v", err)
+	}
+	acme, err := tlsConfig(serveConfig{acmeHost: "relay.example", acmeCache: t.TempDir()})
+	if err != nil || acme.GetCertificate == nil {
+		t.Fatalf("acme: %v", err)
+	}
+}
+
+func TestCertReloader(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	write := func() {
+		cert, err := selfSigned()
+		if err != nil {
+			t.Fatal(err)
+		}
+		der, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})
+		keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+		if err := os.WriteFile(filepath.Join(dir, "c.pem"), certPEM, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "k.pem"), keyPEM, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write()
+	r, err := newCertReloader(filepath.Join(dir, "c.pem"), filepath.Join(dir, "k.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := r.get(nil)
+	write()
+	future := time.Now().Add(time.Hour)
+	if err := os.Chtimes(filepath.Join(dir, "c.pem"), future, future); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	r.checked = time.Time{} // force the next call to look at the files
+	r.mu.Unlock()
+	second, _ := r.get(nil)
+	if bytes.Equal(first.Certificate[0], second.Certificate[0]) {
+		t.Fatal("certificate not reloaded after the files changed")
 	}
 }

@@ -86,7 +86,8 @@ type Server struct {
 	byIndex    map[uint32]*session
 	byNode     map[key.NodePublic]*session
 	byDisco    map[key.DiscoPublic]*session
-	timestamps map[key.DiscoPublic]int64 // last accepted ClientHello timestamp
+	timestamps map[key.DiscoPublic]int64            // last accepted ClientHello timestamp
+	streams    map[StreamConn]map[*session]struct{} // sessions bound to each stream connection
 	draining   bool
 
 	routeMu sync.Mutex // serialises route creation and removal across sessions
@@ -142,6 +143,7 @@ func New(cfg Config) (*Server, error) {
 		byNode:     make(map[key.NodePublic]*session),
 		byDisco:    make(map[key.DiscoPublic]*session),
 		timestamps: make(map[key.DiscoPublic]int64),
+		streams:    make(map[StreamConn]map[*session]struct{}),
 	}, nil
 }
 
@@ -374,6 +376,9 @@ func (s *Server) closeSession(sess *session, reason mtrp.SessionCloseReason, ret
 	if s.byDisco[sess.disco] == sess {
 		delete(s.byDisco, sess.disco)
 	}
+	if b := sess.binding.Load(); b != nil && b.stream != nil {
+		s.unbindStreamLocked(b.stream, sess)
+	}
 	s.cfg.Metrics.Sessions(len(s.byIndex))
 	s.mu.Unlock()
 
@@ -399,6 +404,60 @@ func (s *Server) closeSession(sess *session, reason mtrp.SessionCloseReason, ret
 	}
 	s.sendControl(sess, mtrp.ControlMessage{Type: mtrp.ControlSessionClose, SessionClose: reason, RetryAfterMS: millis32(retryAfter)})
 	s.cfg.Logger.Debug("session closed", "reason", reason)
+}
+
+// StreamClosed tells the server a stream connection ended: the sessions bound
+// to it can no longer be reached and are closed at once instead of waiting
+// for the idle timeout.
+func (s *Server) StreamClosed(conn StreamConn) {
+	s.mu.Lock()
+	bound := s.streams[conn]
+	delete(s.streams, conn)
+	s.mu.Unlock()
+	for sess := range bound {
+		if b := sess.binding.Load(); b != nil && b.stream == conn {
+			s.closeSession(sess, mtrp.SessionClosePolicy, 0)
+		}
+	}
+}
+
+func (s *Server) bindStreamLocked(conn StreamConn, sess *session) {
+	set, ok := s.streams[conn]
+	if !ok {
+		set = make(map[*session]struct{})
+		s.streams[conn] = set
+	}
+	set[sess] = struct{}{}
+	if b, ok := conn.(streamBinder); ok {
+		b.SessionBound()
+	}
+}
+
+func (s *Server) unbindStreamLocked(conn StreamConn, sess *session) {
+	if set, ok := s.streams[conn]; ok {
+		delete(set, sess)
+		if len(set) == 0 {
+			delete(s.streams, conn)
+		}
+	}
+}
+
+// moveBinding replaces a session's binding and updates the stream index in
+// one step, so concurrent roams cannot leave the index behind the binding.
+// It reports false if another change won the race.
+func (s *Server) moveBinding(sess *session, from, to *binding) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !sess.binding.CompareAndSwap(from, to) {
+		return false
+	}
+	if from != nil && from.stream != nil {
+		s.unbindStreamLocked(from.stream, sess)
+	}
+	if to.stream != nil && s.byIndex[sess.index()] == sess {
+		s.bindStreamLocked(to.stream, sess)
+	}
+	return true
 }
 
 // Drain stops accepting new sessions and tells every client to move to

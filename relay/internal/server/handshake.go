@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"io"
 	"math"
+	"net/netip"
 	"time"
 
 	"meshtransit.net/relay/internal/ratelimit"
@@ -26,7 +27,7 @@ func (s *Server) handleInit(frame []byte, from binding, stream bool) {
 		return
 	}
 	now := s.cfg.Now()
-	if !stream && !s.sources.Allow(from.udp.Addr()) {
+	if !s.sources.Allow(sourceOf(from)) {
 		s.cfg.Metrics.Handshake("source_limited")
 		return
 	}
@@ -158,6 +159,9 @@ func (s *Server) register(sess *session, timestampMS int64) ([]*session, string)
 		return nil, "full"
 	}
 	s.timestamps[sess.disco] = timestampMS
+	if b := sess.binding.Load(); b != nil && b.stream != nil {
+		s.bindStreamLocked(b.stream, sess)
+	}
 	s.byIndex[sess.index()] = sess
 	s.byNode[sess.node] = sess
 	s.byDisco[sess.disco] = sess
@@ -181,6 +185,17 @@ func (s *Server) timestampInWindow(timestampMS int64, now time.Time) bool {
 	skew := MaxTimestampSkew.Milliseconds()
 	nowMS := now.UnixMilli()
 	return timestampMS >= s.startedMS && timestampMS >= nowMS-skew && timestampMS <= nowMS+skew
+}
+
+// sourceOf returns the address a frame came from, for per-source limits.
+func sourceOf(b binding) netip.Addr {
+	if b.stream != nil {
+		if p, ok := b.stream.(streamPeer); ok {
+			return p.RemoteAddr()
+		}
+		return netip.Addr{}
+	}
+	return b.udp.Addr()
 }
 
 func (s *Server) isDraining() bool {

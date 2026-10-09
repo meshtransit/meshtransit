@@ -23,9 +23,15 @@ meshrelay serve \
 | `--public-ip` | none | Address advertised in RFC 5780 attributes |
 | `--admin` | `127.0.0.1:9479` | `/metrics` (Prometheus) and `/healthz` |
 | `--drain-timeout` | `5s` | Time clients get to move away on SIGTERM |
+| `--tls` | off | TLS listen address (for example `0.0.0.0:443`): ALPN `mtrp/1` for framed MTRP, `http/1.1` for WebSocket at `/mtrp/v1` |
+| `--acme-host`, `--acme-cache` | none | Let's Encrypt certificate via TLS-ALPN-01 on the TLS port |
+| `--tls-cert`, `--tls-key` | none | Certificate files instead of ACME |
+| `--tls-self-signed` | off | Ephemeral certificate, for labs |
 
 Every flag can be set as `MESHRELAY_<FLAG>` (upper case, `_` for `-`). The key
 file must be mode 0600.
 
-TLS and WebSocket transports, and the Core link for signing keys and
-revocations, are being added (see the protocol roadmap).
+TLS is not part of MTRP's trust model: clients authenticate the relay with
+the Noise handshake. A publicly trusted certificate still matters, because
+middleboxes and proxies pass it. The Core link for signing keys and
+revocations is being added (see the protocol roadmap).

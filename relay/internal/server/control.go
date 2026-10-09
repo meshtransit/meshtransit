@@ -96,7 +96,9 @@ func (s *Server) updateBinding(sess *session, from binding, msg mtrp.ControlMess
 	if !current.matches(from) {
 		moved := from
 		moved.verified = from.stream != nil
-		sess.binding.Store(&moved)
+		if !s.moveBinding(sess, current, &moved) {
+			return
+		}
 		s.cfg.Metrics.Control("roamed")
 		if !moved.verified {
 			s.challenge(sess, &moved)

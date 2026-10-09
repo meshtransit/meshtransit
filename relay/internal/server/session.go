@@ -18,6 +18,18 @@ type StreamConn interface {
 	Close() error
 }
 
+// streamPeer is implemented by stream connections that know their remote
+// address, so stream handshakes share the per-source limit with UDP.
+type streamPeer interface {
+	RemoteAddr() netip.Addr
+}
+
+// streamBinder is implemented by stream connections that want to know when a
+// session binds to them (they close connections that never get one).
+type streamBinder interface {
+	SessionBound()
+}
+
 // binding is where a session's client is reachable. It is immutable; roaming
 // and verification replace it atomically.
 //

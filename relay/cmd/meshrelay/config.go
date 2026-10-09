@@ -27,6 +27,16 @@ type serveConfig struct {
 	adminAddr    string
 	drainTimeout time.Duration
 	logLevel     string
+
+	tlsAddr       string
+	tlsCert       string
+	tlsKey        string
+	tlsSelfSigned bool
+	acmeHost      string
+	acmeCache     string
+	acmeEmail     string
+	tlsMaxConns   int
+	tlsMaxPerIP   int
 }
 
 func parseServeConfig(args []string, env func(string) (string, bool), stderr io.Writer) (serveConfig, error) {
@@ -44,6 +54,15 @@ func parseServeConfig(args []string, env func(string) (string, bool), stderr io.
 	fs.StringVar(&cfg.adminAddr, "admin", "127.0.0.1:9479", "metrics and health listen address")
 	fs.DurationVar(&cfg.drainTimeout, "drain-timeout", 5*time.Second, "time clients get to move away on shutdown")
 	fs.StringVar(&cfg.logLevel, "log-level", "info", "log level: debug, info, warn, error")
+	fs.StringVar(&cfg.tlsAddr, "tls", "", "TLS/WebSocket listen address, for example 0.0.0.0:443 (empty disables)")
+	fs.StringVar(&cfg.tlsCert, "tls-cert", "", "TLS certificate chain file (PEM)")
+	fs.StringVar(&cfg.tlsKey, "tls-key", "", "TLS private key file (PEM)")
+	fs.BoolVar(&cfg.tlsSelfSigned, "tls-self-signed", false, "use an ephemeral self-signed certificate (labs only)")
+	fs.StringVar(&cfg.acmeHost, "acme-host", "", "obtain a certificate for this host name from Let's Encrypt (TLS-ALPN-01 on the TLS port)")
+	fs.StringVar(&cfg.acmeCache, "acme-cache", "", "directory where ACME certificates are kept")
+	fs.StringVar(&cfg.acmeEmail, "acme-email", "", "contact address for the ACME account (optional)")
+	fs.IntVar(&cfg.tlsMaxConns, "tls-max-conns", 10_000, "maximum TLS/WebSocket connections")
+	fs.IntVar(&cfg.tlsMaxPerIP, "tls-max-conns-per-ip", 64, "maximum TLS/WebSocket connections per source address (IPv6: per /64)")
 	if err := applyEnv(fs, env); err != nil {
 		return serveConfig{}, err
 	}
@@ -75,6 +94,9 @@ func parseServeConfig(args []string, env func(string) (string, bool), stderr io.
 			return serveConfig{}, fmt.Errorf("--public-ip %q is not an IPv4 address", publicIP)
 		}
 		cfg.publicIP = ip
+	}
+	if cfg.tlsMaxConns < 1 || cfg.tlsMaxPerIP < 1 {
+		return serveConfig{}, errors.New("--tls-max-conns and --tls-max-conns-per-ip must be positive")
 	}
 	if cfg.udpReaders < 1 || cfg.udpReaders > 64 {
 		return serveConfig{}, errors.New("--udp-readers must be between 1 and 64")

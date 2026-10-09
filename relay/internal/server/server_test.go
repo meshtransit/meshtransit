@@ -438,3 +438,30 @@ func TestRelayDataPathDoesNotAllocate(t *testing.T) {
 		t.Fatalf("DATA forwarding allocates %.1f times per frame", n)
 	}
 }
+
+// fakeStream is a stream connection with a known remote address.
+type fakeStream struct{ remote netip.Addr }
+
+func (f *fakeStream) Send([]byte) error      { return nil }
+func (f *fakeStream) Close() error           { return nil }
+func (f *fakeStream) RemoteAddr() netip.Addr { return f.remote }
+
+func TestRelayStreamHandshakesShareSourceLimit(t *testing.T) {
+	t.Parallel()
+	h := newRelay(t, func(c *Config) { c.SourceHandshakeRate = 1 })
+	conn := &fakeStream{remote: netip.MustParseAddr("192.0.2.200")}
+	a := h.newClient(zoneA)
+	for i := range 5 {
+		_, init, err := mtrp.StartClientHandshake(mtrp.ClientConfig{
+			Disco: a.disco, Relay: h.srv.PublicKey(), Index: uint32(100 + i),
+			Hello: mtrp.ClientHello{TimestampMS: a.ts + int64(10+i), Ticket: a.ticket(zoneA)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.srv.HandleStream(init, conn)
+	}
+	if h.metrics.get("handshake:source_limited") != 3 {
+		t.Fatalf("source_limited = %d, want 3 (burst 2)", h.metrics.get("handshake:source_limited"))
+	}
+}

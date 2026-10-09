@@ -13,6 +13,7 @@ import (
 
 	"meshtransit.net/relay/internal/metrics"
 	"meshtransit.net/relay/internal/server"
+	"meshtransit.net/relay/internal/stream"
 	"meshtransit.net/relay/internal/stunserver"
 	"meshtransit.net/relay/internal/udp"
 	"meshtransit.net/shared/mtrp"
@@ -61,6 +62,22 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 		defer stun.Close()
 	}
 
+	var streams *stream.Listener
+	if cfg.tlsAddr != "" {
+		tlsConf, err := tlsConfig(cfg)
+		if err != nil {
+			return err
+		}
+		streams, err = stream.Listen(ctx, stream.Config{
+			Addr: cfg.tlsAddr, TLS: tlsConf, Handler: relay, Logger: logger, Metrics: m.Stream,
+			MaxConns: cfg.tlsMaxConns, MaxConnsPerIP: cfg.tlsMaxPerIP,
+		})
+		if err != nil {
+			return err
+		}
+		defer func() { _ = streams.Close() }()
+	}
+
 	admin, err := listenAdmin(ctx, cfg.adminAddr, m.Handler(), relay)
 	if err != nil {
 		return err
@@ -68,17 +85,20 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 
 	logger.Info("relay started",
 		"version", version, "public_key", relay.PublicKey().String(),
-		"udp", udpListener.LocalAddr().String(), "stun", cfg.stunAddr, "stun_alt", cfg.stunAltPort,
+		"udp", udpListener.LocalAddr().String(), "stun", cfg.stunAddr, "stun_alt", cfg.stunAltPort, "tls", cfg.tlsAddr,
 		"trusted_signing_keys", len(cfg.signingKeys))
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var wg sync.WaitGroup
-	errs := make(chan error, 4)
+	errs := make(chan error, 5)
 	wg.Go(func() { errs <- udpListener.Serve(runCtx, cfg.udpReaders, relay.HandleUDP) })
 	wg.Go(func() { errs <- ignoreCanceled(relay.Run(runCtx)) })
 	if stun != nil {
 		wg.Go(func() { errs <- stun.Serve(runCtx) })
+	}
+	if streams != nil {
+		wg.Go(func() { errs <- streams.Serve(runCtx) })
 	}
 	wg.Go(func() { errs <- ignoreServerClosed(admin.server.Serve(admin.listener)) })
 
