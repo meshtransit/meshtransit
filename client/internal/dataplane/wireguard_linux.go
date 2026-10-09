@@ -15,6 +15,7 @@ import (
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 	relaywire "meshtransit.net/client/internal/compat/derp"
+	compatstun "meshtransit.net/client/internal/compat/stun"
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/client/internal/relay"
 	"meshtransit.net/shared/netcheck"
@@ -93,7 +94,10 @@ func (f *officialWireGuardFactory) New(
 
 		return nil, err
 	}
-	natClassifier, err := pathdiscovery.NewNATClassifier(bind, netcheck.Config{})
+	natClassifier, err := pathdiscovery.NewNATClassifier(
+		bind,
+		netcheck.Config{Software: compatstun.RequestSoftware},
+	)
 	if err != nil {
 		_ = tunDevice.Close()
 		_ = relayPool.Close()

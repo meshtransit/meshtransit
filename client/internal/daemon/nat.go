@@ -354,11 +354,13 @@ func (s *Service) classifyNATOnce(
 }
 
 func natErrorCode(err error) string {
+	// netcheck joins ErrNoResponse with the deadline that ended the wait, so
+	// it is checked before context errors.
 	switch {
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return "cancelled"
 	case errors.Is(err, netcheck.ErrNoResponse):
 		return "no_response"
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return "cancelled"
 	case errors.Is(err, pathdiscovery.ErrNoSTUNServers):
 		return "no_stun_servers"
 	case errors.Is(err, pathdiscovery.ErrSocketChanged):

@@ -26,6 +26,8 @@ const (
 
 	// MaxMessageSize bounds a message we accept or produce.
 	MaxMessageSize = 576
+	// MaxSoftwareSize bounds the SOFTWARE attribute we send or keep.
+	MaxSoftwareSize = 128
 )
 
 // Attribute types.
@@ -57,6 +59,14 @@ var (
 // TxID is a STUN transaction ID.
 type TxID [12]byte
 
+// Request describes a Binding request.
+type Request struct {
+	Change ChangeRequest
+	// Software is an optional SOFTWARE attribute (RFC 8489 §14.14). Some
+	// deployed servers answer only requests that carry a value they expect.
+	Software string
+}
+
 // ChangeRequest asks an RFC 5780 server to answer from another address/port.
 type ChangeRequest struct {
 	IP, Port bool
@@ -71,6 +81,7 @@ type Message struct {
 	ResponseOrigin netip.AddrPort // response: address the response was sent from
 	OtherAddress   netip.AddrPort // response: the server's alternate address
 	ErrorCode      int            // error response: class*100 + number
+	Software       string         // SOFTWARE attribute, if present and ≤ MaxSoftwareSize
 }
 
 // Is reports whether b looks like a STUN message (RFC 8489 §6 demultiplexing).
@@ -78,10 +89,25 @@ func Is(b []byte) bool {
 	return len(b) >= headerSize && b[0]&0xC0 == 0 && binary.BigEndian.Uint32(b[4:8]) == magicCookie
 }
 
-// AppendBindingRequest encodes a Binding request.
+// AppendBindingRequest encodes a Binding request without SOFTWARE.
 func AppendBindingRequest(dst []byte, id TxID, change ChangeRequest) []byte {
+	out, _ := AppendRequest(dst, id, Request{Change: change}) // cannot fail without SOFTWARE
+
+	return out
+}
+
+// AppendRequest encodes a Binding request. It fails only when Software is
+// longer than MaxSoftwareSize.
+func AppendRequest(dst []byte, id TxID, req Request) ([]byte, error) {
+	if len(req.Software) > MaxSoftwareSize {
+		return nil, ErrMalformed
+	}
+	change := req.Change
 	start := len(dst)
 	dst = appendHeader(dst, TypeBindingRequest, id)
+	if req.Software != "" {
+		dst = appendAttr(dst, attrSoftware, []byte(req.Software))
+	}
 	if change.IP || change.Port {
 		var flags uint32
 		if change.IP {
@@ -92,7 +118,7 @@ func AppendBindingRequest(dst []byte, id TxID, change ChangeRequest) []byte {
 		}
 		dst = appendAttr(dst, attrChangeRequest, binary.BigEndian.AppendUint32(nil, flags))
 	}
-	return finish(dst, start)
+	return finish(dst, start), nil
 }
 
 // AppendBindingSuccess encodes a Binding success response. origin and other
@@ -248,7 +274,11 @@ func (m *Message) parseAttr(typ uint16, value, msg []byte, offset int) error {
 		if crc32.ChecksumIEEE(msg[:offset])^fingerprintXOR != binary.BigEndian.Uint32(value) {
 			return ErrMalformed
 		}
-	case attrSoftware, attrMessageIntegrity, attrMessageIntegritySHA256:
+	case attrSoftware:
+		if len(value) <= MaxSoftwareSize {
+			m.Software = string(value)
+		}
+	case attrMessageIntegrity, attrMessageIntegritySHA256:
 		// Recognised but unused: MeshTransit's STUN is unauthenticated binding.
 	default:
 		if typ < 0x8000 {

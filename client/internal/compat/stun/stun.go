@@ -32,6 +32,11 @@ const (
 	bindingRequestAttributesLength = 4 + ((compatibilitySoftwareLength + 3) &^ 3) + 8
 )
 
+// RequestSoftware is the SOFTWARE value the current compatibility relays
+// require on Binding requests. Product STUN clients pass it while the relay
+// map still points at those relays; MeshTransit relays do not need it.
+const RequestSoftware = compatibilitySoftware
+
 var (
 	// ErrNotMessage means the packet does not have an RFC 5389 header.
 	ErrNotMessage = errors.New("stun: packet is not a message")

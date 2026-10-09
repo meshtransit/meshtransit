@@ -45,6 +45,7 @@ type Config struct {
 	Retransmit   time.Duration // delay before the single retransmission
 	Budget       time.Duration // bound on a whole Run
 	Random       io.Reader     // transaction IDs; crypto/rand when nil; read under a lock
+	Software     string        // optional STUN SOFTWARE attribute for servers that require one
 	Now          func() time.Time
 }
 
@@ -308,7 +309,10 @@ func (p *Prober) transact(ctx context.Context, dst, expect netip.AddrPort, chang
 	}
 	defer p.unregister(id)
 
-	req := stun.AppendBindingRequest(make([]byte, 0, 64), id, change)
+	req, err := stun.AppendRequest(make([]byte, 0, 64+len(p.cfg.Software)), id, stun.Request{Change: change, Software: p.cfg.Software})
+	if err != nil {
+		return stun.Message{}, false, fmt.Errorf("netcheck: encode probe: %w", err)
+	}
 	if _, err := p.conn.WriteToUDPAddrPort(req, dst); err != nil {
 		return stun.Message{}, false, fmt.Errorf("netcheck: send probe: %w", err)
 	}

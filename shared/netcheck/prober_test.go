@@ -192,3 +192,23 @@ func TestRunCancelled(t *testing.T) {
 		t.Fatalf("Run error = %v, want context.Canceled", err)
 	}
 }
+
+func TestProberSendsSoftware(t *testing.T) {
+	t.Parallel()
+	w := recordingWriter{sent: make(chan []byte, 16)}
+	cfg := fast
+	cfg.Software = "compat-value"
+	p := netcheck.NewProber(w, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = p.Run(ctx, []netip.AddrPort{netip.MustParseAddrPort("203.0.113.1:3478")}, nil)
+	}()
+	req, err := stun.Parse(<-w.sent)
+	cancel()
+	<-done
+	if err != nil || req.Software != "compat-value" {
+		t.Fatalf("request = %+v, %v", req, err)
+	}
+}

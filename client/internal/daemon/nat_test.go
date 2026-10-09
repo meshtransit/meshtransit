@@ -256,6 +256,7 @@ func TestNATStatusAndHelpers(t *testing.T) {
 		pathdiscovery.ErrSocketChanged:   "socket_changed",
 		pathdiscovery.ErrTransportClosed: "socket_closed",
 		errors.New("other"):              "error",
+		errors.Join(netcheck.ErrNoResponse, context.DeadlineExceeded): "no_response",
 	} {
 		if got := natErrorCode(err); got != want {
 			t.Errorf("natErrorCode(%v) = %q, want %q", err, got, want)

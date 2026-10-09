@@ -44,6 +44,16 @@ func TestBindingRoundTrip(t *testing.T) {
 	if err != nil || m.Type != TypeBindingRequest || m.TxID != id || !m.Change.IP || !m.Change.Port {
 		t.Fatalf("request = %+v, %v", m, err)
 	}
+	withSoftware, err := AppendRequest(nil, id, Request{Change: ChangeRequest{Port: true}, Software: "meshtransit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, err := Parse(withSoftware); err != nil || m.Software != "meshtransit" || !m.Change.Port {
+		t.Fatalf("request with software = %+v, %v", m, err)
+	}
+	if _, err := AppendRequest(nil, id, Request{Software: strings.Repeat("x", MaxSoftwareSize+1)}); err == nil {
+		t.Fatal("oversized SOFTWARE encoded")
+	}
 	plain := AppendBindingRequest(nil, id, ChangeRequest{})
 	if m, err := Parse(plain); err != nil || m.Change.IP || m.Change.Port {
 		t.Fatalf("plain request = %+v, %v", m, err)
