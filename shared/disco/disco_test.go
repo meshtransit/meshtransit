@@ -8,7 +8,6 @@ import (
 	"flag"
 	"net/netip"
 	"os"
-	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
@@ -18,6 +17,9 @@ import (
 )
 
 var update = flag.Bool("update", false, "rewrite testdata/vectors.json")
+
+// vectorsPath is the committed test vector file this package must reproduce.
+const vectorsPath = "testdata/vectors.json"
 
 // fixedReader returns the same byte forever; it makes nonces reproducible.
 type fixedReader byte
@@ -368,7 +370,6 @@ func buildVectors(t *testing.T) vectorFile {
 
 func TestVectors(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join("testdata", "vectors.json")
 	got := buildVectors(t)
 	encoded, err := json.MarshalIndent(got, "", "  ")
 	if err != nil {
@@ -376,11 +377,11 @@ func TestVectors(t *testing.T) {
 	}
 	encoded = append(encoded, '\n')
 	if *update {
-		if err := os.WriteFile(path, encoded, 0o644); err != nil {
+		if err := os.WriteFile(vectorsPath, encoded, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	want, err := os.ReadFile(path)
+	want, err := os.ReadFile(vectorsPath)
 	if err != nil {
 		t.Fatalf("read vectors (run with -update to create): %v", err)
 	}

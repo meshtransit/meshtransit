@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/netip"
 
+	"meshtransit.net/shared/internal/wire"
 	"meshtransit.net/shared/key"
 )
 
@@ -158,7 +159,10 @@ func (p Ping) appendBody(dst []byte) ([]byte, error) {
 	}
 	dst = append(dst, p.TxID[:]...)
 	dst = append(dst, p.Node[:]...)
-	dst = binary.BigEndian.AppendUint64(dst, uint64(p.SentAt))
+	dst, ok := wire.AppendMillis(dst, p.SentAt)
+	if !ok {
+		return nil, ErrMalformed
+	}
 	return append(dst, make([]byte, p.Padding)...), nil
 }
 
@@ -171,17 +175,26 @@ func (p Pong) appendBody(dst []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return binary.BigEndian.AppendUint64(dst, uint64(p.Echo)), nil
+	dst, ok := wire.AppendMillis(dst, p.Echo)
+	if !ok {
+		return nil, ErrMalformed
+	}
+	return dst, nil
 }
 
 func (c CallMeMaybe) appendBody(dst []byte) ([]byte, error) {
 	if len(c.Endpoints) > MaxEndpoints || c.Flags&^flagsDefined != 0 || !c.NAT.valid() {
 		return nil, ErrMalformed
 	}
+	count, ok := wire.Len8(len(c.Endpoints))
+	if !ok {
+		return nil, ErrMalformed
+	}
 	dst = binary.BigEndian.AppendUint64(dst, c.Seq)
-	dst = binary.BigEndian.AppendUint64(dst, uint64(c.SentAt))
-	dst = append(dst, byte(c.NAT.Mapping), byte(c.NAT.Filtering), byte(c.NAT.Allocation), byte(c.Flags),
-		byte(len(c.Endpoints)))
+	if dst, ok = wire.AppendMillis(dst, c.SentAt); !ok {
+		return nil, ErrMalformed
+	}
+	dst = append(dst, byte(c.NAT.Mapping), byte(c.NAT.Filtering), byte(c.NAT.Allocation), byte(c.Flags), count)
 	for _, e := range c.Endpoints {
 		if e.Kind < EndpointHost || e.Kind > endpointKindLastDefined {
 			return nil, ErrMalformed
@@ -224,7 +237,11 @@ func parsePing(b []byte) (Message, error) {
 	var p Ping
 	copy(p.TxID[:], b[:TxIDSize])
 	copy(p.Node[:], b[TxIDSize:TxIDSize+key.Size])
-	p.SentAt = int64(binary.BigEndian.Uint64(b[TxIDSize+key.Size:]))
+	sentAt, ok := wire.Millis(b[TxIDSize+key.Size:])
+	if !ok {
+		return nil, ErrMalformed
+	}
+	p.SentAt = sentAt
 	padding := b[pingBodySize:]
 	for _, v := range padding {
 		if v != 0 {
@@ -249,7 +266,11 @@ func parsePong(b []byte) (Message, error) {
 		return nil, ErrMalformed
 	}
 	p.Observed = observed
-	p.Echo = int64(binary.BigEndian.Uint64(b[TxIDSize+endpointSize:]))
+	echo, ok := wire.Millis(b[TxIDSize+endpointSize:])
+	if !ok {
+		return nil, ErrMalformed
+	}
+	p.Echo = echo
 	return p, nil
 }
 
@@ -257,9 +278,13 @@ func parseCallMeMaybe(b []byte) (Message, error) {
 	if len(b) < cmmFixedSize {
 		return nil, ErrMalformed
 	}
+	sentAt, ok := wire.Millis(b[8:16])
+	if !ok {
+		return nil, ErrMalformed
+	}
 	c := CallMeMaybe{
 		Seq:    binary.BigEndian.Uint64(b[0:8]),
-		SentAt: int64(binary.BigEndian.Uint64(b[8:16])),
+		SentAt: sentAt,
 		NAT:    NATInfo{Mapping: Mapping(b[16]), Filtering: Filtering(b[17]), Allocation: Allocation(b[18])},
 		Flags:  Flags(b[19]),
 	}

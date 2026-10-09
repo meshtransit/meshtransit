@@ -90,8 +90,11 @@ func (k SigningPrivate) IsZero() bool { return k.private == nil }
 // Public returns the matching public key.
 func (k SigningPrivate) Public() SigningPublic {
 	var p SigningPublic
-	if k.private != nil {
-		copy(p[:], k.private.Public().(ed25519.PublicKey))
+	if k.private == nil {
+		return p
+	}
+	if public, ok := k.private.Public().(ed25519.PublicKey); ok {
+		copy(p[:], public)
 	}
 	return p
 }
