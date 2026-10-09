@@ -139,8 +139,8 @@ func (l *Link) Run(ctx context.Context) error {
 			}
 		}
 		err := l.Poll(ctx)
-		if ctx.Err() != nil {
-			return nil // shutting down; a cancelled poll is not a failure
+		if stopping(ctx) {
+			return nil // a poll cut short by shutdown is not a failure
 		}
 		l.refreshKeys() // keys can expire while Core is unreachable
 		switch {
@@ -245,3 +245,5 @@ func (l *Link) refreshKeys() {
 		l.keys.Store(&empty) // every key expired: fail closed
 	}
 }
+
+func stopping(ctx context.Context) bool { return ctx.Err() != nil }
