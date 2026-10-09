@@ -14,6 +14,7 @@ resolved by `go.mod` and `go.sum`.
 | `tailscale.com` | `v1.102.3` | BSD-3-Clause |
 | `github.com/beorn7/perks` | `v1.0.1` | MIT |
 | `github.com/cespare/xxhash/v2` | `v2.3.0` | MIT |
+| `github.com/flynn/noise` | `v1.1.0` | BSD-3-Clause |
 | `github.com/go-json-experiment/json` | `v0.0.0-20260214004413-d219187c3433` | BSD-3-Clause |
 | `github.com/jackc/pgpassfile` | `v1.0.0` | MIT |
 | `github.com/jackc/pgservicefile` | `v0.0.0-20240606120523-5a60cdf6a761` | MIT |
