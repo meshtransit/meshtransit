@@ -123,13 +123,13 @@ func (s *Server) handleInit(frame []byte, from binding, stream bool) {
 	// Answer first: the client completes its new session before it hears
 	// that the old one (already unreachable through the maps) is closed.
 	if err := s.sendTo(&bound, resp); err != nil {
-		s.closeSession(sess, mtrp.SessionClosePolicy, 0)
+		s.closeSession(sess, mtrp.SessionClosePolicy, 0, "send_failed")
 		s.cfg.Metrics.Handshake("send_failed")
 	} else {
 		s.cfg.Metrics.Handshake("ok")
 	}
 	for _, old := range replaced {
-		s.closeSession(old, mtrp.SessionClosePolicy, 0)
+		s.closeSession(old, mtrp.SessionClosePolicy, 0, "replaced")
 	}
 }
 

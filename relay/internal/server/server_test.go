@@ -54,7 +54,7 @@ func TestRelayRefusesRoutes(t *testing.T) {
 	a, b := h.newClient(zoneA), h.newClient(zoneB)
 	ghost := h.newClient(zoneA)
 	ghostNode := ghost.node
-	h.srv.closeSession(h.srv.lookup(ghost.session.RemoteIndex()), mtrp.SessionClosePolicy, 0)
+	h.srv.closeSession(h.srv.lookup(ghost.session.RemoteIndex()), mtrp.SessionClosePolicy, 0, "replaced")
 
 	for _, peer := range [][32]byte{b.node, ghostNode} {
 		a.sendControl(mtrp.ControlMessage{Type: mtrp.ControlRouteOpen, Request: 3, Peer: peer})
@@ -308,6 +308,9 @@ func TestRelayDrainAndRevocation(t *testing.T) {
 	h.srv.sweep()
 	if m := b.expectControl(mtrp.ControlSessionClose); m.SessionClose != mtrp.SessionCloseRevoked {
 		t.Fatalf("revoked: %+v", m)
+	}
+	if h.metrics.get("closed:revoked") != 1 {
+		t.Fatalf("closed:revoked = %d", h.metrics.get("closed:revoked"))
 	}
 
 	h.srv.Drain(30 * time.Second)

@@ -79,7 +79,8 @@ func (m *countingMetrics) Control(r string)   { m.add("control:" + r) }
 func (m *countingMetrics) Data(r string, _ int) {
 	m.add("data:" + r)
 }
-func (m *countingMetrics) Sessions(int) {}
+func (m *countingMetrics) Sessions(int)             {}
+func (m *countingMetrics) SessionClosed(why string) { m.add("closed:" + why) }
 func (m *countingMetrics) Routes(d int) {
 	m.mu.Lock()
 	m.routes += d

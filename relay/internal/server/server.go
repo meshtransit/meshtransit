@@ -358,11 +358,11 @@ func (s *Server) sweep() {
 		sess.mu.Unlock()
 		switch {
 		case checkRevocations && mtrp.IsRevoked(ticket, s.cfg.Revocations):
-			s.closeSession(sess, mtrp.SessionCloseRevoked, 0)
+			s.closeSession(sess, mtrp.SessionCloseRevoked, 0, "revoked")
 		case !now.Before(notAfter):
-			s.closeSession(sess, mtrp.SessionCloseExpired, 0)
+			s.closeSession(sess, mtrp.SessionCloseExpired, 0, "expired")
 		case sess.lastRecv.Load() < idleBefore:
-			s.closeSession(sess, mtrp.SessionCloseIdle, 0)
+			s.closeSession(sess, mtrp.SessionCloseIdle, 0, "idle")
 		case checkRevocations:
 			s.pruneRoutes(sess) // a withdrawn zone may end some of its routes
 		}
@@ -393,7 +393,7 @@ func (s *Server) pruneRoutes(sess *session) {
 
 // closeSession removes a session, tells its client and closes its routes.
 // No lock is held while sending.
-func (s *Server) closeSession(sess *session, reason mtrp.SessionCloseReason, retryAfter time.Duration) {
+func (s *Server) closeSession(sess *session, reason mtrp.SessionCloseReason, retryAfter time.Duration, why string) {
 	s.mu.Lock()
 	if s.byIndex[sess.index()] == sess {
 		delete(s.byIndex, sess.index())
@@ -424,6 +424,7 @@ func (s *Server) closeSession(sess *session, reason mtrp.SessionCloseReason, ret
 	if already {
 		return
 	}
+	s.cfg.Metrics.SessionClosed(why)
 	if len(routes) > 0 {
 		s.cfg.Metrics.Routes(-len(routes))
 	}
@@ -444,7 +445,7 @@ func (s *Server) StreamClosed(conn StreamConn) {
 	s.mu.Unlock()
 	for sess := range bound {
 		if b := sess.binding.Load(); b != nil && b.stream == conn {
-			s.closeSession(sess, mtrp.SessionClosePolicy, 0)
+			s.closeSession(sess, mtrp.SessionClosePolicy, 0, "stream_closed")
 		}
 	}
 }

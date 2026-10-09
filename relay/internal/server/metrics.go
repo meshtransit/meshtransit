@@ -9,12 +9,16 @@ type Metrics interface {
 	Data(result string, payloadBytes int)
 	Sessions(active int)
 	Routes(delta int)
+	// SessionClosed counts sessions the relay ended, by why: revoked,
+	// expired, idle, draining, replaced, stream_closed or send_failed.
+	SessionClosed(reason string)
 }
 
 type nopMetrics struct{}
 
-func (nopMetrics) Handshake(string) {}
-func (nopMetrics) Control(string)   {}
-func (nopMetrics) Data(string, int) {}
-func (nopMetrics) Sessions(int)     {}
-func (nopMetrics) Routes(int)       {}
+func (nopMetrics) Handshake(string)     {}
+func (nopMetrics) Control(string)       {}
+func (nopMetrics) Data(string, int)     {}
+func (nopMetrics) Sessions(int)         {}
+func (nopMetrics) Routes(int)           {}
+func (nopMetrics) SessionClosed(string) {}

@@ -44,6 +44,9 @@ type Config struct {
 	Now       func() time.Time
 	Logger    *slog.Logger
 	Metrics   func(result string)
+	// Revocations, when set, receives the number of revocation entries in
+	// force after each applied state.
+	Revocations func(n int)
 }
 
 // Link holds the latest verified relay state. Its read methods are safe for
@@ -84,6 +87,9 @@ func New(cfg Config) (*Link, error) {
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
+	}
+	if cfg.Revocations == nil {
+		cfg.Revocations = func(int) {}
 	}
 	if cfg.Metrics == nil {
 		cfg.Metrics = func(string) {}
@@ -228,7 +234,9 @@ func (l *Link) apply(doc []byte) error {
 		return fmt.Errorf("corelink: relay state lists no valid signing key: %w", err)
 	}
 	l.keys.Store(&keys)
-	l.revoked.Store(mtrp.NewRevocationSet(state))
+	revoked := mtrp.NewRevocationSet(state)
+	l.revoked.Store(revoked)
+	l.cfg.Revocations(revoked.Len())
 	l.generation.Add(1)
 	l.sequence, l.expiresAt, l.state = state.Sequence, state.ExpiresAt, state
 	if slices.Contains(state.Drain, l.cfg.Self) {

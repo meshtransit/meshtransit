@@ -25,6 +25,8 @@ type Relay struct {
 	streams    *prometheus.CounterVec
 	certExpiry prometheus.Gauge
 	coreLink   *prometheus.CounterVec
+	closed     *prometheus.CounterVec
+	revoked    prometheus.Gauge
 }
 
 // New registers the relay collectors and the Go runtime and process ones.
@@ -58,6 +60,12 @@ func New() *Relay {
 		coreLink: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "meshrelay_core_state_polls_total", Help: "Relay state polls of Core by outcome.",
 		}, []string{"result"}),
+		closed: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "meshrelay_sessions_closed_total", Help: "Sessions the relay ended, by reason.",
+		}, []string{"reason"}),
+		revoked: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "meshrelay_revocations", Help: "Revocation entries (tickets, nodes, disco keys, zones) in force from Core.",
+		}),
 		certExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "meshrelay_tls_certificate_expiry_timestamp_seconds",
 			Help: "Expiry of the TLS certificate last served (alert when it nears).",
@@ -65,6 +73,7 @@ func New() *Relay {
 	}
 	r.registry.MustRegister(
 		r.handshakes, r.control, r.data, r.dataBytes, r.sessions, r.routes, r.stun, r.streams, r.certExpiry, r.coreLink,
+		r.closed, r.revoked,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -103,6 +112,12 @@ func (r *Relay) Stream(result string) { r.streams.WithLabelValues(result).Inc() 
 func (r *Relay) CertificateServed(notAfter time.Time) {
 	r.certExpiry.Set(float64(notAfter.Unix()))
 }
+
+// SessionClosed counts a session the relay ended.
+func (r *Relay) SessionClosed(reason string) { r.closed.WithLabelValues(reason).Inc() }
+
+// Revocations records how many revocation entries are in force.
+func (r *Relay) Revocations(n int) { r.revoked.Set(float64(n)) }
 
 // CoreLink counts a relay state poll outcome.
 func (r *Relay) CoreLink(result string) { r.coreLink.WithLabelValues(result).Inc() }

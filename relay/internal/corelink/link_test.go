@@ -112,6 +112,13 @@ func TestLinkAppliesRotatesAndRevokes(t *testing.T) {
 	if !l.ZoneRevoked(contract) || l.ZoneRevoked(mtrp.Zone{Kind: mtrp.ZoneNetwork, ID: [16]byte{1}}) {
 		t.Fatal("zone withdrawal not applied")
 	}
+	var inForce atomic.Int64
+	l.cfg.Revocations = func(n int) { inForce.Store(int64(n)) }
+	core.set(t, s1, a, `"1b"`) // same sequence: not applied, count untouched
+	_ = l.Poll(t.Context())
+	if inForce.Load() != 0 {
+		t.Fatal("revocation count reported for a state that was not applied")
+	}
 	if _, ok := l.SigningKey(b.Public().ID()); !ok {
 		t.Fatal("rotated-in key not trusted")
 	}
