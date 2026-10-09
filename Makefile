@@ -6,6 +6,7 @@ GO_FILES := $(shell find core client api shared relay test -type f -name '*.go' 
 VERSION ?= 0.1.0~dev
 ARCH ?= amd64
 CONTAINER_IMAGE ?= meshtransit/mesh-core
+RELAY_IMAGE ?= meshtransit/mesh-relay
 CONTAINER_TAG ?= dev
 CONTAINER_PLATFORM ?= linux/$(shell $(GO) env GOARCH)
 CONTAINER_REVISION ?= unknown
@@ -23,7 +24,7 @@ DEX_CURRENT_BINARY ?=
 DEX_CURRENT_BINARY_SHA256 ?=
 
 .PHONY: help build build-core build-client package-deb package-deb-meshd package-deb-meshctl lint-client lint-relay build-relay natlab-matrix check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
-	container-build container-build-multiarch container-push-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
+	container-build container-build-multiarch container-push-multiarch container-push-relay-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
 
 help:
 	@echo "Targets: build build-core build-client test test-race lint lint-client quality"
@@ -216,6 +217,18 @@ container-push-multiarch:
 		--push \
 		--file core/Dockerfile \
 		--tag $(CONTAINER_IMAGE):$(CONTAINER_TAG) \
+		.
+
+container-push-relay-multiarch:
+	docker buildx build \
+		--build-arg REVISION=$(CONTAINER_REVISION) \
+		--build-arg VERSION=$(CONTAINER_TAG) \
+		--platform linux/amd64,linux/arm64 \
+		--provenance=mode=max \
+		--sbom=true \
+		--push \
+		--file relay/Dockerfile \
+		--tag $(RELAY_IMAGE):$(CONTAINER_TAG) \
 		.
 
 container-push-dexbroker-multiarch:
