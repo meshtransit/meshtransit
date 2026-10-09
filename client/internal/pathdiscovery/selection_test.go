@@ -413,7 +413,9 @@ func TestPathSelectorRejectsUnauthorizedAndRegressingObservations(t *testing.T) 
 		{name: "generation", mutate: func(value *PathObservation) { value.Generation.MapRevision++ }},
 		{name: "peer", mutate: func(value *PathObservation) { value.PeerID++ }},
 		{name: "remote", mutate: func(value *PathObservation) {
-			value.RemoteEndpoint = netip.MustParseAddrPort("203.0.113.61:41641")
+			// Unlisted public endpoints are admitted by an authenticated
+			// reply; a non-routable one never is.
+			value.RemoteEndpoint = netip.MustParseAddrPort("127.0.0.1:41641")
 		}},
 		{name: "observed local", mutate: func(value *PathObservation) {
 			value.ObservedLocalEndpoint = netip.MustParseAddrPort("127.0.0.1:41641")
@@ -665,4 +667,25 @@ func cloneSelectionSnapshot(snapshot networkmap.Snapshot) networkmap.Snapshot {
 	}
 
 	return clone
+}
+
+func TestPathSelectorAdmitsAuthenticatedUnlistedEndpoint(t *testing.T) {
+	t.Parallel()
+
+	listed := netip.MustParseAddrPort("203.0.113.60:41641")
+	learned := netip.MustParseAddrPort("198.51.100.61:50000")
+	now := time.Unix(10_000, 0)
+	selector, _, generation := activePathSelector(t, listed)
+	result, err := selector.Observe(pathObservation(generation, learned, time.Millisecond, now))
+	if err != nil || len(result.Changes) != 1 || result.Changes[0].Current.RemoteEndpoint != learned {
+		t.Fatalf("Observe(learned) = %+v, %v", result, err)
+	}
+	// The learned candidate is evidence, not authority: re-activating the
+	// same map keeps the selection.
+	next := generation
+	next.MapRevision++
+	result, err = selector.Activate(selectionSnapshot(next.MapRevision, listed), next)
+	if err != nil || result.Activation.SelectionsPreserved != 1 {
+		t.Fatalf("re-activation = %+v, %v", result.Activation, err)
+	}
 }

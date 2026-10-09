@@ -128,6 +128,10 @@ type peerProbingDevice interface {
 	SetPeerProbeHandler(pathdiscovery.DatagramHandler)
 }
 
+type relayProbingDevice interface {
+	pathdiscovery.RelayDatagramTransport
+}
+
 type relayManagingDevice interface {
 	RelayHealth() relay.HealthSnapshot
 	PrepareRelayRegion(int) error
@@ -672,6 +676,20 @@ func (e *WireGuardEngine) SendDatagram(
 	return device.SendDatagram(packet, destination)
 }
 
+// SendRelayDatagram sends one bounded peer-probe packet to a peer through its
+// relay.
+func (e *WireGuardEngine) SendRelayDatagram(packet []byte, peerNode [32]byte) error {
+	if e == nil || e.device == nil {
+		return pathdiscovery.ErrTransportClosed
+	}
+	device, supported := e.device.(relayProbingDevice)
+	if !supported {
+		return errors.New("dataplane: relay probe transport is unavailable")
+	}
+
+	return device.SendRelayDatagram(packet, peerNode)
+}
+
 // SetPeerProbeHandler atomically attaches or detaches the active session from
 // shared-socket demultiplexing. A nil handler detaches.
 func (e *WireGuardEngine) SetPeerProbeHandler(
@@ -767,7 +785,10 @@ func (e *WireGuardEngine) SetPreferredEndpoint(
 	if !exists {
 		return ErrPeerEndpointUnavailable
 	}
-	if !slices.Contains(peer.authorizedEndpoints, endpoint) {
+	// Map endpoints are authorized outright; others (CALL_ME_MAYBE,
+	// peer-reflexive) reach here only after the peer answered an
+	// authenticated probe from exactly that public endpoint.
+	if !slices.Contains(peer.authorizedEndpoints, endpoint) && !validDatagramEndpoint(endpoint) {
 		return ErrPeerEndpointUnauthorized
 	}
 	if peer.sessionResetPending {

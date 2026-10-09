@@ -387,7 +387,7 @@ func TestWireGuardEngineRejectsUnauthorizedOrStalePeerEndpoint(t *testing.T) {
 	if err := engine.SetPreferredEndpoint(
 		snapshot.Revision,
 		snapshot.Peers[0].ID,
-		netip.MustParseAddrPort("203.0.113.99:41641"),
+		netip.MustParseAddrPort("127.0.0.1:41641"),
 	); !errors.Is(err, ErrPeerEndpointUnauthorized) {
 		t.Fatalf("unauthorized SetPreferredEndpoint() error = %v", err)
 	}
@@ -604,7 +604,9 @@ func TestWireGuardEngineEndpointAuthorityChangePreservesPeerSession(t *testing.T
 		snapshot.Revision,
 		snapshot.Peers[0].ID,
 		oldEndpoint,
-	); !errors.Is(err, ErrPeerEndpointUnauthorized) {
+	); err != nil {
+		// A public endpoint the map no longer lists stays usable once the
+		// path controller has authenticated proof for it (disco-v2 §4.1).
 		t.Fatalf("removed endpoint SetPreferredEndpoint() error = %v", err)
 	}
 	if err := engine.SetPreferredEndpoint(

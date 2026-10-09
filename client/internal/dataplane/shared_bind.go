@@ -260,6 +260,23 @@ func (b *sharedBind) SendDatagram(
 	return socket, nil
 }
 
+// SendRelayDatagram sends one control datagram to a peer through its home
+// relay region.
+func (b *sharedBind) SendRelayDatagram(packet []byte, peerNode [32]byte) error {
+	if len(packet) == 0 || len(packet) > maxControlDatagramSize {
+		return errors.New("dataplane: control datagram size is invalid")
+	}
+	if b == nil || b.relay == nil {
+		return pathdiscovery.ErrTransportClosed
+	}
+	peer, ok := b.relay.Peer(relay.Key(peerNode))
+	if !ok {
+		return errors.New("dataplane: relay peer is not authorized")
+	}
+
+	return b.relay.Send(peer.HomeRegion, peer.Key, [][]byte{packet})
+}
+
 func (b *sharedBind) wrapReceiver(
 	receive conn.ReceiveFunc,
 	handler pathdiscovery.DatagramHandler,
@@ -281,6 +298,14 @@ func (b *sharedBind) wrapReceiver(
 			}
 			packet := packets[index][:sizes[index]]
 			if !handler.MatchesDatagram(packet) {
+				continue
+			}
+			if through, viaRelay := endpoints[index].(*relayEndpoint); viaRelay {
+				if relayed, ok := handler.(pathdiscovery.RelayDatagramHandler); ok {
+					relayed.HandleRelayDatagram(packet, through.peerKey)
+				}
+				sizes[index] = 0
+				endpoints[index] = nil
 				continue
 			}
 			source, valid := datagramSource(endpoints[index])

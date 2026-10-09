@@ -89,6 +89,9 @@ type pathCandidateState struct {
 	roundTrip     time.Duration
 	confirmedAt   time.Time
 	expiresAt     time.Time
+	// learned marks a candidate outside the map (CALL_ME_MAYBE or
+	// peer-reflexive), admitted by its first authenticated reply.
+	learned bool
 }
 
 type peerPathState struct {
@@ -250,8 +253,16 @@ func (s *PathSelector) Observe(
 		return PathSelectionResult{}, ErrInvalidPathObservation
 	}
 	state, authorized := peer.candidates[observation.RemoteEndpoint]
-	if !authorized || (!state.confirmedAt.IsZero() &&
-		observation.ObservedAt.Before(state.confirmedAt)) {
+	if !authorized {
+		// The peer answered an authenticated probe from this endpoint, so it
+		// is a candidate even though the map does not list it (disco-v2 §4.1).
+		if len(peer.candidates) >= maxPathCandidatesPerPeer {
+			return PathSelectionResult{}, ErrInvalidPathObservation
+		}
+		state = pathCandidateState{learned: true}
+		peer.candidates[observation.RemoteEndpoint] = state
+	}
+	if !state.confirmedAt.IsZero() && observation.ObservedAt.Before(state.confirmedAt) {
 		return PathSelectionResult{}, ErrInvalidPathObservation
 	}
 
@@ -571,15 +582,29 @@ func comparePeerPathAuthority(
 	return summary
 }
 
+// equalPathCandidates compares the map-authorized candidates; learned ones
+// are evidence, not authority, and carry over while the authority holds.
 func equalPathCandidates(
 	left map[netip.AddrPort]pathCandidateState,
 	right map[netip.AddrPort]pathCandidateState,
 ) bool {
-	if len(left) != len(right) {
+	count := func(candidates map[netip.AddrPort]pathCandidateState) int {
+		n := 0
+		for _, state := range candidates {
+			if !state.learned {
+				n++
+			}
+		}
+		return n
+	}
+	if count(left) != count(right) {
 		return false
 	}
-	for endpoint := range left {
-		if _, exists := right[endpoint]; !exists {
+	for endpoint, state := range left {
+		if state.learned {
+			continue
+		}
+		if other, exists := right[endpoint]; !exists || other.learned {
 			return false
 		}
 	}

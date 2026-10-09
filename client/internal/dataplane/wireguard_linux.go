@@ -263,6 +263,14 @@ func (d *officialWireGuardDevice) SendDatagram(
 	return d.bind.SendDatagram(packet, destination)
 }
 
+func (d *officialWireGuardDevice) SendRelayDatagram(packet []byte, peerNode [32]byte) error {
+	if d == nil || d.bind == nil {
+		return pathdiscovery.ErrTransportClosed
+	}
+
+	return d.bind.SendRelayDatagram(packet, peerNode)
+}
+
 func (d *officialWireGuardDevice) SetPeerProbeHandler(
 	handler pathdiscovery.DatagramHandler,
 ) {

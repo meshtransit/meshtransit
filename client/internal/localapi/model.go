@@ -127,6 +127,9 @@ type pathProbeStatus struct {
 	ObservationsAccepted         uint64 `json:"observations_accepted"`
 	ObservationRejected          uint64 `json:"observations_rejected"`
 	DirectExpirations            uint64 `json:"direct_expirations"`
+	CallMeMaybeSent              uint64 `json:"call_me_maybe_sent"`
+	CallMeMaybeAccepted          uint64 `json:"call_me_maybe_accepted"`
+	PeerReflexiveLearned         uint64 `json:"peer_reflexive_learned"`
 }
 
 type relayStatus struct {

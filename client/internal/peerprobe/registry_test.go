@@ -2,6 +2,7 @@ package peerprobe
 
 import (
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"net/netip"
 	"strings"
@@ -9,9 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"meshtransit.net/client/internal/compat/disco"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
+	"meshtransit.net/shared/disco"
+	"meshtransit.net/shared/key"
 )
 
 func TestRegistryBridgesAuthenticatedPingAndPong(t *testing.T) {
@@ -29,20 +31,20 @@ func TestRegistryBridgesAuthenticatedPingAndPong(t *testing.T) {
 		t.Fatalf("remote Open(ping) error = %v", err)
 	}
 	ping, ok := message.(disco.Ping)
-	if !ok || ping.ID != disco.TransactionID(transaction.ID) ||
-		ping.NodeKey.String() != snapshot.Self.PublicKey || ping.Padding != 24 {
+	if !ok || ping.TxID != disco.TxID(transaction.ID) ||
+		ping.Node != testNodeKey(t, snapshot.Self.PublicKey) || ping.Padding != 24 {
 		t.Fatalf("remote Open(ping) = %#v", message)
 	}
 
 	observedLocal := netip.MustParseAddrPort("198.51.100.15:41641")
 	pongPacket, err := remoteChannel.Seal(disco.Pong{
-		ID:     ping.ID,
-		Source: observedLocal,
+		TxID:     ping.TxID,
+		Observed: observedLocal,
 	})
 	if err != nil {
 		t.Fatalf("remote Seal(pong) error = %v", err)
 	}
-	opened, err := registry.Open(pongPacket, transaction.Endpoint, generation)
+	opened, err := registry.Open(pongPacket, transaction.Endpoint, generation, time.Unix(1_000, 0))
 	if err != nil {
 		t.Fatalf("Open(pong) error = %v", err)
 	}
@@ -56,15 +58,15 @@ func TestRegistryBridgesAuthenticatedPingAndPong(t *testing.T) {
 		t.Fatalf("Open(pong) = %#v", opened)
 	}
 
-	remotePingID := disco.TransactionID{12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
+	remotePingID := disco.TxID{12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
 	remotePingPacket, err := remoteChannel.Seal(disco.Ping{
-		ID:      remotePingID,
-		NodeKey: testNodeKey(t, snapshot.Peers[0].PublicKey),
+		TxID: remotePingID,
+		Node: testNodeKey(t, snapshot.Peers[0].PublicKey),
 	})
 	if err != nil {
 		t.Fatalf("remote Seal(ping) error = %v", err)
 	}
-	opened, err = registry.Open(remotePingPacket, transaction.Endpoint, generation)
+	opened, err = registry.Open(remotePingPacket, transaction.Endpoint, generation, time.Unix(1_000, 0))
 	if err != nil {
 		t.Fatalf("Open(ping) error = %v", err)
 	}
@@ -84,7 +86,7 @@ func TestRegistryBridgesAuthenticatedPingAndPong(t *testing.T) {
 		t.Fatalf("remote Open(pong) error = %v", err)
 	}
 	reply, ok := message.(disco.Pong)
-	if !ok || reply.ID != remotePingID || reply.Source != transaction.Endpoint {
+	if !ok || reply.TxID != remotePingID || reply.Observed != transaction.Endpoint {
 		t.Fatalf("remote Open(pong) = %#v", message)
 	}
 }
@@ -108,48 +110,47 @@ func TestRegistryRejectsUnauthorizedInputs(t *testing.T) {
 	}
 
 	badNodePacket, err := remoteChannel.Seal(disco.Ping{
-		ID:      disco.TransactionID{1},
-		NodeKey: testNodeKey(t, testNodeKeyText(0x77)),
+		TxID: disco.TxID{1},
+		Node: testNodeKey(t, testNodeKeyText(0x77)),
 	})
 	if err != nil {
 		t.Fatalf("remote Seal(bad node) error = %v", err)
 	}
-	if _, err := registry.Open(badNodePacket, transaction.Endpoint, generation); !errors.Is(err, ErrInvalidPacket) {
+	if _, err := registry.Open(badNodePacket, transaction.Endpoint, generation, time.Unix(1_000, 0)); !errors.Is(err, ErrInvalidPacket) {
 		t.Fatalf("Open(bad node) error = %v, want ErrInvalidPacket", err)
 	}
 
 	validPacket, err := remoteChannel.Seal(disco.Pong{
-		ID:     disco.TransactionID{1},
-		Source: netip.MustParseAddrPort("198.51.100.20:41641"),
+		TxID:     disco.TxID{1},
+		Observed: netip.MustParseAddrPort("198.51.100.20:41641"),
 	})
 	if err != nil {
 		t.Fatalf("remote Seal(valid) error = %v", err)
 	}
 	tampered := bytes.Clone(validPacket)
 	tampered[len(tampered)-1] ^= 0xff
-	if _, err := registry.Open(tampered, transaction.Endpoint, generation); !errors.Is(err, ErrInvalidPacket) {
+	if _, err := registry.Open(tampered, transaction.Endpoint, generation, time.Unix(1_000, 0)); !errors.Is(err, ErrInvalidPacket) {
 		t.Fatalf("Open(tampered) error = %v, want ErrInvalidPacket", err)
 	}
 
 	unknown := testIdentity(t)
 	unknownChannel := testPeerChannel(t, unknown, local)
 	unknownPacket, err := unknownChannel.Seal(disco.Pong{
-		ID:     disco.TransactionID{1},
-		Source: netip.MustParseAddrPort("198.51.100.21:41641"),
+		TxID:     disco.TxID{1},
+		Observed: netip.MustParseAddrPort("198.51.100.21:41641"),
 	})
 	if err != nil {
 		t.Fatalf("unknown Seal() error = %v", err)
 	}
-	if _, err := registry.Open(unknownPacket, transaction.Endpoint, generation); !errors.Is(err, ErrUnknownPeer) {
+	if _, err := registry.Open(unknownPacket, transaction.Endpoint, generation, time.Unix(1_000, 0)); !errors.Is(err, ErrUnknownPeer) {
 		t.Fatalf("Open(unknown) error = %v, want ErrUnknownPeer", err)
 	}
 }
 
-func TestRegistryReplacementIsAtomicAndDestroysOldChannels(t *testing.T) {
+func TestRegistryReplacementIsAtomic(t *testing.T) {
 	t.Parallel()
 
 	_, _, registry, snapshot, generation := testRegistry(t)
-	oldChannel := registry.byID[snapshot.Peers[0].ID].wire
 
 	invalid := cloneTestSnapshot(snapshot)
 	invalid.Revision++
@@ -159,7 +160,7 @@ func TestRegistryReplacementIsAtomicAndDestroysOldChannels(t *testing.T) {
 	invalid.Peers = append(invalid.Peers, duplicate)
 	invalidGeneration := generation
 	invalidGeneration.MapRevision = invalid.Revision
-	if _, err := registry.Replace(invalid, invalidGeneration); !errors.Is(err, ErrInvalidSnapshot) {
+	if _, err := registry.Replace(invalid, invalidGeneration, time.Unix(1_000, 0)); !errors.Is(err, ErrInvalidSnapshot) {
 		t.Fatalf("Replace(duplicate discovery key) error = %v, want ErrInvalidSnapshot", err)
 	}
 	if _, err := registry.SealPing(testTransaction(generation, snapshot.Peers[0]), 0); err != nil {
@@ -171,31 +172,22 @@ func TestRegistryReplacementIsAtomicAndDestroysOldChannels(t *testing.T) {
 	replacement.Revision++
 	replacement.Peers[0].ID++
 	replacement.Peers[0].PublicKey = testNodeKeyText(0x44)
-	newRemotePublic, err := newRemote.Public()
-	if err != nil {
-		t.Fatalf("new remote Public() error = %v", err)
-	}
-	replacement.Peers[0].DiscoveryKey = newRemotePublic.String()
+	newRemotePublic := newRemote.Public()
+	replacement.Peers[0].DiscoveryKey = MapDiscoveryKey(newRemotePublic)
 	replacement.Peers[0].Endpoints = []netip.AddrPort{
 		netip.MustParseAddrPort("203.0.113.44:41641"),
 	}
 	replacementGeneration := generation
 	replacementGeneration.MapRevision = replacement.Revision
-	if count, err := registry.Replace(replacement, replacementGeneration); err != nil || count != 1 {
+	if count, err := registry.Replace(replacement, replacementGeneration, time.Unix(1_000, 0)); err != nil || count != 1 {
 		t.Fatalf("Replace(valid) = %d, %v, want 1", count, err)
-	}
-	if _, err := oldChannel.Seal(disco.Ping{
-		ID:      disco.TransactionID{1},
-		NodeKey: testNodeKey(t, snapshot.Self.PublicKey),
-	}); !errors.Is(err, disco.ErrClosed) {
-		t.Fatalf("old channel Seal() error = %v, want disco.ErrClosed", err)
 	}
 	if _, err := registry.SealPing(testTransaction(generation, snapshot.Peers[0]), 0); !errors.Is(err, ErrInvalidGeneration) {
 		t.Fatalf("SealPing(old generation) error = %v, want ErrInvalidGeneration", err)
 	}
 
 	stale := cloneTestSnapshot(snapshot)
-	if _, err := registry.Replace(stale, generation); !errors.Is(err, ErrInvalidGeneration) {
+	if _, err := registry.Replace(stale, generation, time.Unix(1_000, 0)); !errors.Is(err, ErrInvalidGeneration) {
 		t.Fatalf("Replace(stale) error = %v, want ErrInvalidGeneration", err)
 	}
 	if count := registry.Len(); count != 1 {
@@ -203,11 +195,10 @@ func TestRegistryReplacementIsAtomicAndDestroysOldChannels(t *testing.T) {
 	}
 }
 
-func TestRegistryDeactivateDestroysChannelsAndRetainsGenerationFloor(t *testing.T) {
+func TestRegistryDeactivateRetainsGenerationFloor(t *testing.T) {
 	t.Parallel()
 
 	_, _, registry, snapshot, generation := testRegistry(t)
-	oldChannel := registry.byID[snapshot.Peers[0].ID].wire
 	if removed := registry.Deactivate(); removed != 1 {
 		t.Fatalf("Deactivate() = %d, want 1", removed)
 	}
@@ -220,21 +211,15 @@ func TestRegistryDeactivateDestroysChannelsAndRetainsGenerationFloor(t *testing.
 	); !errors.Is(err, ErrInactive) {
 		t.Fatalf("SealPing() after Deactivate error = %v, want ErrInactive", err)
 	}
-	if _, err := oldChannel.Seal(disco.Ping{
-		ID:      disco.TransactionID{1},
-		NodeKey: testNodeKey(t, snapshot.Self.PublicKey),
-	}); !errors.Is(err, disco.ErrClosed) {
-		t.Fatalf("old channel Seal() error = %v, want disco.ErrClosed", err)
-	}
 
 	stale := cloneTestSnapshot(snapshot)
 	stale.Revision--
 	staleGeneration := generation
 	staleGeneration.MapRevision = stale.Revision
-	if _, err := registry.Replace(stale, staleGeneration); !errors.Is(err, ErrInvalidGeneration) {
+	if _, err := registry.Replace(stale, staleGeneration, time.Unix(1_000, 0)); !errors.Is(err, ErrInvalidGeneration) {
 		t.Fatalf("Replace(stale) error = %v, want ErrInvalidGeneration", err)
 	}
-	if count, err := registry.Replace(snapshot, generation); err != nil || count != 1 {
+	if count, err := registry.Replace(snapshot, generation, time.Unix(1_000, 0)); err != nil || count != 1 {
 		t.Fatalf("Replace(current) = %d, %v, want 1", count, err)
 	}
 }
@@ -285,7 +270,7 @@ func TestRegistryValidatesSessionAndPeerMap(t *testing.T) {
 			test.mutate(&candidate)
 			candidateGeneration := generation
 			candidateGeneration.MapRevision = candidate.Revision
-			if _, err := registry.Replace(candidate, candidateGeneration); !errors.Is(err, ErrInvalidSnapshot) {
+			if _, err := registry.Replace(candidate, candidateGeneration, time.Unix(1_000, 0)); !errors.Is(err, ErrInvalidSnapshot) {
 				t.Fatalf("Replace() error = %v, want ErrInvalidSnapshot", err)
 			}
 		})
@@ -296,13 +281,13 @@ func TestRegistryValidatesSessionAndPeerMap(t *testing.T) {
 	withoutDiscovery.Peers[0].DiscoveryKey = ""
 	withoutGeneration := generation
 	withoutGeneration.MapRevision = withoutDiscovery.Revision
-	if count, err := registry.Replace(withoutDiscovery, withoutGeneration); err != nil || count != 0 {
+	if count, err := registry.Replace(withoutDiscovery, withoutGeneration, time.Unix(1_000, 0)); err != nil || count != 0 {
 		t.Fatalf("Replace(no peer discovery key) = %d, %v, want 0", count, err)
 	}
 
 	registry.Close()
 	registry.Close()
-	if _, err := registry.Replace(snapshot, generation); !errors.Is(err, ErrInactive) {
+	if _, err := registry.Replace(snapshot, generation, time.Unix(1_000, 0)); !errors.Is(err, ErrInactive) {
 		t.Fatalf("Replace() after Close error = %v, want ErrInactive", err)
 	}
 	if _, err := registry.SealPong(IncomingPing{}); !errors.Is(err, ErrInvalidProbe) {
@@ -317,8 +302,8 @@ func TestRegistryConcurrentReplacementAndPacketUse(t *testing.T) {
 	remoteChannel := testPeerChannel(t, remote, local)
 	transaction := testTransaction(generation, snapshot.Peers[0])
 	pongPacket, err := remoteChannel.Seal(disco.Pong{
-		ID:     disco.TransactionID(transaction.ID),
-		Source: netip.MustParseAddrPort("198.51.100.30:41641"),
+		TxID:     disco.TxID(transaction.ID),
+		Observed: netip.MustParseAddrPort("198.51.100.30:41641"),
 	})
 	if err != nil {
 		t.Fatalf("remote Seal(pong) error = %v", err)
@@ -336,7 +321,7 @@ func TestRegistryConcurrentReplacementAndPacketUse(t *testing.T) {
 
 					return
 				}
-				if _, err := registry.Open(pongPacket, transaction.Endpoint, generation); err != nil &&
+				if _, err := registry.Open(pongPacket, transaction.Endpoint, generation, time.Unix(1_000, 0)); err != nil &&
 					!errors.Is(err, ErrInvalidGeneration) {
 					t.Errorf("Open() concurrent error = %v", err)
 
@@ -350,7 +335,7 @@ func TestRegistryConcurrentReplacementAndPacketUse(t *testing.T) {
 	replacementGeneration := generation
 	replacementGeneration.MapRevision = replacement.Revision
 	close(start)
-	count, err := registry.Replace(replacement, replacementGeneration)
+	count, err := registry.Replace(replacement, replacementGeneration, time.Unix(1_000, 0))
 	workers.Wait()
 	if err != nil || count != 1 {
 		t.Fatalf("Replace() = %d, %v, want 1", count, err)
@@ -359,32 +344,26 @@ func TestRegistryConcurrentReplacementAndPacketUse(t *testing.T) {
 
 func testRegistry(
 	t *testing.T,
-) (*disco.Identity, *disco.Identity, *Registry, networkmap.Snapshot, pathdiscovery.ProbeGeneration) {
+) (key.DiscoPrivate, key.DiscoPrivate, *Registry, networkmap.Snapshot, pathdiscovery.ProbeGeneration) {
 	t.Helper()
 
 	local := testIdentity(t)
 	remote := testIdentity(t)
-	localPublic, err := local.Public()
-	if err != nil {
-		t.Fatalf("local Public() error = %v", err)
-	}
-	remotePublic, err := remote.Public()
-	if err != nil {
-		t.Fatalf("remote Public() error = %v", err)
-	}
+	localPublic := local.Public()
+	remotePublic := remote.Public()
 	endpoint := netip.MustParseAddrPort("203.0.113.10:41641")
 	snapshot := networkmap.Snapshot{
 		Revision: 7,
 		Self: networkmap.Node{
 			ID:                1,
 			PublicKey:         testNodeKeyText(0x11),
-			DiscoveryKey:      localPublic.String(),
+			DiscoveryKey:      MapDiscoveryKey(localPublic),
 			MachineAuthorized: true,
 		},
 		Peers: []networkmap.Node{{
 			ID:                2,
 			PublicKey:         testNodeKeyText(0x22),
-			DiscoveryKey:      remotePublic.String(),
+			DiscoveryKey:      MapDiscoveryKey(remotePublic),
 			Endpoints:         []netip.AddrPort{endpoint},
 			MachineAuthorized: true,
 		}},
@@ -401,7 +380,7 @@ func testRegistry(
 	if err != nil {
 		t.Fatalf("NewRegistry() error = %v", err)
 	}
-	if count, err := registry.Replace(snapshot, generation); err != nil || count != 1 {
+	if count, err := registry.Replace(snapshot, generation, time.Unix(1_000, 0)); err != nil || count != 1 {
 		t.Fatalf("Replace() = %d, %v, want 1", count, err)
 	}
 	t.Cleanup(registry.Close)
@@ -409,36 +388,39 @@ func testRegistry(
 	return local, remote, registry, snapshot, generation
 }
 
-func testIdentity(t *testing.T) *disco.Identity {
+func testIdentity(t *testing.T) key.DiscoPrivate {
 	t.Helper()
 
-	identity, err := disco.NewIdentity()
+	identity, err := key.NewDiscoPrivate()
 	if err != nil {
-		t.Fatalf("NewIdentity() error = %v", err)
+		t.Fatalf("NewDiscoPrivate() error = %v", err)
 	}
-	t.Cleanup(identity.Close)
 
 	return identity
 }
 
+// testWire is the remote side of a disco v2 channel.
+type testWire struct{ key *disco.PeerKey }
+
+func (w *testWire) Seal(message disco.Message) ([]byte, error) {
+	return w.key.Seal(nil, message, rand.Reader)
+}
+
+func (w *testWire) Open(packet []byte) (disco.Message, error) { return w.key.Open(packet) }
+
 func testPeerChannel(
 	t *testing.T,
-	from *disco.Identity,
-	to *disco.Identity,
-) *disco.Peer {
+	from key.DiscoPrivate,
+	to key.DiscoPrivate,
+) *testWire {
 	t.Helper()
 
-	publicKey, err := to.Public()
+	peer, err := disco.NewPeerKey(from, to.Public())
 	if err != nil {
-		t.Fatalf("recipient Public() error = %v", err)
+		t.Fatalf("NewPeerKey() error = %v", err)
 	}
-	peer, err := from.Peer(publicKey)
-	if err != nil {
-		t.Fatalf("Peer() error = %v", err)
-	}
-	t.Cleanup(peer.Close)
 
-	return peer
+	return &testWire{key: peer}
 }
 
 func testTransaction(
@@ -457,15 +439,15 @@ func testTransaction(
 	}
 }
 
-func testNodeKey(t *testing.T, text string) disco.NodeKey {
+func testNodeKey(t *testing.T, text string) key.NodePublic {
 	t.Helper()
 
-	key, err := disco.ParseNodeKey(text)
+	raw, err := parseMapKey(text, mapNodeKeyPrefix)
 	if err != nil {
-		t.Fatalf("ParseNodeKey() error = %v", err)
+		t.Fatalf("parseMapKey() error = %v", err)
 	}
 
-	return key
+	return key.NodePublic(raw)
 }
 
 func testNodeKeyText(value byte) string {

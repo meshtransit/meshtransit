@@ -34,6 +34,9 @@ type ProbeTelemetrySnapshot struct {
 	ObservationsAccepted         uint64
 	ObservationRejected          uint64
 	DirectExpirations            uint64
+	CallMeMaybeSent              uint64
+	CallMeMaybeAccepted          uint64
+	PeerReflexiveLearned         uint64
 }
 
 // ProbeTelemetry owns process-local counters shared across control sessions.
@@ -68,6 +71,9 @@ type ProbeTelemetry struct {
 	observationsAccepted         atomic.Uint64
 	observationRejected          atomic.Uint64
 	directExpirations            atomic.Uint64
+	callMeMaybeSent              atomic.Uint64
+	callMeMaybeAccepted          atomic.Uint64
+	peerReflexiveLearned         atomic.Uint64
 }
 
 // NewProbeTelemetry creates zeroed aggregate telemetry.
@@ -139,6 +145,15 @@ func (t *ProbeTelemetry) RecordDirectExpiry(count uint64) {
 	addProbeCounter(&t.directExpirations, count)
 }
 
+// RecordCallMeMaybeSent counts CALL_ME_MAYBE messages sent through a relay.
+func (t *ProbeTelemetry) RecordCallMeMaybeSent() { addProbeCounter(&t.callMeMaybeSent, 1) }
+
+// RecordCallMeMaybeAccepted counts authenticated CALL_ME_MAYBE messages.
+func (t *ProbeTelemetry) RecordCallMeMaybeAccepted() { addProbeCounter(&t.callMeMaybeAccepted, 1) }
+
+// RecordPeerReflexiveLearned counts peer-reflexive candidates learned.
+func (t *ProbeTelemetry) RecordPeerReflexiveLearned() { addProbeCounter(&t.peerReflexiveLearned, 1) }
+
 // Snapshot returns a coherent-enough monotonic view for operator diagnostics.
 // Individual counters may advance while the snapshot is being read.
 func (t *ProbeTelemetry) Snapshot() ProbeTelemetrySnapshot {
@@ -176,6 +191,9 @@ func (t *ProbeTelemetry) Snapshot() ProbeTelemetrySnapshot {
 		ObservationsAccepted:         t.observationsAccepted.Load(),
 		ObservationRejected:          t.observationRejected.Load(),
 		DirectExpirations:            t.directExpirations.Load(),
+		CallMeMaybeSent:              t.callMeMaybeSent.Load(),
+		CallMeMaybeAccepted:          t.callMeMaybeAccepted.Load(),
+		PeerReflexiveLearned:         t.peerReflexiveLearned.Load(),
 	}
 }
 

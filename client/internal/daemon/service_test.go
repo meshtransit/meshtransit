@@ -3,6 +3,8 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -14,9 +16,11 @@ import (
 	"testing"
 	"time"
 
+	"meshtransit.net/client/internal/peerprobe"
+	"meshtransit.net/shared/disco"
+
 	"meshtransit.net/shared/key"
 
-	peerwire "meshtransit.net/client/internal/compat/disco"
 	"meshtransit.net/client/internal/compat/ts2021"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/identity"
@@ -1333,7 +1337,7 @@ func TestService_RunRejectsConcurrentSupervisor(t *testing.T) {
 	}
 }
 
-func TestService_RunRotatesAndClosesPeerProbeIdentity(t *testing.T) {
+func TestService_RunRotatesPeerProbeDiscoKey(t *testing.T) {
 	t.Parallel()
 
 	service, _, control, _, _ := newTestService(t)
@@ -1348,58 +1352,40 @@ func TestService_RunRotatesAndClosesPeerProbeIdentity(t *testing.T) {
 		t.Fatalf("StartLogin() error = %v", err)
 	}
 
-	created := make(chan *peerwire.Identity, 2)
-	service.newPeerProbeIdentity = func(key.DiscoPrivate) (*peerwire.Identity, error) {
-		identity, err := peerwire.NewIdentity()
+	created := make(chan key.DiscoPrivate, 2)
+	service.newDiscoKey = func() (key.DiscoPrivate, error) {
+		disco, err := key.NewDiscoPrivate()
 		if err == nil {
-			created <- identity
+			created <- disco
 		}
 
-		return identity, err
+		return disco, err
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	runResult := make(chan error, 1)
 	go func() { runResult <- service.Run(ctx) }()
 
-	firstIdentity := waitForPeerProbeIdentity(t, created)
+	first := waitForDiscoKey(t, created)
 	waitForStreamStart(t, control)
 	firstOptions := latestStreamOptions(t, control)
-	firstPublic, err := firstIdentity.Public()
-	if err != nil || firstOptions.PeerProbePublicKey != firstPublic.String() {
-		t.Fatalf(
-			"first peer-probe key = %q, public=%q, error=%v",
-			firstOptions.PeerProbePublicKey,
-			firstPublic.String(),
-			err,
-		)
+	if firstOptions.PeerProbePublicKey != peerprobe.MapDiscoveryKey(first.Public()) {
+		t.Fatalf("first peer-probe key = %q", firstOptions.PeerProbePublicKey)
 	}
 
 	service.signalControlSync()
-	secondIdentity := waitForPeerProbeIdentity(t, created)
+	second := waitForDiscoKey(t, created)
 	waitForStreamStart(t, control)
 	secondOptions := latestStreamOptions(t, control)
-	secondPublic, err := secondIdentity.Public()
-	if err != nil || secondOptions.PeerProbePublicKey != secondPublic.String() {
-		t.Fatalf(
-			"second peer-probe key = %q, public=%q, error=%v",
-			secondOptions.PeerProbePublicKey,
-			secondPublic.String(),
-			err,
-		)
+	if secondOptions.PeerProbePublicKey != peerprobe.MapDiscoveryKey(second.Public()) {
+		t.Fatalf("second peer-probe key = %q", secondOptions.PeerProbePublicKey)
 	}
 	if firstOptions.PeerProbePublicKey == secondOptions.PeerProbePublicKey {
-		t.Fatal("peer-probe identity did not rotate with the control session")
-	}
-	if _, err := firstIdentity.Public(); !errors.Is(err, peerwire.ErrClosed) {
-		t.Fatalf("first identity after rotation error = %v, want ErrClosed", err)
+		t.Fatal("disco key did not rotate with the control session")
 	}
 
 	cancel()
 	if err := <-runResult; !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context cancellation", err)
-	}
-	if _, err := secondIdentity.Public(); !errors.Is(err, peerwire.ErrClosed) {
-		t.Fatalf("second identity after shutdown error = %v, want ErrClosed", err)
 	}
 }
 
@@ -1419,8 +1405,8 @@ func TestService_RunFailsClosedWithoutPeerProbeIdentity(t *testing.T) {
 	}
 
 	identityErr := errors.New("test entropy unavailable")
-	service.newPeerProbeIdentity = func(key.DiscoPrivate) (*peerwire.Identity, error) {
-		return nil, identityErr
+	service.newDiscoKey = func() (key.DiscoPrivate, error) {
+		return key.DiscoPrivate{}, identityErr
 	}
 	if err := service.Run(t.Context()); !errors.Is(err, identityErr) {
 		t.Fatalf("Run() error = %v, want identity failure", err)
@@ -1454,24 +1440,15 @@ func TestService_RunAttachesAndSchedulesLivePeerProbes(t *testing.T) {
 		t.Fatalf("StartLogin() error = %v", err)
 	}
 
-	localProbe, err := peerwire.NewIdentity()
+	localProbe, err := key.NewDiscoPrivate()
 	if err != nil {
-		t.Fatalf("NewIdentity(local) error = %v", err)
+		t.Fatalf("NewDiscoPrivate(local) error = %v", err)
 	}
-	remoteProbe, err := peerwire.NewIdentity()
+	remoteProbe, err := key.NewDiscoPrivate()
 	if err != nil {
-		localProbe.Close()
-
-		t.Fatalf("NewIdentity(remote) error = %v", err)
+		t.Fatalf("NewDiscoPrivate(remote) error = %v", err)
 	}
-	t.Cleanup(remoteProbe.Close)
-	service.newPeerProbeIdentity = func(key.DiscoPrivate) (*peerwire.Identity, error) {
-		return localProbe, nil
-	}
-	remotePublic, err := remoteProbe.Public()
-	if err != nil {
-		t.Fatalf("remote Public() error = %v", err)
-	}
+	service.newDiscoKey = func() (key.DiscoPrivate, error) { return localProbe, nil }
 	peerEndpoint := netip.MustParseAddrPort("203.0.113.80:41641")
 	control.mu.Lock()
 	control.echoPeerProbeKey = true
@@ -1485,7 +1462,7 @@ func TestService_RunAttachesAndSchedulesLivePeerProbes(t *testing.T) {
 		Peers: []networkmap.Node{{
 			ID:                2,
 			PublicKey:         "nodekey:" + strings.Repeat("22", 32),
-			DiscoveryKey:      remotePublic.String(),
+			DiscoveryKey:      peerprobe.MapDiscoveryKey(remoteProbe.Public()),
 			Endpoints:         []netip.AddrPort{peerEndpoint},
 			MachineAuthorized: true,
 		}},
@@ -1499,27 +1476,22 @@ func TestService_RunAttachesAndSchedulesLivePeerProbes(t *testing.T) {
 	if scheduled.destination != peerEndpoint || scheduled.socket != dataPlane.socket {
 		t.Fatalf("scheduled probe = %#v", scheduled)
 	}
-	localPublic, err := localProbe.Public()
+	remoteChannel, err := disco.NewPeerKey(remoteProbe, localProbe.Public())
 	if err != nil {
-		t.Fatalf("local Public() error = %v", err)
+		t.Fatalf("remote NewPeerKey() error = %v", err)
 	}
-	remoteChannel, err := remoteProbe.Peer(localPublic)
-	if err != nil {
-		t.Fatalf("remote Peer() error = %v", err)
-	}
-	t.Cleanup(remoteChannel.Close)
 	message, err := remoteChannel.Open(scheduled.packet)
 	if err != nil {
 		t.Fatalf("remote Open(scheduled ping) error = %v", err)
 	}
-	ping, ok := message.(peerwire.Ping)
-	if !ok || ping.NodeKey.String() != control.streamSnapshot.Self.PublicKey {
+	ping, ok := message.(disco.Ping)
+	if !ok || ping.Node != mustDaemonNodeKey(t, control.streamSnapshot.Self.PublicKey) {
 		t.Fatalf("remote Open(scheduled ping) = %#v", message)
 	}
-	authenticatedPong, err := remoteChannel.Seal(peerwire.Pong{
-		ID:     ping.ID,
-		Source: netip.MustParseAddrPort("198.51.100.80:41641"),
-	})
+	authenticatedPong, err := remoteChannel.Seal(nil, disco.Pong{
+		TxID:     ping.TxID,
+		Observed: netip.MustParseAddrPort("198.51.100.80:41641"),
+	}, rand.Reader)
 	if err != nil {
 		t.Fatalf("remote Seal(pong) error = %v", err)
 	}
@@ -1534,11 +1506,11 @@ func TestService_RunAttachesAndSchedulesLivePeerProbes(t *testing.T) {
 		t.Fatalf("authenticated endpoint update = %#v", endpointUpdate)
 	}
 
-	remotePingID := peerwire.TransactionID{9, 8, 7, 6, 5, 4, 3, 2, 1, 4, 5, 6}
-	remotePing, err := remoteChannel.Seal(peerwire.Ping{
-		ID:      remotePingID,
-		NodeKey: mustDaemonNodeKey(t, control.streamSnapshot.Peers[0].PublicKey),
-	})
+	remotePingID := disco.TxID{9, 8, 7, 6, 5, 4, 3, 2, 1, 4, 5, 6}
+	remotePing, err := remoteChannel.Seal(nil, disco.Ping{
+		TxID: remotePingID,
+		Node: mustDaemonNodeKey(t, control.streamSnapshot.Peers[0].PublicKey),
+	}, rand.Reader)
 	if err != nil {
 		t.Fatalf("remote Seal(ping) error = %v", err)
 	}
@@ -1551,8 +1523,8 @@ func TestService_RunAttachesAndSchedulesLivePeerProbes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("remote Open(pong) error = %v", err)
 	}
-	pong, ok := message.(peerwire.Pong)
-	if !ok || pong.ID != remotePingID || pong.Source != peerEndpoint {
+	pong, ok := message.(disco.Pong)
+	if !ok || pong.TxID != remotePingID || pong.Observed != peerEndpoint {
 		t.Fatalf("remote Open(pong) = %#v", message)
 	}
 
@@ -1562,9 +1534,6 @@ func TestService_RunAttachesAndSchedulesLivePeerProbes(t *testing.T) {
 	}
 	if dataPlane.handlerSnapshot() != nil {
 		t.Fatal("peer-probe handler remained attached after shutdown")
-	}
-	if _, err := localProbe.Public(); !errors.Is(err, peerwire.ErrClosed) {
-		t.Fatalf("local probe identity after shutdown error = %v, want ErrClosed", err)
 	}
 }
 
@@ -2682,15 +2651,16 @@ func waitForLiveProbeSend(
 	}
 }
 
-func mustDaemonNodeKey(t *testing.T, text string) peerwire.NodeKey {
+func mustDaemonNodeKey(t *testing.T, text string) key.NodePublic {
 	t.Helper()
 
-	key, err := peerwire.ParseNodeKey(text)
-	if err != nil {
-		t.Fatalf("ParseNodeKey() error = %v", err)
+	encoded, ok := strings.CutPrefix(text, "nodekey:")
+	raw, err := hex.DecodeString(encoded)
+	if !ok || err != nil || len(raw) != 32 {
+		t.Fatalf("node key %q is malformed", text)
 	}
 
-	return key
+	return key.NodePublic(raw)
 }
 
 func (f *fakeEndpointDataPlane) DiscoverySocket() pathdiscovery.Socket {
@@ -2827,19 +2797,16 @@ func clearProtocolMaterials(values []ts2021.KeyMaterial) {
 	}
 }
 
-func waitForPeerProbeIdentity(
-	t *testing.T,
-	created <-chan *peerwire.Identity,
-) *peerwire.Identity {
+func waitForDiscoKey(t *testing.T, created <-chan key.DiscoPrivate) key.DiscoPrivate {
 	t.Helper()
 
 	select {
-	case identity := <-created:
-		return identity
+	case disco := <-created:
+		return disco
 	case <-time.After(3 * time.Second):
-		t.Fatal("timed out waiting for peer-probe identity")
+		t.Fatal("timed out waiting for the session disco key")
 
-		return nil
+		return key.DiscoPrivate{}
 	}
 }
 

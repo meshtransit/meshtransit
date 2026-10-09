@@ -71,6 +71,21 @@ func (m *controlDatagramMux) HandleDatagram(
 	}
 }
 
+// HandleRelayDatagram passes a relayed control datagram to the session's
+// probe handler; STUN never arrives through a relay.
+func (m *controlDatagramMux) HandleRelayDatagram(packet []byte, peerNode [32]byte) {
+	if m == nil {
+		return
+	}
+	peer, matches := m.peerHandler()
+	if matches == nil || !matches(packet) {
+		return
+	}
+	if relayed, ok := peer.(pathdiscovery.RelayDatagramHandler); ok {
+		relayed.HandleRelayDatagram(packet, peerNode)
+	}
+}
+
 func (m *controlDatagramMux) peerHandler() (
 	pathdiscovery.DatagramHandler,
 	func([]byte) bool,

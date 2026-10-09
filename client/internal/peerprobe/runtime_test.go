@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"meshtransit.net/client/internal/compat/disco"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
+	"meshtransit.net/shared/disco"
+	"meshtransit.net/shared/key"
 )
 
 func TestRuntimeCompletesScheduledProbeAndRepliesToPing(t *testing.T) {
@@ -34,14 +35,14 @@ func TestRuntimeCompletesScheduledProbeAndRepliesToPing(t *testing.T) {
 		t.Fatalf("remote Open(ping) error = %v", err)
 	}
 	ping, ok := message.(disco.Ping)
-	if !ok || ping.NodeKey.String() != snapshot.Self.PublicKey {
+	if !ok || ping.Node != testNodeKey(t, snapshot.Self.PublicKey) {
 		t.Fatalf("remote Open(ping) = %#v", message)
 	}
 
 	observedLocal := netip.MustParseAddrPort("198.51.100.10:41641")
 	pongPacket, err := remoteChannel.Seal(disco.Pong{
-		ID:     ping.ID,
-		Source: observedLocal,
+		TxID:     ping.TxID,
+		Observed: observedLocal,
 	})
 	if err != nil {
 		t.Fatalf("remote Seal(pong) error = %v", err)
@@ -64,11 +65,11 @@ func TestRuntimeCompletesScheduledProbeAndRepliesToPing(t *testing.T) {
 		t.Fatal("timed out waiting for authenticated path observation")
 	}
 
-	remoteSource := netip.MustParseAddrPort("203.0.113.10:51234")
-	remotePingID := disco.TransactionID{12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
+	remoteSource := snapshot.Peers[0].Endpoints[0] // a known candidate: no peer-reflexive probe
+	remotePingID := disco.TxID{12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1}
 	remotePing, err := remoteChannel.Seal(disco.Ping{
-		ID:      remotePingID,
-		NodeKey: testNodeKey(t, snapshot.Peers[0].PublicKey),
+		TxID: remotePingID,
+		Node: testNodeKey(t, snapshot.Peers[0].PublicKey),
 	})
 	if err != nil {
 		t.Fatalf("remote Seal(ping) error = %v", err)
@@ -83,7 +84,7 @@ func TestRuntimeCompletesScheduledProbeAndRepliesToPing(t *testing.T) {
 		t.Fatalf("remote Open(pong) error = %v", err)
 	}
 	pong, ok := message.(disco.Pong)
-	if !ok || pong.ID != remotePingID || pong.Source != remoteSource {
+	if !ok || pong.TxID != remotePingID || pong.Observed != remoteSource {
 		t.Fatalf("remote Open(pong) = %#v", message)
 	}
 	telemetry := runtime.telemetry.Snapshot()
@@ -132,8 +133,8 @@ func TestRuntimeRejectsStaleReplyAfterGenerationChange(t *testing.T) {
 	}
 
 	oldPong, err := remoteChannel.Seal(disco.Pong{
-		ID:     firstPing.ID,
-		Source: netip.MustParseAddrPort("198.51.100.20:41641"),
+		TxID:     firstPing.TxID,
+		Observed: netip.MustParseAddrPort("198.51.100.20:41641"),
 	})
 	if err != nil {
 		t.Fatalf("remote Seal(old pong) error = %v", err)
@@ -146,8 +147,8 @@ func TestRuntimeRejectsStaleReplyAfterGenerationChange(t *testing.T) {
 	}
 
 	newPong, err := remoteChannel.Seal(disco.Pong{
-		ID:     secondPing.ID,
-		Source: netip.MustParseAddrPort("198.51.100.21:41641"),
+		TxID:     secondPing.TxID,
+		Observed: netip.MustParseAddrPort("198.51.100.21:41641"),
 	})
 	if err != nil {
 		t.Fatalf("remote Seal(new pong) error = %v", err)
@@ -177,7 +178,13 @@ func TestRuntimeCancelsTransactionAfterTransportFailure(t *testing.T) {
 		t.Fatalf("Activate() error = %v", err)
 	}
 	waitForRuntimeAttempt(t, transport)
+	// The failure is counted just after the send returns.
+	deadline := time.Now().Add(2 * time.Second)
 	telemetry := runtime.telemetry.Snapshot()
+	for telemetry.ProbeSendFailures == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		telemetry = runtime.telemetry.Snapshot()
+	}
 	if telemetry.ProbeAttempts != 1 || telemetry.ProbesStarted != 1 ||
 		telemetry.ProbeSendFailures != 1 || telemetry.ProbesSent != 0 {
 		t.Fatalf("failed-send telemetry = %#v", telemetry)
@@ -229,10 +236,11 @@ func TestRuntimeLimitsAuthenticatedPingResponses(t *testing.T) {
 	}
 	remoteChannel := testPeerChannel(t, remote, local)
 	source := netip.MustParseAddrPort("203.0.113.30:41641")
+	runtime.registry.LearnPeerReflexive(snapshot.Peers[0].ID, source, clock.Now()) // no extra probe
 	for index := 0; index < maxIncomingPingsPerPeer+1; index++ {
 		packet, err := remoteChannel.Seal(disco.Ping{
-			ID:      disco.TransactionID{byte(index + 1)},
-			NodeKey: testNodeKey(t, snapshot.Peers[0].PublicKey),
+			TxID: disco.TxID{byte(index + 1)},
+			Node: testNodeKey(t, snapshot.Peers[0].PublicKey),
 		})
 		if err != nil {
 			t.Fatalf("remote Seal(%d) error = %v", index, err)
@@ -249,8 +257,8 @@ func TestRuntimeLimitsAuthenticatedPingResponses(t *testing.T) {
 
 	clock.Advance(incomingPingWindow)
 	packet, err := remoteChannel.Seal(disco.Ping{
-		ID:      disco.TransactionID{0xff},
-		NodeKey: testNodeKey(t, snapshot.Peers[0].PublicKey),
+		TxID: disco.TxID{0xff},
+		Node: testNodeKey(t, snapshot.Peers[0].PublicKey),
 	})
 	if err != nil {
 		t.Fatalf("remote Seal(after window) error = %v", err)
@@ -271,42 +279,45 @@ func TestRuntimeLimitsAuthenticatedPingResponses(t *testing.T) {
 	}
 }
 
-func TestBuildProbeTargetsIsBoundedAndRoundRobin(t *testing.T) {
+func TestRoundTargetsAreRoundRobinAndIncludeLearned(t *testing.T) {
 	t.Parallel()
 
-	first := networkmap.Node{
-		ID:                1,
-		DiscoveryKey:      testDiscoveryKeyText(0x11),
-		MachineAuthorized: true,
-		Endpoints: []netip.AddrPort{
-			netip.MustParseAddrPort("203.0.113.1:41641"),
-			netip.MustParseAddrPort("203.0.113.2:41641"),
-		},
+	runtime, _, _, local, _, snapshot, generation := testRuntime(t)
+	node := func(id uint64, nodeByte byte, endpoints ...string) networkmap.Node {
+		peer := networkmap.Node{
+			ID: id, PublicKey: testNodeKeyText(nodeByte), DiscoveryKey: MapDiscoveryKey(testIdentity(t).Public()),
+			MachineAuthorized: true,
+		}
+		for _, endpoint := range endpoints {
+			peer.Endpoints = append(peer.Endpoints, netip.MustParseAddrPort(endpoint))
+		}
+		return peer
 	}
-	second := networkmap.Node{
-		ID:                2,
-		DiscoveryKey:      testDiscoveryKeyText(0x22),
-		MachineAuthorized: true,
-		Endpoints: []netip.AddrPort{
-			netip.MustParseAddrPort("203.0.113.3:41641"),
-			netip.MustParseAddrPort("203.0.113.4:41641"),
-		},
+	first := node(2, 0x22, "203.0.113.1:41641", "203.0.113.2:41641")
+	second := node(3, 0x33, "203.0.113.3:41641", "203.0.113.4:41641")
+	offline := node(4, 0x44, "203.0.113.5:41641")
+	offline.OnlineKnown, offline.Online = true, false
+	snapshot.Peers = []networkmap.Node{first, second, offline}
+	_ = local
+	if _, _, err := runtime.Activate(snapshot, generation); err != nil {
+		t.Fatal(err)
 	}
-	offline := second
-	offline.ID = 3
-	offline.OnlineKnown = true
-	offline.Online = false
-	targets := buildProbeTargets(networkmap.Snapshot{
-		Peers: []networkmap.Node{first, second, offline},
-	})
 	want := []probeTarget{
-		{peerID: 1, endpoint: first.Endpoints[0]},
-		{peerID: 2, endpoint: second.Endpoints[0]},
-		{peerID: 1, endpoint: first.Endpoints[1]},
-		{peerID: 2, endpoint: second.Endpoints[1]},
+		{peerID: 2, endpoint: first.Endpoints[0]},
+		{peerID: 3, endpoint: second.Endpoints[0]},
+		{peerID: 2, endpoint: first.Endpoints[1]},
+		{peerID: 3, endpoint: second.Endpoints[1]},
 	}
-	if !slices.Equal(targets, want) {
-		t.Fatalf("buildProbeTargets() = %#v, want %#v", targets, want)
+	if targets := runtime.roundTargets(); !slices.Equal(targets, want) {
+		t.Fatalf("roundTargets() = %#v, want %#v", targets, want)
+	}
+	learned := netip.MustParseAddrPort("198.51.100.77:5000")
+	if !runtime.registry.LearnPeerReflexive(2, learned, time.Now()) {
+		t.Fatal("peer-reflexive candidate not learned")
+	}
+	targets := runtime.roundTargets()
+	if !slices.Contains(targets, probeTarget{peerID: 2, endpoint: learned}) {
+		t.Fatalf("learned candidate not probed: %#v", targets)
 	}
 }
 
@@ -425,8 +436,8 @@ func TestRuntimeCloseStopsWorkAndKeepsIdentityOwnedByCaller(t *testing.T) {
 	); !errors.Is(err, ErrInactive) {
 		t.Fatalf("Probe() after Close error = %v, want ErrInactive", err)
 	}
-	if _, err := local.Public(); err != nil {
-		t.Fatalf("caller-owned identity after Runtime.Close error = %v", err)
+	if local.IsZero() {
+		t.Fatal("caller-owned disco key cleared by Runtime.Close")
 	}
 }
 
@@ -440,8 +451,8 @@ func TestRuntimeCloseIsIncomingDatagramBarrier(t *testing.T) {
 	waitForRuntimeSend(t, transport)
 	remoteChannel := testPeerChannel(t, remote, local)
 	packet, err := remoteChannel.Seal(disco.Ping{
-		ID:      disco.TransactionID{1, 2, 3},
-		NodeKey: testNodeKey(t, snapshot.Peers[0].PublicKey),
+		TxID: disco.TxID{1, 2, 3},
+		Node: testNodeKey(t, snapshot.Peers[0].PublicKey),
 	})
 	if err != nil {
 		t.Fatalf("remote Seal(ping) error = %v", err)
@@ -595,8 +606,8 @@ func testRuntime(
 	*Runtime,
 	*runtimeTransport,
 	*runtimeObserver,
-	*disco.Identity,
-	*disco.Identity,
+	key.DiscoPrivate,
+	key.DiscoPrivate,
 	networkmap.Snapshot,
 	pathdiscovery.ProbeGeneration,
 ) {
@@ -629,31 +640,25 @@ func testRuntime(
 
 func runtimeSnapshot(
 	t *testing.T,
-	local *disco.Identity,
-	remote *disco.Identity,
+	local key.DiscoPrivate,
+	remote key.DiscoPrivate,
 ) (networkmap.Snapshot, pathdiscovery.ProbeGeneration) {
 	t.Helper()
 
-	localPublic, err := local.Public()
-	if err != nil {
-		t.Fatalf("local Public() error = %v", err)
-	}
-	remotePublic, err := remote.Public()
-	if err != nil {
-		t.Fatalf("remote Public() error = %v", err)
-	}
+	localPublic := local.Public()
+	remotePublic := remote.Public()
 	snapshot := networkmap.Snapshot{
 		Revision: 7,
 		Self: networkmap.Node{
 			ID:                1,
 			PublicKey:         testNodeKeyText(0x11),
-			DiscoveryKey:      localPublic.String(),
+			DiscoveryKey:      MapDiscoveryKey(localPublic),
 			MachineAuthorized: true,
 		},
 		Peers: []networkmap.Node{{
 			ID:           2,
 			PublicKey:    testNodeKeyText(0x22),
-			DiscoveryKey: remotePublic.String(),
+			DiscoveryKey: MapDiscoveryKey(remotePublic),
 			Endpoints: []netip.AddrPort{
 				netip.MustParseAddrPort("203.0.113.10:41641"),
 			},
@@ -696,3 +701,47 @@ func waitForRuntimeAttempt(t *testing.T, transport *runtimeTransport) {
 }
 
 var _ PathObserver = (*runtimeObserver)(nil)
+
+func TestRuntimeLearnsPeerReflexiveAndProbesIt(t *testing.T) {
+	t.Parallel()
+
+	runtime, transport, _, local, remote, snapshot, generation := testRuntime(t)
+	if _, _, err := runtime.Activate(snapshot, generation); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuntimeSend(t, transport) // the scheduled probe to the map endpoint
+	remoteChannel := testPeerChannel(t, remote, local)
+	hole := netip.MustParseAddrPort("198.51.100.99:60000") // the peer NAT's fresh mapping
+	packet, err := remoteChannel.Seal(disco.Ping{TxID: disco.TxID{9}, Node: testNodeKey(t, snapshot.Peers[0].PublicKey)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.HandleDatagram(packet, hole, generation.Socket)
+	waitForRuntimeAttempt(t, transport)
+	waitForRuntimeAttempt(t, transport)
+	var probed, ponged bool
+	for _, sent := range transport.sentSnapshot() {
+		if sent.destination != hole {
+			continue
+		}
+		message, err := remoteChannel.Open(sent.packet)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch message.(type) {
+		case disco.Ping:
+			probed = true
+		case disco.Pong:
+			ponged = true
+		}
+	}
+	if !probed || !ponged {
+		t.Fatalf("probed=%v ponged=%v", probed, ponged)
+	}
+	if got := runtime.telemetry.Snapshot().PeerReflexiveLearned; got != 1 {
+		t.Fatalf("peer-reflexive learned = %d", got)
+	}
+	if candidates := runtime.registry.PeerCandidates(snapshot.Peers[0].ID, time.Now()); !slices.Contains(candidates, hole) {
+		t.Fatalf("candidates %v lack the peer-reflexive address", candidates)
+	}
+}

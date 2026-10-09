@@ -420,6 +420,9 @@ func mapPathProbeStatus(status daemon.PathProbeStatus) pathProbeStatus {
 		ObservationsAccepted:         snapshot.ObservationsAccepted,
 		ObservationRejected:          snapshot.ObservationRejected,
 		DirectExpirations:            snapshot.DirectExpirations,
+		CallMeMaybeSent:              snapshot.CallMeMaybeSent,
+		CallMeMaybeAccepted:          snapshot.CallMeMaybeAccepted,
+		PeerReflexiveLearned:         snapshot.PeerReflexiveLearned,
 	}
 }
 

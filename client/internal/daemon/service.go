@@ -15,9 +15,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"meshtransit.net/shared/disco"
 	"meshtransit.net/shared/key"
 
-	peerwire "meshtransit.net/client/internal/compat/disco"
 	"meshtransit.net/client/internal/compat/ts2021"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/identity"
@@ -269,6 +269,22 @@ func (t *lockedPeerProbeTransport) SendDatagram(
 	return t.dataPlane.SendDatagram(packet, destination)
 }
 
+// SendRelayDatagram forwards a probe packet through the relay when the data
+// plane supports it.
+func (t *lockedPeerProbeTransport) SendRelayDatagram(packet []byte, peerNode [32]byte) error {
+	if t == nil || t.mu == nil || t.dataPlane == nil {
+		return pathdiscovery.ErrTransportClosed
+	}
+	relayed, ok := t.dataPlane.(pathdiscovery.RelayDatagramTransport)
+	if !ok {
+		return pathdiscovery.ErrTransportClosed
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return relayed.SendRelayDatagram(packet, peerNode)
+}
+
 // DNSController consumes validated maps and owns transactional local resolver
 // plus host configuration. Reset keeps it reusable across profile changes;
 // Close permanently releases it during process shutdown.
@@ -292,7 +308,9 @@ type Service struct {
 	clock                func() time.Time
 	runtimeRetryDelay    func(time.Duration) time.Duration
 	endpointRefreshDelay func() time.Duration
-	newPeerProbeIdentity func(key.DiscoPrivate) (*peerwire.Identity, error)
+	newDiscoKey          func() (key.DiscoPrivate, error)
+	localEndpointsMu     sync.Mutex
+	localEndpointSink    func(pathdiscovery.Set)
 	logger               *slog.Logger
 	networkChanges       <-chan struct{}
 	syncSignal           chan struct{}
@@ -412,7 +430,7 @@ func New(
 		clock:                options.Clock,
 		runtimeRetryDelay:    jitteredRuntimeRetryDelay,
 		endpointRefreshDelay: randomEndpointRefreshDelay,
-		newPeerProbeIdentity: legacyProbeIdentity,
+		newDiscoKey:          key.NewDiscoPrivate,
 		logger:               options.Logger,
 		networkChanges:       options.NetworkChanges,
 		syncSignal:           make(chan struct{}, 1),
@@ -555,27 +573,12 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		}
 		// One disco key per control session serves the legacy probe format
 		// and Interchange relays, whose tickets bind it.
-		discoKey, err := key.NewDiscoPrivate()
+		discoKey, err := s.newDiscoKey()
 		if err != nil {
 			clear(privateKey[:])
 			clearProtocolMaterial(protocolMaterial)
 
 			return fmt.Errorf("creating disco key: %w", err)
-		}
-		probeIdentity, err := s.newPeerProbeIdentity(discoKey)
-		if err != nil {
-			clear(privateKey[:])
-			clearProtocolMaterial(protocolMaterial)
-
-			return fmt.Errorf("creating peer-probe identity: %w", err)
-		}
-		probePublicKey, err := probeIdentity.Public()
-		if err != nil {
-			probeIdentity.Close()
-			clear(privateKey[:])
-			clearProtocolMaterial(protocolMaterial)
-
-			return fmt.Errorf("reading peer-probe public key: %w", err)
 		}
 
 		if relayIdentity, ok := s.dataPlane.(relayIdentityDataPlane); ok {
@@ -609,7 +612,6 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				)
 				if err != nil {
 					cancel()
-					probeIdentity.Close()
 					clear(privateKey[:])
 					clearProtocolMaterial(protocolMaterial)
 
@@ -619,7 +621,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			}
 			probeRuntime, err = peerprobe.NewRuntime(
 				streamCtx,
-				probeIdentity,
+				discoKey,
 				&lockedPeerProbeTransport{
 					mu:        &s.dataPlaneMu,
 					dataPlane: dataPlane,
@@ -630,14 +632,18 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if err != nil {
 				pathController.Close()
 				cancel()
-				probeIdentity.Close()
 				clear(privateKey[:])
 				clearProtocolMaterial(protocolMaterial)
 
 				return fmt.Errorf("creating peer-probe runtime: %w", err)
 			}
+			runtime := probeRuntime
+			s.setLocalEndpointSink(func(candidates pathdiscovery.Set) {
+				runtime.SetLocalEndpoints(discoEndpoints(candidates), s.nat.get().NAT)
+			})
 		}
 		cleanupSession := func() error {
+			s.setLocalEndpointSink(nil)
 			if probeRuntime != nil {
 				probeRuntime.Close()
 			}
@@ -648,7 +654,6 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				detachErr = probeDataPlane.SetPeerProbeHandler(nil)
 				s.dataPlaneMu.Unlock()
 			}
-			probeIdentity.Close()
 			clear(privateKey[:])
 			clearProtocolMaterial(protocolMaterial)
 
@@ -687,7 +692,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					Hostname:            s.hostname,
 					Version:             "meshd/" + s.build.Version,
 					PinnedFingerprint:   record.ControlKeyFingerprint(),
-					PeerProbePublicKey:  probePublicKey.String(),
+					PeerProbePublicKey:  peerprobe.MapDiscoveryKey(discoKey.Public()),
 					Candidates:          s.configuredCandidates,
 					EndpointUpdates:     endpointUpdates,
 				},
@@ -1105,6 +1110,7 @@ func (s *Service) runEndpointRefresh(
 		offerLatest(updates, update)
 		lastPublished = update
 		hasPublished = true
+		s.notifyLocalEndpoints(candidates)
 	}
 
 	for {
@@ -2170,6 +2176,38 @@ type relayIdentityDataPlane interface {
 	SetRelayIdentity(key.DiscoPrivate)
 }
 
-func legacyProbeIdentity(disco key.DiscoPrivate) (*peerwire.Identity, error) {
-	return peerwire.IdentityFromPrivate(disco.ECDH().Bytes())
+// notifyLocalEndpoints hands the latest discovered candidates to the
+// session's probe runtime, which advertises them in CALL_ME_MAYBE.
+func (s *Service) notifyLocalEndpoints(candidates pathdiscovery.Set) {
+	s.localEndpointsMu.Lock()
+	sink := s.localEndpointSink
+	s.localEndpointsMu.Unlock()
+	if sink != nil {
+		sink(candidates)
+	}
+}
+
+func (s *Service) setLocalEndpointSink(sink func(pathdiscovery.Set)) {
+	s.localEndpointsMu.Lock()
+	s.localEndpointSink = sink
+	s.localEndpointsMu.Unlock()
+}
+
+// discoEndpoints translates discovered candidates to CALL_ME_MAYBE entries.
+func discoEndpoints(candidates pathdiscovery.Set) []disco.Endpoint {
+	out := make([]disco.Endpoint, 0, candidates.Len())
+	for _, candidate := range candidates.Candidates() {
+		kind := disco.EndpointHost
+		switch candidate.Source() {
+		case pathdiscovery.SourceServerReflexive:
+			kind = disco.EndpointServerReflex
+		case pathdiscovery.SourcePortMapping:
+			kind = disco.EndpointPortMapped
+		case pathdiscovery.SourceConfigured:
+			kind = disco.EndpointStatic
+		default:
+		}
+		out = append(out, disco.Endpoint{Kind: kind, Addr: candidate.Endpoint()})
+	}
+	return out
 }

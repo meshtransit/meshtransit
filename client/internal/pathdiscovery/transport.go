@@ -30,3 +30,16 @@ type DatagramHandler interface {
 	MatchesDatagram([]byte) bool
 	HandleDatagram([]byte, netip.AddrPort, Socket)
 }
+
+// RelayDatagramTransport sends a control datagram to a peer node through the
+// relay that peer is reached by. It never carries tunnel traffic.
+type RelayDatagramTransport interface {
+	SendRelayDatagram(packet []byte, peerNode [32]byte) error
+}
+
+// RelayDatagramHandler consumes control datagrams that arrived through a
+// relay. The relay authenticated the sender's node key; implementations must
+// not retain the packet slice.
+type RelayDatagramHandler interface {
+	HandleRelayDatagram(packet []byte, peerNode [32]byte)
+}
