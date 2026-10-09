@@ -31,6 +31,12 @@ RUN GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
     -o /out/meshrelay \
     ./relay/cmd/meshrelay
 
+# Let the non-root relay bind 443 without running as root: the file
+# capability survives into the scratch image and needs no other privilege.
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends libcap2-bin >/dev/null \
+    && setcap cap_net_bind_service=+ep /out/meshrelay \
+    && getcap /out/meshrelay
+
 FROM scratch
 
 ARG VERSION
