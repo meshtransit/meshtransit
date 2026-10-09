@@ -11,8 +11,8 @@ the `samber/cc-skills-golang@golang-how-to` skill first.
 
 ## Repository-wide rules
 
-- Licensing is per directory (see `LICENSE`). Code under `client/`, `shared/`
-  and `api/` MUST NOT import `core/` or `relay/`. `make check-boundaries`
+- Licensing is per directory (see `LICENSE`). Code under `client/`, `shared/`,
+  `api/` and `test/` MUST NOT import `core/` or `relay/`. `make check-boundaries`
   enforces this in CI.
 - `tailscale.com` may be imported only by the compatibility adapters
   (`client/internal/compat`, `core/internal/adapter/legacyts2021`) until they

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Apache-2.0 code (client/, shared/, api/) must never depend on AGPL-3.0 code
+# Apache-2.0 code (client/, shared/, api/, test/) must never depend on AGPL-3.0 code
 # (core/, relay/). Run from the repository root.
 set -euo pipefail
 
 module="$(go list -m)"
 violations=0
-for tree in client shared api; do
+for tree in client shared api test; do
 	[[ -d "${tree}" ]] || continue
 	while IFS= read -r package; do
 		deps="$(go list -deps "${package}" | grep -E "^${module}/(core|relay)(/|$)" || true)"

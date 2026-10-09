@@ -11,6 +11,7 @@ Apache-2.0 (see LICENSES/Apache-2.0.txt):
   client/   meshd, meshnetd, meshcred and meshctl
   shared/   protocol libraries used by the client, the relay and Core
   api/      API and protocol contracts
+  test/     shared test infrastructure (natlab)
   and every other file in this repository unless a LICENSE file in its
   directory, or a notice in the file itself, states otherwise.
 

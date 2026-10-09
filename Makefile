@@ -2,7 +2,7 @@ GO := go
 GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
 GOVULNCHECK := $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.8.0
 ACTIONLINT := $(GO) run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-GO_FILES := $(shell find core client api shared relay -type f -name '*.go' 2>/dev/null)
+GO_FILES := $(shell find core client api shared relay test -type f -name '*.go' 2>/dev/null)
 VERSION ?= 0.1.0~dev
 ARCH ?= amd64
 CONTAINER_IMAGE ?= manhdev2002/meshtransit-core
@@ -22,7 +22,7 @@ DEX_OLD_SOURCE ?=
 DEX_CURRENT_BINARY ?=
 DEX_CURRENT_BINARY_SHA256 ?=
 
-.PHONY: help build build-core build-client package-deb package-deb-meshd package-deb-meshctl lint-client check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
+.PHONY: help build build-core build-client package-deb package-deb-meshd package-deb-meshctl lint-client natlab-matrix check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
 	container-build container-build-multiarch container-push-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
 
 help:
@@ -162,7 +162,11 @@ lint:
 	$(GOLANGCI_LINT) run ./core/... ./api/...
 
 lint-client:
-	$(GOLANGCI_LINT) run --config client/.golangci.yml ./client/... ./shared/...
+	$(GOLANGCI_LINT) run --config client/.golangci.yml ./client/... ./shared/... ./test/...
+
+# Regenerates test/natlab/testdata/matrix.md; review the diff before committing.
+natlab-matrix:
+	$(GO) test ./test/natlab -run TestTraversalMatrix -count=1 -update
 
 lint-integration:
 	$(GOLANGCI_LINT) run --build-tags=integration \

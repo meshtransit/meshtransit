@@ -7,6 +7,13 @@ merge (2026-10-09) are kept below.
 
 - Merged Core, meshd and meshctl into one repository with per-directory
   licensing (core/ AGPL-3.0, client/ Apache-2.0).
+- Protocol specifications for disco v2, MTRP v1, keys, NAT classification and
+  the network threat model (docs/protocol).
+- shared/key, shared/disco and shared/mtrp: key types, disco v2 and MTRP v1
+  codecs with cross-checked test vectors and fuzz tests.
+- shared/stun (RFC 8489/5780 codec) and shared/netcheck (NAT classification).
+- test/natlab: in-memory NAT simulator, RFC 5780 STUN server, reference
+  traversal agent and a generated traversal matrix.
 
 ## meshd (before the merge)
 

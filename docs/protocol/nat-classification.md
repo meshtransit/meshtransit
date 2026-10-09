@@ -31,14 +31,18 @@ results describe the mapping WireGuard and disco actually use.
    - `M(S1) = M(S2) = M(S1′)`: **endpoint-independent**;
    - `M(S1) = M(S1′)` but `M(S1) ≠ M(S2)`: **address-dependent**;
    - `M(S1) ≠ M(S1′)`: **address-and-port-dependent**;
-   - fewer than two servers answered: **unknown**.
+   - `M(S1) ≠ M(S2)` and S1′ was not measured: **address-and-port-dependent**
+     (the two cannot be told apart; the stricter value keeps peers from
+     relying on port reuse that may not exist);
+   - fewer than two server addresses answered: **unknown**.
 2. **Port allocation.**
    - Endpoint-independent: mapped port equals the local port → **port-preserving**,
      otherwise **random** (nothing better to learn).
-   - Endpoint-dependent: query at least four distinct destinations in sequence
-     and take the differences between consecutive mapped ports. All
-     differences in 1..8 (allowing wrap-around) → **sequential** with the median
-     step recorded; otherwise **random**.
+   - Endpoint-dependent: contact the destinations one at a time and take the
+     differences between consecutive *distinct* mapped ports. At least three
+     distinct mappings are needed, otherwise **unknown**. All differences in
+     1..8 (modulo 2^16) → **sequential** with the median step recorded;
+     otherwise **random**.
 3. **Filtering** (needs a server supporting RFC 5780 CHANGE-REQUEST):
    - ask for a response from the other address and port: received →
      **endpoint-independent**;
@@ -47,12 +51,21 @@ results describe the mapping WireGuard and disco actually use.
    - if the server has no alternate address but has an alternate port, a
      received change-port response proves at most **address-dependent**
      (report 2); a missing one proves **address-and-port-dependent**;
-   - no RFC 5780 server reachable: **unknown**.
+   - no RFC 5780 server reachable: **unknown**;
+   - contradictory results resolve to the stricter class.
+
+   The filtering probes MUST run before any packet is sent to S1′, which
+   shares S1's address and the alternate port: that packet would open the
+   filter the change-port probe measures. A response counts only if it comes
+   from the address and port the change request asked for; a server that
+   ignores CHANGE-REQUEST answers from its primary address, and accepting that
+   would report filtering as open.
 4. **IPv6.** Report whether the node has a global IPv6 address and whether STUN
    over IPv6 succeeded (CALL_ME_MAYBE flag bit1).
 
 Each probe waits 1 s and is retransmitted once after 200 ms. The whole
-procedure is bounded to 3 s.
+procedure is bounded to 3 s and uses at most four servers. Transaction IDs
+come from a CSPRNG; responses with an unknown transaction ID are dropped.
 
 ## 3. Refinement from peers
 
@@ -70,3 +83,13 @@ peers. Results older than 10 minutes are reported as unknown.
 Classification results and endpoints are shared only with the control plane
 and with peers in the current map, inside encrypted messages. They are never
 logged with addresses.
+
+## 6. Laboratory validation
+
+`test/natlab` simulates the NAT behaviours above (RFC 4787 mapping,
+filtering, allocation, timeouts, hairpinning, carrier-grade chains and IPv6
+stateful firewalls) with an RFC 5780 STUN server. Tests check that
+`shared/netcheck` classifies every profile correctly, and a reference agent
+built on disco v2 records which technique connects each pair of profiles in
+[`test/natlab/testdata/matrix.md`](../../test/natlab/testdata/matrix.md),
+regenerated with `make natlab-matrix`.

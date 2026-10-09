@@ -5,6 +5,7 @@ on:
     paths:
       - "client/**"
       - "shared/**"
+      - "test/**"
       - "packaging/**"
       - "hack/**"
       - "go.mod"
@@ -69,7 +70,7 @@ jobs:
       - name: Check formatting
         shell: bash
         run: |
-          unformatted="$(gofmt -l client shared)"
+          unformatted="$(gofmt -l client shared test)"
           if [[ -n "${unformatted}" ]]; then
             printf '%s\n' "${unformatted}"
             exit 1
@@ -155,16 +156,16 @@ jobs:
           bash client/tools/qualification/test-linux-service-readiness.sh
 
       - name: Run vet
-        run: go vet ./client/... ./shared/...
+        run: go vet ./client/... ./shared/... ./test/...
 
       - name: Run tests with race detection
-        run: go test -race -shuffle=on -coverprofile=coverage.out ./client/... ./shared/...
+        run: go test -race -shuffle=on -coverprofile=coverage.out ./client/... ./shared/... ./test/...
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.12.2
-          args: --timeout=5m --config client/.golangci.yml ./client/... ./shared/...
+          args: --timeout=5m --config client/.golangci.yml ./client/... ./shared/... ./test/...
 
       - name: Install govulncheck
         env:

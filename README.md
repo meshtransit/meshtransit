@@ -42,6 +42,7 @@ at any past moment, and is recorded in a tamper-evident audit trail.
 | [`client/`](client/) | `meshd` node daemon, `meshnetd`, `meshcred` helpers and the `meshctl` CLI | Apache-2.0 |
 | `shared/` | Protocol libraries used by the client, the relay and Core (in development) | Apache-2.0 |
 | [`api/`](api/) | Management API (OpenAPI) and protocol contracts | Apache-2.0 |
+| `test/` | Shared test infrastructure, including the NAT traversal lab (`test/natlab`) | Apache-2.0 |
 | [`packaging/`](packaging/) | Linux packages (deb) and service units | Apache-2.0 |
 | [`docs/`](docs/) | Architecture, protocol and operations documents | Apache-2.0 |
 | [`hack/`](hack/) | Development, CI and supply-chain scripts | Apache-2.0 |
