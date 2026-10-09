@@ -64,7 +64,7 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 
 	var streams *stream.Listener
 	if cfg.tlsAddr != "" {
-		tlsConf, err := tlsConfig(cfg, logger)
+		tlsConf, err := tlsConfig(cfg, logger, m.CertificateServed)
 		if err != nil {
 			return err
 		}

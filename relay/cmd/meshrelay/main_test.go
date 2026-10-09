@@ -79,23 +79,24 @@ func TestParseServeConfig(t *testing.T) {
 
 func TestTLSConfigModes(t *testing.T) {
 	t.Parallel()
-	if _, err := tlsConfig(serveConfig{}, slog.New(slog.DiscardHandler)); err == nil {
+	if _, err := tlsConfig(serveConfig{}, slog.New(slog.DiscardHandler), nil); err == nil {
 		t.Fatal("no certificate mode accepted")
 	}
-	if _, err := tlsConfig(serveConfig{tlsSelfSigned: true, acmeHost: "relay.example"}, slog.New(slog.DiscardHandler)); err == nil {
+	if _, err := tlsConfig(serveConfig{tlsSelfSigned: true, acmeHost: "relay.example"}, slog.New(slog.DiscardHandler), nil); err == nil {
 		t.Fatal("two certificate modes accepted")
 	}
-	if _, err := tlsConfig(serveConfig{acmeHost: "relay.example"}, slog.New(slog.DiscardHandler)); err == nil {
+	if _, err := tlsConfig(serveConfig{acmeHost: "relay.example"}, slog.New(slog.DiscardHandler), nil); err == nil {
 		t.Fatal("ACME without a cache directory accepted")
 	}
-	if _, err := tlsConfig(serveConfig{tlsCert: "missing.pem", tlsKey: "missing.key"}, slog.New(slog.DiscardHandler)); err == nil {
+	if _, err := tlsConfig(serveConfig{tlsCert: "missing.pem", tlsKey: "missing.key"}, slog.New(slog.DiscardHandler), nil); err == nil {
 		t.Fatal("missing certificate files accepted")
 	}
-	c, err := tlsConfig(serveConfig{tlsSelfSigned: true}, slog.New(slog.DiscardHandler))
-	if err != nil || len(c.Certificates) != 1 {
-		t.Fatalf("self-signed: %v", err)
+	var expiry time.Time
+	c, err := tlsConfig(serveConfig{tlsSelfSigned: true}, slog.New(slog.DiscardHandler), func(t time.Time) { expiry = t })
+	if err != nil || len(c.Certificates) != 1 || time.Until(expiry) < 300*24*time.Hour {
+		t.Fatalf("self-signed: %v (expiry %v)", err, expiry)
 	}
-	acme, err := tlsConfig(serveConfig{acmeHost: "relay.example", acmeCache: t.TempDir()}, slog.New(slog.DiscardHandler))
+	acme, err := tlsConfig(serveConfig{acmeHost: "relay.example", acmeCache: t.TempDir()}, slog.New(slog.DiscardHandler), func(time.Time) {})
 	if err != nil || acme.GetCertificate == nil {
 		t.Fatalf("acme: %v", err)
 	}

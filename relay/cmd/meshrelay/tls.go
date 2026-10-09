@@ -23,7 +23,39 @@ import (
 // part of MTRP's trust model (the Noise handshake authenticates the relay),
 // but a publicly trusted certificate lets middleboxes and proxies pass the
 // connection, so ACME or certificate files are preferred over self-signed.
-func tlsConfig(cfg serveConfig, logger *slog.Logger) (*tls.Config, error) {
+func tlsConfig(cfg serveConfig, logger *slog.Logger, served func(notAfter time.Time)) (*tls.Config, error) {
+	c, err := baseTLSConfig(cfg, logger)
+	if err != nil || served == nil {
+		return c, err
+	}
+	// Report the expiry of whatever certificate is served, so monitoring
+	// can alert before it lapses (for example if ACME renewal keeps failing).
+	if len(c.Certificates) == 1 {
+		reportExpiry(&c.Certificates[0], served)
+	}
+	if get := c.GetCertificate; get != nil {
+		c.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			cert, err := get(hello)
+			if err == nil {
+				reportExpiry(cert, served)
+			}
+			return cert, err
+		}
+	}
+	return c, nil
+}
+
+func reportExpiry(cert *tls.Certificate, served func(time.Time)) {
+	leaf := cert.Leaf
+	if leaf == nil && len(cert.Certificate) > 0 {
+		leaf, _ = x509.ParseCertificate(cert.Certificate[0])
+	}
+	if leaf != nil {
+		served(leaf.NotAfter)
+	}
+}
+
+func baseTLSConfig(cfg serveConfig, logger *slog.Logger) (*tls.Config, error) {
 	modes := 0
 	for _, set := range []bool{cfg.tlsCert != "", cfg.acmeHost != "", cfg.tlsSelfSigned} {
 		if set {
