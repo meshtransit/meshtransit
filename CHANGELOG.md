@@ -20,6 +20,11 @@ merge (2026-10-09) are kept below.
   docs/protocol/policy-digest-v1.md); meshd reports the digest of the rules
   its packet filter enforces; Core compares it with the delivered filter and
   reports enforced, applying, mismatch or not_reported per Device.
+- Enforcement evidence ledger (R1-69, schema 136): the enforcement-ledger
+  worker records per-Device enforcement intervals, seals
+  device.enforcement_mismatch and device.enforcement_restored on the Network
+  audit stream, and GET …/devices/enforcement-history?at=T answers what each
+  Device enforced at an instant.
 
 ## meshd (before the merge)
 

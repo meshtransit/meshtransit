@@ -60,9 +60,11 @@ type Config struct {
 	ContractExpiryWorker  *ContractExpiryWorkerConfig
 	RelayAuthority        *RelayAuthorityConfig
 	AccessLedgerWorker    *AccessLedgerWorkerConfig
-	AuthExpiry            *AuthExpiryConfig
-	PrivateLogin          *PrivateLoginFile
-	BrowserRegistration   *BrowserRegistrationConfig
+	// EnforcementLedgerWorker records client enforcement evidence (R1-69).
+	EnforcementLedgerWorker *EnforcementLedgerWorkerConfig
+	AuthExpiry              *AuthExpiryConfig
+	PrivateLogin            *PrivateLoginFile
+	BrowserRegistration     *BrowserRegistrationConfig
 	// Mail sends Workspace invitations; it is accepted on api and all roles.
 	Mail *MailConfig
 	// Signup enables self sign-up; it is accepted on api and all roles with
@@ -137,6 +139,11 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	accessLedgerWorkerConfig, err := loadAccessLedgerWorkerConfig(lookup, role)
+	if err != nil {
+		return Config{}, err
+	}
+
+	enforcementLedgerWorkerConfig, err := loadEnforcementLedgerWorkerConfig(lookup, role)
 	if err != nil {
 		return Config{}, err
 	}
@@ -262,28 +269,29 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	return Config{
-		Role:                  role,
-		HealthAddress:         healthAddress,
-		ShutdownTimeout:       shutdownTimeout,
-		LogLevel:              logLevel,
-		Dependencies:          dependencyConfig,
-		Storage:               storageConfig,
-		API:                   apiConfig,
-		Control:               controlConfig,
-		Enrollment:            enrollmentConfig,
-		RevisionWorker:        revisionWorkerConfig,
-		PrivateEndpointWorker: privateEndpointWorkerConfig,
-		DeviceAliasWorker:     deviceAliasWorkerConfig,
-		ContractExpiryWorker:  contractExpiryWorkerConfig,
-		RelayAuthority:        relayAuthorityConfig,
-		AccessLedgerWorker:    accessLedgerWorkerConfig,
-		AuthExpiry:            authExpiryConfig,
-		PrivateLogin:          privateLoginFile,
-		BrowserRegistration:   browserRegistration,
-		Mail:                  mailConfig,
-		Signup:                signupConfig,
-		Identity:              identityConfig,
-		DeploymentEntitlement: deploymentEntitlementConfig,
+		Role:                    role,
+		HealthAddress:           healthAddress,
+		ShutdownTimeout:         shutdownTimeout,
+		LogLevel:                logLevel,
+		Dependencies:            dependencyConfig,
+		Storage:                 storageConfig,
+		API:                     apiConfig,
+		Control:                 controlConfig,
+		Enrollment:              enrollmentConfig,
+		RevisionWorker:          revisionWorkerConfig,
+		PrivateEndpointWorker:   privateEndpointWorkerConfig,
+		DeviceAliasWorker:       deviceAliasWorkerConfig,
+		ContractExpiryWorker:    contractExpiryWorkerConfig,
+		RelayAuthority:          relayAuthorityConfig,
+		AccessLedgerWorker:      accessLedgerWorkerConfig,
+		EnforcementLedgerWorker: enforcementLedgerWorkerConfig,
+		AuthExpiry:              authExpiryConfig,
+		PrivateLogin:            privateLoginFile,
+		BrowserRegistration:     browserRegistration,
+		Mail:                    mailConfig,
+		Signup:                  signupConfig,
+		Identity:                identityConfig,
+		DeploymentEntitlement:   deploymentEntitlementConfig,
 	}, nil
 }
 

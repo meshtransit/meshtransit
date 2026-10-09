@@ -502,6 +502,7 @@ func Catalog() []Migration {
 		newMigration(133, "Read policy distribution status", deviceDistributionReadSQL),
 		newMigration(134, "Access edge ledger and history read", accessEdgeLedgerSQL),
 		newMigration(135, "Relay revocation read", relayRevocationsReadSQL),
+		newMigration(136, "Device enforcement ledger and history read", deviceEnforcementLedgerSQL),
 	}
 }
 
@@ -686,3 +687,6 @@ var accessEdgeLedgerSQL string
 
 //go:embed 000135_relay_revocations_read.up.sql
 var relayRevocationsReadSQL string
+
+//go:embed 000136_device_enforcement_ledger.up.sql
+var deviceEnforcementLedgerSQL string

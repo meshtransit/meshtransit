@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 135 {
-		t.Fatalf("len(Catalog()) = %d, want 135", len(catalog))
+	if len(catalog) != 136 {
+		t.Fatalf("len(Catalog()) = %d, want 136", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 135 {
-		t.Fatalf("LatestVersion() = %d, want 135", LatestVersion())
+	if LatestVersion() != 136 {
+		t.Fatalf("LatestVersion() = %d, want 136", LatestVersion())
 	}
 }
 
@@ -3249,6 +3249,38 @@ func TestRelayRevocationsRead(t *testing.T) {
 	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP ", "UPDATE ", "INSERT "} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 135 must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestDeviceEnforcementLedger(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[135]
+	if migration.Version != 136 {
+		t.Fatalf("migration 136 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh_ops.device_enforcement_history",
+		"CREATE TABLE mesh_ops.device_enforcement_event",
+		"WHERE valid_to IS NULL;",
+		"(state = 'enforced') = (delivered_digest = enforced_digest)",
+		"mesh_audit.capture_authority_mutation('device_enforcement_event', 'public_id')",
+		"pg_try_advisory_xact_lock",
+		"'device.enforcement_mismatch'",
+		"'device.enforcement_restored'",
+		"'system.reconcile'",
+		"INTERVAL '13 months'",
+		"'device.read', p_evaluated_at",
+		") TO mesh_worker;",
+		") TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 136 must contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 136 must not contain %q", forbidden)
 		}
 	}
 }

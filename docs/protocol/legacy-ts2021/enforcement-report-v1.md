@@ -47,3 +47,7 @@ the current session and the latest report of that session. A new session
 clears the report. The comparison is `enforced` (equal), `applying` (different
 but delivered less than 60 s ago), `mismatch` (different past 60 s) or
 `not_reported` (no report past 60 s; for example an older meshd).
+
+The enforcement-ledger worker records each change between `enforced` and
+`mismatch` as a validity interval, and seals the change into or out of
+`mismatch` as an audit event on the Network stream.

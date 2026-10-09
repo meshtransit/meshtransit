@@ -60,6 +60,8 @@ type BrowserManagementOptions struct {
 	Distribution SessionDeviceDistribution
 	// AccessGraphHistory is optional; without it the ledger route is not served.
 	AccessGraphHistory SessionAccessGraphHistory
+	// EnforcementHistory is optional; without it the evidence route is not served.
+	EnforcementHistory SessionEnforcementHistory
 	Capabilities       SessionDeploymentCapabilities
 	DeploymentID       deployment.ID
 	Origin             string
@@ -77,15 +79,17 @@ type BrowserManagement struct {
 	inventory    SessionDeviceInventory
 	distribution SessionDeviceDistribution
 	history      SessionAccessGraphHistory
-	capabilities SessionDeploymentCapabilities
-	deploymentID deployment.ID
-	origin, host string
-	keyID        string
-	key          [32]byte
-	clock        accountsession.Clock
-	lifetime     time.Duration
-	entropy      io.Reader
-	telemetry    *BrowserManagementTelemetry
+	// enforcementHistory reads recorded enforcement evidence (R1-69).
+	enforcementHistory SessionEnforcementHistory
+	capabilities       SessionDeploymentCapabilities
+	deploymentID       deployment.ID
+	origin, host       string
+	keyID              string
+	key                [32]byte
+	clock              accountsession.Clock
+	lifetime           time.Duration
+	entropy            io.Reader
+	telemetry          *BrowserManagementTelemetry
 	// Handle owns tokens through real submission. Never close or queue on slots.
 	slots chan struct{}
 }
@@ -137,7 +141,8 @@ func NewBrowserManagement(options BrowserManagementOptions) (*BrowserManagement,
 		return nil, ErrInvalidBrowserManagement
 	}
 	browser := &BrowserManagement{management: handler, logout: options.Logout, scopes: options.Scopes, inventory: options.Inventory,
-		distribution: options.Distribution, history: options.AccessGraphHistory, capabilities: options.Capabilities,
+		distribution: options.Distribution, history: options.AccessGraphHistory,
+		enforcementHistory: options.EnforcementHistory, capabilities: options.Capabilities,
 		deploymentID: options.DeploymentID,
 		origin:       options.Origin, host: origin.Host, keyID: options.Key.ID, clock: options.Clock,
 		lifetime: options.ProofLifetime, entropy: rand.Reader, telemetry: NewBrowserManagementTelemetry(),
@@ -254,6 +259,8 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 	distributionRead := distributionMatched && !nilContinuationDependency(browser.distribution)
 	historyScope, historyMatched := parseAccessGraphHistoryPath(request)
 	historyRead := historyMatched && !nilContinuationDependency(browser.history)
+	enforcementScope, enforcementMatched := parseEnforcementHistoryPath(request)
+	enforcementRead := enforcementMatched && !nilContinuationDependency(browser.enforcementHistory)
 	deploymentCapabilities := request.URL.Path == DeploymentCapabilitiesPath && request.Method == http.MethodGet
 	_, device := parseDeviceRevokePath(request)
 	_, policy := parsePolicyPublishPath(request)
@@ -275,6 +282,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		isInvitationOperation(request)
 	resourceSharing, _ := browserResourceSharingOperation(request)
 	if !prepare && !logout && !managementScopes && !inventoryRead && !distributionRead && !historyRead &&
+		!enforcementRead &&
 		!deploymentCapabilities && !device && !policy && !simulation &&
 		!approval && !accessGraph && !accessGraphList && !policyRead && !workspaceRename && !workspaceRoles && !resourceSharing {
 		return ErrInvalidBrowserManagement
@@ -334,6 +342,10 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		}
 	} else if historyRead {
 		if err := browser.readAccessGraphHistory(ctx, candidate, request, admission, historyScope); err != nil {
+			return err
+		}
+	} else if enforcementRead {
+		if err := browser.readEnforcementHistory(ctx, candidate, request, admission, enforcementScope); err != nil {
 			return err
 		}
 	} else if deploymentCapabilities {
@@ -479,6 +491,8 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	distributionRead := distributionMatched && !nilContinuationDependency(browser.distribution)
 	_, historyMatched := parseAccessGraphHistoryPath(request)
 	historyRead := historyMatched && !nilContinuationDependency(browser.history)
+	_, enforcementMatched := parseEnforcementHistoryPath(request)
+	enforcementRead := enforcementMatched && !nilContinuationDependency(browser.enforcementHistory)
 	deploymentCapabilityRead := request.Method == http.MethodGet && target.Path == DeploymentCapabilitiesPath
 	_, policyMatched := parseActivePolicyPath(request)
 	policyRead := policyMatched && request.Method == http.MethodGet
@@ -493,6 +507,7 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	auditRead := isAuditEventListRead(request) || isAuditEventExportRead(request) || isDeviceGroupRead(request) ||
 		isIdentityCatalogRead(request)
 	safeRead := approvalRead || managementScopeRead || inventoryRead || distributionRead || historyRead ||
+		enforcementRead ||
 		deploymentCapabilityRead ||
 		policyRead ||
 		accessGraphRead || resourceSharingRead || directoryRead || auditRead
@@ -500,7 +515,7 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 		return false
 	}
 	queryAllowed := approvalRead && approvalPath.kind == policyApprovalPathCollection || managementScopeRead ||
-		inventoryRead || distributionRead || historyRead ||
+		inventoryRead || distributionRead || historyRead || enforcementRead ||
 		resourceSharingCollectionRead || accessGraphRead || auditRead
 	if (!queryAllowed && target.RawQuery != "") || len(target.RawQuery) > maximumCallbackQueryBytes {
 		return false

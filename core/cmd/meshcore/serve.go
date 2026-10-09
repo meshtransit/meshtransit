@@ -247,6 +247,16 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		additionalMetrics = append(additionalMetrics, workerMetrics)
 		roleServices = append(roleServices, app.OwnedService{Name: "access-ledger-worker", Service: workerService})
 	}
+	if processConfig.EnforcementLedgerWorker != nil {
+		workerService, workerMetrics, composeErr := composeEnforcementLedgerWorker(
+			*processConfig.EnforcementLedgerWorker, storagePools.worker, redisClient, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "enforcement_ledger_worker_composition_failure")
+			return 1
+		}
+		additionalMetrics = append(additionalMetrics, workerMetrics)
+		roleServices = append(roleServices, app.OwnedService{Name: "enforcement-ledger-worker", Service: workerService})
+	}
 	var privateFactory *privateIdentityFactory
 	if privateProfile != nil {
 		var browserRuntime []browserRegistrationRuntime

@@ -103,6 +103,7 @@ const (
 	postgresOperationDeviceDistribution        postgresOperation = "device_distribution"
 	postgresOperationRelayRevocations          postgresOperation = "relay_revocations"
 	postgresOperationAccessGraphHistory        postgresOperation = "access_graph_history"
+	postgresOperationEnforcementHistory        postgresOperation = "enforcement_history"
 	postgresOperationActivePolicyRead          postgresOperation = "active_policy_read"
 	postgresOperationAccountSessionCaps        postgresOperation = "account_session_capabilities"
 	postgresOperationAccountSessionLogout      postgresOperation = "account_session_logout"
@@ -203,6 +204,7 @@ var (
 		postgresOperationDeviceDistribution,
 		postgresOperationRelayRevocations,
 		postgresOperationAccessGraphHistory,
+		postgresOperationEnforcementHistory,
 		postgresOperationActivePolicyRead,
 		postgresOperationAccountSessionCaps,
 		postgresOperationAccountSessionLogout,
@@ -510,6 +512,7 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationDeviceDistribution ||
 			operation == postgresOperationRelayRevocations ||
 			operation == postgresOperationAccessGraphHistory ||
+			operation == postgresOperationEnforcementHistory ||
 			operation == postgresOperationActivePolicyRead ||
 			operation == postgresOperationAccountSessionCaps ||
 			operation == postgresOperationAccountSessionLogout
