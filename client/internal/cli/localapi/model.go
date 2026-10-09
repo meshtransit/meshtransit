@@ -35,7 +35,29 @@ type Status struct {
 	NetworkChanges     NetworkChangeStatus    `json:"network_changes"`
 	RuntimeRecovery    *RuntimeRecoveryStatus `json:"runtime_recovery,omitempty"`
 	Runtime            *RuntimeStatus         `json:"runtime,omitempty"`
+	NAT                *NATStatus             `json:"nat,omitempty"`
 	CompatibilityNote  string                 `json:"compatibility_note"`
+}
+
+// NATStatus is the daemon's classification of the NAT in front of its
+// encrypted packet socket.
+type NATStatus struct {
+	State           string `json:"state"`
+	Mapping         string `json:"mapping,omitempty"`
+	Filtering       string `json:"filtering,omitempty"`
+	Allocation      string `json:"allocation,omitempty"`
+	SequentialStep  uint16 `json:"sequential_step,omitempty"`
+	Difficulty      string `json:"difficulty,omitempty"`
+	PublicEndpoint  string `json:"public_endpoint,omitempty"`
+	ServersAnswered int    `json:"servers_answered,omitempty"`
+	ObservedAt      string `json:"observed_at,omitempty"`
+	Error           string `json:"error,omitempty"`
+}
+
+// Netcheck is the result of an on-demand NAT classification.
+type Netcheck struct {
+	APIVersion string    `json:"api_version"`
+	NAT        NATStatus `json:"nat"`
 }
 
 // PathStatus summarizes the selected transport for visible peers.

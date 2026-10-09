@@ -25,6 +25,7 @@ const (
 	defaultLoginWaitTimeout = 5 * time.Minute
 	loginRetryDelay         = 100 * time.Millisecond
 	maxAuthKeyBytes         = 4096
+	netcheckTimeout         = 15 * time.Second
 )
 
 var errLoginWaitTimeout = errors.New("browser authorization wait timed out")
@@ -40,6 +41,7 @@ type DaemonClient interface {
 	StartLogin(context.Context, string) (localapi.Login, error)
 	CompleteLogin(context.Context) (localapi.Login, error)
 	RotateNodeKey(context.Context) (localapi.NodeKeyRotation, error)
+	RefreshNAT(context.Context) (localapi.Netcheck, error)
 }
 
 // ClientFactory constructs the local daemon client after global flags are parsed.
@@ -104,7 +106,12 @@ func Run(
 		return writeVersion(stdout, global.isJSON, options.Build)
 	}
 
-	client, err := options.NewClient(global.socketPath, global.timeout)
+	timeout := global.timeout
+	if commandArgs[0] == "netcheck" {
+		// A classification waits for STUN answers; never cut it short.
+		timeout = max(timeout, netcheckTimeout)
+	}
+	client, err := options.NewClient(global.socketPath, timeout)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "meshctl: %v\n", err)
 
@@ -132,6 +139,8 @@ func Run(
 		)
 	case "identity":
 		return runIdentity(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
+	case "netcheck":
+		return runNetcheck(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	default:
 		_, _ = fmt.Fprintf(stderr, "meshctl: unknown command %q\n", commandArgs[0])
 		writeUsage(stderr)
@@ -489,7 +498,7 @@ func runStatus(
 	}
 	_, _ = fmt.Fprintf(
 		stdout,
-		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nPeers: %d\nPeer paths: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
+		"Daemon: %s\nState: %s\nData plane: %s\nDNS: %s\nNetwork changes: %s\nRuntime recovery: %s\nRuntime: %s\nActive profile: %s\nProfiles: %d\nControl trust: %s\nRegistration: %s\nControl session: %s\nNetmap revision: %d\nNetwork: %s\nSelf addresses: %s\nPeers: %d\nPeer paths: %s\nPath transitions: %s\nPath probes: %s\nRelay: %s\nNAT: %s\nPolicy rules: %d\nControl key: %s\nNote: %s\n",
 		status.Daemon.Version,
 		status.State,
 		status.DataPlane,
@@ -510,6 +519,7 @@ func runStatus(
 		formatPathTransitionStatus(status.PeerPaths),
 		formatPathProbeStatus(status.PathProbes),
 		formatRelayStatus(status.Relay),
+		formatNATSummary(status.NAT),
 		status.PolicyRuleCount,
 		controlFingerprint,
 		status.CompatibilityNote,
@@ -887,6 +897,7 @@ Commands:
                                           Register the active profile and wait for browser approval
   login complete                          Recover a pending browser authorization
   identity rotate-node-key                Rotate the active profile Node key
+  netcheck                                Classify the NAT in front of this machine now
   doctor control                          Probe active control compatibility
   version                                 Show meshctl build information
   help                                    Show this help

@@ -225,6 +225,19 @@ func (c *Client) RotateNodeKey(ctx context.Context) (NodeKeyRotation, error) {
 	return response, nil
 }
 
+// RefreshNAT asks the daemon to classify its NAT now.
+func (c *Client) RefreshNAT(ctx context.Context) (Netcheck, error) {
+	response := Netcheck{}
+	if err := c.do(ctx, http.MethodPost, "/v1/netcheck", nil, http.StatusOK, &response); err != nil {
+		return Netcheck{}, err
+	}
+	if response.APIVersion != apiVersion {
+		return Netcheck{}, fmt.Errorf("localapi: unsupported api version %q", response.APIVersion)
+	}
+
+	return response, nil
+}
+
 func (c *Client) do(
 	ctx context.Context,
 	method string,

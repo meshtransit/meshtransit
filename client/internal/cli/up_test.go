@@ -96,6 +96,10 @@ func (*upFakeClient) RotateNodeKey(context.Context) (localapi.NodeKeyRotation, e
 	return localapi.NodeKeyRotation{}, nil
 }
 
+func (*upFakeClient) RefreshNAT(context.Context) (localapi.Netcheck, error) {
+	return localapi.Netcheck{}, nil
+}
+
 var _ DaemonClient = (*upFakeClient)(nil)
 
 func runUpCommand(t *testing.T, client DaemonClient, args ...string) (int, string, string) {

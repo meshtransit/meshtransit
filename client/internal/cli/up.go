@@ -218,7 +218,7 @@ func writeUpConnected(
 	return writeUpDone(stdout, stderr, isJSON, result, "Connected")
 }
 
-func writeUpDone(stdout io.Writer, stderr io.Writer, isJSON bool, result upResult, verb string) int {
+func writeUpDone(stdout, stderr io.Writer, isJSON bool, result upResult, verb string) int {
 	if isJSON {
 		return writeJSON(stdout, stderr, result)
 	}

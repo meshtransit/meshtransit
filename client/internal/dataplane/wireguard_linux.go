@@ -17,6 +17,7 @@ import (
 	relaywire "meshtransit.net/client/internal/compat/derp"
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/client/internal/relay"
+	"meshtransit.net/shared/netcheck"
 )
 
 type officialWireGuardFactory struct {
@@ -26,6 +27,7 @@ type officialWireGuardFactory struct {
 type officialWireGuardDevice struct {
 	device    *device.Device
 	discovery *pathdiscovery.Discovery
+	nat       *pathdiscovery.NATClassifier
 	bind      *sharedBind
 	datagrams *controlDatagramMux
 }
@@ -91,7 +93,16 @@ func (f *officialWireGuardFactory) New(
 
 		return nil, err
 	}
-	datagrams, err := newControlDatagramMux(discovery)
+	natClassifier, err := pathdiscovery.NewNATClassifier(bind, netcheck.Config{})
+	if err != nil {
+		_ = tunDevice.Close()
+		_ = relayPool.Close()
+
+		return nil, err
+	}
+	// Endpoint discovery and NAT classification both use STUN on the shared
+	// socket; each ignores answers to transactions it did not send.
+	datagrams, err := newControlDatagramMux(pathdiscovery.JoinHandlers(discovery, natClassifier))
 	if err != nil {
 		_ = tunDevice.Close()
 		_ = relayPool.Close()
@@ -108,6 +119,7 @@ func (f *officialWireGuardFactory) New(
 	return &officialWireGuardDevice{
 		device:    newEndpointAuthorityDevice(tunDevice, bind, logger),
 		discovery: discovery,
+		nat:       natClassifier,
 		bind:      bind,
 		datagrams: datagrams,
 	}, nil
@@ -204,6 +216,18 @@ func (d *officialWireGuardDevice) DiscoverEndpoints(
 	}
 
 	return d.discovery.Discover(ctx, scope, servers)
+}
+
+func (d *officialWireGuardDevice) ClassifyNAT(
+	ctx context.Context,
+	servers []netip.AddrPort,
+	local []netip.AddrPort,
+) (pathdiscovery.NATReport, error) {
+	if d == nil || d.nat == nil {
+		return pathdiscovery.NATReport{}, pathdiscovery.ErrTransportClosed
+	}
+
+	return d.nat.Classify(ctx, servers, local)
 }
 
 func (d *officialWireGuardDevice) Socket() pathdiscovery.Socket {

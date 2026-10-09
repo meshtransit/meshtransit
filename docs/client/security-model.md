@@ -51,6 +51,13 @@ Packet payloads are not an observability asset and must not be collected.
   goroutine, and GC counters for soak qualification. It exposes no stack trace,
   allocation profile, label, command line, address, or per-peer metric and does
   not open a network listener.
+- NAT classification uses STUN on the encrypted packet socket, only toward
+  the signed relay map's STUN servers, with random transaction IDs; answers
+  are accepted only from the exact expected source. Local status reports the
+  classification without addresses. Only an explicit authenticated
+  `POST /v1/netcheck` returns the node's own public endpoint, and logs carry
+  error codes only. Probes are prepared under the packet-engine lock and run
+  outside it, so a classification never delays map updates.
 - Control URLs reject credentials, query strings, and fragments.
 - Control URLs and the TS2021 key probe permit TLS port 443 only.
 - The control probe bypasses environment proxies, refuses redirects, uses TLS 1.2 or newer with standard certificate and hostname verification, limits the key response to 64 KiB, validates the typed machine key, completes Noise IK with an ephemeral machine key, and returns only a SHA-256 fingerprint.

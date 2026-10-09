@@ -1,6 +1,8 @@
 # NAT classification
 
-Draft 1, 2026-10-09. Implementation: `shared/netcheck`.
+Draft 1, 2026-10-09. Implementation: `shared/netcheck`; meshd runs it on its
+encrypted packet socket (`client/internal/pathdiscovery`), shown by
+`meshctl netcheck`.
 
 A node classifies the NAT in front of its WireGuard socket so that peers pick
 the right traversal technique (see the traversal matrix in

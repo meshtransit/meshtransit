@@ -93,6 +93,7 @@ Global flags must appear before the command. `MESHCTL_SOCKET` and `MESHCTL_TIMEO
 - `meshctl login --auth-key-stdin`
 - `meshctl login complete`
 - `meshctl identity rotate-node-key`
+- `meshctl netcheck`
 - `meshctl version`
 - `meshctl doctor control`
 - `meshctl --json ...` for machine-readable output
@@ -114,6 +115,15 @@ environment variables and are not persisted by either process.
 rotation for the active registered profile. `meshctl` sends no key or login
 credential and never receives private key material. A temporary failure can be
 retried safely; `meshd` retains and reuses the exact staged transition.
+
+`netcheck` asks `meshd` to classify the NAT in front of its encrypted packet
+socket now, using the relay map's STUN servers on that same socket, and prints
+the mapping, filtering and port allocation behaviour, whether the network is
+easy or hard for direct connections, and the public endpoint
+([nat-classification](../../../docs/protocol/nat-classification.md)). `meshd`
+also classifies on its own at session start, after network changes and every
+five minutes; `meshctl status` shows that result without the public endpoint.
+Filtering is reported as `unknown` until the relays offer RFC 5780 STUN.
 
 Creating a profile does not accept a network ID. The control plane derives and authorizes network membership from the registration or session credential.
 

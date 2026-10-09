@@ -115,6 +115,14 @@ type endpointDiscoveringDevice interface {
 	) (pathdiscovery.DiscoveryResult, error)
 }
 
+type natClassifyingDevice interface {
+	ClassifyNAT(
+		context.Context,
+		[]netip.AddrPort,
+		[]netip.AddrPort,
+	) (pathdiscovery.NATReport, error)
+}
+
 type peerProbingDevice interface {
 	pathdiscovery.DatagramTransport
 	SetPeerProbeHandler(pathdiscovery.DatagramHandler)
@@ -576,6 +584,48 @@ func (e *WireGuardEngine) DiscoverEndpoints(
 	result.Candidates = merged
 
 	return result, nil
+}
+
+// NATClassification runs one NAT classification prepared by
+// PrepareNATClassification. It needs no engine lock.
+type NATClassification func(context.Context) (pathdiscovery.NATReport, error)
+
+// PrepareNATClassification snapshots what a classification of the shared
+// encrypted-packet socket needs (docs/protocol/nat-classification.md). The
+// caller holds the same lock it holds for Apply; the returned function then
+// runs without it, so a classification never blocks map updates.
+func (e *WireGuardEngine) PrepareNATClassification(
+	servers []netip.AddrPort,
+) (pathdiscovery.Socket, NATClassification, error) {
+	if e == nil {
+		return pathdiscovery.Socket{}, nil, errors.New("dataplane: wireguard engine is not initialized")
+	}
+	device, supported := e.device.(natClassifyingDevice)
+	if !supported {
+		return pathdiscovery.Socket{}, nil, errors.New("dataplane: nat classification is unavailable")
+	}
+	if len(servers) == 0 {
+		return pathdiscovery.Socket{}, nil, pathdiscovery.ErrNoSTUNServers
+	}
+	socket := e.DiscoverySocket()
+	if !socket.IsOpen() {
+		return pathdiscovery.Socket{}, nil, pathdiscovery.ErrTransportClosed
+	}
+	// The socket's own addresses let the classifier recognise a host without
+	// NAT; a lookup failure only costs that distinction.
+	var local []netip.AddrPort
+	if e.hostAddresses != nil {
+		if addresses, err := e.hostAddresses(); err == nil {
+			if candidates, err := pathdiscovery.HostCandidates(addresses, socket.Port, e.addresses); err == nil {
+				local = candidates.Endpoints()
+			}
+		}
+	}
+	servers = append([]netip.AddrPort(nil), servers...)
+
+	return socket, func(ctx context.Context) (pathdiscovery.NATReport, error) {
+		return device.ClassifyNAT(ctx, servers, local)
+	}, nil
 }
 
 // Socket returns the active generation of the shared encrypted-packet socket.

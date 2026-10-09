@@ -37,7 +37,28 @@ type statusResponse struct {
 	NetworkChanges     networkChangeStatus   `json:"network_changes"`
 	RuntimeRecovery    runtimeRecoveryStatus `json:"runtime_recovery"`
 	Runtime            runtimeStatus         `json:"runtime"`
+	NAT                natStatus             `json:"nat"`
 	CompatibilityNote  string                `json:"compatibility_note"`
+}
+
+// natStatus is the wire form of the daemon's NAT classification
+// (docs/protocol/nat-classification.md).
+type natStatus struct {
+	State           string `json:"state"`
+	Mapping         string `json:"mapping,omitempty"`
+	Filtering       string `json:"filtering,omitempty"`
+	Allocation      string `json:"allocation,omitempty"`
+	SequentialStep  uint16 `json:"sequential_step,omitempty"`
+	Difficulty      string `json:"difficulty,omitempty"`
+	PublicEndpoint  string `json:"public_endpoint,omitempty"`
+	ServersAnswered int    `json:"servers_answered,omitempty"`
+	ObservedAt      string `json:"observed_at,omitempty"`
+	Error           string `json:"error,omitempty"`
+}
+
+type netcheckResponse struct {
+	APIVersion string    `json:"api_version"`
+	NAT        natStatus `json:"nat"`
 }
 
 type networkChangeStatus struct {

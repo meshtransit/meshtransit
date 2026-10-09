@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"meshtransit.net/client/internal/runtimehealth"
 	"meshtransit.net/client/internal/secretstore"
 	"meshtransit.net/client/internal/version"
+	"meshtransit.net/shared/disco"
 )
 
 const testUID = 1000
@@ -712,4 +714,53 @@ func decodeResponse[T any](t *testing.T, response *httptest.ResponseRecorder) T 
 	}
 
 	return decoded
+}
+
+func TestServer_Netcheck(t *testing.T) {
+	t.Parallel()
+	server := newTestServer(t)
+
+	status := decodeResponse[statusResponse](t, performRequest(t, server, http.MethodGet, "/v1/status", "", nil))
+	if status.NAT.State != daemon.NATUnavailable || status.NAT.PublicEndpoint != "" {
+		t.Fatalf("nat status without a packet engine = %#v", status.NAT)
+	}
+	if got := performRequest(t, server, http.MethodGet, "/v1/netcheck", "", nil); got.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /v1/netcheck = %d, want 405", got.Code)
+	}
+	if got := performRequest(t, server, http.MethodPost, "/v1/netcheck", "application/json", []byte("{}")); got.Code != http.StatusBadRequest {
+		t.Fatalf("POST with body = %d, want 400", got.Code)
+	}
+}
+
+func TestMapNATStatus(t *testing.T) {
+	t.Parallel()
+	observed := time.Date(2026, 10, 9, 8, 0, 0, 0, time.UTC)
+	ready := daemon.NATStatus{
+		State:           daemon.NATReady,
+		NAT:             disco.NATInfo{Mapping: disco.MappingAddressAndPortDependent, Filtering: disco.FilteringAddressAndPortDependent, Allocation: disco.AllocationSequential},
+		Step:            2,
+		PublicEndpoint:  netip.MustParseAddrPort("203.0.113.7:41641"),
+		ServersAnswered: 3,
+		ObservedAt:      observed,
+	}
+	got := mapNATStatus(ready, true)
+	want := natStatus{
+		State: "ready", Mapping: "address-and-port-dependent", Filtering: "address-and-port-dependent",
+		Allocation: "sequential", SequentialStep: 2, Difficulty: "hard", PublicEndpoint: "203.0.113.7:41641",
+		ServersAnswered: 3, ObservedAt: "2026-10-09T08:00:00Z",
+	}
+	if got != want {
+		t.Fatalf("mapNATStatus = %#v, want %#v", got, want)
+	}
+	if forStatus := mapNATStatus(ready, false); forStatus.PublicEndpoint != "" {
+		t.Fatalf("status form exposes the public endpoint: %#v", forStatus)
+	}
+	failed := mapNATStatus(daemon.NATStatus{State: daemon.NATFailed, Error: "no_response", PublicEndpoint: netip.MustParseAddrPort("203.0.113.7:1")}, true)
+	if failed != (natStatus{State: "failed", Error: "no_response"}) {
+		t.Fatalf("failed status leaks fields: %#v", failed)
+	}
+	easy := mapNATStatus(daemon.NATStatus{State: daemon.NATStale, NAT: disco.NATInfo{Mapping: disco.MappingNone}}, false)
+	if easy.Difficulty != "easy" || easy.Filtering != "unknown" || easy.Allocation != "unknown" {
+		t.Fatalf("stale public host = %#v", easy)
+	}
 }

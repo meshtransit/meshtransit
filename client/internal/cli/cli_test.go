@@ -106,6 +106,13 @@ func TestRun_Status(t *testing.T) {
 				SysBytes:       25165824,
 				GCCycles:       7,
 			},
+			NAT: &localapi.NATStatus{
+				State:      "ready",
+				Mapping:    "endpoint-independent",
+				Filtering:  "unknown",
+				Allocation: "port-preserving",
+				Difficulty: "easy",
+			},
 			CompatibilityNote: "foundation only",
 		},
 	}
@@ -138,6 +145,7 @@ func TestRun_Status(t *testing.T) {
 		"Path transitions: relay bootstraps 2, direct promotions 2, relay fallbacks 1, last/max promotion 3200/4700 ms",
 		"Path probes: maps 9 (7 preserved, 2 retired; authority peer/node/discovery/endpoint 0/0/0/2; socket changes 0; 3 pending invalidated), rounds 11/12 completed, sends 22/24 attempts (1 start, 1 send failures), completions 20/21 authenticated replies (1 rejected), observations 19/20 accepted (1 rejected, 0 dropped), expirations 2, receive drops 4",
 		"Relay: 1/2 regions connected (home 7)",
+		"NAT: easy (endpoint-independent mapping, unknown filtering, port-preserving)",
 		"Policy rules: 3",
 	} {
 		if !strings.Contains(stdout.String(), expected) {
@@ -787,10 +795,15 @@ type fakeClient struct {
 	login           localapi.Login
 	completedLogin  localapi.Login
 	rotation        localapi.NodeKeyRotation
+	netcheck        localapi.Netcheck
 	completeLogin   func(context.Context) (localapi.Login, error)
 	receivedAuthKey string
 	completeCalls   int
 	err             error
+}
+
+func (f *fakeClient) RefreshNAT(_ context.Context) (localapi.Netcheck, error) {
+	return f.netcheck, f.err
 }
 
 func (f *fakeClient) Status(_ context.Context) (localapi.Status, error) {

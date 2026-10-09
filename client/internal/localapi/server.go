@@ -20,6 +20,7 @@ import (
 	"meshtransit.net/client/internal/profile"
 	"meshtransit.net/client/internal/relay"
 	"meshtransit.net/client/internal/runtimehealth"
+	"meshtransit.net/shared/disco"
 )
 
 const (
@@ -38,6 +39,7 @@ type service interface {
 	StartLogin(context.Context, string) (daemon.Login, error)
 	CompleteLogin(context.Context) (daemon.Login, error)
 	RotateNodeKey(context.Context) (daemon.NodeKeyRotation, error)
+	RefreshNAT(context.Context) (daemon.NATStatus, error)
 }
 
 // Server serves the local control API with bounded HTTP resources.
@@ -155,6 +157,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/v1/login", s.handleLogin)
 	mux.HandleFunc("/v1/login/complete", s.handleLoginComplete)
 	mux.HandleFunc("/v1/identity/node-key/rotate", s.handleNodeKeyRotation)
+	mux.HandleFunc("/v1/netcheck", s.handleNetcheck)
 
 	bounded := http.MaxBytesHandler(mux, maxRequestBodyBytes)
 
@@ -262,6 +265,27 @@ func (s *Server) handleNodeKeyRotation(writer http.ResponseWriter, request *http
 	})
 }
 
+func (s *Server) handleNetcheck(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		s.writeMethodNotAllowed(writer, http.MethodPost)
+
+		return
+	}
+	if request.ContentLength > 0 {
+		s.writeError(writer, http.StatusBadRequest, "unexpected_body", "request body must be empty")
+
+		return
+	}
+
+	status, err := s.service.RefreshNAT(request.Context())
+	if err != nil {
+		s.writeServiceError(writer, err)
+
+		return
+	}
+	s.writeJSON(writer, http.StatusOK, netcheckResponse{APIVersion: apiVersion, NAT: mapNATStatus(status, true)})
+}
+
 func (s *Server) writeLogin(writer http.ResponseWriter, login daemon.Login) {
 	s.writeJSON(writer, http.StatusOK, loginResponse{
 		APIVersion: apiVersion,
@@ -357,6 +381,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		NetworkChanges:     mapNetworkChangeStatus(status.NetworkChanges),
 		RuntimeRecovery:    mapRuntimeRecoveryStatus(status.RuntimeRecovery),
 		Runtime:            mapRuntimeStatus(status.Runtime),
+		NAT:                mapNATStatus(status.NAT, false),
 		CompatibilityNote:  status.CompatibilityNote,
 	})
 }
@@ -395,6 +420,78 @@ func mapPathProbeStatus(status daemon.PathProbeStatus) pathProbeStatus {
 		ObservationsAccepted:         snapshot.ObservationsAccepted,
 		ObservationRejected:          snapshot.ObservationRejected,
 		DirectExpirations:            snapshot.DirectExpirations,
+	}
+}
+
+// mapNATStatus converts the classification to its wire form. The public
+// endpoint is included only for an explicit netcheck request; /v1/status
+// never exposes endpoint addresses.
+func mapNATStatus(status daemon.NATStatus, withEndpoint bool) natStatus {
+	out := natStatus{State: status.State, Error: status.Error}
+	if status.State != daemon.NATReady && status.State != daemon.NATStale {
+		return out
+	}
+	out.Mapping = natMappingName(status.NAT.Mapping)
+	out.Filtering = natFilteringName(status.NAT.Filtering)
+	out.Allocation = natAllocationName(status.NAT.Allocation)
+	out.SequentialStep = status.Step
+	switch {
+	case status.NAT.Mapping.Easy():
+		out.Difficulty = "easy"
+	case status.NAT.Mapping.Hard():
+		out.Difficulty = "hard"
+	default:
+		out.Difficulty = "unknown"
+	}
+	if withEndpoint && status.PublicEndpoint.IsValid() {
+		out.PublicEndpoint = status.PublicEndpoint.String()
+	}
+	out.ServersAnswered = status.ServersAnswered
+	if !status.ObservedAt.IsZero() {
+		out.ObservedAt = status.ObservedAt.UTC().Format(time.RFC3339)
+	}
+
+	return out
+}
+
+func natMappingName(m disco.Mapping) string {
+	switch m {
+	case disco.MappingNone:
+		return "none"
+	case disco.MappingEndpointIndependent:
+		return "endpoint-independent"
+	case disco.MappingAddressDependent:
+		return "address-dependent"
+	case disco.MappingAddressAndPortDependent:
+		return "address-and-port-dependent"
+	default:
+		return "unknown"
+	}
+}
+
+func natFilteringName(f disco.Filtering) string {
+	switch f {
+	case disco.FilteringEndpointIndependent:
+		return "endpoint-independent"
+	case disco.FilteringAddressDependent:
+		return "address-dependent"
+	case disco.FilteringAddressAndPortDependent:
+		return "address-and-port-dependent"
+	default:
+		return "unknown"
+	}
+}
+
+func natAllocationName(a disco.Allocation) string {
+	switch a {
+	case disco.AllocationPreserving:
+		return "port-preserving"
+	case disco.AllocationSequential:
+		return "sequential"
+	case disco.AllocationRandom:
+		return "random"
+	default:
+		return "unknown"
 	}
 }
 
@@ -591,6 +688,8 @@ func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, daemon.ErrNodeKeyRotation):
 		s.logger.Warn("node key rotation failed", "error", err)
 		s.writeError(writer, http.StatusBadGateway, "node_key_rotation_failed", "node key rotation failed")
+	case errors.Is(err, daemon.ErrNATInactive):
+		s.writeError(writer, http.StatusConflict, "nat_classification_inactive", "no connected session to classify the network from")
 	case errors.Is(err, daemon.ErrControlProbe):
 		s.logger.Warn("control compatibility probe failed", "error", err)
 		s.writeError(writer, http.StatusBadGateway, "control_probe_failed", "control compatibility probe failed")

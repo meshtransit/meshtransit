@@ -122,6 +122,7 @@ type Status struct {
 	NetworkChanges     NetworkChangeStatus
 	RuntimeRecovery    RuntimeRecoveryStatus
 	Runtime            runtimehealth.Snapshot
+	NAT                NATStatus
 }
 
 // NetworkChangeStatus contains process-local aggregate network-event counters.
@@ -306,6 +307,7 @@ type Service struct {
 	runtimeRecoveries    atomic.Uint64
 	runtimePending       atomic.Bool
 	pathProbes           *pathdiscovery.ProbeTelemetry
+	nat                  *natState
 }
 
 type syncStatus struct {
@@ -414,6 +416,7 @@ func New(
 		syncSignal:           make(chan struct{}, 1),
 		registrationGate:     registrationGate,
 		pathProbes:           pathdiscovery.NewProbeTelemetry(),
+		nat:                  newNATState(),
 		syncState: syncStatus{
 			state:     ControlSessionInactive,
 			dataPlane: initialDataPlane,
@@ -1058,6 +1061,8 @@ func (s *Service) runEndpointRefresh(
 	if discoverer == nil || requests == nil || updates == nil {
 		return errors.New("daemon: endpoint refresh dependencies are missing")
 	}
+	natRequests, natNetwork, stopNAT := s.startNATClassification(ctx, discoverer)
+	defer stopNAT()
 	tracker := pathdiscovery.NewTracker()
 	homeSelector := relay.NewHomeSelector()
 	current := endpointRefreshRequest{}
@@ -1211,6 +1216,15 @@ func (s *Service) runEndpointRefresh(
 			s.networkRefreshes.Add(1)
 		}
 		publish(currentCandidates, selection.RegionID)
+		if natRequests != nil {
+			offerLatest(natRequests, natRequest{
+				socket:  current.socket,
+				servers: pathdiscovery.NATServers(current.servers),
+			})
+			if networkTriggered {
+				signalNetworkChange(natNetwork)
+			}
+		}
 		if !current.periodic {
 			continue
 		}
@@ -1572,6 +1586,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 			Pending:    s.runtimePending.Load(),
 		},
 		Runtime: runtimehealth.Read(),
+		NAT:     s.natStatus(),
 	}, nil
 }
 
