@@ -258,28 +258,76 @@ Verification rules:
   numbers are never reused within a session; a TICKET_UPDATE must not be older
   than the ticket it replaces.
 
-## 8. Relay map
+## 8. Signed documents and the relay map
 
-Core distributes a signed relay map (through MTCP, and for bootstrap as a file):
+Core distributes two signed documents in the same envelope:
 
 ```
-payload    bytes      ; JSON document, UTF-8
-key_id     bytes[8]
-signature  bytes[64]  ; Ed25519 over ("meshtransit/relay-map/v1" || 0x00 || payload)
+magic        bytes[4]  = "MTSD"
+version      u8        = 1
+kind         u8        ; 1 relay map, 2 relay state
+key_id       bytes[8]  ; Core signing key (keys.md)
+payload_len  u32       ; 1 .. 8 MiB
+payload      bytes     ; UTF-8 JSON
+signature    bytes[64] ; Ed25519 over (domain || 0x00 || every preceding byte)
 ```
 
-The signature covers the exact payload bytes; receivers verify before parsing.
-The payload lists regions (ID, code, name) and nodes (host name, IPv4/IPv6,
-relay key, UDP/TLS/STUN ports, optional alternate STUN address and port,
-weight) plus `version` and `expires_at`. A node rejects a map older than the
-one it holds or past `expires_at`.
+Domains: `meshtransit/relay-map/v1` (kind 1) and `meshtransit/relay-state/v1`
+(kind 2), so a signature over one kind is never valid as the other. Receivers
+verify the signature before parsing the payload.
 
-## 9. Relay ↔ Core (outline, specified in P2)
+The **relay map** payload:
 
-The relay authenticates to Core with its own key, receives trusted signing key
-IDs, revocation lists (ticket IDs, node keys, disco keys) and drain commands,
-and reports health and aggregate load. Core uses load to steer home-relay
-selection.
+```json
+{"version": 1, "map_version": 3, "expires_at_ms": 1760600000000,
+ "regions": [{"id": 1, "code": "sgp", "name": "Singapore",
+   "nodes": [{"name": "sgp1", "host_name": "relay-sgp1.meshtransit.net",
+     "ipv4": "18.142.253.199", "key": "mtrelay:…",
+     "udp_port": 3479, "tls_port": 443, "stun_port": 3478,
+     "stun_alt_port": 3480, "weight": 100}]}]}
+```
+
+Limits: 1–128 regions with unique non-zero IDs and lowercase codes, 1–16
+nodes per region, unique relay keys, at least one address per node, expiry at
+most 30 days ahead. A node rejects a map whose `map_version` is not newer than
+the one it holds or whose `expires_at_ms` has passed.
+
+## 9. Relay ↔ Core
+
+Core publishes a signed **relay state** at `GET /relay/v1/state` on its control
+host. The document is public: it contains no secrets and every revocation
+entry is a hash, so relays need no credential to fetch it, and its signature
+makes it trustworthy over any transport.
+
+```json
+{"version": 1, "sequence": 1760000000123,
+ "issued_at_ms": 1760000000123, "expires_at_ms": 1760000600123,
+ "signing_keys": [{"key": "mtsign:…", "not_after_ms": 1767000000000}],
+ "revoked": {"tickets": ["<32 hex>"], "nodes": ["<32 hex>"], "discos": ["<32 hex>"]},
+ "drain": ["mtrelay:…"]}
+```
+
+- `sequence` strictly increases; `expires_at_ms − issued_at_ms` ≤ 1 hour
+  (Core uses 10 minutes and republishes every 10 seconds).
+- `signing_keys` (1–4) are the Core keys whose tickets and documents relays
+  accept. A relay bootstraps from configured keys and afterwards replaces its
+  trusted set with the list of each newer verified state, keeping keys only
+  until their `not_after_ms`. Rotation therefore publishes the next key here
+  before Core signs with it.
+- A revocation entry is the first 16 bytes of
+  `BLAKE2s-256("meshtransit/relay-revocation/v1" || 0x00 || kind || value)`
+  with kind 1 ticket ID, 2 node key, 3 disco key. Core lists every revoked
+  value whose tickets may still be valid (≤ 15 minutes plus skew); relays close
+  matching sessions and refuse matching tickets.
+- `drain` lists relay keys that must drain (SESSION_CLOSE draining) and stop
+  accepting sessions.
+- Relays poll every 10 seconds with `If-None-Match`, accept only a newer
+  `sequence` signed by a trusted key, and keep the last good state when Core
+  is unreachable, logging when it has expired. Ticket lifetimes (≤ 15 min)
+  bound how long a missed update matters.
+
+Health and load reporting from relays to Core (for home-relay steering) needs
+relay authentication and is specified with the relay fleet work.
 
 ## 10. Test vectors
 

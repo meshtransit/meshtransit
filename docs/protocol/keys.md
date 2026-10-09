@@ -45,6 +45,8 @@ followed by a zero byte. Registered domains:
 | `meshtransit/disco/v2` | disco v2 key derivation |
 | `meshtransit/mtrp-ticket/v1` | Relay ticket signatures |
 | `meshtransit/relay-map/v1` | Relay map signatures |
+| `meshtransit/relay-state/v1` | Relay state signatures (trusted keys, revocations, drain) |
+| `meshtransit/relay-revocation/v1` | Hashed revocation entries in the relay state |
 | `MeshTransit MTRP v1` | Noise prologue for MTRP (no zero byte; Noise prologue) |
 | `MeshTransit MTCP v1` | Noise prologue for MTCP (no zero byte; Noise prologue) |
 | `meshtransit/mtcp-key-proof/v1` | MTCP proof of possession of node and disco keys |
