@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -450,11 +451,24 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				issuer: issuer, completion: completion,
 			})
 		}
+		var relayAuthorityHandler http.Handler
+		if processConfig.RelayAuthority != nil {
+			publisher, handler, relayErr := composeRelayAuthority(ctx, *processConfig.RelayAuthority, logger)
+			if relayErr != nil {
+				logger.ErrorContext(ctx, "startup failed", "error_code", "relay_authority_composition_failure", "error", relayErr)
+				return 1
+			}
+			relayAuthorityHandler = handler
+			additionalMetrics = append(additionalMetrics, publisher.Metrics())
+			// Started before the listener, so the first documents exist when it opens.
+			roleServices = append(roleServices, app.OwnedService{Name: "relay-authority", Service: publisher})
+		}
 		controlListener, composeErr := composeControlListener(
 			*processConfig.Control,
 			registrationService,
 			mapSessionService,
 			mapStreamService,
+			relayAuthorityHandler,
 			logger,
 			browserControl...,
 		)

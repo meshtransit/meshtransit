@@ -63,40 +63,57 @@ func Decode(reader io.Reader, expected [sha256.Size]byte) (relay.Directory, erro
 // Load reads a regular, non-group-writable local snapshot confined to its
 // operator-selected parent and verifies it before returning domain state.
 func Load(ctx context.Context, path string, expected [sha256.Size]byte) (relay.Directory, error) {
+	encoded, err := ReadVerified(ctx, path, expected, MaximumDocumentBytes)
+	if err != nil {
+		return relay.Directory{}, err
+	}
+	defer clear(encoded)
+	return decode(encoded, expected)
+}
+
+// ReadVerified reads an operator-selected local document: a regular file
+// confined to its parent directory, not group- or world-writable, at most
+// maxBytes, unchanged while it was read, and matching the expected SHA-256.
+func ReadVerified(ctx context.Context, path string, expected [sha256.Size]byte, maxBytes int64) ([]byte, error) {
 	validPath := ctx != nil && ctx.Err() == nil && filepath.IsAbs(path) && filepath.Clean(path) == path &&
 		len(path) > 0 && len(path) <= 4096
-	if !validPath || expected == ([sha256.Size]byte{}) {
-		return relay.Directory{}, ErrInvalid
+	if !validPath || expected == ([sha256.Size]byte{}) || maxBytes <= 0 {
+		return nil, ErrInvalid
 	}
 	// #nosec G304 -- the canonical operator path is confined to its selected parent.
 	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
-		return relay.Directory{}, ErrInvalid
+		return nil, ErrInvalid
 	}
 	name := filepath.Base(path)
 	file, err := openDirectoryFile(root, name)
 	if err != nil {
 		_ = root.Close()
-		return relay.Directory{}, ErrInvalid
+		return nil, ErrInvalid
 	}
 	before, statErr := file.Stat()
-	if statErr != nil || !validFileInfo(before) {
+	if statErr != nil || !validFileInfo(before, maxBytes) {
 		_ = file.Close()
 		_ = root.Close()
-		return relay.Directory{}, ErrInvalid
+		return nil, ErrInvalid
 	}
-	encoded, readErr := io.ReadAll(io.LimitReader(file, MaximumDocumentBytes+1))
+	encoded, readErr := io.ReadAll(io.LimitReader(file, maxBytes+1))
 	after, afterErr := file.Stat()
 	current, currentErr := root.Stat(name)
 	fileCloseErr := file.Close()
 	rootCloseErr := root.Close()
-	defer clear(encoded)
 	if readErr != nil || afterErr != nil || currentErr != nil || fileCloseErr != nil || rootCloseErr != nil ||
-		ctx.Err() != nil || !unchangedFile(before, after) || !unchangedFile(after, current) ||
+		ctx.Err() != nil || !unchangedFile(before, after, maxBytes) || !unchangedFile(after, current, maxBytes) ||
 		int64(len(encoded)) != before.Size() {
-		return relay.Directory{}, ErrInvalid
+		clear(encoded)
+		return nil, ErrInvalid
 	}
-	return decode(encoded, expected)
+	actual := sha256.Sum256(encoded)
+	if subtle.ConstantTimeCompare(actual[:], expected[:]) != 1 {
+		clear(encoded)
+		return nil, ErrInvalid
+	}
+	return encoded, nil
 }
 
 func decode(encoded []byte, expected [sha256.Size]byte) (relay.Directory, error) {
@@ -119,13 +136,13 @@ func decode(encoded []byte, expected [sha256.Size]byte) (relay.Directory, error)
 	return document.directory()
 }
 
-func validFileInfo(info os.FileInfo) bool {
+func validFileInfo(info os.FileInfo, maxBytes int64) bool {
 	return info != nil && info.Mode().IsRegular() && info.Mode().Perm()&0o022 == 0 &&
-		info.Size() > 0 && info.Size() <= MaximumDocumentBytes
+		info.Size() > 0 && info.Size() <= maxBytes
 }
 
-func unchangedFile(before, after os.FileInfo) bool {
-	return validFileInfo(before) && validFileInfo(after) && os.SameFile(before, after) &&
+func unchangedFile(before, after os.FileInfo, maxBytes int64) bool {
+	return validFileInfo(before, maxBytes) && validFileInfo(after, maxBytes) && os.SameFile(before, after) &&
 		before.Mode() == after.Mode() && before.Size() == after.Size() &&
 		before.ModTime().Equal(after.ModTime())
 }

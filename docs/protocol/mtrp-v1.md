@@ -289,8 +289,15 @@ The **relay map** payload:
 
 Limits: 1–128 regions with unique non-zero IDs and lowercase codes, 1–16
 nodes per region, unique relay keys, at least one address per node, expiry at
-most 30 days ahead. A node rejects a map whose `map_version` is not newer than
-the one it holds or whose `expires_at_ms` has passed.
+most 30 days ahead. A node rejects a map whose `expires_at_ms` has passed or
+whose `map_version` is older than the one it holds; a map with the same
+`map_version` replaces the held one only when its `expires_at_ms` is later.
+
+Core serves the map at `GET /relay/v1/map` on its control host and re-signs
+it with every relay state refresh, with `expires_at_ms` 7 days ahead, so an
+unchanged map keeps its `map_version` while its expiry moves forward. The
+operator maintains the regions and nodes in a file whose SHA-256 is pinned in
+Core's configuration; `map_version` is that file's revision.
 
 ## 9. Relay ↔ Core
 
@@ -321,6 +328,9 @@ makes it trustworthy over any transport.
   matching sessions and refuse matching tickets.
 - `drain` lists relay keys that must drain (SESSION_CLOSE draining) and stop
   accepting sessions.
+- Both documents are served with an `ETag` and `Cache-Control: no-cache`,
+  answer `If-None-Match` with 304, are rate limited per source address, and
+  return 503 until Core has signed its first state.
 - Relays poll every 10 seconds with `If-None-Match`, accept only a newer
   `sequence` signed by a trusted key, and keep the last good state when Core
   is unreachable, logging when it has expired. Ticket lifetimes (≤ 15 min)

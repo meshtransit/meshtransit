@@ -58,6 +58,7 @@ type Config struct {
 	PrivateEndpointWorker *PrivateEndpointWorkerConfig
 	DeviceAliasWorker     *DeviceAliasWorkerConfig
 	ContractExpiryWorker  *ContractExpiryWorkerConfig
+	RelayAuthority        *RelayAuthorityConfig
 	AccessLedgerWorker    *AccessLedgerWorkerConfig
 	AuthExpiry            *AuthExpiryConfig
 	PrivateLogin          *PrivateLoginFile
@@ -126,6 +127,10 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, settingError(envDeviceAliasWorkerEnabled)
 	}
 
+	relayAuthorityConfig, err := loadRelayAuthorityConfig(lookup, role)
+	if err != nil {
+		return Config{}, err
+	}
 	contractExpiryWorkerConfig, err := loadContractExpiryWorkerConfig(lookup, role)
 	if err != nil {
 		return Config{}, err
@@ -264,6 +269,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		PrivateEndpointWorker: privateEndpointWorkerConfig,
 		DeviceAliasWorker:     deviceAliasWorkerConfig,
 		ContractExpiryWorker:  contractExpiryWorkerConfig,
+		RelayAuthority:        relayAuthorityConfig,
 		AccessLedgerWorker:    accessLedgerWorkerConfig,
 		AuthExpiry:            authExpiryConfig,
 		PrivateLogin:          privateLoginFile,

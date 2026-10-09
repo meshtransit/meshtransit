@@ -214,7 +214,7 @@ func validBrowserManagementHandler(handler *ManagementHandler) bool {
 	validTimeout := handler.timeout >= minimumManagementTimeout && handler.timeout <= maximumManagementTimeout
 	validCapacity := cap(handler.slots) >= 1 && cap(handler.slots) <= 128
 	return validTimeout && validCapacity && handler.sourcePolicy.IsValid() && handler.sessionPolicy.IsValid() &&
-		validBrowserProxies(handler.clientIPs.trustedProxyPrefixes)
+		validBrowserProxies(handler.clientIPs.TrustedProxies())
 }
 
 func validBrowserManagementKeyID(id string) bool {

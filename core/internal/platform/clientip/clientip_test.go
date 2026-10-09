@@ -1,4 +1,4 @@
-package httpapi
+package clientip
 
 import (
 	"net/http/httptest"
@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestClientIPResolverIgnoresForwardingFromUntrustedPeer(t *testing.T) {
+func TestResolverIgnoresForwardingFromUntrustedPeer(t *testing.T) {
 	t.Parallel()
 
-	resolver, _ := newClientIPResolver([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
+	resolver, _ := NewResolver([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
 	request := httptest.NewRequestWithContext(t.Context(), "POST", "https://core.example.test/api", nil)
 	request.RemoteAddr = "192.0.2.10:1234"
 	request.Header.Set("X-Forwarded-For", "198.51.100.9")
@@ -19,10 +19,10 @@ func TestClientIPResolverIgnoresForwardingFromUntrustedPeer(t *testing.T) {
 	}
 }
 
-func TestClientIPResolverSelectsLastUntrustedHop(t *testing.T) {
+func TestResolverSelectsLastUntrustedHop(t *testing.T) {
 	t.Parallel()
 
-	resolver, _ := newClientIPResolver([]netip.Prefix{
+	resolver, _ := NewResolver([]netip.Prefix{
 		netip.MustParsePrefix("10.0.0.0/8"),
 		netip.MustParsePrefix("172.16.0.0/12"),
 	})
@@ -35,10 +35,10 @@ func TestClientIPResolverSelectsLastUntrustedHop(t *testing.T) {
 	}
 }
 
-func TestClientIPResolverRejectsMalformedTrustedForwarding(t *testing.T) {
+func TestResolverRejectsMalformedTrustedForwarding(t *testing.T) {
 	t.Parallel()
 
-	resolver, _ := newClientIPResolver([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
+	resolver, _ := NewResolver([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
 	request := httptest.NewRequestWithContext(t.Context(), "POST", "https://core.example.test/api", nil)
 	request.RemoteAddr = "10.0.0.2:443"
 	request.Header.Set("X-Forwarded-For", "not-an-ip")

@@ -34,6 +34,7 @@ func TestComposeControlListenerLoadsTLSAndNoiseIdentity(t *testing.T) {
 		controlRegistrationServiceFixture{},
 		controlMapSessionServiceFixture{},
 		controlMapStreamServiceFixture{},
+		nil,
 		discardCompositionLogger(),
 	)
 	if err != nil {
@@ -91,6 +92,7 @@ func TestComposeControlListenerRejectsInvalidDependencies(t *testing.T) {
 				service,
 				mapService,
 				streamService,
+				nil,
 				logger,
 			)
 			if !errors.Is(err, errInvalidControlComposition) {
@@ -231,5 +233,23 @@ func controlConfigFixture(t *testing.T) (config.ControlConfig, map[string]string
 		"certificate.pem": certificatePath,
 		"tls.key":         privateKeyPath,
 		"noise.key":       noisePath,
+	}
+}
+
+type routeRecorder struct{ hits int }
+
+func (r *routeRecorder) ServeHTTP(http.ResponseWriter, *http.Request) { r.hits++ }
+func (*routeRecorder) Shutdown(context.Context) error                 { return nil }
+
+func TestRelayAuthorityRoutesSplitByPrefix(t *testing.T) {
+	t.Parallel()
+
+	control, relay := &routeRecorder{}, &routeRecorder{}
+	routes := relayAuthorityRoutes{ControlSessionServer: control, relay: relay}
+	for _, path := range []string{"/relay/v1/state", "/relay/v1/map", "/key", "/ts2021", "/relay/v2/state"} {
+		routes.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
+	}
+	if relay.hits != 2 || control.hits != 3 {
+		t.Fatalf("relay hits %d, control hits %d", relay.hits, control.hits)
 	}
 }

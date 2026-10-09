@@ -4,8 +4,11 @@ import (
 	"crypto/tls"
 	"errors"
 	"log/slog"
+	"net/http"
+	"strings"
 
 	"meshtransit.net/core/internal/adapter/legacyts2021"
+	"meshtransit.net/core/internal/adapter/relayauthority"
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/enrollment/registration/intake"
 	"meshtransit.net/core/internal/platform/config"
@@ -23,6 +26,7 @@ func composeControlListener(
 	registrationService legacyts2021.RegistrationService,
 	mapSessionService legacyts2021.MapSessionService,
 	mapStreamService legacyts2021.MapStreamService,
+	relayAuthority http.Handler,
 	logger *slog.Logger,
 	browser ...browserControlServices,
 ) (*legacyts2021.ControlListener, error) {
@@ -93,10 +97,14 @@ func composeControlListener(
 	if err != nil {
 		return nil, errors.Join(errInvalidControlComposition, err)
 	}
+	var routes legacyts2021.ControlSessionServer = sessions
+	if relayAuthority != nil {
+		routes = relayAuthorityRoutes{ControlSessionServer: sessions, relay: relayAuthority}
+	}
 	listener, err := legacyts2021.NewControlListener(legacyts2021.ControlListenerOptions{
 		Address:          controlConfig.Address,
 		Certificate:      certificate,
-		Sessions:         sessions,
+		Sessions:         routes,
 		Telemetry:        telemetry,
 		MaxConnections:   controlConfig.MaxSessions,
 		HandshakeTimeout: controlConfig.HandshakeTimeout,
@@ -106,6 +114,21 @@ func composeControlListener(
 		return nil, errors.Join(errInvalidControlComposition, err)
 	}
 	return listener, nil
+}
+
+// relayAuthorityRoutes serves the relay authority's public documents beside
+// the TS2021 control paths on the same listener.
+type relayAuthorityRoutes struct {
+	legacyts2021.ControlSessionServer
+	relay http.Handler
+}
+
+func (routes relayAuthorityRoutes) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	if strings.HasPrefix(request.URL.Path, relayauthority.PathPrefix) {
+		routes.relay.ServeHTTP(response, request)
+		return
+	}
+	routes.ControlSessionServer.ServeHTTP(response, request)
 }
 
 var _ legacyts2021.MapSessionService = (*mapsession.Service)(nil)
