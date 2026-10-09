@@ -41,6 +41,7 @@ type ControlTelemetry struct {
 	authenticatedDuration prometheus.Histogram
 	registrations         registrationMetrics
 	maps                  mapMetrics
+	enforcementReports    *prometheus.CounterVec
 }
 
 // NewControlTelemetry constructs isolated metrics without using the default registry.
@@ -124,7 +125,17 @@ func NewControlTelemetry(connectionLimit, sessionLimit int) (*ControlTelemetry, 
 		registrations:         registrations,
 		maps:                  maps,
 	}
+	// Dashboard: sum by (result) (rate(meshtransit_control_enforcement_reports_total[5m]))
+	// Alert: rate(meshtransit_control_enforcement_reports_total{result="unavailable"}[5m]) > 0
+	telemetry.enforcementReports = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "meshtransit_control_enforcement_reports_total",
+		Help: "Enforcement reports from nodes by bounded result.",
+	}, []string{"result"})
+	for _, result := range allEnforcementResults() {
+		telemetry.enforcementReports.WithLabelValues(string(result))
+	}
 	telemetry.collectors = []prometheus.Collector{
+		telemetry.enforcementReports,
 		telemetry.connectionsActive,
 		telemetry.connectionLimit,
 		telemetry.connectionRejections,

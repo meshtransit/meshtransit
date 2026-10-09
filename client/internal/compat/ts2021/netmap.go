@@ -72,6 +72,9 @@ type NetmapOptions struct {
 	PreferredRelay      int
 	HasPreferredRelay   bool
 	EndpointUpdates     <-chan EndpointUpdate
+	// EnforcementReports, when set, carries what the packet filter enforces;
+	// each report is sent to Core and repeated while it stays current.
+	EnforcementReports <-chan EnforcementReport
 }
 
 // EndpointUpdate is one complete product-owned network presence update. The
@@ -108,6 +111,17 @@ func (c *Client) StreamNetmap(
 	machineKey, nodeKey, controlKey, err := parseMaterial(material)
 	if err != nil {
 		return err
+	}
+	if options.EnforcementReports != nil {
+		reportCtx, stopReports := context.WithCancel(ctx)
+		var reports sync.WaitGroup
+		reports.Go(func() {
+			c.runEnforcementReports(reportCtx, controlURL, machineKey, nodeKey, controlKey, options)
+		})
+		defer func() {
+			stopReports()
+			reports.Wait()
+		}()
 	}
 	endpointState := newEndpointState(EndpointUpdate{
 		Candidates:        options.Candidates,
@@ -630,33 +644,15 @@ func (c *Client) sendEndpointUpdate(
 	return nil
 }
 
-func (c *Client) openMapExchange(
-	ctx context.Context,
+// newNoiseHTTPClient returns an HTTP/2 client whose single connection is a
+// Noise session to the pinned control key, and the channel that hands over
+// that connection once dialed.
+func newNoiseHTTPClient(
 	discovered discoveredControlKey,
+	endpoint *url.URL,
 	machineKey key.MachinePrivate,
-	nodeKey key.NodePrivate,
 	controlKey key.MachinePublic,
-	mapRequest controlMapRequest,
-) (*mapExchange, error) {
-	encoded, err := marshalMapRequest(mapRequest)
-	if err != nil {
-		return nil, fmt.Errorf("ts2021: encoding netmap request: %w", err)
-	}
-	endpoint := netmapEndpoint(discovered.endpoint)
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		endpoint.String(),
-		bytes.NewReader(encoded),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("ts2021: creating netmap request: %w", err)
-	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("User-Agent", "meshd")
-	request.Header.Set(tailcfg.LBHeader, nodeKey.Public().String())
-
+) (*http.Client, *http.Transport, chan net.Conn) {
 	expectedAddress := net.JoinHostPort(endpoint.Hostname(), "443")
 	dialed := make(chan net.Conn, 1)
 	protocols := new(http.Protocols)
@@ -704,6 +700,38 @@ func (c *Client) openMapExchange(
 			return http.ErrUseLastResponse
 		},
 	}
+
+	return httpClient, transport, dialed
+}
+
+func (c *Client) openMapExchange(
+	ctx context.Context,
+	discovered discoveredControlKey,
+	machineKey key.MachinePrivate,
+	nodeKey key.NodePrivate,
+	controlKey key.MachinePublic,
+	mapRequest controlMapRequest,
+) (*mapExchange, error) {
+	encoded, err := marshalMapRequest(mapRequest)
+	if err != nil {
+		return nil, fmt.Errorf("ts2021: encoding netmap request: %w", err)
+	}
+	endpoint := netmapEndpoint(discovered.endpoint)
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		endpoint.String(),
+		bytes.NewReader(encoded),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ts2021: creating netmap request: %w", err)
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "meshd")
+	request.Header.Set(tailcfg.LBHeader, nodeKey.Public().String())
+
+	httpClient, transport, dialed := newNoiseHTTPClient(discovered, endpoint, machineKey, controlKey)
 
 	response, err := httpClient.Do(request)
 	if err != nil {

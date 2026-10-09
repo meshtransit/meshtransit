@@ -689,6 +689,11 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		}
 		lastRefreshRequest := endpointRefreshRequest{}
 		hasRefreshRequest := false
+		var enforcementReports chan ts2021.EnforcementReport
+		enforcedPolicy, reportsEnforcement := s.dataPlane.(enforcedPolicyDataPlane)
+		if reportsEnforcement {
+			enforcementReports = make(chan ts2021.EnforcementReport, 1)
+		}
 		go func() {
 			streamDone <- s.prober.StreamNetmap(
 				streamCtx,
@@ -702,6 +707,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					PeerProbePublicKey:  peerprobe.MapDiscoveryKey(discoKey.Public()),
 					Candidates:          s.configuredCandidates,
 					EndpointUpdates:     endpointUpdates,
+					EnforcementReports:  enforcementReports,
 				},
 				func(callbackCtx context.Context, snapshot networkmap.Snapshot) (callbackErr error) {
 					defer func() {
@@ -737,6 +743,11 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					if s.dataPlane != nil {
 						s.dataPlaneMu.Lock()
 						state, err := s.dataPlane.Apply(callbackCtx, snapshot, privateKey)
+						if err == nil && reportsEnforcement {
+							if enforced, known := enforcedPolicy.EnforcedPolicy(); known {
+								publishEnforcement(enforcementReports, enforced)
+							}
+						}
 						if err == nil && probeDataPlane != nil {
 							if len(snapshot.Peers) == 0 {
 								probeAttachErr = probeDataPlane.SetPeerProbeHandler(nil)
@@ -2198,6 +2209,32 @@ func (s *Service) stopDataPlane() error {
 // Interchange relays with the session's disco key.
 type relayIdentityDataPlane interface {
 	SetRelayIdentity(key.DiscoPrivate)
+}
+
+// enforcedPolicyDataPlane reports the digest of the rules its packet filter
+// enforces (R1-69).
+type enforcedPolicyDataPlane interface {
+	EnforcedPolicy() (dataplane.EnforcedPolicy, bool)
+}
+
+// publishEnforcement hands the latest enforced policy to the map session,
+// replacing a report that was not sent yet. Only the map callback sends.
+func publishEnforcement(reports chan ts2021.EnforcementReport, enforced dataplane.EnforcedPolicy) {
+	report := ts2021.EnforcementReport{Digest: enforced.Digest, Grants: enforced.Grants,
+		AppliedAt: enforced.AppliedAt}
+	select {
+	case reports <- report:
+		return
+	default:
+	}
+	select {
+	case <-reports:
+	default:
+	}
+	select {
+	case reports <- report:
+	default:
+	}
 }
 
 // notifyLocalEndpoints hands the latest discovered candidates to the

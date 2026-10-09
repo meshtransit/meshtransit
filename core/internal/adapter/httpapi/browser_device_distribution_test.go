@@ -13,6 +13,7 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/distribution"
+	"meshtransit.net/shared/policydigest"
 )
 
 type distributionTestReader struct {
@@ -58,9 +59,15 @@ func TestBrowserDeviceDistributionReportsStatusPerDevice(t *testing.T) {
 			{ID: second, Hostname: "poc-02", State: "active"},
 		}}}
 	delivered := time.Date(2026, time.October, 8, 12, 0, 0, 0, time.UTC)
+	digest, grants, err := policydigest.Compute(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filter := distribution.FilterSummary{Digest: digest, Grants: grants}
 	observations := distributionTestObservations{observations: []distribution.Observation{{
 		Known: true, SessionGeneration: 1, NetworkRevision: 7, PolicyRevision: 3,
 		DeliveredAt: delivered, SeenAt: delivered.Add(time.Minute), Online: true,
+		Filter: filter, Enforced: filter, AppliedAt: delivered, ReportedAt: delivered.Add(time.Second),
 	}}}
 	service, err := distribution.NewService(reader, observations, fixture)
 	if err != nil {
@@ -89,6 +96,12 @@ func TestBrowserDeviceDistributionReportsStatusPerDevice(t *testing.T) {
 		data.Devices[0].DeliveredNetworkRevision == nil || *data.Devices[0].DeliveredNetworkRevision != 7 ||
 		envelope.NextPageToken == "" {
 		t.Fatalf("distribution page = %+v next=%q", data, envelope.NextPageToken)
+	}
+	enforcement := data.Devices[0].Enforcement
+	if enforcement.Status != "enforced" || enforcement.DeliveredDigest == nil ||
+		*enforcement.DeliveredDigest != digest.String() || enforcement.EnforcedDigest == nil ||
+		*enforcement.EnforcedDigest != digest.String() || enforcement.ReportedAt == nil {
+		t.Fatalf("enforcement = %+v", enforcement)
 	}
 
 	reader.err = distribution.ErrForbidden

@@ -77,6 +77,17 @@ func composeControlListener(
 	if err != nil {
 		return nil, errors.Join(errInvalidControlComposition, err)
 	}
+	// Client enforcement evidence (R1-69) reaches the stream that owns it.
+	if enforcement, ok := mapStreamService.(legacyts2021.EnforcementService); ok {
+		enforcementHandler, handlerErr := legacyts2021.NewEnforcementHandler(enforcement, logger, telemetry)
+		if handlerErr != nil {
+			return nil, errors.Join(errInvalidControlComposition, handlerErr)
+		}
+		sessionRoutes, err = sessionRoutes.WithEnforcement(enforcementHandler)
+		if err != nil {
+			return nil, errors.Join(errInvalidControlComposition, err)
+		}
+	}
 
 	privateKey, certificate, err := loadControlIdentity(controlConfig)
 	if err != nil {

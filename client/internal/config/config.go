@@ -37,6 +37,9 @@ type Config struct {
 	AllowSocketPeers    bool
 	EnableDataPlane     bool
 	EnableDeviceAliases bool
+	// TestPolicyDrift makes the packet filter enforce one rule fewer than
+	// Core sends, to demonstrate that Core reports the mismatch. Test only.
+	TestPolicyDrift     bool
 	EnableDNS           bool
 	WireGuardListenPort uint16
 	AdvertiseEndpoints  []netip.AddrPort
@@ -78,6 +81,8 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	)
 	flags.BoolVar(&cfg.EnableDeviceAliases, "enable-device-aliases", false,
 		"enable qualification of peer-specific Device aliases; requires confined helper alias pools")
+	flags.BoolVar(&cfg.TestPolicyDrift, "test-policy-drift", false,
+		"TEST ONLY: enforce one packet-filter rule fewer than control sends, to demonstrate mismatch detection")
 	flags.BoolVar(
 		&cfg.EnableDNS,
 		"enable-dns",
@@ -216,6 +221,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.EnableDeviceAliases && !cfg.EnableDataPlane {
 		return errors.New("device aliases require --enable-data-plane")
+	}
+	if cfg.TestPolicyDrift && !cfg.EnableDataPlane {
+		return errors.New("policy drift testing requires --enable-data-plane")
 	}
 	if cfg.EnableFlowLogs {
 		if !cfg.EnableDataPlane {

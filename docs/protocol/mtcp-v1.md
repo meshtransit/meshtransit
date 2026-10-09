@@ -231,6 +231,7 @@ payload     bytes[...]
 | 0x31 | `HostinfoReport` | N→C | 8 KiB |
 | 0x32 | `HealthReport` | N→C | 16 KiB |
 | 0x33 | `PathStatsReport` | N→C | 256 KiB |
+| 0x34 | `EnforcementReport` | N→C | 1 KiB |
 | 0x40 | `RelayTicket` | C→N | 4 KiB |
 | 0x50 | `Lifecycle` | C→N | 4 KiB |
 | 0x51 | `KeyUpdate` | C→N | 4 KiB |
@@ -511,6 +512,17 @@ the hostname only to propose a Device name; it never trusts it for identity.
   telemetry policy.
 
 Flow logs keep their separate HTTPS endpoint; they are not part of MTCP v1.
+
+### 8.4 Enforcement
+
+`EnforcementReport{view, digest, grants, applied_ms}`: the
+[policy digest](policy-digest-v1.md) of the rules the node's packet filter
+enforces after applying the map at `view`, how many grants they cover, and
+when it installed them. Sent after each change of the installed rules, once
+more 30 s later, and every 5 min while unchanged; at most one per second.
+Core compares it with the digest of the filter it sent at that view and shows
+the Device as enforced, applying (within 60 s) or mismatch. The report is
+evidence from the node, not attestation (policy digest §6).
 
 ## 9. Relay access
 

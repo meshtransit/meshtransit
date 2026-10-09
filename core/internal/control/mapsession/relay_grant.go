@@ -142,5 +142,6 @@ func (service *StreamService) WithRelayAccess(access RelayAccess) (*StreamServic
 		return nil, err
 	}
 	granted.delivery = service.delivery
+	granted.enforcement = service.enforcement
 	return granted, nil
 }

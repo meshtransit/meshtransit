@@ -12,6 +12,7 @@ ships test vectors that any implementation must reproduce.
 | [mtrp-v1.md](mtrp-v1.md) | Draft 1 | MeshTransit Relay Protocol (Interchange) and relay tickets |
 | [nat-classification.md](nat-classification.md) | Draft 1 | How a node classifies its NAT and what it reports |
 | [mtcp-v1.md](mtcp-v1.md) | Draft 1 | MeshTransit Control Protocol (replaces TS2021); schema in `api/mtcp/v1` |
+| [policy-digest-v1.md](policy-digest-v1.md) | Draft 1 | Semantic digest of a packet filter, for enforcement evidence |
 | [legacy-ts2021/](legacy-ts2021/) | Legacy | Extensions of the TS2021 compatibility protocol, removed with it |
 
 ## Conventions

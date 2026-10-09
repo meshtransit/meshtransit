@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"meshtransit.net/core/internal/adapter/legacyts2021"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/adapter/relayfile"
 	"meshtransit.net/core/internal/control/mapsession"
@@ -65,7 +66,10 @@ func composeMapStream(
 	presence mapsession.PresenceStore,
 	revisions mapsession.RevisionWatcher,
 	connectivity mapsession.ConnectivityWatcher,
-	delivery mapsession.DeliveryRecorder,
+	delivery interface {
+		mapsession.DeliveryRecorder
+		mapsession.EnforcementRecorder
+	},
 	relayAccess mapsession.RelayAccess,
 ) (*mapsession.StreamService, error) {
 	replicaID, err := publicid.New()
@@ -83,8 +87,13 @@ func composeMapStream(
 	if err != nil {
 		return nil, err
 	}
-	// Policy distribution status (R1-65): record what each Device last received.
+	// Policy distribution status (R1-65): record what each Device last
+	// received, and (R1-69) what it reports it enforces.
 	recorded, err := service.WithDeliveryRecorder(delivery)
+	if err != nil {
+		return nil, errors.Join(errInvalidMapSessionComposition, err)
+	}
+	recorded, err = recorded.WithEnforcementRecorder(delivery)
 	if err != nil {
 		return nil, errors.Join(errInvalidMapSessionComposition, err)
 	}
@@ -118,6 +127,7 @@ func newMapStreamService(
 			CoordinationTimeout: mapConfig.CoordinationTimeout,
 			KeepAliveInterval:   mapConfig.KeepAliveInterval,
 			ReconcileInterval:   mapConfig.ReconcileInterval,
+			FilterDigest:        legacyts2021.PacketFilterDigest,
 		},
 	)
 	if err != nil {

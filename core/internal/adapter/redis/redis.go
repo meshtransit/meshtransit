@@ -45,23 +45,25 @@ type Options struct {
 
 // Client is the concrete Redis dependency owned by the composition root.
 type Client struct {
-	ping             func(context.Context) error
-	publish          func(context.Context, string, []byte) error
-	subscribe        func(context.Context, string) (messageSubscription, error)
-	acquirePresence  presenceAcquireFunc
-	renewPresence    presenceRenewFunc
-	releasePresence  presenceReleaseFunc
-	observeEndpoints observeEndpointsFunc
-	loadEndpoints    loadEndpointsFunc
-	loadConnectivity loadConnectivityFunc
-	applyRateLimit   rateLimitFunc
-	recordDelivery   recordDeliveryFunc
-	touchDelivery    touchDeliveryFunc
-	loadDeliveries   loadDeliveriesFunc
-	metrics          *redisMetrics
-	close            func() error
-	closeOnce        sync.Once
-	closeErr         error
+	ping              func(context.Context) error
+	publish           func(context.Context, string, []byte) error
+	subscribe         func(context.Context, string) (messageSubscription, error)
+	acquirePresence   presenceAcquireFunc
+	renewPresence     presenceRenewFunc
+	releasePresence   presenceReleaseFunc
+	observeEndpoints  observeEndpointsFunc
+	loadEndpoints     loadEndpointsFunc
+	loadConnectivity  loadConnectivityFunc
+	applyRateLimit    rateLimitFunc
+	recordDelivery    recordDeliveryFunc
+	recordEnforcement recordEnforcementFunc
+	loadSession       loadSessionFunc
+	touchDelivery     touchDeliveryFunc
+	loadDeliveries    loadDeliveriesFunc
+	metrics           *redisMetrics
+	close             func() error
+	closeOnce         sync.Once
+	closeErr          error
 }
 
 // Open constructs a lazy, bounded TLS-only Redis client. Connectivity is
@@ -217,15 +219,26 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 		},
 		recordDelivery: func(
 			recordCtx context.Context,
-			key string,
-			generation int64,
-			networkRevision int64,
-			policyRevision int64,
-			deliveredAt int64,
+			deliveryKey string,
+			sessionKey string,
+			record deliveryRecord,
 			ttl time.Duration,
 		) (int64, error) {
-			return recordDeliveryScript.Run(recordCtx, client, []string{key}, generation, networkRevision,
-				policyRevision, deliveredAt, ttl.Milliseconds()).Int64()
+			return recordDeliveryScript.Run(recordCtx, client, []string{deliveryKey, sessionKey},
+				record.generation, record.networkRevision, record.policyRevision, record.deliveredAt,
+				ttl.Milliseconds(), record.filterDigest, record.filterGrants, record.nodeID, record.machine).Int64()
+		},
+		loadSession: func(loadCtx context.Context, key string) ([]any, error) {
+			return client.HMGet(loadCtx, key, "node_id", "generation", "machine").Result()
+		},
+		recordEnforcement: func(
+			recordCtx context.Context,
+			key string,
+			record enforcementRecord,
+			ttl time.Duration,
+		) (int64, error) {
+			return recordEnforcementScript.Run(recordCtx, client, []string{key}, record.generation,
+				record.digest, record.grants, record.appliedAt, record.reportedAt, ttl.Milliseconds()).Int64()
 		},
 		touchDelivery: func(
 			touchCtx context.Context,

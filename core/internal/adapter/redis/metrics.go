@@ -11,20 +11,21 @@ import (
 type redisCommand string
 
 const (
-	redisCommandPing             redisCommand = "ping"
-	redisCommandPublish          redisCommand = "publish"
-	redisCommandSubscribe        redisCommand = "subscribe"
-	redisCommandReceive          redisCommand = "receive"
-	redisCommandAcquire          redisCommand = "presence_acquire"
-	redisCommandRenew            redisCommand = "presence_renew"
-	redisCommandRelease          redisCommand = "presence_release"
-	redisCommandObserveEndpoints redisCommand = "endpoints_observe"
-	redisCommandLoadEndpoints    redisCommand = "endpoints_load"
-	redisCommandLoadConnectivity redisCommand = "connectivity_load"
-	redisCommandRateLimit        redisCommand = "rate_limit"
-	redisCommandRecordDelivery   redisCommand = "delivery_record"
-	redisCommandTouchDelivery    redisCommand = "delivery_touch"
-	redisCommandLoadDeliveries   redisCommand = "delivery_load"
+	redisCommandPing              redisCommand = "ping"
+	redisCommandPublish           redisCommand = "publish"
+	redisCommandSubscribe         redisCommand = "subscribe"
+	redisCommandReceive           redisCommand = "receive"
+	redisCommandAcquire           redisCommand = "presence_acquire"
+	redisCommandRenew             redisCommand = "presence_renew"
+	redisCommandRelease           redisCommand = "presence_release"
+	redisCommandObserveEndpoints  redisCommand = "endpoints_observe"
+	redisCommandLoadEndpoints     redisCommand = "endpoints_load"
+	redisCommandLoadConnectivity  redisCommand = "connectivity_load"
+	redisCommandRateLimit         redisCommand = "rate_limit"
+	redisCommandRecordDelivery    redisCommand = "delivery_record"
+	redisCommandTouchDelivery     redisCommand = "delivery_touch"
+	redisCommandLoadDeliveries    redisCommand = "delivery_load"
+	redisCommandRecordEnforcement redisCommand = "enforcement_record"
 )
 
 var redisCommands = [...]redisCommand{
@@ -42,6 +43,7 @@ var redisCommands = [...]redisCommand{
 	redisCommandRecordDelivery,
 	redisCommandTouchDelivery,
 	redisCommandLoadDeliveries,
+	redisCommandRecordEnforcement,
 }
 
 type redisMetrics struct {

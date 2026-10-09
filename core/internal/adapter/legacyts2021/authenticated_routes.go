@@ -15,6 +15,7 @@ var ErrInvalidAuthenticatedRoutes = errors.New("legacyts2021: invalid authentica
 type AuthenticatedRoutes struct {
 	registration AuthenticatedHandlerFactory
 	mapSession   AuthenticatedHandlerFactory
+	enforcement  AuthenticatedHandlerFactory
 }
 
 // NewAuthenticatedRoutes constructs an immutable authenticated endpoint router.
@@ -26,6 +27,17 @@ func NewAuthenticatedRoutes(
 		return nil, ErrInvalidAuthenticatedRoutes
 	}
 	return &AuthenticatedRoutes{registration: registration, mapSession: mapSession}, nil
+}
+
+// WithEnforcement returns routes that also serve enforcement reports.
+func (routes *AuthenticatedRoutes) WithEnforcement(
+	enforcement AuthenticatedHandlerFactory,
+) (*AuthenticatedRoutes, error) {
+	if routes == nil || enforcement == nil {
+		return nil, ErrInvalidAuthenticatedRoutes
+	}
+	return &AuthenticatedRoutes{registration: routes.registration, mapSession: routes.mapSession,
+		enforcement: enforcement}, nil
 }
 
 // Handler binds every route to the same transport-authenticated machine.
@@ -43,6 +55,13 @@ func (routes *AuthenticatedRoutes) Handler(
 	if err != nil || mapSession == nil {
 		return nil, errors.Join(ErrInvalidAuthenticatedRoutes, err)
 	}
+	enforcement := http.Handler(http.NotFoundHandler())
+	if routes.enforcement != nil {
+		enforcement, err = routes.enforcement.Handler(machine)
+		if err != nil || enforcement == nil {
+			return nil, errors.Join(ErrInvalidAuthenticatedRoutes, err)
+		}
+	}
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request == nil || request.URL == nil {
 			http.Error(response, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
@@ -53,6 +72,8 @@ func (routes *AuthenticatedRoutes) Handler(
 			registration.ServeHTTP(response, request)
 		case mapSessionPath:
 			mapSession.ServeHTTP(response, request)
+		case enforcementPath:
+			enforcement.ServeHTTP(response, request)
 		default:
 			http.NotFound(response, request)
 		}

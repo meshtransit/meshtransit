@@ -81,6 +81,9 @@ type StreamOptions struct {
 	ReconcileInterval   time.Duration
 	// RelayAccess, when set, issues each node's Interchange grant.
 	RelayAccess RelayAccess
+	// FilterDigest, when set, records the digest of each delivered packet
+	// filter so enforcement reports can be compared with it.
+	FilterDigest FilterDigester
 }
 
 // StreamService runs generation-fenced map streams synchronously. It owns no
@@ -93,6 +96,7 @@ type StreamService struct {
 	connectivity ConnectivityWatcher
 	options      StreamOptions
 	delivery     DeliveryRecorder
+	enforcement  EnforcementRecorder
 
 	activeMu sync.Mutex
 	active   map[node.ID]struct{}
@@ -181,7 +185,7 @@ func (service *StreamService) Serve(
 	if err := sink.SendSnapshot(ctx, snapshot); err != nil {
 		return errors.Join(ErrStreamWrite, err)
 	}
-	service.recordDelivery(ctx, snapshot)
+	service.recordDelivery(ctx, snapshot, service.filterDigest(snapshot))
 	err = service.run(
 		ctx,
 		machine,
@@ -261,15 +265,26 @@ func (service *StreamService) run(
 	defer func() { watch.close() }()
 	current := initial
 	delivered := initial.NetworkRevision()
+	deliveredFilter := service.filterDigest(initial)
 	lastTouch := time.Now()
 	// advance adopts a refreshed snapshot and records it when the client now
-	// holds a newer Network revision than it was last known to have.
+	// holds a newer Network revision, or a different packet filter, than it
+	// was last known to have. Only a revision or projection change can change
+	// the filter, so the digest is not recomputed for connectivity changes.
 	advance := func(next Snapshot) {
+		previous := current
 		current = next
-		if current.NetworkRevision() != delivered {
-			delivered = current.NetworkRevision()
-			service.recordDelivery(ctx, current)
+		revisionChanged := current.NetworkRevision() != delivered
+		if !revisionChanged &&
+			equalDirectDeviceProjections(previous.directDeviceProjections, current.directDeviceProjections) {
+			return
 		}
+		filter := service.filterDigest(current)
+		if !revisionChanged && filter == deliveredFilter {
+			return
+		}
+		delivered, deliveredFilter = current.NetworkRevision(), filter
+		service.recordDelivery(ctx, current, filter)
 	}
 	for {
 		if !current.KeyExpiry().Equal(expiry) {

@@ -110,6 +110,42 @@ type deviceDistributionItem struct {
 	DeliveredPolicyRevision  *int64     `json:"delivered_policy_revision"`
 	DeliveredAt              *time.Time `json:"delivered_at"`
 	LastSeenAt               *time.Time `json:"last_seen_at"`
+	// Enforcement compares the Device's own report with the delivered packet
+	// filter (R1-69).
+	Enforcement deviceEnforcementItem `json:"enforcement"`
+}
+
+type deviceEnforcementItem struct {
+	// Status is enforced, applying, mismatch, not_reported or unknown.
+	Status          string     `json:"status"`
+	DeliveredDigest *string    `json:"delivered_digest"`
+	DeliveredGrants *int       `json:"delivered_grants"`
+	EnforcedDigest  *string    `json:"enforced_digest"`
+	EnforcedGrants  *int       `json:"enforced_grants"`
+	AppliedAt       *time.Time `json:"applied_at"`
+	ReportedAt      *time.Time `json:"reported_at"`
+}
+
+func newDeviceEnforcementItem(status distribution.Enforcement,
+	observation distribution.Observation) deviceEnforcementItem {
+	item := deviceEnforcementItem{Status: string(status)}
+	if status == "" {
+		item.Status = string(distribution.EnforcementUnknown)
+	}
+	if !observation.Known {
+		return item
+	}
+	if filter := observation.Filter; !filter.IsZero() {
+		digest, grants := filter.Digest.String(), filter.Grants
+		item.DeliveredDigest, item.DeliveredGrants = &digest, &grants
+	}
+	if enforced := observation.Enforced; !enforced.IsZero() {
+		digest, grants := enforced.Digest.String(), enforced.Grants
+		appliedAt, reportedAt := observation.AppliedAt.UTC(), observation.ReportedAt.UTC()
+		item.EnforcedDigest, item.EnforcedGrants = &digest, &grants
+		item.AppliedAt, item.ReportedAt = &appliedAt, &reportedAt
+	}
+	return item
 }
 
 type deviceDistributionData struct {
@@ -129,11 +165,13 @@ type deviceDistributionEnvelope struct {
 
 func newDeviceDistributionItem(device distribution.Device) deviceDistributionItem {
 	item := deviceDistributionItem{ID: device.ID.String(), Hostname: device.Hostname, State: device.State,
-		Status: string(device.Status), Online: device.Observation.Online}
+		Status: string(device.Status), Online: device.Observation.Online,
+		Enforcement: deviceEnforcementItem{Status: string(distribution.EnforcementUnknown)}}
 	if device.Status == distribution.StatusUnknown {
 		item.Online = false
 		return item
 	}
+	item.Enforcement = newDeviceEnforcementItem(device.Enforcement, device.Observation)
 	if observation := device.Observation; observation.Known {
 		networkRevision, policyRevision := observation.NetworkRevision, observation.PolicyRevision
 		deliveredAt, seenAt := observation.DeliveredAt.UTC(), observation.SeenAt.UTC()

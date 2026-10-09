@@ -79,3 +79,21 @@ func (e *WireGuardEngine) SetRelayIdentity(disco key.DiscoPrivate) {
 		e.credentials.setIdentity(disco)
 	}
 }
+
+// EnforcedPolicy returns the digest of the rules the packet filter enforces
+// right now, for the daemon to report to Core (R1-69).
+func (e *WireGuardEngine) EnforcedPolicy() (EnforcedPolicy, bool) {
+	if e == nil {
+		return EnforcedPolicy{}, false
+	}
+	return e.filter.Enforced()
+}
+
+// SetPolicyDriftTest makes the packet filter enforce one rule fewer than
+// Core sends. It exists only to demonstrate enforcement mismatch detection
+// and must never be enabled in production.
+func (e *WireGuardEngine) SetPolicyDriftTest(enabled bool) {
+	if e != nil {
+		e.filter.setDropLastRule(enabled)
+	}
+}

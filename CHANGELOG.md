@@ -16,6 +16,10 @@ merge (2026-10-09) are kept below.
   traversal agent and a generated traversal matrix.
 - MTCP v1 specification (control protocol replacing TS2021) and its
   protobuf schema in api/mtcp/v1.
+- Client enforcement evidence (R1-69): policy digest v1 (shared/policydigest,
+  docs/protocol/policy-digest-v1.md); meshd reports the digest of the rules
+  its packet filter enforces; Core compares it with the delivered filter and
+  reports enforced, applying, mismatch or not_reported per Device.
 
 ## meshd (before the merge)
 

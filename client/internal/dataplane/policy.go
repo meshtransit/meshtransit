@@ -9,6 +9,7 @@ import (
 
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/packetmeta"
+	"meshtransit.net/shared/policydigest"
 )
 
 const (
@@ -56,6 +57,19 @@ type policyFilter struct {
 	maximumFlows  int
 	aliases       map[netip.Addr]aliasPacketGrant
 	suspended     bool
+	// enforced is the digest of rules, recomputed whenever they change.
+	enforced EnforcedPolicy
+	// dropLastRule makes the filter deliberately enforce one rule fewer
+	// than it was given, to demonstrate that Core detects the mismatch.
+	dropLastRule bool
+}
+
+// EnforcedPolicy is the policy digest of the rules the packet filter
+// enforces and when it installed them (R1-69).
+type EnforcedPolicy struct {
+	Digest    policydigest.Digest
+	Grants    int
+	AppliedAt time.Time
 }
 
 func newPolicyFilter() *policyFilter {
@@ -104,8 +118,16 @@ func (f *policyFilter) UpdateNetwork(snapshot networkmap.Snapshot) {
 			}
 		}
 	}
-	rules := make([]compiledRule, 0, len(snapshot.Policy))
-	for _, rule := range snapshot.Policy {
+	policy := snapshot.Policy
+
+	f.mu.Lock()
+	dropLastRule := f.dropLastRule
+	f.mu.Unlock()
+	if dropLastRule && len(policy) > 0 {
+		policy = policy[:len(policy)-1]
+	}
+	rules := make([]compiledRule, 0, len(policy))
+	for _, rule := range policy {
 		rules = append(rules, compiledRule{
 			sources:      append([]networkmap.Selector{}, rule.Sources...),
 			destinations: append([]networkmap.Destination{}, rule.Destinations...),
@@ -125,6 +147,7 @@ func (f *policyFilter) UpdateNetwork(snapshot networkmap.Snapshot) {
 	isUnchanged := maps.Equal(f.self, self) && f.selfAuthority.equal(selfAuthority) &&
 		maps.EqualFunc(f.peers, peers, func(first, second packetAuthority) bool { return first.equal(second) }) &&
 		slices.EqualFunc(f.rules, rules, equalCompiledRule) && equalAliasPacketGrants(f.aliases, aliases)
+	rulesChanged := !slices.EqualFunc(f.rules, rules, equalCompiledRule)
 	f.self = self
 	f.selfAuthority = selfAuthority
 	f.peers = peers
@@ -133,6 +156,40 @@ func (f *policyFilter) UpdateNetwork(snapshot networkmap.Snapshot) {
 	if !isUnchanged {
 		f.flows = map[flowKey]flowState{}
 	}
+	if rulesChanged || f.enforced.Digest.IsZero() {
+		f.enforced = enforcedPolicyOf(rules, f.clock)
+	}
+	f.mu.Unlock()
+}
+
+// enforcedPolicyOf digests exactly the compiled rules. A digest failure
+// leaves the zero value, which is never reported.
+func enforcedPolicyOf(rules []compiledRule, clock func() time.Time) EnforcedPolicy {
+	enforced := make([]networkmap.Rule, len(rules))
+	for index, rule := range rules {
+		enforced[index] = networkmap.Rule{Sources: rule.sources, Destinations: rule.destinations,
+			Protocols: rule.protocols}
+	}
+	digest, grants, err := networkmap.PolicyDigest(enforced)
+	if err != nil || clock == nil {
+		return EnforcedPolicy{}
+	}
+	return EnforcedPolicy{Digest: digest, Grants: grants, AppliedAt: clock().UTC()}
+}
+
+// Enforced returns the digest of the rules being enforced, if known.
+func (f *policyFilter) Enforced() (EnforcedPolicy, bool) {
+	if f == nil {
+		return EnforcedPolicy{}, false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.enforced, !f.enforced.Digest.IsZero()
+}
+
+func (f *policyFilter) setDropLastRule(drop bool) {
+	f.mu.Lock()
+	f.dropLastRule = drop
 	f.mu.Unlock()
 }
 

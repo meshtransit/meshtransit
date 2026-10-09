@@ -45,7 +45,8 @@ const (
 
 // Observation is what the control plane recorded for one Device. Known is
 // false when it never recorded a delivery; Online reflects a live presence
-// lease.
+// lease. Filter is the digest of the last delivered packet filter; Enforced,
+// AppliedAt and ReportedAt are the Device's own report for the same session.
 type Observation struct {
 	Known             bool
 	SessionGeneration int64
@@ -54,17 +55,23 @@ type Observation struct {
 	DeliveredAt       time.Time
 	SeenAt            time.Time
 	Online            bool
+	Filter            FilterSummary
+	Enforced          FilterSummary
+	AppliedAt         time.Time
+	ReportedAt        time.Time
 }
 
 // IsValid reports a self-consistent observation.
 func (observation Observation) IsValid() bool {
 	if !observation.Known {
 		return observation.SessionGeneration == 0 && observation.NetworkRevision == 0 &&
-			observation.PolicyRevision == 0 && observation.DeliveredAt.IsZero() && observation.SeenAt.IsZero()
+			observation.PolicyRevision == 0 && observation.DeliveredAt.IsZero() && observation.SeenAt.IsZero() &&
+			observation.Filter.IsZero() && observation.Enforced.IsZero() &&
+			observation.AppliedAt.IsZero() && observation.ReportedAt.IsZero()
 	}
 	return observation.SessionGeneration > 0 && observation.NetworkRevision > 0 &&
 		observation.PolicyRevision >= 0 && !observation.DeliveredAt.IsZero() &&
-		!observation.SeenAt.Before(observation.DeliveredAt)
+		!observation.SeenAt.Before(observation.DeliveredAt) && validEnforcement(observation)
 }
 
 // TargetDevice is a Device that should hold the current revision.
@@ -102,6 +109,7 @@ type Device struct {
 	Hostname    string
 	State       string
 	Status      Status
+	Enforcement Enforcement
 	Observation Observation
 }
 
@@ -158,7 +166,7 @@ func (service *Service) Read(ctx context.Context, session accountsession.Session
 	for index, device := range devices {
 		ids[index] = device.ID
 		page.Devices[index] = Device{ID: device.ID, Hostname: device.Hostname, State: device.State,
-			Status: StatusUnknown}
+			Status: StatusUnknown, Enforcement: EnforcementUnknown}
 	}
 	if len(ids) == 0 {
 		page.ObservationsAvailable = true
@@ -169,12 +177,14 @@ func (service *Service) Read(ctx context.Context, session accountsession.Session
 		// Delivery records are operational; the durable list still answers.
 		return page, nil
 	}
+	now := service.clock.Now()
 	for index, observation := range observations {
 		if !observation.IsValid() {
 			return page, nil
 		}
 		page.Devices[index].Observation = observation
 		page.Devices[index].Status = Classify(target.NetworkRevision, observation)
+		page.Devices[index].Enforcement = ClassifyEnforcement(observation, now)
 	}
 	page.ObservationsAvailable = true
 	return page, nil

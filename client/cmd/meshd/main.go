@@ -140,6 +140,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 			return 1
 		}
+		if cfg.TestPolicyDrift {
+			engine.SetPolicyDriftTest(true)
+			logger.Warn("TEST ONLY: the packet filter enforces one rule fewer than control sends")
+		}
 		daemonOptions.DataPlane = engine
 		logger.Info(
 			"encrypted data plane enabled",
