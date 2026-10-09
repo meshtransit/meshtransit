@@ -38,7 +38,7 @@ at any past moment, and is recorded in a tamper-evident audit trail.
 | Path | What | License |
 |---|---|---|
 | [`core/`](core/) | MeshTransit Core: control plane (API, control, worker, identity roles) | AGPL-3.0 |
-| `relay/` | MeshTransit Interchange (`meshrelay`), the relay (in development) | AGPL-3.0 |
+| [`relay/`](relay/) | MeshTransit Interchange (`meshrelay`), the relay | AGPL-3.0 |
 | [`client/`](client/) | `meshd` node daemon, `meshnetd`, `meshcred` helpers and the `meshctl` CLI | Apache-2.0 |
 | `shared/` | Protocol libraries used by the client, the relay and Core (in development) | Apache-2.0 |
 | [`api/`](api/) | Management API (OpenAPI) and protocol contracts | Apache-2.0 |

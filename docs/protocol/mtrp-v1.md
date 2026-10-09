@@ -94,6 +94,11 @@ ticket time window, ticket `disco_key` equals the Noise initiator static key,
 revocation lists, `timestamp` greater than the last accepted for this disco key,
 admission limits. Only then does it allocate session state and reply.
 
+The `timestamp` MUST be within ±60 s of the relay clock and not earlier than
+the relay's start: replay state does not survive a restart, so an INIT from
+before it cannot be told from a replay. A client whose INIT is refused this
+way retries with a fresh timestamp.
+
 ### 4.1 DoS protection (mac1/mac2, cookies)
 
 As in WireGuard:
@@ -150,6 +155,8 @@ Plaintext: `type u8 || body`.
 | 0x07 | TICKET_UPDATE | `ticket_len u16 || ticket` | client |
 | 0x08 | TICKET_ACK | `not_after u64` | relay |
 | 0x09 | SESSION_CLOSE | `reason u8 || retry_after_ms u32` (1 expired, 2 revoked, 3 draining, 4 policy, 5 idle) | relay |
+| 0x0A | PATH_CHALLENGE | `nonce u64` (non-zero, random) | relay |
+| 0x0B | PATH_RESPONSE | `nonce u64` (echo of the challenge) | client |
 
 ### 5.1 Routes
 
@@ -170,6 +177,15 @@ Plaintext: `type u8 || body`.
 - A UDP session is bound to the source address of its INIT. DATA and CONTROL
   from any other address are dropped, except an authenticated CONTROL frame,
   which moves the binding to its source address (roaming).
+- **Return routability.** A binding is *unverified* until the relay has proof
+  that the client receives at that address. The client MUST send a KEEPALIVE
+  immediately after the handshake; the first authenticated CONTROL frame from
+  the handshake address verifies it (its keys required the RESPONSE sent
+  there). After a roam the relay sends PATH_CHALLENGE to the new address; the
+  client MUST answer with PATH_RESPONSE from that address, which verifies it.
+  The relay caps traffic towards an unverified binding (default 16 KiB/s), so
+  moving a binding to someone else's address cannot make the relay a
+  reflector. Stream bindings are always verified.
 - The client sends KEEPALIVE after `keepalive_s` without sending anything; the
   relay closes a session after `idle_timeout_s` without a valid frame.
 
@@ -222,7 +238,14 @@ Verification rules:
 - Logs contain no keys, tickets, endpoints or zones; only aggregate counters and
   error codes.
 - Draining: SESSION_CLOSE(draining, retry_after) lets clients move to another
-  node before shutdown.
+  node before shutdown; the relay keeps forwarding for existing sessions until
+  it stops, and admits no new ones.
+- Admission before public-key work: per-source handshake rate (IPv6 counted
+  per /64), global handshake rate and session capacity; above either global
+  limit, UDP INITs need a valid cookie (mac2).
+- CONTROL frames are rate limited per session after authentication; route
+  numbers are never reused within a session; a TICKET_UPDATE must not be older
+  than the ticket it replaces.
 
 ## 8. Relay map
 

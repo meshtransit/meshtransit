@@ -18,4 +18,11 @@
 !core/migrations/**
 !shared/
 !shared/**
+!relay/
+!relay/LICENSE
+!relay/THIRD_PARTY_NOTICES.md
+!relay/cmd/
+!relay/cmd/**
+!relay/internal/
+!relay/internal/**
 **/*_test.go

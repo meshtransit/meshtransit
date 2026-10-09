@@ -21,6 +21,8 @@ const (
 	ControlTicketUpdate  ControlType = 0x07
 	ControlTicketAck     ControlType = 0x08
 	ControlSessionClose  ControlType = 0x09
+	ControlPathChallenge ControlType = 0x0A
+	ControlPathResponse  ControlType = 0x0B
 )
 
 // RouteErrorCode explains a refused ROUTE_OPEN.
@@ -69,6 +71,7 @@ type ControlMessage struct {
 	SessionClose SessionCloseReason
 	RetryAfterMS uint32
 	NotAfterMS   uint64
+	Nonce        uint64 // PATH_CHALLENGE and PATH_RESPONSE
 	Ticket       []byte
 }
 
@@ -123,6 +126,8 @@ func AppendControlMessage(dst []byte, m ControlMessage) ([]byte, error) {
 		}
 		dst = append(dst, byte(m.SessionClose))
 		dst = binary.BigEndian.AppendUint32(dst, m.RetryAfterMS)
+	case ControlPathChallenge, ControlPathResponse:
+		dst = binary.BigEndian.AppendUint64(dst, m.Nonce)
 	default:
 		return nil, ErrUnsupported
 	}
@@ -198,6 +203,11 @@ func ParseControlMessage(b []byte) (ControlMessage, error) {
 			return ControlMessage{}, ErrMalformed
 		}
 		m.NotAfterMS = binary.BigEndian.Uint64(body)
+	case ControlPathChallenge, ControlPathResponse:
+		if !exact(8) {
+			return ControlMessage{}, ErrMalformed
+		}
+		m.Nonce = binary.BigEndian.Uint64(body)
 	case ControlSessionClose:
 		if !exact(5) {
 			return ControlMessage{}, ErrMalformed

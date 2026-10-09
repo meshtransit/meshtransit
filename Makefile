@@ -22,14 +22,14 @@ DEX_OLD_SOURCE ?=
 DEX_CURRENT_BINARY ?=
 DEX_CURRENT_BINARY_SHA256 ?=
 
-.PHONY: help build build-core build-client package-deb package-deb-meshd package-deb-meshctl lint-client natlab-matrix check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
+.PHONY: help build build-core build-client package-deb package-deb-meshd package-deb-meshctl lint-client lint-relay build-relay natlab-matrix check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
 	container-build container-build-multiarch container-push-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
 
 help:
 	@echo "Targets: build build-core build-client test test-race lint lint-client quality"
 	@echo "         check-boundaries integration-platform-container package-deb container-build"
 
-build: build-core build-client
+build: build-core build-client build-relay
 
 build-core:
 	mkdir -p bin
@@ -41,6 +41,10 @@ build-client:
 	$(GO) build -trimpath -o bin/meshnetd ./client/cmd/meshnetd
 	$(GO) build -trimpath -o bin/meshcred ./client/cmd/meshcred
 	$(GO) build -trimpath -o bin/meshctl ./client/cmd/meshctl
+
+build-relay:
+	mkdir -p bin
+	$(GO) build -trimpath -o bin/meshrelay ./relay/cmd/meshrelay
 
 package-deb: package-deb-meshd package-deb-meshctl
 
@@ -165,6 +169,9 @@ lint-client:
 	$(GOLANGCI_LINT) run --config client/.golangci.yml ./client/... ./shared/... ./test/...
 
 # Regenerates test/natlab/testdata/matrix.md; review the diff before committing.
+lint-relay:
+	$(GOLANGCI_LINT) run --config relay/.golangci.yml ./relay/...
+
 natlab-matrix:
 	$(GO) test ./test/natlab -run TestTraversalMatrix -count=1 -update
 

@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.78.0
 	github.com/aws/smithy-go v1.28.1
 	github.com/dexidp/dex v0.0.0-20260303133905-11d2eeb52b42
+	github.com/flynn/noise v1.1.0
 	github.com/go-jose/go-jose/v4 v4.1.3
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/prometheus/client_golang v1.24.1
@@ -19,7 +20,6 @@ require (
 )
 
 require (
-	github.com/flynn/noise v1.1.0 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 )

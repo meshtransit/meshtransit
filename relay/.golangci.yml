@@ -1,0 +1,62 @@
+version: "2"
+
+run:
+  concurrency: 4
+  timeout: 5m
+  tests: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 50
+
+linters:
+  enable:
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - copyloopvar
+    - depguard
+    - durationcheck
+    - errcheck
+    - errorlint
+    - errname
+    - forcetypeassert
+    - gocritic
+    - godot
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - noctx
+    - nolintlint
+    - predeclared
+    - reassign
+    - sloglint
+    - staticcheck
+    - unused
+    - usetesting
+  settings:
+    depguard:
+      rules:
+        relay-boundary:
+          deny:
+            - pkg: meshtransit.net/core
+              desc: the relay is a separate binary; share code through shared/
+            - pkg: meshtransit.net/client
+              desc: the relay must not depend on the node daemon
+            - pkg: tailscale.com
+              desc: the relay is MeshTransit-only code
+    errcheck:
+      check-type-assertions: true
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      extra-rules: true
