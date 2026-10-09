@@ -16,10 +16,10 @@ are included.
 | Duplicate-callback qualification source | `7e13d6513dd9e1d4f0ddec57be8b18c54934d68f` |
 | Unknown-write qualification source | `4a84c9c18268c1b7f6717d32c691c671823afffa` |
 | Proxy-safe heartbeat default source | `57546a26498cec2e9f6930a3e58330522e06ef56` |
-| Core image | `manhdev2002/meshtransit-core:poc-v36` |
+| Core image | `meshtransit/mesh-core:poc-v36` |
 | Core image digest | `sha256:8dfc99c447475df44d3060b0993c434455ddd329898795fe385c2483e3d46bb8` |
 | Control source | `ab1c26c051994393e009ff8baef6e2e77b4f276c` |
-| Control image | `manhdev2002/meshtransit-core:poc-v36` |
+| Control image | `meshtransit/mesh-core:poc-v36` |
 | Control image digest | `sha256:8dfc99c447475df44d3060b0993c434455ddd329898795fe385c2483e3d46bb8` |
 | Embedded broker release | `v2.45.1+compat.8` |
 | meshd source | `745db5193def2db0d8a1946eb762e75f898ddef0` |
@@ -991,7 +991,7 @@ run; that exact test then passed three consecutive executions and the complete
 tagged workspace passed. This evidence does not turn the timing case into an
 availability guarantee.
 
-Image `manhdev2002/meshtransit-core:poc-v38` was built from that exact commit
+Image `meshtransit/mesh-core:poc-v38` was built from that exact commit
 as a multi-platform index with digest
 `sha256:bcf23e940701e00d9a9290e28dc89ed0f9ab7f1085ba6c8deb553e4f7c6c56f1`.
 The amd64 and arm64 manifests are

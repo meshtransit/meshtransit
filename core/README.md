@@ -1088,7 +1088,7 @@ exits.
 
 ## Container image
 
-`make container-build` creates `manhdev2002/meshtransit-core:dev` by default.
+`make container-build` creates `meshtransit/mesh-core:dev` by default.
 Override `CONTAINER_IMAGE`, `CONTAINER_TAG`, or `CONTAINER_PLATFORM` without
 editing repository files. `make container-inspect` verifies the numeric
 non-root identity and fixed entrypoint, `make container-smoke` exercises the

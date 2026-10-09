@@ -101,7 +101,7 @@ jobs:
       - name: Scan image
         uses: aquasecurity/trivy-action@0.36.0
         with:
-          image-ref: manhdev2002/meshtransit-core:ci
+          image-ref: meshtransit/mesh-core:ci
           format: table
           exit-code: "1"
           ignore-unfixed: false
