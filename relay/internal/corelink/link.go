@@ -189,9 +189,13 @@ func (l *Link) Poll(ctx context.Context) error {
 		return fmt.Errorf("corelink: read: %w", err)
 	}
 	if err := l.apply(body); err != nil {
-		if !errors.Is(err, errNotNewer) {
-			l.cfg.Metrics("rejected")
+		if errors.Is(err, errNotNewer) {
+			// A Core replica one signing window behind the one that served
+			// the held state: keep it, and keep its ETag.
+			l.cfg.Metrics("not_newer")
+			return nil
 		}
+		l.cfg.Metrics("rejected")
 		return err
 	}
 	l.etag = resp.Header.Get("ETag")

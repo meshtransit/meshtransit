@@ -135,9 +135,11 @@ func TestLinkAppliesRotatesAndRevokes(t *testing.T) {
 	if err := l.Poll(t.Context()); err == nil {
 		t.Fatal("state signed by a retired key accepted")
 	}
+	// A state that is not newer (a lagging Core replica) is ignored without error.
 	core.set(t, state(2, mtrp.TrustedKey{Key: b.Public(), NotAfter: t0.Add(time.Hour)}), b, `"2b"`)
-	if err := l.Poll(t.Context()); err == nil {
-		t.Fatal("replayed sequence accepted")
+	generation := l.Generation()
+	if err := l.Poll(t.Context()); err != nil || l.Generation() != generation || l.etag != `"2"` {
+		t.Fatalf("replayed sequence: err %v, generation %d -> %d, etag %s", err, generation, l.Generation(), l.etag)
 	}
 	if drained.Load() != 1 {
 		t.Fatal("drain fired twice")

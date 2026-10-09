@@ -14,10 +14,17 @@ import (
 	"meshtransit.net/shared/mtrp"
 )
 
-// Publishing schedule (mtrp-v1 §9).
+// Publishing schedule (mtrp-v1 §9). Core signs once per RefreshInterval
+// window aligned to Unix time and derives every timestamp from the window
+// start, so replicas publish byte-identical documents (Ed25519 signatures
+// are deterministic) and a relay polling through a load balancer sees one
+// ETag.
 const (
 	RefreshInterval = 10 * time.Second
 	StateLifetime   = 10 * time.Minute
+	// windowSlack delays each refresh past the window boundary so a timer
+	// that fires marginally early still lands in the new window.
+	windowSlack = 50 * time.Millisecond
 	// keyTrustWindow is the not_after given to published signing keys. It is
 	// renewed every refresh, so a key stays trusted while Core runs and lapses
 	// a week after Core stops listing it.
@@ -54,7 +61,7 @@ type Publisher struct {
 	state    atomic.Pointer[document]
 	relayMap atomic.Pointer[document]
 
-	sequence int64 // owned by the refresh goroutine (and Start before it)
+	window time.Time // last signed window; owned by the refresh goroutine (and Start before it)
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -125,13 +132,14 @@ func (p *Publisher) Done() <-chan error {
 
 func (p *Publisher) run(ctx context.Context, done chan<- error) {
 	defer close(done)
-	t := time.NewTicker(RefreshInterval)
+	t := time.NewTimer(untilNextWindow(time.Now()))
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			t.Reset(untilNextWindow(time.Now()))
 			// A failed refresh keeps the previous documents, which stay
 			// valid for StateLifetime; it is retried on the next tick.
 			if err := p.refresh(ctx); err != nil && ctx.Err() == nil {
@@ -141,11 +149,28 @@ func (p *Publisher) run(ctx context.Context, done chan<- error) {
 	}
 }
 
-// refresh signs a new relay state and, when configured, relay map.
+// untilNextWindow is the delay to just after the next window boundary.
+func untilNextWindow(now time.Time) time.Duration {
+	return RefreshInterval - time.Duration(now.UnixNano()%int64(RefreshInterval)) + windowSlack
+}
+
+// windowStart truncates t to its RefreshInterval window.
+func windowStart(t time.Time) time.Time {
+	ms := RefreshInterval.Milliseconds()
+	return time.UnixMilli(t.UnixMilli() / ms * ms)
+}
+
+// refresh signs a new relay state and, when configured, relay map, once per
+// window. A window that is not after the last signed one (a repeated tick or
+// a clock step back) keeps the current documents, so the sequence, which is
+// the window start in milliseconds, strictly increases.
 func (p *Publisher) refresh(ctx context.Context) error {
-	now := p.opts.Now()
+	now := windowStart(p.opts.Now())
+	if p.state.Load() != nil && !now.After(p.window) {
+		return nil
+	}
 	state := mtrp.RelayState{
-		Sequence:  max(now.UnixMilli(), p.sequence+1),
+		Sequence:  now.UnixMilli(),
 		IssuedAt:  now,
 		ExpiresAt: now.Add(StateLifetime),
 		Drain:     p.opts.Drain,
@@ -179,7 +204,7 @@ func (p *Publisher) refresh(ctx context.Context) error {
 			return err
 		}
 	}
-	p.sequence = state.Sequence
+	p.window = now
 	p.state.Store(stateDoc)
 	if mapDoc != nil {
 		p.relayMap.Store(mapDoc)

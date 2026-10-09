@@ -179,29 +179,69 @@ func TestPublisherSignsStateAndMap(t *testing.T) {
 	}
 }
 
-func TestPublisherSequenceIsMonotonic(t *testing.T) {
+func TestPublisherSignsOncePerWindow(t *testing.T) {
 	t.Parallel()
 
 	current := signer(t, 1)
-	c := newClock(t0)
+	c := newClock(t0.Add(3 * time.Second))
 	p := newPublisher(t, c, Options{Signer: current})
 	if err := p.refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	first := p.state.Load()
-	// The clock stepping backwards must not reuse or lower the sequence.
-	c.advance(-time.Second)
+	if got := openState(t, first, current.Public()); got.Sequence != t0.UnixMilli() || !got.IssuedAt.Equal(t0) {
+		t.Fatalf("first state seq %d issued %v, want the window start", got.Sequence, got.IssuedAt)
+	}
+	// A later tick in the same window and a clock step back keep the document.
+	c.advance(5 * time.Second)
+	if err := p.refresh(t.Context()); err != nil || p.state.Load() != first {
+		t.Fatalf("same window re-signed: %v", err)
+	}
+	c.advance(-20 * time.Second)
+	if err := p.refresh(t.Context()); err != nil || p.state.Load() != first {
+		t.Fatalf("earlier window re-signed: %v", err)
+	}
+	c.advance(25 * time.Second)
 	if err := p.refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if got := openState(t, p.state.Load(), current.Public()).Sequence; got != t0.UnixMilli()+1 {
-		t.Fatalf("sequence after clock step back = %d", got)
+	if got := openState(t, p.state.Load(), current.Public()).Sequence; got != t0.Add(RefreshInterval).UnixMilli() {
+		t.Fatalf("next window sequence = %d", got)
 	}
 	if p.state.Load().etag == first.etag {
 		t.Fatal("etag unchanged for a new document")
 	}
 	if p.relayMap.Load() != nil {
 		t.Fatal("map published without a map file")
+	}
+}
+
+func TestReplicasPublishIdenticalDocuments(t *testing.T) {
+	t.Parallel()
+
+	m := testMap(t)
+	opts := Options{Signer: signer(t, 1), Map: &m}
+	a := newPublisher(t, newClock(t0.Add(1200*time.Millisecond)), opts)
+	b := newPublisher(t, newClock(t0.Add(8700*time.Millisecond)), opts)
+	for _, p := range []*Publisher{a, b} {
+		if err := p.refresh(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !bytes.Equal(a.state.Load().body, b.state.Load().body) || a.state.Load().etag != b.state.Load().etag ||
+		!bytes.Equal(a.relayMap.Load().body, b.relayMap.Load().body) {
+		t.Fatal("replicas signing in the same window published different documents")
+	}
+}
+
+func TestUntilNextWindow(t *testing.T) {
+	t.Parallel()
+
+	if got := untilNextWindow(t0.Add(3 * time.Second)); got != 7*time.Second+windowSlack {
+		t.Fatalf("untilNextWindow mid-window = %v", got)
+	}
+	if got := untilNextWindow(t0); got != RefreshInterval+windowSlack {
+		t.Fatalf("untilNextWindow on a boundary = %v", got)
 	}
 }
 
@@ -215,6 +255,7 @@ func TestPublisherKeepsDocumentsWhenRevocationsFail(t *testing.T) {
 	}
 	before := p.state.Load()
 	src.fail.Store(true)
+	p.opts.Now = func() time.Time { return t0.Add(RefreshInterval) }
 	if err := p.refresh(t.Context()); err == nil {
 		t.Fatal("refresh succeeded with failing revocation source")
 	}

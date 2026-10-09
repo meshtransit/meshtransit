@@ -315,7 +315,10 @@ makes it trustworthy over any transport.
 ```
 
 - `sequence` strictly increases; `expires_at_ms − issued_at_ms` ≤ 1 hour
-  (Core uses 10 minutes and republishes every 10 seconds).
+  (Core uses 10 minutes and republishes every 10 seconds). Core signs once
+  per 10-second window aligned to Unix time, with `issued_at_ms` and
+  `sequence` set to the window start and every other time derived from it,
+  so replicas behind one load balancer serve byte-identical documents.
 - `signing_keys` (1–4) are the Core keys whose tickets and documents relays
   accept. A relay bootstraps from configured keys and afterwards replaces its
   trusted set with the list of each newer verified state, keeping keys only
@@ -332,7 +335,8 @@ makes it trustworthy over any transport.
   answer `If-None-Match` with 304, are rate limited per source address, and
   return 503 until Core has signed its first state.
 - Relays poll every 10 seconds with `If-None-Match`, accept only a newer
-  `sequence` signed by a trusted key, and keep the last good state when Core
+  `sequence` signed by a trusted key (ignoring, without error, a state that
+  is not newer, as a replica one window behind may serve), and keep the last good state when Core
   is unreachable, logging when it has expired. Ticket lifetimes (≤ 15 min)
   bound how long a missed update matters.
 
