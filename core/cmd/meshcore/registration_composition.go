@@ -3,13 +3,13 @@ package main
 import (
 	"errors"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	postgresintake "github.com/meshtransit/meshtransit/core/internal/adapter/postgres/registrationintake"
-	"github.com/meshtransit/meshtransit/core/internal/control"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration/intake"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node/keyrotation"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	postgresintake "meshtransit.net/core/internal/adapter/postgres/registrationintake"
+	"meshtransit.net/core/internal/control"
+	"meshtransit.net/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/enrollment/registration/intake"
+	"meshtransit.net/core/internal/domain/node/keyrotation"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 var errInvalidRegistrationComposition = errors.New("invalid registration composition")

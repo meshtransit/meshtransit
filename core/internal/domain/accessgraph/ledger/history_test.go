@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 type fixedClock time.Time

@@ -4,12 +4,12 @@ import (
 	"errors"
 	"log/slog"
 
-	oidcadapter "github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/authexpiry"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	oidcadapter "meshtransit.net/core/internal/adapter/oidc"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/identity/authexpiry"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 var errInvalidAuthExpiryComposition = errors.New("invalid browser expiry composition")

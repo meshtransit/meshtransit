@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
 )
 
 func TestAuthTransactionCommitClassificationUsesDomainUnknownSeam(t *testing.T) {

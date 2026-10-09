@@ -7,12 +7,12 @@ import (
 	"mime"
 	"net/http"
 
-	"github.com/meshtransit/meshtransit/core/internal/control"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration/intake"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node/keyrotation"
+	"meshtransit.net/core/internal/control"
+	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/enrollment/registration/intake"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/keyrotation"
 )
 
 const credentialRegistrationPath = "/machine/register"

@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 func TestIdentityBrokerCompositionFailsClosedWithoutBuildSupport(t *testing.T) {

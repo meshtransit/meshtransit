@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/client/internal/secretstore"
+	"meshtransit.net/client/internal/secretstore"
 )
 
 func TestProvisionCreatesAndReusesCredential(t *testing.T) {

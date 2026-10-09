@@ -7,7 +7,7 @@ import (
 
 	redisclient "github.com/redis/go-redis/v9"
 
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/control/mapsession"
 )
 
 func TestConnectivityWakeupRoundTrip(t *testing.T) {

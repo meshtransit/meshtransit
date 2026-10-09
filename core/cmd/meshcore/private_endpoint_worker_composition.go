@@ -4,13 +4,13 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/httpapi"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/adapter/routeagent"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing/endpointpublication"
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
 	"github.com/prometheus/client_golang/prometheus"
+	"meshtransit.net/core/internal/adapter/httpapi"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/adapter/routeagent"
+	"meshtransit.net/core/internal/domain/sharing/endpointpublication"
+	"meshtransit.net/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 var errInvalidPrivateEndpointWorkerComposition = errors.New("invalid Private Endpoint worker composition")

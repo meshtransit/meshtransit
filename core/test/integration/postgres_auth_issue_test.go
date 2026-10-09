@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	adapteroidc "github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	adapteroidc "meshtransit.net/core/internal/adapter/oidc"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 func assertPostgreSQLSessionIssuance(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn, pool *postgresadapter.Pool) {

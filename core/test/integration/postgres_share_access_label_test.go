@@ -9,10 +9,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/resource"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 // assertShareAccessLabelRules qualifies schema 94 on a fresh labeled offer:

@@ -4,7 +4,7 @@ package identity
 import (
 	"errors"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 // ErrInvalidPrincipalID reports an absent or malformed principal public ID.

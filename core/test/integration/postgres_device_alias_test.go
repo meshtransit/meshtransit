@@ -13,7 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 const reserveDeviceAliasesSQL = `SELECT alias_role, family, address::TEXT, owner_device_id,

@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace/creation"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/workspace/creation"
 )
 
 // assertPostgreSQLWorkspaceCreation drives schema 99 through the production

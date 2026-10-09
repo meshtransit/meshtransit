@@ -11,11 +11,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identitygroup"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/identitygroup"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 const listIdentityGroupsSQL = `SELECT mesh_ops.list_identity_groups_v1(` + sessionArguments + `,

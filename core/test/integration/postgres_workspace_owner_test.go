@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
 )
 
 func assertWorkspaceOwnerAuthority(ctx context.Context, t *testing.T, admin *pgx.Conn) {

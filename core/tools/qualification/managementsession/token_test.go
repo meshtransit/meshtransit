@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 func TestPrepareBearerWritesPrivateFileAndDerivesProductionDigest(t *testing.T) {

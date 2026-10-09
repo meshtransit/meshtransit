@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/idempotency"
+	"meshtransit.net/core/internal/platform/idempotency"
 )
 
 func TestProof(t *testing.T) {

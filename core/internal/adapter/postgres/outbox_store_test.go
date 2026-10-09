@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 const (

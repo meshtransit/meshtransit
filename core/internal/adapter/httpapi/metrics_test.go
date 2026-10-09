@@ -10,8 +10,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network/revisionworker"
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/domain/network/revisionworker"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 func TestOperatorMetricsExposeBoundedRuntimeSignals(t *testing.T) {

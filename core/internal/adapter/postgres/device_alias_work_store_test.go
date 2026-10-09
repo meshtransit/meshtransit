@@ -3,7 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing/devicealias"
+	"meshtransit.net/core/internal/domain/sharing/devicealias"
 	"testing"
 )
 

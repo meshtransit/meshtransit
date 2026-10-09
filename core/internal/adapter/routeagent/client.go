@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing/endpointpublication"
+	"meshtransit.net/core/internal/domain/sharing/endpointpublication"
 )
 
 const (

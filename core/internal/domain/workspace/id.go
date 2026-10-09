@@ -4,7 +4,7 @@ package workspace
 import (
 	"errors"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 // ErrInvalidID reports an absent or malformed Workspace public ID.

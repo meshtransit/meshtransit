@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/node/distribution"
+	"meshtransit.net/core/internal/domain/node/distribution"
 )
 
 func TestDecodeDeviceDistribution(t *testing.T) {

@@ -7,10 +7,10 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/guardrail"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node/revocation"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/guardrail"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/node/revocation"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 type revokeDeviceRequest struct {

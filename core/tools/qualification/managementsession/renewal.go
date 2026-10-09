@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/audit"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 const renewalOutboxEventClass = "qualification.management_session.renewed"

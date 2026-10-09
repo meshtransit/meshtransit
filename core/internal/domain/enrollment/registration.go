@@ -4,8 +4,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 var (

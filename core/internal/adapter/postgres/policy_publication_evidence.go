@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit"
-	publication "github.com/meshtransit/meshtransit/core/internal/domain/policy/publication"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/audit"
+	publication "meshtransit.net/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 const policyPublicationOutboxEventClass = "network.revision.advanced"

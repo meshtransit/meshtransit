@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	approval "github.com/meshtransit/meshtransit/core/internal/domain/policy/approval"
+	approval "meshtransit.net/core/internal/domain/policy/approval"
 )
 
 func classifyPolicyApprovalDatabaseError(ctx context.Context, err error) error {

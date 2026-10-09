@@ -5,9 +5,9 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
-	publication "github.com/meshtransit/meshtransit/core/internal/domain/policy/publication"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
+	"meshtransit.net/core/internal/domain/policy"
+	publication "meshtransit.net/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/resource"
 )
 
 func TestCandidateHashIsDeterministicAndRevisionIndependent(t *testing.T) {

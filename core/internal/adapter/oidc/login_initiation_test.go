@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
 )
 
 func initiationFixture(t testing.TB) (*LoginInitiationGuard, time.Time) {

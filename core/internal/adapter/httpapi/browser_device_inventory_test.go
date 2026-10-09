@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node/inventory"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/inventory"
 )
 
 type inventoryTestReader struct {

@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
 	"go.uber.org/goleak"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 func TestSubjectResolutionReturnsOnlyClosedExactSnapshot(t *testing.T) {

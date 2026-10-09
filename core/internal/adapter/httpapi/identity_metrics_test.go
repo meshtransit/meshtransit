@@ -9,7 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 func TestIdentityServerMetricsExposeBoundedResourceSignals(t *testing.T) {

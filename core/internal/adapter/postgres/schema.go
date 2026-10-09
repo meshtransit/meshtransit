@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/migrations"
+	"meshtransit.net/core/migrations"
 )
 
 const runtimeSchemaCompatibilitySQL = `SELECT

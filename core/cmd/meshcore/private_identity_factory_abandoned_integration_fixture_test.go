@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	redisadapter "github.com/meshtransit/meshtransit/core/internal/adapter/redis"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/adapter/oidc"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 const privateFactoryAbandonedDatabase = "meshtransit_private_factory_abandoned"

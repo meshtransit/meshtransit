@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/domain/authorization"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node/revocation"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/authorization"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node/revocation"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 type deviceRevocationTransactionState uint8

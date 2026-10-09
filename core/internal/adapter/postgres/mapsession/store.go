@@ -9,11 +9,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/meshtransit/meshtransit/core/internal/control"
-	appmapsession "github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
-	"github.com/meshtransit/meshtransit/core/internal/domain/relay"
+	"meshtransit.net/core/internal/control"
+	appmapsession "meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/relay"
 )
 
 const (

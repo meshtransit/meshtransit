@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/policy"
 )
 
 func TestNewAuthorityDeltaProjectsPeerAndPolicyChanges(t *testing.T) {

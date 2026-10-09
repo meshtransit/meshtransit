@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 func TestRoleWorkerProcessExpiryConvergesAcrossRestart(t *testing.T) {

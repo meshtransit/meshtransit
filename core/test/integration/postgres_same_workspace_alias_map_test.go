@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 // assertSameWorkspaceAliasAllocation proves Network-scoped alias uniqueness on

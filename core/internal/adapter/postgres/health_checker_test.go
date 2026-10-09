@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 func TestHealthCheckerChecksConfiguredRolePools(t *testing.T) {

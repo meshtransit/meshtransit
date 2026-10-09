@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 // HealthChecker presents one PostgreSQL readiness component while verifying

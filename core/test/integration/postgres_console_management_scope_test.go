@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/authorization"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/sessioncontext"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/authorization"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/identity/sessioncontext"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 func assertPostgreSQLConsoleManagementScopes(

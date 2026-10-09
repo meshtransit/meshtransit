@@ -10,11 +10,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/meshtransit/meshtransit/core/internal/domain/authorization"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/authorization"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 const maximumResourceSharingIdempotencyTTL = 24 * time.Hour

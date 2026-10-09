@@ -4,7 +4,7 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 // ErrInvalidAuthenticatedNode reports an incomplete transport-bound Node identity.

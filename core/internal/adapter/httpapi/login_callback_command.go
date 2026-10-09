@@ -1,6 +1,6 @@
 package httpapi
 
-import "github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
+import "meshtransit.net/core/internal/domain/identity/oidcauth"
 
 // Command translates immutable syntax, never authentication. The caller must
 // complete continuation POST/CSRF admission and own the whole application and

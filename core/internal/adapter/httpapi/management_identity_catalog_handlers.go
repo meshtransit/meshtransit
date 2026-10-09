@@ -4,10 +4,10 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/devicetag"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identitygroup"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/devicetag"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/identitygroup"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 type identityGroupBody struct {

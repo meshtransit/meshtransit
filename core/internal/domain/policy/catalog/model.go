@@ -5,10 +5,10 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy/compilation"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/policy/compilation"
+	"meshtransit.net/core/internal/domain/policy/publication"
 )
 
 // MaximumRows bounds the public projection; incomplete projections cannot be edited.

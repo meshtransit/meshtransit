@@ -6,9 +6,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
-	"github.com/meshtransit/meshtransit/client/internal/packetmeta"
 	"golang.zx2c4.com/wireguard/tun"
+	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/packetmeta"
 )
 
 func TestObservedTUNReportsSuccessfulPackets(t *testing.T) {

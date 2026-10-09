@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
-	"github.com/meshtransit/meshtransit/core/internal/platform/ratelimit"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/goleak"
+	"meshtransit.net/core/internal/adapter/oidc"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
 func browserLoginTestOptions(t *testing.T) (BrowserLoginOptions, *loginHTTPFixture, *completionTestPort) {

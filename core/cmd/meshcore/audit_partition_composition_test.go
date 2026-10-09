@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 )
 
 func TestAuditPartitionCompositionRejectsMissingWorkerDependencies(t *testing.T) {

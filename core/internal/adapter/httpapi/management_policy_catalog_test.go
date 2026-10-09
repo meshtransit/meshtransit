@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph/simulation"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy/catalog"
+	"meshtransit.net/core/internal/domain/accessgraph/simulation"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/policy/catalog"
 )
 
 type activePolicyReaderFunc func(context.Context, accountsession.Session, network.Scope, time.Time) (catalog.Snapshot, error)

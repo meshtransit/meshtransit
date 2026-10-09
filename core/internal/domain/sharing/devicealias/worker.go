@@ -3,8 +3,8 @@ package devicealias
 import (
 	"context"
 	"errors"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
 	"log/slog"
+	"meshtransit.net/core/internal/domain/deployment"
 	"reflect"
 	"sync"
 	"sync/atomic"

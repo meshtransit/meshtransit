@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/resource"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 // assertProviderSeesWhoAccesses lists the provider's accepted outgoing

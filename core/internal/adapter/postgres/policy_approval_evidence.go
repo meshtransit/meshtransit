@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit"
-	approval "github.com/meshtransit/meshtransit/core/internal/domain/policy/approval"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/audit"
+	approval "meshtransit.net/core/internal/domain/policy/approval"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 const (

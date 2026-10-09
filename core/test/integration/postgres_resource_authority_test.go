@@ -9,16 +9,16 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
-	authority "github.com/meshtransit/meshtransit/core/internal/domain/resource/authority"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource/catalog"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
-	"github.com/meshtransit/meshtransit/core/internal/platform/idempotency"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/resource"
+	authority "meshtransit.net/core/internal/domain/resource/authority"
+	"meshtransit.net/core/internal/domain/resource/catalog"
+	"meshtransit.net/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/platform/idempotency"
 )
 
 func assertPostgreSQLResourceAuthority(

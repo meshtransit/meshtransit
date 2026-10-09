@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 // DeliveryTouchInterval bounds how often a live stream refreshes the time a

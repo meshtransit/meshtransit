@@ -14,10 +14,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	redisadapter "github.com/meshtransit/meshtransit/core/internal/adapter/redis"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 func TestTLSAuthenticatedDependencies(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
 )
 
 // CallbackOptions bounds complete application work, fail-fast capacity and

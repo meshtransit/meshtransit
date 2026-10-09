@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/client/internal/netadmin"
+	"meshtransit.net/client/internal/netadmin"
 )
 
 func TestResolvedHostAppliesRoutingDomainsAndResets(t *testing.T) {

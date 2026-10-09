@@ -18,7 +18,7 @@ import (
 	"github.com/dexidp/dex/storage"
 	"github.com/dexidp/dex/storage/memory"
 	"github.com/go-jose/go-jose/v4"
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 var errBrokerStorageOutage = errors.New("synthetic broker storage unavailable")

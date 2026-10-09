@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph/simulation"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node/inventory"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/accessgraph/simulation"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/inventory"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 func assertPostgreSQLConsoleDeviceInventory(ctx context.Context, t *testing.T,

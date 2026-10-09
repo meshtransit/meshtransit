@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	publication "github.com/meshtransit/meshtransit/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	publication "meshtransit.net/core/internal/domain/policy/publication"
 )
 
 func TestApprovalGateBindsCompleteSinglePolicyAdvance(t *testing.T) {

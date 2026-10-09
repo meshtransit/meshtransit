@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
-	registration "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/enrollment"
+	registration "meshtransit.net/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 var errControlled = errors.New("controlled failure")

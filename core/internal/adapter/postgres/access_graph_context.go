@@ -7,9 +7,9 @@ import (
 	"io"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 // maximumAccessGraphContextBytes bounds the explanation context document;

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
+	"meshtransit.net/client/internal/networkmap"
 )
 
 func TestPathSelectorSelectsAndSmoothsAuthenticatedPath(t *testing.T) {

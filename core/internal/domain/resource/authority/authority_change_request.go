@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
-	"github.com/meshtransit/meshtransit/core/internal/platform/idempotency"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/platform/idempotency"
 )
 
 const authorityChangeRequestHashDomain = "meshtransit/resource-authority-change-request/v1\x00"

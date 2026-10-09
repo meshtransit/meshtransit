@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"time"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
-	policypublication "github.com/meshtransit/meshtransit/core/internal/domain/policy/publication"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/policy"
+	policypublication "meshtransit.net/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 const (

@@ -5,13 +5,13 @@ import (
 	"errors"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph/simulation"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy/publication"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
-	"github.com/meshtransit/meshtransit/core/internal/platform/idempotency"
+	"meshtransit.net/core/internal/domain/accessgraph/simulation"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/platform/idempotency"
 )
 
 var (

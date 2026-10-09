@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	approval "github.com/meshtransit/meshtransit/core/internal/domain/policy/approval"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/network"
+	approval "meshtransit.net/core/internal/domain/policy/approval"
+	"meshtransit.net/core/internal/domain/policy/publication"
 )
 
 func TestApprovalCatalogSnapshotLifecycle(t *testing.T) {

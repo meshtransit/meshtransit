@@ -12,10 +12,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 const envPrivateLoginConfigFile = "MESHTRANSIT_PRIVATE_LOGIN_CONFIG_FILE"

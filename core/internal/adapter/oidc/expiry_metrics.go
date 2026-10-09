@@ -3,8 +3,8 @@ package oidc
 import (
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/authexpiry"
 	"github.com/prometheus/client_golang/prometheus"
+	"meshtransit.net/core/internal/domain/identity/authexpiry"
 )
 
 // ExpiryTelemetry owns no-data metrics registered only on the private health server.

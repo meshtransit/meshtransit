@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
-	"github.com/meshtransit/meshtransit/core/internal/platform/idempotency"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/resource"
+	"meshtransit.net/core/internal/platform/idempotency"
 )
 
 const (

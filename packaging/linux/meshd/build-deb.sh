@@ -59,7 +59,7 @@ readonly package_root="${work_dir}/root"
 readonly binary_dir="${work_dir}/bin"
 mkdir -p "${package_root}/DEBIAN" "${binary_dir}" "${output_dir}"
 
-readonly version_package='github.com/meshtransit/meshtransit/client/internal/version'
+readonly version_package='meshtransit.net/client/internal/version'
 readonly ldflags="-s -w -X ${version_package}.Version=${version} -X ${version_package}.Commit=${commit} -X ${version_package}.Date=${build_date}"
 
 (

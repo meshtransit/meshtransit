@@ -3,9 +3,9 @@ package postgres
 import (
 	"context"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/guardrail"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/guardrail"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 // guardedShareActions open or keep open a path between Networks; each is

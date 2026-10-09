@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 const usage = "Usage: meshcore [serve | version | config validate | identity fingerprint | migrate status | migrate up | bootstrap check | bootstrap apply]\n"

@@ -181,9 +181,9 @@ jq --sort-keys \
             ]
         }
         | .components |= map(
-            if .name == "github.com/meshtransit/meshtransit" and .version == "UNKNOWN" then
+            if .name == "meshtransit.net" and .version == "UNKNOWN" then
                 .version = $version
-                | .purl = ("pkg:golang/github.com/meshtransit/meshtransit@" + $purl_version)
+                | .purl = ("pkg:golang/meshtransit.net@" + $purl_version)
                 | del(.cpe)
             elif .type == "file" and (.name | startswith($root + "/")) then
                 .name = (.name | ltrimstr($root))
@@ -216,7 +216,7 @@ jq -e \
         and any(.components[];
             ((.purl // "") | startswith("pkg:golang/")))
         and all(.components[];
-            .name != "github.com/meshtransit/meshtransit" or .version == $version)
+            .name != "meshtransit.net" or .version == $version)
     ' "${normalized_cyclonedx}" >/dev/null
 
 for binary in "${packaged_binaries[@]}"; do

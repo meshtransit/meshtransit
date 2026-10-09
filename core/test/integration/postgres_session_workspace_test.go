@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace/selection"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/workspace/selection"
 )
 
 const switchSessionPublicID = "01890f00-0000-7000-8000-00000000a701"

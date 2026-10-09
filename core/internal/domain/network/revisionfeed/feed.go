@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/platform/wakeup"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/platform/wakeup"
 )
 
 const (

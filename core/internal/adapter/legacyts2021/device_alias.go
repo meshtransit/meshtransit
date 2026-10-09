@@ -7,8 +7,8 @@ import (
 
 	"tailscale.com/tailcfg"
 
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
+	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/policy"
 )
 
 const deviceAliasCapability tailcfg.NodeCapability = "https://meshtransit.io/cap/device-alias-v1"

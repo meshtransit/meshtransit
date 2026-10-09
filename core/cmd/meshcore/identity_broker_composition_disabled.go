@@ -7,7 +7,7 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 var errIdentityBrokerUnavailable = errors.New("identity broker support is unavailable in this binary")

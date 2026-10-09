@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/deployment"
 )
 
 const testDeploymentID = "01890f00-0000-7000-8000-000000000001"

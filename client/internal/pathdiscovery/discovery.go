@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	compatstun "github.com/meshtransit/meshtransit/client/internal/compat/stun"
+	compatstun "meshtransit.net/client/internal/compat/stun"
 )
 
 const (

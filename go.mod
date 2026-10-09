@@ -1,4 +1,4 @@
-module github.com/meshtransit/meshtransit
+module meshtransit.net
 
 go 1.26.8
 

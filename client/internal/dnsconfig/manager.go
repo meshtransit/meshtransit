@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
+	"meshtransit.net/client/internal/networkmap"
 )
 
 var ErrClosed = errors.New("dnsconfig: manager is closed")

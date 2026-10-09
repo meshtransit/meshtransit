@@ -3,7 +3,7 @@ package httpapi
 import (
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network/revisionfeed"
+	"meshtransit.net/core/internal/domain/network/revisionfeed"
 )
 
 type revisionFeedMetricsCollector struct {

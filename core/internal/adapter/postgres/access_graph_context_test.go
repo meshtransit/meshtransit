@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 const postgresSharedContext = `{"source":{"state":"active","name":"poc-02"},

@@ -3,7 +3,7 @@ package mapsession
 import (
 	"slices"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 func streamCanAdvance(current, next Snapshot) bool {

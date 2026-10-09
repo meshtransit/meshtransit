@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph"
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph/simulation"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	approval "github.com/meshtransit/meshtransit/core/internal/domain/policy/approval"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy/publication"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
-	"github.com/meshtransit/meshtransit/core/internal/platform/idempotency"
+	"meshtransit.net/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/accessgraph/simulation"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	approval "meshtransit.net/core/internal/domain/policy/approval"
+	"meshtransit.net/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/platform/idempotency"
 )
 
 type policyApprovalTestCall struct {

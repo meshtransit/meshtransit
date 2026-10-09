@@ -3,7 +3,7 @@ package config
 import (
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/enrollment"
 )
 
 const (

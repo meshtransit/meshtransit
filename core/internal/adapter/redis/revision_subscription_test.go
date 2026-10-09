@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
 	redisclient "github.com/redis/go-redis/v9"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 func TestClientSubscribesAndReceivesNetworkRevisionAdvanced(t *testing.T) {

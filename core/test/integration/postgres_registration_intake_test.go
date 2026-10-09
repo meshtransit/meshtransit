@@ -10,14 +10,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/adapter/postgres/registrationintake"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
-	registrationapp "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
-	appintake "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration/intake"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/adapter/postgres/registrationintake"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/enrollment"
+	registrationapp "meshtransit.net/core/internal/domain/enrollment/registration"
+	appintake "meshtransit.net/core/internal/domain/enrollment/registration/intake"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 const (

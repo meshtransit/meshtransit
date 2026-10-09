@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/control"
-	appmapsession "github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/relay"
+	"meshtransit.net/core/internal/control"
+	appmapsession "meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/relay"
 )
 
 const (

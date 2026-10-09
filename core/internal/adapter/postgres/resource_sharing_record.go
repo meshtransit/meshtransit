@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/resource"
+	"meshtransit.net/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 type resourceSharingTrafficRecord struct {

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/control"
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/control"
+	"meshtransit.net/core/internal/control/mapsession"
 )
 
 func TestMapSessionHandlerReturnsAuthorizedFullSnapshot(t *testing.T) {

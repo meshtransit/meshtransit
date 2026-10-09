@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	registrationapp "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	registrationapp "meshtransit.net/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 const registrationTransactionChangeID = "01890f21-0000-7000-8000-000000000001"

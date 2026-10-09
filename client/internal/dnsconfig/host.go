@@ -7,7 +7,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/meshtransit/meshtransit/client/internal/netadmin"
+	"meshtransit.net/client/internal/netadmin"
 )
 
 type dnsAdministrator interface {

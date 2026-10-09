@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node/keyrotation"
+	"meshtransit.net/core/internal/domain/node/keyrotation"
 )
 
 func classifyNodeKeyRotationDatabaseError(ctx context.Context, err error) error {

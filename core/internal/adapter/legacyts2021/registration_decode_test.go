@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/control"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/control"
+	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 const validRegistrationRequestJSON = `{

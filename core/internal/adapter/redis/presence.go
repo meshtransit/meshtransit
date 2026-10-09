@@ -7,9 +7,9 @@ import (
 
 	redisclient "github.com/redis/go-redis/v9"
 
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 const presenceKeyPrefix = "meshtransit:v1:presence:node:"

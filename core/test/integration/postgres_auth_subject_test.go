@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	adapteroidc "github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
+	adapteroidc "meshtransit.net/core/internal/adapter/oidc"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
 )
 
 const integrationSubjectCountSQL = `SELECT pg_catalog.count(*) FROM mesh_ops.resolve_oidc_login_subject_v2(

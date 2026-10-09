@@ -16,10 +16,10 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/httpapi"
-	"github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/adapter/httpapi"
+	"meshtransit.net/core/internal/adapter/oidc"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
 )
 
 func TestPrivateIdentityFactoryCallbackIntegration(t *testing.T) {

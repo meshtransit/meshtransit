@@ -7,11 +7,11 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/dexbroker"
-	"github.com/meshtransit/meshtransit/core/internal/adapter/httpapi"
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
 	"github.com/prometheus/client_golang/prometheus"
+	"meshtransit.net/core/internal/adapter/dexbroker"
+	"meshtransit.net/core/internal/adapter/httpapi"
+	"meshtransit.net/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 type identityPostgreSQLChecker struct {

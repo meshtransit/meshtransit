@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/enrollment/registration"
 )
 
 const (

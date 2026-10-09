@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/config"
 
 	dexsql "github.com/dexidp/dex/storage/sql"
 )

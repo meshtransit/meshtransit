@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/control"
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/control"
+	"meshtransit.net/core/internal/control/mapsession"
 )
 
 const mapSessionPath = "/machine/map"

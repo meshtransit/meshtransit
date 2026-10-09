@@ -8,11 +8,11 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/adapter/legacyts2021/protocoltest"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/adapter/legacyts2021/protocoltest"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 const (

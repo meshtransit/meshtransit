@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 func TestProfileValidatesCredentialAuthority(t *testing.T) {

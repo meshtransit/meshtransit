@@ -11,11 +11,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit"
-	"github.com/meshtransit/meshtransit/core/internal/domain/authorization"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network/provisioning"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/audit"
+	"meshtransit.net/core/internal/domain/authorization"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/network/provisioning"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 const createNetworkSQL = `SELECT network_public_id::TEXT, network_display_code, network_version, network_created_at,

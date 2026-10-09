@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	appmapsession "github.com/meshtransit/meshtransit/core/internal/control/mapsession"
+	appmapsession "meshtransit.net/core/internal/control/mapsession"
 )
 
 const loadDirectEdgesSQL = `SELECT edge::TEXT

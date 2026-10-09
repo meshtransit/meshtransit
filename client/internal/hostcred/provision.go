@@ -14,7 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/meshtransit/meshtransit/client/internal/secretstore"
+	"meshtransit.net/client/internal/secretstore"
 )
 
 const (

@@ -8,9 +8,9 @@ import (
 
 	redisclient "github.com/redis/go-redis/v9"
 
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node/distribution"
+	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/distribution"
 )
 
 const (

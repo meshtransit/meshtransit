@@ -3,7 +3,7 @@ package publication_test
 import (
 	"testing"
 
-	publication "github.com/meshtransit/meshtransit/core/internal/domain/policy/publication"
+	publication "meshtransit.net/core/internal/domain/policy/publication"
 )
 
 func TestMutationIDsOwnProjectionIdentities(t *testing.T) {

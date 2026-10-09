@@ -1,6 +1,6 @@
 package revisionfeed
 
-import "github.com/meshtransit/meshtransit/core/internal/domain/network"
+import "meshtransit.net/core/internal/domain/network"
 
 // WatchNetwork registers one bounded, process-local consumer. The returned
 // release function is idempotent and must be called by the consumer owner.

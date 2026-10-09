@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	appmapsession "github.com/meshtransit/meshtransit/core/internal/control/mapsession"
+	appmapsession "meshtransit.net/core/internal/control/mapsession"
 )
 
 const dependencyFixture = `{"workspace_id":"01890f00-0000-7000-8000-000000000102","network_id":"01890f00-0000-7000-8000-000000000202"}`

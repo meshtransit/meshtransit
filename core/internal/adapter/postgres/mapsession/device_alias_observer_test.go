@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	appmapsession "github.com/meshtransit/meshtransit/core/internal/control/mapsession"
+	appmapsession "meshtransit.net/core/internal/control/mapsession"
 )
 
 type aliasVersionDatabase struct{ *fakeDatabase }

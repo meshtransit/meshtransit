@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/node/inventory"
+	"meshtransit.net/core/internal/domain/node/inventory"
 )
 
 const inventoryLifecycleDocument = `{"workspace_id":"01890f00-0000-7000-8000-000000000101",

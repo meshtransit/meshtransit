@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/resource"
 )
 
 func TestResourceAcceptsCurrentReboundDeviceRevision(t *testing.T) {

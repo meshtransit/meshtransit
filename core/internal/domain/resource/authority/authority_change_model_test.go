@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
+	"meshtransit.net/core/internal/domain/resource"
 )
 
 func TestAuthorityChangeImpactBindsSubjectActionTargetAndVersion(t *testing.T) {

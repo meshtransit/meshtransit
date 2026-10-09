@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/enrollment/registration"
 )
 
 // Transactions starts explicit registration-intake units of work.

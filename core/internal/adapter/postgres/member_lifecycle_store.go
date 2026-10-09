@@ -10,11 +10,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identitygroup"
-	"github.com/meshtransit/meshtransit/core/internal/domain/memberlifecycle"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/identitygroup"
+	"meshtransit.net/core/internal/domain/memberlifecycle"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 const changeWorkspaceMemberSQL = `SELECT mesh_ops.change_workspace_member_v1(` + sessionArguments + `,

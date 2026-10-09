@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit"
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit/history"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/audit"
+	"meshtransit.net/core/internal/domain/audit/history"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/network"
 
 	"github.com/jackc/pgx/v5"
 )

@@ -1,6 +1,6 @@
 package sharing
 
-import "github.com/meshtransit/meshtransit/core/internal/domain/network"
+import "meshtransit.net/core/internal/domain/network"
 
 // ScopeRelation describes how the provider and consumer Networks are related.
 // It is always derived from authoritative scope identities, never caller input.

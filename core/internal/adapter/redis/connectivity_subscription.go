@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/control/mapsession"
 )
 
 // ConnectivitySubscription is a synchronous, caller-driven Redis

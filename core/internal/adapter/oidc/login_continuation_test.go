@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
 )
 
 func continuationGuardFixture(t testing.TB) (*LoginContinuationGuard, http.Header, time.Time) {

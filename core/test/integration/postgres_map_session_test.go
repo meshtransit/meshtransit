@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/control"
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	registrationapp "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/relay"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/control"
+	"meshtransit.net/core/internal/control/mapsession"
+	registrationapp "meshtransit.net/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/relay"
 )
 
 func assertPostgreSQLMapSessionSnapshot(

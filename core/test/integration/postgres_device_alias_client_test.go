@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/control"
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	registrationapp "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/control"
+	"meshtransit.net/core/internal/control/mapsession"
+	registrationapp "meshtransit.net/core/internal/domain/enrollment/registration"
 )
 
 func assertPostgreSQLDeviceAliasClientVersion(ctx context.Context, t *testing.T, admin, runtime *pgx.Conn, pool *postgresadapter.Pool, command registrationapp.Command) {

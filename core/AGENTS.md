@@ -198,7 +198,7 @@ meshcore/
 └── THIRD_PARTY_NOTICES.md
 ```
 
-The intended module is `github.com/meshtransit/meshtransit`; the binary is
+The intended module is `meshtransit.net`; the binary is
 `meshcore`. `cmd/meshcore` parses configuration, constructs dependencies,
 selects runtime roles, handles signals, and coordinates shutdown. It contains
 no domain policy.

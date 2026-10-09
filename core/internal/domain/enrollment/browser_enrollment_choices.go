@@ -1,8 +1,8 @@
 package enrollment
 
 import (
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 // BrowserEnrollmentNetworkChoice is a current enrollment option, not a grant.

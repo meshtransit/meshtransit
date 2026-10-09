@@ -4,13 +4,13 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/devicegroup"
-	"github.com/meshtransit/meshtransit/core/internal/domain/devicetag"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identitygroup"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy/compilation"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/devicegroup"
+	"meshtransit.net/core/internal/domain/devicetag"
+	"meshtransit.net/core/internal/domain/identitygroup"
+	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/policy/compilation"
+	"meshtransit.net/core/internal/domain/resource"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 func TestRuleIntentGroupSelectors(t *testing.T) {

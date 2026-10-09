@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 var errInvalidMutationIDs = errors.New("node key rotation: invalid mutation IDs")

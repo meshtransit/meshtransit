@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
+	"meshtransit.net/client/internal/networkmap"
 )
 
 var ErrInvalid = errors.New("dnsconfig: invalid plan")

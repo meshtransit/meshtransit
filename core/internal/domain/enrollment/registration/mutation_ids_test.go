@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	registration "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	registration "meshtransit.net/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 func TestNewMutationIDs(t *testing.T) {

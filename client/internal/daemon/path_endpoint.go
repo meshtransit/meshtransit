@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
-	"github.com/meshtransit/meshtransit/client/internal/pathdiscovery"
+	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/pathdiscovery"
 )
 
 const maxQueuedPathObservations = 128

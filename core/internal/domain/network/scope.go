@@ -3,7 +3,7 @@ package network
 import (
 	"errors"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 // ErrInvalidScope reports an incomplete Workspace-qualified Network scope.

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/enrollment/registration"
 )
 
 func TestRegistrationReplayStoreResolvesCommittedResultUnderExactScope(t *testing.T) {

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/control"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/control"
+	"meshtransit.net/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 type recordingBrowserRegistrationService struct {

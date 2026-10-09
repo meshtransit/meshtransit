@@ -2,9 +2,9 @@ package devicealias
 
 import (
 	"context"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 // Cursor identifies the last visited endpoint/consumer, including rows that

@@ -3,7 +3,7 @@ package dataplane
 import (
 	"errors"
 
-	"github.com/meshtransit/meshtransit/client/internal/packetmeta"
+	"meshtransit.net/client/internal/packetmeta"
 
 	"golang.zx2c4.com/wireguard/tun"
 )

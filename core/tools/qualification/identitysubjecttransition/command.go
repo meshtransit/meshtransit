@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 const (

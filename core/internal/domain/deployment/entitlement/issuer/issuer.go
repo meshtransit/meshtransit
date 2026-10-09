@@ -12,7 +12,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment/entitlement"
+	"meshtransit.net/core/internal/domain/deployment/entitlement"
 )
 
 // ErrInvalid reports claims the verifier would reject.

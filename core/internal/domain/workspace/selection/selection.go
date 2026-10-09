@@ -11,11 +11,11 @@ import (
 	"errors"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace/settings"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/workspace/settings"
 )
 
 // MaxCandidates bounds the switchable Workspace list; PostgreSQL enforces the same.

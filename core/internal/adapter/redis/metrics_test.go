@@ -13,8 +13,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	redisclient "github.com/redis/go-redis/v9"
 
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 func TestClientMetricsTrackCommandsPoolAndSubscriptionLifecycle(t *testing.T) {

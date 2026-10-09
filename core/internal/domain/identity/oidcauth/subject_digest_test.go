@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/deployment"
 )
 
 func TestSubjectDigestsFixExactStableNamespace(t *testing.T) {

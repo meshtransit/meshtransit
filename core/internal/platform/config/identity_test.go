@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 func TestLoadIdentityUsesIsolatedRuntimeConfiguration(t *testing.T) {

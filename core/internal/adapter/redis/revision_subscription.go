@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
 	redisclient "github.com/redis/go-redis/v9"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 var (

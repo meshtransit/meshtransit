@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
-	registrationapp "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node/keyrotation"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/enrollment"
+	registrationapp "meshtransit.net/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/keyrotation"
 )
 
 type nodeKeyRotationEvidence struct {

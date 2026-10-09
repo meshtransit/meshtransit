@@ -41,9 +41,9 @@ linters:
       rules:
         apache-boundary:
           deny:
-            - pkg: github.com/meshtransit/meshtransit/core
+            - pkg: meshtransit.net/core
               desc: Apache-2.0 client code must not import AGPL-3.0 Core code
-            - pkg: github.com/meshtransit/meshtransit/relay
+            - pkg: meshtransit.net/relay
               desc: Apache-2.0 client code must not import AGPL-3.0 relay code
     errcheck:
       check-type-assertions: true

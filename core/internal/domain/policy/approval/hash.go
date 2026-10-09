@@ -4,8 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
 )
 
 const (

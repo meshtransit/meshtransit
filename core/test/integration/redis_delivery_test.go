@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	redisadapter "github.com/meshtransit/meshtransit/core/internal/adapter/redis"
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 // assertRedisDeliveryRecords qualifies the delivery Lua scripts against real

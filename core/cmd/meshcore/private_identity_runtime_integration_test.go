@@ -32,9 +32,9 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/httpapi"
-	"github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/adapter/httpapi"
+	"meshtransit.net/core/internal/adapter/oidc"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 func TestPrivateIdentityRuntimeProcessIntegration(t *testing.T) {

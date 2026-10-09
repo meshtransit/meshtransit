@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/buildinfo"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/buildinfo"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 type versionOutput struct {

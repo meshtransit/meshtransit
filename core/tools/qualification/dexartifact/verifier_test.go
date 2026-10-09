@@ -443,7 +443,7 @@ func createMeshCoreModule(t *testing.T, moduleVersion, suffix string) string {
 	t.Helper()
 
 	root := t.TempDir()
-	contents := "module github.com/meshtransit/meshtransit\n\n" +
+	contents := "module meshtransit.net\n\n" +
 		"go 1.26.8\n\nrequire github.com/dexidp/dex " + moduleVersion + "\n" + suffix
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(contents), 0o600); err != nil {
 		t.Fatal(err)

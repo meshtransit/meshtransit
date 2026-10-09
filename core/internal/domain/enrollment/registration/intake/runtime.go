@@ -3,8 +3,8 @@ package intake
 import (
 	"fmt"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 // PublicRegistrationIDGenerator creates UUIDv7 registration intent IDs from

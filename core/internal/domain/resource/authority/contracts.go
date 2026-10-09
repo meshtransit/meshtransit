@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 // Transactions starts explicit Resource authority units of work.

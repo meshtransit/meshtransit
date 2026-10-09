@@ -3,8 +3,8 @@ package httpapi
 import (
 	"errors"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing/contractexpiry"
 	"github.com/prometheus/client_golang/prometheus"
+	"meshtransit.net/core/internal/domain/sharing/contractexpiry"
 )
 
 // ErrInvalidContractExpiryWorkerMetrics reports a missing owned worker source.

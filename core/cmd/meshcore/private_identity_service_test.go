@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 )
 
 func privateIdentityLoginServiceTestOptions(t *testing.T) privateIdentityLoginServiceOptions {

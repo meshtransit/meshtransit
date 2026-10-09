@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	postgresmapsession "github.com/meshtransit/meshtransit/core/internal/adapter/postgres/mapsession"
+	postgresmapsession "meshtransit.net/core/internal/adapter/postgres/mapsession"
 )
 
 // ErrInvalidMapSessionStore reports a pool without runtime read authority.

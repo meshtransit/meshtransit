@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/enrollment/registration"
 )
 
 func (transaction *registrationTransaction) persistCredentialConsumption(

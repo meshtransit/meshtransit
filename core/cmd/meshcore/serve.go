@@ -9,16 +9,16 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/httpapi"
-	oidcadapter "github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	redisadapter "github.com/meshtransit/meshtransit/core/internal/adapter/redis"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network/revisionworker"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing/endpointpublication"
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
-	"github.com/meshtransit/meshtransit/core/internal/platform/buildinfo"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
-	"github.com/meshtransit/meshtransit/core/internal/platform/observability"
+	"meshtransit.net/core/internal/adapter/httpapi"
+	oidcadapter "meshtransit.net/core/internal/adapter/oidc"
+	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/network/revisionworker"
+	"meshtransit.net/core/internal/domain/sharing/endpointpublication"
+	"meshtransit.net/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/buildinfo"
+	"meshtransit.net/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/observability"
 )
 
 func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (exitCode int) {

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/accessgraph"
 )
 
 func TestRevisionVectorNextPolicyAdvancesOnlyPolicyAuthority(t *testing.T) {

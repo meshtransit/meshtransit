@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment/entitlement"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/deployment/entitlement"
 )
 
 func field(t *testing.T, output, name string) string {

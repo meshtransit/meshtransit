@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/devicetag"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identitygroup"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/devicetag"
+	"meshtransit.net/core/internal/domain/identitygroup"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 func TestTagNames(t *testing.T) {

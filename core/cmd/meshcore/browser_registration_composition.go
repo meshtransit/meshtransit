@@ -5,12 +5,12 @@ import (
 	"errors"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/httpapi"
-	"github.com/meshtransit/meshtransit/core/internal/adapter/legacyts2021"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/control"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/adapter/httpapi"
+	"meshtransit.net/core/internal/adapter/legacyts2021"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/control"
+	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 const browserRegistrationTTL = 15 * time.Minute

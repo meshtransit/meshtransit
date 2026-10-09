@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 func TestRunMigrateStatusWritesMachineReadableState(t *testing.T) {

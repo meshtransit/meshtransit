@@ -1,10 +1,10 @@
 package main
 
 import (
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource/authority"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource/catalog"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/resource/authority"
+	"meshtransit.net/core/internal/domain/resource/catalog"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 type privateIdentityResourceServices struct {

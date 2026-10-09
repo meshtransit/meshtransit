@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	redisadapter "github.com/meshtransit/meshtransit/core/internal/adapter/redis"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network/revisionfeed"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/domain/network/revisionfeed"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 var errInvalidRevisionFeedComposition = errors.New("invalid network revision feed composition")

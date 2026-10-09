@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/control"
+	"meshtransit.net/core/internal/control"
 )
 
 func TestAuthenticatedRoutesBindAndDispatchClosedEndpointSet(t *testing.T) {

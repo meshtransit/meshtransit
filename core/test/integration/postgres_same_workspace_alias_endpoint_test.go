@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource/authority"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/resource"
+	"meshtransit.net/core/internal/domain/resource/authority"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 // assertSameWorkspaceAliasEndpoint proves that a same-Workspace share takes the

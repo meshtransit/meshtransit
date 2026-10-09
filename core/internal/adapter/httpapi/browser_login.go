@@ -11,9 +11,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
-	"github.com/meshtransit/meshtransit/core/internal/platform/ratelimit"
+	"meshtransit.net/core/internal/adapter/oidc"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
 var (

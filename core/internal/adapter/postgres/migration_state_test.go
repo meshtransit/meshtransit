@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/migrations"
+	"meshtransit.net/core/migrations"
 )
 
 func TestBuildMigrationConnectionConfigAppliesDirectConnectionSecurity(t *testing.T) {

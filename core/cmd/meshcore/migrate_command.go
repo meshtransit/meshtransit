@@ -6,10 +6,10 @@ import (
 	"io"
 	"log/slog"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/platform/buildinfo"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
-	"github.com/meshtransit/meshtransit/core/internal/platform/observability"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/platform/buildinfo"
+	"meshtransit.net/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/observability"
 )
 
 type migrationService interface {

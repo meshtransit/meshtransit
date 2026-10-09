@@ -9,8 +9,8 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 const maxRetryDelay = time.Minute

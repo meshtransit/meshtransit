@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/authorization"
+	"meshtransit.net/core/internal/domain/authorization"
 )
 
 func TestNewRequest(t *testing.T) {

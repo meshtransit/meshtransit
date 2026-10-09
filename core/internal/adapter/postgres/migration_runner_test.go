@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/migrations"
+	"meshtransit.net/core/migrations"
 )
 
 func TestMigrationRunnerUpInitializesCatalogAtomically(t *testing.T) {

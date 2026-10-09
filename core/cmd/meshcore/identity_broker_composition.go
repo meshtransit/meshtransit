@@ -3,8 +3,8 @@ package main
 import (
 	"errors"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
 	"github.com/prometheus/client_golang/prometheus"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 var (

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/policy/publication"
 )
 
 func proposedImportedInputsCurrent(candidate publication.Candidate, vector accessgraph.RevisionVector) bool {

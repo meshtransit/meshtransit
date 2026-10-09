@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
-	"github.com/meshtransit/meshtransit/client/internal/packetmeta"
+	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/packetmeta"
 )
 
 const (

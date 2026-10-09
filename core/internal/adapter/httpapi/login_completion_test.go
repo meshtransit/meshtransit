@@ -10,8 +10,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
 	"go.uber.org/goleak"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
 )
 
 type completionTestPort struct {

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/meshtransit/meshtransit/client/internal/netadmin"
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
+	"meshtransit.net/client/internal/netadmin"
+	"meshtransit.net/client/internal/networkmap"
 )
 
 // State is the non-secret readiness state exposed through daemon status.

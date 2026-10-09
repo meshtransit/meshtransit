@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
-	"github.com/meshtransit/meshtransit/client/internal/pathdiscovery"
+	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/pathdiscovery"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"

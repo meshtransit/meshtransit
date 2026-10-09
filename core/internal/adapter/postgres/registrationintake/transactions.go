@@ -9,10 +9,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	appintake "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration/intake"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/deployment"
+	appintake "meshtransit.net/core/internal/domain/enrollment/registration/intake"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 const (

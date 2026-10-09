@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
 )
 
 // The largest catalog page is 100 bounded approval projections. At the maximum

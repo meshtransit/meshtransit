@@ -5,9 +5,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/sharing"
 )
 
 // DeviceAliasParams binds durable reservations to one exact peer pair. The

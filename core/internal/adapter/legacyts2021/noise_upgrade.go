@@ -14,8 +14,8 @@ import (
 	"golang.org/x/net/http2"
 	"tailscale.com/control/controlbase"
 
-	"github.com/meshtransit/meshtransit/core/internal/control"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/control"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 const (

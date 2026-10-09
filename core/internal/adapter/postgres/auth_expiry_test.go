@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
 )
 
 func authExpirySnapshotFixture(t *testing.T, consuming bool) oidcauth.ExpirySnapshot {

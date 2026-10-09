@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/enrollment/registration"
 )
 
 func classifyRegistrationDatabaseError(ctx context.Context, err error) error {

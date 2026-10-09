@@ -7,9 +7,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network/provisioning"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace/creation"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace/selection"
+	"meshtransit.net/core/internal/domain/network/provisioning"
+	"meshtransit.net/core/internal/domain/workspace/creation"
+	"meshtransit.net/core/internal/domain/workspace/selection"
 )
 
 // Provisioning outcomes map by SQLSTATE alone; the message never matters.

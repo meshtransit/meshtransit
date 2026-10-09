@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/api/openapi"
-	"github.com/meshtransit/meshtransit/core/internal/adapter/httpapi"
-	"github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/api/openapi"
+	"meshtransit.net/core/internal/adapter/httpapi"
+	"meshtransit.net/core/internal/adapter/oidc"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
 )
 
 func TestPrivateIdentityDispatcherAndDocumentShareCallback(t *testing.T) {

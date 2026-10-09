@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/migrations"
+	"meshtransit.net/core/migrations"
 )
 
 func newTestMigrationRunner(t *testing.T, connection migrationConnection) *MigrationRunner {

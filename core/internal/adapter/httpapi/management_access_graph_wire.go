@@ -3,9 +3,9 @@ package httpapi
 import (
 	"encoding/hex"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/policy/publication"
 )
 
 // explainedPolicyContext tells a person why the decision came out as it did.

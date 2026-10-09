@@ -8,7 +8,7 @@ import (
 
 	redisclient "github.com/redis/go-redis/v9"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/ratelimit"
+	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
 const managementRateLimitKeyPrefix = "meshtransit:v1:ratelimit:management:"

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/resource"
 )
 
 func TestLifecycleServiceCommitsResourceSuspension(t *testing.T) {

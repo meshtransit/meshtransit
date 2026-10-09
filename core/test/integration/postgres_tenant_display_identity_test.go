@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/meshtransit/meshtransit/core/migrations"
+	"meshtransit.net/core/migrations"
 )
 
 func assertTenantDisplayIdentities(ctx context.Context, t *testing.T, admin *pgx.Conn) {

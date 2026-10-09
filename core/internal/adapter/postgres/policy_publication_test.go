@@ -9,8 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/meshtransit/meshtransit/core/internal/domain/guardrail"
-	publication "github.com/meshtransit/meshtransit/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/guardrail"
+	publication "meshtransit.net/core/internal/domain/policy/publication"
 )
 
 var policyPublicationTestTime = time.Date(2026, time.September, 16, 8, 0, 0, 0, time.UTC)

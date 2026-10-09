@@ -28,7 +28,7 @@ RUN GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
     -buildvcs=false \
     -mod=readonly \
     -trimpath \
-    -ldflags="-s -w -X github.com/meshtransit/meshtransit/core/internal/platform/buildinfo.version=$VERSION -X github.com/meshtransit/meshtransit/core/internal/platform/buildinfo.revision=$REVISION" \
+    -ldflags="-s -w -X meshtransit.net/core/internal/platform/buildinfo.version=$VERSION -X meshtransit.net/core/internal/platform/buildinfo.revision=$REVISION" \
     -o /out/meshcore \
     ./core/cmd/meshcore
 

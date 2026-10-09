@@ -3,8 +3,8 @@ package mapsession
 import (
 	"encoding/json"
 	"errors"
-	appmapsession "github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
+	appmapsession "meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/sharing"
 	"time"
 )
 

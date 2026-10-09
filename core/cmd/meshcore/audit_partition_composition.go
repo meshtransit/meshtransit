@@ -4,9 +4,9 @@ import (
 	"errors"
 	"log/slog"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit/partitions"
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/audit/partitions"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 var errInvalidAuditPartitionComposition = errors.New("invalid audit partition maintainer composition")

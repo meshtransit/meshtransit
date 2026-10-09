@@ -12,8 +12,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/platform/observability"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/platform/observability"
 )
 
 func TestNewRejectsInvalidInputs(t *testing.T) {

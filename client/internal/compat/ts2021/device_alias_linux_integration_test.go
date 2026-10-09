@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/dataplane"
-	"github.com/meshtransit/meshtransit/client/internal/netadmin"
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
-	"github.com/meshtransit/meshtransit/client/internal/socket"
+	"meshtransit.net/client/internal/dataplane"
+	"meshtransit.net/client/internal/netadmin"
+	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/socket"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 )

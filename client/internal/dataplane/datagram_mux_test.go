@@ -4,7 +4,7 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/client/internal/pathdiscovery"
+	"meshtransit.net/client/internal/pathdiscovery"
 )
 
 func TestControlDatagramMuxRoutesAndDetachesPeerHandler(t *testing.T) {

@@ -5,8 +5,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 // GroupRevisionParams contains one complete immutable Resource Group definition.

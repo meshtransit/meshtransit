@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	redisadapter "github.com/meshtransit/meshtransit/core/internal/adapter/redis"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/adapter/oidc"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
 )
 
 func TestComposePrivateIdentityFactoryOwnsCompletePrivateGraph(t *testing.T) {

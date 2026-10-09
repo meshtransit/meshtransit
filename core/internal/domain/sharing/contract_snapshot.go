@@ -1,6 +1,6 @@
 package sharing
 
-import "github.com/meshtransit/meshtransit/core/internal/domain/resource"
+import "meshtransit.net/core/internal/domain/resource"
 
 // ContractSnapshotParams supplies one consumer-local management projection.
 type ContractSnapshotParams struct {

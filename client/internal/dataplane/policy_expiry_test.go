@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
-	"github.com/meshtransit/meshtransit/client/internal/packetmeta"
+	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/packetmeta"
 )
 
 func TestPolicyFilterEnforcesExclusivePeerDeadlineWithoutMapUpdate(t *testing.T) {

@@ -26,9 +26,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment/entitlement"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment/entitlement/issuer"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/deployment/entitlement"
+	"meshtransit.net/core/internal/domain/deployment/entitlement/issuer"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 func main() {

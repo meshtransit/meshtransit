@@ -3,8 +3,8 @@ package oidc
 import (
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
 	"github.com/prometheus/client_golang/prometheus"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
 )
 
 // SubjectTelemetry owns no-data resolution metrics for a private operator registry.

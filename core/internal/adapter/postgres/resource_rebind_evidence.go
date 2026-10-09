@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
-	authority "github.com/meshtransit/meshtransit/core/internal/domain/resource/authority"
+	"meshtransit.net/core/internal/domain/audit"
+	"meshtransit.net/core/internal/domain/publicid"
+	authority "meshtransit.net/core/internal/domain/resource/authority"
 )
 
 type resourceRebindAuditPayload struct {

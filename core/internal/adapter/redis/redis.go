@@ -16,8 +16,8 @@ import (
 	redisclient "github.com/redis/go-redis/v9"
 	"github.com/redis/go-redis/v9/maintnotifications"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 const (

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/relay"
+	"meshtransit.net/client/internal/relay"
 )
 
 func TestDialRejectsNonUpgradeResponse(t *testing.T) {

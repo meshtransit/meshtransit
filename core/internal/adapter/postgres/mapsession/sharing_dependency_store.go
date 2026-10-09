@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	appmapsession "github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	appmapsession "meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 const loadSharingDependenciesSQL = `SELECT dependency::TEXT

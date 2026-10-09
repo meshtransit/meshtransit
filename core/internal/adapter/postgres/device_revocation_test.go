@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node/revocation"
+	"meshtransit.net/core/internal/domain/node/revocation"
 )
 
 func TestDeviceRevocationTransactionPersistsAtomicTerminalEvidence(t *testing.T) {

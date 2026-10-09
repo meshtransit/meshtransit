@@ -17,11 +17,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/netadmin"
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
-	"github.com/meshtransit/meshtransit/client/internal/packetmeta"
-	"github.com/meshtransit/meshtransit/client/internal/pathdiscovery"
-	"github.com/meshtransit/meshtransit/client/internal/relay"
+	"meshtransit.net/client/internal/netadmin"
+	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/packetmeta"
+	"meshtransit.net/client/internal/pathdiscovery"
+	"meshtransit.net/client/internal/relay"
 )
 
 const (

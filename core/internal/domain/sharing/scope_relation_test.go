@@ -3,7 +3,7 @@ package sharing
 import (
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 func TestClassifyScopeRelationDerivesTrustBoundary(t *testing.T) {

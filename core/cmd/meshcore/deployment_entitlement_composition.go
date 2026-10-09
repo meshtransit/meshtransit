@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment/entitlement"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/deployment/entitlement"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 const entitlementRecordTimeout = 10 * time.Second

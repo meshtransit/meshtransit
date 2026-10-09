@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	appintake "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration/intake"
+	appintake "meshtransit.net/core/internal/domain/enrollment/registration/intake"
 )
 
 func TestTransactionCreatesPendingIntentWithAuditAndOutbox(t *testing.T) {

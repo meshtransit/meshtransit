@@ -3,8 +3,8 @@ package localapi
 import (
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/profile"
-	"github.com/meshtransit/meshtransit/client/internal/version"
+	"meshtransit.net/client/internal/profile"
+	"meshtransit.net/client/internal/version"
 )
 
 const apiVersion = "v1"

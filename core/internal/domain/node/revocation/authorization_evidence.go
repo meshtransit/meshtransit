@@ -1,9 +1,9 @@
 package revocation
 
 import (
-	"github.com/meshtransit/meshtransit/core/internal/domain/authorization"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/authorization"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 // AuthorizationEvidence identifies the current durable rows locked for device.manage.

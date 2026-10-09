@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 // ErrInvalidRebindMutationIDs reports incomplete or aliased durable identities.

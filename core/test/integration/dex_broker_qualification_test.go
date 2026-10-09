@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/oidc/qualification"
+	"meshtransit.net/core/internal/adapter/oidc/qualification"
 )
 
 const (

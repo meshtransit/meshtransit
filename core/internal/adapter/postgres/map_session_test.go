@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	postgresmapsession "github.com/meshtransit/meshtransit/core/internal/adapter/postgres/mapsession"
+	postgresmapsession "meshtransit.net/core/internal/adapter/postgres/mapsession"
 )
 
 func TestNewMapSessionStoreRequiresRuntimePool(t *testing.T) {

@@ -19,9 +19,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/dataplane"
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
-	"github.com/meshtransit/meshtransit/client/internal/packetmeta"
+	"meshtransit.net/client/internal/dataplane"
+	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/packetmeta"
 )
 
 const (

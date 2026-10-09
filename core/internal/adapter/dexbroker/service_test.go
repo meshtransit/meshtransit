@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/dexidp/dex/storage"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 func TestServiceServeHTTPFailsClosedBeforeStart(t *testing.T) {

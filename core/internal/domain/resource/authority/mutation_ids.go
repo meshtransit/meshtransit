@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/resource"
 )
 
 // ErrInvalidMutationIDs reports incomplete or aliased durable identities.

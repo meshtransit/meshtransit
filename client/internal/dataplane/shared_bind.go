@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/meshtransit/meshtransit/client/internal/pathdiscovery"
-	"github.com/meshtransit/meshtransit/client/internal/relay"
 	"golang.zx2c4.com/wireguard/conn"
+	"meshtransit.net/client/internal/pathdiscovery"
+	"meshtransit.net/client/internal/relay"
 )
 
 const maxControlDatagramSize = 2048

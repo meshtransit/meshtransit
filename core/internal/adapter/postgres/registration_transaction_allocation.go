@@ -5,8 +5,8 @@ import (
 	"errors"
 	"net/netip"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
-	"github.com/meshtransit/meshtransit/core/internal/domain/ipam"
+	"meshtransit.net/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/ipam"
 )
 
 type registrationLease struct {

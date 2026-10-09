@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/platform/idempotency"
-	"github.com/meshtransit/meshtransit/core/internal/platform/ratelimit"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/platform/idempotency"
+	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
 const (

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
-	"github.com/meshtransit/meshtransit/core/migrations"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/platform/config"
+	"meshtransit.net/core/migrations"
 )
 
 func TestPostgreSQLMigrations(t *testing.T) {

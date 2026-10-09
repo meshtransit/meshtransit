@@ -5,7 +5,7 @@ package mapsession
 import (
 	"errors"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 const maximumCapabilityVersion = 1<<16 - 1

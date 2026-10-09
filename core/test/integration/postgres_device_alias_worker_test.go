@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/audit"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx, endpointID, consumerID string, provider, consumer aliasMapIdentity) {

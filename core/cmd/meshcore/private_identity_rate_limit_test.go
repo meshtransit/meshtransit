@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/ratelimit"
+	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
 // Console pages make several management reads each. One Session switching

@@ -4,13 +4,13 @@ import (
 	"net/netip"
 	"time"
 
-	appmapsession "github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
-	"github.com/meshtransit/meshtransit/core/internal/domain/relay"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
+	appmapsession "meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/relay"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 type snapshotRecord struct {

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/control"
+	"meshtransit.net/core/internal/control"
 )
 
 type recordingAuthenticatedHandlerFactory struct {

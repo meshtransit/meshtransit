@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph"
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph/simulation"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy/approval"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy/publication"
+	"meshtransit.net/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/accessgraph/simulation"
+	"meshtransit.net/core/internal/domain/policy/approval"
+	"meshtransit.net/core/internal/domain/policy/publication"
 )
 
 func TestBindingRequiresExactlyOnePolicyAuthorityAdvance(t *testing.T) {

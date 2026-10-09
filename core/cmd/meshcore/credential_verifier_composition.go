@@ -4,8 +4,8 @@ import (
 	"encoding/base64"
 	"errors"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 var errInvalidCredentialVerifierComposition = errors.New("invalid credential verifier composition")

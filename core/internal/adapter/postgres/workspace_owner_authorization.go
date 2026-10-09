@@ -3,7 +3,7 @@ package postgres
 import (
 	"errors"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 // Only the durable resolver can return owner authority. An owner has no

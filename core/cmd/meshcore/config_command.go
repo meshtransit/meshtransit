@@ -8,9 +8,9 @@ import (
 	"io"
 	"log/slog"
 
-	redisadapter "github.com/meshtransit/meshtransit/core/internal/adapter/redis"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
-	"github.com/meshtransit/meshtransit/core/internal/platform/observability"
+	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/observability"
 )
 
 type configValidationOutput struct {

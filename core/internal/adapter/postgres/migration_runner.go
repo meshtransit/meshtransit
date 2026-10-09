@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/migrations"
+	"meshtransit.net/core/migrations"
 )
 
 var (

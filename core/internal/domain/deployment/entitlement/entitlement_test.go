@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment/entitlement"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment/entitlement/issuer"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/deployment/entitlement"
+	"meshtransit.net/core/internal/domain/deployment/entitlement/issuer"
 )
 
 const (

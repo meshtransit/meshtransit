@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	redisadapter "github.com/meshtransit/meshtransit/core/internal/adapter/redis"
-	"github.com/meshtransit/meshtransit/core/internal/platform/ratelimit"
+	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
 func assertRedisRateLimit(ctx context.Context, t *testing.T, client *redisadapter.Client) {

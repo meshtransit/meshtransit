@@ -5,7 +5,7 @@ import (
 	"net/netip"
 	"sync"
 
-	"github.com/meshtransit/meshtransit/client/internal/pathdiscovery"
+	"meshtransit.net/client/internal/pathdiscovery"
 )
 
 // controlDatagramMux keeps the fixed STUN handler ahead of one dynamically

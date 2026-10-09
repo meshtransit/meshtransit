@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 // LifecycleTransactions starts explicit Resource lifecycle units of work.

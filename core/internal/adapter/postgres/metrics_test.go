@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	postgresmapsession "github.com/meshtransit/meshtransit/core/internal/adapter/postgres/mapsession"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	postgresmapsession "meshtransit.net/core/internal/adapter/postgres/mapsession"
 )
 
 func TestMetricsCollectorExposesBoundedOperationsAndPoolStats(t *testing.T) {

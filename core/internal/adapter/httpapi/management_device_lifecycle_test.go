@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/devicelifecycle"
+	"meshtransit.net/core/internal/domain/devicelifecycle"
 )
 
 func TestParseDeviceLifecyclePath(t *testing.T) {

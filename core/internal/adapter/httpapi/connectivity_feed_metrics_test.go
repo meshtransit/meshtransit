@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/control/connectivityfeed"
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/control/connectivityfeed"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 func TestConnectivityFeedMetricsExposeBoundedSignals(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 // SystemStartIDs creates public transaction and evidence IDs with OS entropy.

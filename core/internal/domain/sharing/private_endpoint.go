@@ -5,7 +5,7 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 var (

@@ -7,9 +7,9 @@ import (
 	"errors"
 	"testing"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	registrationapp "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	registrationapp "meshtransit.net/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 func assertPostgreSQLRegistrationReplay(

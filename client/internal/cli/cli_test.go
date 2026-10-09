@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/cli/localapi"
-	"github.com/meshtransit/meshtransit/client/internal/version"
+	"meshtransit.net/client/internal/cli/localapi"
+	"meshtransit.net/client/internal/version"
 )
 
 func TestRun_Version(t *testing.T) {

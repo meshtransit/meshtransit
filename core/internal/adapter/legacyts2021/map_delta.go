@@ -6,8 +6,8 @@ import (
 
 	"tailscale.com/tailcfg"
 
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 type authorityDeltaMapResponseWire struct {

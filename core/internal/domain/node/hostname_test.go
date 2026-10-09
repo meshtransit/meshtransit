@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 func TestParseHostname(t *testing.T) {

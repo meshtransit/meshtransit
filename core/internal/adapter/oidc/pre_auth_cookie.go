@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
 )
 
 const (

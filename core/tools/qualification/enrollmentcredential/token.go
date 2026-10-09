@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/enrollment"
 )
 
 const credentialTokenBytes = 32

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph/ledger"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/accessgraph/ledger"
+	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 func mustAccessLedgerID(t *testing.T, value string) publicid.ID {

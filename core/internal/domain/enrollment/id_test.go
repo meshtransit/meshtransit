@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/enrollment"
 )
 
 func TestIDParsers(t *testing.T) {

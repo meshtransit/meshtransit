@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment/entitlement"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment/entitlement/issuer"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/deployment/entitlement"
+	"meshtransit.net/core/internal/domain/deployment/entitlement/issuer"
 )
 
 const integrationDeploymentPublicID = "01890f00-0000-7000-8000-000000000001"

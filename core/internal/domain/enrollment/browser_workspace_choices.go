@@ -1,6 +1,6 @@
 package enrollment
 
-import "github.com/meshtransit/meshtransit/core/internal/domain/workspace"
+import "meshtransit.net/core/internal/domain/workspace"
 
 // BrowserEnrollmentWorkspaceChoice is a current membership view, never a grant.
 type BrowserEnrollmentWorkspaceChoice struct {

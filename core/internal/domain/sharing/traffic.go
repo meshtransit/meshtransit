@@ -6,7 +6,7 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/policy"
 )
 
 const (

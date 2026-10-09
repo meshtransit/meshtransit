@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
-	"github.com/meshtransit/meshtransit/core/migrations"
+	"meshtransit.net/core/internal/platform/config"
+	"meshtransit.net/core/migrations"
 )
 
 const (

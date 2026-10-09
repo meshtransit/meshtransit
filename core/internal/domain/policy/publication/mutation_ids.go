@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 // ErrInvalidMutationIDs reports incomplete, aliased, or unbounded publication IDs.

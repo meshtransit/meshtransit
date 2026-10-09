@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/policy"
 )
 
 func TestNewTrafficSetCanonicalizesAndOwnsInput(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 
 	"tailscale.com/tailcfg"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 const discoveryKeyPrefix = "discokey:"

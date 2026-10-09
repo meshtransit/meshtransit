@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
 )
 
 const maximumBrowserSessionProofBytes = 256

@@ -15,8 +15,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/meshtransit/meshtransit/client/internal/cli/localapi"
-	"github.com/meshtransit/meshtransit/client/internal/version"
+	"meshtransit.net/client/internal/cli/localapi"
+	"meshtransit.net/client/internal/version"
 )
 
 const (

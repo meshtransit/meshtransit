@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 func TestOwnerPublishesWithoutRoleOrApprovalAndRecordsOwnership(t *testing.T) {

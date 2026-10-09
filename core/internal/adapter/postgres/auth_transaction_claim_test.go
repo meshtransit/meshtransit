@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
 )
 
 func TestBrowserClaimUnitRejectsOverlappingCallsWithoutDatabaseIO(t *testing.T) {

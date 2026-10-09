@@ -12,8 +12,8 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/adapter/oidc"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 func TestPrivateIdentityFactoryConsumingCleanupIntegration(t *testing.T) {

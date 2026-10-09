@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network/revisionworker"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/network/revisionworker"
 )
 
 const (

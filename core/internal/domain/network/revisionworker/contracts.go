@@ -6,7 +6,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 // Outbox is the durable delivery boundary consumed by Dispatcher.

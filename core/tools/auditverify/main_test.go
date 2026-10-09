@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit"
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit/exportformat"
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit/history"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/audit"
+	"meshtransit.net/core/internal/domain/audit/exportformat"
+	"meshtransit.net/core/internal/domain/audit/history"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 // The tool's seal is written from the specification; MeshCore's seal is the

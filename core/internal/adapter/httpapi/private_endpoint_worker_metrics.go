@@ -3,8 +3,8 @@ package httpapi
 import (
 	"errors"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing/endpointpublication"
 	"github.com/prometheus/client_golang/prometheus"
+	"meshtransit.net/core/internal/domain/sharing/endpointpublication"
 )
 
 // ErrInvalidPrivateEndpointWorkerMetrics reports a missing telemetry source.

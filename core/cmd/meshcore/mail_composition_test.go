@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/sesmail"
-	"github.com/meshtransit/meshtransit/core/internal/domain/invitation"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/adapter/sesmail"
+	"meshtransit.net/core/internal/domain/invitation"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 func TestComposeInvitationMailer(t *testing.T) {

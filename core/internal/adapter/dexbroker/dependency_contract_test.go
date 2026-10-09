@@ -59,7 +59,7 @@ func TestVerifyPinnedDexRequirement(t *testing.T) {
 		},
 		{
 			name:      "missing requirement",
-			contents:  "module github.com/meshtransit/meshtransit\n",
+			contents:  "module meshtransit.net\n",
 			wantError: true,
 		},
 		{

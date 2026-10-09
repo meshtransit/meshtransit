@@ -27,7 +27,7 @@ const (
 	maximumSourceTreeBytes = 2 << 30
 	maximumSourceTreeFiles = 100_000
 	sourceTreeDigestDomain = "meshtransit-dex-source-tree-v1"
-	meshcoreModulePath     = "github.com/meshtransit/meshtransit"
+	meshcoreModulePath     = "meshtransit.net"
 )
 
 var (

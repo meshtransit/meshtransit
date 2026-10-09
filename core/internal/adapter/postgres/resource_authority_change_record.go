@@ -7,13 +7,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
-	authority "github.com/meshtransit/meshtransit/core/internal/domain/resource/authority"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/resource"
+	authority "meshtransit.net/core/internal/domain/resource/authority"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 const (

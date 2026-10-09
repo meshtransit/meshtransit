@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	registrationapp "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	registrationapp "meshtransit.net/core/internal/domain/enrollment/registration"
 )
 
 const concurrentRegistrationCalls = 2

@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	authority "github.com/meshtransit/meshtransit/core/internal/domain/resource/authority"
+	authority "meshtransit.net/core/internal/domain/resource/authority"
 )
 
 func classifyResourceAuthorityDatabaseError(ctx context.Context, err error) error {

@@ -4,12 +4,12 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/httpapi"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing/devicealias"
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
 	"github.com/prometheus/client_golang/prometheus"
+	"meshtransit.net/core/internal/adapter/httpapi"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/sharing/devicealias"
+	"meshtransit.net/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 var errInvalidDeviceAliasWorkerComposition = errors.New("invalid Device alias worker composition")

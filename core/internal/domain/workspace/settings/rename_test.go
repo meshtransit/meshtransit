@@ -1,7 +1,7 @@
 package settings_test
 
 import (
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace/settings"
+	"meshtransit.net/core/internal/domain/workspace/settings"
 	"testing"
 )
 

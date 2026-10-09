@@ -1,8 +1,8 @@
 package connectivityfeed
 
 import (
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 // WatchNetwork registers one bounded local consumer. Release is idempotent.

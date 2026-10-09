@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/policy"
 )
 
 func TestSharedDNSRecordsNameConsumerAliasesOnly(t *testing.T) {

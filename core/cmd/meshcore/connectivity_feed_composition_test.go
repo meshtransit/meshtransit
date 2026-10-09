@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/control/connectivityfeed"
+	"meshtransit.net/core/internal/control/connectivityfeed"
 )
 
 func TestNewConnectivityFeedValidatesComposition(t *testing.T) {

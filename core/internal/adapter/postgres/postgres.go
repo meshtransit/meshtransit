@@ -14,10 +14,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	postgresmapsession "github.com/meshtransit/meshtransit/core/internal/adapter/postgres/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/adapter/postgres/registrationintake"
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	postgresmapsession "meshtransit.net/core/internal/adapter/postgres/mapsession"
+	"meshtransit.net/core/internal/adapter/postgres/registrationintake"
+	"meshtransit.net/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 const (

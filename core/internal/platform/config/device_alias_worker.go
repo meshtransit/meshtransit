@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 const (

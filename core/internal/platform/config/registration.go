@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/ipam"
+	"meshtransit.net/core/internal/domain/ipam"
 )
 
 const (

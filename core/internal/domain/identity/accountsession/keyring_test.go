@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
 )
 
 func TestKeyringDigestsStableRotationCandidates(t *testing.T) {

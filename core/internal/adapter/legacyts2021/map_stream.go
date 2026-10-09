@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/control/mapsession"
 )
 
 // ErrMapStreamWrite classifies a failed framed stream response.

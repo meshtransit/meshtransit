@@ -16,7 +16,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 func TestHealthHandlerReportsLifecycleState(t *testing.T) {

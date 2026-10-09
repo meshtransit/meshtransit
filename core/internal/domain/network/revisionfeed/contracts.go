@@ -4,7 +4,7 @@ package revisionfeed
 import (
 	"context"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 // Subscription is one caller-owned stream of validated revision wakeups.

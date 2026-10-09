@@ -24,8 +24,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/adapter/oidc"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
 )
 
 const privateFactoryCode = "synthetic-private-factory-code"

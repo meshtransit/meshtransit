@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network/provisioning"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace/creation"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace/selection"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/network/provisioning"
+	"meshtransit.net/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/workspace/creation"
+	"meshtransit.net/core/internal/domain/workspace/selection"
 )
 
 // The Console reads members and switchable Workspaces with a cookie-only GET

@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 )
 
 // assertAuditPartitionsAndStreams qualifies schema 115: monthly audit

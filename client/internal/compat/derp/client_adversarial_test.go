@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/relay"
 	"go4.org/mem"
+	"meshtransit.net/client/internal/relay"
 	protocol "tailscale.com/derp"
 	"tailscale.com/types/key"
 )

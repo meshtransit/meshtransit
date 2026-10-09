@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/ipam"
+	"meshtransit.net/core/internal/domain/ipam"
 )
 
 func aliasAllocationParams() ipam.DeviceAliasAllocationParams {

@@ -6,9 +6,9 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
-	appintake "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration/intake"
+	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/enrollment/registration"
+	appintake "meshtransit.net/core/internal/domain/enrollment/registration/intake"
 )
 
 type intentRecord struct {

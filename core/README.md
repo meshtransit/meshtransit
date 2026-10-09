@@ -221,7 +221,7 @@ epoch, and address leases remain unchanged. An exact old/new retry converges on
 the committed epoch; stale transitions and any reuse of a historical Node key
 fail closed.
 
-The module path is `github.com/meshtransit/meshtransit`; the process binary
+The module path is `meshtransit.net`; the process binary
 is `meshcore`. Development and security gates run with Go 1.26.8.
 
 Run `meshcore version` for machine-readable build, revision, Go, and

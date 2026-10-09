@@ -19,10 +19,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/netadmin"
-	"github.com/meshtransit/meshtransit/client/internal/servicemanager"
-	"github.com/meshtransit/meshtransit/client/internal/socket"
-	"github.com/meshtransit/meshtransit/client/internal/version"
+	"meshtransit.net/client/internal/netadmin"
+	"meshtransit.net/client/internal/servicemanager"
+	"meshtransit.net/client/internal/socket"
+	"meshtransit.net/client/internal/version"
 )
 
 func main() {

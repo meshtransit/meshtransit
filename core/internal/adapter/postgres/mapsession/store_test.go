@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	appmapsession "github.com/meshtransit/meshtransit/core/internal/control/mapsession"
+	appmapsession "meshtransit.net/core/internal/control/mapsession"
 )
 
 func TestStoreLoadsConsistentScopedSnapshot(t *testing.T) {

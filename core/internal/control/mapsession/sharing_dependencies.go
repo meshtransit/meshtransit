@@ -1,7 +1,7 @@
 package mapsession
 
 import (
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/network"
 	"strings"
 )
 

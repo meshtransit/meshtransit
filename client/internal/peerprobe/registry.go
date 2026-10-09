@@ -8,9 +8,9 @@ import (
 	"net/netip"
 	"sync"
 
-	"github.com/meshtransit/meshtransit/client/internal/compat/disco"
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
-	"github.com/meshtransit/meshtransit/client/internal/pathdiscovery"
+	"meshtransit.net/client/internal/compat/disco"
+	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/pathdiscovery"
 )
 
 const maxPeerChannels = 256

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/socket"
+	"meshtransit.net/client/internal/socket"
 )
 
 func TestNewServerRejectsUnsafeAllowedPrefixes(t *testing.T) {

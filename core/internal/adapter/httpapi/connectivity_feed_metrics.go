@@ -3,7 +3,7 @@ package httpapi
 import (
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/meshtransit/meshtransit/core/internal/control/connectivityfeed"
+	"meshtransit.net/core/internal/control/connectivityfeed"
 )
 
 type connectivityFeedMetricsCollector struct {

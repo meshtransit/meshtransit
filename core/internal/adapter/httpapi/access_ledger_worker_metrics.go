@@ -3,8 +3,8 @@ package httpapi
 import (
 	"errors"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph/ledger"
 	"github.com/prometheus/client_golang/prometheus"
+	"meshtransit.net/core/internal/domain/accessgraph/ledger"
 )
 
 // ErrInvalidAccessLedgerWorkerMetrics reports a missing owned worker source.

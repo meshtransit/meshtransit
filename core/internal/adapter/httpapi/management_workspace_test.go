@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace/settings"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/workspace/settings"
 )
 
 type workspaceRenameFunc func(context.Context, settings.Command) (settings.Result, error)

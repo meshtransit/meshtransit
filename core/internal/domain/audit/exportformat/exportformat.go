@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit"
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit/history"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/audit"
+	"meshtransit.net/core/internal/domain/audit/history"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 // Version is the export document version.

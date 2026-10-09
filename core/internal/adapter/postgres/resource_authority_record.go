@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
-	authority "github.com/meshtransit/meshtransit/core/internal/domain/resource/authority"
+	"meshtransit.net/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/resource"
+	authority "meshtransit.net/core/internal/domain/resource/authority"
 )
 
 const (

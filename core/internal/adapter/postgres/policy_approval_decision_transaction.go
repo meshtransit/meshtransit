@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/domain/authorization"
-	approval "github.com/meshtransit/meshtransit/core/internal/domain/policy/approval"
+	"meshtransit.net/core/internal/domain/authorization"
+	approval "meshtransit.net/core/internal/domain/policy/approval"
 )
 
 const policyApprovalDecisionResultKind = "policy_approval_evidence"

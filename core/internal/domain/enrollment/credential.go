@@ -5,7 +5,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/identity"
 )
 
 var (

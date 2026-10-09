@@ -3,8 +3,8 @@ package main
 import (
 	"log/slog"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/httpapi"
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/adapter/httpapi"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 type privateIdentityLoginServiceOptions struct {

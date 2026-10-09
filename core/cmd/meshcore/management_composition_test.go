@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
-	"github.com/meshtransit/meshtransit/core/internal/platform/ratelimit"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
 // #nosec G101 -- canonical token grammar fixture; it has no authority outside this test.

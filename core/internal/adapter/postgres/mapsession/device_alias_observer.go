@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/control"
-	appmapsession "github.com/meshtransit/meshtransit/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/control"
+	appmapsession "meshtransit.net/core/internal/control/mapsession"
 )
 
 var _ appmapsession.DeviceAliasVersionObserver = (*Store)(nil)

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/identity"
 )
 
 func TestPrincipalIDRoundTrip(t *testing.T) {

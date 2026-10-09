@@ -5,7 +5,7 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
+	"meshtransit.net/client/internal/networkmap"
 )
 
 func TestCompileMagicDNSPlan(t *testing.T) {

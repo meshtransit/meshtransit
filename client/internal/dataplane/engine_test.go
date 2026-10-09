@@ -6,8 +6,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/client/internal/netadmin"
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
+	"meshtransit.net/client/internal/netadmin"
+	"meshtransit.net/client/internal/networkmap"
 )
 
 func TestEngineApplyLifecycle(t *testing.T) {

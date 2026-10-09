@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace/creation"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/workspace/creation"
 )
 
 type storeFunc func(context.Context, creation.Command) (creation.Result, error)

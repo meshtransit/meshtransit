@@ -10,9 +10,9 @@ import (
 	"tailscale.com/tailcfg"
 	"tailscale.com/util/zstdframe"
 
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/policy"
+	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/policy"
 )
 
 func TestEncodeAuthorityDeltaMapResponseAddsPeerAndPolicyAtomically(t *testing.T) {

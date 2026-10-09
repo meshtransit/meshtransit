@@ -3,11 +3,11 @@ package devicealias
 import (
 	"context"
 	"errors"
-	"github.com/meshtransit/meshtransit/core/internal/domain/deployment"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing"
 	"io"
 	"log/slog"
+	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/sharing"
 	"testing"
 	"time"
 )

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing/target"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/sharing/target"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 type shareTargetResolverStub struct {

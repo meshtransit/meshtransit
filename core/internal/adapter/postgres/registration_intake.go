@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/postgres/registrationintake"
+	"meshtransit.net/core/internal/adapter/postgres/registrationintake"
 )
 
 // ErrInvalidRegistrationIntake reports a pool without runtime write authority.

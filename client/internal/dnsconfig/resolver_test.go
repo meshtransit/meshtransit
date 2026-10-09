@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
 	"golang.org/x/net/dns/dnsmessage"
+	"meshtransit.net/client/internal/networkmap"
 )
 
 func TestResolverEngineLocalRecordsAndNegativeAnswers(t *testing.T) {

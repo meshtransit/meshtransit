@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/client/internal/secretstore"
+	"meshtransit.net/client/internal/secretstore"
 )
 
 func TestLoadIdentityProtectorOwnerOnlyOverride(t *testing.T) {

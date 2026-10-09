@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/api/openapi"
+	"meshtransit.net/api/openapi"
 )
 
 func TestLoginDocumentRejectsProfileAndRoutingFallbacks(t *testing.T) {

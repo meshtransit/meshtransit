@@ -3,7 +3,7 @@ package sharing
 import (
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/network"
 )
 
 // PolicyDestinationParams contains one active Imported Resource resolution.

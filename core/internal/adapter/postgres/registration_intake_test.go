@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/postgres/registrationintake"
+	"meshtransit.net/core/internal/adapter/postgres/registrationintake"
 )
 
 func TestNewRegistrationIntakeTransactionsRequiresRuntimePool(t *testing.T) {

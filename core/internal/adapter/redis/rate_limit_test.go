@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/ratelimit"
+	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
 func TestClientValidateRateLimiterIsStructuralAndEffectFree(t *testing.T) {

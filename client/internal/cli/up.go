@@ -9,15 +9,15 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/meshtransit/meshtransit/client/internal/cli/localapi"
+	"meshtransit.net/client/internal/cli/localapi"
 )
 
 // MeshTransit Cloud defaults. Packages built for Cloud carry the control key
 // fingerprint, so `meshctl up` never asks a person to compare one; a key
 // rotation ships a new package. Release builds may override both with
 //
-//	-ldflags "-X github.com/meshtransit/meshtransit/client/internal/cli.DefaultControlURL=...
-//	          -X github.com/meshtransit/meshtransit/client/internal/cli.DefaultControlKeyFingerprint=..."
+//	-ldflags "-X meshtransit.net/client/internal/cli.DefaultControlURL=...
+//	          -X meshtransit.net/client/internal/cli.DefaultControlKeyFingerprint=..."
 var (
 	DefaultControlURL            = "https://control.meshtransit.net"
 	DefaultControlKeyFingerprint = "sha256:9af0dbfdffaca2f5e428a33b9dfdd57e46aafd0b41010bfbb08daaf508f18f3a"

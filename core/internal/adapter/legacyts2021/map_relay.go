@@ -3,7 +3,7 @@ package legacyts2021
 import (
 	"tailscale.com/tailcfg"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/relay"
+	"meshtransit.net/core/internal/domain/relay"
 )
 
 func mapRelayDirectory(directory relay.Directory) (*tailcfg.DERPMap, error) {

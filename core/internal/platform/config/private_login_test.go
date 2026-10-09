@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 func privateLoginTestDocument(t testing.TB) (Config, map[string]any) {

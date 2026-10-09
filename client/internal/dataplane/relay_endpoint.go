@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/meshtransit/meshtransit/client/internal/relay"
+	"meshtransit.net/client/internal/relay"
 )
 
 const relayEndpointPrefix = "relay:"

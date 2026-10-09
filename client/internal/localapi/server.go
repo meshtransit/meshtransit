@@ -14,12 +14,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/compat/ts2021"
-	"github.com/meshtransit/meshtransit/client/internal/daemon"
-	"github.com/meshtransit/meshtransit/client/internal/dataplane"
-	"github.com/meshtransit/meshtransit/client/internal/profile"
-	"github.com/meshtransit/meshtransit/client/internal/relay"
-	"github.com/meshtransit/meshtransit/client/internal/runtimehealth"
+	"meshtransit.net/client/internal/compat/ts2021"
+	"meshtransit.net/client/internal/daemon"
+	"meshtransit.net/client/internal/dataplane"
+	"meshtransit.net/client/internal/profile"
+	"meshtransit.net/client/internal/relay"
+	"meshtransit.net/client/internal/runtimehealth"
 )
 
 const (

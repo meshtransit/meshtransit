@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/enrollment/registration"
 )
 
 func TestRegistrationTransactionCreatesCompleteAtomicMutation(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	appintake "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration/intake"
+	appintake "meshtransit.net/core/internal/domain/enrollment/registration/intake"
 )
 
 func (transaction *transaction) Resolve(

@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/idempotency"
+	"meshtransit.net/core/internal/platform/idempotency"
 )
 
 func TestDigesterProducesStableDomainSeparatedProof(t *testing.T) {

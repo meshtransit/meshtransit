@@ -8,9 +8,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/cli"
-	"github.com/meshtransit/meshtransit/client/internal/cli/localapi"
-	"github.com/meshtransit/meshtransit/client/internal/version"
+	"meshtransit.net/client/internal/cli"
+	"meshtransit.net/client/internal/cli/localapi"
+	"meshtransit.net/client/internal/version"
 )
 
 func main() {

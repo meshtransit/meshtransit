@@ -16,7 +16,7 @@ import (
 
 	"github.com/redis/go-redis/v9/maintnotifications"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 func TestBuildClientOptionsAppliesSecurityAndPoolBounds(t *testing.T) {

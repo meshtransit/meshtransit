@@ -19,7 +19,7 @@ import (
 	"github.com/dexidp/dex/storage"
 	"github.com/dexidp/dex/storage/memory"
 	dexsql "github.com/dexidp/dex/storage/sql"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 func TestOpenPostgreSQLResourceMapsExplicitRuntimePolicy(t *testing.T) {

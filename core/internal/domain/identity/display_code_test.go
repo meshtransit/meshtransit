@@ -3,7 +3,7 @@ package identity_test
 import (
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/identity"
 )
 
 func TestDisplayCode(t *testing.T) {

@@ -4,9 +4,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/enrollment/registration"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 func TestNewChangePreservesCredentialCustody(t *testing.T) {

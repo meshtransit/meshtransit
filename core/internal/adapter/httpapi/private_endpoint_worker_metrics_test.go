@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/sharing/endpointpublication"
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/domain/sharing/endpointpublication"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 func TestPrivateEndpointWorkerMetricsExposeBoundedSignals(t *testing.T) {

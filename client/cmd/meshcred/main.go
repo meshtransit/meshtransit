@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/config"
-	"github.com/meshtransit/meshtransit/client/internal/hostcred"
-	"github.com/meshtransit/meshtransit/client/internal/identity"
-	"github.com/meshtransit/meshtransit/client/internal/secretstore"
+	"meshtransit.net/client/internal/config"
+	"meshtransit.net/client/internal/hostcred"
+	"meshtransit.net/client/internal/identity"
+	"meshtransit.net/client/internal/secretstore"
 )
 
 const (

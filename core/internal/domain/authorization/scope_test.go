@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/authorization"
+	"meshtransit.net/core/internal/domain/authorization"
 )
 
 func TestPublicIDConstructors(t *testing.T) {

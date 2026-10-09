@@ -3,7 +3,7 @@ package guardrail
 import (
 	"slices"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/authorization"
+	"meshtransit.net/core/internal/domain/authorization"
 )
 
 func superset[T comparable](wider, narrower []T) bool {

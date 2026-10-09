@@ -5,7 +5,7 @@ package sharing
 import (
 	"errors"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 var (

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	approval "github.com/meshtransit/meshtransit/core/internal/domain/policy/approval"
+	"meshtransit.net/core/internal/domain/network"
+	approval "meshtransit.net/core/internal/domain/policy/approval"
 )
 
 const (

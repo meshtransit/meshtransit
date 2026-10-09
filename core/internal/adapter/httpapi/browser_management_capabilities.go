@@ -5,9 +5,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/sessioncontext"
-	"github.com/meshtransit/meshtransit/core/internal/platform/ratelimit"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/identity/sessioncontext"
+	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
 // SessionDeploymentCapabilities reads one fresh non-secret Deployment projection.

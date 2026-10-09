@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/client/internal/cli/localapi"
+	"meshtransit.net/client/internal/cli/localapi"
 )
 
 const testCloudFingerprint = "sha256:9af0dbfdffaca2f5e428a33b9dfdd57e46aafd0b41010bfbb08daaf508f18f3a"

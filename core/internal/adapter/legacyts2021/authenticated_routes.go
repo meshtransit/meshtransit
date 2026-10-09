@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/meshtransit/meshtransit/core/internal/control"
+	"meshtransit.net/core/internal/control"
 )
 
 // ErrInvalidAuthenticatedRoutes reports incomplete session endpoint composition.

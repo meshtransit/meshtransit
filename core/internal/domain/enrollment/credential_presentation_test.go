@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/enrollment"
 )
 
 const testCredentialPresentation = "mtc1.01890f90-0000-7000-8000-000000000001." +

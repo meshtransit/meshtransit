@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	compatstun "github.com/meshtransit/meshtransit/client/internal/compat/stun"
-	"github.com/meshtransit/meshtransit/client/internal/pathdiscovery"
-	"github.com/meshtransit/meshtransit/client/internal/relay"
 	"golang.zx2c4.com/wireguard/conn"
+	compatstun "meshtransit.net/client/internal/compat/stun"
+	"meshtransit.net/client/internal/pathdiscovery"
+	"meshtransit.net/client/internal/relay"
 )
 
 func TestNewSharedBind(t *testing.T) {

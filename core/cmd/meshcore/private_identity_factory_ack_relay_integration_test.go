@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 // Fixture TLS termination is deliberately outside the production pool/factory.

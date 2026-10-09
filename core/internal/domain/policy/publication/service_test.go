@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	publication "github.com/meshtransit/meshtransit/core/internal/domain/policy/publication"
+	publication "meshtransit.net/core/internal/domain/policy/publication"
 )
 
 func TestServicePublishesCandidateAtomically(t *testing.T) {

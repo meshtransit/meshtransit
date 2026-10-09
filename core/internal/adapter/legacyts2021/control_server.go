@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/net/http2"
 
-	"github.com/meshtransit/meshtransit/core/internal/control"
+	"meshtransit.net/core/internal/control"
 )
 
 const (

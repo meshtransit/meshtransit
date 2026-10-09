@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/netadmin"
+	"meshtransit.net/client/internal/netadmin"
 )
 
 const (

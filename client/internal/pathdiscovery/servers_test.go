@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
+	"meshtransit.net/client/internal/networkmap"
 )
 
 func TestServersFromRelayMap(t *testing.T) {

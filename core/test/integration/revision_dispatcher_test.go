@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	redisadapter "github.com/meshtransit/meshtransit/core/internal/adapter/redis"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network/revisionworker"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
-	"github.com/meshtransit/meshtransit/core/internal/platform/observability"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/network/revisionworker"
+	"meshtransit.net/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/observability"
 )
 
 const integrationNetworkPublicID = "01890f00-0000-7000-8000-000000000201"

@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"hash"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph"
+	"meshtransit.net/core/internal/domain/accessgraph"
 )
 
 const impactHashDomainV1 = "meshtransit/policy-simulation-impact/v1\x00"

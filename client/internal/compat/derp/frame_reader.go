@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/meshtransit/meshtransit/client/internal/relay"
+	"meshtransit.net/client/internal/relay"
 	protocol "tailscale.com/derp"
 )
 

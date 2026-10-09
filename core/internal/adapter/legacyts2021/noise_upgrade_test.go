@@ -18,7 +18,7 @@ import (
 	"tailscale.com/control/controlbase"
 	"tailscale.com/types/key"
 
-	"github.com/meshtransit/meshtransit/core/internal/control"
+	"meshtransit.net/core/internal/control"
 )
 
 func TestControlServerBindsNoisePeerToHTTP2Session(t *testing.T) {

@@ -4,10 +4,10 @@ import (
 	"errors"
 	"log/slog"
 
-	postgresadapter "github.com/meshtransit/meshtransit/core/internal/adapter/postgres"
-	redisadapter "github.com/meshtransit/meshtransit/core/internal/adapter/redis"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network/revisionworker"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	redisadapter "meshtransit.net/core/internal/adapter/redis"
+	"meshtransit.net/core/internal/domain/network/revisionworker"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 var errInvalidWorkerComposition = errors.New("invalid worker composition")

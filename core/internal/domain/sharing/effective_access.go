@@ -3,7 +3,7 @@ package sharing
 import (
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/resource"
+	"meshtransit.net/core/internal/domain/resource"
 )
 
 // DenialReason is a stable fail-closed sharing decision classification.

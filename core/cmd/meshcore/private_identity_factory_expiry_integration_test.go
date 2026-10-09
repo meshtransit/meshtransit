@@ -14,10 +14,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/goleak"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/authexpiry"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/adapter/oidc"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/identity/authexpiry"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 func TestPrivateIdentityFactoryExpiryQuarantineIntegration(t *testing.T) {

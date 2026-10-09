@@ -3,7 +3,7 @@ package control
 import (
 	"testing"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 func TestAuthenticatedMachineBindsNodeKey(t *testing.T) {

@@ -7,12 +7,12 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/httpapi"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/accountsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
-	"github.com/meshtransit/meshtransit/core/internal/platform/idempotency"
-	"github.com/meshtransit/meshtransit/core/internal/platform/ratelimit"
+	"meshtransit.net/core/internal/adapter/httpapi"
+	"meshtransit.net/core/internal/domain/identity/accountsession"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
+	"meshtransit.net/core/internal/platform/config"
+	"meshtransit.net/core/internal/platform/idempotency"
+	"meshtransit.net/core/internal/platform/ratelimit"
 )
 
 const privateIdentityConstructionTimeout = 5 * time.Second

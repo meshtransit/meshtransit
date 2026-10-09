@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
+	"meshtransit.net/client/internal/networkmap"
 	"tailscale.com/tailcfg"
 )
 

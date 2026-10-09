@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
+	"meshtransit.net/client/internal/networkmap"
 )
 
 // A Device that holds a shared-Device alias keeps its data plane when a later

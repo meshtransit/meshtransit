@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/authexpiry"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
 	"github.com/prometheus/client_golang/prometheus"
+	"meshtransit.net/core/internal/domain/identity/authexpiry"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
 )
 
 func TestExpiryTelemetryHasOnlyClosedLabelsAndBoundedCounts(t *testing.T) {

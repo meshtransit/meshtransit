@@ -1,6 +1,6 @@
 package sharing
 
-import "github.com/meshtransit/meshtransit/core/internal/domain/identity"
+import "meshtransit.net/core/internal/domain/identity"
 
 // OfferDisplayCodes names both ends of an offer with their twelve-digit
 // display codes. Each side already knows them: the provider typed the

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit/partitions"
+	"meshtransit.net/core/internal/domain/audit/partitions"
 )
 
 // ErrInvalidAuditPartitionStore reports unsafe construction or input.

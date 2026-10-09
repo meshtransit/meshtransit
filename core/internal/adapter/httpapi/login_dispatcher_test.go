@@ -14,9 +14,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/oidc"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity/oidcauth"
-	approval "github.com/meshtransit/meshtransit/core/internal/domain/policy/approval"
+	"meshtransit.net/core/internal/adapter/oidc"
+	"meshtransit.net/core/internal/domain/identity/oidcauth"
+	approval "meshtransit.net/core/internal/domain/policy/approval"
 )
 
 func dispatcherTestGraph(t *testing.T) (*LoginDispatcher, *loginHTTPFixture, *completionTestPort) {

@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	authority "github.com/meshtransit/meshtransit/core/internal/domain/resource/authority"
+	"meshtransit.net/core/internal/domain/network"
+	authority "meshtransit.net/core/internal/domain/resource/authority"
 )
 
 var (

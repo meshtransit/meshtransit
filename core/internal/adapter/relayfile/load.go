@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/relay"
+	"meshtransit.net/core/internal/domain/relay"
 )
 
 const (

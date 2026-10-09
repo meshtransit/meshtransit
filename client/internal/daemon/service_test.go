@@ -14,16 +14,16 @@ import (
 	"testing"
 	"time"
 
-	peerwire "github.com/meshtransit/meshtransit/client/internal/compat/disco"
-	"github.com/meshtransit/meshtransit/client/internal/compat/ts2021"
-	"github.com/meshtransit/meshtransit/client/internal/dataplane"
-	"github.com/meshtransit/meshtransit/client/internal/identity"
-	"github.com/meshtransit/meshtransit/client/internal/networkmap"
-	"github.com/meshtransit/meshtransit/client/internal/pathdiscovery"
-	"github.com/meshtransit/meshtransit/client/internal/profile"
-	"github.com/meshtransit/meshtransit/client/internal/relay"
-	"github.com/meshtransit/meshtransit/client/internal/secretstore"
-	"github.com/meshtransit/meshtransit/client/internal/version"
+	peerwire "meshtransit.net/client/internal/compat/disco"
+	"meshtransit.net/client/internal/compat/ts2021"
+	"meshtransit.net/client/internal/dataplane"
+	"meshtransit.net/client/internal/identity"
+	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/client/internal/pathdiscovery"
+	"meshtransit.net/client/internal/profile"
+	"meshtransit.net/client/internal/relay"
+	"meshtransit.net/client/internal/secretstore"
+	"meshtransit.net/client/internal/version"
 )
 
 func TestService_TrustAndBrowserRegistration(t *testing.T) {

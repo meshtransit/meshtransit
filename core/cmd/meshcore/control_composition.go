@@ -5,10 +5,10 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/legacyts2021"
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
-	"github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration/intake"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/adapter/legacyts2021"
+	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/enrollment/registration/intake"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 var errInvalidControlComposition = errors.New("invalid control composition")

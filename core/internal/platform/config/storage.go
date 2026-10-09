@@ -3,7 +3,7 @@ package config
 import (
 	"strconv"
 
-	"github.com/meshtransit/meshtransit/core/internal/platform/app"
+	"meshtransit.net/core/internal/platform/app"
 )
 
 const (

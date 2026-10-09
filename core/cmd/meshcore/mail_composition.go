@@ -5,10 +5,10 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/meshtransit/meshtransit/core/internal/adapter/sesmail"
-	"github.com/meshtransit/meshtransit/core/internal/adapter/smtpmail"
-	"github.com/meshtransit/meshtransit/core/internal/domain/invitation"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/adapter/sesmail"
+	"meshtransit.net/core/internal/adapter/smtpmail"
+	"meshtransit.net/core/internal/domain/invitation"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 var errInvalidMailComposition = errors.New("meshcore: invalid mail composition")

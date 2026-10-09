@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/audit"
-	appintake "github.com/meshtransit/meshtransit/core/internal/domain/enrollment/registration/intake"
-	"github.com/meshtransit/meshtransit/core/internal/domain/identity"
-	"github.com/meshtransit/meshtransit/core/internal/domain/publicid"
+	"meshtransit.net/core/internal/domain/audit"
+	appintake "meshtransit.net/core/internal/domain/enrollment/registration/intake"
+	"meshtransit.net/core/internal/domain/identity"
+	"meshtransit.net/core/internal/domain/publicid"
 )
 
 const registrationPendingEventClass = "registration.pending.created"

@@ -10,13 +10,13 @@ import (
 	"net/netip"
 	"os"
 
-	relaywire "github.com/meshtransit/meshtransit/client/internal/compat/derp"
-	"github.com/meshtransit/meshtransit/client/internal/pathdiscovery"
-	"github.com/meshtransit/meshtransit/client/internal/relay"
 	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
+	relaywire "meshtransit.net/client/internal/compat/derp"
+	"meshtransit.net/client/internal/pathdiscovery"
+	"meshtransit.net/client/internal/relay"
 )
 
 type officialWireGuardFactory struct {

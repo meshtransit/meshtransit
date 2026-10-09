@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/meshtransit/meshtransit/core/internal/domain/accessgraph/simulation"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/workspace"
+	"meshtransit.net/core/internal/domain/accessgraph/simulation"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/workspace"
 )
 
 func TestPolicySimulationBaselineRecordReconstructsFormatThreeCandidate(t *testing.T) {

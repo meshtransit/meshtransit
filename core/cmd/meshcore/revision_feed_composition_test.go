@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/meshtransit/meshtransit/core/internal/domain/network"
-	"github.com/meshtransit/meshtransit/core/internal/domain/network/revisionfeed"
-	"github.com/meshtransit/meshtransit/core/internal/platform/config"
+	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/network/revisionfeed"
+	"meshtransit.net/core/internal/platform/config"
 )
 
 func TestRevisionFeedCompositionValidatesDependencies(t *testing.T) {

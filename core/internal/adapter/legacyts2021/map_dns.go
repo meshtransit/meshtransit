@@ -3,7 +3,7 @@ package legacyts2021
 import (
 	"tailscale.com/tailcfg"
 
-	"github.com/meshtransit/meshtransit/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/control/mapsession"
 )
 
 // mapDNSConfig returns the complete DNS configuration for one map. It is
