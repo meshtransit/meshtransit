@@ -131,3 +131,24 @@ func mustIdentity(t *testing.T) *Identity {
 
 	return identity
 }
+
+func TestIdentityFromPrivateMatchesGenerated(t *testing.T) {
+	t.Parallel()
+	generated, err := NewIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped, err := IdentityFromPrivate(generated.private[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wrapped.public != generated.public {
+		t.Fatal("wrapped key derives a different public key")
+	}
+	if _, err := IdentityFromPrivate(make([]byte, keySize)); err == nil {
+		t.Fatal("zero key accepted")
+	}
+	if _, err := IdentityFromPrivate([]byte{1}); err == nil {
+		t.Fatal("short key accepted")
+	}
+}

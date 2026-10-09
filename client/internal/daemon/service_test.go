@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"meshtransit.net/shared/key"
+
 	peerwire "meshtransit.net/client/internal/compat/disco"
 	"meshtransit.net/client/internal/compat/ts2021"
 	"meshtransit.net/client/internal/dataplane"
@@ -1347,7 +1349,7 @@ func TestService_RunRotatesAndClosesPeerProbeIdentity(t *testing.T) {
 	}
 
 	created := make(chan *peerwire.Identity, 2)
-	service.newPeerProbeIdentity = func() (*peerwire.Identity, error) {
+	service.newPeerProbeIdentity = func(key.DiscoPrivate) (*peerwire.Identity, error) {
 		identity, err := peerwire.NewIdentity()
 		if err == nil {
 			created <- identity
@@ -1417,7 +1419,7 @@ func TestService_RunFailsClosedWithoutPeerProbeIdentity(t *testing.T) {
 	}
 
 	identityErr := errors.New("test entropy unavailable")
-	service.newPeerProbeIdentity = func() (*peerwire.Identity, error) {
+	service.newPeerProbeIdentity = func(key.DiscoPrivate) (*peerwire.Identity, error) {
 		return nil, identityErr
 	}
 	if err := service.Run(t.Context()); !errors.Is(err, identityErr) {
@@ -1463,7 +1465,7 @@ func TestService_RunAttachesAndSchedulesLivePeerProbes(t *testing.T) {
 		t.Fatalf("NewIdentity(remote) error = %v", err)
 	}
 	t.Cleanup(remoteProbe.Close)
-	service.newPeerProbeIdentity = func() (*peerwire.Identity, error) {
+	service.newPeerProbeIdentity = func(key.DiscoPrivate) (*peerwire.Identity, error) {
 		return localProbe, nil
 	}
 	remotePublic, err := remoteProbe.Public()

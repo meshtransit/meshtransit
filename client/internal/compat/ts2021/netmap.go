@@ -978,6 +978,7 @@ type mapAccumulator struct {
 	relays        map[int]networkmap.RelayRegion
 	dns           *networkmap.DNSConfig
 	audit         networkmap.AuditCredentials
+	interchange   *interchangeGrant // immutable once held
 }
 
 func newMapAccumulator() *mapAccumulator {
@@ -1021,6 +1022,12 @@ func (a *mapAccumulator) apply(
 			return networkmap.Snapshot{}, false, err
 		}
 		candidate.self = converted
+		// A grant that fails verification, or an entry without one, keeps
+		// the previous grant until its ticket expires.
+		if grant, present, grantErr := parseInterchange(response.Node, now); present && grantErr == nil &&
+			grant.supersedes(candidate.interchange) {
+			candidate.interchange = grant
+		}
 		if response.Node.DataPlaneAuditLogID != "" || response.DomainDataPlaneAuditLogID != "" {
 			if !response.Node.CapMap.Contains(tailcfg.CapabilityDataPlaneAuditLogs) &&
 				!response.Node.CapMap.Contains(meshDataPlaneAuditLogs) {
@@ -1248,7 +1255,7 @@ func (a *mapAccumulator) snapshot() networkmap.Snapshot {
 		policy = append(policy, a.namedPolicies[name]...)
 	}
 
-	return networkmap.Snapshot{
+	snapshot := networkmap.Snapshot{
 		Revision:    a.revision,
 		NetworkName: a.networkName,
 		ControlTime: a.controlTime,
@@ -1259,6 +1266,10 @@ func (a *mapAccumulator) snapshot() networkmap.Snapshot {
 		DNS:         a.dns,
 		Audit:       a.audit,
 	}
+	if a.interchange != nil {
+		snapshot.Interchange, snapshot.Relays = a.interchange.snapshot()
+	}
+	return snapshot
 }
 
 func (a *mapAccumulator) clone() *mapAccumulator {
@@ -1273,6 +1284,7 @@ func (a *mapAccumulator) clone() *mapAccumulator {
 		relays:        make(map[int]networkmap.RelayRegion, len(a.relays)),
 		dns:           cloneDNSConfig(a.dns),
 		audit:         a.audit,
+		interchange:   a.interchange,
 	}
 	for id, peer := range a.peers {
 		cloned.peers[id] = cloneMapNode(peer)
@@ -1300,7 +1312,8 @@ func equalMapAccumulatorState(left, right *mapAccumulator) bool {
 		maps.EqualFunc(left.namedPolicies, right.namedPolicies, equalRules) &&
 		maps.EqualFunc(left.relays, right.relays, equalRelayRegion) &&
 		equalDNSConfig(left.dns, right.dns) &&
-		left.audit == right.audit
+		left.audit == right.audit &&
+		left.interchange.equal(right.interchange)
 }
 
 func equalMapNode(left, right networkmap.Node) bool {

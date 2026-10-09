@@ -209,6 +209,7 @@ type WireGuardEngine struct {
 	relayFallbacks          uint64
 	lastPromotion           time.Duration
 	maximumPromotion        time.Duration
+	credentials             *relayCredentials
 }
 
 // NewWireGuard constructs the Linux encrypted packet engine.
@@ -247,6 +248,10 @@ func newWireGuardEngine(
 		return nil, errors.New("dataplane: wireguard listen port is required")
 	}
 
+	credentials := newRelayCredentials(time.Now)
+	if aware, ok := factory.(interchangeFactory); ok {
+		aware.setRelayCredentials(credentials)
+	}
 	return &WireGuardEngine{
 		opener:        opener,
 		factory:       factory,
@@ -255,7 +260,14 @@ func newWireGuardEngine(
 		observer:      observer,
 		hostAddresses: localHostAddresses,
 		clock:         time.Now,
+		credentials:   credentials,
 	}, nil
+}
+
+// interchangeFactory is implemented by device factories that can dial
+// Interchange relays with the engine's credentials.
+type interchangeFactory interface {
+	setRelayCredentials(*relayCredentials)
 }
 
 // Apply atomically replaces the peer configuration derived from one validated
@@ -284,6 +296,7 @@ func (e *WireGuardEngine) Apply(
 		return StateFailed, err
 	}
 	e.filter.suspendFor(snapshot)
+	e.credentials.setGrant(snapshot.Interchange)
 	state, err := e.applySnapshot(ctx, snapshot, privateKey)
 	if err != nil {
 		e.filter.UpdateNetwork(networkmap.Snapshot{})
@@ -1396,6 +1409,8 @@ func usableRelayRegion(
 			IPv4:     node.IPv4,
 			IPv6:     node.IPv6,
 			Port:     uint16(port),
+			RelayKey: node.RelayKey,
+			UDPPort:  uint16(node.UDPPort), //nolint:gosec // validated 0..65535
 		})
 	}
 

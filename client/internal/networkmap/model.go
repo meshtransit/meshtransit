@@ -17,6 +17,19 @@ type Snapshot struct {
 	Relays      map[int]RelayRegion
 	DNS         *DNSConfig
 	Audit       AuditCredentials
+	// Interchange is the node's relay grant; when present, Relays come from
+	// its signed relay map (MTRP v1 §9.1).
+	Interchange *Interchange
+}
+
+// Interchange is a verified relay grant: the ticket this node presents to
+// Interchange relays, and the relay map version its regions came from.
+type Interchange struct {
+	Ticket         []byte
+	TicketNotAfter time.Time
+	TicketDisco    [32]byte // the disco key the ticket binds
+	MapVersion     uint64
+	MapExpiresAt   time.Time
 }
 
 // Node contains only the control-plane fields needed by the future data plane.
@@ -82,6 +95,8 @@ type RelayRegion struct {
 }
 
 // RelayNode describes one relay endpoint without test-only transport knobs.
+// RelayPort is the TLS port. Interchange nodes also carry their static
+// relay key and UDP port.
 type RelayNode struct {
 	Name      string
 	HostName  string
@@ -91,6 +106,8 @@ type RelayNode struct {
 	STUNPort  int
 	RelayPort int
 	STUNOnly  bool
+	RelayKey  [32]byte
+	UDPPort   int
 }
 
 // DNSConfig is the complete, product-owned DNS view for one map revision. A

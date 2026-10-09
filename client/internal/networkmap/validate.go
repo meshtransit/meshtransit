@@ -359,7 +359,7 @@ func validateRelayRegion(region RelayRegion) error {
 			return err
 		}
 		if node.STUNPort < -1 || node.STUNPort > 65535 ||
-			node.RelayPort < 0 || node.RelayPort > 65535 {
+			node.RelayPort < 0 || node.RelayPort > 65535 || node.UDPPort < 0 || node.UDPPort > 65535 {
 			return errors.New("relay port is invalid")
 		}
 		for index, rawAddress := range []string{node.IPv4, node.IPv6} {
@@ -510,6 +510,11 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 		cloned.Relays[id] = region
 	}
 	cloned.DNS = cloneDNSConfig(snapshot.DNS)
+	if snapshot.Interchange != nil {
+		interchange := *snapshot.Interchange
+		interchange.Ticket = append([]byte(nil), interchange.Ticket...)
+		cloned.Interchange = &interchange
+	}
 
 	return cloned
 }

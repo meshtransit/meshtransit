@@ -138,6 +138,22 @@ func newIdentity(random io.Reader) (*Identity, error) {
 	}, nil
 }
 
+// IdentityFromPrivate wraps an existing X25519 private key, so the legacy
+// probe format and MTRP share one disco key. raw is copied.
+func IdentityFromPrivate(raw []byte) (*Identity, error) {
+	if len(raw) != keySize || isZero(raw) {
+		return nil, ErrInvalidKey
+	}
+	var private [keySize]byte
+	copy(private[:], raw)
+	public, err := curve25519.X25519(private[:], curve25519.Basepoint)
+	if err != nil || isZero(public) {
+		clear(private[:])
+		return nil, ErrInvalidKey
+	}
+	return &Identity{private: private, public: PublicKey{raw: [keySize]byte(public)}}, nil
+}
+
 // Public returns the identity's public key while the identity is active.
 func (i *Identity) Public() (PublicKey, error) {
 	if i == nil {

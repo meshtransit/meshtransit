@@ -16,6 +16,7 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 	relaywire "meshtransit.net/client/internal/compat/derp"
 	compatstun "meshtransit.net/client/internal/compat/stun"
+	"meshtransit.net/client/internal/interchange"
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/client/internal/relay"
 	"meshtransit.net/shared/netcheck"
@@ -23,6 +24,7 @@ import (
 
 type officialWireGuardFactory struct {
 	generations *socketGenerationSource
+	credentials *relayCredentials
 }
 
 type officialWireGuardDevice struct {
@@ -31,6 +33,10 @@ type officialWireGuardDevice struct {
 	nat       *pathdiscovery.NATClassifier
 	bind      *sharedBind
 	datagrams *controlDatagramMux
+}
+
+func (f *officialWireGuardFactory) setRelayCredentials(credentials *relayCredentials) {
+	f.credentials = credentials
 }
 
 func newWireGuardFactory() (wireGuardFactory, error) {
@@ -69,7 +75,11 @@ func (f *officialWireGuardFactory) New(
 	}
 	var relayPool *relay.Pool
 	if relayConfig != nil {
-		relayPool, err = relay.New(ctx, *relayConfig, relaywire.NewDialer())
+		var dialer relay.Dialer = relaywire.NewDialer()
+		if usesInterchange(*relayConfig) && f.credentials != nil {
+			dialer = interchange.NewDialer(f.credentials)
+		}
+		relayPool, err = relay.New(ctx, *relayConfig, dialer)
 		if err != nil {
 			_ = tunDevice.Close()
 

@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"meshtransit.net/shared/key"
+
 	peerwire "meshtransit.net/client/internal/compat/disco"
 	"meshtransit.net/client/internal/compat/ts2021"
 	"meshtransit.net/client/internal/dataplane"
@@ -290,7 +292,7 @@ type Service struct {
 	clock                func() time.Time
 	runtimeRetryDelay    func(time.Duration) time.Duration
 	endpointRefreshDelay func() time.Duration
-	newPeerProbeIdentity func() (*peerwire.Identity, error)
+	newPeerProbeIdentity func(key.DiscoPrivate) (*peerwire.Identity, error)
 	logger               *slog.Logger
 	networkChanges       <-chan struct{}
 	syncSignal           chan struct{}
@@ -410,7 +412,7 @@ func New(
 		clock:                options.Clock,
 		runtimeRetryDelay:    jitteredRuntimeRetryDelay,
 		endpointRefreshDelay: randomEndpointRefreshDelay,
-		newPeerProbeIdentity: peerwire.NewIdentity,
+		newPeerProbeIdentity: legacyProbeIdentity,
 		logger:               options.Logger,
 		networkChanges:       options.NetworkChanges,
 		syncSignal:           make(chan struct{}, 1),
@@ -551,7 +553,16 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 
 			return err
 		}
-		probeIdentity, err := s.newPeerProbeIdentity()
+		// One disco key per control session serves the legacy probe format
+		// and Interchange relays, whose tickets bind it.
+		discoKey, err := key.NewDiscoPrivate()
+		if err != nil {
+			clear(privateKey[:])
+			clearProtocolMaterial(protocolMaterial)
+
+			return fmt.Errorf("creating disco key: %w", err)
+		}
+		probeIdentity, err := s.newPeerProbeIdentity(discoKey)
 		if err != nil {
 			clear(privateKey[:])
 			clearProtocolMaterial(protocolMaterial)
@@ -567,6 +578,11 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			return fmt.Errorf("reading peer-probe public key: %w", err)
 		}
 
+		if relayIdentity, ok := s.dataPlane.(relayIdentityDataPlane); ok {
+			s.dataPlaneMu.Lock()
+			relayIdentity.SetRelayIdentity(discoKey)
+			s.dataPlaneMu.Unlock()
+		}
 		s.setSyncStatus(syncStatus{
 			profileID: active.ID,
 			state:     ControlSessionConnecting,
@@ -2146,4 +2162,14 @@ func (s *Service) stopDataPlane() error {
 	}
 
 	return nil
+}
+
+// relayIdentityDataPlane is implemented by data planes that reach
+// Interchange relays with the session's disco key.
+type relayIdentityDataPlane interface {
+	SetRelayIdentity(key.DiscoPrivate)
+}
+
+func legacyProbeIdentity(disco key.DiscoPrivate) (*peerwire.Identity, error) {
+	return peerwire.IdentityFromPrivate(disco.ECDH().Bytes())
 }
