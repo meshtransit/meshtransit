@@ -2,7 +2,7 @@
 
 Draft 1, 2026-10-09. Covers path discovery (disco v2), the relay protocol
 (MTRP v1, Interchange), relay tickets and NAT classification. The control
-protocol (MTCP v1) gets its own section when it is specified.
+protocol's threats are listed in [mtcp-v1.md §16](mtcp-v1.md#16-security-considerations).
 
 ## 1. System and trust boundaries
 

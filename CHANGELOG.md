@@ -14,6 +14,8 @@ merge (2026-10-09) are kept below.
 - shared/stun (RFC 8489/5780 codec) and shared/netcheck (NAT classification).
 - test/natlab: in-memory NAT simulator, RFC 5780 STUN server, reference
   traversal agent and a generated traversal matrix.
+- MTCP v1 specification (control protocol replacing TS2021) and its
+  protobuf schema in api/mtcp/v1.
 
 ## meshd (before the merge)
 

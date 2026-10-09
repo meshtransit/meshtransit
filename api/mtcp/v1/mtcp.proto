@@ -1,0 +1,484 @@
+// MTCP v1 message schema. Normative text: docs/protocol/mtcp-v1.md.
+//
+// Conventions:
+//   - Keys are raw 32-byte values (never text forms).
+//   - IP addresses are 4 or 16 raw bytes; IPv4 is always 4 bytes.
+//   - Times are Unix milliseconds (int64); 0 means unset.
+//   - Field numbers are never reused; removed fields are reserved.
+syntax = "proto3";
+
+package meshtransit.mtcp.v1;
+
+option go_package = "meshtransit.net/api/mtcp/v1;mtcpv1";
+
+// ---- Handshake payloads (inside Noise INIT / RESPONSE) ----
+
+message ClientHello {
+  uint32 protocol_version = 1;
+  int64 timestamp_ms = 2;
+  ClientInfo client = 3;
+  repeated string capabilities = 4;
+  bytes node_key = 5;
+  bytes profile_hint = 6;
+}
+
+message ClientInfo {
+  string product = 1; // "meshd"
+  string version = 2;
+  string os = 3;
+  string os_version = 4;
+  string arch = 5;
+}
+
+message ServerHello {
+  uint32 protocol_version = 1;
+  int64 server_time_ms = 2;
+  bytes session_id = 3;
+  repeated string capabilities = 4;
+  Limits limits = 5;
+  bytes profile_hint = 6;
+  Reject reject = 7;
+
+  enum Reject {
+    REJECT_UNSPECIFIED = 0; // not rejected
+    VERSION_UNSUPPORTED = 1;
+    CLIENT_TOO_OLD = 2;
+    MAINTENANCE = 3;
+  }
+}
+
+message Limits {
+  uint32 keepalive_s = 1;
+  uint32 idle_timeout_s = 2;
+  uint32 max_unacked_map = 3;
+}
+
+// ---- Session ----
+
+message Error {
+  Code code = 1;
+  string message = 2;
+  uint32 retry_after_ms = 3;
+  bool fatal = 4;
+
+  enum Code {
+    CODE_UNSPECIFIED = 0;
+    INVALID = 1;
+    UNSUPPORTED = 2;
+    NOT_AUTHORIZED = 3;
+    NOT_PERMITTED = 4;
+    SESSION_REPLACED = 5;
+    OVERLOADED = 6;
+    INTERNAL = 7;
+  }
+}
+
+message Ping {
+  bytes nonce = 1; // ≤ 32 bytes
+}
+
+message Pong {
+  bytes nonce = 1;
+}
+
+// ---- Registration ----
+
+message RegisterRequest {
+  bytes node_key = 1;
+  bytes disco_key = 2;
+  Hostinfo hostinfo = 3;
+  Auth auth = 4;
+  bytes node_key_proof = 5; // mtcp-v1 §6.4
+  bytes disco_key_proof = 6;
+
+  message Auth {
+    oneof method {
+      string enrollment_key = 1; // mtc1.<id>.<secret>; never logged
+      Interactive interactive = 2;
+      Resume resume = 3;
+    }
+  }
+
+  message Interactive {
+    string resume_handle = 1; // from an earlier Pending response, or empty
+  }
+
+  message Resume {}
+}
+
+message RegisterResponse {
+  oneof outcome {
+    Authorized authorized = 1;
+    Pending pending = 2;
+    Rejected rejected = 3;
+  }
+
+  message Authorized {
+    string device_id = 1;
+    string network_id = 2;
+    repeated bytes addresses = 3;
+    int64 key_expiry_ms = 4;
+  }
+
+  message Pending {
+    string approval_url = 1;
+    string resume_handle = 2; // bound to this machine key and node key
+    int64 expires_ms = 3;
+  }
+
+  message Rejected {
+    Code code = 1;
+    string message = 2;
+
+    enum Code {
+      CODE_UNSPECIFIED = 0;
+      INVALID = 1;
+      CREDENTIAL_INVALID = 2;
+      CREDENTIAL_EXHAUSTED = 3;
+      NOT_PERMITTED = 4;
+      CONFLICT = 5;
+      EXPIRED = 6;
+    }
+  }
+}
+
+message RotateNodeKey {
+  bytes new_node_key = 1;
+  bytes new_disco_key = 2;
+  bytes node_key_proof = 3; // mtcp-v1 §6.4, for the new node key
+  bytes disco_key_proof = 4;
+}
+
+message RotateNodeKeyResponse {
+  bytes node_key = 1; // the Device's node key after the request
+  int64 key_expiry_ms = 2;
+}
+
+message Logout {}
+
+// ---- Map ----
+
+message View {
+  uint64 epoch = 1;
+  uint64 seq = 2;
+}
+
+message NetworkRevision {
+  string network_id = 1;
+  uint64 revision = 2;
+}
+
+message MapSnapshot {
+  View view = 1;
+  repeated NetworkRevision network_revisions = 2;
+  Device self = 3;
+  repeated Device peers = 4; // sorted by device_id
+  PacketFilter packet_filter = 5;
+  DnsConfig dns = 6;
+  bytes relay_map = 7; // signed relay map (MTRP v1 §8)
+  Settings settings = 8;
+}
+
+message MapDelta {
+  View view = 1;
+  repeated NetworkRevision network_revisions = 2;
+  Device self = 3;
+  repeated Device peers_upsert = 4;
+  repeated string peers_remove = 5;
+  repeated PeerPatch peer_patches = 6;
+  PacketFilter packet_filter = 7; // replaces the filter when set
+  DnsConfig dns = 8; // replaces DNS when set
+  bytes relay_map = 9; // replaces the relay map when non-empty
+  Settings settings = 10; // replaces settings when set
+}
+
+message MapAck {
+  View view = 1;
+}
+
+message MapResync {
+  View view = 1; // the node's current view
+}
+
+message Device {
+  string device_id = 1;
+  string name = 2;
+  string display_name = 3;
+  bytes node_key = 4;
+  bytes disco_key = 5;
+  repeated bytes addresses = 6;
+  repeated Prefix allowed_prefixes = 7;
+  repeated Endpoint endpoints = 8;
+  NatInfo nat = 9;
+  uint32 home_relay = 10;
+  bool online = 11;
+  int64 last_seen_ms = 12;
+  int64 key_expiry_ms = 13;
+  Owner owner = 14;
+  repeated string capabilities = 15;
+  AliasGrant alias = 16;
+}
+
+message PeerPatch {
+  string device_id = 1;
+  // Each present field replaces the peer's value.
+  optional bytes disco_key = 2;
+  EndpointList endpoints = 3;
+  optional uint32 home_relay = 4;
+  optional bool online = 5;
+  optional int64 last_seen_ms = 6;
+  NatInfo nat = 7;
+}
+
+message EndpointList {
+  repeated Endpoint items = 1;
+}
+
+message Owner {
+  string ref = 1; // opaque
+  string display_name = 2;
+}
+
+message Prefix {
+  bytes ip = 1;
+  uint32 bits = 2;
+}
+
+message Endpoint {
+  bytes ip = 1;
+  uint32 port = 2;
+  Kind kind = 3;
+
+  // Values match disco v2 endpoint kinds.
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    HOST = 1;
+    SERVER_REFLEXIVE = 2;
+    PORT_MAPPED = 3;
+    STATIC = 4;
+    PEER_REFLEXIVE = 5;
+  }
+}
+
+// Values match docs/protocol/nat-classification.md §1.
+message NatInfo {
+  uint32 mapping = 1;
+  uint32 filtering = 2;
+  uint32 allocation = 3;
+  uint32 sequential_step = 4;
+}
+
+message AliasGrant {
+  string contract_id = 1;
+  string endpoint_id = 2;
+  uint64 generation = 3;
+  uint64 grant_revision = 4;
+  uint64 recovery_epoch = 5;
+  Role role = 6;
+  int64 expires_ms = 7;
+  repeated AliasService services = 8;
+  bytes masquerade_v4 = 9;
+  bytes masquerade_v6 = 10;
+
+  enum Role {
+    ROLE_UNSPECIFIED = 0;
+    CONSUMER = 1;
+    PROVIDER = 2;
+  }
+}
+
+message AliasService {
+  uint32 protocol = 1;
+  uint32 port_from = 2;
+  uint32 port_to = 3;
+}
+
+message PacketFilter {
+  repeated FilterRule rules = 1;
+}
+
+message FilterRule {
+  repeated Prefix sources = 1;
+  repeated Destination destinations = 2;
+  repeated uint32 protocols = 3; // empty: TCP, UDP and ICMP
+}
+
+message Destination {
+  Prefix prefix = 1;
+  repeated PortRange ports = 2; // empty: all ports
+}
+
+message PortRange {
+  uint32 first = 1;
+  uint32 last = 2;
+}
+
+message DnsConfig {
+  repeated DnsRecord records = 1;
+  repeated Resolver resolvers = 2;
+  repeated string search_domains = 3;
+  repeated DnsRoute routes = 4;
+}
+
+message DnsRecord {
+  string name = 1;
+  Type type = 2;
+  bytes value = 3;
+
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    A = 1;
+    AAAA = 28;
+  }
+}
+
+message Resolver {
+  bytes ip = 1;
+  string url = 2; // optional DoH (https://) or DoT (tls://) URL
+}
+
+message DnsRoute {
+  string suffix = 1;
+  repeated Resolver resolvers = 2;
+}
+
+message Settings {
+  uint32 endpoint_report_s = 1;
+  uint32 path_stats_s = 2;
+  bool path_stats_enabled = 3;
+}
+
+// ---- Reports ----
+
+message EndpointReport {
+  bytes disco_key = 1;
+  repeated Endpoint endpoints = 2;
+  NatInfo nat = 3;
+  bool ipv6_global = 4;
+  bool ipv6_stun = 5;
+  uint32 preferred_relay = 6;
+  int64 observed_ms = 7;
+}
+
+message Hostinfo {
+  string hostname = 1;
+  string os = 2;
+  string os_version = 3;
+  string client_version = 4;
+  string arch = 5;
+  string device_model = 6;
+  repeated Prefix advertised_prefixes = 7; // subnet or exit routes offered
+}
+
+message HostinfoReport {
+  Hostinfo hostinfo = 1;
+}
+
+message HealthReport {
+  repeated Component components = 1;
+
+  message Component {
+    Name name = 1;
+    State state = 2;
+    string code = 3; // short machine-readable reason, ≤ 64 bytes
+
+    enum Name {
+      NAME_UNSPECIFIED = 0;
+      DATA_PLANE = 1;
+      DNS = 2;
+      RELAY = 3;
+      CLOCK = 4;
+    }
+
+    enum State {
+      STATE_UNSPECIFIED = 0;
+      OK = 1;
+      DEGRADED = 2;
+      FAILED = 3;
+    }
+  }
+}
+
+message PathStatsReport {
+  int64 interval_start_ms = 1;
+  uint32 interval_s = 2;
+  repeated PeerPathStats peers = 3;
+}
+
+message PeerPathStats {
+  string device_id = 1;
+  uint64 direct_tx_bytes = 2;
+  uint64 direct_rx_bytes = 3;
+  uint64 relay_tx_bytes = 4;
+  uint64 relay_rx_bytes = 5;
+  uint64 direct_tx_packets = 6;
+  uint64 direct_rx_packets = 7;
+  Technique technique = 8;
+  uint32 relay_region = 9;
+  uint32 rtt_ms_bucket = 10;
+  uint64 relay_tx_packets = 11;
+  uint64 relay_rx_packets = 12;
+
+  enum Technique {
+    TECHNIQUE_UNSPECIFIED = 0;
+    RELAY = 1;
+    DIRECT = 2;
+    PEER_REFLEXIVE = 3;
+    PREDICTION = 4;
+    BIRTHDAY = 5;
+  }
+}
+
+// ---- Relay, lifecycle, keys ----
+
+message RelayTicket {
+  bytes ticket = 1; // MTRP v1 ticket ("MTT1")
+  int64 not_after_ms = 2;
+}
+
+message Lifecycle {
+  State state = 1;
+  string reason = 2;
+  uint32 retry_after_ms = 3;
+  int64 not_before_ms = 4;
+
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    ACTIVE = 1;
+    SUSPENDED = 2;
+    EXPIRED = 3;
+    REVOKED = 4;
+    LOGGED_OUT = 5;
+    REAUTH_REQUIRED = 6;
+    RECONNECT = 7;
+  }
+}
+
+message KeyUpdate {
+  repeated ControlKey control_keys = 1; // at most 2
+  repeated SigningKey signing_keys = 2; // at most 4
+  bytes nonce = 3; // ≤ 32 bytes; the node answers Pong{nonce} once stored
+
+  message ControlKey {
+    bytes key = 1;
+    int64 not_after_ms = 2;
+  }
+
+  message SigningKey {
+    bytes key_id = 1; // 8 bytes, keys.md
+    bytes key = 2; // Ed25519 public key
+    int64 not_after_ms = 3;
+  }
+}
+
+message Notice {
+  Severity severity = 1;
+  string text = 2; // shown to the user; ≤ 1024 bytes
+  string url = 3; // optional https link
+
+  enum Severity {
+    SEVERITY_UNSPECIFIED = 0;
+    INFO = 1;
+    WARNING = 2;
+  }
+}

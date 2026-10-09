@@ -13,8 +13,8 @@ purpose.
 | Disco key | X25519 | Node | Authenticates disco v2 messages and MTRP sessions; rotated with the node session | `mtdisco:` |
 | Relay key | X25519 | Interchange node | Noise IK responder static key | `mtrelay:` |
 | Signing key | Ed25519 | Core | Signs relay tickets and the relay map | `mtsign:` (public) |
-
-A machine key for MTCP is defined with MTCP v1.
+| Machine key | X25519 | Node installation | MTCP Noise initiator static key; identifies the installation | `mtmachine:` |
+| Control key | X25519 | Core deployment | MTCP Noise responder static key, pinned by nodes | `mtcontrol:` |
 
 ## Text encoding
 
@@ -46,6 +46,9 @@ followed by a zero byte. Registered domains:
 | `meshtransit/mtrp-ticket/v1` | Relay ticket signatures |
 | `meshtransit/relay-map/v1` | Relay map signatures |
 | `MeshTransit MTRP v1` | Noise prologue for MTRP (no zero byte; Noise prologue) |
+| `MeshTransit MTCP v1` | Noise prologue for MTCP (no zero byte; Noise prologue) |
+| `meshtransit/mtcp-key-proof/v1` | MTCP proof of possession of node and disco keys |
+| `meshtransit/mtcp-control-fp/v1` | MTCP control key fingerprint in enrollment links |
 | `meshtransit/mtrp-mac1/v1`, `meshtransit/mtrp-cookie/v1` | MTRP handshake DoS MACs |
 
 New uses MUST register a new domain here.
