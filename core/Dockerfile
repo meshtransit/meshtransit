@@ -14,6 +14,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY api ./api
+COPY shared ./shared
 COPY core/cmd ./core/cmd
 COPY core/internal ./core/internal
 COPY core/migrations ./core/migrations
