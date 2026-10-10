@@ -58,6 +58,11 @@ merge (2026-10-09) are kept below.
   it as a `port_mapping` candidate when its external address is public.
   `meshctl status` and `meshctl netcheck` show it. The NAT lab supports
   explicit mappings; symmetric/symmetric pairs go direct when one side maps.
+- Cloud public addresses (P5b): on AWS (IMDSv2), GCP, Azure and DigitalOcean,
+  recognised from DMI data, meshd reads the instance's public addresses from
+  the metadata service and offers them as static candidates with the
+  WireGuard port (`--cloud-metadata=auto|off`). `meshctl status` and
+  `meshctl netcheck` show them.
 
 ## meshd (before the merge)
 

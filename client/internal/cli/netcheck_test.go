@@ -131,3 +131,22 @@ func TestNetcheckShowsThePortMapping(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatCloud(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		cloud *localapi.CloudStatus
+		want  string
+	}{
+		{nil, "unavailable"},
+		{&localapi.CloudStatus{State: "off"}, "off"},
+		{&localapi.CloudStatus{State: "none"}, "not a cloud instance"},
+		{&localapi.CloudStatus{State: "ready", Platform: "aws", AddressCount: 1}, "aws (1 public address)"},
+		{&localapi.CloudStatus{State: "ready", Platform: "gcp", AddressCount: 2}, "gcp (2 public addresses)"},
+		{&localapi.CloudStatus{State: "failed", Platform: "azure", Error: "network"}, "azure (failed: network)"},
+	} {
+		if got := formatCloud(tt.cloud); got != tt.want {
+			t.Errorf("formatCloud(%+v) = %q, want %q", tt.cloud, got, tt.want)
+		}
+	}
+}

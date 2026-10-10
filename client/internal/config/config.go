@@ -43,6 +43,9 @@ type Config struct {
 	// PortMapping is auto (map the WireGuard port on the local gateway with
 	// PCP, NAT-PMP or UPnP when the data plane runs) or off.
 	PortMapping string
+	// CloudMetadata is auto (read the instance's public addresses from the
+	// cloud provider's metadata service on a recognised cloud) or off.
+	CloudMetadata string
 	// TestPolicyDrift makes the packet filter enforce one rule fewer than
 	// Core sends, to demonstrate that Core reports the mismatch. Test only.
 	TestPolicyDrift     bool
@@ -91,6 +94,8 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 		"control protocol: auto (MTCP where the control server offers it), mtcp, or legacy")
 	flags.StringVar(&cfg.PortMapping, "port-mapping", "auto",
 		"ask the local gateway to forward the WireGuard port with PCP, NAT-PMP or UPnP: auto or off")
+	flags.StringVar(&cfg.CloudMetadata, "cloud-metadata", "auto",
+		"read public addresses from the cloud metadata service on AWS, GCP, Azure or DigitalOcean: auto or off")
 	flags.BoolVar(&cfg.TestPolicyDrift, "test-policy-drift", false,
 		"TEST ONLY: enforce one packet-filter rule fewer than control sends, to demonstrate mismatch detection")
 	flags.BoolVar(
@@ -241,6 +246,11 @@ func validate(cfg Config) error {
 	case "auto", "off":
 	default:
 		return errors.New("port mapping must be auto or off")
+	}
+	switch cfg.CloudMetadata {
+	case "auto", "off":
+	default:
+		return errors.New("cloud metadata must be auto or off")
 	}
 	if cfg.TestPolicyDrift && !cfg.EnableDataPlane {
 		return errors.New("policy drift testing requires --enable-data-plane")

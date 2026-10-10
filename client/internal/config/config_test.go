@@ -287,3 +287,18 @@ func TestParsePortMapping(t *testing.T) {
 		t.Fatal("an unknown port mapping mode was accepted")
 	}
 }
+
+func TestParseCloudMetadata(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Parse(nil, io.Discard)
+	if err != nil || cfg.CloudMetadata != "auto" {
+		t.Fatalf("default cloud metadata = %q, %v", cfg.CloudMetadata, err)
+	}
+	if cfg, err := Parse([]string{"--cloud-metadata", "off"}, io.Discard); err != nil || cfg.CloudMetadata != "off" {
+		t.Fatalf("--cloud-metadata off = %q, %v", cfg.CloudMetadata, err)
+	}
+	if _, err := Parse([]string{"--cloud-metadata", "aws"}, io.Discard); err == nil {
+		t.Fatal("an unknown cloud metadata mode was accepted")
+	}
+}

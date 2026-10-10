@@ -785,3 +785,21 @@ func TestMapPortMappingStatus(t *testing.T) {
 		t.Fatalf("empty = %#v", empty)
 	}
 }
+
+func TestMapCloudStatus(t *testing.T) {
+	t.Parallel()
+	ready := daemon.CloudStatus{
+		State: "ready", Platform: "aws", Addresses: []netip.Addr{netip.MustParseAddr("18.142.253.199")},
+		ObservedAt: time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC),
+	}
+	status := mapCloudStatus(ready, false)
+	if status.AddressCount != 1 || len(status.Addresses) != 0 || status.ObservedAt != "2026-10-10T10:00:00Z" {
+		t.Fatalf("status form = %#v", status)
+	}
+	if netcheck := mapCloudStatus(ready, true); len(netcheck.Addresses) != 1 || netcheck.Addresses[0] != "18.142.253.199" {
+		t.Fatalf("netcheck form = %#v", netcheck)
+	}
+	if empty := mapCloudStatus(daemon.CloudStatus{}, true); empty.State != daemon.CloudOff {
+		t.Fatalf("empty = %#v", empty)
+	}
+}

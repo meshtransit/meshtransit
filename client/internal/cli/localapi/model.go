@@ -37,7 +37,19 @@ type Status struct {
 	Runtime            *RuntimeStatus         `json:"runtime,omitempty"`
 	NAT                *NATStatus             `json:"nat,omitempty"`
 	PortMapping        *PortMappingStatus     `json:"port_mapping,omitempty"`
+	Cloud              *CloudStatus           `json:"cloud,omitempty"`
 	CompatibilityNote  string                 `json:"compatibility_note"`
+}
+
+// CloudStatus is the instance's public addresses from its cloud provider's
+// metadata service. Addresses are present in netcheck results only.
+type CloudStatus struct {
+	State        string   `json:"state"`
+	Platform     string   `json:"platform,omitempty"`
+	AddressCount int      `json:"address_count"`
+	Addresses    []string `json:"addresses,omitempty"`
+	ObservedAt   string   `json:"observed_at,omitempty"`
+	Error        string   `json:"error,omitempty"`
 }
 
 // PortMappingStatus is the daemon's mapping of its packet port on the local
@@ -70,6 +82,7 @@ type Netcheck struct {
 	APIVersion  string             `json:"api_version"`
 	NAT         NATStatus          `json:"nat"`
 	PortMapping *PortMappingStatus `json:"port_mapping,omitempty"`
+	Cloud       *CloudStatus       `json:"cloud,omitempty"`
 }
 
 // PathStatus summarizes the selected transport for visible peers.

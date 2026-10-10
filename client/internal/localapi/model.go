@@ -39,7 +39,19 @@ type statusResponse struct {
 	Runtime            runtimeStatus         `json:"runtime"`
 	NAT                natStatus             `json:"nat"`
 	PortMapping        portMappingStatus     `json:"port_mapping"`
+	Cloud              cloudStatus           `json:"cloud"`
 	CompatibilityNote  string                `json:"compatibility_note"`
+}
+
+// cloudStatus is the wire form of the instance's cloud public addresses.
+// The addresses appear in netcheck responses only.
+type cloudStatus struct {
+	State        string   `json:"state"`
+	Platform     string   `json:"platform,omitempty"`
+	AddressCount int      `json:"address_count"`
+	Addresses    []string `json:"addresses,omitempty"`
+	ObservedAt   string   `json:"observed_at,omitempty"`
+	Error        string   `json:"error,omitempty"`
 }
 
 // portMappingStatus is the wire form of the daemon's port mapping. The
@@ -71,6 +83,7 @@ type netcheckResponse struct {
 	APIVersion  string            `json:"api_version"`
 	NAT         natStatus         `json:"nat"`
 	PortMapping portMappingStatus `json:"port_mapping"`
+	Cloud       cloudStatus       `json:"cloud"`
 }
 
 type networkChangeStatus struct {

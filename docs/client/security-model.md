@@ -18,6 +18,7 @@ Packet payloads are not an observability asset and must not be collected.
 4. The tunnel engine to untrusted network packets and relay traffic.
 5. The event pipeline to remote log storage.
 6. `meshd` to the local Internet gateway for port mapping (PCP, NAT-PMP, UPnP IGD).
+7. `meshd` to the cloud provider's instance metadata service on a recognised cloud.
 
 ## Required security invariants
 
@@ -184,6 +185,7 @@ Packet payloads are not an observability asset and must not be collected.
 - Flow metadata and control-issued audit credentials are tied to one immutable network-map generation. Credential formatting is redacted; Node and Network scopes are checked before use, tokens travel in HTTPS headers, and redirects are refused.
 - Flow event and upload queues are bounded and non-blocking on the packet path. Saturation or remote failure drops telemetry rather than packets; request bodies and response reads are bounded by the client/server contract.
 - Port mapping talks only to the IPv4 default gateway: PCP and NAT-PMP replies must come from the gateway's port 5351 and match the request (PCP nonce, protocol and internal port), SSDP replies must come from the gateway's address, and UPnP description and control URLs must be plain HTTP to the gateway's address literal with no redirects, credentials or proxy. All responses are size-limited. Only the WireGuard UDP port is mapped, mappings are removed on exit, and logs never include gateway or external addresses. `--port-mapping=off` disables it ([port-mapping.md](port-mapping.md)).
+- Cloud metadata lookups happen only on a platform recognised from DMI data, go only to `169.254.169.254` over HTTP with no proxy or redirects, a two-second timeout and a 64 KiB limit, keep only public addresses, and never log them. `--cloud-metadata=off` disables them ([cloud-addresses.md](cloud-addresses.md)).
 
 ## Known gaps before production
 

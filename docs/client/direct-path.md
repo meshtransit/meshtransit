@@ -135,6 +135,8 @@ peer map ──────────► authenticated path manager ───�
 
 Port mapping (PCP, NAT-PMP, UPnP IGD) is described in
 [port-mapping.md](port-mapping.md); a mapping is published as a
-`port_mapping` candidate and still needs authenticated proof. The bounded relay base
+`port_mapping` candidate and still needs authenticated proof. On AWS, GCP,
+Azure and DigitalOcean the instance's public addresses from the metadata
+service are static candidates ([cloud-addresses.md](cloud-addresses.md)). The bounded relay base
 path is described in [relay.md](relay.md); it is not a direct candidate and does
 not weaken the endpoint authority or freshness rules above.

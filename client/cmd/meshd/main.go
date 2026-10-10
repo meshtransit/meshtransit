@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"meshtransit.net/client/internal/cloudaddr"
 	"meshtransit.net/client/internal/compat/ts2021"
 	"meshtransit.net/client/internal/config"
 	"meshtransit.net/client/internal/controlselect"
@@ -150,6 +151,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		daemonOptions.DataPlane = engine
 		if cfg.PortMapping == "auto" {
 			daemonOptions.PortMapper = portmap.New(portmap.Options{Logger: logger.With("component", "port_mapping")})
+		}
+		if cfg.CloudMetadata == "auto" {
+			watcher := cloudaddr.NewWatcher(cloudaddr.WatcherOptions{Logger: logger.With("component", "cloud_metadata")})
+			if watcher.Platform() != cloudaddr.PlatformNone {
+				daemonOptions.CloudAddresses = watcher
+				logger.Info("cloud instance recognised", "platform", string(watcher.Platform()))
+			}
 		}
 		logger.Info(
 			"encrypted data plane enabled",

@@ -133,6 +133,7 @@ type Status struct {
 	Runtime            runtimehealth.Snapshot
 	NAT                NATStatus
 	PortMapping        PortMappingStatus
+	Cloud              CloudStatus
 }
 
 // NetworkChangeStatus contains process-local aggregate network-event counters.
@@ -337,6 +338,7 @@ type Service struct {
 	pathProbes           *pathdiscovery.ProbeTelemetry
 	nat                  *natState
 	portMapper           PortMapper
+	cloud                CloudAddresses
 }
 
 type syncStatus struct {
@@ -373,6 +375,9 @@ type Options struct {
 	// PortMapper maps the WireGuard port on the local gateway; nil turns
 	// port mapping off.
 	PortMapper PortMapper
+	// CloudAddresses reads the instance's public cloud addresses; nil turns
+	// cloud metadata lookups off.
+	CloudAddresses CloudAddresses
 }
 
 // New creates a daemon service from explicit dependencies.
@@ -450,6 +455,7 @@ func New(
 		pathProbes:           pathdiscovery.NewProbeTelemetry(),
 		nat:                  newNATState(),
 		portMapper:           options.PortMapper,
+		cloud:                options.CloudAddresses,
 		syncState: syncStatus{
 			state:     ControlSessionInactive,
 			dataPlane: initialDataPlane,
@@ -1142,6 +1148,8 @@ func (s *Service) runEndpointRefresh(
 	defer stopNAT()
 	portChanges, stopPortMapping := s.startPortMapping(ctx)
 	defer stopPortMapping()
+	cloudChanges, stopCloud := s.startCloudAddresses(ctx)
+	defer stopCloud()
 	tracker := pathdiscovery.NewTracker()
 	homeSelector := relay.NewHomeSelector()
 	current := endpointRefreshRequest{}
@@ -1206,8 +1214,16 @@ func (s *Service) runEndpointRefresh(
 			if s.portMapper != nil {
 				s.portMapper.NetworkChanged()
 			}
+			if s.cloud != nil {
+				s.cloud.NetworkChanged()
+			}
 		case <-portChanges:
 			// The mapped endpoint changed: publish it now.
+			stopRefreshTimer(timer)
+			timer = nil
+			timerChannel = nil
+		case <-cloudChanges:
+			// The cloud public addresses changed: publish them now.
 			stopRefreshTimer(timer)
 			timer = nil
 			timerChannel = nil
@@ -1364,6 +1380,7 @@ func (s *Service) discoverEndpoints(
 
 		return s.configuredCandidates, nil, relay.HealthSnapshot{}, nil
 	}
+	port := discoverer.DiscoverySocket().Port
 	result, err := discoverer.DiscoverEndpoints(ctx, scope, endpoints)
 	health := relay.HealthSnapshot{}
 	if relayDataPlane, supported := discoverer.(relayHealthDataPlane); supported {
@@ -1377,6 +1394,7 @@ func (s *Service) discoverEndpoints(
 		}
 		merged, mergeErr := pathdiscovery.Merge(
 			local,
+			s.cloudCandidates(port),
 			result.Candidates,
 		)
 		if mergeErr != nil {
@@ -1399,6 +1417,9 @@ func (s *Service) discoverEndpoints(
 		errors.Is(err, pathdiscovery.ErrSocketChanged) ||
 		errors.Is(err, pathdiscovery.ErrTransportClosed) {
 		local, localErr := s.localCandidates(pathdiscovery.Set{})
+		if localErr == nil {
+			local, localErr = pathdiscovery.Merge(local, s.cloudCandidates(port))
+		}
 		if localErr != nil {
 			return pathdiscovery.Set{}, nil, relay.HealthSnapshot{}, fmt.Errorf("merging local endpoints: %w", localErr)
 		}
@@ -1689,6 +1710,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		Runtime:     runtimehealth.Read(),
 		NAT:         s.natStatus(),
 		PortMapping: s.portMappingStatus(),
+		Cloud:       s.cloudStatus(),
 	}, nil
 }
 

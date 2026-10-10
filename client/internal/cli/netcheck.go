@@ -36,6 +36,12 @@ func runNetcheck(
 			_, _ = fmt.Fprintf(stdout, "Mapped endpoint: %s\n", result.PortMapping.External)
 		}
 	}
+	if result.Cloud != nil {
+		_, _ = fmt.Fprintf(stdout, "Cloud: %s\n", formatCloud(result.Cloud))
+		if len(result.Cloud.Addresses) != 0 {
+			_, _ = fmt.Fprintf(stdout, "Cloud public addresses: %s\n", strings.Join(result.Cloud.Addresses, ", "))
+		}
+	}
 	if result.NAT.State != "ready" {
 		return 1
 	}
@@ -134,5 +140,29 @@ func formatPortMapping(mapping *localapi.PortMappingStatus) string {
 		return mapping.State + " (" + valueOrNone(mapping.Error) + ")"
 	default:
 		return valueOrNone(mapping.State)
+	}
+}
+
+// formatCloud renders the one-line cloud field.
+func formatCloud(cloud *localapi.CloudStatus) string {
+	if cloud == nil {
+		return "unavailable"
+	}
+	switch cloud.State {
+	case "ready":
+		noun := "addresses"
+		if cloud.AddressCount == 1 {
+			noun = "address"
+		}
+
+		return fmt.Sprintf("%s (%d public %s)", cloud.Platform, cloud.AddressCount, noun)
+	case "pending":
+		return cloud.Platform + " (looking up)"
+	case "failed":
+		return cloud.Platform + " (failed: " + valueOrNone(cloud.Error) + ")"
+	case "none":
+		return "not a cloud instance"
+	default:
+		return valueOrNone(cloud.State)
 	}
 }

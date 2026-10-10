@@ -286,6 +286,7 @@ func (s *Server) handleNetcheck(writer http.ResponseWriter, request *http.Reques
 	response := netcheckResponse{APIVersion: apiVersion, NAT: mapNATStatus(status, true)}
 	if daemonStatus, err := s.service.Status(request.Context()); err == nil {
 		response.PortMapping = mapPortMappingStatus(daemonStatus.PortMapping, true)
+		response.Cloud = mapCloudStatus(daemonStatus.Cloud, true)
 	}
 	s.writeJSON(writer, http.StatusOK, response)
 }
@@ -387,6 +388,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		Runtime:            mapRuntimeStatus(status.Runtime),
 		NAT:                mapNATStatus(status.NAT, false),
 		PortMapping:        mapPortMappingStatus(status.PortMapping, false),
+		Cloud:              mapCloudStatus(status.Cloud, false),
 		CompatibilityNote:  status.CompatibilityNote,
 	})
 }
@@ -429,6 +431,27 @@ func mapPathProbeStatus(status daemon.PathProbeStatus) pathProbeStatus {
 		CallMeMaybeAccepted:          snapshot.CallMeMaybeAccepted,
 		PeerReflexiveLearned:         snapshot.PeerReflexiveLearned,
 	}
+}
+
+// mapCloudStatus converts the cloud addresses to their wire form. The
+// addresses are included only for an explicit netcheck request.
+func mapCloudStatus(status daemon.CloudStatus, withAddresses bool) cloudStatus {
+	out := cloudStatus{
+		State: status.State, Platform: status.Platform, AddressCount: len(status.Addresses), Error: status.Error,
+	}
+	if out.State == "" {
+		out.State = daemon.CloudOff
+	}
+	if !status.ObservedAt.IsZero() {
+		out.ObservedAt = status.ObservedAt.UTC().Format(time.RFC3339)
+	}
+	if withAddresses {
+		for _, addr := range status.Addresses {
+			out.Addresses = append(out.Addresses, addr.String())
+		}
+	}
+
+	return out
 }
 
 // mapPortMappingStatus converts the port mapping to its wire form. The
