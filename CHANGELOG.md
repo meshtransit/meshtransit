@@ -46,6 +46,12 @@ merge (2026-10-09) are kept below.
   auto|mtcp|legacy` (default auto: MTCP where the control server offers
   it). Profiles keep their keys across protocols; `meshctl up
   --fingerprint` also accepts the `ck=` value of enrollment links.
+- Turned off TS2021 on the POC control server (P4e): meshd speaks MTCP only.
+- Path reports (P4f): meshd reports per peer whether traffic goes direct or
+  through which relay, why (`relay_reason`) and byte counters; Core keeps
+  the latest report per Device and the Console Devices page shows it in a
+  Connection column. The MTCP key document gains each key's `ck=`
+  fingerprint, used by the Console install command.
 
 ## meshd (before the merge)
 

@@ -533,6 +533,24 @@ the hostname only to propose a Device name; it never trusts it for identity.
   why" view and capacity planning; retained according to the deployment's
   telemetry policy.
 
+  A relayed peer carries `relay_reason`, the node's own view of why it has no
+  direct path:
+
+  | Reason | Meaning |
+  |---|---|
+  | `BOOTSTRAP` | The peer has been relayed for less than 30 s; direct paths are still being tried |
+  | `NO_CANDIDATES` | The peer publishes no endpoint the node could try |
+  | `NO_RESPONSE` | Endpoints were tried and none answered (UDP blocked or a strict NAT) |
+  | `UNSPECIFIED` | Not relayed, or the node cannot tell |
+
+  The node samples its peers every 10 s and sends one report per interval;
+  a report the session has not sent yet is replaced by the next one. Core
+  accepts at most one report per 30 s per session, keeps only peers present
+  in the node's current map, and drops the rest.
+  Peers that belong to another Network (shares) are kept without their
+  identity. Core stores only the latest report, at most 256 peers ordered by
+  traffic, and discards it when the node starts a new session.
+
 Flow logs keep their separate HTTPS endpoint; they are not part of MTCP v1.
 
 ### 8.4 Enforcement
