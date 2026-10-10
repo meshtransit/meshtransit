@@ -365,20 +365,26 @@ makes it trustworthy over any transport.
 - `drain` lists relay keys that must drain (SESSION_CLOSE draining) and stop
   accepting sessions.
 - Both documents are served with an `ETag` and `Cache-Control: no-cache`,
-  answer `If-None-Match` with 304, are rate limited per source address, and
-  return 503 until Core has signed its first state.
+  answer `If-None-Match` with 304, are rate limited per source (an IPv4
+  address or an IPv6 /64; when Core's bounded source table is full the
+  least recently seen source is evicted, so new sources are never locked
+  out), and return 503 until Core has signed its first state.
 - A relay holding a state polls `GET /relay/v1/state?wait=N` (N = 1–25
   seconds) with `If-None-Match`. Core holds the request until it signs a
   newer state (200) or N seconds pass (304), and answers at once beyond a
-  bound on held polls; other query parameters are refused (400). After a
+  bound on held polls (in total, and four per source); other query
+  parameters are refused (400). After a
   200 or a held 304 the relay polls again at once, so a revocation reaches
   it within about a second of Core signing it. A 304 that comes back early
   means Core does not hold polls: the relay then polls every 10 seconds.
 - Relays accept only a newer `sequence` signed by a trusted key (ignoring,
   without error, a state that is not newer, as a replica behind may serve,
   and then waiting a second before asking again), and keep the last good
-  state when Core is unreachable, logging when it has expired. Ticket
-  lifetimes (≤ 15 min) bound how long a missed update matters.
+  state when Core is unreachable, logging when it has expired. A failed
+  poll is retried after about a second, doubling to a minute. A starting
+  relay reads no session until it has applied a first state, waiting up to
+  20 seconds before serving on its bootstrap keys. Ticket lifetimes
+  (≤ 15 min) bound how long a missed update matters.
 
 Health and load reporting from relays to Core (for home-relay steering) needs
 relay authentication and is specified with the relay fleet work.

@@ -106,3 +106,15 @@ func TestRunFallsBackWhenCoreDoesNotHold(t *testing.T) {
 		t.Fatalf("%d requests in one second at a 100 ms interval", got)
 	}
 }
+
+func TestRetryDelayStartsNearASecond(t *testing.T) {
+	t.Parallel()
+	for failures, want := range map[int]time.Duration{1: time.Second, 2: 2 * time.Second, 3: 4 * time.Second, 7: time.Minute, 50: time.Minute} {
+		if got := retryDelay(10*time.Second, failures); got != want {
+			t.Errorf("retryDelay(10s, %d) = %v, want %v", failures, got, want)
+		}
+	}
+	if got := retryDelay(10*time.Millisecond, 1); got != 10*time.Millisecond {
+		t.Errorf("retryDelay(10ms, 1) = %v", got)
+	}
+}

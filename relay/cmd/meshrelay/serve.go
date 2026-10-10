@@ -109,6 +109,16 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 		"udp", udpListener.LocalAddr().String(), "stun", cfg.stunAddr, "stun_alt", cfg.stunAltPort, "tls", cfg.tlsAddr,
 		"trusted_signing_keys", len(cfg.signingKeys))
 
+	if link != nil {
+		// Admit no session before Core's revocations are known: the sockets
+		// are bound but not read until the first state is applied, or until
+		// initialStateWait passes (then the relay serves on its bootstrap
+		// keys, and tickets, valid for minutes, bound the exposure).
+		if err := pollInitialState(ctx, link); err != nil {
+			logger.Warn("initial relay state poll failed; serving with bootstrap keys", "error", err)
+		}
+	}
+
 	runCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var wg sync.WaitGroup
@@ -122,13 +132,6 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 		wg.Go(func() { errs <- streams.Serve(runCtx) })
 	}
 	if link != nil {
-		// A first poll before serving narrows the window in which revoked
-		// tickets could be accepted after a restart.
-		pollCtx, cancelPoll := context.WithTimeout(ctx, corelink.DefaultTimeout)
-		if err := link.Poll(pollCtx); err != nil {
-			logger.Warn("initial relay state poll failed; continuing with bootstrap keys", "error", err)
-		}
-		cancelPoll()
 		wg.Go(func() { errs <- link.Run(runCtx) })
 	}
 	wg.Go(func() { errs <- ignoreServerClosed(admin.server.Serve(admin.listener)) })
@@ -202,4 +205,29 @@ func ignoreServerClosed(err error) error {
 		return nil
 	}
 	return err
+}
+
+// initialStateWait bounds how long a starting relay waits for Core's first
+// relay state before serving.
+const initialStateWait = 20 * time.Second
+
+// pollInitialState polls Core until one state is applied, retrying after 1,
+// 2 and 4 seconds within initialStateWait.
+func pollInitialState(ctx context.Context, link *corelink.Link) error {
+	ctx, cancel := context.WithTimeout(ctx, initialStateWait)
+	defer cancel()
+	var err error
+	for retry := time.Second; ; retry *= 2 {
+		pollCtx, cancelPoll := context.WithTimeout(ctx, corelink.DefaultTimeout)
+		err = link.Poll(pollCtx)
+		cancelPoll()
+		if err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(retry):
+		}
+	}
 }

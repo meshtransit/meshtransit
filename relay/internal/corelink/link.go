@@ -211,7 +211,7 @@ func (l *Link) Run(ctx context.Context) error {
 		switch {
 		case err != nil:
 			failures++
-			delay = min(l.cfg.Interval<<min(failures, 6), maxBackoff)
+			delay = retryDelay(l.cfg.Interval, failures)
 			l.cfg.Logger.Warn("relay state update failed", "error", err, "retry_in", delay.String(),
 				"state_expired", !l.expiresAt.IsZero() && l.cfg.Now().After(l.expiresAt))
 		case outcome == pollApplied || outcome == pollHeld:
@@ -227,6 +227,14 @@ func (l *Link) Run(ctx context.Context) error {
 		// Jitter spreads a fleet's requests.
 		delay += time.Duration(rand.Int64N(int64(delay/10) + 1)) //nolint:gosec // jitter, not security
 	}
+}
+
+// retryDelay is the wait after the failures-th consecutive failed poll:
+// about a second at first (one dropped connection must not leave the relay
+// blind to revocations for long), doubling up to maxBackoff.
+func retryDelay(interval time.Duration, failures int) time.Duration {
+	base := min(interval, time.Second)
+	return min(base<<min(max(failures-1, 0), 6), maxBackoff)
 }
 
 // pollOutcome says how a state poll ended, which sets the next delay.

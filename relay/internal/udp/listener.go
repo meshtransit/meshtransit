@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"time"
 )
 
 // socketBuffer is the receive and send buffer the listener asks for. A
@@ -77,14 +78,22 @@ func (l *Listener) Serve(ctx context.Context, readers int, handle Handler) error
 
 func (l *Listener) read(handle Handler) error {
 	buf := make([]byte, l.maxFrame+1) // one spare byte detects oversize datagrams
+	failures := 0
 	for {
 		n, from, err := l.conn.ReadFromUDPAddrPort(buf)
 		if errors.Is(err, net.ErrClosed) {
 			return nil
 		}
 		if err != nil {
-			continue // transient (for example ICMP unreachable on Linux)
+			// Usually transient (an ICMP unreachable on Linux); a persistent
+			// error must not spin a core, so repeats back off up to 100 ms.
+			failures++
+			if failures > 1 {
+				time.Sleep(min(time.Millisecond<<min(failures-2, 7), 100*time.Millisecond))
+			}
+			continue
 		}
+		failures = 0
 		if n > l.maxFrame {
 			continue
 		}

@@ -105,6 +105,35 @@ merge (2026-10-09) are kept below.
   three unanswered probes; the failure re-chooses the home relay at once,
   and a failed home relay connection is replaced on the first observation
   instead of after two missed refreshes (was up to about a minute).
+  A home relay change now moves on the live relay pool instead of
+  recreating the WireGuard device and TUN, so connected regions, WireGuard
+  sessions and direct paths survive it. A peer endpoint change reloads only
+  connectivity in Core (one query instead of a full map snapshot per
+  stream). POC drill: silent home relay loss to a working new home in
+  4.7 s, double loss to the next region in 5.9 s.
+- The relay accepts its key as a systemd credential (`LoadCredential=`,
+  mode 0440 inside `$CREDENTIALS_DIRECTORY`); elsewhere the key file must
+  still be 0600.
+
+### Fixed
+
+- Relay authority hardening (security review): Core rate limits relay
+  endpoints per IPv4 address or IPv6 /64 and evicts the least recently seen
+  source when its table is full, instead of refusing every new source for
+  a minute (one host could lock relays out of revocations); a source holds
+  at most four long polls; a data race on the signing window of Network
+  maps and grants is gone; a connectivity-only map refresh never issues a
+  new relay grant (the full refresh checks the Device first). The relay
+  reads no session before its first relay state (bounded wait of 20 s),
+  retries a failed poll after about a second instead of 20 s, and backs off
+  on persistent UDP read errors.
+- Relay failover review: a relay health snapshot naming a region the home
+  selector had not been given yet stopped the whole meshd session; only the
+  home region's loss triggers a discovery round; the failure hook is in
+  place before the home region is dialled.
+- A peer endpoint change no longer drops the node's relay grant: the
+  connectivity-only reload rebuilt the snapshot without the grant, and the
+  node then lost every relay until its next full refresh.
 
 ### Removed
 
