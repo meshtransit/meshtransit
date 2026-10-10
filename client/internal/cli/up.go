@@ -53,7 +53,7 @@ func runUp(
 	flags := flag.NewFlagSet("meshctl up", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	serverFlag := flags.String("server", "", "control server URL (default: MeshTransit Cloud)")
-	fingerprintFlag := flags.String("fingerprint", "", "expected SHA-256 control key fingerprint")
+	fingerprintFlag := flags.String("fingerprint", "", "expected control key fingerprint: sha256:… or the 32-character ck value of an enrollment link")
 	nameFlag := flags.String("name", "", "profile name when a new profile is created")
 	noWait := flags.Bool("no-wait", false, "return after printing the browser authorization URL")
 	waitTimeout := flags.Duration("wait-timeout", defaultLoginWaitTimeout, "maximum time to wait for browser approval")

@@ -167,8 +167,10 @@ func (f *policyFilter) UpdateNetwork(snapshot networkmap.Snapshot) {
 func enforcedPolicyOf(rules []compiledRule, clock func() time.Time) EnforcedPolicy {
 	enforced := make([]networkmap.Rule, len(rules))
 	for index, rule := range rules {
-		enforced[index] = networkmap.Rule{Sources: rule.sources, Destinations: rule.destinations,
-			Protocols: rule.protocols}
+		enforced[index] = networkmap.Rule{
+			Sources: rule.sources, Destinations: rule.destinations,
+			Protocols: rule.protocols,
+		}
 	}
 	digest, grants, err := networkmap.PolicyDigest(enforced)
 	if err != nil || clock == nil {

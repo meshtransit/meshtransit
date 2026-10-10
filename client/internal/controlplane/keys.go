@@ -7,6 +7,9 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"strings"
+
+	"meshtransit.net/shared/key"
+	sharedmtcp "meshtransit.net/shared/mtcp"
 )
 
 const (
@@ -103,4 +106,30 @@ func CanonicalFingerprint(value string) (string, error) {
 		return "", ErrInvalidFingerprint
 	}
 	return "sha256:" + hex.EncodeToString(digest), nil
+}
+
+// VerifyControlPin checks an operator pin against a control key in its
+// "mkey:<hex>" form. The pin is either the control key fingerprint
+// ("sha256:…") or the enrollment link fingerprint (ck=, 32 hex digits,
+// mtcp-v1 §2.1). It returns the canonical "sha256:" fingerprint.
+func VerifyControlPin(pin string, controlPublicKey []byte) (string, error) {
+	raw, err := ParseControlPublicKey(controlPublicKey)
+	if err != nil {
+		return "", err
+	}
+	fingerprint := ControlKeyFingerprint(raw)
+	pin = strings.TrimSpace(pin)
+	if strings.HasPrefix(strings.ToLower(pin), "sha256:") {
+		return VerifyFingerprint(pin, fingerprint)
+	}
+	if len(pin) != 32 {
+		return "", ErrInvalidFingerprint
+	}
+	if _, err := hex.DecodeString(pin); err != nil {
+		return "", ErrInvalidFingerprint
+	}
+	if !sharedmtcp.FingerprintMatches(key.ControlPublic(raw), strings.ToLower(pin)) {
+		return "", ErrFingerprintMismatch
+	}
+	return fingerprint, nil
 }

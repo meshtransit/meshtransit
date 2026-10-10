@@ -4,6 +4,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"meshtransit.net/shared/key"
+	sharedmtcp "meshtransit.net/shared/mtcp"
 )
 
 func TestKeyText(t *testing.T) {
@@ -42,6 +45,26 @@ func TestFingerprints(t *testing.T) {
 		t.Fatalf("different keys: %v", err)
 	}
 	if _, err := VerifyFingerprint("sha256:nope", pin); !errors.Is(err, ErrInvalidFingerprint) {
+		t.Fatalf("malformed pin: %v", err)
+	}
+}
+
+func TestVerifyControlPin(t *testing.T) {
+	t.Parallel()
+	raw := [32]byte{7}
+	text := EncodeControlPublicKey(raw)
+	pin := ControlKeyFingerprint(raw)
+	ck := sharedmtcp.ControlFingerprint(key.ControlPublic(raw))
+	for name, value := range map[string]string{"sha256": pin, "ck": ck, "ck uppercase": strings.ToUpper(ck)} {
+		if canonical, err := VerifyControlPin(value, text); err != nil || canonical != pin {
+			t.Errorf("%s: %q, %v", name, canonical, err)
+		}
+	}
+	other := sharedmtcp.ControlFingerprint(key.ControlPublic([32]byte{8}))
+	if _, err := VerifyControlPin(other, text); !errors.Is(err, ErrFingerprintMismatch) {
+		t.Fatalf("another key's ck: %v", err)
+	}
+	if _, err := VerifyControlPin("abc", text); !errors.Is(err, ErrInvalidFingerprint) {
 		t.Fatalf("malformed pin: %v", err)
 	}
 }

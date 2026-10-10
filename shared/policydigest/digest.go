@@ -162,7 +162,7 @@ func Compute(rules []Rule) (Digest, int, error) {
 	hash.Write([]byte(domainSeparator))
 	hash.Write(binary.BigEndian.AppendUint64(nil, uint64(len(grants))))
 	for _, grant := range grants {
-		hash.Write(binary.BigEndian.AppendUint32(nil, uint32(len(grant))))
+		hash.Write(binary.BigEndian.AppendUint32(nil, uint32(len(grant)))) //nolint:gosec // G115: a grant is a few dozen bytes
 		hash.Write(grant)
 	}
 	var digest Digest
@@ -210,12 +210,12 @@ func appendSelector(encoded []byte, selector Selector) ([]byte, error) {
 		}
 		address := selector.Prefix.Addr().Unmap()
 		bits := selector.Prefix.Bits()
-		if bits > address.BitLen() {
+		if bits < 0 || bits > address.BitLen() {
 			return nil, ErrInvalidRule
 		}
 		prefix := netip.PrefixFrom(address, bits).Masked()
 		encoded = appendAddress(encoded, prefix.Addr())
-		return append(encoded, byte(bits)), nil
+		return append(encoded, byte(bits)), nil //nolint:gosec // G115: 0–128, checked above
 	case KindRange:
 		start, end := selector.RangeStart.Unmap(), selector.RangeEnd.Unmap()
 		if !start.IsValid() || !end.IsValid() || start.Is4() != end.Is4() || end.Less(start) {
@@ -227,7 +227,7 @@ func appendSelector(encoded []byte, selector Selector) ([]byte, error) {
 		if selector.Capability == "" || len(selector.Capability) > MaximumCapabilityLength {
 			return nil, ErrInvalidRule
 		}
-		encoded = binary.BigEndian.AppendUint16(encoded, uint16(len(selector.Capability)))
+		encoded = binary.BigEndian.AppendUint16(encoded, uint16(len(selector.Capability))) //nolint:gosec // G115: bounded by MaximumCapabilityLength
 		return append(encoded, selector.Capability...), nil
 	default:
 		return nil, ErrInvalidRule

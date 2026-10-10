@@ -38,6 +38,14 @@ merge (2026-10-09) are kept below.
   key, map snapshots and deltas with an acknowledgement window, KeyUpdate,
   Lifecycle, relay tickets, endpoint and enforcement reports. Registration
   over MTCP follows in P4c.
+- Registration over MTCP (P4c, schema 138): enrollment keys and browser
+  approvals with resume handles, node key rotation, and Logout, which
+  revokes the Device and records device.logged_out.
+- meshd speaks MTCP v1 (P4d): mtcpclient registers, rotates node keys and
+  streams maps over MTCP with a WebSocket fallback; `--control-protocol
+  auto|mtcp|legacy` (default auto: MTCP where the control server offers
+  it). Profiles keep their keys across protocols; `meshctl up
+  --fingerprint` also accepts the `ck=` value of enrollment links.
 
 ## meshd (before the merge)
 

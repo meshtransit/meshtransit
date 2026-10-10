@@ -37,6 +37,9 @@ type Config struct {
 	AllowSocketPeers    bool
 	EnableDataPlane     bool
 	EnableDeviceAliases bool
+	// ControlProtocol is auto (MTCP where the control origin serves it),
+	// mtcp or legacy.
+	ControlProtocol string
 	// TestPolicyDrift makes the packet filter enforce one rule fewer than
 	// Core sends, to demonstrate that Core reports the mismatch. Test only.
 	TestPolicyDrift     bool
@@ -81,6 +84,8 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	)
 	flags.BoolVar(&cfg.EnableDeviceAliases, "enable-device-aliases", false,
 		"enable qualification of peer-specific Device aliases; requires confined helper alias pools")
+	flags.StringVar(&cfg.ControlProtocol, "control-protocol", "auto",
+		"control protocol: auto (MTCP where the control server offers it), mtcp, or legacy")
 	flags.BoolVar(&cfg.TestPolicyDrift, "test-policy-drift", false,
 		"TEST ONLY: enforce one packet-filter rule fewer than control sends, to demonstrate mismatch detection")
 	flags.BoolVar(
@@ -221,6 +226,11 @@ func validate(cfg Config) error {
 	}
 	if cfg.EnableDeviceAliases && !cfg.EnableDataPlane {
 		return errors.New("device aliases require --enable-data-plane")
+	}
+	switch cfg.ControlProtocol {
+	case "auto", "mtcp", "legacy":
+	default:
+		return errors.New("control protocol must be auto, mtcp or legacy")
 	}
 	if cfg.TestPolicyDrift && !cfg.EnableDataPlane {
 		return errors.New("policy drift testing requires --enable-data-plane")

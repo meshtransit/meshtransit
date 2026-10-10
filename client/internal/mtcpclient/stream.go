@@ -184,7 +184,9 @@ func permanentStreamError(err error) bool {
 		errors.Is(err, controlplane.ErrControlKeyChanged) || errors.Is(err, controlplane.ErrNetmapRejected) ||
 		errors.Is(err, controlplane.ErrNetmapInvalid) || errors.Is(err, controlplane.ErrNetmapAuthorityRevoked) ||
 		errors.Is(err, controlplane.ErrNetmapAuthorityPaused) || errors.Is(err, controlplane.ErrNetmapConsumer) ||
-		errors.Is(err, networkmap.ErrInvalid) || errors.Is(err, errUnknownKey)
+		errors.Is(err, networkmap.ErrInvalid) || errors.Is(err, errUnknownKey) ||
+		// The origin does not serve MTCP: the caller may use another protocol.
+		errors.Is(err, ErrUnavailable)
 }
 
 func jittered(base time.Duration) time.Duration {

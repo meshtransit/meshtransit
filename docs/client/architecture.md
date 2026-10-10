@@ -12,7 +12,7 @@ meshctl
   ▼
 meshd
   ├── profile service       one active control-plane identity
-  ├── control adapter       pinned TS2021/Noise registration and map stream
+  ├── control adapters      MTCP v1 (mtcpclient) and legacy TS2021, chosen per origin (controlselect)
   ├── policy validator      fail-closed, atomic network-map validation
   ├── DNS planner           protocol-independent MagicDNS/split-DNS transaction plan
   ├── packet policy gate    inbound ACL plus bounded return-flow state
@@ -25,7 +25,7 @@ meshd
                               pool-confined TUN and resolved-link setup; firewall later
 ```
 
-The current code implements the profile service, persistent per-profile identity, explicit control-key pinning, TS2021/Noise registration, long-lived map streaming, product-owned map and DNS validation, local API, composition root, bounded control compatibility probe, and opt-in Linux encrypted data plane. Data-plane status distinguishes `not_implemented`, `idle`, `tun_ready_no_crypto`, `waiting_endpoint`, `policy_unsupported`, `encrypted_direct`, `encrypted_relay_ready`, and `failed`; DNS is reported separately as `inactive`, `not_implemented`, `configured`, or `failed`.
+The current code implements the profile service, persistent per-profile identity, explicit control-key pinning, registration and long-lived map streaming over MTCP v1 (with the legacy TS2021 protocol as a fallback for control servers that do not offer MTCP; `--control-protocol auto|mtcp|legacy`), product-owned map and DNS validation, local API, composition root, bounded control compatibility probe, and opt-in Linux encrypted data plane. Data-plane status distinguishes `not_implemented`, `idle`, `tun_ready_no_crypto`, `waiting_endpoint`, `policy_unsupported`, `encrypted_direct`, `encrypted_relay_ready`, and `failed`; DNS is reported separately as `inactive`, `not_implemented`, `configured`, or `failed`.
 
 ## Repository boundary
 
@@ -224,7 +224,7 @@ The protocol adapter pins `tailscale.com` to `v1.102.3`, matching the current co
 
 Compatibility must be proven independently at four layers:
 
-1. HTTPS server-key discovery and TS2021/Noise session establishment. Implemented by `doctor control`, registration, and the long-lived map stream.
+1. HTTPS server-key discovery and MTCP v1 session establishment (HTTP upgrade with a WebSocket fallback), or TS2021/Noise for control servers without MTCP. Implemented by `doctor control`, registration, and the long-lived map stream. Both protocols use the same machine, node and control keys, so a profile changes protocol without registering again; a pin is the control key fingerprint (`sha256:…`) or the `ck=` value of an enrollment link.
 2. Registration, login completion, keepalive watchdog, and bounded reconnect are implemented. Session-handle resume remains; reconnect currently requires a new full snapshot.
 3. Network-map decoding, structural policy validation, DNS translation/planning, Linux DNS activation, and host-level TCP/UDP/ICMP policy enforcement are implemented. Capability-based networking, subnet/exit policy, and URL resolver transports remain.
 4. Privileged TUN/DNS lifecycle, direct userspace WireGuard traffic, shared-socket STUN discovery, periodic and host-network-triggered candidate refresh/expiry, typed endpoint and health-gated home-relay publication, bounded encrypted relay traffic with idle region eviction, and authenticated direct endpoint switching are implemented in the opt-in Linux data plane. Traffic-idle discovery pacing, generalized routes, native non-Linux network monitors, and non-Linux DNS backends remain.

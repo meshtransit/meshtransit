@@ -703,7 +703,7 @@ func runProfileTrust(
 ) int {
 	flags := flag.NewFlagSet("meshctl profile trust", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	fingerprint := flags.String("fingerprint", "", "expected SHA-256 control key fingerprint")
+	fingerprint := flags.String("fingerprint", "", "expected control key fingerprint: sha256:… or the 32-character ck value of an enrollment link")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}

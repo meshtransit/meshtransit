@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net/netip"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1450,10 +1451,7 @@ func (s *Service) TrustControl(ctx context.Context, expectedFingerprint string) 
 
 	record, err := s.identities.Get(ctx, active.ID)
 	if err == nil {
-		canonical, verifyErr := controlplane.VerifyFingerprint(
-			expectedFingerprint,
-			record.ControlKeyFingerprint(),
-		)
+		canonical, verifyErr := verifyStoredPin(expectedFingerprint, record)
 		if verifyErr != nil {
 			return ControlTrust{}, fmt.Errorf("%w: %w", ErrControlTrust, verifyErr)
 		}
@@ -1953,6 +1951,18 @@ func toProtocolMaterial(material identity.Material) controlplane.KeyMaterial {
 		NodePrivateKey:    append([]byte(nil), material.NodePrivateKey...),
 		ControlPublicKey:  append([]byte(nil), material.ControlPublicKey...),
 	}
+}
+
+// verifyStoredPin compares an operator pin with a trusted profile: a
+// "sha256:" fingerprint against the stored one, an enrollment link ck=
+// against the stored control key.
+func verifyStoredPin(pin string, record identity.Record) (string, error) {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(pin)), "sha256:") {
+		return controlplane.VerifyFingerprint(pin, record.ControlKeyFingerprint())
+	}
+	material := record.Material()
+	defer clearIdentityMaterial(material)
+	return controlplane.VerifyControlPin(pin, material.ControlPublicKey)
 }
 
 func clearIdentityMaterial(material identity.Material) {

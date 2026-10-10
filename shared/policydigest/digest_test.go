@@ -84,7 +84,8 @@ func TestComputeCanonicalizesAddresses(t *testing.T) {
 	}})
 	mapped, _ := mustCompute(t, []Rule{{
 		Sources: []Selector{{Kind: KindPrefix, Prefix: netip.PrefixFrom(
-			netip.MustParseAddr("::ffff:100.64.1.7").Unmap(), 10)}},
+			netip.MustParseAddr("::ffff:100.64.1.7").Unmap(), 10,
+		)}},
 		Destinations: []Destination{{
 			Selector: Selector{Kind: KindPrefix, Prefix: netip.PrefixFrom(netip.MustParseAddr("::ffff:100.64.0.1"), 32)},
 			PortFrom: 80, PortTo: 80,
@@ -148,10 +149,14 @@ func TestComputeRejectsInvalidRules(t *testing.T) {
 		"prefix":     {Sources: []Selector{{Kind: KindPrefix}}, Destinations: []Destination{to("100.64.0.1/32", 1, 1)}},
 		"ports":      {Sources: []Selector{{Kind: KindAny}}, Destinations: []Destination{to("100.64.0.1/32", 9, 1)}},
 		"capability": {Sources: []Selector{{Kind: KindCapability}}, Destinations: []Destination{to("100.64.0.1/32", 1, 1)}},
-		"range": {Sources: []Selector{{Kind: KindRange, RangeStart: netip.MustParseAddr("100.64.0.9"),
-			RangeEnd: netip.MustParseAddr("100.64.0.1")}}, Destinations: []Destination{to("100.64.0.1/32", 1, 1)}},
-		"family": {Sources: []Selector{{Kind: KindRange, RangeStart: netip.MustParseAddr("100.64.0.1"),
-			RangeEnd: netip.MustParseAddr("fd00::1")}}, Destinations: []Destination{to("100.64.0.1/32", 1, 1)}},
+		"range": {Sources: []Selector{{
+			Kind: KindRange, RangeStart: netip.MustParseAddr("100.64.0.9"),
+			RangeEnd: netip.MustParseAddr("100.64.0.1"),
+		}}, Destinations: []Destination{to("100.64.0.1/32", 1, 1)}},
+		"family": {Sources: []Selector{{
+			Kind: KindRange, RangeStart: netip.MustParseAddr("100.64.0.1"),
+			RangeEnd: netip.MustParseAddr("fd00::1"),
+		}}, Destinations: []Destination{to("100.64.0.1/32", 1, 1)}},
 	}
 	for name, rule := range cases {
 		t.Run(name, func(t *testing.T) {

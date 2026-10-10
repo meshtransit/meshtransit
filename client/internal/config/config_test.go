@@ -255,3 +255,20 @@ func TestDeviceAliasFlagRequiresPacketEngine(t *testing.T) {
 		t.Fatal("alias support enabled by default", err)
 	}
 }
+
+func TestParseControlProtocol(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Parse(nil, io.Discard)
+	if err != nil || cfg.ControlProtocol != "auto" {
+		t.Fatalf("default control protocol = %q, %v", cfg.ControlProtocol, err)
+	}
+	for _, value := range []string{"mtcp", "legacy"} {
+		if cfg, err := Parse([]string{"--control-protocol", value}, io.Discard); err != nil || cfg.ControlProtocol != value {
+			t.Fatalf("--control-protocol %s = %q, %v", value, cfg.ControlProtocol, err)
+		}
+	}
+	if _, err := Parse([]string{"--control-protocol", "ts2021"}, io.Discard); err == nil {
+		t.Fatal("an unknown control protocol was accepted")
+	}
+}

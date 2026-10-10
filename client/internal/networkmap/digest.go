@@ -51,8 +51,10 @@ func digestSelector(selector Selector) (policydigest.Selector, error) {
 	case SelectorPrefix:
 		return policydigest.Selector{Kind: policydigest.KindPrefix, Prefix: selector.Prefix}, nil
 	case SelectorRange:
-		return policydigest.Selector{Kind: policydigest.KindRange, RangeStart: selector.RangeStart,
-			RangeEnd: selector.RangeEnd}, nil
+		return policydigest.Selector{
+			Kind: policydigest.KindRange, RangeStart: selector.RangeStart,
+			RangeEnd: selector.RangeEnd,
+		}, nil
 	case SelectorCapability:
 		return policydigest.Selector{Kind: policydigest.KindCapability, Capability: selector.Capability}, nil
 	default:
