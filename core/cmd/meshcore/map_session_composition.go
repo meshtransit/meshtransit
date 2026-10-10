@@ -8,6 +8,7 @@ import (
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/adapter/relayfile"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/publicid"
 	"meshtransit.net/core/internal/domain/relay"
 	"meshtransit.net/core/internal/platform/config"
@@ -21,6 +22,7 @@ func composeMapSession(
 	endpoints mapsession.EndpointObserver,
 	connectivity mapsession.ConnectivityStore,
 	relayDirectory relay.Directory,
+	relayDirectories func(network.ID) (relay.Directory, error),
 ) (*mapsession.Service, error) {
 	if runtimePool == nil || endpoints == nil || connectivity == nil || !relayDirectory.IsValid() {
 		return nil, errInvalidMapSessionComposition
@@ -34,6 +36,7 @@ func composeMapSession(
 			PeerCandidateLimit:  mapsession.MaximumPeerCandidates,
 			PolicyRuleLimit:     mapsession.MaximumPacketPolicyRules,
 			RelayDirectory:      relayDirectory,
+			RelayDirectories:    relayDirectories,
 		},
 	)
 	if err != nil {

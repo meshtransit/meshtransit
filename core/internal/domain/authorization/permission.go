@@ -58,6 +58,10 @@ const (
 	PermissionDeviceTagRead Permission = "device_tag.read"
 	// PermissionDeviceTagManage changes the device tag catalog and applies any tag.
 	PermissionDeviceTagManage Permission = "device_tag.manage"
+	// PermissionInterchangeRead reads the Workspace's Private Interchange relays.
+	PermissionInterchangeRead Permission = "interchange.read"
+	// PermissionInterchangeManage adds, changes and removes Private Interchange relays.
+	PermissionInterchangeManage Permission = "interchange.manage"
 
 	// PermissionRoleDefinitionRead reads role definitions.
 	PermissionRoleDefinitionRead Permission = "role_definition.read"
@@ -259,5 +263,7 @@ func Permissions() []Permission {
 		PermissionIdentityGroupRead,
 		PermissionDeviceTagRead,
 		PermissionDeviceTagManage,
+		PermissionInterchangeRead,
+		PermissionInterchangeManage,
 	}
 }

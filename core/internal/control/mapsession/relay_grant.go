@@ -48,6 +48,25 @@ type RelayGrant struct {
 	payload []byte
 	request RelayGrantRequest
 	renewAt time.Time
+	// mapKey identifies the relay map inside the grant, for relay access
+	// that can tell when a Network's map changed (RelayMapFreshness).
+	mapKey string
+}
+
+// RelayMapFreshness is implemented by relay access whose relay maps differ
+// per Network (Private Interchange): a grant built on an older map is
+// replaced at the next snapshot.
+type RelayMapFreshness interface {
+	RelayMapCurrent(network.ID, string) bool
+}
+
+// NewRelayGrantForMap is NewRelayGrant for a grant whose relay map has
+// content key mapKey.
+func NewRelayGrantForMap(request RelayGrantRequest, payload []byte, notAfter time.Time,
+	mapKey string) (RelayGrant, error) {
+	grant, err := NewRelayGrant(request, payload, notAfter)
+	grant.mapKey = mapKey
+	return grant, err
 }
 
 // NewRelayGrant wraps an encoded grant valid until notAfter.

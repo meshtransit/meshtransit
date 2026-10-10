@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 138 {
-		t.Fatalf("len(Catalog()) = %d, want 138", len(catalog))
+	if len(catalog) != 139 {
+		t.Fatalf("len(Catalog()) = %d, want 139", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 138 {
-		t.Fatalf("LatestVersion() = %d, want 138", LatestVersion())
+	if LatestVersion() != 139 {
+		t.Fatalf("LatestVersion() = %d, want 139", LatestVersion())
 	}
 }
 
@@ -3304,6 +3304,38 @@ func TestMTCPMachineTimestamp(t *testing.T) {
 	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP "} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 137 must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestPrivateInterchange(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[138]
+	if migration.Version != 139 {
+		t.Fatalf("migration 139 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh.private_interchange (",
+		"CREATE TABLE mesh.private_interchange_network (",
+		"ALTER TABLE mesh.private_interchange FORCE ROW LEVEL SECURITY;",
+		"CREATE UNIQUE INDEX private_interchange_active_key_idx",
+		"mesh_audit.capture_authority_mutation('private_interchange', 'public_id')",
+		"'interchange.manage', evaluated_at",
+		"mesh_ops.advance_identity_networks_internal_v1(scoped_workspace_id, affected)",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.private_interchange_directory_v1() TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 139 must contain %q", want)
+		}
+	}
+	// The control plane read must not reach mesh.network outside a scope.
+	directory := migration.SQL[strings.Index(migration.SQL, "CREATE FUNCTION mesh_ops.private_interchange_directory_v1()"):]
+	if strings.Contains(directory[:strings.Index(directory, "$function$;")], "mesh.network ") {
+		t.Error("the directory function must not read mesh.network")
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP ", "ON mesh.network\n"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 139 must not contain %q", forbidden)
 		}
 	}
 }

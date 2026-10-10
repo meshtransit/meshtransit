@@ -90,6 +90,8 @@ func LookupPermission(permission Permission) (PermissionDefinition, bool) {
 		PermissionIdentityGroupRead,
 		PermissionDeviceTagRead,
 		PermissionDeviceTagManage,
+		PermissionInterchangeRead,
+		PermissionInterchangeManage,
 		PermissionRoleDefinitionRead,
 		PermissionRoleDefinitionManage,
 		PermissionRoleBindingRead,

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"meshtransit.net/core/internal/domain/interchange"
 	"meshtransit.net/shared/key"
 	"meshtransit.net/shared/mtrp"
 )
@@ -55,9 +56,11 @@ type Options struct {
 	Map         *mtrp.RelayMap      // nil: no relay map is served
 	Drain       []key.RelayPublic
 	Revocations RevocationSource // nil: no revocations yet
-	Now         func() time.Time
-	Logger      *slog.Logger
-	Metrics     *Metrics
+	// Private reads the Private Interchange relays; nil: none.
+	Private PrivateInterchangeSource
+	Now     func() time.Time
+	Logger  *slog.Logger
+	Metrics *Metrics
 }
 
 // document is one signed artefact with its HTTP validator.
@@ -74,6 +77,13 @@ type Publisher struct {
 	relayMap atomic.Pointer[document]
 
 	window time.Time // last signed window; owned by the refresh goroutine (and Start before it)
+
+	private atomic.Pointer[interchange.Directory]
+	// Per-window caches of Network maps (by content key) and relay grants.
+	cacheMu     sync.Mutex
+	cacheWindow time.Time
+	maps        map[string]*document
+	grants      map[key.RelayPublic]*document
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -202,6 +212,7 @@ func (p *Publisher) refresh(ctx context.Context) error {
 			state.Zones = append(state.Zones, mtrp.ZoneRevocationHash(mtrp.Zone{Kind: mtrp.ZoneTrustContract, ID: contract}))
 		}
 	}
+	p.refreshPrivate(ctx)
 	stateDoc, err := p.sign(mtrp.DocumentRelayState, state.Payload)
 	if err != nil {
 		p.opts.Metrics.refreshes.WithLabelValues("sign_failed").Inc()
@@ -209,7 +220,8 @@ func (p *Publisher) refresh(ctx context.Context) error {
 	}
 	var mapDoc *document
 	if p.opts.Map != nil {
-		m := *p.opts.Map
+		// The map of a Network without a Private Interchange.
+		m := NetworkMap(*p.opts.Map, nil, p.privateDirectory().Revision)
 		m.ExpiresAt = now.Add(MapLifetime)
 		mapDoc, err = p.sign(mtrp.DocumentRelayMap, func() ([]byte, error) { return m.Payload(now) })
 		if err != nil {

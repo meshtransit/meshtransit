@@ -9,12 +9,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"meshtransit.net/core/internal/platform/clientip"
+	"meshtransit.net/shared/key"
 )
 
 // Public paths served on the control listener.
 const (
 	StatePath = "/relay/v1/state"
 	MapPath   = "/relay/v1/map"
+	// GrantPath serves a Private Interchange relay its sealed grant
+	// (mtrp-v1 §9.2): GET /relay/v1/grant?relay=<mtrelay:…>.
+	GrantPath = "/relay/v1/grant"
 	// PathPrefix selects the requests the control listener routes here.
 	PathPrefix = "/relay/v1/"
 
@@ -65,6 +69,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
+	case GrantPath:
+		h.serveGrant(w, r)
+		return
 	default:
 		h.metrics.requests.WithLabelValues("not_found").Inc()
 		http.NotFound(w, r)
@@ -103,6 +110,49 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = w.Write(doc.body)
+}
+
+// serveGrant answers a Private Interchange relay with its grant sealed to
+// its key. Anyone may ask; only the relay can read the answer. A key no
+// Workspace registered gets 404.
+func (h *Handler) serveGrant(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.metrics.requests.WithLabelValues("bad_method").Inc()
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	client, err := h.clients.Resolve(r)
+	if err != nil || !h.allow(client) {
+		h.metrics.requests.WithLabelValues("rate_limited").Inc()
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+	query := r.URL.Query()
+	relayKey, err := key.ParseRelayPublic(query.Get("relay"))
+	if err != nil || len(query) != 1 || len(query["relay"]) != 1 {
+		h.metrics.requests.WithLabelValues("bad_request").Inc()
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	sealed, found, err := h.publisher.sealedGrant(relayKey)
+	switch {
+	case err != nil:
+		h.metrics.requests.WithLabelValues("unavailable").Inc()
+		http.Error(w, "not ready", http.StatusServiceUnavailable)
+		return
+	case !found:
+		h.metrics.requests.WithLabelValues("not_found").Inc()
+		http.NotFound(w, r)
+		return
+	}
+	header := w.Header()
+	header.Set("Cache-Control", "no-store")
+	header.Set("X-Content-Type-Options", "nosniff")
+	header.Set("Content-Type", "application/vnd.meshtransit.sealed-relay-grant")
+	h.metrics.requests.WithLabelValues("ok").Inc()
+	_, _ = w.Write(sealed) //nolint:gosec // G705: an encrypted binary document, never rendered as HTML
 }
 
 // allow applies the per-source token bucket with bounded memory.

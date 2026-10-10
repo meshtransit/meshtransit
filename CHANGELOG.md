@@ -77,6 +77,15 @@ merge (2026-10-09) are kept below.
   (`nat.report1`, new `port_mapping` and `nat_observed_ms` fields); Core
   stores the latest per Device and session when it changes, and the device
   distribution API returns it as `connectivity`.
+- Private Interchange (P5e): a Workspace registers its own relays
+  (`meshrelay --private-interchange`) and grants each to some of its
+  Networks (schema 139, `interchange.read`/`interchange.manage`, management
+  API under `/api/v1/workspaces/{id}/interchanges`, audit events
+  `interchange.created|updated|deleted` and Network wake events). Core signs
+  a relay map per Network with the granted regions marked preferred,
+  accepts them as home relays, renews node grants when a Network's relays
+  change, and serves each relay its grant sealed to its key at
+  `/relay/v1/grant`.
 
 ## meshd (before the merge)
 

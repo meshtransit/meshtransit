@@ -252,6 +252,10 @@ type ManagementHandlerOptions struct {
 	AuditExports AuditExporter
 	// Guardrails lists and changes Workspace guardrails; nil answers 503.
 	Guardrails GuardrailManager
+	// Interchanges lists and changes Private Interchange relays; nil answers 503.
+	Interchanges InterchangeManager
+	// InterchangeTrust is shown with the command that starts a relay.
+	InterchangeTrust InterchangeRelayTrust
 	// DeviceGroups lists and changes Network Device Groups; nil answers 503.
 	DeviceGroups DeviceGroupManager
 	// IdentityGroups lists and changes Workspace Identity Groups; nil answers 503.
@@ -306,6 +310,8 @@ type ManagementHandler struct {
 	auditHistory              AuditHistoryReader
 	auditExports              AuditExporter
 	guardrails                GuardrailManager
+	interchanges              InterchangeManager
+	interchangeTrust          InterchangeRelayTrust
 	deviceGroups              DeviceGroupManager
 	identityGroups            IdentityGroupManager
 	deviceTags                DeviceTagManager
@@ -376,6 +382,8 @@ func NewManagementHandler(options ManagementHandlerOptions) (*ManagementHandler,
 		auditHistory:              options.AuditHistory,
 		auditExports:              options.AuditExports,
 		guardrails:                options.Guardrails,
+		interchanges:              options.Interchanges,
+		interchangeTrust:          options.InterchangeTrust,
 		deviceGroups:              options.DeviceGroups,
 		identityGroups:            options.IdentityGroups,
 		deviceTags:                options.DeviceTags,
@@ -487,6 +495,7 @@ func (handler *ManagementHandler) serveHTTP(
 	auditEventPath, auditEventMatched := parseAuditEventListPath(request)
 	auditExportPath, auditExportMatched := parseAuditEventExportPath(request)
 	guardrailPathValue, guardrailMatched := parseGuardrailPath(request)
+	interchangePathValue, interchangeMatched := parseInterchangePath(request)
 	deviceGroupPathValue, deviceGroupMatched := parseDeviceGroupPath(request)
 	identityCatalogPathValue, identityCatalogMatched := parseIdentityCatalogPath(request)
 	deviceLifecyclePathValue, deviceLifecycleMatched := parseDeviceLifecyclePath(request)
@@ -496,7 +505,7 @@ func (handler *ManagementHandler) serveHTTP(
 		!accessGraphMatched && !accessGraphListMatched && !resourceMatched && !sharingMatched && !policyReadMatched && !workspaceRenameMatched &&
 		!workspaceRoleMatched && !workspaceCollectionMatched && !networkCollectionMatched && !sessionWorkspaceMatched &&
 		!shareTargetMatched && !aliasRangeMatched && !auditEventMatched &&
-		!auditExportMatched && !guardrailMatched && !deviceGroupMatched && !identityCatalogMatched &&
+		!auditExportMatched && !guardrailMatched && !interchangeMatched && !deviceGroupMatched && !identityCatalogMatched &&
 		!deviceLifecycleMatched && !memberLifecycleMatched && !invitationMatched {
 		resultCode = "not_found"
 		writeManagementError(request.Context(), handler.logger, response, correlationID, managementError{
@@ -527,6 +536,8 @@ func (handler *ManagementHandler) serveHTTP(
 		operation = auditEventExportOperation
 	} else if guardrailMatched {
 		operation = guardrailPathValue.operation(request.Method)
+	} else if interchangeMatched {
+		operation = interchangePathValue.operation(request.Method)
 	} else if deviceGroupMatched {
 		operation = deviceGroupPathValue.operation()
 	} else if identityCatalogMatched {
@@ -575,6 +586,8 @@ func (handler *ManagementHandler) serveHTTP(
 		allowedMethod = aliasRangePath.allowedMethod()
 	} else if guardrailMatched {
 		allowedMethod = guardrailPathValue.allowedMethod(request.Method)
+	} else if interchangeMatched {
+		allowedMethod = interchangePathValue.allowedMethod(request.Method)
 	} else if deviceGroupMatched {
 		allowedMethod = deviceGroupPathValue.allowedMethod()
 	} else if identityCatalogMatched {
@@ -684,6 +697,10 @@ func (handler *ManagementHandler) serveHTTP(
 	}
 	if guardrailMatched {
 		resultCode = handler.handleGuardrails(ctx, response, request, correlationID, guardrailPathValue, session)
+		return
+	}
+	if interchangeMatched {
+		resultCode = handler.handleInterchanges(ctx, response, request, correlationID, interchangePathValue, session)
 		return
 	}
 	if deviceGroupMatched {

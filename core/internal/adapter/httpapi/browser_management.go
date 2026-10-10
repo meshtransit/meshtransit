@@ -276,7 +276,7 @@ func (browser *BrowserManagement) Handle(response http.ResponseWriter, request *
 		isWorkspaceCollectionPath(request) && request.Method == http.MethodPost ||
 		isNetworkCollectionPost(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
 		isNetworkAliasRangeOperation(request) || isAuditEventListRead(request) ||
-		isAuditEventExportRead(request) || isGuardrailOperation(request) || isDeviceGroupOperation(request) ||
+		isAuditEventExportRead(request) || isGuardrailOperation(request) || isInterchangeOperation(request) || isDeviceGroupOperation(request) ||
 		isIdentityCatalogOperation(request) || isDeviceLifecycleOperation(request) ||
 		isMemberLifecycleOperation(request) ||
 		isInvitationOperation(request)
@@ -503,7 +503,8 @@ func (browser *BrowserManagement) validRequest(request *http.Request) bool {
 	// Member directory and switchable Workspaces are exact, query-free reads.
 	directoryRead := request.Method == http.MethodGet &&
 		(isWorkspaceRoleOperation(request) || isSessionWorkspaceOperation(request) || isShareTargetRead(request) ||
-			isNetworkAliasRangeRead(request) || isGuardrailRead(request) || isInvitationRead(request))
+			isNetworkAliasRangeRead(request) || isGuardrailRead(request) || isInterchangeRead(request) ||
+			isInvitationRead(request))
 	auditRead := isAuditEventListRead(request) || isAuditEventExportRead(request) || isDeviceGroupRead(request) ||
 		isIdentityCatalogRead(request)
 	safeRead := approvalRead || managementScopeRead || inventoryRead || distributionRead || historyRead ||

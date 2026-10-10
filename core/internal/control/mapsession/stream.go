@@ -484,7 +484,11 @@ func (service *StreamService) grantRelayAccess(ctx context.Context, current, nex
 	now := time.Now()
 	previous := current.RelayGrant()
 	request, ok := next.RelayGrantRequest()
-	if !ok || relayGrantCurrent(previous, request, now) {
+	mapCurrent := true
+	if freshness, tracked := access.(RelayMapFreshness); tracked && previous.IsValid() && ok {
+		mapCurrent = freshness.RelayMapCurrent(request.Network, previous.mapKey)
+	}
+	if !ok || (mapCurrent && relayGrantCurrent(previous, request, now)) {
 		if previous.IsValid() && now.Before(previous.request.NotAfter) {
 			return next.WithRelayGrant(previous), false
 		}

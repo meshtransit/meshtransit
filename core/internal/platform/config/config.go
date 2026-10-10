@@ -69,7 +69,10 @@ type Config struct {
 	Mail *MailConfig
 	// Signup enables self sign-up; it is accepted on api and all roles with
 	// the private login.
-	Signup                *SignupConfig
+	Signup *SignupConfig
+	// Interchange is shown with the Private Interchange relay command; nil:
+	// the Console shows placeholders.
+	Interchange           *InterchangeConfig
 	Identity              *IdentityConfig
 	DeploymentEntitlement *DeploymentEntitlementConfig
 }
@@ -244,6 +247,10 @@ func Load(lookup LookupFunc) (Config, error) {
 	if mailConfig != nil && (role != app.RoleAll && role != app.RoleAPI || privateLoginFile == nil) {
 		return Config{}, settingError(envMailTransport)
 	}
+	interchangeConfig, err := loadInterchangeConfig(lookup)
+	if err != nil {
+		return Config{}, err
+	}
 	signupConfig, err := loadSignupConfig(lookup)
 	if err != nil {
 		return Config{}, err
@@ -290,6 +297,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		BrowserRegistration:     browserRegistration,
 		Mail:                    mailConfig,
 		Signup:                  signupConfig,
+		Interchange:             interchangeConfig,
 		Identity:                identityConfig,
 		DeploymentEntitlement:   deploymentEntitlementConfig,
 	}, nil

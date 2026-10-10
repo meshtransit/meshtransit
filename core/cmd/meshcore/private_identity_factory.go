@@ -20,6 +20,7 @@ import (
 	"meshtransit.net/core/internal/domain/identity/oidcauth"
 	"meshtransit.net/core/internal/domain/identity/sessioncontext"
 	"meshtransit.net/core/internal/domain/identitygroup"
+	"meshtransit.net/core/internal/domain/interchange"
 	"meshtransit.net/core/internal/domain/invitation"
 	"meshtransit.net/core/internal/domain/memberlifecycle"
 	"meshtransit.net/core/internal/domain/network/aliasrange"
@@ -37,6 +38,7 @@ import (
 	"meshtransit.net/core/internal/domain/workspace/selection"
 	"meshtransit.net/core/internal/domain/workspace/settings"
 	"meshtransit.net/core/internal/platform/config"
+	"meshtransit.net/shared/key"
 )
 
 // The production binding accepts no replacement clock or effect/service ports.
@@ -60,6 +62,8 @@ type privateIdentityFactoryDependencies struct {
 	Mailer invitation.Mailer
 	// Signup enables self sign-up with these limits; nil leaves it off.
 	Signup *config.SignupConfig
+	// Interchange is shown with the Private Interchange relay command.
+	Interchange *config.InterchangeConfig
 }
 
 // This owner closes only its HTTP clients. Admission/drain and borrowed pool/
@@ -183,6 +187,21 @@ func composePrivateIdentityFactory(
 	guardrails, err := guardrail.NewService(guardrailStore, clock, guardrail.SystemIDs{})
 	if err != nil {
 		return nil, errInvalidPrivateIdentityComposition
+	}
+	interchangeStore, err := postgresadapter.NewPrivateInterchangeStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	// The API process has no relay map; the control plane leaves out a
+	// relay that clashes with it when it builds maps.
+	interchanges, err := interchange.NewService(interchangeStore, clock, interchange.SystemIDs{}, unknownSharedRelays{})
+	if err != nil {
+		return nil, errInvalidPrivateIdentityComposition
+	}
+	var interchangeTrust httpapi.InterchangeRelayTrust
+	if dependencies.Interchange != nil {
+		interchangeTrust = httpapi.InterchangeRelayTrust{CoreURL: dependencies.Interchange.CoreURL,
+			SigningKeys: dependencies.Interchange.SigningKeys()}
 	}
 	deviceGroupStore, err := postgresadapter.NewDeviceGroupStore(dependencies.Runtime, postgresadapter.AccountSessionOptions{StatementTimeout: managementOptions.StatementTimeout, IdleTimeout: managementOptions.IdleTimeout})
 	if err != nil {
@@ -365,7 +384,7 @@ func composePrivateIdentityFactory(
 		ClaimIDs: oidcauth.SystemClaimIDs{}, IssueMaterial: oidcauth.SystemIssueMaterial{},
 		Revocations: revocations, PolicyPublications: policies, PolicyCompilations: policyCompiler,
 		PolicyExplanations: policyExplainer, AccessGraphs: policyExplainer, PolicySimulations: policySimulator,
-		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, DeviceGroups: deviceGroups, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
+		ActivePolicies: activePolicies, WorkspaceRenames: workspaceSettings, WorkspaceRoles: workspaceRoles, WorkspaceCreations: workspaceCreations, NetworkCreations: networkCreations, AliasRanges: aliasRanges, AuditHistory: auditHistory, AuditExports: auditExports, Guardrails: guardrails, Interchanges: interchanges, InterchangeTrust: interchangeTrust, DeviceGroups: deviceGroups, IdentityGroups: identityGroups, DeviceTags: deviceTags, DeviceLifecycle: deviceLifecycle, MemberLifecycle: memberLifecycle, Invitations: invitations, InvitationPreviews: invitations, InvitationAcceptor: invitationStore, AccountSignups: signups,
 		SessionWorkspaces: sessionWorkspaces, ShareTargets: shareTargets,
 		PolicyApprovals: policyApprovals, PolicyApprovalCatalog: policyApprovalCatalog,
 		ResourceCreations: resources.creations, ResourceCatalog: resources.catalog, ResourceSharing: resources.sharing,
@@ -542,3 +561,9 @@ func (*privateIdentityFactory) LogValue() slog.Value { return slog.StringValue("
 func (*privateIdentityFactory) MarshalJSON() ([]byte, error) {
 	return nil, errInvalidPrivateIdentityComposition
 }
+
+// unknownSharedRelays stands in for the shared relay map where the process
+// has none: clashes are caught when the control plane builds maps.
+type unknownSharedRelays struct{}
+
+func (unknownSharedRelays) Uses(string, key.RelayPublic) bool { return false }

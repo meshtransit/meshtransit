@@ -9,6 +9,7 @@ import (
 
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/deployment"
+	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/shared/key"
 	"meshtransit.net/shared/mtrp"
 )
@@ -59,9 +60,9 @@ func (issuer *Issuer) GrantRelayAccess(_ context.Context, request mapsession.Rel
 }
 
 func (issuer *Issuer) grant(request mapsession.RelayGrantRequest) (mapsession.RelayGrant, error) {
-	relayMap := issuer.publisher.relayMap.Load()
-	if relayMap == nil {
-		return mapsession.RelayGrant{}, ErrNoRelayMap
+	relayMap, mapKey, err := issuer.publisher.mapForNetwork(request.Network)
+	if err != nil {
+		return mapsession.RelayGrant{}, err
 	}
 	now := issuer.now()
 	notAfter := now.Add(TicketLifetime)
@@ -99,5 +100,10 @@ func (issuer *Issuer) grant(request mapsession.RelayGrantRequest) (mapsession.Re
 	if err != nil {
 		return mapsession.RelayGrant{}, err
 	}
-	return mapsession.NewRelayGrant(request, payload, notAfter)
+	return mapsession.NewRelayGrantForMap(request, payload, notAfter, mapKey)
+}
+
+// RelayMapCurrent implements mapsession.RelayMapFreshness.
+func (issuer *Issuer) RelayMapCurrent(id network.ID, mapKey string) bool {
+	return issuer.publisher.RelayMapCurrent(id, mapKey)
 }

@@ -505,6 +505,7 @@ func Catalog() []Migration {
 		newMigration(136, "Device enforcement ledger and history read", deviceEnforcementLedgerSQL),
 		newMigration(137, "MTCP machine timestamps", mtcpMachineTimestampSQL),
 		newMigration(138, "Device logout", deviceLogoutSQL),
+		newMigration(139, "Private Interchange", privateInterchangeSQL),
 	}
 }
 
@@ -698,3 +699,6 @@ var mtcpMachineTimestampSQL string
 
 //go:embed 000138_device_logout.up.sql
 var deviceLogoutSQL string
+
+//go:embed 000139_private_interchange.up.sql
+var privateInterchangeSQL string

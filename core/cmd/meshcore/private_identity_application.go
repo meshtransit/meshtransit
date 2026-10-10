@@ -85,6 +85,8 @@ type privateIdentityPorts struct {
 	AuditHistory        httpapi.AuditHistoryReader
 	AuditExports        httpapi.AuditExporter
 	Guardrails          httpapi.GuardrailManager
+	Interchanges        httpapi.InterchangeManager
+	InterchangeTrust    httpapi.InterchangeRelayTrust
 	DeviceGroups        httpapi.DeviceGroupManager
 	IdentityGroups      httpapi.IdentityGroupManager
 	DeviceTags          httpapi.DeviceTagManager
@@ -206,6 +208,8 @@ func composePrivateIdentity(
 		AuditHistory:          ports.AuditHistory,
 		AuditExports:          ports.AuditExports,
 		Guardrails:            ports.Guardrails,
+		Interchanges:          ports.Interchanges,
+		InterchangeTrust:      ports.InterchangeTrust,
 		DeviceGroups:          ports.DeviceGroups,
 		IdentityGroups:        ports.IdentityGroups,
 		DeviceTags:            ports.DeviceTags,

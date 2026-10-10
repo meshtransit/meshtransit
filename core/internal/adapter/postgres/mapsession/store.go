@@ -33,11 +33,15 @@ var (
 
 // Options bounds database work owned by one map snapshot load.
 type Options struct {
-	StatementTimeout    time.Duration
-	IdleTimeout         time.Duration
-	PeerCandidateLimit  int
-	PolicyRuleLimit     int
-	RelayDirectory      relay.Directory
+	StatementTimeout   time.Duration
+	IdleTimeout        time.Duration
+	PeerCandidateLimit int
+	PolicyRuleLimit    int
+	RelayDirectory     relay.Directory
+	// RelayDirectories, when set, returns a Network's own relay directory
+	// (the shared regions plus its Private Interchange regions); a failure
+	// falls back to RelayDirectory.
+	RelayDirectories    func(network.ID) (relay.Directory, error)
 	EnableDeviceAliases bool
 }
 
@@ -191,7 +195,7 @@ func (store *Store) Load(
 		recoveryEpoch,
 		peerCandidates,
 		packetPolicy,
-		store.options.RelayDirectory,
+		store.relayDirectory(scope.NetworkID()),
 	)
 	if err != nil {
 		return appmapsession.Snapshot{}, err
@@ -370,6 +374,18 @@ func validOptions(options Options) bool {
 		options.PolicyRuleLimit > 0 &&
 		options.PolicyRuleLimit <= appmapsession.MaximumPacketPolicyRules &&
 		options.RelayDirectory.IsValid()
+}
+
+// relayDirectory returns the Network's relay directory.
+func (store *Store) relayDirectory(id network.ID) relay.Directory {
+	if store.options.RelayDirectories == nil {
+		return store.options.RelayDirectory
+	}
+	directory, err := store.options.RelayDirectories(id)
+	if err != nil || !directory.IsValid() || directory.Revision() < store.options.RelayDirectory.Revision() {
+		return store.options.RelayDirectory
+	}
+	return directory
 }
 
 func postgresTimeout(value time.Duration) string {

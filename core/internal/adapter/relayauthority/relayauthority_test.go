@@ -184,7 +184,7 @@ func TestPublisherSignsStateAndMap(t *testing.T) {
 		t.Fatal(err)
 	}
 	signedMap, err := mtrp.ParseRelayMap(payload, t0)
-	if err != nil || signedMap.Version != 3 || !signedMap.ExpiresAt.Equal(t0.Add(MapLifetime)) {
+	if err != nil || signedMap.Version != MapVersion(3, 0) || !signedMap.ExpiresAt.Equal(t0.Add(MapLifetime)) {
 		t.Fatalf("signed map = %+v, %v", signedMap, err)
 	}
 }

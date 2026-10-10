@@ -16,6 +16,7 @@ import (
 	redisadapter "meshtransit.net/core/internal/adapter/redis"
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/enrollment"
+	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/network/revisionworker"
 	"meshtransit.net/core/internal/domain/relay"
 	"meshtransit.net/core/internal/domain/sharing/endpointpublication"
@@ -275,7 +276,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			ctx,
 			privateProfile,
 			privateIdentityFactoryDependencies{Runtime: storagePools.runtime, Redis: redisClient, Logger: logger,
-				Mailer: mailer, Signup: processConfig.Signup},
+				Mailer: mailer, Signup: processConfig.Signup, Interchange: processConfig.Interchange},
 			browserRuntime...,
 		)
 		if composeErr != nil {
@@ -407,6 +408,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		var relayAuthorityHandler http.Handler
 		var relayAccess mapsession.RelayAccess
 		var relayAuthorityDirectory relay.Directory
+		var relayDirectories func(network.ID) (relay.Directory, error)
 		if processConfig.RelayAuthority != nil {
 			authority, relayErr := composeRelayAuthority(ctx, *processConfig.RelayAuthority, storagePools.runtime, logger)
 			if relayErr != nil {
@@ -415,6 +417,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			}
 			relayAuthorityHandler, relayAccess = authority.handler, authority.access
 			relayAuthorityDirectory = authority.directory
+			relayDirectories = authority.directories
 			additionalMetrics = append(additionalMetrics, authority.publisher.Metrics())
 			// Started before the listener, so the first documents exist when it opens.
 			roleServices = append(roleServices, app.OwnedService{Name: "relay-authority", Service: authority.publisher})
@@ -443,6 +446,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			redisClient,
 			redisClient,
 			relayDirectory,
+			relayDirectories,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(

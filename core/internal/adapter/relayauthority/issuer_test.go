@@ -56,7 +56,7 @@ func TestIssuerGrantsVerifiableTicket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if relayMap, err := decoded.OpenRelayMap(t0); err != nil || relayMap.Version != 3 {
+	if relayMap, err := decoded.OpenRelayMap(t0); err != nil || relayMap.Version != MapVersion(3, 0) {
 		t.Fatalf("grant relay map = %+v, %v", relayMap, err)
 	}
 	verifier := mtrp.Verifier{Keys: mtrp.NewStaticKeys(signer.Public()), Now: c.now}
