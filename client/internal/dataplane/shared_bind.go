@@ -187,6 +187,15 @@ func (b *sharedBind) RelayHealth() relay.HealthSnapshot {
 	return b.relay.Health()
 }
 
+// RelayFailures signals relay connection failures (relay.Pool.Failures).
+func (b *sharedBind) RelayFailures() <-chan struct{} {
+	if b == nil || b.relay == nil {
+		return nil
+	}
+
+	return b.relay.Failures()
+}
+
 func (b *sharedBind) PrepareRelayRegion(regionID int) error {
 	if b == nil || b.relay == nil {
 		return pathdiscovery.ErrTransportClosed

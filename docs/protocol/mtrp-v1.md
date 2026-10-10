@@ -200,6 +200,12 @@ Plaintext: `type u8 || body`.
   reflector. Stream bindings are always verified.
 - The client sends KEEPALIVE after `keepalive_s` without sending anything; the
   relay closes a session after `idle_timeout_s` without a valid frame.
+- The relay answers every KEEPALIVE. A client that has received nothing for
+  1.5 s probes with a KEEPALIVE every second and treats the relay as dead
+  after three unanswered probes plus four smoothed round trips (0.5–2 s), so
+  it moves to another relay within seconds when one fails silently. An idle
+  session therefore exchanges one KEEPALIVE pair every 1.5 s; control frames
+  are rate limited per session (section 7), well above that.
 
 ### 5.3 Tickets during a session
 

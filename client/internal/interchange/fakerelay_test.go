@@ -39,6 +39,7 @@ type fakeRelay struct {
 	udp     *net.UDPConn
 	tls     net.Listener
 	ignoreU atomic.Bool // drop UDP INITs (UDP blocked)
+	mute    atomic.Bool // stop answering anything (a relay that died silently)
 	cookies atomic.Bool // demand mac2
 
 	mu        sync.Mutex
@@ -182,6 +183,9 @@ func (r *fakeRelay) serveTLS() {
 }
 
 func (r *fakeRelay) handle(frame []byte, from netip.AddrPort, send func([]byte), udp bool) {
+	if r.mute.Load() {
+		return
+	}
 	typ, err := mtrp.PeekType(frame)
 	if err != nil {
 		return

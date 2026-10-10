@@ -100,6 +100,12 @@ merge (2026-10-09) are kept below.
   packet filter digest, meshd's map state and cloud metadata parsing, and
   `hack/fuzz-long.sh` to run every fuzz target for a set time.
 
+- Relay failover within seconds (P7): a meshd relay session that hears
+  nothing for 1.5 s probes its relay every second and declares it dead after
+  three unanswered probes; the failure re-chooses the home relay at once,
+  and a failed home relay connection is replaced on the first observation
+  instead of after two missed refreshes (was up to about a minute).
+
 ### Removed
 
 - The legacy control protocol and the third-party protocol library it used

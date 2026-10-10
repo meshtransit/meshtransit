@@ -221,6 +221,9 @@ func TestHomeSelectorKeepsRecentlyActiveHomeWithoutSTUN(t *testing.T) {
 	}
 }
 
+// TestHomeSelectorFailsOverWhenCurrentRelayFails: a failed home relay
+// connection (the session already missed its probes) moves the home relay
+// on the first observation, without waiting for further misses.
 func TestHomeSelectorFailsOverWhenCurrentRelayFails(t *testing.T) {
 	t.Parallel()
 
@@ -233,24 +236,24 @@ func TestHomeSelectorFailsOverWhenCurrentRelayFails(t *testing.T) {
 		{RegionID: 1, Latency: 10 * time.Millisecond},
 		{RegionID: 2, Latency: 30 * time.Millisecond},
 	}
-	for round := 1; round <= missesBeforeRelayFailover; round++ {
-		observedAt := now.Add(time.Duration(round) * time.Second)
-		health := healthyRelaySnapshot(observedAt, 1, 2)
-		health.Regions = append(health.Regions, RegionHealth{
-			RegionID:            1,
-			LastFailure:         observedAt,
-			ConsecutiveFailures: 1,
-		})
-		result, err := selector.Observe(observedAt, samples, health)
-		if err != nil {
-			t.Fatalf("Observe() round %d error = %v", round, err)
-		}
-		if round == 1 && (result.RegionID != 1 || result.Changed) {
-			t.Fatalf("first failed-health Observe() = %#v", result)
-		}
-		if round == 2 && (result.RegionID != 2 || !result.Changed) {
-			t.Fatalf("second failed-health Observe() = %#v", result)
-		}
+	observedAt := now.Add(time.Second)
+	health := healthyRelaySnapshot(observedAt, 1, 2)
+	health.Regions = append(health.Regions, RegionHealth{
+		RegionID:            1,
+		LastFailure:         observedAt,
+		ConsecutiveFailures: 1,
+	})
+	result, err := selector.Observe(observedAt, samples, health)
+	if err != nil || result.RegionID != 2 || !result.Changed {
+		t.Fatalf("failed-health Observe() = %#v, %v", result, err)
+	}
+
+	// Once the old home relay is healthy and materially faster, it is
+	// chosen again.
+	later := observedAt.Add(time.Second)
+	result, err = selector.Observe(later, samples, healthyRelaySnapshot(later, 2, 1, 2))
+	if err != nil || result.RegionID != 1 || !result.Changed {
+		t.Fatalf("recovered Observe() = %#v, %v", result, err)
 	}
 }
 

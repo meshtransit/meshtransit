@@ -14,8 +14,18 @@ import (
 
 // Session behaviour (MTRP §5).
 const (
-	defaultKeepalive   = 25 * time.Second
-	livenessGrace      = 15 * time.Second
+	defaultKeepalive = 25 * time.Second
+	// A session that hears nothing for probeAfter sends a KEEPALIVE every
+	// probeEvery and is declared dead after three unanswered probes plus a
+	// round-trip allowance, so a relay that dies silently is replaced in
+	// seconds (production criterion: failover within 5 s). An idle session
+	// costs one probe and one answer every probeAfter.
+	probeAfter         = 1500 * time.Millisecond
+	probeEvery         = time.Second
+	probeTick          = 250 * time.Millisecond
+	minProbeAnswer     = 500 * time.Millisecond
+	maxProbeAnswer     = 2 * time.Second
+	probesBeforeDead   = 3
 	routeOpenTimeout   = 5 * time.Second
 	routeRefusalPause  = 2 * time.Second
 	maxPendingPackets  = 8
@@ -67,6 +77,8 @@ type Client struct {
 	nextRequest uint32
 	ticket      []byte
 	lastRecv    time.Time
+	probeSent   time.Time     // last unanswered KEEPALIVE, zero when answered
+	rtt         time.Duration // smoothed KEEPALIVE round trip
 	closed      bool
 	closeErr    error
 
@@ -253,8 +265,28 @@ func (c *Client) readLoop() {
 
 func (c *Client) touch() {
 	c.mu.Lock()
-	c.lastRecv = c.now()
+	now := c.now()
+	c.lastRecv = now
+	if !c.probeSent.IsZero() {
+		sample := now.Sub(c.probeSent)
+		if c.rtt == 0 {
+			c.rtt = sample
+		} else {
+			c.rtt = (7*c.rtt + sample) / 8
+		}
+		c.probeSent = time.Time{}
+	}
 	c.mu.Unlock()
+}
+
+// deadAfter is how long a session may hear nothing before its relay is
+// declared unresponsive: the silence before the first probe, the spacing of
+// the probes, and an allowance for the last probe's answer.
+func (c *Client) deadAfter() time.Duration {
+	c.mu.Lock()
+	answer := min(max(4*c.rtt, minProbeAnswer), maxProbeAnswer)
+	c.mu.Unlock()
+	return probeAfter + (probesBeforeDead-1)*probeEvery + answer
 }
 
 func (c *Client) handleData(frame []byte) {
@@ -366,31 +398,43 @@ func (c *Client) establish(request, route uint32, incoming *relay.Key) {
 	}
 }
 
-// tickLoop sends keepalives, notices a dead relay, and hands the relay a
-// renewed ticket when Core issues one.
+// tickLoop sends keepalives, probes a silent relay, notices a dead one, and
+// hands the relay a renewed ticket when Core issues one.
 func (c *Client) tickLoop() {
 	defer c.wg.Done()
 	_ = c.sendControl(mtrp.ControlMessage{Type: mtrp.ControlKeepalive}) // verifies the binding (§5.2)
-	keepalive := time.NewTicker(c.keepalive)
-	defer keepalive.Stop()
+	lastKeepalive := c.now()
+	ticker := time.NewTicker(probeTick)
+	defer ticker.Stop()
 	credentials := time.NewTicker(credentialInterval)
 	defer credentials.Stop()
 	for {
 		select {
 		case <-c.done:
 			return
-		case <-keepalive.C:
+		case <-ticker.C:
+			now := c.now()
 			c.mu.Lock()
-			silent := c.now().Sub(c.lastRecv)
+			silent := now.Sub(c.lastRecv)
 			c.mu.Unlock()
-			if silent > c.keepalive+livenessGrace {
+			if silent >= c.deadAfter() {
 				c.shutdown(ErrRelayUnresponsive)
 				return
 			}
+			sinceKeepalive := now.Sub(lastKeepalive)
+			if sinceKeepalive < c.keepalive && (silent < probeAfter || sinceKeepalive < probeEvery) {
+				continue
+			}
+			c.mu.Lock()
+			if c.probeSent.IsZero() {
+				c.probeSent = now
+			}
+			c.mu.Unlock()
 			if err := c.sendControl(mtrp.ControlMessage{Type: mtrp.ControlKeepalive}); err != nil {
 				c.shutdown(fmt.Errorf("interchange: keepalive: %w", err))
 				return
 			}
+			lastKeepalive = now
 		case <-credentials.C:
 			if !c.refreshTicket() {
 				return

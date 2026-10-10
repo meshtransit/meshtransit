@@ -104,7 +104,7 @@ const (
 	runtimeRetryReset     = 30 * time.Second
 	minEndpointRefresh    = 20 * time.Second
 	maxEndpointRefresh    = 26 * time.Second
-	relayPreparationPoll  = 5 * time.Second
+	relayPreparationPoll  = time.Second
 )
 
 // Status is the daemon-owned status model before it is mapped to a wire format.
@@ -237,6 +237,12 @@ type relayHealthDataPlane interface {
 
 type relayStatusDataPlane interface {
 	RelayHealth() relay.HealthSnapshot
+}
+
+// relayFailureDataPlane signals relay connection failures so the home relay
+// is re-chosen at once.
+type relayFailureDataPlane interface {
+	RelayFailures() <-chan struct{}
 }
 
 type peerPathStatusDataPlane interface {
@@ -1169,6 +1175,10 @@ func (s *Service) runEndpointRefresh(
 	if s.nat != nil {
 		natChanges = s.nat.changes
 	}
+	var relayFailures <-chan struct{}
+	if failing, ok := discoverer.(relayFailureDataPlane); ok {
+		relayFailures = failing.RelayFailures()
+	}
 	tracker := pathdiscovery.NewTracker()
 	homeSelector := relay.NewHomeSelector()
 	current := endpointRefreshRequest{}
@@ -1245,6 +1255,11 @@ func (s *Service) runEndpointRefresh(
 			timerChannel = nil
 		case <-cloudChanges:
 			// The cloud public addresses changed: publish them now.
+			stopRefreshTimer(timer)
+			timer = nil
+			timerChannel = nil
+		case <-relayFailures:
+			// A relay connection failed: re-choose the home relay now.
 			stopRefreshTimer(timer)
 			timer = nil
 			timerChannel = nil

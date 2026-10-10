@@ -223,9 +223,11 @@ func (s *HomeSelector) Observe(
 	currentRelayFailed := health.Available && currentHealthExists &&
 		currentHealth.ConsecutiveFailures > 0 && !regionHealthy(now, currentHealth)
 	switch {
-	case currentRelayFailed && currentObserved:
+	case currentRelayFailed:
+		// The home relay's own connection failed: that is evidence enough,
+		// so fail over at once instead of waiting for missed probes.
 		s.consecutiveMisses++
-		if s.consecutiveMisses >= missesBeforeRelayFailover && failoverTarget != 0 {
+		if failoverTarget != 0 {
 			candidateRegionID = failoverTarget
 		}
 	case !currentObserved:

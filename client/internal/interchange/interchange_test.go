@@ -273,6 +273,43 @@ func TestDiscoKeyChangeEndsSession(t *testing.T) {
 	t.Fatal("Receive kept succeeding after the disco key changed")
 }
 
+// TestSilentRelayIsDetectedWithinSeconds: an idle session probes its relay
+// once it has heard nothing for a moment, so a relay that dies without
+// closing anything is noticed in seconds, not after the 25 s keepalive.
+func TestSilentRelayIsDetectedWithinSeconds(t *testing.T) {
+	t.Parallel()
+	r := newFakeRelay(t)
+	a := dial(t, r, newCreds(t, r, key.NodePublic{0xa2}))
+	time.Sleep(3 * time.Second) // idle: probes keep the session alive
+	errs := make(chan error, 1)
+	go func() {
+		for {
+			if _, err := a.Receive(); err != nil {
+				errs <- err
+				return
+			}
+		}
+	}()
+	select {
+	case err := <-errs:
+		t.Fatalf("an answering relay was declared dead: %v", err)
+	default:
+	}
+	r.mute.Store(true)
+	muted := time.Now()
+	select {
+	case err := <-errs:
+		if !errors.Is(err, ErrRelayUnresponsive) {
+			t.Fatalf("error = %v, want ErrRelayUnresponsive", err)
+		}
+		if elapsed := time.Since(muted); elapsed > 5*time.Second {
+			t.Fatalf("silent relay noticed after %v", elapsed)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("silent relay never noticed")
+	}
+}
+
 func TestKeepaliveActivity(t *testing.T) {
 	t.Parallel()
 	r := newFakeRelay(t)
