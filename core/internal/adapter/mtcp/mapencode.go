@@ -184,7 +184,8 @@ func encodeConnectivity(device *mtcpv1.Device, connectivity mapsession.Connectiv
 		device.HomeRelay = uint32(relay) //nolint:gosec // region IDs are bounded
 	}
 	if !self {
-		device.Online = connectivity.Online()
+		online := connectivity.Online()
+		device.Online = &online
 	}
 	return nil
 }

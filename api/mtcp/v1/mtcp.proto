@@ -211,7 +211,7 @@ message Device {
   repeated Endpoint endpoints = 8;
   NatInfo nat = 9;
   uint32 home_relay = 10;
-  bool online = 11;
+  optional bool online = 11; // absent: Core has no connectivity for the Device
   int64 last_seen_ms = 12;
   int64 key_expiry_ms = 13;
   Owner owner = 14;

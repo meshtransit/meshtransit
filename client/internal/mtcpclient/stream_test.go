@@ -132,8 +132,10 @@ func TestStreamNetmapDeliversMapsAndReports(t *testing.T) {
 		self.DiscoKey = report.GetDiscoKey()
 		_ = s.send(sharedmtcp.MessageMapDelta, &mtcpv1.MapDelta{View: &mtcpv1.View{Epoch: 10, Seq: 2}, Self: self})
 		core.expect(s, sharedmtcp.MessageMapAck)
-		_ = s.send(sharedmtcp.MessageMapDelta, &mtcpv1.MapDelta{View: &mtcpv1.View{Epoch: 10, Seq: 3},
-			PeersRemove: []string{"peer-b"}})
+		_ = s.send(sharedmtcp.MessageMapDelta, &mtcpv1.MapDelta{
+			View:        &mtcpv1.View{Epoch: 10, Seq: 3},
+			PeersRemove: []string{"peer-b"},
+		})
 		core.expect(s, sharedmtcp.MessageMapAck)
 		<-deliveredDelta
 		// A gap asks for a resync; the answer is a new epoch.

@@ -1858,7 +1858,7 @@ type Device struct {
 	Endpoints       []*Endpoint            `protobuf:"bytes,8,rep,name=endpoints,proto3" json:"endpoints,omitempty"`
 	Nat             *NatInfo               `protobuf:"bytes,9,opt,name=nat,proto3" json:"nat,omitempty"`
 	HomeRelay       uint32                 `protobuf:"varint,10,opt,name=home_relay,json=homeRelay,proto3" json:"home_relay,omitempty"`
-	Online          bool                   `protobuf:"varint,11,opt,name=online,proto3" json:"online,omitempty"`
+	Online          *bool                  `protobuf:"varint,11,opt,name=online,proto3,oneof" json:"online,omitempty"`
 	LastSeenMs      int64                  `protobuf:"varint,12,opt,name=last_seen_ms,json=lastSeenMs,proto3" json:"last_seen_ms,omitempty"`
 	KeyExpiryMs     int64                  `protobuf:"varint,13,opt,name=key_expiry_ms,json=keyExpiryMs,proto3" json:"key_expiry_ms,omitempty"`
 	Owner           *Owner                 `protobuf:"bytes,14,opt,name=owner,proto3" json:"owner,omitempty"`
@@ -1969,8 +1969,8 @@ func (x *Device) GetHomeRelay() uint32 {
 }
 
 func (x *Device) GetOnline() bool {
-	if x != nil {
-		return x.Online
+	if x != nil && x.Online != nil {
+		return *x.Online
 	}
 	return false
 }
@@ -4500,7 +4500,7 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x06MapAck\x12-\n" +
 	"\x04view\x18\x01 \x01(\v2\x19.meshtransit.mtcp.v1.ViewR\x04view\":\n" +
 	"\tMapResync\x12-\n" +
-	"\x04view\x18\x01 \x01(\v2\x19.meshtransit.mtcp.v1.ViewR\x04view\"\xf1\x04\n" +
+	"\x04view\x18\x01 \x01(\v2\x19.meshtransit.mtcp.v1.ViewR\x04view\"\x81\x05\n" +
 	"\x06Device\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12!\n" +
@@ -4513,14 +4513,15 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x03nat\x18\t \x01(\v2\x1c.meshtransit.mtcp.v1.NatInfoR\x03nat\x12\x1d\n" +
 	"\n" +
 	"home_relay\x18\n" +
-	" \x01(\rR\thomeRelay\x12\x16\n" +
-	"\x06online\x18\v \x01(\bR\x06online\x12 \n" +
+	" \x01(\rR\thomeRelay\x12\x1b\n" +
+	"\x06online\x18\v \x01(\bH\x00R\x06online\x88\x01\x01\x12 \n" +
 	"\flast_seen_ms\x18\f \x01(\x03R\n" +
 	"lastSeenMs\x12\"\n" +
 	"\rkey_expiry_ms\x18\r \x01(\x03R\vkeyExpiryMs\x120\n" +
 	"\x05owner\x18\x0e \x01(\v2\x1a.meshtransit.mtcp.v1.OwnerR\x05owner\x12\"\n" +
 	"\fcapabilities\x18\x0f \x03(\tR\fcapabilities\x125\n" +
-	"\x05alias\x18\x10 \x01(\v2\x1f.meshtransit.mtcp.v1.AliasGrantR\x05alias\"\xdc\x02\n" +
+	"\x05alias\x18\x10 \x01(\v2\x1f.meshtransit.mtcp.v1.AliasGrantR\x05aliasB\t\n" +
+	"\a_online\"\xdc\x02\n" +
 	"\tPeerPatch\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12 \n" +
 	"\tdisco_key\x18\x02 \x01(\fH\x00R\bdiscoKey\x88\x01\x01\x12?\n" +
@@ -4911,6 +4912,7 @@ func file_mtcp_v1_mtcp_proto_init() {
 		(*RegisterResponse_Pending_)(nil),
 		(*RegisterResponse_Rejected_)(nil),
 	}
+	file_mtcp_v1_mtcp_proto_msgTypes[18].OneofWrappers = []any{}
 	file_mtcp_v1_mtcp_proto_msgTypes[19].OneofWrappers = []any{}
 	file_mtcp_v1_mtcp_proto_msgTypes[47].OneofWrappers = []any{
 		(*RegisterRequest_Auth_EnrollmentKey)(nil),

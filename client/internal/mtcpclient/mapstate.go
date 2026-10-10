@@ -146,7 +146,8 @@ func patchPeer(peer *mtcpv1.Device, patch *mtcpv1.PeerPatch) *mtcpv1.Device {
 		next.HomeRelay = patch.GetHomeRelay()
 	}
 	if patch.Online != nil {
-		next.Online = patch.GetOnline()
+		online := patch.GetOnline()
+		next.Online = &online
 	}
 	if patch.LastSeenMs != nil {
 		next.LastSeenMs = patch.GetLastSeenMs()
@@ -334,7 +335,9 @@ func convertDevice(device *mtcpv1.Device, self bool, now time.Time) (networkmap.
 		node.KeyExpiry = time.UnixMilli(expiry).UTC()
 		node.Expired = !node.KeyExpiry.After(now)
 	}
-	if !self {
+	if !self && device.Online != nil {
+		// Absent means Core has no connectivity for the peer: unknown, so the
+		// node still probes it.
 		node.OnlineKnown, node.Online = true, device.GetOnline()
 	}
 	if alias := device.GetAlias(); alias != nil {

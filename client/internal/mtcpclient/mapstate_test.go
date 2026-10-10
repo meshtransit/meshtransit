@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/networkmap"
@@ -20,7 +22,7 @@ func device(id string, seed byte, address string) *mtcpv1.Device {
 	return &mtcpv1.Device{
 		DeviceId: id, Name: id + ".", NodeKey: bytes.Repeat([]byte{seed}, 32),
 		DiscoKey: bytes.Repeat([]byte{seed + 100}, 32), Addresses: [][]byte{ip.AsSlice()},
-		KeyExpiryMs: time.Now().Add(24 * time.Hour).UnixMilli(), Online: true,
+		KeyExpiryMs: time.Now().Add(24 * time.Hour).UnixMilli(), Online: proto.Bool(true),
 	}
 }
 
@@ -75,6 +77,14 @@ func TestMapStateBuildsTheProductSnapshot(t *testing.T) {
 	if len(snapshot.Peers) != 2 || snapshot.Peers[0].StableID != "peer-a" || !snapshot.Peers[0].Online ||
 		snapshot.Peers[0].DiscoveryKey != "discokey:"+bytesHex(102) || nodeID("peer-a") == nodeID("peer-b") {
 		t.Fatalf("peers %+v", snapshot.Peers)
+	}
+	unknown := snapshotMessage(8)
+	unknown.Peers[1].Online = nil
+	if err := state.applySnapshot(unknown); err != nil {
+		t.Fatal(err)
+	}
+	if peers := build(t, state).Peers; peers[1].OnlineKnown || !peers[0].OnlineKnown {
+		t.Fatal("a peer without connectivity must be unknown, not offline")
 	}
 	if snapshot.DNS == nil || len(snapshot.DNS.Records) != 1 || snapshot.DNS.Records[0].Name != "laptop.example" {
 		t.Fatalf("dns %+v", snapshot.DNS)

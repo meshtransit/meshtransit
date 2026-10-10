@@ -445,7 +445,7 @@ removal of the same ID, makes the delta invalid (the node resyncs).
 | `endpoints` | Candidate UDP endpoints with their kind (disco v2 endpoint kinds) |
 | `nat` | The peer's last NAT classification (nat-classification §1) |
 | `home_relay` | Relay region ID the peer is reachable through |
-| `online`, `last_seen` | Presence, as known to Core |
+| `online`, `last_seen` | Presence, as known to Core; `online` is absent when Core has no connectivity for the Device (unknown, not offline: nodes still probe it) |
 | `key_expiry` | When the Device stops being valid without renewal |
 | `owner` | Opaque owner reference for display (no personal data beyond a display name) |
 | `capabilities` | Feature names the peer supports (section 13) |
