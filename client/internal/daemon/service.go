@@ -359,6 +359,7 @@ type endpointRefreshRequest struct {
 	socket           pathdiscovery.Socket
 	controlHomeRelay int
 	usableRelays     []int
+	preferredRelays  []int
 	servers          []pathdiscovery.RelayServer
 }
 
@@ -1087,8 +1088,21 @@ func endpointRequest(
 		socket:           socket,
 		controlHomeRelay: snapshot.Self.HomeRelay,
 		usableRelays:     usableRelayRegionIDs(snapshot.Relays),
+		preferredRelays:  preferredRelayRegionIDs(snapshot.Relays),
 		servers:          append([]pathdiscovery.RelayServer(nil), servers...),
 	}, nil
+}
+
+// preferredRelayRegionIDs lists the Private Interchange regions.
+func preferredRelayRegionIDs(regions map[int]networkmap.RelayRegion) []int {
+	var regionIDs []int
+	for regionID, region := range regions {
+		if region.Preferred && region.ID == regionID {
+			regionIDs = append(regionIDs, regionID)
+		}
+	}
+	slices.Sort(regionIDs)
+	return regionIDs
 }
 
 func (r endpointRefreshRequest) equal(other endpointRefreshRequest) bool {
@@ -1096,6 +1110,7 @@ func (r endpointRefreshRequest) equal(other endpointRefreshRequest) bool {
 		r.socket == other.socket &&
 		r.controlHomeRelay == other.controlHomeRelay &&
 		slices.Equal(r.usableRelays, other.usableRelays) &&
+		slices.Equal(r.preferredRelays, other.preferredRelays) &&
 		slices.Equal(r.servers, other.servers)
 }
 
@@ -1270,6 +1285,7 @@ func (s *Service) runEndpointRefresh(
 
 			continue
 		}
+		homeSelector.SetPreferred(current.preferredRelays)
 		selection, err := homeSelector.Reconcile(
 			current.controlHomeRelay,
 			current.usableRelays,

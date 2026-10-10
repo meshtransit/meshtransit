@@ -92,6 +92,9 @@ type RelayRegion struct {
 	Code  string
 	Name  string
 	Nodes []RelayNode
+	// Preferred marks a Private Interchange region: the home relay while it
+	// is reachable (mtrp-v1 §8).
+	Preferred bool
 }
 
 // RelayNode describes one relay endpoint without test-only transport knobs.

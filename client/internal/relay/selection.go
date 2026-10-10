@@ -42,6 +42,7 @@ type latencyState struct {
 // is intentionally not safe for concurrent use.
 type HomeSelector struct {
 	usable            map[int]struct{}
+	preferred         map[int]struct{} // Private Interchange regions
 	latencies         map[int]latencyState
 	current           int
 	lastControl       int
@@ -58,9 +59,39 @@ func NewHomeSelector() *HomeSelector {
 	}
 }
 
+// SetPreferred names the Private Interchange regions of the signed topology.
+// A usable preferred region is the home relay before any shared region, and
+// a faster shared region never replaces it; only failover does.
+func (s *HomeSelector) SetPreferred(regions []int) {
+	if s == nil {
+		return
+	}
+	s.preferred = make(map[int]struct{}, len(regions))
+	for _, regionID := range regions {
+		s.preferred[regionID] = struct{}{}
+	}
+}
+
+func (s *HomeSelector) isPreferred(regionID int) bool {
+	_, preferred := s.preferred[regionID]
+	return preferred
+}
+
+// lowestPreferred returns the lowest usable preferred region, or 0.
+func (s *HomeSelector) lowestPreferred(ordered []int) int {
+	for _, regionID := range ordered {
+		if s.isPreferred(regionID) {
+			return regionID
+		}
+	}
+	return 0
+}
+
 // Reconcile applies the latest signed topology. A newly changed usable
 // control preference is authoritative; otherwise an existing usable choice is
-// retained. The lowest usable region is the deterministic cold-start fallback.
+// retained. A usable preferred (Private Interchange) region replaces a shared
+// one. The lowest usable region, preferred first, is the deterministic
+// cold-start fallback.
 func (s *HomeSelector) Reconcile(
 	controlPreferred int,
 	usableRegions []int,
@@ -94,6 +125,10 @@ func (s *HomeSelector) Reconcile(
 		if len(ordered) != 0 {
 			s.current = ordered[0]
 		}
+		s.consecutiveMisses = 0
+	}
+	if preferred := s.lowestPreferred(ordered); preferred != 0 && !s.isPreferred(s.current) {
+		s.current = preferred
 		s.consecutiveMisses = 0
 	}
 
@@ -170,6 +205,18 @@ func (s *HomeSelector) Observe(
 			bestAlternative = regionID
 		}
 	}
+	// On failover a preferred alternative wins over a faster shared one.
+	bestPreferred := 0
+	for regionID := range s.latencies {
+		if regionID != s.current && s.isPreferred(regionID) &&
+			(bestPreferred == 0 || s.better(regionID, bestPreferred)) {
+			bestPreferred = regionID
+		}
+	}
+	failoverTarget := bestAlternative
+	if bestPreferred != 0 {
+		failoverTarget = bestPreferred
+	}
 	preparationRegionID := 0
 	candidateRegionID := 0
 	currentHealth, currentHealthExists := healthByRegion[s.current]
@@ -178,21 +225,26 @@ func (s *HomeSelector) Observe(
 	switch {
 	case currentRelayFailed && currentObserved:
 		s.consecutiveMisses++
-		if s.consecutiveMisses >= missesBeforeRelayFailover && bestAlternative != 0 {
-			candidateRegionID = bestAlternative
+		if s.consecutiveMisses >= missesBeforeRelayFailover && failoverTarget != 0 {
+			candidateRegionID = failoverTarget
 		}
 	case !currentObserved:
 		if regionHealthy(now, healthByRegion[s.current]) {
 			s.consecutiveMisses = 0
 		} else {
 			s.consecutiveMisses++
-			if s.consecutiveMisses >= missesBeforeRelayFailover && bestAlternative != 0 {
-				candidateRegionID = bestAlternative
+			if s.consecutiveMisses >= missesBeforeRelayFailover && failoverTarget != 0 {
+				candidateRegionID = failoverTarget
 			}
 		}
+	case !s.isPreferred(s.current) && bestPreferred != 0:
+		// A reachable preferred region replaces a shared home.
+		s.consecutiveMisses = 0
+		candidateRegionID = bestPreferred
 	default:
 		s.consecutiveMisses = 0
-		if bestAlternative != 0 && s.materiallyBetter(bestAlternative, s.current) {
+		if bestAlternative != 0 && s.materiallyBetter(bestAlternative, s.current) &&
+			(!s.isPreferred(s.current) || s.isPreferred(bestAlternative)) {
 			candidateRegionID = bestAlternative
 		}
 	}

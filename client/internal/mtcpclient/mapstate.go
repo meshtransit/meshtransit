@@ -255,7 +255,7 @@ func (state *mapState) interchange(now time.Time) (*networkmap.Interchange, map[
 	}
 	regions := make(map[int]networkmap.RelayRegion, len(relayMap.Regions))
 	for _, r := range relayMap.Regions {
-		region := networkmap.RelayRegion{ID: int(r.ID), Code: r.Code, Name: r.Name}
+		region := networkmap.RelayRegion{ID: int(r.ID), Code: r.Code, Name: r.Name, Preferred: r.Preferred}
 		for _, n := range r.Nodes {
 			relay := networkmap.RelayNode{
 				Name: n.Name, HostName: n.HostName, STUNPort: int(n.STUNPort),

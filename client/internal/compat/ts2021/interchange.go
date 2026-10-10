@@ -82,7 +82,7 @@ func (grant *interchangeGrant) equal(other *interchangeGrant) bool {
 func (grant *interchangeGrant) snapshot() (*networkmap.Interchange, map[int]networkmap.RelayRegion) {
 	regions := make(map[int]networkmap.RelayRegion, len(grant.relayMap.Regions))
 	for _, r := range grant.relayMap.Regions {
-		region := networkmap.RelayRegion{ID: int(r.ID), Code: r.Code, Name: r.Name}
+		region := networkmap.RelayRegion{ID: int(r.ID), Code: r.Code, Name: r.Name, Preferred: r.Preferred}
 		for _, n := range r.Nodes {
 			node := networkmap.RelayNode{
 				Name: n.Name, HostName: n.HostName,

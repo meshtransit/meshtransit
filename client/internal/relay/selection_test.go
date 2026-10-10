@@ -363,3 +363,52 @@ func TestHomeSelectorReset(t *testing.T) {
 		t.Fatalf("Reset() = %#v", result)
 	}
 }
+
+// TestHomeSelectorPrefersPrivateInterchange: a usable preferred region is
+// the home relay at once, a faster shared region does not take over, and
+// only a failing preferred home fails over to a shared one.
+func TestHomeSelectorPrefersPrivateInterchange(t *testing.T) {
+	t.Parallel()
+
+	selector := NewHomeSelector()
+	selector.SetPreferred([]int{1000})
+	now := time.Now()
+	result, err := selector.Reconcile(1, []int{1, 1000})
+	if err != nil || result.RegionID != 1000 {
+		t.Fatalf("cold start Reconcile() = %#v, %v", result, err)
+	}
+	result, err = selector.Observe(now, []RegionLatency{
+		{RegionID: 1, Latency: 5 * time.Millisecond},
+		{RegionID: 1000, Latency: 80 * time.Millisecond},
+	}, healthyRelaySnapshot(now, 1000, 1, 1000))
+	if err != nil || result.RegionID != 1000 || result.Changed {
+		t.Fatalf("a faster shared region took over: %#v, %v", result, err)
+	}
+	// Two rounds without the preferred home fail over to the shared one.
+	for round := 1; round <= 2; round++ {
+		at := now.Add(time.Duration(round) * time.Second)
+		result, err = selector.Observe(at, []RegionLatency{{RegionID: 1, Latency: 5 * time.Millisecond}},
+			healthyRelaySnapshot(at, 1000, 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if result.RegionID != 1 {
+		t.Fatalf("no failover from an unreachable preferred home: %#v", result)
+	}
+	// When the preferred region answers again it becomes home again.
+	at := now.Add(3 * time.Second)
+	result, err = selector.Observe(at, []RegionLatency{
+		{RegionID: 1, Latency: 5 * time.Millisecond},
+		{RegionID: 1000, Latency: 80 * time.Millisecond},
+	}, healthyRelaySnapshot(at, 1, 1, 1000))
+	if err != nil || result.RegionID != 1000 || !result.Changed {
+		t.Fatalf("the preferred region did not come back: %#v, %v", result, err)
+	}
+
+	// Without preferred regions the shared behaviour is unchanged.
+	plain := NewHomeSelector()
+	if result, err := plain.Reconcile(0, []int{1, 1000}); err != nil || result.RegionID != 1 {
+		t.Fatalf("plain cold start = %#v, %v", result, err)
+	}
+}
