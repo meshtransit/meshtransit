@@ -493,8 +493,17 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", storeErr)
 				return 1
 			}
-			server, metrics, mtcpErr := composeMTCP(*processConfig.Control, mapStreamService, mapSessionService,
-				timestamps, logger)
+			logout, logoutErr := composeDeviceLogout(processConfig.Control.Map, storagePools.runtime)
+			if logoutErr != nil {
+				logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", logoutErr)
+				return 1
+			}
+			deps := mtcpDependencies{streams: mapStreamService, sessions: mapSessionService,
+				registrations: registrationService, logout: logout, guard: timestamps, logger: logger}
+			if len(browserControl) == 1 {
+				deps.browser, deps.origin = &browserControl[0], processConfig.BrowserRegistration.Origin
+			}
+			server, metrics, mtcpErr := composeMTCP(*processConfig.Control, deps)
 			if mtcpErr != nil {
 				logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", mtcpErr)
 				return 1

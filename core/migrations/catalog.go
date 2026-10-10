@@ -504,6 +504,7 @@ func Catalog() []Migration {
 		newMigration(135, "Relay revocation read", relayRevocationsReadSQL),
 		newMigration(136, "Device enforcement ledger and history read", deviceEnforcementLedgerSQL),
 		newMigration(137, "MTCP machine timestamps", mtcpMachineTimestampSQL),
+		newMigration(138, "Device logout", deviceLogoutSQL),
 	}
 }
 
@@ -694,3 +695,6 @@ var deviceEnforcementLedgerSQL string
 
 //go:embed 000137_mtcp_machine_timestamp.up.sql
 var mtcpMachineTimestampSQL string
+
+//go:embed 000138_device_logout.up.sql
+var deviceLogoutSQL string

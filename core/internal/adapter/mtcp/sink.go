@@ -40,6 +40,7 @@ type mapSink struct {
 	keyNonce   []byte
 	ticket     []byte
 	relayMap   []byte
+	authorized bool // a registration awaits its RegisterResponse
 }
 
 func newMapSink(session *Session, aliases bool, controlKeys []ControlKey, now func() time.Time) *mapSink {
@@ -66,6 +67,12 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 	if err != nil {
 		return err
 	}
+	if sink.authorized {
+		if err := sink.session.Send(sharedmtcp.MessageRegisterResponse, authorizedResponse(snapshot)); err != nil {
+			return err
+		}
+		sink.authorized = false
+	}
 	if err := sink.sendKeysLocked(grant); err != nil {
 		return err
 	}
@@ -80,6 +87,28 @@ func (sink *mapSink) sendSnapshotLocked(_ context.Context, snapshot mapsession.S
 	sink.epoch, sink.seq, sink.acked = epoch, 1, 0
 	sink.adoptLocked(snapshot, grant)
 	return sink.sendTicketLocked(grant)
+}
+
+// announce makes the next snapshot start with RegisterResponse{authorized}:
+// the first map of a new registration carries the facts the response
+// reports (mtcp-v1 §6.2).
+func (sink *mapSink) announce() {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	sink.authorized = true
+}
+
+func authorizedResponse(snapshot mapsession.Snapshot) *mtcpv1.RegisterResponse {
+	authorized := &mtcpv1.RegisterResponse_Authorized{
+		DeviceId: snapshot.NodeID().String(), NetworkId: snapshot.Scope().NetworkID().String(),
+	}
+	for _, prefix := range snapshot.Addresses() {
+		authorized.Addresses = append(authorized.Addresses, prefix.Addr().AsSlice())
+	}
+	if expiry := snapshot.KeyExpiry(); !expiry.IsZero() {
+		authorized.KeyExpiryMs = expiry.UnixMilli()
+	}
+	return &mtcpv1.RegisterResponse{Outcome: &mtcpv1.RegisterResponse_Authorized_{Authorized: authorized}}
 }
 
 // SendAuthorityDelta sends the change to the next Network revision.

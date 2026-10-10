@@ -364,7 +364,7 @@ func (server *Server) handshake(parent context.Context, transport recordConn, pe
 		fail("rejected")
 		return
 	}
-	session := newSession(server, transport, noise, init.Machine(), hello, reply)
+	session := newSession(server, transport, noise, pending.control.Private, init.Machine(), hello, reply)
 	server.options.Metrics.handshake("responded")
 	session.run(parent, started.Add(handshakeDeadline), pending.releaseSource)
 }

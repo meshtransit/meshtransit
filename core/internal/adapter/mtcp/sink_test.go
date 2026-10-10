@@ -113,7 +113,7 @@ func testSession(t *testing.T) (*Session, *nodeView, key.ControlPrivate) {
 		t.Fatal(err)
 	}
 	transport := &pipeTransport{signal: make(chan struct{}, 1)}
-	session := newSession(owner, transport, coreNoise, server.Machine(), server.Hello(), reply)
+	session := newSession(owner, transport, coreNoise, control, server.Machine(), server.Hello(), reply)
 	return session, &nodeView{t: t, transport: transport, noise: nodeNoise,
 		asm: sharedmtcp.NewAssembler(sharedmtcp.CoreToNode)}, control
 }

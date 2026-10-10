@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/netip"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -13,6 +14,7 @@ import (
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/shared/key"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 	"meshtransit.net/shared/policydigest"
 )
@@ -37,30 +39,62 @@ type EndpointObserver interface {
 		preferredRelay int, hasPreferredRelay bool) error
 }
 
-// Application turns established sessions into map streams. Registration
-// over MTCP comes in a later step; until then an unregistered node waits.
+// Snapshots opens the authoritative snapshot of a machine and node key
+// (mapsession.Service). A successful open proves the node key is the
+// Device's current key.
+type Snapshots interface {
+	Open(ctx context.Context, machine control.AuthenticatedMachine, request mapsession.Request) (mapsession.Snapshot, error)
+}
+
+// ApplicationOptions configures an Application. Registration fields may be
+// nil: requests they would serve are answered UNSUPPORTED.
+type ApplicationOptions struct {
+	Streams     MapStreams
+	Endpoints   EndpointObserver
+	Snapshots   Snapshots
+	ControlKeys []ControlKey
+	Logger      *slog.Logger
+
+	Registrations   Registrations
+	RegistrationIDs RegistrationIDs
+	BrowserIssuer   BrowserIssuer
+	BrowserApproval BrowserApproval
+	Logout          DeviceLogout
+	// ApprovalOrigin is the https origin of approval URLs; ApprovalTTL is
+	// how long an approval stays open.
+	ApprovalOrigin string
+	ApprovalTTL    time.Duration
+}
+
+// Application turns established sessions into registrations and map
+// streams.
 type Application struct {
-	streams     MapStreams
-	endpoints   EndpointObserver
-	controlKeys []ControlKey
-	logger      *slog.Logger
-	now         func() time.Time
+	options ApplicationOptions
+	now     func() time.Time
+	poll    time.Duration // how often a pending approval is checked
 }
 
 // NewApplication validates its dependencies.
-func NewApplication(streams MapStreams, endpoints EndpointObserver, controlKeys []ControlKey,
-	logger *slog.Logger) (*Application, error) {
-	if streams == nil || endpoints == nil || len(controlKeys) == 0 || logger == nil {
+func NewApplication(options ApplicationOptions) (*Application, error) {
+	if options.Streams == nil || options.Endpoints == nil || options.Snapshots == nil ||
+		len(options.ControlKeys) == 0 || options.Logger == nil ||
+		(options.Registrations != nil) != (options.RegistrationIDs != nil) ||
+		(options.BrowserIssuer != nil) != (options.BrowserApproval != nil) {
 		return nil, ErrInvalidServer
 	}
-	return &Application{streams: streams, endpoints: endpoints, controlKeys: controlKeys, logger: logger,
-		now: time.Now}, nil
+	if options.BrowserIssuer != nil && (options.ApprovalOrigin == "" || options.ApprovalTTL <= 0 ||
+		options.ApprovalTTL > maxApprovalTTL) {
+		return nil, ErrInvalidServer
+	}
+	return &Application{options: options, now: time.Now, poll: approvalPollInterval}, nil
 }
 
 // Open implements SessionHandler.
 func (application *Application) Open(session *Session) Conversation {
 	return &conversation{application: application, session: session,
-		sink: newMapSink(session, session.Supports("device-alias.v1"), application.controlKeys, application.now)}
+		sink: newMapSink(session, session.Supports("device-alias.v1"), application.options.ControlKeys,
+			application.now),
+		wake: make(chan struct{}, 1), approvals: make(chan approval, 1)}
 }
 
 type conversation struct {
@@ -69,36 +103,135 @@ type conversation struct {
 	sink        *mapSink
 
 	lastEndpoints time.Time // when the last EndpointReport was accepted; Receive is serial
+
+	mu         sync.Mutex
+	nodeKey    node.Key // the key the map stream serves; zero until known
+	hostname   node.Hostname
+	generation uint64             // advances with every authorization
+	restart    context.CancelFunc // ends the running stream when the key changes
+
+	wake      chan struct{} // the node key changed
+	approvals chan approval // the latest pending browser approval
 }
 
-// Run serves the map stream of a registered node and maps how it ended to
-// a Lifecycle message (mtcp-v1 §10).
+// Run serves the map stream of the node key the session currently has: the
+// ClientHello's, or the one a registration or rotation authorized. A
+// stream that ends because the Device is not authorized leaves the session
+// open for a new registration (mtcp-v1 §5, §10).
 func (conversation *conversation) Run(ctx context.Context) error {
-	nodeKey := conversation.session.Hello().GetNodeKey()
-	if len(nodeKey) == 0 {
-		<-ctx.Done() // registration over MTCP is not served yet
-		return nil
+	if conversation.session.OpenedBy() != sharedmtcp.MessageRegisterRequest {
+		if hello := conversation.session.Hello().GetNodeKey(); len(hello) == key.Size {
+			conversation.mu.Lock()
+			conversation.nodeKey = node.Key(hello)
+			conversation.mu.Unlock()
+		}
 	}
+	approvalsDone := make(chan struct{})
+	approvalCtx, stopApprovals := context.WithCancel(ctx)
+	go func() {
+		defer close(approvalsDone)
+		conversation.awaitApprovals(approvalCtx)
+	}()
+	defer func() {
+		stopApprovals()
+		<-approvalsDone
+	}()
+	for {
+		nodeKey, generation, streamCtx, cancel := conversation.startStream(ctx)
+		if nodeKey.IsValid() {
+			err := conversation.serve(streamCtx, nodeKey)
+			cancel()
+			if ctx.Err() != nil {
+				return nil
+			}
+			if conversation.currentGeneration() != generation {
+				continue // a registration or rotation restarted the stream
+			}
+			if lifecycle := lifecycleFor(err); lifecycle != nil {
+				_ = conversation.session.Send(sharedmtcp.MessageLifecycle, lifecycle)
+			}
+			if !needsRegistration(err) {
+				return err
+			}
+			conversation.clearKey(nodeKey)
+		} else {
+			cancel()
+		}
+		select {
+		case <-conversation.wake:
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
+func (conversation *conversation) startStream(ctx context.Context) (node.Key, uint64, context.Context,
+	context.CancelFunc) {
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
+	streamCtx, cancel := context.WithCancel(ctx)
+	conversation.restart = cancel
+	return conversation.nodeKey, conversation.generation, streamCtx, cancel
+}
+
+func (conversation *conversation) currentGeneration() uint64 {
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
+	return conversation.generation
+}
+
+func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key) error {
 	machine, err := control.NewAuthenticatedMachine(node.MachineKey(conversation.session.Machine()))
 	if err != nil {
 		return err
 	}
-	request, err := mapsession.NewRequest(node.Key(nodeKey), requestCapabilityVersion)
+	request, err := mapsession.NewRequest(nodeKey, requestCapabilityVersion)
 	if err == nil && conversation.session.Supports("device-alias.v1") {
 		request, err = request.WithDeviceAliasVersion(1)
 	}
 	if err != nil {
-		return Violation(mtcpv1.Error_INVALID, "invalid node key")
+		return mapsession.ErrUnauthorized
 	}
-	err = conversation.application.streams.Serve(ctx, machine, request, conversation.sink)
-	if ctx.Err() != nil {
-		return nil
+	return conversation.application.options.Streams.Serve(ctx, machine, request, conversation.sink)
+}
+
+func (conversation *conversation) currentKey() node.Key {
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
+	return conversation.nodeKey
+}
+
+func (conversation *conversation) clearKey(nodeKey node.Key) {
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
+	if conversation.nodeKey == nodeKey {
+		conversation.nodeKey = node.Key{}
 	}
-	lifecycle := lifecycleFor(err)
-	if lifecycle != nil {
-		_ = conversation.session.Send(sharedmtcp.MessageLifecycle, lifecycle)
+}
+
+// authorize switches the session to an authorized node key: the running
+// stream ends and the next one starts with RegisterResponse{authorized}.
+func (conversation *conversation) authorize(nodeKey node.Key, hostname node.Hostname, announce bool) {
+	if announce {
+		conversation.sink.announce()
 	}
-	return err
+	conversation.mu.Lock()
+	conversation.nodeKey, conversation.hostname = nodeKey, hostname
+	conversation.generation++
+	if conversation.restart != nil {
+		conversation.restart()
+	}
+	conversation.mu.Unlock()
+	select {
+	case conversation.wake <- struct{}{}:
+	default:
+	}
+}
+
+// needsRegistration reports a stream end the node can repair on the same
+// session by registering.
+func needsRegistration(err error) bool {
+	return errors.Is(err, mapsession.ErrUnauthorized) || errors.Is(err, mapsession.ErrAuthorizationExpired)
 }
 
 // lifecycleFor maps how a map stream ended. Core never tells a node to erase
@@ -134,9 +267,12 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 		return conversation.endpoints(ctx, m)
 	case *mtcpv1.HostinfoReport, *mtcpv1.HealthReport, *mtcpv1.PathStatsReport:
 		// Accepted; Console views for these come later (P4f).
-	case *mtcpv1.RegisterRequest, *mtcpv1.RotateNodeKey, *mtcpv1.Logout:
-		_ = conversation.session.Send(sharedmtcp.MessageError, &mtcpv1.Error{Code: mtcpv1.Error_UNSUPPORTED,
-			Message: "registration over MTCP is not available yet"})
+	case *mtcpv1.RegisterRequest:
+		return conversation.register(ctx, m)
+	case *mtcpv1.RotateNodeKey:
+		return conversation.rotate(ctx, m)
+	case *mtcpv1.Logout:
+		return conversation.logout(ctx)
 	default:
 		return Violation(mtcpv1.Error_INVALID, "unexpected message")
 	}
@@ -144,8 +280,8 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 }
 
 func (conversation *conversation) enforcement(ctx context.Context, report *mtcpv1.EnforcementReport) {
-	nodeKey := conversation.session.Hello().GetNodeKey()
-	if len(nodeKey) != 32 || len(report.GetDigest()) != 32 || report.GetAppliedMs() <= 0 {
+	nodeKey := conversation.currentKey()
+	if !nodeKey.IsValid() || len(report.GetDigest()) != 32 || report.GetAppliedMs() <= 0 {
 		return
 	}
 	filter, err := mapsession.NewFilterDigest(policydigest.Digest(report.GetDigest()), int(report.GetGrants()))
@@ -156,10 +292,10 @@ func (conversation *conversation) enforcement(ctx context.Context, report *mtcpv
 	if err != nil {
 		return
 	}
-	if err := conversation.application.streams.ReportEnforcement(ctx, machine, mapsession.ClientEnforcement{
-		NodeKey: node.Key(nodeKey), Filter: filter, AppliedAt: time.UnixMilli(report.GetAppliedMs()),
+	if err := conversation.application.options.Streams.ReportEnforcement(ctx, machine, mapsession.ClientEnforcement{
+		NodeKey: nodeKey, Filter: filter, AppliedAt: time.UnixMilli(report.GetAppliedMs()),
 	}); err != nil {
-		conversation.application.logger.DebugContext(ctx, "mtcp enforcement report not stored", "error", err)
+		conversation.application.options.Logger.DebugContext(ctx, "mtcp enforcement report not stored", "error", err)
 	}
 }
 
@@ -209,8 +345,8 @@ func (conversation *conversation) endpoints(ctx context.Context, report *mtcpv1.
 	}
 	conversation.lastEndpoints = now
 	relay := int(report.GetPreferredRelay())
-	if err := conversation.application.endpoints.ObserveSessionEndpoints(ctx, snapshot, set, relay, true); err != nil {
-		conversation.application.logger.DebugContext(ctx, "mtcp endpoint report not stored", "error", err)
+	if err := conversation.application.options.Endpoints.ObserveSessionEndpoints(ctx, snapshot, set, relay, true); err != nil {
+		conversation.application.options.Logger.DebugContext(ctx, "mtcp endpoint report not stored", "error", err)
 	}
 	return nil
 }

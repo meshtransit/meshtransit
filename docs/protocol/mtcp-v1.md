@@ -301,10 +301,13 @@ MUST reject a request whose proofs do not verify (`INVALID`).
   (≤ 10 minutes). The session stays open; when the user approves, Core sends a
   second `RegisterResponse{authorized}` on it. If the session drops, the node
   reconnects and repeats the request with `auth.interactive.resume_handle`; it
-  never polls. The pending approval is bound to the requesting machine key
-  and node key: a resume handle presented by any other machine key, or with
-  other keys, is rejected, and knowing the approval URL is never enough to
-  obtain the authorization. The approval page shows the hostname and the
+  never polls. The pending approval is bound to the requesting machine key,
+  node key and hostname: a resume handle presented by any other machine key,
+  or with other keys, is rejected (`EXPIRED`), and knowing the approval URL
+  is never enough to obtain the authorization. The handle is opaque to the
+  node; Core MAY use the URL token itself, since completing the approval also
+  requires the session's machine key and node key. A pending approval that
+  expires is answered with `rejected{EXPIRED}`. The approval page shows the hostname and the
   machine key fingerprint so the approver can recognise the device.
 - `rejected`: a code (`INVALID`, `CREDENTIAL_INVALID`, `CREDENTIAL_EXHAUSTED`,
   `NOT_PERMITTED`, `CONFLICT`, `EXPIRED`) and a human-readable message that
@@ -313,10 +316,12 @@ MUST reject a request whose proofs do not verify (`INVALID`).
 The browser flow lets the user choose the Workspace and Network; Core never
 selects one on the user's behalf.
 
-`auth.resume` is accepted only while the Device has not expired, or when the
-Network policy explicitly enables automatic renewal for it; otherwise Core
-answers `rejected{EXPIRED}` and the node must use the interactive flow. A
-stolen machine key alone therefore cannot keep an expired Device alive.
+`auth.resume` is accepted only when the Network policy explicitly enables
+automatic renewal for the Device, and only while it has not expired;
+otherwise Core answers `rejected{EXPIRED}` and the node must use the
+interactive flow. A stolen machine key alone therefore cannot keep a Device
+alive past the expiry a person approved. (No policy enables renewal yet, so
+Core currently always answers `EXPIRED`.)
 
 ### 6.3 Node key rotation
 
@@ -351,8 +356,12 @@ failure.
 ### 6.5 Logout
 
 `Logout{}` asks Core to deauthorize the Device (the node is being removed or
-the user signed out). Core marks the Device logged out, removes it from peers'
-maps, sends `Lifecycle{state: LOGGED_OUT}` and closes. A Network policy MAY
+the user signed out). Core revokes the Device and its current keys, removes
+it from peers' maps, records `device.logged_out` with the Device's owner as
+the actor, sends `Lifecycle{state: LOGGED_OUT}` and closes. Only a session
+whose machine key and node key are the Device's current keys can log it
+out; otherwise Core answers `Error{code: NOT_AUTHORIZED}`. The Device must
+enroll again. A Network policy MAY
 forbid self-logout for managed Devices; Core then answers
 `Error{code: NOT_PERMITTED}`.
 

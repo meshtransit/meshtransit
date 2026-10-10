@@ -13,6 +13,7 @@ import (
 	mtcpadapter "meshtransit.net/core/internal/adapter/mtcp"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/enrollment/registration"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/platform/config"
 	sharedmtcp "meshtransit.net/shared/mtcp"
@@ -37,6 +38,31 @@ func (mtcpEndpointsFixture) ObserveSessionEndpoints(context.Context, mapsession.
 	return nil
 }
 
+func (mtcpEndpointsFixture) Open(context.Context, control.AuthenticatedMachine, mapsession.Request) (
+	mapsession.Snapshot, error) {
+	return mapsession.Snapshot{}, mapsession.ErrUnauthorized
+}
+
+type mtcpRegistrationsFixture struct{}
+
+func (mtcpRegistrationsFixture) Register(context.Context, control.AuthenticatedMachine,
+	control.RegistrationRequest) (registration.Result, error) {
+	return registration.Result{}, errors.New("unused")
+}
+
+type mtcpLogoutFixture struct{}
+
+func (mtcpLogoutFixture) Logout(context.Context, control.AuthenticatedMachine, node.Key) (control.DeviceLogout,
+	error) {
+	return control.DeviceLogout{}, control.ErrDeviceLogoutNotFound
+}
+
+func mtcpDependenciesFixture() mtcpDependencies {
+	return mtcpDependencies{streams: mtcpStreamsFixture{}, sessions: mtcpEndpointsFixture{},
+		registrations: mtcpRegistrationsFixture{}, logout: mtcpLogoutFixture{}, guard: mtcpGuardFixture{},
+		logger: discardCompositionLogger()}
+}
+
 type mtcpGuardFixture struct{}
 
 func (mtcpGuardFixture) AcceptTimestamp(context.Context, [32]byte, []byte, int64) (bool, error) {
@@ -47,16 +73,14 @@ func TestComposeMTCP(t *testing.T) {
 	t.Parallel()
 
 	controlConfig, _ := controlConfigFixture(t)
-	server, metrics, err := composeMTCP(controlConfig, mtcpStreamsFixture{}, mtcpEndpointsFixture{},
-		mtcpGuardFixture{}, discardCompositionLogger())
+	server, metrics, err := composeMTCP(controlConfig, mtcpDependenciesFixture())
 	if err != nil || server != nil || metrics != nil {
 		t.Fatalf("MTCP off: %v %v %v", server, metrics, err)
 	}
 
 	notAfter := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
 	controlConfig.MTCP = &config.ControlMTCPConfig{KeyNotAfter: notAfter}
-	server, metrics, err = composeMTCP(controlConfig, mtcpStreamsFixture{}, mtcpEndpointsFixture{},
-		mtcpGuardFixture{}, discardCompositionLogger())
+	server, metrics, err = composeMTCP(controlConfig, mtcpDependenciesFixture())
 	if err != nil || server == nil || len(metrics.Collectors()) == 0 {
 		t.Fatalf("composeMTCP() = %v, %v", server, err)
 	}
@@ -77,9 +101,15 @@ func TestComposeMTCP(t *testing.T) {
 		t.Fatalf("key document %d %s", recorder.Code, recorder.Body.String())
 	}
 
-	if _, _, err := composeMTCP(controlConfig, nil, mtcpEndpointsFixture{}, mtcpGuardFixture{},
-		discardCompositionLogger()); !errors.Is(err, errInvalidMTCPComposition) {
+	missing := mtcpDependenciesFixture()
+	missing.streams = nil
+	if _, _, err := composeMTCP(controlConfig, missing); !errors.Is(err, errInvalidMTCPComposition) {
 		t.Fatalf("missing streams: %v", err)
+	}
+	browserWithoutOrigin := mtcpDependenciesFixture()
+	browserWithoutOrigin.browser = &browserControlServices{}
+	if _, _, err := composeMTCP(controlConfig, browserWithoutOrigin); !errors.Is(err, errInvalidMTCPComposition) {
+		t.Fatalf("browser without origin: %v", err)
 	}
 }
 

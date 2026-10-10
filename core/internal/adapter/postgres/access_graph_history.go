@@ -251,11 +251,12 @@ func decodeAccessGraphHistoryEdge(wire accessGraphHistoryEdgeJSON) (ledger.Edge,
 		invalid = true
 	}
 	for index := range wire.PortFirst {
-		if invalid || wire.PortFirst[index] < 1 || wire.PortLast[index] > 65535 {
+		first, last := wire.PortFirst[index], wire.PortLast[index]
+		if invalid || first < 1 || first > 65535 || last < 1 || last > 65535 {
 			invalid = true
 			break
 		}
-		portRange, err := policy.NewPortRange(uint16(wire.PortFirst[index]), uint16(wire.PortLast[index]))
+		portRange, err := policy.NewPortRange(uint16(first), uint16(last))
 		invalid = invalid || err != nil
 		edge.Ports = append(edge.Ports, portRange)
 	}

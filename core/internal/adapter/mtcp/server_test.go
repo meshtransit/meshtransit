@@ -129,13 +129,13 @@ type dialOptions struct {
 	keyID     string
 }
 
-// rejection is the status line and headers of a refused upgrade.
-type rejection struct {
+// refusal is the status line and headers of a refused upgrade.
+type refusal struct {
 	StatusCode int
 	Header     http.Header
 }
 
-func (f *fixture) dial(options dialOptions) (*client, *rejection, error) {
+func (f *fixture) dial(options dialOptions) (*client, *refusal, error) {
 	f.t.Helper()
 	if options.machine.IsZero() {
 		options.machine, _ = key.NewMachinePrivate(nil)
@@ -176,7 +176,7 @@ func (f *fixture) dial(options dialOptions) (*client, *rejection, error) {
 	}
 	_ = response.Body.Close() // an upgrade or a refusal carries no body the test reads
 	if response.StatusCode != http.StatusSwitchingProtocols {
-		return nil, &rejection{StatusCode: response.StatusCode, Header: response.Header}, nil
+		return nil, &refusal{StatusCode: response.StatusCode, Header: response.Header}, nil
 	}
 	body, err := base64.RawURLEncoding.DecodeString(response.Header.Get(sharedmtcp.HeaderHandshake))
 	if err != nil {

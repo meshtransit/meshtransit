@@ -35,6 +35,8 @@ type Session struct {
 	hello        *mtcpv1.ClientHello
 	reply        *mtcpv1.ServerHello
 	capabilities []string
+	control      key.ControlPrivate     // the key the node chose; proofs bind to it
+	openedBy     sharedmtcp.MessageType // the message that established the session
 
 	sendMu   sync.Mutex
 	lastSend atomic.Int64 // Unix nanoseconds of the last record sent
@@ -44,10 +46,10 @@ type Session struct {
 	once   sync.Once
 }
 
-func newSession(server *Server, transport recordConn, noise *sharedmtcp.Session, machine key.MachinePublic,
-	hello *mtcpv1.ClientHello, reply *mtcpv1.ServerHello) *Session {
-	return &Session{server: server, transport: transport, noise: noise, machine: machine, hello: hello,
-		reply: reply, capabilities: reply.GetCapabilities()}
+func newSession(server *Server, transport recordConn, noise *sharedmtcp.Session, control key.ControlPrivate,
+	machine key.MachinePublic, hello *mtcpv1.ClientHello, reply *mtcpv1.ServerHello) *Session {
+	return &Session{server: server, transport: transport, noise: noise, control: control, machine: machine,
+		hello: hello, reply: reply, capabilities: reply.GetCapabilities()}
 }
 
 // Machine returns the session's authenticated machine key.
@@ -61,6 +63,19 @@ func (session *Session) SessionID() []byte { return session.reply.GetSessionId()
 
 // HandshakeHash returns the channel binding of proofs of possession.
 func (session *Session) HandshakeHash() [32]byte { return session.noise.HandshakeHash() }
+
+// OpenedBy returns the type of the message that established the session:
+// MessagePing or MessageRegisterRequest.
+func (session *Session) OpenedBy() sharedmtcp.MessageType { return session.openedBy }
+
+// VerifyKeyProof checks a proof of possession of a node or disco key, bound
+// to this session's handshake and control key (mtcp-v1 §6.4).
+func (session *Session) VerifyKeyProof(public []byte, proof []byte) bool {
+	if len(public) != key.Size {
+		return false
+	}
+	return sharedmtcp.VerifyKeyProof(session.control, session.noise.HandshakeHash(), [key.Size]byte(public), proof)
+}
 
 // Supports reports whether both sides negotiated a capability.
 func (session *Session) Supports(capability string) bool {
@@ -138,6 +153,7 @@ func (session *Session) run(parent context.Context, establishBy time.Time, estab
 		session.server.options.Metrics.handshake("not_established")
 		return
 	}
+	session.openedBy = first.t
 	if err := session.server.establish(session); err != nil {
 		return
 	}
@@ -151,6 +167,15 @@ func (session *Session) run(parent context.Context, establishBy time.Time, estab
 	go func() { readerDone <- session.readLoop(assembler, messages) }()
 	runDone := make(chan error, 1)
 	go func() { runDone <- conversation.Run(session.ctx) }()
+	runJoined := false
+	defer func() {
+		// The conversation ends with the session: join it, so Shutdown
+		// waits for its work too.
+		session.close(context.Canceled)
+		if !runJoined {
+			<-runDone
+		}
+	}()
 
 	// Checked five times per interval, a Ping leaves at most a fifth of the
 	// interval late (mtcp-v1 §5: after keepalive_s without sending).
@@ -169,6 +194,7 @@ func (session *Session) run(parent context.Context, establishBy time.Time, estab
 		case <-session.ctx.Done():
 			return
 		case err := <-runDone:
+			runJoined = true
 			if err != nil && session.ctx.Err() == nil {
 				session.server.options.Logger.DebugContext(session.ctx, "mtcp conversation ended", "error", err)
 			}
