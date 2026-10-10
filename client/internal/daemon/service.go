@@ -105,6 +105,8 @@ const (
 	minEndpointRefresh    = 20 * time.Second
 	maxEndpointRefresh    = 26 * time.Second
 	relayPreparationPoll  = time.Second
+	relayPreparationWait  = 1500 * time.Millisecond
+	relayPreparationTick  = 50 * time.Millisecond
 )
 
 // Status is the daemon-owned status model before it is mapped to a wire format.
@@ -1360,6 +1362,17 @@ func (s *Service) runEndpointRefresh(
 			s.dataPlaneMu.Unlock()
 			if prepareErr == nil {
 				preparingRelay = true
+				// Connecting to a nearby relay takes milliseconds: wait for it
+				// briefly and confirm the move now, instead of after another
+				// poll and discovery round.
+				if health, connected := s.awaitRelayRegion(ctx, relayDataPlane,
+					selection.PreparationRegionID); connected {
+					confirmed, observeErr := homeSelector.Observe(s.clock(), regionLatencies, health)
+					if observeErr == nil {
+						selection = confirmed
+						preparingRelay = confirmed.PreparationRegionID != 0
+					}
+				}
 			} else if s.logger != nil {
 				s.logger.Debug(
 					"relay preparation deferred",
@@ -1533,6 +1546,36 @@ func relayRegionLatencies(
 	}
 
 	return result, nil
+}
+
+// awaitRelayRegion polls relay health until regionID's connection is up or
+// relayPreparationWait passes, and returns the last snapshot.
+func (s *Service) awaitRelayRegion(
+	ctx context.Context,
+	relayDataPlane relayHealthDataPlane,
+	regionID int,
+) (relay.HealthSnapshot, bool) {
+	deadline := time.NewTimer(relayPreparationWait)
+	defer deadline.Stop()
+	ticker := time.NewTicker(relayPreparationTick)
+	defer ticker.Stop()
+	for {
+		s.dataPlaneMu.Lock()
+		health := relayDataPlane.RelayHealth()
+		s.dataPlaneMu.Unlock()
+		for _, region := range health.Regions {
+			if region.RegionID == regionID && region.Connected {
+				return health, true
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return health, false
+		case <-deadline.C:
+			return health, false
+		case <-ticker.C:
+		}
+	}
 }
 
 func randomEndpointRefreshDelay() time.Duration {
