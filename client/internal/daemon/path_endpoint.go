@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
 )
@@ -434,10 +435,14 @@ func (c *pathEndpointController) applyChangesWithRetiredGeneration(
 			)) {
 			return errors.New("daemon: expired path generation changed")
 		}
-		if err := c.dataPlane.RestorePreferredEndpoint(
+		err := c.dataPlane.RestorePreferredEndpoint(
 			generation.MapRevision,
 			change.PeerID,
-		); err != nil {
+		)
+		// A peer without a map endpoint (offline, or not yet reported after
+		// Core came back) has nothing to return to: the map applied before
+		// this activation already set its WireGuard state.
+		if err != nil && !(allowRetired && errors.Is(err, dataplane.ErrPeerEndpointUnavailable)) {
 			return err
 		}
 	}

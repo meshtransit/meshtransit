@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
 )
@@ -516,5 +517,47 @@ func pathEndpointGeneration() pathdiscovery.ProbeGeneration {
 			Port:       41641,
 			Generation: 3,
 		},
+	}
+}
+
+// A peer still in the map but without an endpoint to return to (for example
+// offline while Core comes back) has nothing to restore; that must not stop
+// the session.
+func TestPathEndpointControllerActivationSkipsPeerWithoutEndpoint(t *testing.T) {
+	t.Parallel()
+
+	generation := pathEndpointGeneration()
+	retiredGeneration := generation
+	retiredGeneration.MapRevision--
+	now := time.Now()
+	selector := &scriptedPathSelector{activateResult: pathdiscovery.PathSelectionResult{
+		Activation: pathdiscovery.PathActivationSummary{SelectionsRetired: 1},
+		Changes: []pathdiscovery.PathChange{{PeerID: 2, Previous: pathdiscovery.PathSelection{
+			PeerID:                2,
+			Generation:            retiredGeneration,
+			RemoteEndpoint:        netip.MustParseAddrPort("203.0.113.30:41641"),
+			ObservedLocalEndpoint: netip.MustParseAddrPort("198.51.100.30:41641"),
+			RoundTrip:             time.Millisecond,
+			ConfirmedAt:           now,
+			ExpiresAt:             now.Add(time.Second),
+		}}},
+	}}
+	dataPlane := newRecordingPreferredEndpointDataPlane()
+	dataPlane.restoreErrFor = map[uint64]error{2: dataplane.ErrPeerEndpointUnavailable}
+	ctx, cancel := context.WithCancel(t.Context())
+	controller, err := newPathEndpointController(ctx, selector, dataPlane, &sync.Mutex{},
+		pathdiscovery.NewProbeTelemetry(), time.Now, cancel)
+	if err != nil {
+		t.Fatalf("newPathEndpointController() error = %v", err)
+	}
+	t.Cleanup(controller.Close)
+	if err := controller.Activate(t.Context(),
+		networkmap.Snapshot{Revision: generation.MapRevision, Peers: []networkmap.Node{{ID: 2}}}, generation); err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	select {
+	case <-ctx.Done():
+		t.Fatalf("session stopped: %v", controller.Err())
+	case <-time.After(50 * time.Millisecond):
 	}
 }

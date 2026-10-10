@@ -961,7 +961,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if dnsState != DNSFailed {
 				dnsState = DNSInactive
 			}
-			recoverable := errors.Is(streamErr, errRuntimeRecovery)
+			// A stop the path controller caused is a local runtime failure:
+			// rebuild with backoff, never wait for an operator.
+			recoverable := errors.Is(streamErr, errRuntimeRecovery) || pathErr != nil
 			suspended := errors.Is(streamErr, controlplane.ErrNetmapAuthorityPaused)
 			controlState := ControlSessionBlocked
 			switch {
@@ -996,21 +998,8 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				continue
 			}
 			if recoverable {
-				s.runtimeFailures.Add(1)
-				s.runtimePending.Store(true)
-				runtimeRetry = runtimeRetryAfterSession(
-					runtimeRetry,
-					synchronizedAt,
-					s.clock(),
-				)
-				backoffElapsed, err := s.waitForRuntimeRecovery(ctx, runtimeRetry)
-				if err != nil {
+				if runtimeRetry, err = s.recoverRuntime(ctx, runtimeRetry, synchronizedAt); err != nil {
 					return err
-				}
-				if backoffElapsed {
-					runtimeRetry = nextRuntimeRetry(runtimeRetry)
-				} else {
-					runtimeRetry = minRuntimeRetry
 				}
 
 				continue
@@ -1047,9 +1036,11 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			if dnsState != DNSFailed {
 				dnsState = DNSInactive
 			}
+			// Endpoint discovery and relay selection are local runtime work:
+			// a failure rebuilds the session with backoff.
 			s.setSyncStatus(syncStatus{
 				profileID: active.ID,
-				state:     ControlSessionBlocked,
+				state:     ControlSessionConnecting,
 				dataPlane: dataPlaneState,
 				dns:       dnsState,
 			})
@@ -1059,11 +1050,27 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					runtimeStopErr,
 				)
 			}
-			if err := s.waitForSyncSignal(ctx); err != nil {
+			if runtimeRetry, err = s.recoverRuntime(ctx, runtimeRetry, synchronizedAt); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+// recoverRuntime records a local runtime failure and waits out its backoff
+// (cut short by a sync signal), returning the next retry delay.
+func (s *Service) recoverRuntime(ctx context.Context, retry time.Duration, synchronizedAt time.Time) (time.Duration, error) {
+	s.runtimeFailures.Add(1)
+	s.runtimePending.Store(true)
+	retry = runtimeRetryAfterSession(retry, synchronizedAt, s.clock())
+	backoffElapsed, err := s.waitForRuntimeRecovery(ctx, retry)
+	if err != nil {
+		return retry, err
+	}
+	if backoffElapsed {
+		return nextRuntimeRetry(retry), nil
+	}
+	return minRuntimeRetry, nil
 }
 
 func (s *Service) logControlSessionFailure(message string, err error) {
