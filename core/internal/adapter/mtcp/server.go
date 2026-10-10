@@ -170,6 +170,8 @@ type keyDocument struct {
 type keyDocumentKey struct {
 	Key      key.ControlPublic `json:"key"`
 	NotAfter time.Time         `json:"not_after"`
+	// Fingerprint is the ck= value install commands carry (mtcp-v1 §2.1).
+	Fingerprint string `json:"fingerprint"`
 }
 
 func (server *Server) serveKeys(response http.ResponseWriter, request *http.Request) {
@@ -180,8 +182,9 @@ func (server *Server) serveKeys(response http.ResponseWriter, request *http.Requ
 	}
 	document := keyDocument{Version: sharedmtcp.Version}
 	for _, controlKey := range server.options.Keys {
-		document.Keys = append(document.Keys, keyDocumentKey{Key: controlKey.Private.Public(),
-			NotAfter: controlKey.NotAfter.UTC().Truncate(time.Second)})
+		public := controlKey.Private.Public()
+		document.Keys = append(document.Keys, keyDocumentKey{Key: public,
+			NotAfter: controlKey.NotAfter.UTC().Truncate(time.Second), Fingerprint: sharedmtcp.ControlFingerprint(public)})
 	}
 	encoded, err := json.Marshal(document)
 	if err != nil || len(encoded) > maxKeyDocument {

@@ -45,7 +45,8 @@ of the trust model.
 `GET /mtcp/v1/key` returns, over TLS with Web PKI validation:
 
 ```json
-{"version": 1, "keys": [{"key": "mtcontrol:<64 hex>", "not_after": "2027-10-09T00:00:00Z"}]}
+{"version": 1, "keys": [{"key": "mtcontrol:<64 hex>", "not_after": "2027-10-09T00:00:00Z",
+                          "fingerprint": "<32 hex>"}]}
 ```
 
 - A node fetches it **only at enrollment**, when it has no pinned key for this
@@ -58,7 +59,9 @@ of the trust model.
   32 lowercase hex characters. Enrollment commands and links that Core
   generates (enrollment keys, Console install commands) MUST carry it as
   `ck=<fingerprint>`; the node then refuses a key that does not match, which
-  removes the Web PKI from the trust path. Only the interactive flow started
+  removes the Web PKI from the trust path. The key document lists each key's
+  fingerprint so the Console can build install commands; a node never
+  trusts that field and computes the fingerprint itself. Only the interactive flow started
   without a link relies on Web PKI; its approval page shows the fingerprint so
   the user can compare it with `meshctl status`.
 

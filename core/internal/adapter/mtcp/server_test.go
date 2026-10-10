@@ -271,14 +271,16 @@ func TestKeyDocument(t *testing.T) {
 	var document struct {
 		Version int `json:"version"`
 		Keys    []struct {
-			Key      key.ControlPublic `json:"key"`
-			NotAfter time.Time         `json:"not_after"`
+			Key         key.ControlPublic `json:"key"`
+			NotAfter    time.Time         `json:"not_after"`
+			Fingerprint string            `json:"fingerprint"`
 		} `json:"keys"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&document); err != nil {
 		t.Fatal(err)
 	}
 	if document.Version != 1 || len(document.Keys) != 1 || document.Keys[0].Key != f.control.Public() ||
+		document.Keys[0].Fingerprint != sharedmtcp.ControlFingerprint(f.control.Public()) ||
 		response.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("key document = %+v", document)
 	}
