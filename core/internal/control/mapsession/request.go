@@ -8,16 +8,13 @@ import (
 	"meshtransit.net/core/internal/domain/node"
 )
 
-const maximumCapabilityVersion = 1<<16 - 1
-
 // ErrInvalidRequest reports an incomplete or unsupported map-session request.
 var ErrInvalidRequest = errors.New("map session: invalid request")
 
-// Request is the protocol-independent identity and compatibility input needed
+// Request is the protocol-independent identity and connectivity input needed
 // to open one map session.
 type Request struct {
 	nodeKey            node.Key
-	capabilityVersion  int
 	deviceAliasVersion uint8
 	endpointSet        node.EndpointSet
 	hasEndpointSet     bool
@@ -36,9 +33,9 @@ func (request Request) WithPreferredRelay(regionID int) (Request, error) {
 	return request, nil
 }
 
-// NewRequest validates an untrusted Node key and bounded compatibility version.
-func NewRequest(nodeKey node.Key, capabilityVersion int) (Request, error) {
-	request := Request{nodeKey: nodeKey, capabilityVersion: capabilityVersion}
+// NewRequest validates an untrusted Node key.
+func NewRequest(nodeKey node.Key) (Request, error) {
+	request := Request{nodeKey: nodeKey}
 	if !request.IsValid() {
 		return Request{}, ErrInvalidRequest
 	}
@@ -47,9 +44,6 @@ func NewRequest(nodeKey node.Key, capabilityVersion int) (Request, error) {
 
 // NodeKey returns the Node key claimed by this request.
 func (request Request) NodeKey() node.Key { return request.nodeKey }
-
-// CapabilityVersion returns the positive bounded client compatibility version.
-func (request Request) CapabilityVersion() int { return request.capabilityVersion }
 
 // WithEndpointSet returns a validated request carrying one transient client
 // connectivity report. The original request remains unchanged.
@@ -76,8 +70,7 @@ func (request Request) PreferredRelay() (int, bool) {
 
 // IsValid reports whether the request is safe to authorize.
 func (request Request) IsValid() bool {
-	if request.deviceAliasVersion > 1 || !request.nodeKey.IsValid() || request.capabilityVersion <= 0 ||
-		request.capabilityVersion > maximumCapabilityVersion ||
+	if request.deviceAliasVersion > 1 || !request.nodeKey.IsValid() ||
 		request.preferredRelay < 0 || request.preferredRelay > node.MaximumRelayRegionID ||
 		(!request.hasPreferredRelay && request.preferredRelay != 0) ||
 		request.hasPreferredRelay && !request.hasEndpointSet {

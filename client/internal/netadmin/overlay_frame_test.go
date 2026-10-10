@@ -36,7 +36,7 @@ func TestWithinSafeOverlayFrame(t *testing.T) {
 		{prefix: "198.18.0.0/15", want: true},
 		{prefix: "198.19.0.0/16", want: true},
 		{prefix: "fd00::/8", want: true},
-		{prefix: "fd7a:115c:a1e0::/48", want: true},
+		{prefix: "fd07:d4de:9d87::/48", want: true},
 		{prefix: "fd02:48de:ec1b:1::/96", want: true},
 		{prefix: "100.0.0.0/8", want: false},
 		{prefix: "198.16.0.0/14", want: false},

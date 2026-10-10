@@ -7,11 +7,6 @@ import (
 	"time"
 )
 
-// InterchangeCapability names the grant in the legacy TS2021 map: Core puts
-// it on the node's own map entry until MTCP carries KeyUpdate, the relay map
-// and RelayTicket (mtcp-v1 §7.3, §9, §11).
-const InterchangeCapability = "https://meshtransit.io/cap/interchange-v1"
-
 // MaxGrantSize bounds an encoded InterchangeGrant.
 const MaxGrantSize = 256 << 10
 

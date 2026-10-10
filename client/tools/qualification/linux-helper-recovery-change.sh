@@ -25,7 +25,7 @@ Usage:
     --peer-label LABEL \
     --peer-v4 ADDRESS \
     --peer-v6 ADDRESS \
-    --peer-name MAGICDNS_NAME \
+    --peer-name MESH_DNS_NAME \
     --confirm-recovery-change LABEL \
     [--artifact-sha256 HEX] \
     [--ready-timeout-seconds N] \

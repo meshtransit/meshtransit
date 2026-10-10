@@ -13,16 +13,17 @@ func TestLoadControlMTCPConfig(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		values  map[string]string
-		wantNil bool
 		wantErr string
 	}{
-		{name: "off by default", values: map[string]string{}, wantNil: true},
-		{name: "off rejects latent settings", values: map[string]string{
-			envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z",
-		}, wantErr: envControlMTCPKeyNotAfter},
+		{name: "needs a key expiry", values: map[string]string{}, wantErr: envControlMTCPKeyNotAfter},
+		{name: "cannot be turned off", values: map[string]string{
+			envControlMTCPEnabled: "false", envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z",
+		}, wantErr: envControlMTCPEnabled},
 		{name: "invalid flag", values: map[string]string{envControlMTCPEnabled: "yes"}, wantErr: envControlMTCPEnabled},
-		{name: "on needs a key expiry", values: map[string]string{envControlMTCPEnabled: "true"},
-			wantErr: envControlMTCPKeyNotAfter},
+		{name: "on without the switch", values: map[string]string{
+			envControlMTCPKeyNotAfter:    "2027-10-10T07:00:00+07:00",
+			envControlMTCPTrustedProxies: "10.0.0.0/8,2001:db8::/32",
+		}},
 		{name: "expiry in the past", values: map[string]string{
 			envControlMTCPEnabled: "true", envControlMTCPKeyNotAfter: "2026-10-09T00:00:00Z",
 		}, wantErr: envControlMTCPKeyNotAfter},
@@ -49,12 +50,6 @@ func TestLoadControlMTCPConfig(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatal(err)
-			}
-			if test.wantNil {
-				if got != nil {
-					t.Fatalf("got %+v, want nil", got)
-				}
-				return
 			}
 			if !got.KeyNotAfter.Equal(time.Date(2027, 10, 10, 0, 0, 0, 0, time.UTC)) ||
 				got.KeyNotAfter.Location() != time.UTC {

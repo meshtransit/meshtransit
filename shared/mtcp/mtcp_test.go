@@ -32,7 +32,7 @@ func (r fixedReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func fixedKeys(t *testing.T) (key.MachinePrivate, key.ControlPrivate) {
+func fixedKeys(t testing.TB) (key.MachinePrivate, key.ControlPrivate) {
 	t.Helper()
 	machine, err := key.MachinePrivateFromBytes(bytes.Repeat([]byte{0x11}, 32))
 	if err != nil {
@@ -463,15 +463,15 @@ func FuzzRecordReader(f *testing.F) {
 }
 
 func TestFilterDigestMatchesTheSharedVector(t *testing.T) {
-	// The PacketFilter of shared/policydigest/testdata/packet-filter-v1.json
+	// The test vector of docs/protocol/policy-digest-v1.md §5
 	// written as MTCP: an ICMP destination without ports means every port.
 	prefix := func(text string) *mtcpv1.Prefix { return AppendPrefix(netip.MustParsePrefix(text)) }
 	filter := &mtcpv1.PacketFilter{Rules: []*mtcpv1.FilterRule{
 		{
-			Sources: []*mtcpv1.Prefix{prefix("100.64.0.2/32"), prefix("fd7a:115c:a1e0::2/128")},
+			Sources: []*mtcpv1.Prefix{prefix("100.64.0.2/32"), prefix("fd07:d4de:9d87::2/128")},
 			Destinations: []*mtcpv1.Destination{
 				{Prefix: prefix("100.64.0.1/32"), Ports: []*mtcpv1.PortRange{{First: 22, Last: 22}}},
-				{Prefix: prefix("fd7a:115c:a1e0::1/128"), Ports: []*mtcpv1.PortRange{{First: 22, Last: 22}}},
+				{Prefix: prefix("fd07:d4de:9d87::1/128"), Ports: []*mtcpv1.PortRange{{First: 22, Last: 22}}},
 			},
 			Protocols: []uint32{6},
 		},
@@ -483,7 +483,7 @@ func TestFilterDigestMatchesTheSharedVector(t *testing.T) {
 	}}
 	digest, grants, err := FilterDigest(filter)
 	if err != nil || grants != 5 ||
-		digest.String() != "sha256:65c3166a6062804e3b2a55acd157d70ce0ebf6fdd91130eecd280654a714251a" {
+		digest.String() != "sha256:5714d8784aeeb16d13dade4978798461062af395740fd19a493c8a88b5cea897" {
 		t.Fatalf("digest = %s (%d), %v", digest, grants, err)
 	}
 	filter.Rules[0].Destinations[0].Ports[0].First = 23

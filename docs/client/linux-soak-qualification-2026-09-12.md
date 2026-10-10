@@ -42,14 +42,14 @@ before the accepted canary smoke began.
 
 After Ubuntu B passed, Ubuntu A was upgraded. Both upgrades preserved the
 identity tree, profile file, daemon configuration, online synchronized state,
-one authenticated direct path, MagicDNS, and IPv4/IPv6 peer traffic.
+one authenticated direct path, MeshTransit DNS, and IPv4/IPv6 peer traffic.
 
 ## Accepted results
 
 Both nodes used a 90-second duration, 15-second sampling, and a 30-second
 warmup. Every sample checked service generations and restart counters,
 process/interface/listener cardinality, persisted state, routes, resolver
-policy, artifact identity, network-change counters, MagicDNS, and one IPv4 and
+policy, artifact identity, network-change counters, MeshTransit DNS, and one IPv4 and
 IPv6 peer probe.
 
 | Node | Samples | Journal warning/error | meshd maximum RSS growth | meshnetd maximum RSS growth | Goroutine/thread/descriptor growth | Result |
@@ -59,7 +59,7 @@ IPv6 peer probe.
 
 After both smokes, an independent simultaneous final gate on each node verified
 the exact alpha17/alpha6 versions, active services, online synchronized state,
-one direct path, runtime counters, unchanged persisted state, exact MagicDNS,
+one direct path, runtime counters, unchanged persisted state, exact MeshTransit DNS,
 and five successful probes for each address family.
 
 The retained report SHA-256 values are:

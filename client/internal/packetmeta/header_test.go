@@ -31,8 +31,8 @@ func TestParse(t *testing.T) {
 			name:     "ipv6 udp after hop by hop header",
 			packet:   testIPv6UDPWithExtension(),
 			protocol: ProtocolUDP,
-			source:   netip.MustParseAddr("fd7a:115c:a1e0::3"),
-			dest:     netip.MustParseAddr("fd7a:115c:a1e0::4"),
+			source:   netip.MustParseAddr("fd07:d4de:9d87::3"),
+			dest:     netip.MustParseAddr("fd07:d4de:9d87::4"),
 			srcPort:  53000,
 			dstPort:  53,
 		},
@@ -129,8 +129,8 @@ func testIPv6UDPWithExtension() []byte {
 	binary.BigEndian.PutUint16(packet[4:6], 16)
 	packet[6] = 0
 	packet[7] = 64
-	source := netip.MustParseAddr("fd7a:115c:a1e0::3").As16()
-	destination := netip.MustParseAddr("fd7a:115c:a1e0::4").As16()
+	source := netip.MustParseAddr("fd07:d4de:9d87::3").As16()
+	destination := netip.MustParseAddr("fd07:d4de:9d87::4").As16()
 	copy(packet[8:24], source[:])
 	copy(packet[24:40], destination[:])
 	packet[40] = ProtocolUDP
@@ -172,8 +172,8 @@ func testIPv6ICMPPacket(protocol, messageType, code uint8) []byte {
 	binary.BigEndian.PutUint16(packet[4:6], 8)
 	packet[6] = protocol
 	packet[7] = 64
-	source := netip.MustParseAddr("fd7a:115c:a1e0::3").As16()
-	destination := netip.MustParseAddr("fd7a:115c:a1e0::4").As16()
+	source := netip.MustParseAddr("fd07:d4de:9d87::3").As16()
+	destination := netip.MustParseAddr("fd07:d4de:9d87::4").As16()
 	copy(packet[8:24], source[:])
 	copy(packet[24:40], destination[:])
 	packet[40] = messageType

@@ -26,7 +26,7 @@ Usage:
     --peer-label LABEL \
     --peer-v4 ADDRESS \
     --peer-v6 ADDRESS \
-    --peer-name MAGICDNS_NAME \
+    --peer-name MESH_DNS_NAME \
     --confirm-helper-socket-fault LABEL \
     [--artifact-sha256 HEX] \
     [--iterations N] \
@@ -41,7 +41,7 @@ Usage:
     [--dns-interface NAME]
 
 Runs the in-process helper-socket recovery gate while continuously probing a
-fixed peer over IPv4, IPv6, and uncached MagicDNS. Every sample must observe a
+fixed peer over IPv4, IPv6, and uncached MeshTransit DNS. Every sample must observe a
 real outage in all three probes, recover a stable trailing run, and pass the
 single-sample runtime/resource invariants. Output is one redacted aggregate
 JSON document; peer addresses and DNS names are never retained.
@@ -429,11 +429,11 @@ main() {
   ping -6 -n -c 3 -W 1 "${peer_v6}" >/dev/null 2>&1 ||
     fail "baseline IPv6 peer traffic is unavailable"
   baseline_status="$(timeout 2s resolvectl query --cache=no "${peer_name}" 2>/dev/null)" ||
-    fail "baseline uncached MagicDNS query failed"
+    fail "baseline uncached MeshTransit DNS query failed"
   grep -Fq -- "${peer_v4}" <<<"${baseline_status}" ||
-    fail "baseline MagicDNS query omitted peer IPv4"
+    fail "baseline MeshTransit DNS query omitted peer IPv4"
   grep -Fq -- "${peer_v6}" <<<"${baseline_status}" ||
-    fail "baseline MagicDNS query omitted peer IPv6"
+    fail "baseline MeshTransit DNS query omitted peer IPv6"
 
   observation_seconds=$((
     lead_seconds + recovery_timeout_seconds + resource_timeout_seconds + tail_seconds + 5

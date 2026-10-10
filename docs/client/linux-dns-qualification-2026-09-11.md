@@ -41,12 +41,12 @@ Two temporary control-plane configurations were then applied sequentially:
    host resolver queries returned upstream answers with recursion available.
 2. The split route was removed and the same upstream was configured as an
    explicit default. Both nodes installed `+DefaultRoute` and `~.`, forwarded an
-   unrelated public domain through `meshdns0`, and continued to answer MagicDNS.
+   unrelated public domain through `meshdns0`, and continued to answer MeshTransit DNS.
 
-The original configuration was restored after those checks: MagicDNS enabled,
+The original configuration was restored after those checks: MeshTransit DNS enabled,
 no global resolvers, no split rules, and override-local-DNS disabled. Both nodes
 then showed `-DefaultRoute`, external queries returned to the physical uplink,
-MagicDNS remained on `meshdns0`, and direct encrypted peer paths remained healthy.
+MeshTransit DNS remained on `meshdns0`, and direct encrypted peer paths remained healthy.
 
 The first harness attempt on `ubuntu-a` reported a false cleanup timeout because
 `resolvectl status` returned exit code zero for an absent interface while writing
@@ -97,14 +97,14 @@ first change and used as the exact rollback target.
    non-mesh resolver path.
 2. The split route was replaced by the same resolver as an explicit default.
    Both clients installed `+DefaultRoute` and `~.`, forwarded unrelated public
-   queries through `meshdns0`, and continued to answer MagicDNS.
+   queries through `meshdns0`, and continued to answer MeshTransit DNS.
 3. The global resolver and override were removed. Both clients returned to
    `-DefaultRoute`, removed `~.` and the temporary split route, sent public
    queries back to the host resolver, and stopped forwarding public names from
    the local MeshTransit resolver.
 
 Every phase completed on both nodes with synchronized control, configured DNS,
-direct IPv4/IPv6 traffic, and MagicDNS resolution. The original daemon process
+direct IPv4/IPv6 traffic, and MeshTransit DNS resolution. The original daemon process
 IDs remained unchanged and both systemd restart counters remained zero,
 demonstrating live application rather than restart recovery. The final bounded
 warning-level journal query returned no entries.
@@ -127,7 +127,7 @@ selected resolver.
 The immutable alpha16 Debian package was built independently twice with
 byte-identical output, rolled to one canary, verified in a mixed alpha15/alpha16
 topology, and then installed on the second node. Both upgrades preserved
-identity and configuration bytes, synchronized control, MagicDNS, and
+identity and configuration bytes, synchronized control, MeshTransit DNS, and
 bidirectional encrypted IPv4/IPv6 traffic.
 
 A live split route then placed a non-responsive resolver before a reachable
@@ -139,7 +139,7 @@ packets, all to the selected resolver, and zero packets to an unexpected DNS
 destination. Unrelated names remained on the host DNS path in both phases.
 
 The temporary route was removed after the test. Both nodes returned to the
-exact MagicDNS-only baseline without a daemon restart, with the original
+exact MeshTransit DNS-only baseline without a daemon restart, with the original
 process IDs, zero systemd restarts, and no warning-level journal entries. The
 redacted aggregate report is retained in
 [`docs/evidence/linux-dns-alpha16-upstream-failure-s1`](evidence/linux-dns-alpha16-upstream-failure-s1).
@@ -147,7 +147,7 @@ redacted aggregate report is retained in
 A separate alpha16 crash-recovery matrix killed `meshd` with `SIGKILL` on both
 nodes. The dedicated link, UDP/TCP listeners, and per-link resolved state were
 observed absent in 31–60 milliseconds before systemd rebuilt them. Exact
-MagicDNS and stable dual-stack traffic recovered within the 20-second gate.
+MeshTransit DNS and stable dual-stack traffic recovered within the 20-second gate.
 The four daemon/helper reports are retained in
 [`docs/evidence/linux-crash-recovery-alpha16-s1`](evidence/linux-crash-recovery-alpha16-s1).
 

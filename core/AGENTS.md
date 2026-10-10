@@ -77,74 +77,37 @@ MUST NOT import `client/` packages (licence boundary and Go `internal`
 rules); shared protocol code belongs in `shared/`. Checked-in specifications and sanitized fixtures
 must make this repository independently buildable.
 
-`tailscale.com` packages MAY be used temporarily only inside
-`core/internal/adapter/legacyts2021`. No other package, generated API, database type,
-log field, metric, public identifier, or product-facing documentation may
-expose Tailscale or Headscale implementation names. Pin the dependency, review
-its license and vulnerabilities, list it in the SBOM and
-`THIRD_PARTY_NOTICES.md`, and test upgrades in a non-production forward lane.
+Core contains only MeshTransit protocol code; it never copies code from other
+VPN products, and its dependencies come only from the reviewed
+`hack/allowed-modules.txt` (`make check-boundaries`). No package, generated
+API, database type, log field, metric, public identifier, or product-facing
+documentation may expose another product's implementation names.
 
-## Compatibility profile required by the current client
+## Control protocol contract
 
-The initial legacy profile is `legacy-ts2021-cap142-v1`. Capability `142` is an
-explicit profile constant; it MUST NOT change merely because a dependency is
-upgraded.
+Nodes speak MTCP v1 (`docs/protocol/mtcp-v1.md`) to Core and MTRP v1
+(`docs/protocol/mtrp-v1.md`) to relays; `shared/mtcp` and `shared/mtrp` hold
+the codecs both sides use. Whatever the protocol, Core must preserve:
 
-The legacy adapter must preserve these observed client contracts:
-
-- `GET /key?v=142` returns the non-zero control public key as JSON. Responses,
-  headers, redirects, origin, TLS, and body size must satisfy the client's
-  strict validation.
-- `/ts2021` establishes the authenticated Noise session on the pinned HTTPS
-  origin. There is no plaintext, proxy, redirect, or insecure-certificate
-  fallback.
-- `POST /machine/register` runs inside Noise. The Noise machine identity and
-  request Node key/Hostinfo form the identity input. The request does not carry
-  a trusted Workspace, Network, account, tenant, or database ID.
-- Registration supports auth-key and same-origin browser authorization flows.
-  An authorized response and a pending `AuthURL` are mutually exclusive.
-  Duplicate and retried operations must converge without consuming extra
+- Registration supports enrollment-key and same-origin browser authorization
+  flows. Duplicate and retried operations converge without consuming extra
   one-off uses, identities, or addresses.
-- `POST /machine/map` accepts a non-streaming complete endpoint/home-relay
-  update and a long-lived streaming request. An explicit empty `Endpoints`
-  collection is a withdrawal, not an omitted field.
-- The first non-keepalive response on every stream contains the authenticated
-  self Node and a complete, explicit peer set, including an empty set. A
-  reconnect never starts with a delta and cannot resurrect stale peers.
-- Streaming frames use the profile's four-byte little-endian length prefix and
-  are non-empty and no larger than 16 MiB. Keepalives do not represent empty
-  maps. Silent streams must be compatible with the client's two-minute read
-  watchdog.
-- Supported deltas include peer replacement/change, removal, patch, online
-  state, policy, relay, DNS, and control-time changes. Duplicate, stale,
-  malformed, or ambiguous updates must not partially mutate effective state.
-- Omitted, `null`, and empty fields are distinct wherever the wire profile
-  distinguishes them. In particular, DNS `nil` means unchanged within a
-  stream, an empty locally authoritative DNS route is meaningful, and an empty
-  endpoint list withdraws presence.
-- Endpoint candidates and preferred relay are routing observations, never
+- The first map on every stream contains the authenticated self Node and a
+  complete, explicit peer set, including an empty set. A reconnect never starts
+  with a delta and cannot resurrect stale peers. Duplicate, stale, malformed,
+  or ambiguous updates must not partially mutate effective state.
+- Endpoint candidates and the home relay are routing observations, never
   identity or authorization. Updates are bound to the authenticated Node,
-  discovery key, session generation, and Network scope.
+  discovery key, session and Network scope.
 - Every projected map contains only one Network plus explicit authorized share
-  projections. The client never sends a trusted `network_id`, and maps from
-  different profiles must never be unioned.
-- The legacy packet filter is Node-reduced and deny-by-default. Peer presence,
-  routes, endpoints, and capabilities do not grant packet access. Translation
-  must preserve the current TCP, UDP, ICMP, port, range, and empty-policy
-  semantics without widening them.
-- The current Linux client accepts the implemented MagicDNS/split-DNS model and
-  classic non-loopback IP resolvers on port 53. Unsupported resolver URLs or
-  ambiguous names must not be projected to this profile.
-- Relay directory and peer authorization are derived from the same validated
-  Network projection. STUN-only nodes cannot become packet relays, and relay
-  reachability cannot grant peer visibility.
-- Scoped flow-log credentials, when enabled, must match the authenticated self
-  Node and Network and authorize only bounded `POST /v1/flows` uploads. Tokens
-  never become resource identity or durable client storage credentials.
-- Do not send a server-controlled `PingRequest` URL to the current client. A
-  future liveness operation must use only an opaque unpredictable ID and a
-  fixed same-origin method/path; the server cannot select scheme, host, port,
-  redirect, proxy, or body.
+  projections. The node never sends a trusted Network ID, and maps from
+  different profiles are never unioned.
+- The packet filter is Node-reduced and deny-by-default. Peer presence, routes,
+  endpoints, and capabilities do not grant packet access.
+- Relay directory and peer authorization derive from the same validated
+  Network projection; relay reachability cannot grant peer visibility.
+- Core never sends a node a URL it would fetch beyond the fixed same-origin
+  approval URL of browser registration.
 
 Compatibility tests compare semantics, not incidental JSON order, peer order,
 timestamps within an approved tolerance, random nonces, or diagnostic text.
@@ -183,7 +146,7 @@ meshcore/
 │       ├── redis/
 │       ├── httpapi/
 │       ├── legacyadmin/
-│       ├── legacyts2021/
+│       ├── controllistener/
 │       ├── mtcp/
 │       └── oidc/
 ├── api/openapi/                  versioned management contract
@@ -556,7 +519,8 @@ Required test layers are:
 1. Domain invariant and state-machine unit tests.
 2. Repository/transaction/RLS integration tests.
 3. OpenAPI and protocol contract tests, including absent/null/empty behavior.
-4. `legacy-ts2021-cap142-v1` conformance tests with the pinned `meshd` artifact.
+4. MTCP v1 conformance tests (`shared/mtcp` vectors and the process-level
+   registration test in `core/test/integration`).
 5. Semantic differential tests against the isolated `.87` oracle.
 6. Cross-Workspace/Network IDOR, overlapping-CIDR, hostname, DNS, policy,
    sharing, and non-transitive isolation tests.
@@ -593,8 +557,8 @@ Before merge, run all relevant gates plus:
 - integration and conformance suites with test caching disabled;
 - parser/compiler fuzz smoke tests and scheduled extended fuzzing;
 - OpenAPI/protocol backward-compatibility and generated-file checks;
-- import-boundary checks that reject Headscale entirely and reject
-  `tailscale.com` outside `core/internal/adapter/legacyts2021`;
+- import-boundary checks that reject Headscale and any module outside
+  `hack/allowed-modules.txt`;
 - migration lint, clean-install, upgrade, mixed-version, RLS/grant, query-plan,
   backup/restore, and rollback tests;
 - Gitleaks against both the checked-out tree and complete Git history;
@@ -685,7 +649,7 @@ self-hosting experience, migration, and operational lifecycle.
 Never:
 
 - copy or mechanically translate Headscale code;
-- import Headscale anywhere or `tailscale.com` outside the legacy adapter;
+- import Headscale or any module outside `hack/allowed-modules.txt`;
 - trust a client-provided Workspace, Network, role, group, route, endpoint, or
   capability as authority;
 - implement sharing by merging Networks or exposing ambiguous overlapping

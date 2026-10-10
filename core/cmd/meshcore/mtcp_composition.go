@@ -32,8 +32,6 @@ func mtcpCapabilities(deviceAliases bool) []string {
 	return capabilities
 }
 
-// composeMTCP builds the MTCP v1 server that shares the control listener
-// and control key with TS2021. It returns nil when MTCP is off.
 // mtcpDependencies are the application services MTCP sessions use. The
 // browser fields are nil when browser registration is off.
 type mtcpDependencies struct {
@@ -59,13 +57,15 @@ type mtcpMapSessions interface {
 // approval itself may outlive it, and mtcp-v1 §6.2 caps the wait at 10 min.
 const mtcpApprovalTTL = 10 * time.Minute
 
+// controlKeyExpiryWarning is how early the control role warns that its key
+// expires (MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER).
+const controlKeyExpiryWarning = 30 * 24 * time.Hour
+
+// composeMTCP builds the MTCP v1 server the control listener routes to.
 func composeMTCP(
 	controlConfig config.ControlConfig,
 	deps mtcpDependencies,
 ) (*mtcpadapter.Server, *mtcpadapter.Metrics, error) {
-	if controlConfig.MTCP == nil {
-		return nil, nil, nil
-	}
 	if deps.streams == nil || deps.sessions == nil || deps.registrations == nil || deps.logout == nil ||
 		deps.guard == nil ||
 		deps.logger == nil || (deps.browser != nil && deps.origin == "") {
@@ -81,6 +81,12 @@ func composeMTCP(
 		return nil, nil, errors.Join(errInvalidMTCPComposition, err)
 	}
 	keys := []mtcpadapter.ControlKey{{Private: private, NotAfter: controlConfig.MTCP.KeyNotAfter}}
+	// Past the expiry nodes refuse the key and the control role no longer
+	// starts, so warn while there is time to rotate it.
+	if remaining := time.Until(controlConfig.MTCP.KeyNotAfter); remaining < controlKeyExpiryWarning {
+		logger.Warn("control key expires soon; rotate it", "not_after", controlConfig.MTCP.KeyNotAfter,
+			"remaining_hours", int(remaining.Hours()))
+	}
 	clients, err := clientip.NewResolver(controlConfig.MTCP.TrustedProxyPrefixes())
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidMTCPComposition, err)

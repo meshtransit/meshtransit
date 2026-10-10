@@ -1,6 +1,5 @@
 // Package controlplane holds the protocol-neutral contract between meshd's
-// daemon and its control protocol clients (MTCP v1, and TS2021 until it is
-// removed): key material, registration outcomes, map stream options, node
+// daemon and its control protocol client (MTCP v1): key material, registration outcomes, map stream options, node
 // reports and the errors the daemon classifies.
 package controlplane
 

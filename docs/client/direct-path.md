@@ -6,10 +6,8 @@ This document fixes the behavior and security boundaries for automatic endpoint
 discovery and direct UDP path selection. It is an internal design record, not a
 claim that every phase is implemented.
 
-The compatibility study covered the pinned `tailscale.com v1.102.3` source and
-official upstream snapshot `63d1eedf2c90ca4fb1a673c318aa804720052fc9` from
-2026-09-08. The reference is used as a behavior oracle; source files are not
-copied into this repository.
+The design was written from the RFCs and published protocol behaviour; no
+third-party source is copied into this repository.
 
 ## Decisions
 
@@ -35,16 +33,16 @@ local interfaces ─► candidate collector           │
 configured input ─► candidate collector           ▼
                                             shared UDP transport
                                                    │
-candidate set ─────► TS2021 compatibility adapter  ├─► encrypted tunnel packets
+candidate set ─────► MTCP EndpointReport           ├─► encrypted tunnel packets
 peer map ──────────► authenticated path manager ───┘
 ```
 
 - `internal/pathdiscovery` owns candidate and path state in MeshTransit terms.
-- A small RFC 5389 codec will own STUN framing without a product dependency.
+- `shared/stun` owns STUN framing (RFC 8489) without a product dependency.
 - `internal/dataplane` will own the shared socket and the WireGuard `Bind`
   implementation.
-- `internal/compat/ts2021` alone will translate candidate sources to protocol
-  endpoint types and publish endpoint-only map updates.
+- `internal/mtcpclient` translates candidate sources to MTCP endpoint types and
+  sends them in `EndpointReport`.
 - The daemon will own lifecycle, cancellation, and active-profile generation.
 
 ## Candidate contract

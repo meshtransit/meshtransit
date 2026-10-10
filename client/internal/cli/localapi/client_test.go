@@ -235,7 +235,7 @@ func TestClient_ProbeControl(t *testing.T) {
   "api_version":"v1",
   "profile_id":"00000000000000000000000000000001",
   "control_url":"https://transit.example.com",
-  "protocol":"ts2021",
+  "protocol":"mtcp",
   "capability":142,
   "control_key_fingerprint":"sha256:test",
   "noise_established":true,

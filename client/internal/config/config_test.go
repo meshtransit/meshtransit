@@ -263,13 +263,15 @@ func TestParseControlProtocol(t *testing.T) {
 	if err != nil || cfg.ControlProtocol != "auto" {
 		t.Fatalf("default control protocol = %q, %v", cfg.ControlProtocol, err)
 	}
-	for _, value := range []string{"mtcp", "legacy"} {
+	for _, value := range []string{"mtcp"} {
 		if cfg, err := Parse([]string{"--control-protocol", value}, io.Discard); err != nil || cfg.ControlProtocol != value {
 			t.Fatalf("--control-protocol %s = %q, %v", value, cfg.ControlProtocol, err)
 		}
 	}
-	if _, err := Parse([]string{"--control-protocol", "ts2021"}, io.Discard); err == nil {
-		t.Fatal("an unknown control protocol was accepted")
+	for _, value := range []string{"legacy", "noise"} {
+		if _, err := Parse([]string{"--control-protocol", value}, io.Discard); err == nil {
+			t.Fatalf("control protocol %q was accepted", value)
+		}
 	}
 }
 

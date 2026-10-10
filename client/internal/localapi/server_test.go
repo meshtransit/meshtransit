@@ -568,7 +568,7 @@ type fakeProber struct{}
 
 func (fakeProber) Probe(_ context.Context, _ string) (controlplane.Result, error) {
 	return controlplane.Result{
-		Protocol:         "ts2021",
+		Protocol:         "mtcp",
 		Capability:       142,
 		KeyFingerprint:   "sha256:test-fingerprint",
 		NoiseEstablished: true,

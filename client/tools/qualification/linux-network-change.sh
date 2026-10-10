@@ -27,7 +27,7 @@ Usage:
     --peer-label LABEL \
     --peer-v4 ADDRESS \
     --peer-v6 ADDRESS \
-    --peer-name MAGICDNS_NAME \
+    --peer-name MESH_DNS_NAME \
     --confirm-network-change LABEL \
     [--artifact-sha256 HEX] \
     [--lead-seconds N] \
@@ -436,7 +436,7 @@ main() {
   baseline_observed="$(jq -r '.network_changes.observed' <<<"${baseline_status}")"
   baseline_refreshes="$(jq -r '.network_changes.endpoint_refreshes' <<<"${baseline_status}")"
   dns_is_ready "${peer_name}" "${peer_v4}" "${peer_v6}" ||
-    fail "MagicDNS does not currently return both expected peer addresses"
+    fail "MeshTransit DNS does not currently return both expected peer addresses"
   ping -4 -n -c 3 -W 1 "${peer_v4}" >/dev/null 2>&1 ||
     fail "baseline IPv4 peer traffic is unavailable"
   ping -6 -n -c 3 -W 1 "${peer_v6}" >/dev/null 2>&1 ||

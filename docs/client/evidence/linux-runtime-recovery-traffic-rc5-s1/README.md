@@ -6,13 +6,13 @@ native Ubuntu 26.04 AMD64 node and one native Ubuntu 26.04 ARM64 node in the
 same fixed Network.
 
 Each node ran three helper-socket permission faults while independent probe
-loops continuously exercised IPv4, IPv6, and uncached MagicDNS against the
+loops continuously exercised IPv4, IPv6, and uncached MeshTransit DNS against the
 other node. Every sample observed loss in all three probe classes and ended
 with a long consecutive-success tail. The nested runtime gate also passed its
 process, interface, listener, route, address, resolver, persisted-state,
 descriptor, socket-permission, and systemd restart-count invariants.
 
-| Report | Architecture | Samples | IPv4 stable p95 | IPv6 stable p95 | MagicDNS stable p95 | Result |
+| Report | Architecture | Samples | IPv4 stable p95 | IPv6 stable p95 | MeshTransit DNS stable p95 | Result |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
 | `ubuntu26-amd64.json` | x86_64 | 3/3 | 5,239 ms | 5,217 ms | 5,217 ms | pass |
 | `ubuntu26-arm64.json` | aarch64 | 3/3 | 6,978 ms | 6,927 ms | 4,625 ms | pass |

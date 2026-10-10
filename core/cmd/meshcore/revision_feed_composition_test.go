@@ -48,3 +48,14 @@ func (revisionSubscriptionFixture) Receive(
 }
 
 func (revisionSubscriptionFixture) Close() error { return nil }
+
+// TestMapStreamWatchersCoverSharingScopes pins the feed budget: a stream
+// watches its own Network plus each Network it imports from, and a
+// reconnect briefly doubles that, so one watcher per session is too few.
+func TestMapStreamWatchersCoverSharingScopes(t *testing.T) {
+	t.Parallel()
+
+	if got := mapStreamWatchers(config.ControlConfig{MaxSessions: 1024}); got != 8192 {
+		t.Fatalf("mapStreamWatchers(1024 sessions) = %d, want 8192", got)
+	}
+}

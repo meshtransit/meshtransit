@@ -24,7 +24,7 @@ func TestLoginDocumentRejectsProfileAndRoutingFallbacks(t *testing.T) {
 		})
 	}
 	for _, path := range []string{
-		"", "/", "/auth", "/auth/", "/api/v1/callback", "/machine/register", "/key", "/ts2021",
+		"", "/", "/auth", "/auth/", "/api/v1/callback", "/machine/register", "/key", "/control",
 		"https://console.example.test/auth/callback", "//auth/callback", "/auth/callback/", "/auth//callback",
 		"/auth/../callback", "/auth/./callback", "/auth/callback?code=private", "/auth/callback#state",
 		"/auth/call%62ack", "/auth/call\\back", "/auth/é", "/auth/" + strings.Repeat("x", 251),

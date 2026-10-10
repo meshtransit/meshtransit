@@ -30,7 +30,7 @@ assert_rejected "${harness}" __validate-dns-label '-poc1'
 assert_rejected "${harness}" __validate-dns-name 'bad..example'
 "${harness}" __validate-ipv4 100.64.0.6
 assert_rejected "${harness}" __validate-ipv4 100.64.0.999
-"${harness}" __validate-ipv6 fd7a:115c:a1e0::d
+"${harness}" __validate-ipv6 fd07:d4de:9d87::d
 assert_rejected "${harness}" __validate-ipv6 'fd7a::1%eth0'
 
 printf 'linux DNS qualification validation passed\n'

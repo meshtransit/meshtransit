@@ -12,7 +12,7 @@ a release-candidate percentile claim.
 - Debian package SHA-256:
   `51b32b18380122522e980812288fdedaa6efbf3f6d39823ece29be13b25ec159`
 - Two x86-64 Ubuntu 24.04 nodes with one authenticated direct peer path.
-- IPv4, IPv6, MagicDNS, and control-map synchronization were healthy before
+- IPv4, IPv6, MeshTransit DNS, and control-map synchronization were healthy before
   each run.
 - Ubuntu B was the canary. Ubuntu A ran only after B passed and an independent
   cleanup check completed.
@@ -42,7 +42,7 @@ Raw PIDs are deliberately omitted from the retained reports.
 After each chain completed, the node had exactly one `meshd` process, one
 `meshnetd` process, one `mesh0` interface, one `meshdns0` interface, one UDP DNS
 listener, and one TCP DNS listener. `meshqchg0` was absent. IPv4 and IPv6 peer
-routes still used `mesh0`; MagicDNS returned both expected addresses; direct
+routes still used `mesh0`; MeshTransit DNS returned both expected addresses; direct
 dual-stack traffic passed; and status remained online with one direct path and
 DNS configured.
 

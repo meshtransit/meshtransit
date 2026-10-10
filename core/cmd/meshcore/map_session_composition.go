@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"meshtransit.net/core/internal/adapter/legacyts2021"
+	mtcpadapter "meshtransit.net/core/internal/adapter/mtcp"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/adapter/relayfile"
 	"meshtransit.net/core/internal/control/mapsession"
@@ -130,7 +130,7 @@ func newMapStreamService(
 			CoordinationTimeout: mapConfig.CoordinationTimeout,
 			KeepAliveInterval:   mapConfig.KeepAliveInterval,
 			ReconcileInterval:   mapConfig.ReconcileInterval,
-			FilterDigest:        legacyts2021.PacketFilterDigest,
+			FilterDigest:        mtcpadapter.PacketFilterDigest,
 		},
 	)
 	if err != nil {

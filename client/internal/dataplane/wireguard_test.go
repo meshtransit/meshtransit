@@ -256,8 +256,8 @@ func TestWireGuardEngineApplyDualStack(t *testing.T) {
 	t.Parallel()
 
 	privateKey, snapshot := testWireGuardSnapshot(t)
-	selfIPv6 := netip.MustParsePrefix("fd7a:115c:a1e0::f/128")
-	peerIPv6 := netip.MustParsePrefix("fd7a:115c:a1e0::5/128")
+	selfIPv6 := netip.MustParsePrefix("fd07:d4de:9d87::f/128")
+	peerIPv6 := netip.MustParsePrefix("fd07:d4de:9d87::5/128")
 	snapshot.Self.Addresses = append(snapshot.Self.Addresses, selfIPv6)
 	snapshot.Peers[0].Addresses = append(snapshot.Peers[0].Addresses, peerIPv6)
 	snapshot.Peers[0].AllowedIPs = append(snapshot.Peers[0].AllowedIPs, peerIPv6)
@@ -283,7 +283,7 @@ func TestWireGuardEngineApplyDualStack(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"allowed_ip=100.64.0.4/32",
-		"allowed_ip=fd7a:115c:a1e0::5/128",
+		"allowed_ip=fd07:d4de:9d87::5/128",
 	} {
 		if !strings.Contains(device.configuration, expected) {
 			t.Fatalf("configuration is missing %q", expected)

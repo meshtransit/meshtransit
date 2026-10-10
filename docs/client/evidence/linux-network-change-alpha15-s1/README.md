@@ -14,7 +14,7 @@ the current two-node Linux alpha topology while the peer remained online.
 
 The controlled action used only the dedicated `meshqchg0` dummy interface.
 Independent post-run checks confirmed its removal, preservation of each
-default route, synchronized direct-path operation, exact MagicDNS answers,
+default route, synchronized direct-path operation, exact MeshTransit DNS answers,
 dual-stack traffic, and no warning-level service log entries.
 
 The report schema omits SSH destinations, overlay addresses, DNS names and

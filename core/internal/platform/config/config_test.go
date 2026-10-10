@@ -65,8 +65,7 @@ func TestLoadDefaults(t *testing.T) {
 		t.Fatalf("api config = %+v, want bounded defaults", got.API)
 	}
 	if got.Control == nil || got.Control.Address != defaultControlAddress ||
-		got.Control.MaxSessions != defaultControlMaxSessions ||
-		got.Control.MaxStreamsPerSession != defaultControlMaxStreams {
+		got.Control.MaxSessions != defaultControlMaxSessions || got.Control.MTCP.KeyNotAfter.IsZero() {
 		t.Fatalf("control config = %+v, want bounded defaults", got.Control)
 	}
 	if got.RevisionWorker == nil || *got.RevisionWorker != (RevisionWorkerConfig{
@@ -202,6 +201,7 @@ func validProcessValues(overrides map[string]string) map[string]string {
 		envControlTLSCertificateFile:             "/run/secrets/control-tls-certificate.pem",
 		envControlTLSPrivateKeyFile:              "/run/secrets/control-tls-private-key.pem",
 		envControlNoisePrivateKeyFile:            "/run/secrets/control-noise-private-key",
+		envControlMTCPKeyNotAfter:                time.Now().UTC().AddDate(1, 0, 0).Format(time.RFC3339),
 		envRelayDirectoryFile:                    "/etc/meshtransit/relay-directory.json",
 		envRelayDirectorySHA256:                  "sha256:1111111111111111111111111111111111111111111111111111111111111111",
 		envAPITLSCertificateFile:                 "/run/secrets/control-tls-certificate.pem",

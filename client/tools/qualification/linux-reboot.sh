@@ -26,10 +26,10 @@ Usage:
     --observer-label LABEL \
     --target-v4 ADDRESS \
     --target-v6 ADDRESS \
-    --target-name MAGICDNS_NAME \
+    --target-name MESH_DNS_NAME \
     --observer-v4 ADDRESS \
     --observer-v6 ADDRESS \
-    --observer-name MAGICDNS_NAME \
+    --observer-name MESH_DNS_NAME \
     --artifact-sha256 HEX \
     --confirm-reboot TARGET_LABEL \
     [--ssh-driver ssh|rtk] \
@@ -127,13 +127,13 @@ validate_dns_name() {
   local -a dns_labels
 
   if (( ${#value} > 253 )) || [[ "${value}" == *. ]]; then
-    fail "MagicDNS names must be bounded and must not end with a dot"
+    fail "MeshTransit DNS names must be bounded and must not end with a dot"
   fi
   IFS=. read -r -a dns_labels <<<"${value}"
   for dns_label in "${dns_labels[@]}"; do
     if (( ${#dns_label} == 0 || ${#dns_label} > 63 )) ||
       [[ ! "${dns_label}" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]]; then
-      fail "MagicDNS name contains an invalid label"
+      fail "MeshTransit DNS name contains an invalid label"
     fi
   done
 }
@@ -499,9 +499,9 @@ main() {
   status_is_ready "${target_status}" || fail "target is not ready before reboot"
   status_is_ready "${observer_status}" || fail "observer is not ready before reboot"
   remote_dns_ready "${target_ssh}" "${observer_name}" "${observer_v4}" "${observer_v6}" ||
-    fail "target MagicDNS preflight failed"
+    fail "target MeshTransit DNS preflight failed"
   remote_dns_ready "${observer_ssh}" "${target_name}" "${target_v4}" "${target_v6}" ||
-    fail "observer MagicDNS preflight failed"
+    fail "observer MeshTransit DNS preflight failed"
   remote_outbound_ready "${target_ssh}" "${observer_v4}" "${observer_v6}" ||
     fail "target outbound traffic preflight failed"
   remote_outbound_ready "${observer_ssh}" "${target_v4}" "${target_v6}" ||

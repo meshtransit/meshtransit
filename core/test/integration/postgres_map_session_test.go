@@ -49,7 +49,7 @@ func assertPostgreSQLMapSessionSnapshot(
 	if err != nil {
 		t.Fatalf("control.NewAuthenticatedMachine() error = %v", err)
 	}
-	request, err := mapsession.NewRequest(command.Identity.NodeKey(), 142)
+	request, err := mapsession.NewRequest(command.Identity.NodeKey())
 	if err != nil {
 		t.Fatalf("mapsession.NewRequest() error = %v", err)
 	}
@@ -96,7 +96,7 @@ func assertPostgreSQLMapSessionSnapshot(
 	if err != nil {
 		t.Fatalf("construct unknown Node key: %v", err)
 	}
-	unknownNodeRequest, err := mapsession.NewRequest(unknownNodeKey, 142)
+	unknownNodeRequest, err := mapsession.NewRequest(unknownNodeKey)
 	if err != nil {
 		t.Fatalf("construct unknown Node request: %v", err)
 	}

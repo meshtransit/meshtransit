@@ -1,8 +1,16 @@
 # Third-party notices: client
 
-`meshd` uses selected packages from `tailscale.com v1.102.3` inside isolated TS2021 and relay wire compatibility adapters. That dependency is licensed under the BSD 3-Clause License.
+`meshd` and `meshctl` contain only MeshTransit code and the modules below.
 
-The Linux encrypted data plane uses `golang.zx2c4.com/wireguard`, licensed under the MIT License, and `github.com/vishvananda/netlink`, licensed under the Apache License 2.0. The compatible peer-probe cryptography uses `golang.org/x/crypto`, licensed under the BSD 3-Clause License.
+| Module | Used for | License |
+| --- | --- | --- |
+| `golang.zx2c4.com/wireguard` | Linux encrypted data plane | MIT |
+| `github.com/vishvananda/netlink`, `github.com/vishvananda/netns` | Linux routes, addresses and namespaces | Apache-2.0 |
+| `github.com/flynn/noise` | MTCP v1 Noise handshake | BSD-3-Clause |
+| `github.com/coder/websocket` | MTCP and relay WebSocket fallback | ISC |
+| `github.com/klauspost/compress` | MTCP message compression | BSD-3-Clause, parts Apache-2.0 |
+| `google.golang.org/protobuf` | MTCP messages | BSD-3-Clause |
+| `golang.org/x/crypto`, `golang.org/x/net`, `golang.org/x/sys` | peer-probe cryptography, DNS messages, system calls | BSD-3-Clause |
 
 The complete direct-dependency license texts are reproduced under `client/third_party/licenses/`. Product commands, API names, and documentation must not imply endorsement by any dependency's copyright holders or contributors.
 

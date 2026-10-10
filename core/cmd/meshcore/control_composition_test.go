@@ -18,93 +18,26 @@ import (
 	"strings"
 	"testing"
 
-	"meshtransit.net/core/internal/adapter/legacyts2021"
-	"meshtransit.net/core/internal/control"
-	"meshtransit.net/core/internal/control/mapsession"
-	"meshtransit.net/core/internal/domain/enrollment/registration"
 	"meshtransit.net/core/internal/platform/config"
 )
 
-func TestComposeControlListenerLoadsTLSAndNoiseIdentity(t *testing.T) {
+func TestComposeControlListenerLoadsTLS(t *testing.T) {
 	t.Parallel()
 
 	controlConfig, _ := controlConfigFixture(t)
-	listener, err := composeControlListener(
-		controlConfig,
-		controlRegistrationServiceFixture{},
-		controlMapSessionServiceFixture{},
-		controlMapStreamServiceFixture{},
-		nil,
-		nil,
-		discardCompositionLogger(),
-	)
+	listener, err := composeControlListener(controlConfig, nil, &routeRecorder{})
 	if err != nil {
 		t.Fatalf("composeControlListener() error = %v", err)
 	}
-	if listener == nil {
-		t.Fatal("composeControlListener() returned nil listener")
+	if listener == nil || listener.MetricsCollector() == nil {
+		t.Fatal("composeControlListener() returned no listener or no telemetry")
 	}
-	if listener.MetricsCollector() == nil {
-		t.Fatal("composeControlListener() returned listener without telemetry")
-	}
-}
-
-func TestComposeControlListenerRejectsInvalidDependencies(t *testing.T) {
-	t.Parallel()
-
-	controlConfig, _ := controlConfigFixture(t)
-	tests := []struct {
-		name            string
-		service         controlRegistrationServiceFixture
-		mapService      controlMapSessionServiceFixture
-		streamService   controlMapStreamServiceFixture
-		nilRegistration bool
-		nilMap          bool
-		nilStream       bool
-		nilLog          bool
-	}{
-		{name: "registration service", nilRegistration: true, mapService: controlMapSessionServiceFixture{}, streamService: controlMapStreamServiceFixture{}},
-		{name: "map service", service: controlRegistrationServiceFixture{}, nilMap: true, streamService: controlMapStreamServiceFixture{}},
-		{name: "stream service", service: controlRegistrationServiceFixture{}, mapService: controlMapSessionServiceFixture{}, nilStream: true},
-		{name: "logger", service: controlRegistrationServiceFixture{}, mapService: controlMapSessionServiceFixture{}, streamService: controlMapStreamServiceFixture{}, nilLog: true},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			var service legacyts2021.RegistrationService = test.service
-			if test.nilRegistration {
-				service = nil
-			}
-			var mapService legacyts2021.MapSessionService = test.mapService
-			if test.nilMap {
-				mapService = nil
-			}
-			var streamService legacyts2021.MapStreamService = test.streamService
-			if test.nilStream {
-				streamService = nil
-			}
-			logger := discardCompositionLogger()
-			if test.nilLog {
-				logger = nil
-			}
-			_, err := composeControlListener(
-				controlConfig,
-				service,
-				mapService,
-				streamService,
-				nil,
-				nil,
-				logger,
-			)
-			if !errors.Is(err, errInvalidControlComposition) {
-				t.Fatalf("composeControlListener() error = %v, want composition error", err)
-			}
-		})
+	if _, err := composeControlListener(controlConfig, nil, nil); !errors.Is(err, errInvalidControlComposition) {
+		t.Fatalf("without MTCP: error = %v, want composition error", err)
 	}
 }
 
-func TestLoadControlIdentityRejectsMaterialWithoutDisclosure(t *testing.T) {
+func TestLoadControlCertificateRejectsMaterialWithoutDisclosure(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -112,7 +45,6 @@ func TestLoadControlIdentityRejectsMaterialWithoutDisclosure(t *testing.T) {
 		filename string
 		content  []byte
 	}{
-		{name: "noise key", filename: "noise.key", content: []byte("privkey:invalid")},
 		{name: "certificate", filename: "certificate.pem", content: []byte("not a certificate")},
 		{name: "tls key", filename: "tls.key", content: []byte("not a private key")},
 	}
@@ -125,46 +57,15 @@ func TestLoadControlIdentityRejectsMaterialWithoutDisclosure(t *testing.T) {
 			if err := os.WriteFile(path, test.content, 0o600); err != nil {
 				t.Fatalf("os.WriteFile() error = %v", err)
 			}
-			_, _, err := loadControlIdentity(controlConfig)
+			_, err := loadControlCertificate(controlConfig)
 			if !errors.Is(err, errInvalidControlComposition) {
-				t.Fatalf("loadControlIdentity() error = %v, want composition error", err)
+				t.Fatalf("loadControlCertificate() error = %v, want composition error", err)
 			}
 			if strings.Contains(err.Error(), path) || strings.Contains(err.Error(), string(test.content)) {
-				t.Fatalf("loadControlIdentity() disclosed secret material or path: %v", err)
+				t.Fatalf("loadControlCertificate() disclosed secret material or path: %v", err)
 			}
 		})
 	}
-}
-
-type controlRegistrationServiceFixture struct{}
-
-func (controlRegistrationServiceFixture) Register(
-	context.Context,
-	control.AuthenticatedMachine,
-	control.RegistrationRequest,
-) (registration.Result, error) {
-	return registration.Result{}, errors.New("composition fixture must not be called")
-}
-
-type controlMapSessionServiceFixture struct{}
-
-func (controlMapSessionServiceFixture) Open(
-	context.Context,
-	control.AuthenticatedMachine,
-	mapsession.Request,
-) (mapsession.Snapshot, error) {
-	return mapsession.Snapshot{}, errors.New("composition fixture must not be called")
-}
-
-type controlMapStreamServiceFixture struct{}
-
-func (controlMapStreamServiceFixture) Serve(
-	context.Context,
-	control.AuthenticatedMachine,
-	mapsession.Request,
-	mapsession.StreamSink,
-) error {
-	return errors.New("composition fixture must not be called")
 }
 
 func discardCompositionLogger() *slog.Logger {
@@ -246,48 +147,46 @@ func (*routeRecorder) Shutdown(context.Context) error                 { return n
 func TestControlRoutesSplitByPath(t *testing.T) {
 	t.Parallel()
 
-	control, relay, mtcp := &routeRecorder{}, &routeRecorder{}, &routeRecorder{}
-	routes := controlRoutes{ControlSessionServer: control, relay: relay, mtcp: mtcp}
-	for _, path := range []string{"/relay/v1/state", "/relay/v1/map", "/key", "/ts2021", "/relay/v2/state",
-		"/mtcp/v1", "/mtcp/v1/ws", "/mtcp/v1/key", "/mtcp/v2"} {
-		routes.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
+	relay, mtcp := &routeRecorder{}, &routeRecorder{}
+	routes := controlRoutes{relay: relay, mtcp: mtcp}
+	notFound := 0
+	for _, path := range []string{"/relay/v1/state", "/relay/v1/map", "/key", "/control", "/machine/map",
+		"/relay/v2/state", "/mtcp/v1", "/mtcp/v1/ws", "/mtcp/v1/key", "/mtcp/v2"} {
+		response := httptest.NewRecorder()
+		routes.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
+		if response.Code == http.StatusNotFound {
+			notFound++
+		}
 	}
-	if relay.hits != 2 || mtcp.hits != 3 || control.hits != 4 {
-		t.Fatalf("relay hits %d, mtcp hits %d, control hits %d", relay.hits, mtcp.hits, control.hits)
+	if relay.hits != 2 || mtcp.hits != 3 || notFound != 5 {
+		t.Fatalf("relay hits %d, mtcp hits %d, not found %d", relay.hits, mtcp.hits, notFound)
 	}
-	// Without MTCP, its paths reach TS2021, which refuses them.
-	withoutMTCP := controlRoutes{ControlSessionServer: control, relay: relay}
-	withoutMTCP.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/mtcp/v1", nil))
-	if control.hits != 5 || mtcp.hits != 3 {
-		t.Fatal("an MTCP path reached MTCP while it is off")
+	// Without a relay authority its paths are not found either.
+	response := httptest.NewRecorder()
+	controlRoutes{mtcp: mtcp}.ServeHTTP(response,
+		httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/relay/v1/state", nil))
+	if response.Code != http.StatusNotFound || relay.hits != 2 {
+		t.Fatal("a relay path was served without a relay authority")
 	}
 }
 
 type shutdownRecorder struct {
 	routeRecorder
-	order *[]string
-	name  string
+	calls int
 	err   error
 }
 
 func (r *shutdownRecorder) Shutdown(context.Context) error {
-	*r.order = append(*r.order, r.name)
+	r.calls++
 	return r.err
 }
 
-func TestControlRoutesShutdownJoinsMTCPFirst(t *testing.T) {
+func TestControlRoutesShutdownJoinsMTCP(t *testing.T) {
 	t.Parallel()
 
-	var order []string
 	failure := errors.New("mtcp drain timed out")
-	routes := controlRoutes{
-		ControlSessionServer: &shutdownRecorder{order: &order, name: "ts2021"},
-		mtcp:                 &shutdownRecorder{order: &order, name: "mtcp", err: failure},
-	}
-	if err := routes.Shutdown(t.Context()); !errors.Is(err, failure) {
-		t.Fatalf("Shutdown() = %v", err)
-	}
-	if strings.Join(order, ",") != "mtcp,ts2021" {
-		t.Fatalf("shutdown order %v", order)
+	mtcp := &shutdownRecorder{err: failure}
+	if err := (controlRoutes{mtcp: mtcp}).Shutdown(t.Context()); !errors.Is(err, failure) || mtcp.calls != 1 {
+		t.Fatalf("Shutdown() = %v after %d calls", err, mtcp.calls)
 	}
 }

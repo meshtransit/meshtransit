@@ -153,13 +153,9 @@ That gate checks each packet against self/peer deadlines before ACL or tracked
 replies, and invalidates tracked flows on mapped identity, key or deadline
 replacement. It adds no Network selector or sharing protocol fallback.
 
-`TestExportDirectSharingFrames` is an explicit synthetic fixture producer:
-
-```text
-go test -count=1 ./internal/adapter/legacyts2021 \
-  -run '^TestExportDirectSharingFrames$' \
-  -args -direct-sharing-fixture-output=<existing-output-directory>
-```
+The synthetic fixture producer `TestExportDirectSharingFrames` belonged to the
+legacy control adapter and was removed with it (P6); MTCP map encoding is
+covered by `core/internal/adapter/mtcp` tests.
 
 Ordinary tests never rewrite fixtures. The producer emits full provider/consumer,
 full and delta share removal, and terminal withdrawal documents from the actual

@@ -25,7 +25,7 @@ used or modified.
 
 Both runs observed a real SSH outage and a changed kernel boot ID. After boot,
 both services, the data interface and routes, daemon control synchronization,
-MagicDNS, and outbound dual-stack traffic recovered before the deadline. The
+MeshTransit DNS, and outbound dual-stack traffic recovered before the deadline. The
 active profile, profile count, self addresses, runtime version, and runtime
 commit remained unchanged. Each observer then recorded more than 200
 consecutive replies per address family after stable recovery.

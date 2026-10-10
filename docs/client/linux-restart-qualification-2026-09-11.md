@@ -18,7 +18,7 @@ the current two-node Ubuntu topology. Each node independently restarted
 - Stability tail: five seconds with at least three consecutive replies
 
 Every run required both services to be active, the data interface and dual-stack
-peer routes to exist, the control session to be synchronized, and MagicDNS to
+peer routes to exist, the control session to be synchronized, and MeshTransit DNS to
 return the exact peer addresses before the selected service was restarted.
 
 ## Results
@@ -87,7 +87,7 @@ change so the daemon cannot continue against stale helper-generation TUN state.
 All eight probe streams stabilized within 6,885 milliseconds and ended with
 82–86 consecutive replies per address family. Post-matrix inspection found one
 data link, one DNS link, one UDP and one TCP resolver listener owned by the
-current daemon, synchronized direct paths, configured MagicDNS, unchanged
+current daemon, synchronized direct paths, configured MeshTransit DNS, unchanged
 identity/profile/env bytes, and no error-level service log entries on either
 node.
 

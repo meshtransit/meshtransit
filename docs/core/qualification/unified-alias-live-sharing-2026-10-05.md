@@ -9,9 +9,9 @@ addresses below come from the product ranges (RFC 6598, RFC 2544, ULA).
 
 | Role | Overlay | Seen by the other side as |
 | --- | --- | --- |
-| Provider Device | 100.64.10.8, fd7a:115c:a1e0:1::8 | Resource Alias 198.18.0.2, fd02:48de:ec1b:1::2 |
-| Consumer Device | 100.64.20.1, fd7a:115c:a1e0:2::1 | Consumer Source Alias 198.19.0.2, fd02:48de:ec1b:2::2 |
-| Isolation Device | 100.64.30.1, fd7a:115c:a1e0:3::1 | nothing |
+| Provider Device | 100.64.10.8, fd07:d4de:9d87:1::8 | Resource Alias 198.18.0.2, fd02:48de:ec1b:1::2 |
+| Consumer Device | 100.64.20.1, fd07:d4de:9d87:2::1 | Consumer Source Alias 198.19.0.2, fd02:48de:ec1b:2::2 |
+| Isolation Device | 100.64.30.1, fd07:d4de:9d87:3::1 | nothing |
 
 The Consumer rule allows ICMP from the Consumer Device to the imported Device.
 Latencies are measured from the Console action to the first changed echo on a

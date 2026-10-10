@@ -14,9 +14,7 @@ import (
 	"time"
 
 	"meshtransit.net/client/internal/cloudaddr"
-	"meshtransit.net/client/internal/compat/ts2021"
 	"meshtransit.net/client/internal/config"
-	"meshtransit.net/client/internal/controlselect"
 	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/dnsconfig"
@@ -192,7 +190,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		daemonOptions.DNS = dnsManager
-		logger.Info("MagicDNS enabled", "socket", cfg.NetAdminSocketPath)
+		logger.Info("MeshTransit DNS enabled", "socket", cfg.NetAdminSocketPath)
 	}
 	var networkMonitor *netwatch.Monitor
 	if cfg.EnableDataPlane {
@@ -210,18 +208,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			daemonOptions.NetworkChanges = networkMonitor.Events()
 		}
 	}
-	mode, err := controlselect.ParseMode(cfg.ControlProtocol)
-	if err != nil {
-		logger.Error("invalid control protocol", "error", err)
-
-		return 1
-	}
-	control, err := controlselect.New(mode, mtcpclient.New(), ts2021.New())
-	if err != nil {
-		logger.Error("creating control client failed", "error", err)
-
-		return 1
-	}
+	control := mtcpclient.New()
 	service, err := daemon.New(
 		profiles,
 		identities,

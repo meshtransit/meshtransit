@@ -1,7 +1,6 @@
 # disco v2: peer path discovery
 
-Draft 1, 2026-10-09. Replaces the TS2021-compatible disco format used by the
-legacy adapter. Implementation: `shared/disco`.
+Draft 1, 2026-10-09. Implementation: `shared/disco`.
 
 disco v2 lets two nodes find and keep the best UDP path between them. It runs
 on the same UDP socket as WireGuard, and through the relay when no direct path

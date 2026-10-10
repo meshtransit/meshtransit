@@ -8,42 +8,37 @@ const (
 	envControlTLSPrivateKeyFile    = "MESHTRANSIT_CONTROL_TLS_PRIVATE_KEY_FILE"
 	envControlNoisePrivateKeyFile  = "MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE"
 	envControlMaxSessions          = "MESHTRANSIT_CONTROL_MAX_SESSIONS"
-	envControlMaxStreamsPerSession = "MESHTRANSIT_CONTROL_MAX_STREAMS_PER_SESSION"
 	envControlHandshakeTimeout     = "MESHTRANSIT_CONTROL_HANDSHAKE_TIMEOUT"
 	envControlReadIdleTimeout      = "MESHTRANSIT_CONTROL_READ_IDLE_TIMEOUT"
-	envControlPingTimeout          = "MESHTRANSIT_CONTROL_PING_TIMEOUT"
-	envControlWriteTimeout         = "MESHTRANSIT_CONTROL_WRITE_TIMEOUT"
 	defaultControlAddress          = "0.0.0.0:8443"
 	defaultControlMaxSessions      = 1024
-	defaultControlMaxStreams       = 8
 	defaultControlHandshakeTimeout = 5 * time.Second
 	defaultControlReadIdleTimeout  = time.Minute
-	defaultControlPingTimeout      = 15 * time.Second
-	defaultControlWriteTimeout     = 15 * time.Second
 	minControlTimeout              = 100 * time.Millisecond
 	maxControlHandshakeTimeout     = 30 * time.Second
 	maxControlSessionTimeout       = 5 * time.Minute
 	minControlSessions             = 1
 	maxControlSessions             = 4096
-	minControlStreams              = 1
-	maxControlStreams              = 64
 )
+
+var retiredControlSettings = []string{
+	"MESHTRANSIT_CONTROL_MAX_STREAMS_PER_SESSION",
+	"MESHTRANSIT_CONTROL_PING_TIMEOUT",
+	"MESHTRANSIT_CONTROL_WRITE_TIMEOUT",
+}
 
 // ControlConfig contains the public authenticated control-listener contract.
 // Secret-bearing file references format only as redacted values.
 type ControlConfig struct {
-	Address              string
-	TLSCertificateFile   TrustFile
-	TLSPrivateKeyFile    PrivateKeyFile
-	NoisePrivateKeyFile  SecretFile
-	MaxSessions          int
-	MaxStreamsPerSession uint32
-	HandshakeTimeout     time.Duration
-	ReadIdleTimeout      time.Duration
-	PingTimeout          time.Duration
-	WriteTimeout         time.Duration
-	Map                  ControlMapConfig
-	MTCP                 *ControlMTCPConfig // nil: MTCP is off
+	Address             string
+	TLSCertificateFile  TrustFile
+	TLSPrivateKeyFile   PrivateKeyFile
+	NoisePrivateKeyFile SecretFile
+	MaxSessions         int
+	HandshakeTimeout    time.Duration
+	ReadIdleTimeout     time.Duration
+	Map                 ControlMapConfig
+	MTCP                ControlMTCPConfig
 }
 
 func loadControlConfig(lookup LookupFunc) (ControlConfig, error) {
@@ -75,14 +70,6 @@ func loadControlConfig(lookup LookupFunc) (ControlConfig, error) {
 	if err != nil {
 		return ControlConfig{}, settingError(envControlMaxSessions)
 	}
-	maxStreams, err := parseIntInRange(
-		valueOrDefault(lookup, envControlMaxStreamsPerSession, "8"),
-		minControlStreams,
-		maxControlStreams,
-	)
-	if err != nil {
-		return ControlConfig{}, settingError(envControlMaxStreamsPerSession)
-	}
 	handshakeTimeout, err := parseDurationInRange(
 		valueOrDefault(lookup, envControlHandshakeTimeout, defaultControlHandshakeTimeout.String()),
 		minControlTimeout,
@@ -99,21 +86,12 @@ func loadControlConfig(lookup LookupFunc) (ControlConfig, error) {
 	if err != nil {
 		return ControlConfig{}, settingError(envControlReadIdleTimeout)
 	}
-	pingTimeout, err := parseDurationInRange(
-		valueOrDefault(lookup, envControlPingTimeout, defaultControlPingTimeout.String()),
-		minControlTimeout,
-		readIdleTimeout,
-	)
-	if err != nil {
-		return ControlConfig{}, settingError(envControlPingTimeout)
-	}
-	writeTimeout, err := parseDurationInRange(
-		valueOrDefault(lookup, envControlWriteTimeout, defaultControlWriteTimeout.String()),
-		minControlTimeout,
-		maxControlSessionTimeout,
-	)
-	if err != nil {
-		return ControlConfig{}, settingError(envControlWriteTimeout)
+	// Settings of the retired legacy control server are refused rather than ignored,
+	// so a deployment that still sets them notices.
+	for _, name := range retiredControlSettings {
+		if _, present := lookup(name); present {
+			return ControlConfig{}, settingError(name)
+		}
 	}
 	mapConfig, err := loadControlMapConfig(lookup)
 	if err != nil {
@@ -130,14 +108,10 @@ func loadControlConfig(lookup LookupFunc) (ControlConfig, error) {
 		TLSPrivateKeyFile:   PrivateKeyFile{path: privateKeyPath},
 		NoisePrivateKeyFile: SecretFile{path: noiseKeyPath},
 		MaxSessions:         maxSessions,
-		// #nosec G115 -- validation above bounds the value to 1..64.
-		MaxStreamsPerSession: uint32(maxStreams),
-		HandshakeTimeout:     handshakeTimeout,
-		ReadIdleTimeout:      readIdleTimeout,
-		PingTimeout:          pingTimeout,
-		WriteTimeout:         writeTimeout,
-		Map:                  mapConfig,
-		MTCP:                 mtcpConfig,
+		HandshakeTimeout:    handshakeTimeout,
+		ReadIdleTimeout:     readIdleTimeout,
+		Map:                 mapConfig,
+		MTCP:                mtcpConfig,
 	}, nil
 }
 

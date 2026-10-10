@@ -227,7 +227,7 @@ func TestResolverEnginePTRAndMalformedQuery(t *testing.T) {
 	engine := newResolverEngine()
 	for _, name := range []string{
 		"1.0.64.100.in-addr.arpa.",
-		"1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.e.1.a.c.5.1.1.a.7.d.f.ip6.arpa.",
+		"1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.7.8.d.9.e.d.4.d.7.0.d.f.ip6.arpa.",
 	} {
 		query := packQuery(t, name, dnsmessage.TypePTR)
 		response, err := engine.resolve(t.Context(), plan, query, "udp")

@@ -25,7 +25,7 @@ func TestNextAvailableAddressSelectsLowestUsableCandidate(t *testing.T) {
 			occupied: []string{"100.64.1.1", "100.64.1.3"},
 			want:     "100.64.1.2",
 		},
-		{name: "empty ipv6 prefix", prefix: "fd7a:115c:a1e0::/64", want: "fd7a:115c:a1e0::1"},
+		{name: "empty ipv6 prefix", prefix: "fd07:d4de:9d87::/64", want: "fd07:d4de:9d87::1"},
 	}
 
 	for _, test := range tests {
@@ -101,7 +101,7 @@ func TestNextAvailableAddressRejectsUnsafeInput(t *testing.T) {
 		{
 			name:           "mixed family",
 			prefix:         netip.MustParsePrefix("100.64.1.0/24"),
-			occupied:       []netip.Addr{netip.MustParseAddr("fd7a:115c:a1e0::1")},
+			occupied:       []netip.Addr{netip.MustParseAddr("fd07:d4de:9d87::1")},
 			candidateLimit: 1,
 		},
 	}

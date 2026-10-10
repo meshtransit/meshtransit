@@ -66,8 +66,8 @@ func TestPolicyFilterEnforcesSupportedProtocolMatrix(t *testing.T) {
 
 	self4 := netip.MustParsePrefix("100.64.0.3/32")
 	peer4 := netip.MustParsePrefix("100.64.0.4/32")
-	self6 := netip.MustParsePrefix("fd7a:115c:a1e0::3/128")
-	peer6 := netip.MustParsePrefix("fd7a:115c:a1e0::4/128")
+	self6 := netip.MustParsePrefix("fd07:d4de:9d87::3/128")
+	peer6 := netip.MustParsePrefix("fd07:d4de:9d87::4/128")
 	tests := []struct {
 		name     string
 		self     netip.Prefix
@@ -368,8 +368,8 @@ func TestPolicyFilterRequiresTCPInitiationAndExactReplyTuple(t *testing.T) {
 func TestPolicyFilterAllowsICMPv6(t *testing.T) {
 	t.Parallel()
 
-	self := netip.MustParsePrefix("fd7a:115c:a1e0::f/128")
-	peer := netip.MustParsePrefix("fd7a:115c:a1e0::5/128")
+	self := netip.MustParsePrefix("fd07:d4de:9d87::f/128")
+	peer := netip.MustParsePrefix("fd07:d4de:9d87::5/128")
 	snapshot := networkmap.Snapshot{
 		Self:  networkmap.Node{Addresses: []netip.Prefix{self}},
 		Peers: []networkmap.Node{{Addresses: []netip.Prefix{peer}}},

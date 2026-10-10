@@ -20,10 +20,6 @@ import (
 	"meshtransit.net/shared/policydigest"
 )
 
-// requestCapabilityVersion fills mapsession.Request's legacy compatibility
-// field; nothing outside the TS2021 adapter reads it.
-const requestCapabilityVersion = 1
-
 // MapStreams runs authorized map streams and stores enforcement evidence
 // (mapsession.StreamService).
 type MapStreams interface {
@@ -192,7 +188,7 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key) e
 	if err != nil {
 		return err
 	}
-	request, err := mapsession.NewRequest(nodeKey, requestCapabilityVersion)
+	request, err := mapsession.NewRequest(nodeKey)
 	if err == nil && conversation.session.Supports("device-alias.v1") {
 		request, err = request.WithDeviceAliasVersion(1)
 	}

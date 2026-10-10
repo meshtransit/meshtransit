@@ -382,7 +382,7 @@ func (conversation *conversation) rotate(ctx context.Context, request *mtcpv1.Ro
 // Device.
 func (conversation *conversation) ownsKey(ctx context.Context, machine control.AuthenticatedMachine,
 	nodeKey node.Key) (mapsession.Snapshot, bool) {
-	request, err := mapsession.NewRequest(nodeKey, requestCapabilityVersion)
+	request, err := mapsession.NewRequest(nodeKey)
 	if err == nil && conversation.session.Supports("device-alias.v1") {
 		// Open records the client's alias support; report the same as the stream.
 		request, err = request.WithDeviceAliasVersion(1)

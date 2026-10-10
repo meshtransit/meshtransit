@@ -20,7 +20,7 @@ trap cleanup EXIT
 
 help_output="$("${harness}" --help)"
 grep -Fq -- 'fixed peer over IPv4' <<<"${help_output}"
-grep -Fq -- 'uncached MagicDNS' <<<"${help_output}"
+grep -Fq -- 'uncached MeshTransit DNS' <<<"${help_output}"
 grep -Fq -- 'peer addresses and DNS names are never retained' <<<"${help_output}"
 
 "${harness}" __validate-label ubuntu26-amd64

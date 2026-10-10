@@ -7,7 +7,7 @@ passed three consecutive traffic-bearing helper-socket fault samples on native
 Ubuntu 26.04 AMD64 and ARM64. The reusable qualification harness was introduced
 at `826ad90`.
 
-| Target | Samples | Runtime synchronized p95 | IPv4 stable p95 | IPv6 stable p95 | MagicDNS stable p95 | Result |
+| Target | Samples | Runtime synchronized p95 | IPv4 stable p95 | IPv6 stable p95 | MeshTransit DNS stable p95 | Result |
 | --- | ---: | ---: | ---: | ---: | ---: | --- |
 | Ubuntu 26.04, x86_64 | 3/3 | 4,104 ms | 5,239 ms | 5,217 ms | 5,217 ms | pass |
 | Ubuntu 26.04, aarch64 | 3/3 | 4,089 ms | 6,978 ms | 6,927 ms | 4,625 ms | pass |
@@ -25,7 +25,7 @@ complete recovery and stability tail. Each loop was bounded and sampled:
 
 - IPv4 ICMP through the product-owned data interface;
 - IPv6 ICMP through the same interface; and
-- an uncached MagicDNS lookup that required the exact peer A and AAAA answers.
+- an uncached MeshTransit DNS lookup that required the exact peer A and AAAA answers.
 
 A sample was rejected unless all three probe classes observed at least one
 missed attempt after the action began, returned a reply, and ended with at
@@ -33,7 +33,7 @@ least three consecutive successful attempts. This prevents an always-healthy
 cached result or an unexercised fault from being accepted as recovery evidence.
 
 The AMD64 samples observed 13–15 missing IPv4 attempts, 21–24 missing IPv6
-attempts, and 16–18 missing MagicDNS attempts. The ARM64 samples observed 13–15,
+attempts, and 16–18 missing MeshTransit DNS attempts. The ARM64 samples observed 13–15,
 21–23, and 11–12 respectively. Every final success tail contained at least 125
 consecutive successful attempts.
 

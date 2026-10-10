@@ -24,7 +24,7 @@ The traceable runs are `meshd` CI #21 (`34606746952`) and `meshctl` CI #9
 
 - Two x86-64 nodes running Ubuntu 24.04.4 LTS and Linux 6.8.0-139-generic.
 - One authenticated direct peer path was available in each direction.
-- IPv4, IPv6, and MagicDNS were healthy before every sample.
+- IPv4, IPv6, and MeshTransit DNS were healthy before every sample.
 - Each sample used `linux-network-change.sh` with its default 20-second recovery
   bound and 0.2-second continuous dual-stack probes.
 - The action created only the dedicated `meshqchg0` dummy interface and assigned
@@ -71,7 +71,7 @@ matrices.
 Both status counters advanced for interface creation and advanced again after
 the interface was removed. Independent post-run inspection confirmed that
 `meshqchg0` was absent, the original default route and uplink were unchanged,
-peer routes still used `mesh0`, both services remained active, MagicDNS and
+peer routes still used `mesh0`, both services remained active, MeshTransit DNS and
 dual-stack traffic remained healthy, and the bounded warning-level journal
 query returned no entries.
 

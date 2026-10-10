@@ -6,7 +6,7 @@ on the current two-node Linux alpha topology:
 1. A non-responsive resolver was placed before a reachable resolver.
 2. The reachable resolver was removed, leaving only the non-responsive
    resolver.
-3. The temporary split route was removed and the exact MagicDNS-only baseline
+3. The temporary split route was removed and the exact MeshTransit DNS-only baseline
    was restored.
 
 - Runtime: `0.1.0~alpha16`
@@ -27,7 +27,7 @@ selected non-responsive resolver, with zero packets sent to an unexpected DNS
 destination.
 
 The split route remained suffix-scoped in both failure phases. Unrelated public
-queries stayed on the host resolver path, while MagicDNS, bidirectional
+queries stayed on the host resolver path, while MeshTransit DNS, bidirectional
 dual-stack peer traffic, synchronized control, and the encrypted data plane
 remained healthy. Neither daemon restarted. Rollback removed the temporary
 route, disabled public forwarding through the MeshTransit resolver, and

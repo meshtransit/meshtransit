@@ -191,7 +191,7 @@ mtcp-crosscheck:
 
 lint-integration:
 	$(GOLANGCI_LINT) run --build-tags=integration \
-		./core/internal/adapter/legacyts2021/protocoltest \
+		./core/internal/adapter/mtcp/mtcptest \
 		./core/test/integration \
 		./core/cmd/meshcore
 

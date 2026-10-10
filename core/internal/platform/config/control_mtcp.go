@@ -15,8 +15,8 @@ const (
 	maxControlMTCPKeyLifetime = 5 * 365 * 24 * time.Hour
 )
 
-// ControlMTCPConfig enables MTCP v1 on the control listener beside TS2021.
-// The control key is the Noise key file the listener already uses.
+// ControlMTCPConfig configures MTCP v1, the control protocol. The control
+// key is MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE.
 type ControlMTCPConfig struct {
 	// KeyNotAfter is the expiry advertised for the control key in the key
 	// document (mtcp-v1 §2.2).
@@ -31,26 +31,19 @@ func (cfg ControlMTCPConfig) TrustedProxyPrefixes() []netip.Prefix {
 	return slices.Clone(cfg.trustedProxyPrefixes)
 }
 
-func loadControlMTCPConfig(lookup LookupFunc, now time.Time) (*ControlMTCPConfig, error) {
-	enabled := valueOrDefault(lookup, envControlMTCPEnabled, "false")
-	if enabled != "true" && enabled != "false" {
-		return nil, settingError(envControlMTCPEnabled)
-	}
-	if enabled == "false" {
-		for _, name := range []string{envControlMTCPKeyNotAfter, envControlMTCPTrustedProxies} {
-			if _, present := lookup(name); present {
-				return nil, settingError(name)
-			}
-		}
-		return nil, nil
+func loadControlMTCPConfig(lookup LookupFunc, now time.Time) (ControlMTCPConfig, error) {
+	// MTCP is the only control protocol; the switch stays readable so
+	// existing deployments that set it to true keep starting.
+	if enabled, present := lookup(envControlMTCPEnabled); present && enabled != "true" {
+		return ControlMTCPConfig{}, settingError(envControlMTCPEnabled)
 	}
 	notAfter, err := time.Parse(time.RFC3339, valueOrDefault(lookup, envControlMTCPKeyNotAfter, ""))
 	if err != nil || !notAfter.After(now) || notAfter.Sub(now) > maxControlMTCPKeyLifetime {
-		return nil, settingError(envControlMTCPKeyNotAfter)
+		return ControlMTCPConfig{}, settingError(envControlMTCPKeyNotAfter)
 	}
 	proxies, err := parseTrustedProxyPrefixes(valueOrDefault(lookup, envControlMTCPTrustedProxies, ""))
 	if err != nil {
-		return nil, settingError(envControlMTCPTrustedProxies)
+		return ControlMTCPConfig{}, settingError(envControlMTCPTrustedProxies)
 	}
-	return &ControlMTCPConfig{KeyNotAfter: notAfter.UTC(), trustedProxyPrefixes: proxies}, nil
+	return ControlMTCPConfig{KeyNotAfter: notAfter.UTC(), trustedProxyPrefixes: proxies}, nil
 }

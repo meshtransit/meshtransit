@@ -6,12 +6,14 @@ import (
 	"net/netip"
 )
 
-// meshOverlayPrefixes are the ranges MeshTransit assigns inside Workspaces.
-// A host interface address in them belongs to a mesh client on this host,
-// possibly one enrolled in another Network, and is never an underlay path.
+// meshOverlayPrefixes are the IPv4 ranges MeshTransit assigns inside
+// Workspaces. A host interface address in them belongs to a mesh client on
+// this host, possibly one enrolled in another Network, and is never an
+// underlay path. Workspace IPv6 prefixes are random ULAs, indistinguishable
+// from a LAN's; mesh clients hold them on point-to-point TUN interfaces,
+// which are skipped as a whole.
 var meshOverlayPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("fd7a:115c:a1e0::/48"),
 }
 
 // hostInterface is the subset of an interface that endpoint discovery reads.

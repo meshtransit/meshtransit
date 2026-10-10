@@ -59,7 +59,7 @@ Preflight must prove all of the following before the service action is attempted
 - the data and DNS interfaces exist;
 - both peer host routes use the MeshTransit data interface;
 - the daemon is online, synchronized, and has an encrypted peer path;
-- MagicDNS returns the exact expected IPv4 and IPv6 peer addresses;
+- MeshTransit DNS returns the exact expected IPv4 and IPv6 peer addresses;
 - baseline IPv4 and IPv6 ICMP traffic succeeds.
 
 Raw ping output, peer addresses, DNS responses, the network name, and the control
@@ -91,7 +91,7 @@ sudo tools/qualification/linux-restart.sh \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
-  --peer-v6 fd7a:115c:a1e0::d \
+  --peer-v6 fd07:d4de:9d87::d \
   --peer-name ubuntu-b \
   --service meshd \
   --artifact-sha256 SHA256_OF_DEB \
@@ -122,7 +122,7 @@ The schema identifier is `meshtransit.linux-restart-qualification/v1`.
 - `action.duration_ms` measures the blocking service restart. The selected
   service PID must change.
 - `readiness_ms` measures both services active, the data interface present, the
-  daemon online and synchronized, and MagicDNS configured with correct A/AAAA
+  daemon online and synchronized, and MeshTransit DNS configured with correct A/AAAA
   answers. Every value is measured from restart start.
 - `traffic.ipv4` and `traffic.ipv6` include total transmitted/received packets,
   total loss, first reply after the restart command, the longest missing
@@ -158,7 +158,7 @@ sudo tools/qualification/linux-crash-repeat.sh \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
-  --peer-v6 fd7a:115c:a1e0::d \
+  --peer-v6 fd07:d4de:9d87::d \
   --peer-name ubuntu-b \
   --service meshd \
   --iterations 3 \
@@ -213,7 +213,7 @@ sudo tools/qualification/linux-helper-recovery-change.sh \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
-  --peer-v6 fd7a:115c:a1e0::d \
+  --peer-v6 fd07:d4de:9d87::d \
   --peer-name ubuntu-b \
   --artifact-sha256 SHA256_OF_DEB \
   --confirm-recovery-change ubuntu-a \
@@ -311,7 +311,7 @@ with the two redacted aggregate reports retained under `docs/evidence`.
 
 For the final traffic-bearing gate, run the aggregate wrapper on each node in a
 fixed two-peer topology. It continuously probes IPv4, IPv6, and uncached
-MagicDNS while each nested sample executes the complete runtime and resource
+MeshTransit DNS while each nested sample executes the complete runtime and resource
 gate:
 
 ```bash
@@ -320,7 +320,7 @@ sudo tools/qualification/linux-runtime-recovery-traffic.sh \
   --peer-label ubuntu-arm64 \
   --peer-v4 PEER_OVERLAY_V4 \
   --peer-v6 PEER_OVERLAY_V6 \
-  --peer-name PEER_MAGICDNS_NAME \
+  --peer-name PEER_MESH_DNS_NAME \
   --iterations 3 \
   --artifact-sha256 SHA256_OF_DEB \
   --confirm-helper-socket-fault ubuntu-amd64 \
@@ -344,7 +344,7 @@ ARM64 is recorded in
 The soak harness is read-only and runs on the node under test. It samples the
 authenticated local status API and `/proc`, checks service generations and
 restart counters, and verifies process/interface/listener cardinality,
-persisted identity/configuration bytes, routes, resolver policy, MagicDNS, and
+persisted identity/configuration bytes, routes, resolver policy, MeshTransit DNS, and
 one IPv4 plus one IPv6 peer probe at every interval.
 
 ```bash
@@ -354,7 +354,7 @@ sudo tools/qualification/linux-soak-systemd.sh start \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
-  --peer-v6 fd7a:115c:a1e0::d \
+  --peer-v6 fd07:d4de:9d87::d \
   --peer-name ubuntu-b \
   --artifact-sha256 SHA256_OF_DEB
 ```
@@ -422,10 +422,10 @@ tools/qualification/linux-reboot.sh \
   --target-label ubuntu-a \
   --observer-label ubuntu-b \
   --target-v4 100.64.0.5 \
-  --target-v6 fd7a:115c:a1e0::6 \
+  --target-v6 fd07:d4de:9d87::6 \
   --target-name ubuntu-a \
   --observer-v4 100.64.0.6 \
-  --observer-v6 fd7a:115c:a1e0::d \
+  --observer-v6 fd07:d4de:9d87::d \
   --observer-name ubuntu-b \
   --artifact-sha256 SHA256_OF_DEB \
   --confirm-reboot ubuntu-a \
@@ -438,7 +438,7 @@ polling, and both long-running traffic streams.
 
 Preflight requires both nodes to be online, synchronized, registered, and able
 to exchange dual-stack traffic. After the reboot, the target must recover both
-services, the data interface and peer routes, daemon readiness, exact MagicDNS
+services, the data interface and peer routes, daemon readiness, exact MeshTransit DNS
 answers, and outbound dual-stack traffic. The active profile, profile count,
 self addresses, daemon version, and daemon commit must remain unchanged.
 
@@ -472,7 +472,7 @@ sudo tools/qualification/linux-network-change.sh \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
-  --peer-v6 fd7a:115c:a1e0::d \
+  --peer-v6 fd07:d4de:9d87::d \
   --peer-name ubuntu-b \
   --artifact-sha256 SHA256_OF_DEB \
   --confirm-network-change ubuntu-a \
@@ -481,7 +481,7 @@ sudo tools/qualification/linux-network-change.sh \
 
 The schema identifier is
 `meshtransit.linux-network-change-qualification/v1`. Preflight requires both
-services, MagicDNS, a direct peer path, dual-stack traffic, and the
+services, MeshTransit DNS, a direct peer path, dual-stack traffic, and the
 `network_changes` status counters. A pass requires meshd to observe the change,
 complete endpoint discovery within 20 seconds, retain a usable direct path and
 stable dual-stack traffic, and remove the dedicated interface. Reports contain
@@ -508,7 +508,7 @@ leaves the path direct and causes the run to fail instead of producing false
 relay evidence.
 
 Preflight requires an online synchronized daemon, one direct peer, at least one
-connected relay region, exact MagicDNS answers, dual-stack traffic, and routes
+connected relay region, exact MeshTransit DNS answers, dual-stack traffic, and routes
 that separate overlay from underlay addresses. The harness refuses to reuse its
 fixed `meshd_relay_qual` nftables table. It then atomically creates two hooks
 which drop only UDP whose source or destination is one of the explicit peer
@@ -521,7 +521,7 @@ sudo tools/qualification/linux-relay-fallback.sh \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
-  --peer-v6 fd7a:115c:a1e0::d \
+  --peer-v6 fd07:d4de:9d87::d \
   --peer-name ubuntu-b \
   --peer-underlay-v4 PEER_PUBLIC_IPV4 \
   --peer-underlay-v4 PEER_PRIVATE_IPV4 \
@@ -567,7 +567,7 @@ sudo tools/qualification/linux-dns.sh \
   --node-label ubuntu-a \
   --peer-label ubuntu-b \
   --peer-v4 100.64.0.6 \
-  --peer-v6 fd7a:115c:a1e0::d \
+  --peer-v6 fd07:d4de:9d87::d \
   --peer-name ubuntu-b \
   --dns-domain NETWORK_DNS_DOMAIN \
   --artifact-sha256 SHA256_OF_DEB \
@@ -597,7 +597,7 @@ ordered non-responsive/responsive resolver pair failed over after one bounded
 attempt on every query; the non-responsive-only phase returned `SERVFAIL` and
 packet capture found no query to an unexpected DNS destination. The temporary
 split route was then removed and both clients returned to their exact
-MagicDNS-only baseline without restart. Redacted aggregate evidence is retained
+MeshTransit DNS-only baseline without restart. Redacted aggregate evidence is retained
 under
 [`docs/evidence/linux-dns-alpha16-upstream-failure-s1`](evidence/linux-dns-alpha16-upstream-failure-s1).
 
@@ -612,8 +612,8 @@ sudo tools/qualification/linux-dns-upstream.sh \
   --peer-label ubuntu-amd64 \
   --peer-v4 PEER_OVERLAY_V4 \
   --peer-v6 PEER_OVERLAY_V6 \
-  --peer-name PEER_MAGICDNS_NAME \
-  --magic-domain NETWORK_MAGICDNS_DOMAIN \
+  --peer-name PEER_MESH_DNS_NAME \
+  --magic-domain NETWORK_MESH_DNS_DOMAIN \
   --test-domain example.com \
   --test-query example.com \
   --phase failover \
@@ -633,7 +633,7 @@ query must return the phase-specific outcome inside the bounded query window.
 The harness does not require a minimum delay: resolver racing can select the
 fallback immediately, while cached health or a circuit breaker can produce an
 immediate fail-closed result. Resolver counters prove that the injected fault
-was exercised. MagicDNS, dual-stack peer traffic, daemon generation, and
+was exercised. MeshTransit DNS, dual-stack peer traffic, daemon generation, and
 restart count must remain stable. A trap removes the exact qualification table.
 
 For `fail-closed`, publish only the first resolver, omit
@@ -655,8 +655,8 @@ resolver work has drained.
 The RC4 candidate passed the three-phase matrix with five UDP and five TCP
 samples per phase on Ubuntu 26.04 AMD64 and ARM64. Every retained report had
 zero unexpected resolver packets, preserved daemon generations and restart
-counters, and passed MagicDNS and dual-stack peer continuity. DNS and policy
-were restored to the exact MagicDNS-only/default-deny baseline afterward. See
+counters, and passed MeshTransit DNS and dual-stack peer continuity. DNS and policy
+were restored to the exact MeshTransit DNS-only/default-deny baseline afterward. See
 [`docs/evidence/linux-dns-rc4-upstream-failure-s1`](evidence/linux-dns-rc4-upstream-failure-s1/README.md).
 
 ## Run a host-policy phase

@@ -365,19 +365,11 @@ makes it trustworthy over any transport.
 Health and load reporting from relays to Core (for home-relay steering) needs
 relay authentication and is specified with the relay fleet work.
 
-### 9.1 Grants to nodes before MTCP
+### 9.1 Grants to nodes
 
-Until MTCP (P4) carries `KeyUpdate`, the relay map and `RelayTicket`, Core
-delivers a node's Interchange access on its own entry of the legacy TS2021
-map, as the capability `https://meshtransit.io/cap/interchange-v1` (one JSON
-value, `shared/mtrp` `InterchangeGrant`):
-
-```json
-{"version": 1,
- "signing_keys": [{"key": "mtsign:…", "not_after_ms": 1760600000000}],
- "relay_map": "<base64 signed relay map>",
- "ticket": "<base64 ticket>", "ticket_not_after_ms": 1760000900000}
-```
+Core delivers a node's Interchange access over its MTCP session: the signing
+keys in `KeyUpdate`, the signed relay map, and the node's `RelayTicket`
+([mtcp-v1](mtcp-v1.md) §7.3, §9, §11).
 
 - The control session is authenticated, so the keys need no other signature;
   the node verifies the relay map with them before use and keeps the previous
@@ -386,12 +378,11 @@ value, `shared/mtrp` `InterchangeGrant`):
   of its Network and of every Trust Contract it takes part in (at most 31).
   They live 15 minutes, never past the node's authority deadline, and are
   replaced 5 minutes before expiry, at once when the disco key or zones
-  change. A renewal that changes nothing else is sent as a map response with
-  only the node's own entry.
-- A node keeps its last grant until the ticket expires when a later entry
-  omits the capability.
+  change.
+- A node keeps its last ticket until it expires when a later map carries
+  none.
 - The relay map is the only source of relay regions: Core validates the home
-  region a node reports against it and sends no legacy DERP map.
+  region a node reports against it.
 
 ### 9.2 Private Interchange grants
 

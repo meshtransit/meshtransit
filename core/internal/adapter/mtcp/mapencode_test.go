@@ -1,12 +1,18 @@
 package mtcp
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
 	"net/netip"
+	"strings"
 	"testing"
+	"time"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
-	"meshtransit.net/core/internal/adapter/legacyts2021"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/policy"
+	"meshtransit.net/core/internal/domain/sharing"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 )
 
@@ -42,9 +48,9 @@ func TestEncodeSnapshot(t *testing.T) {
 	}
 }
 
-// TestFilterDigestMatchesTS2021 keeps enforcement evidence comparable while
-// nodes move from TS2021 to MTCP: both encodings digest the same.
-func TestFilterDigestMatchesTS2021(t *testing.T) {
+// TestPacketFilterDigestCoversTheEncodedFilter checks the digest Core keeps
+// against the filter the map carries, for growing peer sets.
+func TestPacketFilterDigestCoversTheEncodedFilter(t *testing.T) {
 	scope := snapshotFixture(t, 1).Scope()
 	peers := []string{"100.64.0.2", "100.64.0.3", "100.64.0.4"}
 	for count := 1; count <= len(peers); count++ {
@@ -58,17 +64,79 @@ func TestFilterDigestMatchesTS2021(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, grants, err := sharedmtcp.FilterDigest(filter)
+		want, grants, err := sharedmtcp.FilterDigest(filter)
 		if err != nil {
 			t.Fatal(err)
 		}
-		want, err := legacyts2021.PacketFilterDigest(snapshot)
+		got, err := PacketFilterDigest(snapshot)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != want.Digest() || grants != want.Grants() {
-			t.Fatalf("%d peers: MTCP digest %s (%d) differs from TS2021 %s (%d)", count, got, grants,
-				want.Digest(), want.Grants())
+		if got.Digest() != want || got.Grants() != grants {
+			t.Fatalf("%d peers: digest %s (%d), want %s (%d)", count, got.Digest(), got.Grants(), want, grants)
 		}
+	}
+	if _, err := PacketFilterDigest(mapsession.Snapshot{}); !errors.Is(err, ErrFilterDigest) {
+		t.Fatalf("invalid snapshot error = %v", err)
+	}
+}
+
+// TestEncodeAliasCarriesTheGrant checks the device alias v1 grant as MTCP
+// typed fields (docs/protocol/device-alias-v1.md, mtcp-v1 §7.4).
+func TestEncodeAliasCarriesTheGrant(t *testing.T) {
+	contract, err := sharing.ParseContractID("01890f00-0000-7000-8000-000000000a01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := sharing.ParsePrivateEndpointID("01890f00-0000-7000-8000-000000000a02")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports, _ := policy.NewPortRange(22, 22)
+	tcp, err := sharing.NewTrafficConstraint(sharing.TrafficConstraintParams{
+		Protocol: policy.ProtocolTCP, DestinationPortRanges: []policy.PortRange{ports},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	icmp, err := sharing.NewTrafficConstraint(sharing.TrafficConstraintParams{Protocol: policy.ProtocolICMP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	traffic, err := sharing.NewTrafficSet([]sharing.TrafficConstraint{tcp, icmp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Now().Add(time.Hour).Truncate(time.Millisecond)
+	grant := mapsession.DeviceAliasGrant{
+		ContractID: contract, EndpointID: endpoint, Generation: 3, GrantRevision: 4, RecoveryEpoch: 5,
+		IsConsumer: true, ExpiresAt: expires, Traffic: traffic,
+		LocalAddresses: []netip.Prefix{
+			netip.MustParsePrefix("198.18.0.7/32"), netip.MustParsePrefix("fd02:48de:ec1b:1::7/128"),
+		},
+	}
+	alias, err := encodeAlias(grant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alias.GetContractId() != contract.String() || alias.GetEndpointId() != endpoint.String() ||
+		alias.GetGeneration() != 3 || alias.GetGrantRevision() != 4 || alias.GetRecoveryEpoch() != 5 ||
+		alias.GetRole() != mtcpv1.AliasGrant_CONSUMER || alias.GetExpiresMs() != expires.UnixMilli() ||
+		!bytes.Equal(alias.GetMasqueradeV4(), netip.MustParseAddr("198.18.0.7").AsSlice()) ||
+		!bytes.Equal(alias.GetMasqueradeV6(), netip.MustParseAddr("fd02:48de:ec1b:1::7").AsSlice()) {
+		t.Fatalf("alias = %v", alias)
+	}
+	// ICMP becomes one echo grant per local family, sorted with TCP.
+	var services []string
+	for _, service := range alias.GetServices() {
+		services = append(services, fmt.Sprintf("%d:%d-%d", service.GetProtocol(), service.GetPortFrom(), service.GetPortTo()))
+	}
+	if strings.Join(services, ",") != "1:0-0,6:22-22,58:0-0" {
+		t.Fatalf("services = %v", services)
+	}
+
+	grant.IsConsumer = false
+	if provider, err := encodeAlias(grant); err != nil || provider.GetRole() != mtcpv1.AliasGrant_PROVIDER {
+		t.Fatalf("provider role = %v, %v", provider.GetRole(), err)
 	}
 }

@@ -17,12 +17,12 @@ other node stayed online and recorded continuous IPv4 and IPv6 traffic.
 - Traffic pacing: 200 milliseconds
 
 Preflight required both nodes to be registered, synchronized, dual-stack
-reachable, and resolvable through MagicDNS. Reboot confirmation was bound to
+reachable, and resolvable through MeshTransit DNS. Reboot confirmation was bound to
 the exact target label, and the two nodes were never rebooted concurrently.
 
 ## Results
 
-| Target | SSH and boot ID | Services | TUN and routes | Daemon online | MagicDNS | Outbound dual stack | Result |
+| Target | SSH and boot ID | Services | TUN and routes | Daemon online | MeshTransit DNS | Outbound dual stack | Result |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | `ubuntu-b` | 23,339 ms | 32,745 ms | 35,782 ms | 38,957 ms | 42,894 ms | 50,014 ms | pass |
 | `ubuntu-a` | 18,890 ms | 27,614 ms | 31,200 ms | 34,185 ms | 37,279 ms | 44,310 ms | pass |
@@ -40,7 +40,7 @@ the reports covers the intentional reboot interval; both streams ended with
 189–217 consecutive replies.
 
 Final inspection found both nodes online and synchronized with one direct peer,
-configured DNS, exact MagicDNS A/AAAA answers, and dual-stack host routes.
+configured DNS, exact MeshTransit DNS A/AAAA answers, and dual-stack host routes.
 Three IPv4 and three IPv6 packets passed in each direction, service restart
 counters were zero, and the bounded warning-level journal query returned no
 entries.

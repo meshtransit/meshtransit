@@ -45,14 +45,14 @@ assert_rejected "${harness}" __validate-port 65536
 [[ "$("${harness}" __classify-ping-probe 2)" == deny ]]
 [[ "$("${harness}" __classify-ping-probe 255)" == error ]]
 
-status_with_prefixes='{"self_addresses":["100.64.0.5/32","fd7a:115c:a1e0::6/128"]}'
+status_with_prefixes='{"self_addresses":["100.64.0.5/32","fd07:d4de:9d87::6/128"]}'
 "${harness}" __status-has-addresses \
-  "${status_with_prefixes}" 100.64.0.5 fd7a:115c:a1e0::6
+  "${status_with_prefixes}" 100.64.0.5 fd07:d4de:9d87::6
 assert_rejected "${harness}" __status-has-addresses \
-  "${status_with_prefixes}" 100.64.0.6 fd7a:115c:a1e0::6
+  "${status_with_prefixes}" 100.64.0.6 fd07:d4de:9d87::6
 assert_rejected "${harness}" __status-has-addresses \
-  '{"self_addresses":["100.64.0.5","fd7a:115c:a1e0::6"]}' \
-  100.64.0.5 fd7a:115c:a1e0::6
+  '{"self_addresses":["100.64.0.5","fd07:d4de:9d87::6"]}' \
+  100.64.0.5 fd07:d4de:9d87::6
 
 online_status='{"state":"online","control_session":"synchronized","registration":"registered","data_plane":"encrypted_relay_ready","policy_rule_count":0,"netmap_revision":1,"self_addresses":[]}'
 idle_status='{"state":"offline","control_session":"synchronized","registration":"registered","data_plane":"idle","policy_rule_count":0,"netmap_revision":1,"self_addresses":[]}'
@@ -99,9 +99,9 @@ common_arguments=(
   --node-a-label ubuntu-a
   --node-b-label ubuntu-b
   --node-a-v4 100.64.0.5
-  --node-a-v6 fd7a:115c:a1e0::6
+  --node-a-v6 fd07:d4de:9d87::6
   --node-b-v4 100.64.0.6
-  --node-b-v6 fd7a:115c:a1e0::d
+  --node-b-v6 fd07:d4de:9d87::d
   --phase-label asymmetric-a-to-b
   --expect-a-to-b-tcp allow
   --expect-a-to-b-udp allow

@@ -227,7 +227,7 @@ func (service *Service) ObserveSessionEndpoints(ctx context.Context, snapshot Sn
 	if ctx == nil || service == nil || !snapshot.IsValid() || !set.IsValid() {
 		return ErrInvalidRequest
 	}
-	request, err := NewRequest(snapshot.NodeKey(), 1)
+	request, err := NewRequest(snapshot.NodeKey())
 	if err == nil {
 		request, err = request.WithEndpointSet(set)
 	}

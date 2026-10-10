@@ -220,7 +220,7 @@ func TestDirectRecordProviderReceivesOnlyConsumerInitiation(t *testing.T) {
 	machineKey, nodeKey := consumer.MachineKey().Bytes(), consumer.NodeKey().Bytes()
 	record.Peer.MachineKey, record.Peer.NodeKey = hex.EncodeToString(machineKey[:]), hex.EncodeToString(nodeKey[:])
 	record.Peer.SessionGeneration, record.Peer.CreatedAt, record.Peer.KeyExpiry = consumer.SessionGeneration(), consumer.CreatedAt(), consumer.KeyExpiry()
-	record.Peer.Addresses = []string{"100.64.0.1/32", "fd7a:115c:a1e0::1/128"}
+	record.Peer.Addresses = []string{"100.64.0.1/32", "fd07:d4de:9d87::1/128"}
 	projection, err := decodeDirectEdge([]byte(encodeDirectRecord(t, record)), provider)
 	if err != nil {
 		t.Fatal(err)

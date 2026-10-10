@@ -16,11 +16,13 @@ for tree in client shared api test; do
 	done < <(go list "./${tree}/..." 2>/dev/null)
 done
 
-tailscale_outside="$(go list -f '{{.ImportPath}} {{join .Imports " "}}' ./... \
-	| grep 'tailscale.com' \
-	| grep -vE "^${module}/(client/internal/compat|core/internal/adapter/legacyts2021)" || true)"
-if [[ -n "${tailscale_outside}" ]]; then
-	printf 'tailscale.com imported outside the compatibility adapters:\n%s\n' "${tailscale_outside}" >&2
+# Every module go.mod requires must be on the reviewed allowlist, so a new
+# dependency cannot arrive without review.
+unreviewed="$(awk '/^require \($/ {block = 1; next} block && /^\)/ {block = 0}
+	block && NF {print $1} /^require [^(]/ {print $2}' go.mod \
+	| grep -vxF -f <(grep -vE '^(#|$)' hack/allowed-modules.txt) || true)"
+if [[ -n "${unreviewed}" ]]; then
+	printf 'go.mod requires modules missing from hack/allowed-modules.txt:\n%s\n' "${unreviewed}" >&2
 	violations=1
 fi
 

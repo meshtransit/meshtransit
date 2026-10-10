@@ -14,7 +14,7 @@ HA, data-service failover, cross-platform enforcement, production SLOs, or GA.
 | Core candidate | commit containing this matrix; exact commit is recorded in the delivery report |
 | Client source | `484cb397cde7d1a9e199035cd1360127189319c2` |
 | Compiler format | `1` |
-| Client profile | `legacy-ts2021-cap142-v1` |
+| Client profile | legacy control profile (capability 142, since removed) |
 
 ## Acceptance matrix
 
@@ -29,7 +29,7 @@ HA, data-service failover, cross-platform enforcement, production SLOs, or GA.
 | `M2A-07` | Allow, deny-all, and TCP/UDP restore activate atomically with audit/outbox/revisions. | Disposable `TestPostgreSQLMigrations` policy lifecycle. | Pass |
 | `M2A-08` | A stale candidate or stale deny-all request creates no replacement release. | Publication service/unit adapter tests and lifecycle replay after restore. | Pass |
 | `M2A-09` | PostgreSQL is authoritative and Redis loss cannot widen access. | Publication store and map loader path inspection; no Redis policy input. | Pass |
-| `M2A-10` | `meshd` enforces IPv4/IPv6 TCP/UDP ports and clears tracked return-flow authority on policy changes. | 208 focused client tests in `internal/dataplane`, `internal/networkmap`, and `internal/compat/ts2021`. | Pass |
+| `M2A-10` | `meshd` enforces IPv4/IPv6 TCP/UDP ports and clears tracked return-flow authority on policy changes. | 208 focused client tests in `internal/dataplane`, `internal/networkmap`, and the legacy control adapter (since removed). | Pass |
 | `M2A-11` | Core focused policy, HTTP, and projection suites pass. | 1,295 tests across four packages. | Pass |
 | `M2A-12` | Integration-tag compilation and disposable PostgreSQL migration/publication scenario pass. | Integration compile succeeded; `TestPostgreSQLMigrations` passed in 18.129 s on the second disposable run. | Pass |
 

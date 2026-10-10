@@ -14,9 +14,9 @@ the `samber/cc-skills-golang@golang-how-to` skill first.
 - Licensing is per directory (see `LICENSE`). Code under `client/`, `shared/`,
   `api/` and `test/` MUST NOT import `core/` or `relay/`. `make check-boundaries`
   enforces this in CI.
-- `tailscale.com` may be imported only by the compatibility adapters
-  (`client/internal/compat`, `core/internal/adapter/legacyts2021`) until they
-  are removed. Do not add new uses.
+- MeshTransit speaks its own MTCP/MTRP protocols; never copy code from other
+  VPN products. Dependencies come only from the reviewed
+  `hack/allowed-modules.txt`, which `make check-boundaries` enforces.
 - Never copy Headscale source code, schemas or migrations.
 - Shared protocol code (MTCP, MTRP, disco, keys) belongs in `shared/` with a
   language-independent specification under `docs/`.

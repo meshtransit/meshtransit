@@ -45,7 +45,7 @@ Usage:
     --peer-label LABEL \
     --peer-v4 ADDRESS \
     --peer-v6 ADDRESS \
-    --peer-name MAGICDNS_NAME \
+    --peer-name MESH_DNS_NAME \
     [--artifact-sha256 HEX] \
     [--duration-seconds N] \
     [--sample-interval-seconds N] \
@@ -59,7 +59,7 @@ Usage:
 
 Runs a read-only fixed-topology Linux soak. Every sample verifies service
 generation, resource cardinality, persisted state, routes, resolver policy,
-online control status, MagicDNS, and IPv4/IPv6 peer traffic. It measures RSS,
+online control status, MeshTransit DNS, and IPv4/IPv6 peer traffic. It measures RSS,
 threads, descriptors, and authenticated local Go runtime health without
 changing services, interfaces, routes, DNS, profiles, policy, or identity.
 
@@ -952,7 +952,7 @@ main() {
     fail "peer-v4 does not resolve through ${data_interface}"
   route_uses_interface 6 "${peer_v6}" "${data_interface}" ||
     fail "peer-v6 does not resolve through ${data_interface}"
-  dns_is_ready || fail "MagicDNS does not return both expected peer addresses"
+  dns_is_ready || fail "MeshTransit DNS does not return both expected peer addresses"
   ping -4 -n -c 3 -W 1 "${peer_v4}" >/dev/null 2>&1 ||
     fail "baseline IPv4 peer traffic is unavailable"
   ping -6 -n -c 3 -W 1 "${peer_v6}" >/dev/null 2>&1 ||

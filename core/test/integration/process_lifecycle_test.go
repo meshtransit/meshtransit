@@ -210,10 +210,9 @@ func assertRoleControlMetrics(ctx context.Context, address string) error {
 	}
 	for _, metric := range []string{
 		"meshtransit_control_connections_limit 8",
-		"meshtransit_control_sessions_limit 8",
-		`meshtransit_control_session_attempts_total{result="established"} 0`,
-		"meshtransit_control_registrations_active 0",
-		`meshtransit_control_registration_requests_total{result="authorized"} 0`,
+		"meshtransit_control_connections_active 0",
+		`meshtransit_mtcp_handshakes_total{result="established"} 0`,
+		"meshtransit_mtcp_sessions_active 0",
 	} {
 		if !strings.Contains(body, metric) {
 			return fmt.Errorf("metrics missing %q", metric)
@@ -316,5 +315,14 @@ func integrationProcessEnvironment(healthAddress, controlAddress string) []strin
 	for _, name := range names {
 		environment = append(environment, name+"="+overrides[name])
 	}
+	// MTCP requires an advertised control key expiry. The platform script
+	// exports one so the test's own config.Load sees the same value; a
+	// caller that did not gets a near-term default.
+	if _, present := os.LookupEnv(integrationMTCPKeyNotAfterEnvironment); !present {
+		environment = append(environment, integrationMTCPKeyNotAfterEnvironment+"="+
+			time.Now().Add(24*time.Hour).UTC().Format(time.RFC3339))
+	}
 	return environment
 }
+
+const integrationMTCPKeyNotAfterEnvironment = "MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER"

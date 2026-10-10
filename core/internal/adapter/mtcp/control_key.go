@@ -8,9 +8,9 @@ import (
 	"meshtransit.net/shared/key"
 )
 
-// controlKeyFilePrefix starts the text form of the control key file the
-// TS2021 listener already reads; MTCP reuses the same key (P4 decision: no
-// re-enrollment), so both protocols answer with one control public key.
+// controlKeyFilePrefix starts the text form of the control key file
+// (MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE). Deployments keep the key they
+// had before MTCP, so enrolled Devices need no new trust.
 const controlKeyFilePrefix = "privkey:"
 
 // ErrInvalidControlKey reports a control key file that is not exactly one

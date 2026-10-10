@@ -20,7 +20,7 @@ The exact runtime packages used for the closing gate were:
 The Linux implementation boundary now includes browser login with bounded
 wait-for-approval, profile isolation, pinned control trust, synchronized map
 streaming, encrypted relay and authenticated direct paths, IPv4/IPv6 host
-traffic, policy enforcement, MagicDNS and classic split DNS, privilege-separated
+traffic, policy enforcement, MeshTransit DNS and classic split DNS, privilege-separated
 TUN management, host-protected identity storage and rotation, package/service
 lifecycle, network-change handling, and bounded in-process recovery from local
 runtime failure.
@@ -49,7 +49,7 @@ ARM64, and restart any exact-artifact long-duration gate.
 - five consecutive peerless in-process runtime-recovery samples per
   architecture; and
 - three consecutive traffic-bearing in-process runtime-recovery samples per
-  architecture, including observed IPv4, IPv6, and uncached MagicDNS outages
+  architecture, including observed IPv4, IPv6, and uncached MeshTransit DNS outages
   followed by stable recovery.
 
 The closing native result is documented in

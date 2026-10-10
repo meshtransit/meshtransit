@@ -15,7 +15,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"meshtransit.net/core/internal/adapter/legacyts2021/protocoltest"
+	mtcpadapter "meshtransit.net/core/internal/adapter/mtcp"
+	"meshtransit.net/core/internal/adapter/mtcp/mtcptest"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/platform/config"
 )
@@ -32,7 +33,7 @@ func TestRoleControlProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 	adminConfig := loadIntegrationAdminConfig(t)
 	// The overall budget covers process start-up plus the largest revision
 	// backlog wait.
-	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second+processRevisionMaxWait)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second+processRevisionMaxWait)
 	defer cancel()
 	adminConnection := openIntegrationPostgreSQLConnection(
 		ctx,
@@ -49,22 +50,20 @@ func TestRoleControlProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 	client := newProcessRegistrationClient(t, processConfig, controlAddress)
 
 	first := startReadyControlProcess(t, binary, controlAddress)
-	registerCtx, cancelRegister := context.WithTimeout(ctx, 10*time.Second)
-	if err := client.Register(registerCtx, fixture.credential.Reveal()); err != nil {
-		cancelRegister()
-		first.process.forceStop(t)
-		t.Fatalf("first process registration: %v; stderr: %s", err, first.process.stderr.String())
-	}
-	cancelRegister()
+	firstRegistration := registerProcessClient(ctx, t, first, client, fixture.credential.Reveal())
+	assertProcessControlKey(t, client, processConfig)
 	firstMap := fetchProcessFullMap(ctx, t, first, client)
-	assertProcessEndpointObservation(ctx, t, firstMap.StableNodeID, client.Connectivity())
+	assertProcessEndpointObservation(ctx, t, firstMap.DeviceID, client.Connectivity())
+	// A new session's snapshot already carries the endpoints Core stored
+	// from the previous session's report.
 	firstStreamMap := fetchProcessInitialStreamMap(ctx, t, first, client)
 	if !reflect.DeepEqual(firstStreamMap, firstMap) {
 		first.process.forceStop(t)
-		t.Fatalf("first stream map differs from one-shot map: one-shot=%+v stream=%+v", firstMap, firstStreamMap)
+		t.Fatalf("first stream snapshot differs from converged map: converged=%+v snapshot=%+v", firstMap, firstStreamMap)
 	}
 	firstEvidence := readProcessRegistrationEvidence(ctx, t, adminConnection, client.Identity())
 	assertProcessRegistrationEvidence(t, firstEvidence)
+	assertProcessRegistration(t, firstRegistration, firstEvidence)
 	assertProcessFullMap(
 		t,
 		firstMap,
@@ -77,18 +76,18 @@ func TestRoleControlProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 	stopReadyControlProcess(t, first)
 
 	second := startReadyControlProcess(t, binary, controlAddress)
-	replayCtx, cancelReplay := context.WithTimeout(ctx, 10*time.Second)
-	if err := client.Register(replayCtx, fixture.credential.Reveal()); err != nil {
-		cancelReplay()
+	secondRegistration := registerProcessClient(ctx, t, second, client, fixture.credential.Reveal())
+	if !reflect.DeepEqual(secondRegistration, firstRegistration) {
 		second.process.forceStop(t)
-		t.Fatalf("restarted process registration replay: %v; stderr: %s", err, second.process.stderr.String())
+		t.Fatalf("registration replay answered another authorization: before=%+v after=%+v",
+			firstRegistration, secondRegistration)
 	}
-	cancelReplay()
 	secondMap := fetchProcessFullMap(ctx, t, second, client)
 	secondStreamMap := fetchProcessInitialStreamMap(ctx, t, second, client)
 	if !reflect.DeepEqual(secondStreamMap, secondMap) {
 		second.process.forceStop(t)
-		t.Fatalf("restarted stream map differs from one-shot map: one-shot=%+v stream=%+v", secondMap, secondStreamMap)
+		t.Fatalf("restarted stream snapshot differs from converged map: converged=%+v snapshot=%+v",
+			secondMap, secondStreamMap)
 	}
 	assertControlClientMetrics(t, second)
 	stopReadyControlProcess(t, second)
@@ -106,14 +105,69 @@ func TestRoleControlProcessRegistrationConvergesAcrossRestart(t *testing.T) {
 	stopReadyControlProcess(t, third)
 }
 
+func registerProcessClient(
+	ctx context.Context,
+	t *testing.T,
+	running readyControlProcess,
+	client *mtcptest.Client,
+	credential string,
+) mtcptest.Registration {
+	t.Helper()
+	registerCtx, cancelRegister := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelRegister()
+	registration, err := client.Register(registerCtx, credential)
+	if err != nil {
+		running.process.forceStop(t)
+		t.Fatalf("process registration: %v; stderr: %s", err, running.process.stderr.String())
+	}
+	return registration
+}
+
+// assertProcessControlKey checks that the key document advertised the
+// configured control key and expiry, and that the client pinned it.
+func assertProcessControlKey(t *testing.T, client *mtcptest.Client, processConfig config.Config) {
+	t.Helper()
+	if processConfig.Control == nil {
+		t.Fatal("process integration configuration did not load control")
+	}
+	text, err := processConfig.Control.NoisePrivateKeyFile.Read()
+	if err != nil {
+		t.Fatalf("read process control key: %v", err)
+	}
+	private, err := mtcpadapter.ParseControlKey(text)
+	if err != nil {
+		t.Fatalf("parse process control key: %v", err)
+	}
+	pinned := client.PinnedControlKey()
+	if pinned.Public != private.Public() ||
+		!pinned.NotAfter.Equal(processConfig.Control.MTCP.KeyNotAfter.Truncate(time.Second)) {
+		t.Fatalf("pinned control key = %x until %v, want the configured key until %v",
+			pinned.Public, pinned.NotAfter, processConfig.Control.MTCP.KeyNotAfter)
+	}
+}
+
+func assertProcessRegistration(
+	t *testing.T,
+	registration mtcptest.Registration,
+	evidence processRegistrationEvidence,
+) {
+	t.Helper()
+	if registration.DeviceID != evidence.nodePublicID || registration.NetworkID != integrationNetworkPublicID ||
+		len(registration.Addresses) != 1 ||
+		netip.PrefixFrom(registration.Addresses[0], registration.Addresses[0].BitLen()).String() != evidence.primaryAddress ||
+		!registration.KeyExpiry.After(time.Now()) {
+		t.Fatalf("process registration response disagrees with its evidence: %+v", registration)
+	}
+}
+
 func assertProcessEndpointObservation(
 	ctx context.Context,
 	t *testing.T,
-	stableNodeID string,
-	want protocoltest.Connectivity,
+	deviceID string,
+	want mtcptest.Connectivity,
 ) {
 	t.Helper()
-	nodeID, err := node.ParseID(stableNodeID)
+	nodeID, err := node.ParseID(deviceID)
 	if err != nil {
 		t.Fatalf("parse process endpoint Node ID: %v", err)
 	}
@@ -138,42 +192,45 @@ func assertProcessEndpointObservation(
 	}
 }
 
+// assertProcessRevisionWakeup commits a revision that changes nothing the
+// node sees. Core cannot express a revision-only change as a delta, so the
+// open stream must receive a new-epoch snapshot carrying the new revision
+// (mtcp-v1 §7.1) with the map as it was.
 func assertProcessRevisionWakeup(
 	ctx context.Context,
 	t *testing.T,
 	running readyControlProcess,
-	client *protocoltest.Client,
+	client *mtcptest.Client,
 	adminConnection *pgx.Conn,
 ) {
 	t.Helper()
 	baseline := fetchProcessFullMap(ctx, t, running, client)
 	streamCtx, cancelStream := context.WithTimeout(ctx, 10*time.Second)
-	stream, initial, err := client.OpenMapStream(streamCtx)
-	if err != nil {
-		cancelStream()
-		running.process.forceStop(t)
-		t.Fatalf("open process map stream: %v; stderr: %s", err, running.process.stderr.String())
-	}
-	if !reflect.DeepEqual(initial, baseline) {
+	defer cancelStream()
+	stream, initial := openProcessMapStream(streamCtx, t, running, client)
+	if !reflect.DeepEqual(initial.Map, baseline) {
 		_ = stream.Close()
-		cancelStream()
 		running.process.forceStop(t)
-		t.Fatalf("initial revision stream map differs from baseline: baseline=%+v stream=%+v", baseline, initial)
+		t.Fatalf("initial revision stream map differs from baseline: baseline=%+v stream=%+v", baseline, initial.Map)
 	}
 	feedBefore := waitForProcessRevisionFeedMetrics(t, running, func(metrics processRevisionFeedMetrics) bool {
 		return metrics.connected && metrics.activeWatchers == 1
 	})
-	commitIntegrationNetworkRevision(streamCtx, t, adminConnection, "994")
-	advanced, err := stream.NextFullMap()
-	closeErr := stream.Close()
-	cancelStream()
-	if err != nil || closeErr != nil {
+	_, committed := commitIntegrationNetworkRevision(streamCtx, t, adminConnection, "994")
+	advanced := nextProcessMapUpdate(streamCtx, t, running, stream, initial, func(update mtcptest.MapUpdate) bool {
+		return update.NetworkRevisions[integrationNetworkPublicID] >= uint64(committed) //nolint:gosec // positive
+	})
+	if err := stream.Close(); err != nil {
 		running.process.forceStop(t)
-		t.Fatalf("receive process revision wakeup: read=%v close=%v; stderr: %s", err, closeErr, running.process.stderr.String())
+		t.Fatalf("close process revision stream: %v", err)
 	}
-	if !reflect.DeepEqual(advanced, baseline) {
+	if initial.NetworkRevisions[integrationNetworkPublicID] >= uint64(committed) || //nolint:gosec // positive
+		!advanced.Snapshot ||
+		advanced.NetworkRevisions[integrationNetworkPublicID] != uint64(committed) || //nolint:gosec // positive
+		!reflect.DeepEqual(advanced.Map, baseline) {
 		running.process.forceStop(t)
-		t.Fatalf("revision-only change altered map projection: baseline=%+v advanced=%+v", baseline, advanced)
+		t.Fatalf("revision-only change altered map projection: baseline=%+v initial=%v advanced=%+v committed=%d",
+			baseline, initial.NetworkRevisions, advanced, committed)
 	}
 	waitForProcessRevisionFeedMetrics(t, running, func(metrics processRevisionFeedMetrics) bool {
 		return metrics.connected && metrics.activeWatchers == 0 &&
@@ -182,51 +239,100 @@ func assertProcessRevisionWakeup(
 	})
 }
 
+// assertProcessConnectivityWakeup reports a new endpoint on an open stream:
+// the stream must receive it as a delta replacing self, and the next
+// session must converge on the same map.
 func assertProcessConnectivityWakeup(
 	ctx context.Context,
 	t *testing.T,
 	running readyControlProcess,
-	client *protocoltest.Client,
+	client *mtcptest.Client,
 ) {
 	t.Helper()
 	baseline := fetchProcessFullMap(ctx, t, running, client)
 	streamCtx, cancelStream := context.WithTimeout(ctx, 10*time.Second)
-	stream, initial, err := client.OpenMapStream(streamCtx)
-	if err != nil {
-		cancelStream()
-		running.process.forceStop(t)
-		t.Fatalf("open connectivity map stream: %v; stderr: %s", err, running.process.stderr.String())
-	}
-	if !reflect.DeepEqual(initial, baseline) {
+	defer cancelStream()
+	stream, initial := openProcessMapStream(streamCtx, t, running, client)
+	if !reflect.DeepEqual(initial.Map, baseline) {
 		_ = stream.Close()
-		cancelStream()
 		running.process.forceStop(t)
-		t.Fatalf("initial connectivity stream differs from baseline: baseline=%+v stream=%+v", baseline, initial)
+		t.Fatalf("initial connectivity stream differs from baseline: baseline=%+v stream=%+v", baseline, initial.Map)
 	}
 
 	endpoint := netip.MustParseAddrPort("198.51.100.20:41641")
 	if err := client.UpdateEndpoint(endpoint); err != nil {
 		_ = stream.Close()
-		cancelStream()
+		running.process.forceStop(t)
 		t.Fatalf("update protocol-test endpoint: %v", err)
 	}
 	expected := baseline
 	expected.Endpoints = []netip.AddrPort{endpoint}
-	updated := fetchProcessFullMap(ctx, t, running, client)
-	advanced, readErr := stream.NextConnectivityDelta()
-	closeErr := stream.Close()
-	cancelStream()
-	if readErr != nil || closeErr != nil {
+	if err := stream.ReportEndpoints(streamCtx); err != nil {
+		_ = stream.Close()
 		running.process.forceStop(t)
-		t.Fatalf("receive connectivity wakeup: read=%v close=%v; stderr: %s", readErr, closeErr, running.process.stderr.String())
+		t.Fatalf("report protocol-test endpoint: %v; stderr: %s", err, running.process.stderr.String())
 	}
-	if !reflect.DeepEqual(updated, expected) || !advanced.SelfChanged ||
-		advanced.SelfNodeID != baseline.NodeID ||
-		advanced.DiscoveryKey != baseline.DiscoveryKey ||
-		!slices.Equal(advanced.Endpoints, []netip.AddrPort{endpoint}) ||
-		len(advanced.PeersChanged) != 0 {
+	advanced := nextProcessMapUpdate(streamCtx, t, running, stream, initial, func(update mtcptest.MapUpdate) bool {
+		return slices.Equal(update.Map.Endpoints, expected.Endpoints)
+	})
+	if err := stream.Close(); err != nil {
 		running.process.forceStop(t)
-		t.Fatalf("connectivity projection did not converge: baseline=%+v one-shot=%+v stream=%+v", baseline, updated, advanced)
+		t.Fatalf("close process connectivity stream: %v", err)
+	}
+	updated := fetchProcessFullMap(ctx, t, running, client)
+	if !reflect.DeepEqual(advanced.Map, expected) || advanced.Snapshot || !advanced.SelfChanged ||
+		!reflect.DeepEqual(updated, expected) {
+		running.process.forceStop(t)
+		t.Fatalf("connectivity projection did not converge: baseline=%+v stream=%+v reconnect=%+v",
+			baseline, advanced, updated)
+	}
+	assertProcessEndpointObservation(ctx, t, baseline.DeviceID, client.Connectivity())
+}
+
+func openProcessMapStream(
+	ctx context.Context,
+	t *testing.T,
+	running readyControlProcess,
+	client *mtcptest.Client,
+) (*mtcptest.MapStream, mtcptest.MapUpdate) {
+	t.Helper()
+	stream, initial, err := client.OpenMapStream(ctx)
+	if err != nil {
+		running.process.forceStop(t)
+		t.Fatalf("open process map stream: %v; stderr: %s", err, running.process.stderr.String())
+	}
+	return stream, initial
+}
+
+// nextProcessMapUpdate reads the stream until done accepts an update. Every
+// update on the way must leave the peers alone: the node is alone in its
+// Network.
+func nextProcessMapUpdate(
+	ctx context.Context,
+	t *testing.T,
+	running readyControlProcess,
+	stream *mtcptest.MapStream,
+	initial mtcptest.MapUpdate,
+	done func(mtcptest.MapUpdate) bool,
+) mtcptest.MapUpdate {
+	t.Helper()
+	for {
+		update, err := stream.Next(ctx)
+		if err != nil {
+			_ = stream.Close()
+			running.process.forceStop(t)
+			t.Fatalf("read process map stream: %v; stderr: %s", err, running.process.stderr.String())
+		}
+		if len(update.PeersUpserted) != 0 || len(update.PeersRemoved) != 0 ||
+			len(update.PeersPatched) != 0 {
+			_ = stream.Close()
+			running.process.forceStop(t)
+			t.Fatalf("process map stream sent an unexpected update after revisions %v: %+v",
+				initial.NetworkRevisions, update)
+		}
+		if done(update) {
+			return update
+		}
 	}
 }
 
@@ -285,12 +391,14 @@ type readyControlProcess struct {
 	healthAddress string
 }
 
+// fetchProcessFullMap is MTCP's one-shot map: a session that reports the
+// client's connectivity, waits for the map converged on it and closes.
 func fetchProcessFullMap(
 	ctx context.Context,
 	t *testing.T,
 	running readyControlProcess,
-	client *protocoltest.Client,
-) protocoltest.FullMap {
+	client *mtcptest.Client,
+) mtcptest.FullMap {
 	t.Helper()
 	mapCtx, cancelMap := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelMap()
@@ -302,12 +410,14 @@ func fetchProcessFullMap(
 	return result
 }
 
+// fetchProcessInitialStreamMap returns the snapshot a new session starts
+// with, before it reports anything.
 func fetchProcessInitialStreamMap(
 	ctx context.Context,
 	t *testing.T,
 	running readyControlProcess,
-	client *protocoltest.Client,
-) protocoltest.FullMap {
+	client *mtcptest.Client,
+) mtcptest.FullMap {
 	t.Helper()
 	mapCtx, cancelMap := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelMap()
@@ -321,19 +431,18 @@ func fetchProcessInitialStreamMap(
 
 func assertProcessFullMap(
 	t *testing.T,
-	result protocoltest.FullMap,
+	result mtcptest.FullMap,
 	evidence processRegistrationEvidence,
-	identity protocoltest.Identity,
-	connectivity protocoltest.Connectivity,
+	identity mtcptest.Identity,
+	connectivity mtcptest.Connectivity,
 ) {
 	t.Helper()
-	if result.NodeID <= 0 || result.OwnerID <= 0 ||
-		result.StableNodeID != evidence.nodePublicID ||
-		result.Name != evidence.hostname+"." || result.ComputedName != evidence.hostname ||
-		result.MachineKey != identity.MachineKey || result.NodeKey != identity.NodeKey ||
+	if result.DeviceID != evidence.nodePublicID ||
+		result.Name != evidence.hostname+"." || result.DisplayName != evidence.hostname ||
+		result.NodeKey != identity.NodeKey ||
 		len(result.Addresses) != 1 || result.Addresses[0].String() != evidence.primaryAddress ||
-		len(result.AllowedIPs) != 1 || result.AllowedIPs[0] != result.Addresses[0] ||
-		result.CapabilityVersion != 142 || !result.MachineAuthorized ||
+		len(result.AllowedPrefixes) != 1 || result.AllowedPrefixes[0] != result.Addresses[0] ||
+		!result.KeyExpiry.After(time.Now()) ||
 		result.DiscoveryKey != connectivity.DiscoveryKey ||
 		!slices.Equal(result.Endpoints, connectivity.Endpoints) ||
 		result.PeerCount != 0 || !result.DenyAll {
@@ -341,6 +450,16 @@ func assertProcessFullMap(
 	}
 }
 
+// processMetricWant is one expected metric value; atLeast tolerates
+// sessions retried after a Lifecycle RECONNECT.
+type processMetricWant struct {
+	name    string
+	value   uint64
+	atLeast bool
+}
+
+// assertControlClientMetrics checks one process after one registration
+// session and two map sessions (one reporting endpoints), all closed.
 func assertControlClientMetrics(t *testing.T, running readyControlProcess) {
 	t.Helper()
 	if running.process == nil || running.healthAddress == "" {
@@ -350,21 +469,22 @@ func assertControlClientMetrics(t *testing.T, running readyControlProcess) {
 	defer cancel()
 	client := integrationHTTPClient()
 	defer client.CloseIdleConnections()
-	want := []string{
-		`meshtransit_control_session_attempts_total{result="established"} 3`,
-		`meshtransit_control_registration_requests_total{result="authorized"} 1`,
-		`meshtransit_control_map_requests_total{result="authorized"} 1`,
-		`meshtransit_control_map_requests_total{result="stream_closed"} 1`,
-		`meshtransit_redis_commands_total{operation="presence_acquire",result="success"} 1`,
-		`meshtransit_redis_commands_total{operation="endpoints_observe",result="success"} 1`,
-		"meshtransit_control_registrations_active 0",
-		"meshtransit_control_authenticated_sessions_active 0",
-		"meshtransit_control_map_streams_active 0",
-		"meshtransit_revision_feed_subscriber_connected 1",
-		"meshtransit_revision_feed_watchers_active 0",
-		"meshtransit_connectivity_feed_subscriber_connected 1",
-		"meshtransit_connectivity_feed_watchers_active 0",
-		`meshtransit_redis_commands_total{operation="connectivity_load",result="success"}`,
+	want := []processMetricWant{
+		{name: `meshtransit_mtcp_handshakes_total{result="established"}`, value: 3, atLeast: true},
+		{name: `meshtransit_mtcp_messages_total{direction="received",type="0x10"}`, value: 1}, // RegisterRequest
+		{name: `meshtransit_mtcp_messages_total{direction="sent",type="0x11"}`, value: 1},     // RegisterResponse
+		{name: `meshtransit_mtcp_messages_total{direction="sent",type="0x51"}`, value: 3},     // KeyUpdate
+		{name: `meshtransit_mtcp_messages_total{direction="sent",type="0x20"}`, value: 3},     // MapSnapshot
+		{name: `meshtransit_mtcp_messages_total{direction="received",type="0x30"}`, value: 1}, // EndpointReport
+		{name: `meshtransit_redis_commands_total{operation="presence_acquire",result="success"}`, value: 3, atLeast: true},
+		{name: `meshtransit_redis_commands_total{operation="endpoints_observe",result="success"}`, value: 1},
+		{name: `meshtransit_redis_commands_total{operation="connectivity_load",result="success"}`, value: 1, atLeast: true},
+		{name: "meshtransit_mtcp_sessions_active", value: 0},
+		{name: "meshtransit_control_connections_active", value: 0},
+		{name: "meshtransit_revision_feed_subscriber_connected", value: 1},
+		{name: "meshtransit_revision_feed_watchers_active", value: 0},
+		{name: "meshtransit_connectivity_feed_subscriber_connected", value: 1},
+		{name: "meshtransit_connectivity_feed_watchers_active", value: 0},
 	}
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
@@ -376,7 +496,7 @@ func assertControlClientMetrics(t *testing.T, running readyControlProcess) {
 			lastStatus = status
 			lastBody = body
 		}
-		if err == nil && status == http.StatusOK && containsEveryMetric(body, want) {
+		if err == nil && status == http.StatusOK && unmetProcessMetric(body, want) == "" {
 			return
 		}
 		select {
@@ -387,14 +507,28 @@ func assertControlClientMetrics(t *testing.T, running readyControlProcess) {
 			if lastStatus != http.StatusOK {
 				t.Fatalf("process control metrics status = %d, want %d", lastStatus, http.StatusOK)
 			}
-			for _, metric := range want {
-				if !strings.Contains(lastBody, metric) {
-					t.Fatalf("process control metrics missing %q", metric)
-				}
-			}
+			t.Fatalf("process control metrics: %s", unmetProcessMetric(lastBody, want))
 		case <-ticker.C:
 		}
 	}
+}
+
+// unmetProcessMetric describes the first expectation body does not meet,
+// or returns "".
+func unmetProcessMetric(body string, want []processMetricWant) string {
+	for _, metric := range want {
+		value, found := parseProcessMetric(body, metric.name)
+		switch {
+		case !found:
+			return metric.name + " is missing"
+		case metric.atLeast && value < metric.value:
+			return metric.name + " = " + strconv.FormatUint(value, 10) + ", want at least " +
+				strconv.FormatUint(metric.value, 10)
+		case !metric.atLeast && value != metric.value:
+			return metric.name + " = " + strconv.FormatUint(value, 10) + ", want " + strconv.FormatUint(metric.value, 10)
+		}
+	}
+	return ""
 }
 
 type processRevisionFeedMetrics struct {
@@ -541,13 +675,4 @@ WHERE workspace_id = 101
 		case <-ticker.C:
 		}
 	}
-}
-
-func containsEveryMetric(body string, metrics []string) bool {
-	for _, metric := range metrics {
-		if !strings.Contains(body, metric) {
-			return false
-		}
-	}
-	return true
 }

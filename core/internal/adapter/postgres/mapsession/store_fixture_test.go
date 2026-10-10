@@ -330,7 +330,7 @@ func validSnapshotRecord(t *testing.T, identity control.AuthenticatedNode) snaps
 		keyExpiry:         time.Date(2026, time.September, 15, 3, 0, 0, 0, time.UTC),
 		networkRevision:   7,
 		policyRevision:    5,
-		addresses:         []string{"100.64.0.1/32", "fd7a:115c:a1e0::1/128"},
+		addresses:         []string{"100.64.0.1/32", "fd07:d4de:9d87::1/128"},
 	}
 }
 

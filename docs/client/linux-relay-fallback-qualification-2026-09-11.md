@@ -46,7 +46,7 @@ establish the release-candidate p95 target.
 - Every nftables output counter increased, proving the direct fault was
   exercised. Input counters also increased in all runs.
 - Every run removed the dedicated nftables table and ended online,
-  synchronized, direct, MagicDNS-configured, and dual-stack stable.
+  synchronized, direct, MeshTransit DNS-configured, and dual-stack stable.
 - A separate signal-interruption check terminated the harness while the fault
   was active; its trap removed the table and the node returned to direct.
 - The longest observed disruption was five 200-millisecond probe sequences.
@@ -75,7 +75,7 @@ After rollback, the continuous streams stabilized within 71 milliseconds and
 ended with at least 33 consecutive replies. Independent post-run inspection
 confirmed that `meshd_relay_qual` was absent, the original default route was
 unchanged, peer routes still used `mesh0`, both services remained active,
-MagicDNS and dual-stack traffic were healthy, and the bounded warning-level
+MeshTransit DNS and dual-stack traffic were healthy, and the bounded warning-level
 journal query returned no entries.
 
 The redacted reports and checksum manifest are retained in

@@ -19,7 +19,7 @@ func composeConnectivityFeed(
 	if redisClient == nil {
 		return nil, nil, errInvalidConnectivityFeedComposition
 	}
-	maxWatchers := controlConfig.MaxSessions * int(controlConfig.MaxStreamsPerSession)
+	maxWatchers := mapStreamWatchers(controlConfig)
 	return newConnectivityFeed(
 		maxWatchers,
 		controlConfig.Map.CoordinationTimeout,

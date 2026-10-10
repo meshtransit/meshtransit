@@ -2,6 +2,7 @@ package pathdiscovery
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -9,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	compatstun "meshtransit.net/client/internal/compat/stun"
+	"meshtransit.net/shared/stun"
 )
 
 const (
@@ -74,7 +75,7 @@ type Discovery struct {
 	roundMu     sync.Mutex
 	mu          sync.Mutex
 	activeScope uint64
-	pending     map[compatstun.TransactionID]pendingProbe
+	pending     map[stun.TxID]pendingProbe
 }
 
 // NewDiscovery constructs a STUN discovery client over a shared UDP transport.
@@ -98,13 +99,13 @@ func newDiscovery(
 		transport:   transport,
 		probeWindow: probeWindow,
 		retryDelay:  retryDelay,
-		pending:     make(map[compatstun.TransactionID]pendingProbe),
+		pending:     make(map[stun.TxID]pendingProbe),
 	}, nil
 }
 
 // MatchesDatagram implements DatagramHandler.
 func (d *Discovery) MatchesDatagram(packet []byte) bool {
-	return compatstun.LooksLikeMessage(packet)
+	return stun.Is(packet)
 }
 
 // Socket returns the currently open transport generation, if any.
@@ -126,10 +127,11 @@ func (d *Discovery) HandleDatagram(
 	if d == nil {
 		return
 	}
-	transactionID, address, err := compatstun.ParseBindingResponse(packet)
-	if err != nil {
+	message, err := stun.Parse(packet)
+	if err != nil || message.Type != stun.TypeBindingSuccess {
 		return
 	}
+	transactionID, address := message.TxID, message.XORMapped
 	if err := validateEndpoint(address); err != nil {
 		return
 	}
@@ -279,7 +281,7 @@ func (d *Discovery) probe(
 	}
 	defer d.removeProbe(transactionID)
 
-	packet := compatstun.BindingRequest(transactionID)
+	packet := stun.AppendBindingRequest(nil, transactionID, stun.ChangeRequest{})
 	usedSocket, err := d.transport.SendDatagram(packet, server)
 	if err != nil {
 		return Candidate{}, Socket{}, 0, err
@@ -321,11 +323,11 @@ func (d *Discovery) registerProbe(
 	scope uint64,
 	server netip.AddrPort,
 	socket Socket,
-) (compatstun.TransactionID, <-chan probeResponse, error) {
+) (stun.TxID, <-chan probeResponse, error) {
 	for range 4 {
-		transactionID, err := compatstun.NewTransactionID()
-		if err != nil {
-			return compatstun.TransactionID{}, nil, fmt.Errorf(
+		var transactionID stun.TxID
+		if _, err := rand.Read(transactionID[:]); err != nil {
+			return stun.TxID{}, nil, fmt.Errorf(
 				"pathdiscovery: creating stun transaction: %w",
 				err,
 			)
@@ -336,7 +338,7 @@ func (d *Discovery) registerProbe(
 		if len(d.pending) >= maxPendingRequests {
 			d.mu.Unlock()
 
-			return compatstun.TransactionID{}, nil, errors.New(
+			return stun.TxID{}, nil, errors.New(
 				"pathdiscovery: too many pending stun probes",
 			)
 		}
@@ -357,12 +359,12 @@ func (d *Discovery) registerProbe(
 		return transactionID, response, nil
 	}
 
-	return compatstun.TransactionID{}, nil, errors.New(
+	return stun.TxID{}, nil, errors.New(
 		"pathdiscovery: could not allocate a unique stun transaction",
 	)
 }
 
-func (d *Discovery) removeProbe(transactionID compatstun.TransactionID) {
+func (d *Discovery) removeProbe(transactionID stun.TxID) {
 	d.mu.Lock()
 	delete(d.pending, transactionID)
 	d.mu.Unlock()

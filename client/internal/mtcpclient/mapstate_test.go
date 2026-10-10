@@ -209,3 +209,44 @@ func TestMapStateVerifiesTheRelayGrant(t *testing.T) {
 		t.Fatal("a relay map with an untrusted signature was used")
 	}
 }
+
+// TestConvertDeviceCarriesTheAliasGrant checks the device alias v1 grant
+// (docs/protocol/device-alias-v1.md) reaches the product model unchanged.
+func TestConvertDeviceCarriesTheAliasGrant(t *testing.T) {
+	peer := device("01890f00-0000-7000-8000-000000000702", 2, "100.64.0.2")
+	expires := time.Now().Add(time.Hour).Truncate(time.Millisecond).UTC()
+	peer.Alias = &mtcpv1.AliasGrant{
+		ContractId: "01890f00-0000-7000-8000-000000000a01", EndpointId: "01890f00-0000-7000-8000-000000000a02",
+		Generation: 3, GrantRevision: 4, RecoveryEpoch: 5, Role: mtcpv1.AliasGrant_CONSUMER,
+		ExpiresMs:    expires.UnixMilli(),
+		Services:     []*mtcpv1.AliasService{{Protocol: 6, PortFrom: 22, PortTo: 22}, {Protocol: 1}},
+		MasqueradeV4: netip.MustParseAddr("198.18.0.7").AsSlice(),
+		MasqueradeV6: netip.MustParseAddr("fd02:48de:ec1b:1::7").AsSlice(),
+	}
+	node, err := convertDevice(peer, false, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := node.Alias
+	if got == nil || got.ContractID != peer.Alias.ContractId || got.EndpointID != peer.Alias.EndpointId ||
+		got.Generation != 3 || got.GrantRevision != 4 || got.RecoveryEpoch != 5 ||
+		got.Role != networkmap.AliasConsumer || !got.ExpiresAt.Equal(expires) ||
+		got.SelfIPv4 != netip.MustParseAddr("198.18.0.7") || got.SelfIPv6 != netip.MustParseAddr("fd02:48de:ec1b:1::7") ||
+		len(got.Services) != 2 || got.Services[0] != (networkmap.AliasService{Protocol: 6, PortFrom: 22, PortTo: 22}) ||
+		got.Services[1] != (networkmap.AliasService{Protocol: 1}) {
+		t.Fatalf("alias = %+v", got)
+	}
+
+	for name, mutate := range map[string]func(*mtcpv1.AliasGrant){
+		"no role":      func(grant *mtcpv1.AliasGrant) { grant.Role = mtcpv1.AliasGrant_ROLE_UNSPECIFIED },
+		"bad address":  func(grant *mtcpv1.AliasGrant) { grant.MasqueradeV4 = []byte{1, 2, 3} },
+		"bad protocol": func(grant *mtcpv1.AliasGrant) { grant.Services[0].Protocol = 256 },
+		"bad port":     func(grant *mtcpv1.AliasGrant) { grant.Services[0].PortTo = 65536 },
+	} {
+		broken, _ := proto.Clone(peer).(*mtcpv1.Device)
+		mutate(broken.Alias)
+		if _, err := convertDevice(broken, false, time.Now()); !errors.Is(err, controlplane.ErrNetmapInvalid) {
+			t.Errorf("%s: error = %v", name, err)
+		}
+	}
+}

@@ -34,7 +34,7 @@
       "routed_query_over_mesh_resolver_on_both_nodes": true,
       "unrelated_query_avoided_mesh_resolver_on_both_nodes": true,
       "upstream_recursion_on_both_nodes": true,
-      "magicdns_on_both_nodes": true,
+      "mesh_dns_on_both_nodes": true,
       "direct_dual_stack_on_both_nodes": true
     },
     "explicit_default": {
@@ -44,7 +44,7 @@
       "root_route_installed_on_both_nodes": true,
       "public_queries_over_mesh_resolver_on_both_nodes": true,
       "upstream_recursion_on_both_nodes": true,
-      "magicdns_on_both_nodes": true,
+      "mesh_dns_on_both_nodes": true,
       "direct_dual_stack_on_both_nodes": true
     },
     "rollback": {
@@ -55,7 +55,7 @@
       "test_route_absent_on_both_nodes": true,
       "public_queries_avoided_mesh_resolver_on_both_nodes": true,
       "public_forwarding_disabled_on_both_nodes": true,
-      "magicdns_on_both_nodes": true,
+      "mesh_dns_on_both_nodes": true,
       "direct_dual_stack_on_both_nodes": true
     }
   },

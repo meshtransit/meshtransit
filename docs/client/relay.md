@@ -68,7 +68,7 @@ copies are cleared after configuration and never enter either fingerprint.
 and lifecycle. It exposes a small protocol-independent client contract whose
 `Close` operation must interrupt a concurrent `Receive`.
 
-`internal/compat/derp` owns the pinned on-wire framing. It deliberately does
+`shared/mtrp` owns the MTRP v1 on-wire framing. The client deliberately does
 not inherit general HTTP-client behavior: relay sessions use raw TCP plus TLS,
 do not use environment proxies, do not follow redirects, and require an HTTP
 101 protocol upgrade followed by the authenticated server greeting. Certificate

@@ -37,8 +37,8 @@ type Config struct {
 	AllowSocketPeers    bool
 	EnableDataPlane     bool
 	EnableDeviceAliases bool
-	// ControlProtocol is auto (MTCP where the control origin serves it),
-	// mtcp or legacy.
+	// ControlProtocol is accepted for existing unit files: auto and mtcp
+	// both mean MTCP v1, the only control protocol.
 	ControlProtocol string
 	// PortMapping is auto (map the WireGuard port on the local gateway with
 	// PCP, NAT-PMP or UPnP when the data plane runs) or off.
@@ -91,7 +91,7 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	flags.BoolVar(&cfg.EnableDeviceAliases, "enable-device-aliases", false,
 		"enable qualification of peer-specific Device aliases; requires confined helper alias pools")
 	flags.StringVar(&cfg.ControlProtocol, "control-protocol", "auto",
-		"control protocol: auto (MTCP where the control server offers it), mtcp, or legacy")
+		"control protocol: auto or mtcp (both MTCP v1; kept for existing unit files)")
 	flags.StringVar(&cfg.PortMapping, "port-mapping", "auto",
 		"ask the local gateway to forward the WireGuard port with PCP, NAT-PMP or UPnP: auto or off")
 	flags.StringVar(&cfg.CloudMetadata, "cloud-metadata", "auto",
@@ -102,7 +102,7 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 		&cfg.EnableDNS,
 		"enable-dns",
 		false,
-		"enable MagicDNS and systemd-resolved integration",
+		"enable MeshTransit DNS and systemd-resolved integration",
 	)
 	flags.Uint64Var(
 		&listenPort,
@@ -238,9 +238,11 @@ func validate(cfg Config) error {
 		return errors.New("device aliases require --enable-data-plane")
 	}
 	switch cfg.ControlProtocol {
-	case "auto", "mtcp", "legacy":
+	case "auto", "mtcp":
+	case "legacy":
+		return errors.New("the legacy control protocol was removed; use --control-protocol=mtcp or leave it unset")
 	default:
-		return errors.New("control protocol must be auto, mtcp or legacy")
+		return errors.New("control protocol must be auto or mtcp")
 	}
 	switch cfg.PortMapping {
 	case "auto", "off":

@@ -29,8 +29,8 @@ func mustCompute(t *testing.T, rules []Rule) (Digest, int) {
 func vectorRules() []Rule {
 	return []Rule{
 		{
-			Sources:      []Selector{prefix("100.64.0.2/32"), prefix("fd7a:115c:a1e0::2/128")},
-			Destinations: []Destination{to("100.64.0.1/32", 22, 22), to("fd7a:115c:a1e0::1/128", 22, 22)},
+			Sources:      []Selector{prefix("100.64.0.2/32"), prefix("fd07:d4de:9d87::2/128")},
+			Destinations: []Destination{to("100.64.0.1/32", 22, 22), to("fd07:d4de:9d87::1/128", 22, 22)},
 			Protocols:    []uint8{6},
 		},
 		{
@@ -43,7 +43,7 @@ func vectorRules() []Rule {
 
 func TestComputeVector(t *testing.T) {
 	digest, count := mustCompute(t, vectorRules())
-	const want = "sha256:65c3166a6062804e3b2a55acd157d70ce0ebf6fdd91130eecd280654a714251a"
+	const want = "sha256:5714d8784aeeb16d13dade4978798461062af395740fd19a493c8a88b5cea897"
 	if count != 5 {
 		t.Fatalf("grants = %d, want 5", count)
 	}
@@ -61,13 +61,13 @@ func TestComputeIgnoresGroupingOrderAndDuplicates(t *testing.T) {
 			Protocols:    []uint8{1, 1},
 		},
 		{
-			Sources:      []Selector{prefix("fd7a:115c:a1e0::2/128")},
-			Destinations: []Destination{to("fd7a:115c:a1e0::1/128", 22, 22), to("100.64.0.1/32", 22, 22)},
+			Sources:      []Selector{prefix("fd07:d4de:9d87::2/128")},
+			Destinations: []Destination{to("fd07:d4de:9d87::1/128", 22, 22), to("100.64.0.1/32", 22, 22)},
 			Protocols:    []uint8{6},
 		},
 		{
 			Sources:      []Selector{prefix("100.64.0.2/32"), prefix("100.64.0.2/32")},
-			Destinations: []Destination{to("100.64.0.1/32", 22, 22), to("fd7a:115c:a1e0::1/128", 22, 22)},
+			Destinations: []Destination{to("100.64.0.1/32", 22, 22), to("fd07:d4de:9d87::1/128", 22, 22)},
 			Protocols:    []uint8{6},
 		},
 		{Sources: []Selector{prefix("100.64.0.9/32")}, Protocols: []uint8{6}}, // no destinations
@@ -106,7 +106,7 @@ func TestComputeDistinguishesGrants(t *testing.T) {
 		"width":       func(rules []Rule) { rules[1].Sources[0] = prefix("100.64.0.0/24") },
 		"any":         func(rules []Rule) { rules[1].Sources[0] = Selector{Kind: KindAny} },
 		"missing":     func(rules []Rule) { rules[1].Destinations = nil },
-		"destination": func(rules []Rule) { rules[0].Destinations[1] = to("fd7a:115c:a1e0::5/128", 22, 22) },
+		"destination": func(rules []Rule) { rules[0].Destinations[1] = to("fd07:d4de:9d87::5/128", 22, 22) },
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {

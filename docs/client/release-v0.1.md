@@ -34,7 +34,7 @@ The v0.1 release includes:
 - encrypted host-to-host IPv4 and IPv6 traffic;
 - an authenticated relay base path and authenticated direct-path promotion;
 - host, protocol, TCP/UDP port, and ICMP policy enforcement;
-- MagicDNS records, search domains, split DNS, and an explicit default DNS
+- MeshTransit DNS records, search domains, split DNS, and an explicit default DNS
   route;
 - local status and profile management through `meshctl`;
 - native installation, service lifecycle, upgrade, rollback, and uninstall;
@@ -122,7 +122,7 @@ the original single samples remain in
 [linux-runtime-recovery-qualification-2026-09-13.md](linux-runtime-recovery-qualification-2026-09-13.md).
 RC5 then passed three traffic-bearing runtime-recovery samples in each
 direction between native Ubuntu 26.04 AMD64 and ARM64 peers. Every sample
-observed IPv4, IPv6, and uncached MagicDNS loss during the injected local
+observed IPv4, IPv6, and uncached MeshTransit DNS loss during the injected local
 runtime fault, followed by stable recovery, while the nested state and resource
 contract also passed. See
 [linux-runtime-recovery-traffic-qualification-2026-09-13.md](linux-runtime-recovery-traffic-qualification-2026-09-13.md).

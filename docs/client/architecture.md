@@ -12,9 +12,9 @@ meshctl
   ▼
 meshd
   ├── profile service       one active control-plane identity
-  ├── control adapters      MTCP v1 (mtcpclient) and legacy TS2021, chosen per origin (controlselect)
+  ├── control client        MTCP v1 (mtcpclient)
   ├── policy validator      fail-closed, atomic network-map validation
-  ├── DNS planner           protocol-independent MagicDNS/split-DNS transaction plan
+  ├── DNS planner           protocol-independent MeshTransit DNS/split-DNS transaction plan
   ├── packet policy gate    inbound ACL plus bounded return-flow state
   ├── tunnel engine         userspace WireGuard relay/direct path
   ├── traffic events        bounded 5-tuple/counter events without payloads
@@ -25,7 +25,7 @@ meshd
                               pool-confined TUN and resolved-link setup; firewall later
 ```
 
-The current code implements the profile service, persistent per-profile identity, explicit control-key pinning, registration and long-lived map streaming over MTCP v1 (with the legacy TS2021 protocol as a fallback for control servers that do not offer MTCP; `--control-protocol auto|mtcp|legacy`), product-owned map and DNS validation, local API, composition root, bounded control compatibility probe, and opt-in Linux encrypted data plane. Data-plane status distinguishes `not_implemented`, `idle`, `tun_ready_no_crypto`, `waiting_endpoint`, `policy_unsupported`, `encrypted_direct`, `encrypted_relay_ready`, and `failed`; DNS is reported separately as `inactive`, `not_implemented`, `configured`, or `failed`.
+The current code implements the profile service, persistent per-profile identity, explicit control-key pinning, registration and long-lived map streaming over MTCP v1, product-owned map and DNS validation, local API, composition root, bounded control compatibility probe, and opt-in Linux encrypted data plane. Data-plane status distinguishes `not_implemented`, `idle`, `tun_ready_no_crypto`, `waiting_endpoint`, `policy_unsupported`, `encrypted_direct`, `encrypted_relay_ready`, and `failed`; DNS is reported separately as `inactive`, `not_implemented`, `configured`, or `failed`.
 
 ## Repository boundary
 
@@ -56,7 +56,7 @@ The unprivileged data-plane engine opens the descriptor after receiving a valida
 After a full map establishes the active self identity, the control plane can
 withdraw that authority with a terminal map frame. The frame must repeat the
 same self ID and node key, mark the self expired and unauthorized, and carry
-explicit empty peer and packet-filter replacements. The compatibility adapter
+explicit empty peer and packet-filter replacements. The MTCP client
 classifies that exact frame as a permanent authority revocation without
 publishing it as a new snapshot. The supervisor therefore tears down DNS,
 peer-probe state, relay authority, routes, and the packet engine immediately,
@@ -85,8 +85,8 @@ through the pinned map protocol and resent after reconnect. The packet engine
 changes home only after the control plane echoes the preference in a validated
 map, so local network observations cannot rewrite peer authority directly.
 
-The peer-probe wire adapter implements the current encrypted Ping/Pong format
-behind `internal/compat/disco`. The daemon creates one ephemeral X25519 identity
+The peer-probe wire adapter implements the disco v2 encrypted Ping/Pong format
+(`shared/disco`, `docs/protocol/disco-v2.md`). The daemon creates one ephemeral X25519 identity
 per active control session, advertises its canonical public key through every
 map reconnect and endpoint update, then destroys its private material after all
 session workers stop. The adapter owns precomputed NaCl channels, authenticated
@@ -146,8 +146,8 @@ endpoint incrementally, and proof expiry restores the relay instead of an
 unproven network address.
 
 `internal/relay` owns bounded queues, connection lifecycle, retry policy, and
-product types. `internal/compat/derp` alone owns the pinned wire codec. The
-adapter opens raw TLS without environment proxies or redirects, verifies normal,
+product types. `shared/mtrp` owns the MTRP v1 wire codec. The
+client opens raw TLS without environment proxies or redirects, verifies normal,
 alternate-name, or exact control-signed certificate authority, requires the
 protocol upgrade and authenticated server greeting, and carries unchanged
 WireGuard ciphertext. Region dialing starts the first signed node immediately
@@ -192,7 +192,7 @@ evidence and remaining delivery gates.
 
 ## DNS boundary
 
-The compatibility adapter translates every non-nil DNS map into product-owned values and preserves nil-as-unchanged delta semantics inside a streaming session. Resolver order, locally authoritative empty routes, search domains, MagicDNS intent, and A/AAAA records are retained. Names are canonicalized to lowercase without a trailing dot and the entire candidate remains atomic with the rest of the network map. The initial resolver boundary accepts only classic IP resolvers on port 53. URL-based DoH/HTTP resolvers, bootstrap addresses, exit-node overrides, malformed names, duplicate routes/records, and unsafe resolver addresses fail closed.
+The MTCP client translates every non-nil DNS map into product-owned values and preserves nil-as-unchanged delta semantics inside a streaming session. Resolver order, locally authoritative empty routes, search domains, MeshTransit DNS intent, and A/AAAA records are retained. Names are canonicalized to lowercase without a trailing dot and the entire candidate remains atomic with the rest of the network map. The initial resolver boundary accepts only classic IP resolvers on port 53. URL-based DoH/HTTP resolvers, bootstrap addresses, exit-node overrides, malformed names, duplicate routes/records, and unsafe resolver addresses fail closed.
 
 The DNS compiler creates deterministic forward and reverse node records from the validated map, detects record shadowing, and requires every node name to be covered by a locally authoritative route. Extra records outside an existing route receive an exact local route. A transaction manager prepares the local resolver before enabling OS routing, restores host DNS before clearing the resolver, and rolls back the first component if the second fails.
 
@@ -208,7 +208,7 @@ After policy acceptance, the WireGuard TUN wrapper observes outbound plaintext i
 
 Events enter a bounded non-blocking queue and are aggregated by network-map generation plus 5-tuple. TCP SYN/SYN-ACK/ACK/FIN/RST flags produce `syn`, `syn_ack`, `established`, `closing`, or `reset`; UDP is reported as `observed`. Each side reports source-to-destination and reverse packet/byte counters. Queue saturation drops telemetry and emits a count, never tunnel traffic.
 
-The pinned control stream supplies an opaque Node token and Network token. The compatibility adapter requires the data-plane-audit capability and validates their embedded network/self scopes before publishing redacted product-owned credentials. `meshd` sends them only in HTTPS headers to the configured exact origin and refuses redirects. The log service validates the HMAC and stores normalized records; no storage credential exists on the client.
+MTCP v1 does not yet deliver flow-log upload credentials, so flow logging stays disabled. When it does, the credentials will be scoped to the Node and Network and sent only in HTTPS headers to the configured exact origin, without following redirects; no storage credential exists on the client.
 
 ## Multiple-network invariant
 
@@ -216,15 +216,13 @@ MeshTransit allows address reuse across isolated networks. Therefore one process
 
 The client never sends a `network_id`. Registration and session credentials identify the account; the server selects and authorizes the network. Browser registration must reauthorize the final choice.
 
-## Compatibility strategy
+## Protocol strategy
 
-The reference implementation is an interoperability oracle, not a source tree for mechanical copying. Product orchestration, persistence, local API, CLI, logging, and privilege separation are authored here.
+meshd speaks MTCP v1 to Core and MTRP v1 to relays (`docs/protocol/`), with the codecs in `shared/`. Bootstrap fetches the MTCP key document, compares the control key fingerprint with a value obtained independently by the operator, creates per-profile machine and node keys, and verifies server possession through the MTCP Noise handshake. TLS port 443 is mandatory, environment proxies and redirects are disabled, and the normal certificate chain and hostname are verified. Required attribution for third-party modules is recorded in `THIRD_PARTY_NOTICES.md`.
 
-The protocol adapter pins `tailscale.com` to `v1.102.3`, matching the current control-plane dependency and capability 142. Imports are confined to the compatibility adapter. Bootstrap fetches `/key?v=142`, compares the SHA-256 fingerprint with a value obtained independently by the operator, creates per-profile machine and node keys, and verifies server possession through Noise IK. Registration then uses the pinned key over Noise and a bounded HTTP/2 session. TLS port 443 is mandatory, environment proxies and redirects are disabled, and the normal certificate chain and hostname are verified. The upstream dialer is not used because its compatibility behavior includes plaintext fallback and permissive certificate handling that conflict with this product's security policy. A separate forward-test lane may exercise newer versions without changing the production baseline. Required BSD attribution is recorded in `THIRD_PARTY_NOTICES.md`.
+Behaviour must be proven independently at four layers:
 
-Compatibility must be proven independently at four layers:
-
-1. HTTPS server-key discovery and MTCP v1 session establishment (HTTP upgrade with a WebSocket fallback), or TS2021/Noise for control servers without MTCP. Implemented by `doctor control`, registration, and the long-lived map stream. Both protocols use the same machine, node and control keys, so a profile changes protocol without registering again; a pin is the control key fingerprint (`sha256:…`) or the `ck=` value of an enrollment link.
+1. HTTPS server-key discovery and MTCP v1 session establishment (HTTP upgrade with a WebSocket fallback). Implemented by `doctor control`, registration, and the long-lived map stream. A pin is the control key fingerprint (`sha256:…`) or the `ck=` value of an enrollment link.
 2. Registration, login completion, keepalive watchdog, and bounded reconnect are implemented. Session-handle resume remains; reconnect currently requires a new full snapshot.
 3. Network-map decoding, structural policy validation, DNS translation/planning, Linux DNS activation, and host-level TCP/UDP/ICMP policy enforcement are implemented. Capability-based networking, subnet/exit policy, and URL resolver transports remain.
 4. Privileged TUN/DNS lifecycle, direct userspace WireGuard traffic, shared-socket STUN discovery, periodic and host-network-triggered candidate refresh/expiry, typed endpoint and health-gated home-relay publication, bounded encrypted relay traffic with idle region eviction, and authenticated direct endpoint switching are implemented in the opt-in Linux data plane. Traffic-idle discovery pacing, generalized routes, native non-Linux network monitors, and non-Linux DNS backends remain.
@@ -313,10 +311,10 @@ of accepted runtime failures and completed recoveries plus whether a recovery
 is pending. These counters reset with the daemon and contain no peer, address,
 route, DNS name, key, packet, or error-text data.
 
-Protocol structs remain inside the compatibility adapter. Each non-keepalive response is converted into a MeshTransit-owned candidate snapshot. Full and delta peer changes, named packet-filter updates, online state, relay topology, DNS configuration, and control time are applied to a clone. The candidate must pass identity, key, address, route, endpoint, policy, relay, DNS, cardinality, self-authorization, self-expiry, and registered-self-key checks before it atomically replaces the latest in-memory snapshot.
+Protocol structs remain inside the MTCP client (`internal/mtcpclient`). Each non-keepalive response is converted into a MeshTransit-owned candidate snapshot. Full and delta peer changes, named packet-filter updates, online state, relay topology, DNS configuration, and control time are applied to a clone. The candidate must pass identity, key, address, route, endpoint, policy, relay, DNS, cardinality, self-authorization, self-expiry, and registered-self-key checks before it atomically replaces the latest in-memory snapshot.
 
 Reconnect deliberately resets delta state and requires a new full self snapshot. `PingRequest` is not executed because accepting an arbitrary URL would create an SSRF boundary; an allowlisted implementation can be added later. Capability grants are not widened into network permissions. Linux DNS activation remains explicitly opt-in; session-handle resume is deferred.
 
 ## Dependency policy
 
-Use the standard library by default. Every external module requires a purpose, license review, fixed version, vulnerability scan, and maintainer approval. Protocol-specific dependencies remain behind internal packages so the product API does not inherit their naming or lifecycle model. The pinned relay codec is used only inside `internal/compat/derp`; dialing, TLS policy, retries, memory bounds, authorization, and path selection remain product-owned.
+Use the standard library by default. Every external module requires a purpose, license review, fixed version, vulnerability scan, and maintainer approval. Protocol-specific dependencies remain behind internal packages so the product API does not inherit their naming or lifecycle model. The relay codec lives in `shared/mtrp`; dialing, TLS policy, retries, memory bounds, authorization, and path selection remain product-owned.

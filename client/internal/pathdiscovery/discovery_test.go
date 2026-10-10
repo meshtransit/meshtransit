@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	compatstun "meshtransit.net/client/internal/compat/stun"
+	"meshtransit.net/shared/stun"
 )
 
 func TestNewDiscovery(t *testing.T) {
@@ -329,7 +329,7 @@ func (t *fakeDiscoveryTransport) SendDatagram(
 	t.mu.Unlock()
 
 	if mapped.IsValid() && handler != nil && len(packet) >= 20 {
-		var transactionID compatstun.TransactionID
+		var transactionID stun.TxID
 		copy(transactionID[:], packet[8:20])
 		handler.HandleDatagram(testBindingResponse(transactionID, mapped), source, socket)
 	}
@@ -345,7 +345,7 @@ func (t *fakeDiscoveryTransport) sendCount() int {
 }
 
 func testBindingResponse(
-	transactionID compatstun.TransactionID,
+	transactionID stun.TxID,
 	address netip.AddrPort,
 ) []byte {
 	const attributeHeaderLength uint16 = 4

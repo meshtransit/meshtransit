@@ -12,7 +12,7 @@ sharing.
   `f60e40e8a1a9d3d83a5ce10b7b7dec25fbcfe885`.
 - Implemented client alias checkpoint:
   `bbe1ec7b77ea35e7217e53694bbe9f5201d82d89`.
-- Client compatibility dependency: `tailscale.com v1.102.3`.
+- Client legacy-protocol dependency: a pinned third-party library, since removed (P6).
 - Core runtime baseline: `a70546e`; documentation baseline:
   `44cb533be5c378573f85db8cf50b01029ad6a998`.
 
@@ -35,7 +35,7 @@ self-address masquerade fields rather than an additional gateway peer:
 Evidence locations: `hscontrol/mapper/device_share.go` and the assertions in
 `hscontrol/mapper/device_share_test.go`. These files were inspected read-only.
 No reference code, test, SQL, type or schema was copied into Core or the client.
-The pinned dependency's `tailcfg.Node` field documentation independently defines
+The pinned legacy library's per-peer Node documentation independently defines
 masquerading as local-source translation limited to that peer.
 
 The reference's reverse IPv6 observation keeps the consumer's canonical IPv6
@@ -48,8 +48,8 @@ black-box qualification remains a delivery gate.
 
 ## Previous client gap (inspection baseline)
 
-`internal/compat/ts2021/netmap.go:convertNode` copies identity, host addresses,
-routes, endpoints and expiry. It does not transfer either per-peer masquerade
+The legacy client adapter (since removed) copied identity, host addresses,
+routes, endpoints and expiry. It did not transfer either per-peer masquerade
 field into the product-owned Node.
 
 `internal/dataplane/observed_tun.go` performs packet policy checks and observation

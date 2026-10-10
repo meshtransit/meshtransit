@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"golang.zx2c4.com/wireguard/conn"
-	compatstun "meshtransit.net/client/internal/compat/stun"
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/client/internal/relay"
+	"meshtransit.net/shared/stun"
 )
 
 func TestNewSharedBind(t *testing.T) {
@@ -52,7 +52,7 @@ func TestSharedBindDemultiplexesControlDatagrams(t *testing.T) {
 		t.Fatalf("Open() = %d receivers, port %d, error %v", len(receivers), port, err)
 	}
 
-	stunPacket := compatstun.BindingRequest(compatstun.TransactionID{1, 2, 3})
+	stunPacket := stun.AppendBindingRequest(nil, stun.TxID{1, 2, 3}, stun.ChangeRequest{})
 	stunSource := netip.MustParseAddrPort("203.0.113.1:3478")
 	inner.queue(stunPacket, stunSource)
 	packets, sizes, endpoints := receiveBuffers()
@@ -103,7 +103,7 @@ func TestSharedBindDropsMatchedDatagramWithInvalidSource(t *testing.T) {
 		t.Fatalf("Open() error = %v", err)
 	}
 	inner.queueEndpoint(
-		compatstun.BindingRequest(compatstun.TransactionID{4, 5, 6}),
+		stun.AppendBindingRequest(nil, stun.TxID{4, 5, 6}, stun.ChangeRequest{}),
 		&fakeBindEndpoint{destination: "invalid"},
 	)
 	packets, sizes, endpoints := receiveBuffers()
@@ -125,7 +125,7 @@ func TestSharedBindSendDatagramAndSocketGeneration(t *testing.T) {
 		t.Fatalf("newSharedBind() error = %v", err)
 	}
 	destination := netip.MustParseAddrPort("203.0.113.2:3478")
-	packet := compatstun.BindingRequest(compatstun.TransactionID{7, 8, 9})
+	packet := stun.AppendBindingRequest(nil, stun.TxID{7, 8, 9}, stun.ChangeRequest{})
 	if _, err := shared.SendDatagram(packet, destination); !errors.Is(err, pathdiscovery.ErrTransportClosed) {
 		t.Fatalf("SendDatagram() closed error = %v", err)
 	}
@@ -614,7 +614,7 @@ type recordingDatagramHandler struct {
 var _ pathdiscovery.DatagramHandler = (*recordingDatagramHandler)(nil)
 
 func (*recordingDatagramHandler) MatchesDatagram(packet []byte) bool {
-	return compatstun.LooksLikeMessage(packet)
+	return stun.Is(packet)
 }
 
 func (h *recordingDatagramHandler) HandleDatagram(

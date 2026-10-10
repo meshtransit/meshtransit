@@ -32,6 +32,9 @@ account_session_digest_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\
 idempotency_digest_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
 rate_limit_digest_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
 noise_private_key="privkey:$(openssl rand -hex 32)"
+# GNU date on Linux, BSD date on macOS.
+control_key_not_after="$(date -u -d '+1 day' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
+	date -u -v+1d '+%Y-%m-%dT%H:%M:%SZ')"
 
 cleanup() {
 	docker rm --force "${runner_container}" >/dev/null 2>&1 || true
@@ -119,7 +122,7 @@ run_go() {
 		--env MESHTRANSIT_CONTROL_TLS_PRIVATE_KEY_FILE \
 		--env MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE \
 		--env MESHTRANSIT_CONTROL_MAX_SESSIONS \
-		--env MESHTRANSIT_CONTROL_MAX_STREAMS_PER_SESSION \
+		--env MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER \
 		--env MESHTRANSIT_API_TLS_CERTIFICATE_FILE \
 		--env MESHTRANSIT_API_TLS_PRIVATE_KEY_FILE \
 		--env MESHTRANSIT_API_ACCOUNT_SESSION_DIGEST_ACTIVE_KEY_ID \
@@ -391,7 +394,8 @@ export MESHTRANSIT_CONTROL_TLS_CERTIFICATE_FILE="${fixture_dir}/control-server.c
 export MESHTRANSIT_CONTROL_TLS_PRIVATE_KEY_FILE="${fixture_dir}/control-server.key"
 export MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE="${fixture_dir}/control-noise-private-key"
 export MESHTRANSIT_CONTROL_MAX_SESSIONS=8
-export MESHTRANSIT_CONTROL_MAX_STREAMS_PER_SESSION=2
+# MTCP advertises the control key's expiry; keep it inside the fixture's life.
+export MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER="${control_key_not_after}"
 export MESHTRANSIT_API_TLS_CERTIFICATE_FILE="${fixture_dir}/control-server.crt"
 export MESHTRANSIT_API_TLS_PRIVATE_KEY_FILE="${fixture_dir}/control-server.key"
 export MESHTRANSIT_API_ACCOUNT_SESSION_DIGEST_ACTIVE_KEY_ID=integration-v1

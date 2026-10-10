@@ -177,7 +177,7 @@ const testConnectivityText = `{"at":1759924830000,"nat":{"map":"address_and_port
 	`"filter":"address_and_port_dependent","alloc":"sequential","step":2},"v6":true,` +
 	`"pm":{"proto":"upnp","state":"mapped","exp":1759932030000}}`
 
-const testDigestText = "sha256:65c3166a6062804e3b2a55acd157d70ce0ebf6fdd91130eecd280654a714251a"
+const testDigestText = "sha256:5714d8784aeeb16d13dade4978798461062af395740fd19a493c8a88b5cea897"
 
 const (
 	testPathPeer  = "01890f90-0000-7000-8000-0000000000b1"

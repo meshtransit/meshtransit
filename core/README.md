@@ -170,7 +170,7 @@ MeshTransit Core is the product-owned MeshTransit control plane. This checkout
 currently contains the Phase 1 platform spine: validated process configuration,
 runtime role selection, bounded lifecycle management, safe JSON logging,
 health/readiness endpoints, TLS-only PostgreSQL and Redis dependency adapters,
-and a bounded TLS plus authenticated Noise client-control ingress. It also
+and a bounded TLS plus MTCP v1 client-control ingress. It also
 contains the forward-only PostgreSQL migration foundation and
 the first canonical authority schema for tenancy, network identity, address
 realms, address pools, prefixes, and revision state. Authority changes are
@@ -211,8 +211,8 @@ HMACs; Redis failure closes management admission rather than bypassing it.
 The worker PostgreSQL adapter leases, reconciles, and completes the matching
 durable outbox work without treating Redis as authority.
 
-Node-key rotation reuses `/machine/register` only after the Noise session proves
-the active machine key. The request carries the exact old and proposed new Node
+Node-key rotation runs over MTCP only after the session handshake proves the
+active machine key. The request carries the exact old and proposed new Node
 public keys, no enrollment credential, and no caller-selected scope. One
 transaction expires the old key epoch, creates the next epoch, advances the
 Device version and session generation, advances Network and inventory revisions,
@@ -471,9 +471,9 @@ authority revision vector, immutable release evidence, and at most 64 matching
 paths with authoring selector provenance. It is marked `no-store`; it does not
 claim packet execution or introduce a graph database.
 
-Those roles also expose the public client-control listener. It accepts TLS only;
-the client session inside TLS must then authenticate with the pinned Noise
-capability. Port `8443` is the non-root container default; a load balancer or
+Those roles also expose the public client-control listener. It accepts TLS only
+and serves MTCP v1 (`/mtcp/v1`, `/mtcp/v1/ws`, `/mtcp/v1/key`) and, when the
+relay authority is configured, `/relay/v1`; every other path answers 404. Port `8443` is the non-root container default; a load balancer or
 Kubernetes Service may publish it as port `443`, but must preserve HTTP upgrade
 semantics. TLS, Noise, and enrollment private-key files must be purpose-separated.
 
@@ -482,13 +482,13 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_ADDRESS` | `0.0.0.0:8443` | TCP host and non-zero port for public client control traffic. |
 | `MESHTRANSIT_CONTROL_TLS_CERTIFICATE_FILE` | none | Absolute path to the TLS certificate-chain PEM. |
 | `MESHTRANSIT_CONTROL_TLS_PRIVATE_KEY_FILE` | none | Absolute path to the bounded TLS private-key PEM. |
-| `MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE` | none | Absolute path to the canonical, single-line Noise machine private key. |
+| `MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE` | none | Absolute path to the canonical, single-line MTCP control private key (`privkey:<hex>`). |
+| `MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER` | none | Required RFC 3339 expiry advertised for the control key in the MTCP key document; in the future and at most five years ahead. The control role logs a warning in the last 30 days and refuses to start after it: extend the date (same key) or rotate the key before then. |
+| `MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS` | none | Comma-separated reverse-proxy prefixes whose `X-Forwarded-For` names the client for per-source admission. |
+| `MESHTRANSIT_CONTROL_MTCP_ENABLED` | `true` | Accepted only as `true`, for existing deployments; MTCP is the only control protocol. |
 | `MESHTRANSIT_CONTROL_MAX_SESSIONS` | `1024` | Per-process connection and session admission cap from 1 through 4096. |
-| `MESHTRANSIT_CONTROL_MAX_STREAMS_PER_SESSION` | `8` | HTTP/2 stream cap per authenticated session from 1 through 64. |
-| `MESHTRANSIT_CONTROL_HANDSHAKE_TIMEOUT` | `5s` | TLS, header, and Noise handshake deadline from 100ms through 30 seconds. |
-| `MESHTRANSIT_CONTROL_READ_IDLE_TIMEOUT` | `1m` | Authenticated session read-idle probe interval from 100ms through 5 minutes. |
-| `MESHTRANSIT_CONTROL_PING_TIMEOUT` | `15s` | Probe-response deadline from 100ms through the read-idle timeout. |
-| `MESHTRANSIT_CONTROL_WRITE_TIMEOUT` | `15s` | Authenticated session write deadline from 100ms through 5 minutes. |
+| `MESHTRANSIT_CONTROL_HANDSHAKE_TIMEOUT` | `5s` | TLS and HTTP header deadline from 100ms through 30 seconds. |
+| `MESHTRANSIT_CONTROL_READ_IDLE_TIMEOUT` | `1m` | Idle timeout of control connections that are not MTCP sessions, from 100ms through 5 minutes. |
 | `MESHTRANSIT_CONTROL_MAP_REQUEST_TIMEOUT` | `10s` | Total application deadline for one authenticated map snapshot, from 100ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MAP_STATEMENT_TIMEOUT` | `3s` | PostgreSQL statement timeout for one authenticated map snapshot, from 1ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MAP_TRANSACTION_IDLE_LIMIT` | `5s` | PostgreSQL idle-in-transaction limit for one map snapshot, from 1ms through 1 minute. |
@@ -514,9 +514,9 @@ replacement in the next full map snapshot; revision regression or different
 topology under the same revision terminates the stream fail-closed. Relay
 metadata grants no peer visibility, route, packet-policy, or Network authority.
 
-Control connection saturation, session admission results, Noise handshake
-duration, authenticated-session duration, registration results/duration, and
-map snapshot results/duration are exported only through the private operator
+Control connection saturation (`meshtransit_control_connections_*`), MTCP
+handshake results, active sessions and message counts (`meshtransit_mtcp_*`)
+are exported only through the private operator
 `/metrics` endpoint. Result labels come from fixed internal sets and never
 contain machine identity, endpoint, credential, or request data.
 
@@ -801,7 +801,7 @@ The transport-proven machine key is the only rotation principal. Request JSON
 cannot provide Workspace, Network, Device, session generation, revision, or
 audit authority.
 
-- Spoofing: the server binds rotation to the Noise machine key and requires its
+- Spoofing: the server binds rotation to the MTCP session machine key and requires its
   active machine-key epoch. A missing, revoked, expired, or cross-scope Device
   receives one generic unauthenticated result.
 - Tampering and replay: the transaction locks current Device, machine-key,
@@ -1087,7 +1087,7 @@ performs bounded SIGTERM shutdowns, and proves restarted processes reach
 readiness against the same durable state. A negative process case proves
 invalid control configuration exits with redacted diagnostics
 before starting the operator listener. The same gate also discovers the
-control key over validated TLS, establishes Noise plus HTTP/2, registers a
+control key over validated TLS, establishes an MTCP v1 session, registers a
 synthetic one-off credential, and verifies the committed Node, key epochs,
 primary address, revision, audit, and outbox evidence. Repeating that exchange
 after process restart must replay the canonical result without consuming or

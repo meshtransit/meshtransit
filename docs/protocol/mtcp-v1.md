@@ -8,7 +8,7 @@ and meshd (phase P4).
 MTCP connects a node (meshd) to Core. Over one long-lived, mutually
 authenticated session it registers the node, delivers its network map,
 collects endpoint and NAT reports, hands out relay tickets and pushes lifecycle
-changes. MTCP v1 replaces the TS2021 compatibility protocol entirely; there is
+changes. MTCP v1 replaced the earlier compatibility protocol entirely; there is
 no dual stack. Data never flows over MTCP.
 
 ## 1. Roles and keys
@@ -471,9 +471,8 @@ imported shares, `resolvers` (IP and optional DoH/DoT URL), `search_domains`,
 
 ### 7.4 Device alias grants
 
-The `alias` field carries the same grant as the legacy
-[device alias v1](legacy-ts2021/device-alias-v1.md) extension, as typed fields
-instead of a JSON capability: `contract_id`, `endpoint_id`, `generation`,
+The `alias` field carries the [device alias v1](device-alias-v1.md) grant as
+typed fields: `contract_id`, `endpoint_id`, `generation`,
 `grant_revision`, `recovery_epoch`, `role` (consumer or provider),
 `expires_at`, `services` (protocol, port range) and the local masquerade
 addresses for this peer. All semantics (exact intersection, deadlines,
@@ -699,7 +698,7 @@ secrets or other tenants' data, and is at most 512 bytes.
 | C6 | Slow node exhausts Core memory | Ack window, coalescing, snapshot fallback, 16 MiB outbound cap |
 | C7 | Cross-tenant disclosure through the map | The map contains only peers the node may reach or be reached by; error messages carry no foreign data |
 | C8 | Malicious node floods reports | Per-type rate limits, latest-wins coalescing, size caps |
-| C9 | Downgrade to an older protocol | No in-band version fallback; TS2021 is not served |
+| C9 | Downgrade to an older protocol | No in-band version fallback; no older protocol is served |
 | C10 | Enrollment key theft from logs | Enrollment keys are never logged or echoed; evaluated in constant time |
 | C11 | Map tampering by a compromised relay | Maps never travel through relays; relay map is signed separately |
 | C12 | Captured INIT replayed to displace a live node | Sessions count only after the first TRANSPORT record; durable per-Device timestamps shared by replicas |

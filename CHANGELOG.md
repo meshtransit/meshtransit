@@ -14,7 +14,7 @@ merge (2026-10-09) are kept below.
 - shared/stun (RFC 8489/5780 codec) and shared/netcheck (NAT classification).
 - test/natlab: in-memory NAT simulator, RFC 5780 STUN server, reference
   traversal agent and a generated traversal matrix.
-- MTCP v1 specification (control protocol replacing TS2021) and its
+- MTCP v1 specification (the MeshTransit control protocol) and its
   protobuf schema in api/mtcp/v1.
 - Client enforcement evidence (R1-69): policy digest v1 (shared/policydigest,
   docs/protocol/policy-digest-v1.md); meshd reports the digest of the rules
@@ -33,7 +33,7 @@ merge (2026-10-09) are kept below.
 - Core MTCP v1 endpoint (P4b, schema 137): with
   MESHTRANSIT_CONTROL_MTCP_ENABLED the control listener serves /mtcp/v1
   (HTTP upgrade), /mtcp/v1/ws (WebSocket fallback) and /mtcp/v1/key beside
-  TS2021, with the same control key. Admission before Noise, durable
+  the legacy protocol, with the same control key. Admission before Noise, durable
   ClientHello timestamps per bound machine key, one session per machine
   key, map snapshots and deltas with an acknowledgement window, KeyUpdate,
   Lifecycle, relay tickets, endpoint and enforcement reports. Registration
@@ -46,7 +46,8 @@ merge (2026-10-09) are kept below.
   auto|mtcp|legacy` (default auto: MTCP where the control server offers
   it). Profiles keep their keys across protocols; `meshctl up
   --fingerprint` also accepts the `ck=` value of enrollment links.
-- Turned off TS2021 on the POC control server (P4e): meshd speaks MTCP only.
+- Turned off the legacy control protocol on the POC control server (P4e):
+  meshd speaks MTCP only.
 - Path reports (P4f): meshd reports per peer whether traffic goes direct or
   through which relay, why (`relay_reason`) and byte counters; Core keeps
   the latest report per Device and the Console Devices page shows it in a
@@ -86,6 +87,23 @@ merge (2026-10-09) are kept below.
   accepts them as home relays, renews node grants when a Network's relays
   change, and serves each relay its grant sealed to its key at
   `/relay/v1/grant`.
+- meshd prefers Private Interchange regions as its home relay (P5f): it
+  leaves a preferred region only when that region fails and returns when it
+  recovers.
+
+### Removed
+
+- The legacy control protocol and the third-party protocol library it used
+  (P6). Core's control listener (`core/internal/adapter/controllistener`)
+  serves only MTCP v1 and the relay authority; other paths answer 404.
+  MTCP is always on and needs `MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER`;
+  `MESHTRANSIT_CONTROL_MTCP_ENABLED` may only be `true`, and
+  `MESHTRANSIT_CONTROL_MAX_STREAMS_PER_SESSION`, `_PING_TIMEOUT` and
+  `_WRITE_TIMEOUT` are refused. meshd speaks only MTCP:
+  `--control-protocol` accepts `auto` or `mtcp`, and `legacy` is refused.
+  STUN probes use `shared/stun` without a SOFTWARE attribute.
+  `make check-boundaries` fails when go.mod requires a module missing from
+  the reviewed allowlist `hack/allowed-modules.txt`.
 
 ## meshd (before the merge)
 
@@ -104,10 +122,10 @@ merge (2026-10-09) are kept below.
   systemd services and package lifecycle scripts.
 - Debian service-state preservation across upgrade, removal, and reinstall,
   alternate-root-safe purge behavior, and disposable package lifecycle tests.
-- Bounded Linux restart qualification for service, TUN, MagicDNS, and dual-stack
+- Bounded Linux restart qualification for service, TUN, MeshTransit DNS, and dual-stack
   traffic recovery, with redacted machine-readable reports and parser fixtures.
 - Bounded two-node Linux reboot qualification for service, route, identity,
-  MagicDNS, and dual-stack traffic recovery with explicit target confirmation.
+  MeshTransit DNS, and dual-stack traffic recovery with explicit target confirmation.
 - Linux route/link/address monitoring with bounded netlink event coalescing,
   polling fallback, immediate endpoint refresh, redacted status counters, and a
   reversible network-change qualification harness.
@@ -145,7 +163,7 @@ merge (2026-10-09) are kept below.
   addresses are checked independently from address-derived kernel routes, and
   aggregate peer-count changes are classified as topology changes.
 - Traffic-bearing Linux local-runtime recovery qualification with continuous
-  IPv4, IPv6, and uncached MagicDNS probes, mandatory outage observation,
+  IPv4, IPv6, and uncached MeshTransit DNS probes, mandatory outage observation,
   stable-recovery timing, and nested per-sample runtime/resource validation.
 
 ### Changed

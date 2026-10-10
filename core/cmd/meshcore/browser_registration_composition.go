@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"meshtransit.net/core/internal/adapter/httpapi"
-	"meshtransit.net/core/internal/adapter/legacyts2021"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/domain/enrollment"
@@ -49,7 +48,7 @@ func composeBrowserControl(
 	keys *enrollment.BrowserIntentKeyring,
 	registrationConfig config.RegistrationConfig,
 	runtime *postgresadapter.Pool,
-) (legacyts2021.BrowserRegistrationService, legacyts2021.BrowserCompletionService, error) {
+) (*control.BrowserRegistrationService, *control.BrowserCompletionService, error) {
 	if profile == nil || keys == nil || runtime == nil {
 		return nil, nil, errInvalidBrowserRegistrationComposition
 	}

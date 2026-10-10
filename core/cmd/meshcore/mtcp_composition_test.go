@@ -73,19 +73,14 @@ func TestComposeMTCP(t *testing.T) {
 	t.Parallel()
 
 	controlConfig, _ := controlConfigFixture(t)
-	server, metrics, err := composeMTCP(controlConfig, mtcpDependenciesFixture())
-	if err != nil || server != nil || metrics != nil {
-		t.Fatalf("MTCP off: %v %v %v", server, metrics, err)
-	}
-
 	notAfter := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
-	controlConfig.MTCP = &config.ControlMTCPConfig{KeyNotAfter: notAfter}
-	server, metrics, err = composeMTCP(controlConfig, mtcpDependenciesFixture())
+	controlConfig.MTCP = config.ControlMTCPConfig{KeyNotAfter: notAfter}
+	server, metrics, err := composeMTCP(controlConfig, mtcpDependenciesFixture())
 	if err != nil || server == nil || len(metrics.Collectors()) == 0 {
 		t.Fatalf("composeMTCP() = %v, %v", server, err)
 	}
 	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
-	// The key document answers with the TS2021 Noise key file's key.
+	// The key document answers with the control key file's key.
 	material, err := controlConfig.NoisePrivateKeyFile.Read()
 	if err != nil {
 		t.Fatal(err)

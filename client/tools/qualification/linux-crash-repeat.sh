@@ -22,7 +22,7 @@ Usage:
     --peer-label LABEL \
     --peer-v4 ADDRESS \
     --peer-v6 ADDRESS \
-    --peer-name MAGICDNS_NAME \
+    --peer-name MESH_DNS_NAME \
     --service meshd|meshnetd \
     [--artifact-sha256 HEX] \
     [--iterations N] \

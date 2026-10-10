@@ -12,6 +12,18 @@ import (
 
 var errInvalidRevisionFeedComposition = errors.New("invalid network revision feed composition")
 
+// mapWatchersPerSession is the feed watchers one MTCP session may hold: its
+// map stream watches its own Network and every Network it imports Devices
+// from, and a reconnecting node briefly holds the old and the new stream.
+// It keeps the budget the control process had before MTCP (8 per session).
+const mapWatchersPerSession = 8
+
+// mapStreamWatchers bounds the watchers of the revision and connectivity
+// feeds.
+func mapStreamWatchers(controlConfig config.ControlConfig) int {
+	return controlConfig.MaxSessions * mapWatchersPerSession
+}
+
 func composeRevisionFeed(
 	controlConfig config.ControlConfig,
 	redisClient *redisadapter.Client,
@@ -19,7 +31,7 @@ func composeRevisionFeed(
 	if redisClient == nil {
 		return nil, nil, errInvalidRevisionFeedComposition
 	}
-	maxWatchers := controlConfig.MaxSessions * int(controlConfig.MaxStreamsPerSession)
+	maxWatchers := mapStreamWatchers(controlConfig)
 	return newRevisionFeed(
 		maxWatchers,
 		controlConfig.Map.CoordinationTimeout,

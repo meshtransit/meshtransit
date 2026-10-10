@@ -8,7 +8,7 @@ packet deadline gate. It does not enable a live cross-Network packet path.
 - Core implementation: `368122f9b3d74ce68e94e1feec8666b0e3d2b362`.
 - Client deadline/conformance: `f60e40e8a1a9d3d83a5ce10b7b7dec25fbcfe885`.
 - Client lint maintenance: `00bf21d`; separate from packet behavior.
-- Protocol: `legacy-ts2021-cap142-v1`, capability 142.
+- Protocol: legacy control profile (capability 142, since removed), capability 142.
 - PostgreSQL regression: schema 78, disposable TLS-authenticated fixture.
 - No new migration, image, client package or live rollout belongs to this checkpoint.
 

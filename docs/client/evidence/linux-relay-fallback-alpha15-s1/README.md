@@ -17,7 +17,7 @@ address families carried traffic over relay before the dedicated nftables
 table was removed and the authenticated direct path returned.
 
 Independent post-run checks confirmed table removal, preservation of each
-default route, synchronized direct-path operation, exact MagicDNS answers,
+default route, synchronized direct-path operation, exact MeshTransit DNS answers,
 dual-stack traffic, and no warning-level service log entries.
 
 The report schema stores candidate counts rather than addresses and omits SSH

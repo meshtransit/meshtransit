@@ -252,7 +252,7 @@ func authenticatedRequestFixture(
 	if err != nil {
 		t.Fatalf("control.NewAuthenticatedMachine() error = %v", err)
 	}
-	request, err := NewRequest(snapshot.NodeKey(), 142)
+	request, err := NewRequest(snapshot.NodeKey())
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}

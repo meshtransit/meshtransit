@@ -35,9 +35,9 @@ independent upgrades.
 - `/var/lib/meshd` is mode `0700`. `/etc/meshd/meshd.env` is a root-owned mode
   `0640` conffile and must not contain enrollment credentials.
 
-The package enables encrypted host networking and MagicDNS. Flow logging stays
+The package enables encrypted host networking and MeshTransit DNS. Flow logging stays
 disabled. The privileged helper fixes the overlay pools to `100.64.0.0/10` and
-`fd7a:115c:a1e0::/48`; supporting different control-plane pools requires an
+`fd07:d4de:9d87::/48`; supporting different control-plane pools requires an
 explicit root-owned unit override and must remain within the server's assigned
 address space.
 

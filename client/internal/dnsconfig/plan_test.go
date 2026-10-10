@@ -8,7 +8,7 @@ import (
 	"meshtransit.net/client/internal/networkmap"
 )
 
-func TestCompileMagicDNSPlan(t *testing.T) {
+func TestCompileMeshDNSPlan(t *testing.T) {
 	t.Parallel()
 
 	snapshot := dnsSnapshot()
@@ -138,7 +138,7 @@ func dnsSnapshot() networkmap.Snapshot {
 			Name: "Node-A.Example.Mesh.",
 			Addresses: []netip.Prefix{
 				netip.MustParsePrefix("100.64.0.1/32"),
-				netip.MustParsePrefix("fd7a:115c:a1e0::1/128"),
+				netip.MustParsePrefix("fd07:d4de:9d87::1/128"),
 			},
 		},
 		Peers: []networkmap.Node{{

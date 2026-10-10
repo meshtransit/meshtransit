@@ -15,7 +15,7 @@ not modified.
 - query deadline: 4,500 ms
 
 The temporary policy allowed traffic only between the two devices owned by the
-qualification user in this isolated Network. The baseline was MagicDNS enabled,
+qualification user in this isolated Network. The baseline was MeshTransit DNS enabled,
 no global resolver, local-DNS override disabled, no split route, no search
 domain, no custom record, and zero allow rules.
 
@@ -30,7 +30,7 @@ domain, no custom record, and zero allow rules.
 | ARM64 | fail-closed | `SERVFAIL` | 5/5 | 5/5 | 11 UDP / 10 TCP | 0 | 0 |
 | ARM64 | rollback | `SERVFAIL` from direct MeshTransit resolver; host bypass | 5/5 | 5/5 | 0 | 0 | 0 |
 
-All retained reports passed the resolver-destination gate. MagicDNS, IPv4 and
+All retained reports passed the resolver-destination gate. MeshTransit DNS, IPv4 and
 IPv6 peer traffic, daemon readiness, service generation, and restart count
 remained healthy in every phase. The temporary nftables table was removed by
 the harness after each run.
@@ -49,7 +49,7 @@ After both architecture runs, the split route and temporary policy rule were
 removed through the authenticated Console. Both nodes then reported `online`,
 `synchronized`, `dns=configured`, `peer_count=0`, `policy_rule_count=0`, and
 `data_plane=idle`. `meshd.service` was active with `NRestarts=0`; the resolver
-link contained only the Network MagicDNS and reverse-routing domains, and the
+link contained only the Network MeshTransit DNS and reverse-routing domains, and the
 qualification nftables table was absent.
 
 ## Reports

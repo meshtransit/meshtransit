@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	"meshtransit.net/core/internal/adapter/legacyts2021/protocoltest"
+	"meshtransit.net/core/internal/adapter/mtcp/mtcptest"
 	"meshtransit.net/core/internal/domain/deployment"
 	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/node"
@@ -158,7 +158,7 @@ func newProcessRegistrationClient(
 	t *testing.T,
 	processConfig config.Config,
 	controlAddress string,
-) *protocoltest.Client {
+) *mtcptest.Client {
 	t.Helper()
 	if processConfig.Storage == nil {
 		t.Fatal("process integration configuration did not load storage")
@@ -168,14 +168,14 @@ func newProcessRegistrationClient(
 		t.Fatalf("read process registration CA: %v", err)
 	}
 	defer clear(caPEM)
-	client, err := protocoltest.NewClient(protocoltest.Options{
+	client, err := mtcptest.NewClient(mtcptest.Options{
 		ControlAddress: controlAddress,
 		TLSServerName:  processControlTLSServerName,
 		RootCAPEM:      caPEM,
 		Hostname:       processRegistrationHostname,
 	})
 	if err != nil {
-		t.Fatalf("protocoltest.NewClient() error = %v", err)
+		t.Fatalf("mtcptest.NewClient() error = %v", err)
 	}
 	return client
 }
@@ -184,7 +184,7 @@ func readProcessRegistrationEvidence(
 	ctx context.Context,
 	t *testing.T,
 	connection *pgx.Conn,
-	identity protocoltest.Identity,
+	identity mtcptest.Identity,
 ) processRegistrationEvidence {
 	t.Helper()
 	machineKey, err := node.NewMachineKey(identity.MachineKey)

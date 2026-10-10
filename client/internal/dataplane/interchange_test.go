@@ -66,7 +66,7 @@ func TestRelayConfigCarriesInterchangeNodes(t *testing.T) {
 		t.Fatal("Interchange node not recognised")
 	}
 	legacy := region
-	legacy.Nodes = []relay.Node{{Name: "1a", HostName: "derp.example.com", Port: 443}}
+	legacy.Nodes = []relay.Node{{Name: "1a", HostName: "relay.example.com", Port: 443}}
 	if usesInterchange(relay.Config{Regions: map[int]relay.Region{1: legacy}}) {
 		t.Fatal("legacy node taken for Interchange")
 	}

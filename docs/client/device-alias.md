@@ -29,29 +29,26 @@ an exact contract, endpoint, endpoint generation, grant revision, recovery epoch
 self Node key, peer Node key, direction, exclusive deadline and service list.
 It creates no Device or membership and is never persisted in a profile.
 
-The compatibility adapter accepts exactly one JSON document under the Node
-capability `https://meshtransit.io/cap/device-alias-v1`, together with at least
-one per-peer self masquerade address. These adapter-only address fields encode
-the local alias for that peer. The peer's Addresses and AllowedIPs encode only
-its remote aliases as identical exact host routes. The document fields are:
+MTCP carries the grant as typed fields of the peer's `alias`
+([mtcp-v1 §7.4](../protocol/mtcp-v1.md)). The local masquerade addresses for
+that peer travel in the grant; the peer's Addresses and AllowedIPs encode only
+its remote aliases as identical exact host routes. The fields are:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Exactly 1 |
 | `contract_id`, `endpoint_id` | Nonzero canonical UUID-shaped identifiers |
 | `generation`, `grant_revision`, `recovery_epoch` | Nonzero unsigned authority versions |
-| `self_key`, `peer_key` | Exact current Node public keys |
-| `role` | `consumer` or `provider` |
-| `expires_at` | Exclusive UTC deadline, bounded by both finite Node deadlines |
+| `role` | `CONSUMER` or `PROVIDER` |
+| `expires_ms` | Exclusive UTC deadline, bounded by both finite Node deadlines |
 | `services` | Ordered disjoint protocol and destination-port grants |
+| `masquerade_v4`, `masquerade_v6` | This node's local alias for the peer |
 
+The self and peer Node keys are those of the map entries, not grant fields.
 Each service has `protocol`, `port_from` and `port_to`. TCP (6) and UDP (17)
 require ports 1–65535. ICMPv4 (1) and ICMPv6 (58) allow echo only and use zero
 ports, with the corresponding family present. No wildcard protocol is accepted.
-The document is limited to 8 KiB, nesting depth four and 64 services. Field
-names match exactly; unknown fields, casing variants, duplicate keys, multiple
-documents, trailing values and integer overflows fail the whole candidate map.
-Legacy masquerade fields without the typed grant are rejected.
+A grant has at most 64 services; an unknown role, a malformed address or an
+out-of-range protocol or port fails the whole candidate map.
 
 The map validates at most 256 alias peers. Both families must have a canonical
 local address and complete local/remote aliases. Duplicate addresses, mapped

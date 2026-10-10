@@ -21,7 +21,7 @@ Usage:
     --peer-label LABEL \
     --peer-v4 ADDRESS \
     --peer-v6 ADDRESS \
-    --peer-name MAGICDNS_NAME \
+    --peer-name MESH_DNS_NAME \
     --magic-domain DOMAIN \
     --test-domain DOMAIN \
     --test-query NAME \
@@ -449,9 +449,9 @@ main() {
     fail "baseline status is unavailable"
   status_is_ready "${baseline_status}" || fail "baseline status is not ready"
   magic_domain_present "${dns_interface}" "${magic_domain}" ||
-    fail "MagicDNS domain does not match the expected network"
+    fail "MeshTransit DNS domain does not match the expected network"
   magic_dns_ready "${peer_name}" "${peer_v4}" "${peer_v6}" "${dns_interface}" ||
-    fail "baseline MagicDNS is not ready"
+    fail "baseline MeshTransit DNS is not ready"
   peer_traffic_ready "${peer_v4}" "${peer_v6}" ||
     fail "baseline dual-stack peer traffic is not ready"
 

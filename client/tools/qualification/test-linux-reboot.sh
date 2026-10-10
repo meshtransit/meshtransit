@@ -39,10 +39,10 @@ if "${harness}" \
   --target-label ubuntu-a \
   --observer-label ubuntu-b \
   --target-v4 100.64.0.5 \
-  --target-v6 fd7a:115c:a1e0::6 \
+  --target-v6 fd07:d4de:9d87::6 \
   --target-name ubuntu-a \
   --observer-v4 100.64.0.6 \
-  --observer-v6 fd7a:115c:a1e0::d \
+  --observer-v6 fd07:d4de:9d87::d \
   --observer-name ubuntu-b \
   --artifact-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   --confirm-reboot ubuntu-b 2>/dev/null; then

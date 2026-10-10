@@ -258,9 +258,31 @@ func encodeAlias(grant mapsession.DeviceAliasGrant) (*mtcpv1.AliasGrant, error) 
 	return alias, nil
 }
 
+// ErrFilterDigest reports a packet filter the policy digest cannot cover.
+var ErrFilterDigest = errors.New("mtcp: packet filter digest")
+
+// PacketFilterDigest returns the policy digest v1 of the packet filter a
+// map for snapshot carries, as meshd computes it from the filter it
+// installs (docs/protocol/policy-digest-v1.md). Core compares it with the
+// node's enforcement reports.
+func PacketFilterDigest(snapshot mapsession.Snapshot) (mapsession.FilterDigest, error) {
+	if !snapshot.IsValid() {
+		return mapsession.FilterDigest{}, ErrFilterDigest
+	}
+	filter, err := encodePacketFilter(snapshot)
+	if err != nil {
+		return mapsession.FilterDigest{}, errors.Join(ErrFilterDigest, err)
+	}
+	digest, grants, err := sharedmtcp.FilterDigest(filter)
+	if err != nil {
+		return mapsession.FilterDigest{}, errors.Join(ErrFilterDigest, err)
+	}
+	return mapsession.NewFilterDigest(digest, grants)
+}
+
 // encodePacketFilter builds this node's inbound filter. Rules opening the
 // same traffic to this node are merged and their sources split at the
-// per-rule limit, as on TS2021, so the policy digest is identical.
+// per-rule limit.
 func encodePacketFilter(snapshot mapsession.Snapshot) (*mtcpv1.PacketFilter, error) {
 	candidates := make(map[node.ID]mapsession.PeerCandidate)
 	for _, candidate := range snapshot.AuthorizedPeers() {

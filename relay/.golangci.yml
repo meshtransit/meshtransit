@@ -45,8 +45,6 @@ linters:
               desc: the relay is a separate binary; share code through shared/
             - pkg: meshtransit.net/client
               desc: the relay must not depend on the node daemon
-            - pkg: tailscale.com
-              desc: the relay is MeshTransit-only code
     errcheck:
       check-type-assertions: true
     nolintlint:

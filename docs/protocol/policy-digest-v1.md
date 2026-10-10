@@ -79,19 +79,18 @@ produces the all-zero value.
 
 ## 5. Test vector
 
-`shared/policydigest/testdata/packet-filter-v1.json` holds this filter in the
-TS2021 `PacketFilter` wire form, which both Core and meshd parse in their
-tests:
+`shared/mtcp` `TestFilterDigestMatchesTheSharedVector` encodes this filter as
+an MTCP `PacketFilter`; Core and meshd both digest it with `shared/mtcp`:
 
 | Rule | Sources | Destinations | Protocols |
 |---|---|---|---|
-| 1 | `100.64.0.2`, `fd7a:115c:a1e0::2` | `100.64.0.1` port 22, `fd7a:115c:a1e0::1` port 22 | 6 |
+| 1 | `100.64.0.2`, `fd07:d4de:9d87::2` | `100.64.0.1` port 22, `fd07:d4de:9d87::1` port 22 | 6 |
 | 2 | `100.64.0.3` | `100.64.0.1` ports 0–65535 | 1 |
 
 It expands into 5 grants and its digest is
 
 ```
-sha256:65c3166a6062804e3b2a55acd157d70ce0ebf6fdd91130eecd280654a714251a
+sha256:5714d8784aeeb16d13dade4978798461062af395740fd19a493c8a88b5cea897
 ```
 
 The vector was cross-checked with an independent Python implementation of
