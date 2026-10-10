@@ -218,7 +218,7 @@ func (core *fakeCore) webSocket(response http.ResponseWriter, request *http.Requ
 func (core *fakeCore) reply() *mtcpv1.ServerHello {
 	return &mtcpv1.ServerHello{
 		ProtocolVersion: 1, SessionId: make([]byte, 16), ServerTimeMs: time.Now().UnixMilli(),
-		Capabilities: []string{"map.zstd"}, Limits: &mtcpv1.Limits{KeepaliveS: 25, IdleTimeoutS: 75, MaxUnackedMap: 8},
+		Capabilities: []string{"map.zstd", "stats.path1"}, Limits: &mtcpv1.Limits{KeepaliveS: 25, IdleTimeoutS: 75, MaxUnackedMap: 8},
 	}
 }
 

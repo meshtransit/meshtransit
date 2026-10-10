@@ -461,6 +461,58 @@ func (HealthReport_Component_State) EnumDescriptor() ([]byte, []int) {
 	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{39, 0, 1}
 }
 
+type PeerPathStats_RelayReason int32
+
+const (
+	PeerPathStats_RELAY_REASON_UNSPECIFIED PeerPathStats_RelayReason = 0
+	PeerPathStats_BOOTSTRAP                PeerPathStats_RelayReason = 1
+	PeerPathStats_NO_CANDIDATES            PeerPathStats_RelayReason = 2
+	PeerPathStats_NO_RESPONSE              PeerPathStats_RelayReason = 3
+)
+
+// Enum value maps for PeerPathStats_RelayReason.
+var (
+	PeerPathStats_RelayReason_name = map[int32]string{
+		0: "RELAY_REASON_UNSPECIFIED",
+		1: "BOOTSTRAP",
+		2: "NO_CANDIDATES",
+		3: "NO_RESPONSE",
+	}
+	PeerPathStats_RelayReason_value = map[string]int32{
+		"RELAY_REASON_UNSPECIFIED": 0,
+		"BOOTSTRAP":                1,
+		"NO_CANDIDATES":            2,
+		"NO_RESPONSE":              3,
+	}
+)
+
+func (x PeerPathStats_RelayReason) Enum() *PeerPathStats_RelayReason {
+	p := new(PeerPathStats_RelayReason)
+	*p = x
+	return p
+}
+
+func (x PeerPathStats_RelayReason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PeerPathStats_RelayReason) Descriptor() protoreflect.EnumDescriptor {
+	return file_mtcp_v1_mtcp_proto_enumTypes[8].Descriptor()
+}
+
+func (PeerPathStats_RelayReason) Type() protoreflect.EnumType {
+	return &file_mtcp_v1_mtcp_proto_enumTypes[8]
+}
+
+func (x PeerPathStats_RelayReason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PeerPathStats_RelayReason.Descriptor instead.
+func (PeerPathStats_RelayReason) EnumDescriptor() ([]byte, []int) {
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{42, 0}
+}
+
 type PeerPathStats_Technique int32
 
 const (
@@ -503,11 +555,11 @@ func (x PeerPathStats_Technique) String() string {
 }
 
 func (PeerPathStats_Technique) Descriptor() protoreflect.EnumDescriptor {
-	return file_mtcp_v1_mtcp_proto_enumTypes[8].Descriptor()
+	return file_mtcp_v1_mtcp_proto_enumTypes[9].Descriptor()
 }
 
 func (PeerPathStats_Technique) Type() protoreflect.EnumType {
-	return &file_mtcp_v1_mtcp_proto_enumTypes[8]
+	return &file_mtcp_v1_mtcp_proto_enumTypes[9]
 }
 
 func (x PeerPathStats_Technique) Number() protoreflect.EnumNumber {
@@ -516,7 +568,7 @@ func (x PeerPathStats_Technique) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use PeerPathStats_Technique.Descriptor instead.
 func (PeerPathStats_Technique) EnumDescriptor() ([]byte, []int) {
-	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{42, 0}
+	return file_mtcp_v1_mtcp_proto_rawDescGZIP(), []int{42, 1}
 }
 
 type Lifecycle_State int32
@@ -567,11 +619,11 @@ func (x Lifecycle_State) String() string {
 }
 
 func (Lifecycle_State) Descriptor() protoreflect.EnumDescriptor {
-	return file_mtcp_v1_mtcp_proto_enumTypes[9].Descriptor()
+	return file_mtcp_v1_mtcp_proto_enumTypes[10].Descriptor()
 }
 
 func (Lifecycle_State) Type() protoreflect.EnumType {
-	return &file_mtcp_v1_mtcp_proto_enumTypes[9]
+	return &file_mtcp_v1_mtcp_proto_enumTypes[10]
 }
 
 func (x Lifecycle_State) Number() protoreflect.EnumNumber {
@@ -616,11 +668,11 @@ func (x Notice_Severity) String() string {
 }
 
 func (Notice_Severity) Descriptor() protoreflect.EnumDescriptor {
-	return file_mtcp_v1_mtcp_proto_enumTypes[10].Descriptor()
+	return file_mtcp_v1_mtcp_proto_enumTypes[11].Descriptor()
 }
 
 func (Notice_Severity) Type() protoreflect.EnumType {
-	return &file_mtcp_v1_mtcp_proto_enumTypes[10]
+	return &file_mtcp_v1_mtcp_proto_enumTypes[11]
 }
 
 func (x Notice_Severity) Number() protoreflect.EnumNumber {
@@ -3455,19 +3507,20 @@ func (x *PathStatsReport) GetPeers() []*PeerPathStats {
 }
 
 type PeerPathStats struct {
-	state           protoimpl.MessageState  `protogen:"open.v1"`
-	DeviceId        string                  `protobuf:"bytes,1,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
-	DirectTxBytes   uint64                  `protobuf:"varint,2,opt,name=direct_tx_bytes,json=directTxBytes,proto3" json:"direct_tx_bytes,omitempty"`
-	DirectRxBytes   uint64                  `protobuf:"varint,3,opt,name=direct_rx_bytes,json=directRxBytes,proto3" json:"direct_rx_bytes,omitempty"`
-	RelayTxBytes    uint64                  `protobuf:"varint,4,opt,name=relay_tx_bytes,json=relayTxBytes,proto3" json:"relay_tx_bytes,omitempty"`
-	RelayRxBytes    uint64                  `protobuf:"varint,5,opt,name=relay_rx_bytes,json=relayRxBytes,proto3" json:"relay_rx_bytes,omitempty"`
-	DirectTxPackets uint64                  `protobuf:"varint,6,opt,name=direct_tx_packets,json=directTxPackets,proto3" json:"direct_tx_packets,omitempty"`
-	DirectRxPackets uint64                  `protobuf:"varint,7,opt,name=direct_rx_packets,json=directRxPackets,proto3" json:"direct_rx_packets,omitempty"`
-	Technique       PeerPathStats_Technique `protobuf:"varint,8,opt,name=technique,proto3,enum=meshtransit.mtcp.v1.PeerPathStats_Technique" json:"technique,omitempty"`
-	RelayRegion     uint32                  `protobuf:"varint,9,opt,name=relay_region,json=relayRegion,proto3" json:"relay_region,omitempty"`
-	RttMsBucket     uint32                  `protobuf:"varint,10,opt,name=rtt_ms_bucket,json=rttMsBucket,proto3" json:"rtt_ms_bucket,omitempty"`
-	RelayTxPackets  uint64                  `protobuf:"varint,11,opt,name=relay_tx_packets,json=relayTxPackets,proto3" json:"relay_tx_packets,omitempty"`
-	RelayRxPackets  uint64                  `protobuf:"varint,12,opt,name=relay_rx_packets,json=relayRxPackets,proto3" json:"relay_rx_packets,omitempty"`
+	state           protoimpl.MessageState    `protogen:"open.v1"`
+	DeviceId        string                    `protobuf:"bytes,1,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	DirectTxBytes   uint64                    `protobuf:"varint,2,opt,name=direct_tx_bytes,json=directTxBytes,proto3" json:"direct_tx_bytes,omitempty"`
+	DirectRxBytes   uint64                    `protobuf:"varint,3,opt,name=direct_rx_bytes,json=directRxBytes,proto3" json:"direct_rx_bytes,omitempty"`
+	RelayTxBytes    uint64                    `protobuf:"varint,4,opt,name=relay_tx_bytes,json=relayTxBytes,proto3" json:"relay_tx_bytes,omitempty"`
+	RelayRxBytes    uint64                    `protobuf:"varint,5,opt,name=relay_rx_bytes,json=relayRxBytes,proto3" json:"relay_rx_bytes,omitempty"`
+	DirectTxPackets uint64                    `protobuf:"varint,6,opt,name=direct_tx_packets,json=directTxPackets,proto3" json:"direct_tx_packets,omitempty"`
+	DirectRxPackets uint64                    `protobuf:"varint,7,opt,name=direct_rx_packets,json=directRxPackets,proto3" json:"direct_rx_packets,omitempty"`
+	Technique       PeerPathStats_Technique   `protobuf:"varint,8,opt,name=technique,proto3,enum=meshtransit.mtcp.v1.PeerPathStats_Technique" json:"technique,omitempty"`
+	RelayRegion     uint32                    `protobuf:"varint,9,opt,name=relay_region,json=relayRegion,proto3" json:"relay_region,omitempty"`
+	RttMsBucket     uint32                    `protobuf:"varint,10,opt,name=rtt_ms_bucket,json=rttMsBucket,proto3" json:"rtt_ms_bucket,omitempty"`
+	RelayTxPackets  uint64                    `protobuf:"varint,11,opt,name=relay_tx_packets,json=relayTxPackets,proto3" json:"relay_tx_packets,omitempty"`
+	RelayRxPackets  uint64                    `protobuf:"varint,12,opt,name=relay_rx_packets,json=relayRxPackets,proto3" json:"relay_rx_packets,omitempty"`
+	RelayReason     PeerPathStats_RelayReason `protobuf:"varint,13,opt,name=relay_reason,json=relayReason,proto3,enum=meshtransit.mtcp.v1.PeerPathStats_RelayReason" json:"relay_reason,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -3584,6 +3637,13 @@ func (x *PeerPathStats) GetRelayRxPackets() uint64 {
 		return x.RelayRxPackets
 	}
 	return 0
+}
+
+func (x *PeerPathStats) GetRelayReason() PeerPathStats_RelayReason {
+	if x != nil {
+		return x.RelayReason
+	}
+	return PeerPathStats_RELAY_REASON_UNSPECIFIED
 }
 
 type RelayTicket struct {
@@ -4679,7 +4739,7 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x11interval_start_ms\x18\x01 \x01(\x03R\x0fintervalStartMs\x12\x1d\n" +
 	"\n" +
 	"interval_s\x18\x02 \x01(\rR\tintervalS\x128\n" +
-	"\x05peers\x18\x03 \x03(\v2\".meshtransit.mtcp.v1.PeerPathStatsR\x05peers\"\xf8\x04\n" +
+	"\x05peers\x18\x03 \x03(\v2\".meshtransit.mtcp.v1.PeerPathStatsR\x05peers\"\xab\x06\n" +
 	"\rPeerPathStats\x12\x1b\n" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\x12&\n" +
 	"\x0fdirect_tx_bytes\x18\x02 \x01(\x04R\rdirectTxBytes\x12&\n" +
@@ -4693,7 +4753,13 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\rrtt_ms_bucket\x18\n" +
 	" \x01(\rR\vrttMsBucket\x12(\n" +
 	"\x10relay_tx_packets\x18\v \x01(\x04R\x0erelayTxPackets\x12(\n" +
-	"\x10relay_rx_packets\x18\f \x01(\x04R\x0erelayRxPackets\"o\n" +
+	"\x10relay_rx_packets\x18\f \x01(\x04R\x0erelayRxPackets\x12Q\n" +
+	"\frelay_reason\x18\r \x01(\x0e2..meshtransit.mtcp.v1.PeerPathStats.RelayReasonR\vrelayReason\"^\n" +
+	"\vRelayReason\x12\x1c\n" +
+	"\x18RELAY_REASON_UNSPECIFIED\x10\x00\x12\r\n" +
+	"\tBOOTSTRAP\x10\x01\x12\x11\n" +
+	"\rNO_CANDIDATES\x10\x02\x12\x0f\n" +
+	"\vNO_RESPONSE\x10\x03\"o\n" +
 	"\tTechnique\x12\x19\n" +
 	"\x15TECHNIQUE_UNSPECIFIED\x10\x00\x12\t\n" +
 	"\x05RELAY\x10\x01\x12\n" +
@@ -4759,7 +4825,7 @@ func file_mtcp_v1_mtcp_proto_rawDescGZIP() []byte {
 	return file_mtcp_v1_mtcp_proto_rawDescData
 }
 
-var file_mtcp_v1_mtcp_proto_enumTypes = make([]protoimpl.EnumInfo, 11)
+var file_mtcp_v1_mtcp_proto_enumTypes = make([]protoimpl.EnumInfo, 12)
 var file_mtcp_v1_mtcp_proto_msgTypes = make([]protoimpl.MessageInfo, 56)
 var file_mtcp_v1_mtcp_proto_goTypes = []any{
 	(ServerHello_Reject)(0),             // 0: meshtransit.mtcp.v1.ServerHello.Reject
@@ -4770,136 +4836,138 @@ var file_mtcp_v1_mtcp_proto_goTypes = []any{
 	(DnsRecord_Type)(0),                 // 5: meshtransit.mtcp.v1.DnsRecord.Type
 	(HealthReport_Component_Name)(0),    // 6: meshtransit.mtcp.v1.HealthReport.Component.Name
 	(HealthReport_Component_State)(0),   // 7: meshtransit.mtcp.v1.HealthReport.Component.State
-	(PeerPathStats_Technique)(0),        // 8: meshtransit.mtcp.v1.PeerPathStats.Technique
-	(Lifecycle_State)(0),                // 9: meshtransit.mtcp.v1.Lifecycle.State
-	(Notice_Severity)(0),                // 10: meshtransit.mtcp.v1.Notice.Severity
-	(*ClientHello)(nil),                 // 11: meshtransit.mtcp.v1.ClientHello
-	(*ClientInfo)(nil),                  // 12: meshtransit.mtcp.v1.ClientInfo
-	(*ServerHello)(nil),                 // 13: meshtransit.mtcp.v1.ServerHello
-	(*Limits)(nil),                      // 14: meshtransit.mtcp.v1.Limits
-	(*Error)(nil),                       // 15: meshtransit.mtcp.v1.Error
-	(*Ping)(nil),                        // 16: meshtransit.mtcp.v1.Ping
-	(*Pong)(nil),                        // 17: meshtransit.mtcp.v1.Pong
-	(*RegisterRequest)(nil),             // 18: meshtransit.mtcp.v1.RegisterRequest
-	(*RegisterResponse)(nil),            // 19: meshtransit.mtcp.v1.RegisterResponse
-	(*RotateNodeKey)(nil),               // 20: meshtransit.mtcp.v1.RotateNodeKey
-	(*RotateNodeKeyResponse)(nil),       // 21: meshtransit.mtcp.v1.RotateNodeKeyResponse
-	(*Logout)(nil),                      // 22: meshtransit.mtcp.v1.Logout
-	(*View)(nil),                        // 23: meshtransit.mtcp.v1.View
-	(*NetworkRevision)(nil),             // 24: meshtransit.mtcp.v1.NetworkRevision
-	(*MapSnapshot)(nil),                 // 25: meshtransit.mtcp.v1.MapSnapshot
-	(*MapDelta)(nil),                    // 26: meshtransit.mtcp.v1.MapDelta
-	(*MapAck)(nil),                      // 27: meshtransit.mtcp.v1.MapAck
-	(*MapResync)(nil),                   // 28: meshtransit.mtcp.v1.MapResync
-	(*Device)(nil),                      // 29: meshtransit.mtcp.v1.Device
-	(*PeerPatch)(nil),                   // 30: meshtransit.mtcp.v1.PeerPatch
-	(*EndpointList)(nil),                // 31: meshtransit.mtcp.v1.EndpointList
-	(*Owner)(nil),                       // 32: meshtransit.mtcp.v1.Owner
-	(*Prefix)(nil),                      // 33: meshtransit.mtcp.v1.Prefix
-	(*Endpoint)(nil),                    // 34: meshtransit.mtcp.v1.Endpoint
-	(*NatInfo)(nil),                     // 35: meshtransit.mtcp.v1.NatInfo
-	(*AliasGrant)(nil),                  // 36: meshtransit.mtcp.v1.AliasGrant
-	(*AliasService)(nil),                // 37: meshtransit.mtcp.v1.AliasService
-	(*PacketFilter)(nil),                // 38: meshtransit.mtcp.v1.PacketFilter
-	(*FilterRule)(nil),                  // 39: meshtransit.mtcp.v1.FilterRule
-	(*Destination)(nil),                 // 40: meshtransit.mtcp.v1.Destination
-	(*PortRange)(nil),                   // 41: meshtransit.mtcp.v1.PortRange
-	(*DnsConfig)(nil),                   // 42: meshtransit.mtcp.v1.DnsConfig
-	(*DnsRecord)(nil),                   // 43: meshtransit.mtcp.v1.DnsRecord
-	(*Resolver)(nil),                    // 44: meshtransit.mtcp.v1.Resolver
-	(*DnsRoute)(nil),                    // 45: meshtransit.mtcp.v1.DnsRoute
-	(*Settings)(nil),                    // 46: meshtransit.mtcp.v1.Settings
-	(*EndpointReport)(nil),              // 47: meshtransit.mtcp.v1.EndpointReport
-	(*Hostinfo)(nil),                    // 48: meshtransit.mtcp.v1.Hostinfo
-	(*HostinfoReport)(nil),              // 49: meshtransit.mtcp.v1.HostinfoReport
-	(*HealthReport)(nil),                // 50: meshtransit.mtcp.v1.HealthReport
-	(*EnforcementReport)(nil),           // 51: meshtransit.mtcp.v1.EnforcementReport
-	(*PathStatsReport)(nil),             // 52: meshtransit.mtcp.v1.PathStatsReport
-	(*PeerPathStats)(nil),               // 53: meshtransit.mtcp.v1.PeerPathStats
-	(*RelayTicket)(nil),                 // 54: meshtransit.mtcp.v1.RelayTicket
-	(*Lifecycle)(nil),                   // 55: meshtransit.mtcp.v1.Lifecycle
-	(*KeyUpdate)(nil),                   // 56: meshtransit.mtcp.v1.KeyUpdate
-	(*Notice)(nil),                      // 57: meshtransit.mtcp.v1.Notice
-	(*RegisterRequest_Auth)(nil),        // 58: meshtransit.mtcp.v1.RegisterRequest.Auth
-	(*RegisterRequest_Interactive)(nil), // 59: meshtransit.mtcp.v1.RegisterRequest.Interactive
-	(*RegisterRequest_Resume)(nil),      // 60: meshtransit.mtcp.v1.RegisterRequest.Resume
-	(*RegisterResponse_Authorized)(nil), // 61: meshtransit.mtcp.v1.RegisterResponse.Authorized
-	(*RegisterResponse_Pending)(nil),    // 62: meshtransit.mtcp.v1.RegisterResponse.Pending
-	(*RegisterResponse_Rejected)(nil),   // 63: meshtransit.mtcp.v1.RegisterResponse.Rejected
-	(*HealthReport_Component)(nil),      // 64: meshtransit.mtcp.v1.HealthReport.Component
-	(*KeyUpdate_ControlKey)(nil),        // 65: meshtransit.mtcp.v1.KeyUpdate.ControlKey
-	(*KeyUpdate_SigningKey)(nil),        // 66: meshtransit.mtcp.v1.KeyUpdate.SigningKey
+	(PeerPathStats_RelayReason)(0),      // 8: meshtransit.mtcp.v1.PeerPathStats.RelayReason
+	(PeerPathStats_Technique)(0),        // 9: meshtransit.mtcp.v1.PeerPathStats.Technique
+	(Lifecycle_State)(0),                // 10: meshtransit.mtcp.v1.Lifecycle.State
+	(Notice_Severity)(0),                // 11: meshtransit.mtcp.v1.Notice.Severity
+	(*ClientHello)(nil),                 // 12: meshtransit.mtcp.v1.ClientHello
+	(*ClientInfo)(nil),                  // 13: meshtransit.mtcp.v1.ClientInfo
+	(*ServerHello)(nil),                 // 14: meshtransit.mtcp.v1.ServerHello
+	(*Limits)(nil),                      // 15: meshtransit.mtcp.v1.Limits
+	(*Error)(nil),                       // 16: meshtransit.mtcp.v1.Error
+	(*Ping)(nil),                        // 17: meshtransit.mtcp.v1.Ping
+	(*Pong)(nil),                        // 18: meshtransit.mtcp.v1.Pong
+	(*RegisterRequest)(nil),             // 19: meshtransit.mtcp.v1.RegisterRequest
+	(*RegisterResponse)(nil),            // 20: meshtransit.mtcp.v1.RegisterResponse
+	(*RotateNodeKey)(nil),               // 21: meshtransit.mtcp.v1.RotateNodeKey
+	(*RotateNodeKeyResponse)(nil),       // 22: meshtransit.mtcp.v1.RotateNodeKeyResponse
+	(*Logout)(nil),                      // 23: meshtransit.mtcp.v1.Logout
+	(*View)(nil),                        // 24: meshtransit.mtcp.v1.View
+	(*NetworkRevision)(nil),             // 25: meshtransit.mtcp.v1.NetworkRevision
+	(*MapSnapshot)(nil),                 // 26: meshtransit.mtcp.v1.MapSnapshot
+	(*MapDelta)(nil),                    // 27: meshtransit.mtcp.v1.MapDelta
+	(*MapAck)(nil),                      // 28: meshtransit.mtcp.v1.MapAck
+	(*MapResync)(nil),                   // 29: meshtransit.mtcp.v1.MapResync
+	(*Device)(nil),                      // 30: meshtransit.mtcp.v1.Device
+	(*PeerPatch)(nil),                   // 31: meshtransit.mtcp.v1.PeerPatch
+	(*EndpointList)(nil),                // 32: meshtransit.mtcp.v1.EndpointList
+	(*Owner)(nil),                       // 33: meshtransit.mtcp.v1.Owner
+	(*Prefix)(nil),                      // 34: meshtransit.mtcp.v1.Prefix
+	(*Endpoint)(nil),                    // 35: meshtransit.mtcp.v1.Endpoint
+	(*NatInfo)(nil),                     // 36: meshtransit.mtcp.v1.NatInfo
+	(*AliasGrant)(nil),                  // 37: meshtransit.mtcp.v1.AliasGrant
+	(*AliasService)(nil),                // 38: meshtransit.mtcp.v1.AliasService
+	(*PacketFilter)(nil),                // 39: meshtransit.mtcp.v1.PacketFilter
+	(*FilterRule)(nil),                  // 40: meshtransit.mtcp.v1.FilterRule
+	(*Destination)(nil),                 // 41: meshtransit.mtcp.v1.Destination
+	(*PortRange)(nil),                   // 42: meshtransit.mtcp.v1.PortRange
+	(*DnsConfig)(nil),                   // 43: meshtransit.mtcp.v1.DnsConfig
+	(*DnsRecord)(nil),                   // 44: meshtransit.mtcp.v1.DnsRecord
+	(*Resolver)(nil),                    // 45: meshtransit.mtcp.v1.Resolver
+	(*DnsRoute)(nil),                    // 46: meshtransit.mtcp.v1.DnsRoute
+	(*Settings)(nil),                    // 47: meshtransit.mtcp.v1.Settings
+	(*EndpointReport)(nil),              // 48: meshtransit.mtcp.v1.EndpointReport
+	(*Hostinfo)(nil),                    // 49: meshtransit.mtcp.v1.Hostinfo
+	(*HostinfoReport)(nil),              // 50: meshtransit.mtcp.v1.HostinfoReport
+	(*HealthReport)(nil),                // 51: meshtransit.mtcp.v1.HealthReport
+	(*EnforcementReport)(nil),           // 52: meshtransit.mtcp.v1.EnforcementReport
+	(*PathStatsReport)(nil),             // 53: meshtransit.mtcp.v1.PathStatsReport
+	(*PeerPathStats)(nil),               // 54: meshtransit.mtcp.v1.PeerPathStats
+	(*RelayTicket)(nil),                 // 55: meshtransit.mtcp.v1.RelayTicket
+	(*Lifecycle)(nil),                   // 56: meshtransit.mtcp.v1.Lifecycle
+	(*KeyUpdate)(nil),                   // 57: meshtransit.mtcp.v1.KeyUpdate
+	(*Notice)(nil),                      // 58: meshtransit.mtcp.v1.Notice
+	(*RegisterRequest_Auth)(nil),        // 59: meshtransit.mtcp.v1.RegisterRequest.Auth
+	(*RegisterRequest_Interactive)(nil), // 60: meshtransit.mtcp.v1.RegisterRequest.Interactive
+	(*RegisterRequest_Resume)(nil),      // 61: meshtransit.mtcp.v1.RegisterRequest.Resume
+	(*RegisterResponse_Authorized)(nil), // 62: meshtransit.mtcp.v1.RegisterResponse.Authorized
+	(*RegisterResponse_Pending)(nil),    // 63: meshtransit.mtcp.v1.RegisterResponse.Pending
+	(*RegisterResponse_Rejected)(nil),   // 64: meshtransit.mtcp.v1.RegisterResponse.Rejected
+	(*HealthReport_Component)(nil),      // 65: meshtransit.mtcp.v1.HealthReport.Component
+	(*KeyUpdate_ControlKey)(nil),        // 66: meshtransit.mtcp.v1.KeyUpdate.ControlKey
+	(*KeyUpdate_SigningKey)(nil),        // 67: meshtransit.mtcp.v1.KeyUpdate.SigningKey
 }
 var file_mtcp_v1_mtcp_proto_depIdxs = []int32{
-	12, // 0: meshtransit.mtcp.v1.ClientHello.client:type_name -> meshtransit.mtcp.v1.ClientInfo
-	14, // 1: meshtransit.mtcp.v1.ServerHello.limits:type_name -> meshtransit.mtcp.v1.Limits
+	13, // 0: meshtransit.mtcp.v1.ClientHello.client:type_name -> meshtransit.mtcp.v1.ClientInfo
+	15, // 1: meshtransit.mtcp.v1.ServerHello.limits:type_name -> meshtransit.mtcp.v1.Limits
 	0,  // 2: meshtransit.mtcp.v1.ServerHello.reject:type_name -> meshtransit.mtcp.v1.ServerHello.Reject
 	1,  // 3: meshtransit.mtcp.v1.Error.code:type_name -> meshtransit.mtcp.v1.Error.Code
-	48, // 4: meshtransit.mtcp.v1.RegisterRequest.hostinfo:type_name -> meshtransit.mtcp.v1.Hostinfo
-	58, // 5: meshtransit.mtcp.v1.RegisterRequest.auth:type_name -> meshtransit.mtcp.v1.RegisterRequest.Auth
-	61, // 6: meshtransit.mtcp.v1.RegisterResponse.authorized:type_name -> meshtransit.mtcp.v1.RegisterResponse.Authorized
-	62, // 7: meshtransit.mtcp.v1.RegisterResponse.pending:type_name -> meshtransit.mtcp.v1.RegisterResponse.Pending
-	63, // 8: meshtransit.mtcp.v1.RegisterResponse.rejected:type_name -> meshtransit.mtcp.v1.RegisterResponse.Rejected
-	23, // 9: meshtransit.mtcp.v1.MapSnapshot.view:type_name -> meshtransit.mtcp.v1.View
-	24, // 10: meshtransit.mtcp.v1.MapSnapshot.network_revisions:type_name -> meshtransit.mtcp.v1.NetworkRevision
-	29, // 11: meshtransit.mtcp.v1.MapSnapshot.self:type_name -> meshtransit.mtcp.v1.Device
-	29, // 12: meshtransit.mtcp.v1.MapSnapshot.peers:type_name -> meshtransit.mtcp.v1.Device
-	38, // 13: meshtransit.mtcp.v1.MapSnapshot.packet_filter:type_name -> meshtransit.mtcp.v1.PacketFilter
-	42, // 14: meshtransit.mtcp.v1.MapSnapshot.dns:type_name -> meshtransit.mtcp.v1.DnsConfig
-	46, // 15: meshtransit.mtcp.v1.MapSnapshot.settings:type_name -> meshtransit.mtcp.v1.Settings
-	23, // 16: meshtransit.mtcp.v1.MapDelta.view:type_name -> meshtransit.mtcp.v1.View
-	24, // 17: meshtransit.mtcp.v1.MapDelta.network_revisions:type_name -> meshtransit.mtcp.v1.NetworkRevision
-	29, // 18: meshtransit.mtcp.v1.MapDelta.self:type_name -> meshtransit.mtcp.v1.Device
-	29, // 19: meshtransit.mtcp.v1.MapDelta.peers_upsert:type_name -> meshtransit.mtcp.v1.Device
-	30, // 20: meshtransit.mtcp.v1.MapDelta.peer_patches:type_name -> meshtransit.mtcp.v1.PeerPatch
-	38, // 21: meshtransit.mtcp.v1.MapDelta.packet_filter:type_name -> meshtransit.mtcp.v1.PacketFilter
-	42, // 22: meshtransit.mtcp.v1.MapDelta.dns:type_name -> meshtransit.mtcp.v1.DnsConfig
-	46, // 23: meshtransit.mtcp.v1.MapDelta.settings:type_name -> meshtransit.mtcp.v1.Settings
-	23, // 24: meshtransit.mtcp.v1.MapAck.view:type_name -> meshtransit.mtcp.v1.View
-	23, // 25: meshtransit.mtcp.v1.MapResync.view:type_name -> meshtransit.mtcp.v1.View
-	33, // 26: meshtransit.mtcp.v1.Device.allowed_prefixes:type_name -> meshtransit.mtcp.v1.Prefix
-	34, // 27: meshtransit.mtcp.v1.Device.endpoints:type_name -> meshtransit.mtcp.v1.Endpoint
-	35, // 28: meshtransit.mtcp.v1.Device.nat:type_name -> meshtransit.mtcp.v1.NatInfo
-	32, // 29: meshtransit.mtcp.v1.Device.owner:type_name -> meshtransit.mtcp.v1.Owner
-	36, // 30: meshtransit.mtcp.v1.Device.alias:type_name -> meshtransit.mtcp.v1.AliasGrant
-	31, // 31: meshtransit.mtcp.v1.PeerPatch.endpoints:type_name -> meshtransit.mtcp.v1.EndpointList
-	35, // 32: meshtransit.mtcp.v1.PeerPatch.nat:type_name -> meshtransit.mtcp.v1.NatInfo
-	34, // 33: meshtransit.mtcp.v1.EndpointList.items:type_name -> meshtransit.mtcp.v1.Endpoint
+	49, // 4: meshtransit.mtcp.v1.RegisterRequest.hostinfo:type_name -> meshtransit.mtcp.v1.Hostinfo
+	59, // 5: meshtransit.mtcp.v1.RegisterRequest.auth:type_name -> meshtransit.mtcp.v1.RegisterRequest.Auth
+	62, // 6: meshtransit.mtcp.v1.RegisterResponse.authorized:type_name -> meshtransit.mtcp.v1.RegisterResponse.Authorized
+	63, // 7: meshtransit.mtcp.v1.RegisterResponse.pending:type_name -> meshtransit.mtcp.v1.RegisterResponse.Pending
+	64, // 8: meshtransit.mtcp.v1.RegisterResponse.rejected:type_name -> meshtransit.mtcp.v1.RegisterResponse.Rejected
+	24, // 9: meshtransit.mtcp.v1.MapSnapshot.view:type_name -> meshtransit.mtcp.v1.View
+	25, // 10: meshtransit.mtcp.v1.MapSnapshot.network_revisions:type_name -> meshtransit.mtcp.v1.NetworkRevision
+	30, // 11: meshtransit.mtcp.v1.MapSnapshot.self:type_name -> meshtransit.mtcp.v1.Device
+	30, // 12: meshtransit.mtcp.v1.MapSnapshot.peers:type_name -> meshtransit.mtcp.v1.Device
+	39, // 13: meshtransit.mtcp.v1.MapSnapshot.packet_filter:type_name -> meshtransit.mtcp.v1.PacketFilter
+	43, // 14: meshtransit.mtcp.v1.MapSnapshot.dns:type_name -> meshtransit.mtcp.v1.DnsConfig
+	47, // 15: meshtransit.mtcp.v1.MapSnapshot.settings:type_name -> meshtransit.mtcp.v1.Settings
+	24, // 16: meshtransit.mtcp.v1.MapDelta.view:type_name -> meshtransit.mtcp.v1.View
+	25, // 17: meshtransit.mtcp.v1.MapDelta.network_revisions:type_name -> meshtransit.mtcp.v1.NetworkRevision
+	30, // 18: meshtransit.mtcp.v1.MapDelta.self:type_name -> meshtransit.mtcp.v1.Device
+	30, // 19: meshtransit.mtcp.v1.MapDelta.peers_upsert:type_name -> meshtransit.mtcp.v1.Device
+	31, // 20: meshtransit.mtcp.v1.MapDelta.peer_patches:type_name -> meshtransit.mtcp.v1.PeerPatch
+	39, // 21: meshtransit.mtcp.v1.MapDelta.packet_filter:type_name -> meshtransit.mtcp.v1.PacketFilter
+	43, // 22: meshtransit.mtcp.v1.MapDelta.dns:type_name -> meshtransit.mtcp.v1.DnsConfig
+	47, // 23: meshtransit.mtcp.v1.MapDelta.settings:type_name -> meshtransit.mtcp.v1.Settings
+	24, // 24: meshtransit.mtcp.v1.MapAck.view:type_name -> meshtransit.mtcp.v1.View
+	24, // 25: meshtransit.mtcp.v1.MapResync.view:type_name -> meshtransit.mtcp.v1.View
+	34, // 26: meshtransit.mtcp.v1.Device.allowed_prefixes:type_name -> meshtransit.mtcp.v1.Prefix
+	35, // 27: meshtransit.mtcp.v1.Device.endpoints:type_name -> meshtransit.mtcp.v1.Endpoint
+	36, // 28: meshtransit.mtcp.v1.Device.nat:type_name -> meshtransit.mtcp.v1.NatInfo
+	33, // 29: meshtransit.mtcp.v1.Device.owner:type_name -> meshtransit.mtcp.v1.Owner
+	37, // 30: meshtransit.mtcp.v1.Device.alias:type_name -> meshtransit.mtcp.v1.AliasGrant
+	32, // 31: meshtransit.mtcp.v1.PeerPatch.endpoints:type_name -> meshtransit.mtcp.v1.EndpointList
+	36, // 32: meshtransit.mtcp.v1.PeerPatch.nat:type_name -> meshtransit.mtcp.v1.NatInfo
+	35, // 33: meshtransit.mtcp.v1.EndpointList.items:type_name -> meshtransit.mtcp.v1.Endpoint
 	3,  // 34: meshtransit.mtcp.v1.Endpoint.kind:type_name -> meshtransit.mtcp.v1.Endpoint.Kind
 	4,  // 35: meshtransit.mtcp.v1.AliasGrant.role:type_name -> meshtransit.mtcp.v1.AliasGrant.Role
-	37, // 36: meshtransit.mtcp.v1.AliasGrant.services:type_name -> meshtransit.mtcp.v1.AliasService
-	39, // 37: meshtransit.mtcp.v1.PacketFilter.rules:type_name -> meshtransit.mtcp.v1.FilterRule
-	33, // 38: meshtransit.mtcp.v1.FilterRule.sources:type_name -> meshtransit.mtcp.v1.Prefix
-	40, // 39: meshtransit.mtcp.v1.FilterRule.destinations:type_name -> meshtransit.mtcp.v1.Destination
-	33, // 40: meshtransit.mtcp.v1.Destination.prefix:type_name -> meshtransit.mtcp.v1.Prefix
-	41, // 41: meshtransit.mtcp.v1.Destination.ports:type_name -> meshtransit.mtcp.v1.PortRange
-	43, // 42: meshtransit.mtcp.v1.DnsConfig.records:type_name -> meshtransit.mtcp.v1.DnsRecord
-	44, // 43: meshtransit.mtcp.v1.DnsConfig.resolvers:type_name -> meshtransit.mtcp.v1.Resolver
-	45, // 44: meshtransit.mtcp.v1.DnsConfig.routes:type_name -> meshtransit.mtcp.v1.DnsRoute
+	38, // 36: meshtransit.mtcp.v1.AliasGrant.services:type_name -> meshtransit.mtcp.v1.AliasService
+	40, // 37: meshtransit.mtcp.v1.PacketFilter.rules:type_name -> meshtransit.mtcp.v1.FilterRule
+	34, // 38: meshtransit.mtcp.v1.FilterRule.sources:type_name -> meshtransit.mtcp.v1.Prefix
+	41, // 39: meshtransit.mtcp.v1.FilterRule.destinations:type_name -> meshtransit.mtcp.v1.Destination
+	34, // 40: meshtransit.mtcp.v1.Destination.prefix:type_name -> meshtransit.mtcp.v1.Prefix
+	42, // 41: meshtransit.mtcp.v1.Destination.ports:type_name -> meshtransit.mtcp.v1.PortRange
+	44, // 42: meshtransit.mtcp.v1.DnsConfig.records:type_name -> meshtransit.mtcp.v1.DnsRecord
+	45, // 43: meshtransit.mtcp.v1.DnsConfig.resolvers:type_name -> meshtransit.mtcp.v1.Resolver
+	46, // 44: meshtransit.mtcp.v1.DnsConfig.routes:type_name -> meshtransit.mtcp.v1.DnsRoute
 	5,  // 45: meshtransit.mtcp.v1.DnsRecord.type:type_name -> meshtransit.mtcp.v1.DnsRecord.Type
-	44, // 46: meshtransit.mtcp.v1.DnsRoute.resolvers:type_name -> meshtransit.mtcp.v1.Resolver
-	34, // 47: meshtransit.mtcp.v1.EndpointReport.endpoints:type_name -> meshtransit.mtcp.v1.Endpoint
-	35, // 48: meshtransit.mtcp.v1.EndpointReport.nat:type_name -> meshtransit.mtcp.v1.NatInfo
-	33, // 49: meshtransit.mtcp.v1.Hostinfo.advertised_prefixes:type_name -> meshtransit.mtcp.v1.Prefix
-	48, // 50: meshtransit.mtcp.v1.HostinfoReport.hostinfo:type_name -> meshtransit.mtcp.v1.Hostinfo
-	64, // 51: meshtransit.mtcp.v1.HealthReport.components:type_name -> meshtransit.mtcp.v1.HealthReport.Component
-	23, // 52: meshtransit.mtcp.v1.EnforcementReport.view:type_name -> meshtransit.mtcp.v1.View
-	53, // 53: meshtransit.mtcp.v1.PathStatsReport.peers:type_name -> meshtransit.mtcp.v1.PeerPathStats
-	8,  // 54: meshtransit.mtcp.v1.PeerPathStats.technique:type_name -> meshtransit.mtcp.v1.PeerPathStats.Technique
-	9,  // 55: meshtransit.mtcp.v1.Lifecycle.state:type_name -> meshtransit.mtcp.v1.Lifecycle.State
-	65, // 56: meshtransit.mtcp.v1.KeyUpdate.control_keys:type_name -> meshtransit.mtcp.v1.KeyUpdate.ControlKey
-	66, // 57: meshtransit.mtcp.v1.KeyUpdate.signing_keys:type_name -> meshtransit.mtcp.v1.KeyUpdate.SigningKey
-	10, // 58: meshtransit.mtcp.v1.Notice.severity:type_name -> meshtransit.mtcp.v1.Notice.Severity
-	59, // 59: meshtransit.mtcp.v1.RegisterRequest.Auth.interactive:type_name -> meshtransit.mtcp.v1.RegisterRequest.Interactive
-	60, // 60: meshtransit.mtcp.v1.RegisterRequest.Auth.resume:type_name -> meshtransit.mtcp.v1.RegisterRequest.Resume
-	2,  // 61: meshtransit.mtcp.v1.RegisterResponse.Rejected.code:type_name -> meshtransit.mtcp.v1.RegisterResponse.Rejected.Code
-	6,  // 62: meshtransit.mtcp.v1.HealthReport.Component.name:type_name -> meshtransit.mtcp.v1.HealthReport.Component.Name
-	7,  // 63: meshtransit.mtcp.v1.HealthReport.Component.state:type_name -> meshtransit.mtcp.v1.HealthReport.Component.State
-	64, // [64:64] is the sub-list for method output_type
-	64, // [64:64] is the sub-list for method input_type
-	64, // [64:64] is the sub-list for extension type_name
-	64, // [64:64] is the sub-list for extension extendee
-	0,  // [0:64] is the sub-list for field type_name
+	45, // 46: meshtransit.mtcp.v1.DnsRoute.resolvers:type_name -> meshtransit.mtcp.v1.Resolver
+	35, // 47: meshtransit.mtcp.v1.EndpointReport.endpoints:type_name -> meshtransit.mtcp.v1.Endpoint
+	36, // 48: meshtransit.mtcp.v1.EndpointReport.nat:type_name -> meshtransit.mtcp.v1.NatInfo
+	34, // 49: meshtransit.mtcp.v1.Hostinfo.advertised_prefixes:type_name -> meshtransit.mtcp.v1.Prefix
+	49, // 50: meshtransit.mtcp.v1.HostinfoReport.hostinfo:type_name -> meshtransit.mtcp.v1.Hostinfo
+	65, // 51: meshtransit.mtcp.v1.HealthReport.components:type_name -> meshtransit.mtcp.v1.HealthReport.Component
+	24, // 52: meshtransit.mtcp.v1.EnforcementReport.view:type_name -> meshtransit.mtcp.v1.View
+	54, // 53: meshtransit.mtcp.v1.PathStatsReport.peers:type_name -> meshtransit.mtcp.v1.PeerPathStats
+	9,  // 54: meshtransit.mtcp.v1.PeerPathStats.technique:type_name -> meshtransit.mtcp.v1.PeerPathStats.Technique
+	8,  // 55: meshtransit.mtcp.v1.PeerPathStats.relay_reason:type_name -> meshtransit.mtcp.v1.PeerPathStats.RelayReason
+	10, // 56: meshtransit.mtcp.v1.Lifecycle.state:type_name -> meshtransit.mtcp.v1.Lifecycle.State
+	66, // 57: meshtransit.mtcp.v1.KeyUpdate.control_keys:type_name -> meshtransit.mtcp.v1.KeyUpdate.ControlKey
+	67, // 58: meshtransit.mtcp.v1.KeyUpdate.signing_keys:type_name -> meshtransit.mtcp.v1.KeyUpdate.SigningKey
+	11, // 59: meshtransit.mtcp.v1.Notice.severity:type_name -> meshtransit.mtcp.v1.Notice.Severity
+	60, // 60: meshtransit.mtcp.v1.RegisterRequest.Auth.interactive:type_name -> meshtransit.mtcp.v1.RegisterRequest.Interactive
+	61, // 61: meshtransit.mtcp.v1.RegisterRequest.Auth.resume:type_name -> meshtransit.mtcp.v1.RegisterRequest.Resume
+	2,  // 62: meshtransit.mtcp.v1.RegisterResponse.Rejected.code:type_name -> meshtransit.mtcp.v1.RegisterResponse.Rejected.Code
+	6,  // 63: meshtransit.mtcp.v1.HealthReport.Component.name:type_name -> meshtransit.mtcp.v1.HealthReport.Component.Name
+	7,  // 64: meshtransit.mtcp.v1.HealthReport.Component.state:type_name -> meshtransit.mtcp.v1.HealthReport.Component.State
+	65, // [65:65] is the sub-list for method output_type
+	65, // [65:65] is the sub-list for method input_type
+	65, // [65:65] is the sub-list for extension type_name
+	65, // [65:65] is the sub-list for extension extendee
+	0,  // [0:65] is the sub-list for field type_name
 }
 
 func init() { file_mtcp_v1_mtcp_proto_init() }
@@ -4924,7 +4992,7 @@ func file_mtcp_v1_mtcp_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mtcp_v1_mtcp_proto_rawDesc), len(file_mtcp_v1_mtcp_proto_rawDesc)),
-			NumEnums:      11,
+			NumEnums:      12,
 			NumMessages:   56,
 			NumExtensions: 0,
 			NumServices:   0,

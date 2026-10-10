@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -70,7 +71,9 @@ func (c *Client) StreamNetmap(ctx context.Context, controlURL string, material c
 	})
 	streamCtx, cancel := context.WithCancel(ctx)
 	var forwarders sync.WaitGroup
-	forwarders.Go(func() { reports.forward(streamCtx, options.EndpointUpdates, options.EnforcementReports) })
+	forwarders.Go(func() {
+		reports.forward(streamCtx, options.EndpointUpdates, options.EnforcementReports, options.PathStats)
+	})
 	defer func() {
 		cancel()
 		forwarders.Wait()
@@ -97,6 +100,7 @@ type reportBox struct {
 	mu          sync.Mutex
 	endpoints   controlplane.EndpointUpdate
 	enforcement *controlplane.EnforcementReport
+	paths       *controlplane.PathStatsReport // sent once, then cleared
 	changed     chan struct{}
 }
 
@@ -105,7 +109,7 @@ func newReportBox(initial controlplane.EndpointUpdate) *reportBox {
 }
 
 func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane.EndpointUpdate,
-	enforcement <-chan controlplane.EnforcementReport,
+	enforcement <-chan controlplane.EnforcementReport, paths <-chan controlplane.PathStatsReport,
 ) {
 	for {
 		select {
@@ -127,6 +131,14 @@ func (box *reportBox) forward(ctx context.Context, endpoints <-chan controlplane
 			box.mu.Lock()
 			box.enforcement = &report
 			box.mu.Unlock()
+		case report, ok := <-paths:
+			if !ok {
+				paths = nil
+				continue
+			}
+			box.mu.Lock()
+			box.paths = &report
+			box.mu.Unlock()
 		}
 		select {
 		case box.changed <- struct{}{}:
@@ -139,6 +151,15 @@ func (box *reportBox) latest() (controlplane.EndpointUpdate, *controlplane.Enfor
 	box.mu.Lock()
 	defer box.mu.Unlock()
 	return box.endpoints, box.enforcement
+}
+
+// takePaths returns the pending path report, once.
+func (box *reportBox) takePaths() *controlplane.PathStatsReport {
+	box.mu.Lock()
+	defer box.mu.Unlock()
+	report := box.paths
+	box.paths = nil
+	return report
 }
 
 type netmapStream struct {
@@ -216,7 +237,7 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 		return false, 0, err
 	}
 	nodePublic := stream.keys.node.Public()
-	capabilities := []string{"map.zstd", "relay.mtrp1", "dns.split"}
+	capabilities := []string{"map.zstd", "relay.mtrp1", "dns.split", "stats.path1"}
 	if stream.options.EnableDeviceAliases {
 		capabilities = append(capabilities, "device-alias.v1")
 	}
@@ -445,7 +466,50 @@ func (run *sessionRun) sendReports(timer *time.Timer) error {
 		copied := *enforcement
 		run.enforced = &copied
 	}
+	if run.supports("stats.path1") {
+		if paths := run.stream.reports.takePaths(); paths != nil {
+			if err := run.send(sharedmtcp.MessagePathStatsReport, pathStatsMessage(*paths)); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
+}
+
+func (run *sessionRun) supports(capability string) bool {
+	return slices.Contains(run.s.reply.GetCapabilities(), capability)
+}
+
+// pathStatsMessage encodes one interval (mtcp-v1 §8.3).
+func pathStatsMessage(report controlplane.PathStatsReport) *mtcpv1.PathStatsReport {
+	seconds := min(max(report.Interval/time.Second, 0), 24*60*60)
+	message := &mtcpv1.PathStatsReport{
+		IntervalStartMs: report.IntervalStart.UnixMilli(),
+		IntervalS:       uint32(seconds),
+	}
+	for _, peer := range report.Peers {
+		entry := &mtcpv1.PeerPathStats{
+			DeviceId: peer.DeviceID, DirectTxBytes: peer.DirectTxBytes,
+			DirectRxBytes: peer.DirectRxBytes, RelayTxBytes: peer.RelayTxBytes, RelayRxBytes: peer.RelayRxBytes,
+		}
+		switch peer.Path {
+		case controlplane.PathDirect:
+			entry.Technique = mtcpv1.PeerPathStats_DIRECT
+		case controlplane.PathRelay:
+			entry.Technique = mtcpv1.PeerPathStats_RELAY
+			entry.RelayRegion = uint32(max(peer.RelayRegion, 0)) //nolint:gosec // G115: region IDs are small
+			switch peer.RelayReason {
+			case controlplane.RelayBootstrap:
+				entry.RelayReason = mtcpv1.PeerPathStats_BOOTSTRAP
+			case controlplane.RelayNoCandidates:
+				entry.RelayReason = mtcpv1.PeerPathStats_NO_CANDIDATES
+			case controlplane.RelayNoResponse:
+				entry.RelayReason = mtcpv1.PeerPathStats_NO_RESPONSE
+			}
+		}
+		message.Peers = append(message.Peers, entry)
+	}
+	return message
 }
 
 func (run *sessionRun) endpointReport(update controlplane.EndpointUpdate) *mtcpv1.EndpointReport {

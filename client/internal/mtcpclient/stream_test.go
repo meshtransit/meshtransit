@@ -270,3 +270,45 @@ func TestStreamNetmapConsumerFailureIsPermanent(t *testing.T) {
 		t.Fatalf("StreamNetmap = %v", err)
 	}
 }
+
+func TestStreamNetmapSendsPathStats(t *testing.T) {
+	t.Parallel()
+	received := make(chan *mtcpv1.PathStatsReport, 1)
+	core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
+		core.keyUpdate(s)
+		_ = s.send(sharedmtcp.MessageMapSnapshot, core.snapshot(1))
+		if report, ok := core.expect(s, sharedmtcp.MessagePathStatsReport).(*mtcpv1.PathStatsReport); ok {
+			received <- report
+		}
+		_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_REVOKED})
+		answerPings(s)
+	})
+	material, options := core.options(t)
+	paths := make(chan controlplane.PathStatsReport, 1)
+	options.PathStats = paths
+	start := time.Now()
+	err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
+		func(context.Context, networkmap.Snapshot) error {
+			paths <- controlplane.PathStatsReport{
+				IntervalStart: start, Interval: time.Minute,
+				Peers: []controlplane.PeerPathStats{{
+					DeviceID: "peer-a", Path: controlplane.PathRelay, RelayRegion: 1,
+					RelayReason: controlplane.RelayNoResponse, RelayTxBytes: 42,
+				}},
+			}
+			return nil
+		})
+	if !errors.Is(err, controlplane.ErrNetmapAuthorityRevoked) {
+		t.Fatalf("StreamNetmap = %v", err)
+	}
+	select {
+	case report := <-received:
+		peer := report.GetPeers()[0]
+		if report.GetIntervalS() != 60 || peer.GetDeviceId() != "peer-a" || peer.GetTechnique() != mtcpv1.PeerPathStats_RELAY ||
+			peer.GetRelayRegion() != 1 || peer.GetRelayReason() != mtcpv1.PeerPathStats_NO_RESPONSE || peer.GetRelayTxBytes() != 42 {
+			t.Fatalf("path stats %v", report)
+		}
+	default:
+		t.Fatal("no path stats reached Core")
+	}
+}

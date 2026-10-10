@@ -124,6 +124,54 @@ type NetmapOptions struct {
 	// EnforcementReports, when set, carries what the packet filter enforces;
 	// each report is sent to Core and repeated while it stays current.
 	EnforcementReports <-chan EnforcementReport
+	// PathStats, when set, carries one report per interval of how traffic
+	// reached each peer.
+	PathStats <-chan PathStatsReport
+}
+
+// PathKind is how traffic reaches a peer.
+type PathKind uint8
+
+const (
+	// PathUnknown means no path is installed yet.
+	PathUnknown PathKind = iota
+	// PathDirect sends straight to the peer.
+	PathDirect
+	// PathRelay sends through a relay.
+	PathRelay
+)
+
+// RelayReason explains a relayed path.
+type RelayReason uint8
+
+const (
+	// RelayReasonNone applies to paths that are not relayed.
+	RelayReasonNone RelayReason = iota
+	// RelayBootstrap means direct candidates are still being probed.
+	RelayBootstrap
+	// RelayNoCandidates means the peer offers no direct candidate.
+	RelayNoCandidates
+	// RelayNoResponse means direct probes went unanswered.
+	RelayNoResponse
+)
+
+// PeerPathStats is one peer's path over a report interval.
+type PeerPathStats struct {
+	DeviceID      string
+	Path          PathKind
+	RelayRegion   int
+	RelayReason   RelayReason
+	DirectTxBytes uint64
+	DirectRxBytes uint64
+	RelayTxBytes  uint64
+	RelayRxBytes  uint64
+}
+
+// PathStatsReport covers one interval (MTCP PathStatsReport).
+type PathStatsReport struct {
+	IntervalStart time.Time
+	Interval      time.Duration
+	Peers         []PeerPathStats
 }
 
 // EndpointUpdate is one complete candidate set to publish.

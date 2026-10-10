@@ -650,7 +650,30 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				runtime.SetLocalEndpoints(discoEndpoints(candidates), s.nat.get().NAT)
 			})
 		}
+		// Path statistics (mtcp-v1 §8.3) follow the session's data plane.
+		var pathStats chan controlplane.PathStatsReport
+		var pathSampler *pathStatsSampler
+		stopPathStats := func() {}
+		if statsPlane, supported := s.dataPlane.(pathStatsDataPlane); supported {
+			pathStats = make(chan controlplane.PathStatsReport, 1)
+			pathSampler = newPathStatsSampler(s.clock())
+			pathCtx, pathCancel := context.WithCancel(streamCtx)
+			pathDone := make(chan struct{})
+			go func() {
+				defer close(pathDone)
+				runPathStats(pathCtx, pathSampler, func() []dataplane.PeerPathStat {
+					s.dataPlaneMu.Lock()
+					defer s.dataPlaneMu.Unlock()
+					return statsPlane.PeerPathStats()
+				}, pathStats, s.clock)
+			}()
+			stopPathStats = func() {
+				pathCancel()
+				<-pathDone
+			}
+		}
 		cleanupSession := func() error {
+			stopPathStats()
 			s.setLocalEndpointSink(nil)
 			if probeRuntime != nil {
 				probeRuntime.Close()
@@ -709,6 +732,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					Candidates:          s.configuredCandidates,
 					EndpointUpdates:     endpointUpdates,
 					EnforcementReports:  enforcementReports,
+					PathStats:           pathStats,
 				},
 				func(callbackCtx context.Context, snapshot networkmap.Snapshot) (callbackErr error) {
 					defer func() {
@@ -725,6 +749,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					}
 					if s.profiles.Snapshot().ActiveProfileID != active.ID {
 						return nil
+					}
+					if pathSampler != nil {
+						pathSampler.observe(snapshot)
 					}
 					selfAddresses := make([]string, len(snapshot.Self.Addresses))
 					for index, address := range snapshot.Self.Addresses {

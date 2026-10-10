@@ -207,6 +207,15 @@ func (d *officialWireGuardDevice) Configure(configuration io.Reader) error {
 
 func (d *officialWireGuardDevice) Up() error { return d.device.Up() }
 
+// PeerTraffic reads the device's cumulative per-peer counters.
+func (d *officialWireGuardDevice) PeerTraffic() (map[[32]byte]peerTraffic, error) {
+	response, err := d.device.IpcGet()
+	if err != nil {
+		return nil, err
+	}
+	return parsePeerTraffic(response), nil
+}
+
 func (d *officialWireGuardDevice) Close() {
 	d.device.Close()
 	_ = d.bind.closeRelayPermanently()

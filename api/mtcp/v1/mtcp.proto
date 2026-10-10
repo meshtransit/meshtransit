@@ -427,6 +427,14 @@ message PeerPathStats {
   uint32 rtt_ms_bucket = 10;
   uint64 relay_tx_packets = 11;
   uint64 relay_rx_packets = 12;
+  RelayReason relay_reason = 13; // why the path is relayed, when it is
+
+  enum RelayReason {
+    RELAY_REASON_UNSPECIFIED = 0;
+    BOOTSTRAP = 1;     // relayed while direct candidates are being probed
+    NO_CANDIDATES = 2; // the peer offers no direct candidate
+    NO_RESPONSE = 3;   // direct probes went unanswered (filtered UDP or hard NAT)
+  }
 
   enum Technique {
     TECHNIQUE_UNSPECIFIED = 0;
