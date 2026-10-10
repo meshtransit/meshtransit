@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,10 +27,16 @@ import (
 const (
 	DefaultInterval = 10 * time.Second
 	DefaultTimeout  = 10 * time.Second
-	maxBackoff      = time.Minute
-	statePath       = "/relay/v1/state"
-	grantPath       = "/relay/v1/grant"
-	maxSealedGrant  = 64 << 10
+	// DefaultLongPoll is how long Core may hold a state poll (wait=N,
+	// mtrp-v1 §9) so revocations reach the relay as soon as Core signs them.
+	DefaultLongPoll = 25 * time.Second
+	// notNewerDelay paces polls answered by a Core replica still behind the
+	// state the relay holds, until that replica catches up.
+	notNewerDelay  = time.Second
+	maxBackoff     = time.Minute
+	statePath      = "/relay/v1/state"
+	grantPath      = "/relay/v1/grant"
+	maxSealedGrant = 64 << 10
 )
 
 var errNotNewer = errors.New("corelink: relay state is not newer than the current one")
@@ -42,7 +49,8 @@ type Config struct {
 	OnDrain   func()              // called once when Core asks this relay to drain
 	Interval  time.Duration
 	Timeout   time.Duration
-	Client    *http.Client // tests; production builds one with Timeout and no redirects
+	LongPoll  time.Duration // whole seconds; 0 uses DefaultLongPoll
+	Client    *http.Client  // tests; production builds one with Timeout and no redirects
 	Now       func() time.Time
 	Logger    *slog.Logger
 	Metrics   func(result string)
@@ -94,6 +102,9 @@ func New(cfg Config) (*Link, error) {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = DefaultTimeout
 	}
+	if cfg.LongPoll <= 0 {
+		cfg.LongPoll = DefaultLongPoll
+	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -110,8 +121,9 @@ func New(cfg Config) (*Link, error) {
 		cfg.OnDrain = func() {}
 	}
 	if cfg.Client == nil {
+		// No client-wide timeout: each request carries its own, longer for a
+		// held poll.
 		cfg.Client = &http.Client{
-			Timeout: cfg.Timeout,
 			Transport: &http.Transport{
 				Proxy:               http.ProxyFromEnvironment,
 				TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
@@ -187,7 +199,7 @@ func (l *Link) Run(ctx context.Context) error {
 			case <-t.C:
 			}
 		}
-		err := l.Poll(ctx)
+		outcome, err := l.poll(ctx)
 		if err == nil && l.cfg.Private {
 			err = l.PollGrant(ctx)
 		}
@@ -202,58 +214,90 @@ func (l *Link) Run(ctx context.Context) error {
 			delay = min(l.cfg.Interval<<min(failures, 6), maxBackoff)
 			l.cfg.Logger.Warn("relay state update failed", "error", err, "retry_in", delay.String(),
 				"state_expired", !l.expiresAt.IsZero() && l.cfg.Now().After(l.expiresAt))
+		case outcome == pollApplied || outcome == pollHeld:
+			// Core holds the next poll until it signs a new state.
+			failures, delay = 0, 0
+			continue
+		case outcome == pollNotNewer:
+			failures, delay = 0, min(notNewerDelay, l.cfg.Interval)
 		default:
-			failures = 0
-			delay = l.cfg.Interval
+			// Answered at once: this Core does not hold polls.
+			failures, delay = 0, l.cfg.Interval
 		}
 		// Jitter spreads a fleet's requests.
 		delay += time.Duration(rand.Int64N(int64(delay/10) + 1)) //nolint:gosec // jitter, not security
 	}
 }
 
+// pollOutcome says how a state poll ended, which sets the next delay.
+type pollOutcome int
+
+const (
+	pollApplied  pollOutcome = iota // a newer state was applied
+	pollHeld                        // Core held the poll until its wait ended
+	pollAnswered                    // not modified, answered at once
+	pollNotNewer                    // a replica behind the held state answered
+)
+
 // Poll fetches and applies the relay state once.
 func (l *Link) Poll(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.stateURL, nil)
+	_, err := l.poll(ctx)
+	return err
+}
+
+func (l *Link) poll(ctx context.Context) (pollOutcome, error) {
+	target, timeout := l.stateURL, l.cfg.Timeout
+	if l.etag != "" {
+		target += "?wait=" + strconv.Itoa(int(l.cfg.LongPoll/time.Second))
+		timeout += l.cfg.LongPoll
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return err
+		return pollAnswered, err
 	}
 	if l.etag != "" {
 		req.Header.Set("If-None-Match", l.etag)
 	}
+	started := time.Now()
 	resp, err := l.cfg.Client.Do(req)
 	if err != nil {
 		l.cfg.Metrics("fetch_failed")
-		return fmt.Errorf("corelink: fetch: %w", err)
+		return pollAnswered, fmt.Errorf("corelink: fetch: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	switch resp.StatusCode {
 	case http.StatusNotModified:
 		l.cfg.Metrics("not_modified")
 		l.refreshKeys()
-		return nil
+		if time.Since(started) >= l.cfg.LongPoll/2 {
+			return pollHeld, nil
+		}
+		return pollAnswered, nil
 	case http.StatusOK:
 	default:
 		l.cfg.Metrics("bad_status")
-		return fmt.Errorf("corelink: fetch: status %d", resp.StatusCode)
+		return pollAnswered, fmt.Errorf("corelink: fetch: status %d", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, mtrp.MaxDocumentPayload+1024))
 	if err != nil {
 		l.cfg.Metrics("fetch_failed")
-		return fmt.Errorf("corelink: read: %w", err)
+		return pollAnswered, fmt.Errorf("corelink: read: %w", err)
 	}
 	if err := l.apply(body); err != nil {
 		if errors.Is(err, errNotNewer) {
-			// A Core replica one signing window behind the one that served
-			// the held state: keep it, and keep its ETag.
+			// A Core replica behind the one that served the held state:
+			// keep it, and keep its ETag.
 			l.cfg.Metrics("not_newer")
-			return nil
+			return pollNotNewer, nil
 		}
 		l.cfg.Metrics("rejected")
-		return err
+		return pollAnswered, err
 	}
 	l.etag = resp.Header.Get("ETag")
 	l.cfg.Metrics("applied")
-	return nil
+	return pollApplied, nil
 }
 
 // apply verifies a signed state and makes it current.
@@ -309,6 +353,8 @@ func stopping(ctx context.Context) bool { return ctx.Err() != nil }
 
 // PollGrant fetches, opens and applies this Private Interchange's grant.
 func (l *Link) PollGrant(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, l.cfg.Timeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.grantURL, nil)
 	if err != nil {
 		return err

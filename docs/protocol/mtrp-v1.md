@@ -330,6 +330,10 @@ makes it trustworthy over any transport.
   per 10-second window aligned to Unix time, with `issued_at_ms` and
   `sequence` set to the window start and every other time derived from it,
   so replicas behind one load balancer serve byte-identical documents.
+  Between windows Core checks its revocations every second; when they
+  change it signs the state at once with `issued_at_ms` and `sequence` set
+  to that second (relay maps and grants keep their window). Replicas may
+  sign such a state a second apart; relays keep the highest `sequence`.
 - `signing_keys` (1–4) are the Core keys whose tickets and documents relays
   accept. A relay bootstraps from configured keys and afterwards replaces its
   trusted set with the list of each newer verified state, keeping keys only
@@ -356,11 +360,18 @@ makes it trustworthy over any transport.
 - Both documents are served with an `ETag` and `Cache-Control: no-cache`,
   answer `If-None-Match` with 304, are rate limited per source address, and
   return 503 until Core has signed its first state.
-- Relays poll every 10 seconds with `If-None-Match`, accept only a newer
-  `sequence` signed by a trusted key (ignoring, without error, a state that
-  is not newer, as a replica one window behind may serve), and keep the last good state when Core
-  is unreachable, logging when it has expired. Ticket lifetimes (≤ 15 min)
-  bound how long a missed update matters.
+- A relay holding a state polls `GET /relay/v1/state?wait=N` (N = 1–25
+  seconds) with `If-None-Match`. Core holds the request until it signs a
+  newer state (200) or N seconds pass (304), and answers at once beyond a
+  bound on held polls; other query parameters are refused (400). After a
+  200 or a held 304 the relay polls again at once, so a revocation reaches
+  it within about a second of Core signing it. A 304 that comes back early
+  means Core does not hold polls: the relay then polls every 10 seconds.
+- Relays accept only a newer `sequence` signed by a trusted key (ignoring,
+  without error, a state that is not newer, as a replica behind may serve,
+  and then waiting a second before asking again), and keep the last good
+  state when Core is unreachable, logging when it has expired. Ticket
+  lifetimes (≤ 15 min) bound how long a missed update matters.
 
 Health and load reporting from relays to Core (for home-relay steering) needs
 relay authentication and is specified with the relay fleet work.

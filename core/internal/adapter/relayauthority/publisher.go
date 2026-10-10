@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,6 +32,12 @@ const (
 	// renewed every refresh, so a key stays trusted while Core runs and lapses
 	// a week after Core stops listing it.
 	keyTrustWindow = 7 * 24 * time.Hour
+	// RevocationCheckInterval is how often Core looks for new revocations
+	// between windows. A change is signed at once, so relays holding a long
+	// poll stop honouring a revoked node within seconds (production
+	// criterion: 5 s p99). Replicas may sign such a state a second apart;
+	// relays keep the highest sequence.
+	RevocationCheckInterval = time.Second
 )
 
 // RevocationWindow is how far back revocations are published: the longest
@@ -77,6 +85,16 @@ type Publisher struct {
 	relayMap atomic.Pointer[document]
 
 	window time.Time // last signed window; owned by the refresh goroutine (and Start before it)
+	// stateIssued and revocationKey describe the current state: when it was
+	// issued (a window start, or a revocation check) and what it revokes.
+	// Owned by the refresh goroutine.
+	stateIssued   time.Time
+	revocationKey string
+
+	// changed is closed and replaced whenever a new state is stored, waking
+	// relays that hold a long poll.
+	notifyMu sync.Mutex
+	changed  chan struct{}
 
 	private atomic.Pointer[interchange.Directory]
 	// Per-window caches of Network maps (by content key) and relay grants.
@@ -107,7 +125,7 @@ func NewPublisher(opts Options) (*Publisher, error) {
 	if opts.Metrics == nil {
 		opts.Metrics = NewMetrics()
 	}
-	return &Publisher{opts: opts}, nil
+	return &Publisher{opts: opts, changed: make(chan struct{})}, nil
 }
 
 // Start signs the first documents (failing if it cannot) and starts the
@@ -156,6 +174,12 @@ func (p *Publisher) run(ctx context.Context, done chan<- error) {
 	defer close(done)
 	t := time.NewTimer(untilNextWindow(time.Now()))
 	defer t.Stop()
+	var checks <-chan time.Time
+	if p.opts.Revocations != nil {
+		ticker := time.NewTicker(RevocationCheckInterval)
+		defer ticker.Stop()
+		checks = ticker.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -166,6 +190,10 @@ func (p *Publisher) run(ctx context.Context, done chan<- error) {
 			// valid for StateLifetime; it is retried on the next tick.
 			if err := p.refresh(ctx); err != nil && ctx.Err() == nil {
 				p.opts.Logger.Warn("relay authority refresh failed", "error", err)
+			}
+		case <-checks:
+			if err := p.checkRevocations(ctx); err != nil && ctx.Err() == nil {
+				p.opts.Logger.Warn("relay revocation check failed", "error", err)
 			}
 		}
 	}
@@ -191,26 +219,9 @@ func (p *Publisher) refresh(ctx context.Context) error {
 	if p.state.Load() != nil && !now.After(p.window) {
 		return nil
 	}
-	state := mtrp.RelayState{
-		Sequence:    now.UnixMilli(),
-		IssuedAt:    now,
-		ExpiresAt:   now.Add(StateLifetime),
-		Drain:       p.opts.Drain,
-		SigningKeys: p.trustedKeys(now),
-	}
-	if p.opts.Revocations != nil {
-		revoked, err := p.opts.Revocations.RelayRevocations(ctx, now.Add(-RevocationWindow))
-		if err != nil {
-			p.opts.Metrics.refreshes.WithLabelValues("revocations_failed").Inc()
-			return err
-		}
-		state.Nodes = make([]mtrp.RevocationID, len(revoked.NodeKeys))
-		for i, node := range revoked.NodeKeys {
-			state.Nodes[i] = mtrp.RevocationHash(mtrp.RevokeNode, node[:])
-		}
-		for _, contract := range revoked.TrustContracts {
-			state.Zones = append(state.Zones, mtrp.ZoneRevocationHash(mtrp.Zone{Kind: mtrp.ZoneTrustContract, ID: contract}))
-		}
+	state, revocationKey, err := p.buildState(ctx, now, now)
+	if err != nil {
+		return err
 	}
 	p.refreshPrivate(ctx)
 	stateDoc, err := p.sign(mtrp.DocumentRelayState, state.Payload)
@@ -230,7 +241,7 @@ func (p *Publisher) refresh(ctx context.Context) error {
 		}
 	}
 	p.window = now
-	p.state.Store(stateDoc)
+	p.storeState(stateDoc, now, revocationKey)
 	if mapDoc != nil {
 		p.relayMap.Store(mapDoc)
 	}
@@ -238,6 +249,90 @@ func (p *Publisher) refresh(ctx context.Context) error {
 	p.opts.Metrics.revocations.Set(float64(len(state.Tickets) + len(state.Nodes) + len(state.Discos) + len(state.Zones)))
 	p.opts.Metrics.lastSuccess.Set(float64(now.Unix()))
 	return nil
+}
+
+// buildState assembles the relay state issued at issued, revoking what ended
+// since window minus RevocationWindow. It returns a key of the revocations
+// for change detection.
+func (p *Publisher) buildState(ctx context.Context, issued, window time.Time) (mtrp.RelayState, string, error) {
+	state := mtrp.RelayState{
+		Sequence:    issued.UnixMilli(),
+		IssuedAt:    issued,
+		ExpiresAt:   issued.Add(StateLifetime),
+		Drain:       p.opts.Drain,
+		SigningKeys: p.trustedKeys(window),
+	}
+	if p.opts.Revocations != nil {
+		revoked, err := p.opts.Revocations.RelayRevocations(ctx, window.Add(-RevocationWindow))
+		if err != nil {
+			p.opts.Metrics.refreshes.WithLabelValues("revocations_failed").Inc()
+			return mtrp.RelayState{}, "", err
+		}
+		state.Nodes = make([]mtrp.RevocationID, len(revoked.NodeKeys))
+		for i, node := range revoked.NodeKeys {
+			state.Nodes[i] = mtrp.RevocationHash(mtrp.RevokeNode, node[:])
+		}
+		for _, contract := range revoked.TrustContracts {
+			state.Zones = append(state.Zones, mtrp.ZoneRevocationHash(mtrp.Zone{Kind: mtrp.ZoneTrustContract, ID: contract}))
+		}
+	}
+	return state, revocationKeyOf(state), nil
+}
+
+// revocationKeyOf identifies the set of revocations a state carries.
+func revocationKeyOf(state mtrp.RelayState) string {
+	ids := make([]string, 0, len(state.Nodes)+len(state.Zones))
+	for _, id := range state.Nodes {
+		ids = append(ids, "n"+hex.EncodeToString(id[:]))
+	}
+	for _, id := range state.Zones {
+		ids = append(ids, "z"+hex.EncodeToString(id[:]))
+	}
+	slices.Sort(ids)
+	return strings.Join(ids, ",")
+}
+
+// checkRevocations signs a new state at once when the revocations changed
+// since the current state, without waiting for the next window. Only the
+// state is re-signed; relay maps and grants keep their window.
+func (p *Publisher) checkRevocations(ctx context.Context) error {
+	if p.opts.Revocations == nil || p.state.Load() == nil {
+		return nil
+	}
+	issued := p.opts.Now().Truncate(RevocationCheckInterval)
+	if !issued.After(p.stateIssued) {
+		return nil
+	}
+	state, revocationKey, err := p.buildState(ctx, issued, p.window)
+	if err != nil || revocationKey == p.revocationKey {
+		return err
+	}
+	stateDoc, err := p.sign(mtrp.DocumentRelayState, state.Payload)
+	if err != nil {
+		p.opts.Metrics.refreshes.WithLabelValues("sign_failed").Inc()
+		return err
+	}
+	p.storeState(stateDoc, issued, revocationKey)
+	p.opts.Metrics.refreshes.WithLabelValues("revocation").Inc()
+	p.opts.Metrics.revocations.Set(float64(len(state.Tickets) + len(state.Nodes) + len(state.Discos) + len(state.Zones)))
+	return nil
+}
+
+// storeState makes doc the current state and wakes waiting relays.
+func (p *Publisher) storeState(doc *document, issued time.Time, revocationKey string) {
+	p.stateIssued, p.revocationKey = issued, revocationKey
+	p.state.Store(doc)
+	p.notifyMu.Lock()
+	close(p.changed)
+	p.changed = make(chan struct{})
+	p.notifyMu.Unlock()
+}
+
+// stateChanged returns a channel closed when the next state is stored.
+func (p *Publisher) stateChanged() <-chan struct{} {
+	p.notifyMu.Lock()
+	defer p.notifyMu.Unlock()
+	return p.changed
 }
 
 func (p *Publisher) sign(kind mtrp.DocumentKind, payload func() ([]byte, error)) (*document, error) {

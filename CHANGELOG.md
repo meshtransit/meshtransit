@@ -91,6 +91,15 @@ merge (2026-10-09) are kept below.
   leaves a preferred region only when that region fails and returns when it
   recovers.
 
+- Relay revocation within seconds (P7): Core checks revocations every
+  second and signs a new relay state at once when they change; relays hold
+  a long poll (`GET /relay/v1/state?wait=N`, N ≤ 25 s) and apply it as soon
+  as it is signed, falling back to 10-second polls against a Core that does
+  not hold polls (mtrp-v1 §9).
+- Fuzz targets for the MTCP handshake, session records, message records and
+  packet filter digest, meshd's map state and cloud metadata parsing, and
+  `hack/fuzz-long.sh` to run every fuzz target for a set time.
+
 ### Removed
 
 - The legacy control protocol and the third-party protocol library it used
