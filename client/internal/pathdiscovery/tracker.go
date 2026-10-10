@@ -26,9 +26,10 @@ type TrackingResult struct {
 	ExpiresAt  time.Time
 }
 
-// Tracker retains recently observed non-host candidates across transient
-// discovery failures. Host and configured candidates always mirror the latest
-// observation.
+// Tracker retains recently observed server-reflexive candidates across
+// transient discovery failures. Host, configured and port-mapped candidates
+// always mirror the latest observation: the port mapper owns a mapping's
+// lifetime, so a removed mapping must stop being published at once.
 type Tracker struct {
 	mu        sync.Mutex
 	retention time.Duration
@@ -74,9 +75,9 @@ func (t *Tracker) Update(now time.Time, current Set) (TrackingResult, error) {
 	expiresAt := now.Add(t.retention)
 	for _, candidate := range current.candidates {
 		switch candidate.source {
-		case SourceHost, SourceConfigured:
+		case SourceHost, SourceConfigured, SourcePortMapping:
 			t.stable = append(t.stable, candidate)
-		case SourceServerReflexive, SourcePortMapping:
+		case SourceServerReflexive:
 			t.tracked[candidate] = expiresAt
 		}
 	}

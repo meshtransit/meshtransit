@@ -45,6 +45,7 @@ type NAT struct {
 	mu       sync.Mutex
 	byKey    map[mapKey]*mapping
 	byExt    map[netip.AddrPort]*mapping
+	explicit map[netip.AddrPort]*mapping // port mappings by internal endpoint
 	nextPort uint16
 	rng      *rand.Rand
 }
@@ -61,6 +62,11 @@ type mapping struct {
 	external netip.AddrPort
 	permits  map[netip.AddrPort]struct{} // remotes allowed in (ADF: port 0)
 	lastOut  time.Time
+	// explicit marks a port mapping a host requested (PCP, NAT-PMP, UPnP):
+	// endpoint-independent for its internal endpoint, open to every remote,
+	// and alive until expires whatever the traffic.
+	explicit bool
+	expires  time.Time
 }
 
 type natInside struct{ n *NAT }
@@ -123,12 +129,13 @@ func (n *Network) newNAT(name string, cfg NATConfig, outside *Segment) *NAT {
 		cfg.MaxMappings = DefaultMaxMappings
 	}
 	nat := &NAT{
-		cfg:     cfg,
-		clock:   n.clock,
-		outside: outside,
-		byKey:   make(map[mapKey]*mapping),
-		byExt:   make(map[netip.AddrPort]*mapping),
-		rng:     rand.New(rand.NewPCG(cfg.Seed, cfg.Seed^0x9e3779b97f4a7c15)), //nolint:gosec // reproducible port allocation, not secrets
+		cfg:      cfg,
+		clock:    n.clock,
+		outside:  outside,
+		byKey:    make(map[mapKey]*mapping),
+		byExt:    make(map[netip.AddrPort]*mapping),
+		explicit: make(map[netip.AddrPort]*mapping),
+		rng:      rand.New(rand.NewPCG(cfg.Seed, cfg.Seed^0x9e3779b97f4a7c15)), //nolint:gosec // reproducible port allocation, not secrets
 	}
 	nat.nextPort = nat.randomPort()
 	nat.inside = n.NewSegment(name + "-inside")
@@ -190,6 +197,12 @@ func (n *NAT) inbound(p packet) {
 
 // mappingFor finds or creates the mapping for a flow. Called with n.mu held.
 func (n *NAT) mappingFor(src, dst netip.AddrPort, now time.Time) *mapping {
+	if m, ok := n.explicit[src]; ok {
+		if !n.expired(m, now) {
+			return m
+		}
+		n.remove(m)
+	}
 	key := mapKey{internal: src}
 	switch n.cfg.Mapping {
 	case disco.MappingAddressDependent:
@@ -238,6 +251,9 @@ func (n *NAT) permitKey(remote netip.AddrPort) (netip.AddrPort, bool) {
 }
 
 func (n *NAT) permitted(m *mapping, remote netip.AddrPort) bool {
+	if m.explicit {
+		return true
+	}
 	k, filtered := n.permitKey(remote)
 	if !filtered {
 		return n.cfg.Filtering == disco.FilteringEndpointIndependent
@@ -247,11 +263,18 @@ func (n *NAT) permitted(m *mapping, remote netip.AddrPort) bool {
 }
 
 func (n *NAT) expired(m *mapping, now time.Time) bool {
+	if m.explicit {
+		return !now.Before(m.expires)
+	}
 	return now.Sub(m.lastOut) > n.cfg.Timeout
 }
 
 func (n *NAT) remove(m *mapping) {
-	delete(n.byKey, m.key)
+	if m.explicit {
+		delete(n.explicit, m.key.internal)
+	} else {
+		delete(n.byKey, m.key)
+	}
 	delete(n.byExt, m.external)
 }
 

@@ -52,6 +52,12 @@ merge (2026-10-09) are kept below.
   the latest report per Device and the Console Devices page shows it in a
   Connection column. The MTCP key document gains each key's `ck=`
   fingerprint, used by the Console install command.
+- Port mapping (P5a): meshd asks the local gateway to forward its WireGuard
+  port with PCP, NAT-PMP or UPnP IGD (`--port-mapping=auto|off`, default
+  auto), renews and verifies the mapping, removes it on exit, and publishes
+  it as a `port_mapping` candidate when its external address is public.
+  `meshctl status` and `meshctl netcheck` show it. The NAT lab supports
+  explicit mappings; symmetric/symmetric pairs go direct when one side maps.
 
 ## meshd (before the merge)
 

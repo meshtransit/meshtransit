@@ -17,6 +17,7 @@ Packet payloads are not an observability asset and must not be collected.
 3. `meshd` to the future privileged `meshnetd` helper over a separate authenticated local channel.
 4. The tunnel engine to untrusted network packets and relay traffic.
 5. The event pipeline to remote log storage.
+6. `meshd` to the local Internet gateway for port mapping (PCP, NAT-PMP, UPnP IGD).
 
 ## Required security invariants
 
@@ -182,6 +183,7 @@ Packet payloads are not an observability asset and must not be collected.
 - Flow logging is opt-in and receives only ephemeral TUN packet slices. It parses only bounded IP/TCP/UDP headers, retains scalar 5-tuple/state/counter fields, and never copies payload bytes.
 - Flow metadata and control-issued audit credentials are tied to one immutable network-map generation. Credential formatting is redacted; Node and Network scopes are checked before use, tokens travel in HTTPS headers, and redirects are refused.
 - Flow event and upload queues are bounded and non-blocking on the packet path. Saturation or remote failure drops telemetry rather than packets; request bodies and response reads are bounded by the client/server contract.
+- Port mapping talks only to the IPv4 default gateway: PCP and NAT-PMP replies must come from the gateway's port 5351 and match the request (PCP nonce, protocol and internal port), SSDP replies must come from the gateway's address, and UPnP description and control URLs must be plain HTTP to the gateway's address literal with no redirects, credentials or proxy. All responses are size-limited. Only the WireGuard UDP port is mapped, mappings are removed on exit, and logs never include gateway or external addresses. `--port-mapping=off` disables it ([port-mapping.md](port-mapping.md)).
 
 ## Known gaps before production
 

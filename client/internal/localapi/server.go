@@ -283,7 +283,11 @@ func (s *Server) handleNetcheck(writer http.ResponseWriter, request *http.Reques
 
 		return
 	}
-	s.writeJSON(writer, http.StatusOK, netcheckResponse{APIVersion: apiVersion, NAT: mapNATStatus(status, true)})
+	response := netcheckResponse{APIVersion: apiVersion, NAT: mapNATStatus(status, true)}
+	if daemonStatus, err := s.service.Status(request.Context()); err == nil {
+		response.PortMapping = mapPortMappingStatus(daemonStatus.PortMapping, true)
+	}
+	s.writeJSON(writer, http.StatusOK, response)
 }
 
 func (s *Server) writeLogin(writer http.ResponseWriter, login daemon.Login) {
@@ -382,6 +386,7 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		RuntimeRecovery:    mapRuntimeRecoveryStatus(status.RuntimeRecovery),
 		Runtime:            mapRuntimeStatus(status.Runtime),
 		NAT:                mapNATStatus(status.NAT, false),
+		PortMapping:        mapPortMappingStatus(status.PortMapping, false),
 		CompatibilityNote:  status.CompatibilityNote,
 	})
 }
@@ -424,6 +429,23 @@ func mapPathProbeStatus(status daemon.PathProbeStatus) pathProbeStatus {
 		CallMeMaybeAccepted:          snapshot.CallMeMaybeAccepted,
 		PeerReflexiveLearned:         snapshot.PeerReflexiveLearned,
 	}
+}
+
+// mapPortMappingStatus converts the port mapping to its wire form. The
+// external endpoint is included only for an explicit netcheck request.
+func mapPortMappingStatus(status daemon.PortMappingStatus, withEndpoint bool) portMappingStatus {
+	out := portMappingStatus{State: status.State, Protocol: status.Protocol, Error: status.Error}
+	if out.State == "" {
+		out.State = daemon.PortMappingOff
+	}
+	if !status.ExpiresAt.IsZero() {
+		out.ExpiresAt = status.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	if withEndpoint && status.External.IsValid() {
+		out.External = status.External.String()
+	}
+
+	return out
 }
 
 // mapNATStatus converts the classification to its wire form. The public

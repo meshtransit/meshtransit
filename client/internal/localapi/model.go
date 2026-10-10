@@ -38,7 +38,18 @@ type statusResponse struct {
 	RuntimeRecovery    runtimeRecoveryStatus `json:"runtime_recovery"`
 	Runtime            runtimeStatus         `json:"runtime"`
 	NAT                natStatus             `json:"nat"`
+	PortMapping        portMappingStatus     `json:"port_mapping"`
 	CompatibilityNote  string                `json:"compatibility_note"`
+}
+
+// portMappingStatus is the wire form of the daemon's port mapping. The
+// external endpoint appears in netcheck responses only.
+type portMappingStatus struct {
+	State     string `json:"state"`
+	Protocol  string `json:"protocol,omitempty"`
+	External  string `json:"external_endpoint,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // natStatus is the wire form of the daemon's NAT classification
@@ -57,8 +68,9 @@ type natStatus struct {
 }
 
 type netcheckResponse struct {
-	APIVersion string    `json:"api_version"`
-	NAT        natStatus `json:"nat"`
+	APIVersion  string            `json:"api_version"`
+	NAT         natStatus         `json:"nat"`
+	PortMapping portMappingStatus `json:"port_mapping"`
 }
 
 type networkChangeStatus struct {

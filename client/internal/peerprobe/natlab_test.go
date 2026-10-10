@@ -28,6 +28,7 @@ type labNode struct {
 	node     key.NodePublic
 	srflx    netip.AddrPort
 	host     netip.AddrPort
+	mapped   netip.AddrPort // port mapping on the home router, if any
 	paths    chan pathdiscovery.PathObservation
 	peerMu   sync.Mutex
 	peerNode *labNode
@@ -60,10 +61,19 @@ func (n *labNode) ObservePath(observation pathdiscovery.PathObservation) {
 
 func newLabNode(t *testing.T, lab *natlab.Lab, name string, profile natlab.Profile) *labNode {
 	t.Helper()
-	host, err := lab.AddNode(name, profile)
+	return newMappedLabNode(t, lab, name, profile, false)
+}
+
+// newMappedLabNode is newLabNode; with portMapped, the home router holds a
+// port mapping for the packet socket, as portmap requests with PCP, NAT-PMP
+// or UPnP, and the node advertises it.
+func newMappedLabNode(t *testing.T, lab *natlab.Lab, name string, profile natlab.Profile, portMapped bool) *labNode {
+	t.Helper()
+	home, err := lab.AddHomeNode(name, profile)
 	if err != nil {
 		t.Fatal(err)
 	}
+	host := home.Host
 	conn, err := host.Listen(41641)
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +91,23 @@ func newLabNode(t *testing.T, lab *natlab.Lab, name string, profile natlab.Profi
 		paths: make(chan pathdiscovery.PathObservation, 64),
 	}
 	n.srflx = n.stunMapping(lab.STUN()[0])
+	if portMapped {
+		if home.Router == nil {
+			t.Fatal("a public host has no router to map on")
+		}
+		if n.mapped, err = home.Router.AddPortMapping(conn.LocalAddrPort(), 41641, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return n
+}
+
+// published returns the endpoints Core publishes for the node.
+func (n *labNode) published() []netip.AddrPort {
+	if n.mapped.IsValid() {
+		return []netip.AddrPort{n.srflx, n.mapped}
+	}
+	return []netip.AddrPort{n.srflx}
 }
 
 // stunMapping learns the node's server-reflexive endpoint, as meshd does
@@ -144,30 +170,41 @@ func (n *labNode) activate(peer *labNode) {
 		Peers: []networkmap.Node{{
 			ID: 2, PublicKey: "nodekey:" + hex.EncodeToString(peer.node[:]),
 			DiscoveryKey: MapDiscoveryKey(peer.disco.Public()), MachineAuthorized: true,
-			// What Core publishes: the peer's STUN-observed endpoint.
-			Endpoints: []netip.AddrPort{peer.srflx},
+			// What Core publishes: the endpoints the peer reported.
+			Endpoints: peer.published(),
 		}},
 	}
 	generation := pathdiscovery.ProbeGeneration{Scope: 1, MapRevision: 1, Socket: n.socket}
 	if _, _, err := n.runtime.Activate(snapshot, generation); err != nil {
 		n.t.Fatal(err)
 	}
-	n.runtime.SetLocalEndpoints([]disco.Endpoint{
+	local := []disco.Endpoint{
 		{Kind: disco.EndpointServerReflex, Addr: n.srflx},
 		{Kind: disco.EndpointHost, Addr: n.host},
-	}, disco.NATInfo{})
+	}
+	if n.mapped.IsValid() {
+		local = append(local, disco.Endpoint{Kind: disco.EndpointPortMapped, Addr: n.mapped})
+	}
+	n.runtime.SetLocalEndpoints(local, disco.NATInfo{})
 }
 
 // meshdTraverses reports whether meshd's probe runtime finds a direct path
 // between two nodes behind the given profiles within timeout.
 func meshdTraverses(t *testing.T, a, b natlab.Profile, timeout time.Duration) (bool, uint64) {
 	t.Helper()
+	return meshdTraversesMapped(t, a, b, false, timeout)
+}
+
+// meshdTraversesMapped is meshdTraverses with an optional port mapping on
+// a's home router.
+func meshdTraversesMapped(t *testing.T, a, b natlab.Profile, aMapped bool, timeout time.Duration) (bool, uint64) {
+	t.Helper()
 	lab, err := natlab.NewLab(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(lab.Close)
-	na, nb := newLabNode(t, lab, "a", a), newLabNode(t, lab, "b", b)
+	na, nb := newMappedLabNode(t, lab, "a", a, aMapped), newLabNode(t, lab, "b", b)
 	na.start(nb)
 	nb.start(na)
 	na.activate(nb)
@@ -225,6 +262,30 @@ func TestMeshdTraversalP0(t *testing.T) {
 			}
 			if c.prflx && learned == 0 {
 				t.Fatal("connected without learning a peer-reflexive candidate")
+			}
+		})
+	}
+}
+
+// TestMeshdTraversalPortMapping covers the cells port mapping opens (P5a):
+// two symmetric NATs stay relayed, but a port mapping on one home router
+// gives the other side an endpoint it can reach, so the pair goes direct.
+func TestMeshdTraversalPortMapping(t *testing.T) {
+	if testing.Short() {
+		t.Skip("NAT lab traversal takes a few seconds")
+	}
+	cases := []struct {
+		a, b natlab.Profile
+	}{
+		{natlab.SymmetricRandom, natlab.SymmetricRandom},
+		{natlab.SymmetricSequential, natlab.CGNATSymmetric},
+		{natlab.PortRestrictedCone, natlab.SymmetricRandom},
+	}
+	for _, c := range cases {
+		t.Run(c.a.Name+"+mapping/"+c.b.Name, func(t *testing.T) {
+			t.Parallel()
+			if got, _ := meshdTraversesMapped(t, c.a, c.b, true, 8*time.Second); !got {
+				t.Fatal("no direct path although a's router maps its port")
 			}
 		})
 	}

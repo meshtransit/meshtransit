@@ -132,6 +132,7 @@ type Status struct {
 	RuntimeRecovery    RuntimeRecoveryStatus
 	Runtime            runtimehealth.Snapshot
 	NAT                NATStatus
+	PortMapping        PortMappingStatus
 }
 
 // NetworkChangeStatus contains process-local aggregate network-event counters.
@@ -335,6 +336,7 @@ type Service struct {
 	runtimePending       atomic.Bool
 	pathProbes           *pathdiscovery.ProbeTelemetry
 	nat                  *natState
+	portMapper           PortMapper
 }
 
 type syncStatus struct {
@@ -368,6 +370,9 @@ type Options struct {
 	Logger              *slog.Logger
 	AdvertiseEndpoints  []netip.AddrPort
 	NetworkChanges      <-chan struct{}
+	// PortMapper maps the WireGuard port on the local gateway; nil turns
+	// port mapping off.
+	PortMapper PortMapper
 }
 
 // New creates a daemon service from explicit dependencies.
@@ -444,6 +449,7 @@ func New(
 		registrationGate:     registrationGate,
 		pathProbes:           pathdiscovery.NewProbeTelemetry(),
 		nat:                  newNATState(),
+		portMapper:           options.PortMapper,
 		syncState: syncStatus{
 			state:     ControlSessionInactive,
 			dataPlane: initialDataPlane,
@@ -1134,6 +1140,8 @@ func (s *Service) runEndpointRefresh(
 	}
 	natRequests, natNetwork, stopNAT := s.startNATClassification(ctx, discoverer)
 	defer stopNAT()
+	portChanges, stopPortMapping := s.startPortMapping(ctx)
+	defer stopPortMapping()
 	tracker := pathdiscovery.NewTracker()
 	homeSelector := relay.NewHomeSelector()
 	current := endpointRefreshRequest{}
@@ -1195,9 +1203,24 @@ func (s *Service) runEndpointRefresh(
 			stopRefreshTimer(timer)
 			timer = nil
 			timerChannel = nil
+			if s.portMapper != nil {
+				s.portMapper.NetworkChanged()
+			}
+		case <-portChanges:
+			// The mapped endpoint changed: publish it now.
+			stopRefreshTimer(timer)
+			timer = nil
+			timerChannel = nil
 		}
 		if !hasCurrent {
 			continue
+		}
+		if s.portMapper != nil {
+			if current.active && current.socket.IsOpen() {
+				s.portMapper.SetPort(current.socket.Port)
+			} else {
+				s.portMapper.SetPort(0)
+			}
 		}
 		if resetForSocketChange {
 			_, err := tracker.Reset(s.clock(), s.configuredCandidates)
@@ -1348,8 +1371,12 @@ func (s *Service) discoverEndpoints(
 	}
 	s.dataPlaneMu.Unlock()
 	if err == nil {
+		local, localErr := s.localCandidates(result.Candidates)
+		if localErr != nil {
+			return pathdiscovery.Set{}, nil, relay.HealthSnapshot{}, fmt.Errorf("merging local endpoints: %w", localErr)
+		}
 		merged, mergeErr := pathdiscovery.Merge(
-			s.configuredCandidates,
+			local,
 			result.Candidates,
 		)
 		if mergeErr != nil {
@@ -1371,7 +1398,12 @@ func (s *Service) discoverEndpoints(
 		errors.Is(err, pathdiscovery.ErrNoSTUNServers) ||
 		errors.Is(err, pathdiscovery.ErrSocketChanged) ||
 		errors.Is(err, pathdiscovery.ErrTransportClosed) {
-		return s.configuredCandidates, nil, health, nil
+		local, localErr := s.localCandidates(pathdiscovery.Set{})
+		if localErr != nil {
+			return pathdiscovery.Set{}, nil, relay.HealthSnapshot{}, fmt.Errorf("merging local endpoints: %w", localErr)
+		}
+
+		return local, nil, health, nil
 	}
 
 	return pathdiscovery.Set{}, nil, relay.HealthSnapshot{}, fmt.Errorf(
@@ -1654,8 +1686,9 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 			Recoveries: s.runtimeRecoveries.Load(),
 			Pending:    s.runtimePending.Load(),
 		},
-		Runtime: runtimehealth.Read(),
-		NAT:     s.natStatus(),
+		Runtime:     runtimehealth.Read(),
+		NAT:         s.natStatus(),
+		PortMapping: s.portMappingStatus(),
 	}, nil
 }
 

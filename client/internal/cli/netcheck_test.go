@@ -95,3 +95,39 @@ func TestFormatNATSummary(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatPortMapping(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		mapping *localapi.PortMappingStatus
+		want    string
+	}{
+		{nil, "unavailable"},
+		{&localapi.PortMappingStatus{State: "off"}, "off"},
+		{&localapi.PortMappingStatus{State: "mapped", Protocol: "upnp", ExpiresAt: "2026-10-10T07:00:00Z"}, "upnp, expires 2026-10-10T07:00:00Z"},
+		{&localapi.PortMappingStatus{State: "double_nat", Protocol: "nat-pmp"}, "nat-pmp, behind another NAT (not offered to peers)"},
+		{&localapi.PortMappingStatus{State: "unavailable", Error: "no_gateway"}, "unavailable (no_gateway)"},
+	} {
+		if got := formatPortMapping(tt.mapping); got != tt.want {
+			t.Errorf("formatPortMapping(%+v) = %q, want %q", tt.mapping, got, tt.want)
+		}
+	}
+}
+
+func TestNetcheckShowsThePortMapping(t *testing.T) {
+	t.Parallel()
+	client := &fakeClient{netcheck: localapi.Netcheck{
+		APIVersion:  "v1",
+		NAT:         localapi.NATStatus{State: "ready", Difficulty: "hard"},
+		PortMapping: &localapi.PortMappingStatus{State: "mapped", Protocol: "pcp", External: "203.0.113.7:50000"},
+	}}
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	if code := Run(t.Context(), []string{"netcheck"}, stdout, stderr, testOptions(client)); code != 0 {
+		t.Fatalf("exit code %d: %s", code, stderr)
+	}
+	for _, want := range []string{"Port mapping: pcp", "Mapped endpoint: 203.0.113.7:50000"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("output missing %q:\n%s", want, stdout)
+		}
+	}
+}

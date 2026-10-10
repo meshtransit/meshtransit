@@ -724,6 +724,9 @@ func TestServer_Netcheck(t *testing.T) {
 	if status.NAT.State != daemon.NATUnavailable || status.NAT.PublicEndpoint != "" {
 		t.Fatalf("nat status without a packet engine = %#v", status.NAT)
 	}
+	if status.PortMapping.State != daemon.PortMappingOff {
+		t.Fatalf("port mapping without a packet engine = %#v", status.PortMapping)
+	}
 	if got := performRequest(t, server, http.MethodGet, "/v1/netcheck", "", nil); got.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET /v1/netcheck = %d, want 405", got.Code)
 	}
@@ -762,5 +765,23 @@ func TestMapNATStatus(t *testing.T) {
 	easy := mapNATStatus(daemon.NATStatus{State: daemon.NATStale, NAT: disco.NATInfo{Mapping: disco.MappingNone}}, false)
 	if easy.Difficulty != "easy" || easy.Filtering != "unknown" || easy.Allocation != "unknown" {
 		t.Fatalf("stale public host = %#v", easy)
+	}
+}
+
+func TestMapPortMappingStatus(t *testing.T) {
+	t.Parallel()
+	expires := time.Date(2026, 10, 10, 14, 0, 0, 0, time.FixedZone("ICT", 7*3600))
+	mapped := daemon.PortMappingStatus{
+		State: "mapped", Protocol: "pcp", External: netip.MustParseAddrPort("203.0.113.7:41641"), ExpiresAt: expires,
+	}
+	status := mapPortMappingStatus(mapped, false)
+	if status.External != "" || status.Protocol != "pcp" || status.ExpiresAt != "2026-10-10T07:00:00Z" {
+		t.Fatalf("status form = %#v", status)
+	}
+	if netcheck := mapPortMappingStatus(mapped, true); netcheck.External != "203.0.113.7:41641" {
+		t.Fatalf("netcheck form = %#v", netcheck)
+	}
+	if empty := mapPortMappingStatus(daemon.PortMappingStatus{}, true); empty.State != daemon.PortMappingOff {
+		t.Fatalf("empty = %#v", empty)
 	}
 }

@@ -272,3 +272,18 @@ func TestParseControlProtocol(t *testing.T) {
 		t.Fatal("an unknown control protocol was accepted")
 	}
 }
+
+func TestParsePortMapping(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Parse(nil, io.Discard)
+	if err != nil || cfg.PortMapping != "auto" {
+		t.Fatalf("default port mapping = %q, %v", cfg.PortMapping, err)
+	}
+	if cfg, err := Parse([]string{"--port-mapping", "off"}, io.Discard); err != nil || cfg.PortMapping != "off" {
+		t.Fatalf("--port-mapping off = %q, %v", cfg.PortMapping, err)
+	}
+	if _, err := Parse([]string{"--port-mapping", "upnp"}, io.Discard); err == nil {
+		t.Fatal("an unknown port mapping mode was accepted")
+	}
+}

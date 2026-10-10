@@ -25,6 +25,7 @@ import (
 	"meshtransit.net/client/internal/mtcpclient"
 	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/netwatch"
+	"meshtransit.net/client/internal/portmap"
 	"meshtransit.net/client/internal/profile"
 	"meshtransit.net/client/internal/secretstore"
 	"meshtransit.net/client/internal/servicemanager"
@@ -147,6 +148,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			logger.Warn("TEST ONLY: the packet filter enforces one rule fewer than control sends")
 		}
 		daemonOptions.DataPlane = engine
+		if cfg.PortMapping == "auto" {
+			daemonOptions.PortMapper = portmap.New(portmap.Options{Logger: logger.With("component", "port_mapping")})
+		}
 		logger.Info(
 			"encrypted data plane enabled",
 			"socket", cfg.NetAdminSocketPath,

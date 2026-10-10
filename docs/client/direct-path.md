@@ -133,6 +133,8 @@ peer map ──────────► authenticated path manager ───�
    uplink or default route. It does not by itself prove failover between two real
    underlays; that requires a separately controlled multi-homed lab.
 
-Port mapping remains a separate follow-up capability. The bounded relay base
+Port mapping (PCP, NAT-PMP, UPnP IGD) is described in
+[port-mapping.md](port-mapping.md); a mapping is published as a
+`port_mapping` candidate and still needs authenticated proof. The bounded relay base
 path is described in [relay.md](relay.md); it is not a direct candidate and does
 not weaken the endpoint authority or freshness rules above.

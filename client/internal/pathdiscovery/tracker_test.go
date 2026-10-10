@@ -182,3 +182,23 @@ func mustSet(t *testing.T, candidates ...Candidate) Set {
 
 	return set
 }
+
+func TestTrackerDropsARemovedPortMappingAtOnce(t *testing.T) {
+	t.Parallel()
+
+	tracker := newTracker(10 * time.Second)
+	now := time.Unix(2_000, 0)
+	reflexive := mustCandidate(t, netip.MustParseAddrPort("198.51.100.20:41641"), SourceServerReflexive)
+	mapped := mustCandidate(t, netip.MustParseAddrPort("198.51.100.20:50000"), SourcePortMapping)
+	if _, err := tracker.Update(now, mustSet(t, reflexive, mapped)); err != nil {
+		t.Fatalf("Update(initial) error = %v", err)
+	}
+	// The mapper removed the mapping; one STUN round failed too.
+	result, err := tracker.Update(now.Add(time.Second), mustSet(t))
+	if err != nil {
+		t.Fatalf("Update(after removal) error = %v", err)
+	}
+	if !result.Candidates.Equal(mustSet(t, reflexive)) {
+		t.Fatalf("published %v, want only the retained reflexive candidate", result.Candidates.Candidates())
+	}
+}

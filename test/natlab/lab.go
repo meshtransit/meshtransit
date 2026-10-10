@@ -130,10 +130,30 @@ func (l *Lab) Close() {
 
 // AddNode places a host named name behind the NATs of p and returns it.
 func (l *Lab) AddNode(name string, p Profile) (*Host, error) {
+	node, err := l.AddHomeNode(name, p)
+	return node.Host, err
+}
+
+// HomeNode is a host with its home router: the innermost NAT of its profile
+// and the LAN segment they share. Router and LAN are nil for a public host.
+type HomeNode struct {
+	Host   *Host
+	Router *NAT
+	LAN    *Segment
+}
+
+// HomeGateway is the router's address on every home LAN.
+var HomeGateway = netip.MustParseAddr("192.168.1.1")
+
+// AddHomeNode is AddNode returning the home router and LAN too, so a test
+// can add a gateway service (port mapping) at HomeGateway.
+func (l *Lab) AddHomeNode(name string, p Profile) (HomeNode, error) {
 	if len(p.NATs) == 0 {
-		return l.Net.NewHost(name, l.Net.Internet, l.nextPublic())
+		host, err := l.Net.NewHost(name, l.Net.Internet, l.nextPublic())
+		return HomeNode{Host: host}, err
 	}
 	outside := l.Net.Internet
+	var router *NAT
 	for i := len(p.NATs) - 1; i >= 0; i-- {
 		cfg := p.NATs[i]
 		cfg.Seed = seed(name, p.Name, i)
@@ -143,13 +163,14 @@ func (l *Lab) AddNode(name string, p Profile) (*Host, error) {
 		} else {
 			ext = l.nextCarrier()
 		}
-		_, inside, err := l.Net.NewNAT(fmt.Sprintf("%s-nat%d", name, i), cfg, outside, ext)
+		nat, inside, err := l.Net.NewNAT(fmt.Sprintf("%s-nat%d", name, i), cfg, outside, ext)
 		if err != nil {
-			return nil, err
+			return HomeNode{}, err
 		}
-		outside = inside
+		router, outside = nat, inside
 	}
-	return l.Net.NewHost(name, outside, LANHost)
+	host, err := l.Net.NewHost(name, outside, LANHost)
+	return HomeNode{Host: host, Router: router, LAN: outside}, err
 }
 
 func (l *Lab) nextPublic() netip.Addr {

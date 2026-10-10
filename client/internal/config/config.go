@@ -40,6 +40,9 @@ type Config struct {
 	// ControlProtocol is auto (MTCP where the control origin serves it),
 	// mtcp or legacy.
 	ControlProtocol string
+	// PortMapping is auto (map the WireGuard port on the local gateway with
+	// PCP, NAT-PMP or UPnP when the data plane runs) or off.
+	PortMapping string
 	// TestPolicyDrift makes the packet filter enforce one rule fewer than
 	// Core sends, to demonstrate that Core reports the mismatch. Test only.
 	TestPolicyDrift     bool
@@ -86,6 +89,8 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 		"enable qualification of peer-specific Device aliases; requires confined helper alias pools")
 	flags.StringVar(&cfg.ControlProtocol, "control-protocol", "auto",
 		"control protocol: auto (MTCP where the control server offers it), mtcp, or legacy")
+	flags.StringVar(&cfg.PortMapping, "port-mapping", "auto",
+		"ask the local gateway to forward the WireGuard port with PCP, NAT-PMP or UPnP: auto or off")
 	flags.BoolVar(&cfg.TestPolicyDrift, "test-policy-drift", false,
 		"TEST ONLY: enforce one packet-filter rule fewer than control sends, to demonstrate mismatch detection")
 	flags.BoolVar(
@@ -231,6 +236,11 @@ func validate(cfg Config) error {
 	case "auto", "mtcp", "legacy":
 	default:
 		return errors.New("control protocol must be auto, mtcp or legacy")
+	}
+	switch cfg.PortMapping {
+	case "auto", "off":
+	default:
+		return errors.New("port mapping must be auto or off")
 	}
 	if cfg.TestPolicyDrift && !cfg.EnableDataPlane {
 		return errors.New("policy drift testing requires --enable-data-plane")

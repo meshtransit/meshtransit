@@ -30,6 +30,12 @@ func runNetcheck(
 		return writeJSON(stdout, stderr, result)
 	}
 	writeNetcheck(stdout, result.NAT)
+	if result.PortMapping != nil {
+		_, _ = fmt.Fprintf(stdout, "Port mapping: %s\n", formatPortMapping(result.PortMapping))
+		if result.PortMapping.External != "" {
+			_, _ = fmt.Fprintf(stdout, "Mapped endpoint: %s\n", result.PortMapping.External)
+		}
+	}
 	if result.NAT.State != "ready" {
 		return 1
 	}
@@ -106,4 +112,27 @@ func valueOrNone(value string) string {
 	}
 
 	return value
+}
+
+// formatPortMapping renders the one-line port mapping field.
+func formatPortMapping(mapping *localapi.PortMappingStatus) string {
+	if mapping == nil {
+		return "unavailable"
+	}
+	switch mapping.State {
+	case "mapped", "double_nat":
+		summary := mapping.Protocol
+		if mapping.State == "double_nat" {
+			summary += ", behind another NAT (not offered to peers)"
+		}
+		if mapping.ExpiresAt != "" {
+			summary += ", expires " + mapping.ExpiresAt
+		}
+
+		return summary
+	case "unavailable", "failed":
+		return mapping.State + " (" + valueOrNone(mapping.Error) + ")"
+	default:
+		return valueOrNone(mapping.State)
+	}
 }

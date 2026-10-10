@@ -36,7 +36,18 @@ type Status struct {
 	RuntimeRecovery    *RuntimeRecoveryStatus `json:"runtime_recovery,omitempty"`
 	Runtime            *RuntimeStatus         `json:"runtime,omitempty"`
 	NAT                *NATStatus             `json:"nat,omitempty"`
+	PortMapping        *PortMappingStatus     `json:"port_mapping,omitempty"`
 	CompatibilityNote  string                 `json:"compatibility_note"`
+}
+
+// PortMappingStatus is the daemon's mapping of its packet port on the local
+// gateway. External is present in netcheck results only.
+type PortMappingStatus struct {
+	State     string `json:"state"`
+	Protocol  string `json:"protocol,omitempty"`
+	External  string `json:"external_endpoint,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // NATStatus is the daemon's classification of the NAT in front of its
@@ -56,8 +67,9 @@ type NATStatus struct {
 
 // Netcheck is the result of an on-demand NAT classification.
 type Netcheck struct {
-	APIVersion string    `json:"api_version"`
-	NAT        NATStatus `json:"nat"`
+	APIVersion  string             `json:"api_version"`
+	NAT         NATStatus          `json:"nat"`
+	PortMapping *PortMappingStatus `json:"port_mapping,omitempty"`
 }
 
 // PathStatus summarizes the selected transport for visible peers.
