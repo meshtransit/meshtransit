@@ -198,25 +198,27 @@ func (s *HomeSelector) Observe(
 	if s.current == 0 || len(samples) == 0 {
 		return HomeSelection{RegionID: s.current}, nil
 	}
+	// failing reports a region whose relay connection failed and has not
+	// come back; its latency sample may predate the failure.
+	failing := func(regionID int) bool {
+		health, known := healthByRegion[regionID]
+		return known && !health.Connected && health.ConsecutiveFailures > 0
+	}
 	bestAlternative := 0
 	for regionID := range s.latencies {
-		if regionID != s.current &&
+		if regionID != s.current && !failing(regionID) &&
 			(bestAlternative == 0 || s.better(regionID, bestAlternative)) {
 			bestAlternative = regionID
 		}
 	}
-	// On failover a preferred alternative wins over a faster shared one.
-	bestPreferred := 0
-	for regionID := range s.latencies {
-		if regionID != s.current && s.isPreferred(regionID) &&
-			(bestPreferred == 0 || s.better(regionID, bestPreferred)) {
-			bestPreferred = regionID
-		}
+	// On failover a preferred alternative wins over a faster shared one, and
+	// a region that answered in this round wins over one known only from an
+	// older sample, which may be unreachable now.
+	failoverTarget := s.failoverTarget(seen, failing, true)
+	if failoverTarget == 0 {
+		failoverTarget = s.failoverTarget(seen, failing, false)
 	}
-	failoverTarget := bestAlternative
-	if bestPreferred != 0 {
-		failoverTarget = bestPreferred
-	}
+	bestPreferred := s.failoverTarget(seen, failing, true)
 	preparationRegionID := 0
 	candidateRegionID := 0
 	currentHealth, currentHealthExists := healthByRegion[s.current]
@@ -281,6 +283,28 @@ func (s *HomeSelector) Reset() HomeSelection {
 	s.lastObservation = time.Time{}
 
 	return HomeSelection{Changed: previous != 0}
+}
+
+// failoverTarget picks the replacement for the home relay: preferred
+// regions only when preferredOnly, never a failing region, a region sampled
+// in this round over an older sample, then the lowest latency.
+func (s *HomeSelector) failoverTarget(
+	seen map[int]struct{},
+	failing func(int) bool,
+	preferredOnly bool,
+) int {
+	best, bestFresh := 0, false
+	for regionID := range s.latencies {
+		if regionID == s.current || failing(regionID) || (preferredOnly && !s.isPreferred(regionID)) {
+			continue
+		}
+		_, fresh := seen[regionID]
+		if best == 0 || (fresh && !bestFresh) || (fresh == bestFresh && s.better(regionID, best)) {
+			best, bestFresh = regionID, fresh
+		}
+	}
+
+	return best
 }
 
 func (s *HomeSelector) better(left, right int) bool {

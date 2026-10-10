@@ -415,3 +415,38 @@ func TestHomeSelectorPrefersPrivateInterchange(t *testing.T) {
 		t.Fatalf("plain cold start = %#v, %v", result, err)
 	}
 }
+
+// TestHomeSelectorFailsOverToAFreshlyReachableRegion: when the home relay
+// fails, a region that also failed and only has an old latency sample is
+// skipped for one that answered in this round, even if slower.
+func TestHomeSelectorFailsOverToAFreshlyReachableRegion(t *testing.T) {
+	t.Parallel()
+
+	selector := NewHomeSelector()
+	now := time.Now()
+	if _, err := selector.Reconcile(2, []int{1, 2, 3}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	// Every region answered once: 1 and 2 are near, 3 is far.
+	if _, err := selector.Observe(now, []RegionLatency{
+		{RegionID: 1, Latency: 2 * time.Millisecond},
+		{RegionID: 2, Latency: 3 * time.Millisecond},
+		{RegionID: 3, Latency: 250 * time.Millisecond},
+	}, healthyRelaySnapshot(now, 2, 2)); err != nil {
+		t.Fatalf("Observe() error = %v", err)
+	}
+	// Region 1 has since failed; now home region 2 fails too. Only region 3
+	// answers this round.
+	later := now.Add(10 * time.Second)
+	health := HealthSnapshot{Available: true, HomeRegion: 2, Regions: []RegionHealth{
+		{RegionID: 1, LastFailure: later, ConsecutiveFailures: 1},
+		{RegionID: 2, LastFailure: later, ConsecutiveFailures: 1},
+	}}
+	result, err := selector.Observe(later, []RegionLatency{{RegionID: 3, Latency: 251 * time.Millisecond}}, health)
+	if err != nil {
+		t.Fatalf("Observe() error = %v", err)
+	}
+	if result.RegionID != 3 && result.PreparationRegionID != 3 {
+		t.Fatalf("Observe() = %#v, want region 3 chosen or prepared", result)
+	}
+}

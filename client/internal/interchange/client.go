@@ -20,10 +20,10 @@ const (
 	// round-trip allowance, so a relay that dies silently is replaced in
 	// seconds (production criterion: failover within 5 s). An idle session
 	// costs one probe and one answer every probeAfter.
-	probeAfter         = 1500 * time.Millisecond
-	probeEvery         = time.Second
-	probeTick          = 250 * time.Millisecond
-	minProbeAnswer     = 500 * time.Millisecond
+	probeAfter         = 1200 * time.Millisecond
+	probeEvery         = 800 * time.Millisecond
+	probeTick          = 200 * time.Millisecond
+	minProbeAnswer     = 400 * time.Millisecond
 	maxProbeAnswer     = 2 * time.Second
 	probesBeforeDead   = 3
 	routeOpenTimeout   = 5 * time.Second
