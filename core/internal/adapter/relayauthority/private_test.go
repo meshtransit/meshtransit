@@ -181,3 +181,47 @@ func TestPublisherServesPrivateInterchange(t *testing.T) {
 		t.Fatalf("the removed relay is still in the map: %+v", regions)
 	}
 }
+
+// Network maps and grants are signed on request goroutines while the
+// refresh goroutine moves the window; run with -race.
+func TestPublisherWindowIsSafeForConcurrentRequests(t *testing.T) {
+	t.Parallel()
+	c := newClock(t0)
+	m := testMap(t)
+	relayPrivate, err := key.NewRelayPrivate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	granted := mustNetworkID(t, "01890f00-0000-7000-8000-000000000201")
+	source := &staticPrivate{}
+	source.set(interchange.Directory{Revision: 1_760_000_000,
+		Relays: []interchange.Interchange{officeRelay(t, relayPrivate.Public(), granted)}})
+	p := newPublisher(t, c, Options{Signer: signer(t, 1), Map: &m, Private: source})
+	if err := p.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 50 {
+			c.advance(RefreshInterval)
+			if err := p.refresh(t.Context()); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	for {
+		select {
+		case <-done:
+			return
+		default:
+		}
+		if _, _, err := p.mapForNetwork(granted); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := p.sealedGrant(relayPrivate.Public()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

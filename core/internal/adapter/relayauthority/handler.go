@@ -24,18 +24,23 @@ const (
 	// PathPrefix selects the requests the control listener routes here.
 	PathPrefix = "/relay/v1/"
 
-	sourceRate   = 20 // requests per second per source address
-	sourceBurst  = 40
-	maxSources   = 4096
-	pruneEvery   = time.Minute
-	documentType = "application/vnd.meshtransit.signed-document"
+	// Sources are IPv4 addresses and IPv6 /64s, as on the relay. The table
+	// is bounded; when it is full the least recently seen source is
+	// evicted, so filling it never locks out a relay arriving later.
+	sourceRate     = 20 // requests per second per source
+	sourceBurst    = 40
+	maxSources     = 4096
+	ipv6SourceBits = 64
+	documentType   = "application/vnd.meshtransit.signed-document"
 
 	// MaxStateWait bounds a relay's long poll for the next state (wait=N
 	// seconds, mtrp-v1 §9); maxStateWaiters bounds the polls held at once.
 	// Past it a poll is answered at once and the relay simply asks again.
-	MaxStateWait    = 25 * time.Second
-	maxStateWaiters = 1024
-	stateWriteSlack = 10 * time.Second
+	// maxStateWaitersPerSource keeps one source from taking every slot.
+	MaxStateWait             = 25 * time.Second
+	maxStateWaiters          = 1024
+	maxStateWaitersPerSource = 4
+	stateWriteSlack          = 10 * time.Second
 )
 
 // Handler serves the signed documents. Each response is a precomputed byte
@@ -46,9 +51,9 @@ type Handler struct {
 	now       func() time.Time
 	metrics   *Metrics
 
-	mu        sync.Mutex
-	buckets   map[netip.Addr]*bucket
-	lastPrune time.Time
+	mu      sync.Mutex
+	buckets map[netip.Prefix]*bucket
+	held    map[netip.Prefix]int // long polls held per source
 
 	waiters chan struct{} // semaphore of held long polls
 }
@@ -63,7 +68,8 @@ type bucket struct {
 func NewHandler(p *Publisher, clients clientip.Resolver) *Handler {
 	return &Handler{
 		publisher: p, clients: clients, now: p.opts.Now, metrics: p.opts.Metrics,
-		buckets: make(map[netip.Addr]*bucket), waiters: make(chan struct{}, maxStateWaiters),
+		buckets: make(map[netip.Prefix]*bucket), held: make(map[netip.Prefix]int),
+		waiters: make(chan struct{}, maxStateWaiters),
 	}
 }
 
@@ -114,7 +120,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if wait > 0 && r.Header.Get("If-None-Match") == doc.etag {
-			doc = h.awaitState(w, r, doc, wait)
+			doc = h.awaitState(w, r, sourceOf(client), doc, wait)
 		}
 	}
 	header := w.Header()
@@ -153,7 +159,12 @@ func stateWait(r *http.Request) (time.Duration, bool) {
 
 // awaitState holds a relay that already has held until a newer state is
 // stored, its wait ends or it goes away, and returns the state to answer.
-func (h *Handler) awaitState(w http.ResponseWriter, r *http.Request, held *document, wait time.Duration) *document {
+func (h *Handler) awaitState(w http.ResponseWriter, r *http.Request, source netip.Prefix, held *document,
+	wait time.Duration) *document {
+	if !h.holdFor(source) {
+		return held // the source holds its share of polls: answer now
+	}
+	defer h.releaseFor(source)
 	select {
 	case h.waiters <- struct{}{}:
 		defer func() { <-h.waiters }()
@@ -225,29 +236,37 @@ func (h *Handler) serveGrant(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(sealed) //nolint:gosec // G705: an encrypted binary document, never rendered as HTML
 }
 
+// sourceOf is the rate-limited source of a client address: the address for
+// IPv4, its /64 for IPv6 (one host commonly holds a whole /64).
+func sourceOf(addr netip.Addr) netip.Prefix {
+	addr = addr.Unmap()
+	bits := addr.BitLen()
+	if addr.Is6() {
+		bits = ipv6SourceBits
+	}
+	prefix, err := addr.Prefix(bits)
+	if err != nil {
+		return netip.Prefix{}
+	}
+	return prefix
+}
+
 // allow applies the per-source token bucket with bounded memory.
 func (h *Handler) allow(addr netip.Addr) bool {
+	source := sourceOf(addr)
+	if !source.IsValid() {
+		return false
+	}
 	now := h.now()
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	b, ok := h.buckets[addr]
+	b, ok := h.buckets[source]
 	if !ok {
 		if len(h.buckets) >= maxSources {
-			if now.Sub(h.lastPrune) < pruneEvery {
-				return false // full and recently pruned: refuse new sources
-			}
-			h.lastPrune = now
-			for a, old := range h.buckets {
-				if now.Sub(old.last) > 2*time.Second {
-					delete(h.buckets, a)
-				}
-			}
-			if len(h.buckets) >= maxSources {
-				return false
-			}
+			h.evictLocked()
 		}
 		b = &bucket{tokens: sourceBurst, last: now}
-		h.buckets[addr] = b
+		h.buckets[source] = b
 	}
 	b.tokens = min(sourceBurst, b.tokens+now.Sub(b.last).Seconds()*sourceRate)
 	b.last = now
@@ -256,6 +275,51 @@ func (h *Handler) allow(addr netip.Addr) bool {
 	}
 	b.tokens--
 	return true
+}
+
+// evictLocked drops the least recently seen source that holds no long
+// poll. It runs only when the table is full; h.mu is held.
+func (h *Handler) evictLocked() {
+	var oldest netip.Prefix
+	var oldestSeen time.Time
+	for source, b := range h.buckets {
+		if h.held[source] != 0 {
+			continue
+		}
+		if !oldest.IsValid() || b.last.Before(oldestSeen) {
+			oldest, oldestSeen = source, b.last
+		}
+	}
+	if oldest.IsValid() {
+		delete(h.buckets, oldest)
+	}
+}
+
+func (h *Handler) holdFor(source netip.Prefix) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.held[source] >= maxStateWaitersPerSource {
+		return false
+	}
+	h.held[source]++
+	return true
+}
+
+func (h *Handler) releaseFor(source netip.Prefix) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.held[source] <= 1 {
+		delete(h.held, source)
+		return
+	}
+	h.held[source]--
+}
+
+// heldBy reports the polls a source holds (for tests).
+func (h *Handler) heldBy(source netip.Prefix) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.held[source]
 }
 
 // Metrics are the relay authority's collectors. Labels are outcome names.

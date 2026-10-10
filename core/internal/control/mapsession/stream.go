@@ -458,7 +458,11 @@ func (service *StreamService) refreshConnectivity(
 	operationCtx, cancel := context.WithTimeout(ctx, service.options.SnapshotTimeout)
 	next, err := reloader.ReloadConnectivity(operationCtx, current)
 	cancel()
-	if err != nil || !next.IsValid() || next.NetworkRevision() != current.NetworkRevision() {
+	// A new relay grant is issued only after the full refresh has checked
+	// the Device again (a suspension whose wakeup was lost must not get a
+	// fresh ticket from a connectivity reload).
+	if err != nil || !next.IsValid() || next.NetworkRevision() != current.NetworkRevision() ||
+		service.relayGrantNeeded(current, next, time.Now()) {
 		return service.refresh(ctx, machine, request, sink, current)
 	}
 	next, grantChanged := service.grantRelayAccess(ctx, current, next)
@@ -522,6 +526,25 @@ func (service *StreamService) deliver(
 // covers next, and otherwise issues a new one. Without a disco key or when
 // issuing fails, the previous grant stays (it expires on its own) and the
 // next refresh tries again; relay access never ends a map stream.
+// relayGrantNeeded reports whether moving from current to next must issue
+// a new relay grant.
+func (service *StreamService) relayGrantNeeded(current, next Snapshot, now time.Time) bool {
+	access := service.options.RelayAccess
+	if isNilDependency(access) {
+		return false
+	}
+	previous := current.RelayGrant()
+	request, ok := next.RelayGrantRequest()
+	if !ok {
+		return false
+	}
+	mapCurrent := true
+	if freshness, tracked := access.(RelayMapFreshness); tracked && previous.IsValid() {
+		mapCurrent = freshness.RelayMapCurrent(request.Network, previous.mapKey)
+	}
+	return !mapCurrent || !relayGrantCurrent(previous, request, now)
+}
+
 func (service *StreamService) grantRelayAccess(ctx context.Context, current, next Snapshot) (Snapshot, bool) {
 	access := service.options.RelayAccess
 	if isNilDependency(access) {
@@ -529,12 +552,8 @@ func (service *StreamService) grantRelayAccess(ctx context.Context, current, nex
 	}
 	now := time.Now()
 	previous := current.RelayGrant()
-	request, ok := next.RelayGrantRequest()
-	mapCurrent := true
-	if freshness, tracked := access.(RelayMapFreshness); tracked && previous.IsValid() && ok {
-		mapCurrent = freshness.RelayMapCurrent(request.Network, previous.mapKey)
-	}
-	if !ok || (mapCurrent && relayGrantCurrent(previous, request, now)) {
+	request, _ := next.RelayGrantRequest()
+	if !service.relayGrantNeeded(current, next, now) {
 		if previous.IsValid() && now.Before(previous.request.NotAfter) {
 			return next.WithRelayGrant(previous), false
 		}

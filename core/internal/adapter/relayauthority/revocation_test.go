@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -160,5 +161,46 @@ func TestLongPollOutlivesTheListenerWriteTimeout(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusNotModified || time.Since(start) < 900*time.Millisecond {
 		t.Fatalf("held poll: %d after %v", response.StatusCode, time.Since(start))
+	}
+}
+
+// One source cannot take the long-poll slots of every relay: past its own
+// few held polls it is answered at once, while another source still waits.
+func TestLongPollSlotsArePerSource(t *testing.T) {
+	t.Parallel()
+
+	c := newClock(t0)
+	p := newPublisher(t, c, Options{Signer: signer(t, 1), Revocations: &mutableRevocations{}})
+	if err := p.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(p, clientip.Resolver{})
+	held := http.Header{"If-None-Match": {p.state.Load().etag}}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	for range maxStateWaitersPerSource {
+		go func() {
+			r := httptest.NewRequestWithContext(ctx, http.MethodGet, StatePath+"?wait=20", nil)
+			r.RemoteAddr = "192.0.2.1:1000"
+			r.Header = held.Clone()
+			h.ServeHTTP(httptest.NewRecorder(), r)
+		}()
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for h.heldBy(sourceOf(netip.MustParseAddr("192.0.2.1"))) < maxStateWaitersPerSource {
+		if time.Now().After(deadline) {
+			t.Fatal("polls were not held")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	start := time.Now()
+	if w := serve(h, http.MethodGet, StatePath+"?wait=5", "192.0.2.1:1001", held); w.Code != http.StatusNotModified ||
+		time.Since(start) > time.Second {
+		t.Fatalf("poll past the source's slots: %d after %v, want an immediate 304", w.Code, time.Since(start))
+	}
+	start = time.Now()
+	if w := serve(h, http.MethodGet, StatePath+"?wait=1", "192.0.2.2:1000", held); w.Code != http.StatusNotModified ||
+		time.Since(start) < 900*time.Millisecond {
+		t.Fatalf("another source was not held: %d after %v", w.Code, time.Since(start))
 	}
 }

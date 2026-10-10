@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -417,6 +418,8 @@ func TestHandlerRateLimitsPerSource(t *testing.T) {
 	}
 }
 
+// A full source table must never lock out new sources (a relay arriving
+// after an attacker filled it): the least recently seen source is evicted.
 func TestHandlerBoundsSourceTable(t *testing.T) {
 	t.Parallel()
 
@@ -431,13 +434,40 @@ func TestHandlerBoundsSourceTable(t *testing.T) {
 		a := base
 		a[2], a[3] = byte(i>>8), byte(i)
 		h.allow(netip.AddrFrom4(a))
+		c.advance(time.Millisecond)
 	}
-	if h.allow(netip.MustParseAddr("192.0.2.9")) {
-		t.Fatal("new source admitted while the table is full")
+	if !h.allow(netip.MustParseAddr("192.0.2.9")) {
+		t.Fatal("new source refused while the table is full")
 	}
-	c.advance(pruneEvery)
-	if !h.allow(netip.MustParseAddr("192.0.2.9")) || len(h.buckets) != 1 {
-		t.Fatalf("idle sources not pruned: %d buckets", len(h.buckets))
+	if len(h.buckets) > maxSources {
+		t.Fatalf("table grew past its bound: %d", len(h.buckets))
+	}
+	if _, kept := h.buckets[sourceOf(netip.MustParseAddr("10.0.0.0"))]; kept {
+		t.Fatal("the least recently seen source was not the one evicted")
+	}
+}
+
+// Addresses of one IPv6 /64 are one source, as on the relay itself.
+func TestHandlerGroupsIPv6Sources(t *testing.T) {
+	t.Parallel()
+
+	c := newClock(t0)
+	p := newPublisher(t, c, Options{Signer: signer(t, 1)})
+	if err := p.refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(p, clientip.Resolver{})
+	for i := range sourceBurst {
+		remote := fmt.Sprintf("[2001:db8:1:2::%x]:1", i+1)
+		if w := serve(h, http.MethodGet, StatePath, remote, nil); w.Code != http.StatusOK {
+			t.Fatalf("request %d: %d", i, w.Code)
+		}
+	}
+	if w := serve(h, http.MethodGet, StatePath, "[2001:db8:1:2::ffff]:1", nil); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("same /64 past the burst: %d, want 429", w.Code)
+	}
+	if w := serve(h, http.MethodGet, StatePath, "[2001:db8:1:3::1]:1", nil); w.Code != http.StatusOK {
+		t.Fatalf("other /64 limited: %d", w.Code)
 	}
 }
 

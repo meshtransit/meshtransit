@@ -289,3 +289,46 @@ func TestWithConnectivityKeepsRelayGrant(t *testing.T) {
 		t.Fatal("WithConnectivity dropped the relay grant")
 	}
 }
+
+// A connectivity change that needs a new grant (here a new disco key) takes
+// the full refresh, which checks the Device again before granting.
+func TestConnectivityReloadNeedingAGrantTakesTheFullRefresh(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		before := snapshotWithSelfDiscoKey(t, 7)
+		after := snapshotWithSelfDiscoKey(t, 8)
+		access := &countingRelayAccess{}
+		options := streamOptionsFixture(t)
+		options.RelayAccess = access
+		connectivity := newStreamConnectivityWatcher()
+		opener := &reloadingSnapshotOpener{streamSnapshotOpener: streamSnapshotOpener{snapshots: []Snapshot{before, after}}, reloaded: after}
+		service, err := NewStreamService(opener, &streamPresenceStore{}, newStreamRevisionWatcher(), connectivity, options)
+		if err != nil {
+			t.Fatalf("NewStreamService() error = %v", err)
+		}
+		machine, request := authenticatedRequestFixture(t, before)
+		sink := &recordingStreamSink{}
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan error, 1)
+		go func() { result <- service.Serve(ctx, machine, request, sink) }()
+
+		synctest.Wait()
+		change, err := NewConnectivityChanged(before.Scope().NetworkID(), before.NodeID(), before.SessionGeneration(), ConnectivityChangeEndpoints)
+		if err != nil {
+			t.Fatalf("NewConnectivityChanged() error = %v", err)
+		}
+		connectivity.send(t, change)
+		synctest.Wait()
+		if calls, _ := opener.state(); calls != 2 {
+			t.Fatalf("snapshot opens = %d, want the full refresh (2)", calls)
+		}
+		access.mu.Lock()
+		requests := append([]RelayGrantRequest(nil), access.requests...)
+		access.mu.Unlock()
+		if len(requests) != 2 || requests[1].DiscoveryKey != (node.DiscoveryKey{8}) {
+			t.Fatalf("grants = %d, want a second one for the new disco key", len(requests))
+		}
+		cancel()
+		synctest.Wait()
+		<-result
+	})
+}

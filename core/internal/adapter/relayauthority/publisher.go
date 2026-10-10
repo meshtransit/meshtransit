@@ -84,7 +84,10 @@ type Publisher struct {
 	state    atomic.Pointer[document]
 	relayMap atomic.Pointer[document]
 
-	window time.Time // last signed window; owned by the refresh goroutine (and Start before it)
+	// window is the last signed window. Only the refresh goroutine (and
+	// Start before it) writes it, under cacheMu, because request goroutines
+	// read it under cacheMu to sign Network maps and grants.
+	window time.Time
 	// stateIssued and revocationKey describe the current state: when it was
 	// issued (a window start, or a revocation check) and what it revokes.
 	// Owned by the refresh goroutine.
@@ -240,7 +243,9 @@ func (p *Publisher) refresh(ctx context.Context) error {
 			return err
 		}
 	}
+	p.cacheMu.Lock()
 	p.window = now
+	p.cacheMu.Unlock()
 	p.storeState(stateDoc, now, revocationKey)
 	if mapDoc != nil {
 		p.relayMap.Store(mapDoc)
