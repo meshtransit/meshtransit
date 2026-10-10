@@ -454,3 +454,39 @@ func TestWebSocketFallback(t *testing.T) {
 		t.Fatalf("pong over WebSocket: %v", err)
 	}
 }
+
+// replayGuard refuses timestamps it has seen, as the durable store would for
+// an INIT replayed to another replica.
+type replayGuard struct {
+	mu   sync.Mutex
+	seen map[[32]byte]int64
+}
+
+func (guard *replayGuard) AcceptTimestamp(_ context.Context, machine [32]byte, _ []byte, timestamp int64) (bool, error) {
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	if last, found := guard.seen[machine]; found && timestamp <= last {
+		return false, nil
+	}
+	guard.seen[machine] = timestamp
+	return true, nil
+}
+
+func TestDurableGuardRefusesReplayOnAnotherReplica(t *testing.T) {
+	guard := &replayGuard{seen: map[[32]byte]int64{}}
+	first := newFixture(t, func(options *Options) { options.Guard = guard })
+	machine, _ := key.NewMachinePrivate(nil)
+	timestamp := time.Now().UnixMilli()
+	if c, _, _ := first.dial(dialOptions{machine: machine, timestamp: timestamp}); c == nil {
+		t.Fatal("first handshake refused")
+	}
+	// A second replica shares the guard but not the first one's cache.
+	second := newFixture(t, func(options *Options) {
+		options.Guard = guard
+		options.Keys = []ControlKey{{Private: first.control, NotAfter: time.Now().Add(time.Hour)}}
+	})
+	second.control = first.control
+	if c, _, _ := second.dial(dialOptions{machine: machine, timestamp: timestamp}); c != nil {
+		t.Fatal("replayed timestamp accepted by another replica")
+	}
+}

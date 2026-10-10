@@ -104,6 +104,7 @@ const (
 	postgresOperationRelayRevocations          postgresOperation = "relay_revocations"
 	postgresOperationAccessGraphHistory        postgresOperation = "access_graph_history"
 	postgresOperationEnforcementHistory        postgresOperation = "enforcement_history"
+	postgresOperationMTCPTimestamp             postgresOperation = "mtcp_timestamp"
 	postgresOperationActivePolicyRead          postgresOperation = "active_policy_read"
 	postgresOperationAccountSessionCaps        postgresOperation = "account_session_capabilities"
 	postgresOperationAccountSessionLogout      postgresOperation = "account_session_logout"
@@ -205,6 +206,7 @@ var (
 		postgresOperationRelayRevocations,
 		postgresOperationAccessGraphHistory,
 		postgresOperationEnforcementHistory,
+		postgresOperationMTCPTimestamp,
 		postgresOperationActivePolicyRead,
 		postgresOperationAccountSessionCaps,
 		postgresOperationAccountSessionLogout,
@@ -513,6 +515,7 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationRelayRevocations ||
 			operation == postgresOperationAccessGraphHistory ||
 			operation == postgresOperationEnforcementHistory ||
+			operation == postgresOperationMTCPTimestamp ||
 			operation == postgresOperationActivePolicyRead ||
 			operation == postgresOperationAccountSessionCaps ||
 			operation == postgresOperationAccountSessionLogout

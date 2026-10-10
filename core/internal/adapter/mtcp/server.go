@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	mtcpv1 "meshtransit.net/api/mtcp/v1"
+	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/platform/clientip"
 	"meshtransit.net/shared/key"
 	sharedmtcp "meshtransit.net/shared/mtcp"
@@ -50,9 +51,11 @@ type ControlKey struct {
 }
 
 // TimestampGuard accepts a ClientHello timestamp only when it is greater
-// than the last accepted one for the machine key (mtcp-v1 §3, step 3).
+// than the last accepted one for the machine key, durably for keys bound to
+// a Device (mtcp-v1 §3, step 3). The machine key is given as its node
+// domain fingerprint, the index Core's Device bindings use.
 type TimestampGuard interface {
-	AcceptTimestamp(ctx context.Context, machine key.MachinePublic, timestampMS int64) (bool, error)
+	AcceptTimestamp(ctx context.Context, machineFingerprint [32]byte, nodeKey []byte, timestampMS int64) (bool, error)
 }
 
 // SessionHandler gives each established session to the application.
@@ -335,7 +338,7 @@ func (server *Server) handshake(parent context.Context, transport recordConn, pe
 	now := server.options.Now()
 	timestamp := time.UnixMilli(hello.GetTimestampMs())
 	if timestamp.Before(now.Add(-timestampWindow)) || timestamp.After(now.Add(timestampWindow)) ||
-		!server.acceptTimestamp(parent, init.Machine(), hello.GetTimestampMs()) {
+		!server.acceptTimestamp(parent, init.Machine(), hello.GetNodeKey(), hello.GetTimestampMs()) {
 		fail("replay")
 		return
 	}
@@ -366,7 +369,8 @@ func (server *Server) handshake(parent context.Context, transport recordConn, pe
 	session.run(parent, started.Add(handshakeDeadline), pending.releaseSource)
 }
 
-func (server *Server) acceptTimestamp(ctx context.Context, machine key.MachinePublic, timestampMS int64) bool {
+func (server *Server) acceptTimestamp(ctx context.Context, machine key.MachinePublic, nodeKey []byte,
+	timestampMS int64) bool {
 	if !server.recent.accept(machine, timestampMS) {
 		return false
 	}
@@ -375,7 +379,8 @@ func (server *Server) acceptTimestamp(ctx context.Context, machine key.MachinePu
 	}
 	guardCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
-	accepted, err := server.options.Guard.AcceptTimestamp(guardCtx, machine, timestampMS)
+	accepted, err := server.options.Guard.AcceptTimestamp(guardCtx, node.MachineKey(machine).Fingerprint(), nodeKey,
+		timestampMS)
 	if err != nil {
 		server.options.Logger.WarnContext(ctx, "mtcp timestamp check failed", "error_code", "mtcp_timestamp_unavailable")
 		return false

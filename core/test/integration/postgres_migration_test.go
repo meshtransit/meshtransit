@@ -254,6 +254,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		processConfig.Dependencies.CheckTimeout,
 	)
 	assertPostgreSQLDeviceAliasClientVersion(ctx, t, adminConnection, runtimeConnection, runtimePool, registrationReplayCommand)
+	assertPostgreSQLMTCPTimestamp(ctx, t, runtimePool, registrationReplayCommand)
 	assertRuntimePublicNetworkScope(ctx, t, runtimeConnection)
 	assertRuntimeRejectsInvalidPublicNetworkScope(ctx, t, runtimeConnection)
 	assertRuntimeNetworkRevisionLock(ctx, t, runtimeConnection, runtimeContenderConnection)

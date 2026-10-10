@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 136 {
-		t.Fatalf("len(Catalog()) = %d, want 136", len(catalog))
+	if len(catalog) != 137 {
+		t.Fatalf("len(Catalog()) = %d, want 137", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 136 {
-		t.Fatalf("LatestVersion() = %d, want 136", LatestVersion())
+	if LatestVersion() != 137 {
+		t.Fatalf("LatestVersion() = %d, want 137", LatestVersion())
 	}
 }
 
@@ -3281,6 +3281,29 @@ func TestDeviceEnforcementLedger(t *testing.T) {
 	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP "} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 136 must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestMTCPMachineTimestamp(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[136]
+	if migration.Version != 137 {
+		t.Fatalf("migration 137 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh_ops.mtcp_machine_timestamp",
+		"mesh_ops.resolve_map_session_scope(p_machine_fingerprint, p_node_key)",
+		"WHERE stored.last_timestamp_ms < EXCLUDED.last_timestamp_ms",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.accept_mtcp_timestamp_v1(BYTEA, BYTEA, BIGINT) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 137 must contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 137 must not contain %q", forbidden)
 		}
 	}
 }

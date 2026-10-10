@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"net/netip"
 	"os"
 	"strings"
 	"testing"
@@ -447,4 +448,34 @@ func FuzzRecordReader(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestFilterDigestMatchesTheSharedVector(t *testing.T) {
+	// The PacketFilter of shared/policydigest/testdata/packet-filter-v1.json
+	// written as MTCP: an ICMP destination without ports means every port.
+	prefix := func(text string) *mtcpv1.Prefix { return AppendPrefix(netip.MustParsePrefix(text)) }
+	filter := &mtcpv1.PacketFilter{Rules: []*mtcpv1.FilterRule{
+		{
+			Sources: []*mtcpv1.Prefix{prefix("100.64.0.2/32"), prefix("fd7a:115c:a1e0::2/128")},
+			Destinations: []*mtcpv1.Destination{
+				{Prefix: prefix("100.64.0.1/32"), Ports: []*mtcpv1.PortRange{{First: 22, Last: 22}}},
+				{Prefix: prefix("fd7a:115c:a1e0::1/128"), Ports: []*mtcpv1.PortRange{{First: 22, Last: 22}}},
+			},
+			Protocols: []uint32{6},
+		},
+		{
+			Sources:      []*mtcpv1.Prefix{prefix("100.64.0.3/32")},
+			Destinations: []*mtcpv1.Destination{{Prefix: prefix("100.64.0.1/32")}},
+			Protocols:    []uint32{1},
+		},
+	}}
+	digest, grants, err := FilterDigest(filter)
+	if err != nil || grants != 5 ||
+		digest.String() != "sha256:65c3166a6062804e3b2a55acd157d70ce0ebf6fdd91130eecd280654a714251a" {
+		t.Fatalf("digest = %s (%d), %v", digest, grants, err)
+	}
+	filter.Rules[0].Destinations[0].Ports[0].First = 23
+	if _, _, err := FilterDigest(filter); !errors.Is(err, ErrMalformed) {
+		t.Fatalf("inverted port range: %v", err)
+	}
 }
