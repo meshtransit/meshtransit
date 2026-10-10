@@ -23,7 +23,7 @@ DEX_OLD_SOURCE ?=
 DEX_CURRENT_BINARY ?=
 DEX_CURRENT_BINARY_SHA256 ?=
 
-.PHONY: help build build-core build-client package-deb package-deb-meshd package-deb-meshctl lint-client lint-relay build-relay natlab-matrix check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
+.PHONY: help build build-core build-client package-deb package-deb-meshd package-deb-meshctl lint-client lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
 	container-build container-build-multiarch container-push-multiarch container-push-relay-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
 
 help:
@@ -175,6 +175,19 @@ lint-relay:
 
 natlab-matrix:
 	$(GO) test ./test/natlab -run TestTraversalMatrix -count=1 -update
+
+# Regenerates the Go code of api/ protobuf schemas without protoc
+# (hack/protogen); proto-check fails when the committed code is stale.
+proto:
+	$(GO) run -C hack/protogen . ../../api mtcp/v1/mtcp.proto
+
+proto-check: proto
+	git diff --exit-code -- api/
+
+# Recomputes shared/mtcp/testdata/vectors.json with an independent
+# implementation (needs Python 3 with the cryptography package).
+mtcp-crosscheck:
+	python3 shared/mtcp/testdata/crosscheck.py shared/mtcp/testdata/vectors.json
 
 lint-integration:
 	$(GOLANGCI_LINT) run --build-tags=integration \

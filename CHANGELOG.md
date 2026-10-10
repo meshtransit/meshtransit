@@ -20,6 +20,11 @@ merge (2026-10-09) are kept below.
   docs/protocol/policy-digest-v1.md); meshd reports the digest of the rules
   its packet filter enforces; Core compares it with the delivered filter and
   reports enforced, applying, mismatch or not_reported per Device.
+- shared/mtcp (P4a): MTCP v1 records, Noise IK handshake between machine and
+  control keys, encrypted session, fragmentation with bounded zstd, proofs of
+  possession and control key fingerprints; Go types generated from
+  api/mtcp/v1 without protoc (hack/protogen, `make proto`); test vectors
+  cross-checked by an independent Python implementation.
 - Enforcement evidence ledger (R1-69, schema 136): the enforcement-ledger
   worker records per-Device enforcement intervals, seals
   device.enforcement_mismatch and device.enforcement_restored on the Network

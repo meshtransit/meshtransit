@@ -1,7 +1,9 @@
 # MTCP v1: MeshTransit Control Protocol
 
 Draft 1, 2026-10-09. Schema: [`api/mtcp/v1/mtcp.proto`](../../api/mtcp/v1/mtcp.proto).
-Implementation: Core `control` role and meshd (phase P4).
+Implementation: `shared/mtcp` (records, handshake, session, messages,
+proofs), generated types in `api/mtcp/v1` (`make proto`); Core `control` role
+and meshd (phase P4).
 
 MTCP connects a node (meshd) to Core. Over one long-lived, mutually
 authenticated session it registers the node, delivers its network map,
@@ -657,7 +659,11 @@ secrets or other tenants' data, and is at most 512 bytes.
 
 ## 17. Test vectors
 
-`api/mtcp/v1/testdata/` will hold, with the P4 implementation: a complete
-handshake with fixed static and ephemeral keys, transport records with
-fragmentation and ZSTD, and canonical encodings of every message, each
-cross-checked by an independent implementation as for disco v2 and MTRP v1.
+`shared/mtcp/testdata/vectors.json` holds a complete handshake with fixed
+machine, control and ephemeral keys (INIT, RESPONSE, handshake hash), three
+transport records in both directions, node and disco key proofs bound to that
+handshake, the control key ID and the control key fingerprint.
+`shared/mtcp/testdata/crosscheck.py` recomputes all of them with an
+independent Noise IK implementation (Python, `cryptography` package):
+`make mtcp-crosscheck`. Fragmentation, ZSTD limits and the protobuf encoding
+of messages are pinned by the Go tests of `shared/mtcp`.
