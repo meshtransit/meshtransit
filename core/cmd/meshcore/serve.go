@@ -12,6 +12,7 @@ import (
 
 	"meshtransit.net/core/internal/adapter/httpapi"
 	oidcadapter "meshtransit.net/core/internal/adapter/oidc"
+	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	redisadapter "meshtransit.net/core/internal/adapter/redis"
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/enrollment"
@@ -484,12 +485,30 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				issuer: issuer, completion: completion,
 			})
 		}
+		// MTCP v1 (P4b) shares the listener and control key with TS2021.
+		var mtcpServer mtcpRoutes
+		if processConfig.Control.MTCP != nil {
+			timestamps, storeErr := postgresadapter.NewMTCPTimestampStore(storagePools.runtime)
+			if storeErr != nil {
+				logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", storeErr)
+				return 1
+			}
+			server, metrics, mtcpErr := composeMTCP(*processConfig.Control, mapStreamService, mapSessionService,
+				timestamps, logger)
+			if mtcpErr != nil {
+				logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", mtcpErr)
+				return 1
+			}
+			additionalMetrics = append(additionalMetrics, metrics.Collectors()...)
+			mtcpServer = server
+		}
 		controlListener, composeErr := composeControlListener(
 			*processConfig.Control,
 			registrationService,
 			mapSessionService,
 			mapStreamService,
 			relayAuthorityHandler,
+			mtcpServer,
 			logger,
 			browserControl...,
 		)

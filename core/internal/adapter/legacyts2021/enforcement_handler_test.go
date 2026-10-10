@@ -57,7 +57,7 @@ func TestEnforcementHandlerStoresAndClassifiesReports(t *testing.T) {
 		t.Fatal(err)
 	}
 	post := func(method, contentType, body string) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(method, enforcementPath, strings.NewReader(body))
+		request := httptest.NewRequestWithContext(t.Context(), method, enforcementPath, strings.NewReader(body))
 		request.Header.Set("Content-Type", contentType)
 		response := httptest.NewRecorder()
 		bound.ServeHTTP(response, request)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"log/slog"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"meshtransit.net/core/internal/adapter/legacyts2021"
+	mtcpadapter "meshtransit.net/core/internal/adapter/mtcp"
 	"meshtransit.net/core/internal/adapter/relayauthority"
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/enrollment/registration/intake"
@@ -27,6 +29,7 @@ func composeControlListener(
 	mapSessionService legacyts2021.MapSessionService,
 	mapStreamService legacyts2021.MapStreamService,
 	relayAuthority http.Handler,
+	mtcp mtcpRoutes,
 	logger *slog.Logger,
 	browser ...browserControlServices,
 ) (*legacyts2021.ControlListener, error) {
@@ -109,8 +112,8 @@ func composeControlListener(
 		return nil, errors.Join(errInvalidControlComposition, err)
 	}
 	var routes legacyts2021.ControlSessionServer = sessions
-	if relayAuthority != nil {
-		routes = relayAuthorityRoutes{ControlSessionServer: sessions, relay: relayAuthority}
+	if relayAuthority != nil || mtcp != nil {
+		routes = controlRoutes{ControlSessionServer: sessions, relay: relayAuthority, mtcp: mtcp}
 	}
 	listener, err := legacyts2021.NewControlListener(legacyts2021.ControlListenerOptions{
 		Address:          controlConfig.Address,
@@ -127,19 +130,39 @@ func composeControlListener(
 	return listener, nil
 }
 
-// relayAuthorityRoutes serves the relay authority's public documents beside
-// the TS2021 control paths on the same listener.
-type relayAuthorityRoutes struct {
-	legacyts2021.ControlSessionServer
-	relay http.Handler
+// mtcpRoutes is the MTCP v1 server (mtcpadapter.Server).
+type mtcpRoutes interface {
+	http.Handler
+	Shutdown(context.Context) error
 }
 
-func (routes relayAuthorityRoutes) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	if strings.HasPrefix(request.URL.Path, relayauthority.PathPrefix) {
+// controlRoutes serves MTCP v1 and the relay authority's public documents
+// beside the TS2021 control paths on the same listener. Either may be nil.
+type controlRoutes struct {
+	legacyts2021.ControlSessionServer
+	relay http.Handler
+	mtcp  mtcpRoutes
+}
+
+func (routes controlRoutes) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	switch {
+	case routes.mtcp != nil && mtcpadapter.Handles(request.URL.Path):
+		routes.mtcp.ServeHTTP(response, request)
+	case routes.relay != nil && strings.HasPrefix(request.URL.Path, relayauthority.PathPrefix):
 		routes.relay.ServeHTTP(response, request)
-		return
+	default:
+		routes.ControlSessionServer.ServeHTTP(response, request)
 	}
-	routes.ControlSessionServer.ServeHTTP(response, request)
+}
+
+// Shutdown closes and joins MTCP sessions, which the HTTP server stopped
+// tracking when it handed their connections over, and then TS2021 sessions.
+func (routes controlRoutes) Shutdown(ctx context.Context) error {
+	var mtcpErr error
+	if routes.mtcp != nil {
+		mtcpErr = routes.mtcp.Shutdown(ctx)
+	}
+	return errors.Join(mtcpErr, routes.ControlSessionServer.Shutdown(ctx))
 }
 
 var _ legacyts2021.MapSessionService = (*mapsession.Service)(nil)

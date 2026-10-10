@@ -43,6 +43,7 @@ type ControlConfig struct {
 	PingTimeout          time.Duration
 	WriteTimeout         time.Duration
 	Map                  ControlMapConfig
+	MTCP                 *ControlMTCPConfig // nil: MTCP is off
 }
 
 func loadControlConfig(lookup LookupFunc) (ControlConfig, error) {
@@ -118,6 +119,10 @@ func loadControlConfig(lookup LookupFunc) (ControlConfig, error) {
 	if err != nil {
 		return ControlConfig{}, err
 	}
+	mtcpConfig, err := loadControlMTCPConfig(lookup, time.Now())
+	if err != nil {
+		return ControlConfig{}, err
+	}
 
 	return ControlConfig{
 		Address:             address,
@@ -132,6 +137,7 @@ func loadControlConfig(lookup LookupFunc) (ControlConfig, error) {
 		PingTimeout:          pingTimeout,
 		WriteTimeout:         writeTimeout,
 		Map:                  mapConfig,
+		MTCP:                 mtcpConfig,
 	}, nil
 }
 

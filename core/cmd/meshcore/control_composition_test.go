@@ -35,6 +35,7 @@ func TestComposeControlListenerLoadsTLSAndNoiseIdentity(t *testing.T) {
 		controlMapSessionServiceFixture{},
 		controlMapStreamServiceFixture{},
 		nil,
+		nil,
 		discardCompositionLogger(),
 	)
 	if err != nil {
@@ -92,6 +93,7 @@ func TestComposeControlListenerRejectsInvalidDependencies(t *testing.T) {
 				service,
 				mapService,
 				streamService,
+				nil,
 				nil,
 				logger,
 			)
@@ -241,15 +243,51 @@ type routeRecorder struct{ hits int }
 func (r *routeRecorder) ServeHTTP(http.ResponseWriter, *http.Request) { r.hits++ }
 func (*routeRecorder) Shutdown(context.Context) error                 { return nil }
 
-func TestRelayAuthorityRoutesSplitByPrefix(t *testing.T) {
+func TestControlRoutesSplitByPath(t *testing.T) {
 	t.Parallel()
 
-	control, relay := &routeRecorder{}, &routeRecorder{}
-	routes := relayAuthorityRoutes{ControlSessionServer: control, relay: relay}
-	for _, path := range []string{"/relay/v1/state", "/relay/v1/map", "/key", "/ts2021", "/relay/v2/state"} {
+	control, relay, mtcp := &routeRecorder{}, &routeRecorder{}, &routeRecorder{}
+	routes := controlRoutes{ControlSessionServer: control, relay: relay, mtcp: mtcp}
+	for _, path := range []string{"/relay/v1/state", "/relay/v1/map", "/key", "/ts2021", "/relay/v2/state",
+		"/mtcp/v1", "/mtcp/v1/ws", "/mtcp/v1/key", "/mtcp/v2"} {
 		routes.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 	}
-	if relay.hits != 2 || control.hits != 3 {
-		t.Fatalf("relay hits %d, control hits %d", relay.hits, control.hits)
+	if relay.hits != 2 || mtcp.hits != 3 || control.hits != 4 {
+		t.Fatalf("relay hits %d, mtcp hits %d, control hits %d", relay.hits, mtcp.hits, control.hits)
+	}
+	// Without MTCP, its paths reach TS2021, which refuses them.
+	withoutMTCP := controlRoutes{ControlSessionServer: control, relay: relay}
+	withoutMTCP.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/mtcp/v1", nil))
+	if control.hits != 5 || mtcp.hits != 3 {
+		t.Fatal("an MTCP path reached MTCP while it is off")
+	}
+}
+
+type shutdownRecorder struct {
+	routeRecorder
+	order *[]string
+	name  string
+	err   error
+}
+
+func (r *shutdownRecorder) Shutdown(context.Context) error {
+	*r.order = append(*r.order, r.name)
+	return r.err
+}
+
+func TestControlRoutesShutdownJoinsMTCPFirst(t *testing.T) {
+	t.Parallel()
+
+	var order []string
+	failure := errors.New("mtcp drain timed out")
+	routes := controlRoutes{
+		ControlSessionServer: &shutdownRecorder{order: &order, name: "ts2021"},
+		mtcp:                 &shutdownRecorder{order: &order, name: "mtcp", err: failure},
+	}
+	if err := routes.Shutdown(t.Context()); !errors.Is(err, failure) {
+		t.Fatalf("Shutdown() = %v", err)
+	}
+	if strings.Join(order, ",") != "mtcp,ts2021" {
+		t.Fatalf("shutdown order %v", order)
 	}
 }
