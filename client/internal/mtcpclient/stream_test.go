@@ -24,6 +24,17 @@ type streamCore struct {
 	mu       sync.Mutex
 	received []proto.Message
 	sessions atomic.Int32
+	disco    []byte // the node's session disco key, as its options name it
+}
+
+// snapshot is snapshotMessage whose self entry carries the node's disco key,
+// as Core's map does once it has the node's EndpointReport.
+func (core *streamCore) snapshot(epoch uint64) *mtcpv1.MapSnapshot {
+	message := snapshotMessage(epoch)
+	core.mu.Lock()
+	message.Self.DiscoKey = append([]byte(nil), core.disco...)
+	core.mu.Unlock()
+	return message
 }
 
 func newStreamCore(t *testing.T, script func(core *streamCore, s *coreSession, index int32)) *streamCore {
@@ -65,6 +76,19 @@ func (core *streamCore) keyUpdate(s *coreSession) {
 	})
 }
 
+func (core *streamCore) options(t *testing.T) (controlplane.KeyMaterial, controlplane.NetmapOptions) {
+	t.Helper()
+	material, options := streamOptions(t, core.fakeCore)
+	raw, err := parseDiscoKey(options.PeerProbePublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.mu.Lock()
+	core.disco = append([]byte(nil), raw[:]...)
+	core.mu.Unlock()
+	return material, options
+}
+
 func streamOptions(t *testing.T, core *fakeCore) (controlplane.KeyMaterial, controlplane.NetmapOptions) {
 	t.Helper()
 	trustCore := core.client()
@@ -95,39 +119,40 @@ func bytesHexOf(raw []byte) string {
 func TestStreamNetmapDeliversMapsAndReports(t *testing.T) {
 	t.Parallel()
 	deliveredDelta := make(chan struct{})
-	core := newStreamCore(t, func(core *streamCore, s *coreSession, index int32) {
+	core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
 		core.keyUpdate(s)
+		// Core's first map names no disco key for this session yet.
 		_ = s.send(sharedmtcp.MessageMapSnapshot, snapshotMessage(10))
 		core.expect(s, sharedmtcp.MessageMapAck)
-		core.expect(s, sharedmtcp.MessageEndpointReport)
-		_ = s.send(sharedmtcp.MessageMapDelta, &mtcpv1.MapDelta{
-			View:        &mtcpv1.View{Epoch: 10, Seq: 2},
-			PeersRemove: []string{"peer-b"},
-		})
+		report, ok := core.expect(s, sharedmtcp.MessageEndpointReport).(*mtcpv1.EndpointReport)
+		if !ok {
+			return
+		}
+		self := snapshotMessage(10).GetSelf()
+		self.DiscoKey = report.GetDiscoKey()
+		_ = s.send(sharedmtcp.MessageMapDelta, &mtcpv1.MapDelta{View: &mtcpv1.View{Epoch: 10, Seq: 2}, Self: self})
+		core.expect(s, sharedmtcp.MessageMapAck)
+		_ = s.send(sharedmtcp.MessageMapDelta, &mtcpv1.MapDelta{View: &mtcpv1.View{Epoch: 10, Seq: 3},
+			PeersRemove: []string{"peer-b"}})
 		core.expect(s, sharedmtcp.MessageMapAck)
 		<-deliveredDelta
 		// A gap asks for a resync; the answer is a new epoch.
 		_ = s.send(sharedmtcp.MessageMapDelta, &mtcpv1.MapDelta{View: &mtcpv1.View{Epoch: 10, Seq: 9}})
 		resync, ok := core.expect(s, sharedmtcp.MessageMapResync).(*mtcpv1.MapResync)
-		if !ok || resync.GetView().GetSeq() != 2 {
+		if !ok || resync.GetView().GetSeq() != 3 {
 			return
 		}
-		_ = s.send(sharedmtcp.MessageMapSnapshot, snapshotMessage(11))
+		_ = s.send(sharedmtcp.MessageMapSnapshot, core.snapshot(11))
 		core.expect(s, sharedmtcp.MessageMapAck)
 		_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_SUSPENDED})
 		answerPings(s)
 	})
-	material, options := streamOptions(t, core.fakeCore)
-	enforcement := make(chan controlplane.EnforcementReport, 1)
-	options.EnforcementReports = enforcement
+	material, options := core.options(t)
 	var snapshots []networkmap.Snapshot
 	var once sync.Once
 	err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
 		func(_ context.Context, snapshot networkmap.Snapshot) error {
 			snapshots = append(snapshots, snapshot)
-			if len(snapshots) == 1 {
-				enforcement <- controlplane.EnforcementReport{Digest: policydigest.Digest{1}, Grants: 2, AppliedAt: time.Now()}
-			}
 			if len(snapshots) == 2 {
 				once.Do(func() { close(deliveredDelta) })
 			}
@@ -136,34 +161,65 @@ func TestStreamNetmapDeliversMapsAndReports(t *testing.T) {
 	if !errors.Is(err, controlplane.ErrNetmapAuthorityPaused) {
 		t.Fatalf("StreamNetmap = %v, want paused", err)
 	}
+	// The first map waited for the self entry with this session's disco key.
 	if len(snapshots) != 3 || len(snapshots[0].Peers) != 2 || len(snapshots[1].Peers) != 1 || len(snapshots[2].Peers) != 2 ||
-		snapshots[2].Revision <= snapshots[1].Revision {
+		snapshots[0].Self.DiscoveryKey != options.PeerProbePublicKey || snapshots[2].Revision <= snapshots[1].Revision {
 		t.Fatalf("%d snapshots delivered", len(snapshots))
 	}
 	core.mu.Lock()
 	defer core.mu.Unlock()
-	var pong, report, enforced bool
+	var pong, report bool
 	for _, message := range core.received {
 		switch m := message.(type) {
 		case *mtcpv1.Pong:
 			pong = pong || string(m.GetNonce()) == "n1"
 		case *mtcpv1.EndpointReport:
 			report = report || len(m.GetDiscoKey()) == 32
-		case *mtcpv1.EnforcementReport:
-			enforced = enforced || m.GetGrants() == 2
 		}
 	}
 	if !pong || !report {
 		t.Fatalf("KeyUpdate acknowledged %t, endpoint report sent %t", pong, report)
 	}
-	_ = enforced // timing: the report may follow the resync
+}
+
+func TestStreamNetmapSendsEnforcementEvidence(t *testing.T) {
+	t.Parallel()
+	received := make(chan *mtcpv1.EnforcementReport, 1)
+	core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
+		core.keyUpdate(s)
+		_ = s.send(sharedmtcp.MessageMapSnapshot, core.snapshot(1))
+		if report, ok := core.expect(s, sharedmtcp.MessageEnforcementReport).(*mtcpv1.EnforcementReport); ok {
+			received <- report
+		}
+		_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_REVOKED})
+		answerPings(s)
+	})
+	material, options := core.options(t)
+	enforcement := make(chan controlplane.EnforcementReport, 1)
+	options.EnforcementReports = enforcement
+	err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
+		func(context.Context, networkmap.Snapshot) error {
+			enforcement <- controlplane.EnforcementReport{Digest: policydigest.Digest{1}, Grants: 2, AppliedAt: time.Now()}
+			return nil
+		})
+	if !errors.Is(err, controlplane.ErrNetmapAuthorityRevoked) {
+		t.Fatalf("StreamNetmap = %v", err)
+	}
+	select {
+	case report := <-received:
+		if report.GetGrants() != 2 || report.GetDigest()[0] != 1 {
+			t.Fatalf("enforcement report %v", report)
+		}
+	default:
+		t.Fatal("no enforcement report reached Core")
+	}
 }
 
 func TestStreamNetmapReconnectsAndEndsOnRevocation(t *testing.T) {
 	t.Parallel()
 	core := newStreamCore(t, func(core *streamCore, s *coreSession, index int32) {
 		core.keyUpdate(s)
-		_ = s.send(sharedmtcp.MessageMapSnapshot, snapshotMessage(uint64(max(index, 1))))
+		_ = s.send(sharedmtcp.MessageMapSnapshot, core.snapshot(uint64(max(index, 1))))
 		core.expect(s, sharedmtcp.MessageMapAck)
 		if index == 1 {
 			return // the session drops; the node reconnects
@@ -171,7 +227,7 @@ func TestStreamNetmapReconnectsAndEndsOnRevocation(t *testing.T) {
 		_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_LOGGED_OUT})
 		answerPings(s)
 	})
-	material, options := streamOptions(t, core.fakeCore)
+	material, options := core.options(t)
 	delivered := 0
 	err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
 		func(context.Context, networkmap.Snapshot) error { delivered++; return nil })
@@ -190,7 +246,7 @@ func TestStreamNetmapRefusesAnotherControlKey(t *testing.T) {
 		})
 		answerPings(s)
 	})
-	material, options := streamOptions(t, core.fakeCore)
+	material, options := core.options(t)
 	err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
 		func(context.Context, networkmap.Snapshot) error { return nil })
 	if !errors.Is(err, controlplane.ErrControlKeyChanged) {
@@ -202,10 +258,10 @@ func TestStreamNetmapConsumerFailureIsPermanent(t *testing.T) {
 	t.Parallel()
 	core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
 		core.keyUpdate(s)
-		_ = s.send(sharedmtcp.MessageMapSnapshot, snapshotMessage(1))
+		_ = s.send(sharedmtcp.MessageMapSnapshot, core.snapshot(1))
 		answerPings(s)
 	})
-	material, options := streamOptions(t, core.fakeCore)
+	material, options := core.options(t)
 	err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
 		func(context.Context, networkmap.Snapshot) error { return errors.New("data plane failed") })
 	if !errors.Is(err, controlplane.ErrNetmapConsumer) || core.sessions.Load() != 1 {

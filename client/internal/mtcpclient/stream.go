@@ -1,6 +1,7 @@
 package mtcpclient
 
 import (
+	"bytes"
 	"context"
 	cryptorand "crypto/rand"
 	"encoding/hex"
@@ -372,24 +373,29 @@ func (run *sessionRun) keyUpdate(ctx context.Context, update *mtcpv1.KeyUpdate) 
 // mapChanged delivers the view, acknowledges it, and after the first map
 // of the session sends the node's reports.
 func (run *sessionRun) mapChanged(ctx context.Context, view *mtcpv1.View) error {
-	if err := run.deliver(ctx); err != nil {
-		return err
-	}
 	if err := run.send(sharedmtcp.MessageMapAck, &mtcpv1.MapAck{View: view}); err != nil {
 		return err
 	}
 	if !run.mapped {
 		run.mapped = true
 		// The first report follows the first map, even without candidates:
-		// the relay grant needs the disco key (mtcp-v1 §8.1).
-		return run.sendReports(nil)
+		// Core learns this session's disco key from it, which the self
+		// entry and the relay grant need (mtcp-v1 §8.1).
+		if err := run.sendReports(nil); err != nil {
+			return err
+		}
 	}
-	return nil
+	return run.deliver(ctx)
 }
 
-// deliver hands a changed product snapshot to the daemon.
+// deliver hands a changed product snapshot to the daemon, once the map's
+// self entry carries this session's disco key: until Core has applied the
+// first EndpointReport it may name none, or the previous session's.
 func (run *sessionRun) deliver(ctx context.Context) error {
 	stream := run.stream
+	if !bytes.Equal(run.state.self.GetDiscoKey(), stream.disco[:]) {
+		return nil
+	}
 	snapshot, err := run.state.build(snapshotInput{
 		revision: stream.revision + 1, controlTime: run.controlTime,
 		now: time.Now(),
