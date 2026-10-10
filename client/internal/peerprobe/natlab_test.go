@@ -29,6 +29,7 @@ type labNode struct {
 	srflx    netip.AddrPort
 	host     netip.AddrPort
 	mapped   netip.AddrPort // port mapping on the home router, if any
+	hidden   bool           // Core publishes no endpoints for the node
 	paths    chan pathdiscovery.PathObservation
 	peerMu   sync.Mutex
 	peerNode *labNode
@@ -102,8 +103,40 @@ func newMappedLabNode(t *testing.T, lab *natlab.Lab, name string, profile natlab
 	return n
 }
 
+// newFirewalledLabNode places the node on an IPv6-only network behind a
+// stateful firewall; it learns its (unchanged) address from an IPv6 STUN
+// server, as meshd does.
+func newFirewalledLabNode(t *testing.T, lab *natlab.Lab, name string, filtering disco.Filtering) *labNode {
+	t.Helper()
+	home, err := lab.AddFirewalledNode(name, filtering)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := home.Host.Listen(41641)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	disco, err := key.NewDiscoPrivate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var node key.NodePublic
+	_, _ = rand.Read(node[:])
+	n := &labNode{
+		t: t, conn: conn, socket: pathdiscovery.Socket{Port: 41641, Generation: 1},
+		disco: disco, node: node, host: conn.LocalAddrPort(),
+		paths: make(chan pathdiscovery.PathObservation, 64),
+	}
+	n.srflx = n.stunMapping(lab.STUN6()[0])
+	return n
+}
+
 // published returns the endpoints Core publishes for the node.
 func (n *labNode) published() []netip.AddrPort {
+	if n.hidden {
+		return nil
+	}
 	if n.mapped.IsValid() {
 		return []netip.AddrPort{n.srflx, n.mapped}
 	}
@@ -286,6 +319,66 @@ func TestMeshdTraversalPortMapping(t *testing.T) {
 			t.Parallel()
 			if got, _ := meshdTraversesMapped(t, c.a, c.b, true, 8*time.Second); !got {
 				t.Fatal("no direct path although a's router maps its port")
+			}
+		})
+	}
+}
+
+// TestMeshdTraversalIPv6Firewalls runs meshd's disco runtime between two
+// IPv6 hosts, each behind a stateful firewall that admits only replies to
+// what the host sent (P5c). With the addresses from Core, or with none and
+// only CALL_ME_MAYBE through the relay, both sides ping at once, which opens
+// both firewalls, and the pair goes direct over IPv6.
+func TestMeshdTraversalIPv6Firewalls(t *testing.T) {
+	if testing.Short() {
+		t.Skip("NAT lab traversal takes a few seconds")
+	}
+	for _, hidden := range []bool{false, true} {
+		name := "published"
+		if hidden {
+			name = "call-me-maybe-only"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			lab, err := natlab.NewLab(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(lab.Close)
+			na := newFirewalledLabNode(t, lab, "a", disco.FilteringAddressAndPortDependent)
+			nb := newFirewalledLabNode(t, lab, "b", disco.FilteringAddressAndPortDependent)
+			if na.srflx != na.host || !na.host.Addr().Is6() {
+				t.Fatalf("a firewall must not translate: host %s, STUN %s", na.host, na.srflx)
+			}
+			na.hidden, nb.hidden = hidden, hidden
+			// Unsolicited packets do not cross the firewalls.
+			if _, err := na.conn.WriteToUDPAddrPort([]byte("x"), nb.host); err != nil {
+				t.Fatal(err)
+			}
+			na.start(nb)
+			nb.start(na)
+			na.activate(nb)
+			nb.activate(na)
+			deadline := time.After(8 * time.Second)
+			var gotA, gotB bool
+			for !gotA || !gotB {
+				select {
+				case observation := <-na.paths:
+					if !observation.RemoteEndpoint.Addr().Is6() {
+						t.Fatalf("a's direct path %s is not IPv6", observation.RemoteEndpoint)
+					}
+					gotA = true
+				case observation := <-nb.paths:
+					if !observation.RemoteEndpoint.Addr().Is6() {
+						t.Fatalf("b's direct path %s is not IPv6", observation.RemoteEndpoint)
+					}
+					gotB = true
+				case <-deadline:
+					t.Fatalf("no direct IPv6 path (a %v, b %v)", gotA, gotB)
+				}
+			}
+			if hidden && na.runtime.telemetry.Snapshot().CallMeMaybeAccepted+nb.runtime.telemetry.Snapshot().CallMeMaybeAccepted == 0 {
+				t.Fatal("connected without CALL_ME_MAYBE although Core published nothing")
 			}
 		})
 	}

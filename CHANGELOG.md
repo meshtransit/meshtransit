@@ -63,6 +63,15 @@ merge (2026-10-09) are kept below.
   the metadata service and offers them as static candidates with the
   WireGuard port (`--cloud-metadata=auto|off`). `meshctl status` and
   `meshctl netcheck` show them.
+- IPv6 hardening (P5c): IPv6 host candidates follow the kernel's address
+  state (no tentative, duplicate or deprecated addresses; privacy addresses
+  only without a stable one; at most four); CALL_ME_MAYBE sets the port
+  mapped and global IPv6 flags; a peer pinging from a known address while no
+  path is proven gets an immediate probe, so stateful IPv6 firewalls open
+  together. meshrelay gains `--public-ipv6` for RFC 5780 attributes to IPv6
+  clients. The NAT lab has IPv6 STUN and firewalled IPv6 nodes; two IPv6
+  hosts behind address-and-port-dependent firewalls go direct, also when
+  Core publishes no endpoints and only CALL_ME_MAYBE carries them.
 
 ## meshd (before the merge)
 

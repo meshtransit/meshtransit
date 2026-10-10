@@ -70,10 +70,11 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 	var stun *stunserver.Server
 	if cfg.stunAddr != "" {
 		stun, err = stunserver.Listen(stunserver.Config{
-			Primary:    cfg.stunAddr,
-			AltPort:    cfg.stunAltPort,
-			PublicAddr: cfg.publicIP,
-			Metrics:    m.STUN,
+			Primary:     cfg.stunAddr,
+			AltPort:     cfg.stunAltPort,
+			PublicAddr:  cfg.publicIP,
+			PublicAddr6: cfg.publicIPv6,
+			Metrics:     m.STUN,
 		})
 		if err != nil {
 			return err

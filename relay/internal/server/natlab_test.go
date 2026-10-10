@@ -81,7 +81,8 @@ type labClient struct {
 }
 
 func dialLabRelay(t *testing.T, lab *natlab.Lab, relay labRelay, name string, profile natlab.Profile,
-	node byte) *labClient {
+	node byte,
+) *labClient {
 	t.Helper()
 	host, err := lab.AddNode(name, profile)
 	if err != nil {

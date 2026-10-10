@@ -572,6 +572,19 @@ func (r *Registry) MarkPong(peerID uint64, now time.Time) {
 	r.mu.Unlock()
 }
 
+// RecentPong reports whether the peer answered a probe within window: it
+// has a direct path that was proven recently.
+func (r *Registry) RecentPong(peerID uint64, now time.Time, window time.Duration) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	peer, exists := r.byID[peerID]
+
+	return exists && !peer.lastPong.IsZero() && now.Sub(peer.lastPong) < window
+}
+
 // PeerCandidates returns the current candidates of one peer.
 func (r *Registry) PeerCandidates(peerID uint64, now time.Time) []netip.AddrPort {
 	if r == nil {

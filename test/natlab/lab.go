@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net/netip"
+	"slices"
 	"sync"
 
 	"meshtransit.net/shared/disco"
@@ -64,10 +65,12 @@ func Profiles() []Profile {
 type Lab struct {
 	Net *Network
 
-	mu      sync.Mutex
-	servers []*STUNServer
-	public  int // last public host number handed out in 198.51.100.0/24
-	carrier int // last carrier NAT number handed out in 100.64.0.0/24
+	mu       sync.Mutex
+	servers  []*STUNServer
+	servers6 []*STUNServer
+	public   int // last public host number handed out in 198.51.100.0/24
+	carrier  int // last carrier NAT number handed out in 100.64.0.0/24
+	site6    int // last IPv6 site prefix handed out in 2001:db8:100::/40
 }
 
 // STUN server addresses (documentation ranges, RFC 5737).
@@ -75,6 +78,10 @@ var (
 	stunAddrs = [][2]netip.Addr{
 		{netip.MustParseAddr("203.0.113.1"), netip.MustParseAddr("203.0.113.2")},
 		{netip.MustParseAddr("203.0.113.3"), netip.MustParseAddr("203.0.113.4")},
+	}
+	// stun6Addrs are the IPv6 STUN servers (documentation range, RFC 3849).
+	stun6Addrs = [][2]netip.Addr{
+		{netip.MustParseAddr("2001:db8:ffff::1"), netip.MustParseAddr("2001:db8:ffff::2")},
 	}
 	// LANHost is the address every node gets on its home LAN, so that
 	// identical private candidates on both sides are part of every test.
@@ -103,7 +110,31 @@ func NewLab(clock Clock) (*Lab, error) {
 		}
 		l.servers = append(l.servers, s)
 	}
+	for i, pair := range stun6Addrs {
+		h, err := l.Net.NewHost(fmt.Sprintf("stun6-%d", i+1), l.Net.Internet, pair[0], pair[1])
+		if err != nil {
+			l.Close()
+			return nil, err
+		}
+		s, err := NewSTUNServer(h, STUNPort, STUNAltPort)
+		if err != nil {
+			l.Close()
+			return nil, err
+		}
+		l.servers6 = append(l.servers6, s)
+	}
 	return l, nil
+}
+
+// STUN6 returns the primary endpoints of the lab's IPv6 STUN servers.
+func (l *Lab) STUN6() []netip.AddrPort {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]netip.AddrPort, 0, len(l.servers6))
+	for _, s := range l.servers6 {
+		out = append(out, s.Addr())
+	}
+	return out
 }
 
 // STUN returns the primary endpoints of the lab's STUN servers.
@@ -120,8 +151,8 @@ func (l *Lab) STUN() []netip.AddrPort {
 // Close stops the STUN servers.
 func (l *Lab) Close() {
 	l.mu.Lock()
-	servers := l.servers
-	l.servers = nil
+	servers := slices.Concat(l.servers, l.servers6)
+	l.servers, l.servers6 = nil, nil
 	l.mu.Unlock()
 	for _, s := range servers {
 		s.Close()
@@ -171,6 +202,28 @@ func (l *Lab) AddHomeNode(name string, p Profile) (HomeNode, error) {
 	}
 	host, err := l.Net.NewHost(name, outside, LANHost)
 	return HomeNode{Host: host, Router: router, LAN: outside}, err
+}
+
+// AddFirewalledNode places an IPv6-only host behind a stateful firewall
+// with filtering f, as on an IPv6 home or mobile network: the host has a
+// global address, but unsolicited inbound packets are dropped. The firewall
+// is returned as the node's router.
+func (l *Lab) AddFirewalledNode(name string, f disco.Filtering) (HomeNode, error) {
+	l.mu.Lock()
+	l.site6++
+	site := l.site6
+	l.mu.Unlock()
+	prefix := netip.PrefixFrom(netip.AddrFrom16([16]byte{
+		0x20, 0x01, 0x0d, 0xb8, 0x01, byte(site), //nolint:gosec // labs hold far fewer than 255 nodes
+	}), 64)
+	firewall, lan, err := l.Net.NewFirewall(name+"-fw", NATConfig{Filtering: f, Seed: seed(name, "ipv6")}, l.Net.Internet, prefix)
+	if err != nil {
+		return HomeNode{}, err
+	}
+	address := prefix.Addr().As16()
+	address[15] = 0x10
+	host, err := l.Net.NewHost(name, lan, netip.AddrFrom16(address))
+	return HomeNode{Host: host, Router: firewall, LAN: lan}, err
 }
 
 func (l *Lab) nextPublic() netip.Addr {

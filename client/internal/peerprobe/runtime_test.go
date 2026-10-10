@@ -237,6 +237,7 @@ func TestRuntimeLimitsAuthenticatedPingResponses(t *testing.T) {
 	remoteChannel := testPeerChannel(t, remote, local)
 	source := netip.MustParseAddrPort("203.0.113.30:41641")
 	runtime.registry.LearnPeerReflexive(snapshot.Peers[0].ID, source, clock.Now()) // no extra probe
+	runtime.registry.MarkPong(snapshot.Peers[0].ID, clock.Now())                   // a proven path: no answer probe
 	for index := 0; index < maxIncomingPingsPerPeer+1; index++ {
 		packet, err := remoteChannel.Seal(disco.Ping{
 			TxID: disco.TxID{byte(index + 1)},

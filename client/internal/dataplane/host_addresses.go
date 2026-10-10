@@ -39,7 +39,7 @@ func localHostAddresses() ([]netip.Addr, error) {
 		})
 	}
 
-	return usableHostAddresses(observed), nil
+	return selectIPv6HostAddresses(usableHostAddresses(observed), ipv6AddressStates()), nil
 }
 
 // usableHostAddresses keeps addresses a peer could reach over the underlay.

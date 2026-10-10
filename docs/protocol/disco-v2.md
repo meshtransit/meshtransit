@@ -110,6 +110,11 @@ Endpoint kinds: 1 host, 2 server-reflexive (STUN), 3 port mapped
 (UPnP/NAT-PMP/PCP), 4 static (configured), 5 peer-reflexive (learned from a
 PONG). Other values: reject the message.
 
+A sender sets bit0 when the list contains a port-mapped endpoint and bit1 when
+it contains a global (not unique-local) IPv6 endpoint of its own (host,
+server-reflexive, port mapped or static). The bits are informational: the
+receiver probes every listed endpoint either way.
+
 The receiver MUST reject the message if `seq` is not greater than the last
 accepted `seq` from this sender disco key, or if `|now − sent_at| > 60 s`. On
 acceptance it merges the endpoints into the peer's candidate set (bounded,

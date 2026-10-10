@@ -33,9 +33,12 @@ type Config struct {
 	Primary, AltPort          string
 	AltAddrListen, AltBoth    string
 	PublicAddr, PublicAltAddr netip.Addr // as clients reach them; PublicAltAddr optional
-	GlobalRate, SourceRate    float64
-	Now                       func() time.Time
-	Metrics                   func(result string)
+	// PublicAddr6 is the primary address as IPv6 clients reach it. IPv6
+	// clients get RFC 5780 attributes only with it; families never mix.
+	PublicAddr6            netip.Addr
+	GlobalRate, SourceRate float64
+	Now                    func() time.Time
+	Metrics                func(result string)
 }
 
 // Server is a running STUN server.
@@ -157,12 +160,13 @@ func (s *Server) answer(a, p int, frame []byte, from netip.AddrPort) {
 		return
 	}
 	var origin, other netip.AddrPort
-	if pub := s.publicAddr(ra); pub.IsValid() {
+	client := from.Addr().Unmap()
+	if pub := s.publicAddr(ra, client); pub.IsValid() {
 		origin = netip.AddrPortFrom(pub, s.ports[rp])
 	}
-	if pub, port := s.publicAddr(1-a), s.ports[1-p]; port != 0 {
+	if pub, port := s.publicAddr(1-a, client), s.ports[1-p]; port != 0 {
 		if !pub.IsValid() {
-			pub = s.publicAddr(a) // alternate port only: same address
+			pub = s.publicAddr(a, client) // alternate port only: same address
 		}
 		if pub.IsValid() {
 			other = netip.AddrPortFrom(pub, port)
@@ -178,7 +182,13 @@ func (s *Server) answer(a, p int, frame []byte, from netip.AddrPort) {
 	}
 }
 
-func (s *Server) publicAddr(a int) netip.Addr {
+func (s *Server) publicAddr(a int, client netip.Addr) netip.Addr {
+	if client.Is6() {
+		if a == 0 {
+			return s.cfg.PublicAddr6
+		}
+		return netip.Addr{} // no alternate IPv6 address
+	}
 	if a == 0 {
 		return s.cfg.PublicAddr
 	}

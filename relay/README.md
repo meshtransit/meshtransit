@@ -21,6 +21,7 @@ meshrelay serve \
 | `--udp` | `0.0.0.0:3479` | MTRP UDP |
 | `--stun`, `--stun-alt` | `0.0.0.0:3478`, `0.0.0.0:3480` | STUN and its alternate port |
 | `--public-ip` | none | Address advertised in RFC 5780 attributes |
+| `--public-ipv6` | none | IPv6 address advertised to IPv6 clients in RFC 5780 attributes. To serve IPv6, listen on `[::]` (for example `--udp [::]:3479 --stun [::]:3478 --stun-alt [::]:3480 --tls [::]:443`); a `[::]` socket also accepts IPv4 on Linux |
 | `--admin` | `127.0.0.1:9479` | `/metrics` (Prometheus) and `/healthz` |
 | `--drain-timeout` | `5s` | Time clients get to move away on SIGTERM |
 | `--tls` | off | TLS listen address (for example `0.0.0.0:443`): ALPN `mtrp/1` for framed MTRP, `http/1.1` for WebSocket at `/mtrp/v1` |

@@ -123,3 +123,51 @@ func TestSTUNServerRejectsAndLimits(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// TestIPv6ClientsGetIPv6Attributes: a dual-stack server reports its IPv6
+// public address to IPv6 clients and its IPv4 address to IPv4 clients.
+func TestIPv6ClientsGetIPv6Attributes(t *testing.T) {
+	t.Parallel()
+	probe, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.IPv6loopback})
+	if err != nil {
+		t.Skip("no IPv6 loopback:", err)
+	}
+	_ = probe.Close()
+	s := startServer(t, Config{
+		Primary: "[::]:0", AltPort: "[::]:0",
+		PublicAddr:  netip.MustParseAddr("198.51.100.1"),
+		PublicAddr6: netip.MustParseAddr("2001:db8::1"),
+	})
+	primary, alt := s.Ports()
+	for _, tt := range []struct {
+		network, server string
+		origin, other   netip.AddrPort
+	}{
+		{"udp6", "::1", netip.AddrPortFrom(netip.MustParseAddr("2001:db8::1"), primary), netip.AddrPortFrom(netip.MustParseAddr("2001:db8::1"), alt)},
+		{"udp4", "127.0.0.1", netip.AddrPortFrom(netip.MustParseAddr("198.51.100.1"), primary), netip.AddrPortFrom(netip.MustParseAddr("198.51.100.1"), alt)},
+	} {
+		conn, err := net.ListenUDP(tt.network, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := stun.TxID{1, 2, 3}
+		target := netip.AddrPortFrom(netip.MustParseAddr(tt.server), primary)
+		if _, err := conn.WriteToUDPAddrPort(stun.AppendBindingRequest(nil, id, stun.ChangeRequest{}), target); err != nil {
+			t.Fatal(err)
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		buf := make([]byte, 1500)
+		n, _, err := conn.ReadFromUDPAddrPort(buf)
+		_ = conn.Close()
+		if err != nil {
+			t.Fatalf("%s: %v", tt.network, err)
+		}
+		message, err := stun.Parse(buf[:n])
+		if err != nil || message.TxID != id {
+			t.Fatalf("%s: %v", tt.network, err)
+		}
+		if message.ResponseOrigin != tt.origin || message.OtherAddress != tt.other {
+			t.Errorf("%s: origin %s other %s", tt.network, message.ResponseOrigin, message.OtherAddress)
+		}
+	}
+}

@@ -36,8 +36,11 @@ const (
 	callMeMaybeSlow       = 15 * time.Second
 	callMeMaybeFastPeriod = time.Minute
 	directTrust           = 6500 * time.Millisecond
-	maxBurstQueue         = 16
-	maxLocalReflexive     = 8
+	// maxAnsweredPeers bounds the answer-probe bookkeeping; it restarts
+	// when full.
+	maxAnsweredPeers  = 4096
+	maxBurstQueue     = 16
+	maxLocalReflexive = 8
 )
 
 // PathObserver receives authenticated direct-path observations. It must return
@@ -89,6 +92,9 @@ type Runtime struct {
 	active      pathdiscovery.ProbeGeneration
 	windowMu    sync.Mutex
 	window      pingWindow
+	// answered is when each peer was last probed in answer to its ping;
+	// guarded by windowMu.
+	answered map[uint64]time.Time
 
 	localMu        sync.Mutex
 	localEndpoints []disco.Endpoint
@@ -455,7 +461,8 @@ func (r *Runtime) processDatagram(datagram receivedDatagram) {
 		r.answerCallMeMaybe(generation, message)
 	case IncomingPing:
 		r.telemetry.RecordAuthenticatedPing()
-		if r.registry.LearnPeerReflexive(message.PeerID(), message.Source(), now) {
+		learned := r.registry.LearnPeerReflexive(message.PeerID(), message.Source(), now)
+		if learned {
 			// A ping from an address we did not know is the hole its NAT
 			// just opened towards us: answer and probe it straight away.
 			r.telemetry.RecordPeerReflexiveLearned()
@@ -466,6 +473,16 @@ func (r *Runtime) processDatagram(datagram receivedDatagram) {
 		if !r.allowIncomingPing(now, message) {
 			r.telemetry.RecordPingRateLimited()
 			return
+		}
+		if !learned && !r.registry.RecentPong(message.PeerID(), now, directTrust) &&
+			r.allowAnswerProbe(message.PeerID(), now) {
+			// A known address pinging us while we have no proven path: its
+			// NAT or firewall is open towards us now, though our earlier
+			// probes may have been dropped. Probe it now rather than at the
+			// next round (simultaneous open through stateful firewalls).
+			r.offerBurst(probeBatch{generation: generation, targets: []probeTarget{{
+				peerID: message.PeerID(), endpoint: message.Source(),
+			}}})
 		}
 		packet, err := r.registry.SealPong(message)
 		if err != nil {
@@ -640,6 +657,22 @@ func (r *Runtime) allowIncomingPing(now time.Time, ping IncomingPing) bool {
 	return true
 }
 
+// allowAnswerProbe permits one probe in answer to a peer's ping per
+// directTrust, so a peer pinging repeatedly cannot multiply our traffic.
+func (r *Runtime) allowAnswerProbe(peerID uint64, now time.Time) bool {
+	r.windowMu.Lock()
+	defer r.windowMu.Unlock()
+	if last, ok := r.answered[peerID]; ok && now.Sub(last) < directTrust && !now.Before(last) {
+		return false
+	}
+	if r.answered == nil || len(r.answered) >= maxAnsweredPeers {
+		r.answered = make(map[uint64]time.Time)
+	}
+	r.answered[peerID] = now
+
+	return true
+}
+
 // roundTargets interleaves every probe-eligible peer's candidates (map
 // endpoints first, then learned ones), so one peer's long list cannot starve
 // the others.
@@ -752,7 +785,24 @@ func (r *Runtime) callMeMaybe(now time.Time) (disco.CallMeMaybe, bool) {
 		return disco.CallMeMaybe{}, false
 	}
 	r.callSeq++
-	return disco.CallMeMaybe{Seq: r.callSeq, SentAt: now.UnixMilli(), NAT: r.localNAT, Endpoints: endpoints}, true
+	return disco.CallMeMaybe{
+		Seq: r.callSeq, SentAt: now.UnixMilli(), NAT: r.localNAT, Flags: callMeMaybeFlags(endpoints), Endpoints: endpoints,
+	}, true
+}
+
+// callMeMaybeFlags reports a port mapping and global IPv6 reachability
+// (disco v2 §3.3) from the endpoints being advertised.
+func callMeMaybeFlags(endpoints []disco.Endpoint) disco.Flags {
+	var flags disco.Flags
+	for _, endpoint := range endpoints {
+		if endpoint.Kind == disco.EndpointPortMapped {
+			flags |= disco.FlagPortMapped
+		}
+		if address := endpoint.Addr.Addr(); address.Is6() && !address.IsPrivate() && endpoint.Kind != disco.EndpointPeerReflexive {
+			flags |= disco.FlagIPv6
+		}
+	}
+	return flags
 }
 
 // answerCallMeMaybe pings every candidate of the peer at once, so both NATs

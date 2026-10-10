@@ -24,6 +24,7 @@ type serveConfig struct {
 	stunAddr     string
 	stunAltPort  string
 	publicIP     netip.Addr
+	publicIPv6   netip.Addr
 	adminAddr    string
 	drainTimeout time.Duration
 	logLevel     string
@@ -44,7 +45,7 @@ func parseServeConfig(args []string, env func(string) (string, bool), stderr io.
 	fs := flag.NewFlagSet("meshrelay serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var cfg serveConfig
-	var signing, publicIP string
+	var signing, publicIP, publicIPv6 string
 	fs.StringVar(&cfg.keyFile, "key-file", "", "relay private key file written by `meshrelay genkey` (mode 0600)")
 	fs.StringVar(&signing, "trusted-signing-keys", "", "comma-separated Core signing keys (mtsign:...); with --core-url they only bootstrap trust")
 	fs.StringVar(&cfg.coreURL, "core-url", "", "Core control URL (https://...) to poll for signing keys, revocations and drain")
@@ -53,6 +54,7 @@ func parseServeConfig(args []string, env func(string) (string, bool), stderr io.
 	fs.StringVar(&cfg.stunAddr, "stun", "0.0.0.0:3478", "STUN listen address (empty disables STUN)")
 	fs.StringVar(&cfg.stunAltPort, "stun-alt", "0.0.0.0:3480", "STUN alternate-port listen address for RFC 5780 (empty disables)")
 	fs.StringVar(&publicIP, "public-ip", "", "public IPv4 address clients reach (enables RFC 5780 attributes)")
+	fs.StringVar(&publicIPv6, "public-ipv6", "", "public IPv6 address clients reach (RFC 5780 attributes for IPv6 clients; listen on [::] to serve IPv6)")
 	fs.StringVar(&cfg.adminAddr, "admin", "127.0.0.1:9479", "metrics and health listen address")
 	fs.DurationVar(&cfg.drainTimeout, "drain-timeout", 5*time.Second, "time clients get to move away on shutdown")
 	fs.StringVar(&cfg.logLevel, "log-level", "info", "log level: debug, info, warn, error")
@@ -96,6 +98,13 @@ func parseServeConfig(args []string, env func(string) (string, bool), stderr io.
 			return serveConfig{}, fmt.Errorf("--public-ip %q is not an IPv4 address", publicIP)
 		}
 		cfg.publicIP = ip
+	}
+	if publicIPv6 != "" {
+		ip, err := netip.ParseAddr(publicIPv6)
+		if err != nil || !ip.Is6() || ip.Is4In6() || !ip.IsGlobalUnicast() || ip.IsPrivate() {
+			return serveConfig{}, fmt.Errorf("--public-ipv6 %q is not a public IPv6 address", publicIPv6)
+		}
+		cfg.publicIPv6 = ip
 	}
 	if cfg.tlsMaxConns < 1 || cfg.tlsMaxPerIP < 1 {
 		return serveConfig{}, errors.New("--tls-max-conns and --tls-max-conns-per-ip must be positive")

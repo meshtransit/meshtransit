@@ -55,6 +55,15 @@ peer map ──────────► authenticated path manager ───�
   addresses are rejected.
 - Private IPv4 and unique-local IPv6 are allowed for host and configured LAN
   paths. Candidate addresses grant no routing or policy authority.
+- IPv6 host addresses follow the kernel's address state (Linux, netlink):
+  tentative, duplicate and deprecated addresses are never offered; temporary
+  (privacy) addresses are offered only when no stable global address exists,
+  and then only the longest-lived one; stable global addresses come before
+  unique-local ones, at most four IPv6 host addresses.
+- An authenticated PING from a known peer address while no direct path is
+  proven is answered with an immediate probe (at most one per peer per 6.5 s),
+  so two stateful IPv6 firewalls open at the same time instead of waiting for
+  the next probe round.
 - One publication contains at most 16 unique candidates and at most 64 raw
   observations before deduplication.
 - Duplicate addresses retain the highest publication-priority source.
