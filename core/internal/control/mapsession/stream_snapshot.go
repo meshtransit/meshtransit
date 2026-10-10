@@ -56,9 +56,14 @@ func relayDirectoryChanged(current, next Snapshot) bool {
 		nextDirectory.Fingerprint() != currentDirectory.Fingerprint()
 }
 
+// equalMapConnectivity compares what a map shows of each node's transient
+// state: endpoints, home relay and, for peers, presence. A home relay change
+// alone must reach the node (its data plane follows it) and its peers.
 func equalMapConnectivity(self node.ID, first, second []Connectivity) bool {
 	return slices.EqualFunc(first, second, func(left, right Connectivity) bool {
 		if left.key != right.key || left.endpointSetPresent != right.endpointSetPresent ||
+			left.preferredRelay != right.preferredRelay ||
+			left.preferredRelayPresent != right.preferredRelayPresent ||
 			left.key.NodeID() != self && left.online != right.online {
 			return false
 		}

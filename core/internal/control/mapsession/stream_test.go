@@ -1353,3 +1353,48 @@ func (watcher *streamConnectivityWatcher) state() (int, int) {
 	defer watcher.mu.Unlock()
 	return watcher.watches, watcher.releases
 }
+
+// TestStreamSnapshotChangedTracksHomeRelay keeps a home relay change visible
+// on its own: the node's map must carry its new home region (the data plane
+// follows it) and its peers must learn where to reach it.
+func TestStreamSnapshotChangedTracksHomeRelay(t *testing.T) {
+	t.Parallel()
+
+	base, peer := snapshotWithAuthorizedPeerFixture(t)
+	withHome := func(nodeID node.ID, generation int64, region int, present bool) Connectivity {
+		key, err := NewConnectivityKey(nodeID, generation)
+		if err != nil {
+			t.Fatalf("NewConnectivityKey() error = %v", err)
+		}
+		connectivity, err := NewConnectivity(ConnectivityParams{
+			Key: key, PreferredRelay: region, PreferredRelayPresent: present,
+		})
+		if err != nil {
+			t.Fatalf("NewConnectivity() error = %v", err)
+		}
+		return connectivity
+	}
+	snapshot := func(self, other Connectivity) Snapshot {
+		result, err := base.WithConnectivity([]Connectivity{self, other})
+		if err != nil {
+			t.Fatalf("WithConnectivity() error = %v", err)
+		}
+		return result
+	}
+	selfID, selfGeneration := base.NodeID(), base.SessionGeneration()
+	peerID, peerGeneration := peer.NodeID(), peer.SessionGeneration()
+	current := snapshot(withHome(selfID, selfGeneration, 0, false), withHome(peerID, peerGeneration, 0, false))
+	for name, next := range map[string]Snapshot{
+		"self home relay": snapshot(withHome(selfID, selfGeneration, 1, true),
+			withHome(peerID, peerGeneration, 0, false)),
+		"peer home relay": snapshot(withHome(selfID, selfGeneration, 0, false),
+			withHome(peerID, peerGeneration, 1, true)),
+	} {
+		if !streamSnapshotChanged(current, next) {
+			t.Errorf("%s: change not detected", name)
+		}
+	}
+	if streamSnapshotChanged(current, current) {
+		t.Error("an unchanged snapshot was reported as changed")
+	}
+}
