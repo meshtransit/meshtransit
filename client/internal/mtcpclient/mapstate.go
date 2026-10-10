@@ -1,0 +1,515 @@
+package mtcpclient
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net/netip"
+	"slices"
+	"strings"
+	"time"
+
+	"google.golang.org/protobuf/proto"
+
+	mtcpv1 "meshtransit.net/api/mtcp/v1"
+	"meshtransit.net/client/internal/controlplane"
+	"meshtransit.net/client/internal/networkmap"
+	"meshtransit.net/shared/key"
+	sharedmtcp "meshtransit.net/shared/mtcp"
+	"meshtransit.net/shared/mtrp"
+	"meshtransit.net/shared/policydigest"
+)
+
+// Bounds of what one map may hold; networkmap validates the rest.
+const (
+	maxMapPeers    = 100_000
+	maxPeerPatches = 100_000
+)
+
+// errMapGap reports a delta that does not follow the node's view: the node
+// asks for a resync (mtcp-v1 §7.1).
+var errMapGap = errors.New("mtcp: map delta does not follow the current view")
+
+// mapState is the node's view of its map: the last snapshot with every
+// delta applied in order, the signing keys of its relay grant and its
+// relay ticket.
+type mapState struct {
+	ready     bool
+	epoch     uint64
+	seq       uint64
+	self      *mtcpv1.Device
+	peers     map[string]*mtcpv1.Device
+	filter    *mtcpv1.PacketFilter
+	dns       *mtcpv1.DnsConfig
+	relayMap  []byte
+	revisions []*mtcpv1.NetworkRevision
+
+	signingKeys []mtrp.TrustedKey
+	ticket      []byte
+	ticketUntil time.Time
+}
+
+func newMapState() *mapState { return &mapState{peers: make(map[string]*mtcpv1.Device)} }
+
+// applySnapshot replaces the view.
+func (state *mapState) applySnapshot(snapshot *mtcpv1.MapSnapshot) error {
+	view := snapshot.GetView()
+	if view.GetEpoch() == 0 || view.GetSeq() != 1 || snapshot.GetSelf() == nil || len(snapshot.GetPeers()) > maxMapPeers {
+		return fmt.Errorf("%w: malformed snapshot", controlplane.ErrNetmapInvalid)
+	}
+	if state.ready && view.GetEpoch() <= state.epoch {
+		return fmt.Errorf("%w: snapshot epoch went back", controlplane.ErrNetmapInvalid)
+	}
+	peers := make(map[string]*mtcpv1.Device, len(snapshot.GetPeers()))
+	for _, peer := range snapshot.GetPeers() {
+		if peer.GetDeviceId() == "" {
+			return fmt.Errorf("%w: peer without a Device ID", controlplane.ErrNetmapInvalid)
+		}
+		if _, duplicate := peers[peer.GetDeviceId()]; duplicate {
+			return fmt.Errorf("%w: duplicate peer", controlplane.ErrNetmapInvalid)
+		}
+		peers[peer.GetDeviceId()] = peer
+	}
+	state.ready, state.epoch, state.seq = true, view.GetEpoch(), 1
+	state.self, state.peers = snapshot.GetSelf(), peers
+	state.filter, state.dns = snapshot.GetPacketFilter(), snapshot.GetDns()
+	state.relayMap = bytes.Clone(snapshot.GetRelayMap())
+	state.revisions = snapshot.GetNetworkRevisions()
+	return nil
+}
+
+// applyDelta applies the next delta of the current epoch.
+func (state *mapState) applyDelta(delta *mtcpv1.MapDelta) error {
+	view := delta.GetView()
+	if !state.ready || view.GetEpoch() != state.epoch || view.GetSeq() != state.seq+1 {
+		return errMapGap
+	}
+	if len(delta.GetPeersUpsert()) > maxMapPeers || len(delta.GetPeerPatches()) > maxPeerPatches {
+		return fmt.Errorf("%w: delta exceeds its bounds", controlplane.ErrNetmapInvalid)
+	}
+	peers := make(map[string]*mtcpv1.Device, len(state.peers))
+	for id, peer := range state.peers {
+		peers[id] = peer
+	}
+	for _, id := range delta.GetPeersRemove() {
+		delete(peers, id)
+	}
+	for _, peer := range delta.GetPeersUpsert() {
+		if peer.GetDeviceId() == "" {
+			return fmt.Errorf("%w: peer without a Device ID", controlplane.ErrNetmapInvalid)
+		}
+		peers[peer.GetDeviceId()] = peer
+	}
+	for _, patch := range delta.GetPeerPatches() {
+		current, found := peers[patch.GetDeviceId()]
+		if !found {
+			return errMapGap // the node lost a peer Core thinks it has
+		}
+		peers[patch.GetDeviceId()] = patchPeer(current, patch)
+	}
+	if len(peers) > maxMapPeers {
+		return fmt.Errorf("%w: too many peers", controlplane.ErrNetmapInvalid)
+	}
+	state.seq = view.GetSeq()
+	state.peers = peers
+	if delta.GetSelf() != nil {
+		state.self = delta.GetSelf()
+	}
+	if delta.GetPacketFilter() != nil {
+		state.filter = delta.GetPacketFilter()
+	}
+	if delta.GetDns() != nil {
+		state.dns = delta.GetDns()
+	}
+	if len(delta.GetRelayMap()) != 0 {
+		state.relayMap = bytes.Clone(delta.GetRelayMap())
+	}
+	if len(delta.GetNetworkRevisions()) != 0 {
+		state.revisions = delta.GetNetworkRevisions()
+	}
+	return nil
+}
+
+// patchPeer returns a copy of peer with the patch's present fields.
+func patchPeer(peer *mtcpv1.Device, patch *mtcpv1.PeerPatch) *mtcpv1.Device {
+	next, _ := proto.Clone(peer).(*mtcpv1.Device)
+	if patch.DiscoKey != nil {
+		next.DiscoKey = bytes.Clone(patch.GetDiscoKey())
+	}
+	if patch.GetEndpoints() != nil {
+		next.Endpoints = patch.GetEndpoints().GetItems()
+	}
+	if patch.HomeRelay != nil {
+		next.HomeRelay = patch.GetHomeRelay()
+	}
+	if patch.Online != nil {
+		next.Online = patch.GetOnline()
+	}
+	if patch.LastSeenMs != nil {
+		next.LastSeenMs = patch.GetLastSeenMs()
+	}
+	if patch.GetNat() != nil {
+		next.Nat = patch.GetNat()
+	}
+	return next
+}
+
+// setKeys records the relay signing keys of a KeyUpdate.
+func (state *mapState) setKeys(update *mtcpv1.KeyUpdate) error {
+	keys := make([]mtrp.TrustedKey, 0, len(update.GetSigningKeys()))
+	for _, signing := range update.GetSigningKeys() {
+		if len(signing.GetKey()) != len(key.SigningPublic{}) || signing.GetNotAfterMs() <= 0 {
+			return fmt.Errorf("%w: malformed signing key", controlplane.ErrNetmapInvalid)
+		}
+		keys = append(keys, mtrp.TrustedKey{
+			Key:      key.SigningPublic(signing.GetKey()),
+			NotAfter: time.UnixMilli(signing.GetNotAfterMs()),
+		})
+	}
+	state.signingKeys = keys
+	return nil
+}
+
+// setTicket records a relay ticket.
+func (state *mapState) setTicket(ticket *mtcpv1.RelayTicket) error {
+	if len(ticket.GetTicket()) == 0 || len(ticket.GetTicket()) > mtrp.MaxTicketSize || ticket.GetNotAfterMs() <= 0 {
+		return fmt.Errorf("%w: malformed relay ticket", controlplane.ErrNetmapInvalid)
+	}
+	state.ticket, state.ticketUntil = bytes.Clone(ticket.GetTicket()), time.UnixMilli(ticket.GetNotAfterMs())
+	return nil
+}
+
+// snapshotInput carries what a product snapshot needs besides the view.
+type snapshotInput struct {
+	revision    uint64
+	controlTime time.Time
+	now         time.Time
+}
+
+// build returns the validated product snapshot of the view.
+func (state *mapState) build(input snapshotInput) (networkmap.Snapshot, error) {
+	if !state.ready {
+		return networkmap.Snapshot{}, fmt.Errorf("%w: no map yet", controlplane.ErrNetmapInvalid)
+	}
+	self, err := convertDevice(state.self, true, input.now)
+	if err != nil {
+		return networkmap.Snapshot{}, err
+	}
+	ids := make([]string, 0, len(state.peers))
+	for id := range state.peers {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	peers := make([]networkmap.Node, 0, len(ids))
+	for _, id := range ids {
+		peer, err := convertDevice(state.peers[id], false, input.now)
+		if err != nil {
+			return networkmap.Snapshot{}, err
+		}
+		if peer.Alias != nil {
+			peer.Alias.SelfKey, peer.Alias.PeerKey = self.PublicKey, peer.PublicKey
+		}
+		peers = append(peers, peer)
+	}
+	policy, err := convertFilter(state.filter)
+	if err != nil {
+		return networkmap.Snapshot{}, err
+	}
+	dns, err := convertDNS(state.dns)
+	if err != nil {
+		return networkmap.Snapshot{}, err
+	}
+	snapshot := networkmap.Snapshot{
+		Revision: input.revision, ControlTime: input.controlTime, Self: self, Peers: peers, Policy: policy, DNS: dns,
+		Relays: map[int]networkmap.RelayRegion{},
+	}
+	if interchange, regions, ok := state.interchange(input.now); ok {
+		snapshot.Interchange, snapshot.Relays = interchange, regions
+	}
+	return networkmap.ValidateAndClone(snapshot, input.now)
+}
+
+// interchange verifies the relay map with the grant's signing keys and
+// pairs it with the ticket (MTRP v1 §9). Without a complete grant there are
+// no relays yet.
+func (state *mapState) interchange(now time.Time) (*networkmap.Interchange, map[int]networkmap.RelayRegion, bool) {
+	if len(state.signingKeys) == 0 || len(state.relayMap) == 0 || len(state.ticket) == 0 ||
+		!now.Before(state.ticketUntil) {
+		return nil, nil, false
+	}
+	grant := mtrp.InterchangeGrant{
+		SigningKeys: state.signingKeys, RelayMap: state.relayMap, Ticket: state.ticket,
+		TicketNotAfter: state.ticketUntil,
+	}
+	relayMap, err := grant.OpenRelayMap(now)
+	if err != nil {
+		return nil, nil, false
+	}
+	ticket, err := mtrp.ParseTicketUnverified(state.ticket)
+	if err != nil {
+		return nil, nil, false
+	}
+	regions := make(map[int]networkmap.RelayRegion, len(relayMap.Regions))
+	for _, r := range relayMap.Regions {
+		region := networkmap.RelayRegion{ID: int(r.ID), Code: r.Code, Name: r.Name}
+		for _, n := range r.Nodes {
+			relay := networkmap.RelayNode{
+				Name: n.Name, HostName: n.HostName, STUNPort: int(n.STUNPort),
+				RelayPort: int(n.TLSPort), RelayKey: n.Key, UDPPort: int(n.UDPPort),
+			}
+			if n.IPv4.IsValid() {
+				relay.IPv4 = n.IPv4.String()
+			}
+			if n.IPv6.IsValid() {
+				relay.IPv6 = n.IPv6.String()
+			}
+			region.Nodes = append(region.Nodes, relay)
+		}
+		regions[region.ID] = region
+	}
+	return &networkmap.Interchange{
+		Ticket: bytes.Clone(state.ticket), TicketNotAfter: state.ticketUntil,
+		TicketDisco: ticket.Disco, MapVersion: relayMap.Version, MapExpiresAt: relayMap.ExpiresAt,
+	}, regions, true
+}
+
+// nodeID derives the product's numeric node identity from the Device ID:
+// Core's internal identifiers never reach nodes.
+func nodeID(deviceID string) uint64 {
+	digest := sha256.Sum256([]byte("meshtransit/node-id/v1\x00" + deviceID))
+	id := binary.BigEndian.Uint64(digest[:8]) &^ (1 << 63)
+	if id == 0 {
+		return 1
+	}
+	return id
+}
+
+func convertDevice(device *mtcpv1.Device, self bool, now time.Time) (networkmap.Node, error) {
+	invalid := func(what string) (networkmap.Node, error) {
+		return networkmap.Node{}, fmt.Errorf("%w: device %s", controlplane.ErrNetmapInvalid, what)
+	}
+	if device == nil || device.GetDeviceId() == "" || len(device.GetNodeKey()) != key.Size {
+		return invalid("identity")
+	}
+	node := networkmap.Node{
+		ID: nodeID(device.GetDeviceId()), StableID: device.GetDeviceId(), Name: device.GetName(),
+		PublicKey: "nodekey:" + hex.EncodeToString(device.GetNodeKey()), HomeRelay: int(device.GetHomeRelay()),
+		MachineAuthorized: true,
+	}
+	if disco := device.GetDiscoKey(); len(disco) != 0 {
+		if len(disco) != key.Size {
+			return invalid("disco key")
+		}
+		node.DiscoveryKey = "discokey:" + hex.EncodeToString(disco)
+	}
+	for _, raw := range device.GetAddresses() {
+		address, ok := netip.AddrFromSlice(raw)
+		if !ok {
+			return invalid("address")
+		}
+		address = address.Unmap()
+		node.Addresses = append(node.Addresses, netip.PrefixFrom(address, address.BitLen()))
+	}
+	for _, raw := range device.GetAllowedPrefixes() {
+		prefix, err := sharedmtcp.ParsePrefix(raw)
+		if err != nil {
+			return invalid("allowed prefix")
+		}
+		node.AllowedIPs = append(node.AllowedIPs, prefix)
+	}
+	if len(node.AllowedIPs) == 0 {
+		node.AllowedIPs = slices.Clone(node.Addresses)
+	}
+	for _, endpoint := range device.GetEndpoints() {
+		address, ok := netip.AddrFromSlice(endpoint.GetIp())
+		if !ok || endpoint.GetPort() == 0 || endpoint.GetPort() > 65535 {
+			return invalid("endpoint")
+		}
+		node.Endpoints = append(node.Endpoints, netip.AddrPortFrom(address.Unmap(), uint16(endpoint.GetPort()))) //nolint:gosec // G115: checked above
+	}
+	if expiry := device.GetKeyExpiryMs(); expiry > 0 {
+		node.KeyExpiry = time.UnixMilli(expiry).UTC()
+		node.Expired = !node.KeyExpiry.After(now)
+	}
+	if !self {
+		node.OnlineKnown, node.Online = true, device.GetOnline()
+	}
+	if alias := device.GetAlias(); alias != nil {
+		binding, err := convertAlias(alias)
+		if err != nil {
+			return networkmap.Node{}, err
+		}
+		node.Alias = binding
+	}
+	return node, nil
+}
+
+func convertAlias(alias *mtcpv1.AliasGrant) (*networkmap.AliasBinding, error) {
+	role := networkmap.AliasProvider
+	switch alias.GetRole() {
+	case mtcpv1.AliasGrant_CONSUMER:
+		role = networkmap.AliasConsumer
+	case mtcpv1.AliasGrant_PROVIDER:
+	default:
+		return nil, fmt.Errorf("%w: alias role", controlplane.ErrNetmapInvalid)
+	}
+	binding := &networkmap.AliasBinding{
+		ContractID: alias.GetContractId(), EndpointID: alias.GetEndpointId(), Generation: alias.GetGeneration(),
+		GrantRevision: alias.GetGrantRevision(), RecoveryEpoch: alias.GetRecoveryEpoch(), Role: role,
+		ExpiresAt: time.UnixMilli(alias.GetExpiresMs()).UTC(),
+	}
+	for _, raw := range [][]byte{alias.GetMasqueradeV4(), alias.GetMasqueradeV6()} {
+		if len(raw) == 0 {
+			continue
+		}
+		address, ok := netip.AddrFromSlice(raw)
+		if !ok {
+			return nil, fmt.Errorf("%w: alias address", controlplane.ErrNetmapInvalid)
+		}
+		if address.Unmap().Is4() {
+			binding.SelfIPv4 = address.Unmap()
+		} else {
+			binding.SelfIPv6 = address
+		}
+	}
+	for _, service := range alias.GetServices() {
+		if service.GetProtocol() > 255 || service.GetPortFrom() > 65535 || service.GetPortTo() > 65535 {
+			return nil, fmt.Errorf("%w: alias service", controlplane.ErrNetmapInvalid)
+		}
+		binding.Services = append(binding.Services, networkmap.AliasService{
+			Protocol: uint8(service.GetProtocol()),  //nolint:gosec // G115: checked above
+			PortFrom: uint16(service.GetPortFrom()), //nolint:gosec // G115: checked above
+			PortTo:   uint16(service.GetPortTo()),   //nolint:gosec // G115: checked above
+		})
+	}
+	return binding, nil
+}
+
+// convertFilter reads the packet filter through the same rules Core
+// digests (shared/mtcp), so the enforced policy digest matches Core's.
+func convertFilter(filter *mtcpv1.PacketFilter) ([]networkmap.Rule, error) {
+	if filter == nil {
+		return nil, nil
+	}
+	rules, err := sharedmtcp.PolicyRules(filter)
+	if err != nil {
+		return nil, fmt.Errorf("%w: packet filter: %w", controlplane.ErrNetmapInvalid, err)
+	}
+	converted := make([]networkmap.Rule, 0, len(rules))
+	for _, rule := range rules {
+		next := networkmap.Rule{Protocols: slices.Clone(rule.Protocols)}
+		for _, source := range rule.Sources {
+			selector, err := convertSelector(source)
+			if err != nil {
+				return nil, err
+			}
+			next.Sources = append(next.Sources, selector)
+		}
+		for _, destination := range rule.Destinations {
+			selector, err := convertSelector(destination.Selector)
+			if err != nil {
+				return nil, err
+			}
+			next.Destinations = append(next.Destinations, networkmap.Destination{
+				Selector: selector,
+				PortFrom: destination.PortFrom, PortTo: destination.PortTo,
+			})
+		}
+		converted = append(converted, next)
+	}
+	return converted, nil
+}
+
+func convertSelector(selector policydigest.Selector) (networkmap.Selector, error) {
+	switch selector.Kind {
+	case policydigest.KindAny:
+		return networkmap.Selector{Kind: networkmap.SelectorAny}, nil
+	case policydigest.KindPrefix:
+		return networkmap.Selector{Kind: networkmap.SelectorPrefix, Prefix: selector.Prefix}, nil
+	case policydigest.KindRange:
+		return networkmap.Selector{
+			Kind: networkmap.SelectorRange, RangeStart: selector.RangeStart,
+			RangeEnd: selector.RangeEnd,
+		}, nil
+	default:
+		return networkmap.Selector{}, fmt.Errorf("%w: unsupported filter selector", controlplane.ErrNetmapInvalid)
+	}
+}
+
+// convertDNS keeps classic IP resolvers on port 53 and drops URL
+// resolvers, which the product's DNS model does not run yet.
+func convertDNS(config *mtcpv1.DnsConfig) (*networkmap.DNSConfig, error) {
+	if config == nil {
+		return nil, nil
+	}
+	out := &networkmap.DNSConfig{}
+	resolvers := func(raw []*mtcpv1.Resolver) []networkmap.DNSResolver {
+		converted := []networkmap.DNSResolver{}
+		for _, resolver := range raw {
+			address, ok := netip.AddrFromSlice(resolver.GetIp())
+			if !ok || resolver.GetUrl() != "" {
+				continue
+			}
+			converted = append(converted, networkmap.DNSResolver{Address: netip.AddrPortFrom(address.Unmap(), 53)})
+		}
+		return converted
+	}
+	out.Resolvers = resolvers(config.GetResolvers())
+	for _, route := range config.GetRoutes() {
+		suffix, err := canonicalDNSName(route.GetSuffix())
+		if err != nil {
+			return nil, err
+		}
+		out.Routes = append(out.Routes, networkmap.DNSRoute{Suffix: suffix, Resolvers: resolvers(route.GetResolvers())})
+	}
+	for _, domain := range config.GetSearchDomains() {
+		canonical, err := canonicalDNSName(domain)
+		if err != nil {
+			return nil, err
+		}
+		out.SearchDomains = append(out.SearchDomains, canonical)
+	}
+	for _, record := range config.GetRecords() {
+		name, err := canonicalDNSName(record.GetName())
+		if err != nil {
+			return nil, err
+		}
+		address, ok := netip.AddrFromSlice(record.GetValue())
+		if !ok {
+			return nil, fmt.Errorf("%w: dns record address", controlplane.ErrNetmapInvalid)
+		}
+		address = address.Unmap()
+		recordType := networkmap.DNSRecordAAAA
+		if record.GetType() == mtcpv1.DnsRecord_A {
+			recordType = networkmap.DNSRecordA
+		}
+		if (recordType == networkmap.DNSRecordA) != address.Is4() {
+			return nil, fmt.Errorf("%w: dns record type and address differ", controlplane.ErrNetmapInvalid)
+		}
+		out.Records = append(out.Records, networkmap.DNSRecord{Name: name, Type: recordType, Address: address})
+	}
+	return out, nil
+}
+
+// canonicalDNSName lowercases a DNS name and drops one trailing dot.
+func canonicalDNSName(raw string) (string, error) {
+	trimmed := strings.TrimSuffix(raw, ".")
+	if trimmed == "" || len(trimmed) > 253 || strings.TrimSpace(raw) != raw {
+		return "", fmt.Errorf("%w: dns name", controlplane.ErrNetmapInvalid)
+	}
+	for label := range strings.SplitSeq(trimmed, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return "", fmt.Errorf("%w: dns label", controlplane.ErrNetmapInvalid)
+		}
+		for _, character := range label {
+			if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') &&
+				(character < '0' || character > '9') && character != '-' {
+				return "", fmt.Errorf("%w: dns label", controlplane.ErrNetmapInvalid)
+			}
+		}
+	}
+	return strings.ToLower(trimmed), nil
+}
