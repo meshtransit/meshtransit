@@ -177,6 +177,15 @@ func usableRelayPreference(snapshot Snapshot, regionID int) bool {
 	return false
 }
 
+// ReloadConnectivity implements ConnectivityReloader: the same
+// authoritative snapshot with its peers' connectivity read again.
+func (service *Service) ReloadConnectivity(ctx context.Context, snapshot Snapshot) (Snapshot, error) {
+	if ctx == nil || service == nil || isNilDependency(service.connectivity) || !snapshot.IsValid() {
+		return Snapshot{}, ErrInvalidService
+	}
+	return service.loadConnectivity(ctx, snapshot)
+}
+
 func (service *Service) loadConnectivity(ctx context.Context, snapshot Snapshot) (Snapshot, error) {
 	peers := snapshot.AuthorizedPeers()
 	keys := make([]ConnectivityKey, 0, len(peers)+1)

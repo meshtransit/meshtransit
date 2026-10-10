@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -478,6 +479,99 @@ func TestStreamServiceReconcilesImmediatelyOnConnectivityWakeup(t *testing.T) {
 		snapshots, _ := sink.state()
 		deltas := sink.connectivityDeltas()
 		if calls, _ := opener.state(); calls != 2 || len(snapshots) != 1 ||
+			len(deltas) != 1 || deltas[0].Snapshot().NetworkRevision() != initial.NetworkRevision() {
+			t.Fatalf(
+				"connectivity refresh = opener %d snapshots %+v deltas %+v",
+				calls,
+				snapshots,
+				deltas,
+			)
+		}
+		projected, found := deltas[0].Snapshot().ConnectivityFor(peer.NodeID())
+		if !found || !projected.Online() {
+			t.Fatalf("refreshed peer connectivity = (%+v, %t), want online", projected, found)
+		}
+
+		cancel()
+		synctest.Wait()
+		if err := <-result; !errors.Is(err, context.Canceled) {
+			t.Fatalf("Serve() error = %v, want context cancellation", err)
+		}
+		if watches, releases := connectivity.state(); watches != 1 || releases != 1 {
+			t.Fatalf("connectivity watches = (%d, %d), want one owned lifecycle", watches, releases)
+		}
+	})
+}
+
+// TestStreamServiceReloadsOnlyConnectivityOnConnectivityWakeup: a peer's
+// endpoint or presence change reloads the transient connectivity alone; the
+// authoritative snapshot is not read again from storage.
+func TestStreamServiceReloadsOnlyConnectivityOnConnectivityWakeup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		base, peer := snapshotWithAuthorizedPeerFixture(t)
+		selfKey, err := NewConnectivityKey(base.NodeID(), base.SessionGeneration())
+		if err != nil {
+			t.Fatalf("NewConnectivityKey(self) error = %v", err)
+		}
+		peerKey, err := NewConnectivityKey(peer.NodeID(), peer.SessionGeneration())
+		if err != nil {
+			t.Fatalf("NewConnectivityKey(peer) error = %v", err)
+		}
+		self, err := NewConnectivity(ConnectivityParams{Key: selfKey})
+		if err != nil {
+			t.Fatalf("NewConnectivity(self) error = %v", err)
+		}
+		offline, err := NewConnectivity(ConnectivityParams{Key: peerKey})
+		if err != nil {
+			t.Fatalf("NewConnectivity(peer offline) error = %v", err)
+		}
+		initial, err := base.WithConnectivity([]Connectivity{self, offline})
+		if err != nil {
+			t.Fatalf("WithConnectivity(initial) error = %v", err)
+		}
+		online := connectivityFixture(
+			t,
+			peer.NodeID(),
+			peer.SessionGeneration(),
+			4,
+			"198.51.100.2:41641",
+			true,
+		)
+		advanced, err := base.WithConnectivity([]Connectivity{self, online})
+		if err != nil {
+			t.Fatalf("WithConnectivity(advanced) error = %v", err)
+		}
+
+		opener := &reloadingSnapshotOpener{streamSnapshotOpener: streamSnapshotOpener{snapshots: []Snapshot{initial}}, reloaded: advanced}
+		connectivity := newStreamConnectivityWatcher()
+		service := newStreamServiceWithWatchersFixture(
+			t,
+			opener,
+			&streamPresenceStore{},
+			newStreamRevisionWatcher(),
+			connectivity,
+		)
+		machine, request := authenticatedRequestFixture(t, initial)
+		sink := &recordingStreamSink{}
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan error, 1)
+		go func() { result <- service.Serve(ctx, machine, request, sink) }()
+
+		synctest.Wait()
+		change, err := NewConnectivityChanged(
+			initial.Scope().NetworkID(),
+			peer.NodeID(),
+			peer.SessionGeneration(),
+			ConnectivityChangeEndpoints,
+		)
+		if err != nil {
+			t.Fatalf("NewConnectivityChanged() error = %v", err)
+		}
+		connectivity.send(t, change)
+		synctest.Wait()
+		snapshots, _ := sink.state()
+		deltas := sink.connectivityDeltas()
+		if calls, _ := opener.state(); calls != 1 || opener.reloads.Load() != 1 || len(snapshots) != 1 ||
 			len(deltas) != 1 || deltas[0].Snapshot().NetworkRevision() != initial.NetworkRevision() {
 			t.Fatalf(
 				"connectivity refresh = opener %d snapshots %+v deltas %+v",
@@ -1080,6 +1174,18 @@ func advancedStreamSnapshot(t *testing.T, initial Snapshot) Snapshot {
 		t.Fatalf("NewSnapshot() error = %v", err)
 	}
 	return advanced
+}
+
+// reloadingSnapshotOpener also reloads connectivity, returning reloaded.
+type reloadingSnapshotOpener struct {
+	streamSnapshotOpener
+	reloaded Snapshot
+	reloads  atomic.Int32
+}
+
+func (opener *reloadingSnapshotOpener) ReloadConnectivity(context.Context, Snapshot) (Snapshot, error) {
+	opener.reloads.Add(1)
+	return opener.reloaded, nil
 }
 
 type streamSnapshotOpener struct {

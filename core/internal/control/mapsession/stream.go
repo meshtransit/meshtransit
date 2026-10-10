@@ -36,6 +36,15 @@ type SnapshotOpener interface {
 	Open(context.Context, control.AuthenticatedMachine, Request) (Snapshot, error)
 }
 
+// ConnectivityReloader refreshes only the transient connectivity of a
+// snapshot. A stream woken by a peer's endpoint, home relay or presence
+// change uses it instead of reading the authoritative snapshot again, so a
+// change in a Network of N Devices costs N-1 Redis reads, not N-1 database
+// snapshots. Revision wakeups and reconciliation still reload everything.
+type ConnectivityReloader interface {
+	ReloadConnectivity(context.Context, Snapshot) (Snapshot, error)
+}
+
 // PresenceStore owns only ephemeral, generation-fenced stream observations.
 type PresenceStore interface {
 	AcquirePresence(context.Context, network.Scope, node.PresenceLease) (bool, error)
@@ -375,7 +384,11 @@ func (service *StreamService) run(
 					continue
 				}
 			}
-			next, err := service.refresh(ctx, machine, request, sink, current)
+			refresh := service.refresh
+			if !wake.reconcile && !wake.revision.IsValid() && wake.connectivity.IsValid() {
+				refresh = service.refreshConnectivity
+			}
+			next, err := refresh(ctx, machine, request, sink, current)
 			if err != nil {
 				return err
 			}
@@ -424,6 +437,32 @@ func (service *StreamService) refresh(
 		if err := sink.SendRelayGrant(ctx, next); err != nil {
 			return Snapshot{}, errors.Join(ErrStreamWrite, err)
 		}
+	}
+	return next, nil
+}
+
+// refreshConnectivity reloads only current's transient connectivity and
+// delivers the change. Without a ConnectivityReloader, or when the reload
+// fails, it falls back to a full refresh.
+func (service *StreamService) refreshConnectivity(
+	ctx context.Context,
+	machine control.AuthenticatedMachine,
+	request Request,
+	sink StreamSink,
+	current Snapshot,
+) (Snapshot, error) {
+	reloader, ok := service.snapshots.(ConnectivityReloader)
+	if !ok {
+		return service.refresh(ctx, machine, request, sink, current)
+	}
+	operationCtx, cancel := context.WithTimeout(ctx, service.options.SnapshotTimeout)
+	next, err := reloader.ReloadConnectivity(operationCtx, current)
+	cancel()
+	if err != nil || !next.IsValid() || next.NetworkRevision() != current.NetworkRevision() {
+		return service.refresh(ctx, machine, request, sink, current)
+	}
+	if _, err := service.deliver(ctx, sink, current, next); err != nil {
+		return Snapshot{}, err
 	}
 	return next, nil
 }
