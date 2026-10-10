@@ -45,26 +45,27 @@ type Options struct {
 
 // Client is the concrete Redis dependency owned by the composition root.
 type Client struct {
-	ping              func(context.Context) error
-	publish           func(context.Context, string, []byte) error
-	subscribe         func(context.Context, string) (messageSubscription, error)
-	acquirePresence   presenceAcquireFunc
-	renewPresence     presenceRenewFunc
-	releasePresence   presenceReleaseFunc
-	observeEndpoints  observeEndpointsFunc
-	loadEndpoints     loadEndpointsFunc
-	loadConnectivity  loadConnectivityFunc
-	applyRateLimit    rateLimitFunc
-	recordDelivery    recordDeliveryFunc
-	recordEnforcement recordEnforcementFunc
-	recordPaths       func(ctx context.Context, key string, generation int64, encoded string, ttl time.Duration) (int64, error)
-	loadSession       loadSessionFunc
-	touchDelivery     touchDeliveryFunc
-	loadDeliveries    loadDeliveriesFunc
-	metrics           *redisMetrics
-	close             func() error
-	closeOnce         sync.Once
-	closeErr          error
+	ping               func(context.Context) error
+	publish            func(context.Context, string, []byte) error
+	subscribe          func(context.Context, string) (messageSubscription, error)
+	acquirePresence    presenceAcquireFunc
+	renewPresence      presenceRenewFunc
+	releasePresence    presenceReleaseFunc
+	observeEndpoints   observeEndpointsFunc
+	loadEndpoints      loadEndpointsFunc
+	loadConnectivity   loadConnectivityFunc
+	applyRateLimit     rateLimitFunc
+	recordDelivery     recordDeliveryFunc
+	recordEnforcement  recordEnforcementFunc
+	recordPaths        func(ctx context.Context, key string, generation int64, encoded string, ttl time.Duration) (int64, error)
+	recordConnectivity func(ctx context.Context, key string, generation int64, encoded string, ttl time.Duration) (int64, error)
+	loadSession        loadSessionFunc
+	touchDelivery      touchDeliveryFunc
+	loadDeliveries     loadDeliveriesFunc
+	metrics            *redisMetrics
+	close              func() error
+	closeOnce          sync.Once
+	closeErr           error
 }
 
 // Open constructs a lazy, bounded TLS-only Redis client. Connectivity is
@@ -244,6 +245,11 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 		recordPaths: func(recordCtx context.Context, key string, generation int64, encoded string,
 			ttl time.Duration) (int64, error) {
 			return recordPathsScript.Run(recordCtx, client, []string{key}, generation, encoded,
+				ttl.Milliseconds()).Int64()
+		},
+		recordConnectivity: func(recordCtx context.Context, key string, generation int64, encoded string,
+			ttl time.Duration) (int64, error) {
+			return recordConnectivityScript.Run(recordCtx, client, []string{key}, generation, encoded,
 				ttl.Milliseconds()).Int64()
 		},
 		touchDelivery: func(

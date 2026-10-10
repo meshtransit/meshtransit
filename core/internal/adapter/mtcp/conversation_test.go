@@ -182,6 +182,18 @@ func (paths *fakePaths) RecordPaths(_ context.Context, nodeID node.ID, _ int64, 
 	return nil
 }
 
+type fakeConnectivity struct {
+	mu      sync.Mutex
+	reports []distribution.Connectivity
+}
+
+func (c *fakeConnectivity) RecordConnectivity(_ context.Context, _ node.ID, _ int64, report distribution.Connectivity) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reports = append(c.reports, report)
+	return nil
+}
+
 type conversationFixture struct {
 	t             *testing.T
 	session       *Session
@@ -194,6 +206,7 @@ type conversationFixture struct {
 	browser       *fakeBrowser
 	logout        *fakeLogout
 	paths         *fakePaths
+	connectivity  *fakeConnectivity
 	clockMu       sync.Mutex
 	clock         time.Time
 	talk          *conversation
@@ -210,13 +223,13 @@ func newConversationFixture(t *testing.T, openedBy sharedmtcp.MessageType) *conv
 		streams:   &fakeStreams{snapshot: snapshot, started: make(chan node.Key, 8)},
 		endpoints: &fakeEndpoints{}, snapshots: &fakeSnapshots{current: map[node.Key]bool{}, snapshot: snapshot},
 		registrations: &fakeRegistrations{result: result}, browser: &fakeBrowser{result: result},
-		logout: &fakeLogout{}, paths: &fakePaths{},
+		logout: &fakeLogout{}, paths: &fakePaths{}, connectivity: &fakeConnectivity{},
 		clock: time.Unix(1_800_000_000, 0)}
 	application, err := NewApplication(ApplicationOptions{
 		Streams: f.streams, Endpoints: f.endpoints, Snapshots: f.snapshots,
 		ControlKeys: []ControlKey{{Private: controlKey, NotAfter: f.clock.Add(time.Hour)}},
 		Logger:      slog.New(slog.DiscardHandler), Registrations: f.registrations, RegistrationIDs: sequentialIDs{},
-		BrowserIssuer: f.browser, BrowserApproval: f.browser, Logout: f.logout, Paths: f.paths,
+		BrowserIssuer: f.browser, BrowserApproval: f.browser, Logout: f.logout, Paths: f.paths, Connectivity: f.connectivity,
 		ApprovalOrigin: testApprovalOrigin,
 		ApprovalTTL:    10 * time.Minute,
 	})
@@ -812,5 +825,51 @@ func TestPathStatsAreStoredForMapPeers(t *testing.T) {
 	if err := f.talk.Receive(t.Context(), sharedmtcp.MessagePathStatsReport,
 		&mtcpv1.PathStatsReport{IntervalS: 0}); !errors.As(err, &violation) {
 		t.Fatalf("an empty interval: %v", err)
+	}
+}
+
+func TestConversationStoresConnectivityWhenItChanges(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	if err := f.talk.sink.SendSnapshot(t.Context(), streamFixture(t, 1)); err != nil {
+		t.Fatal(err)
+	}
+	disco := make([]byte, 32)
+	disco[0] = 9
+	observed := f.now().Add(-time.Minute)
+	report := &mtcpv1.EndpointReport{DiscoKey: disco, Ipv6Global: true,
+		Nat:           &mtcpv1.NatInfo{Mapping: 4, Filtering: 3, Allocation: 2, SequentialStep: 2},
+		NatObservedMs: observed.UnixMilli(),
+		PortMapping:   &mtcpv1.PortMapping{Protocol: 3, State: 3, ExpiresMs: f.now().Add(time.Hour).UnixMilli()}}
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.connectivity.reports) != 1 {
+		t.Fatalf("stored %d connectivity reports", len(f.connectivity.reports))
+	}
+	stored := f.connectivity.reports[0]
+	if stored.NAT == nil || stored.NAT.Mapping != distribution.NATMappingAddressAndPortDependent ||
+		stored.NAT.Allocation != distribution.NATAllocationSequential || stored.NAT.SequentialStep != 2 ||
+		!stored.NAT.ObservedAt.Equal(observed) || !stored.IPv6Global || stored.IPv6STUN ||
+		stored.PortMapping == nil || stored.PortMapping.Protocol != distribution.PortMappingProtocolUPnP ||
+		stored.PortMapping.State != distribution.PortMappingMapped || !stored.IsValid() {
+		t.Fatalf("stored %+v", stored)
+	}
+	// The same connectivity again is not stored again.
+	f.advance(endpointReportInterval)
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil || len(f.connectivity.reports) != 1 {
+		t.Fatalf("unchanged report: %v, %d stored", err, len(f.connectivity.reports))
+	}
+	// A change is; codes a newer node sends read as unknown.
+	f.advance(endpointReportInterval)
+	report.Nat = &mtcpv1.NatInfo{Mapping: 9, Filtering: 1, Allocation: 1}
+	report.PortMapping = &mtcpv1.PortMapping{Protocol: 7, State: 42}
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport, report); err != nil || len(f.connectivity.reports) != 2 {
+		t.Fatalf("changed report: %v, %d stored", err, len(f.connectivity.reports))
+	}
+	changed := f.connectivity.reports[1]
+	if changed.NAT.Mapping != distribution.NATMappingUnknown || changed.PortMapping.Protocol != distribution.PortMappingProtocolUnknown ||
+		changed.PortMapping.State != distribution.PortMappingUnknown || !changed.IsValid() {
+		t.Fatalf("changed %+v", changed)
 	}
 }

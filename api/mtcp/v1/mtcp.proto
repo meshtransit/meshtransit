@@ -358,6 +358,20 @@ message EndpointReport {
   bool ipv6_stun = 5;
   uint32 preferred_relay = 6;
   int64 observed_ms = 7;
+  // The node's gateway port mapping; absent when the node does not map.
+  PortMapping port_mapping = 8;
+  // When nat was classified; zero when nat is absent.
+  int64 nat_observed_ms = 9;
+}
+
+// PortMapping is the state of the node's mapping on its local gateway. It
+// never carries the external address: that is a PORT_MAPPED endpoint.
+// Codes are numbers so that a newer node's values never invalidate the
+// report; unknown codes read as unknown.
+message PortMapping {
+  uint32 protocol = 1;   // 0 unknown, 1 PCP, 2 NAT-PMP, 3 UPnP IGD
+  uint32 state = 2;      // 0 unknown, 1 off, 2 searching, 3 mapped, 4 double NAT, 5 unavailable, 6 failed
+  int64 expires_ms = 3;  // mapping expiry; zero for permanent or none
 }
 
 message Hostinfo {

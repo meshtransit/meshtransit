@@ -116,6 +116,56 @@ type deviceDistributionItem struct {
 	// Paths is the Device's latest report of how its traffic reaches each
 	// peer (MTCP path statistics); absent when it has none.
 	Paths *devicePathsItem `json:"paths,omitempty"`
+	// Connectivity is the Device's NAT classification, IPv6 reachability
+	// and gateway port mapping from its latest endpoint report; absent when
+	// it sent none.
+	Connectivity *deviceConnectivityItem `json:"connectivity,omitempty"`
+}
+
+type deviceConnectivityItem struct {
+	ReportedAt  time.Time          `json:"reported_at"`
+	NAT         *deviceNATItem     `json:"nat"`
+	IPv6Global  bool               `json:"ipv6_global"`
+	IPv6STUN    bool               `json:"ipv6_stun"`
+	PortMapping *devicePortMapItem `json:"port_mapping"`
+}
+
+type deviceNATItem struct {
+	Mapping        string     `json:"mapping"`
+	Filtering      string     `json:"filtering"`
+	Allocation     string     `json:"allocation"`
+	SequentialStep int        `json:"sequential_step"`
+	ObservedAt     *time.Time `json:"observed_at"`
+}
+
+type devicePortMapItem struct {
+	Protocol  string     `json:"protocol"`
+	State     string     `json:"state"`
+	ExpiresAt *time.Time `json:"expires_at"`
+}
+
+func newDeviceConnectivityItem(report *distribution.Connectivity) *deviceConnectivityItem {
+	if report == nil {
+		return nil
+	}
+	optional := func(t time.Time) *time.Time {
+		if t.IsZero() {
+			return nil
+		}
+		utc := t.UTC()
+		return &utc
+	}
+	item := &deviceConnectivityItem{ReportedAt: report.ReportedAt.UTC(), IPv6Global: report.IPv6Global,
+		IPv6STUN: report.IPv6STUN}
+	if nat := report.NAT; nat != nil {
+		item.NAT = &deviceNATItem{Mapping: string(nat.Mapping), Filtering: string(nat.Filtering),
+			Allocation: string(nat.Allocation), SequentialStep: int(nat.SequentialStep), ObservedAt: optional(nat.ObservedAt)}
+	}
+	if mapping := report.PortMapping; mapping != nil {
+		item.PortMapping = &devicePortMapItem{Protocol: string(mapping.Protocol), State: string(mapping.State),
+			ExpiresAt: optional(mapping.ExpiresAt)}
+	}
+	return item
 }
 
 type devicePathsItem struct {
@@ -232,6 +282,7 @@ func newDeviceDistributionItem(device distribution.Device) deviceDistributionIte
 		item.DeliveredNetworkRevision, item.DeliveredPolicyRevision = &networkRevision, &policyRevision
 		item.DeliveredAt, item.LastSeenAt = &deliveredAt, &seenAt
 		item.Paths = newDevicePathsItem(observation.Paths)
+		item.Connectivity = newDeviceConnectivityItem(observation.Connectivity)
 	}
 	return item
 }

@@ -499,7 +499,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 				return 1
 			}
 			deps := mtcpDependencies{streams: mapStreamService, sessions: mapSessionService,
-				registrations: registrationService, logout: logout, paths: redisClient, guard: timestamps, logger: logger}
+				registrations: registrationService, logout: logout, paths: redisClient, connectivity: redisClient, guard: timestamps, logger: logger}
 			if len(browserControl) == 1 {
 				deps.browser, deps.origin = &browserControl[0], processConfig.BrowserRegistration.Origin
 			}

@@ -14,6 +14,7 @@ import (
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/shared/key"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 	"meshtransit.net/shared/policydigest"
@@ -61,6 +62,7 @@ type ApplicationOptions struct {
 	BrowserApproval BrowserApproval
 	Logout          DeviceLogout
 	Paths           PathRecorder
+	Connectivity    ConnectivityRecorder
 	// ApprovalOrigin is the https origin of approval URLs; ApprovalTTL is
 	// how long an approval stays open.
 	ApprovalOrigin string
@@ -105,6 +107,8 @@ type conversation struct {
 
 	lastEndpoints time.Time // when the last EndpointReport was accepted; Receive is serial
 	lastPaths     time.Time // when the last PathStatsReport was stored
+	// lastConnectivity is the connectivity last stored for this session.
+	lastConnectivity *distribution.Connectivity
 
 	mu         sync.Mutex
 	nodeKey    node.Key // the key the map stream serves; zero until known
@@ -364,6 +368,7 @@ func (conversation *conversation) endpoints(ctx context.Context, report *mtcpv1.
 	if err := conversation.application.options.Endpoints.ObserveSessionEndpoints(ctx, snapshot, set, relay, true); err != nil {
 		conversation.application.options.Logger.DebugContext(ctx, "mtcp endpoint report not stored", "error", err)
 	}
+	conversation.connectivity(ctx, snapshot, report, now)
 	return nil
 }
 

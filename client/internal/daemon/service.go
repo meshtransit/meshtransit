@@ -1150,6 +1150,10 @@ func (s *Service) runEndpointRefresh(
 	defer stopPortMapping()
 	cloudChanges, stopCloud := s.startCloudAddresses(ctx)
 	defer stopCloud()
+	var natChanges <-chan struct{}
+	if s.nat != nil {
+		natChanges = s.nat.changes
+	}
 	tracker := pathdiscovery.NewTracker()
 	homeSelector := relay.NewHomeSelector()
 	current := endpointRefreshRequest{}
@@ -1167,10 +1171,12 @@ func (s *Service) runEndpointRefresh(
 			Candidates:        candidates,
 			PreferredRelay:    preferredRelay,
 			HasPreferredRelay: true,
+			Connectivity:      s.connectivity(),
 		}
 		if hasPublished && lastPublished.PreferredRelay == preferredRelay &&
 			lastPublished.HasPreferredRelay == update.HasPreferredRelay &&
-			lastPublished.Candidates.Equal(candidates) {
+			lastPublished.Candidates.Equal(candidates) &&
+			lastPublished.Connectivity == update.Connectivity {
 			return
 		}
 		offerLatest(updates, update)
@@ -1227,6 +1233,14 @@ func (s *Service) runEndpointRefresh(
 			stopRefreshTimer(timer)
 			timer = nil
 			timerChannel = nil
+		case <-natChanges:
+			// A new NAT classification: report it with the current
+			// candidates, without another discovery round.
+			if hasCurrent && current.active {
+				publish(currentCandidates, lastPublished.PreferredRelay)
+			}
+
+			continue
 		}
 		if !hasCurrent {
 			continue

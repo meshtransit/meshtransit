@@ -61,6 +61,9 @@ type Observation struct {
 	ReportedAt        time.Time
 	// Paths is the Device's latest path report for the session, if any.
 	Paths *PathReport
+	// Connectivity is the Device's latest NAT, IPv6 and port mapping report
+	// for the session, if any.
+	Connectivity *Connectivity
 }
 
 // IsValid reports a self-consistent observation.
@@ -69,9 +72,13 @@ func (observation Observation) IsValid() bool {
 		return observation.SessionGeneration == 0 && observation.NetworkRevision == 0 &&
 			observation.PolicyRevision == 0 && observation.DeliveredAt.IsZero() && observation.SeenAt.IsZero() &&
 			observation.Filter.IsZero() && observation.Enforced.IsZero() &&
-			observation.AppliedAt.IsZero() && observation.ReportedAt.IsZero() && observation.Paths == nil
+			observation.AppliedAt.IsZero() && observation.ReportedAt.IsZero() && observation.Paths == nil &&
+			observation.Connectivity == nil
 	}
 	if observation.Paths != nil && !observation.Paths.IsValid() {
+		return false
+	}
+	if observation.Connectivity != nil && !observation.Connectivity.IsValid() {
 		return false
 	}
 	return observation.SessionGeneration > 0 && observation.NetworkRevision > 0 &&

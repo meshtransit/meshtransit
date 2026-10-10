@@ -5,8 +5,10 @@ import (
 	"net/netip"
 	"time"
 
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/client/internal/portmap"
+	"meshtransit.net/shared/netcheck"
 )
 
 // PortMappingOff is the port mapping state when it is turned off
@@ -108,4 +110,28 @@ func (s *Service) observedPublicAddress(addr netip.Addr, observed pathdiscovery.
 	status := s.nat.get()
 
 	return status.State == NATReady && status.PublicEndpoint.Addr() == addr
+}
+
+// connectivity is what the endpoint report says about how this node reaches
+// the Internet: a current NAT classification and the port mapping state.
+func (s *Service) connectivity() controlplane.Connectivity {
+	var connectivity controlplane.Connectivity
+	if s.nat != nil {
+		s.addNAT(&connectivity)
+	}
+	if s.portMapper != nil {
+		mapping := s.portMappingStatus()
+		connectivity.PortMapping = controlplane.PortMappingState{
+			Protocol: mapping.Protocol, State: mapping.State, ExpiresAt: mapping.ExpiresAt,
+		}
+	}
+	return connectivity
+}
+
+// addNAT adds a current (not stale) NAT classification.
+func (s *Service) addNAT(connectivity *controlplane.Connectivity) {
+	if nat := s.nat.get(); nat.State == NATReady && s.clock().Sub(nat.ObservedAt) <= netcheck.MaxReportAge {
+		connectivity.NATKnown, connectivity.NAT, connectivity.NATStep = true, nat.NAT, nat.Step
+		connectivity.NATObservedAt = nat.ObservedAt
+	}
 }

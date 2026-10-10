@@ -12,6 +12,7 @@ import (
 
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
+	"meshtransit.net/shared/disco"
 	"meshtransit.net/shared/policydigest"
 )
 
@@ -179,6 +180,27 @@ type EndpointUpdate struct {
 	Candidates        pathdiscovery.Set
 	PreferredRelay    int
 	HasPreferredRelay bool
+	Connectivity      Connectivity
+}
+
+// Connectivity is how the node reaches the Internet, reported with its
+// endpoints: its NAT classification and its gateway port mapping. It never
+// carries addresses.
+type Connectivity struct {
+	// NATKnown reports a current classification in NAT and NATStep.
+	NATKnown      bool
+	NAT           disco.NATInfo
+	NATStep       uint16
+	NATObservedAt time.Time
+	// PortMapping is empty when the node does not map ports.
+	PortMapping PortMappingState
+}
+
+// PortMappingState is the node's gateway mapping, without its address.
+type PortMappingState struct {
+	Protocol  string // pcp, nat-pmp, upnp or empty
+	State     string // off, idle, searching, mapped, double_nat, unavailable, failed
+	ExpiresAt time.Time
 }
 
 // EnforcementReport is the evidence of what the packet filter enforces

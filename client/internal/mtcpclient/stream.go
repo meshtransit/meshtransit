@@ -237,7 +237,7 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 		return false, 0, err
 	}
 	nodePublic := stream.keys.node.Public()
-	capabilities := []string{"map.zstd", "relay.mtrp1", "dns.split", "stats.path1"}
+	capabilities := []string{"map.zstd", "relay.mtrp1", "dns.split", "stats.path1", "nat.report1"}
 	if stream.options.EnableDeviceAliases {
 		capabilities = append(capabilities, "device-alias.v1")
 	}
@@ -528,8 +528,54 @@ func (run *sessionRun) endpointReport(update controlplane.EndpointUpdate) *mtcpv
 			Port: uint32(address.Port()), Kind: kind,
 		})
 	}
+	if run.supports("nat.report1") {
+		addConnectivity(report, update)
+	}
 	return report
 }
+
+// addConnectivity fills the NAT classification, IPv6 reachability (from the
+// whole candidate set, before the endpoint cap) and port mapping state.
+func addConnectivity(report *mtcpv1.EndpointReport, update controlplane.EndpointUpdate) {
+	connectivity := update.Connectivity
+	if connectivity.NATKnown {
+		report.Nat = &mtcpv1.NatInfo{
+			Mapping: uint32(connectivity.NAT.Mapping), Filtering: uint32(connectivity.NAT.Filtering),
+			Allocation: uint32(connectivity.NAT.Allocation), SequentialStep: uint32(connectivity.NATStep),
+		}
+		if !connectivity.NATObservedAt.IsZero() {
+			report.NatObservedMs = connectivity.NATObservedAt.UnixMilli()
+		}
+	}
+	for _, candidate := range update.Candidates.Candidates() {
+		address := candidate.Endpoint().Addr()
+		if !address.Is6() || address.IsPrivate() {
+			continue
+		}
+		switch candidate.Source() {
+		case pathdiscovery.SourceHost, pathdiscovery.SourceConfigured:
+			report.Ipv6Global = true
+		case pathdiscovery.SourceServerReflexive:
+			report.Ipv6Global, report.Ipv6Stun = true, true
+		}
+	}
+	if mapping := connectivity.PortMapping; mapping.State != "" {
+		report.PortMapping = &mtcpv1.PortMapping{
+			Protocol: portMappingProtocols[mapping.Protocol], State: portMappingStates[mapping.State],
+		}
+		if !mapping.ExpiresAt.IsZero() {
+			report.PortMapping.ExpiresMs = mapping.ExpiresAt.UnixMilli()
+		}
+	}
+}
+
+// Port mapping codes of MTCP PortMapping; anything else is 0 (unknown).
+var (
+	portMappingProtocols = map[string]uint32{"pcp": 1, "nat-pmp": 2, "upnp": 3}
+	portMappingStates    = map[string]uint32{
+		"off": 1, "idle": 2, "searching": 2, "mapped": 3, "double_nat": 4, "unavailable": 5, "failed": 6,
+	}
+)
 
 func endpointKind(source pathdiscovery.Source) (mtcpv1.Endpoint_Kind, bool) {
 	switch source {

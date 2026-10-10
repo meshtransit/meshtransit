@@ -96,8 +96,8 @@ func TestClientLoadsObservationsInOrder(t *testing.T) {
 			gotKeys = keys
 			return []any{
 				"4", "9", "3", "1759924800000", "1759924860000", testDigestText, "7",
-				testDigestText, "7", "1759924801000", "1759924802000", testPathsText, "1",
-				"", "", "", "", "", "", "", "", "", "", "", "", "0",
+				testDigestText, "7", "1759924801000", "1759924802000", testPathsText, testConnectivityText, "1",
+				"", "", "", "", "", "", "", "", "", "", "", "", "", "0",
 			}, nil
 		},
 		metrics: newRedisMetrics(1, nil),
@@ -121,6 +121,11 @@ func TestClientLoadsObservationsInOrder(t *testing.T) {
 		first.Paths.Peers[0].RelayReason != distribution.RelayNoResponse || first.Paths.Peers[1].DirectBytes != 900 {
 		t.Fatalf("first paths = %+v", first.Paths)
 	}
+	if c := first.Connectivity; c == nil || c.NAT == nil || c.NAT.Mapping != distribution.NATMappingAddressAndPortDependent ||
+		c.NAT.SequentialStep != 2 || !c.IPv6Global || c.IPv6STUN || c.PortMapping == nil ||
+		c.PortMapping.Protocol != distribution.PortMappingProtocolUPnP || c.PortMapping.State != distribution.PortMappingMapped {
+		t.Fatalf("first connectivity = %+v", first.Connectivity)
+	}
 	if second.Known || second.Online {
 		t.Fatalf("second = %+v", second)
 	}
@@ -130,7 +135,7 @@ func TestClientRejectsCorruptObservations(t *testing.T) {
 	t.Parallel()
 	id := testDeliveryNode(t)
 	valid := []string{"4", "9", "3", "1759924800000", "1759924860000", testDigestText, "7",
-		testDigestText, "7", "1759924801000", "1759924802000", "", "0"}
+		testDigestText, "7", "1759924801000", "1759924802000", "", "", "0"}
 	with := func(index int, value any) []any {
 		raw := make([]any, len(valid))
 		for position, field := range valid {
@@ -140,20 +145,23 @@ func TestClientRejectsCorruptObservations(t *testing.T) {
 		return raw
 	}
 	for name, raw := range map[string][]any{
-		"short":           {"4", "9"},
-		"partial record":  {"", "9", "", "", "", "", "", "", "", "", "", "", "0"},
-		"bad number":      with(0, "x"),
-		"bad presence":    with(12, "2"),
-		"bad paths":       with(11, `{"at":1,"interval_s":60,"peers":[{"id":"x","kind":"direct"}]}`),
-		"paths kind":      with(11, `{"at":1,"interval_s":60,"peers":[{"id":"`+testPathPeer+`","kind":"teleport"}]}`),
-		"paths no time":   with(11, `{"interval_s":60,"peers":[]}`),
-		"seen before":     with(4, "1759924700000"),
-		"non string":      with(0, int64(4)),
-		"bad digest":      with(5, "sha256:00"),
-		"digest alone":    with(6, ""),
-		"bad grants":      with(8, "-1"),
-		"applied late":    with(9, "1759924803000"),
-		"report no times": with(10, ""),
+		"short":                {"4", "9"},
+		"partial record":       {"", "9", "", "", "", "", "", "", "", "", "", "", "", "0"},
+		"bad number":           with(0, "x"),
+		"bad presence":         with(13, "2"),
+		"bad connectivity":     with(12, `{"at":1,"nat":{"map":"teleport","filter":"unknown","alloc":"unknown"}}`),
+		"stun without v6":      with(12, `{"at":1,"v6stun":true}`),
+		"connectivity no time": with(12, `{"v6":true}`),
+		"bad paths":            with(11, `{"at":1,"interval_s":60,"peers":[{"id":"x","kind":"direct"}]}`),
+		"paths kind":           with(11, `{"at":1,"interval_s":60,"peers":[{"id":"`+testPathPeer+`","kind":"teleport"}]}`),
+		"paths no time":        with(11, `{"interval_s":60,"peers":[]}`),
+		"seen before":          with(4, "1759924700000"),
+		"non string":           with(0, int64(4)),
+		"bad digest":           with(5, "sha256:00"),
+		"digest alone":         with(6, ""),
+		"bad grants":           with(8, "-1"),
+		"applied late":         with(9, "1759924803000"),
+		"report no times":      with(10, ""),
 	} {
 		client := &Client{
 			loadDeliveries: func(context.Context, []string) ([]any, error) { return raw, nil },
@@ -164,6 +172,10 @@ func TestClientRejectsCorruptObservations(t *testing.T) {
 		}
 	}
 }
+
+const testConnectivityText = `{"at":1759924830000,"nat":{"map":"address_and_port_dependent",` +
+	`"filter":"address_and_port_dependent","alloc":"sequential","step":2},"v6":true,` +
+	`"pm":{"proto":"upnp","state":"mapped","exp":1759932030000}}`
 
 const testDigestText = "sha256:65c3166a6062804e3b2a55acd157d70ce0ebf6fdd91130eecd280654a714251a"
 
@@ -277,6 +289,39 @@ func TestClientRecordsPaths(t *testing.T) {
 	}
 	report.Peers[0].Kind = "teleport"
 	if err := client.RecordPaths(t.Context(), id, 4, report); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("invalid report: %v", err)
+	}
+}
+
+func TestClientRecordsConnectivity(t *testing.T) {
+	t.Parallel()
+	id := testDeliveryNode(t)
+	var stored string
+	client := &Client{
+		recordConnectivity: func(_ context.Context, key string, generation int64, encoded string, _ time.Duration) (int64, error) {
+			if key != deliveryKeyForNode(id) || generation != 4 {
+				t.Fatalf("key %s generation %d", key, generation)
+			}
+			stored = encoded
+			return 1, nil
+		},
+		metrics: newRedisMetrics(1, nil),
+	}
+	report := distribution.Connectivity{ReportedAt: time.UnixMilli(1759924830000).UTC(), IPv6Global: true, IPv6STUN: true,
+		NAT: &distribution.NATClass{Mapping: distribution.NATMappingEndpointIndependent,
+			Filtering: distribution.NATFilteringAddressDependent, Allocation: distribution.NATAllocationPreserving,
+			ObservedAt: time.UnixMilli(1759924800000).UTC()},
+		PortMapping: &distribution.PortMapping{Protocol: distribution.PortMappingProtocolPCP,
+			State: distribution.PortMappingMapped, ExpiresAt: time.UnixMilli(1759932030000).UTC()}}
+	if err := client.RecordConnectivity(t.Context(), id, 4, report); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeConnectivity(stored)
+	if err != nil || decoded == nil || !decoded.SameAs(report) || !decoded.ReportedAt.Equal(report.ReportedAt) {
+		t.Fatalf("round trip %+v, %v", decoded, err)
+	}
+	report.PortMapping.State = "teleported"
+	if err := client.RecordConnectivity(t.Context(), id, 4, report); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("invalid report: %v", err)
 	}
 }

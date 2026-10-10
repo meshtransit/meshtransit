@@ -207,3 +207,31 @@ func TestDevicePathsItemHidesExternalPeers(t *testing.T) {
 		t.Fatal("no report must leave paths out")
 	}
 }
+
+func TestDeviceConnectivityItem(t *testing.T) {
+	t.Parallel()
+	reportedAt := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	item := newDeviceConnectivityItem(&distribution.Connectivity{ReportedAt: reportedAt, IPv6Global: true,
+		NAT: &distribution.NATClass{Mapping: distribution.NATMappingEndpointIndependent,
+			Filtering: distribution.NATFilteringAddressDependent, Allocation: distribution.NATAllocationPreserving},
+		PortMapping: &distribution.PortMapping{Protocol: distribution.PortMappingProtocolPCP,
+			State: distribution.PortMappingMapped, ExpiresAt: reportedAt.Add(time.Hour)}})
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"reported_at":"2026-10-10T12:00:00Z","nat":{"mapping":"endpoint_independent",` +
+		`"filtering":"address_dependent","allocation":"preserving","sequential_step":0,"observed_at":null},` +
+		`"ipv6_global":true,"ipv6_stun":false,"port_mapping":{"protocol":"pcp","state":"mapped",` +
+		`"expires_at":"2026-10-10T13:00:00Z"}}`
+	if string(encoded) != want {
+		t.Fatalf("connectivity JSON\n got %s\nwant %s", encoded, want)
+	}
+	if newDeviceConnectivityItem(nil) != nil {
+		t.Fatal("no report must leave connectivity out")
+	}
+	bare, _ := json.Marshal(newDeviceConnectivityItem(&distribution.Connectivity{ReportedAt: reportedAt}))
+	if string(bare) != `{"reported_at":"2026-10-10T12:00:00Z","nat":null,"ipv6_global":false,"ipv6_stun":false,"port_mapping":null}` {
+		t.Fatalf("bare connectivity JSON %s", bare)
+	}
+}

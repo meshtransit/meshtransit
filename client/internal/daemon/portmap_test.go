@@ -11,6 +11,7 @@ import (
 	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/client/internal/portmap"
+	"meshtransit.net/shared/disco"
 )
 
 // fakePortMapper records what the refresh loop tells it and serves a
@@ -140,11 +141,19 @@ func TestEndpointRefreshPublishesThePortMapping(t *testing.T) {
 
 	// A mapping whose address meshd never observed is not offered: replies
 	// from the gateway are unauthenticated.
-	mapper.set(netip.MustParseAddrPort("203.0.113.7:50000"))
+	unobserved := netip.MustParseAddrPort("203.0.113.7:50000")
+	mapper.set(unobserved)
 	select {
 	case update := <-updates:
-		t.Fatalf("an unobserved mapping was published: %v", update.Candidates.Candidates())
-	case <-time.After(100 * time.Millisecond):
+		// The mapping state is reported, the endpoint is not.
+		if hasSource(update.Candidates, unobserved, pathdiscovery.SourcePortMapping) {
+			t.Fatalf("an unobserved mapping was published: %v", update.Candidates.Candidates())
+		}
+		if update.Connectivity.PortMapping.State != portmap.StateMapped {
+			t.Fatalf("connectivity %+v", update.Connectivity)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the port mapping state was not reported")
 	}
 	mapped := netip.MustParseAddrPort("198.51.100.51:50000") // the STUN-observed address
 	mapper.set(mapped)
@@ -202,5 +211,47 @@ func TestPortMappingStatusWithoutMapper(t *testing.T) {
 	t.Parallel()
 	if status := (&Service{}).portMappingStatus(); status.State != PortMappingOff {
 		t.Fatalf("status %+v", status)
+	}
+}
+
+func TestEndpointRefreshReportsANewNATClassification(t *testing.T) {
+	t.Parallel()
+	discoverer := &refreshDiscoverer{calls: make(chan struct{}, 4)}
+	service := &Service{
+		clock:                time.Now,
+		endpointRefreshDelay: func() time.Duration { return time.Hour },
+		nat:                  newNATState(),
+	}
+	requests := make(chan endpointRefreshRequest, 1)
+	updates := make(chan controlplane.EndpointUpdate, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- service.runEndpointRefresh(ctx, 15, discoverer, requests, updates) }()
+	requests <- endpointRefreshRequest{active: true, socket: pathdiscovery.Socket{Port: 41641, Generation: 1}}
+	select {
+	case update := <-updates:
+		if update.Connectivity.NATKnown {
+			t.Fatal("a NAT classification before any ran")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no initial endpoint update")
+	}
+	nat := disco.NATInfo{Mapping: disco.MappingEndpointIndependent, Filtering: disco.FilteringAddressDependent, Allocation: disco.AllocationPreserving}
+	service.nat.set(NATStatus{State: NATReady, NAT: nat, ObservedAt: time.Now()}, pathdiscovery.Socket{Port: 41641, Generation: 1})
+	service.nat.changes <- struct{}{}
+	select {
+	case update := <-updates:
+		if !update.Connectivity.NATKnown || update.Connectivity.NAT != nat {
+			t.Fatalf("connectivity %+v", update.Connectivity)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the NAT classification was not reported")
+	}
+	if calls := len(discoverer.calls); calls != 1 {
+		t.Fatalf("a NAT report ran %d discovery rounds, want only the first", calls)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("runEndpointRefresh() = %v", err)
 	}
 }

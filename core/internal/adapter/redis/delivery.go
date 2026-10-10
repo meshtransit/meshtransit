@@ -26,7 +26,7 @@ const (
 	deliveryTTL = 30 * 24 * time.Hour
 	// maximumDeliveryLoad bounds one read to one distribution page.
 	maximumDeliveryLoad = distribution.MaximumPageSize
-	deliveryFieldCount  = 13
+	deliveryFieldCount  = 14
 	presenceField       = deliveryFieldCount - 1
 )
 
@@ -70,7 +70,7 @@ redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'network_revision', ARGV[2],
     'filter_digest', ARGV[6], 'filter_grants', ARGV[7])
 if not same_generation then
     redis.call('HSET', KEYS[1], 'enforced_digest', '', 'enforced_grants', '',
-        'applied_at', '', 'reported_at', '', 'paths', '')
+        'applied_at', '', 'reported_at', '', 'paths', '', 'connectivity', '')
 end
 redis.call('PEXPIRE', KEYS[1], ARGV[5])
 redis.call('HSET', KEYS[2], 'node_id', ARGV[8], 'generation', ARGV[1], 'machine', ARGV[9])
@@ -98,6 +98,16 @@ redis.call('HSET', KEYS[1], 'paths', ARGV[2])
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `)
+	// A connectivity report is stored only for the session generation that
+	// currently owns the delivery record.
+	recordConnectivityScript = redisclient.NewScript(`
+if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then
+    return 0
+end
+redis.call('HSET', KEYS[1], 'connectivity', ARGV[2])
+redis.call('PEXPIRE', KEYS[1], ARGV[3])
+return 1
+`)
 	// A touch only refreshes the record of the same session generation.
 	touchDeliveryScript = redisclient.NewScript(`
 if redis.call('HGET', KEYS[1], 'generation') ~= ARGV[1] then
@@ -107,15 +117,15 @@ redis.call('HSET', KEYS[1], 'seen_at', ARGV[2])
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `)
-	// KEYS alternate delivery and presence keys; each pair yields twelve
+	// KEYS alternate delivery and presence keys; each pair yields thirteen
 	// fields (empty when absent) and whether a presence lease exists.
 	loadDeliveriesScript = redisclient.NewScript(`
 local result = {}
 for index = 1, #KEYS, 2 do
     local fields = redis.call('HMGET', KEYS[index], 'generation', 'network_revision',
         'policy_revision', 'delivered_at', 'seen_at', 'filter_digest', 'filter_grants',
-        'enforced_digest', 'enforced_grants', 'applied_at', 'reported_at', 'paths')
-    for field = 1, 12 do
+        'enforced_digest', 'enforced_grants', 'applied_at', 'reported_at', 'paths', 'connectivity')
+    for field = 1, 13 do
         result[#result + 1] = fields[field] or ''
     end
     result[#result + 1] = tostring(redis.call('EXISTS', KEYS[index + 1]))
@@ -337,7 +347,8 @@ func decodeObservations(raw []any, count int) ([]distribution.Observation, error
 
 // decodeObservation reads, in order: generation, network_revision,
 // policy_revision, delivered_at, seen_at, filter_digest, filter_grants,
-// enforced_digest, enforced_grants, applied_at, reported_at, paths, presence.
+// enforced_digest, enforced_grants, applied_at, reported_at, paths,
+// connectivity, presence.
 func decodeObservation(fields []string) (distribution.Observation, error) {
 	online := fields[presenceField] == "1"
 	if fields[presenceField] != "0" && fields[presenceField] != "1" {
@@ -379,6 +390,10 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 	if err != nil {
 		return distribution.Observation{}, err
 	}
+	connectivity, err := decodeConnectivity(fields[12])
+	if err != nil {
+		return distribution.Observation{}, err
+	}
 	observation := distribution.Observation{
 		Known:             true,
 		SessionGeneration: numbers[0],
@@ -392,6 +407,7 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 		AppliedAt:         appliedAt,
 		ReportedAt:        reportedAt,
 		Paths:             paths,
+		Connectivity:      connectivity,
 	}
 	if !observation.IsValid() {
 		return distribution.Observation{}, errors.New("inconsistent delivery record")

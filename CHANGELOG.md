@@ -72,6 +72,11 @@ merge (2026-10-09) are kept below.
   clients. The NAT lab has IPv6 STUN and firewalled IPv6 nodes; two IPv6
   hosts behind address-and-port-dependent firewalls go direct, also when
   Core publishes no endpoints and only CALL_ME_MAYBE carries them.
+- Connectivity on the Console (P5d): meshd reports its NAT classification,
+  IPv6 reachability and gateway port mapping state in `EndpointReport`
+  (`nat.report1`, new `port_mapping` and `nat_observed_ms` fields); Core
+  stores the latest per Device and session when it changes, and the device
+  distribution API returns it as `connectivity`.
 
 ## meshd (before the merge)
 

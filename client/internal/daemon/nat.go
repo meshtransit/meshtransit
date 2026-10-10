@@ -89,6 +89,9 @@ type natState struct {
 	loopDone chan struct{}        // closed when the current loop exits; nil without a loop
 	manual   chan chan natReply
 	schedule natSchedule
+	// changes receives a value when a classification succeeds, so the
+	// endpoint loop reports it.
+	changes chan struct{}
 }
 
 func newNATState() *natState {
@@ -96,6 +99,7 @@ func newNATState() *natState {
 		status:   NATStatus{State: NATInactive},
 		manual:   make(chan chan natReply),
 		schedule: defaultNATSchedule,
+		changes:  make(chan struct{}, 1),
 	}
 }
 
@@ -319,6 +323,10 @@ func (s *Service) classifyNAT(
 		ObservedAt:      report.Report.At,
 	}
 	s.nat.set(status, report.Socket)
+	select {
+	case s.nat.changes <- struct{}{}:
+	default:
+	}
 
 	return status, true
 }

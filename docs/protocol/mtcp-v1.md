@@ -493,7 +493,20 @@ Core never signals revocation with an empty map. It sends `Lifecycle`
 `disco_key`, `endpoints` (address and kind, at most 32), `nat`
 (mapping, filtering, allocation, sequential step), `ipv6` (global address
 present, STUN over IPv6 succeeded), `preferred_relay` (region ID) and
-`observed_at`.
+`observed_at`. With `nat.report1` the node also sends `nat_observed_ms` (when
+`nat` was classified) and `port_mapping`: the protocol (1 PCP, 2 NAT-PMP,
+3 UPnP IGD), the state (1 off, 2 searching, 3 mapped, 4 double NAT,
+5 unavailable, 6 failed) and the expiry of its gateway mapping, never its
+address (that is a `PORT_MAPPED` endpoint).
+
+- `nat` is present only while the node holds a current classification
+  (nat-classification §4); absent means not classified, not "no NAT".
+- The `nat` and `port_mapping` values are numbers: Core reads codes it does
+  not know as unknown instead of rejecting the report, so newer nodes can add
+  values.
+- Core keeps the latest NAT, IPv6 and port mapping state per Device for the
+  session and stores it only when it changes; the Console shows it with the
+  Device's paths.
 
 - `disco_key` MUST equal the Device's current disco key (the one proved in
   this session's registration or rotation); otherwise Core answers
