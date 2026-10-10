@@ -450,3 +450,48 @@ func TestHomeSelectorFailsOverToAFreshlyReachableRegion(t *testing.T) {
 		t.Fatalf("Observe() = %#v, want region 3 chosen or prepared", result)
 	}
 }
+
+// The data plane can already run a region the selector has not been told
+// about yet (a map applied between two refreshes); that is not an error
+// that may stop the session.
+func TestHomeSelectorIgnoresRegionsItWasNotGiven(t *testing.T) {
+	t.Parallel()
+
+	selector := NewHomeSelector()
+	now := time.Now()
+	if _, err := selector.Reconcile(1, []int{1, 2}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	samples := []RegionLatency{{RegionID: 1, Latency: 5 * time.Millisecond}, {RegionID: 2, Latency: 50 * time.Millisecond}}
+	if _, err := selector.Observe(now, samples, healthyRelaySnapshot(now, 1, 1, 3)); err != nil {
+		t.Fatalf("Observe() with an unknown worker region error = %v", err)
+	}
+	if _, err := selector.Observe(now, samples, healthyRelaySnapshot(now, 3, 3)); err != nil {
+		t.Fatalf("Observe() with an unknown home region error = %v", err)
+	}
+}
+
+func TestPoolSignalsOnlyHomeRegionFailures(t *testing.T) {
+	t.Parallel()
+
+	pool, err := New(t.Context(), twoRegionConfig(), &fakeDialer{client: newFakeClient(), calls: make(chan int, 4)})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+	signals := 0
+	pool.SetFailureHook(func() { signals++ })
+	home := &regionWorker{region: Region{ID: 1}}
+	other := &regionWorker{region: Region{ID: 2}}
+	pool.mu.Lock()
+	pool.workers = map[int]*regionWorker{1: home, 2: other}
+	pool.mu.Unlock()
+	pool.markFailure(other)
+	if signals != 0 {
+		t.Fatalf("a non-home region failure signalled %d times", signals)
+	}
+	pool.markFailure(home)
+	if signals != 1 {
+		t.Fatalf("home region failure signalled %d times, want 1", signals)
+	}
+}

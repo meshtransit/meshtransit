@@ -360,17 +360,16 @@ func normalizeHealth(
 	if health.HomeRegion <= 0 || len(health.Regions) > maxActiveRegions {
 		return nil, errInvalidSelection
 	}
+	// A region the selector was not given yet (the data plane applied a
+	// newer map than the last refresh request) carries no usable evidence.
 	if _, exists := usable[health.HomeRegion]; !exists {
-		return nil, errInvalidSelection
+		return nil, nil
 	}
 	regions := make(map[int]RegionHealth, len(health.Regions))
 	for _, region := range health.Regions {
 		if region.RegionID <= 0 || region.ConsecutiveFailures < 0 ||
 			dateAfter(region.LastConnected, now) || dateAfter(region.LastActivity, now) ||
 			dateAfter(region.LastSend, now) || dateAfter(region.LastFailure, now) {
-			return nil, errInvalidSelection
-		}
-		if _, exists := usable[region.RegionID]; !exists {
 			return nil, errInvalidSelection
 		}
 		if _, exists := regions[region.RegionID]; exists {
@@ -383,6 +382,9 @@ func normalizeHealth(
 			region.LastActivity.Before(region.LastConnected) ||
 			region.ConsecutiveFailures != 0) {
 			return nil, errInvalidSelection
+		}
+		if _, exists := usable[region.RegionID]; !exists {
+			continue
 		}
 		regions[region.RegionID] = region
 	}

@@ -1499,8 +1499,8 @@ func TestWireGuardEnginePreparesAuthorizedRelayBeforeSelection(t *testing.T) {
 	}
 	// The device's relay failures reach the engine's long-lived channel,
 	// and repeated failures coalesce into one pending signal.
-	if device.relayFailureHook == nil {
-		t.Fatal("Apply() did not install the relay failure hook")
+	if device.relayFailureHook == nil || !device.hookBeforeUp {
+		t.Fatal("Apply() did not install the relay failure hook before Up")
 	}
 	device.relayFailureHook()
 	device.relayFailureHook()
@@ -1831,6 +1831,7 @@ func (f *fakeWireGuardFactory) New(
 
 type fakeWireGuardDevice struct {
 	relayFailureHook func()
+	hookBeforeUp     bool
 	configuration    string
 	configurations   []string
 	configureErr     error
@@ -1868,6 +1869,7 @@ func (d *fakeWireGuardDevice) Configure(configuration io.Reader) error {
 
 func (d *fakeWireGuardDevice) Up() error {
 	d.upCalls++
+	d.hookBeforeUp = d.relayFailureHook != nil
 
 	return nil
 }

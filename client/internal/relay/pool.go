@@ -266,9 +266,13 @@ func (p *Pool) ReplaceAuthority(homeRegion int, peers []Peer) error {
 	if !open {
 		return nil
 	}
-	_, err := p.ensureWorker(homeRegion)
+	// With every region slot busy the home connects on its next use; the
+	// new authority stands either way.
+	if _, err := p.ensureWorker(homeRegion); err != nil && !errors.Is(err, ErrRegionLimit) {
+		return err
+	}
 
-	return err
+	return nil
 }
 
 // replaceAuthorityLocked requires p.lifecycle.
@@ -807,7 +811,10 @@ func (p *Pool) markFailure(worker *regionWorker) {
 	if worker.health.ConsecutiveFailures < math.MaxInt {
 		worker.health.ConsecutiveFailures++
 	}
-	if p.onFailure != nil {
+	// Only the home region's loss calls for a new home; a peer's region or
+	// a prepared candidate failing is retried by its worker and seen in
+	// the next health snapshot.
+	if p.onFailure != nil && worker.region.ID == p.config.HomeRegion {
 		p.onFailure()
 	}
 }

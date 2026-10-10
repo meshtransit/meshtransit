@@ -461,6 +461,10 @@ func (e *WireGuardEngine) applySnapshot(
 
 		return StateFailed, fmt.Errorf("dataplane: creating wireguard device: %w", err)
 	}
+	// Before Up, which dials the home region: its first failure must signal.
+	if failing, ok := device.(relayFailureDevice); ok {
+		failing.SetRelayFailureHook(e.signalRelayFailure)
+	}
 	if err := device.Configure(bytes.NewReader(plan.configuration)); err != nil {
 		device.Close()
 
@@ -470,9 +474,6 @@ func (e *WireGuardEngine) applySnapshot(
 		device.Close()
 
 		return StateFailed, fmt.Errorf("dataplane: starting wireguard device: %w", err)
-	}
-	if failing, ok := device.(relayFailureDevice); ok {
-		failing.SetRelayFailureHook(e.signalRelayFailure)
 	}
 	e.device = device
 	e.adoptPlan(snapshot.Revision, plan)
