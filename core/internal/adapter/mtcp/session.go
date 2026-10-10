@@ -152,7 +152,9 @@ func (session *Session) run(parent context.Context, establishBy time.Time, estab
 	runDone := make(chan error, 1)
 	go func() { runDone <- conversation.Run(session.ctx) }()
 
-	keepalive := time.NewTicker(session.server.options.Keepalive / 2)
+	// Checked five times per interval, a Ping leaves at most a fifth of the
+	// interval late (mtcp-v1 §5: after keepalive_s without sending).
+	keepalive := time.NewTicker(session.server.options.Keepalive / 5)
 	defer keepalive.Stop()
 	pending := []inbound{first}
 	for {

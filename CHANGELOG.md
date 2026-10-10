@@ -30,6 +30,14 @@ merge (2026-10-09) are kept below.
   device.enforcement_mismatch and device.enforcement_restored on the Network
   audit stream, and GET …/devices/enforcement-history?at=T answers what each
   Device enforced at an instant.
+- Core MTCP v1 endpoint (P4b, schema 137): with
+  MESHTRANSIT_CONTROL_MTCP_ENABLED the control listener serves /mtcp/v1
+  (HTTP upgrade), /mtcp/v1/ws (WebSocket fallback) and /mtcp/v1/key beside
+  TS2021, with the same control key. Admission before Noise, durable
+  ClientHello timestamps per bound machine key, one session per machine
+  key, map snapshots and deltas with an acknowledgement window, KeyUpdate,
+  Lifecycle, relay tickets, endpoint and enforcement reports. Registration
+  over MTCP follows in P4c.
 
 ## meshd (before the merge)
 
