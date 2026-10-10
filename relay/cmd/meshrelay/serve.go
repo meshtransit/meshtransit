@@ -49,6 +49,7 @@ func serve(ctx context.Context, cfg serveConfig, logOut io.Writer) error {
 			CoreURL: cfg.coreURL, Bootstrap: cfg.signingKeys, Self: relayKey.Public(),
 			OnDrain: func() { relay.Drain(cfg.drainTimeout) },
 			Logger:  logger, Metrics: m.CoreLink, Revocations: m.Revocations,
+			Private: cfg.private, Key: relayKey,
 		})
 		if err != nil {
 			return err

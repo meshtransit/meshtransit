@@ -28,6 +28,8 @@ const (
 	DefaultTimeout  = 10 * time.Second
 	maxBackoff      = time.Minute
 	statePath       = "/relay/v1/state"
+	grantPath       = "/relay/v1/grant"
+	maxSealedGrant  = 64 << 10
 )
 
 var errNotNewer = errors.New("corelink: relay state is not newer than the current one")
@@ -47,6 +49,11 @@ type Config struct {
 	// Revocations, when set, receives the number of revocation entries in
 	// force after each applied state.
 	Revocations func(n int)
+	// Private makes this relay a Private Interchange: it polls its grant
+	// (mtrp-v1 §9.2), sealed to Key, and admits only the granted Networks.
+	// Without a valid grant it admits nothing.
+	Private bool
+	Key     key.RelayPrivate
 }
 
 // Link holds the latest verified relay state. Its read methods are safe for
@@ -54,6 +61,7 @@ type Config struct {
 type Link struct {
 	cfg      Config
 	stateURL string
+	grantURL string
 
 	keys       atomic.Pointer[mtrp.StaticKeys]
 	revoked    atomic.Pointer[mtrp.RevocationSet]
@@ -65,6 +73,10 @@ type Link struct {
 	expiresAt time.Time
 	state     mtrp.RelayState
 	drainOnce sync.Once
+
+	grant         atomic.Pointer[mtrp.RelayGrant]
+	grantSequence uint64 // owned by the polling goroutine
+	grantExpired  bool   // owned by the polling goroutine
 }
 
 // New validates the configuration and installs the bootstrap keys.
@@ -110,7 +122,15 @@ func New(cfg Config) (*Link, error) {
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}
 	}
+	if cfg.Private && (cfg.Key.IsZero() || cfg.Key.Public() != cfg.Self) {
+		return nil, errors.New("corelink: a Private Interchange needs its relay key")
+	}
 	l := &Link{cfg: cfg, stateURL: u.JoinPath(statePath).String()}
+	if cfg.Private {
+		grantURL := u.JoinPath(grantPath)
+		grantURL.RawQuery = url.Values{"relay": {cfg.Self.String()}}.Encode()
+		l.grantURL = grantURL.String()
+	}
 	bootstrap := mtrp.NewStaticKeys(cfg.Bootstrap...)
 	l.keys.Store(&bootstrap)
 	l.revoked.Store(mtrp.NewRevocationSet(mtrp.RelayState{}))
@@ -125,8 +145,28 @@ func (l *Link) SigningKey(id key.KeyID) (key.SigningPublic, bool) {
 // Revoked implements mtrp.Revocations.
 func (l *Link) Revoked(t mtrp.Ticket) bool { return l.revoked.Load().Revoked(t) }
 
-// ZoneRevoked implements mtrp.ZoneRevocations.
-func (l *Link) ZoneRevoked(z mtrp.Zone) bool { return l.revoked.Load().ZoneRevoked(z) }
+// ZoneRevoked implements mtrp.ZoneRevocations. A Private Interchange treats
+// every zone outside its grant as withdrawn: tickets without a granted
+// Network are refused, and routes open only within granted Networks.
+func (l *Link) ZoneRevoked(z mtrp.Zone) bool {
+	if l.revoked.Load().ZoneRevoked(z) {
+		return true
+	}
+	if !l.cfg.Private {
+		return false
+	}
+	grant := l.grant.Load()
+	return grant == nil || z.Kind != mtrp.ZoneNetwork || !l.cfg.Now().Before(grant.ExpiresAt) || !grant.Serves(z.ID)
+}
+
+// Grant returns the Private Interchange grant in force, if any.
+func (l *Link) Grant() (mtrp.RelayGrant, bool) {
+	grant := l.grant.Load()
+	if grant == nil {
+		return mtrp.RelayGrant{}, false
+	}
+	return *grant, true
+}
 
 // Generation increases whenever the revocations change, so the relay only
 // rescans its sessions when there is something new.
@@ -148,10 +188,14 @@ func (l *Link) Run(ctx context.Context) error {
 			}
 		}
 		err := l.Poll(ctx)
+		if err == nil && l.cfg.Private {
+			err = l.PollGrant(ctx)
+		}
 		if stopping(ctx) {
 			return nil // a poll cut short by shutdown is not a failure
 		}
 		l.refreshKeys() // keys can expire while Core is unreachable
+		l.noteGrantExpiry()
 		switch {
 		case err != nil:
 			failures++
@@ -262,3 +306,74 @@ func (l *Link) refreshKeys() {
 }
 
 func stopping(ctx context.Context) bool { return ctx.Err() != nil }
+
+// PollGrant fetches, opens and applies this Private Interchange's grant.
+func (l *Link) PollGrant(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.grantURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := l.cfg.Client.Do(req)
+	if err != nil {
+		l.cfg.Metrics("grant_fetch_failed")
+		return fmt.Errorf("corelink: grant fetch: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		l.cfg.Metrics("grant_bad_status")
+		return fmt.Errorf("corelink: grant fetch: status %d", resp.StatusCode)
+	}
+	sealed, err := io.ReadAll(io.LimitReader(resp.Body, maxSealedGrant+1))
+	if err != nil || len(sealed) > maxSealedGrant {
+		l.cfg.Metrics("grant_fetch_failed")
+		return errors.New("corelink: grant read failed or too large")
+	}
+	if err := l.applyGrant(sealed); err != nil {
+		if errors.Is(err, errNotNewer) {
+			l.cfg.Metrics("grant_not_newer")
+			return nil
+		}
+		l.cfg.Metrics("grant_rejected")
+		return err
+	}
+	l.cfg.Metrics("grant_applied")
+	return nil
+}
+
+// applyGrant opens a sealed grant, verifies it and makes it current.
+func (l *Link) applyGrant(sealed []byte) error {
+	document, err := mtrp.OpenRelayGrant(sealed, l.cfg.Key)
+	if err != nil {
+		return fmt.Errorf("corelink: %w", err)
+	}
+	payload, _, err := mtrp.OpenDocument(document, mtrp.DocumentRelayGrant, *l.keys.Load())
+	if err != nil {
+		return fmt.Errorf("corelink: %w", err)
+	}
+	grant, err := mtrp.ParseRelayGrant(payload, l.cfg.Self, l.cfg.Now())
+	if err != nil {
+		return fmt.Errorf("corelink: %w", err)
+	}
+	if grant.Sequence <= l.grantSequence {
+		return errNotNewer
+	}
+	previous := l.grant.Load()
+	l.grant.Store(&grant)
+	l.grantSequence, l.grantExpired = grant.Sequence, false
+	if previous == nil || !slices.Equal(previous.Networks, grant.Networks) {
+		l.cfg.Logger.Info("Private Interchange grant updated", "networks", len(grant.Networks))
+		l.generation.Add(1) // the relay rescans sessions and routes
+	}
+	return nil
+}
+
+// noteGrantExpiry rescans sessions once when the grant in force expires.
+func (l *Link) noteGrantExpiry() {
+	grant := l.grant.Load()
+	if !l.cfg.Private || grant == nil || l.grantExpired || l.cfg.Now().Before(grant.ExpiresAt) {
+		return
+	}
+	l.grantExpired = true
+	l.cfg.Logger.Warn("Private Interchange grant expired: admitting no session until Core answers")
+	l.generation.Add(1)
+}

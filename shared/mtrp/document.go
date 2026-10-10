@@ -16,6 +16,7 @@ type DocumentKind uint8
 const (
 	DocumentRelayMap   DocumentKind = 1
 	DocumentRelayState DocumentKind = 2
+	DocumentRelayGrant DocumentKind = 3
 )
 
 // Document limits.
@@ -42,6 +43,8 @@ func (k DocumentKind) domain() (string, bool) {
 		return "meshtransit/relay-map/v1", true
 	case DocumentRelayState:
 		return "meshtransit/relay-state/v1", true
+	case DocumentRelayGrant:
+		return "meshtransit/relay-grant/v1", true
 	default:
 		return "", false
 	}

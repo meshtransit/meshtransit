@@ -267,16 +267,17 @@ Core distributes two signed documents in the same envelope:
 ```
 magic        bytes[4]  = "MTSD"
 version      u8        = 1
-kind         u8        ; 1 relay map, 2 relay state
+kind         u8        ; 1 relay map, 2 relay state, 3 relay grant
 key_id       bytes[8]  ; Core signing key (keys.md)
 payload_len  u32       ; 1 .. 8 MiB
 payload      bytes     ; UTF-8 JSON
 signature    bytes[64] ; Ed25519 over (domain || 0x00 || every preceding byte)
 ```
 
-Domains: `meshtransit/relay-map/v1` (kind 1) and `meshtransit/relay-state/v1`
-(kind 2), so a signature over one kind is never valid as the other. Receivers
-verify the signature before parsing the payload.
+Domains: `meshtransit/relay-map/v1` (kind 1), `meshtransit/relay-state/v1`
+(kind 2) and `meshtransit/relay-grant/v1` (kind 3, section 9.2), so a
+signature over one kind is never valid as another. Receivers verify the
+signature before parsing the payload.
 
 The **relay map** payload:
 
@@ -289,7 +290,14 @@ The **relay map** payload:
      "stun_alt_port": 3480, "weight": 100}]}]}
 ```
 
-Limits: 1–128 regions with unique non-zero IDs and lowercase codes, 1–16
+A region MAY carry `"preferred": true`: a Private Interchange region (section
+9.2) granted to the node's Network. A node uses a reachable preferred region
+as its home relay before shared regions and does not leave it for a faster
+shared region; it keeps the shared regions to reach peers outside its
+Network. Core sends each Network a map with the shared regions plus the
+Private Interchange regions granted to it.
+
+Limits: 1–128 regions with unique non-zero IDs and unique lowercase codes, 1–16
 nodes per region, unique relay keys, at least one address per node, expiry at
 most 30 days ahead. A node rejects a map whose `expires_at_ms` has passed or
 whose `map_version` is older than the one it holds; a map with the same
@@ -384,6 +392,36 @@ value, `shared/mtrp` `InterchangeGrant`):
   omits the capability.
 - The relay map is the only source of relay regions: Core validates the home
   region a node reports against it and sends no legacy DERP map.
+
+### 9.2 Private Interchange grants
+
+A Workspace may run its own relays (Private Interchange, the same software)
+and grant each to some of its Networks. Core includes a granted relay's
+region, marked preferred, in those Networks' relay maps. The relay learns
+which Networks it serves from a relay grant:
+
+```json
+{"version": 1, "relay": "mtrelay:…", "sequence": 1760000000000,
+ "issued_at_ms": 1760000000000, "expires_at_ms": 1760000600000,
+ "networks": ["01890f00-0000-7000-8000-000000000201"]}
+```
+
+- Core signs it as a kind 3 document, sorted distinct Network IDs, at most
+  1024, lifetime at most one hour (Core uses 10 minutes, re-signed with every
+  state refresh, `sequence` the signing window).
+- `GET /relay/v1/grant?relay=<mtrelay:…>` returns the document sealed to that
+  relay key with the Noise `N` pattern (Noise_N_25519_ChaChaPoly_BLAKE2s,
+  prologue `meshtransit/relay-grant/v1`): an ephemeral key, then the
+  encrypted document. Only the relay can read which Networks it serves;
+  anyone may ask. Core answers 404 for a relay key no Workspace registered.
+- A relay started as a Private Interchange polls its grant with the state,
+  accepts only a newer `sequence` for its own key signed by a trusted key,
+  and keeps the last good grant while it is valid. Without a valid grant it
+  accepts no session (fail closed).
+- With a grant, a relay accepts a session only when its ticket names one of
+  the granted Networks, and opens a route only between sessions that share a
+  granted Network. Trust Contract zones do not admit sessions to a Private
+  Interchange.
 
 ## 10. Test vectors
 

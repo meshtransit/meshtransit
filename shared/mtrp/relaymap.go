@@ -38,6 +38,9 @@ type RelayRegion struct {
 	Code  string // short lowercase name, e.g. "sgp"
 	Name  string // display name
 	Nodes []RelayNode
+	// Preferred marks a Private Interchange region: nodes use it as their
+	// home relay while it is reachable, before shared regions.
+	Preferred bool
 }
 
 // RelayNode is one relay endpoint.
@@ -62,10 +65,11 @@ type relayMapWire struct {
 }
 
 type regionWire struct {
-	ID    uint16     `json:"id"`
-	Code  string     `json:"code"`
-	Name  string     `json:"name"`
-	Nodes []nodeWire `json:"nodes"`
+	ID        uint16     `json:"id"`
+	Code      string     `json:"code"`
+	Name      string     `json:"name"`
+	Nodes     []nodeWire `json:"nodes"`
+	Preferred bool       `json:"preferred,omitempty"`
 }
 
 type nodeWire struct {
@@ -89,7 +93,7 @@ func (m RelayMap) Payload(now time.Time) ([]byte, error) {
 	}
 	w := relayMapWire{Version: 1, MapVersion: m.Version, ExpiresAtMS: m.ExpiresAt.UnixMilli()}
 	for _, r := range m.Regions {
-		rw := regionWire{ID: r.ID, Code: r.Code, Name: r.Name}
+		rw := regionWire{ID: r.ID, Code: r.Code, Name: r.Name, Preferred: r.Preferred}
 		for _, n := range r.Nodes {
 			rw.Nodes = append(rw.Nodes, nodeWire{
 				Name: n.Name, HostName: n.HostName, IPv4: addrString(n.IPv4), IPv6: addrString(n.IPv6),
@@ -114,7 +118,7 @@ func ParseRelayMap(payload []byte, now time.Time) (RelayMap, error) {
 	}
 	m := RelayMap{Version: w.MapVersion, ExpiresAt: time.UnixMilli(w.ExpiresAtMS)}
 	for _, rw := range w.Regions {
-		r := RelayRegion{ID: rw.ID, Code: rw.Code, Name: rw.Name}
+		r := RelayRegion{ID: rw.ID, Code: rw.Code, Name: rw.Name, Preferred: rw.Preferred}
 		for _, nw := range rw.Nodes {
 			n := RelayNode{
 				Name: nw.Name, HostName: nw.HostName, Key: nw.Key, UDPPort: nw.UDPPort, TLSPort: nw.TLSPort,
@@ -157,6 +161,9 @@ func (m RelayMap) validate(now time.Time) error {
 	for i, r := range m.Regions {
 		if r.ID == 0 || slices.ContainsFunc(m.Regions[:i], func(o RelayRegion) bool { return o.ID == r.ID }) {
 			return bad("invalid or duplicate region id %d", r.ID)
+		}
+		if slices.ContainsFunc(m.Regions[:i], func(o RelayRegion) bool { return o.Code == r.Code }) {
+			return bad("duplicate region code %q", r.Code)
 		}
 		if !regionCodePattern.MatchString(r.Code) || len(r.Name) == 0 || len(r.Name) > 64 {
 			return bad("region %d: invalid code or name", r.ID)

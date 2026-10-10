@@ -39,6 +39,7 @@ type serveConfig struct {
 	tlsMaxConns   int
 	tlsMaxPerIP   int
 	coreURL       string
+	private       bool
 }
 
 func parseServeConfig(args []string, env func(string) (string, bool), stderr io.Writer) (serveConfig, error) {
@@ -49,6 +50,8 @@ func parseServeConfig(args []string, env func(string) (string, bool), stderr io.
 	fs.StringVar(&cfg.keyFile, "key-file", "", "relay private key file written by `meshrelay genkey` (mode 0600)")
 	fs.StringVar(&signing, "trusted-signing-keys", "", "comma-separated Core signing keys (mtsign:...); with --core-url they only bootstrap trust")
 	fs.StringVar(&cfg.coreURL, "core-url", "", "Core control URL (https://...) to poll for signing keys, revocations and drain")
+	fs.BoolVar(&cfg.private, "private-interchange", false,
+		"run as a Workspace's Private Interchange: serve only the Networks Core grants this relay (needs --core-url)")
 	fs.StringVar(&cfg.udpAddr, "udp", "0.0.0.0:3479", "MTRP UDP listen address")
 	fs.IntVar(&cfg.udpReaders, "udp-readers", 4, "UDP reader goroutines")
 	fs.StringVar(&cfg.stunAddr, "stun", "0.0.0.0:3478", "STUN listen address (empty disables STUN)")
@@ -105,6 +108,9 @@ func parseServeConfig(args []string, env func(string) (string, bool), stderr io.
 			return serveConfig{}, fmt.Errorf("--public-ipv6 %q is not a public IPv6 address", publicIPv6)
 		}
 		cfg.publicIPv6 = ip
+	}
+	if cfg.private && cfg.coreURL == "" {
+		return serveConfig{}, errors.New("--private-interchange needs --core-url")
 	}
 	if cfg.tlsMaxConns < 1 || cfg.tlsMaxPerIP < 1 {
 		return serveConfig{}, errors.New("--tls-max-conns and --tls-max-conns-per-ip must be positive")
