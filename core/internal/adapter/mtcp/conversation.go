@@ -63,6 +63,8 @@ type ApplicationOptions struct {
 	// how long an approval stays open.
 	ApprovalOrigin string
 	ApprovalTTL    time.Duration
+	// Metrics, when set, counts map stream ends.
+	Metrics *Metrics
 }
 
 // Application turns established sessions into registrations and map
@@ -150,6 +152,7 @@ func (conversation *conversation) Run(ctx context.Context) error {
 			if conversation.currentGeneration() != generation {
 				continue // a registration or rotation restarted the stream
 			}
+			conversation.streamEnded(err)
 			if lifecycle := lifecycleFor(err); lifecycle != nil {
 				_ = conversation.session.Send(sharedmtcp.MessageLifecycle, lifecycle)
 			}
@@ -235,6 +238,38 @@ func (conversation *conversation) authorize(nodeKey node.Key, disco node.Discove
 	select {
 	case conversation.wake <- struct{}{}:
 	default:
+	}
+}
+
+// streamEnded counts why a stream ended and warns when Core, not the
+// Device, ended it (overload or a failing store), so it is never silent.
+// Only the bounded reason is logged: errors may carry identifiers.
+func (conversation *conversation) streamEnded(err error) {
+	reason := streamEndReason(err)
+	conversation.application.options.Metrics.streamEnded(reason)
+	switch reason {
+	case "unavailable", "discontinuity", "other":
+		conversation.application.options.Logger.Warn("map stream ended by control", "reason", reason)
+	}
+}
+
+// streamEndReason maps a stream end to its bounded metric label.
+func streamEndReason(err error) string {
+	switch {
+	case errors.Is(err, mapsession.ErrSuspended):
+		return "suspended"
+	case errors.Is(err, mapsession.ErrUnauthorized), errors.Is(err, mapsession.ErrAuthorizationExpired):
+		return "unauthorized"
+	case errors.Is(err, mapsession.ErrPresenceConflict):
+		return "presence_conflict"
+	case errors.Is(err, mapsession.ErrStreamWrite):
+		return "write_failed"
+	case errors.Is(err, mapsession.ErrStreamDiscontinuity):
+		return "discontinuity"
+	case errors.Is(err, mapsession.ErrStreamUnavailable):
+		return "unavailable"
+	default:
+		return "other"
 	}
 }
 

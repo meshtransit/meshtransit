@@ -485,6 +485,8 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE` | none | Absolute path to the canonical, single-line MTCP control private key (`privkey:<hex>`). |
 | `MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER` | none | Required RFC 3339 expiry advertised for the control key in the MTCP key document; in the future and at most five years ahead. The control role logs a warning in the last 30 days and refuses to start after it: extend the date (same key) or rotate the key before then. |
 | `MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS` | none | Comma-separated reverse-proxy prefixes whose `X-Forwarded-For` names the client for per-source admission. |
+| `MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_RATE` | `10` | New MTCP handshakes per second per source (IPv4 address or IPv6 /64), from 1 through 10000, before any cryptography. Raise it where many Devices share one NAT. |
+| `MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_BURST` | `50` | Handshake burst per source, from the rate through 100000. |
 | `MESHTRANSIT_CONTROL_MTCP_ENABLED` | `true` | Accepted only as `true`, for existing deployments; MTCP is the only control protocol. |
 | `MESHTRANSIT_CONTROL_MAX_SESSIONS` | `1024` | Per-process connection and session admission cap from 1 through 4096. |
 | `MESHTRANSIT_CONTROL_HANDSHAKE_TIMEOUT` | `5s` | TLS and HTTP header deadline from 100ms through 30 seconds. |

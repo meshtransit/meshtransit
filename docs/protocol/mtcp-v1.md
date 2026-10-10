@@ -659,7 +659,7 @@ Unknown names are ignored. Core sends a feature only when both sides list it.
 | Handshake record | 2048 bytes |
 | Transport record | 65535 bytes |
 | Concurrent sessions per Core replica | configurable (default 4096) |
-| New handshakes per source IP | 10/s burst 50, before any Noise work |
+| New handshakes per source (IPv4 address or IPv6 /64) | 10/s burst 50 by default, configurable; before any Noise work |
 | Unauthenticated connections per source IP | 32 |
 | Buffered outbound bytes per session | 16 MiB plus one snapshot in flight; beyond it the session closes |
 | Unacknowledged map messages | 8 (7.2) |

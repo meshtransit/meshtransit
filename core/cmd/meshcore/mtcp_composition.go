@@ -91,10 +91,11 @@ func composeMTCP(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidMTCPComposition, err)
 	}
+	metrics := mtcpadapter.NewMetrics()
 	applicationOptions := mtcpadapter.ApplicationOptions{
 		Streams: deps.streams, Endpoints: deps.sessions, Snapshots: deps.sessions, ControlKeys: keys,
 		Logger: logger, Registrations: deps.registrations, RegistrationIDs: intake.PublicRegistrationIDGenerator{},
-		Logout: deps.logout, Paths: deps.paths, Connectivity: deps.connectivity,
+		Logout: deps.logout, Paths: deps.paths, Connectivity: deps.connectivity, Metrics: metrics,
 	}
 	if deps.browser != nil {
 		applicationOptions.BrowserIssuer = deps.browser.issuer
@@ -106,15 +107,16 @@ func composeMTCP(
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidMTCPComposition, err)
 	}
-	metrics := mtcpadapter.NewMetrics()
 	server, err := mtcpadapter.NewServer(mtcpadapter.Options{
-		Keys:         keys,
-		ClientIPs:    clients,
-		Handler:      application,
-		Guard:        deps.guard,
-		Capabilities: mtcpCapabilities(controlConfig.Map.EnableDeviceAliases),
-		Logger:       logger,
-		Metrics:      metrics,
+		Keys:           keys,
+		ClientIPs:      clients,
+		Handler:        application,
+		Guard:          deps.guard,
+		Capabilities:   mtcpCapabilities(controlConfig.Map.EnableDeviceAliases),
+		Logger:         logger,
+		Metrics:        metrics,
+		HandshakeRate:  controlConfig.MTCP.HandshakeRate,
+		HandshakeBurst: controlConfig.MTCP.HandshakeBurst,
 		// MTCP connections count against the listener's connection bound.
 		MaxSessions: controlConfig.MaxSessions,
 	})

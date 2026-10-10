@@ -3,6 +3,7 @@ package config
 import (
 	"net/netip"
 	"slices"
+	"strconv"
 	"time"
 )
 
@@ -10,6 +11,14 @@ const (
 	envControlMTCPEnabled        = "MESHTRANSIT_CONTROL_MTCP_ENABLED"
 	envControlMTCPKeyNotAfter    = "MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER"
 	envControlMTCPTrustedProxies = "MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS"
+	// Per-source handshake admission (mtcp-v1 §14). A source is an IPv4
+	// address or IPv6 /64; raise these where many Devices share one NAT.
+	envControlMTCPHandshakeRate      = "MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_RATE"
+	envControlMTCPHandshakeBurst     = "MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_BURST"
+	defaultControlMTCPHandshakeRate  = 10
+	defaultControlMTCPHandshakeBurst = 50
+	maxControlMTCPHandshakeRate      = 10000
+	maxControlMTCPHandshakeBurst     = 100000
 	// The advertised key lifetime is bounded so a forgotten value cannot
 	// pin clients to one key indefinitely.
 	maxControlMTCPKeyLifetime = 5 * 365 * 24 * time.Hour
@@ -21,6 +30,10 @@ type ControlMTCPConfig struct {
 	// KeyNotAfter is the expiry advertised for the control key in the key
 	// document (mtcp-v1 §2.2).
 	KeyNotAfter time.Time
+	// HandshakeRate and HandshakeBurst bound new handshakes per source and
+	// second, before any cryptography.
+	HandshakeRate  int
+	HandshakeBurst int
 	// TrustedProxyPrefixes are the reverse proxies whose X-Forwarded-For
 	// names the client for per-source admission; empty uses the peer.
 	trustedProxyPrefixes []netip.Prefix
@@ -45,5 +58,16 @@ func loadControlMTCPConfig(lookup LookupFunc, now time.Time) (ControlMTCPConfig,
 	if err != nil {
 		return ControlMTCPConfig{}, settingError(envControlMTCPTrustedProxies)
 	}
-	return ControlMTCPConfig{KeyNotAfter: notAfter.UTC(), trustedProxyPrefixes: proxies}, nil
+	rate, err := parseIntInRange(valueOrDefault(lookup, envControlMTCPHandshakeRate,
+		strconv.Itoa(defaultControlMTCPHandshakeRate)), 1, maxControlMTCPHandshakeRate)
+	if err != nil {
+		return ControlMTCPConfig{}, settingError(envControlMTCPHandshakeRate)
+	}
+	burst, err := parseIntInRange(valueOrDefault(lookup, envControlMTCPHandshakeBurst,
+		strconv.Itoa(max(defaultControlMTCPHandshakeBurst, rate))), 1, maxControlMTCPHandshakeBurst)
+	if err != nil || burst < rate {
+		return ControlMTCPConfig{}, settingError(envControlMTCPHandshakeBurst)
+	}
+	return ControlMTCPConfig{KeyNotAfter: notAfter.UTC(), HandshakeRate: rate, HandshakeBurst: burst,
+		trustedProxyPrefixes: proxies}, nil
 }

@@ -66,3 +66,33 @@ func TestLoadControlMTCPConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadControlMTCPHandshakeLimits(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	base := map[string]string{envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z"}
+	got, err := loadControlMTCPConfig(mapLookup(base), now)
+	if err != nil || got.HandshakeRate != 10 || got.HandshakeBurst != 50 {
+		t.Fatalf("defaults = %d/%d, %v; want 10/50", got.HandshakeRate, got.HandshakeBurst, err)
+	}
+	raised := map[string]string{envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z",
+		envControlMTCPHandshakeRate: "100", envControlMTCPHandshakeBurst: "2000"}
+	if got, err := loadControlMTCPConfig(mapLookup(raised), now); err != nil ||
+		got.HandshakeRate != 100 || got.HandshakeBurst != 2000 {
+		t.Fatalf("raised = %d/%d, %v", got.HandshakeRate, got.HandshakeBurst, err)
+	}
+	for name, value := range map[string]string{
+		envControlMTCPHandshakeRate: "0", envControlMTCPHandshakeBurst: "100001",
+	} {
+		values := map[string]string{envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z", name: value}
+		if _, err := loadControlMTCPConfig(mapLookup(values), now); err == nil || !strings.HasSuffix(err.Error(), ": "+name) {
+			t.Errorf("%s=%s accepted: %v", name, value, err)
+		}
+	}
+	// A burst below the rate would refuse a whole second's allowance.
+	low := map[string]string{envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z",
+		envControlMTCPHandshakeRate: "100", envControlMTCPHandshakeBurst: "50"}
+	if _, err := loadControlMTCPConfig(mapLookup(low), now); err == nil {
+		t.Error("burst below the rate accepted")
+	}
+}

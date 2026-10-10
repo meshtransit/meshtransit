@@ -83,9 +83,13 @@ type Options struct {
 	Logger       *slog.Logger
 	Metrics      *Metrics
 	MaxSessions  int
-	Keepalive    time.Duration
-	IdleTimeout  time.Duration
-	Now          func() time.Time
+	// HandshakeRate and HandshakeBurst bound handshakes per source (zero
+	// uses the mtcp-v1 §14 defaults).
+	HandshakeRate  int
+	HandshakeBurst int
+	Keepalive      time.Duration
+	IdleTimeout    time.Duration
+	Now            func() time.Time
 }
 
 // Server serves MTCP on the control listener. It is an http.Handler for
@@ -136,8 +140,9 @@ func NewServer(options Options) (*Server, error) {
 		return nil, ErrInvalidServer
 	}
 	return &Server{options: options, keys: keys,
-		admission: newAdmission(defaultHandshakeRate, defaultHandshakeBurst, defaultUnauthPerIP, options.Now),
-		recent:    newTimestampCache(), byMachine: make(map[key.MachinePublic]*Session),
+		admission: newAdmission(handshakeLimit(options.HandshakeRate, defaultHandshakeRate),
+			handshakeLimit(options.HandshakeBurst, defaultHandshakeBurst), defaultUnauthPerIP, options.Now),
+		recent: newTimestampCache(), byMachine: make(map[key.MachinePublic]*Session),
 		live: make(map[*Session]struct{})}, nil
 }
 
@@ -497,4 +502,11 @@ func intersect(offered, supported []string) []string {
 		}
 	}
 	return both
+}
+
+func handshakeLimit(configured int, fallback float64) float64 {
+	if configured <= 0 {
+		return fallback
+	}
+	return float64(configured)
 }

@@ -117,6 +117,16 @@ merge (2026-10-09) are kept below.
 
 ### Fixed
 
+- Core scale test findings (opt-in `TestRoleControlProcessScalesMapStreams`,
+  `MESHTRANSIT_SCALE_SESSIONS=N`): address allocation scanned only the first
+  256 addresses of a prefix (the candidate limit), so a Network stopped
+  registering Devices at about 253 per prefix with a retryable "registration
+  unavailable". Postgres now finds the lowest free address under the
+  allocator lock and the search starts there. MTCP map stream ends are
+  counted in `meshtransit_mtcp_map_stream_ends_total{reason}` and logged
+  when control ended them (they were silent). Per-source MTCP handshake
+  admission is configurable (`MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_RATE`,
+  `_BURST`; defaults 10/s, 50) for sites where many Devices share one NAT.
 - Relay authority hardening (security review): Core rate limits relay
   endpoints per IPv4 address or IPv6 /64 and evicts the least recently seen
   source when its table is full, instead of refusing every new source for
