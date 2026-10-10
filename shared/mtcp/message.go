@@ -124,11 +124,10 @@ func EncodeMessage(t MessageType, m proto.Message, from Direction, options Encod
 		return nil, ErrTooLarge
 	}
 	var flags uint8
-	if options.Compress {
-		// EncodeAll writes the content size in the frame header, which
-		// receivers require.
-		payload = encoder.EncodeAll(payload, make([]byte, 0, len(payload)/2+64))
-		flags = flagZstd
+	if options.Compress && len(payload) >= minCompressed {
+		if compressed, ok := compress(payload); ok {
+			payload, flags = compressed, flagZstd
+		}
 	}
 	count := max(1, (len(payload)+MaxFragmentPayload-1)/MaxFragmentPayload)
 	fragments := make([][]byte, 0, count)
@@ -209,24 +208,43 @@ func (a *Assembler) Add(fragment []byte) (MessageType, []byte, bool, error) {
 
 func compressionSlack(limit int) int { return limit/128 + 64 }
 
+// minCompressed is the smallest payload worth compressing.
+const minCompressed = 1024
+
+// compress returns payload as one zstd frame when the frame declares its
+// content size, which receivers require; the encoder omits it for some
+// small inputs, and those are sent uncompressed.
+func compress(payload []byte) ([]byte, bool) {
+	frame := encoder.EncodeAll(payload, make([]byte, 0, len(payload)/2+64))
+	var header zstd.Header
+	if err := header.Decode(frame); err != nil || !header.HasFCS || header.FrameContentSize != uint64(len(payload)) {
+		return nil, false
+	}
+	return frame, true
+}
+
 // decompress decodes one zstd frame that declares its content size, which
 // must not exceed limit; the declared size bounds the allocation.
 func decompress(frame []byte, limit int) ([]byte, error) {
+	if limit <= 0 {
+		return nil, ErrMalformed
+	}
+	bound := uint64(limit)
 	var header zstd.Header
-	if err := header.Decode(frame); err != nil || !header.HasFCS || header.FrameContentSize > uint64(limit) ||
+	if err := header.Decode(frame); err != nil || !header.HasFCS || header.FrameContentSize > bound ||
 		header.WindowSize > maxZstdWindow {
 		return nil, ErrMalformed
 	}
+	size := int64(header.FrameContentSize) //nolint:gosec // bounded by limit above
 	decoder, err := zstd.NewReader(bytes.NewReader(frame), zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true),
-		zstd.WithDecoderMaxWindow(maxZstdWindow), zstd.WithDecoderMaxMemory(uint64(limit)))
+		zstd.WithDecoderMaxWindow(maxZstdWindow), zstd.WithDecoderMaxMemory(bound))
 	if err != nil {
 		return nil, ErrMalformed
 	}
 	defer decoder.Close()
-	decoded := make([]byte, 0, header.FrameContentSize)
-	buffer := bytes.NewBuffer(decoded)
-	n, err := io.Copy(buffer, io.LimitReader(decoder, int64(limit)+1))
-	if err != nil || n != int64(header.FrameContentSize) {
+	buffer := bytes.NewBuffer(make([]byte, 0, size))
+	n, err := io.Copy(buffer, io.LimitReader(decoder, size+1))
+	if err != nil || n != size {
 		return nil, ErrMalformed
 	}
 	return buffer.Bytes(), nil

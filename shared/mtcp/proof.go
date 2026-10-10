@@ -32,7 +32,8 @@ func NodeKeyProof(node key.NodePrivate, control key.ControlPublic, handshakeHash
 
 // DiscoKeyProof proves possession of a disco key in this session.
 func DiscoKeyProof(disco key.DiscoPrivate, control key.ControlPublic,
-	handshakeHash [32]byte) ([ProofSize]byte, error) {
+	handshakeHash [32]byte,
+) ([ProofSize]byte, error) {
 	secret, err := disco.SharedWithControl(control)
 	if err != nil {
 		return [ProofSize]byte{}, err

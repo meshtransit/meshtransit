@@ -129,7 +129,13 @@ type dialOptions struct {
 	keyID     string
 }
 
-func (f *fixture) dial(options dialOptions) (*client, *http.Response, error) {
+// rejection is the status line and headers of a refused upgrade.
+type rejection struct {
+	StatusCode int
+	Header     http.Header
+}
+
+func (f *fixture) dial(options dialOptions) (*client, *rejection, error) {
 	f.t.Helper()
 	if options.machine.IsZero() {
 		options.machine, _ = key.NewMachinePrivate(nil)
@@ -151,7 +157,7 @@ func (f *fixture) dial(options dialOptions) (*client, *http.Response, error) {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	conn, err := net.Dial("tcp", strings.TrimPrefix(f.http.URL, "http://"))
+	conn, err := (&net.Dialer{}).DialContext(f.t.Context(), "tcp", strings.TrimPrefix(f.http.URL, "http://"))
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -168,8 +174,9 @@ func (f *fixture) dial(options dialOptions) (*client, *http.Response, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	_ = response.Body.Close() // an upgrade or a refusal carries no body the test reads
 	if response.StatusCode != http.StatusSwitchingProtocols {
-		return nil, response, nil
+		return nil, &rejection{StatusCode: response.StatusCode, Header: response.Header}, nil
 	}
 	body, err := base64.RawURLEncoding.DecodeString(response.Header.Get(sharedmtcp.HeaderHandshake))
 	if err != nil {
@@ -180,7 +187,7 @@ func (f *fixture) dial(options dialOptions) (*client, *http.Response, error) {
 		f.t.Fatal(err)
 	}
 	return &client{t: f.t, conn: conn, reader: sharedmtcp.NewRecordReader(buffered), session: session, hello: hello,
-		asm: sharedmtcp.NewAssembler(sharedmtcp.CoreToNode)}, response, nil
+		asm: sharedmtcp.NewAssembler(sharedmtcp.CoreToNode)}, nil, nil
 }
 
 func (c *client) send(t sharedmtcp.MessageType, message proto.Message) {
@@ -252,11 +259,15 @@ func waitFor(t *testing.T, condition func() bool) {
 
 func TestKeyDocument(t *testing.T) {
 	f := newFixture(t, nil)
-	response, err := http.Get(f.http.URL + sharedmtcp.KeyPath)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, f.http.URL+sharedmtcp.KeyPath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
 	var document struct {
 		Version int `json:"version"`
 		Keys    []struct {
@@ -351,9 +362,15 @@ func TestHandshakePolicy(t *testing.T) {
 		"bad base64": "POST /mtcp/v1 HTTP/1.1\r\nHost: x\r\nUpgrade: mtcp/1\r\nConnection: Upgrade\r\nMTCP-Key: " +
 			f.control.Public().ID().String() + "\r\nMTCP-Handshake: ***\r\nContent-Length: 0\r\n\r\n",
 	} {
-		conn, _ := net.Dial("tcp", strings.TrimPrefix(f.http.URL, "http://"))
+		conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", strings.TrimPrefix(f.http.URL, "http://"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		_, _ = io.WriteString(conn, header)
 		response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err == nil {
+			_ = response.Body.Close()
+		}
 		if err != nil || response.StatusCode != http.StatusBadRequest {
 			t.Errorf("%s: %v %v", name, response, err)
 		}
@@ -415,12 +432,15 @@ func TestWebSocketFallback(t *testing.T) {
 	defer cancel()
 	header := http.Header{}
 	header.Set(sharedmtcp.HeaderKey, f.control.Public().ID().String())
-	conn, _, err := websocket.Dial(ctx, strings.Replace(f.http.URL, "http", "ws", 1)+sharedmtcp.WebSocketPath,
+	conn, response, err := websocket.Dial(ctx, strings.Replace(f.http.URL, "http", "ws", 1)+sharedmtcp.WebSocketPath,
 		&websocket.DialOptions{Subprotocols: []string{sharedmtcp.WebSocketProtocol}, HTTPHeader: header})
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close() // the library drains a refusal; an upgrade has no body
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 	message, _ := sharedmtcp.AppendMessageRecord(nil, sharedmtcp.RecordInit, init)
 	if err := conn.Write(ctx, websocket.MessageBinary, message); err != nil {
 		t.Fatal(err)

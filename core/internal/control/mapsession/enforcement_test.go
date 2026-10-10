@@ -44,7 +44,7 @@ func (recorder *recordingEnforcementRecorder) state() []Enforcement {
 // so a test can tell which snapshot a delivery recorded.
 func revisionDigest(snapshot Snapshot) (FilterDigest, error) {
 	var digest policydigest.Digest
-	digest[0] = byte(snapshot.NetworkRevision())
+	digest[0] = byte(snapshot.NetworkRevision() & 0xff)
 	digest[1] = 0xa5
 	return NewFilterDigest(digest, int(snapshot.NetworkRevision()))
 }

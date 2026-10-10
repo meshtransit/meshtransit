@@ -66,8 +66,10 @@ func sampleServerHello() *mtcpv1.ServerHello {
 func handshake(t *testing.T, clientRandom, serverRandom io.Reader) (*Session, *Session, []byte, []byte) {
 	t.Helper()
 	machine, control := fixedKeys(t)
-	client, init, err := StartClient(ClientConfig{Machine: machine, Control: control.Public(),
-		Hello: sampleClientHello(), Random: clientRandom})
+	client, init, err := StartClient(ClientConfig{
+		Machine: machine, Control: control.Public(),
+		Hello: sampleClientHello(), Random: clientRandom,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,13 +203,19 @@ func largeSnapshot(peers int) *mtcpv1.MapSnapshot {
 }
 
 func TestMessageFragmentationAndCompression(t *testing.T) {
-	snapshot := largeSnapshot(2000)
-	for _, compress := range []bool{false, true} {
+	// Small messages cover the encoder omitting the frame content size,
+	// which receivers require: those go uncompressed.
+	for _, test := range []struct {
+		peers    int
+		compress bool
+	}{{0, true}, {1, true}, {3, true}, {12, true}, {2000, false}, {2000, true}} {
+		snapshot := largeSnapshot(test.peers)
+		compress := test.compress
 		fragments, err := EncodeMessage(MessageMapSnapshot, snapshot, CoreToNode, EncodeOptions{Compress: compress})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !compress && len(fragments) < 2 {
+		if test.peers == 2000 && !compress && len(fragments) < 2 {
 			t.Fatalf("uncompressed snapshot fit in %d fragment", len(fragments))
 		}
 		assembler := NewAssembler(CoreToNode)
@@ -224,10 +232,10 @@ func TestMessageFragmentationAndCompression(t *testing.T) {
 		}
 		decoded, err := DecodeMessage(MessageMapSnapshot, payload)
 		if err != nil || !proto.Equal(decoded, snapshot) {
-			t.Fatalf("compress=%t: snapshot did not survive: %v", compress, err)
+			t.Fatalf("peers=%d compress=%t: snapshot did not survive: %v", test.peers, compress, err)
 		}
 	}
-	if _, err := EncodeMessage(MessageMapSnapshot, snapshot, NodeToCore, EncodeOptions{}); !errors.Is(err, ErrDirection) {
+	if _, err := EncodeMessage(MessageMapSnapshot, largeSnapshot(1), NodeToCore, EncodeOptions{}); !errors.Is(err, ErrDirection) {
 		t.Fatalf("node sending a map: %v", err)
 	}
 	ping, _ := EncodeMessage(MessagePing, &mtcpv1.Ping{Nonce: []byte{1}}, NodeToCore, EncodeOptions{})
@@ -353,8 +361,10 @@ func buildVectors(t *testing.T) vectors {
 	}
 	ping, _ := EncodeMessage(MessagePing, &mtcpv1.Ping{Nonce: []byte{1, 2, 3, 4}}, NodeToCore, EncodeOptions{})
 	pong, _ := EncodeMessage(MessagePong, &mtcpv1.Pong{Nonce: []byte{1, 2, 3, 4}}, CoreToNode, EncodeOptions{})
-	lifecycle, _ := EncodeMessage(MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_SUSPENDED,
-		Reason: "suspended by an administrator", RetryAfterMs: 3000}, CoreToNode, EncodeOptions{})
+	lifecycle, _ := EncodeMessage(MessageLifecycle, &mtcpv1.Lifecycle{
+		State:  mtcpv1.Lifecycle_SUSPENDED,
+		Reason: "suspended by an administrator", RetryAfterMs: 3000,
+	}, CoreToNode, EncodeOptions{})
 	for _, step := range []struct {
 		direction string
 		sender    *Session
@@ -372,8 +382,10 @@ func buildVectors(t *testing.T) vectors {
 		if opened, err := step.receiver.Open(nil, record); err != nil || !bytes.Equal(opened, step.plaintext) {
 			t.Fatalf("vector record: %v", err)
 		}
-		v.Records = append(v.Records, vectorRecord{Direction: step.direction,
-			Plaintext: hex.EncodeToString(step.plaintext), Record: hex.EncodeToString(record)})
+		v.Records = append(v.Records, vectorRecord{
+			Direction: step.direction,
+			Plaintext: hex.EncodeToString(step.plaintext), Record: hex.EncodeToString(record),
+		})
 	}
 	node, _ := key.NodePrivateFromBytes(bytes.Repeat([]byte{0x77}, 32))
 	disco, _ := key.DiscoPrivateFromBytes(bytes.Repeat([]byte{0x88}, 32))
@@ -400,7 +412,7 @@ func TestVectors(t *testing.T) {
 	}
 	encoded = append(encoded, '\n')
 	if *update {
-		if err := os.WriteFile(vectorsPath, encoded, 0o644); err != nil {
+		if err := os.WriteFile(vectorsPath, encoded, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -415,7 +427,7 @@ func TestVectors(t *testing.T) {
 
 func FuzzAssembler(f *testing.F) {
 	ping, _ := EncodeMessage(MessagePing, &mtcpv1.Ping{Nonce: []byte{1}}, NodeToCore, EncodeOptions{})
-	compressed, _ := EncodeMessage(MessageNotice, &mtcpv1.Notice{}, CoreToNode, EncodeOptions{Compress: true})
+	compressed, _ := EncodeMessage(MessageMapSnapshot, largeSnapshot(12), CoreToNode, EncodeOptions{Compress: true})
 	f.Add(ping[0], []byte{})
 	f.Add(compressed[0], ping[0])
 	f.Fuzz(func(t *testing.T, first, second []byte) {

@@ -216,8 +216,10 @@ func ValidateClientHello(hello *mtcpv1.ClientHello) error {
 		return ErrMalformed
 	}
 	client := hello.GetClient()
-	for _, field := range []string{client.GetProduct(), client.GetVersion(), client.GetOs(), client.GetOsVersion(),
-		client.GetArch()} {
+	for _, field := range []string{
+		client.GetProduct(), client.GetVersion(), client.GetOs(), client.GetOsVersion(),
+		client.GetArch(),
+	} {
 		if len(field) > maxClientField || !utf8.ValidString(field) {
 			return ErrMalformed
 		}

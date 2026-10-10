@@ -218,3 +218,24 @@ func (service *Service) loadConnectivity(ctx context.Context, snapshot Snapshot)
 	}
 	return enriched, nil
 }
+
+// ObserveSessionEndpoints records a node's transient connectivity for the
+// map session of snapshot, which the caller already holds (MTCP sessions
+// report endpoints on their live stream instead of a separate request).
+func (service *Service) ObserveSessionEndpoints(ctx context.Context, snapshot Snapshot, set node.EndpointSet,
+	preferredRelay int, hasPreferredRelay bool) error {
+	if ctx == nil || service == nil || !snapshot.IsValid() || !set.IsValid() {
+		return ErrInvalidRequest
+	}
+	request, err := NewRequest(snapshot.NodeKey(), 1)
+	if err == nil {
+		request, err = request.WithEndpointSet(set)
+	}
+	if err == nil && hasPreferredRelay {
+		request, err = request.WithPreferredRelay(preferredRelay)
+	}
+	if err != nil {
+		return err
+	}
+	return service.observeEndpoints(ctx, snapshot, request)
+}

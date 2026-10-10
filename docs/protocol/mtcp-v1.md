@@ -208,7 +208,9 @@ payload     bytes[...]
 - `ZSTD` is set on every fragment of a compressed message or on none. The
   reassembled payload is then one zstd frame; the decompressed size MUST be
   declared in the frame header and MUST NOT exceed the message type's limit.
-  Decoders use a window of at most 8 MiB and no dictionaries.
+  Decoders use a window of at most 8 MiB and no dictionaries. Compression is
+  optional per message: a sender whose encoder cannot declare the size (some
+  encoders omit it for small inputs) sends that message uncompressed.
 - The reassembled (and decompressed) payload is the protobuf encoding of the
   message type. Unknown protobuf fields are ignored; unknown `msg_type` values
   close the connection with `ERROR UNSUPPORTED`.
@@ -485,12 +487,14 @@ present, STUN over IPv6 succeeded), `preferred_relay` (region ID) and
   answers `Error{INVALID}` and ignores the report.
 - The node sends it after each change and at least every 20 s ± 5 s while
   connected; Core treats endpoints as stale after 30 s without a report.
-- Core accepts at most one report per second per session; it keeps the latest
-  and drops the rest.
-- Core validates every endpoint (valid address, port 1–65535, no
-  unspecified, broadcast or multicast address; link-local addresses only with
-  kind `host`) and distributes only the latest report to peers as
-  `peer_patches`.
+- A node sends at most one report per second: it coalesces faster changes
+  and sends the latest when the second has passed. Core drops reports that
+  arrive less than a second after the last one it accepted.
+- Core rejects a malformed endpoint (address not 4 or 16 bytes, port outside
+  1–65535) with `Error{INVALID}`, ignores endpoints of unknown kind and
+  silently drops well-formed endpoints it does not distribute (unspecified,
+  loopback, link-local, multicast or broadcast addresses). It distributes
+  only the latest report to peers as `peer_patches`.
 
 ### 8.2 Hostinfo
 
