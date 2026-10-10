@@ -28,6 +28,8 @@ import (
 	"tailscale.com/control/controlhttp/controlhttpcommon"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
+
+	"meshtransit.net/client/internal/controlplane"
 )
 
 const (
@@ -39,14 +41,8 @@ const (
 	earlyPayloadHeaderLen = 9
 )
 
-// Result contains non-secret compatibility facts about a control server.
-type Result struct {
-	Protocol         string
-	Capability       int
-	KeyFingerprint   string
-	NoiseEstablished bool
-	NoiseVersion     int
-}
+// Result is controlplane.Result.
+type Result = controlplane.Result
 
 // Client performs bounded HTTPS compatibility probes.
 type Client struct {

@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/pathdiscovery"
 	"tailscale.com/tailcfg"
@@ -42,51 +43,24 @@ const (
 	meshDataPlaneAuditLogs = tailcfg.NodeCapability("https://meshtransit.io/cap/data-plane-audit-logs")
 )
 
+// The map errors are the protocol-neutral ones of controlplane.
 var (
-	// ErrNetmapRejected indicates a permanent client or registration error.
-	ErrNetmapRejected = errors.New("ts2021: netmap request rejected")
-	// ErrNetmapInvalid indicates that a received update failed validation.
-	ErrNetmapInvalid = errors.New("ts2021: invalid netmap update")
-	// ErrNetmapConsumer indicates that the product consumer rejected a snapshot.
-	ErrNetmapConsumer = errors.New("ts2021: netmap consumer failed")
-	// ErrNetmapAuthorityRevoked indicates that an authenticated control stream
-	// explicitly withdrew the active session's authority.
-	ErrNetmapAuthorityRevoked = errors.New("ts2021: netmap authority revoked")
-	// ErrNetmapAuthorityPaused indicates that control suspended this Device:
-	// it keeps its identity and should retry until an administrator resumes it.
-	ErrNetmapAuthorityPaused = errors.New("ts2021: netmap authority paused")
-	// ErrEndpointUpdate indicates that a candidate publication did not complete.
-	ErrEndpointUpdate = errors.New("ts2021: endpoint update failed")
+	ErrNetmapRejected         = controlplane.ErrNetmapRejected
+	ErrNetmapInvalid          = controlplane.ErrNetmapInvalid
+	ErrNetmapConsumer         = controlplane.ErrNetmapConsumer
+	ErrNetmapAuthorityRevoked = controlplane.ErrNetmapAuthorityRevoked
+	ErrNetmapAuthorityPaused  = controlplane.ErrNetmapAuthorityPaused
+	ErrEndpointUpdate         = controlplane.ErrEndpointUpdate
 )
 
-// NetmapOptions contains stable host facts, the persisted control-key pin, and
-// an optional active-session stream of complete candidate sets.
-type NetmapOptions struct {
-	// EnableDeviceAliases explicitly advertises the qualified peer translation contract.
-	EnableDeviceAliases bool
-	Hostname            string
-	Version             string
-	PinnedFingerprint   string
-	PeerProbePublicKey  string
-	Candidates          pathdiscovery.Set
-	PreferredRelay      int
-	HasPreferredRelay   bool
-	EndpointUpdates     <-chan EndpointUpdate
-	// EnforcementReports, when set, carries what the packet filter enforces;
-	// each report is sent to Core and repeated while it stays current.
-	EnforcementReports <-chan EnforcementReport
-}
+// NetmapOptions is controlplane.NetmapOptions.
+type NetmapOptions = controlplane.NetmapOptions
 
-// EndpointUpdate is one complete product-owned network presence update. The
-// direct candidates and preferred relay are published atomically.
-type EndpointUpdate struct {
-	Candidates        pathdiscovery.Set
-	PreferredRelay    int
-	HasPreferredRelay bool
-}
+// EndpointUpdate is controlplane.EndpointUpdate.
+type EndpointUpdate = controlplane.EndpointUpdate
 
-// NetmapHandler consumes one fully validated, defensive network snapshot.
-type NetmapHandler func(context.Context, networkmap.Snapshot) error
+// NetmapHandler is controlplane.NetmapHandler.
+type NetmapHandler = controlplane.NetmapHandler
 
 // StreamNetmap maintains a bounded streaming map session until cancellation or
 // a permanent security/registration failure. Reconnects always re-verify the

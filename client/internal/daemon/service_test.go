@@ -21,7 +21,7 @@ import (
 
 	"meshtransit.net/shared/key"
 
-	"meshtransit.net/client/internal/compat/ts2021"
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/identity"
 	"meshtransit.net/client/internal/networkmap"
@@ -59,13 +59,13 @@ func TestService_TrustAndBrowserRegistration(t *testing.T) {
 		t.Fatalf("repeat trust = %#v, calls bootstrap=%d verify=%d", trustedAgain, control.bootstrapCalls, control.verifyCalls)
 	}
 
-	control.registrationResults = []ts2021.RegistrationResult{
+	control.registrationResults = []controlplane.RegistrationResult{
 		{
-			State:   ts2021.RegistrationStateAuthorizationRequired,
+			State:   controlplane.RegistrationStateAuthorizationRequired,
 			AuthURL: "https://control.example.com/register/opaque",
 		},
 		{
-			State:             ts2021.RegistrationStateAuthorized,
+			State:             controlplane.RegistrationStateAuthorized,
 			MachineAuthorized: true,
 		},
 	}
@@ -103,28 +103,28 @@ func TestService_StartLoginRechecksPendingAuthorization(t *testing.T) {
 	const newURL = "https://control.example.com/register/new"
 	for _, test := range []struct {
 		name   string
-		result ts2021.RegistrationResult
+		result controlplane.RegistrationResult
 		state  string
 		url    string
 	}{
 		{
 			name: "live intent replay",
-			result: ts2021.RegistrationResult{
-				State: ts2021.RegistrationStateAuthorizationRequired, AuthURL: oldURL,
+			result: controlplane.RegistrationResult{
+				State: controlplane.RegistrationStateAuthorizationRequired, AuthURL: oldURL,
 			},
 			state: RegistrationPending, url: oldURL,
 		},
 		{
 			name: "expired intent replacement",
-			result: ts2021.RegistrationResult{
-				State: ts2021.RegistrationStateAuthorizationRequired, AuthURL: newURL,
+			result: controlplane.RegistrationResult{
+				State: controlplane.RegistrationStateAuthorizationRequired, AuthURL: newURL,
 			},
 			state: RegistrationPending, url: newURL,
 		},
 		{
 			name: "already authorized",
-			result: ts2021.RegistrationResult{
-				State: ts2021.RegistrationStateAuthorized, MachineAuthorized: true,
+			result: controlplane.RegistrationResult{
+				State: controlplane.RegistrationStateAuthorized, MachineAuthorized: true,
 			},
 			state: RegistrationRegistered,
 		},
@@ -135,8 +135,8 @@ func TestService_StartLoginRechecksPendingAuthorization(t *testing.T) {
 			if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 				t.Fatal(err)
 			}
-			control.registrationResults = []ts2021.RegistrationResult{
-				{State: ts2021.RegistrationStateAuthorizationRequired, AuthURL: oldURL},
+			control.registrationResults = []controlplane.RegistrationResult{
+				{State: controlplane.RegistrationStateAuthorizationRequired, AuthURL: oldURL},
 				test.result,
 			}
 			if _, err := service.StartLogin(t.Context(), ""); err != nil {
@@ -185,9 +185,9 @@ func TestService_StartLoginPreservesPendingAuthorizationOnFailure(t *testing.T) 
 		name string
 		err  error
 	}{
-		{name: "temporary failure", err: ts2021.ErrRegistrationTemporary},
-		{name: "control key changed", err: ts2021.ErrControlKeyChanged},
-		{name: "rejected response", err: ts2021.ErrRegistration},
+		{name: "temporary failure", err: controlplane.ErrRegistrationTemporary},
+		{name: "control key changed", err: controlplane.ErrControlKeyChanged},
+		{name: "rejected response", err: controlplane.ErrRegistration},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -196,14 +196,14 @@ func TestService_StartLoginPreservesPendingAuthorizationOnFailure(t *testing.T) 
 				t.Fatal(err)
 			}
 			const pendingURL = "https://control.example.com/register/old"
-			control.registrationResults = []ts2021.RegistrationResult{
-				{State: ts2021.RegistrationStateAuthorizationRequired, AuthURL: pendingURL},
+			control.registrationResults = []controlplane.RegistrationResult{
+				{State: controlplane.RegistrationStateAuthorizationRequired, AuthURL: pendingURL},
 			}
 			if _, err := service.StartLogin(t.Context(), ""); err != nil {
 				t.Fatal(err)
 			}
-			control.registerFunc = func(context.Context, ts2021.RegisterOptions) (ts2021.RegistrationResult, error) {
-				return ts2021.RegistrationResult{}, test.err
+			control.registerFunc = func(context.Context, controlplane.RegisterOptions) (controlplane.RegistrationResult, error) {
+				return controlplane.RegistrationResult{}, test.err
 			}
 			if _, err := service.StartLogin(t.Context(), ""); !errors.Is(err, test.err) {
 				t.Fatalf("explicit login error = %v, want %v", err, test.err)
@@ -226,8 +226,8 @@ func TestService_RotateNodeKeyCommitsConfirmedKey(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
@@ -242,8 +242,8 @@ func TestService_RotateNodeKeyCommitsConfirmedKey(t *testing.T) {
 	oldNodePrivateKey := bytes.Clone(oldMaterial.NodePrivateKey)
 	defer clear(oldNodePrivateKey)
 
-	control.rotationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.rotationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	rotated, err := service.RotateNodeKey(t.Context())
@@ -290,8 +290,8 @@ func TestService_RotateNodeKeyRetriesSameStagedKey(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
@@ -308,21 +308,21 @@ func TestService_RotateNodeKeyRetriesSameStagedKey(t *testing.T) {
 	control.rotateFunc = func(
 		_ context.Context,
 		_ []byte,
-	) (ts2021.RegistrationResult, error) {
+	) (controlplane.RegistrationResult, error) {
 		rotationCall++
 		if rotationCall == 1 {
-			return ts2021.RegistrationResult{}, fmt.Errorf(
+			return controlplane.RegistrationResult{}, fmt.Errorf(
 				"%w: injected transport failure",
-				ts2021.ErrRegistrationTemporary,
+				controlplane.ErrRegistrationTemporary,
 			)
 		}
 
-		return ts2021.RegistrationResult{
-			State:             ts2021.RegistrationStateAuthorized,
+		return controlplane.RegistrationResult{
+			State:             controlplane.RegistrationStateAuthorized,
 			MachineAuthorized: true,
 		}, nil
 	}
-	if _, err := service.RotateNodeKey(t.Context()); !errors.Is(err, ts2021.ErrRegistrationTemporary) ||
+	if _, err := service.RotateNodeKey(t.Context()); !errors.Is(err, controlplane.ErrRegistrationTemporary) ||
 		!errors.Is(err, ErrNodeKeyRotation) {
 		t.Fatalf("first RotateNodeKey() error = %v, want temporary rotation error", err)
 	}
@@ -373,14 +373,14 @@ func TestService_RunResumesPendingNodeKeyRotation(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
 		t.Fatalf("StartLogin() error = %v", err)
 	}
-	pendingNodePrivateKey, err := ts2021.GenerateNodePrivateKey()
+	pendingNodePrivateKey, err := controlplane.GenerateNodePrivateKey()
 	if err != nil {
 		t.Fatalf("GenerateNodePrivateKey() error = %v", err)
 	}
@@ -392,8 +392,8 @@ func TestService_RunResumesPendingNodeKeyRotation(t *testing.T) {
 	); err != nil {
 		t.Fatalf("BeginNodeKeyRotation() error = %v", err)
 	}
-	control.rotationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.rotationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 
@@ -431,8 +431,8 @@ func TestService_CompleteLoginSerializesPendingAuthorization(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:   ts2021.RegistrationStateAuthorizationRequired,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:   controlplane.RegistrationStateAuthorizationRequired,
 		AuthURL: "https://control.example.com/register/opaque",
 	}}
 	if _, err := service.StartLogin(t.Context(), ""); err != nil {
@@ -447,15 +447,15 @@ func TestService_CompleteLoginSerializesPendingAuthorization(t *testing.T) {
 	control.mu.Lock()
 	control.registerFunc = func(
 		ctx context.Context,
-		_ ts2021.RegisterOptions,
-	) (ts2021.RegistrationResult, error) {
+		_ controlplane.RegisterOptions,
+	) (controlplane.RegistrationResult, error) {
 		registerStarted <- struct{}{}
 		select {
 		case <-ctx.Done():
-			return ts2021.RegistrationResult{}, ctx.Err()
+			return controlplane.RegistrationResult{}, ctx.Err()
 		case <-releaseRegister:
-			return ts2021.RegistrationResult{
-				State:             ts2021.RegistrationStateAuthorized,
+			return controlplane.RegistrationResult{
+				State:             controlplane.RegistrationStateAuthorized,
 				MachineAuthorized: true,
 			}, nil
 		}
@@ -514,8 +514,8 @@ func TestService_CompleteLoginKeepsPendingStateOnTemporaryFailure(t *testing.T) 
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:   ts2021.RegistrationStateAuthorizationRequired,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:   controlplane.RegistrationStateAuthorizationRequired,
 		AuthURL: "https://control.example.com/register/opaque",
 	}}
 	if _, err := service.StartLogin(t.Context(), ""); err != nil {
@@ -526,17 +526,17 @@ func TestService_CompleteLoginKeepsPendingStateOnTemporaryFailure(t *testing.T) 
 	control.mu.Lock()
 	control.registerFunc = func(
 		context.Context,
-		ts2021.RegisterOptions,
-	) (ts2021.RegistrationResult, error) {
-		return ts2021.RegistrationResult{}, fmt.Errorf(
+		controlplane.RegisterOptions,
+	) (controlplane.RegistrationResult, error) {
+		return controlplane.RegistrationResult{}, fmt.Errorf(
 			"test control outage: %w",
-			ts2021.ErrRegistrationTemporary,
+			controlplane.ErrRegistrationTemporary,
 		)
 	}
 	control.mu.Unlock()
 	startedAt := time.Now()
 	if _, err := service.completeLogin(t.Context(), pollTimeout); !errors.Is(err, ErrAuthorizationPending) ||
-		!errors.Is(err, ts2021.ErrRegistrationTemporary) {
+		!errors.Is(err, controlplane.ErrRegistrationTemporary) {
 		t.Fatalf("CompleteLogin() error = %v, want pending temporary failure", err)
 	}
 	if elapsed := time.Since(startedAt); elapsed < pollTimeout {
@@ -553,10 +553,10 @@ func TestService_CompleteLoginKeepsPendingStateOnTemporaryFailure(t *testing.T) 
 	control.mu.Lock()
 	control.registerFunc = func(
 		context.Context,
-		ts2021.RegisterOptions,
-	) (ts2021.RegistrationResult, error) {
-		return ts2021.RegistrationResult{
-			State:             ts2021.RegistrationStateAuthorized,
+		controlplane.RegisterOptions,
+	) (controlplane.RegistrationResult, error) {
+		return controlplane.RegistrationResult{
+			State:             controlplane.RegistrationStateAuthorized,
 			MachineAuthorized: true,
 		}, nil
 	}
@@ -574,13 +574,13 @@ func TestService_CompleteLoginThrottlesPendingResponse(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{
+	control.registrationResults = []controlplane.RegistrationResult{
 		{
-			State:   ts2021.RegistrationStateAuthorizationRequired,
+			State:   controlplane.RegistrationStateAuthorizationRequired,
 			AuthURL: "https://control.example.com/register/opaque",
 		},
 		{
-			State:   ts2021.RegistrationStateAuthorizationRequired,
+			State:   controlplane.RegistrationStateAuthorizationRequired,
 			AuthURL: "https://control.example.com/register/opaque",
 		},
 	}
@@ -613,13 +613,13 @@ func TestService_CompleteLoginPersistsResponseAfterPollDeadline(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{
+	control.registrationResults = []controlplane.RegistrationResult{
 		{
-			State:   ts2021.RegistrationStateAuthorizationRequired,
+			State:   controlplane.RegistrationStateAuthorizationRequired,
 			AuthURL: "https://control.example.com/register/opaque",
 		},
 		{
-			State:   ts2021.RegistrationStateAuthorizationRequired,
+			State:   controlplane.RegistrationStateAuthorizationRequired,
 			AuthURL: "https://control.example.com/register/opaque",
 		},
 	}
@@ -648,8 +648,8 @@ func TestService_RegistrationClearsTemporaryKeyMaterial(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
@@ -677,8 +677,8 @@ func TestService_CompleteLoginTemporaryFailureHonorsCancellation(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:   ts2021.RegistrationStateAuthorizationRequired,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:   controlplane.RegistrationStateAuthorizationRequired,
 		AuthURL: "https://control.example.com/register/opaque",
 	}}
 	if _, err := service.StartLogin(t.Context(), ""); err != nil {
@@ -689,13 +689,13 @@ func TestService_CompleteLoginTemporaryFailureHonorsCancellation(t *testing.T) {
 	control.mu.Lock()
 	control.registerFunc = func(
 		context.Context,
-		ts2021.RegisterOptions,
-	) (ts2021.RegistrationResult, error) {
+		controlplane.RegisterOptions,
+	) (controlplane.RegistrationResult, error) {
 		registerStarted <- struct{}{}
 
-		return ts2021.RegistrationResult{}, fmt.Errorf(
+		return controlplane.RegistrationResult{}, fmt.Errorf(
 			"test control outage: %w",
-			ts2021.ErrRegistrationTemporary,
+			controlplane.ErrRegistrationTemporary,
 		)
 	}
 	control.mu.Unlock()
@@ -729,8 +729,8 @@ func TestService_AuthKeyIsNotPersisted(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	const authKey = "sensitive-auth-key-value"
@@ -804,8 +804,8 @@ func TestService_RunPublishesLatestValidatedSnapshot(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
@@ -898,8 +898,8 @@ func TestService_RunRecoversRuntimeApplyFailuresWithBoundedBackoff(t *testing.T)
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
@@ -988,8 +988,8 @@ func TestService_RuntimeRecoveryStatusTracksPendingAndSuccess(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
@@ -1075,8 +1075,8 @@ func TestService_RunStopsWhenRuntimeCleanupIsAmbiguous(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
@@ -1207,14 +1207,14 @@ func TestService_RunDoesNotRetryPermanentControlFailure(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
 		t.Fatalf("StartLogin() error = %v", err)
 	}
-	control.streamError = ts2021.ErrControlKeyChanged
+	control.streamError = controlplane.ErrControlKeyChanged
 
 	ctx, cancel := context.WithCancel(t.Context())
 	runResult := make(chan error, 1)
@@ -1251,15 +1251,15 @@ func TestService_RunWaitsWhileSuspendedAndRetries(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
 		t.Fatalf("StartLogin() error = %v", err)
 	}
 	control.mu.Lock()
-	control.streamError = fmt.Errorf("%w: control endpoint returned http 423", ts2021.ErrNetmapAuthorityPaused)
+	control.streamError = fmt.Errorf("%w: control endpoint returned http 423", controlplane.ErrNetmapAuthorityPaused)
 	control.mu.Unlock()
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -1289,8 +1289,8 @@ func TestService_RunRejectsConcurrentSupervisor(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
@@ -1345,8 +1345,8 @@ func TestService_RunRotatesPeerProbeDiscoKey(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
@@ -1397,8 +1397,8 @@ func TestService_RunFailsClosedWithoutPeerProbeIdentity(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
@@ -1433,8 +1433,8 @@ func TestService_RunAttachesAndSchedulesLivePeerProbes(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
@@ -1564,8 +1564,8 @@ func TestService_RunDiscoversAndPublishesDirectEndpoint(t *testing.T) {
 	if _, err := service.TrustControl(t.Context(), testFingerprint); err != nil {
 		t.Fatalf("TrustControl() error = %v", err)
 	}
-	control.registrationResults = []ts2021.RegistrationResult{{
-		State:             ts2021.RegistrationStateAuthorized,
+	control.registrationResults = []controlplane.RegistrationResult{{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}}
 	if _, err := service.StartLogin(t.Context(), "credential"); err != nil {
@@ -1600,7 +1600,7 @@ func TestService_RunDiscoversAndPublishesDirectEndpoint(t *testing.T) {
 	}
 
 	control.mu.Lock()
-	updates := append([]ts2021.EndpointUpdate(nil), control.endpointUpdates...)
+	updates := append([]controlplane.EndpointUpdate(nil), control.endpointUpdates...)
 	control.mu.Unlock()
 	if len(updates) != 1 || !updates[0].Candidates.Equal(candidates) ||
 		updates[0].PreferredRelay != 1 {
@@ -1646,7 +1646,7 @@ func TestEndpointRefreshRunsPeriodicallyWithoutDuplicatePublication(t *testing.T
 		endpointRefreshDelay: func() time.Duration { return 5 * time.Millisecond },
 	}
 	requests := make(chan endpointRefreshRequest, 1)
-	updates := make(chan ts2021.EndpointUpdate, 1)
+	updates := make(chan controlplane.EndpointUpdate, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
@@ -1711,7 +1711,7 @@ func TestEndpointRefreshDoesNotPollWithoutPeers(t *testing.T) {
 		endpointRefreshDelay: func() time.Duration { return 5 * time.Millisecond },
 	}
 	requests := make(chan endpointRefreshRequest, 1)
-	updates := make(chan ts2021.EndpointUpdate, 1)
+	updates := make(chan controlplane.EndpointUpdate, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
@@ -1776,7 +1776,7 @@ func TestEndpointRefreshRunsImmediatelyAfterNetworkChange(t *testing.T) {
 		networkChanges:       networkChanges,
 	}
 	requests := make(chan endpointRefreshRequest, 1)
-	updates := make(chan ts2021.EndpointUpdate, 1)
+	updates := make(chan controlplane.EndpointUpdate, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
@@ -1838,7 +1838,7 @@ func TestEndpointRefreshSelectsMeasuredHomeRelay(t *testing.T) {
 		endpointRefreshDelay: func() time.Duration { return 5 * time.Millisecond },
 	}
 	requests := make(chan endpointRefreshRequest, 1)
-	updates := make(chan ts2021.EndpointUpdate, 1)
+	updates := make(chan controlplane.EndpointUpdate, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
@@ -1922,7 +1922,7 @@ func TestEndpointRefreshResetWithdrawsDynamicCandidate(t *testing.T) {
 		endpointRefreshDelay: func() time.Duration { return time.Hour },
 	}
 	requests := make(chan endpointRefreshRequest, 1)
-	updates := make(chan ts2021.EndpointUpdate, 1)
+	updates := make(chan controlplane.EndpointUpdate, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
@@ -1997,7 +1997,7 @@ func TestEndpointRefreshSocketChangePublishesReplacementAtomically(t *testing.T)
 		endpointRefreshDelay: func() time.Duration { return time.Hour },
 	}
 	requests := make(chan endpointRefreshRequest, 1)
-	updates := make(chan ts2021.EndpointUpdate, 1)
+	updates := make(chan controlplane.EndpointUpdate, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
@@ -2288,25 +2288,25 @@ type fakeControl struct {
 	mu                  sync.Mutex
 	bootstrapCalls      int
 	verifyCalls         int
-	registrationResults []ts2021.RegistrationResult
-	registerOptions     []ts2021.RegisterOptions
-	registerMaterial    ts2021.KeyMaterial
+	registrationResults []controlplane.RegistrationResult
+	registerOptions     []controlplane.RegisterOptions
+	registerMaterial    controlplane.KeyMaterial
 	rotationKeys        [][]byte
-	rotationMaterials   []ts2021.KeyMaterial
-	rotationResults     []ts2021.RegistrationResult
+	rotationMaterials   []controlplane.KeyMaterial
+	rotationResults     []controlplane.RegistrationResult
 	rotateFunc          func(
 		context.Context,
 		[]byte,
-	) (ts2021.RegistrationResult, error)
+	) (controlplane.RegistrationResult, error)
 	registerFunc func(
 		context.Context,
-		ts2021.RegisterOptions,
-	) (ts2021.RegistrationResult, error)
+		controlplane.RegisterOptions,
+	) (controlplane.RegistrationResult, error)
 	streamSnapshot    *networkmap.Snapshot
 	streamPublished   chan struct{}
 	endpointPublished chan struct{}
-	endpointUpdates   []ts2021.EndpointUpdate
-	streamOptions     []ts2021.NetmapOptions
+	endpointUpdates   []controlplane.EndpointUpdate
+	streamOptions     []controlplane.NetmapOptions
 	streamStarted     chan struct{}
 	streamError       error
 	echoPeerProbeKey  bool
@@ -2383,16 +2383,16 @@ func (f *fakeDataPlane) RelayHealth() relay.HealthSnapshot {
 	return f.relayStatus
 }
 
-func (f *fakeControl) Probe(context.Context, string) (ts2021.Result, error) {
-	return ts2021.Result{}, nil
+func (f *fakeControl) Probe(context.Context, string) (controlplane.Result, error) {
+	return controlplane.Result{}, nil
 }
 
-func (f *fakeControl) BootstrapTrust(context.Context, string, string) (ts2021.TrustResult, error) {
+func (f *fakeControl) BootstrapTrust(context.Context, string, string) (controlplane.TrustResult, error) {
 	f.bootstrapCalls++
 
-	return ts2021.TrustResult{
+	return controlplane.TrustResult{
 		Fingerprint: testFingerprint,
-		Material: ts2021.KeyMaterial{
+		Material: controlplane.KeyMaterial{
 			MachinePrivateKey: []byte("machine-private"),
 			NodePrivateKey:    []byte("privkey:" + strings.Repeat("01", 32)),
 			ControlPublicKey:  []byte("control-public"),
@@ -2400,7 +2400,7 @@ func (f *fakeControl) BootstrapTrust(context.Context, string, string) (ts2021.Tr
 	}, nil
 }
 
-func (f *fakeControl) VerifyTrust(context.Context, string, ts2021.KeyMaterial, string) error {
+func (f *fakeControl) VerifyTrust(context.Context, string, controlplane.KeyMaterial, string) error {
 	f.verifyCalls++
 
 	return nil
@@ -2409,9 +2409,9 @@ func (f *fakeControl) VerifyTrust(context.Context, string, ts2021.KeyMaterial, s
 func (f *fakeControl) Register(
 	ctx context.Context,
 	_ string,
-	material ts2021.KeyMaterial,
-	options ts2021.RegisterOptions,
-) (ts2021.RegistrationResult, error) {
+	material controlplane.KeyMaterial,
+	options controlplane.RegisterOptions,
+) (controlplane.RegistrationResult, error) {
 	f.mu.Lock()
 	f.registerMaterial = material
 	f.registerOptions = append(f.registerOptions, options)
@@ -2424,7 +2424,7 @@ func (f *fakeControl) Register(
 	if len(f.registrationResults) == 0 {
 		f.mu.Unlock()
 
-		return ts2021.RegistrationResult{}, errors.New("unexpected registration call")
+		return controlplane.RegistrationResult{}, errors.New("unexpected registration call")
 	}
 	result := f.registrationResults[0]
 	f.registrationResults = f.registrationResults[1:]
@@ -2436,13 +2436,13 @@ func (f *fakeControl) Register(
 func (f *fakeControl) RotateNodeKey(
 	ctx context.Context,
 	_ string,
-	material ts2021.KeyMaterial,
+	material controlplane.KeyMaterial,
 	newNodePrivateKey []byte,
-	_ ts2021.RegisterOptions,
-) (ts2021.RegistrationResult, error) {
+	_ controlplane.RegisterOptions,
+) (controlplane.RegistrationResult, error) {
 	f.mu.Lock()
 	f.rotationKeys = append(f.rotationKeys, append([]byte(nil), newNodePrivateKey...))
-	f.rotationMaterials = append(f.rotationMaterials, ts2021.KeyMaterial{
+	f.rotationMaterials = append(f.rotationMaterials, controlplane.KeyMaterial{
 		MachinePrivateKey: append([]byte(nil), material.MachinePrivateKey...),
 		NodePrivateKey:    append([]byte(nil), material.NodePrivateKey...),
 		ControlPublicKey:  append([]byte(nil), material.ControlPublicKey...),
@@ -2456,7 +2456,7 @@ func (f *fakeControl) RotateNodeKey(
 	if len(f.rotationResults) == 0 {
 		f.mu.Unlock()
 
-		return ts2021.RegistrationResult{}, errors.New("unexpected Node-key rotation call")
+		return controlplane.RegistrationResult{}, errors.New("unexpected Node-key rotation call")
 	}
 	result := f.rotationResults[0]
 	f.rotationResults = f.rotationResults[1:]
@@ -2468,9 +2468,9 @@ func (f *fakeControl) RotateNodeKey(
 func (f *fakeControl) StreamNetmap(
 	ctx context.Context,
 	_ string,
-	_ ts2021.KeyMaterial,
-	options ts2021.NetmapOptions,
-	handler ts2021.NetmapHandler,
+	_ controlplane.KeyMaterial,
+	options controlplane.NetmapOptions,
+	handler controlplane.NetmapHandler,
 ) error {
 	f.mu.Lock()
 	snapshot := f.streamSnapshot
@@ -2493,7 +2493,7 @@ func (f *fakeControl) StreamNetmap(
 			current.Self.DiscoveryKey = options.PeerProbePublicKey
 		}
 		if err := handler(ctx, current); err != nil {
-			return fmt.Errorf("%w: %w", ts2021.ErrNetmapConsumer, err)
+			return fmt.Errorf("%w: %w", controlplane.ErrNetmapConsumer, err)
 		}
 		select {
 		case published <- struct{}{}:
@@ -2779,10 +2779,10 @@ func clearByteSlices(values [][]byte) {
 	}
 }
 
-func cloneProtocolMaterials(values []ts2021.KeyMaterial) []ts2021.KeyMaterial {
-	cloned := make([]ts2021.KeyMaterial, len(values))
+func cloneProtocolMaterials(values []controlplane.KeyMaterial) []controlplane.KeyMaterial {
+	cloned := make([]controlplane.KeyMaterial, len(values))
 	for index, value := range values {
-		cloned[index] = ts2021.KeyMaterial{
+		cloned[index] = controlplane.KeyMaterial{
 			MachinePrivateKey: bytes.Clone(value.MachinePrivateKey),
 			NodePrivateKey:    bytes.Clone(value.NodePrivateKey),
 			ControlPublicKey:  bytes.Clone(value.ControlPublicKey),
@@ -2792,7 +2792,7 @@ func cloneProtocolMaterials(values []ts2021.KeyMaterial) []ts2021.KeyMaterial {
 	return cloned
 }
 
-func clearProtocolMaterials(values []ts2021.KeyMaterial) {
+func clearProtocolMaterials(values []controlplane.KeyMaterial) {
 	for index := range values {
 		clearProtocolMaterial(values[index])
 	}
@@ -2811,7 +2811,7 @@ func waitForDiscoKey(t *testing.T, created <-chan key.DiscoPrivate) key.DiscoPri
 	}
 }
 
-func latestStreamOptions(t *testing.T, control *fakeControl) ts2021.NetmapOptions {
+func latestStreamOptions(t *testing.T, control *fakeControl) controlplane.NetmapOptions {
 	t.Helper()
 
 	control.mu.Lock()

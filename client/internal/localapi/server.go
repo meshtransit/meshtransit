@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"meshtransit.net/client/internal/compat/ts2021"
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/profile"
@@ -669,11 +669,11 @@ func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 		s.writeError(writer, http.StatusBadRequest, "invalid_profile", message)
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		s.writeError(writer, http.StatusRequestTimeout, "request_cancelled", "request was cancelled")
-	case errors.Is(err, ts2021.ErrInvalidFingerprint):
+	case errors.Is(err, controlplane.ErrInvalidFingerprint):
 		s.writeError(writer, http.StatusBadRequest, "invalid_control_key_fingerprint", "control key fingerprint is invalid")
-	case errors.Is(err, ts2021.ErrFingerprintMismatch):
+	case errors.Is(err, controlplane.ErrFingerprintMismatch):
 		s.writeError(writer, http.StatusConflict, "control_key_mismatch", "control key fingerprint does not match")
-	case errors.Is(err, ts2021.ErrControlKeyChanged):
+	case errors.Is(err, controlplane.ErrControlKeyChanged):
 		s.logger.Error("pinned control key changed", "error", err)
 		s.writeError(writer, http.StatusBadGateway, "control_key_changed", "pinned control key no longer matches the control server")
 	case errors.Is(err, daemon.ErrControlNotTrusted):
@@ -682,10 +682,10 @@ func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 		s.writeError(writer, http.StatusConflict, "authorization_pending", "browser authorization is still pending")
 	case errors.Is(err, daemon.ErrNoPendingAuthorization):
 		s.writeError(writer, http.StatusConflict, "no_pending_authorization", "no browser authorization is pending")
-	case errors.Is(err, ts2021.ErrNodeKeyExpired):
+	case errors.Is(err, controlplane.ErrNodeKeyExpired):
 		s.writeError(writer, http.StatusConflict, "node_key_expired", "node key rotation is required")
 	case errors.Is(err, daemon.ErrNodeKeyRotation) &&
-		errors.Is(err, ts2021.ErrRegistrationTemporary):
+		errors.Is(err, controlplane.ErrRegistrationTemporary):
 		s.logger.Warn("node key rotation is temporarily unavailable", "error", err)
 		s.writeError(writer, http.StatusServiceUnavailable, "node_key_rotation_unavailable", "node key rotation is temporarily unavailable")
 	case errors.Is(err, daemon.ErrNodeKeyRotation):

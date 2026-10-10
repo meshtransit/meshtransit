@@ -4,13 +4,13 @@ import (
 	"testing"
 	"time"
 
-	"meshtransit.net/client/internal/compat/ts2021"
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/shared/policydigest"
 )
 
 func TestPublishEnforcementKeepsOnlyTheLatestReport(t *testing.T) {
-	reports := make(chan ts2021.EnforcementReport, 1)
+	reports := make(chan controlplane.EnforcementReport, 1)
 	first := dataplane.EnforcedPolicy{Digest: policydigest.Digest{1}, Grants: 1, AppliedAt: time.Unix(1, 0)}
 	second := dataplane.EnforcedPolicy{Digest: policydigest.Digest{2}, Grants: 2, AppliedAt: time.Unix(2, 0)}
 	publishEnforcement(reports, first)

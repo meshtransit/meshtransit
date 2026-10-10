@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"meshtransit.net/client/internal/compat/ts2021"
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/identity"
@@ -566,8 +566,8 @@ func newTestServerWithOptions(t *testing.T, options Options) *Server {
 
 type fakeProber struct{}
 
-func (fakeProber) Probe(_ context.Context, _ string) (ts2021.Result, error) {
-	return ts2021.Result{
+func (fakeProber) Probe(_ context.Context, _ string) (controlplane.Result, error) {
+	return controlplane.Result{
 		Protocol:         "ts2021",
 		Capability:       142,
 		KeyFingerprint:   "sha256:test-fingerprint",
@@ -580,10 +580,10 @@ func (fakeProber) BootstrapTrust(
 	_ context.Context,
 	_ string,
 	fingerprint string,
-) (ts2021.TrustResult, error) {
-	return ts2021.TrustResult{
+) (controlplane.TrustResult, error) {
+	return controlplane.TrustResult{
 		Fingerprint: fingerprint,
-		Material: ts2021.KeyMaterial{
+		Material: controlplane.KeyMaterial{
 			MachinePrivateKey: []byte("machine-private"),
 			NodePrivateKey:    []byte("node-private"),
 			ControlPublicKey:  []byte("control-public"),
@@ -591,25 +591,25 @@ func (fakeProber) BootstrapTrust(
 	}, nil
 }
 
-func (fakeProber) VerifyTrust(context.Context, string, ts2021.KeyMaterial, string) error {
+func (fakeProber) VerifyTrust(context.Context, string, controlplane.KeyMaterial, string) error {
 	return nil
 }
 
 func (fakeProber) Register(
 	_ context.Context,
 	controlURL string,
-	_ ts2021.KeyMaterial,
-	options ts2021.RegisterOptions,
-) (ts2021.RegistrationResult, error) {
+	_ controlplane.KeyMaterial,
+	options controlplane.RegisterOptions,
+) (controlplane.RegistrationResult, error) {
 	if options.AuthKey != "" || options.FollowupURL != "" {
-		return ts2021.RegistrationResult{
-			State:             ts2021.RegistrationStateAuthorized,
+		return controlplane.RegistrationResult{
+			State:             controlplane.RegistrationStateAuthorized,
 			MachineAuthorized: true,
 		}, nil
 	}
 
-	return ts2021.RegistrationResult{
-		State:   ts2021.RegistrationStateAuthorizationRequired,
+	return controlplane.RegistrationResult{
+		State:   controlplane.RegistrationStateAuthorizationRequired,
 		AuthURL: controlURL + "/register/opaque",
 	}, nil
 }
@@ -617,12 +617,12 @@ func (fakeProber) Register(
 func (fakeProber) RotateNodeKey(
 	_ context.Context,
 	_ string,
-	_ ts2021.KeyMaterial,
+	_ controlplane.KeyMaterial,
 	_ []byte,
-	_ ts2021.RegisterOptions,
-) (ts2021.RegistrationResult, error) {
-	return ts2021.RegistrationResult{
-		State:             ts2021.RegistrationStateAuthorized,
+	_ controlplane.RegisterOptions,
+) (controlplane.RegistrationResult, error) {
+	return controlplane.RegistrationResult{
+		State:             controlplane.RegistrationStateAuthorized,
 		MachineAuthorized: true,
 	}, nil
 }
@@ -630,9 +630,9 @@ func (fakeProber) RotateNodeKey(
 func (fakeProber) StreamNetmap(
 	ctx context.Context,
 	_ string,
-	_ ts2021.KeyMaterial,
-	_ ts2021.NetmapOptions,
-	_ ts2021.NetmapHandler,
+	_ controlplane.KeyMaterial,
+	_ controlplane.NetmapOptions,
+	_ controlplane.NetmapHandler,
 ) error {
 	<-ctx.Done()
 
@@ -640,7 +640,7 @@ func (fakeProber) StreamNetmap(
 }
 
 var _ interface {
-	Probe(context.Context, string) (ts2021.Result, error)
+	Probe(context.Context, string) (controlplane.Result, error)
 } = fakeProber{}
 
 func createProfile(t *testing.T, server *Server, name, controlURL string) profileResponse {

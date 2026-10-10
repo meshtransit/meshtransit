@@ -18,7 +18,7 @@ import (
 	"meshtransit.net/shared/disco"
 	"meshtransit.net/shared/key"
 
-	"meshtransit.net/client/internal/compat/ts2021"
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/identity"
 	"meshtransit.net/client/internal/networkmap"
@@ -187,28 +187,28 @@ type NodeKeyRotation struct {
 const nodeKeyRotationCompleted = "rotated"
 
 type controlProber interface {
-	Probe(context.Context, string) (ts2021.Result, error)
-	BootstrapTrust(context.Context, string, string) (ts2021.TrustResult, error)
-	VerifyTrust(context.Context, string, ts2021.KeyMaterial, string) error
+	Probe(context.Context, string) (controlplane.Result, error)
+	BootstrapTrust(context.Context, string, string) (controlplane.TrustResult, error)
+	VerifyTrust(context.Context, string, controlplane.KeyMaterial, string) error
 	Register(
 		context.Context,
 		string,
-		ts2021.KeyMaterial,
-		ts2021.RegisterOptions,
-	) (ts2021.RegistrationResult, error)
+		controlplane.KeyMaterial,
+		controlplane.RegisterOptions,
+	) (controlplane.RegistrationResult, error)
 	RotateNodeKey(
 		context.Context,
 		string,
-		ts2021.KeyMaterial,
+		controlplane.KeyMaterial,
 		[]byte,
-		ts2021.RegisterOptions,
-	) (ts2021.RegistrationResult, error)
+		controlplane.RegisterOptions,
+	) (controlplane.RegistrationResult, error)
 	StreamNetmap(
 		context.Context,
 		string,
-		ts2021.KeyMaterial,
-		ts2021.NetmapOptions,
-		ts2021.NetmapHandler,
+		controlplane.KeyMaterial,
+		controlplane.NetmapOptions,
+		controlplane.NetmapHandler,
 	) error
 }
 
@@ -523,7 +523,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			}
 			if rotationErr != nil {
 				s.logControlSessionFailure("node key rotation resume failed", rotationErr)
-				recoverable := errors.Is(rotationErr, ts2021.ErrRegistrationTemporary)
+				recoverable := errors.Is(rotationErr, controlplane.ErrRegistrationTemporary)
 				controlState := ControlSessionBlocked
 				if recoverable {
 					controlState = ControlSessionConnecting
@@ -562,7 +562,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		clearIdentityMaterial(identityMaterial)
 		privateKey := dataplane.NodePrivateKey{}
 		if s.dataPlane != nil {
-			rawPrivateKey, keyErr := ts2021.NodePrivateRaw(protocolMaterial)
+			rawPrivateKey, keyErr := controlplane.NodePrivateRaw(protocolMaterial)
 			if keyErr != nil {
 				clearProtocolMaterial(protocolMaterial)
 
@@ -667,14 +667,14 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			return detachErr
 		}
 		var discoveryRequests chan endpointRefreshRequest
-		var endpointUpdates chan ts2021.EndpointUpdate
+		var endpointUpdates chan controlplane.EndpointUpdate
 		var refreshDone <-chan error
 		var sessionDiscoverer endpointDiscoverer
 		var synchronizedAt time.Time
 		if discoverer, supported := s.dataPlane.(endpointDiscoverer); supported {
 			sessionDiscoverer = discoverer
 			discoveryRequests = make(chan endpointRefreshRequest, 1)
-			endpointUpdates = make(chan ts2021.EndpointUpdate, 1)
+			endpointUpdates = make(chan controlplane.EndpointUpdate, 1)
 			done := make(chan error, 1)
 			refreshDone = done
 			go func() {
@@ -689,17 +689,17 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		}
 		lastRefreshRequest := endpointRefreshRequest{}
 		hasRefreshRequest := false
-		var enforcementReports chan ts2021.EnforcementReport
+		var enforcementReports chan controlplane.EnforcementReport
 		enforcedPolicy, reportsEnforcement := s.dataPlane.(enforcedPolicyDataPlane)
 		if reportsEnforcement {
-			enforcementReports = make(chan ts2021.EnforcementReport, 1)
+			enforcementReports = make(chan controlplane.EnforcementReport, 1)
 		}
 		go func() {
 			streamDone <- s.prober.StreamNetmap(
 				streamCtx,
 				active.ControlURL,
 				protocolMaterial,
-				ts2021.NetmapOptions{
+				controlplane.NetmapOptions{
 					EnableDeviceAliases: s.enableDeviceAliases,
 					Hostname:            s.hostname,
 					Version:             "meshd/" + s.build.Version,
@@ -913,7 +913,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				dnsState = DNSInactive
 			}
 			recoverable := errors.Is(streamErr, errRuntimeRecovery)
-			suspended := errors.Is(streamErr, ts2021.ErrNetmapAuthorityPaused)
+			suspended := errors.Is(streamErr, controlplane.ErrNetmapAuthorityPaused)
 			controlState := ControlSessionBlocked
 			switch {
 			case suspended:
@@ -1099,7 +1099,7 @@ func (s *Service) runEndpointRefresh(
 	scope uint64,
 	discoverer endpointDiscoverer,
 	requests <-chan endpointRefreshRequest,
-	updates chan ts2021.EndpointUpdate,
+	updates chan controlplane.EndpointUpdate,
 ) error {
 	if discoverer == nil || requests == nil || updates == nil {
 		return errors.New("daemon: endpoint refresh dependencies are missing")
@@ -1110,7 +1110,7 @@ func (s *Service) runEndpointRefresh(
 	homeSelector := relay.NewHomeSelector()
 	current := endpointRefreshRequest{}
 	var currentCandidates pathdiscovery.Set
-	lastPublished := ts2021.EndpointUpdate{Candidates: s.configuredCandidates}
+	lastPublished := controlplane.EndpointUpdate{Candidates: s.configuredCandidates}
 	hasPublished := true
 	hasCurrent := false
 	serverCursor := 0
@@ -1119,7 +1119,7 @@ func (s *Service) runEndpointRefresh(
 	var timerChannel <-chan time.Time
 	defer func() { stopRefreshTimer(timer) }()
 	publish := func(candidates pathdiscovery.Set, preferredRelay int) {
-		update := ts2021.EndpointUpdate{
+		update := controlplane.EndpointUpdate{
 			Candidates:        candidates,
 			PreferredRelay:    preferredRelay,
 			HasPreferredRelay: true,
@@ -1450,7 +1450,7 @@ func (s *Service) TrustControl(ctx context.Context, expectedFingerprint string) 
 
 	record, err := s.identities.Get(ctx, active.ID)
 	if err == nil {
-		canonical, verifyErr := ts2021.VerifyFingerprint(
+		canonical, verifyErr := controlplane.VerifyFingerprint(
 			expectedFingerprint,
 			record.ControlKeyFingerprint(),
 		)
@@ -1749,7 +1749,7 @@ func (s *Service) rotateNodeKeyLocked(
 		if !createPending {
 			return NodeKeyRotation{}, false, nil
 		}
-		pendingNodePrivateKey, err = ts2021.GenerateNodePrivateKey()
+		pendingNodePrivateKey, err = controlplane.GenerateNodePrivateKey()
 		if err != nil {
 			return NodeKeyRotation{}, false, fmt.Errorf("%w: %w", ErrNodeKeyRotation, err)
 		}
@@ -1775,7 +1775,7 @@ func (s *Service) rotateNodeKeyLocked(
 		active.ControlURL,
 		protocolMaterial,
 		pendingNodePrivateKey,
-		ts2021.RegisterOptions{
+		controlplane.RegisterOptions{
 			Hostname:          s.hostname,
 			Version:           "meshd/" + s.build.Version,
 			PinnedFingerprint: record.ControlKeyFingerprint(),
@@ -1784,7 +1784,7 @@ func (s *Service) rotateNodeKeyLocked(
 	if err != nil {
 		return NodeKeyRotation{}, false, fmt.Errorf("%w: %w", ErrNodeKeyRotation, err)
 	}
-	if result.State != ts2021.RegistrationStateAuthorized || !result.MachineAuthorized {
+	if result.State != controlplane.RegistrationStateAuthorized || !result.MachineAuthorized {
 		return NodeKeyRotation{}, false, fmt.Errorf("%w: control returned non-authoritative result", ErrNodeKeyRotation)
 	}
 	persistCtx, cancel := context.WithTimeout(
@@ -1839,7 +1839,7 @@ func (s *Service) completeLogin(ctx context.Context, pollTimeout time.Duration) 
 		if ctx.Err() != nil {
 			return Login{}, ctx.Err()
 		}
-		if errors.Is(err, ts2021.ErrRegistrationTemporary) {
+		if errors.Is(err, controlplane.ErrRegistrationTemporary) {
 			if err := waitForCompletionPoll(ctx, pollCtx); err != nil {
 				return Login{}, err
 			}
@@ -1906,7 +1906,7 @@ func (s *Service) registerWithRecord(
 		requestCtx,
 		active.ControlURL,
 		protocolMaterial,
-		ts2021.RegisterOptions{
+		controlplane.RegisterOptions{
 			Hostname:          s.hostname,
 			Version:           "meshd/" + s.build.Version,
 			PinnedFingerprint: record.ControlKeyFingerprint(),
@@ -1920,13 +1920,13 @@ func (s *Service) registerWithRecord(
 
 	login := Login{ProfileID: active.ID}
 	switch result.State {
-	case ts2021.RegistrationStateAuthorized:
+	case controlplane.RegistrationStateAuthorized:
 		login.State = RegistrationRegistered
 		if _, err := s.identities.SetRegistration(stateCtx, active.ID, "", true); err != nil {
 			return Login{}, fmt.Errorf("persisting authorized registration: %w", err)
 		}
 		s.signalControlSync()
-	case ts2021.RegistrationStateAuthorizationRequired:
+	case controlplane.RegistrationStateAuthorizationRequired:
 		login.State = RegistrationPending
 		login.AuthURL = result.AuthURL
 		if _, err := s.identities.SetRegistration(stateCtx, active.ID, result.AuthURL, false); err != nil {
@@ -1939,7 +1939,7 @@ func (s *Service) registerWithRecord(
 	return login, nil
 }
 
-func toIdentityMaterial(material ts2021.KeyMaterial) identity.Material {
+func toIdentityMaterial(material controlplane.KeyMaterial) identity.Material {
 	return identity.Material{
 		MachinePrivateKey: append([]byte(nil), material.MachinePrivateKey...),
 		NodePrivateKey:    append([]byte(nil), material.NodePrivateKey...),
@@ -1947,8 +1947,8 @@ func toIdentityMaterial(material ts2021.KeyMaterial) identity.Material {
 	}
 }
 
-func toProtocolMaterial(material identity.Material) ts2021.KeyMaterial {
-	return ts2021.KeyMaterial{
+func toProtocolMaterial(material identity.Material) controlplane.KeyMaterial {
+	return controlplane.KeyMaterial{
 		MachinePrivateKey: append([]byte(nil), material.MachinePrivateKey...),
 		NodePrivateKey:    append([]byte(nil), material.NodePrivateKey...),
 		ControlPublicKey:  append([]byte(nil), material.ControlPublicKey...),
@@ -1961,7 +1961,7 @@ func clearIdentityMaterial(material identity.Material) {
 	clear(material.ControlPublicKey)
 }
 
-func clearProtocolMaterial(material ts2021.KeyMaterial) {
+func clearProtocolMaterial(material controlplane.KeyMaterial) {
 	clear(material.MachinePrivateKey)
 	clear(material.NodePrivateKey)
 	clear(material.ControlPublicKey)
@@ -2219,9 +2219,11 @@ type enforcedPolicyDataPlane interface {
 
 // publishEnforcement hands the latest enforced policy to the map session,
 // replacing a report that was not sent yet. Only the map callback sends.
-func publishEnforcement(reports chan ts2021.EnforcementReport, enforced dataplane.EnforcedPolicy) {
-	report := ts2021.EnforcementReport{Digest: enforced.Digest, Grants: enforced.Grants,
-		AppliedAt: enforced.AppliedAt}
+func publishEnforcement(reports chan controlplane.EnforcementReport, enforced dataplane.EnforcedPolicy) {
+	report := controlplane.EnforcementReport{
+		Digest: enforced.Digest, Grants: enforced.Grants,
+		AppliedAt: enforced.AppliedAt,
+	}
 	select {
 	case reports <- report:
 		return

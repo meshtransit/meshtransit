@@ -20,6 +20,8 @@ import (
 
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
+
+	"meshtransit.net/client/internal/controlplane"
 )
 
 const (
@@ -30,29 +32,19 @@ const (
 	maxVersionRunes              = 128
 )
 
+// The registration errors are the protocol-neutral ones of controlplane.
 var (
-	// ErrInvalidFingerprint indicates a malformed operator-supplied SHA-256 pin.
-	ErrInvalidFingerprint = errors.New("ts2021: invalid control key fingerprint")
-	// ErrFingerprintMismatch indicates that the operator pin does not match discovery.
-	ErrFingerprintMismatch = errors.New("ts2021: control key fingerprint mismatch")
-	// ErrControlKeyChanged indicates that discovery no longer matches persisted trust.
-	ErrControlKeyChanged = errors.New("ts2021: pinned control key changed")
-	// ErrInvalidMaterial indicates malformed persisted protocol key material.
-	ErrInvalidMaterial = errors.New("ts2021: invalid identity material")
-	// ErrRegistration indicates a rejected or internally inconsistent response.
-	ErrRegistration = errors.New("ts2021: registration failed")
-	// ErrRegistrationTemporary indicates a retryable transport or server failure.
-	ErrRegistrationTemporary = fmt.Errorf("%w: temporarily unavailable", ErrRegistration)
-	// ErrNodeKeyExpired indicates that registration requires a deliberate key rotation.
-	ErrNodeKeyExpired = errors.New("ts2021: node key expired")
+	ErrInvalidFingerprint    = controlplane.ErrInvalidFingerprint
+	ErrFingerprintMismatch   = controlplane.ErrFingerprintMismatch
+	ErrControlKeyChanged     = controlplane.ErrControlKeyChanged
+	ErrInvalidMaterial       = controlplane.ErrInvalidMaterial
+	ErrRegistration          = controlplane.ErrRegistration
+	ErrRegistrationTemporary = controlplane.ErrRegistrationTemporary
+	ErrNodeKeyExpired        = controlplane.ErrNodeKeyExpired
 )
 
-// KeyMaterial contains serialized protocol keys. Formatting is always redacted.
-type KeyMaterial struct {
-	MachinePrivateKey []byte `json:"-"`
-	NodePrivateKey    []byte `json:"-"`
-	ControlPublicKey  []byte `json:"-"`
-}
+// KeyMaterial is controlplane.KeyMaterial.
+type KeyMaterial = controlplane.KeyMaterial
 
 // NodePrivateRaw decodes the WireGuard-compatible node key at the compatibility
 // boundary. Callers must clear the returned array after transferring it to the
@@ -66,39 +58,23 @@ func NodePrivateRaw(material KeyMaterial) ([32]byte, error) {
 	return nodeKey.Raw32(), nil
 }
 
-func (KeyMaterial) String() string { return "<ts2021 key material redacted>" }
+// TrustResult is controlplane.TrustResult.
+type TrustResult = controlplane.TrustResult
 
-func (KeyMaterial) GoString() string { return "ts2021.KeyMaterial{<redacted>}" }
+// RegistrationState is controlplane.RegistrationState.
+type RegistrationState = controlplane.RegistrationState
 
-// TrustResult is created only after the operator pin and Noise peer both verify.
-type TrustResult struct {
-	Fingerprint string
-	Material    KeyMaterial
-}
-
-// RegistrationState is a stable product-facing registration outcome.
-type RegistrationState string
-
+// The registration states are controlplane's.
 const (
-	RegistrationStateAuthorized            RegistrationState = "authorized"
-	RegistrationStateAuthorizationRequired RegistrationState = "authorization_required"
+	RegistrationStateAuthorized            = controlplane.RegistrationStateAuthorized
+	RegistrationStateAuthorizationRequired = controlplane.RegistrationStateAuthorizationRequired
 )
 
-// RegisterOptions contains non-persisted inputs for one registration request.
-type RegisterOptions struct {
-	Hostname          string
-	Version           string
-	PinnedFingerprint string
-	AuthKey           string
-	FollowupURL       string
-}
+// RegisterOptions is controlplane.RegisterOptions.
+type RegisterOptions = controlplane.RegisterOptions
 
-// RegistrationResult excludes upstream user/login data and private material.
-type RegistrationResult struct {
-	State             RegistrationState
-	AuthURL           string
-	MachineAuthorized bool
-}
+// RegistrationResult is controlplane.RegistrationResult.
+type RegistrationResult = controlplane.RegistrationResult
 
 // BootstrapTrust verifies an operator-provided fingerprint, proves the server
 // owns the corresponding Noise key, then creates fresh per-profile keys.

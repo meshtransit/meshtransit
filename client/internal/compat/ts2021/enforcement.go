@@ -13,16 +13,12 @@ import (
 
 	"tailscale.com/types/key"
 
+	"meshtransit.net/client/internal/controlplane"
 	"meshtransit.net/shared/policydigest"
 )
 
-// EnforcementReport is what the packet filter enforces: the policy digest of
-// its rules and when it installed them (R1-69).
-type EnforcementReport struct {
-	Digest    policydigest.Digest
-	Grants    int
-	AppliedAt time.Time
-}
+// EnforcementReport is controlplane.EnforcementReport.
+type EnforcementReport = controlplane.EnforcementReport
 
 const (
 	enforcementPath = "machine/meshtransit/enforcement"
