@@ -73,7 +73,7 @@ type Pool struct {
 	receiveSilence time.Duration
 	receive        chan Packet
 	done           chan struct{}
-	failures       chan struct{} // signalled when a region connection fails
+	onFailure      func() // called, without blocking, when a region connection fails
 
 	lifecycle        sync.Mutex
 	mu               sync.Mutex
@@ -112,7 +112,6 @@ func New(parent context.Context, config Config, dialer Dialer) (*Pool, error) {
 		clock:          time.Now,
 		receiveSilence: receiveSilenceLimit,
 		peerByKey:      peers,
-		failures:       make(chan struct{}, 1),
 	}, nil
 }
 
@@ -771,20 +770,21 @@ func (p *Pool) markFailure(worker *regionWorker) {
 	if worker.health.ConsecutiveFailures < math.MaxInt {
 		worker.health.ConsecutiveFailures++
 	}
-	select {
-	case p.failures <- struct{}{}:
-	default: // a signal is already pending
+	if p.onFailure != nil {
+		p.onFailure()
 	}
 }
 
-// Failures returns a channel that receives a signal after a region
-// connection fails, so the home relay can be re-chosen at once instead of
-// at the next periodic refresh. Signals coalesce.
-func (p *Pool) Failures() <-chan struct{} {
+// SetFailureHook installs a function called after a region connection
+// fails, so the home relay can be re-chosen at once instead of at the next
+// periodic refresh. hook must not block; it runs with the pool locked.
+func (p *Pool) SetFailureHook(hook func()) {
 	if p == nil {
-		return nil
+		return
 	}
-	return p.failures
+	p.mu.Lock()
+	p.onFailure = hook
+	p.mu.Unlock()
 }
 
 func clonePackets(packets [][]byte) [][]byte {

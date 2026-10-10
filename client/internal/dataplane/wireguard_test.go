@@ -1497,6 +1497,23 @@ func TestWireGuardEnginePreparesAuthorizedRelayBeforeSelection(t *testing.T) {
 	if !engine.RelayHealth().Regions[0].Connected {
 		t.Fatal("RelayHealth() returned mutable device state")
 	}
+	// The device's relay failures reach the engine's long-lived channel,
+	// and repeated failures coalesce into one pending signal.
+	if device.relayFailureHook == nil {
+		t.Fatal("Apply() did not install the relay failure hook")
+	}
+	device.relayFailureHook()
+	device.relayFailureHook()
+	select {
+	case <-engine.RelayFailures():
+	default:
+		t.Fatal("relay failure did not reach RelayFailures()")
+	}
+	select {
+	case <-engine.RelayFailures():
+		t.Fatal("relay failures did not coalesce")
+	default:
+	}
 	if err := engine.PrepareRelayRegion(2); err != nil {
 		t.Fatalf("PrepareRelayRegion() error = %v", err)
 	}
@@ -1785,6 +1802,7 @@ func (f *fakeWireGuardFactory) New(
 }
 
 type fakeWireGuardDevice struct {
+	relayFailureHook func()
 	configuration    string
 	configurations   []string
 	configureErr     error
@@ -1868,6 +1886,10 @@ func (d *fakeWireGuardDevice) RelayHealth() relay.HealthSnapshot {
 	health.Regions = append([]relay.RegionHealth(nil), d.relayHealth.Regions...)
 
 	return health
+}
+
+func (d *fakeWireGuardDevice) SetRelayFailureHook(hook func()) {
+	d.relayFailureHook = hook
 }
 
 func (d *fakeWireGuardDevice) PrepareRelayRegion(regionID int) error {

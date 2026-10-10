@@ -141,6 +141,11 @@ type relayConfiguringDevice interface {
 	ReplaceRelayPeers([]relay.Peer) error
 }
 
+// relayFailureDevice reports relay connection failures to a hook.
+type relayFailureDevice interface {
+	SetRelayFailureHook(func())
+}
+
 type wireGuardFactory interface {
 	New(
 		context.Context,
@@ -192,6 +197,9 @@ type wireGuardPlan struct {
 // WireGuardEngine owns the encrypted userspace packet engine. The daemon
 // serializes Apply and Close after stopping the map callback.
 type WireGuardEngine struct {
+	// relayFailures outlives the devices the engine replaces: each new
+	// device signals its relay connection failures into it.
+	relayFailures           chan struct{}
 	opener                  tunOpener
 	factory                 wireGuardFactory
 	listenPort              uint16
@@ -257,6 +265,7 @@ func newWireGuardEngine(
 		aware.setRelayCredentials(credentials)
 	}
 	return &WireGuardEngine{
+		relayFailures: make(chan struct{}, 1),
 		opener:        opener,
 		factory:       factory,
 		listenPort:    listenPort,
@@ -461,6 +470,9 @@ func (e *WireGuardEngine) applySnapshot(
 		device.Close()
 
 		return StateFailed, fmt.Errorf("dataplane: starting wireguard device: %w", err)
+	}
+	if failing, ok := device.(relayFailureDevice); ok {
+		failing.SetRelayFailureHook(e.signalRelayFailure)
 	}
 	e.device = device
 	e.adoptPlan(snapshot.Revision, plan)
@@ -709,6 +721,23 @@ func (e *WireGuardEngine) SetPeerProbeHandler(
 	device.SetPeerProbeHandler(handler)
 
 	return nil
+}
+
+// RelayFailures receives a signal after a relay connection of the current
+// device fails; signals coalesce. The daemon re-chooses the home relay on it.
+func (e *WireGuardEngine) RelayFailures() <-chan struct{} {
+	if e == nil {
+		return nil
+	}
+
+	return e.relayFailures
+}
+
+func (e *WireGuardEngine) signalRelayFailure() {
+	select {
+	case e.relayFailures <- struct{}{}:
+	default: // a signal is already pending
+	}
 }
 
 // RelayHealth returns non-secret authenticated connection state for home

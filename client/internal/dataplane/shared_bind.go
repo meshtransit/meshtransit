@@ -187,13 +187,12 @@ func (b *sharedBind) RelayHealth() relay.HealthSnapshot {
 	return b.relay.Health()
 }
 
-// RelayFailures signals relay connection failures (relay.Pool.Failures).
-func (b *sharedBind) RelayFailures() <-chan struct{} {
+// SetRelayFailureHook forwards relay connection failures to hook.
+func (b *sharedBind) SetRelayFailureHook(hook func()) {
 	if b == nil || b.relay == nil {
-		return nil
+		return
 	}
-
-	return b.relay.Failures()
+	b.relay.SetFailureHook(hook)
 }
 
 func (b *sharedBind) PrepareRelayRegion(regionID int) error {

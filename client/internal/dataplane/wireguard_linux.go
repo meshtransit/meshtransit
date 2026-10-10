@@ -296,13 +296,12 @@ func (d *officialWireGuardDevice) RelayHealth() relay.HealthSnapshot {
 	return d.bind.RelayHealth()
 }
 
-// RelayFailures signals relay connection failures.
-func (d *officialWireGuardDevice) RelayFailures() <-chan struct{} {
+// SetRelayFailureHook forwards relay connection failures to hook.
+func (d *officialWireGuardDevice) SetRelayFailureHook(hook func()) {
 	if d == nil || d.bind == nil {
-		return nil
+		return
 	}
-
-	return d.bind.RelayFailures()
+	d.bind.SetRelayFailureHook(hook)
 }
 
 func (d *officialWireGuardDevice) PrepareRelayRegion(regionID int) error {
