@@ -173,8 +173,38 @@ func FuzzRewriteAddresses(f *testing.F) {
 		if err != nil || rewritten.Source != source || rewritten.Destination != destination {
 			t.Fatal("successful rewrite has invalid checksum or tuple")
 		}
-		if err := RewriteAddresses(packet, replacement, original); err != nil || !bytes.Equal(packet, before) {
+		if err := RewriteAddresses(packet, replacement, original); err != nil || !sameChecksummedPacket(header, before, packet) {
 			t.Fatalf("successful rewrite did not round trip: original=%+v err=%v before=%x after=%x", original, err, before, packet)
 		}
 	})
+}
+
+// sameChecksummedPacket compares two packets that may differ only in how a
+// TCP or ICMP checksum writes zero: 0x0000 and 0xffff are the same
+// ones'-complement value, and a rewrite writes the canonical 0x0000. A UDP
+// checksum must match exactly, since there 0x0000 means "no checksum".
+func sameChecksummedPacket(header Header, before, after []byte) bool {
+	if bytes.Equal(before, after) {
+		return true
+	}
+	if len(before) != len(after) || header.Protocol == ProtocolUDP {
+		return false
+	}
+	offset := 20
+	if header.Source.Is6() {
+		offset = 40
+	}
+	if header.Protocol == ProtocolTCP {
+		offset += 16
+	} else {
+		offset += 2
+	}
+	if len(before) < offset+2 {
+		return false
+	}
+	zero := func(b []byte) bool { return (b[0] == 0 && b[1] == 0) || (b[0] == 0xff && b[1] == 0xff) }
+	if !zero(before[offset:offset+2]) || !zero(after[offset:offset+2]) {
+		return false
+	}
+	return bytes.Equal(before[:offset], after[:offset]) && bytes.Equal(before[offset+2:], after[offset+2:])
 }

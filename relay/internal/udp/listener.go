@@ -11,6 +11,11 @@ import (
 	"sync"
 )
 
+// socketBuffer is the receive and send buffer the listener asks for. A
+// relay forwards bursts from many sessions through one socket; the kernel
+// caps the request at net.core.rmem_max / wmem_max.
+const socketBuffer = 4 << 20
+
 // Handler processes one datagram. It must not retain frame.
 type Handler func(frame []byte, from netip.AddrPort)
 
@@ -31,6 +36,9 @@ func Listen(addr string, maxFrame int) (*Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("udp: listen %s: %w", addr, err)
 	}
+	// Best effort: a smaller buffer still works, it only drops bursts sooner.
+	_ = conn.SetReadBuffer(socketBuffer)
+	_ = conn.SetWriteBuffer(socketBuffer)
 	return &Listener{conn: conn, maxFrame: maxFrame}, nil
 }
 
