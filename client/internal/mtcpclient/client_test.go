@@ -14,12 +14,12 @@ func TestProbeUsesTheUpgradeAndFallsBackToWebSocket(t *testing.T) {
 	t.Parallel()
 	for _, refuse := range []bool{false, true} {
 		core := newFakeCore(t)
-		core.refuseUp = refuse
+		core.set(func(core *fakeCore) { core.refuseUp = refuse })
 		result, err := core.client().Probe(t.Context(), core.origin())
 		if err != nil {
 			t.Fatalf("refuse upgrade %t: %v", refuse, err)
 		}
-		if result.Protocol != Protocol || result.KeyFingerprint != controlplane.ControlKeyFingerprint(core.control.Public()) {
+		if result.Protocol != Protocol || result.KeyFingerprint != controlplane.ControlKeyFingerprint(core.controlKey().Public()) {
 			t.Fatalf("result %+v", result)
 		}
 		_, modes := core.sessions()
@@ -36,7 +36,7 @@ func TestProbeUsesTheUpgradeAndFallsBackToWebSocket(t *testing.T) {
 func TestBootstrapTrust(t *testing.T) {
 	t.Parallel()
 	core := newFakeCore(t)
-	public := core.control.Public()
+	public := core.controlKey().Public()
 	for name, pin := range map[string]string{
 		"control key fingerprint": strings.ToUpper(controlplane.ControlKeyFingerprint(public)[:6]) +
 			controlplane.ControlKeyFingerprint(public)[6:],
@@ -72,7 +72,7 @@ func TestVerifyTrust(t *testing.T) {
 	t.Parallel()
 	core := newFakeCore(t)
 	client := core.client()
-	trust, err := client.BootstrapTrust(t.Context(), core.origin(), controlplane.ControlKeyFingerprint(core.control.Public()))
+	trust, err := client.BootstrapTrust(t.Context(), core.origin(), controlplane.ControlKeyFingerprint(core.controlKey().Public()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestVerifyTrust(t *testing.T) {
 		t.Fatalf("another pin: %v", err)
 	}
 	rotated, _ := key.NewControlPrivate(nil)
-	core.documented = []key.ControlPublic{rotated.Public()}
+	core.set(func(core *fakeCore) { core.documented = []key.ControlPublic{rotated.Public()} })
 	if err := client.VerifyTrust(t.Context(), core.origin(), trust.Material, trust.Fingerprint); !errors.Is(err,
 		controlplane.ErrControlKeyChanged) {
 		t.Fatalf("key no longer offered: %v", err)
@@ -94,13 +94,16 @@ func TestVerifyTrust(t *testing.T) {
 func TestUnknownKeyIsNotRetriedOverWebSocket(t *testing.T) {
 	t.Parallel()
 	core := newFakeCore(t)
-	trust, err := core.client().BootstrapTrust(t.Context(), core.origin(), controlplane.ControlKeyFingerprint(core.control.Public()))
+	trust, err := core.client().BootstrapTrust(t.Context(), core.origin(), controlplane.ControlKeyFingerprint(core.controlKey().Public()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	other, _ := key.NewControlPrivate(nil)
-	core.control = other // the origin lost the profile's key
-	core.documented = []key.ControlPublic{other.Public(), mustControl(t, trust.Material.ControlPublicKey)}
+	profileKey := mustControl(t, trust.Material.ControlPublicKey)
+	core.set(func(core *fakeCore) {
+		core.control = other // the origin lost the profile's key
+		core.documented = []key.ControlPublic{other.Public(), profileKey}
+	})
 	err = core.client().VerifyTrust(t.Context(), core.origin(), trust.Material, trust.Fingerprint)
 	if !errors.Is(err, errUnknownKey) {
 		t.Fatalf("VerifyTrust = %v, want unknown key", err)

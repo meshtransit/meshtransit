@@ -28,16 +28,29 @@ import (
 // document, the upgrade and the WebSocket fallback, and hands every
 // session to serve.
 type fakeCore struct {
-	t          *testing.T
+	t      *testing.T
+	server *httptest.Server
+
+	mu         sync.Mutex
 	control    key.ControlPrivate
-	server     *httptest.Server
 	refuseUp   bool // answer the upgrade with 404, as a proxy that drops Upgrade
 	documented []key.ControlPublic
 	serve      func(*coreSession)
+	hello      []*mtcpv1.ClientHello
+	modes      []string
+}
 
-	mu    sync.Mutex
-	hello []*mtcpv1.ClientHello
-	modes []string
+// set changes the fake Core under its lock.
+func (core *fakeCore) set(change func(core *fakeCore)) {
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	change(core)
+}
+
+func (core *fakeCore) controlKey() key.ControlPrivate {
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	return core.control
 }
 
 // coreSession is Core's side of one session in a test.
@@ -110,13 +123,19 @@ func (core *fakeCore) handle(response http.ResponseWriter, request *http.Request
 			Version int     `json:"version"`
 			Keys    []entry `json:"keys"`
 		}{Version: 1}
-		for _, documented := range core.documented {
+		core.mu.Lock()
+		documentedKeys := append([]key.ControlPublic(nil), core.documented...)
+		core.mu.Unlock()
+		for _, documented := range documentedKeys {
 			document.Keys = append(document.Keys, entry{Key: documented, NotAfter: time.Now().Add(time.Hour)})
 		}
 		response.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(response).Encode(document)
 	case sharedmtcp.UpgradePath:
-		if core.refuseUp {
+		core.mu.Lock()
+		refuse := core.refuseUp
+		core.mu.Unlock()
+		if refuse {
 			http.NotFound(response, request)
 			return
 		}
@@ -129,7 +148,7 @@ func (core *fakeCore) handle(response http.ResponseWriter, request *http.Request
 }
 
 func (core *fakeCore) knows(keyID string) bool {
-	id := core.control.Public().ID()
+	id := core.controlKey().Public().ID()
 	return keyID == hex.EncodeToString(id[:])
 }
 
@@ -143,7 +162,7 @@ func (core *fakeCore) upgrade(response http.ResponseWriter, request *http.Reques
 		http.Error(response, "bad handshake", http.StatusBadRequest)
 		return
 	}
-	server, err := sharedmtcp.ReadInit(core.control, init, nil)
+	server, err := sharedmtcp.ReadInit(core.controlKey(), init, nil)
 	if err != nil {
 		http.Error(response, "bad handshake", http.StatusBadRequest)
 		return
@@ -183,7 +202,7 @@ func (core *fakeCore) webSocket(response http.ResponseWriter, request *http.Requ
 		_ = transport.close()
 		return
 	}
-	server, err := sharedmtcp.ReadInit(core.control, init, nil)
+	server, err := sharedmtcp.ReadInit(core.controlKey(), init, nil)
 	if err != nil {
 		_ = transport.close()
 		return
