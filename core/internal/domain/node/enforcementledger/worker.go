@@ -55,9 +55,9 @@ var (
 type State string
 
 const (
-	// StateEnforced: the Device reported the delivered rules.
+	// StateEnforced means the Device reported the delivered rules.
 	StateEnforced State = "enforced"
-	// StateMismatch: the Device reported other rules past the grace period.
+	// StateMismatch means the Device reported other rules past the grace period.
 	StateMismatch State = "mismatch"
 )
 

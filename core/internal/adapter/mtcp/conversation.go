@@ -60,6 +60,7 @@ type ApplicationOptions struct {
 	BrowserIssuer   BrowserIssuer
 	BrowserApproval BrowserApproval
 	Logout          DeviceLogout
+	Paths           PathRecorder
 	// ApprovalOrigin is the https origin of approval URLs; ApprovalTTL is
 	// how long an approval stays open.
 	ApprovalOrigin string
@@ -103,6 +104,7 @@ type conversation struct {
 	sink        *mapSink
 
 	lastEndpoints time.Time // when the last EndpointReport was accepted; Receive is serial
+	lastPaths     time.Time // when the last PathStatsReport was stored
 
 	mu         sync.Mutex
 	nodeKey    node.Key // the key the map stream serves; zero until known
@@ -273,8 +275,10 @@ func (conversation *conversation) Receive(ctx context.Context, _ sharedmtcp.Mess
 		conversation.enforcement(ctx, m)
 	case *mtcpv1.EndpointReport:
 		return conversation.endpoints(ctx, m)
-	case *mtcpv1.HostinfoReport, *mtcpv1.HealthReport, *mtcpv1.PathStatsReport:
-		// Accepted; Console views for these come later (P4f).
+	case *mtcpv1.PathStatsReport:
+		return conversation.paths(ctx, m)
+	case *mtcpv1.HostinfoReport, *mtcpv1.HealthReport:
+		// Accepted; nothing reads them yet.
 	case *mtcpv1.RegisterRequest:
 		return conversation.register(ctx, m)
 	case *mtcpv1.RotateNodeKey:

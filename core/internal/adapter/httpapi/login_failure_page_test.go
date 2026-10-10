@@ -30,7 +30,7 @@ func TestServeLoginNavigationAnswersAFailedNavigationWithAPage(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			response := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodGet, "https://control.example.test/auth/v1/callback", nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://control.example.test/auth/v1/callback", nil)
 			refused, err := serveLoginNavigation(response, request, func(writer http.ResponseWriter, _ *http.Request) error {
 				// A handler may stage a cookie before it fails; it must never be delivered.
 				writer.Header().Set("Set-Cookie", "synthetic-private=1")
@@ -67,7 +67,7 @@ func TestServeLoginNavigationAnswersAFailedNavigationWithAPage(t *testing.T) {
 func TestServeLoginNavigationKeepsHeadBodiless(t *testing.T) {
 	t.Parallel()
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodHead, "https://control.example.test/auth/v1/login/continue", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodHead, "https://control.example.test/auth/v1/login/continue", nil)
 	refused, err := serveLoginNavigation(response, request, func(http.ResponseWriter, *http.Request) error {
 		return ErrInvalidLoginLanding
 	})
@@ -78,7 +78,7 @@ func TestServeLoginNavigationKeepsHeadBodiless(t *testing.T) {
 
 func TestServeLoginNavigationLeavesSuccessAndPartialOutputAlone(t *testing.T) {
 	t.Parallel()
-	request := httptest.NewRequest(http.MethodGet, "https://control.example.test/auth/v1/callback", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://control.example.test/auth/v1/callback", nil)
 
 	success := httptest.NewRecorder()
 	refused, err := serveLoginNavigation(success, request, func(writer http.ResponseWriter, _ *http.Request) error {
@@ -104,7 +104,7 @@ func TestServeLoginNavigationLeavesSuccessAndPartialOutputAlone(t *testing.T) {
 func TestServeLoginNavigationExposesTheTransportController(t *testing.T) {
 	t.Parallel()
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "https://control.example.test/auth/v1/callback", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://control.example.test/auth/v1/callback", nil)
 	_, err := serveLoginNavigation(response, request, func(writer http.ResponseWriter, _ *http.Request) error {
 		unwrapper, ok := writer.(interface{ Unwrap() http.ResponseWriter })
 		if !ok || unwrapper.Unwrap() != response {

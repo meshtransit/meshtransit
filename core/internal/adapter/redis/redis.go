@@ -57,6 +57,7 @@ type Client struct {
 	applyRateLimit    rateLimitFunc
 	recordDelivery    recordDeliveryFunc
 	recordEnforcement recordEnforcementFunc
+	recordPaths       func(ctx context.Context, key string, generation int64, encoded string, ttl time.Duration) (int64, error)
 	loadSession       loadSessionFunc
 	touchDelivery     touchDeliveryFunc
 	loadDeliveries    loadDeliveriesFunc
@@ -239,6 +240,11 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 		) (int64, error) {
 			return recordEnforcementScript.Run(recordCtx, client, []string{key}, record.generation,
 				record.digest, record.grants, record.appliedAt, record.reportedAt, ttl.Milliseconds()).Int64()
+		},
+		recordPaths: func(recordCtx context.Context, key string, generation int64, encoded string,
+			ttl time.Duration) (int64, error) {
+			return recordPathsScript.Run(recordCtx, client, []string{key}, generation, encoded,
+				ttl.Milliseconds()).Int64()
 		},
 		touchDelivery: func(
 			touchCtx context.Context,

@@ -10,6 +10,7 @@ import (
 
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/shared/policydigest"
 )
 
@@ -95,8 +96,8 @@ func TestClientLoadsObservationsInOrder(t *testing.T) {
 			gotKeys = keys
 			return []any{
 				"4", "9", "3", "1759924800000", "1759924860000", testDigestText, "7",
-				testDigestText, "7", "1759924801000", "1759924802000", "1",
-				"", "", "", "", "", "", "", "", "", "", "", "0",
+				testDigestText, "7", "1759924801000", "1759924802000", testPathsText, "1",
+				"", "", "", "", "", "", "", "", "", "", "", "", "0",
 			}, nil
 		},
 		metrics: newRedisMetrics(1, nil),
@@ -115,6 +116,11 @@ func TestClientLoadsObservationsInOrder(t *testing.T) {
 		first.ReportedAt.Sub(first.AppliedAt) != time.Second {
 		t.Fatalf("first = %+v", first)
 	}
+	if first.Paths == nil || len(first.Paths.Peers) != 2 || first.Paths.Interval != time.Minute ||
+		first.Paths.Peers[0].Kind != distribution.PathRelay || first.Paths.Peers[0].RelayCode != "sgp" ||
+		first.Paths.Peers[0].RelayReason != distribution.RelayNoResponse || first.Paths.Peers[1].DirectBytes != 900 {
+		t.Fatalf("first paths = %+v", first.Paths)
+	}
 	if second.Known || second.Online {
 		t.Fatalf("second = %+v", second)
 	}
@@ -124,7 +130,7 @@ func TestClientRejectsCorruptObservations(t *testing.T) {
 	t.Parallel()
 	id := testDeliveryNode(t)
 	valid := []string{"4", "9", "3", "1759924800000", "1759924860000", testDigestText, "7",
-		testDigestText, "7", "1759924801000", "1759924802000", "0"}
+		testDigestText, "7", "1759924801000", "1759924802000", "", "0"}
 	with := func(index int, value any) []any {
 		raw := make([]any, len(valid))
 		for position, field := range valid {
@@ -135,9 +141,12 @@ func TestClientRejectsCorruptObservations(t *testing.T) {
 	}
 	for name, raw := range map[string][]any{
 		"short":           {"4", "9"},
-		"partial record":  {"", "9", "", "", "", "", "", "", "", "", "", "0"},
+		"partial record":  {"", "9", "", "", "", "", "", "", "", "", "", "", "0"},
 		"bad number":      with(0, "x"),
-		"bad presence":    with(11, "2"),
+		"bad presence":    with(12, "2"),
+		"bad paths":       with(11, `{"at":1,"interval_s":60,"peers":[{"id":"x","kind":"direct"}]}`),
+		"paths kind":      with(11, `{"at":1,"interval_s":60,"peers":[{"id":"`+testPathPeer+`","kind":"teleport"}]}`),
+		"paths no time":   with(11, `{"interval_s":60,"peers":[]}`),
 		"seen before":     with(4, "1759924700000"),
 		"non string":      with(0, int64(4)),
 		"bad digest":      with(5, "sha256:00"),
@@ -157,6 +166,13 @@ func TestClientRejectsCorruptObservations(t *testing.T) {
 }
 
 const testDigestText = "sha256:65c3166a6062804e3b2a55acd157d70ce0ebf6fdd91130eecd280654a714251a"
+
+const (
+	testPathPeer  = "01890f90-0000-7000-8000-0000000000b1"
+	testPathsText = `{"at":1759924830000,"interval_s":60,"peers":[` +
+		`{"id":"01890f90-0000-7000-8000-0000000000b1","kind":"relay","region":1,"code":"sgp","why":"no_response","relay":300},` +
+		`{"id":"01890f90-0000-7000-8000-0000000000b2","kind":"direct","direct":900}]}`
+)
 
 func testFilterDigest(t *testing.T, grants int) mapsession.FilterDigest {
 	t.Helper()
@@ -228,5 +244,39 @@ func TestClientRecordsEnforcementForItsSession(t *testing.T) {
 	}
 	if _, err := client.RecordEnforcement(t.Context(), mapsession.Enforcement{}); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("invalid RecordEnforcement() error = %v", err)
+	}
+}
+
+func TestClientRecordsPaths(t *testing.T) {
+	t.Parallel()
+	id := testDeliveryNode(t)
+	peer, err := node.ParseID(testPathPeer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored string
+	client := &Client{
+		recordPaths: func(_ context.Context, key string, generation int64, encoded string, _ time.Duration) (int64, error) {
+			if key != deliveryKeyForNode(id) || generation != 4 {
+				t.Fatalf("key %s generation %d", key, generation)
+			}
+			stored = encoded
+			return 1, nil
+		},
+		metrics: newRedisMetrics(1, nil),
+	}
+	report := distribution.PathReport{ReportedAt: time.UnixMilli(1759924830000), Interval: time.Minute,
+		Peers: []distribution.PeerPath{{PeerID: peer, Kind: distribution.PathRelay, RelayRegion: 1, RelayCode: "sgp",
+			RelayReason: distribution.RelayNoResponse, RelayBytes: 300}}}
+	if err := client.RecordPaths(t.Context(), id, 4, report); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodePaths(stored)
+	if err != nil || decoded == nil || len(decoded.Peers) != 1 || decoded.Peers[0] != report.Peers[0] {
+		t.Fatalf("round trip %+v, %v", decoded, err)
+	}
+	report.Peers[0].Kind = "teleport"
+	if err := client.RecordPaths(t.Context(), id, 4, report); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("invalid report: %v", err)
 	}
 }

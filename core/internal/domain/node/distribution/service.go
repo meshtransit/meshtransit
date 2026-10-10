@@ -59,6 +59,8 @@ type Observation struct {
 	Enforced          FilterSummary
 	AppliedAt         time.Time
 	ReportedAt        time.Time
+	// Paths is the Device's latest path report for the session, if any.
+	Paths *PathReport
 }
 
 // IsValid reports a self-consistent observation.
@@ -67,7 +69,10 @@ func (observation Observation) IsValid() bool {
 		return observation.SessionGeneration == 0 && observation.NetworkRevision == 0 &&
 			observation.PolicyRevision == 0 && observation.DeliveredAt.IsZero() && observation.SeenAt.IsZero() &&
 			observation.Filter.IsZero() && observation.Enforced.IsZero() &&
-			observation.AppliedAt.IsZero() && observation.ReportedAt.IsZero()
+			observation.AppliedAt.IsZero() && observation.ReportedAt.IsZero() && observation.Paths == nil
+	}
+	if observation.Paths != nil && !observation.Paths.IsValid() {
+		return false
 	}
 	return observation.SessionGeneration > 0 && observation.NetworkRevision > 0 &&
 		observation.PolicyRevision >= 0 && !observation.DeliveredAt.IsZero() &&

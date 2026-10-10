@@ -113,6 +113,60 @@ type deviceDistributionItem struct {
 	// Enforcement compares the Device's own report with the delivered packet
 	// filter (R1-69).
 	Enforcement deviceEnforcementItem `json:"enforcement"`
+	// Paths is the Device's latest report of how its traffic reaches each
+	// peer (MTCP path statistics); absent when it has none.
+	Paths *devicePathsItem `json:"paths,omitempty"`
+}
+
+type devicePathsItem struct {
+	ReportedAt      time.Time            `json:"reported_at"`
+	IntervalSeconds int64                `json:"interval_seconds"`
+	Peers           []devicePathPeerItem `json:"peers"`
+}
+
+// devicePathPeerItem names a peer of the same Network by ID; a peer of
+// another Network (a share) is marked external and carries no ID.
+type devicePathPeerItem struct {
+	PeerID      *string `json:"peer_id"`
+	External    bool    `json:"external"`
+	Path        string  `json:"path"`
+	RelayRegion *int    `json:"relay_region"`
+	RelayCode   *string `json:"relay_code"`
+	RelayReason *string `json:"relay_reason"`
+	DirectBytes uint64  `json:"direct_bytes"`
+	RelayBytes  uint64  `json:"relay_bytes"`
+}
+
+func newDevicePathsItem(report *distribution.PathReport) *devicePathsItem {
+	if report == nil {
+		return nil
+	}
+	item := &devicePathsItem{ReportedAt: report.ReportedAt.UTC(), IntervalSeconds: int64(report.Interval / time.Second),
+		Peers: make([]devicePathPeerItem, 0, len(report.Peers))}
+	for _, peer := range report.Peers {
+		entry := devicePathPeerItem{External: peer.External, Path: string(peer.Kind),
+			DirectBytes: peer.DirectBytes, RelayBytes: peer.RelayBytes}
+		if !peer.External {
+			id := peer.PeerID.String()
+			entry.PeerID = &id
+		}
+		if peer.Kind == distribution.PathRelay {
+			if peer.RelayRegion > 0 {
+				region := peer.RelayRegion
+				entry.RelayRegion = &region
+			}
+			if peer.RelayCode != "" {
+				code := peer.RelayCode
+				entry.RelayCode = &code
+			}
+			if peer.RelayReason != "" {
+				reason := string(peer.RelayReason)
+				entry.RelayReason = &reason
+			}
+		}
+		item.Peers = append(item.Peers, entry)
+	}
+	return item
 }
 
 type deviceEnforcementItem struct {
@@ -177,6 +231,7 @@ func newDeviceDistributionItem(device distribution.Device) deviceDistributionIte
 		deliveredAt, seenAt := observation.DeliveredAt.UTC(), observation.SeenAt.UTC()
 		item.DeliveredNetworkRevision, item.DeliveredPolicyRevision = &networkRevision, &policyRevision
 		item.DeliveredAt, item.LastSeenAt = &deliveredAt, &seenAt
+		item.Paths = newDevicePathsItem(observation.Paths)
 	}
 	return item
 }

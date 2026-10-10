@@ -173,3 +173,37 @@ func TestBrowserDeviceDistributionRejectsTransportAndForeignCursor(t *testing.T)
 		t.Fatal("distribution served without its dependency")
 	}
 }
+
+func TestDevicePathsItemHidesExternalPeers(t *testing.T) {
+	t.Parallel()
+	local, err := node.ParseID("01890f90-0000-7000-8000-0000000000c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared, err := node.ParseID("01890f90-0000-7000-8000-0000000000c2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportedAt := time.UnixMilli(1_800_000_000_000)
+	item := newDevicePathsItem(&distribution.PathReport{ReportedAt: reportedAt, Interval: time.Minute,
+		Peers: []distribution.PeerPath{
+			{PeerID: local, Kind: distribution.PathRelay, RelayRegion: 1, RelayCode: "sgp",
+				RelayReason: distribution.RelayNoResponse, RelayBytes: 30},
+			{PeerID: shared, External: true, Kind: distribution.PathDirect, DirectBytes: 90},
+		}})
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"reported_at":"` + reportedAt.UTC().Format(time.RFC3339Nano) + `","interval_seconds":60,"peers":[` +
+		`{"peer_id":"01890f90-0000-7000-8000-0000000000c1","external":false,"path":"relay","relay_region":1,` +
+		`"relay_code":"sgp","relay_reason":"no_response","direct_bytes":0,"relay_bytes":30},` +
+		`{"peer_id":null,"external":true,"path":"direct","relay_region":null,"relay_code":null,"relay_reason":null,` +
+		`"direct_bytes":90,"relay_bytes":0}]}`
+	if string(encoded) != want {
+		t.Fatalf("paths JSON\n got %s\nwant %s", encoded, want)
+	}
+	if newDevicePathsItem(nil) != nil {
+		t.Fatal("no report must leave paths out")
+	}
+}

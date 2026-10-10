@@ -15,6 +15,7 @@ import (
 	"meshtransit.net/core/internal/domain/enrollment/registration"
 	"meshtransit.net/core/internal/domain/enrollment/registration/intake"
 	"meshtransit.net/core/internal/domain/node"
+	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/shared/key"
 	sharedmtcp "meshtransit.net/shared/mtcp"
 )
@@ -167,6 +168,20 @@ func (logout *fakeLogout) Logout(_ context.Context, _ control.AuthenticatedMachi
 	return control.DeviceLogout{}, logout.err
 }
 
+type fakePaths struct {
+	mu      sync.Mutex
+	reports []distribution.PathReport
+	nodes   []node.ID
+}
+
+func (paths *fakePaths) RecordPaths(_ context.Context, nodeID node.ID, _ int64, report distribution.PathReport) error {
+	paths.mu.Lock()
+	defer paths.mu.Unlock()
+	paths.reports = append(paths.reports, report)
+	paths.nodes = append(paths.nodes, nodeID)
+	return nil
+}
+
 type conversationFixture struct {
 	t             *testing.T
 	session       *Session
@@ -178,6 +193,7 @@ type conversationFixture struct {
 	registrations *fakeRegistrations
 	browser       *fakeBrowser
 	logout        *fakeLogout
+	paths         *fakePaths
 	clockMu       sync.Mutex
 	clock         time.Time
 	talk          *conversation
@@ -194,14 +210,15 @@ func newConversationFixture(t *testing.T, openedBy sharedmtcp.MessageType) *conv
 		streams:   &fakeStreams{snapshot: snapshot, started: make(chan node.Key, 8)},
 		endpoints: &fakeEndpoints{}, snapshots: &fakeSnapshots{current: map[node.Key]bool{}, snapshot: snapshot},
 		registrations: &fakeRegistrations{result: result}, browser: &fakeBrowser{result: result},
-		logout: &fakeLogout{},
-		clock:  time.Unix(1_800_000_000, 0)}
+		logout: &fakeLogout{}, paths: &fakePaths{},
+		clock: time.Unix(1_800_000_000, 0)}
 	application, err := NewApplication(ApplicationOptions{
 		Streams: f.streams, Endpoints: f.endpoints, Snapshots: f.snapshots,
 		ControlKeys: []ControlKey{{Private: controlKey, NotAfter: f.clock.Add(time.Hour)}},
 		Logger:      slog.New(slog.DiscardHandler), Registrations: f.registrations, RegistrationIDs: sequentialIDs{},
-		BrowserIssuer: f.browser, BrowserApproval: f.browser, Logout: f.logout, ApprovalOrigin: testApprovalOrigin,
-		ApprovalTTL: 10 * time.Minute,
+		BrowserIssuer: f.browser, BrowserApproval: f.browser, Logout: f.logout, Paths: f.paths,
+		ApprovalOrigin: testApprovalOrigin,
+		ApprovalTTL:    10 * time.Minute,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -746,5 +763,54 @@ func TestRotateNodeKeyBeforeTheFirstMap(t *testing.T) {
 	}
 	if calls := f.registrations.calls(); len(calls) != 1 || !calls[0].IsNodeKeyRotation() {
 		t.Fatalf("rotation reached the domain %d times", len(calls))
+	}
+}
+
+func TestPathStatsAreStoredForMapPeers(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	// Before a map there is nothing to bind the report to.
+	report := &mtcpv1.PathStatsReport{IntervalS: 60, Peers: []*mtcpv1.PeerPathStats{{DeviceId: "x"}}}
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessagePathStatsReport, report); err != nil || len(f.paths.reports) != 0 {
+		t.Fatalf("report before a map: %v", err)
+	}
+	snapshot := streamFixture(t, 2)
+	if err := f.talk.sink.SendSnapshot(t.Context(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	peers := snapshot.AuthorizedPeers()
+	if len(peers) == 0 {
+		t.Fatal("fixture has no peers")
+	}
+	known := peers[0].NodeID().String()
+	report = &mtcpv1.PathStatsReport{IntervalS: 60, Peers: []*mtcpv1.PeerPathStats{
+		{DeviceId: known, Technique: mtcpv1.PeerPathStats_RELAY, RelayRegion: 1,
+			RelayReason: mtcpv1.PeerPathStats_NO_RESPONSE, RelayTxBytes: 10, RelayRxBytes: 20},
+		{DeviceId: "01890f00-0000-7000-8000-000000000999", Technique: mtcpv1.PeerPathStats_DIRECT},
+	}}
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessagePathStatsReport, report); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.paths.reports) != 1 || f.paths.nodes[0] != snapshot.NodeID() {
+		t.Fatalf("stored %d reports", len(f.paths.reports))
+	}
+	stored := f.paths.reports[0]
+	if stored.Interval != time.Minute || len(stored.Peers) != 1 || stored.Peers[0].Kind != distribution.PathRelay ||
+		stored.Peers[0].RelayCode != "sin" || stored.Peers[0].RelayReason != distribution.RelayNoResponse ||
+		stored.Peers[0].RelayBytes != 30 {
+		t.Fatalf("stored %+v", stored)
+	}
+	// Reports closer than the interval are dropped; afterwards stored.
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessagePathStatsReport, report); err != nil || len(f.paths.reports) != 1 {
+		t.Fatalf("fast report: %v, %d stored", err, len(f.paths.reports))
+	}
+	f.advance(pathReportInterval)
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessagePathStatsReport, report); err != nil || len(f.paths.reports) != 2 {
+		t.Fatalf("report after the interval: %v, %d stored", err, len(f.paths.reports))
+	}
+	var violation protocolError
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessagePathStatsReport,
+		&mtcpv1.PathStatsReport{IntervalS: 0}); !errors.As(err, &violation) {
+		t.Fatalf("an empty interval: %v", err)
 	}
 }

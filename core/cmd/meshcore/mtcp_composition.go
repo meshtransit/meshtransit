@@ -41,6 +41,7 @@ type mtcpDependencies struct {
 	sessions      mtcpMapSessions
 	registrations mtcpadapter.Registrations
 	logout        mtcpadapter.DeviceLogout
+	paths         mtcpadapter.PathRecorder // optional
 	browser       *browserControlServices
 	origin        string
 	guard         mtcpadapter.TimestampGuard
@@ -86,7 +87,7 @@ func composeMTCP(
 	applicationOptions := mtcpadapter.ApplicationOptions{
 		Streams: deps.streams, Endpoints: deps.sessions, Snapshots: deps.sessions, ControlKeys: keys,
 		Logger: logger, Registrations: deps.registrations, RegistrationIDs: intake.PublicRegistrationIDGenerator{},
-		Logout: deps.logout,
+		Logout: deps.logout, Paths: deps.paths,
 	}
 	if deps.browser != nil {
 		applicationOptions.BrowserIssuer = deps.browser.issuer

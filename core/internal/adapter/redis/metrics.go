@@ -26,6 +26,7 @@ const (
 	redisCommandTouchDelivery     redisCommand = "delivery_touch"
 	redisCommandLoadDeliveries    redisCommand = "delivery_load"
 	redisCommandRecordEnforcement redisCommand = "enforcement_record"
+	redisCommandRecordPaths       redisCommand = "paths_record"
 )
 
 var redisCommands = [...]redisCommand{
@@ -44,6 +45,7 @@ var redisCommands = [...]redisCommand{
 	redisCommandTouchDelivery,
 	redisCommandLoadDeliveries,
 	redisCommandRecordEnforcement,
+	redisCommandRecordPaths,
 }
 
 type redisMetrics struct {
