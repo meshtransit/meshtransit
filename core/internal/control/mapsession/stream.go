@@ -461,8 +461,15 @@ func (service *StreamService) refreshConnectivity(
 	if err != nil || !next.IsValid() || next.NetworkRevision() != current.NetworkRevision() {
 		return service.refresh(ctx, machine, request, sink, current)
 	}
-	if _, err := service.deliver(ctx, sink, current, next); err != nil {
+	next, grantChanged := service.grantRelayAccess(ctx, current, next)
+	selfSent, err := service.deliver(ctx, sink, current, next)
+	if err != nil {
 		return Snapshot{}, err
+	}
+	if grantChanged && !selfSent {
+		if err := sink.SendRelayGrant(ctx, next); err != nil {
+			return Snapshot{}, errors.Join(ErrStreamWrite, err)
+		}
 	}
 	return next, nil
 }

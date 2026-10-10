@@ -213,3 +213,79 @@ func TestStreamReleasesPresenceWhenDeviceIsSuspended(t *testing.T) {
 		}
 	})
 }
+
+// A connectivity-only reload rebuilds the snapshot from the store, which
+// never carries a relay grant; the stream must keep the node's grant, or
+// the node loses every relay (its entry arrives without a ticket).
+func TestStreamKeepsRelayGrantAcrossConnectivityReload(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		base := snapshotFixture(t)
+		before := connectivityFixture(t, base.NodeID(), base.SessionGeneration(), 7, "198.51.100.9:41641", true)
+		after := connectivityFixture(t, base.NodeID(), base.SessionGeneration(), 7, "198.51.100.10:41641", true)
+		initial, err := base.WithConnectivity([]Connectivity{before})
+		if err != nil {
+			t.Fatalf("WithConnectivity(initial) error = %v", err)
+		}
+		reloaded, err := base.WithConnectivity([]Connectivity{after})
+		if err != nil {
+			t.Fatalf("WithConnectivity(reloaded) error = %v", err)
+		}
+		access := &countingRelayAccess{}
+		options := streamOptionsFixture(t)
+		options.RelayAccess = access
+		connectivity := newStreamConnectivityWatcher()
+		opener := &reloadingSnapshotOpener{streamSnapshotOpener: streamSnapshotOpener{snapshots: []Snapshot{initial}}, reloaded: reloaded}
+		service, err := NewStreamService(opener, &streamPresenceStore{}, newStreamRevisionWatcher(), connectivity, options)
+		if err != nil {
+			t.Fatalf("NewStreamService() error = %v", err)
+		}
+		machine, request := authenticatedRequestFixture(t, initial)
+		sink := &recordingStreamSink{}
+		ctx, cancel := context.WithCancel(t.Context())
+		result := make(chan error, 1)
+		go func() { result <- service.Serve(ctx, machine, request, sink) }()
+
+		synctest.Wait()
+		change, err := NewConnectivityChanged(initial.Scope().NetworkID(), base.NodeID(), base.SessionGeneration(), ConnectivityChangeEndpoints)
+		if err != nil {
+			t.Fatalf("NewConnectivityChanged() error = %v", err)
+		}
+		connectivity.send(t, change)
+		synctest.Wait()
+		deltas := sink.connectivityDeltas()
+		if opener.reloads.Load() != 1 || len(deltas) != 1 || !deltas[0].SelfChanged() {
+			t.Fatalf("reload %d, deltas %d", opener.reloads.Load(), len(deltas))
+		}
+		if !deltas[0].Snapshot().RelayGrant().IsValid() {
+			t.Fatal("the node's entry was sent without its relay grant")
+		}
+		if access.count() != 1 {
+			t.Fatalf("grant reissued on a connectivity change: %d", access.count())
+		}
+
+		cancel()
+		synctest.Wait()
+		<-result
+	})
+}
+
+func TestWithConnectivityKeepsRelayGrant(t *testing.T) {
+	snapshot := snapshotWithSelfDiscoKey(t, 7)
+	request, ok := snapshot.RelayGrantRequest()
+	if !ok {
+		t.Fatal("RelayGrantRequest() missing")
+	}
+	grant, err := NewRelayGrant(request, []byte(`{"version":1}`), time.Now().Add(15*time.Minute))
+	if err != nil {
+		t.Fatalf("NewRelayGrant() error = %v", err)
+	}
+	granted := snapshot.WithRelayGrant(grant)
+	self := connectivityFixture(t, snapshot.NodeID(), snapshot.SessionGeneration(), 7, "198.51.100.10:41641", true)
+	next, err := granted.WithConnectivity([]Connectivity{self})
+	if err != nil {
+		t.Fatalf("WithConnectivity() error = %v", err)
+	}
+	if !next.RelayGrant().IsValid() {
+		t.Fatal("WithConnectivity dropped the relay grant")
+	}
+}

@@ -189,7 +189,14 @@ func (snapshot Snapshot) ConnectivityFor(nodeID node.ID) (Connectivity, bool) {
 func (snapshot Snapshot) WithConnectivity(values []Connectivity) (Snapshot, error) {
 	params := snapshot.params()
 	params.Connectivity = values
-	return NewSnapshot(params)
+	next, err := NewSnapshot(params)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	// The grant belongs to the stream, not the store; the stream re-checks
+	// it against the new connectivity (a changed disco key is re-granted).
+	next.relayGrant = snapshot.relayGrant
+	return next, nil
 }
 
 // AuthorizedPeers returns only candidates required by an explicit packet rule
