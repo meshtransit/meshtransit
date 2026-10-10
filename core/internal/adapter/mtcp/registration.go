@@ -65,7 +65,7 @@ const (
 // approval cancels the wait.
 type approval struct {
 	machine  control.AuthenticatedMachine
-	nodeKey  node.Key
+	keys     provenKeys
 	hostname node.Hostname
 	url      string
 	expires  time.Time
@@ -85,7 +85,7 @@ func (conversation *conversation) register(ctx context.Context, request *mtcpv1.
 		return conversation.sendError(mtcpv1.Error_UNSUPPORTED, "registration is not available", 0)
 	}
 	conversation.wait(approval{}) // a new request replaces any pending approval
-	nodeKey, hostname, rejected := conversation.validateRegistration(request)
+	keys, hostname, rejected := conversation.validateRegistration(request)
 	if rejected != nil {
 		return conversation.reject(*rejected)
 	}
@@ -97,9 +97,9 @@ func (conversation *conversation) register(ctx context.Context, request *mtcpv1.
 	defer cancel()
 	switch method := request.GetAuth().GetMethod().(type) {
 	case *mtcpv1.RegisterRequest_Auth_EnrollmentKey:
-		return conversation.registerWithCredential(ctx, machine, nodeKey, hostname, method.EnrollmentKey)
+		return conversation.registerWithCredential(ctx, machine, keys, hostname, method.EnrollmentKey)
 	case *mtcpv1.RegisterRequest_Auth_Interactive:
-		return conversation.registerInteractively(ctx, machine, nodeKey, hostname,
+		return conversation.registerInteractively(ctx, machine, keys, hostname,
 			method.Interactive.GetResumeHandle())
 	case *mtcpv1.RegisterRequest_Auth_Resume:
 		// Renewal without a person would let a machine key keep a Device
@@ -115,12 +115,12 @@ func (conversation *conversation) register(ctx context.Context, request *mtcpv1.
 
 // validateRegistration checks the keys, their proofs of possession and the
 // hostname (mtcp-v1 §6.1, §6.4).
-func (conversation *conversation) validateRegistration(request *mtcpv1.RegisterRequest) (node.Key, node.Hostname,
+func (conversation *conversation) validateRegistration(request *mtcpv1.RegisterRequest) (provenKeys, node.Hostname,
 	*rejection) {
-	invalid := func(message string) (node.Key, node.Hostname, *rejection) {
-		return node.Key{}, node.Hostname{}, &rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID, message: message}
+	invalid := func(message string) (provenKeys, node.Hostname, *rejection) {
+		return provenKeys{}, node.Hostname{}, &rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID, message: message}
 	}
-	nodeKey, ok := conversation.provenKeys(request.GetNodeKey(), request.GetNodeKeyProof(), request.GetDiscoKey(),
+	keys, ok := conversation.provenKeys(request.GetNodeKey(), request.GetNodeKeyProof(), request.GetDiscoKey(),
 		request.GetDiscoKeyProof())
 	if !ok {
 		return invalid("keys or proofs of possession are invalid")
@@ -129,25 +129,33 @@ func (conversation *conversation) validateRegistration(request *mtcpv1.RegisterR
 	if err != nil {
 		return invalid("invalid hostname")
 	}
-	return nodeKey, hostname, nil
+	return keys, hostname, nil
 }
 
 // provenKeys validates a node key and disco key with their proofs.
-func (conversation *conversation) provenKeys(nodeKey, nodeProof, discoKey, discoProof []byte) (node.Key, bool) {
+func (conversation *conversation) provenKeys(nodeKey, nodeProof, discoKey, discoProof []byte) (provenKeys, bool) {
 	if len(nodeKey) != key.Size || len(discoKey) != key.Size || string(nodeKey) == string(discoKey) ||
 		!conversation.session.VerifyKeyProof(nodeKey, nodeProof) ||
 		!conversation.session.VerifyKeyProof(discoKey, discoProof) {
-		return node.Key{}, false
+		return provenKeys{}, false
 	}
 	parsed := node.Key(nodeKey)
-	if !parsed.IsValid() {
-		return node.Key{}, false
+	disco, err := node.NewDiscoveryKey([key.Size]byte(discoKey))
+	if !parsed.IsValid() || err != nil {
+		return provenKeys{}, false
 	}
-	return parsed, true
+	return provenKeys{node: parsed, disco: disco}, true
+}
+
+// provenKeys are a node key and disco key whose possession the node proved
+// in this session.
+type provenKeys struct {
+	node  node.Key
+	disco node.DiscoveryKey
 }
 
 func (conversation *conversation) registerWithCredential(ctx context.Context, machine control.AuthenticatedMachine,
-	nodeKey node.Key, hostname node.Hostname, presented string) error {
+	keys provenKeys, hostname node.Hostname, presented string) error {
 	options := conversation.application.options
 	if options.Registrations == nil {
 		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
@@ -163,7 +171,7 @@ func (conversation *conversation) registerWithCredential(ctx context.Context, ma
 		return conversation.sendError(mtcpv1.Error_INTERNAL, "registration unavailable", 2000)
 	}
 	request, err := control.NewRegistrationRequest(control.RegistrationRequestParams{
-		RegistrationID: registrationID, Credential: credential, NodeKey: nodeKey, Hostname: hostname,
+		RegistrationID: registrationID, Credential: credential, NodeKey: keys.node, Hostname: hostname,
 	})
 	if err != nil {
 		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_INVALID,
@@ -173,7 +181,7 @@ func (conversation *conversation) registerWithCredential(ctx context.Context, ma
 	if err != nil {
 		return conversation.registrationFailed(ctx, err)
 	}
-	conversation.authorize(nodeKey, result.Hostname(), true)
+	conversation.authorize(keys.node, keys.disco, result.Hostname(), true)
 	return nil
 }
 
@@ -202,7 +210,8 @@ func (conversation *conversation) registrationFailed(ctx context.Context, err er
 // registerInteractively answers with an approval URL, or completes an
 // approval the node resumes after a reconnect (mtcp-v1 §6.2).
 func (conversation *conversation) registerInteractively(ctx context.Context, machine control.AuthenticatedMachine,
-	nodeKey node.Key, hostname node.Hostname, handle string) error {
+	keys provenKeys, hostname node.Hostname, handle string) error {
+	nodeKey := keys.node
 	options := conversation.application.options
 	if options.BrowserIssuer == nil {
 		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
@@ -223,7 +232,7 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 		case err != nil:
 			return conversation.sendError(mtcpv1.Error_INTERNAL, "registration unavailable", 2000)
 		case found:
-			conversation.authorize(nodeKey, result.Hostname(), true)
+			conversation.authorize(nodeKey, keys.disco, result.Hostname(), true)
 			return nil
 		}
 	}
@@ -250,7 +259,7 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 	}); err != nil {
 		return err
 	}
-	conversation.wait(approval{machine: machine, nodeKey: nodeKey, hostname: hostname, url: approvalURL,
+	conversation.wait(approval{machine: machine, keys: keys, hostname: hostname, url: approvalURL,
 		expires: expires})
 	return nil
 }
@@ -279,7 +288,7 @@ func (conversation *conversation) awaitApprovals(ctx context.Context) {
 			return
 		case current = <-conversation.approvals:
 		case <-ticker.C:
-			if !current.nodeKey.IsValid() {
+			if !current.keys.node.IsValid() {
 				continue
 			}
 			if !conversation.application.now().Before(current.expires) {
@@ -298,7 +307,7 @@ func (conversation *conversation) checkApproval(ctx context.Context, pending app
 	ctx, cancel := context.WithTimeout(ctx, registrationTimeout)
 	defer cancel()
 	result, found, err := conversation.application.options.BrowserApproval.CompleteBrowser(ctx, pending.machine,
-		pending.nodeKey, pending.hostname, pending.url)
+		pending.keys.node, pending.hostname, pending.url)
 	if err != nil {
 		if errors.Is(err, control.ErrInvalidBrowserRegistration) {
 			_ = conversation.reject(expiredApproval)
@@ -309,7 +318,7 @@ func (conversation *conversation) checkApproval(ctx context.Context, pending app
 	if !found {
 		return false
 	}
-	conversation.authorize(pending.nodeKey, result.Hostname(), true)
+	conversation.authorize(pending.keys.node, pending.keys.disco, result.Hostname(), true)
 	return true
 }
 
@@ -319,8 +328,9 @@ func (conversation *conversation) rotate(ctx context.Context, request *mtcpv1.Ro
 	if options.Registrations == nil {
 		return conversation.sendError(mtcpv1.Error_UNSUPPORTED, "rotation is not available", 0)
 	}
-	newKey, ok := conversation.provenKeys(request.GetNewNodeKey(), request.GetNodeKeyProof(),
+	keys, ok := conversation.provenKeys(request.GetNewNodeKey(), request.GetNodeKeyProof(),
 		request.GetNewDiscoKey(), request.GetDiscoKeyProof())
+	newKey := keys.node
 	if !ok {
 		return conversation.sendError(mtcpv1.Error_INVALID, "keys or proofs of possession are invalid", 0)
 	}
@@ -332,7 +342,7 @@ func (conversation *conversation) rotate(ctx context.Context, request *mtcpv1.Ro
 	defer cancel()
 	// A repeat after a crash: the new key already is the Device's key.
 	if snapshot, current := conversation.ownsKey(ctx, machine, newKey); current {
-		return conversation.rotated(newKey, snapshot.Hostname(), snapshot.KeyExpiry())
+		return conversation.rotated(keys, snapshot.Hostname(), snapshot.KeyExpiry())
 	}
 	oldKey, hostname, expiry := conversation.rotationBase()
 	if !oldKey.IsValid() || !hostname.IsValid() {
@@ -358,7 +368,7 @@ func (conversation *conversation) rotate(ctx context.Context, request *mtcpv1.Ro
 			return conversation.sendError(mtcpv1.Error_INTERNAL, "rotation unavailable", 2000)
 		}
 	}
-	return conversation.rotated(newKey, hostname, expiry)
+	return conversation.rotated(keys, hostname, expiry)
 }
 
 // ownsKey reports whether nodeKey is the current key of this machine's
@@ -399,8 +409,8 @@ func (conversation *conversation) rotationBase() (node.Key, node.Hostname, time.
 	return oldKey, hostname, expiry
 }
 
-func (conversation *conversation) rotated(newKey node.Key, hostname node.Hostname, expiry time.Time) error {
-	response := &mtcpv1.RotateNodeKeyResponse{NodeKey: newKey[:]}
+func (conversation *conversation) rotated(keys provenKeys, hostname node.Hostname, expiry time.Time) error {
+	response := &mtcpv1.RotateNodeKeyResponse{NodeKey: keys.node[:]}
 	if !expiry.IsZero() {
 		response.KeyExpiryMs = expiry.UnixMilli()
 	}
@@ -409,7 +419,7 @@ func (conversation *conversation) rotated(newKey node.Key, hostname node.Hostnam
 	}
 	// The stream restarts with the new key; peers receive it as one map
 	// change from the committed rotation.
-	conversation.authorize(newKey, hostname, false)
+	conversation.authorize(keys.node, keys.disco, hostname, false)
 	return nil
 }
 
@@ -434,7 +444,7 @@ func (conversation *conversation) logout(ctx context.Context) error {
 	if logout == nil {
 		return conversation.sendError(mtcpv1.Error_UNSUPPORTED, "logout is not available", 0)
 	}
-	nodeKey, hostname := conversation.suspendStream()
+	nodeKey, disco, hostname := conversation.suspendStream()
 	if !nodeKey.IsValid() {
 		return conversation.sendError(mtcpv1.Error_NOT_AUTHORIZED, "logout needs an authorized Device", 0)
 	}
@@ -445,7 +455,7 @@ func (conversation *conversation) logout(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, registrationTimeout)
 	defer cancel()
 	if _, err := logout.Logout(ctx, machine, nodeKey); err != nil {
-		conversation.authorize(nodeKey, hostname, false) // nothing changed: the stream resumes
+		conversation.authorize(nodeKey, disco, hostname, false) // nothing changed: the stream resumes
 		if errors.Is(err, control.ErrDeviceLogoutNotFound) {
 			return conversation.sendError(mtcpv1.Error_NOT_AUTHORIZED, "logout needs an authorized Device", 0)
 		}
@@ -461,10 +471,10 @@ func (conversation *conversation) logout(ctx context.Context) error {
 
 // suspendStream ends the running stream without a Lifecycle, so the
 // revocation a logout commits does not reach the node as EXPIRED first.
-func (conversation *conversation) suspendStream() (node.Key, node.Hostname) {
+func (conversation *conversation) suspendStream() (node.Key, node.DiscoveryKey, node.Hostname) {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
-	nodeKey, hostname := conversation.nodeKey, conversation.hostname
+	nodeKey, disco, hostname := conversation.nodeKey, conversation.disco, conversation.hostname
 	if !hostname.IsValid() {
 		if snapshot, ok := conversation.sink.snapshot(); ok {
 			hostname = snapshot.Hostname()
@@ -475,5 +485,5 @@ func (conversation *conversation) suspendStream() (node.Key, node.Hostname) {
 	if conversation.restart != nil {
 		conversation.restart()
 	}
-	return nodeKey, hostname
+	return nodeKey, disco, hostname
 }

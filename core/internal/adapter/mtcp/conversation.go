@@ -107,6 +107,7 @@ type conversation struct {
 	mu         sync.Mutex
 	nodeKey    node.Key // the key the map stream serves; zero until known
 	hostname   node.Hostname
+	disco      node.DiscoveryKey  // proven at registration or rotation in this session
 	generation uint64             // advances with every authorization
 	restart    context.CancelFunc // ends the running stream when the key changes
 
@@ -195,6 +196,12 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key) e
 	return conversation.application.options.Streams.Serve(ctx, machine, request, conversation.sink)
 }
 
+func (conversation *conversation) provenDisco() node.DiscoveryKey {
+	conversation.mu.Lock()
+	defer conversation.mu.Unlock()
+	return conversation.disco
+}
+
 func (conversation *conversation) currentKey() node.Key {
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
@@ -211,12 +218,13 @@ func (conversation *conversation) clearKey(nodeKey node.Key) {
 
 // authorize switches the session to an authorized node key: the running
 // stream ends and the next one starts with RegisterResponse{authorized}.
-func (conversation *conversation) authorize(nodeKey node.Key, hostname node.Hostname, announce bool) {
+func (conversation *conversation) authorize(nodeKey node.Key, disco node.DiscoveryKey, hostname node.Hostname,
+	announce bool) {
 	if announce {
 		conversation.sink.announce()
 	}
 	conversation.mu.Lock()
-	conversation.nodeKey, conversation.hostname = nodeKey, hostname
+	conversation.nodeKey, conversation.disco, conversation.hostname = nodeKey, disco, hostname
 	conversation.generation++
 	if conversation.restart != nil {
 		conversation.restart()
@@ -321,6 +329,10 @@ func (conversation *conversation) endpoints(ctx context.Context, report *mtcpv1.
 	disco, err := node.NewDiscoveryKey([32]byte(report.GetDiscoKey()))
 	if err != nil {
 		return Violation(mtcpv1.Error_INVALID, "invalid disco key")
+	}
+	if proven := conversation.provenDisco(); proven.IsValid() && proven != disco {
+		// mtcp-v1 §8.1: another disco key than the one the node proved.
+		return conversation.sendError(mtcpv1.Error_INVALID, "the disco key is not the Device's", 0)
 	}
 	endpoints := make([]node.Endpoint, 0, len(report.GetEndpoints()))
 	for _, reported := range report.GetEndpoints() {

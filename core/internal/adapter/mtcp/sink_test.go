@@ -15,6 +15,7 @@ import (
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/shared/key"
 	sharedmtcp "meshtransit.net/shared/mtcp"
+	"meshtransit.net/shared/mtrp"
 )
 
 // pipeTransport captures records a Session writes.
@@ -197,5 +198,58 @@ func TestSinkWindowWaitsForAcknowledgements(t *testing.T) {
 	sink.ack(&mtcpv1.View{Epoch: sink.epoch, Seq: 4})
 	if err := <-done; err != nil {
 		t.Fatalf("send after an ack: %v", err)
+	}
+}
+
+// grantFixture is an Interchange grant with one signing key per seed.
+func grantFixture(t *testing.T, ticket string, signers ...key.SigningPrivate) mapsession.RelayGrant {
+	t.Helper()
+	notAfter := time.Now().Add(time.Hour)
+	grant := mtrp.InterchangeGrant{RelayMap: []byte("signed relay map"), Ticket: []byte(ticket),
+		TicketNotAfter: notAfter}
+	for _, signer := range signers {
+		grant.SigningKeys = append(grant.SigningKeys, mtrp.TrustedKey{Key: signer.Public(), NotAfter: notAfter})
+	}
+	payload := must(grant.Marshal())
+	return must(mapsession.NewRelayGrant(mapsession.RelayGrantRequest{}, payload, notAfter))
+}
+
+func TestSinkDeliversRelayGrants(t *testing.T) {
+	session, node, control := testSession(t)
+	sink := newMapSink(session, false, []ControlKey{{Private: control, NotAfter: time.Now().Add(time.Hour)}}, time.Now)
+	signer := must(key.NewSigningPrivate(nil))
+	snapshot := streamFixture(t, 1).WithRelayGrant(grantFixture(t, "ticket-1", signer))
+	if err := sink.SendSnapshot(t.Context(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	_, keys, _ := node.read()
+	signing := keys.(*mtcpv1.KeyUpdate).GetSigningKeys()
+	signerPublic := signer.Public()
+	if len(signing) != 1 || string(signing[0].GetKey()) != string(signerPublic[:]) {
+		t.Fatalf("KeyUpdate signing keys %v", signing)
+	}
+	_, mapped, _ := node.read()
+	if string(mapped.(*mtcpv1.MapSnapshot).GetRelayMap()) != "signed relay map" {
+		t.Fatal("the snapshot does not carry the relay map")
+	}
+	ticketType, ticket, _ := node.read()
+	if ticketType != sharedmtcp.MessageRelayTicket || string(ticket.(*mtcpv1.RelayTicket).GetTicket()) != "ticket-1" {
+		t.Fatalf("got %#x %v, want the relay ticket", uint8(ticketType), ticket)
+	}
+	// A renewed ticket under the same keys and map is just a ticket.
+	if err := sink.SendRelayGrant(t.Context(), snapshot.WithRelayGrant(grantFixture(t, "ticket-2", signer))); err != nil {
+		t.Fatal(err)
+	}
+	if types := node.messages(); len(types) != 1 || types[0] != sharedmtcp.MessageRelayTicket {
+		t.Fatalf("renewal sent %v, want one RelayTicket", types)
+	}
+	// A new signing key is announced before the ticket that needs it.
+	next := must(key.NewSigningPrivate(nil))
+	if err := sink.SendRelayGrant(t.Context(), snapshot.WithRelayGrant(grantFixture(t, "ticket-3", signer, next))); err != nil {
+		t.Fatal(err)
+	}
+	if types := node.messages(); len(types) != 2 || types[0] != sharedmtcp.MessageKeyUpdate ||
+		types[1] != sharedmtcp.MessageRelayTicket {
+		t.Fatalf("key change sent %v, want KeyUpdate then RelayTicket", types)
 	}
 }

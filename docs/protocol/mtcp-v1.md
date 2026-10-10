@@ -492,8 +492,12 @@ Core never signals revocation with an empty map. It sends `Lifecycle`
 present, STUN over IPv6 succeeded), `preferred_relay` (region ID) and
 `observed_at`.
 
-- `disco_key` MUST equal the Device's current disco key; otherwise Core
-  answers `Error{INVALID}` and ignores the report.
+- `disco_key` MUST equal the Device's current disco key (the one proved in
+  this session's registration or rotation); otherwise Core answers
+  `Error{INVALID}` and ignores the report.
+- The node sends its first report right after its first map, with an empty
+  `endpoints` list when it has no candidates yet: relay tickets bind the
+  disco key, so Core issues the relay grant (section 9) only once it has one.
 - The node sends it after each change and at least every 20 s ± 5 s while
   connected; Core treats endpoints as stale after 30 s without a report.
 - A node sends at most one report per second: it coalesces faster changes

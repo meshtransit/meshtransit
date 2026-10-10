@@ -696,3 +696,35 @@ func TestLogoutNeedsAnAuthorizedDevice(t *testing.T) {
 		t.Fatal("logout reached the domain without a Device")
 	}
 }
+
+func TestEndpointReportsUseTheProvenDiscoKey(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessageRegisterRequest)
+	f.run()
+	request := f.request(8, enrollmentAuth(testEnrollmentKey))
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRegisterRequest, request); err != nil {
+		t.Fatal(err)
+	}
+	f.expectStream(node.Key(request.GetNodeKey()))
+	f.expect(sharedmtcp.MessageRegisterResponse)
+	f.expect(sharedmtcp.MessageKeyUpdate)
+	f.expect(sharedmtcp.MessageMapSnapshot)
+	other := append([]byte(nil), request.GetDiscoKey()...)
+	other[0] ^= 1
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport,
+		&mtcpv1.EndpointReport{DiscoKey: other}); err != nil {
+		t.Fatal(err)
+	}
+	if m := f.expect(sharedmtcp.MessageError).(*mtcpv1.Error); m.GetCode() != mtcpv1.Error_INVALID || m.GetFatal() ||
+		len(f.endpoints.sets) != 0 {
+		t.Fatalf("another disco key: %v, %d stored", m, len(f.endpoints.sets))
+	}
+	// A node without candidates still reports, so its relay grant follows.
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageEndpointReport,
+		&mtcpv1.EndpointReport{DiscoKey: request.GetDiscoKey()}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.endpoints.sets) != 1 || len(f.endpoints.sets[0].Endpoints()) != 0 {
+		t.Fatalf("empty report with the proven disco key: %d stored", len(f.endpoints.sets))
+	}
+}
