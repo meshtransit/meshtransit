@@ -728,3 +728,23 @@ func TestEndpointReportsUseTheProvenDiscoKey(t *testing.T) {
 		t.Fatalf("empty report with the proven disco key: %d stored", len(f.endpoints.sets))
 	}
 }
+
+// A node that reconnects only to rotate sends RotateNodeKey before its map
+// arrives: the current key's snapshot names the Device.
+func TestRotateNodeKeyBeforeTheFirstMap(t *testing.T) {
+	t.Parallel()
+	f := newConversationFixture(t, sharedmtcp.MessagePing)
+	helloKey := node.Key(f.session.Hello().GetNodeKey())
+	f.snapshots.current[helloKey] = true
+	_, nodeKey, nodeProof, discoKey, discoProof := f.keys(6)
+	if err := f.talk.Receive(t.Context(), sharedmtcp.MessageRotateNodeKey, &mtcpv1.RotateNodeKey{NewNodeKey: nodeKey,
+		NodeKeyProof: nodeProof, NewDiscoKey: discoKey, DiscoKeyProof: discoProof}); err != nil {
+		t.Fatal(err)
+	}
+	if response := f.expect(sharedmtcp.MessageRotateNodeKeyResponse).(*mtcpv1.RotateNodeKeyResponse); string(response.GetNodeKey()) != string(nodeKey) {
+		t.Fatal("rotation answered another key")
+	}
+	if calls := f.registrations.calls(); len(calls) != 1 || !calls[0].IsNodeKeyRotation() {
+		t.Fatalf("rotation reached the domain %d times", len(calls))
+	}
+}

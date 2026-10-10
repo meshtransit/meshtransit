@@ -345,6 +345,13 @@ func (conversation *conversation) rotate(ctx context.Context, request *mtcpv1.Ro
 		return conversation.rotated(keys, snapshot.Hostname(), snapshot.KeyExpiry())
 	}
 	oldKey, hostname, expiry := conversation.rotationBase()
+	if oldKey.IsValid() && !hostname.IsValid() {
+		// No map on this session yet: the current key's snapshot names the
+		// Device, and proves the key still is current.
+		if snapshot, current := conversation.ownsKey(ctx, machine, oldKey); current {
+			hostname, expiry = snapshot.Hostname(), snapshot.KeyExpiry()
+		}
+	}
 	if !oldKey.IsValid() || !hostname.IsValid() {
 		return conversation.sendError(mtcpv1.Error_NOT_AUTHORIZED, "rotation needs an authorized Device", 0)
 	}
