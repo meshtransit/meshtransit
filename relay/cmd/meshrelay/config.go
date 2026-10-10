@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -137,11 +138,23 @@ func applyEnv(fs *flag.FlagSet, env func(string) (string, bool)) error {
 
 // loadRelayKey reads the key file, refusing files other users can read.
 func loadRelayKey(path string) (key.RelayPrivate, error) {
+	return loadRelayKeyFrom(path, os.Getenv("CREDENTIALS_DIRECTORY"))
+}
+
+// loadRelayKeyFrom is loadRelayKey with systemd's credentials directory
+// (empty when absent). systemd LoadCredential= hands the key over as a 0440
+// file in a directory only the service can open, so group-read is accepted
+// there; anywhere else the file must not be readable by group or others.
+func loadRelayKeyFrom(path, credentialsDir string) (key.RelayPrivate, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return key.RelayPrivate{}, fmt.Errorf("relay key: %w", err)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	refused := os.FileMode(0o077)
+	if inCredentialsDir(path, credentialsDir) {
+		refused = 0o027
+	}
+	if info.Mode().Perm()&refused != 0 {
 		return key.RelayPrivate{}, fmt.Errorf("relay key %s is readable by other users (mode %s); run chmod 600", path, info.Mode().Perm())
 	}
 	raw, err := os.ReadFile(path) //nolint:gosec // operator-supplied path
@@ -154,6 +167,18 @@ func loadRelayKey(path string) (key.RelayPrivate, error) {
 		return key.RelayPrivate{}, fmt.Errorf("relay key %s: %w", path, err)
 	}
 	return k, nil
+}
+
+func inCredentialsDir(path, credentialsDir string) bool {
+	if credentialsDir == "" || !filepath.IsAbs(credentialsDir) {
+		return false
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	relative, err := filepath.Rel(filepath.Clean(credentialsDir), absolute)
+	return err == nil && filepath.IsLocal(relative)
 }
 
 // genkey writes a new relay key file and prints the public key.

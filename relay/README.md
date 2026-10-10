@@ -31,7 +31,9 @@ meshrelay serve \
 | `--core-url` | none | Core control URL; the relay polls `/relay/v1/state` for trusted signing keys, revocations and drain (with it, `--trusted-signing-keys` only bootstraps trust) |
 
 Every flag can be set as `MESHRELAY_<FLAG>` (upper case, `_` for `-`). The key
-file must be mode 0600.
+file must be mode 0600. A key handed over with systemd `LoadCredential=` may be
+group-readable (systemd writes it 0440), because only the service can open
+`$CREDENTIALS_DIRECTORY`; point `--key-file` at `${CREDENTIALS_DIRECTORY}/<name>`.
 
 TLS is not part of MTRP's trust model: clients authenticate the relay with
 the Noise handshake. A publicly trusted certificate still matters, because

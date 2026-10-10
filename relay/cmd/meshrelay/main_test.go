@@ -142,3 +142,37 @@ func TestCertReloader(t *testing.T) {
 		t.Fatal("certificate not reloaded after the files changed")
 	}
 }
+
+// systemd LoadCredential= hands the key over as a 0440 file in a directory
+// only the service can open; group-read is accepted there and nowhere else.
+func TestLoadRelayKeyAcceptsSystemdCredential(t *testing.T) {
+	t.Parallel()
+	credentials := t.TempDir()
+	path := filepath.Join(credentials, "relay.key")
+	var out, errOut bytes.Buffer
+	if code := run(context.Background(), []string{"genkey", "--out", path}, noEnv, &out, &errOut); code != 0 {
+		t.Fatalf("genkey exit %d: %s", code, errOut.String())
+	}
+	if err := os.Chmod(path, 0o440); err != nil { //nolint:gosec // systemd credential mode
+		t.Fatal(err)
+	}
+	if _, err := loadRelayKeyFrom(path, credentials); err != nil {
+		t.Fatalf("credential refused: %v", err)
+	}
+	if _, err := loadRelayKeyFrom(path, ""); err == nil {
+		t.Fatal("group-readable key accepted outside a credentials directory")
+	}
+	if _, err := loadRelayKeyFrom(path, t.TempDir()); err == nil {
+		t.Fatal("group-readable key accepted outside the credentials directory")
+	}
+	escaped := filepath.Join(credentials, "sub", "..", "..", filepath.Base(credentials), "relay.key")
+	if _, err := loadRelayKeyFrom(escaped, filepath.Join(credentials, "sub")); err == nil {
+		t.Fatal("a path leaving the credentials directory was accepted")
+	}
+	if err := os.Chmod(path, 0o444); err != nil { //nolint:gosec // deliberately too open
+		t.Fatal(err)
+	}
+	if _, err := loadRelayKeyFrom(path, credentials); err == nil {
+		t.Fatal("world-readable credential accepted")
+	}
+}
