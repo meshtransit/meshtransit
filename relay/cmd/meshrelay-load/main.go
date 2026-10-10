@@ -42,6 +42,9 @@ import (
 // sourceHandshakeRate stays under the relay's per-source handshake limit.
 const sourceHandshakeRate = 9
 
+// keepaliveInterval keeps sessions well inside the relay's idle timeout.
+const keepaliveInterval = 10 * time.Second
+
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "meshrelay-load:", err)
@@ -257,6 +260,13 @@ func openPair(cfg config, source netip.Addr, n int) (pair, []handshakeBytes, err
 	return pair{from: a, to: b, route: ok.Route}, []handshakeBytes{hsA, hsB}, nil
 }
 
+func keepAlive(pairs []pair) {
+	for _, p := range pairs {
+		_ = p.from.control(mtrp.ControlMessage{Type: mtrp.ControlKeepalive})
+		_ = p.to.control(mtrp.ControlMessage{Type: mtrp.ControlKeepalive})
+	}
+}
+
 func closePair(p pair) {
 	_ = p.from.conn.Close()
 	_ = p.to.conn.Close()
@@ -281,7 +291,7 @@ func send(ctx context.Context, p pair, cfg config, s *stats) {
 	interval := time.Second / time.Duration(cfg.rate)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	keepalive := time.NewTicker(10 * time.Second)
+	keepalive := time.NewTicker(keepaliveInterval)
 	defer keepalive.Stop()
 	payload := make([]byte, cfg.size)
 	var frame []byte
@@ -338,10 +348,16 @@ func run(args []string, out io.Writer) error {
 		failures   int
 	)
 	interval := time.Second / time.Duration(sourceHandshakeRate*len(cfg.sources)) * 2 // two handshakes per pair
-	started := time.Now()
+	started, lastKeepalive := time.Now(), time.Now()
 	for n := range cfg.pairs {
 		if ctx.Err() != nil {
 			break
+		}
+		// Opening many pairs takes minutes; keep the open ones from idling
+		// out (the relay closes a silent session after 90 s).
+		if time.Since(lastKeepalive) > keepaliveInterval {
+			keepAlive(pairs)
+			lastKeepalive = time.Now()
 		}
 		p, hs, err := openPair(cfg, cfg.sources[n%len(cfg.sources)], n)
 		if err != nil {
