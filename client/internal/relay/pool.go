@@ -243,10 +243,46 @@ func (p *Pool) ReplacePeers(peers []Peer) error {
 	}
 	p.lifecycle.Lock()
 	defer p.lifecycle.Unlock()
+
+	return p.replaceAuthorityLocked(p.config.HomeRegion, peers)
+}
+
+// ReplaceAuthority moves the home region and replaces the peer set on the
+// live pool. Connected regions stay up: a home change prepared in advance
+// (PrepareRegion) switches without a new connection, and otherwise the new
+// home is dialled at once.
+func (p *Pool) ReplaceAuthority(homeRegion int, peers []Peer) error {
+	if p == nil {
+		return ErrClosed
+	}
+	p.lifecycle.Lock()
+	defer p.lifecycle.Unlock()
+	if err := p.replaceAuthorityLocked(homeRegion, peers); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	open := p.isOpen
+	p.mu.Unlock()
+	if !open {
+		return nil
+	}
+	_, err := p.ensureWorker(homeRegion)
+
+	return err
+}
+
+// replaceAuthorityLocked requires p.lifecycle.
+func (p *Pool) replaceAuthorityLocked(homeRegion int, peers []Peer) error {
+	p.mu.Lock()
+	closed := p.isClosed
+	p.mu.Unlock()
+	if closed {
+		return ErrClosed
+	}
 	validated, err := Validate(Config{
 		PrivateKey: p.config.PrivateKey,
 		PublicKey:  p.config.PublicKey,
-		HomeRegion: p.config.HomeRegion,
+		HomeRegion: homeRegion,
 		Regions:    p.config.Regions,
 		Peers:      peers,
 	})
@@ -262,6 +298,7 @@ func (p *Pool) ReplacePeers(peers []Peer) error {
 	if p.isClosed {
 		return ErrClosed
 	}
+	p.config.HomeRegion = validated.HomeRegion
 	p.config.Peers = validated.Peers
 	p.peerByKey = peerByKey
 	for peer := range p.reverseByKey {

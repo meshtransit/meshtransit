@@ -184,6 +184,7 @@ func Validate(config Config) (Config, error) {
 // private key is deliberately excluded.
 func Fingerprint(config Config) [32]byte {
 	encoded := encodeTopology(config)
+	writeString(&encoded, strconv.Itoa(config.HomeRegion))
 	for _, peer := range config.Peers {
 		encoded.Write(peer.Key[:])
 		writeString(&encoded, strconv.Itoa(peer.HomeRegion))
@@ -194,7 +195,7 @@ func Fingerprint(config Config) [32]byte {
 }
 
 // TopologyFingerprint identifies the relay transport independently from the
-// peer authorization set that can be replaced on a live pool.
+// home region and peer authorization set, both replaced on a live pool.
 func TopologyFingerprint(config Config) [32]byte {
 	encoded := encodeTopology(config)
 
@@ -204,7 +205,6 @@ func TopologyFingerprint(config Config) [32]byte {
 func encodeTopology(config Config) bytes.Buffer {
 	var encoded bytes.Buffer
 	encoded.Write(config.PublicKey[:])
-	writeString(&encoded, strconv.Itoa(config.HomeRegion))
 	regionIDs := make([]int, 0, len(config.Regions))
 	for id := range config.Regions {
 		regionIDs = append(regionIDs, id)

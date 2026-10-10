@@ -1629,6 +1629,34 @@ func TestWireGuardEngineReopensOnRelayAuthorityChange(t *testing.T) {
 	}
 }
 
+func TestWireGuardEngineMovesHomeRelayWithoutReopening(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	snapshot = addTestRelay(snapshot)
+	snapshot.Relays[2] = testRelayRegion(2, "relay-2.example.com")
+	opener := &wireGuardTUNOpener{}
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(opener, 41641, &fakeWireGuardFactory{device: device}, nil)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("first Apply() error = %v", err)
+	}
+	snapshot.Revision++
+	snapshot.Self.HomeRelay = 2
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("second Apply() error = %v", err)
+	}
+	if opener.calls != 1 || device.closeCalls != 0 || device.upCalls != 1 {
+		t.Fatalf("home change calls open=%d close=%d up=%d, want 1/0/1", opener.calls, device.closeCalls, device.upCalls)
+	}
+	if device.relayUpdateCalls != 1 || device.relayHome != 2 {
+		t.Fatalf("relay authority updates = %d home %d, want 1 and 2", device.relayUpdateCalls, device.relayHome)
+	}
+}
+
 func addTestRelay(snapshot networkmap.Snapshot) networkmap.Snapshot {
 	snapshot.Self.HomeRelay = 1
 	snapshot.Peers[0].HomeRelay = 1
@@ -1821,6 +1849,7 @@ type fakeWireGuardDevice struct {
 	relayHealth      relay.HealthSnapshot
 	preparedRelays   []int
 	relayPeers       []relay.Peer
+	relayHome        int
 	relayUpdateCalls int
 	relayUpdateErr   error
 }
@@ -1898,8 +1927,9 @@ func (d *fakeWireGuardDevice) PrepareRelayRegion(regionID int) error {
 	return nil
 }
 
-func (d *fakeWireGuardDevice) ReplaceRelayPeers(peers []relay.Peer) error {
+func (d *fakeWireGuardDevice) ReplaceRelayAuthority(homeRegion int, peers []relay.Peer) error {
 	d.relayUpdateCalls++
+	d.relayHome = homeRegion
 	d.relayPeers = append([]relay.Peer(nil), peers...)
 
 	return d.relayUpdateErr

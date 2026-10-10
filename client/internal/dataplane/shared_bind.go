@@ -203,12 +203,12 @@ func (b *sharedBind) PrepareRelayRegion(regionID int) error {
 	return b.relay.PrepareRegion(regionID)
 }
 
-func (b *sharedBind) ReplaceRelayPeers(peers []relay.Peer) error {
+func (b *sharedBind) ReplaceRelayAuthority(homeRegion int, peers []relay.Peer) error {
 	if b == nil || b.relay == nil {
 		return pathdiscovery.ErrTransportClosed
 	}
 
-	return b.relay.ReplacePeers(peers)
+	return b.relay.ReplaceAuthority(homeRegion, peers)
 }
 
 func (b *sharedBind) ParseEndpoint(value string) (conn.Endpoint, error) {

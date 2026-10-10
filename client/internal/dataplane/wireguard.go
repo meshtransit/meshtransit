@@ -138,7 +138,7 @@ type relayManagingDevice interface {
 }
 
 type relayConfiguringDevice interface {
-	ReplaceRelayPeers([]relay.Peer) error
+	ReplaceRelayAuthority(homeRegion int, peers []relay.Peer) error
 }
 
 // relayFailureDevice reports relay connection failures to a hook.
@@ -373,7 +373,7 @@ func (e *WireGuardEngine) applySnapshot(
 				return plan.state(), nil
 			}
 			if relayChanged {
-				if err := e.replaceRelayPeers(plan); err != nil {
+				if err := e.replaceRelayAuthority(plan); err != nil {
 					_ = e.Close()
 
 					return StateFailed, err
@@ -402,7 +402,7 @@ func (e *WireGuardEngine) applySnapshot(
 			}
 		}
 		if relayChanged && !relayReplaced {
-			if err := e.replaceRelayPeers(plan); err != nil {
+			if err := e.replaceRelayAuthority(plan); err != nil {
 				_ = e.Close()
 
 				return StateFailed, err
@@ -480,12 +480,15 @@ func (e *WireGuardEngine) applySnapshot(
 	return plan.state(), nil
 }
 
-func (e *WireGuardEngine) replaceRelayPeers(plan wireGuardPlan) error {
+func (e *WireGuardEngine) replaceRelayAuthority(plan wireGuardPlan) error {
 	device, supported := e.device.(relayConfiguringDevice)
 	if !supported || plan.relayConfig == nil {
 		return errors.New("dataplane: live relay authority update is unavailable")
 	}
-	if err := device.ReplaceRelayPeers(append([]relay.Peer(nil), plan.relayConfig.Peers...)); err != nil {
+	if err := device.ReplaceRelayAuthority(
+		plan.relayConfig.HomeRegion,
+		append([]relay.Peer(nil), plan.relayConfig.Peers...),
+	); err != nil {
 		return errors.New("dataplane: replacing relay peer authority failed")
 	}
 
