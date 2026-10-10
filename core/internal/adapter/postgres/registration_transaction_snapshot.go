@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"net/netip"
 
 	"meshtransit.net/core/internal/domain/node"
 )
@@ -151,11 +152,17 @@ func (transaction *registrationTransaction) loadPrefixLeases(
 	ctx context.Context,
 	prefix *registrationPrefix,
 ) error {
+	start, err := transaction.lowestFreeAddress(ctx, prefix)
+	if err != nil {
+		return err
+	}
+	prefix.searchStart = start
 	rows, err := transaction.database.Query(
 		ctx,
 		loadRegistrationLeasesSQL,
 		prefix.internalID,
 		transaction.candidateLimit+1,
+		hostPrefix(start),
 	)
 	if err != nil {
 		return fmt.Errorf("load address allocation snapshot: %w", err)
@@ -194,4 +201,36 @@ func (transaction *registrationTransaction) loadPrefixLeases(
 		return fmt.Errorf("read address allocation snapshot: %w", err)
 	}
 	return nil
+}
+
+// lowestFreeAddress returns the lowest address of prefix that no live lease
+// holds, which may lie past the prefix when every host is taken.
+func (transaction *registrationTransaction) lowestFreeAddress(
+	ctx context.Context,
+	prefix *registrationPrefix,
+) (netip.Addr, error) {
+	first := prefix.prefix.Addr().Next()
+	if !first.IsValid() {
+		return netip.Addr{}, ErrRegistrationEvidence
+	}
+	var value string
+	if err := transaction.database.QueryRow(
+		ctx,
+		lowestFreeRegistrationAddressSQL,
+		prefix.internalID,
+		hostPrefix(first),
+	).Scan(&value); err != nil {
+		return netip.Addr{}, fmt.Errorf("find lowest free address: %w", err)
+	}
+	address, err := netip.ParseAddr(value)
+	if err != nil || address.Is4() != first.Is4() || address.Compare(first) < 0 {
+		return netip.Addr{}, ErrRegistrationEvidence
+	}
+	return address, nil
+}
+
+// hostPrefix writes address as a host route (/32 or /128), the form leases
+// are stored in.
+func hostPrefix(address netip.Addr) string {
+	return netip.PrefixFrom(address, address.BitLen()).String()
 }

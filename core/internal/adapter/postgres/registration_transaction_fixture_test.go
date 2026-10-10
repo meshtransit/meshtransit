@@ -322,6 +322,10 @@ func enqueueOpenRegistrationResolution(
 			return nil
 		},
 	}})
+	database.enqueueRow(lowestFreeRegistrationAddressSQL, registrationTestRow{scan: func(destinations ...any) error {
+		*destinations[0].(*string) = "100.64.1.1"
+		return nil
+	}})
 	database.enqueueRows(loadRegistrationLeasesSQL, &registrationTestRows{})
 }
 

@@ -101,8 +101,37 @@ const loadRegistrationLeasesSQL = `SELECT
 FROM mesh.node_address_lease AS lease
 WHERE lease.network_prefix_id = $1::BIGINT
   AND lease.state IN ('active', 'quarantined')
+  AND lease.address >= $3::INET
 ORDER BY lease.network_prefix_id, lease.address, lease.id
 LIMIT $2::BIGINT`
+
+// lowestFreeRegistrationAddressSQL finds the lowest address of a prefix that
+// no live lease holds: the first host ($2) or the address after a live lease.
+// Allocation searches from there, so a prefix may hold more Devices than one
+// search window (the caller holds the allocator lock; the live-address unique
+// index stays the final arbiter). The last address of each family is skipped
+// because adding one to it overflows; it is never a host of a mesh prefix.
+const lowestFreeRegistrationAddressSQL = `WITH live AS (
+    SELECT lease.address
+    FROM mesh.node_address_lease AS lease
+    WHERE lease.network_prefix_id = $1::BIGINT
+      AND lease.state IN ('active', 'quarantined')
+)
+SELECT pg_catalog.host(candidate.address)
+FROM (
+    SELECT $2::INET AS address
+    UNION
+    SELECT live.address + 1
+    FROM live
+    WHERE pg_catalog.host(live.address) NOT IN (
+        '255.255.255.255', 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'
+    )
+) AS candidate
+WHERE NOT EXISTS (
+    SELECT 1 FROM live WHERE live.address = candidate.address
+)
+ORDER BY candidate.address
+LIMIT 1`
 
 const lockRegistrationDeviceLeasesSQL = `SELECT lease.family
 FROM mesh.node_address_lease AS lease

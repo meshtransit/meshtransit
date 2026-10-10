@@ -29,8 +29,9 @@ func (transaction *registrationTransaction) allocateRegistrationLeases() ([]regi
 				continue
 			}
 			familyAvailable = true
-			address, err := ipam.NextAvailableAddress(
+			address, err := ipam.NextAvailableAddressFrom(
 				prefix.prefix,
+				prefix.searchStart,
 				prefix.occupied,
 				transaction.candidateLimit,
 			)

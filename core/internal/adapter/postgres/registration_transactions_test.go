@@ -64,6 +64,7 @@ func TestRegistrationTransactionCreatesCompleteAtomicMutation(t *testing.T) {
 		lockRegistrationAuditStreamSQL,
 		loadRegistrationHostnamesSQL,
 		lockRegistrationPrefixesSQL,
+		lowestFreeRegistrationAddressSQL,
 		loadRegistrationLeasesSQL,
 		setRegistrationChangeSQL,
 		insertRegistrationDeviceSQL,
@@ -339,5 +340,36 @@ func TestRegistrationDatabaseErrorsPreserveRetryAndCommitSemantics(t *testing.T)
 	if !errors.Is(classified, context.Canceled) ||
 		!errors.Is(classified, registration.ErrCommitOutcomeUnknown) {
 		t.Fatalf("classifyRegistrationCommitError(canceled) = %v", classified)
+	}
+}
+
+// A prefix holding more live leases than one search window still allocates:
+// the search starts at the lowest free address Postgres found.
+func TestRegistrationTransactionAllocatesPastTheSearchWindow(t *testing.T) {
+	t.Parallel()
+
+	command := validRegistrationReplayCommand(t)
+	database := newFakeRegistrationDatabaseTransaction()
+	enqueueOpenRegistrationResolution(t, database, command)
+	database.rows[lowestFreeRegistrationAddressSQL][0] = registrationTestRow{scan: func(destinations ...any) error {
+		*destinations[0].(*string) = "100.64.1.200"
+		return nil
+	}}
+	enqueueRegistrationWrites(database)
+	transaction := beginTestRegistrationTransaction(t, database, command)
+	resolution, err := transaction.Resolve(t.Context(), command)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if _, err := transaction.Apply(t.Context(), testRegistrationChange(t, command, resolution)); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	leases := findRegistrationCall(t, database.calls, loadRegistrationLeasesSQL)
+	if len(leases.arguments) != 3 || leases.arguments[2] != "100.64.1.200/32" {
+		t.Fatalf("lease window arguments = %#v, want the search start", leases.arguments)
+	}
+	leaseCall := findRegistrationCall(t, database.calls, insertRegistrationLeaseSQL)
+	if leaseCall.arguments[7] != "100.64.1.200" {
+		t.Fatalf("allocated %v, want the lowest free address", leaseCall.arguments[7])
 	}
 }

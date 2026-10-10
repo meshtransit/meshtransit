@@ -175,7 +175,10 @@ type registrationPrefix struct {
 	poolInternalID  int64
 	prefix          netip.Prefix
 	family          int
-	occupied        []netip.Addr
+	// searchStart is the lowest free address the store found; occupied
+	// holds the live leases from it on.
+	searchStart netip.Addr
+	occupied    []netip.Addr
 }
 
 type registrationAuditHead struct {

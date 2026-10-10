@@ -25,6 +25,22 @@ func NextAvailableAddress(
 	occupied []netip.Addr,
 	candidateLimit int,
 ) (netip.Addr, error) {
+	return NextAvailableAddressFrom(prefix, netip.Addr{}, occupied, candidateLimit)
+}
+
+// NextAvailableAddressFrom is NextAvailableAddress searching from start (the
+// first host when start is unset or before it). The store passes the lowest
+// free address it found, so a prefix holding more Devices than one search
+// window still allocates; occupied then needs only addresses from start on.
+func NextAvailableAddressFrom(
+	prefix netip.Prefix,
+	start netip.Addr,
+	occupied []netip.Addr,
+	candidateLimit int,
+) (netip.Addr, error) {
+	if start.IsValid() && (start.Is4() != prefix.Addr().Is4() || start.Is4In6()) {
+		return netip.Addr{}, ErrInvalidAllocation
+	}
 	if !prefix.IsValid() || prefix != prefix.Masked() || candidateLimit <= 0 ||
 		candidateLimit > MaxCandidateLimit || len(occupied) > candidateLimit {
 		return netip.Addr{}, ErrInvalidAllocation
@@ -40,6 +56,9 @@ func NextAvailableAddress(
 	}
 
 	candidate := prefix.Addr().Next()
+	if start.IsValid() && start.Compare(candidate) > 0 {
+		candidate = start
+	}
 	for range candidateLimit {
 		if !candidate.IsValid() || !prefix.Contains(candidate) || isIPv4Broadcast(prefix, candidate) {
 			return netip.Addr{}, ErrAddressExhausted
