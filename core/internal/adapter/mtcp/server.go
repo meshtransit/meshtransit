@@ -428,6 +428,7 @@ func (server *Server) establish(session *Session) error {
 	previous := server.byMachine[session.machine]
 	server.byMachine[session.machine] = session
 	server.live[session] = struct{}{}
+	session.established.Store(server.options.Now().UnixNano())
 	server.mu.Unlock()
 	server.options.Metrics.sessionOpened()
 	if previous != nil {

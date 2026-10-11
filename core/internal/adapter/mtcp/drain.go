@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"time"
 
@@ -14,6 +15,11 @@ import (
 // drainWorkers bounds the concurrent goodbyes of a drain or shed: one slow
 // client holds its writer for up to writeTimeout.
 const drainWorkers = 64
+
+// shedMinimumAge spares young sessions when shedding: a node still
+// registering or receiving its first map gains nothing from moving, and a
+// node that just moved here is not moved straight on.
+const shedMinimumAge = 30 * time.Second
 
 var (
 	// errShed ends a session this replica asked to reconnect elsewhere.
@@ -43,6 +49,10 @@ func (server *Server) Shed(ctx context.Context, count int, window time.Duration)
 	}
 	sessions := server.liveSessionsLocked()
 	server.mu.Unlock()
+	oldest := server.options.Now().Add(-shedMinimumAge).UnixNano()
+	sessions = slices.DeleteFunc(sessions, func(session *Session) bool {
+		return session.established.Load() > oldest
+	})
 	rand.Shuffle(len(sessions), func(i, j int) { sessions[i], sessions[j] = sessions[j], sessions[i] }) //nolint:gosec // choosing whom to shed needs no secrecy
 	sessions = sessions[:min(count, len(sessions))]
 	server.sayGoodbye(ctx, sessions, window, "the control replica is rebalancing", errShed)

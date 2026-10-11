@@ -2,6 +2,7 @@ package mtcp
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,8 +39,16 @@ func expectReconnect(t *testing.T, c *client, window time.Duration) {
 }
 
 func TestShedAsksSomeSessionsToReconnect(t *testing.T) {
-	f := newFixture(t, nil)
+	var clock atomic.Int64
+	clock.Store(time.Now().UnixNano())
+	f := newFixture(t, func(options *Options) {
+		options.Now = func() time.Time { return time.Unix(0, clock.Load()) }
+	})
 	clients := establishedClients(t, f, 3)
+	if shed := f.server.Shed(t.Context(), 2, 10*time.Second); shed != 0 {
+		t.Fatalf("Shed() moved %d sessions younger than %v", shed, shedMinimumAge)
+	}
+	clock.Add(int64(shedMinimumAge + time.Second))
 	if shed := f.server.Shed(t.Context(), 2, 10*time.Second); shed != 2 {
 		t.Fatalf("Shed() = %d, want 2", shed)
 	}

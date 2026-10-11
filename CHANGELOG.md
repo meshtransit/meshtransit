@@ -199,6 +199,13 @@ merge (2026-10-09) are kept below.
 
 ### Fixed
 
+- A Device registering into a Network with no free address was told to
+  retry every two seconds, forever; it is now rejected (NOT_PERMITTED,
+  "the Network has no free address") and meshd reports it.
+- Rebalancing no longer moves sessions younger than 30 seconds: it could
+  end a session in the middle of a registration, and move a node that had
+  just arrived.
+
 - meshd reported `control_session: synchronized` while Core was
   unreachable: the MTCP stream reconnects internally and kept the last map
   without telling the daemon. The stream now reports losing and regaining

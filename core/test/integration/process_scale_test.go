@@ -67,7 +67,7 @@ const (
 	scaleMaxProcesses          = 16
 	scalePhaseTimeout          = 2 * time.Minute
 	scaleQuietPeriod           = 2 * time.Second
-	scaleExtraPrefix           = "100.64.16.0/20"
+	scaleExtraPrefix           = "100.80.0.0/14"
 	scaleHubEndpoint           = "198.51.100.77:41641"
 )
 
@@ -333,15 +333,20 @@ RETURNING id`, profilePublicID, "scale-"+profilePublicID).Scan(&profileID); err 
 			fingerprint[:]); err != nil {
 			t.Fatalf("insert scale enrollment credential: %v", err)
 		}
-		if _, err := transaction.Exec(ctx, `INSERT INTO mesh.network_prefix (
+		// The fixture's pool is a /16; a pool and Network prefix of their own
+		// hold up to 262,144 Devices.
+		if _, err := transaction.Exec(ctx, `WITH pool AS (
+    INSERT INTO mesh.address_pool (public_id, deployment_id, workspace_id, address_realm_id, purpose, prefix, family, state)
+    SELECT $1::UUID, 1, 101, 301, 'node_overlay', $3::CIDR, 4, 'active'
+    WHERE NOT EXISTS (SELECT 1 FROM mesh.address_pool WHERE address_realm_id = 301 AND prefix = $3::CIDR)
+    RETURNING id
+)
+INSERT INTO mesh.network_prefix (
     public_id, workspace_id, network_id, address_realm_id, address_pool_id, prefix, family, state
 )
-SELECT $1::UUID, 101, 201, 301, 401, $2::CIDR, 4, 'active'
-WHERE NOT EXISTS (
-    SELECT 1 FROM mesh.network_prefix
-    WHERE workspace_id = 101 AND network_id = 201 AND prefix = $2::CIDR
-)`, newScaleID(t), scaleExtraPrefix); err != nil {
-			t.Fatalf("insert scale network prefix: %v", err)
+SELECT $2::UUID, 101, 201, 301, pool.id, $3::CIDR, 4, 'active' FROM pool`,
+			newScaleID(t), newScaleID(t), scaleExtraPrefix); err != nil {
+			t.Fatalf("insert scale address pool and network prefix: %v", err)
 		}
 	})
 	credentialID, err := enrollment.ParseCredentialID(credentialPublicID)
@@ -469,10 +474,12 @@ func newScaleClients(t *testing.T, processConfig config.Config, controlAddresses
 type scaleRetries struct {
 	shed      int
 	retryable int
+	timeouts  int
 }
 
 func (retries scaleRetries) String() string {
-	return fmt.Sprintf("shed retries=%d, retryable-error retries=%d", retries.shed, retries.retryable)
+	return fmt.Sprintf("shed retries=%d, retryable-error retries=%d, timeout retries=%d", retries.shed,
+		retries.retryable, retries.timeouts)
 }
 
 // retryScaleShed repeats op while Core sheds the handshake or answers with
@@ -491,6 +498,11 @@ func retryScaleShed(ctx context.Context, op func() error) (scaleRetries, error) 
 		case strings.Contains(err.Error(), "fatal=false"):
 			retries.retryable++
 			delay = scaleRetryAfter(err.Error(), delay)
+		case ctx.Err() == nil && (strings.Contains(err.Error(), "i/o timeout") ||
+			strings.Contains(err.Error(), "lifecycle RECONNECT")):
+			// A node retries a registration that timed out or that Core
+			// asked to reconnect; the same keys get the same answer.
+			retries.timeouts++
 		default:
 			return retries, err
 		}
@@ -540,6 +552,7 @@ func runScaleBounded(count int, work func(index int) (scaleRetries, error)) ([]t
 			latencies[index] = time.Since(started)
 			retries.shed += attempts.shed
 			retries.retryable += attempts.retryable
+			retries.timeouts += attempts.timeouts
 			if err != nil && firstErr == nil {
 				firstErr = fmt.Errorf("session %d: %w", index, err)
 			}

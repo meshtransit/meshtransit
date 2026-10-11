@@ -14,6 +14,7 @@ import (
 	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/enrollment/registration"
 	"meshtransit.net/core/internal/domain/enrollment/registration/intake"
+	"meshtransit.net/core/internal/domain/ipam"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/distribution"
 	"meshtransit.net/shared/key"
@@ -432,6 +433,10 @@ func TestRegistrationWithEnrollmentKey(t *testing.T) {
 			want: mtcpv1.RegisterResponse_Rejected_CREDENTIAL_INVALID},
 		{name: "key conflict", err: registration.ErrIntentConflict, reported: true,
 			want: mtcpv1.RegisterResponse_Rejected_CONFLICT},
+		// A full Network is permanent until an admin adds a range: the node
+		// must not retry every two seconds.
+		{name: "no free address", err: errors.Join(errors.New("allocation"), ipam.ErrAddressExhausted),
+			reported: true, want: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED},
 		{name: "renewal without approval", mutate: func(_ *conversationFixture, request *mtcpv1.RegisterRequest) {
 			request.Auth = &mtcpv1.RegisterRequest_Auth{Method: &mtcpv1.RegisterRequest_Auth_Resume{
 				Resume: &mtcpv1.RegisterRequest_Resume{}}}

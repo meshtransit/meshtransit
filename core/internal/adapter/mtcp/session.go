@@ -40,6 +40,9 @@ type Session struct {
 
 	sendMu   sync.Mutex
 	lastSend atomic.Int64 // Unix nanoseconds of the last record sent
+	// established is when the session was registered with the server
+	// (Unix nanoseconds); rebalancing leaves young sessions alone.
+	established atomic.Int64
 
 	ctx    context.Context
 	cancel context.CancelCauseFunc

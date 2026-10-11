@@ -12,6 +12,7 @@ import (
 	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/enrollment/registration"
 	"meshtransit.net/core/internal/domain/enrollment/registration/intake"
+	"meshtransit.net/core/internal/domain/ipam"
 	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/node/keyrotation"
 	"meshtransit.net/shared/key"
@@ -198,6 +199,10 @@ func (conversation *conversation) registrationFailed(ctx context.Context, err er
 	case errors.Is(err, registration.ErrIntentConflict), errors.Is(err, keyrotation.ErrConflict):
 		return conversation.reject(rejection{code: mtcpv1.RegisterResponse_Rejected_CONFLICT,
 			message: "the keys conflict with an existing Device"})
+	case errors.Is(err, ipam.ErrAddressExhausted):
+		// Permanent until an admin adds an address range; retrying would
+		// only load Core.
+		return conversation.reject(networkFull)
 	default:
 		if ctx.Err() == nil {
 			conversation.application.options.Logger.WarnContext(ctx, "mtcp registration failed",
@@ -229,6 +234,8 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 		switch {
 		case errors.Is(err, control.ErrInvalidBrowserRegistration):
 			return conversation.reject(expiredApproval)
+		case errors.Is(err, ipam.ErrAddressExhausted):
+			return conversation.reject(networkFull)
 		case err != nil:
 			return conversation.sendError(mtcpv1.Error_INTERNAL, "registration unavailable", 2000)
 		case found:
@@ -263,6 +270,9 @@ func (conversation *conversation) registerInteractively(ctx context.Context, mac
 		expires: expires})
 	return nil
 }
+
+var networkFull = rejection{code: mtcpv1.RegisterResponse_Rejected_NOT_PERMITTED,
+	message: "the Network has no free address; its administrator can add an address range"}
 
 var expiredApproval = rejection{code: mtcpv1.RegisterResponse_Rejected_EXPIRED,
 	message: "the approval is unknown or has expired; start a new one"}
