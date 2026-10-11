@@ -209,19 +209,41 @@ func (pool *Pool) Shutdown(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if acquired := pool.acquired(); acquired != 0 {
-		return fmt.Errorf("%w: %d connection(s) acquired", ErrPoolInUse, acquired)
+	// Consumers are joined, but a connection whose query shutdown canceled
+	// is destroyed asynchronously and stays counted as acquired briefly:
+	// wait for it within the shutdown bound instead of failing at once.
+	poll := time.NewTicker(poolDrainPoll)
+	defer poll.Stop()
+	for {
+		acquired := pool.acquired()
+		if acquired == 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%w: %d connection(s) acquired", ErrPoolInUse, acquired)
+		case <-poll.C:
+		}
 	}
 	pool.close()
 	pool.closed = true
 	return nil
 }
 
+// poolDrainPoll is how often Shutdown checks for connections being released.
+const poolDrainPoll = 10 * time.Millisecond
+
 // Close releases the pool once for callers outside the process lifecycle. It
-// refuses to wait for acquired connections and is safe to call more than once.
+// waits at most poolCloseWait for connections being released and is safe to
+// call more than once.
 func (pool *Pool) Close() error {
-	return pool.Shutdown(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), poolCloseWait)
+	defer cancel()
+	return pool.Shutdown(ctx)
 }
+
+// poolCloseWait bounds Close's wait for connections being released.
+const poolCloseWait = time.Second
 
 func buildPoolConfig(options Options, password string, caPEM []byte) (*pgxpool.Config, error) {
 	host, portValue, err := net.SplitHostPort(options.Address)

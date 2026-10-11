@@ -18,14 +18,17 @@ const (
 	envRegistrationRetryMaximum          = "MESHTRANSIT_REGISTRATION_RETRY_MAXIMUM"
 	envRegistrationAddressCandidateLimit = "MESHTRANSIT_REGISTRATION_ADDRESS_CANDIDATE_LIMIT"
 
-	defaultRegistrationMaxAttempts           = 3
+	// Registrations of one Network serialize on its revision row; a burst
+	// (a site enrolling many Devices at once) queues behind it, so the lock
+	// wait and attempt budget leave room for that queue (scale-out S4).
+	defaultRegistrationMaxAttempts           = 5
 	defaultRegistrationRollbackTimeout       = time.Second
 	defaultRegistrationPendingTTL            = 10 * time.Minute
 	defaultRegistrationStatementTimeout      = 5 * time.Second
-	defaultRegistrationLockTimeout           = time.Second
+	defaultRegistrationLockTimeout           = 3 * time.Second
 	defaultRegistrationIdleTimeout           = 10 * time.Second
 	defaultRegistrationRetryInitial          = 10 * time.Millisecond
-	defaultRegistrationRetryMaximum          = 250 * time.Millisecond
+	defaultRegistrationRetryMaximum          = 500 * time.Millisecond
 	defaultRegistrationAddressCandidateLimit = 256
 
 	minRegistrationTimeout     = time.Millisecond

@@ -537,15 +537,15 @@ address allocation examines only the configured candidate snapshot.
 
 | Environment variable | Default | Contract |
 | --- | --- | --- |
-| `MESHTRANSIT_REGISTRATION_MAX_ATTEMPTS` | `3` | Whole-transaction attempt budget from 1 through 5. |
+| `MESHTRANSIT_REGISTRATION_MAX_ATTEMPTS` | `5` | Whole-transaction attempt budget from 1 through 5. |
 | `MESHTRANSIT_REGISTRATION_ROLLBACK_TIMEOUT` | `1s` | Rollback cleanup deadline from 1ms through 5s. |
 | `MESHTRANSIT_REGISTRATION_PENDING_TTL` | `10m` | Pending intent lifetime from 1 second through 24 hours. |
 | `MESHTRANSIT_REGISTRATION_ADDRESS_CANDIDATE_LIMIT` | `256` | Maximum canonical address candidates examined per allocation, from 1 through 65536. |
 | `MESHTRANSIT_REGISTRATION_STATEMENT_TIMEOUT` | `5s` | PostgreSQL statement deadline from 1ms through 1 minute. |
-| `MESHTRANSIT_REGISTRATION_LOCK_TIMEOUT` | `1s` | PostgreSQL lock deadline from 1ms through 30 seconds. |
+| `MESHTRANSIT_REGISTRATION_LOCK_TIMEOUT` | `3s` | PostgreSQL lock deadline from 1ms through 30 seconds. |
 | `MESHTRANSIT_REGISTRATION_IDLE_TIMEOUT` | `10s` | PostgreSQL idle-in-transaction deadline from 1ms through 1 minute. |
 | `MESHTRANSIT_REGISTRATION_RETRY_INITIAL` | `10ms` | Initial retry delay from 1ms through 1 minute. |
-| `MESHTRANSIT_REGISTRATION_RETRY_MAXIMUM` | `250ms` | Maximum retry delay from the initial value through 1 minute. |
+| `MESHTRANSIT_REGISTRATION_RETRY_MAXIMUM` | `500ms` | Maximum retry delay from the initial value through 1 minute. |
 
 The `worker` and `all` roles also load the bounded Network-revision delivery
 settings below. A batch is leased as one ordered unit, so the lease must exceed

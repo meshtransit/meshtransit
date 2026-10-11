@@ -265,7 +265,9 @@ func TestPoolShutdownRefusesToWaitForAcquiredConnections(t *testing.T) {
 		close:    func() { closeCalls++ },
 	}
 
-	if err := pool.Shutdown(t.Context()); !errors.Is(err, ErrPoolInUse) {
+	bounded, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	if err := pool.Shutdown(bounded); !errors.Is(err, ErrPoolInUse) {
 		t.Fatalf("Shutdown() error = %v, want ErrPoolInUse", err)
 	}
 	if closeCalls != 0 {
@@ -336,4 +338,30 @@ func testCAPEM(t *testing.T) []byte {
 		t.Fatalf("x509.CreateCertificate() error = %v", err)
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate})
+}
+
+// A connection canceled by shutdown is destroyed asynchronously and stays
+// counted as acquired for a moment; Shutdown waits for it within its bound.
+func TestPoolShutdownWaitsForConnectionsBeingReleased(t *testing.T) {
+	t.Parallel()
+
+	var acquired atomic.Int32
+	acquired.Store(2)
+	var closeCalls atomic.Int32
+	pool := &Pool{
+		acquired: acquired.Load,
+		close:    func() { closeCalls.Add(1) },
+	}
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		acquired.Store(0)
+	}()
+	bounded, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	if err := pool.Shutdown(bounded); err != nil {
+		t.Fatalf("Shutdown() error = %v, want the pool to drain and close", err)
+	}
+	if closeCalls.Load() != 1 {
+		t.Fatalf("close calls = %d, want 1", closeCalls.Load())
+	}
 }
