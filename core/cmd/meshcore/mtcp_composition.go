@@ -59,7 +59,7 @@ const mtcpApprovalTTL = 10 * time.Minute
 
 // controlKeyExpiryWarning is how early the control role warns that its key
 // expires (MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER).
-const controlKeyExpiryWarning = 30 * 24 * time.Hour
+const controlKeyExpiryWarning = 60 * 24 * time.Hour
 
 // composeMTCP builds the MTCP v1 server the control listener routes to.
 func composeMTCP(

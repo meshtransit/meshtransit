@@ -249,6 +249,9 @@ merge (2026-10-09) are kept below.
   outbox backlog only grew. The worker role's new outbox-unrouted-retirer
   closes them every minute as `terminal` with error class `no_consumer`,
   keeping the rows; Network revision events are untouched.
+- Control key expiry is observable: the control role exports
+  `meshtransit_mtcp_control_key_not_after_timestamp_seconds` (latest key) and
+  warns in its log 60 days ahead instead of 30.
 
 ### Removed
 

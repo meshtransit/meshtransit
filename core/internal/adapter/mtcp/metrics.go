@@ -16,6 +16,7 @@ type Metrics struct {
 	messages   *prometheus.CounterVec
 	streamEnds *prometheus.CounterVec
 	sheds      prometheus.Counter
+	keyExpiry  prometheus.Gauge
 }
 
 // streamEndReasons is the closed set of map stream end causes.
@@ -53,6 +54,12 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_sessions_shed_total",
 			Help: "MTCP sessions this replica asked to reconnect elsewhere to rebalance load.",
 		}),
+		// Alert on: meshtransit_mtcp_control_key_not_after_timestamp_seconds - time() < 60 * 86400
+		// Past it nodes refuse the key and the control role no longer starts.
+		keyExpiry: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "meshtransit_mtcp_control_key_not_after_timestamp_seconds",
+			Help: "Expiry of the latest control key this replica answers with (Unix seconds).",
+		}),
 	}
 	for _, result := range handshakeResults {
 		metrics.handshakes.WithLabelValues(result)
@@ -66,7 +73,7 @@ func NewMetrics() *Metrics {
 // Collectors returns the collectors to register.
 func (metrics *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
-		metrics.sheds}
+		metrics.sheds, metrics.keyExpiry}
 }
 
 // streamEnded counts a map stream end; a nil Metrics counts nothing.
@@ -78,9 +85,24 @@ func (metrics *Metrics) streamEnded(reason string) {
 }
 
 func (metrics *Metrics) handshake(result string) { metrics.handshakes.WithLabelValues(result).Inc() }
-func (metrics *Metrics) sessionOpened()          { metrics.sessions.Inc() }
-func (metrics *Metrics) sessionClosed()          { metrics.sessions.Dec() }
-func (metrics *Metrics) shed(count int)          { metrics.sheds.Add(float64(count)) }
+
+// controlKeysExpire records the latest expiry among keys; a nil Metrics
+// records nothing.
+func (metrics *Metrics) controlKeysExpire(keys []ControlKey) {
+	if metrics == nil || len(keys) == 0 {
+		return
+	}
+	latest := keys[0].NotAfter
+	for _, controlKey := range keys[1:] {
+		if controlKey.NotAfter.After(latest) {
+			latest = controlKey.NotAfter
+		}
+	}
+	metrics.keyExpiry.Set(float64(latest.Unix()))
+}
+func (metrics *Metrics) sessionOpened() { metrics.sessions.Inc() }
+func (metrics *Metrics) sessionClosed() { metrics.sessions.Dec() }
+func (metrics *Metrics) shed(count int) { metrics.sheds.Add(float64(count)) }
 
 func (metrics *Metrics) sent(t sharedmtcp.MessageType) {
 	metrics.messages.WithLabelValues("sent", fmt.Sprintf("%#02x", uint8(t))).Inc()

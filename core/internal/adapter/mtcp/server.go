@@ -142,6 +142,7 @@ func NewServer(options Options) (*Server, error) {
 	if len(keys) != len(options.Keys) {
 		return nil, ErrInvalidServer
 	}
+	options.Metrics.controlKeysExpire(options.Keys)
 	return &Server{options: options, keys: keys,
 		admission: newAdmission(handshakeLimit(options.HandshakeRate, defaultHandshakeRate),
 			handshakeLimit(options.HandshakeBurst, defaultHandshakeBurst), defaultUnauthPerIP, options.Now),
