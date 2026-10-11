@@ -486,6 +486,7 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER` | none | Required RFC 3339 expiry advertised for the control key in the MTCP key document; in the future and at most five years ahead. The control role logs a warning in the last 30 days and refuses to start after it: extend the date (same key) or rotate the key before then. |
 | `MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS` | none | Comma-separated reverse-proxy prefixes whose `X-Forwarded-For` names the client for per-source admission. |
 | `MESHTRANSIT_CONTROL_MAP_SHARED_INVENTORY` | `true` | Read each Network's live Devices once per revision and share them between its Devices' maps (`false` reads every other Device for each map). |
+| `MESHTRANSIT_CONTROL_MAP_SHARED_CONNECTIVITY` | `true` | Keep one connectivity table per Network on each replica: a wakeup is read from Redis once per replica and each stream catches up from the table's change log (`false` makes every stream reread all its peers on each wakeup). |
 | `MESHTRANSIT_CONTROL_MAP_INVENTORY_STATEMENT_TIMEOUT` | `30s` | Statement bound of one Network inventory read, from 1ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_RATE` | `10` | New MTCP handshakes per second per source (IPv4 address or IPv6 /64), from 1 through 10000, before any cryptography. Raise it where many Devices share one NAT. |
 | `MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_BURST` | `50` | Handshake burst per source, from the rate through 100000. |

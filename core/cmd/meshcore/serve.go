@@ -440,6 +440,18 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			)
 			return 1
 		}
+		connectivityHub, streamConnectivity, hubMetrics, composeErr := composeConnectivityHub(
+			processConfig.Control.Map,
+			redisClient,
+			connectivityFeed,
+		)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "connectivity_hub_composition_failure", "error", composeErr)
+			return 1
+		}
+		if hubMetrics != nil {
+			additionalMetrics = append(additionalMetrics, hubMetrics)
+		}
 		mapSessionService, mapInventoryMetrics, composeErr := composeMapSession(
 			processConfig.Control.Map,
 			storagePools.runtime,
@@ -447,6 +459,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			redisClient,
 			relayDirectory,
 			relayDirectories,
+			connectivityHub,
 		)
 		if composeErr != nil {
 			logger.ErrorContext(
@@ -463,7 +476,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			mapSessionService,
 			redisClient,
 			revisionFeed,
-			connectivityFeed,
+			streamConnectivity,
 			redisClient,
 			relayAccess,
 		)

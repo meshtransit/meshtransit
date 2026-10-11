@@ -123,8 +123,15 @@ func (snapshot Snapshot) AllowsPeer(first, second node.ID) bool {
 
 // Equal reports whether two snapshots contain the same immutable policy facts.
 func (snapshot Snapshot) Equal(other Snapshot) bool {
-	return snapshot.IsValid() && other.IsValid() && snapshot.scope == other.scope &&
-		snapshot.revision == other.revision && slices.EqualFunc(snapshot.rules, other.rules, equalRules)
+	if !snapshot.IsValid() || !other.IsValid() || snapshot.scope != other.scope ||
+		snapshot.revision != other.revision || len(snapshot.rules) != len(other.rules) {
+		return false
+	}
+	// Copies of one snapshot share its immutable rules: O(1).
+	if len(snapshot.rules) == 0 || &snapshot.rules[0] == &other.rules[0] {
+		return true
+	}
+	return slices.EqualFunc(snapshot.rules, other.rules, equalRules)
 }
 
 func (snapshot Snapshot) rulesFor(source, destination node.ID) []int {

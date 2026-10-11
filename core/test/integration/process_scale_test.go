@@ -654,6 +654,11 @@ func measureScaleConnectivityFanout(
 	// serialized by the session, so the report below may share the stream.
 	collector.read(ctx, 0, stream, hub)
 	collector.quiesce(ctx, scalePhaseTimeout)
+	// The client spaces its reports; wait that out so the latency below
+	// starts when the report leaves, not while the client holds it.
+	if err := stream.AwaitReportSpacing(ctx); err != nil {
+		t.Fatalf("await scale hub report spacing: %v", err)
+	}
 	endpoint := netip.MustParseAddrPort(scaleHubEndpoint)
 	if err := hub.UpdateEndpoint(endpoint); err != nil {
 		t.Fatalf("update scale hub endpoint: %v", err)
@@ -704,6 +709,7 @@ func readScaleMetrics(t *testing.T, running readyControlProcess) []string {
 		"go_memstats_sys_bytes", "process_resident_memory_bytes", "process_open_fds", "process_cpu_seconds_total",
 		"meshtransit_mtcp_handshakes_total", "meshtransit_mtcp_sessions_active", "meshtransit_control_connections",
 		"meshtransit_revision_feed", "meshtransit_connectivity_feed", "meshtransit_postgres_pool",
+		"meshtransit_map_connectivity", "meshtransit_map_snapshots_total", "meshtransit_redis_command",
 	}
 	pressure := []string{"reject", "shed", "limit", "drop", "overflow", "timeout", "failure", "error"}
 	var lines []string

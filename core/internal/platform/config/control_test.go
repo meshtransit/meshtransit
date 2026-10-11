@@ -54,6 +54,7 @@ func TestLoadControlConfigForControlRoles(t *testing.T) {
 					ReconcileInterval:    20 * time.Second,
 
 					SharedInventory:           true,
+					SharedConnectivity:        true,
 					InventoryStatementTimeout: defaultControlMapInventoryStatement,
 				},
 			}

@@ -279,3 +279,44 @@ func connectivityChangeFixture(
 	}
 	return change
 }
+
+func TestFeedBufferedWatcherKeepsABurst(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		subscription := newTestSubscription()
+		feed, err := New(testFeedOptions(1),
+			func(context.Context) (Subscription, error) { return subscription, nil }, NewTelemetry())
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		if err := feed.Start(t.Context()); err != nil {
+			t.Fatalf("Start() error = %v", err)
+		}
+		defer func() {
+			_ = feed.Shutdown(t.Context())
+			<-feed.Done()
+		}()
+		changes := []mapsession.ConnectivityChanged{
+			connectivityChangeFixture(t, "01890f00-0000-7000-8000-000000000701", 1),
+			connectivityChangeFixture(t, "01890f00-0000-7000-8000-000000000702", 2),
+			connectivityChangeFixture(t, "01890f00-0000-7000-8000-000000000703", 3),
+		}
+		if _, _, err := feed.WatchNetworkBuffered(changes[0].NetworkID(), 0); !errors.Is(err, ErrInvalidFeed) {
+			t.Fatalf("WatchNetworkBuffered(0) error = %v, want ErrInvalidFeed", err)
+		}
+		updates, release, err := feed.WatchNetworkBuffered(changes[0].NetworkID(), 2)
+		if err != nil {
+			t.Fatalf("WatchNetworkBuffered() error = %v", err)
+		}
+		defer release()
+		for _, change := range changes {
+			subscription.send(change)
+			synctest.Wait()
+		}
+		// The oldest of three wakeups is dropped; the newest two remain.
+		for _, want := range changes[1:] {
+			if got := <-updates; got.Key() != want.Key() {
+				t.Fatalf("buffered wakeup = %+v, want %+v", got, want)
+			}
+		}
+	})
+}

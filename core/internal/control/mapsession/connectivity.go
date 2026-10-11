@@ -3,7 +3,6 @@ package mapsession
 import (
 	"errors"
 	"slices"
-	"strings"
 
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -142,6 +141,9 @@ type ConnectivityChanged struct {
 	networkID network.ID
 	key       ConnectivityKey
 	kind      ConnectivityChangeKind
+	// batched marks a hub wakeup standing for a whole batch: the stream
+	// catches up from the table's change log, not from key.
+	batched bool
 }
 
 // NewConnectivityChanged validates one transient wakeup hint.
@@ -175,7 +177,7 @@ func (change ConnectivityChanged) IsValid() bool {
 func canonicalConnectivity(values []Connectivity) []Connectivity {
 	canonical := slices.Clone(values)
 	slices.SortFunc(canonical, func(left, right Connectivity) int {
-		return strings.Compare(left.key.nodeID.String(), right.key.nodeID.String())
+		return compareNodeIDs(left.key.nodeID, right.key.nodeID)
 	})
 	return canonical
 }

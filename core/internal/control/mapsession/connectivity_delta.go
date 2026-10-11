@@ -37,10 +37,13 @@ func NewConnectivityDelta(current, next Snapshot) (ConnectivityDelta, error) {
 		current.NodeID(),
 		true,
 	)
-	peers := next.AuthorizedPeers()
-	changedPeers := make([]PeerCandidate, 0, len(peers))
-	for _, peer := range peers {
-		if !equalProjectedConnectivity(current, next, peer.NodeID(), false) {
+	changedPeers := make([]PeerCandidate, 0, 1)
+	for _, nodeID := range connectivityCandidates(current, next) {
+		if nodeID == next.nodeID {
+			continue
+		}
+		peer, authorized := next.authorizedPeer(nodeID)
+		if authorized && !equalProjectedConnectivity(current, next, nodeID, false) {
 			changedPeers = append(changedPeers, peer)
 		}
 	}
@@ -76,33 +79,43 @@ func (delta ConnectivityDelta) IsValid() bool {
 		!delta.isSelfChanged && len(delta.changedPeers) == 0 {
 		return false
 	}
-	authorized := delta.snapshot.AuthorizedPeers()
-	if len(delta.changedPeers) > len(authorized) {
+	if len(delta.changedPeers) > len(delta.snapshot.authorized) {
 		return false
 	}
 	for index, peer := range delta.changedPeers {
 		if !peer.IsValid() || index > 0 &&
-			delta.changedPeers[index-1].NodeID().String() >= peer.NodeID().String() {
+			compareNodeIDs(delta.changedPeers[index-1].nodeID, peer.nodeID) >= 0 {
 			return false
 		}
-		found := false
-		for _, candidate := range authorized {
-			if candidate.NodeID() == peer.NodeID() {
-				found = equalPeerCandidates(
-					[]PeerCandidate{candidate},
-					[]PeerCandidate{peer},
-				)
-				break
-			}
-		}
-		if !found {
+		candidate, found := delta.snapshot.authorizedPeer(peer.nodeID)
+		if !found || !equalPeerCandidates([]PeerCandidate{candidate}, []PeerCandidate{peer}) {
 			return false
 		}
 	}
 	return true
 }
 
+// connectivityCandidates returns, sorted, the Nodes whose connectivity may
+// differ between current and next: the change log between two versions of
+// one shared table, or else self and every authorized peer of next.
+func connectivityCandidates(current, next Snapshot) []node.ID {
+	if from, to := current.sharedConnectivity, next.sharedConnectivity; from != nil && to != nil {
+		if changed, ok := from.changesTo(to); ok {
+			return changed
+		}
+	}
+	candidates := make([]node.ID, 0, len(next.authorized)+1)
+	for _, peer := range next.authorized {
+		candidates = append(candidates, peer.nodeID)
+	}
+	position, _ := slices.BinarySearchFunc(candidates, next.nodeID, compareNodeIDs)
+	return slices.Insert(candidates, position, next.nodeID)
+}
+
 func hasCompleteMapConnectivity(snapshot Snapshot) bool {
+	if snapshot.sharedConnectivity != nil {
+		return true // every self or peer lookup answers, offline when unreported
+	}
 	if _, found := snapshot.ConnectivityFor(snapshot.NodeID()); !found {
 		return false
 	}

@@ -220,14 +220,8 @@ func (stream *MapStream) ReportEndpoints(ctx context.Context) error {
 	if ctx == nil || stream == nil || stream.session == nil {
 		return ErrInvalidClient
 	}
-	if wait := time.Until(stream.lastReport.Add(reportSpacing)); wait > 0 {
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return errors.Join(ErrMap, ctx.Err())
-		case <-timer.C:
-		}
+	if err := stream.AwaitReportSpacing(ctx); err != nil {
+		return err
 	}
 	connectivity := stream.client.Connectivity()
 	report := &mtcpv1.EndpointReport{DiscoKey: connectivity.DiscoveryKey[:], ObservedMs: time.Now().UnixMilli()}
@@ -241,6 +235,26 @@ func (stream *MapStream) ReportEndpoints(ctx context.Context) error {
 	}
 	stream.lastReport = time.Now()
 	return nil
+}
+
+// AwaitReportSpacing waits until ReportEndpoints would send at once, so a
+// caller can time a report from when it leaves.
+func (stream *MapStream) AwaitReportSpacing(ctx context.Context) error {
+	if ctx == nil || stream == nil {
+		return ErrInvalidClient
+	}
+	wait := time.Until(stream.lastReport.Add(reportSpacing))
+	if wait <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return errors.Join(ErrMap, ctx.Err())
+	case <-timer.C:
+		return nil
+	}
 }
 
 // Close ends the session.

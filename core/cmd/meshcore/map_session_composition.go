@@ -25,6 +25,7 @@ func composeMapSession(
 	connectivity mapsession.ConnectivityStore,
 	relayDirectory relay.Directory,
 	relayDirectories func(network.ID) (relay.Directory, error),
+	hub *mapsession.ConnectivityHub, // nil: each snapshot reads its peers' connectivity
 ) (*mapsession.Service, prometheus.Collector, error) {
 	if runtimePool == nil || endpoints == nil || connectivity == nil || !relayDirectory.IsValid() {
 		return nil, nil, errInvalidMapSessionComposition
@@ -53,7 +54,76 @@ func composeMapSession(
 	if err != nil {
 		return nil, nil, err
 	}
+	if hub != nil {
+		if service, err = service.WithConnectivityHub(hub); err != nil {
+			return nil, nil, errors.Join(errInvalidMapSessionComposition, err)
+		}
+	}
 	return service, newMapInventoryCollector(store.InventoryStats), nil
+}
+
+// composeConnectivityHub returns the replica's shared connectivity tables
+// and the watcher streams use: the hub, or the feed itself when the shared
+// tables are switched off (hub and collector are then nil).
+func composeConnectivityHub(
+	mapConfig config.ControlMapConfig,
+	store mapsession.ConnectivityStore,
+	feed mapsession.ConnectivityWatcher,
+) (*mapsession.ConnectivityHub, mapsession.ConnectivityWatcher, prometheus.Collector, error) {
+	if store == nil || feed == nil {
+		return nil, nil, nil, errInvalidMapSessionComposition
+	}
+	if !mapConfig.SharedConnectivity {
+		return nil, feed, nil, nil
+	}
+	hub, err := mapsession.NewConnectivityHub(store, feed, mapsession.ConnectivityHubOptions{
+		// A lost wakeup is repaired within one reconcile interval, as before.
+		ResyncInterval: mapConfig.ReconcileInterval,
+		ReadTimeout:    mapConfig.CoordinationTimeout,
+	})
+	if err != nil {
+		return nil, nil, nil, errors.Join(errInvalidMapSessionComposition, err)
+	}
+	return hub, hub, newConnectivityHubCollector(hub.Stats), nil
+}
+
+// connectivityHubCollector exports the shared connectivity tables' work.
+type connectivityHubCollector struct {
+	stats                                 func() mapsession.ConnectivityHubStats
+	networks, reads, keys, resyncs, drops *prometheus.Desc
+}
+
+func newConnectivityHubCollector(stats func() mapsession.ConnectivityHubStats) *connectivityHubCollector {
+	return &connectivityHubCollector{
+		stats: stats,
+		networks: prometheus.NewDesc("meshtransit_map_connectivity_tables",
+			"Networks with a shared connectivity table on this replica.", nil, nil),
+		reads: prometheus.NewDesc("meshtransit_map_connectivity_reads_total",
+			"Redis reads by the shared connectivity tables.", nil, nil),
+		keys: prometheus.NewDesc("meshtransit_map_connectivity_keys_read_total",
+			"Node keys read by the shared connectivity tables.", nil, nil),
+		resyncs: prometheus.NewDesc("meshtransit_map_connectivity_resyncs_total",
+			"Full rereads of a shared connectivity table (periodic or after a burst).", nil, nil),
+		// Alert on a sustained rate: wakeups arrive faster than one table drains.
+		drops: prometheus.NewDesc("meshtransit_map_connectivity_overflows_total",
+			"Wakeup bursts that filled a table's mailbox and forced a reread.", nil, nil),
+	}
+}
+
+func (collector *connectivityHubCollector) Describe(descriptions chan<- *prometheus.Desc) {
+	for _, description := range []*prometheus.Desc{collector.networks, collector.reads, collector.keys,
+		collector.resyncs, collector.drops} {
+		descriptions <- description
+	}
+}
+
+func (collector *connectivityHubCollector) Collect(metrics chan<- prometheus.Metric) {
+	stats := collector.stats()
+	metrics <- prometheus.MustNewConstMetric(collector.networks, prometheus.GaugeValue, float64(stats.Networks))
+	metrics <- prometheus.MustNewConstMetric(collector.reads, prometheus.CounterValue, float64(stats.Reads))
+	metrics <- prometheus.MustNewConstMetric(collector.keys, prometheus.CounterValue, float64(stats.KeysRead))
+	metrics <- prometheus.MustNewConstMetric(collector.resyncs, prometheus.CounterValue, float64(stats.Resyncs))
+	metrics <- prometheus.MustNewConstMetric(collector.drops, prometheus.CounterValue, float64(stats.Overflows))
 }
 
 // mapInventoryCollector exports how map snapshots got their candidates and

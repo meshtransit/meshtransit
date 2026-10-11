@@ -135,6 +135,21 @@ merge (2026-10-09) are kept below.
   never settles for an older view. Scale test at 2000 Devices: revision
   fan-out p95 1.6 s to 404 ms, Postgres pool wait down 11x, stream opens
   59/s to 95/s. Metric `meshtransit_map_snapshots_total{source="derived"}`.
+- Core scale-out, step S3: each control replica keeps one connectivity
+  table per Network with streams, a persistent hash array mapped trie of
+  Node to endpoints, home relay and presence, versioned with a bounded
+  change log. One worker per Network reads a burst of wakeups from Redis in
+  one call and wakes each stream once; a stream moves to the new version
+  and builds its delta from the logged Nodes alone. A connectivity change
+  costs one Redis read per replica and about 3 µs per stream regardless of
+  the Network's size (was a full peer reread and map rebuild per stream,
+  6 ms at 5000 peers before Redis). Tables are reread every reconcile
+  interval and after a mailbox overflow to repair lost wakeups.
+  `MESHTRANSIT_CONTROL_MAP_SHARED_CONNECTIVITY` (default true); metrics
+  `meshtransit_map_connectivity_*`. Scale test at 2000 Devices, switch off
+  vs on: connectivity fan-out p95 190 ms to 41 ms, Redis connectivity
+  reads 266,870 to 5,180, stream opens 95/s to 540/s, process CPU 56 s to
+  38 s, and no coalesced (possibly lost) wakeups.
 - Core scale-out, step S4: a hostname family may hold 200,000 names (was
   1024); the outbox worker coalesces deliveries per Network and drains
   full batches back to back (batch 32, poll 200 ms); the Postgres pool

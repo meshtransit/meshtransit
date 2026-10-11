@@ -394,7 +394,8 @@ func (service *StreamService) run(
 				if wake.revision.IsValid() && wake.revision.NetworkID() == current.Scope().NetworkID() && wake.revision.Number() <= current.NetworkRevision() {
 					continue
 				}
-				if wake.connectivity.IsValid() && !streamTracksConnectivity(current, wake.connectivity) {
+				if wake.connectivity.IsValid() && !wake.connectivity.batched &&
+					!streamTracksConnectivity(current, wake.connectivity) {
 					continue
 				}
 			}
@@ -488,13 +489,10 @@ func (service *StreamService) refreshConnectivity(
 	sink StreamSink,
 	current Snapshot,
 ) (Snapshot, error) {
-	reloader, ok := service.snapshots.(ConnectivityReloader)
-	if !ok {
+	next, err := service.reloadConnectivity(ctx, current)
+	if errors.Is(err, errNoConnectivityReloader) {
 		return service.refresh(ctx, machine, request, sink, current)
 	}
-	operationCtx, cancel := context.WithTimeout(ctx, service.options.SnapshotTimeout)
-	next, err := reloader.ReloadConnectivity(operationCtx, current)
-	cancel()
 	// A new relay grant is issued only after the full refresh has checked
 	// the Device again (a suspension whose wakeup was lost must not get a
 	// fresh ticket from a connectivity reload).
@@ -513,6 +511,23 @@ func (service *StreamService) refreshConnectivity(
 		}
 	}
 	return next, nil
+}
+
+var errNoConnectivityReloader = errors.New("map session: no connectivity reloader")
+
+// reloadConnectivity moves current to the latest version of its shared
+// connectivity table in O(1), or else reads its peers' connectivity again.
+func (service *StreamService) reloadConnectivity(ctx context.Context, current Snapshot) (Snapshot, error) {
+	if shared := current.sharedConnectivity; shared != nil && shared.table != nil {
+		return current.withSharedConnectivity(shared.table.current.Load())
+	}
+	reloader, ok := service.snapshots.(ConnectivityReloader)
+	if !ok {
+		return Snapshot{}, errNoConnectivityReloader
+	}
+	operationCtx, cancel := context.WithTimeout(ctx, service.options.SnapshotTimeout)
+	defer cancel()
+	return reloader.ReloadConnectivity(operationCtx, current)
 }
 
 // deliver sends whatever moves the client from current to next and reports

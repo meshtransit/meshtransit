@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/netip"
 	"slices"
-	"strings"
 	"time"
 
 	"meshtransit.net/core/internal/domain/network"
@@ -75,8 +74,12 @@ type Snapshot struct {
 	sharingDependencies     []network.Scope
 	packetPolicy            policy.Snapshot
 	connectivity            []Connectivity
-	relayDirectory          relay.Directory
-	relayGrant              RelayGrant // set by the stream service, never by the store
+	// sharedConnectivity, when set, replaces connectivity: a version of the
+	// replica's table for the Network, read through self and the authorized
+	// peers (see ConnectivityFor).
+	sharedConnectivity *connectivityVersion
+	relayDirectory     relay.Directory
+	relayGrant         RelayGrant // set by the stream service, never by the store
 	// authorized and valid are computed once by NewSnapshot; the snapshot is
 	// immutable, so readers never repeat the O(candidates) work.
 	authorized []PeerCandidate
@@ -246,17 +249,58 @@ func (snapshot Snapshot) RelayDirectory() relay.Directory { return snapshot.rela
 // ConnectivityFor returns transient state only for self or a policy-authorized
 // peer in this exact snapshot. A miss is normal and grants no routing authority.
 func (snapshot Snapshot) ConnectivityFor(nodeID node.ID) (Connectivity, bool) {
+	if shared := snapshot.sharedConnectivity; shared != nil {
+		generation, found := snapshot.connectivityGeneration(nodeID)
+		if !found {
+			return Connectivity{}, false
+		}
+		value := shared.lookup(ConnectivityKey{nodeID: nodeID, generation: generation})
+		if relayID, present := value.PreferredRelay(); present && relayID > 0 &&
+			!usableRelayPreference(snapshot, relayID) {
+			value.preferredRelay, value.preferredRelayPresent = 0, false
+		}
+		return value, true
+	}
 	index, found := slices.BinarySearchFunc(
 		snapshot.connectivity,
 		nodeID,
-		func(value Connectivity, target node.ID) int {
-			return strings.Compare(value.key.nodeID.String(), target.String())
-		},
+		func(value Connectivity, target node.ID) int { return compareNodeIDs(value.key.nodeID, target) },
 	)
 	if !found {
 		return Connectivity{}, false
 	}
 	return snapshot.connectivity[index], true
+}
+
+// connectivityGeneration returns the session generation a map shows nodeID
+// at: self's own, or an authorized peer's.
+func (snapshot Snapshot) connectivityGeneration(nodeID node.ID) (int64, bool) {
+	if nodeID == snapshot.nodeID {
+		return snapshot.sessionGeneration, true
+	}
+	peer, found := snapshot.authorizedPeer(nodeID)
+	return peer.sessionGeneration, found
+}
+
+// authorizedPeer finds one authorized peer in O(log N).
+func (snapshot Snapshot) authorizedPeer(nodeID node.ID) (PeerCandidate, bool) {
+	index, found := slices.BinarySearchFunc(snapshot.authorized, nodeID,
+		func(peer PeerCandidate, target node.ID) int { return compareNodeIDs(peer.nodeID, target) })
+	if !found {
+		return PeerCandidate{}, false
+	}
+	return snapshot.authorized[index], true
+}
+
+// withSharedConnectivity returns a copy reading connectivity from version
+// (O(1): nothing per peer is copied). Maps with direct projections keep
+// their own reads, as their peers belong to other Networks.
+func (snapshot Snapshot) withSharedConnectivity(version *connectivityVersion) (Snapshot, error) {
+	if !snapshot.valid || version == nil || len(snapshot.directDeviceProjections) != 0 {
+		return Snapshot{}, ErrInvalidSnapshot
+	}
+	snapshot.connectivity, snapshot.sharedConnectivity = nil, version
+	return snapshot, nil
 }
 
 // WithConnectivity validates and returns a copy with non-authoritative routing
@@ -339,7 +383,7 @@ func validSnapshotConnectivity(params SnapshotParams, candidates snapshotCandida
 	}
 	for index, connectivity := range params.Connectivity {
 		if !connectivity.IsValid() || allowed[connectivity.key.nodeID] != connectivity.key.generation ||
-			index > 0 && params.Connectivity[index-1].key.nodeID.String() >= connectivity.key.nodeID.String() {
+			index > 0 && compareNodeIDs(params.Connectivity[index-1].key.nodeID, connectivity.key.nodeID) >= 0 {
 			return false
 		}
 	}

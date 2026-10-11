@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/netip"
 	"slices"
-	"strings"
 	"time"
 
 	"meshtransit.net/core/internal/domain/identity"
@@ -154,7 +153,7 @@ func canonicalPeerCandidates(candidates []PeerCandidate) []PeerCandidate {
 }
 
 func comparePeerCandidates(first, second PeerCandidate) int {
-	return strings.Compare(first.nodeID.String(), second.nodeID.String())
+	return compareNodeIDs(first.nodeID, second.nodeID)
 }
 
 func equalPeerCandidates(first, second []PeerCandidate) bool {

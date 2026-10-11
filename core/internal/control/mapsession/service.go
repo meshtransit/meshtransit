@@ -52,7 +52,19 @@ type Service struct {
 	store        SnapshotStore
 	endpoints    EndpointObserver
 	connectivity ConnectivityStore
+	hub          *ConnectivityHub // nil: every snapshot reads its peers itself
 	options      ServiceOptions
+}
+
+// WithConnectivityHub returns a copy whose snapshots read connectivity
+// through the replica's shared tables.
+func (service *Service) WithConnectivityHub(hub *ConnectivityHub) (*Service, error) {
+	if service == nil || hub == nil {
+		return nil, ErrInvalidService
+	}
+	copied := *service
+	copied.hub = hub
+	return &copied, nil
 }
 
 // NewService constructs a map-session application service.
@@ -268,6 +280,17 @@ func (service *Service) loadConnectivity(ctx context.Context, snapshot Snapshot)
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, service.options.EndpointTimeout)
 	defer cancel()
+	if service.hub != nil && len(snapshot.directDeviceProjections) == 0 {
+		version, err := service.hub.view(operationCtx, snapshot.Scope().NetworkID(), keys)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("%w: load transient connectivity: %w", ErrOpen, err)
+		}
+		shared, err := snapshot.withSharedConnectivity(version)
+		if err != nil {
+			return Snapshot{}, errors.Join(ErrOpen, err)
+		}
+		return shared, nil
+	}
 	values, err := service.connectivity.LoadConnectivity(operationCtx, keys)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("%w: load transient connectivity: %w", ErrOpen, err)

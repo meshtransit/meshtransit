@@ -5,11 +5,24 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 )
 
+// maximumWatcherMailbox bounds one consumer's buffer.
+const maximumWatcherMailbox = 1 << 16
+
 // WatchNetwork registers one bounded local consumer. Release is idempotent.
 func (feed *Feed) WatchNetwork(
 	networkID network.ID,
 ) (<-chan mapsession.ConnectivityChanged, func(), error) {
-	if feed == nil || !networkID.IsValid() {
+	return feed.WatchNetworkBuffered(networkID, 1)
+}
+
+// WatchNetworkBuffered is WatchNetwork with a deeper mailbox, for a consumer
+// that drains a whole Network's wakeups (the replica's connectivity hub).
+// A full mailbox still drops its oldest wakeup.
+func (feed *Feed) WatchNetworkBuffered(
+	networkID network.ID,
+	capacity int,
+) (<-chan mapsession.ConnectivityChanged, func(), error) {
+	if feed == nil || !networkID.IsValid() || capacity < 1 || capacity > maximumWatcherMailbox {
 		return nil, nil, ErrInvalidFeed
 	}
 	feed.mu.Lock()
@@ -20,7 +33,7 @@ func (feed *Feed) WatchNetwork(
 	}
 	feed.nextWatcher++
 	watcherID := feed.nextWatcher
-	updates := make(chan mapsession.ConnectivityChanged, 1)
+	updates := make(chan mapsession.ConnectivityChanged, capacity)
 	byNetwork := feed.watchers[networkID]
 	if byNetwork == nil {
 		byNetwork = make(map[uint64]chan mapsession.ConnectivityChanged)
@@ -83,3 +96,6 @@ func (feed *Feed) stopWatching() {
 	feed.watcherCount = 0
 	feed.mu.Unlock()
 }
+
+// The replica's connectivity hub drains a whole Network through one mailbox.
+var _ mapsession.BufferedConnectivityWatcher = (*Feed)(nil)

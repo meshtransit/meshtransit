@@ -33,6 +33,7 @@ func TestLoadControlMapDefaults(t *testing.T) {
 		ReconcileInterval:    defaultControlMapReconcile,
 
 		SharedInventory:           true,
+		SharedConnectivity:        true,
 		InventoryStatementTimeout: defaultControlMapInventoryStatement,
 	}
 	directory := got.Control.Map.RelayDirectory
@@ -77,6 +78,7 @@ func TestLoadControlMapExplicitValues(t *testing.T) {
 		ReconcileInterval:    20 * time.Second,
 
 		SharedInventory:           true,
+		SharedConnectivity:        true,
 		InventoryStatementTimeout: defaultControlMapInventoryStatement,
 	}) {
 		t.Fatalf("Control.Map = %+v, want explicit values", got.Control)
@@ -213,6 +215,30 @@ func TestLoadControlMapSharedInventorySettings(t *testing.T) {
 		}
 		if err != nil || got.SharedInventory != test.shared || got.InventoryStatementTimeout != test.timeout {
 			t.Errorf("%s: got %t/%v, %v", name, got.SharedInventory, got.InventoryStatementTimeout, err)
+		}
+	}
+}
+
+func TestLoadControlMapSharedConnectivitySetting(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		values  map[string]string
+		shared  bool
+		wantErr bool
+	}{
+		"default on":   {values: map[string]string{}, shared: true},
+		"switched off": {values: map[string]string{envControlMapSharedConnectivity: "false"}},
+		"bad switch":   {values: map[string]string{envControlMapSharedConnectivity: "1"}, wantErr: true},
+	} {
+		got, err := loadControlMapConfig(mapLookup(test.values))
+		if test.wantErr {
+			if err == nil || !strings.HasSuffix(err.Error(), ": "+envControlMapSharedConnectivity) {
+				t.Errorf("%s: error = %v, want one naming %s", name, err, envControlMapSharedConnectivity)
+			}
+			continue
+		}
+		if err != nil || got.SharedConnectivity != test.shared {
+			t.Errorf("%s: got %t, %v", name, got.SharedConnectivity, err)
 		}
 	}
 }

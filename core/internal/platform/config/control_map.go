@@ -15,6 +15,7 @@ const (
 	// Devices per revision, shared by its Devices' maps. On by default; off
 	// reads every other Device for each map as before.
 	envControlMapSharedInventory           = "MESHTRANSIT_CONTROL_MAP_SHARED_INVENTORY"
+	envControlMapSharedConnectivity        = "MESHTRANSIT_CONTROL_MAP_SHARED_CONNECTIVITY"
 	envControlMapInventoryStatementTimeout = "MESHTRANSIT_CONTROL_MAP_INVENTORY_STATEMENT_TIMEOUT"
 	defaultControlMapInventoryStatement    = 30 * time.Second
 	defaultControlMapRequestTimeout        = 10 * time.Second
@@ -53,6 +54,9 @@ type ControlMapConfig struct {
 	// InventoryStatementTimeout bounds that read (a whole Network).
 	SharedInventory           bool
 	InventoryStatementTimeout time.Duration
+	// SharedConnectivity keeps one connectivity table per Network on each
+	// replica, read once per wakeup instead of once per stream.
+	SharedConnectivity bool
 }
 
 func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
@@ -136,6 +140,10 @@ func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
 	if sharedInventory != "true" && sharedInventory != "false" {
 		return ControlMapConfig{}, settingError(envControlMapSharedInventory)
 	}
+	sharedConnectivity := valueOrDefault(lookup, envControlMapSharedConnectivity, "true")
+	if sharedConnectivity != "true" && sharedConnectivity != "false" {
+		return ControlMapConfig{}, settingError(envControlMapSharedConnectivity)
+	}
 	inventoryTimeout, err := parseDurationInRange(
 		valueOrDefault(lookup, envControlMapInventoryStatementTimeout, defaultControlMapInventoryStatement.String()),
 		minControlMapDatabaseTimeout,
@@ -169,5 +177,6 @@ func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
 
 		SharedInventory:           sharedInventory == "true",
 		InventoryStatementTimeout: inventoryTimeout,
+		SharedConnectivity:        sharedConnectivity == "true",
 	}, nil
 }

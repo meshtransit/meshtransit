@@ -36,7 +36,22 @@ func streamSnapshotChanged(current, next Snapshot) bool {
 	return current.NetworkRevision() != next.NetworkRevision() ||
 		relayDirectoryChanged(current, next) ||
 		!equalDirectDeviceProjections(current.directDeviceProjections, next.directDeviceProjections) ||
-		!equalMapConnectivity(current.NodeID(), current.connectivity, next.connectivity)
+		!sameMapConnectivity(current, next)
+}
+
+// sameMapConnectivity reports whether two maps show the same transient
+// state; between two versions of one shared table it compares only the
+// Nodes the change log names.
+func sameMapConnectivity(current, next Snapshot) bool {
+	if current.sharedConnectivity == nil && next.sharedConnectivity == nil {
+		return equalMapConnectivity(current.NodeID(), current.connectivity, next.connectivity)
+	}
+	for _, nodeID := range connectivityCandidates(current, next) {
+		if !equalProjectedConnectivity(current, next, nodeID, nodeID == current.nodeID) {
+			return false
+		}
+	}
+	return true
 }
 
 func relayDirectoryCanAdvance(current, next Snapshot) bool {
@@ -80,10 +95,6 @@ func streamTracksConnectivity(snapshot Snapshot, change ConnectivityChanged) boo
 		return change.Kind() == ConnectivityChangeEndpoints &&
 			key.Generation() == snapshot.SessionGeneration()
 	}
-	for _, peer := range snapshot.AuthorizedPeers() {
-		if peer.NodeID() == key.NodeID() {
-			return peer.SessionGeneration() == key.Generation()
-		}
-	}
-	return false
+	peer, found := snapshot.authorizedPeer(key.NodeID())
+	return found && peer.SessionGeneration() == key.Generation()
 }
