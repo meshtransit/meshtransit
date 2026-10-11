@@ -196,7 +196,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if cfg.EnableDataPlane {
 		networkMonitor, err = netwatch.New(netwatch.Options{
 			Logger:             logger,
-			ExcludedInterfaces: []string{"mesh0", "meshdns0"},
+			ExcludedInterfaces: ownInterfaces,
 		})
 		if err != nil {
 			logger.Warn(

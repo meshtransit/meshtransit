@@ -178,6 +178,16 @@ func (m *Monitor) logFallback(message string, err error) {
 	}
 }
 
+// ignoredInterface reports whether an interface takes no part in the host's
+// network identity: a named exclusion, or on platforms whose tunnel names the
+// kernel assigns (macOS utunN), any point-to-point interface.
+func ignoredInterface(networkInterface net.Interface, excluded map[string]struct{}) bool {
+	if _, skip := excluded[networkInterface.Name]; skip {
+		return true
+	}
+	return ignorePointToPoint && networkInterface.Flags&net.FlagPointToPoint != 0
+}
+
 func readNetworkSnapshot(excluded map[string]struct{}) (networkSnapshot, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
@@ -185,7 +195,7 @@ func readNetworkSnapshot(excluded map[string]struct{}) (networkSnapshot, error) 
 	}
 	excludedIndexes := make(map[int]struct{}, len(excluded))
 	for _, networkInterface := range interfaces {
-		if _, skip := excluded[networkInterface.Name]; skip {
+		if ignoredInterface(networkInterface, excluded) {
 			excludedIndexes[networkInterface.Index] = struct{}{}
 		}
 	}
@@ -196,7 +206,7 @@ func readNetworkSnapshot(excluded map[string]struct{}) (networkSnapshot, error) 
 	tokens := make([]string, 0, len(routeTokens)+(len(interfaces)*2))
 	tokens = append(tokens, routeTokens...)
 	for _, networkInterface := range interfaces {
-		if _, skip := excluded[networkInterface.Name]; skip {
+		if ignoredInterface(networkInterface, excluded) {
 			continue
 		}
 		if networkInterface.Flags&net.FlagLoopback != 0 {

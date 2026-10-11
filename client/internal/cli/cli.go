@@ -20,7 +20,6 @@ import (
 )
 
 const (
-	defaultSocketPath       = "/run/meshd/meshd.sock"
 	defaultTimeout          = 5 * time.Second
 	defaultLoginWaitTimeout = 5 * time.Minute
 	loginRetryDelay         = 100 * time.Millisecond

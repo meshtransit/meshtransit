@@ -18,11 +18,12 @@ func TestDefaultSocketsUseSeparateDirectories(t *testing.T) {
 	}
 }
 
-func TestDefaultIdentityKeyUsesSystemdCredentialPath(t *testing.T) {
+func TestDefaultIdentityKeyPathIsOutsideState(t *testing.T) {
 	t.Parallel()
 
 	if !filepath.IsAbs(DefaultIdentityKeyPath) ||
-		filepath.Base(DefaultIdentityKeyPath) != "meshd.identity-key" {
+		filepath.Base(DefaultIdentityKeyPath) != "meshd.identity-key" ||
+		filepath.Dir(DefaultIdentityKeyPath) == DefaultStateDir {
 		t.Fatalf("default identity key path = %q", DefaultIdentityKeyPath)
 	}
 }
