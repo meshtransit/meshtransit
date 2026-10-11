@@ -35,6 +35,12 @@ func newNativeSource(_ time.Duration) (changeSource, error) {
 		return nil, fmt.Errorf("opening routing socket: %w", err)
 	}
 	unix.CloseOnExec(fileDescriptor)
+	// drain reads until EAGAIN; recvfrom with a source address fails with
+	// EAFNOSUPPORT on routing sockets, so plain reads on a nonblocking socket.
+	if err := unix.SetNonblock(fileDescriptor, true); err != nil {
+		_ = unix.Close(fileDescriptor)
+		return nil, fmt.Errorf("configuring routing socket: %w", err)
+	}
 	if fileDescriptor > math.MaxInt32 {
 		_ = unix.Close(fileDescriptor)
 		return nil, errors.New("netwatch: file descriptor is outside int32")
@@ -74,7 +80,7 @@ func (s *routeSocketSource) Wait(ctx context.Context) error {
 
 func (s *routeSocketSource) drain() error {
 	for range maxRouteDrainMessages {
-		_, _, err := unix.Recvfrom(s.fileDescriptor, s.buffer, unix.MSG_DONTWAIT)
+		_, err := unix.Read(s.fileDescriptor, s.buffer)
 		switch {
 		case err == nil:
 			continue

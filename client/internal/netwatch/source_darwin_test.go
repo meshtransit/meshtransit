@@ -47,6 +47,14 @@ func TestRoutingSocketSourceOpensAndReadsTheTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newNativeSource() error = %v", err)
 	}
+	// Draining an idle or busy routing socket must not fail.
+	routeSource, ok := source.(*routeSocketSource)
+	if !ok {
+		t.Fatalf("source %T", source)
+	}
+	if err := routeSource.drain(); err != nil {
+		t.Fatalf("drain() error = %v", err)
+	}
 	if err := source.Close(); err != nil {
 		t.Fatal(err)
 	}

@@ -12,7 +12,11 @@ import (
 	"meshtransit.net/core/internal/platform/config"
 )
 
-const browserRegistrationTTL = 15 * time.Minute
+// browserRegistrationTTL stays a minute under the 15-minute ceiling the
+// database enforces against its own clock: at exactly 15 minutes a control
+// node whose clock ran a few milliseconds ahead of the database host had
+// every browser registration refused.
+const browserRegistrationTTL = 14 * time.Minute
 
 var errInvalidBrowserRegistrationComposition = errors.New("invalid browser registration composition")
 
