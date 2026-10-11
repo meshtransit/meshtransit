@@ -131,6 +131,10 @@ merge (2026-10-09) are kept below.
   entirely from the shared view (no per-Device transaction); Devices with
   direct shares or that left the view still take the full read. Integration
   tests require the shared and derived maps to equal the direct read.
+  Coalesced stream wakeups keep the highest announced revision so a refresh
+  never settles for an older view. Scale test at 2000 Devices: revision
+  fan-out p95 1.6 s to 404 ms, Postgres pool wait down 11x, stream opens
+  59/s to 95/s. Metric `meshtransit_map_snapshots_total{source="derived"}`.
 - Core scale-out, step S4: a hostname family may hold 200,000 names (was
   1024); the outbox worker coalesces deliveries per Network and drains
   full batches back to back (batch 32, poll 200 ms); the Postgres pool
