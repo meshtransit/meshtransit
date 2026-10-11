@@ -83,6 +83,9 @@ const (
 	ControlSessionConnecting = "connecting"
 	// ControlSessionSynchronized means a validated snapshot has been published.
 	ControlSessionSynchronized = "synchronized"
+	// ControlSessionReconnecting means the control connection was lost after
+	// synchronizing: the last map and the tunnels stay up while it reconnects.
+	ControlSessionReconnecting = "reconnecting"
 	// ControlSessionBlocked means a permanent trust, registration, or map error stopped sync.
 	ControlSessionBlocked = "blocked"
 	// ControlSessionSuspended means an administrator suspended this Device; it
@@ -754,6 +757,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					EndpointUpdates:     endpointUpdates,
 					EnforcementReports:  enforcementReports,
 					PathStats:           pathStats,
+					ConnectionChanged: func(connected bool) {
+						s.setControlConnected(active.ID, connected)
+					},
 				},
 				func(callbackCtx context.Context, snapshot networkmap.Snapshot) (callbackErr error) {
 					defer func() {
@@ -1767,7 +1773,8 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		compatibilityNote = "data plane failed closed; encrypted tunnel is not active"
 	}
 	daemonState := StateOffline
-	if syncState.state == ControlSessionSynchronized {
+	// Reconnecting keeps the last map: the mesh still works.
+	if syncState.state == ControlSessionSynchronized || syncState.state == ControlSessionReconnecting {
 		daemonState = StateOnline
 	}
 	peerPaths, relayStatus := s.dataPlaneStatus()
@@ -2310,6 +2317,23 @@ func (s *Service) setSyncStatus(status syncStatus) {
 	s.syncMu.Lock()
 	s.syncState = status
 	s.syncMu.Unlock()
+}
+
+// setControlConnected moves a synchronized profile to reconnecting when its
+// control connection is lost and back when a new session has a map; every
+// other state is left to the session loop.
+func (s *Service) setControlConnected(profileID string, connected bool) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	if s.syncState.profileID != profileID {
+		return
+	}
+	switch {
+	case !connected && s.syncState.state == ControlSessionSynchronized:
+		s.syncState.state = ControlSessionReconnecting
+	case connected && s.syncState.state == ControlSessionReconnecting:
+		s.syncState.state = ControlSessionSynchronized
+	}
 }
 
 func (s *Service) getSyncStatus() syncStatus {

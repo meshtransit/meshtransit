@@ -127,6 +127,10 @@ type NetmapOptions struct {
 	// PathStats, when set, carries one report per interval of how traffic
 	// reached each peer.
 	PathStats <-chan PathStatsReport
+	// ConnectionChanged, when set, is called with false when a connected
+	// control session is lost (the stream reconnects and the last map stays
+	// applied) and with true when a new session has a usable map again.
+	ConnectionChanged func(connected bool)
 }
 
 // PathKind is how traffic reaches a peer.

@@ -171,6 +171,12 @@ merge (2026-10-09) are kept below.
 
 ### Fixed
 
+- meshd reported `control_session: synchronized` while Core was
+  unreachable: the MTCP stream reconnects internally and kept the last map
+  without telling the daemon. The stream now reports losing and regaining
+  its control connection, and the status reads `reconnecting` meanwhile
+  (the last map and the tunnels stay up; the daemon stays online).
+
 - Core scale test findings (opt-in `TestRoleControlProcessScalesMapStreams`,
   `MESHTRANSIT_SCALE_SESSIONS=N`): address allocation scanned only the first
   256 addresses of a prefix (the candidate limit), so a Network stopped

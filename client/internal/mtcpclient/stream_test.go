@@ -230,11 +230,18 @@ func TestStreamNetmapReconnectsAndEndsOnRevocation(t *testing.T) {
 		answerPings(s)
 	})
 	material, options := core.options(t)
+	var connection []bool
+	options.ConnectionChanged = func(connected bool) { connection = append(connection, connected) }
 	delivered := 0
 	err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
 		func(context.Context, networkmap.Snapshot) error { delivered++; return nil })
 	if !errors.Is(err, controlplane.ErrNetmapAuthorityRevoked) || core.sessions.Load() != 2 || delivered < 1 {
 		t.Fatalf("StreamNetmap = %v after %d sessions, %d deliveries", err, core.sessions.Load(), delivered)
+	}
+	// Connected, lost when the first session dropped, connected again on the
+	// second session's map; a permanent end reports nothing more.
+	if len(connection) != 3 || !connection[0] || connection[1] || !connection[2] {
+		t.Fatalf("connection changes = %v, want [true false true]", connection)
 	}
 }
 

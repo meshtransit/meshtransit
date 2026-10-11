@@ -172,6 +172,20 @@ type netmapStream struct {
 	reports  *reportBox
 	revision uint64
 	last     *networkmap.Snapshot // last delivered, with Revision zeroed
+	// connected is whether the current session has a usable map (reported
+	// through NetmapOptions.ConnectionChanged).
+	connected bool
+}
+
+// setConnected reports a change of the control connection.
+func (stream *netmapStream) setConnected(connected bool) {
+	if stream.connected == connected {
+		return
+	}
+	stream.connected = connected
+	if notify := stream.options.ConnectionChanged; notify != nil {
+		notify(connected)
+	}
 }
 
 // run reconnects with jittered exponential backoff until a permanent cause.
@@ -186,6 +200,7 @@ func (stream *netmapStream) run(ctx context.Context) error {
 		if permanentStreamError(err) {
 			return err
 		}
+		stream.setConnected(false)
 		if mapped && time.Since(started) >= reconnectResetAfter {
 			backoff = minReconnectDelay
 		}
@@ -427,6 +442,7 @@ func (run *sessionRun) deliver(ctx context.Context) error {
 	compare := snapshot
 	compare.Revision = 0
 	if stream.last != nil && reflect.DeepEqual(*stream.last, compare) {
+		stream.setConnected(true) // usable again, the map already applied
 		return nil
 	}
 	if err := stream.handler(ctx, snapshot); err != nil {
@@ -434,6 +450,7 @@ func (run *sessionRun) deliver(ctx context.Context) error {
 	}
 	stream.revision++
 	stream.last = &compare
+	stream.setConnected(true)
 	return nil
 }
 

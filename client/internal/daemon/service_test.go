@@ -2853,3 +2853,28 @@ func TestSuspendedRetryDelaySlowsDown(t *testing.T) {
 		}
 	}
 }
+
+func TestControlConnectionLossShowsReconnectingOnlyAfterSync(t *testing.T) {
+	t.Parallel()
+
+	var service Service
+	service.setSyncStatus(syncStatus{profileID: "a", state: ControlSessionSynchronized, revision: 7, peerCount: 3})
+	service.setControlConnected("b", false) // another profile: ignored
+	if got := service.getSyncStatus().state; got != ControlSessionSynchronized {
+		t.Fatalf("state after another profile's loss = %q", got)
+	}
+	service.setControlConnected("a", false)
+	if got := service.getSyncStatus(); got.state != ControlSessionReconnecting || got.revision != 7 || got.peerCount != 3 {
+		t.Fatalf("after loss = %+v, want reconnecting with the last map kept", got)
+	}
+	service.setControlConnected("a", true)
+	if got := service.getSyncStatus().state; got != ControlSessionSynchronized {
+		t.Fatalf("after reconnect = %q", got)
+	}
+	// The session loop owns every other state.
+	service.setSyncStatus(syncStatus{profileID: "a", state: ControlSessionBlocked})
+	service.setControlConnected("a", true)
+	if got := service.getSyncStatus().state; got != ControlSessionBlocked {
+		t.Fatalf("blocked became %q", got)
+	}
+}
