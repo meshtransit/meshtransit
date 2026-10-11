@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin
 
 package netadmin
 
@@ -18,7 +18,7 @@ import (
 
 const maxReceivedDescriptors = 4
 
-// Client opens TUN descriptors through one-request Unix packet connections.
+// Client opens TUN descriptors through one-request Unix socket connections.
 type Client struct {
 	socketPath string
 	timeout    time.Duration
@@ -211,7 +211,7 @@ func (c *Client) exchange(ctx context.Context, requestValue request) (response, 
 		return response{}, nil, err
 	}
 	dialer := net.Dialer{Timeout: c.timeout}
-	rawConnection, err := dialer.DialContext(ctx, "unixpacket", c.socketPath)
+	rawConnection, err := dialer.DialContext(ctx, helperNetwork, c.socketPath)
 	if err != nil {
 		return response{}, nil, fmt.Errorf("netadmin: connecting to helper: %w", err)
 	}
@@ -223,25 +223,16 @@ func (c *Client) exchange(ctx context.Context, requestValue request) (response, 
 	if err := connection.SetDeadline(operationDeadline(ctx, c.timeout)); err != nil {
 		return response{}, nil, fmt.Errorf("netadmin: setting helper deadline: %w", err)
 	}
-	if _, err := connection.Write(payload); err != nil {
-		return response{}, nil, fmt.Errorf("netadmin: writing helper request: %w", err)
+	if err := writeRequestFrame(connection, payload); err != nil {
+		return response{}, nil, err
 	}
-
-	message := make([]byte, maxMessageBytes+1)
-	control := make([]byte, unix.CmsgSpace(maxReceivedDescriptors*4))
-	messageSize, controlSize, flags, _, err := connection.ReadMsgUnix(message, control)
+	message, descriptors, err := readResponseFrame(connection)
 	if err != nil {
-		return response{}, nil, fmt.Errorf("netadmin: reading helper response: %w", err)
-	}
-	descriptors := parseDescriptors(control[:controlSize])
-	if flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 || messageSize > maxMessageBytes {
-		closeDescriptors(descriptors)
-
-		return response{}, nil, fmt.Errorf("%w: truncated helper response", ErrProtocol)
+		return response{}, nil, err
 	}
 
 	value := response{}
-	if err := decodeMessage(message[:messageSize], &value); err != nil {
+	if err := decodeMessage(message, &value); err != nil {
 		closeDescriptors(descriptors)
 
 		return response{}, nil, err

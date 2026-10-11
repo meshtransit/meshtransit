@@ -466,15 +466,15 @@ func (f *fakeDNSConfigurator) snapshot() fakeDNSConfiguratorState {
 }
 
 func (f *fakeTUNCreator) Open(
-	_ string,
+	name string,
 	_ int,
 	_ uint32,
 	addresses []netip.Prefix,
 	routes []netip.Prefix,
-) (*os.File, error) {
+) (*os.File, string, error) {
 	reader, writer, err := os.Pipe()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	f.mu.Lock()
 	f.calls++
@@ -483,7 +483,7 @@ func (f *fakeTUNCreator) Open(
 	f.writer = writer
 	f.mu.Unlock()
 
-	return reader, nil
+	return reader, name, nil
 }
 
 func (f *fakeTUNCreator) ReplaceRoutes(

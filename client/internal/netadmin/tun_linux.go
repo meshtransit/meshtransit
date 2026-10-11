@@ -63,20 +63,20 @@ func (kernelTUNCreator) Open(
 	ownerUID uint32,
 	addresses []netip.Prefix,
 	routes []netip.Prefix,
-) (*os.File, error) {
+) (*os.File, string, error) {
 	descriptor, err := unix.Open(
 		tunDevicePath,
 		unix.O_RDWR|unix.O_CLOEXEC|unix.O_NONBLOCK,
 		0,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("opening tun device: %w", err)
+		return nil, "", fmt.Errorf("opening tun device: %w", err)
 	}
 	file := os.NewFile(uintptr(descriptor), "meshnetd-tun")
 	if file == nil {
 		_ = unix.Close(descriptor)
 
-		return nil, errors.New("creating tun file: invalid descriptor")
+		return nil, "", errors.New("creating tun file: invalid descriptor")
 	}
 	succeeded := false
 	defer func() {
@@ -87,11 +87,11 @@ func (kernelTUNCreator) Open(
 
 	request, err := unix.NewIfreq(name)
 	if err != nil {
-		return nil, fmt.Errorf("creating tun interface request: %w", err)
+		return nil, "", fmt.Errorf("creating tun interface request: %w", err)
 	}
 	request.SetUint16(uint16(unix.IFF_TUN | unix.IFF_NO_PI))
 	if err := unix.IoctlIfreq(descriptor, unix.TUNSETIFF, request); err != nil {
-		return nil, fmt.Errorf("creating tun interface: %w", err)
+		return nil, "", fmt.Errorf("creating tun interface: %w", err)
 	}
 	if _, _, errno := unix.Syscall(
 		unix.SYS_IOCTL,
@@ -99,18 +99,18 @@ func (kernelTUNCreator) Open(
 		uintptr(unix.TUNSETOWNER),
 		uintptr(ownerUID),
 	); errno != 0 {
-		return nil, fmt.Errorf("setting tun owner: %w", errno)
+		return nil, "", fmt.Errorf("setting tun owner: %w", errno)
 	}
 	if err := configureLink(request.Name(), mtu); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := configureAddressesAndRoutes(request.Name(), addresses, routes); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	succeeded = true
 
-	return file, nil
+	return file, request.Name(), nil
 }
 
 func (kernelTUNCreator) ReplaceRoutes(

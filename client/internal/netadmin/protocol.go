@@ -32,6 +32,9 @@ const (
 var (
 	// ErrProtocol indicates a malformed or unexpected helper response.
 	ErrProtocol = errors.New("netadmin: protocol error")
+	// errRequestFraming reports a request that is truncated, carries
+	// descriptors or is not exactly one message.
+	errRequestFraming = errors.New("netadmin: invalid request framing")
 	// ErrRemote indicates that meshnetd rejected a valid request.
 	ErrRemote = errors.New("netadmin: helper rejected request")
 	// ErrUnsupported indicates that privileged TUN setup is unavailable.
@@ -308,7 +311,17 @@ func validDNSDomain(value string, allowRoot bool) bool {
 	return true
 }
 
+// validInterfaceName accepts the names meshnetd gives its links (mesh*) and
+// the names the macOS kernel gives tunnels (utun0 to utun9999).
 func validInterfaceName(name string) bool {
+	if len(name) > len("utun") && len(name) <= len("utun9999") && name[:4] == "utun" {
+		for _, character := range name[4:] {
+			if character < '0' || character > '9' {
+				return false
+			}
+		}
+		return true
+	}
 	if len(name) < len("mesh0") || len(name) >= interfaceNameSize || name[:4] != "mesh" {
 		return false
 	}

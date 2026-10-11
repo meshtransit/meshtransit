@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !darwin
 
 // Command meshnetd owns the minimal privileged Linux TUN boundary.
 package main
