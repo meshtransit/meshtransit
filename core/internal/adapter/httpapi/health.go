@@ -59,6 +59,9 @@ type HealthServerOptions struct {
 	Build                   BuildInfo
 	RevisionWorkerTelemetry *revisionworker.Telemetry
 	AdditionalMetrics       []prometheus.Collector
+	// ScaleHandler, when set, answers GET /scale/v1/sessions for an
+	// autoscaler (control replicas).
+	ScaleHandler http.Handler
 }
 
 // NewHealthServer constructs a bounded operator server without opening a listener.
@@ -76,7 +79,7 @@ func NewHealthServer(options HealthServerOptions) (*HealthServer, error) {
 		return nil, errors.Join(ErrInvalidHealthServer, err)
 	}
 
-	handler := newHealthHandler(options.State, options.Logger, metrics)
+	handler := newHealthHandler(options.State, options.Logger, metrics, options.ScaleHandler)
 	listenConfig := &net.ListenConfig{}
 	return &HealthServer{
 		address: options.Address,
@@ -207,6 +210,9 @@ func (server *HealthServer) Shutdown(ctx context.Context) error {
 	return errors.Join(shutdownErr, closeErr)
 }
 
+// scalePath is the autoscaler's route (rebalance.ScalePath).
+const scalePath = "/scale/v1/sessions"
+
 type healthState interface {
 	Snapshot() app.HealthSnapshot
 }
@@ -217,7 +223,8 @@ type healthHandler struct {
 	mux    *http.ServeMux
 }
 
-func newHealthHandler(state healthState, logger *slog.Logger, metrics *operatorMetrics) http.Handler {
+func newHealthHandler(state healthState, logger *slog.Logger, metrics *operatorMetrics,
+	scale http.Handler) http.Handler {
 	handler := &healthHandler{
 		state:  state,
 		logger: logger,
@@ -228,6 +235,9 @@ func newHealthHandler(state healthState, logger *slog.Logger, metrics *operatorM
 	handler.mux.HandleFunc("GET /ready/login", handler.loginReady)
 	handler.mux.HandleFunc("GET /health", handler.health)
 	handler.mux.Handle("GET /metrics", metrics.handler)
+	if scale != nil {
+		handler.mux.Handle("GET "+scalePath, scale)
+	}
 	return metrics.instrument(handler)
 }
 

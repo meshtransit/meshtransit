@@ -23,7 +23,7 @@ func TestOperatorMetricsExposeBoundedRuntimeSignals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOperatorMetrics() error = %v", err)
 	}
-	handler := newHealthHandler(state, discardLogger(), metrics)
+	handler := newHealthHandler(state, discardLogger(), metrics, nil)
 
 	if response := request(t, handler, "/live"); response.Code != http.StatusOK {
 		t.Fatalf("GET /live status = %d, want %d", response.Code, http.StatusOK)
@@ -121,7 +121,7 @@ func TestOperatorMetricsDoNotExposeUnknownRequestPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newOperatorMetrics() error = %v", err)
 	}
-	handler := newHealthHandler(state, discardLogger(), metrics)
+	handler := newHealthHandler(state, discardLogger(), metrics, nil)
 
 	if response := request(t, handler, unknownPath); response.Code != http.StatusNotFound {
 		t.Fatalf("unknown path status = %d, want %d", response.Code, http.StatusNotFound)

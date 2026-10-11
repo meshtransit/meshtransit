@@ -135,6 +135,19 @@ merge (2026-10-09) are kept below.
   never settles for an older view. Scale test at 2000 Devices: revision
   fan-out p95 1.6 s to 404 ms, Postgres pool wait down 11x, stream opens
   59/s to 95/s. Metric `meshtransit_map_snapshots_total{source="derived"}`.
+- Core scale-out, step S5 (scale-out): control replicas publish their
+  MTCP session counts to a Redis registry (`meshtransit:v1:control:replicas`,
+  expiry by Redis time); a replica above its fair share sheds a bounded
+  number of sessions per step with Lifecycle RECONNECT and a jittered
+  retry, so new replicas fill up and the load evens out. Shutdown tells
+  every session to reconnect within `MESHTRANSIT_CONTROL_DRAIN_WINDOW`
+  instead of all at once. `GET /scale/v1/sessions` on the health port
+  answers the cluster total for KEDA's metrics-api scaler; the chart's
+  `autoscaling.provider: keda` renders a ScaledObject (CPU, plus sessions
+  for control) and leaves the replica count to the autoscaler. The session
+  cap may go to 16384. The Redis ACL needs the registry key and `HGETALL`,
+  `HDEL`. Scale test: 1000 sessions on one replica settle at 545/455 on
+  two in 13 s with exactly 455 reconnects.
 - Core scale-out, step S3: each control replica keeps one connectivity
   table per Network with streams, a persistent hash array mapped trie of
   Node to endpoints, home relay and presence, versioned with a bounded

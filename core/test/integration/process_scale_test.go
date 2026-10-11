@@ -42,7 +42,11 @@ const (
 	// are far below the production defaults (10 and 10).
 	scalePostgresPoolEnvironment = "MESHTRANSIT_SCALE_POSTGRES_RUNTIME_MAX_CONNECTIONS"
 	scaleRedisPoolEnvironment    = "MESHTRANSIT_SCALE_REDIS_POOL_SIZE"
-	scaleDefaultPoolSize         = "10"
+	// MESHTRANSIT_SCALE_REBALANCE=1 adds a phase: a second control process
+	// starts, reconnecting nodes go to it, and the first sheds to its share.
+	scaleRebalanceEnvironment = "MESHTRANSIT_SCALE_REBALANCE"
+	scaleRebalanceInterval    = "1s"
+	scaleDefaultPoolSize      = "10"
 
 	scaleParallelism    = 32
 	scaleSessionHeadway = 128 // sessions above N for registrations and reconnects in flight
@@ -89,6 +93,10 @@ func TestRoleControlProcessScalesMapStreams(t *testing.T) {
 	connectivity := measureScaleConnectivityFanout(ctx, t, running, clients[0], collector,
 		registered.deviceIDs[0], peersVisible)
 	collector.failOnUnexpected(t, running)
+	rebalanced := "not measured (set " + scaleRebalanceEnvironment + "=1)"
+	if os.Getenv(scaleRebalanceEnvironment) == "1" {
+		rebalanced = measureScaleRebalance(ctx, t, binary, running, clients, collector, sessions)
+	}
 	metrics := readScaleMetrics(t, running)
 
 	t.Logf("scale summary: sessions=%d peers_visible=%t", sessions, peersVisible)
@@ -98,6 +106,7 @@ func TestRoleControlProcessScalesMapStreams(t *testing.T) {
 		streams.stats, streams.initial[0].Map.PeerCount, streams.initial[min(1, len(streams.initial)-1)].Map.PeerCount)
 	t.Logf("revision fan-out: %s", revision)
 	t.Logf("connectivity fan-out: %s", connectivity)
+	t.Logf("rebalance: %s", rebalanced)
 	t.Logf("streams Core ended with Lifecycle RECONNECT and the test reopened: %d", collector.reconnectCount())
 	for _, line := range metrics {
 		t.Logf("metric %s", line)
@@ -134,27 +143,7 @@ func scaleSessionCount(t *testing.T) int {
 func startScaleControlProcess(t *testing.T, binary, controlAddress string, sessions int) readyControlProcess {
 	t.Helper()
 	healthAddress := reserveLoopbackAddress(t)
-	environment := integrationProcessEnvironment(healthAddress, controlAddress)
-	environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_MAX_SESSIONS",
-		strconv.Itoa(min(scaleMaxSessions, sessions+scaleSessionHeadway)))
-	// Every test client connects from one loopback address; per-source
-	// handshake admission would measure the limiter, not Core.
-	environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_RATE",
-		scaleEnvironmentOr("MESHTRANSIT_SCALE_HANDSHAKE_RATE", "2000"))
-	environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_BURST",
-		scaleEnvironmentOr("MESHTRANSIT_SCALE_HANDSHAKE_BURST", "20000"))
-	environment = setEnvironmentValue(environment, "MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS",
-		scaleEnvironmentOr(scalePostgresPoolEnvironment, scaleDefaultPoolSize))
-	environment = setEnvironmentValue(environment, "MESHTRANSIT_REDIS_POOL_SIZE",
-		scaleEnvironmentOr(scaleRedisPoolEnvironment, scaleDefaultPoolSize))
-	process := startIntegrationProcess(t, binary, environment)
-	t.Cleanup(func() { process.forceStop(t) })
-	startCtx, cancelStart := context.WithTimeout(t.Context(), 15*time.Second)
-	defer cancelStart()
-	if err := waitForReady(startCtx, process, healthAddress); err != nil {
-		process.forceStop(t)
-		t.Fatalf("wait for control readiness: %v; stderr: %s", err, process.stderr.String())
-	}
+	process := startScaleControlOnly(t, binary, healthAddress, controlAddress, sessions)
 	workerHealthAddress := reserveLoopbackAddress(t)
 	workerEnvironment := integrationProcessEnvironment(workerHealthAddress, reserveLoopbackAddress(t))
 	workerEnvironment = setEnvironmentValue(workerEnvironment, "MESHTRANSIT_ROLE", "worker")
@@ -173,6 +162,37 @@ func startScaleControlProcess(t *testing.T, binary, controlAddress string, sessi
 		t.Fatalf("wait for worker readiness: %v; stderr: %s", err, worker.stderr.String())
 	}
 	return readyControlProcess{process: process, worker: worker, healthAddress: healthAddress}
+}
+
+// startScaleControlOnly starts one control process sized for the scale test
+// and waits until it is ready.
+func startScaleControlOnly(t *testing.T, binary, healthAddress, controlAddress string, sessions int) *integrationProcess {
+	t.Helper()
+	environment := integrationProcessEnvironment(healthAddress, controlAddress)
+	environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_MAX_SESSIONS",
+		strconv.Itoa(min(scaleMaxSessions, sessions+scaleSessionHeadway)))
+	// Every test client connects from one loopback address; per-source
+	// handshake admission would measure the limiter, not Core.
+	environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_RATE",
+		scaleEnvironmentOr("MESHTRANSIT_SCALE_HANDSHAKE_RATE", "2000"))
+	environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_BURST",
+		scaleEnvironmentOr("MESHTRANSIT_SCALE_HANDSHAKE_BURST", "20000"))
+	environment = setEnvironmentValue(environment, "MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS",
+		scaleEnvironmentOr(scalePostgresPoolEnvironment, scaleDefaultPoolSize))
+	environment = setEnvironmentValue(environment, "MESHTRANSIT_REDIS_POOL_SIZE",
+		scaleEnvironmentOr(scaleRedisPoolEnvironment, scaleDefaultPoolSize))
+	if os.Getenv(scaleRebalanceEnvironment) == "1" {
+		environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_REBALANCE_INTERVAL", scaleRebalanceInterval)
+	}
+	process := startIntegrationProcess(t, binary, environment)
+	t.Cleanup(func() { process.forceStop(t) })
+	startCtx, cancelStart := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancelStart()
+	if err := waitForReady(startCtx, process, healthAddress); err != nil {
+		process.forceStop(t)
+		t.Fatalf("wait for control readiness: %v; stderr: %s", err, process.stderr.String())
+	}
+	return process
 }
 
 func scaleEnvironmentOr(name, fallback string) string {

@@ -345,7 +345,7 @@ func newTestHealthHandler(t *testing.T, state *app.RuntimeState) http.Handler {
 	if err != nil {
 		t.Fatalf("newOperatorMetrics() error = %v", err)
 	}
-	return newHealthHandler(state, discardLogger(), metrics)
+	return newHealthHandler(state, discardLogger(), metrics, nil)
 }
 
 func newRuntimeState(t *testing.T, roles ...app.Role) *app.RuntimeState {
@@ -396,4 +396,27 @@ func (address testAddress) Network() string {
 
 func (address testAddress) String() string {
 	return string(address)
+}
+
+func TestHealthServerMountsTheScaleRouteOnlyWhenGiven(t *testing.T) {
+	t.Parallel()
+	state := newRuntimeState(t, app.RoleControl)
+	metrics, err := newOperatorMetrics(state, testBuildInfo(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scale := http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte(`{"sessions":3}`))
+	})
+	for _, test := range []struct {
+		handler http.Handler
+		want    int
+	}{{scale, http.StatusOK}, {nil, http.StatusNotFound}} {
+		recorder := httptest.NewRecorder()
+		newHealthHandler(state, discardLogger(), metrics, test.handler).ServeHTTP(recorder,
+			httptest.NewRequestWithContext(t.Context(), http.MethodGet, scalePath, nil))
+		if recorder.Code != test.want {
+			t.Fatalf("GET %s = %d, want %d", scalePath, recorder.Code, test.want)
+		}
+	}
 }

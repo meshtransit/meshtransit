@@ -119,6 +119,7 @@ func composeMTCP(
 		HandshakeBurst: controlConfig.MTCP.HandshakeBurst,
 		// MTCP connections count against the listener's connection bound.
 		MaxSessions: controlConfig.MaxSessions,
+		DrainWindow: controlConfig.DrainWindow,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(errInvalidMTCPComposition, err)

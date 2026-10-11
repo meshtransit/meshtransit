@@ -281,6 +281,8 @@ func operatorRoute(path string) string {
 		return "health"
 	case "/metrics":
 		return "metrics"
+	case scalePath:
+		return "scale"
 	default:
 		return "not_found"
 	}

@@ -15,6 +15,7 @@ type Metrics struct {
 	sessions   prometheus.Gauge
 	messages   *prometheus.CounterVec
 	streamEnds *prometheus.CounterVec
+	sheds      prometheus.Counter
 }
 
 // streamEndReasons is the closed set of map stream end causes.
@@ -48,6 +49,10 @@ func NewMetrics() *Metrics {
 			Name: "meshtransit_mtcp_map_stream_ends_total",
 			Help: "MTCP map streams that ended on a live session, by bounded cause.",
 		}, []string{"reason"}),
+		sheds: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "meshtransit_mtcp_sessions_shed_total",
+			Help: "MTCP sessions this replica asked to reconnect elsewhere to rebalance load.",
+		}),
 	}
 	for _, result := range handshakeResults {
 		metrics.handshakes.WithLabelValues(result)
@@ -60,7 +65,8 @@ func NewMetrics() *Metrics {
 
 // Collectors returns the collectors to register.
 func (metrics *Metrics) Collectors() []prometheus.Collector {
-	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds}
+	return []prometheus.Collector{metrics.handshakes, metrics.sessions, metrics.messages, metrics.streamEnds,
+		metrics.sheds}
 }
 
 // streamEnded counts a map stream end; a nil Metrics counts nothing.
@@ -74,6 +80,7 @@ func (metrics *Metrics) streamEnded(reason string) {
 func (metrics *Metrics) handshake(result string) { metrics.handshakes.WithLabelValues(result).Inc() }
 func (metrics *Metrics) sessionOpened()          { metrics.sessions.Inc() }
 func (metrics *Metrics) sessionClosed()          { metrics.sessions.Dec() }
+func (metrics *Metrics) shed(count int)          { metrics.sheds.Add(float64(count)) }
 
 func (metrics *Metrics) sent(t sharedmtcp.MessageType) {
 	metrics.messages.WithLabelValues("sent", fmt.Sprintf("%#02x", uint8(t))).Inc()

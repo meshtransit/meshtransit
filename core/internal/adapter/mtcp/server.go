@@ -89,7 +89,10 @@ type Options struct {
 	HandshakeBurst int
 	Keepalive      time.Duration
 	IdleTimeout    time.Duration
-	Now            func() time.Time
+	// DrainWindow spreads the reconnects of a shutdown: each session is told
+	// to come back after a random delay within it (zero: at once).
+	DrainWindow time.Duration
+	Now         func() time.Time
 }
 
 // Server serves MTCP on the control listener. It is an http.Handler for
@@ -446,18 +449,16 @@ func (server *Server) forget(session *Session) {
 	}
 }
 
-// Shutdown stops admission, closes every session and waits for them.
+// Shutdown stops admission, tells every session to reconnect within the
+// drain window (so the other replicas take them over gradually, not all
+// at once), ends them and waits for them.
 func (server *Server) Shutdown(ctx context.Context) error {
 	server.mu.Lock()
 	server.shutdown = true
-	sessions := make([]*Session, 0, len(server.live))
-	for session := range server.live {
-		sessions = append(sessions, session)
-	}
+	sessions := server.liveSessionsLocked()
 	server.mu.Unlock()
-	for _, session := range sessions {
-		session.close(errShuttingDown)
-	}
+	server.sayGoodbye(ctx, sessions, server.options.DrainWindow, "the control replica is shutting down",
+		errShuttingDown)
 	done := make(chan struct{})
 	go func() {
 		server.wg.Wait()

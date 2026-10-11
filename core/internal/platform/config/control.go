@@ -10,6 +10,12 @@ const (
 	envControlMaxSessions          = "MESHTRANSIT_CONTROL_MAX_SESSIONS"
 	envControlHandshakeTimeout     = "MESHTRANSIT_CONTROL_HANDSHAKE_TIMEOUT"
 	envControlReadIdleTimeout      = "MESHTRANSIT_CONTROL_READ_IDLE_TIMEOUT"
+	envControlDrainWindow          = "MESHTRANSIT_CONTROL_DRAIN_WINDOW"
+	envControlRebalance            = "MESHTRANSIT_CONTROL_REBALANCE"
+	envControlRebalanceInterval    = "MESHTRANSIT_CONTROL_REBALANCE_INTERVAL"
+	defaultControlDrainWindow      = 30 * time.Second
+	defaultControlRebalanceEvery   = 15 * time.Second
+	maxControlDrainWindow          = 5 * time.Minute
 	defaultControlAddress          = "0.0.0.0:8443"
 	defaultControlMaxSessions      = 1024
 	defaultControlHandshakeTimeout = 5 * time.Second
@@ -18,7 +24,7 @@ const (
 	maxControlHandshakeTimeout     = 30 * time.Second
 	maxControlSessionTimeout       = 5 * time.Minute
 	minControlSessions             = 1
-	maxControlSessions             = 4096
+	maxControlSessions             = 16384
 )
 
 var retiredControlSettings = []string{
@@ -37,8 +43,14 @@ type ControlConfig struct {
 	MaxSessions         int
 	HandshakeTimeout    time.Duration
 	ReadIdleTimeout     time.Duration
-	Map                 ControlMapConfig
-	MTCP                ControlMTCPConfig
+	// DrainWindow spreads the sessions' reconnects when the replica stops.
+	DrainWindow time.Duration
+	// Rebalance lets a replica shed sessions above its fair share;
+	// RebalanceInterval is how often replicas publish their load.
+	Rebalance         bool
+	RebalanceInterval time.Duration
+	Map               ControlMapConfig
+	MTCP              ControlMTCPConfig
 }
 
 func loadControlConfig(lookup LookupFunc) (ControlConfig, error) {
@@ -86,6 +98,21 @@ func loadControlConfig(lookup LookupFunc) (ControlConfig, error) {
 	if err != nil {
 		return ControlConfig{}, settingError(envControlReadIdleTimeout)
 	}
+	drainWindow, err := parseDurationInRange(
+		valueOrDefault(lookup, envControlDrainWindow, defaultControlDrainWindow.String()), 0, maxControlDrainWindow)
+	if err != nil {
+		return ControlConfig{}, settingError(envControlDrainWindow)
+	}
+	rebalance := valueOrDefault(lookup, envControlRebalance, "true")
+	if rebalance != "true" && rebalance != "false" {
+		return ControlConfig{}, settingError(envControlRebalance)
+	}
+	rebalanceInterval, err := parseDurationInRange(
+		valueOrDefault(lookup, envControlRebalanceInterval, defaultControlRebalanceEvery.String()),
+		time.Second, maxControlSessionTimeout)
+	if err != nil {
+		return ControlConfig{}, settingError(envControlRebalanceInterval)
+	}
 	// Settings of the retired legacy control server are refused rather than ignored,
 	// so a deployment that still sets them notices.
 	for _, name := range retiredControlSettings {
@@ -110,6 +137,9 @@ func loadControlConfig(lookup LookupFunc) (ControlConfig, error) {
 		MaxSessions:         maxSessions,
 		HandshakeTimeout:    handshakeTimeout,
 		ReadIdleTimeout:     readIdleTimeout,
+		DrainWindow:         drainWindow,
+		Rebalance:           rebalance == "true",
+		RebalanceInterval:   rebalanceInterval,
 		Map:                 mapConfig,
 		MTCP:                mtcpConfig,
 	}, nil

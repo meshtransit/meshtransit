@@ -362,9 +362,11 @@ Kubernetes deployment.
 | `MESHTRANSIT_REDIS_CA_FILE` | none | Absolute path to the trusted CA bundle. |
 | `MESHTRANSIT_REDIS_POOL_SIZE` | `10` | Per-process active-connection cap from 1 through 50. |
 
-The Redis ACL user must be limited to the presence, endpoint, and
-`meshtransit:v1:ratelimit:management:*` key patterns, the fixed `PING`, `GET`,
-`SET`, `TIME`, hash, expiry, delete, script, publish, and subscribe commands,
+The Redis ACL user must be limited to the presence, endpoint, delivery and
+`meshtransit:v1:ratelimit:management:*` key patterns plus the single key
+`meshtransit:v1:control:replicas` (the control replicas' load registry), the
+fixed `PING`, `GET`, `SET`, `TIME`, hash (`HGET`, `HSET`, `HMGET`, `HGETALL`,
+`HDEL`), `EXISTS`, expiry, delete, script, publish, and subscribe commands,
 and exactly these Pub/Sub channels:
 `meshtransit:v1:wakeup:network_revision_advanced` and
 `meshtransit:v1:wakeup:connectivity_changed`. `resetchannels` without both
@@ -491,9 +493,12 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_RATE` | `10` | New MTCP handshakes per second per source (IPv4 address or IPv6 /64), from 1 through 10000, before any cryptography. Raise it where many Devices share one NAT. |
 | `MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_BURST` | `50` | Handshake burst per source, from the rate through 100000. |
 | `MESHTRANSIT_CONTROL_MTCP_ENABLED` | `true` | Accepted only as `true`, for existing deployments; MTCP is the only control protocol. |
-| `MESHTRANSIT_CONTROL_MAX_SESSIONS` | `1024` | Per-process connection and session admission cap from 1 through 4096. |
+| `MESHTRANSIT_CONTROL_MAX_SESSIONS` | `1024` | Per-process connection and session admission cap from 1 through 16384. |
 | `MESHTRANSIT_CONTROL_HANDSHAKE_TIMEOUT` | `5s` | TLS and HTTP header deadline from 100ms through 30 seconds. |
 | `MESHTRANSIT_CONTROL_READ_IDLE_TIMEOUT` | `1m` | Idle timeout of control connections that are not MTCP sessions, from 100ms through 5 minutes. |
+| `MESHTRANSIT_CONTROL_DRAIN_WINDOW` | `30s` | On shutdown every MTCP session is told to reconnect after a random delay within this window (0 through 5 minutes), so the other replicas take the nodes over gradually; tunnels keep working meanwhile. |
+| `MESHTRANSIT_CONTROL_REBALANCE` | `true` | Let a control replica holding clearly more than its fair share of sessions (over 10% and 32 sessions above it) ask up to 5% of them per step to reconnect elsewhere. One replica alone never sheds. Load is published to Redis either way, for `/scale/v1/sessions`. |
+| `MESHTRANSIT_CONTROL_REBALANCE_INTERVAL` | `15s` | How often each control replica publishes its sessions to the Redis registry and rebalances (1 second through 5 minutes; a replica disappears from the registry after three missed intervals). |
 | `MESHTRANSIT_CONTROL_MAP_REQUEST_TIMEOUT` | `10s` | Total application deadline for one authenticated map snapshot, from 100ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MAP_STATEMENT_TIMEOUT` | `3s` | PostgreSQL statement timeout for one authenticated map snapshot, from 1ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MAP_TRANSACTION_IDLE_LIMIT` | `5s` | PostgreSQL idle-in-transaction limit for one map snapshot, from 1ms through 1 minute. |

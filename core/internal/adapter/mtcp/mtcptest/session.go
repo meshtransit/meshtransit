@@ -91,7 +91,7 @@ func (client *Client) fetchKeyDocument(ctx context.Context) ([]ControlKey, error
 	transport := &http.Transport{
 		Proxy: nil,
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, client.controlAddress)
+			return dialer.DialContext(ctx, network, client.address())
 		},
 		TLSClientConfig:       client.tlsConfig.Clone(),
 		TLSHandshakeTimeout:   operationTimeout,
@@ -201,7 +201,7 @@ func (client *Client) openSession(ctx context.Context, nodeKey []byte) (*session
 
 func (client *Client) dialTLS(ctx context.Context) (*tls.Conn, error) {
 	dialer := &net.Dialer{Timeout: operationTimeout, KeepAlive: -1}
-	raw, err := dialer.DialContext(ctx, "tcp", client.controlAddress)
+	raw, err := dialer.DialContext(ctx, "tcp", client.address())
 	if err != nil {
 		return nil, fmt.Errorf("dial control origin: %w", err)
 	}

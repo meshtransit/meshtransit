@@ -89,6 +89,20 @@ type Client struct {
 	lastTimestamp int64      // the last ClientHello timestamp, in Unix ms
 }
 
+// SetControlAddress makes later dials go to address, as a load balancer
+// might place a reconnecting node on another replica.
+func (client *Client) SetControlAddress(address string) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	client.controlAddress = address
+}
+
+func (client *Client) address() string {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return client.controlAddress
+}
+
 // NewClient validates a synthetic origin, builds an isolated trust store and
 // generates fresh keys without dialing.
 func NewClient(options Options) (*Client, error) {

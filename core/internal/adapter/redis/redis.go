@@ -62,10 +62,13 @@ type Client struct {
 	loadSession        loadSessionFunc
 	touchDelivery      touchDeliveryFunc
 	loadDeliveries     loadDeliveriesFunc
-	metrics            *redisMetrics
-	close              func() error
-	closeOnce          sync.Once
-	closeErr           error
+	replicaLoad        replicaLoadFunc
+	// withdrawReplicaLoad removes one control replica's load field.
+	withdrawReplicaLoad func(ctx context.Context, key, replicaID string) error
+	metrics             *redisMetrics
+	close               func() error
+	closeOnce           sync.Once
+	closeErr            error
 }
 
 // Open constructs a lazy, bounded TLS-only Redis client. Connectivity is
@@ -94,6 +97,10 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 		},
 		publish: func(publishCtx context.Context, channel string, payload []byte) error {
 			return client.Publish(publishCtx, channel, payload).Err()
+		},
+		replicaLoad: runReplicaLoadScript(client),
+		withdrawReplicaLoad: func(withdrawCtx context.Context, key, replicaID string) error {
+			return client.HDel(withdrawCtx, key, replicaID).Err()
 		},
 		subscribe: func(subscribeCtx context.Context, channel string) (messageSubscription, error) {
 			subscription := client.Subscribe(subscribeCtx, channel)

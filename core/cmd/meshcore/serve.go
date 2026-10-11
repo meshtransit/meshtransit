@@ -15,6 +15,7 @@ import (
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	redisadapter "meshtransit.net/core/internal/adapter/redis"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/control/rebalance"
 	"meshtransit.net/core/internal/domain/enrollment"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/network/revisionworker"
@@ -104,6 +105,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 
 	checkers := make([]app.DependencyChecker, 0, len(readiness.RequiredComponents()))
 	additionalMetrics := make([]prometheus.Collector, 0, 6)
+	var scaleHandler http.Handler // control role only: the autoscaler's session total
 	var storagePools postgresPools
 	var redisClient *redisadapter.Client
 	if processConfig.Storage != nil {
@@ -538,6 +540,15 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		}
 		additionalMetrics = append(additionalMetrics, controlListener.MetricsCollector())
 		roleServices = append(roleServices, app.OwnedService{Name: "control", Service: controlListener})
+		// After the listener: started once sessions can exist, stopped (and
+		// withdrawn from the registry) before the listener drains them.
+		balancer, composeErr := composeRebalance(*processConfig.Control, redisClient, mtcpServer, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "rebalance_composition_failure", "error", composeErr)
+			return 1
+		}
+		roleServices = append(roleServices, app.OwnedService{Name: "control-rebalance", Service: balancer})
+		scaleHandler = rebalance.ScaleHandler(redisClient)
 	}
 
 	// Last service: reverse shutdown cancels and joins expiry before drains/storage.
@@ -582,6 +593,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		},
 		RevisionWorkerTelemetry: revisionWorkerTelemetry,
 		AdditionalMetrics:       additionalMetrics,
+		ScaleHandler:            scaleHandler,
 	})
 	if err != nil {
 		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_health_server", "error", err)
