@@ -491,3 +491,29 @@ func TestFilterDigestMatchesTheSharedVector(t *testing.T) {
 		t.Fatalf("inverted port range: %v", err)
 	}
 }
+
+func TestRecordReaderGrowsOnlyForLargeRecords(t *testing.T) {
+	t.Parallel()
+	small := bytes.Repeat([]byte{1}, 40)
+	large := bytes.Repeat([]byte{2}, MaxRecord-1)
+	var stream []byte
+	for _, body := range [][]byte{small, large, small} {
+		var err error
+		if stream, err = AppendRecord(stream, RecordTransport, body); err != nil {
+			t.Fatalf("AppendRecord() error = %v", err)
+		}
+	}
+	reader := NewRecordReader(bytes.NewReader(stream))
+	if len(reader.buf) > 4096 {
+		t.Fatalf("a new reader holds %d bytes", len(reader.buf))
+	}
+	for index, want := range [][]byte{small, large, small} {
+		recordType, body, err := reader.Next()
+		if err != nil || recordType != RecordTransport || !bytes.Equal(body, want) {
+			t.Fatalf("record %d = %v, %d bytes, %v", index, recordType, len(body), err)
+		}
+	}
+	if len(reader.buf) < MaxRecord-1 {
+		t.Fatalf("buffer did not grow for a large record: %d", len(reader.buf))
+	}
+}

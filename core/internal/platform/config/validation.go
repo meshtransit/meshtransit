@@ -37,6 +37,17 @@ func validateAddress(address string) error {
 	return nil
 }
 
+// loopbackAddress reports a host:port whose host is a loopback IP literal,
+// so a debugging listener can never be reached from another machine.
+func loopbackAddress(address string) bool {
+	if validateAddress(address) != nil {
+		return false
+	}
+	host, _, _ := net.SplitHostPort(address)
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func addressesConflict(left, right string) bool {
 	leftHost, leftPort, leftErr := net.SplitHostPort(left)
 	rightHost, rightPort, rightErr := net.SplitHostPort(right)

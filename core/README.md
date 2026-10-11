@@ -246,6 +246,7 @@ invalid value stops startup before a listener is opened.
 | --- | --- | --- |
 | `MESHTRANSIT_ROLE` | `all` | One of `all`, `api`, `control`, `worker`, `relay`, or `identity`. |
 | `MESHTRANSIT_HEALTH_ADDRESS` | `127.0.0.1:8081` | TCP host and non-zero port for the operator health listener. |
+| `MESHTRANSIT_PROFILE_ADDRESS` | none | When set, serve Go runtime profiles (`/debug/pprof/`) on this address. Only a loopback IP literal is accepted (for example `127.0.0.1:6060`); reach it with `kubectl port-forward` or an SSH tunnel. |
 | `MESHTRANSIT_SHUTDOWN_TIMEOUT` | `15s` | Drain deadline from 1 second through 5 minutes. |
 | `MESHTRANSIT_LOG_LEVEL` | `info` | One of `debug`, `info`, `warn`, or `error`. |
 | `MESHTRANSIT_DEPENDENCY_CHECK_TIMEOUT` | `2s` | Per-dependency check deadline from 100ms through 30s. Must be below the interval. |

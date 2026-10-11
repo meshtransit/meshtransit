@@ -17,6 +17,7 @@ const (
 
 	envRole            = "MESHTRANSIT_ROLE"
 	envHealthAddress   = "MESHTRANSIT_HEALTH_ADDRESS"
+	envProfileAddress  = "MESHTRANSIT_PROFILE_ADDRESS"
 	envShutdownTimeout = "MESHTRANSIT_SHUTDOWN_TIMEOUT"
 	envLogLevel        = "MESHTRANSIT_LOG_LEVEL"
 
@@ -45,8 +46,11 @@ type LookupFunc func(string) (string, bool)
 
 // Config is the fully validated process configuration.
 type Config struct {
-	Role                  app.Role
-	HealthAddress         string
+	Role          app.Role
+	HealthAddress string
+	// ProfileAddress, when set, serves Go runtime profiles (pprof) on a
+	// loopback address only; empty disables them.
+	ProfileAddress        string
 	ShutdownTimeout       time.Duration
 	LogLevel              slog.Level
 	Dependencies          DependencyConfig
@@ -98,6 +102,11 @@ func Load(lookup LookupFunc) (Config, error) {
 	healthAddress := valueOrDefault(lookup, envHealthAddress, defaultHealthAddress)
 	if err := validateAddress(healthAddress); err != nil {
 		return Config{}, fmt.Errorf("%w: %s", ErrInvalid, envHealthAddress)
+	}
+
+	profileAddress, _ := lookup(envProfileAddress)
+	if profileAddress != "" && !loopbackAddress(profileAddress) {
+		return Config{}, fmt.Errorf("%w: %s", ErrInvalid, envProfileAddress)
 	}
 
 	shutdownTimeout, err := parseShutdownTimeout(
@@ -278,6 +287,7 @@ func Load(lookup LookupFunc) (Config, error) {
 	return Config{
 		Role:                    role,
 		HealthAddress:           healthAddress,
+		ProfileAddress:          profileAddress,
 		ShutdownTimeout:         shutdownTimeout,
 		LogLevel:                logLevel,
 		Dependencies:            dependencyConfig,

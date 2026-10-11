@@ -3,6 +3,7 @@ package mapsession
 import (
 	"context"
 	"errors"
+	"runtime"
 	"slices"
 	"sync"
 	"testing"
@@ -102,7 +103,12 @@ func TestStreamRemoteRuleRemovalSendsFullWithdrawalAtUnchangedLocalRevision(t *t
 
 func TestStreamWatchCoalescesBurstAndRejectsWrongNetwork(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		initial := snapshotFixture(t)
+		// A sharing scope makes the watch forward several Networks.
+		provider, consumer, _ := directDeviceFixtureAt(t, policy.ProtocolICMP, nil, time.Now())
+		initial, err := provider.WithSharingDependencies([]network.Scope{consumer.Scope()})
+		if err != nil {
+			t.Fatal(err)
+		}
 		revisions := newScopedRevisionFixture()
 		service := newStreamServiceWithWatchersFixture(t, &streamSnapshotOpener{}, &streamPresenceStore{}, revisions, newScopedConnectivityFixture())
 		watch, err := service.watchSnapshot(t.Context(), initial)
@@ -110,6 +116,9 @@ func TestStreamWatchCoalescesBurstAndRejectsWrongNetwork(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer watch.close()
+		if watch.revisionUpdates != nil {
+			t.Fatal("a watch of several Networks read its sources directly")
+		}
 		for number := int64(1); number <= 8; number++ {
 			revision, err := network.NewRevisionAdvanced(initial.Scope().NetworkID().String(), number)
 			if err != nil {
@@ -299,4 +308,36 @@ func TestStreamInitialSharingCatchupFailsClosedOnReadFailureAndChurn(t *testing.
 			}
 		})
 	}
+}
+
+func TestStreamWatchOfOneNetworkReadsItsSourcesDirectly(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		initial := snapshotFixture(t)
+		revisions := newScopedRevisionFixture()
+		connectivity := newScopedConnectivityFixture()
+		service := newStreamServiceWithWatchersFixture(t, &streamSnapshotOpener{}, &streamPresenceStore{}, revisions, connectivity)
+		goroutines := runtime.NumGoroutine()
+		watch, err := service.watchSnapshot(t.Context(), initial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runtime.NumGoroutine() != goroutines || watch.revisionUpdates == nil || watch.connectivityUpdates == nil {
+			t.Fatal("a watch of one Network started a forwarding goroutine")
+		}
+		revision, _ := network.NewRevisionAdvanced(initial.Scope().NetworkID().String(), 3)
+		if wake, err := watch.directWake(streamWakeup{revision: revision}, true); err != nil || wake.revision != revision {
+			t.Fatalf("directWake(revision) = %+v, %v", wake, err)
+		}
+		other, _ := network.NewRevisionAdvanced("01890f00-0000-7000-8000-000000000999", 1)
+		if _, err := watch.directWake(streamWakeup{revision: other}, true); !errors.Is(err, ErrStreamDiscontinuity) {
+			t.Fatalf("directWake(other Network) error = %v", err)
+		}
+		if _, err := watch.directWake(streamWakeup{}, false); !errors.Is(err, ErrStreamUnavailable) {
+			t.Fatalf("directWake(closed) error = %v", err)
+		}
+		watch.close()
+		if active := revisions.activeScopes(); len(active) != 0 {
+			t.Fatalf("close() left %v watched", active)
+		}
+	})
 }

@@ -66,9 +66,15 @@ type RecordReader struct {
 	buf []byte
 }
 
+// initialRecordBuffer fits every record an idle session exchanges (pings,
+// acknowledgements, endpoint reports); the buffer grows to a larger record
+// only when one arrives, so a server holding many idle sessions does not
+// keep MaxRecord bytes for each.
+const initialRecordBuffer = 1024
+
 // NewRecordReader reads records from r.
 func NewRecordReader(r io.Reader) *RecordReader {
-	return &RecordReader{r: r, buf: make([]byte, MaxRecord)}
+	return &RecordReader{r: r, buf: make([]byte, initialRecordBuffer)}
 }
 
 // Next reads one record. A malformed or oversized record is an error, after
@@ -81,6 +87,15 @@ func (rr *RecordReader) Next() (RecordType, []byte, error) {
 	n := int(binary.BigEndian.Uint16(length[:]))
 	if n == 0 {
 		return 0, nil, ErrMalformed
+	}
+	if n > len(rr.buf) {
+		// Grow by doubling (bounded by MaxRecord): a peer sending large
+		// records reallocates a few times, not on every record.
+		size := len(rr.buf)
+		for size < n {
+			size *= 2
+		}
+		rr.buf = make([]byte, min(size, MaxRecord))
 	}
 	if _, err := io.ReadFull(rr.r, rr.buf[:n]); err != nil {
 		if errors.Is(err, io.EOF) {

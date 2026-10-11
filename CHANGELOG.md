@@ -135,6 +135,14 @@ merge (2026-10-09) are kept below.
   never settles for an older view. Scale test at 2000 Devices: revision
   fan-out p95 1.6 s to 404 ms, Postgres pool wait down 11x, stream opens
   59/s to 95/s. Metric `meshtransit_map_snapshots_total{source="derived"}`.
+- Less memory per control session: the MTCP record reader starts with a
+  1 KiB buffer and grows only for a large record (it held 64 KiB per
+  session), the browser-approval watcher starts only when an approval is
+  pending (it was a goroutine and a ticker per session), and a stream of
+  one Network reads its wakeup sources directly instead of through a
+  forwarding goroutine. 2000 sessions: heap 212 MB to 104 MB, RSS 934 MB to
+  563 MB, goroutines 10,016 to 6,016. `MESHTRANSIT_PROFILE_ADDRESS` serves
+  pprof on loopback for operators.
 - Cheap reconcile (scale-out S6): a reread of a Network's shared view that
   finds exactly the same Devices, policy and header keeps the previous
   objects, and a stream's periodic refresh first asks whether its snapshot

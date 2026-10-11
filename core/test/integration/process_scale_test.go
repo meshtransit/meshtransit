@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -53,6 +54,11 @@ const (
 	// MESHTRANSIT_SCALE_PARALLELISM bounds concurrent registrations and
 	// stream opens (default 32).
 	scaleParallelismEnvironment = "MESHTRANSIT_SCALE_PARALLELISM"
+	// MESHTRANSIT_SCALE_PROFILE_ADDRESS=127.0.0.1:port serves pprof from the
+	// first control process; with MESHTRANSIT_SCALE_PROFILE_FILE the test
+	// saves its heap profile there once every phase ran.
+	scaleProfileEnvironment     = "MESHTRANSIT_SCALE_PROFILE_ADDRESS"
+	scaleProfileFileEnvironment = "MESHTRANSIT_SCALE_PROFILE_FILE"
 	scaleDefaultPoolSize        = "10"
 
 	scaleSessionHeadway        = 128 // sessions above N for registrations and reconnects in flight
@@ -114,6 +120,7 @@ func TestRoleControlProcessScalesMapStreams(t *testing.T) {
 		rebalanced = measureScaleRebalance(ctx, t, binary, running, clients, collector, sessions)
 	}
 	metrics := readScaleMetrics(t, running)
+	saveScaleHeapProfile(ctx, t)
 
 	t.Logf("scale summary: sessions=%d processes=%d peers_visible=%t", sessions, processes, peersVisible)
 	for index, health := range healthAddresses {
@@ -201,6 +208,10 @@ func startScaleControlOnly(t *testing.T, binary, healthAddress, controlAddress s
 		scaleEnvironmentOr(scaleRedisPoolEnvironment, scaleDefaultPoolSize))
 	if os.Getenv(scaleRebalanceEnvironment) == "1" {
 		environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_REBALANCE_INTERVAL", scaleRebalanceInterval)
+	}
+	if address := os.Getenv(scaleProfileEnvironment); address != "" && !scaleProfileClaimed.Swap(true) {
+		// The first control process serves profiles for the run.
+		environment = setEnvironmentValue(environment, "MESHTRANSIT_PROFILE_ADDRESS", address)
 	}
 	process := startIntegrationProcess(t, binary, environment)
 	t.Cleanup(func() { process.forceStop(t) })
@@ -767,7 +778,7 @@ func readScaleMetrics(t *testing.T, running readyControlProcess) []string {
 	}
 	prefixes := []string{
 		"go_goroutines", "go_threads", "go_memstats_heap_alloc_bytes", "go_memstats_heap_inuse_bytes",
-		"go_memstats_sys_bytes", "process_resident_memory_bytes", "process_open_fds", "process_cpu_seconds_total",
+		"go_memstats_sys_bytes", "go_memstats_stack_inuse_bytes", "go_memstats_next_gc_bytes", "process_resident_memory_bytes", "process_open_fds", "process_cpu_seconds_total",
 		"meshtransit_mtcp_handshakes_total", "meshtransit_mtcp_sessions_active", "meshtransit_control_connections",
 		"meshtransit_revision_feed", "meshtransit_connectivity_feed", "meshtransit_postgres_pool",
 		"meshtransit_map_connectivity", "meshtransit_map_snapshots_total", "meshtransit_redis_command",
@@ -877,4 +888,35 @@ func scaleProcessSummary(ctx context.Context, t *testing.T, healthAddress string
 	rss, _ := strconv.ParseFloat(values["process_resident_memory_bytes"], 64)
 	return fmt.Sprintf("sessions=%s shed=%s cpu=%ss rss=%.0fMB goroutines=%s", values["meshtransit_mtcp_sessions_active"],
 		values["meshtransit_mtcp_sessions_shed_total"], values["process_cpu_seconds_total"], rss/1e6, values["go_goroutines"])
+}
+
+// scaleProfileClaimed gives the profile address to one process only.
+var scaleProfileClaimed atomic.Bool
+
+// saveScaleHeapProfile writes the first control process's heap profile.
+func saveScaleHeapProfile(ctx context.Context, t *testing.T) {
+	t.Helper()
+	address, path := os.Getenv(scaleProfileEnvironment), os.Getenv(scaleProfileFileEnvironment)
+	if address == "" || path == "" {
+		return
+	}
+	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	client := integrationHTTPClient()
+	defer client.CloseIdleConnections()
+	status, body, err := integrationGET(readCtx, client, address, "/debug/pprof/heap?gc=1")
+	if err != nil || status != http.StatusOK {
+		t.Logf("heap profile unavailable: %d, %v", status, err)
+		return
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Logf("save heap profile: %v", err)
+		return
+	}
+	t.Logf("heap profile saved to %s", path)
+	// Goroutines grouped by stack, next to it, to see what holds stacks.
+	if status, body, err := integrationGET(readCtx, client, address, "/debug/pprof/goroutine?debug=1"); err == nil &&
+		status == http.StatusOK {
+		_ = os.WriteFile(path+".goroutines.txt", []byte(body), 0o600)
+	}
 }

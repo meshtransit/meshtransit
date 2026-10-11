@@ -274,6 +274,54 @@ func (conversation *conversation) wait(next approval) {
 	default:
 	}
 	conversation.approvals <- next // capacity 1, drained above; Receive is serial
+	conversation.startApprovals()
+}
+
+// watchApprovalsWithin bounds the approval watcher by Run's context and
+// starts it if an approval arrived before Run did.
+func (conversation *conversation) watchApprovalsWithin(ctx context.Context) {
+	conversation.approvalMu.Lock()
+	defer conversation.approvalMu.Unlock()
+	conversation.approvalParent = ctx
+	if conversation.approvalPending {
+		conversation.startApprovalsLocked()
+	}
+}
+
+// startApprovals starts the approval watcher once, for Run's life.
+func (conversation *conversation) startApprovals() {
+	conversation.approvalMu.Lock()
+	defer conversation.approvalMu.Unlock()
+	if conversation.approvalParent == nil {
+		conversation.approvalPending = true // Run starts it
+		return
+	}
+	conversation.startApprovalsLocked()
+}
+
+func (conversation *conversation) startApprovalsLocked() {
+	if conversation.approvalDone != nil || conversation.approvalStopped {
+		return
+	}
+	ctx, cancel := context.WithCancel(conversation.approvalParent)
+	done := make(chan struct{})
+	conversation.approvalCancel, conversation.approvalDone = cancel, done
+	go func() {
+		defer close(done)
+		conversation.awaitApprovals(ctx)
+	}()
+}
+
+// stopApprovals ends and joins the approval watcher, if it ever started.
+func (conversation *conversation) stopApprovals() {
+	conversation.approvalMu.Lock()
+	conversation.approvalStopped = true
+	cancel, done := conversation.approvalCancel, conversation.approvalDone
+	conversation.approvalMu.Unlock()
+	if cancel != nil {
+		cancel()
+		<-done
+	}
 }
 
 // awaitApprovals checks the pending approval until it is approved or

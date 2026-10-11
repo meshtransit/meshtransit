@@ -309,6 +309,31 @@ func (service *StreamService) run(
 		delivered, deliveredFilter = current.NetworkRevision(), filter
 		service.recordDelivery(ctx, current, filter)
 	}
+	// wakeUp refreshes current for one wakeup (revision, connectivity or a
+	// coalesced reconcile), skipping what the stream already reflects.
+	wakeUp := func(wake streamWakeup) error {
+		if !wake.reconcile {
+			if wake.revision.IsValid() && wake.revision.NetworkID() == current.Scope().NetworkID() && wake.revision.Number() <= current.NetworkRevision() {
+				return nil
+			}
+			if wake.connectivity.IsValid() && !wake.connectivity.batched &&
+				!streamTracksConnectivity(current, wake.connectivity) {
+				return nil
+			}
+		}
+		refresh := service.refresh
+		if !wake.reconcile && !wake.revision.IsValid() && wake.connectivity.IsValid() {
+			refresh = service.refreshConnectivity
+		} else if wake.revision.IsValid() && wake.revision.NetworkID() == current.Scope().NetworkID() {
+			refresh = service.refreshTo(wake.revision.Number())
+		}
+		next, err := refresh(ctx, machine, request, sink, current)
+		if err != nil {
+			return err
+		}
+		advance(next)
+		return nil
+	}
 	for {
 		if !current.KeyExpiry().Equal(expiry) {
 			// An owner change or extension moved the deadline; the new snapshot
@@ -390,26 +415,29 @@ func (service *StreamService) run(
 			}
 			return err
 		case wake := <-watch.updates:
-			if !wake.reconcile {
-				if wake.revision.IsValid() && wake.revision.NetworkID() == current.Scope().NetworkID() && wake.revision.Number() <= current.NetworkRevision() {
-					continue
-				}
-				if wake.connectivity.IsValid() && !wake.connectivity.batched &&
-					!streamTracksConnectivity(current, wake.connectivity) {
-					continue
-				}
+			if err := wakeUp(wake); err != nil {
+				return err
 			}
-			refresh := service.refresh
-			if !wake.reconcile && !wake.revision.IsValid() && wake.connectivity.IsValid() {
-				refresh = service.refreshConnectivity
-			} else if wake.revision.IsValid() && wake.revision.NetworkID() == current.Scope().NetworkID() {
-				refresh = service.refreshTo(wake.revision.Number())
+		case revision, open := <-watch.revisionUpdates:
+			wake, err := watch.directWake(streamWakeup{revision: revision}, open)
+			if err == nil {
+				err = wakeUp(wake)
+			} else if len(current.directDeviceProjections) != 0 {
+				err = withdrawAuthority(ctx, sink, current, err)
 			}
-			next, err := refresh(ctx, machine, request, sink, current)
 			if err != nil {
 				return err
 			}
-			advance(next)
+		case change, open := <-watch.connectivityUpdates:
+			wake, err := watch.directWake(streamWakeup{connectivity: change}, open)
+			if err == nil {
+				err = wakeUp(wake)
+			} else if len(current.directDeviceProjections) != 0 {
+				err = withdrawAuthority(ctx, sink, current, err)
+			}
+			if err != nil {
+				return err
+			}
 		case <-reconcile.C:
 			next, err := service.refresh(ctx, machine, request, sink, current)
 			if err != nil {

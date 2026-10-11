@@ -27,6 +27,26 @@ type streamWatch struct {
 	done     chan struct{}
 	releases []func()
 	once     sync.Once
+	// A stream of one Network (no sharing scope) reads its two sources
+	// directly instead of through a forwarding goroutine: one goroutine
+	// less per session. Both are nil when the forwarder runs.
+	revisionUpdates     <-chan network.RevisionAdvanced
+	connectivityUpdates <-chan ConnectivityChanged
+}
+
+// directWake validates one wakeup read directly from a source of a
+// single-Network watch: a closed source ends the stream like a failed feed,
+// a wakeup naming another Network is a discontinuity.
+func (watch *streamWatch) directWake(wake streamWakeup, open bool) (streamWakeup, error) {
+	if !open {
+		return streamWakeup{}, ErrStreamUnavailable
+	}
+	networkID := watch.scopes[0].NetworkID()
+	if (wake.revision.IsValid() && wake.revision.NetworkID() == networkID) ||
+		(wake.connectivity.IsValid() && wake.connectivity.NetworkID() == networkID) {
+		return wake, nil
+	}
+	return streamWakeup{}, ErrStreamDiscontinuity
 }
 
 func (service *StreamService) watchSnapshot(ctx context.Context, snapshot Snapshot) (*streamWatch, error) {
@@ -60,6 +80,13 @@ func (service *StreamService) watchSnapshot(ctx context.Context, snapshot Snapsh
 		}
 		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(revisions)}, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(connectivity)})
 		expected = append(expected, scope.NetworkID(), scope.NetworkID())
+		if len(scopes) == 1 {
+			watch.revisionUpdates, watch.connectivityUpdates = revisions, connectivity
+		}
+	}
+	if len(scopes) == 1 {
+		close(watch.done) // nothing to join
+		return watch, nil
 	}
 	go watch.forward(cases, expected)
 	return watch, nil

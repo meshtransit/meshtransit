@@ -25,6 +25,7 @@ import (
 	"meshtransit.net/core/internal/platform/buildinfo"
 	"meshtransit.net/core/internal/platform/config"
 	"meshtransit.net/core/internal/platform/observability"
+	"meshtransit.net/core/internal/platform/profile"
 )
 
 func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (exitCode int) {
@@ -599,8 +600,16 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_health_server", "error", err)
 		return 1
 	}
-	services := make([]app.OwnedService, 0, len(roleServices)+1)
+	services := make([]app.OwnedService, 0, len(roleServices)+2)
 	services = append(services, app.OwnedService{Name: "health", Service: healthServer})
+	if processConfig.ProfileAddress != "" {
+		profiler, profileErr := profile.NewServer(processConfig.ProfileAddress)
+		if profileErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "invalid_profile_server", "error", profileErr)
+			return 1
+		}
+		services = append(services, app.OwnedService{Name: "profile", Service: profiler})
+	}
 	services = append(services, roleServices...)
 	application, err := app.New(
 		app.Options{

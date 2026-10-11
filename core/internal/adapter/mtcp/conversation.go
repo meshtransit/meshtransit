@@ -117,6 +117,16 @@ type conversation struct {
 
 	wake      chan struct{} // the node key changed
 	approvals chan approval // the latest pending browser approval
+
+	// The approval watcher runs only once a browser approval is pending:
+	// most sessions never have one, and an idle watcher would cost every
+	// session a goroutine and a ticker.
+	approvalMu      sync.Mutex
+	approvalParent  context.Context // Run's context, once Run started
+	approvalPending bool            // an approval arrived before Run started
+	approvalCancel  context.CancelFunc
+	approvalDone    chan struct{}
+	approvalStopped bool
 }
 
 // Run serves the map stream of the node key the session currently has: the
@@ -131,16 +141,8 @@ func (conversation *conversation) Run(ctx context.Context) error {
 			conversation.mu.Unlock()
 		}
 	}
-	approvalsDone := make(chan struct{})
-	approvalCtx, stopApprovals := context.WithCancel(ctx)
-	go func() {
-		defer close(approvalsDone)
-		conversation.awaitApprovals(approvalCtx)
-	}()
-	defer func() {
-		stopApprovals()
-		<-approvalsDone
-	}()
+	conversation.watchApprovalsWithin(ctx)
+	defer conversation.stopApprovals()
 	for {
 		nodeKey, generation, streamCtx, cancel := conversation.startStream(ctx)
 		if nodeKey.IsValid() {
