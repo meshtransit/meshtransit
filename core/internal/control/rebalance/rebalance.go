@@ -99,6 +99,27 @@ type Balancer struct {
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	done   chan error
+
+	// The previous step's cluster total and whether it was over its share
+	// (used by the run goroutine only).
+	lastTotal int
+	lastOver  bool
+}
+
+// stableTotal reports whether the cluster's session total moved by at most
+// 5% (or 32 sessions) since the previous step. While it grows or shrinks
+// fast (a ramp, a replica's sessions reconnecting after it stopped), other
+// replicas' published loads lag by up to one interval, so a replica would
+// see an imbalance that is not there.
+func stableTotal(previous, current int) bool {
+	if previous <= 0 {
+		return false
+	}
+	change := current - previous
+	if change < 0 {
+		change = -change
+	}
+	return change <= max(32, current/20)
 }
 
 // New constructs a stopped balancer.
@@ -189,11 +210,15 @@ func (balancer *Balancer) step(ctx context.Context) {
 	if !balancer.options.Shed {
 		return
 	}
-	if count := Plan(own, loads, balancer.options); count > 0 {
+	total := Total(loads)
+	count := Plan(own, loads, balancer.options)
+	// Shed only an imbalance seen twice in a row with a steady total.
+	if count > 0 && balancer.lastOver && stableTotal(balancer.lastTotal, total) {
 		shed := balancer.pool.Shed(stepCtx, count, balancer.options.ReconnectWindow)
 		balancer.options.Logger.InfoContext(ctx, "control sessions shed to rebalance",
 			"sessions", own, "replicas", len(loads), "shed", shed)
 	}
+	balancer.lastTotal, balancer.lastOver = total, count > 0
 }
 
 // Total sums the loads.

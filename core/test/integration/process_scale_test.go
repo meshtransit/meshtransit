@@ -46,15 +46,23 @@ const (
 	// starts, reconnecting nodes go to it, and the first sheds to its share.
 	scaleRebalanceEnvironment = "MESHTRANSIT_SCALE_REBALANCE"
 	scaleRebalanceInterval    = "1s"
-	scaleDefaultPoolSize      = "10"
+	// MESHTRANSIT_SCALE_CONTROL_PROCESSES=K spreads the sessions over K
+	// control processes sharing the database and Redis (clients are
+	// assigned round robin, as a load balancer would).
+	scaleProcessesEnvironment = "MESHTRANSIT_SCALE_CONTROL_PROCESSES"
+	// MESHTRANSIT_SCALE_PARALLELISM bounds concurrent registrations and
+	// stream opens (default 32).
+	scaleParallelismEnvironment = "MESHTRANSIT_SCALE_PARALLELISM"
+	scaleDefaultPoolSize        = "10"
 
-	scaleParallelism    = 32
-	scaleSessionHeadway = 128 // sessions above N for registrations and reconnects in flight
-	scaleMaxSessions    = 4096
-	scalePhaseTimeout   = 2 * time.Minute
-	scaleQuietPeriod    = 2 * time.Second
-	scaleExtraPrefix    = "100.64.16.0/20"
-	scaleHubEndpoint    = "198.51.100.77:41641"
+	scaleSessionHeadway        = 128 // sessions above N for registrations and reconnects in flight
+	scaleMaxSessions           = 200_000
+	scaleMaxSessionsPerProcess = 16_384
+	scaleMaxProcesses          = 16
+	scalePhaseTimeout          = 2 * time.Minute
+	scaleQuietPeriod           = 2 * time.Second
+	scaleExtraPrefix           = "100.64.16.0/20"
+	scaleHubEndpoint           = "198.51.100.77:41641"
 )
 
 func TestRoleControlProcessScalesMapStreams(t *testing.T) {
@@ -72,9 +80,17 @@ func TestRoleControlProcessScalesMapStreams(t *testing.T) {
 		adminConfig.PostgreSQL.Database, adminConfig.PostgreSQL.User, adminConfig.PostgreSQL.PasswordFile,
 		adminConfig.PostgreSQL.CAFile, adminConfig.ConnectTimeout)
 	credential := seedScaleEnrollment(ctx, t, admin, processConfig)
-	controlAddress := reserveLoopbackAddress(t)
-	running := startScaleControlProcess(t, binary, controlAddress, sessions)
-	clients := newScaleClients(t, processConfig, controlAddress, sessions)
+	processes := scaleProcessCount(t, sessions)
+	perProcess := (sessions + processes - 1) / processes
+	controlAddresses := []string{reserveLoopbackAddress(t)}
+	running := startScaleControlProcess(t, binary, controlAddresses[0], perProcess)
+	healthAddresses := []string{running.healthAddress}
+	for range processes - 1 {
+		health, control := reserveLoopbackAddress(t), reserveLoopbackAddress(t)
+		startScaleControlOnly(t, binary, health, control, perProcess)
+		controlAddresses, healthAddresses = append(controlAddresses, control), append(healthAddresses, health)
+	}
+	clients := newScaleClients(t, processConfig, controlAddresses, sessions)
 
 	registered := registerScaleClients(ctx, t, running, clients, credential, scalePhaseTimeout+perSession)
 	peersVisible := os.Getenv(scalePolicyEnvironment) != "none"
@@ -93,13 +109,16 @@ func TestRoleControlProcessScalesMapStreams(t *testing.T) {
 	connectivity := measureScaleConnectivityFanout(ctx, t, running, clients[0], collector,
 		registered.deviceIDs[0], peersVisible)
 	collector.failOnUnexpected(t, running)
-	rebalanced := "not measured (set " + scaleRebalanceEnvironment + "=1)"
-	if os.Getenv(scaleRebalanceEnvironment) == "1" {
+	rebalanced := "not measured (set " + scaleRebalanceEnvironment + "=1 with one process)"
+	if os.Getenv(scaleRebalanceEnvironment) == "1" && processes == 1 {
 		rebalanced = measureScaleRebalance(ctx, t, binary, running, clients, collector, sessions)
 	}
 	metrics := readScaleMetrics(t, running)
 
-	t.Logf("scale summary: sessions=%d peers_visible=%t", sessions, peersVisible)
+	t.Logf("scale summary: sessions=%d processes=%d peers_visible=%t", sessions, processes, peersVisible)
+	for index, health := range healthAddresses {
+		t.Logf("control process %d: %s", index, scaleProcessSummary(ctx, t, health))
+	}
 	t.Logf("registration: %s", registered.stats)
 	t.Logf("revision backlog drained in %v (%d events at start)", backlog.elapsed.Round(time.Millisecond), backlog.start)
 	t.Logf("stream open: %s; initial peers on Device 0=%d, on Device 1=%d",
@@ -131,9 +150,8 @@ func scaleSessionCount(t *testing.T) int {
 		t.Skip("set MESHTRANSIT_INTEGRATION=1 with disposable TLS dependencies")
 	}
 	sessions, err := strconv.Atoi(raw)
-	if err != nil || sessions < 2 || sessions > scaleMaxSessions-scaleSessionHeadway {
-		t.Fatalf("%s=%q must be an integer in [2, %d]", scaleSessionsEnvironment, raw,
-			scaleMaxSessions-scaleSessionHeadway)
+	if err != nil || sessions < 2 || sessions > scaleMaxSessions {
+		t.Fatalf("%s=%q must be an integer in [2, %d]", scaleSessionsEnvironment, raw, scaleMaxSessions)
 	}
 	return sessions
 }
@@ -170,7 +188,7 @@ func startScaleControlOnly(t *testing.T, binary, healthAddress, controlAddress s
 	t.Helper()
 	environment := integrationProcessEnvironment(healthAddress, controlAddress)
 	environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_MAX_SESSIONS",
-		strconv.Itoa(min(scaleMaxSessions, sessions+scaleSessionHeadway)))
+		strconv.Itoa(min(scaleMaxSessionsPerProcess, sessions+scaleSessionHeadway)))
 	// Every test client connects from one loopback address; per-source
 	// handshake admission would measure the limiter, not Core.
 	environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_RATE",
@@ -193,6 +211,29 @@ func startScaleControlOnly(t *testing.T, binary, healthAddress, controlAddress s
 		t.Fatalf("wait for control readiness: %v; stderr: %s", err, process.stderr.String())
 	}
 	return process
+}
+
+// scaleProcessCount reads how many control processes share the sessions;
+// each must hold its share within the per-process session cap.
+func scaleProcessCount(t *testing.T, sessions int) int {
+	t.Helper()
+	processes, err := strconv.Atoi(scaleEnvironmentOr(scaleProcessesEnvironment, "1"))
+	if err != nil || processes < 1 || processes > scaleMaxProcesses {
+		t.Fatalf("%s must be an integer in [1, %d]", scaleProcessesEnvironment, scaleMaxProcesses)
+	}
+	if share := (sessions + processes - 1) / processes; share+scaleSessionHeadway > scaleMaxSessionsPerProcess {
+		t.Fatalf("%d sessions on %d processes exceed %d per process; add processes", sessions, processes,
+			scaleMaxSessionsPerProcess-scaleSessionHeadway)
+	}
+	return processes
+}
+
+func scaleParallelism() int {
+	parallelism, err := strconv.Atoi(scaleEnvironmentOr(scaleParallelismEnvironment, "32"))
+	if err != nil || parallelism < 1 || parallelism > 1024 {
+		return 32
+	}
+	return parallelism
 }
 
 func scaleEnvironmentOr(name, fallback string) string {
@@ -390,7 +431,7 @@ WHERE workspace_id = 101 AND network_id = 201 AND network_revision = $2`, commit
 	return committed
 }
 
-func newScaleClients(t *testing.T, processConfig config.Config, controlAddress string, count int) []*mtcptest.Client {
+func newScaleClients(t *testing.T, processConfig config.Config, controlAddresses []string, count int) []*mtcptest.Client {
 	t.Helper()
 	caPEM, err := processConfig.Storage.PostgreSQL.CAFile.Read()
 	if err != nil {
@@ -400,7 +441,7 @@ func newScaleClients(t *testing.T, processConfig config.Config, controlAddress s
 	clients := make([]*mtcptest.Client, count)
 	for index := range clients {
 		clients[index], err = mtcptest.NewClient(mtcptest.Options{
-			ControlAddress: controlAddress, TLSServerName: processControlTLSServerName,
+			ControlAddress: controlAddresses[index%len(controlAddresses)], TLSServerName: processControlTLSServerName,
 			RootCAPEM: caPEM, Hostname: fmt.Sprintf("scale-%04d.example", index),
 		})
 		if err != nil {
@@ -476,7 +517,7 @@ func runScaleBounded(count int, work func(index int) (scaleRetries, error)) ([]t
 		firstErr error
 		group    sync.WaitGroup
 	)
-	slots := make(chan struct{}, scaleParallelism)
+	slots := make(chan struct{}, scaleParallelism())
 	for index := range count {
 		slots <- struct{}{}
 		group.Go(func() {
@@ -810,4 +851,30 @@ func withoutEnvironmentValue(environment []string, name string) []string {
 		}
 	}
 	return kept
+}
+
+// scaleProcessSummary reads one control process's sessions, CPU, memory and
+// goroutines.
+func scaleProcessSummary(ctx context.Context, t *testing.T, healthAddress string) string {
+	t.Helper()
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	client := integrationHTTPClient()
+	defer client.CloseIdleConnections()
+	status, body, err := integrationGET(readCtx, client, healthAddress, "/metrics")
+	if err != nil || status != http.StatusOK {
+		return fmt.Sprintf("metrics unavailable (%d, %v)", status, err)
+	}
+	values := map[string]string{}
+	for line := range strings.SplitSeq(body, "\n") {
+		for _, name := range []string{"meshtransit_mtcp_sessions_active", "process_cpu_seconds_total",
+			"process_resident_memory_bytes", "go_goroutines", "meshtransit_mtcp_sessions_shed_total"} {
+			if value, found := strings.CutPrefix(line, name+" "); found {
+				values[name] = value
+			}
+		}
+	}
+	rss, _ := strconv.ParseFloat(values["process_resident_memory_bytes"], 64)
+	return fmt.Sprintf("sessions=%s shed=%s cpu=%ss rss=%.0fMB goroutines=%s", values["meshtransit_mtcp_sessions_active"],
+		values["meshtransit_mtcp_sessions_shed_total"], values["process_cpu_seconds_total"], rss/1e6, values["go_goroutines"])
 }

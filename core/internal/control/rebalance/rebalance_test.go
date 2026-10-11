@@ -186,3 +186,53 @@ func TestNewRejectsUnsafeOptions(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 }
+
+func TestStableTotalIgnoresRampsAndReconnectWaves(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		previous, current int
+		want              bool
+	}{
+		"first step":     {0, 1000, false},
+		"steady":         {1000, 1010, true},
+		"small cluster":  {10, 40, true}, // within 32 sessions
+		"ramp":           {1000, 1200, false},
+		"reconnect wave": {2000, 1500, false},
+		"just within 5%": {10000, 10500, true},
+		"just beyond 5%": {10000, 10600, false},
+	} {
+		if got := stableTotal(test.previous, test.current); got != test.want {
+			t.Errorf("%s: stableTotal(%d, %d) = %t", name, test.previous, test.current, got)
+		}
+	}
+}
+
+func TestBalancerWaitsWhileTheTotalRamps(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		registry := &registryFixture{others: []ReplicaLoad{{ReplicaID: "b"}}}
+		pool := &poolFixture{sessions: 600}
+		balancer, err := New(registry, pool, testOptions())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = balancer.Shutdown(context.Background()) }()
+		_ = balancer.Start(t.Context())
+		// Both replicas ramp up together, but the other one's published load
+		// lags a step behind, so this replica looks over its share. The
+		// total grows faster than 5% per interval: nothing is shed.
+		for range 12 {
+			pool.mu.Lock()
+			pool.sessions += 300
+			own := pool.sessions
+			pool.mu.Unlock()
+			registry.mu.Lock()
+			registry.others[0].Sessions = own - 600
+			registry.mu.Unlock()
+			time.Sleep(5 * time.Second)
+			synctest.Wait()
+		}
+		if len(pool.sheds) != 0 {
+			t.Fatalf("shed %v during a ramp", pool.sheds)
+		}
+	})
+}
