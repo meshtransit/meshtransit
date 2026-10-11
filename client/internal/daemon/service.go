@@ -49,6 +49,9 @@ var (
 	// ErrServiceRunning indicates that this service already owns an active supervisor.
 	ErrServiceRunning  = errors.New("daemon: service supervisor is already running")
 	errRuntimeRecovery = errors.New("daemon: runtime recovery required")
+	// errDataPlaneStopped ends a session whose data plane device stopped on
+	// its own; the session then rebuilds it like any runtime failure.
+	errDataPlaneStopped = errors.New("daemon: data plane device stopped")
 )
 
 const (
@@ -248,6 +251,12 @@ type relayStatusDataPlane interface {
 // is re-chosen at once.
 type relayFailureDataPlane interface {
 	RelayFailures() <-chan struct{}
+}
+
+// deviceStopDataPlane signals a data plane device that stopped on its own,
+// which no map would otherwise notice until the next one arrives.
+type deviceStopDataPlane interface {
+	DeviceStops() <-chan struct{}
 }
 
 type peerPathStatusDataPlane interface {
@@ -624,8 +633,12 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			dataPlane: s.currentDataPlaneState(),
 			dns:       s.currentDNSState(),
 		})
-		streamCtx, cancel := context.WithCancel(ctx)
+		streamCtx, cancelStream := context.WithCancelCause(ctx)
+		cancel := context.CancelFunc(func() { cancelStream(nil) })
 		streamDone := make(chan error, 1)
+		if stopping, ok := s.dataPlane.(deviceStopDataPlane); ok {
+			watchDataPlaneStops(streamCtx, stopping.DeviceStops(), cancelStream)
+		}
 		var probeRuntime *peerprobe.Runtime
 		var probeDataPlane peerProbeDataPlane
 		var pathController *pathEndpointController
@@ -943,6 +956,9 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 
 			continue
 		case streamErr := <-streamDone:
+			if cause := context.Cause(streamCtx); errors.Is(cause, errDataPlaneStopped) {
+				streamErr = fmt.Errorf("%w: %w", errRuntimeRecovery, cause)
+			}
 			s.logControlSessionFailure("map stream stopped", streamErr)
 			cancel()
 			if refreshDone != nil {
@@ -1083,6 +1099,26 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			}
 		}
 	}
+}
+
+// watchDataPlaneStops ends the session with errDataPlaneStopped when the
+// data plane device stops on its own. A signal left from before the session
+// is dropped: the session's first map rebuilds a stopped device anyway.
+func watchDataPlaneStops(ctx context.Context, stops <-chan struct{}, cancel context.CancelCauseFunc) {
+	if stops == nil {
+		return
+	}
+	select {
+	case <-stops:
+	default:
+	}
+	go func() {
+		select {
+		case <-stops:
+			cancel(errDataPlaneStopped)
+		case <-ctx.Done():
+		}
+	}()
 }
 
 // recoverRuntime records a local runtime failure and waits out its backoff

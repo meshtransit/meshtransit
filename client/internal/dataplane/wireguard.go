@@ -243,9 +243,13 @@ type WireGuardEngine struct {
 	relayFallbacks          uint64
 	lastPromotion           time.Duration
 	maximumPromotion        time.Duration
-	// pathLogger, when set, records each peer's path changes.
-	pathLogger  *slog.Logger
+	// logger, when set, records each peer's path changes and device stops.
+	logger      *slog.Logger
 	credentials *relayCredentials
+	// deviceStops signals a device that stopped on its own; deviceWatchStop
+	// ends the current device's watcher before an intended Close.
+	deviceStops     chan struct{}
+	deviceWatchStop chan struct{}
 }
 
 // NewWireGuard constructs the Linux encrypted packet engine.
@@ -290,6 +294,7 @@ func newWireGuardEngine(
 	}
 	return &WireGuardEngine{
 		relayFailures: make(chan struct{}, 1),
+		deviceStops:   make(chan struct{}, 1),
 		opener:        opener,
 		factory:       factory,
 		listenPort:    listenPort,
@@ -305,6 +310,18 @@ func newWireGuardEngine(
 // Interchange relays with the engine's credentials.
 type interchangeFactory interface {
 	setRelayCredentials(*relayCredentials)
+}
+
+// loggingFactory is implemented by device factories that can report the
+// device's own errors.
+type loggingFactory interface {
+	setLogger(*slog.Logger)
+}
+
+// stoppingDevice reports when the device has stopped, including when it
+// stopped on its own (WireGuard closes itself when the TUN cannot be read).
+type stoppingDevice interface {
+	Done() <-chan struct{}
 }
 
 // Apply atomically replaces the peer configuration derived from one validated
@@ -370,6 +387,13 @@ func (e *WireGuardEngine) applySnapshot(
 	}
 	defer plan.clearSecrets()
 
+	if e.device != nil && deviceStopped(e.device) {
+		// The device closed itself; a compatible map must not keep it.
+		if e.logger != nil {
+			e.logger.Warn("wireguard device had stopped; rebuilding it")
+		}
+		_ = e.Close()
+	}
 	routesChanged := false
 	if e.device != nil {
 		if !slices.Equal(e.addresses, plan.addresses) || e.relayTopology != plan.relayTopology {
@@ -500,9 +524,63 @@ func (e *WireGuardEngine) applySnapshot(
 		return StateFailed, fmt.Errorf("dataplane: starting wireguard device: %w", err)
 	}
 	e.device = device
+	e.watchDevice(device)
 	e.adoptPlan(snapshot.Revision, plan)
 
 	return plan.state(), nil
+}
+
+func deviceStopped(device wireGuardDevice) bool {
+	stopping, ok := device.(stoppingDevice)
+	if !ok {
+		return false
+	}
+	select {
+	case <-stopping.Done():
+		return true
+	default:
+		return false
+	}
+}
+
+// watchDevice signals DeviceStops when device stops without Close.
+func (e *WireGuardEngine) watchDevice(device wireGuardDevice) {
+	stopping, ok := device.(stoppingDevice)
+	if !ok {
+		return
+	}
+	stop := make(chan struct{})
+	e.deviceWatchStop = stop
+	logger := e.logger
+	go func() {
+		select {
+		case <-stop:
+			return
+		case <-stopping.Done():
+		}
+		select {
+		case <-stop: // Close closes stop before the device
+			return
+		default:
+		}
+		if logger != nil {
+			logger.Warn("wireguard device stopped on its own")
+		}
+		select {
+		case e.deviceStops <- struct{}{}:
+		default: // a signal is already pending
+		}
+	}()
+}
+
+// DeviceStops signals when the device stopped on its own, so the daemon can
+// rebuild the data plane at once instead of at the next map.
+func (e *WireGuardEngine) DeviceStops() <-chan struct{} {
+	if e == nil {
+		return nil
+	}
+
+	return e.deviceStops
 }
 
 func (e *WireGuardEngine) replaceRelayAuthority(plan wireGuardPlan) error {
@@ -1042,11 +1120,16 @@ func (e *WireGuardEngine) adoptPlan(revision uint64, plan wireGuardPlan) {
 	}
 }
 
-// SetPathLogger records each peer's path changes (direct, relay) with the
-// peer's numeric ID and a short digest of the endpoint, never the address.
-func (e *WireGuardEngine) SetPathLogger(logger *slog.Logger) {
-	if e != nil {
-		e.pathLogger = logger
+// SetLogger records each peer's path changes (direct, relay) with the peer's
+// numeric ID and a short digest of the endpoint, never the address, and the
+// WireGuard device's own errors. Call it before the first Apply.
+func (e *WireGuardEngine) SetLogger(logger *slog.Logger) {
+	if e == nil {
+		return
+	}
+	e.logger = logger
+	if aware, ok := e.factory.(loggingFactory); ok && logger != nil {
+		aware.setLogger(logger.With("source", "wireguard"))
 	}
 }
 
@@ -1054,8 +1137,8 @@ func (e *WireGuardEngine) recordPathTransition(peerID uint64, peer *wireGuardPee
 	if e == nil || peer == nil {
 		return
 	}
-	if e.pathLogger != nil && (peer.currentPath != next || peer.currentEndpoint != endpoint) {
-		e.pathLogger.Info("peer path changed", "peer", peerID, "from", peer.currentPath.String(),
+	if e.logger != nil && (peer.currentPath != next || peer.currentEndpoint != endpoint) {
+		e.logger.Info("peer path changed", "peer", peerID, "from", peer.currentPath.String(),
 			"to", next.String(), "endpoint", endpointDigest(endpoint))
 	}
 	if peer.currentPath == next {
@@ -1098,6 +1181,10 @@ func (e *WireGuardEngine) now() time.Time {
 func (e *WireGuardEngine) Close() error {
 	if e == nil || e.device == nil {
 		return nil
+	}
+	if e.deviceWatchStop != nil {
+		close(e.deviceWatchStop)
+		e.deviceWatchStop = nil
 	}
 	e.device.Close()
 	e.device = nil

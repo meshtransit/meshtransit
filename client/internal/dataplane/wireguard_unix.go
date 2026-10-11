@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/netip"
 	"os"
+	"time"
 
 	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/conn"
@@ -23,6 +25,7 @@ import (
 type officialWireGuardFactory struct {
 	generations *socketGenerationSource
 	credentials *relayCredentials
+	logger      *slog.Logger
 }
 
 type officialWireGuardDevice struct {
@@ -35,6 +38,10 @@ type officialWireGuardDevice struct {
 
 func (f *officialWireGuardFactory) setRelayCredentials(credentials *relayCredentials) {
 	f.credentials = credentials
+}
+
+func (f *officialWireGuardFactory) setLogger(logger *slog.Logger) {
+	f.logger = logger
 }
 
 func newWireGuardFactory() (wireGuardFactory, error) {
@@ -67,10 +74,7 @@ func (f *officialWireGuardFactory) New(
 			observer: observer,
 		}
 	}
-	logger := &device.Logger{
-		Verbosef: device.DiscardLogf,
-		Errorf:   device.DiscardLogf,
-	}
+	logger := newDeviceLogger(f.logger, time.Now)
 	var relayPool *relay.Pool
 	if relayConfig != nil {
 		if !usesInterchange(*relayConfig) || f.credentials == nil {
@@ -205,6 +209,9 @@ func (d *officialWireGuardDevice) Configure(configuration io.Reader) error {
 }
 
 func (d *officialWireGuardDevice) Up() error { return d.device.Up() }
+
+// Done is closed once the device has closed, by Close or on its own.
+func (d *officialWireGuardDevice) Done() <-chan struct{} { return d.device.Wait() }
 
 // PeerTraffic reads the device's cumulative per-peer counters.
 func (d *officialWireGuardDevice) PeerTraffic() (map[[32]byte]peerTraffic, error) {
