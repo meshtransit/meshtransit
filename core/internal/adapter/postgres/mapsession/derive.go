@@ -80,3 +80,38 @@ func (store *Store) Derive(
 	store.stats.derived.Add(1)
 	return snapshot, true, nil
 }
+
+// Unchanged implements SnapshotViewChecker: current still describes its
+// Network when it was built from the latest shared view (the same objects,
+// which an identical reread keeps), at that view's revision and policy
+// revision, with the same header and relay directory, and no policy or key
+// deadline is near. Maps with direct projections or cut to a peer limit are
+// always rebuilt.
+func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapshot, minRevision int64) (bool, error) {
+	if ctx == nil || store == nil || store.inventories == nil || !current.IsValid() ||
+		current.HasDirectProjections() || current.IsPeerLimited() || minRevision > current.NetworkRevision() {
+		return false, nil
+	}
+	scope := current.Scope()
+	now := time.Now()
+	cached, found, err := store.inventories.latest(ctx, scope, current.NetworkRevision(), now,
+		func(readCtx context.Context) (cachedInventory, error) {
+			store.stats.reads.Add(1)
+			return store.readInventory(readCtx, scope, scope.WorkspaceID().String(), scope.NetworkID().String())
+		})
+	if err != nil || !found {
+		return false, err
+	}
+	changesAt := cached.policy.ChangesAt()
+	directory := store.relayDirectory(scope.NetworkID())
+	unchanged := cached.serveable && cached.policy.IsValid() && cached.revision == current.NetworkRevision() &&
+		cached.policy.Revision() == current.PacketPolicy().Revision() && current.SharesInventory(cached.inventory) &&
+		cached.networkName == current.NetworkName() && cached.recoveryEpoch == current.RecoveryEpoch() &&
+		(changesAt.IsZero() || now.Add(clockMargin).Before(changesAt)) &&
+		directory.Revision() == current.RelayDirectory().Revision() &&
+		directory.Fingerprint() == current.RelayDirectory().Fingerprint()
+	if unchanged {
+		store.stats.unchanged.Add(1)
+	}
+	return unchanged, nil
+}

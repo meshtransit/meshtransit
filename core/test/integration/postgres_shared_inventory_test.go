@@ -41,7 +41,7 @@ func assertSharedInventoryMatchesDirectRead(
 	if err != nil {
 		t.Fatalf("shared NewMapSessionStore() error = %v", err)
 	}
-	loaded, derivedCount := 0, 0
+	loaded, derivedCount, unchangedCount := 0, 0, 0
 	for index, identity := range identities {
 		want, wantErr := direct.Load(ctx, identity)
 		got, gotErr := shared.Load(ctx, identity)
@@ -79,6 +79,15 @@ func assertSharedInventoryMatchesDirectRead(
 				!reflect.DeepEqual(derived.AuthorizedPeers(), want.AuthorizedPeers()) {
 				t.Fatalf("identity %d: derived snapshot %+v differs from direct %+v", index, derived, want)
 			}
+			// A snapshot derived from the latest view needs no rebuild at
+			// reconcile while the Network stays as it is.
+			unchanged, err := shared.Unchanged(ctx, derived, 0)
+			if err != nil {
+				t.Fatalf("identity %d: Unchanged() error = %v", index, err)
+			}
+			if unchanged {
+				unchangedCount++
+			}
 		} else if !want.HasDirectProjections() {
 			t.Fatalf("identity %d: Derive() declined a Device without direct projections", index)
 		}
@@ -97,6 +106,10 @@ func assertSharedInventoryMatchesDirectRead(
 	}
 	if stats.Derived != uint64(derivedCount) {
 		t.Fatalf("derived counter %d, compared %d", stats.Derived, derivedCount)
+	}
+	if stats.Unchanged != uint64(unchangedCount) || (derivedCount > 0 && unchangedCount == 0) {
+		t.Fatalf("unchanged counter %d, %d of %d derived snapshots unchanged", stats.Unchanged, unchangedCount,
+			derivedCount)
 	}
 	if loaded > 0 && (stats.Shared != uint64(loaded) || stats.Reads == 0) {
 		t.Fatalf("shared inventory never used: %+v", stats)

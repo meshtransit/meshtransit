@@ -82,6 +82,18 @@ func (snapshot Snapshot) PeerLimit() (sent, authorized int) {
 	return len(snapshot.authorized), len(snapshot.authorized)
 }
 
+// SharesInventory reports whether the snapshot's candidates are exactly
+// inventory (the same shared object, not merely equal contents).
+func (snapshot Snapshot) SharesInventory(inventory NetworkInventory) bool {
+	return snapshot.candidates.shared && snapshot.candidates.sharedInventory().Same(inventory)
+}
+
+// IsPeerLimited reports whether a peer limit cut the snapshot's peers; such
+// a map is rechosen at every full refresh (presence ranks its peers).
+func (snapshot Snapshot) IsPeerLimited() bool {
+	return snapshot.authorizedTotal > len(snapshot.authorized)
+}
+
 // sameAuthorizedPeers reports whether two maps carry the same peers: O(1)
 // for copies of one snapshot (a connectivity-only move), a full comparison
 // otherwise.

@@ -72,3 +72,43 @@ func (recorder *cancelAwareRecorder) RecordDelivery(ctx context.Context, deliver
 	recorder.canceled = ctx.Err() != nil
 	return recorder.recordingDeliveryRecorder.RecordDelivery(ctx, delivery)
 }
+
+// viewCheckingStore answers Unchanged and counts Derive and Load calls.
+type viewCheckingStore struct {
+	recordingSnapshotStore
+	unchanged bool
+	derives   int
+	checks    int
+}
+
+func (store *viewCheckingStore) Unchanged(context.Context, Snapshot, int64) (bool, error) {
+	store.checks++
+	return store.unchanged, nil
+}
+
+func (store *viewCheckingStore) Derive(_ context.Context, current Snapshot, _ int64) (Snapshot, bool, error) {
+	store.derives++
+	return current, true, nil
+}
+
+// A reconcile whose Network view did not change keeps the snapshot and
+// reads neither the Device nor the view.
+func TestServiceRefreshKeepsASnapshotWhoseViewDidNotChange(t *testing.T) {
+	t.Parallel()
+	snapshot := snapshotFixture(t)
+	store := &viewCheckingStore{recordingSnapshotStore: recordingSnapshotStore{snapshot: snapshot}, unchanged: true}
+	service := newServiceFixture(t, store, &recordingEndpointObserver{})
+	machine, request := authenticatedRequestFixture(t, snapshot)
+	current, err := service.Open(t.Context(), machine, request)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	refreshed, err := service.Refresh(t.Context(), machine, request, current, 0)
+	if err != nil || !refreshed.IsValid() || store.checks != 1 || store.derives != 0 || store.calls != 1 {
+		t.Fatalf("Refresh() = %v; checks %d, derives %d, loads %d", err, store.checks, store.derives, store.calls)
+	}
+	store.unchanged = false
+	if _, err := service.Refresh(t.Context(), machine, request, current, 0); err != nil || store.derives != 1 {
+		t.Fatalf("a changed view did not derive: %v, %d derives", err, store.derives)
+	}
+}

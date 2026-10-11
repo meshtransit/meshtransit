@@ -77,3 +77,34 @@ func TestInventoryCacheNeverServesAnotherRevision(t *testing.T) {
 		t.Fatalf("the cached revision 9 was not served: found=%t err=%v", found, err)
 	}
 }
+
+func TestKeepIdenticalReusesAnUnchangedReread(t *testing.T) {
+	t.Parallel()
+	scope, _ := scopeFromText(testWorkspaceID, testNetworkID)
+	policyOf := func() appmapsession.NetworkPolicy {
+		policy, err := appmapsession.NewNetworkPolicy(appmapsession.NetworkPolicyParams{Scope: scope, Revision: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return policy
+	}
+	previous := cachedInventory{revision: 7, readAt: inventoryReadAt, inventory: testInventory(t), policy: policyOf(),
+		serveable: true, recoveryEpoch: 2}
+	reread := previous
+	reread.readAt = inventoryReadAt.Add(30 * time.Second)
+	reread.inventory, reread.policy = testInventory(t), policyOf()
+	kept := keepIdentical(previous, reread)
+	if !kept.inventory.Same(previous.inventory) || !kept.readAt.Equal(reread.readAt) {
+		t.Fatal("an identical reread did not keep the previous objects with its new read time")
+	}
+	moved := reread
+	moved.revision = 8
+	if keepIdentical(previous, moved).inventory.Same(previous.inventory) {
+		t.Fatal("a new revision kept the previous inventory")
+	}
+	suspended := reread
+	suspended.serveable = false
+	if keepIdentical(previous, suspended).inventory.Same(previous.inventory) {
+		t.Fatal("a Network that stopped serving kept the previous view")
+	}
+}

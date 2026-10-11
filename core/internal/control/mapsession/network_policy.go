@@ -2,6 +2,7 @@ package mapsession
 
 import (
 	"errors"
+	"slices"
 	"time"
 
 	"meshtransit.net/core/internal/domain/network"
@@ -96,6 +97,9 @@ type networkPolicy struct {
 	devices       map[int64]PolicyDevice
 	byNode        map[node.ID]int64
 	changesAt     time.Time // earliest Device expiry or membership deadline
+	// memberList and deviceList keep the evidence as read, for Equal.
+	memberList []SelectorMember
+	deviceList []PolicyDevice
 }
 
 // NewNetworkPolicy validates and indexes one Network's policy.
@@ -105,11 +109,13 @@ func NewNetworkPolicy(params NetworkPolicyParams) (NetworkPolicy, error) {
 	}
 	inner := &networkPolicy{
 		scope: params.Scope, revision: params.Revision, releaseActive: params.ReleaseActive,
-		rules:    cloneNetworkPolicyRules(params.Rules),
-		members:  make(map[selectorKey][]selectorEntry),
-		memberOf: make(map[int64]map[selectorKey]time.Time),
-		devices:  make(map[int64]PolicyDevice, len(params.Devices)),
-		byNode:   make(map[node.ID]int64, len(params.Devices)),
+		rules:      cloneNetworkPolicyRules(params.Rules),
+		members:    make(map[selectorKey][]selectorEntry),
+		memberOf:   make(map[int64]map[selectorKey]time.Time),
+		devices:    make(map[int64]PolicyDevice, len(params.Devices)),
+		byNode:     make(map[node.ID]int64, len(params.Devices)),
+		memberList: slices.Clone(params.Members),
+		deviceList: slices.Clone(params.Devices),
 	}
 	if !params.ReleaseActive && len(params.Rules) != 0 {
 		return NetworkPolicy{}, ErrInvalidNetworkPolicy
@@ -162,6 +168,31 @@ func (inner *networkPolicy) noteChange(at time.Time) {
 
 // IsValid reports whether the policy was built by NewNetworkPolicy.
 func (networkPolicy NetworkPolicy) IsValid() bool { return networkPolicy.inner != nil }
+
+// Equal reports whether two policies hold the same evidence, read in the
+// same order (a reread of an unchanged Network).
+func (networkPolicy NetworkPolicy) Equal(other NetworkPolicy) bool {
+	left, right := networkPolicy.inner, other.inner
+	if left == nil || right == nil {
+		return left == right
+	}
+	if left == right {
+		return true
+	}
+	return left.scope == right.scope && left.revision == right.revision && left.releaseActive == right.releaseActive &&
+		slices.EqualFunc(left.rules, right.rules, func(first, second NetworkPolicyRule) bool {
+			return first.ID == second.ID && first.SourceKind == second.SourceKind && first.SourceRef == second.SourceRef &&
+				first.DestinationKind == second.DestinationKind && first.DestinationRef == second.DestinationRef &&
+				first.Protocol == second.Protocol && slices.Equal(first.Ports, second.Ports)
+		}) &&
+		slices.EqualFunc(left.memberList, right.memberList, func(first, second SelectorMember) bool {
+			return first.Kind == second.Kind && first.Selector == second.Selector && first.Device == second.Device &&
+				first.ValidUntil.Equal(second.ValidUntil)
+		}) &&
+		slices.EqualFunc(left.deviceList, right.deviceList, func(first, second PolicyDevice) bool {
+			return first.Device == second.Device && first.NodeID == second.NodeID && first.ExpiresAt.Equal(second.ExpiresAt)
+		})
+}
 
 // Revision returns the policy revision.
 func (networkPolicy NetworkPolicy) Revision() int64 {

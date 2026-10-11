@@ -105,6 +105,7 @@ func (cache *inventoryCache) get(
 
 		cache.mu.Lock()
 		if err == nil && loaded.revision >= slot.current.revision {
+			loaded = keepIdentical(slot.current, loaded)
 			slot.current = loaded
 			slot.lastUsed = time.Now()
 		}
@@ -144,6 +145,20 @@ func (cache *inventoryCache) slotLocked(scope network.Scope) *inventorySlot {
 	slot := &inventorySlot{lastUsed: time.Now()}
 	cache.entries[scope] = slot
 	return slot
+}
+
+// keepIdentical returns loaded, but with the inventory and policy objects
+// of previous when the reread found exactly the same Network (same revision
+// and evidence). Streams holding a snapshot built from previous then see
+// their view is still the latest by identity, in O(1).
+func keepIdentical(previous, loaded cachedInventory) cachedInventory {
+	if previous.revision != loaded.revision || previous.serveable != loaded.serveable ||
+		previous.networkName != loaded.networkName || previous.recoveryEpoch != loaded.recoveryEpoch ||
+		!previous.inventory.Equal(loaded.inventory) || !previous.policy.Equal(loaded.policy) {
+		return loaded
+	}
+	loaded.inventory, loaded.policy = previous.inventory, previous.policy
+	return loaded
 }
 
 // clockMargin keeps a derived map clear of a deadline across the clock skew
@@ -195,6 +210,7 @@ func (cache *inventoryCache) latest(
 
 		cache.mu.Lock()
 		if err == nil && loaded.revision >= slot.current.revision {
+			loaded = keepIdentical(slot.current, loaded)
 			slot.current = loaded
 			slot.lastUsed = time.Now()
 		}

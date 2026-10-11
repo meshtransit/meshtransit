@@ -77,3 +77,33 @@ func TestDeriveDeclinesWhatTheViewCannotAnswer(t *testing.T) {
 		t.Fatalf("Derive() without a shared view = %t, %v", found, err)
 	}
 }
+
+func TestUnchangedKeepsASnapshotOfTheLatestView(t *testing.T) {
+	store, transaction, record := liveStoreFixture(t)
+	loaded, err := store.Load(t.Context(), validIdentity(t))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	queries := len(transaction.queries)
+	unchanged, err := store.Unchanged(t.Context(), loaded, record.networkRevision)
+	if err != nil || !unchanged || len(transaction.queries) != queries {
+		t.Fatalf("Unchanged() = %t, %v after %v", unchanged, err, transaction.queries[queries:])
+	}
+	if unchanged, _ := store.Unchanged(t.Context(), loaded, record.networkRevision+1); unchanged {
+		t.Fatal("a newer announced revision counted as unchanged")
+	}
+	derived, found, err := store.Derive(t.Context(), loaded, record.networkRevision)
+	if err != nil || !found {
+		t.Fatalf("Derive() = %t, %v", found, err)
+	}
+	if unchanged, _ := store.Unchanged(t.Context(), derived, 0); !unchanged {
+		t.Fatal("a snapshot derived from the latest view counted as changed")
+	}
+	if store.InventoryStats().Unchanged != 2 {
+		t.Fatalf("stats = %+v, want two unchanged checks", store.InventoryStats())
+	}
+	store.inventories = nil // as with SharedInventory off
+	if unchanged, err := store.Unchanged(t.Context(), loaded, 0); unchanged || err != nil {
+		t.Fatalf("Unchanged() without a shared view = %t, %v", unchanged, err)
+	}
+}

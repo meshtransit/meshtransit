@@ -80,17 +80,20 @@ type InventoryStats struct {
 	// Derived snapshots were refreshed from the shared view alone, without
 	// reading the Device.
 	Derived uint64
+	// Unchanged refreshes found the view the snapshot came from still the
+	// latest and kept the snapshot (O(1)).
+	Unchanged uint64
 }
 
 type inventoryStats struct {
-	shared, reads, direct, policyMismatch, derived atomic.Uint64
+	shared, reads, direct, policyMismatch, derived, unchanged atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
 func (store *Store) InventoryStats() InventoryStats {
 	return InventoryStats{Shared: store.stats.shared.Load(), Reads: store.stats.reads.Load(),
 		Direct: store.stats.direct.Load(), PolicyMismatches: store.stats.policyMismatch.Load(),
-		Derived: store.stats.derived.Load()}
+		Derived: store.stats.derived.Load(), Unchanged: store.stats.unchanged.Load()}
 }
 
 // policyMatches checks, for a Device without direct projections, that the

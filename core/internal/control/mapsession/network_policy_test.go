@@ -158,3 +158,28 @@ func TestNetworkPolicyBoundsAndRelease(t *testing.T) {
 		t.Fatal("an Identity Group destination was accepted")
 	}
 }
+
+func TestNetworkPolicyAndInventoryEqualCompareEvidence(t *testing.T) {
+	t.Parallel()
+	scope := snapshotFixture(t).Scope()
+	build := func(revision int64) NetworkPolicy {
+		policy, err := NewNetworkPolicy(NetworkPolicyParams{Scope: scope, Revision: revision})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return policy
+	}
+	if !build(1).Equal(build(1)) || build(1).Equal(build(2)) || build(1).Equal(NetworkPolicy{}) {
+		t.Fatal("NetworkPolicy.Equal() disagrees with the evidence")
+	}
+	params, list := largeNetworkFixture(t, 3, 1)
+	first, err := NewNetworkInventory(params.Scope, list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _ := NewNetworkInventory(params.Scope, list)
+	fewer, _ := NewNetworkInventory(params.Scope, list[:2])
+	if !first.Equal(second) || first.Same(second) || !first.Same(first) || first.Equal(fewer) {
+		t.Fatal("NetworkInventory Equal/Same disagree with the evidence")
+	}
+}

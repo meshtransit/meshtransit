@@ -95,6 +95,21 @@ func (inventory *networkInventory) claim(index int, candidate PeerCandidate) boo
 // IsValid reports whether the inventory was built by NewNetworkInventory.
 func (inventory NetworkInventory) IsValid() bool { return inventory.inner != nil }
 
+// Equal reports whether two inventories list the same Devices with the same
+// facts (a reread of an unchanged Network).
+func (inventory NetworkInventory) Equal(other NetworkInventory) bool {
+	if inventory.inner == nil || other.inner == nil {
+		return inventory.inner == other.inner
+	}
+	return inventory.inner == other.inner || inventory.inner.scope == other.inner.scope &&
+		equalPeerCandidates(inventory.inner.candidates, other.inner.candidates)
+}
+
+// Same reports whether both are the very same inventory object.
+func (inventory NetworkInventory) Same(other NetworkInventory) bool {
+	return inventory.inner != nil && inventory.inner == other.inner
+}
+
 // Scope returns the inventory's exact Network scope.
 func (inventory NetworkInventory) Scope() network.Scope {
 	if inventory.inner == nil {

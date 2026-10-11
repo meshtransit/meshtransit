@@ -135,6 +135,15 @@ merge (2026-10-09) are kept below.
   never settles for an older view. Scale test at 2000 Devices: revision
   fan-out p95 1.6 s to 404 ms, Postgres pool wait down 11x, stream opens
   59/s to 95/s. Metric `meshtransit_map_snapshots_total{source="derived"}`.
+- Cheap reconcile (scale-out S6): a reread of a Network's shared view that
+  finds exactly the same Devices, policy and header keeps the previous
+  objects, and a stream's periodic refresh first asks whether its snapshot
+  still comes from that latest view (same objects, revision, policy
+  revision, header and relay directory, no deadline near). If so it only
+  moves to the latest connectivity, in O(1), instead of rebuilding the map;
+  the Network is still read once per reconcile interval per replica, so
+  changes that do not advance the revision are caught as before. Metric
+  `meshtransit_map_snapshots_total{source="unchanged"}`.
 - Peer limit (scale-out S6): a map carries at most
   `MESHTRANSIT_CONTROL_MAP_PEER_LIMIT` peers (default 10,000). A Device
   authorized for more receives explicit Device shares first, then peers

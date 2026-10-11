@@ -114,6 +114,14 @@ type SnapshotDeriver interface {
 	Derive(ctx context.Context, current Snapshot, minRevision int64) (Snapshot, bool, error)
 }
 
+// SnapshotViewChecker reports whether a running stream's snapshot still
+// describes its Network: the shared view it came from is still the latest
+// (reread and found identical), with the same header, policy and relay
+// directory. A reconcile then costs O(1) instead of a rebuild.
+type SnapshotViewChecker interface {
+	Unchanged(ctx context.Context, current Snapshot, minRevision int64) (bool, error)
+}
+
 // Refresh implements SnapshotRefresher: it derives the stream's next
 // snapshot from shared Network state when the store can, and otherwise
 // re-reads authority like Reopen. A derived snapshot belongs to the same
@@ -135,6 +143,15 @@ func (service *Service) Refresh(
 	}
 	if current.NodeKey() != identity.NodeKey() || current.MachineKey().Fingerprint() != identity.MachineFingerprint() {
 		return Snapshot{}, ErrOpen
+	}
+	if checker, ok := service.store.(SnapshotViewChecker); ok {
+		unchanged, err := checker.Unchanged(ctx, current, minRevision)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("%w: check shared view: %w", ErrOpen, err)
+		}
+		if unchanged {
+			return service.moveConnectivity(ctx, current)
+		}
 	}
 	derived, found, err := deriver.Derive(ctx, current, minRevision)
 	if err != nil {
@@ -252,6 +269,15 @@ func usableRelayPreference(snapshot Snapshot, regionID int) bool {
 		}
 	}
 	return false
+}
+
+// moveConnectivity returns current with the latest connectivity: the next
+// version of its shared table in O(1), or a new read.
+func (service *Service) moveConnectivity(ctx context.Context, current Snapshot) (Snapshot, error) {
+	if shared := current.sharedConnectivity; shared != nil && shared.table != nil {
+		return current.withSharedConnectivity(shared.table.current.Load())
+	}
+	return service.loadConnectivity(ctx, current)
 }
 
 // ReloadConnectivity implements ConnectivityReloader: the same
