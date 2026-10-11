@@ -109,5 +109,15 @@ for label in "${labels[@]}"; do
 	launchctl bootstrap system "$daemons/$label.plist"
 done
 
+# meshd starts once meshnetd has made its socket directory.
+for _ in $(seq 1 40); do
+	[ -S /var/run/meshd/meshd.sock ] && break
+	sleep 0.5
+done
+if [ ! -S /var/run/meshd/meshd.sock ]; then
+	printf 'install: meshd did not start; see /var/log/meshtransit/meshd.log and\n' >&2
+	printf '         launchctl print system/net.meshtransit.meshd\n' >&2
+	exit 1
+fi
 printf 'MeshTransit is installed and running.\n'
 printf 'Connect this Mac with: meshctl up   (log in again first, or use sudo)\n'
