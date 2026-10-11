@@ -147,7 +147,8 @@ func (dispatcher *Dispatcher) run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-timer.C:
-			if err := dispatcher.dispatchOnce(ctx); err != nil && ctx.Err() == nil {
+			claimed, err := dispatcher.dispatchOnce(ctx)
+			if err != nil && ctx.Err() == nil {
 				dispatcher.logger.WarnContext(
 					ctx,
 					"network revision dispatch cycle failed",
@@ -157,6 +158,12 @@ func (dispatcher *Dispatcher) run(ctx context.Context) error {
 			}
 			if ctx.Err() != nil {
 				return nil
+			}
+			// A full batch means more events may be ready: drain them now
+			// instead of waiting a poll interval per batch.
+			if claimed == dispatcher.options.BatchSize && err == nil {
+				timer.Reset(0)
+				continue
 			}
 			timer.Reset(dispatcher.options.PollInterval)
 		}

@@ -485,6 +485,8 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_CONTROL_NOISE_PRIVATE_KEY_FILE` | none | Absolute path to the canonical, single-line MTCP control private key (`privkey:<hex>`). |
 | `MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER` | none | Required RFC 3339 expiry advertised for the control key in the MTCP key document; in the future and at most five years ahead. The control role logs a warning in the last 30 days and refuses to start after it: extend the date (same key) or rotate the key before then. |
 | `MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS` | none | Comma-separated reverse-proxy prefixes whose `X-Forwarded-For` names the client for per-source admission. |
+| `MESHTRANSIT_CONTROL_MAP_SHARED_INVENTORY` | `true` | Read each Network's live Devices once per revision and share them between its Devices' maps (`false` reads every other Device for each map). |
+| `MESHTRANSIT_CONTROL_MAP_INVENTORY_STATEMENT_TIMEOUT` | `30s` | Statement bound of one Network inventory read, from 1ms through 1 minute. |
 | `MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_RATE` | `10` | New MTCP handshakes per second per source (IPv4 address or IPv6 /64), from 1 through 10000, before any cryptography. Raise it where many Devices share one NAT. |
 | `MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_BURST` | `50` | Handshake burst per source, from the rate through 100000. |
 | `MESHTRANSIT_CONTROL_MTCP_ENABLED` | `true` | Accepted only as `true`, for existing deployments; MTCP is the only control protocol. |
@@ -552,11 +554,11 @@ for load/publish/finish work without relying on an unbounded goroutine fan-out.
 
 | Environment variable | Default | Contract |
 | --- | --- | --- |
-| `MESHTRANSIT_NETWORK_REVISION_BATCH_SIZE` | `8` | Ordered claim size from 1 through 256. |
-| `MESHTRANSIT_NETWORK_REVISION_LEASE` | `30s` | Fenced claim lifetime from 1 second through 5 minutes and above the batch operation budget. |
-| `MESHTRANSIT_NETWORK_REVISION_POLL_INTERVAL` | `1s` | Idle polling interval from 100ms through 1 minute. |
+| `MESHTRANSIT_NETWORK_REVISION_BATCH_SIZE` | `32` | Ordered claim size from 1 through 256. A full batch is followed at once by the next; revisions of one Network in a batch share one wakeup carrying the newest. |
+| `MESHTRANSIT_NETWORK_REVISION_LEASE` | `1m` | Fenced claim lifetime from 1 second through 5 minutes and above the batch operation budget. |
+| `MESHTRANSIT_NETWORK_REVISION_POLL_INTERVAL` | `200ms` | Idle polling interval from 100ms through 1 minute; it adds to revision propagation latency. |
 | `MESHTRANSIT_NETWORK_REVISION_RETRY_DELAY` | `5s` | Delay after a failed delivery from 100ms through 24 hours. |
-| `MESHTRANSIT_NETWORK_REVISION_OPERATION_TIMEOUT` | `1s` | Per PostgreSQL or Redis call deadline from 100ms through 30 seconds. |
+| `MESHTRANSIT_NETWORK_REVISION_OPERATION_TIMEOUT` | `500ms` | Per PostgreSQL or Redis call deadline from 100ms through 30 seconds. |
 
 Private Endpoint reconciliation is independently opt-in for `worker` and `all`
 roles. When disabled, all associated settings must be absent. When enabled, the

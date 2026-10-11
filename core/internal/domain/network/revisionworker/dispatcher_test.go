@@ -103,7 +103,7 @@ func TestDispatchOncePublishesThenMarksDelivered(t *testing.T) {
 	}}
 	dispatcher := mustDispatcher(t, outbox, publisher, io.Discard)
 
-	if err := dispatcher.dispatchOnce(t.Context()); err != nil {
+	if _, err := dispatcher.dispatchOnce(t.Context()); err != nil {
 		t.Fatalf("dispatchOnce() error = %v", err)
 	}
 	if got, want := strings.Join(calls, ","), "claim,load,publish,mark"; got != want {
@@ -132,7 +132,7 @@ func TestDispatchOnceContinuesWhenBacklogObservationFails(t *testing.T) {
 	}
 	dispatcher := mustDispatcher(t, outbox, &fakePublisher{}, io.Discard)
 
-	err := dispatcher.dispatchOnce(t.Context())
+	_, err := dispatcher.dispatchOnce(t.Context())
 	if !errors.Is(err, observationErr) {
 		t.Fatalf("dispatchOnce() error = %v, want backlog observation error", err)
 	}
@@ -167,7 +167,7 @@ func TestDispatchOnceReturnsRetryPersistenceFailure(t *testing.T) {
 	}}
 	dispatcher := mustDispatcher(t, outbox, publisher, io.Discard)
 
-	err := dispatcher.dispatchOnce(t.Context())
+	_, err := dispatcher.dispatchOnce(t.Context())
 	if !errors.Is(err, deliveryErr) || !errors.Is(err, retryErr) {
 		t.Fatalf("dispatchOnce() error = %v, want delivery and retry persistence failures", err)
 	}
@@ -214,7 +214,7 @@ func TestDispatchOnceDefersRetryWithoutExposingFailure(t *testing.T) {
 			var logs bytes.Buffer
 			dispatcher := mustDispatcher(t, outbox, publisher, &logs)
 
-			if err := dispatcher.dispatchOnce(t.Context()); err != nil {
+			if _, err := dispatcher.dispatchOnce(t.Context()); err != nil {
 				t.Fatalf("dispatchOnce() error = %v", err)
 			}
 			if gotClass != test.wantErrorClass || gotDelay != testOptions().RetryDelay {
@@ -247,7 +247,7 @@ func TestDispatchOnceLeavesPublishedClaimForLeaseRecoveryWhenCompletionFails(t *
 	}
 	dispatcher := mustDispatcher(t, outbox, &fakePublisher{}, io.Discard)
 
-	err := dispatcher.dispatchOnce(t.Context())
+	_, err := dispatcher.dispatchOnce(t.Context())
 	if !errors.Is(err, markErr) {
 		t.Fatalf("dispatchOnce() error = %v, want mark error", err)
 	}
@@ -264,7 +264,7 @@ func TestDispatchOnceRejectsOversizedAdapterBatch(t *testing.T) {
 	dispatcher.options.BatchSize = 1
 	dispatcher.options.Lease = 4 * time.Second
 
-	err := dispatcher.dispatchOnce(t.Context())
+	_, err := dispatcher.dispatchOnce(t.Context())
 	if !errors.Is(err, ErrInvalidClaimBatch) {
 		t.Fatalf("dispatchOnce() error = %v, want ErrInvalidClaimBatch", err)
 	}
@@ -281,7 +281,7 @@ func TestDispatchOnceBoundsOutboxClaim(t *testing.T) {
 		dispatcher := mustDispatcher(t, outbox, &fakePublisher{}, io.Discard)
 
 		started := time.Now()
-		err := dispatcher.dispatchOnce(t.Context())
+		_, err := dispatcher.dispatchOnce(t.Context())
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("dispatchOnce() error = %v, want context deadline exceeded", err)
 		}

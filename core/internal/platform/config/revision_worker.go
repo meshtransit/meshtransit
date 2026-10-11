@@ -12,11 +12,14 @@ const (
 	envRevisionWorkerRetryDelay       = "MESHTRANSIT_NETWORK_REVISION_RETRY_DELAY"
 	envRevisionWorkerOperationTimeout = "MESHTRANSIT_NETWORK_REVISION_OPERATION_TIMEOUT"
 
-	defaultRevisionWorkerBatchSize        = 8
-	defaultRevisionWorkerLease            = 30 * time.Second
-	defaultRevisionWorkerPollInterval     = time.Second
+	// A revision reaches streams only after the worker publishes it, so the
+	// poll interval adds directly to propagation latency; full batches are
+	// drained without waiting (scale-out S4).
+	defaultRevisionWorkerBatchSize        = 32
+	defaultRevisionWorkerLease            = time.Minute
+	defaultRevisionWorkerPollInterval     = 200 * time.Millisecond
 	defaultRevisionWorkerRetryDelay       = 5 * time.Second
-	defaultRevisionWorkerOperationTimeout = time.Second
+	defaultRevisionWorkerOperationTimeout = 500 * time.Millisecond
 
 	minRevisionWorkerBatchSize        = 1
 	maxRevisionWorkerBatchSize        = 256

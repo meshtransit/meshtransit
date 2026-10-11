@@ -8,11 +8,16 @@ import (
 	"meshtransit.net/core/internal/domain/network"
 )
 
-func (dispatcher *Dispatcher) dispatchOnce(ctx context.Context) error {
+// dispatchOnce claims one bounded batch and delivers it, reporting how many
+// events it claimed (a full batch means more may be waiting). Streams read
+// up to the newest revision on any wakeup, so revisions of one Network in
+// the batch share a single wakeup carrying the newest; every claim is still
+// loaded, published for and marked individually.
+func (dispatcher *Dispatcher) dispatchOnce(ctx context.Context) (int, error) {
 	var dispatchErrors []error
 	if err := dispatcher.observeBacklog(ctx); err != nil {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return 0, ctx.Err()
 		}
 		dispatchErrors = append(dispatchErrors, fmt.Errorf("observe backlog: %w", err))
 	}
@@ -20,60 +25,106 @@ func (dispatcher *Dispatcher) dispatchOnce(ctx context.Context) error {
 	claims, err := dispatcher.claim(ctx)
 	dispatcher.telemetry.recordClaim(len(claims), err)
 	if err != nil {
-		return errors.Join(
+		return 0, errors.Join(
 			append(dispatchErrors, fmt.Errorf("claim revisions: %w", err))...,
 		)
 	}
 	if len(claims) > dispatcher.options.BatchSize {
 		dispatcher.telemetry.recordDelivery(deliveryFailed)
-		return errors.Join(append(dispatchErrors, ErrInvalidClaimBatch)...)
+		return 0, errors.Join(append(dispatchErrors, ErrInvalidClaimBatch)...)
 	}
 
+	groups, order, loadErrors := dispatcher.loadClaims(ctx, claims)
+	dispatchErrors = append(dispatchErrors, loadErrors...)
+	for _, networkID := range order {
+		if ctx.Err() != nil {
+			return len(claims), errors.Join(append(dispatchErrors, ctx.Err())...)
+		}
+		dispatchErrors = append(dispatchErrors, dispatcher.deliverGroup(ctx, groups[networkID])...)
+	}
+	return len(claims), errors.Join(dispatchErrors...)
+}
+
+// claimGroup is the loaded claims of one Network and its newest revision.
+type claimGroup struct {
+	newest network.RevisionAdvanced
+	claims []network.RevisionClaim
+}
+
+// loadClaims loads every valid claim, deferring those that fail to load,
+// and groups the rest by Network in first-seen order.
+func (dispatcher *Dispatcher) loadClaims(
+	ctx context.Context,
+	claims []network.RevisionClaim,
+) (map[network.ID]*claimGroup, []network.ID, []error) {
+	groups := make(map[network.ID]*claimGroup, len(claims))
+	order := make([]network.ID, 0, len(claims))
+	var loadErrors []error
 	for _, claim := range claims {
 		if ctx.Err() != nil {
-			return errors.Join(append(dispatchErrors, ctx.Err())...)
+			return groups, order, append(loadErrors, ctx.Err())
 		}
 		if !claim.IsValid() {
 			dispatcher.telemetry.recordDelivery(deliveryFailed)
-			dispatchErrors = append(dispatchErrors, ErrInvalidClaimBatch)
+			loadErrors = append(loadErrors, ErrInvalidClaimBatch)
 			continue
 		}
-		outcome, err := dispatcher.dispatchClaim(ctx, claim)
-		dispatcher.telemetry.recordDelivery(outcome)
+		revision, err := dispatcher.load(ctx, claim)
 		if err != nil {
-			dispatchErrors = append(dispatchErrors, err)
+			if ctx.Err() != nil {
+				dispatcher.telemetry.recordDelivery(deliveryFailed)
+				return groups, order, append(loadErrors, ctx.Err())
+			}
+			if deferErr := dispatcher.deferClaim(ctx, claim, errorClassLoadRevision, err); deferErr != nil {
+				dispatcher.telemetry.recordDelivery(deliveryFailed)
+				loadErrors = append(loadErrors, deferErr)
+				continue
+			}
+			dispatcher.telemetry.recordDelivery(deliveryDeferred)
+			continue
 		}
+		group, exists := groups[revision.NetworkID()]
+		if !exists {
+			group = &claimGroup{newest: revision}
+			groups[revision.NetworkID()] = group
+			order = append(order, revision.NetworkID())
+		}
+		if revision.Number() > group.newest.Number() {
+			group.newest = revision
+		}
+		group.claims = append(group.claims, claim)
 	}
-	return errors.Join(dispatchErrors...)
+	return groups, order, loadErrors
 }
 
-func (dispatcher *Dispatcher) dispatchClaim(
-	ctx context.Context,
-	claim network.RevisionClaim,
-) (deliveryOutcome, error) {
-	revision, err := dispatcher.load(ctx, claim)
-	if err != nil {
-		if ctx.Err() != nil {
-			return deliveryFailed, ctx.Err()
+// deliverGroup publishes one wakeup for a Network's newest revision, then
+// marks each of its claims delivered; a failed publish defers them all.
+func (dispatcher *Dispatcher) deliverGroup(ctx context.Context, group *claimGroup) []error {
+	var deliveryErrors []error
+	if err := dispatcher.publish(ctx, group.newest); err != nil {
+		for _, claim := range group.claims {
+			if ctx.Err() != nil {
+				dispatcher.telemetry.recordDelivery(deliveryFailed)
+				return append(deliveryErrors, ctx.Err())
+			}
+			if deferErr := dispatcher.deferClaim(ctx, claim, errorClassPublishWakeup, err); deferErr != nil {
+				dispatcher.telemetry.recordDelivery(deliveryFailed)
+				deliveryErrors = append(deliveryErrors, deferErr)
+				continue
+			}
+			dispatcher.telemetry.recordDelivery(deliveryDeferred)
 		}
-		if deferErr := dispatcher.deferClaim(ctx, claim, errorClassLoadRevision, err); deferErr != nil {
-			return deliveryFailed, deferErr
-		}
-		return deliveryDeferred, nil
+		return deliveryErrors
 	}
-	if err := dispatcher.publish(ctx, revision); err != nil {
-		if ctx.Err() != nil {
-			return deliveryFailed, ctx.Err()
+	for _, claim := range group.claims {
+		if err := dispatcher.markDelivered(ctx, claim); err != nil {
+			dispatcher.telemetry.recordDelivery(deliveryFailed)
+			deliveryErrors = append(deliveryErrors, fmt.Errorf("mark revision delivered: %w", err))
+			continue
 		}
-		if deferErr := dispatcher.deferClaim(ctx, claim, errorClassPublishWakeup, err); deferErr != nil {
-			return deliveryFailed, deferErr
-		}
-		return deliveryDeferred, nil
+		dispatcher.telemetry.recordDelivery(deliveryDelivered)
 	}
-	if err := dispatcher.markDelivered(ctx, claim); err != nil {
-		return deliveryFailed, fmt.Errorf("mark revision delivered: %w", err)
-	}
-	return deliveryDelivered, nil
+	return deliveryErrors
 }
 
 func (dispatcher *Dispatcher) observeBacklog(ctx context.Context) error {
