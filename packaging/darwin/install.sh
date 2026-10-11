@@ -98,6 +98,11 @@ install -d -o _meshd -g _meshd -m 0700 "$support/state"
 "$libexec/meshcred" provision
 
 install -d -o root -g wheel -m 0755 /var/log/meshtransit
+# launchd opens a job's log as the job's user, so meshd's file must exist and
+# belong to _meshd; otherwise launchd refuses to start it (EX_CONFIG).
+touch /var/log/meshtransit/meshd.log
+chown _meshd:_meshd /var/log/meshtransit/meshd.log
+chmod 0640 /var/log/meshtransit/meshd.log
 install -o root -g wheel -m 0644 "$source_dir/newsyslog-meshtransit.conf" /etc/newsyslog.d/meshtransit.conf
 for label in "${labels[@]}"; do
 	install -o root -g wheel -m 0644 "$source_dir/launchd/$label.plist" "$daemons/$label.plist"
