@@ -94,16 +94,35 @@ func (watch *streamWatch) forward(cases []reflect.SelectCase, expected []network
 		select {
 		case watch.updates <- wake:
 		default:
+			// Coalesce to a complete reread that still names the highest
+			// revision announced for the stream's own Network: a refresh from
+			// a shared view must not settle for an older one.
+			coalesced := streamWakeup{reconcile: true}
 			select {
-			case <-watch.updates:
+			case pending := <-watch.updates:
+				coalesced.revision = newerRevision(expected[1], pending.revision, wake.revision)
 			default:
+				coalesced.revision = newerRevision(expected[1], wake.revision)
 			}
 			select {
-			case watch.updates <- streamWakeup{reconcile: true}:
+			case watch.updates <- coalesced:
 			default:
 			}
 		}
 	}
+}
+
+// newerRevision returns the highest valid revision of networkID among
+// revisions, or the zero value when none names it.
+func newerRevision(networkID network.ID, revisions ...network.RevisionAdvanced) network.RevisionAdvanced {
+	var newest network.RevisionAdvanced
+	for _, revision := range revisions {
+		if revision.IsValid() && revision.NetworkID() == networkID &&
+			(!newest.IsValid() || revision.Number() > newest.Number()) {
+			newest = revision
+		}
+	}
+	return newest
 }
 
 func (watch *streamWatch) close() {

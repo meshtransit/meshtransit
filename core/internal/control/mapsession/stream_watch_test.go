@@ -120,6 +120,9 @@ func TestStreamWatchCoalescesBurstAndRejectsWrongNetwork(t *testing.T) {
 		synctest.Wait()
 		if wake := <-watch.updates; !wake.reconcile {
 			t.Fatal("bounded burst did not coalesce to a complete authority reread")
+		} else if wake.revision.Number() != 8 || wake.revision.NetworkID() != initial.Scope().NetworkID() {
+			// A refresh from a shared view needs the newest announced revision.
+			t.Fatalf("coalesced wakeup names revision %d, want 8", wake.revision.Number())
 		}
 		wrong, err := network.NewRevisionAdvanced("01890f00-0000-7000-8000-000000000999", 1)
 		if err != nil {

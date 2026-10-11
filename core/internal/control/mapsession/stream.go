@@ -401,7 +401,7 @@ func (service *StreamService) run(
 			refresh := service.refresh
 			if !wake.reconcile && !wake.revision.IsValid() && wake.connectivity.IsValid() {
 				refresh = service.refreshConnectivity
-			} else if !wake.reconcile && wake.revision.IsValid() && wake.revision.NetworkID() == current.Scope().NetworkID() {
+			} else if wake.revision.IsValid() && wake.revision.NetworkID() == current.Scope().NetworkID() {
 				refresh = service.refreshTo(wake.revision.Number())
 			}
 			next, err := refresh(ctx, machine, request, sink, current)
