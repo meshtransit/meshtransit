@@ -28,7 +28,7 @@ func streamCanAdvance(current, next Snapshot) bool {
 		next.NetworkName() == current.NetworkName() &&
 		next.Hostname() == current.Hostname() &&
 		slices.Equal(next.Addresses(), current.Addresses()) &&
-		equalPeerCandidates(next.peerCandidates, current.peerCandidates) &&
+		next.candidates.equal(current.candidates) &&
 		next.packetPolicy.Equal(current.packetPolicy)
 }
 

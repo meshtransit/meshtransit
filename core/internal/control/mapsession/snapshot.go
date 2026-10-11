@@ -28,21 +28,25 @@ var (
 
 // SnapshotParams contains authoritative facts read in one consistent database snapshot.
 type SnapshotParams struct {
-	Scope                   network.Scope
-	NetworkName             network.DisplayName
-	NetworkRevision         int64
-	RecoveryEpoch           int64
-	SessionGeneration       int64
-	NumericNodeID           int64
-	NumericOwnerID          int64
-	NodeID                  node.ID
-	Hostname                node.Hostname
-	MachineKey              node.MachineKey
-	NodeKey                 node.Key
-	Addresses               []netip.Prefix
-	CreatedAt               time.Time
-	KeyExpiry               time.Time
+	Scope             network.Scope
+	NetworkName       network.DisplayName
+	NetworkRevision   int64
+	RecoveryEpoch     int64
+	SessionGeneration int64
+	NumericNodeID     int64
+	NumericOwnerID    int64
+	NodeID            node.ID
+	Hostname          node.Hostname
+	MachineKey        node.MachineKey
+	NodeKey           node.Key
+	Addresses         []netip.Prefix
+	CreatedAt         time.Time
+	KeyExpiry         time.Time
+	// PeerCandidates lists the other Devices of the Network. When it is nil,
+	// Inventory (the whole Network, self included) provides them instead and
+	// is shared, not copied.
 	PeerCandidates          []PeerCandidate
+	Inventory               NetworkInventory
 	DirectDeviceProjections []DirectDeviceProjection
 	SharingDependencies     []network.Scope
 	PacketPolicy            policy.Snapshot
@@ -66,13 +70,17 @@ type Snapshot struct {
 	addresses               []netip.Prefix
 	createdAt               time.Time
 	keyExpiry               time.Time
-	peerCandidates          []PeerCandidate
+	candidates              snapshotCandidates
 	directDeviceProjections []DirectDeviceProjection
 	sharingDependencies     []network.Scope
 	packetPolicy            policy.Snapshot
 	connectivity            []Connectivity
 	relayDirectory          relay.Directory
 	relayGrant              RelayGrant // set by the stream service, never by the store
+	// authorized and valid are computed once by NewSnapshot; the snapshot is
+	// immutable, so readers never repeat the O(candidates) work.
+	authorized []PeerCandidate
+	valid      bool
 }
 
 // NewSnapshot validates and copies one authoritative map snapshot.
@@ -80,13 +88,24 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 	if len(params.PeerCandidates) > MaximumPeerCandidates {
 		return Snapshot{}, errors.Join(ErrInvalidSnapshot, ErrPeerCandidateLimit)
 	}
-	params.PeerCandidates = canonicalPeerCandidates(params.PeerCandidates)
+	candidates, ok := snapshotCandidatesOf(params)
+	if !ok {
+		return Snapshot{}, ErrInvalidSnapshot
+	}
+	if candidates.len() > candidates.limit() {
+		return Snapshot{}, errors.Join(ErrInvalidSnapshot, ErrPeerCandidateLimit)
+	}
+	params.PeerCandidates = nil
 	params.DirectDeviceProjections = slices.Clone(params.DirectDeviceProjections)
 	params.SharingDependencies = slices.Clone(params.SharingDependencies)
 	slices.SortFunc(params.SharingDependencies, compareSharingScopes)
 	slices.SortFunc(params.DirectDeviceProjections, compareDirectDeviceProjections)
 	params.Connectivity = canonicalConnectivity(params.Connectivity)
-	if !validSnapshotParams(params) {
+	if !validSnapshotCore(params) || !validDirectDeviceProjections(params, candidates) {
+		return Snapshot{}, ErrInvalidSnapshot
+	}
+	authorized := authorizedPeers(params, candidates)
+	if !validSnapshotConnectivity(params, candidates, authorized) {
 		return Snapshot{}, ErrInvalidSnapshot
 	}
 	return Snapshot{
@@ -104,13 +123,69 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		addresses:               slices.Clone(params.Addresses),
 		createdAt:               params.CreatedAt,
 		keyExpiry:               params.KeyExpiry,
-		peerCandidates:          params.PeerCandidates,
+		candidates:              candidates,
 		directDeviceProjections: params.DirectDeviceProjections,
 		sharingDependencies:     params.SharingDependencies,
 		packetPolicy:            params.PacketPolicy,
 		connectivity:            params.Connectivity,
 		relayDirectory:          params.RelayDirectory,
+		authorized:              authorized,
+		valid:                   true,
 	}, nil
+}
+
+// snapshotCandidatesOf binds self into the candidate source of params: the
+// given list (a private inventory, which must not list self) or the shared
+// Network inventory.
+func snapshotCandidatesOf(params SnapshotParams) (snapshotCandidates, bool) {
+	self := selfIdentity{
+		scope: params.Scope, nodeID: params.NodeID, numericID: params.NumericNodeID,
+		machineKey: params.MachineKey, nodeKey: params.NodeKey,
+	}
+	if params.PeerCandidates == nil && params.Inventory.IsValid() {
+		return bindCandidates(params.Inventory.inner, self, true)
+	}
+	inventory, err := newNetworkInventory(params.Scope, params.PeerCandidates)
+	if err != nil {
+		return snapshotCandidates{}, false
+	}
+	return bindCandidates(inventory, self, false)
+}
+
+// authorizedPeers lists the candidates an explicit rule pairs with self,
+// found through the policy's own peer list (O(rules)) instead of testing
+// every candidate, plus the peers of direct projections.
+func authorizedPeers(params SnapshotParams, candidates snapshotCandidates) []PeerCandidate {
+	policyPeers := params.PacketPolicy.PeersOf(params.NodeID)
+	peers := make([]PeerCandidate, 0, len(policyPeers)+len(params.DirectDeviceProjections))
+	for _, peerID := range policyPeers {
+		if candidate, found := candidates.lookup(peerID); found {
+			peers = append(peers, candidate)
+		}
+	}
+	seen := make(map[node.ID]struct{}, len(peers))
+	for _, peer := range peers {
+		seen[peer.NodeID()] = struct{}{}
+	}
+	deadlines := make(map[node.ID]time.Time, len(params.DirectDeviceProjections))
+	for _, projection := range params.DirectDeviceProjections {
+		peer := projection.Peer()
+		if _, exists := seen[peer.NodeID()]; !exists {
+			peers = append(peers, peer)
+			seen[peer.NodeID()] = struct{}{}
+		}
+		deadline, exists := deadlines[peer.NodeID()]
+		if !exists || projection.ExpiresAt().Before(deadline) {
+			deadlines[peer.NodeID()] = projection.ExpiresAt()
+		}
+	}
+	for index, peer := range peers {
+		if deadline, exists := deadlines[peer.NodeID()]; exists && deadline.Before(peer.keyExpiry) {
+			peers[index].keyExpiry = deadline
+		}
+	}
+	slices.SortFunc(peers, comparePeerCandidates)
+	return peers
 }
 
 // Scope returns the exact Workspace-qualified Network scope.
@@ -158,7 +233,7 @@ func (snapshot Snapshot) KeyExpiry() time.Time { return snapshot.keyExpiry }
 // PeerCandidates returns a caller-owned, deterministically ordered copy of
 // same-Network inventory. Candidates are not authorized peers.
 func (snapshot Snapshot) PeerCandidates() []PeerCandidate {
-	return slices.Clone(snapshot.peerCandidates)
+	return snapshot.candidates.list()
 }
 
 // PacketPolicy returns the immutable exact-revision product policy snapshot.
@@ -203,42 +278,14 @@ func (snapshot Snapshot) WithConnectivity(values []Connectivity) (Snapshot, erro
 // in either direction. Candidate inventory and same-Network membership alone
 // never grant visibility.
 func (snapshot Snapshot) AuthorizedPeers() []PeerCandidate {
-	if !snapshot.IsValid() {
+	if !snapshot.valid {
 		return []PeerCandidate{}
 	}
-	peers := make([]PeerCandidate, 0, min(len(snapshot.peerCandidates), 64))
-	for _, candidate := range snapshot.peerCandidates {
-		if snapshot.packetPolicy.AllowsPeer(snapshot.nodeID, candidate.nodeID) {
-			peers = append(peers, candidate)
-		}
-	}
-	seen := make(map[node.ID]struct{}, len(peers))
-	for _, peer := range peers {
-		seen[peer.NodeID()] = struct{}{}
-	}
-	deadlines := make(map[node.ID]time.Time, len(snapshot.directDeviceProjections))
-	for _, projection := range snapshot.directDeviceProjections {
-		peer := projection.Peer()
-		if _, exists := seen[peer.NodeID()]; !exists {
-			peers = append(peers, peer)
-			seen[peer.NodeID()] = struct{}{}
-		}
-		deadline, exists := deadlines[peer.NodeID()]
-		if !exists || projection.ExpiresAt().Before(deadline) {
-			deadlines[peer.NodeID()] = projection.ExpiresAt()
-		}
-	}
-	for index, peer := range peers {
-		if deadline, exists := deadlines[peer.NodeID()]; exists && deadline.Before(peer.keyExpiry) {
-			peers[index].keyExpiry = deadline
-		}
-	}
-	slices.SortFunc(peers, comparePeerCandidates)
-	return peers
+	return slices.Clone(snapshot.authorized)
 }
 
 // IsValid reports whether the snapshot contains complete authority evidence.
-func (snapshot Snapshot) IsValid() bool { return validSnapshotParams(snapshot.params()) }
+func (snapshot Snapshot) IsValid() bool { return snapshot.valid }
 
 func (snapshot Snapshot) params() SnapshotParams {
 	return SnapshotParams{
@@ -256,7 +303,8 @@ func (snapshot Snapshot) params() SnapshotParams {
 		Addresses:               slices.Clone(snapshot.addresses),
 		CreatedAt:               snapshot.createdAt,
 		KeyExpiry:               snapshot.keyExpiry,
-		PeerCandidates:          slices.Clone(snapshot.peerCandidates),
+		PeerCandidates:          snapshot.candidates.privateList(),
+		Inventory:               snapshot.candidates.sharedInventory(),
 		DirectDeviceProjections: slices.Clone(snapshot.directDeviceProjections),
 		SharingDependencies:     slices.Clone(snapshot.sharingDependencies),
 		PacketPolicy:            snapshot.packetPolicy,
@@ -265,36 +313,28 @@ func (snapshot Snapshot) params() SnapshotParams {
 	}
 }
 
-func validSnapshotParams(params SnapshotParams) bool {
+// validSnapshotCore checks every field but the candidates, direct
+// projections and connectivity, which NewSnapshot checks against the bound
+// candidate view.
+func validSnapshotCore(params SnapshotParams) bool {
 	return params.Scope.IsValid() && params.NetworkName.IsValid() && params.NetworkRevision > 0 &&
 		params.RecoveryEpoch > 0 &&
 		params.SessionGeneration > 0 && validNumericID(params.NumericNodeID) &&
 		validNumericID(params.NumericOwnerID) && params.NodeID.IsValid() &&
 		params.Hostname.IsValid() && params.MachineKey.IsValid() && params.NodeKey.IsValid() &&
 		validSnapshotAddresses(params.Addresses) && !params.CreatedAt.IsZero() &&
-		params.KeyExpiry.After(params.CreatedAt) && validSnapshotPeerCandidates(
-		params.PeerCandidates,
-		params.Scope,
-		params.NodeID,
-		params.NumericNodeID,
-		params.MachineKey,
-		params.NodeKey,
-	) && params.PacketPolicy.IsValid() && params.PacketPolicy.Scope() == params.Scope &&
-		validSharingDependencies(params) && validDirectDeviceProjections(params) && validSnapshotConnectivity(params) && params.RelayDirectory.IsValid()
+		params.KeyExpiry.After(params.CreatedAt) &&
+		params.PacketPolicy.IsValid() && params.PacketPolicy.Scope() == params.Scope &&
+		validSharingDependencies(params) && params.RelayDirectory.IsValid()
 }
 
-func validSnapshotConnectivity(params SnapshotParams) bool {
-	if params.Connectivity == nil || len(params.Connectivity) > len(params.PeerCandidates)+len(params.DirectDeviceProjections)+1 {
+func validSnapshotConnectivity(params SnapshotParams, candidates snapshotCandidates, authorized []PeerCandidate) bool {
+	if params.Connectivity == nil || len(params.Connectivity) > candidates.len()+len(params.DirectDeviceProjections)+1 {
 		return params.Connectivity == nil
 	}
-	allowed := map[node.ID]int64{params.NodeID: params.SessionGeneration}
-	for _, candidate := range params.PeerCandidates {
-		if params.PacketPolicy.AllowsPeer(params.NodeID, candidate.NodeID()) {
-			allowed[candidate.NodeID()] = candidate.SessionGeneration()
-		}
-	}
-	for _, projection := range params.DirectDeviceProjections {
-		peer := projection.Peer()
+	allowed := make(map[node.ID]int64, len(authorized)+1)
+	allowed[params.NodeID] = params.SessionGeneration
+	for _, peer := range authorized {
 		allowed[peer.NodeID()] = peer.SessionGeneration()
 	}
 	for index, connectivity := range params.Connectivity {

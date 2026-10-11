@@ -61,7 +61,12 @@ func NewDirectDeviceProjection(params DirectDeviceProjectionParams) (DirectDevic
 		return DirectDeviceProjection{}, ErrInvalidDirectDeviceProjection
 	}
 	// Retain only local authority, avoiding a copy of inventory per grant.
-	params.Self.peerCandidates = []PeerCandidate{}
+	empty, err := newNetworkInventory(params.Self.scope, nil)
+	if err != nil {
+		return DirectDeviceProjection{}, ErrInvalidDirectDeviceProjection
+	}
+	params.Self.candidates = snapshotCandidates{inventory: empty, self: -1}
+	params.Self.authorized = []PeerCandidate{}
 	params.Self.connectivity = nil
 	projection := DirectDeviceProjection{
 		self: params.Self, peer: params.Peer, target: params.ProviderTarget, export: params.ProviderExport,
@@ -254,12 +259,12 @@ func equalDirectDeviceProjections(first, second []DirectDeviceProjection) bool {
 	})
 }
 
-func validDirectDeviceProjections(params SnapshotParams) bool {
+func validDirectDeviceProjections(params SnapshotParams, candidates snapshotCandidates) bool {
 	if len(params.DirectDeviceProjections) == 0 {
 		return true
 	}
 	if !validAliasGrantBounds(params) || len(params.DirectDeviceProjections) > MaximumDirectDeviceProjections ||
-		len(params.PeerCandidates)+len(params.DirectDeviceProjections) > MaximumPeerCandidates ||
+		candidates.len()+len(params.DirectDeviceProjections) > candidates.limit() ||
 		len(params.PacketPolicy.Rules())+len(params.DirectDeviceProjections) > MaximumPacketPolicyRules {
 		return false
 	}
@@ -269,11 +274,11 @@ func validDirectDeviceProjections(params SnapshotParams) bool {
 	}
 	bindings := make(map[node.ID]DeviceAlias, len(params.DirectDeviceProjections))
 	localAliases := make(map[netip.Addr]DirectDeviceProjection, 2*len(params.DirectDeviceProjections))
-	seen := make(map[node.ID]PeerCandidate, len(params.PeerCandidates)+len(params.DirectDeviceProjections))
+	seen := make(map[node.ID]PeerCandidate, candidates.len()+len(params.DirectDeviceProjections))
 	numericIDs := map[int64]struct{}{params.NumericNodeID: {}}
 	machineKeys := map[node.MachineKey]struct{}{params.MachineKey: {}}
 	nodeKeys := map[node.Key]struct{}{params.NodeKey: {}}
-	addresses := make(map[netip.Addr]struct{}, 2*(len(params.PeerCandidates)+len(params.DirectDeviceProjections)+1))
+	addresses := make(map[netip.Addr]struct{}, 2*(candidates.len()+len(params.DirectDeviceProjections)+1))
 	for _, address := range params.Addresses {
 		addresses[address.Addr()] = struct{}{}
 	}
@@ -286,9 +291,10 @@ func validDirectDeviceProjections(params SnapshotParams) bool {
 			addresses[address.Addr()] = struct{}{}
 		}
 	}
-	for _, peer := range params.PeerCandidates {
+	candidates.each(func(peer PeerCandidate) bool {
 		add(peer)
-	}
+		return true
+	})
 	for index, projection := range params.DirectDeviceProjections {
 		if !projection.matchesSelf(params) || index > 0 &&
 			compareDirectDeviceProjections(params.DirectDeviceProjections[index-1], projection) >= 0 {

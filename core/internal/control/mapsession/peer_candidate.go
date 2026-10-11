@@ -157,48 +157,6 @@ func comparePeerCandidates(first, second PeerCandidate) int {
 	return strings.Compare(first.nodeID.String(), second.nodeID.String())
 }
 
-func validSnapshotPeerCandidates(
-	candidates []PeerCandidate,
-	scope network.Scope,
-	selfNodeID node.ID,
-	selfNumericNodeID int64,
-	selfMachineKey node.MachineKey,
-	selfNodeKey node.Key,
-) bool {
-	if candidates == nil || len(candidates) > MaximumPeerCandidates {
-		return false
-	}
-	seenNodeIDs := make(map[node.ID]struct{}, len(candidates))
-	seenNumericNodeIDs := make(map[int64]struct{}, len(candidates))
-	seenMachineKeys := make(map[node.MachineKey]struct{}, len(candidates))
-	seenNodeKeys := make(map[node.Key]struct{}, len(candidates))
-	for index, candidate := range candidates {
-		if !candidate.IsValid() || candidate.scope != scope || candidate.nodeID == selfNodeID ||
-			candidate.numericNodeID == selfNumericNodeID ||
-			candidate.machineKey == selfMachineKey || candidate.nodeKey == selfNodeKey ||
-			index > 0 && comparePeerCandidates(candidates[index-1], candidate) >= 0 {
-			return false
-		}
-		if _, exists := seenNodeIDs[candidate.nodeID]; exists {
-			return false
-		}
-		if _, exists := seenNumericNodeIDs[candidate.numericNodeID]; exists {
-			return false
-		}
-		if _, exists := seenMachineKeys[candidate.machineKey]; exists {
-			return false
-		}
-		if _, exists := seenNodeKeys[candidate.nodeKey]; exists {
-			return false
-		}
-		seenNodeIDs[candidate.nodeID] = struct{}{}
-		seenNumericNodeIDs[candidate.numericNodeID] = struct{}{}
-		seenMachineKeys[candidate.machineKey] = struct{}{}
-		seenNodeKeys[candidate.nodeKey] = struct{}{}
-	}
-	return true
-}
-
 func equalPeerCandidates(first, second []PeerCandidate) bool {
 	return slices.EqualFunc(first, second, func(left, right PeerCandidate) bool {
 		return left.numericNodeID == right.numericNodeID &&
