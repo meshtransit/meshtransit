@@ -75,6 +75,8 @@ func assertPostgreSQLPeerCandidateProjection(
 		t.Fatalf("authorized peers = %+v, want both explicitly connected Nodes", authorizedPeers)
 	}
 
+	assertSharedInventoryMatchesDirectRead(ctx, t, runtimePool, store, identity)
+
 	boundedStore := newPeerCandidateStore(t, runtimePool, 1)
 	if _, err := boundedStore.Load(ctx, identity); !errors.Is(err, mapsession.ErrPeerCandidateLimit) {
 		t.Fatalf("bounded peer candidate Load() error = %v, want ErrPeerCandidateLimit", err)

@@ -37,6 +37,8 @@ func (metrics *postgresPoolMetrics) ObserveMapSession(
 		metrics.observeOperation(postgresOperationMapSessionSnapshot, duration, err)
 	case postgresmapsession.OperationObserveClientVersion:
 		metrics.observeOperation(postgresOperationMapSessionClientVersion, duration, err)
+	case postgresmapsession.OperationLoadInventory:
+		metrics.observeOperation(postgresOperationMapSessionInventory, duration, err)
 	case postgresmapsession.OperationUnknown:
 		return
 	}

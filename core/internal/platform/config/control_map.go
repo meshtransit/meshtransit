@@ -11,25 +11,31 @@ const (
 	envControlMapCoordinationTimeout  = "MESHTRANSIT_CONTROL_MAP_COORDINATION_TIMEOUT"
 	envControlMapKeepAliveInterval    = "MESHTRANSIT_CONTROL_MAP_KEEPALIVE_INTERVAL"
 	envControlMapReconcileInterval    = "MESHTRANSIT_CONTROL_MAP_RECONCILE_INTERVAL"
-	defaultControlMapRequestTimeout   = 10 * time.Second
-	defaultControlMapStatementTimeout = 3 * time.Second
-	defaultControlMapIdleLimit        = 5 * time.Second
-	defaultControlMapPresenceTTL      = 30 * time.Second
-	defaultControlMapCoordination     = 2 * time.Second
-	defaultControlMapKeepAlive        = 30 * time.Second
-	defaultControlMapReconcile        = 30 * time.Second
-	minControlMapRequestTimeout       = 100 * time.Millisecond
-	maxControlMapRequestTimeout       = time.Minute
-	minControlMapDatabaseTimeout      = time.Millisecond
-	maxControlMapDatabaseTimeout      = time.Minute
-	minControlMapPresenceTTL          = 3 * time.Second
-	maxControlMapPresenceTTL          = 5 * time.Minute
-	minControlMapCoordinationTimeout  = 100 * time.Millisecond
-	maxControlMapCoordinationTimeout  = 30 * time.Second
-	minControlMapKeepAliveInterval    = time.Second
-	maxControlMapKeepAliveInterval    = 90 * time.Second
-	minControlMapReconcileInterval    = time.Second
-	maxControlMapReconcileInterval    = 5 * time.Minute
+	// Shared Network inventory (scale-out S1): one read of a Network's live
+	// Devices per revision, shared by its Devices' maps. On by default; off
+	// reads every other Device for each map as before.
+	envControlMapSharedInventory           = "MESHTRANSIT_CONTROL_MAP_SHARED_INVENTORY"
+	envControlMapInventoryStatementTimeout = "MESHTRANSIT_CONTROL_MAP_INVENTORY_STATEMENT_TIMEOUT"
+	defaultControlMapInventoryStatement    = 30 * time.Second
+	defaultControlMapRequestTimeout        = 10 * time.Second
+	defaultControlMapStatementTimeout      = 3 * time.Second
+	defaultControlMapIdleLimit             = 5 * time.Second
+	defaultControlMapPresenceTTL           = 30 * time.Second
+	defaultControlMapCoordination          = 2 * time.Second
+	defaultControlMapKeepAlive             = 30 * time.Second
+	defaultControlMapReconcile             = 30 * time.Second
+	minControlMapRequestTimeout            = 100 * time.Millisecond
+	maxControlMapRequestTimeout            = time.Minute
+	minControlMapDatabaseTimeout           = time.Millisecond
+	maxControlMapDatabaseTimeout           = time.Minute
+	minControlMapPresenceTTL               = 3 * time.Second
+	maxControlMapPresenceTTL               = 5 * time.Minute
+	minControlMapCoordinationTimeout       = 100 * time.Millisecond
+	maxControlMapCoordinationTimeout       = 30 * time.Second
+	minControlMapKeepAliveInterval         = time.Second
+	maxControlMapKeepAliveInterval         = 90 * time.Second
+	minControlMapReconcileInterval         = time.Second
+	maxControlMapReconcileInterval         = 5 * time.Minute
 )
 
 // ControlMapConfig bounds request and PostgreSQL work for one map snapshot.
@@ -43,6 +49,10 @@ type ControlMapConfig struct {
 	KeepAliveInterval    time.Duration
 	ReconcileInterval    time.Duration
 	RelayDirectory       *RelayDirectoryConfig // nil when the relay map is the source
+	// SharedInventory reads each Network's live Devices once per revision;
+	// InventoryStatementTimeout bounds that read (a whole Network).
+	SharedInventory           bool
+	InventoryStatementTimeout time.Duration
 }
 
 func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
@@ -122,6 +132,18 @@ func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
 	if err != nil {
 		return ControlMapConfig{}, settingError(envControlMapReconcileInterval)
 	}
+	sharedInventory := valueOrDefault(lookup, envControlMapSharedInventory, "true")
+	if sharedInventory != "true" && sharedInventory != "false" {
+		return ControlMapConfig{}, settingError(envControlMapSharedInventory)
+	}
+	inventoryTimeout, err := parseDurationInRange(
+		valueOrDefault(lookup, envControlMapInventoryStatementTimeout, defaultControlMapInventoryStatement.String()),
+		minControlMapDatabaseTimeout,
+		maxControlMapDatabaseTimeout,
+	)
+	if err != nil {
+		return ControlMapConfig{}, settingError(envControlMapInventoryStatementTimeout)
+	}
 	// The relay directory file is optional: a relay authority with a relay
 	// map supplies the directory instead (checked by Load).
 	var relayDirectory *RelayDirectoryConfig
@@ -144,5 +166,8 @@ func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
 		KeepAliveInterval:    keepAliveInterval,
 		ReconcileInterval:    reconcileInterval,
 		RelayDirectory:       relayDirectory,
+
+		SharedInventory:           sharedInventory == "true",
+		InventoryStatementTimeout: inventoryTimeout,
 	}, nil
 }

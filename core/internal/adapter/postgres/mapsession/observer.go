@@ -12,6 +12,8 @@ const (
 	OperationLoad
 	// OperationObserveClientVersion records a transport-bound compatibility claim.
 	OperationObserveClientVersion
+	// OperationLoadInventory reads one Network's whole live inventory.
+	OperationLoadInventory
 )
 
 // Observer records bounded operation latency and outcome without identity labels.

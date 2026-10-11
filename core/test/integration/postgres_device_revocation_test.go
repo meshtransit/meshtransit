@@ -571,6 +571,7 @@ func assertRevokedDeviceExcludedFromMap(
 	wantNetworkRevision int64,
 ) {
 	t.Helper()
+	assertSharedInventoryMatchesDirectRead(ctx, t, runtimePool, newPeerCandidateStore(t, runtimePool, 8), selfIdentity)
 	snapshot, err := newPeerCandidateStore(t, runtimePool, 8).Load(ctx, selfIdentity)
 	if err != nil {
 		t.Fatalf("load map after peer revocation: %v", err)
@@ -607,6 +608,7 @@ func assertRevokedDeviceCannotResumeMap(
 	if err != nil {
 		t.Fatalf("bind revoked authenticated Node: %v", err)
 	}
+	assertSharedInventoryMatchesDirectRead(ctx, t, runtimePool, newPeerCandidateStore(t, runtimePool, 8), identityValue)
 	_, loadErr := newPeerCandidateStore(t, runtimePool, 8).Load(ctx, identityValue)
 	if !errors.Is(loadErr, mapsession.ErrUnauthorized) {
 		t.Fatalf("revoked Device map load error = %v, want ErrUnauthorized", loadErr)

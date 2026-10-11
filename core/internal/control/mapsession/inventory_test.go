@@ -63,6 +63,36 @@ func TestSnapshotFromInventoryEqualsSnapshotFromCandidates(t *testing.T) {
 	}
 }
 
+func TestWithInventoryEqualsTheCandidateRead(t *testing.T) {
+	t.Parallel()
+	params, candidates := largeNetworkFixture(t, 50, 10)
+	reference, err := NewSnapshot(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := params
+	own.PeerCandidates = []PeerCandidate{}
+	alone, err := NewSnapshot(own)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := NewNetworkInventory(params.Scope, append(slices.Clone(candidates), selfAsCandidate(t, params, candidates[0])))
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, err := alone.WithInventory(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalPeerCandidates(completed.AuthorizedPeers(), reference.AuthorizedPeers()) ||
+		!equalPeerCandidates(completed.PeerCandidates(), reference.PeerCandidates()) {
+		t.Fatal("completing with the inventory differs from reading the candidates")
+	}
+	if _, err := alone.WithInventory(NetworkInventory{}); err == nil {
+		t.Fatal("an invalid inventory was accepted")
+	}
+}
+
 func TestSnapshotRejectsAnInventoryThatContradictsSelf(t *testing.T) {
 	t.Parallel()
 	params, candidates := largeNetworkFixture(t, 5, 1)

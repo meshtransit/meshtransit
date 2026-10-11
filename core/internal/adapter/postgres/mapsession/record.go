@@ -27,6 +27,7 @@ type snapshotRecord struct {
 	networkRevision   int64
 	policyRevision    int64
 	addresses         []string
+	readAt            time.Time // PostgreSQL transaction time
 }
 
 type peerCandidateRecord struct {

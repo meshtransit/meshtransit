@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -20,6 +21,7 @@ const (
 	maximumStatementTimeout = time.Minute
 	maximumIdleTimeout      = time.Minute
 	rollbackTimeout         = 2 * time.Second
+	maximumInventoryMaxAge  = 5 * time.Minute
 )
 
 var (
@@ -43,14 +45,44 @@ type Options struct {
 	// falls back to RelayDirectory.
 	RelayDirectories    func(network.ID) (relay.Directory, error)
 	EnableDeviceAliases bool
+	// SharedInventory reads each Network's live Devices once per revision
+	// and shares them between its Devices' snapshots, instead of reading
+	// every other Device for each snapshot. InventoryStatementTimeout bounds
+	// that read; InventoryMaxAge bounds how long one read answers for a
+	// revision (state changes that do not advance the revision).
+	SharedInventory           bool
+	InventoryStatementTimeout time.Duration
+	InventoryMaxAge           time.Duration
 }
 
 // Store loads exact-scope snapshots in read-only repeatable-read transactions.
 // It owns no goroutine or process-local authorization state.
 type Store struct {
-	database database
-	options  Options
-	observer Observer
+	database    database
+	options     Options
+	observer    Observer
+	inventories *inventoryCache // nil unless SharedInventory
+	stats       inventoryStats
+}
+
+// InventoryStats counts how map snapshots got their candidates.
+type InventoryStats struct {
+	// Shared snapshots used a Network inventory (Reads of them read it).
+	Shared uint64
+	Reads  uint64
+	// Direct snapshots read their candidates themselves: the shared
+	// inventory is off, or none answered for that exact read.
+	Direct uint64
+}
+
+type inventoryStats struct {
+	shared, reads, direct atomic.Uint64
+}
+
+// InventoryStats returns the counters since the store was built.
+func (store *Store) InventoryStats() InventoryStats {
+	return InventoryStats{Shared: store.stats.shared.Load(), Reads: store.stats.reads.Load(),
+		Direct: store.stats.direct.Load()}
 }
 
 var _ appmapsession.SnapshotStore = (*Store)(nil)
@@ -64,7 +96,11 @@ func newStore(database database, options Options, observer Observer) (*Store, er
 	if database == nil || observer == nil || !validOptions(options) {
 		return nil, ErrInvalidStore
 	}
-	return &Store{database: database, options: options, observer: observer}, nil
+	store := &Store{database: database, options: options, observer: observer}
+	if options.SharedInventory {
+		store.inventories = newInventoryCache(options.InventoryMaxAge)
+	}
+	return store, nil
 }
 
 // Load resolves authority from the bound identity, installs exact RLS scope,
@@ -86,13 +122,82 @@ func (store *Store) Load(
 	if err := ctx.Err(); err != nil {
 		return appmapsession.Snapshot{}, errors.Join(ErrLoadSnapshot, err)
 	}
+	if store.inventories != nil {
+		read, err := store.loadSnapshot(ctx, identity, true)
+		if err != nil || read.complete {
+			return read.snapshot, err
+		}
+		shared, ok, err := store.withSharedInventory(ctx, read)
+		if err != nil || ok {
+			if ok {
+				store.stats.shared.Add(1)
+			}
+			return shared, err
+		}
+		// No inventory answers for this exact read (the Network moved on, or
+		// the read raced a change): read the candidates directly, afresh.
+	}
+	read, err := store.loadSnapshot(ctx, identity, false)
+	if err == nil {
+		store.stats.direct.Add(1)
+	}
+	return read.snapshot, err
+}
+
+// snapshotRead is one transaction's result: a complete snapshot, or (for a
+// shared-inventory read) the Device's own facts awaiting the inventory of
+// revision, read at the PostgreSQL time readAt.
+type snapshotRead struct {
+	snapshot       appmapsession.Snapshot
+	complete       bool
+	revision       int64
+	readAt         time.Time
+	workspaceValue string
+	networkValue   string
+}
+
+// withSharedInventory completes a shared-inventory read with the Network's
+// inventory of exactly that revision, which must list self exactly as self.
+func (store *Store) withSharedInventory(ctx context.Context, read snapshotRead) (appmapsession.Snapshot, bool, error) {
+	scope := read.snapshot.Scope()
+	inventory, found, err := store.inventories.get(ctx, scope, read.revision, read.readAt,
+		func(readCtx context.Context) (cachedInventory, error) {
+			store.stats.reads.Add(1)
+			return store.readInventory(readCtx, scope, read.workspaceValue, read.networkValue)
+		})
+	if err != nil {
+		return appmapsession.Snapshot{}, false, err
+	}
+	if !found {
+		return appmapsession.Snapshot{}, false, nil
+	}
+	self, listed := inventory.Device(read.snapshot.NodeID())
+	if !listed || self.NumericNodeID() != read.snapshot.NumericNodeID() ||
+		self.MachineKey() != read.snapshot.MachineKey() || self.NodeKey() != read.snapshot.NodeKey() {
+		return appmapsession.Snapshot{}, false, nil
+	}
+	snapshot, err := read.snapshot.WithInventory(inventory)
+	if err != nil {
+		return appmapsession.Snapshot{}, false, errors.Join(ErrSnapshotEvidence, err)
+	}
+	return snapshot, true, nil
+}
+
+// loadSnapshot reads one Device's snapshot in one repeatable-read
+// transaction. With shared, it skips the per-Device candidate read and
+// returns the Device's own facts for withSharedInventory.
+func (store *Store) loadSnapshot(
+	ctx context.Context,
+	identity control.AuthenticatedNode,
+	shared bool,
+) (read snapshotRead, resultErr error) {
 
 	transaction, err := store.database.Begin(ctx)
 	if err != nil || transaction == nil {
 		if err == nil {
 			err = ErrSnapshotEvidence
 		}
-		return appmapsession.Snapshot{}, errors.Join(ErrLoadSnapshot, err)
+		return snapshotRead{}, errors.Join(ErrLoadSnapshot, err)
 	}
 	committed := false
 	defer func() {
@@ -101,7 +206,7 @@ func (store *Store) Load(
 		}
 	}()
 	if err := configure(ctx, transaction, store.options); err != nil {
-		return appmapsession.Snapshot{}, errors.Join(ErrLoadSnapshot, err)
+		return snapshotRead{}, errors.Join(ErrLoadSnapshot, err)
 	}
 
 	fingerprint := identity.MachineFingerprint()
@@ -114,14 +219,14 @@ func (store *Store) Load(
 		&recoveryEpoch,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return appmapsession.Snapshot{}, suspendedOrUnauthorized(
+			return snapshotRead{}, suspendedOrUnauthorized(
 				ctx,
 				transaction,
 				fingerprint[:],
 				nodeKey[:],
 			)
 		}
-		return appmapsession.Snapshot{}, errors.Join(
+		return snapshotRead{}, errors.Join(
 			ErrLoadSnapshot,
 			fmt.Errorf("resolve authenticated scope: %w", err),
 		)
@@ -132,17 +237,17 @@ func (store *Store) Load(
 		&workspaceInternalID,
 		&networkInternalID,
 	); err != nil {
-		return appmapsession.Snapshot{}, errors.Join(
+		return snapshotRead{}, errors.Join(
 			ErrLoadSnapshot,
 			fmt.Errorf("set exact scope: %w", err),
 		)
 	}
 	if workspaceInternalID <= 0 || networkInternalID <= 0 || recoveryEpoch <= 0 {
-		return appmapsession.Snapshot{}, ErrSnapshotEvidence
+		return snapshotRead{}, ErrSnapshotEvidence
 	}
 	scope, err := scopeFromText(workspaceValue, networkValue)
 	if err != nil {
-		return appmapsession.Snapshot{}, err
+		return snapshotRead{}, err
 	}
 
 	var record snapshotRecord
@@ -160,24 +265,32 @@ func (store *Store) Load(
 		&record.networkRevision,
 		&record.policyRevision,
 		&record.addresses,
+		&record.readAt,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return appmapsession.Snapshot{}, appmapsession.ErrUnauthorized
+			return snapshotRead{}, appmapsession.ErrUnauthorized
 		}
-		return appmapsession.Snapshot{}, errors.Join(
+		return snapshotRead{}, errors.Join(
 			ErrLoadSnapshot,
 			fmt.Errorf("read scoped snapshot: %w", err),
 		)
 	}
-	peerCandidates, err := store.loadPeerCandidates(
-		ctx,
-		transaction,
-		scope,
-		fingerprint[:],
-		nodeKey[:],
-	)
-	if err != nil {
-		return appmapsession.Snapshot{}, err
+	// A shared-inventory read takes the candidates from the Network's
+	// inventory after commit; the empty list keeps direct projections
+	// decodable meanwhile (they are checked against the inventory then).
+	peerCandidates := []appmapsession.PeerCandidate{}
+	if !shared {
+		var err error
+		peerCandidates, err = store.loadPeerCandidates(
+			ctx,
+			transaction,
+			scope,
+			fingerprint[:],
+			nodeKey[:],
+		)
+		if err != nil {
+			return snapshotRead{}, err
+		}
 	}
 	packetPolicy, err := store.loadPacketPolicy(
 		ctx,
@@ -187,9 +300,9 @@ func (store *Store) Load(
 		record.policyRevision,
 	)
 	if err != nil {
-		return appmapsession.Snapshot{}, err
+		return snapshotRead{}, err
 	}
-	snapshot, err = record.snapshot(
+	snapshot, err := record.snapshot(
 		workspaceValue,
 		networkValue,
 		recoveryEpoch,
@@ -198,17 +311,20 @@ func (store *Store) Load(
 		store.relayDirectory(scope.NetworkID()),
 	)
 	if err != nil {
-		return appmapsession.Snapshot{}, err
+		return snapshotRead{}, err
 	}
 	snapshot, err = store.loadDirectEdges(ctx, transaction, snapshot, fingerprint[:], nodeKey[:])
 	if err != nil {
-		return appmapsession.Snapshot{}, err
+		return snapshotRead{}, err
 	}
 	if err := transaction.Commit(ctx); err != nil {
-		return appmapsession.Snapshot{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("commit read snapshot: %w", err))
+		return snapshotRead{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("commit read snapshot: %w", err))
 	}
 	committed = true
-	return snapshot, nil
+	return snapshotRead{
+		snapshot: snapshot, complete: !shared, revision: record.networkRevision, readAt: record.readAt,
+		workspaceValue: workspaceValue, networkValue: networkValue,
+	}, nil
 }
 
 func (store *Store) loadPacketPolicy(
@@ -373,7 +489,10 @@ func validOptions(options Options) bool {
 		options.PeerCandidateLimit <= appmapsession.MaximumPeerCandidates &&
 		options.PolicyRuleLimit > 0 &&
 		options.PolicyRuleLimit <= appmapsession.MaximumPacketPolicyRules &&
-		options.RelayDirectory.IsValid()
+		options.RelayDirectory.IsValid() &&
+		(!options.SharedInventory || options.InventoryStatementTimeout >= time.Millisecond &&
+			options.InventoryStatementTimeout <= maximumStatementTimeout &&
+			options.InventoryMaxAge >= time.Second && options.InventoryMaxAge <= maximumInventoryMaxAge)
 }
 
 // relayDirectory returns the Network's relay directory.

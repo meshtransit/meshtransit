@@ -297,6 +297,7 @@ WHERE workspace_id = 103 AND network_id = 203
 	if evidenceCount != 1 {
 		t.Fatalf("management policy authorization evidence count = %d, want 1", evidenceCount)
 	}
+	assertSharedInventoryMatchesDirectRead(ctx, t, runtimePool, newPeerCandidateStore(t, runtimePool, 8), identityValue)
 	denySnapshot, err := newPeerCandidateStore(t, runtimePool, 8).Load(ctx, identityValue)
 	if err != nil {
 		t.Fatalf("load deny-all client projection: %v", err)
@@ -381,6 +382,7 @@ WHERE workspace_id = 103 AND network_id = 203
 		)
 	}
 	assertConsumedPolicyApproval(ctx, t, adminConnection, restoreApproval, restored)
+	assertSharedInventoryMatchesDirectRead(ctx, t, runtimePool, newPeerCandidateStore(t, runtimePool, 8), identityValue)
 	clientSnapshot, err := newPeerCandidateStore(t, runtimePool, 8).Load(ctx, identityValue)
 	if err != nil {
 		t.Fatalf("load restored client projection: %v", err)
@@ -654,6 +656,7 @@ WHERE workspace_id = 103 AND network_id = 203`).Scan(&networkRevision); err != n
 	assertCommittedPolicyResourceGroupDestination(
 		ctx, t, adminConnection, published, candidate.ResourceGroupDestinations()[0],
 	)
+	assertSharedInventoryMatchesDirectRead(ctx, t, runtimePool, newPeerCandidateStore(t, runtimePool, 8), identityValue)
 	snapshot, err := newPeerCandidateStore(t, runtimePool, 8).Load(ctx, identityValue)
 	if err != nil {
 		t.Fatalf("load Resource Group client projection: %v", err)
@@ -1256,6 +1259,7 @@ func assertPublishedPolicyVisibleInMap(
 	result publication.Result,
 ) {
 	t.Helper()
+	assertSharedInventoryMatchesDirectRead(ctx, t, runtimePool, newPeerCandidateStore(t, runtimePool, 8), identityValue)
 	snapshot, err := newPeerCandidateStore(t, runtimePool, 8).Load(ctx, identityValue)
 	if err != nil {
 		t.Fatalf("load map snapshot after policy publication: %v", err)

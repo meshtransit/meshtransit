@@ -46,6 +46,7 @@ type fakeTransaction struct {
 	committed      bool
 	rollbackCalls  int
 	candidateRows  *peerCandidateRows
+	inventoryRows  []*peerCandidateRows // one per shared-inventory read
 	policyRows     *policyRuleRows
 	directRows     *directEdgeRows
 	aliasRows      *directEdgeRows
@@ -89,6 +90,13 @@ func (transaction *fakeTransaction) Query(
 			return &peerCandidateRows{}, nil
 		}
 		return transaction.candidateRows, nil
+	case loadNetworkDevicesSQL:
+		if len(transaction.inventoryRows) == 0 {
+			return nil, errors.New("unexpected inventory read")
+		}
+		rows := transaction.inventoryRows[0]
+		transaction.inventoryRows = transaction.inventoryRows[1:]
+		return rows, nil
 	case loadDirectEdgesSQL:
 		if transaction.directRows == nil {
 			return &directEdgeRows{}, nil
@@ -110,6 +118,7 @@ func (transaction *fakeTransaction) Query(
 		if transaction.policyRows == nil {
 			return &policyRuleRows{}, nil
 		}
+		transaction.policyRows.index = 0 // each transaction reads the release afresh
 		return transaction.policyRows, nil
 	default:
 		return nil, errors.New("unexpected query")
@@ -174,6 +183,21 @@ func (row snapshotRow) Scan(destinations ...any) error {
 	*destinations[10].(*int64) = record.networkRevision
 	*destinations[11].(*int64) = record.policyRevision
 	*destinations[12].(*[]string) = append([]string(nil), record.addresses...)
+	if len(destinations) > 13 {
+		*destinations[13].(*time.Time) = record.readAt
+	}
+	return nil
+}
+
+// inventoryRevisionRow answers loadInventoryRevisionSQL.
+type inventoryRevisionRow struct {
+	revision int64
+	readAt   time.Time
+}
+
+func (row inventoryRevisionRow) Scan(destinations ...any) error {
+	*destinations[0].(*int64) = row.revision
+	*destinations[1].(*time.Time) = row.readAt
 	return nil
 }
 

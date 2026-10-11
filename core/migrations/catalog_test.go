@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 139 {
-		t.Fatalf("len(Catalog()) = %d, want 139", len(catalog))
+	if len(catalog) != 140 {
+		t.Fatalf("len(Catalog()) = %d, want 140", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 139 {
-		t.Fatalf("LatestVersion() = %d, want 139", LatestVersion())
+	if LatestVersion() != 140 {
+		t.Fatalf("LatestVersion() = %d, want 140", LatestVersion())
 	}
 }
 
@@ -3336,6 +3336,34 @@ func TestPrivateInterchange(t *testing.T) {
 	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP ", "ON mesh.network\n"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 139 must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestMapNetworkInventory(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[139]
+	if migration.Version != 140 {
+		t.Fatalf("migration 140 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.load_map_network_devices_v1(",
+		"SECURITY DEFINER",
+		"pg_catalog.current_setting('mesh.workspace_id', TRUE)",
+		"candidate.workspace_id = scoped_workspace_id",
+		"candidate.network_id = scoped_network_id",
+		"candidate.expires_at > pg_catalog.transaction_timestamp()",
+		"owner.state = 'active'",
+		"deployment.recovery_state = 'verified'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_devices_v1(INTEGER)\n    TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 140 must contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP ", "INSERT ", "UPDATE ", "DELETE "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 140 must not contain %q", forbidden)
 		}
 	}
 }

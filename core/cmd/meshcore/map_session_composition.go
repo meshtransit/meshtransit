@@ -37,6 +37,11 @@ func composeMapSession(
 			PolicyRuleLimit:     mapsession.MaximumPacketPolicyRules,
 			RelayDirectory:      relayDirectory,
 			RelayDirectories:    relayDirectories,
+			// One inventory read answers for a revision for at most one
+			// reconcile interval, as a direct read would be repeated.
+			SharedInventory:           mapConfig.SharedInventory,
+			InventoryStatementTimeout: mapConfig.InventoryStatementTimeout,
+			InventoryMaxAge:           mapConfig.ReconcileInterval,
 		},
 	)
 	if err != nil {

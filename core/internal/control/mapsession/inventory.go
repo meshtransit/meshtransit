@@ -268,3 +268,22 @@ func (candidates snapshotCandidates) limit() int {
 	}
 	return MaximumPeerCandidates
 }
+
+// WithInventory returns the snapshot with its candidates taken from the
+// shared Network inventory instead of its own list, revalidating self and
+// any direct projection against the whole Network. The store uses it to
+// complete a Device's facts, read on their own, with the inventory read
+// once for that exact revision.
+func (snapshot Snapshot) WithInventory(inventory NetworkInventory) (Snapshot, error) {
+	if !snapshot.valid || !inventory.IsValid() {
+		return Snapshot{}, ErrInvalidSnapshot
+	}
+	params := snapshot.params()
+	params.PeerCandidates, params.Inventory = nil, inventory
+	next, err := NewSnapshot(params)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	next.relayGrant = snapshot.relayGrant
+	return next, nil
+}

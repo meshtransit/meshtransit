@@ -37,7 +37,8 @@ const loadSnapshotSQL = `SELECT
           AND lease.state = 'active'
           AND lease.lease_role = 'primary'
         ORDER BY lease.family, lease.address, lease.id
-    )
+    ),
+    pg_catalog.transaction_timestamp()
 FROM mesh.device AS device
 JOIN mesh.network AS network
   ON network.workspace_id = device.workspace_id

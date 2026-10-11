@@ -184,7 +184,7 @@ func newScaleID(t *testing.T) string {
 		t.Fatalf("generate scale fixture ID: %v", err)
 	}
 	var stamp [8]byte
-	binary.BigEndian.PutUint64(stamp[:], uint64(time.Now().UnixMilli())) //nolint:gosec // positive
+	binary.BigEndian.PutUint64(stamp[:], uint64(time.Now().UnixMilli()))
 	copy(raw[:6], stamp[2:])
 	raw[6] = 0x70 | raw[6]&0x0f
 	raw[8] = 0x80 | raw[8]&0x3f
@@ -641,6 +641,11 @@ func measureScaleConnectivityFanout(
 		running.process.forceStop(t)
 		t.Fatalf("reopen scale hub stream: %v; stderr: %s", err, scaleTail(running.process.stderr.String()))
 	}
+	// Read and acknowledge the hub's stream from the start: with N-1 peers
+	// it receives more than the unacknowledged-map window while traffic
+	// settles, and Core closes a stream that stops acknowledging. Sends are
+	// serialized by the session, so the report below may share the stream.
+	collector.read(ctx, 0, stream, hub)
 	collector.quiesce(ctx, scalePhaseTimeout)
 	endpoint := netip.MustParseAddrPort(scaleHubEndpoint)
 	if err := hub.UpdateEndpoint(endpoint); err != nil {
@@ -664,7 +669,6 @@ func measureScaleConnectivityFanout(
 		running.process.forceStop(t)
 		t.Fatalf("report scale hub endpoint: %v; stderr: %s", err, scaleTail(running.process.stderr.String()))
 	}
-	collector.read(ctx, 0, stream, hub)
 	latencies := collector.await(ctx, t, running, watch, scalePhaseTimeout, "connectivity")
 	self := latencies[0]
 	peers := slices.Delete(slices.Clone(latencies), 0, 1)

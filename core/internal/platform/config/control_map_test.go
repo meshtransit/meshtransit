@@ -31,6 +31,9 @@ func TestLoadControlMapDefaults(t *testing.T) {
 		CoordinationTimeout:  defaultControlMapCoordination,
 		KeepAliveInterval:    defaultControlMapKeepAlive,
 		ReconcileInterval:    defaultControlMapReconcile,
+
+		SharedInventory:           true,
+		InventoryStatementTimeout: defaultControlMapInventoryStatement,
 	}
 	directory := got.Control.Map.RelayDirectory
 	if directory == nil || *directory != relayDirectoryConfigFixture(t) {
@@ -72,6 +75,9 @@ func TestLoadControlMapExplicitValues(t *testing.T) {
 		CoordinationTimeout:  4 * time.Second,
 		KeepAliveInterval:    70 * time.Second,
 		ReconcileInterval:    20 * time.Second,
+
+		SharedInventory:           true,
+		InventoryStatementTimeout: defaultControlMapInventoryStatement,
 	}) {
 		t.Fatalf("Control.Map = %+v, want explicit values", got.Control)
 	}
@@ -181,5 +187,32 @@ func TestLoadIgnoresControlMapConfigOutsideControlRoles(t *testing.T) {
 				t.Fatalf("Control = %+v, want nil for role %s", got.Control, role)
 			}
 		})
+	}
+}
+
+func TestLoadControlMapSharedInventorySettings(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		values  map[string]string
+		shared  bool
+		timeout time.Duration
+		wantErr string
+	}{
+		"default on":   {values: map[string]string{}, shared: true, timeout: defaultControlMapInventoryStatement},
+		"switched off": {values: map[string]string{envControlMapSharedInventory: "false"}, shared: false, timeout: defaultControlMapInventoryStatement},
+		"timeout":      {values: map[string]string{envControlMapInventoryStatementTimeout: "45s"}, shared: true, timeout: 45 * time.Second},
+		"bad switch":   {values: map[string]string{envControlMapSharedInventory: "yes"}, wantErr: envControlMapSharedInventory},
+		"bad timeout":  {values: map[string]string{envControlMapInventoryStatementTimeout: "2m"}, wantErr: envControlMapInventoryStatementTimeout},
+	} {
+		got, err := loadControlMapConfig(mapLookup(test.values))
+		if test.wantErr != "" {
+			if err == nil || !strings.HasSuffix(err.Error(), ": "+test.wantErr) {
+				t.Errorf("%s: error = %v, want one naming %s", name, err, test.wantErr)
+			}
+			continue
+		}
+		if err != nil || got.SharedInventory != test.shared || got.InventoryStatementTimeout != test.timeout {
+			t.Errorf("%s: got %t/%v, %v", name, got.SharedInventory, got.InventoryStatementTimeout, err)
+		}
 	}
 }

@@ -28,6 +28,7 @@ const (
 	postgresOperationIntakeReplay              postgresOperation = "registration_intake_replay"
 	postgresOperationMapSessionSnapshot        postgresOperation = "map_session_snapshot"
 	postgresOperationMapSessionClientVersion   postgresOperation = "map_session_client_version"
+	postgresOperationMapSessionInventory       postgresOperation = "map_session_inventory"
 	postgresOperationPolicyPublicationBegin    postgresOperation = "policy_publication_begin"
 	postgresOperationPolicyPublicationResolve  postgresOperation = "policy_publication_resolve"
 	postgresOperationPolicyPublicationApply    postgresOperation = "policy_publication_apply"
@@ -136,6 +137,7 @@ var (
 		postgresOperationIntakeReplay,
 		postgresOperationMapSessionSnapshot,
 		postgresOperationMapSessionClientVersion,
+		postgresOperationMapSessionInventory,
 		postgresOperationPolicyPublicationBegin,
 		postgresOperationPolicyPublicationResolve,
 		postgresOperationPolicyPublicationApply,
@@ -452,6 +454,7 @@ func (operation postgresOperation) validForRole(role PoolRole) bool {
 			operation == postgresOperationIntakeRollback ||
 			operation == postgresOperationIntakeReplay ||
 			operation == postgresOperationMapSessionSnapshot || operation == postgresOperationMapSessionClientVersion ||
+			operation == postgresOperationMapSessionInventory ||
 			operation == postgresOperationPolicyPublicationBegin ||
 			operation == postgresOperationPolicyPublicationResolve ||
 			operation == postgresOperationPolicyPublicationApply ||

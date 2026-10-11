@@ -506,6 +506,7 @@ func Catalog() []Migration {
 		newMigration(137, "MTCP machine timestamps", mtcpMachineTimestampSQL),
 		newMigration(138, "Device logout", deviceLogoutSQL),
 		newMigration(139, "Private Interchange", privateInterchangeSQL),
+		newMigration(140, "Map Network inventory", mapNetworkInventorySQL),
 	}
 }
 
@@ -702,3 +703,6 @@ var deviceLogoutSQL string
 
 //go:embed 000139_private_interchange.up.sql
 var privateInterchangeSQL string
+
+//go:embed 000140_map_network_inventory.up.sql
+var mapNetworkInventorySQL string
