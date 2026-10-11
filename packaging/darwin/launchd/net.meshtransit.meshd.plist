@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>net.meshtransit.meshd</string>
+	<!-- The node daemon, unprivileged. meshnetd creates its socket directory;
+	     until then meshd exits and launchd starts it again. -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/libexec/meshtransit/meshd</string>
+		<string>--allow-socket-peers</string>
+		<string>--enable-data-plane</string>
+		<string>--wireguard-listen-port=41641</string>
+		<string>--enable-dns</string>
+	</array>
+	<key>UserName</key>
+	<string>_meshd</string>
+	<key>GroupName</key>
+	<string>_meshd</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>2</integer>
+	<key>Umask</key>
+	<integer>7</integer>
+	<key>StandardErrorPath</key>
+	<string>/var/log/meshtransit/meshd.log</string>
+</dict>
+</plist>

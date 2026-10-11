@@ -23,7 +23,7 @@ DEX_OLD_SOURCE ?=
 DEX_CURRENT_BINARY ?=
 DEX_CURRENT_BINARY_SHA256 ?=
 
-.PHONY: help build build-core build-client package-deb package-deb-meshd package-deb-meshctl lint-client lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
+.PHONY: help build build-core build-client package-deb package-deb-meshd package-deb-meshctl package-darwin lint-client lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
 	container-build container-build-multiarch container-push-multiarch container-push-relay-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
 
 help:
@@ -48,6 +48,11 @@ build-relay:
 	$(GO) build -trimpath -o bin/meshrelay ./relay/cmd/meshrelay
 
 package-deb: package-deb-meshd package-deb-meshctl
+
+# macOS client tarballs for both architectures (unsigned).
+package-darwin:
+	bash packaging/darwin/build-tarball.sh "$(VERSION)" amd64 dist
+	bash packaging/darwin/build-tarball.sh "$(VERSION)" arm64 dist
 
 package-deb-meshd:
 	bash packaging/linux/meshd/build-deb.sh "$(VERSION)" "$(ARCH)" dist
