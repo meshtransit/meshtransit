@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"meshtransit.net/core/internal/adapter/controllistener"
 	"meshtransit.net/core/internal/platform/config"
 )
 
@@ -188,5 +189,13 @@ func TestControlRoutesShutdownJoinsMTCP(t *testing.T) {
 	mtcp := &shutdownRecorder{err: failure}
 	if err := (controlRoutes{mtcp: mtcp}).Shutdown(t.Context()); !errors.Is(err, failure) || mtcp.calls != 1 {
 		t.Fatalf("Shutdown() = %v after %d calls", err, mtcp.calls)
+	}
+}
+
+// Every session cap config accepts must compose a control listener.
+func TestControlListenerAcceptsTheLargestConfiguredSessionCap(t *testing.T) {
+	t.Parallel()
+	if _, err := controllistener.NewTelemetry(16384); err != nil {
+		t.Fatalf("NewTelemetry(16384) error = %v; config accepts MESHTRANSIT_CONTROL_MAX_SESSIONS up to 16384", err)
 	}
 }
