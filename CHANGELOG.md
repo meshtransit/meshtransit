@@ -244,6 +244,11 @@ merge (2026-10-09) are kept below.
   so a proxy in front never compresses responses holding secrets (BREACH).
   Inventory, distribution and session scope responses had no Cache-Control
   and were compressed by Cloudflare.
+- Outbox events without a Network scope (identity, session, deployment and
+  Workspace events) have no consumer and stayed pending forever, so the
+  outbox backlog only grew. The worker role's new outbox-unrouted-retirer
+  closes them every minute as `terminal` with error class `no_consumer`,
+  keeping the rows; Network revision events are untouched.
 
 ### Removed
 

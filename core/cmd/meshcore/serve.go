@@ -204,6 +204,12 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			return 1
 		}
 		roleServices = append(roleServices, app.OwnedService{Name: "audit-partition-maintainer", Service: auditPartitions})
+		unroutedRetirer, composeErr := composeOutboxUnroutedRetirer(storagePools.worker, logger)
+		if composeErr != nil {
+			logger.ErrorContext(ctx, "startup failed", "error_code", "outbox_unrouted_composition_failure")
+			return 1
+		}
+		roleServices = append(roleServices, app.OwnedService{Name: "outbox-unrouted-retirer", Service: unroutedRetirer})
 	}
 	if processConfig.PrivateEndpointWorker != nil {
 		telemetry := endpointpublication.NewTelemetry()

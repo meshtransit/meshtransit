@@ -111,6 +111,53 @@ func assertWorkerOutboxDelivery(
 			backlog.OldestAge(),
 		)
 	}
+	assertUnroutedOutboxRetired(ctx, t, adminConnection, store, claims[1].EventID())
+}
+
+// assertUnroutedOutboxRetired closes every pending event without a Network
+// scope (deployment and identity events have no consumer) and leaves Network
+// events, such as the one waiting for its retry, untouched.
+func assertUnroutedOutboxRetired(
+	ctx context.Context,
+	t *testing.T,
+	adminConnection *pgx.Conn,
+	store *postgresadapter.OutboxStore,
+	pendingNetworkEventID int64,
+) {
+	t.Helper()
+	const countUnrouted = `SELECT pg_catalog.count(*) FROM mesh_ops.outbox_event
+WHERE network_id IS NULL AND completed_at IS NULL`
+	var before int
+	if err := adminConnection.QueryRow(ctx, countUnrouted).Scan(&before); err != nil {
+		t.Fatalf("count unrouted outbox events: %v", err)
+	}
+	if before == 0 {
+		t.Fatal("fixture has no unrouted outbox events (bootstrap writes deployment events)")
+	}
+	retired, err := store.RetireUnroutedEvents(ctx, "outbox-unrouted", 256)
+	if err != nil || retired != before {
+		t.Fatalf("RetireUnroutedEvents() = (%d, %v), want (%d, nil)", retired, err, before)
+	}
+	var open, closed int
+	if err := adminConnection.QueryRow(ctx, countUnrouted).Scan(&open); err != nil {
+		t.Fatalf("count unrouted outbox events after retire: %v", err)
+	}
+	if err := adminConnection.QueryRow(ctx, `SELECT pg_catalog.count(*) FROM mesh_ops.outbox_event
+WHERE network_id IS NULL AND state = 'terminal' AND last_error_class = 'no_consumer'
+  AND claimed_by = 'outbox-unrouted' AND completed_at = claimed_at`).Scan(&closed); err != nil {
+		t.Fatalf("count retired outbox events: %v", err)
+	}
+	if open != 0 || closed != before {
+		t.Fatalf("after retire: %d open, %d closed, want 0 and %d", open, closed, before)
+	}
+	var state string
+	if err := adminConnection.QueryRow(ctx, `SELECT state FROM mesh_ops.outbox_event WHERE id = $1`,
+		pendingNetworkEventID).Scan(&state); err != nil || state != "pending" {
+		t.Fatalf("Network event state after retire = (%q, %v), want pending", state, err)
+	}
+	if again, err := store.RetireUnroutedEvents(ctx, "outbox-unrouted", 256); err != nil || again != 0 {
+		t.Fatalf("second RetireUnroutedEvents() = (%d, %v), want (0, nil)", again, err)
+	}
 }
 
 func claimOutboxAcrossReplicas(
