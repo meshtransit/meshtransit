@@ -69,7 +69,7 @@ func newMapInventoryCollector(stats func() postgresmapsession.InventoryStats) *m
 	return &mapInventoryCollector{
 		stats: stats,
 		snapshots: prometheus.NewDesc("meshtransit_map_snapshots_total",
-			"Map snapshots by candidate source: shared Network inventory or direct read.", []string{"source"}, nil),
+			"Map snapshots by source: shared Network inventory, direct read, or refreshed entirely from the shared view (derived).", []string{"source"}, nil),
 		reads: prometheus.NewDesc("meshtransit_map_inventory_reads_total",
 			"Network inventory reads (one per Network revision per replica when shared).", nil, nil),
 		// Alert on: increase(meshtransit_map_inventory_policy_mismatches_total[15m]) > 0
@@ -88,6 +88,7 @@ func (collector *mapInventoryCollector) Collect(metrics chan<- prometheus.Metric
 	stats := collector.stats()
 	metrics <- prometheus.MustNewConstMetric(collector.snapshots, prometheus.CounterValue, float64(stats.Shared), "shared")
 	metrics <- prometheus.MustNewConstMetric(collector.snapshots, prometheus.CounterValue, float64(stats.Direct), "direct")
+	metrics <- prometheus.MustNewConstMetric(collector.snapshots, prometheus.CounterValue, float64(stats.Derived), "derived")
 	metrics <- prometheus.MustNewConstMetric(collector.reads, prometheus.CounterValue, float64(stats.Reads))
 	metrics <- prometheus.MustNewConstMetric(collector.mismatches, prometheus.CounterValue, float64(stats.PolicyMismatches))
 }
