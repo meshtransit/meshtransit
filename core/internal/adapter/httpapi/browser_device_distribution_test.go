@@ -235,3 +235,24 @@ func TestDeviceConnectivityItem(t *testing.T) {
 		t.Fatalf("bare connectivity JSON %s", bare)
 	}
 }
+
+func TestDeviceDistributionItemShowsAPeerLimit(t *testing.T) {
+	t.Parallel()
+	id, err := node.ParseID("01890f90-0000-7000-8000-0000000000c2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	observation := distribution.Observation{Known: true, SessionGeneration: 1, NetworkRevision: 4, PolicyRevision: 2,
+		DeliveredAt: at, SeenAt: at, Online: true}
+	device := distribution.Device{ID: id, Hostname: "edge", State: "active", Status: distribution.StatusInSync,
+		Observation: observation}
+	if item := newDeviceDistributionItem(device); item.PeerLimit != nil {
+		t.Fatalf("an unlimited map shows a peer limit: %+v", item.PeerLimit)
+	}
+	device.Observation.PeerLimit = distribution.PeerLimit{Sent: 10_000, Authorized: 80_000}
+	encoded, err := json.Marshal(newDeviceDistributionItem(device).PeerLimit)
+	if err != nil || string(encoded) != `{"sent":10000,"authorized":80000}` {
+		t.Fatalf("peer limit JSON = %s, %v", encoded, err)
+	}
+}

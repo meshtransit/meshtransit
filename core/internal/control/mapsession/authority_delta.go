@@ -77,8 +77,12 @@ func projectAuthorityDelta(
 	current Snapshot,
 	next Snapshot,
 ) (bool, []PeerCandidate, []int64, error) {
+	// The next revision, or the same one when only a peer limit's subset
+	// changed.
+	sameRevisionSubset := next.NetworkRevision() == current.NetworkRevision() &&
+		(current.authorizedTotal != 0 || next.authorizedTotal != 0) && !sameAuthorizedPeers(current, next)
 	if !streamCanAdvance(current, next) ||
-		next.NetworkRevision() != current.NetworkRevision()+1 ||
+		(next.NetworkRevision() != current.NetworkRevision()+1 && !sameRevisionSubset) ||
 		relayDirectoryChanged(current, next) ||
 		!stableSelfAuthority(current, next) ||
 		!hasCompleteMapConnectivity(current) || !hasCompleteMapConnectivity(next) {

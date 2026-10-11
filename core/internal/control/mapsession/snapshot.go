@@ -83,7 +83,10 @@ type Snapshot struct {
 	// authorized and valid are computed once by NewSnapshot; the snapshot is
 	// immutable, so readers never repeat the O(candidates) work.
 	authorized []PeerCandidate
-	valid      bool
+	// authorizedTotal is how many peers the policy authorizes when a peer
+	// limit cut authorized down (zero otherwise).
+	authorizedTotal int
+	valid           bool
 }
 
 // NewSnapshot validates and copies one authoritative map snapshot.

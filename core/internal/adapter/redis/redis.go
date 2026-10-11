@@ -235,7 +235,8 @@ func Open(ctx context.Context, options Options) (*Client, error) {
 		) (int64, error) {
 			return recordDeliveryScript.Run(recordCtx, client, []string{deliveryKey, sessionKey},
 				record.generation, record.networkRevision, record.policyRevision, record.deliveredAt,
-				ttl.Milliseconds(), record.filterDigest, record.filterGrants, record.nodeID, record.machine).Int64()
+				ttl.Milliseconds(), record.filterDigest, record.filterGrants, record.nodeID, record.machine,
+				record.peerLimit).Int64()
 		},
 		loadSession: func(loadCtx context.Context, key string) ([]any, error) {
 			return client.HMGet(loadCtx, key, "node_id", "generation", "machine").Result()

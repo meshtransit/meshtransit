@@ -25,17 +25,21 @@ type Delivery struct {
 	PolicyRevision     int64
 	DeliveredAt        time.Time
 	Filter             FilterDigest
+	// PeersSent and PeersAuthorized differ when a peer limit cut the map.
+	PeersSent       int
+	PeersAuthorized int
 }
 
 // IsValid reports a complete delivery observation.
 func (delivery Delivery) IsValid() bool {
 	return delivery.NodeID.IsValid() && delivery.NodeKey.IsValid() && delivery.MachineFingerprint != [32]byte{} &&
 		delivery.SessionGeneration > 0 &&
-		delivery.NetworkRevision > 0 && delivery.PolicyRevision >= 0 && !delivery.DeliveredAt.IsZero()
+		delivery.NetworkRevision > 0 && delivery.PolicyRevision >= 0 && !delivery.DeliveredAt.IsZero() &&
+		delivery.PeersSent >= 0 && delivery.PeersAuthorized >= delivery.PeersSent
 }
 
 func deliveryOf(snapshot Snapshot, filter FilterDigest, at time.Time) Delivery {
-	return Delivery{
+	delivery := Delivery{
 		NodeID:             snapshot.NodeID(),
 		NodeKey:            snapshot.NodeKey(),
 		MachineFingerprint: snapshot.MachineKey().Fingerprint(),
@@ -45,6 +49,8 @@ func deliveryOf(snapshot Snapshot, filter FilterDigest, at time.Time) Delivery {
 		DeliveredAt:        at.UTC(),
 		Filter:             filter,
 	}
+	delivery.PeersSent, delivery.PeersAuthorized = snapshot.PeerLimit()
+	return delivery
 }
 
 // DeliveryRecorder keeps, per Device, the last delivered revision and when the

@@ -120,6 +120,14 @@ type deviceDistributionItem struct {
 	// and gateway port mapping from its latest endpoint report; absent when
 	// it sent none.
 	Connectivity *deviceConnectivityItem `json:"connectivity,omitempty"`
+	// PeerLimit is present when the Device's last map was cut to the peer
+	// limit: it carried Sent of the Authorized peers its policy allows.
+	PeerLimit *devicePeerLimitItem `json:"peer_limit,omitempty"`
+}
+
+type devicePeerLimitItem struct {
+	Sent       int `json:"sent"`
+	Authorized int `json:"authorized"`
 }
 
 type deviceConnectivityItem struct {
@@ -283,6 +291,9 @@ func newDeviceDistributionItem(device distribution.Device) deviceDistributionIte
 		item.DeliveredAt, item.LastSeenAt = &deliveredAt, &seenAt
 		item.Paths = newDevicePathsItem(observation.Paths)
 		item.Connectivity = newDeviceConnectivityItem(observation.Connectivity)
+		if limit := observation.PeerLimit; limit.IsValid() {
+			item.PeerLimit = &devicePeerLimitItem{Sent: limit.Sent, Authorized: limit.Authorized}
+		}
 	}
 	return item
 }

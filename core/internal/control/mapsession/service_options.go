@@ -13,6 +13,15 @@ const (
 type ServiceOptions struct {
 	EndpointTTL     time.Duration
 	EndpointTimeout time.Duration
+	// PeerLimit bounds the peers of one map (zero: DefaultPeerLimit).
+	PeerLimit int
+}
+
+func (options ServiceOptions) peerLimit() int {
+	if options.PeerLimit == 0 {
+		return DefaultPeerLimit
+	}
+	return options.PeerLimit
 }
 
 func (options ServiceOptions) isValid() bool {
@@ -20,5 +29,6 @@ func (options ServiceOptions) isValid() bool {
 		options.EndpointTTL <= maximumEndpointTTL &&
 		options.EndpointTimeout >= minimumEndpointTimeout &&
 		options.EndpointTimeout <= maximumEndpointTimeout &&
-		options.EndpointTimeout < options.EndpointTTL
+		options.EndpointTimeout < options.EndpointTTL &&
+		options.PeerLimit >= 0 && options.PeerLimit <= MaximumPeerCandidates
 }

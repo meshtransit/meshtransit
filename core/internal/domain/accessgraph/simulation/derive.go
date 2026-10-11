@@ -35,13 +35,14 @@ func newResult(baseline Baseline, proposed publication.Candidate) (Result, error
 		return Result{}, ErrInvalidResult
 	}
 
+	peers := estimatePeers(proposed, baseline.selectorMembers)
 	currentRules, err := resolvedRules(baseline.candidate, baseline.selectorMembers)
 	if err != nil {
-		return Result{}, err
+		return Result{}, withPeerEstimate(err, peers)
 	}
 	proposedRules, err := resolvedRules(proposed, baseline.selectorMembers)
 	if err != nil {
-		return Result{}, err
+		return Result{}, withPeerEstimate(err, peers)
 	}
 	currentRelationships, err := effectiveRelationships(currentRules)
 	if err != nil {
@@ -93,6 +94,7 @@ func newResult(baseline Baseline, proposed publication.Candidate) (Result, error
 	result.addedImportedIntents, result.removedImportedIntents = importedIntentChanges(
 		baseline.candidate.ImportedResourceDestinations(), proposed.ImportedResourceDestinations(),
 	)
+	result.peers = peers
 	result.affectedDevices, result.affectedResources, result.affectedGroups = affectedEntities(result)
 	result.hash = hashResult(result)
 	if !result.IsValid() {

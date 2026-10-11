@@ -548,6 +548,21 @@ func (service *StreamService) deliver(
 		}
 		return true, nil
 	}
+	if current.NetworkRevision() == next.NetworkRevision() && !sameAuthorizedPeers(current, next) {
+		// A peer limit chose other peers (presence changed): same authority,
+		// another visible subset.
+		delta, deltaErr := NewAuthorityDelta(current, next)
+		if deltaErr != nil {
+			if err := sink.SendSnapshot(ctx, next); err != nil {
+				return false, errors.Join(ErrStreamWrite, err)
+			}
+			return true, nil
+		}
+		if err := sink.SendAuthorityDelta(ctx, delta); err != nil {
+			return false, errors.Join(ErrStreamWrite, err)
+		}
+		return delta.SelfChanged(), nil
+	}
 	if current.NetworkRevision() == next.NetworkRevision() {
 		delta, deltaErr := NewConnectivityDelta(current, next)
 		if deltaErr != nil {

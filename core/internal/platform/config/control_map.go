@@ -1,6 +1,9 @@
 package config
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 const (
 	envControlMapDeviceAliases        = "MESHTRANSIT_DEVICE_ALIASES_ENABLED"
@@ -16,6 +19,10 @@ const (
 	// reads every other Device for each map as before.
 	envControlMapSharedInventory           = "MESHTRANSIT_CONTROL_MAP_SHARED_INVENTORY"
 	envControlMapSharedConnectivity        = "MESHTRANSIT_CONTROL_MAP_SHARED_CONNECTIVITY"
+	envControlMapPeerLimit                 = "MESHTRANSIT_CONTROL_MAP_PEER_LIMIT"
+	defaultControlMapPeerLimit             = 10_000
+	minControlMapPeerLimit                 = 100
+	maxControlMapPeerLimit                 = 10_000
 	envControlMapInventoryStatementTimeout = "MESHTRANSIT_CONTROL_MAP_INVENTORY_STATEMENT_TIMEOUT"
 	defaultControlMapInventoryStatement    = 30 * time.Second
 	defaultControlMapRequestTimeout        = 10 * time.Second
@@ -57,6 +64,9 @@ type ControlMapConfig struct {
 	// SharedConnectivity keeps one connectivity table per Network on each
 	// replica, read once per wakeup instead of once per stream.
 	SharedConnectivity bool
+	// PeerLimit bounds the peers of one map; a Device authorized for more
+	// receives a prioritized subset.
+	PeerLimit int
 }
 
 func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
@@ -144,6 +154,11 @@ func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
 	if sharedConnectivity != "true" && sharedConnectivity != "false" {
 		return ControlMapConfig{}, settingError(envControlMapSharedConnectivity)
 	}
+	peerLimit, err := parseIntInRange(valueOrDefault(lookup, envControlMapPeerLimit, strconv.Itoa(defaultControlMapPeerLimit)),
+		minControlMapPeerLimit, maxControlMapPeerLimit)
+	if err != nil {
+		return ControlMapConfig{}, settingError(envControlMapPeerLimit)
+	}
 	inventoryTimeout, err := parseDurationInRange(
 		valueOrDefault(lookup, envControlMapInventoryStatementTimeout, defaultControlMapInventoryStatement.String()),
 		minControlMapDatabaseTimeout,
@@ -178,5 +193,6 @@ func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
 		SharedInventory:           sharedInventory == "true",
 		InventoryStatementTimeout: inventoryTimeout,
 		SharedConnectivity:        sharedConnectivity == "true",
+		PeerLimit:                 peerLimit,
 	}, nil
 }

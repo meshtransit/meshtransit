@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/accessgraph"
 	"meshtransit.net/core/internal/domain/accessgraph/simulation"
 	"meshtransit.net/core/internal/domain/identity/accountsession"
@@ -33,6 +34,31 @@ type simulatedPolicy struct {
 	Baseline simulatedPolicyBaseline `json:"baseline"`
 	Proposed simulatedPolicyProposed `json:"proposed"`
 	Impact   simulatedPolicyImpact   `json:"impact"`
+	// PeerEstimate warns when the proposed policy would put more peers in
+	// a Device's map than Core sends.
+	PeerEstimate peerEstimateBody `json:"peer_estimate"`
+}
+
+// Peer thresholds the Console warns at: a map grows heavy past
+// peerEstimateWarning peers, and Core sends at most mapsession's default
+// limit (a deployment may lower MESHTRANSIT_CONTROL_MAP_PEER_LIMIT).
+const peerEstimateWarning = 5_000
+
+type peerEstimateBody struct {
+	// MaxPeers is the largest number of peers one Device would see; an
+	// upper bound unless Exact.
+	MaxPeers           int  `json:"max_peers"`
+	Exact              bool `json:"exact"`
+	Warning            int  `json:"warning"`
+	Limit              int  `json:"limit"`
+	DevicesOverWarning int  `json:"devices_over_warning"`
+	DevicesOverLimit   int  `json:"devices_over_limit"`
+}
+
+func encodePeerEstimate(peers simulation.PeerEstimate) peerEstimateBody {
+	return peerEstimateBody{MaxPeers: peers.MaxPeers(), Exact: peers.Exact(), Warning: peerEstimateWarning,
+		Limit: mapsession.DefaultPeerLimit, DevicesOverWarning: peers.DevicesOver(peerEstimateWarning),
+		DevicesOverLimit: peers.DevicesOver(mapsession.DefaultPeerLimit)}
 }
 
 type simulatedPolicyRevisionVector struct {
@@ -331,7 +357,8 @@ func encodePolicySimulationResult(result simulation.Result) simulatedPolicy {
 			SemanticHash:          hex.EncodeToString(proposedHash[:]),
 			RuleCount:             proposed.ProjectionCount(),
 		},
-		Impact: impact,
+		Impact:       impact,
+		PeerEstimate: encodePeerEstimate(result.Peers()),
 	}
 }
 
@@ -440,10 +467,15 @@ func classifyPolicySimulationError(err error) managementError {
 			Message: "the request is not authorized",
 		}
 	case errors.Is(err, simulation.ErrTooLarge):
-		return managementError{
+		tooLarge := managementError{
 			Status: http.StatusUnprocessableEntity, Code: "simulation_too_large",
 			Message: "the Device Groups or group rules are too large to preview Device by Device",
 		}
+		if peers, found := simulation.PeerEstimateOf(err); found {
+			estimate := encodePeerEstimate(peers)
+			tooLarge.PeerEstimate = &estimate
+		}
+		return tooLarge
 	case errors.Is(err, simulation.ErrStaleInputs):
 		return managementError{
 			Status: http.StatusPreconditionFailed, Code: "precondition_failed",

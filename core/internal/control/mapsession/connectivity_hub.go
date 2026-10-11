@@ -290,21 +290,32 @@ func (table *networkConnectivity) resync(ctx context.Context) {
 }
 
 func (table *networkConnectivity) read(ctx context.Context, keys []ConnectivityKey) ([]Connectivity, error) {
-	readCtx, cancel := context.WithTimeout(ctx, table.hub.options.ReadTimeout)
+	return table.hub.read(ctx, keys)
+}
+
+// read loads keys in bounded batches (a map may authorize more peers than
+// one store call accepts) and checks every answer.
+func (hub *ConnectivityHub) read(ctx context.Context, keys []ConnectivityKey) ([]Connectivity, error) {
+	readCtx, cancel := context.WithTimeout(ctx, hub.options.ReadTimeout)
 	defer cancel()
-	table.hub.reads.Add(1)
-	table.hub.keysRead.Add(uint64(len(keys)))
-	values, err := table.hub.store.LoadConnectivity(readCtx, keys)
-	if err != nil {
-		return nil, err
-	}
-	if len(values) != len(keys) {
-		return nil, ErrInvalidConnectivity
-	}
-	for index, value := range values {
-		if !value.IsValid() || value.Key() != keys[index] {
+	values := make([]Connectivity, 0, len(keys))
+	for offset := 0; offset < len(keys); offset += connectivityResyncBatch {
+		batch := keys[offset:min(offset+connectivityResyncBatch, len(keys))]
+		hub.reads.Add(1)
+		hub.keysRead.Add(uint64(len(batch)))
+		loaded, err := hub.store.LoadConnectivity(readCtx, batch)
+		if err != nil {
+			return nil, err
+		}
+		if len(loaded) != len(batch) {
 			return nil, ErrInvalidConnectivity
 		}
+		for index, value := range loaded {
+			if !value.IsValid() || value.Key() != batch[index] {
+				return nil, ErrInvalidConnectivity
+			}
+		}
+		values = append(values, loaded...)
 	}
 	return values, nil
 }
@@ -405,22 +416,12 @@ func (hub *ConnectivityHub) view(ctx context.Context, networkID network.ID,
 }
 
 func (hub *ConnectivityHub) privateView(ctx context.Context, keys []ConnectivityKey) (*connectivityVersion, error) {
-	readCtx, cancel := context.WithTimeout(ctx, hub.options.ReadTimeout)
-	defer cancel()
-	hub.reads.Add(1)
-	hub.keysRead.Add(uint64(len(keys)))
-	values, err := hub.store.LoadConnectivity(readCtx, keys)
+	values, err := hub.read(ctx, keys)
 	if err != nil {
 		return nil, err
 	}
-	if len(values) != len(keys) {
-		return nil, ErrInvalidConnectivity
-	}
 	var entries connectivityMap
-	for index, value := range values {
-		if !value.IsValid() || value.Key() != keys[index] {
-			return nil, ErrInvalidConnectivity
-		}
+	for _, value := range values {
 		entries = entries.set(value)
 	}
 	return &connectivityVersion{entries: entries}, nil

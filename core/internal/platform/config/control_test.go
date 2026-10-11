@@ -58,6 +58,7 @@ func TestLoadControlConfigForControlRoles(t *testing.T) {
 
 					SharedInventory:           true,
 					SharedConnectivity:        true,
+					PeerLimit:                 defaultControlMapPeerLimit,
 					InventoryStatementTimeout: defaultControlMapInventoryStatement,
 				},
 			}

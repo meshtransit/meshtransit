@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	redisclient "github.com/redis/go-redis/v9"
@@ -26,7 +27,7 @@ const (
 	deliveryTTL = 30 * 24 * time.Hour
 	// maximumDeliveryLoad bounds one read to one distribution page.
 	maximumDeliveryLoad = distribution.MaximumPageSize
-	deliveryFieldCount  = 14
+	deliveryFieldCount  = 15
 	presenceField       = deliveryFieldCount - 1
 )
 
@@ -67,7 +68,7 @@ if stored_generation ~= false then
 end
 redis.call('HSET', KEYS[1], 'generation', ARGV[1], 'network_revision', ARGV[2],
     'policy_revision', ARGV[3], 'delivered_at', ARGV[4], 'seen_at', ARGV[4],
-    'filter_digest', ARGV[6], 'filter_grants', ARGV[7])
+    'filter_digest', ARGV[6], 'filter_grants', ARGV[7], 'peer_limit', ARGV[10])
 if not same_generation then
     redis.call('HSET', KEYS[1], 'enforced_digest', '', 'enforced_grants', '',
         'applied_at', '', 'reported_at', '', 'paths', '', 'connectivity', '')
@@ -117,15 +118,16 @@ redis.call('HSET', KEYS[1], 'seen_at', ARGV[2])
 redis.call('PEXPIRE', KEYS[1], ARGV[3])
 return 1
 `)
-	// KEYS alternate delivery and presence keys; each pair yields thirteen
+	// KEYS alternate delivery and presence keys; each pair yields fourteen
 	// fields (empty when absent) and whether a presence lease exists.
 	loadDeliveriesScript = redisclient.NewScript(`
 local result = {}
 for index = 1, #KEYS, 2 do
     local fields = redis.call('HMGET', KEYS[index], 'generation', 'network_revision',
         'policy_revision', 'delivered_at', 'seen_at', 'filter_digest', 'filter_grants',
-        'enforced_digest', 'enforced_grants', 'applied_at', 'reported_at', 'paths', 'connectivity')
-    for field = 1, 13 do
+        'enforced_digest', 'enforced_grants', 'applied_at', 'reported_at', 'paths', 'connectivity',
+        'peer_limit')
+    for field = 1, 14 do
         result[#result + 1] = fields[field] or ''
     end
     result[#result + 1] = tostring(redis.call('EXISTS', KEYS[index + 1]))
@@ -145,6 +147,7 @@ type deliveryRecord struct {
 	deliveredAt     int64
 	filterDigest    string
 	filterGrants    string
+	peerLimit       string // "sent:authorized", empty when the map was not limited
 }
 
 // enforcementRecord is one enforcement report as its script stores it.
@@ -191,6 +194,9 @@ func (client *Client) RecordDelivery(ctx context.Context, delivery mapsession.De
 	if delivery.Filter.IsValid() {
 		record.filterDigest = delivery.Filter.Digest().String()
 		record.filterGrants = strconv.Itoa(delivery.Filter.Grants())
+	}
+	if delivery.PeersAuthorized > delivery.PeersSent && delivery.PeersSent > 0 {
+		record.peerLimit = strconv.Itoa(delivery.PeersSent) + ":" + strconv.Itoa(delivery.PeersAuthorized)
 	}
 	startedAt := time.Now()
 	result, err := client.recordDelivery(ctx, deliveryKeyForNode(delivery.NodeID),
@@ -348,7 +354,7 @@ func decodeObservations(raw []any, count int) ([]distribution.Observation, error
 // decodeObservation reads, in order: generation, network_revision,
 // policy_revision, delivered_at, seen_at, filter_digest, filter_grants,
 // enforced_digest, enforced_grants, applied_at, reported_at, paths,
-// connectivity, presence.
+// connectivity, peer_limit, presence.
 func decodeObservation(fields []string) (distribution.Observation, error) {
 	online := fields[presenceField] == "1"
 	if fields[presenceField] != "0" && fields[presenceField] != "1" {
@@ -394,6 +400,10 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 	if err != nil {
 		return distribution.Observation{}, err
 	}
+	peerLimit, err := decodePeerLimit(fields[13])
+	if err != nil {
+		return distribution.Observation{}, err
+	}
 	observation := distribution.Observation{
 		Known:             true,
 		SessionGeneration: numbers[0],
@@ -408,6 +418,7 @@ func decodeObservation(fields []string) (distribution.Observation, error) {
 		ReportedAt:        reportedAt,
 		Paths:             paths,
 		Connectivity:      connectivity,
+		PeerLimit:         peerLimit,
 	}
 	if !observation.IsValid() {
 		return distribution.Observation{}, errors.New("inconsistent delivery record")
@@ -430,6 +441,22 @@ func decodeFilterSummary(digestText, grantsText string) (distribution.FilterSumm
 		return distribution.FilterSummary{}, errors.New("malformed filter grants")
 	}
 	return distribution.FilterSummary{Digest: digest, Grants: grants}, nil
+}
+
+// decodePeerLimit reads "sent:authorized"; empty means not limited (and
+// records written before the peer limit have no field).
+func decodePeerLimit(text string) (distribution.PeerLimit, error) {
+	if text == "" {
+		return distribution.PeerLimit{}, nil
+	}
+	sentText, authorizedText, found := strings.Cut(text, ":")
+	sent, sentErr := strconv.Atoi(sentText)
+	authorized, authorizedErr := strconv.Atoi(authorizedText)
+	limit := distribution.PeerLimit{Sent: sent, Authorized: authorized}
+	if !found || sentErr != nil || authorizedErr != nil || !limit.IsValid() {
+		return distribution.PeerLimit{}, errors.New("malformed peer limit")
+	}
+	return limit, nil
 }
 
 func decodeOptionalTime(text string) (time.Time, error) {

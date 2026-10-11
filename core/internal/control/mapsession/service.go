@@ -264,6 +264,11 @@ func (service *Service) ReloadConnectivity(ctx context.Context, snapshot Snapsho
 }
 
 func (service *Service) loadConnectivity(ctx context.Context, snapshot Snapshot) (Snapshot, error) {
+	if service.hub == nil || len(snapshot.directDeviceProjections) != 0 {
+		// A private read is bounded by the store: limit before reading, in
+		// stable order (presence is unknown until read).
+		snapshot = snapshot.withPeerLimit(service.options.peerLimit())
+	}
 	peers := snapshot.AuthorizedPeers()
 	keys := make([]ConnectivityKey, 0, len(peers)+1)
 	self, err := NewConnectivityKey(snapshot.NodeID(), snapshot.SessionGeneration())
@@ -289,7 +294,7 @@ func (service *Service) loadConnectivity(ctx context.Context, snapshot Snapshot)
 		if err != nil {
 			return Snapshot{}, errors.Join(ErrOpen, err)
 		}
-		return shared, nil
+		return shared.withPeerLimit(service.options.peerLimit()), nil
 	}
 	values, err := service.connectivity.LoadConnectivity(operationCtx, keys)
 	if err != nil {
@@ -313,7 +318,7 @@ func (service *Service) loadConnectivity(ctx context.Context, snapshot Snapshot)
 	if err != nil {
 		return Snapshot{}, errors.Join(ErrOpen, err)
 	}
-	return enriched, nil
+	return enriched.withPeerLimit(service.options.peerLimit()), nil
 }
 
 // ObserveSessionEndpoints records a node's transient connectivity for the

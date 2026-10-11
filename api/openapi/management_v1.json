@@ -2354,13 +2354,28 @@
           }
         }
       },
+      "PolicyPeerEstimate": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "How many peers the proposed policy puts in each Device's map, counted per rule side without expanding group rules. Core sends at most limit peers per map (a prioritized subset beyond it).",
+        "required": ["max_peers", "exact", "warning", "limit", "devices_over_warning", "devices_over_limit"],
+        "properties": {
+          "max_peers": {"type": "integer", "minimum": 0, "description": "Largest number of peers one Device would see; an upper bound unless exact"},
+          "exact": {"type": "boolean", "description": "False when group rules make the counts upper bounds"},
+          "warning": {"type": "integer", "minimum": 1},
+          "limit": {"type": "integer", "minimum": 1},
+          "devices_over_warning": {"type": "integer", "minimum": 0},
+          "devices_over_limit": {"type": "integer", "minimum": 0}
+        }
+      },
       "SimulatedPolicy": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "baseline",
           "proposed",
-          "impact"
+          "impact",
+          "peer_estimate"
         ],
         "properties": {
           "baseline": {
@@ -2371,6 +2386,9 @@
           },
           "impact": {
             "$ref": "#/components/schemas/PolicySimulationImpact"
+          },
+          "peer_estimate": {
+            "$ref": "#/components/schemas/PolicyPeerEstimate"
           }
         }
       },
@@ -3825,6 +3843,7 @@
           "retryable": {
             "type": "boolean"
           },
+          "peer_estimate": {"$ref":"#/components/schemas/PolicyPeerEstimate","description":"With code simulation_too_large: the peer counts, which need no Device-by-Device expansion"},
           "guardrail_findings": {"type":"array","maxItems":100,"description":"With code guardrail_violation: the acting Workspace's enforced guardrails that blocked the change","items":{"type":"object","additionalProperties":false,"required":["guardrail_id","name","kind","reason"],"properties":{"guardrail_id":{"$ref":"#/components/schemas/PublicID"},"name":{"type":"string","maxLength":80},"kind":{"type":"string","enum":["network_isolation","network_sharing","external_sharing"]},"reason":{"type":"string","enum":["isolated_networks","network_sharing_locked","external_sharing_blocked"]}}}}
         }
       },

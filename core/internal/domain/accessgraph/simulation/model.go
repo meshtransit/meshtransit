@@ -391,7 +391,11 @@ type Result struct {
 	affectedGroups         []resource.GroupID
 	unsupported            []UnsupportedCapability
 	hash                   ImpactHash
+	peers                  PeerEstimate // not part of the impact hash
 }
+
+// Peers estimates how many peers the proposed policy puts in each map.
+func (result Result) Peers() PeerEstimate { return result.peers }
 
 // IsValid reports whether the immutable result and its canonical digest agree.
 func (result Result) IsValid() bool {

@@ -135,6 +135,17 @@ merge (2026-10-09) are kept below.
   never settles for an older view. Scale test at 2000 Devices: revision
   fan-out p95 1.6 s to 404 ms, Postgres pool wait down 11x, stream opens
   59/s to 95/s. Metric `meshtransit_map_snapshots_total{source="derived"}`.
+- Peer limit (scale-out S6): a map carries at most
+  `MESHTRANSIT_CONTROL_MAP_PEER_LIMIT` peers (default 10,000). A Device
+  authorized for more receives explicit Device shares first, then peers
+  online now, then a stable order; a change of the chosen peers at the same
+  revision is sent as an authority delta. The delivery record keeps
+  `peer_limit` (sent of authorized), the Devices page shows "Peers limited",
+  and the policy preview (also when too large to preview Device by Device)
+  returns `peer_estimate`: the largest number of peers one Device would see
+  and how many Devices pass 5,000 and the limit, counted per rule side
+  without expanding group rules. Connectivity reads for a map are batched,
+  so a Device authorized for more than 10,000 peers no longer fails.
 - Core scale-out, step S5 (scale-out): control replicas publish their
   MTCP session counts to a Redis registry (`meshtransit:v1:control:replicas`,
   expiry by Redis time); a replica above its fair share sheds a bounded

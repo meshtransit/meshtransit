@@ -64,7 +64,22 @@ type Observation struct {
 	// Connectivity is the Device's latest NAT, IPv6 and port mapping report
 	// for the session, if any.
 	Connectivity *Connectivity
+	// PeerLimit is set when the last map was cut to a peer limit.
+	PeerLimit PeerLimit
 }
+
+// PeerLimit is how many peers a limited map carried and how many the
+// policy authorized; the zero value means the map was not limited.
+type PeerLimit struct {
+	Sent       int
+	Authorized int
+}
+
+// IsZero reports a map that was not limited.
+func (limit PeerLimit) IsZero() bool { return limit == PeerLimit{} }
+
+// IsValid reports a limit that cut something.
+func (limit PeerLimit) IsValid() bool { return limit.Sent > 0 && limit.Authorized > limit.Sent }
 
 // IsValid reports a self-consistent observation.
 func (observation Observation) IsValid() bool {
@@ -73,7 +88,10 @@ func (observation Observation) IsValid() bool {
 			observation.PolicyRevision == 0 && observation.DeliveredAt.IsZero() && observation.SeenAt.IsZero() &&
 			observation.Filter.IsZero() && observation.Enforced.IsZero() &&
 			observation.AppliedAt.IsZero() && observation.ReportedAt.IsZero() && observation.Paths == nil &&
-			observation.Connectivity == nil
+			observation.Connectivity == nil && observation.PeerLimit.IsZero()
+	}
+	if !observation.PeerLimit.IsZero() && !observation.PeerLimit.IsValid() {
+		return false
 	}
 	if observation.Paths != nil && !observation.Paths.IsValid() {
 		return false

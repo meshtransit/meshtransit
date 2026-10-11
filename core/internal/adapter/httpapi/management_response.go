@@ -39,6 +39,9 @@ type managementError struct {
 	// GuardrailFindings names the acting Workspace's guardrails that blocked
 	// a change (code guardrail_violation); empty otherwise.
 	GuardrailFindings []guardrailFindingBody
+	// PeerEstimate comes with simulation_too_large: the peer counts need no
+	// Device-by-Device expansion.
+	PeerEstimate *peerEstimateBody
 }
 
 type guardrailFindingBody struct {
@@ -58,6 +61,7 @@ type managementErrorBody struct {
 	CorrelationID     string                 `json:"correlation_id"`
 	Retryable         bool                   `json:"retryable"`
 	GuardrailFindings []guardrailFindingBody `json:"guardrail_findings,omitempty"`
+	PeerEstimate      *peerEstimateBody      `json:"peer_estimate,omitempty"`
 }
 
 func classifyAuthenticationError(err error) managementError {
@@ -160,6 +164,7 @@ func writeManagementError(
 			Code: apiError.Code, Message: apiError.Message,
 			CorrelationID: correlationID.String(), Retryable: apiError.Retryable,
 			GuardrailFindings: apiError.GuardrailFindings,
+			PeerEstimate:      apiError.PeerEstimate,
 		},
 	})
 }

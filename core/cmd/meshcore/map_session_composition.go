@@ -269,6 +269,7 @@ func newMapSessionService(
 	service, err := mapsession.NewService(store, endpoints, connectivity, mapsession.ServiceOptions{
 		EndpointTTL:     mapConfig.PresenceTTL,
 		EndpointTimeout: mapConfig.CoordinationTimeout,
+		PeerLimit:       mapConfig.PeerLimit,
 	})
 	if err != nil {
 		return nil, errors.Join(errInvalidMapSessionComposition, err)

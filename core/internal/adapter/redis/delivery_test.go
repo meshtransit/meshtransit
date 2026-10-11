@@ -60,8 +60,12 @@ func TestClientRecordsAndTouchesDeliveryUnderOneKey(t *testing.T) {
 	}
 	delivery.Filter = mapsession.FilterDigest{}
 	if err := client.RecordDelivery(t.Context(), delivery); err != nil || gotRecord.filterDigest != "" ||
-		gotRecord.filterGrants != "" {
+		gotRecord.filterGrants != "" || gotRecord.peerLimit != "" {
 		t.Fatalf("record without filter = %+v, %v", gotRecord, err)
+	}
+	delivery.PeersSent, delivery.PeersAuthorized = 10_000, 80_000
+	if err := client.RecordDelivery(t.Context(), delivery); err != nil || gotRecord.peerLimit != "10000:80000" {
+		t.Fatalf("record with a peer limit = %+v, %v", gotRecord, err)
 	}
 	if err := client.TouchDelivery(t.Context(), nodeID, 4, delivered.Add(time.Minute)); err != nil {
 		t.Fatalf("TouchDelivery() error = %v", err)
@@ -96,8 +100,9 @@ func TestClientLoadsObservationsInOrder(t *testing.T) {
 			gotKeys = keys
 			return []any{
 				"4", "9", "3", "1759924800000", "1759924860000", testDigestText, "7",
-				testDigestText, "7", "1759924801000", "1759924802000", testPathsText, testConnectivityText, "1",
-				"", "", "", "", "", "", "", "", "", "", "", "", "", "0",
+				testDigestText, "7", "1759924801000", "1759924802000", testPathsText, testConnectivityText,
+				"10000:80000", "1",
+				"", "", "", "", "", "", "", "", "", "", "", "", "", "", "0",
 			}, nil
 		},
 		metrics: newRedisMetrics(1, nil),
@@ -125,6 +130,9 @@ func TestClientLoadsObservationsInOrder(t *testing.T) {
 		c.NAT.SequentialStep != 2 || !c.IPv6Global || c.IPv6STUN || c.PortMapping == nil ||
 		c.PortMapping.Protocol != distribution.PortMappingProtocolUPnP || c.PortMapping.State != distribution.PortMappingMapped {
 		t.Fatalf("first connectivity = %+v", first.Connectivity)
+	}
+	if first.PeerLimit != (distribution.PeerLimit{Sent: 10_000, Authorized: 80_000}) {
+		t.Fatalf("first peer limit = %+v", first.PeerLimit)
 	}
 	if second.Known || second.Online {
 		t.Fatalf("second = %+v", second)
@@ -323,5 +331,14 @@ func TestClientRecordsConnectivity(t *testing.T) {
 	report.PortMapping.State = "teleported"
 	if err := client.RecordConnectivity(t.Context(), id, 4, report); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("invalid report: %v", err)
+	}
+}
+
+func TestDecodePeerLimitRejectsMalformedValues(t *testing.T) {
+	t.Parallel()
+	for _, text := range []string{"10", "a:b", "5:5", "0:3", "7:3"} {
+		if _, err := decodePeerLimit(text); err == nil {
+			t.Errorf("decodePeerLimit(%q) accepted a malformed value", text)
+		}
 	}
 }

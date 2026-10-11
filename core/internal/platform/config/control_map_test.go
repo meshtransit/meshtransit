@@ -34,6 +34,7 @@ func TestLoadControlMapDefaults(t *testing.T) {
 
 		SharedInventory:           true,
 		SharedConnectivity:        true,
+		PeerLimit:                 defaultControlMapPeerLimit,
 		InventoryStatementTimeout: defaultControlMapInventoryStatement,
 	}
 	directory := got.Control.Map.RelayDirectory
@@ -79,6 +80,7 @@ func TestLoadControlMapExplicitValues(t *testing.T) {
 
 		SharedInventory:           true,
 		SharedConnectivity:        true,
+		PeerLimit:                 defaultControlMapPeerLimit,
 		InventoryStatementTimeout: defaultControlMapInventoryStatement,
 	}) {
 		t.Fatalf("Control.Map = %+v, want explicit values", got.Control)
@@ -239,6 +241,31 @@ func TestLoadControlMapSharedConnectivitySetting(t *testing.T) {
 		}
 		if err != nil || got.SharedConnectivity != test.shared {
 			t.Errorf("%s: got %t, %v", name, got.SharedConnectivity, err)
+		}
+	}
+}
+
+func TestLoadControlMapPeerLimit(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		value string
+		want  int
+		bad   bool
+	}{"default": {want: defaultControlMapPeerLimit}, "lower": {value: "5000", want: 5000},
+		"too small": {value: "10", bad: true}, "too large": {value: "10001", bad: true}} {
+		values := map[string]string{}
+		if test.value != "" {
+			values[envControlMapPeerLimit] = test.value
+		}
+		got, err := loadControlMapConfig(mapLookup(values))
+		if test.bad {
+			if err == nil || !strings.HasSuffix(err.Error(), ": "+envControlMapPeerLimit) {
+				t.Errorf("%s: error = %v", name, err)
+			}
+			continue
+		}
+		if err != nil || got.PeerLimit != test.want {
+			t.Errorf("%s: got %d, %v", name, got.PeerLimit, err)
 		}
 	}
 }
