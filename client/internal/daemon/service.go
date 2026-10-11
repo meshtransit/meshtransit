@@ -1783,13 +1783,13 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		if dnsState == DNSConfigured {
 			compatibilityNote = "encrypted direct path, host packet policy, and dns are active; no usable signed relay is available and generalized routes are not implemented"
 		} else {
-			compatibilityNote = "encrypted direct path and host packet policy are active; no usable signed relay is available, and dns and generalized routes are not implemented"
+			compatibilityNote = "encrypted direct path and host packet policy are active; no usable signed relay is available, dns is not active, and generalized routes are not implemented"
 		}
 	case string(dataplane.StateEncryptedRelay):
 		if dnsState == DNSConfigured {
 			compatibilityNote = "encrypted mesh with bounded relay fallback, authenticated direct paths, host packet policy, and dns is active; generalized routes are not implemented"
 		} else {
-			compatibilityNote = "encrypted mesh with bounded relay fallback, authenticated direct paths, and host packet policy is active; dns and generalized routes are not implemented"
+			compatibilityNote = "encrypted mesh with bounded relay fallback, authenticated direct paths, and host packet policy is active; dns is not active and generalized routes are not implemented"
 		}
 	case string(dataplane.StateFailed):
 		compatibilityNote = "data plane failed closed; encrypted tunnel is not active"
