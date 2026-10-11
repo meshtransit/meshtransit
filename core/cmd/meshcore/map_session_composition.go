@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 
+	"github.com/prometheus/client_golang/prometheus"
 	mtcpadapter "meshtransit.net/core/internal/adapter/mtcp"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
+	postgresmapsession "meshtransit.net/core/internal/adapter/postgres/mapsession"
 	"meshtransit.net/core/internal/adapter/relayfile"
 	"meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/network"
@@ -23,9 +25,9 @@ func composeMapSession(
 	connectivity mapsession.ConnectivityStore,
 	relayDirectory relay.Directory,
 	relayDirectories func(network.ID) (relay.Directory, error),
-) (*mapsession.Service, error) {
+) (*mapsession.Service, prometheus.Collector, error) {
 	if runtimePool == nil || endpoints == nil || connectivity == nil || !relayDirectory.IsValid() {
-		return nil, errInvalidMapSessionComposition
+		return nil, nil, errInvalidMapSessionComposition
 	}
 	store, err := postgresadapter.NewMapSessionStore(
 		runtimePool,
@@ -45,9 +47,49 @@ func composeMapSession(
 		},
 	)
 	if err != nil {
-		return nil, errors.Join(errInvalidMapSessionComposition, err)
+		return nil, nil, errors.Join(errInvalidMapSessionComposition, err)
 	}
-	return newMapSessionService(mapConfig, store, endpoints, connectivity)
+	service, err := newMapSessionService(mapConfig, store, endpoints, connectivity)
+	if err != nil {
+		return nil, nil, err
+	}
+	return service, newMapInventoryCollector(store.InventoryStats), nil
+}
+
+// mapInventoryCollector exports how map snapshots got their candidates and
+// the shadow check of the Network policy expansion (scale-out S1/S2).
+type mapInventoryCollector struct {
+	stats      func() postgresmapsession.InventoryStats
+	snapshots  *prometheus.Desc
+	reads      *prometheus.Desc
+	mismatches *prometheus.Desc
+}
+
+func newMapInventoryCollector(stats func() postgresmapsession.InventoryStats) *mapInventoryCollector {
+	return &mapInventoryCollector{
+		stats: stats,
+		snapshots: prometheus.NewDesc("meshtransit_map_snapshots_total",
+			"Map snapshots by candidate source: shared Network inventory or direct read.", []string{"source"}, nil),
+		reads: prometheus.NewDesc("meshtransit_map_inventory_reads_total",
+			"Network inventory reads (one per Network revision per replica when shared).", nil, nil),
+		// Alert on: increase(meshtransit_map_inventory_policy_mismatches_total[15m]) > 0
+		mismatches: prometheus.NewDesc("meshtransit_map_inventory_policy_mismatches_total",
+			"Devices whose policy expanded from the Network policy differed from their own read.", nil, nil),
+	}
+}
+
+func (collector *mapInventoryCollector) Describe(descriptions chan<- *prometheus.Desc) {
+	descriptions <- collector.snapshots
+	descriptions <- collector.reads
+	descriptions <- collector.mismatches
+}
+
+func (collector *mapInventoryCollector) Collect(metrics chan<- prometheus.Metric) {
+	stats := collector.stats()
+	metrics <- prometheus.MustNewConstMetric(collector.snapshots, prometheus.CounterValue, float64(stats.Shared), "shared")
+	metrics <- prometheus.MustNewConstMetric(collector.snapshots, prometheus.CounterValue, float64(stats.Direct), "direct")
+	metrics <- prometheus.MustNewConstMetric(collector.reads, prometheus.CounterValue, float64(stats.Reads))
+	metrics <- prometheus.MustNewConstMetric(collector.mismatches, prometheus.CounterValue, float64(stats.PolicyMismatches))
 }
 
 func loadRelayDirectory(

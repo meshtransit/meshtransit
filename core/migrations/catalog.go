@@ -507,6 +507,7 @@ func Catalog() []Migration {
 		newMigration(138, "Device logout", deviceLogoutSQL),
 		newMigration(139, "Private Interchange", privateInterchangeSQL),
 		newMigration(140, "Map Network inventory", mapNetworkInventorySQL),
+		newMigration(141, "Map Network policy", mapNetworkPolicySQL),
 	}
 }
 
@@ -706,3 +707,6 @@ var privateInterchangeSQL string
 
 //go:embed 000140_map_network_inventory.up.sql
 var mapNetworkInventorySQL string
+
+//go:embed 000141_map_network_policy.up.sql
+var mapNetworkPolicySQL string

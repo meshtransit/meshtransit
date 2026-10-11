@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 140 {
-		t.Fatalf("len(Catalog()) = %d, want 140", len(catalog))
+	if len(catalog) != 141 {
+		t.Fatalf("len(Catalog()) = %d, want 141", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 140 {
-		t.Fatalf("LatestVersion() = %d, want 140", LatestVersion())
+	if LatestVersion() != 141 {
+		t.Fatalf("LatestVersion() = %d, want 141", LatestVersion())
 	}
 }
 
@@ -3364,6 +3364,32 @@ func TestMapNetworkInventory(t *testing.T) {
 	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP ", "INSERT ", "UPDATE ", "DELETE "} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 140 must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestMapNetworkPolicy(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[140]
+	if migration.Version != 141 {
+		t.Fatalf("migration 141 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.load_map_network_policy_rules_v1(",
+		"CREATE FUNCTION mesh_ops.load_map_network_selector_members_v1(",
+		"CREATE FUNCTION mesh_ops.load_map_network_policy_devices_v1(",
+		"policy_release.state = 'active'",
+		"membership.expires_at > pg_catalog.transaction_timestamp()",
+		"device.expires_at > pg_catalog.transaction_timestamp()",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_policy_rules_v1(BIGINT, INTEGER) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 141 must contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP ", "INSERT ", "UPDATE ", "DELETE "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 141 must not contain %q", forbidden)
 		}
 	}
 }

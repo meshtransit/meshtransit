@@ -37,16 +37,18 @@ func (database *fakeDatabase) Begin(context.Context) (databaseTransaction, error
 }
 
 type fakeTransaction struct {
-	rows           []databaseRow
-	queries        []string
-	arguments      [][]any
-	execErr        error
-	commitErr      error
-	rollbackErr    error
-	committed      bool
-	rollbackCalls  int
-	candidateRows  *peerCandidateRows
-	inventoryRows  []*peerCandidateRows // one per shared-inventory read
+	rows          []databaseRow
+	queries       []string
+	arguments     [][]any
+	execErr       error
+	commitErr     error
+	rollbackErr   error
+	committed     bool
+	rollbackCalls int
+	candidateRows *peerCandidateRows
+	inventoryRows []*peerCandidateRows // one per shared-inventory read
+	// noNetworkRules serves a Network policy without the Device's rule.
+	noNetworkRules bool
 	policyRows     *policyRuleRows
 	directRows     *directEdgeRows
 	aliasRows      *directEdgeRows
@@ -90,6 +92,18 @@ func (transaction *fakeTransaction) Query(
 			return &peerCandidateRows{}, nil
 		}
 		return transaction.candidateRows, nil
+	case loadNetworkPolicyRulesSQL:
+		rules, _, _ := networkPolicyRows()
+		if transaction.noNetworkRules {
+			return &genericRows{}, nil
+		}
+		return rules, nil
+	case loadNetworkSelectorMembersSQL:
+		_, members, _ := networkPolicyRows()
+		return members, nil
+	case loadNetworkPolicyDevicesSQL:
+		_, _, devices := networkPolicyRows()
+		return devices, nil
 	case loadNetworkDevicesSQL:
 		if len(transaction.inventoryRows) == 0 {
 			return nil, errors.New("unexpected inventory read")
@@ -189,7 +203,8 @@ func (row snapshotRow) Scan(destinations ...any) error {
 	return nil
 }
 
-// inventoryRevisionRow answers loadInventoryRevisionSQL.
+// inventoryRevisionRow answers loadInventoryRevisionSQL (policy revision 5,
+// whose release is active, as in validPolicyRuleRecord).
 type inventoryRevisionRow struct {
 	revision int64
 	readAt   time.Time
@@ -197,8 +212,68 @@ type inventoryRevisionRow struct {
 
 func (row inventoryRevisionRow) Scan(destinations ...any) error {
 	*destinations[0].(*int64) = row.revision
-	*destinations[1].(*time.Time) = row.readAt
+	*destinations[1].(*int64) = 5
+	*destinations[2].(*time.Time) = row.readAt
+	*destinations[3].(*bool) = true
 	return nil
+}
+
+// genericRows serves rows whose columns are scanned positionally.
+type genericRows struct {
+	rows  [][]any
+	index int
+}
+
+func (rows *genericRows) Next() bool {
+	if rows.index >= len(rows.rows) {
+		return false
+	}
+	rows.index++
+	return true
+}
+
+func (rows *genericRows) Scan(destinations ...any) error {
+	row := rows.rows[rows.index-1]
+	if len(row) != len(destinations) {
+		return errors.New("unexpected destinations")
+	}
+	for index, value := range row {
+		switch destination := destinations[index].(type) {
+		case *string:
+			*destination = value.(string)
+		case *int64:
+			*destination = value.(int64)
+		case *[]int32:
+			*destination = append([]int32(nil), value.([]int32)...)
+		case *time.Time:
+			*destination = value.(time.Time)
+		case **time.Time:
+			if value == nil {
+				*destination = nil
+			} else {
+				at := value.(time.Time)
+				*destination = &at
+			}
+		default:
+			return errors.New("unexpected destination type")
+		}
+	}
+	return nil
+}
+
+func (rows *genericRows) Err() error { return nil }
+
+func (rows *genericRows) Close() {}
+
+// networkPolicyRows mirror validPolicyRuleRecord at Network level: one
+// Device rule 701 -> 702, both Devices live.
+func networkPolicyRows() (rules, members, devices *genericRows) {
+	expires := time.Date(2026, time.September, 15, 3, 0, 0, 0, time.UTC)
+	return &genericRows{rows: [][]any{{"device", testRuleID, "device", int64(701), "device", int64(702), "tcp",
+			[]int32{80, 443}, []int32{81, 443}}}},
+		&genericRows{},
+		&genericRows{rows: [][]any{{int64(701), testNodeID, expires}, {int64(702), testPeerNodeID, expires},
+			{int64(703), "01890f00-0000-7000-8000-000000000703", expires}}}
 }
 
 type errorRow struct{ err error }

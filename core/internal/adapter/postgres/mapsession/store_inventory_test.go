@@ -161,3 +161,23 @@ func TestInventoryUsableOnlyForItsRevisionAndWindow(t *testing.T) {
 		}
 	}
 }
+
+// Shadow phase: a Network policy that disagrees with the Device's own
+// policy read is never used; the Device is read directly and counted.
+func TestStoreReadsDirectlyWhenTheNetworkPolicyDisagrees(t *testing.T) {
+	store, transaction, identity := sharedStoreFixture(t, 7, true)
+	transaction.noNetworkRules = true
+	transaction.rows = append(transaction.rows,
+		scopeRow{workspaceID: testWorkspaceID, networkID: testNetworkID, recoveryEpoch: 2},
+		internalScopeRow{workspaceID: 101, networkID: 201},
+		snapshotRow{record: validSnapshotRecord(t, identity)},
+	)
+	snapshot, err := store.Load(t.Context(), identity)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	stats := store.InventoryStats()
+	if stats.PolicyMismatches != 1 || stats.Shared != 0 || stats.Direct != 1 || len(snapshot.PacketPolicy().Rules()) != 1 {
+		t.Fatalf("stats = %+v, rules = %d; want one mismatch read directly", stats, len(snapshot.PacketPolicy().Rules()))
+	}
+}

@@ -9,9 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	postgresadapter "meshtransit.net/core/internal/adapter/postgres"
 	"meshtransit.net/core/internal/control"
 	"meshtransit.net/core/internal/control/mapsession"
+	"meshtransit.net/core/internal/domain/node"
 )
 
 // assertSharedInventoryMatchesDirectRead loads each identity's snapshot
@@ -74,7 +76,86 @@ func assertSharedInventoryMatchesDirectRead(
 		}
 	}
 	stats := shared.InventoryStats()
+	if stats.PolicyMismatches != 0 {
+		t.Fatalf("Network policy expansion disagreed with the per-Device policy read: %+v", stats)
+	}
 	if loaded > 0 && (stats.Shared != uint64(loaded) || stats.Reads == 0) {
 		t.Fatalf("shared inventory never used: %+v", stats)
 	}
+}
+
+// assertNetworkMapsMatchDirectRead runs the shared-inventory comparison for
+// every active Device of one Network, building each identity from the keys
+// PostgreSQL holds.
+func assertNetworkMapsMatchDirectRead(
+	ctx context.Context,
+	t *testing.T,
+	admin *pgx.Conn,
+	pool *postgresadapter.Pool,
+	networkPublicID string,
+) {
+	t.Helper()
+	rows, err := admin.Query(ctx, `SELECT machine.public_key, node_key.public_key
+FROM mesh.device AS device
+JOIN mesh.network AS network ON network.workspace_id = device.workspace_id AND network.id = device.network_id
+JOIN mesh.device_machine_key_epoch AS machine
+  ON machine.device_id = device.id AND machine.epoch = device.current_machine_key_epoch AND machine.state = 'active'
+JOIN mesh.device_node_key_epoch AS node_key
+  ON node_key.device_id = device.id AND node_key.epoch = device.current_node_key_epoch AND node_key.state = 'active'
+WHERE network.public_id = $1::UUID AND device.state = 'active' AND device.deleted_at IS NULL
+ORDER BY device.id`, networkPublicID)
+	if err != nil {
+		t.Fatalf("read Network identities: %v", err)
+	}
+	var identities []control.AuthenticatedNode
+	for rows.Next() {
+		var machineKey, nodeKey []byte
+		if err := rows.Scan(&machineKey, &nodeKey); err != nil {
+			rows.Close()
+			t.Fatalf("scan Network identity: %v", err)
+		}
+		identities = append(identities, identityFromKeys(t, machineKey, nodeKey))
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate Network identities: %v", err)
+	}
+	if len(identities) == 0 {
+		t.Fatal("no active Devices to compare")
+	}
+	direct, err := postgresadapter.NewMapSessionStore(pool, postgresadapter.MapSessionOptions{
+		StatementTimeout:   5 * time.Second,
+		IdleTimeout:        5 * time.Second,
+		PeerCandidateLimit: mapsession.MaximumPeerCandidates,
+		PolicyRuleLimit:    mapsession.MaximumPacketPolicyRules,
+		RelayDirectory:     integrationRelayDirectory(t),
+	})
+	if err != nil {
+		t.Fatalf("direct NewMapSessionStore() error = %v", err)
+	}
+	assertSharedInventoryMatchesDirectRead(ctx, t, pool, direct, identities...)
+}
+
+func identityFromKeys(t *testing.T, machineValue, nodeValue []byte) control.AuthenticatedNode {
+	t.Helper()
+	if len(machineValue) != 32 || len(nodeValue) != 32 {
+		t.Fatal("malformed key epoch")
+	}
+	machineKey, err := node.NewMachineKey([32]byte(machineValue))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeKey, err := node.NewKey([32]byte(nodeValue))
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, err := control.NewAuthenticatedMachine(machineKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := machine.BindNodeKey(nodeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identity
 }

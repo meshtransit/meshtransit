@@ -376,6 +376,7 @@ func assertPostgreSQLGroupPolicy(ctx context.Context, t *testing.T, admin *pgx.C
 	if edges := resolvedGroupEdges(ctx, t, admin); len(edges) != 1 || !edges[client.String()+">"+server.String()] {
 		t.Fatalf("resolved edges after join = %v", edges)
 	}
+	assertNetworkMapsMatchDirectRead(ctx, t, admin, runtimePool, guardrailFixtureNetwork)
 	query, err := accessgraph.NewQuery(accessgraph.QueryParams{
 		Scope: scope, SourceNodeID: client, DestinationNodeID: server, Protocol: policy.ProtocolTCP, DestinationPort: 22,
 	})

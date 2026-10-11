@@ -18,6 +18,7 @@ type cachedInventory struct {
 	readAt    time.Time // PostgreSQL transaction time of the read
 	expiresAt time.Time // earliest Device key expiry in the inventory
 	inventory appmapsession.NetworkInventory
+	policy    appmapsession.NetworkPolicy // at the policy revision of the read
 }
 
 // usableAt reports whether the inventory answers for revision at the
@@ -68,19 +69,19 @@ func (cache *inventoryCache) get(
 	revision int64,
 	now time.Time,
 	read inventoryReader,
-) (appmapsession.NetworkInventory, bool, error) {
+) (cachedInventory, bool, error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		cache.mu.Lock()
 		slot := cache.slotLocked(scope)
 		if slot.current.usableAt(revision, now, cache.maxAge) {
 			slot.lastUsed = time.Now()
-			inventory := slot.current.inventory
+			current := slot.current
 			cache.mu.Unlock()
-			return inventory, true, nil
+			return current, true, nil
 		}
 		if slot.current.revision > revision {
 			cache.mu.Unlock()
-			return appmapsession.NetworkInventory{}, false, nil // the caller read an older revision
+			return cachedInventory{}, false, nil // the caller read an older revision
 		}
 		if wait := slot.loading; wait != nil {
 			cache.mu.Unlock()
@@ -88,7 +89,7 @@ func (cache *inventoryCache) get(
 			case <-wait:
 				continue // re-check what the reader stored
 			case <-ctx.Done():
-				return appmapsession.NetworkInventory{}, false, ctx.Err()
+				return cachedInventory{}, false, ctx.Err()
 			}
 		}
 		done := make(chan struct{})
@@ -106,14 +107,14 @@ func (cache *inventoryCache) get(
 		close(done)
 		cache.mu.Unlock()
 		if err != nil {
-			return appmapsession.NetworkInventory{}, false, err
+			return cachedInventory{}, false, err
 		}
 		if loaded.usableAt(revision, now, cache.maxAge) {
-			return loaded.inventory, true, nil
+			return loaded, true, nil
 		}
-		return appmapsession.NetworkInventory{}, false, nil
+		return cachedInventory{}, false, nil
 	}
-	return appmapsession.NetworkInventory{}, false, nil
+	return cachedInventory{}, false, nil
 }
 
 // slotLocked returns scope's slot, evicting the least recently used idle

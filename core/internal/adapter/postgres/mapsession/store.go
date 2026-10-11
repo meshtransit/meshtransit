@@ -73,16 +73,39 @@ type InventoryStats struct {
 	// Direct snapshots read their candidates themselves: the shared
 	// inventory is off, or none answered for that exact read.
 	Direct uint64
+	// PolicyMismatches counts Devices whose policy expanded from the
+	// Network policy differed from their own policy read (shadow check
+	// before the expansion replaces that read); they were read directly.
+	PolicyMismatches uint64
 }
 
 type inventoryStats struct {
-	shared, reads, direct atomic.Uint64
+	shared, reads, direct, policyMismatch atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
 func (store *Store) InventoryStats() InventoryStats {
 	return InventoryStats{Shared: store.stats.shared.Load(), Reads: store.stats.reads.Load(),
-		Direct: store.stats.direct.Load()}
+		Direct: store.stats.direct.Load(), PolicyMismatches: store.stats.policyMismatch.Load()}
+}
+
+// policyMatches checks, for a Device without direct projections, that the
+// Network policy expanded for it equals its own policy read (scale-out S2
+// shadow phase). A Device with direct projections keeps its own read.
+func (store *Store) policyMatches(cached cachedInventory, read snapshotRead) bool {
+	snapshot := read.snapshot
+	if !cached.policy.IsValid() || cached.policy.Revision() != snapshot.PacketPolicy().Revision() {
+		return false
+	}
+	if snapshot.HasDirectProjections() {
+		return true
+	}
+	expanded, err := cached.policy.For(snapshot.NodeID(), read.readAt, store.options.PolicyRuleLimit)
+	if err == nil && expanded.Equal(snapshot.PacketPolicy()) {
+		return true
+	}
+	store.stats.policyMismatch.Add(1)
+	return false
 }
 
 var _ appmapsession.SnapshotStore = (*Store)(nil)
@@ -160,7 +183,7 @@ type snapshotRead struct {
 // inventory of exactly that revision, which must list self exactly as self.
 func (store *Store) withSharedInventory(ctx context.Context, read snapshotRead) (appmapsession.Snapshot, bool, error) {
 	scope := read.snapshot.Scope()
-	inventory, found, err := store.inventories.get(ctx, scope, read.revision, read.readAt,
+	cached, found, err := store.inventories.get(ctx, scope, read.revision, read.readAt,
 		func(readCtx context.Context) (cachedInventory, error) {
 			store.stats.reads.Add(1)
 			return store.readInventory(readCtx, scope, read.workspaceValue, read.networkValue)
@@ -171,6 +194,10 @@ func (store *Store) withSharedInventory(ctx context.Context, read snapshotRead) 
 	if !found {
 		return appmapsession.Snapshot{}, false, nil
 	}
+	if !store.policyMatches(cached, read) {
+		return appmapsession.Snapshot{}, false, nil
+	}
+	inventory := cached.inventory
 	self, listed := inventory.Device(read.snapshot.NodeID())
 	if !listed || self.NumericNodeID() != read.snapshot.NumericNodeID() ||
 		self.MachineKey() != read.snapshot.MachineKey() || self.NodeKey() != read.snapshot.NodeKey() {

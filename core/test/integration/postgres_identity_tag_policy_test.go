@@ -213,12 +213,14 @@ func assertPostgreSQLIdentityTagPolicy(ctx context.Context, t *testing.T, admin 
 	if edges := resolvedGroupEdges(ctx, t, admin); edges[client.String()+">"+server.String()] {
 		t.Fatalf("a tagged Device still matched through its owner's group: %v", edges)
 	}
+	assertNetworkMapsMatchDirectRead(ctx, t, admin, runtimePool, guardrailFixtureNetwork)
 	if _, err := tags.ChangeAssignments(ctx, owner, scope, client, nil, []devicetag.ID{tag}, newCorrelationID(t)); err != nil {
 		t.Fatalf("untag the client: %v", err)
 	}
 	if !resolvedGroupEdges(ctx, t, admin)[client.String()+">"+server.String()] {
 		t.Fatal("an untagged Device must match through its owner's group again")
 	}
+	assertNetworkMapsMatchDirectRead(ctx, t, admin, runtimePool, guardrailFixtureNetwork)
 	if networkAfter, _ := fixtureNetworkRevisions(ctx, t, admin); networkAfter != networkBefore+2 {
 		t.Fatalf("Network revision %d -> %d, want one advance per tag change", networkBefore, networkAfter)
 	}

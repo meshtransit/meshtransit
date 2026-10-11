@@ -137,10 +137,12 @@ func startScaleControlProcess(t *testing.T, binary, controlAddress string, sessi
 	environment := integrationProcessEnvironment(healthAddress, controlAddress)
 	environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_MAX_SESSIONS",
 		strconv.Itoa(min(scaleMaxSessions, sessions+scaleSessionHeadway)))
-	// The allocator reads at most this many leases per prefix, so the
-	// default of 256 caps every prefix at 256 Devices whatever its size.
-	environment = setEnvironmentValue(environment, "MESHTRANSIT_REGISTRATION_ADDRESS_CANDIDATE_LIMIT",
-		strconv.Itoa(max(256, 2*sessions)))
+	// Every test client connects from one loopback address; per-source
+	// handshake admission would measure the limiter, not Core.
+	environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_RATE",
+		scaleEnvironmentOr("MESHTRANSIT_SCALE_HANDSHAKE_RATE", "2000"))
+	environment = setEnvironmentValue(environment, "MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_BURST",
+		scaleEnvironmentOr("MESHTRANSIT_SCALE_HANDSHAKE_BURST", "20000"))
 	environment = setEnvironmentValue(environment, "MESHTRANSIT_POSTGRES_RUNTIME_MAX_CONNECTIONS",
 		scaleEnvironmentOr(scalePostgresPoolEnvironment, scaleDefaultPoolSize))
 	environment = setEnvironmentValue(environment, "MESHTRANSIT_REDIS_POOL_SIZE",
@@ -156,6 +158,11 @@ func startScaleControlProcess(t *testing.T, binary, controlAddress string, sessi
 	workerHealthAddress := reserveLoopbackAddress(t)
 	workerEnvironment := integrationProcessEnvironment(workerHealthAddress, reserveLoopbackAddress(t))
 	workerEnvironment = setEnvironmentValue(workerEnvironment, "MESHTRANSIT_ROLE", "worker")
+	// The product's outbox defaults, not the fixture's one-event batches.
+	for _, name := range []string{"MESHTRANSIT_NETWORK_REVISION_BATCH_SIZE", "MESHTRANSIT_NETWORK_REVISION_LEASE",
+		"MESHTRANSIT_NETWORK_REVISION_POLL_INTERVAL", "MESHTRANSIT_NETWORK_REVISION_OPERATION_TIMEOUT"} {
+		workerEnvironment = withoutEnvironmentValue(workerEnvironment, name)
+	}
 	worker := startIntegrationProcess(t, binary, workerEnvironment)
 	t.Cleanup(func() { worker.forceStop(t) })
 	workerCtx, cancelWorker := context.WithTimeout(t.Context(), 15*time.Second)
@@ -766,4 +773,15 @@ func scaleTail(text string) string {
 		return text
 	}
 	return "..." + text[len(text)-limit:]
+}
+
+// withoutEnvironmentValue drops name from environment.
+func withoutEnvironmentValue(environment []string, name string) []string {
+	kept := make([]string, 0, len(environment))
+	for _, entry := range environment {
+		if !strings.HasPrefix(entry, name+"=") {
+			kept = append(kept, entry)
+		}
+	}
+	return kept
 }

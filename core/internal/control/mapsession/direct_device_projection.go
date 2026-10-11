@@ -388,6 +388,12 @@ func (snapshot Snapshot) InboundPacketRules() []InboundPacketRule {
 	return rules
 }
 
+// HasDirectProjections reports whether the snapshot carries any direct
+// sharing projection or sharing dependency.
+func (snapshot Snapshot) HasDirectProjections() bool {
+	return len(snapshot.directDeviceProjections) != 0 || len(snapshot.sharingDependencies) != 0
+}
+
 // ProjectionExpiry returns the earliest deadline requiring authoritative map
 // reconstruction, independently of the authenticated self Device deadline.
 func (snapshot Snapshot) ProjectionExpiry() time.Time {

@@ -440,7 +440,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			)
 			return 1
 		}
-		mapSessionService, composeErr := composeMapSession(
+		mapSessionService, mapInventoryMetrics, composeErr := composeMapSession(
 			processConfig.Control.Map,
 			storagePools.runtime,
 			redisClient,
@@ -457,6 +457,7 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 			)
 			return 1
 		}
+		additionalMetrics = append(additionalMetrics, mapInventoryMetrics)
 		mapStreamService, composeErr := composeMapStream(
 			processConfig.Control.Map,
 			mapSessionService,
