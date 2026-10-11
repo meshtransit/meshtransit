@@ -27,12 +27,17 @@ func TestScutilSupplementalResolver(t *testing.T) {
 	}
 	resolver := netip.MustParseAddrPort("192.0.2.53:1053")
 	answer := netip.MustParseAddr("100.64.9.9")
-	link, name, err := kernelTUNCreator{}.Open("", 1280, 0,
-		[]netip.Prefix{netip.PrefixFrom(resolver.Addr(), 32)}, nil)
+	// As meshnetd does: an address-less utun marks meshd's lifetime, and the
+	// resolver address lives on lo0, where local delivery is guaranteed.
+	link, name, err := kernelTUNCreator{}.Open("", 1280, 0, nil, nil)
 	if err != nil {
 		t.Fatalf("opening the DNS link: %v", err)
 	}
 	defer func() { _ = link.Close() }()
+	if err := (kernelLoopback{}).Add(resolver.Addr()); err != nil {
+		t.Fatalf("adding the resolver address to lo0: %v", err)
+	}
+	defer func() { _ = (kernelLoopback{}).Remove(resolver.Addr()) }()
 
 	listener, err := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(resolver))
 	if err != nil {
@@ -41,6 +46,16 @@ func TestScutilSupplementalResolver(t *testing.T) {
 	defer func() { _ = listener.Close() }()
 	queries := make(chan string, 8)
 	go serveTestDNS(listener, answer, queries)
+
+	// Does a packet to the resolver address reach a local socket, or does it
+	// go into the utun link?
+	route, _ := exec.CommandContext(t.Context(), "/sbin/route", "-n", "get", resolver.Addr().String()).CombinedOutput()
+	t.Logf("route to %s:\n%s", resolver.Addr(), route)
+	if direct, err := directQuery(resolver); err != nil {
+		t.Errorf("a direct UDP query to %s got no answer: %v", resolver, err)
+	} else {
+		t.Logf("a direct UDP query to %s was answered (%d bytes)", resolver, direct)
+	}
 
 	configurator, err := newScutilConfigurator(DefaultScutilPath)
 	if err != nil {
@@ -57,13 +72,24 @@ func TestScutilSupplementalResolver(t *testing.T) {
 	}
 	defer func() { _ = configurator.Reset(context.Background(), config.Endpoint) }()
 
-	if dump, _ := exec.Command("/usr/sbin/scutil", "--dns").CombinedOutput(); !strings.Contains(string(dump), "mttest.mesh") {
-		t.Fatalf("scutil --dns does not list the MeshTransit resolver:\n%s", dump)
+	// configd merges the entry asynchronously.
+	var dump []byte
+	for wait := time.Now().Add(10 * time.Second); time.Now().Before(wait); time.Sleep(250 * time.Millisecond) {
+		if dump, _ = exec.Command("/usr/sbin/scutil", "--dns").CombinedOutput(); strings.Contains(string(dump), "mttest.mesh") {
+			break
+		}
+	}
+	if !strings.Contains(string(dump), "mttest.mesh") {
+		script := "show " + scutilIPv4Key + "\nshow " + scutilDNSKey + "\n"
+		stored, _ := execScriptRunner{}.RunScript(ctx, DefaultScutilPath, script)
+		t.Fatalf("scutil --dns does not list the MeshTransit resolver after 10 s.\nstored entries:\n%s\nscutil --dns:\n%s", stored, dump)
 	}
 	var output []byte
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		output, _ = exec.Command("/usr/bin/dscacheutil", "-q", "host", "-a", "name", "probe.mttest.mesh").CombinedOutput()
+		lookup, cancelLookup := context.WithTimeout(ctx, 3*time.Second)
+		output, _ = exec.CommandContext(lookup, "/usr/bin/dscacheutil", "-q", "host", "-a", "name", "probe.mttest.mesh").CombinedOutput()
+		cancelLookup()
 		if strings.Contains(string(output), answer.String()) {
 			break
 		}
@@ -81,6 +107,12 @@ func TestScutilSupplementalResolver(t *testing.T) {
 
 	if err := configurator.Reset(ctx, config.Endpoint); err != nil {
 		t.Fatalf("Reset() error = %v", err)
+	}
+	if err := (kernelLoopback{}).Remove(resolver.Addr()); err != nil {
+		t.Fatalf("removing the resolver address: %v", err)
+	}
+	if after, _ := exec.CommandContext(ctx, "/sbin/ifconfig", "lo0").CombinedOutput(); strings.Contains(string(after), resolver.Addr().String()) {
+		t.Fatal("the resolver address survived its removal from lo0")
 	}
 	if dump, _ := exec.Command("/usr/sbin/scutil", "--dns").CombinedOutput(); strings.Contains(string(dump), "mttest.mesh") {
 		t.Fatal("the MeshTransit resolver survived Reset")
@@ -126,4 +158,29 @@ func serveTestDNS(connection *net.UDPConn, answer netip.Addr, queries chan<- str
 		default:
 		}
 	}
+}
+
+// directQuery sends one A question for probe.mttest.mesh to the resolver and
+// returns the reply size.
+func directQuery(resolver netip.AddrPort) (int, error) {
+	connection, err := net.DialUDP("udp4", nil, net.UDPAddrFromAddrPort(resolver))
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = connection.Close() }()
+	builder := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: 7, RecursionDesired: true})
+	_ = builder.StartQuestions()
+	_ = builder.Question(dnsmessage.Question{
+		Name: dnsmessage.MustNewName("probe.mttest.mesh."), Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET,
+	})
+	query, err := builder.Finish()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := connection.Write(query); err != nil {
+		return 0, err
+	}
+	_ = connection.SetReadDeadline(time.Now().Add(2 * time.Second))
+	reply := make([]byte, 1500)
+	return connection.Read(reply)
 }

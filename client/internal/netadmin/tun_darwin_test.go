@@ -17,6 +17,7 @@ func TestDarwinKernelStructSizes(t *testing.T) {
 		"ifreq":        {unsafe.Sizeof(ifreqFlags{}), 32},
 		"ifaliasreq":   {unsafe.Sizeof(ifAliasReq{}), 64},
 		"in6_aliasreq": {unsafe.Sizeof(in6AliasReq{}), 128},
+		"ifreq addr":   {unsafe.Sizeof(ifreqAddr4{}), 32},
 	} {
 		if test.got != test.want {
 			t.Errorf("sizeof(%s) = %d, want %d", name, test.got, test.want)

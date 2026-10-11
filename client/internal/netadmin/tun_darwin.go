@@ -205,7 +205,7 @@ func inet6(address netip.Addr) unix.RawSockaddrInet6 {
 
 // ioctl passes a pointer to one of the request structs above. x/sys exports
 // no pointer ioctl for these requests on darwin, hence the raw call.
-func ioctl[T ifreqFlags | ifAliasReq | in6AliasReq](descriptor int, request uint, argument *T) error {
+func ioctl[T ifreqFlags | ifAliasReq | in6AliasReq | ifreqAddr4](descriptor int, request uint, argument *T) error {
 	_, _, errno := unix.Syscall(
 		unix.SYS_IOCTL, //nolint:staticcheck // x/sys has no libSystem wrapper for these requests
 		uintptr(descriptor),
@@ -275,4 +275,54 @@ func hostRouteMessage(index int, prefix netip.Prefix, add bool, pid int) ([]byte
 		return nil, fmt.Errorf("encoding route to %s: %w", prefix, err)
 	}
 	return encoded, nil
+}
+
+// loopbackInterface holds the MeshTransit resolver address on macOS.
+const loopbackInterface = "lo0"
+
+// ifreqAddr4 is struct ifreq with an IPv4 ifr_addr, for SIOCDIFADDR.
+type ifreqAddr4 struct {
+	Name    [unix.IFNAMSIZ]byte
+	Address unix.RawSockaddrInet4
+}
+
+// kernelLoopback adds and removes /32 aliases on lo0, where local delivery
+// is guaranteed.
+type kernelLoopback struct{}
+
+func (kernelLoopback) Add(address netip.Addr) error {
+	if !address.Is4() {
+		return fmt.Errorf("%w: loopback resolver address %s is not IPv4", ErrTUNConfig, address)
+	}
+	socket, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
+	if err != nil {
+		return fmt.Errorf("opening interface control socket: %w", err)
+	}
+	defer func() { _ = unix.Close(socket) }()
+	request := ifAliasReq{
+		Address: inet4(address),
+		Mask:    inet4(netip.AddrFrom4([4]byte{255, 255, 255, 255})),
+	}
+	copy(request.Name[:], loopbackInterface)
+	if err := ioctl(socket, unix.SIOCAIFADDR, &request); err != nil && !errors.Is(err, unix.EEXIST) {
+		return fmt.Errorf("adding %s to %s: %w", address, loopbackInterface, err)
+	}
+	return nil
+}
+
+func (kernelLoopback) Remove(address netip.Addr) error {
+	if !address.Is4() {
+		return nil
+	}
+	socket, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
+	if err != nil {
+		return fmt.Errorf("opening interface control socket: %w", err)
+	}
+	defer func() { _ = unix.Close(socket) }()
+	request := ifreqAddr4{Address: inet4(address)}
+	copy(request.Name[:], loopbackInterface)
+	if err := ioctl(socket, unix.SIOCDIFADDR, &request); err != nil && !errors.Is(err, unix.EADDRNOTAVAIL) {
+		return fmt.Errorf("removing %s from %s: %w", address, loopbackInterface, err)
+	}
+	return nil
 }

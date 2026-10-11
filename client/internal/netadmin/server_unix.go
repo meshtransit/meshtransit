@@ -70,6 +70,16 @@ type Server struct {
 	mu sync.Mutex
 	// background runs alongside Serve, until it returns.
 	background func(context.Context)
+	// dnsLoopback, when set, holds the resolver address on the loopback
+	// interface instead of the DNS link (macOS delivers a point-to-point
+	// link's own address into the link, not to local sockets).
+	dnsLoopback loopbackAddresses
+}
+
+// loopbackAddresses adds and removes host addresses on the loopback interface.
+type loopbackAddresses interface {
+	Add(netip.Addr) error
+	Remove(netip.Addr) error
 }
 
 func newServer(options ServerOptions, creator tunCreator) (*Server, error) {
@@ -352,20 +362,29 @@ func (s *Server) openDNS(connection *net.UnixConn) error {
 
 		return errors.New("netadmin: dns support is not enabled")
 	}
-	prefix := netip.PrefixFrom(
+	linkAddresses := []netip.Prefix{netip.PrefixFrom(
 		s.dnsEndpoint.Resolver.Addr(),
 		s.dnsEndpoint.Resolver.Addr().BitLen(),
-	)
+	)}
+	if s.dnsLoopback != nil {
+		linkAddresses = []netip.Prefix{}
+	}
 	file, name, err := s.creator.Open(
 		s.dnsEndpoint.InterfaceName,
 		1280,
 		s.allowedUID,
-		[]netip.Prefix{prefix},
+		linkAddresses,
 		[]netip.Prefix{},
 	)
 	if err == nil && !validInterfaceName(name) {
 		_ = file.Close()
 		err = fmt.Errorf("%w: kernel interface name %q", ErrProtocol, name)
+	}
+	if err == nil && s.dnsLoopback != nil {
+		if aliasErr := s.dnsLoopback.Add(s.dnsEndpoint.Resolver.Addr()); aliasErr != nil {
+			_ = file.Close()
+			err = fmt.Errorf("adding the resolver address to loopback: %w", aliasErr)
+		}
 	}
 	if err != nil {
 		_ = writeResponse(connection, response{

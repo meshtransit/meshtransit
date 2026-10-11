@@ -40,10 +40,15 @@ func TestScutilApplyScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "d.init\n" +
+		"d.add Addresses * 192.0.2.53\n" +
+		"d.add InterfaceName utun7\n" +
+		"set State:/Network/Service/net.meshtransit.dns/IPv4\n" +
+		"d.init\n" +
 		"d.add ServerAddresses * 192.0.2.53\n" +
 		"d.add ServerPort # 1053\n" +
 		"d.add SupplementalMatchDomains * shared.mesh 64.100.in-addr.arpa consumer.mesh\n" +
 		"d.add SearchDomains * consumer.mesh\n" +
+		"d.add InterfaceName utun7\n" +
 		"set State:/Network/Service/net.meshtransit.dns/DNS\n"
 	if script != want {
 		t.Fatalf("script =\n%s\nwant\n%s", script, want)
@@ -65,7 +70,7 @@ func TestScutilConfiguratorAppliesResetsAndRollsBack(t *testing.T) {
 	if err := configurator.Reset(t.Context(), DNSEndpoint{}); err != nil {
 		t.Fatalf("Reset() error = %v", err)
 	}
-	if len(runner.scripts) != 2 || runner.scripts[1] != "remove "+scutilDNSKey+"\n" {
+	if len(runner.scripts) != 2 || runner.scripts[1] != "remove "+scutilDNSKey+"\nremove "+scutilIPv4Key+"\n" {
 		t.Fatalf("scripts = %q", runner.scripts)
 	}
 

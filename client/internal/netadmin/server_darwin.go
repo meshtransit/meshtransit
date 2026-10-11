@@ -33,11 +33,16 @@ func NewServer(options ServerOptions) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	// A previous helper may have stopped with its entry still in the store.
+	server.dnsLoopback = kernelLoopback{}
+	// A previous helper may have stopped with its entries and the resolver
+	// alias still in place.
 	ctx, cancel := context.WithTimeout(context.Background(), helperOperationTimeout)
 	defer cancel()
 	if err := configurator.Reset(ctx, DNSEndpoint{}); err != nil {
 		server.logger.Debug("no stale MeshTransit DNS entry removed", "error", err)
+	}
+	if err := server.dnsLoopback.Remove(server.dnsEndpoint.Resolver.Addr()); err != nil {
+		server.logger.Warn("removing a stale resolver address failed", "error", err)
 	}
 	server.background = server.watchDNSLink
 	return server, nil
@@ -78,6 +83,11 @@ func (s *Server) resetDNSIfLinkGone(ctx context.Context, exists func(string) boo
 	if err := s.dns.Reset(operationCtx, s.dnsEndpoint); err != nil {
 		s.logger.Warn("removing MeshTransit DNS after its link went away failed", "error", err)
 		return
+	}
+	if s.dnsLoopback != nil {
+		if err := s.dnsLoopback.Remove(s.dnsEndpoint.Resolver.Addr()); err != nil {
+			s.logger.Warn("removing the resolver address failed", "error", err)
+		}
 	}
 	s.logger.Info("MeshTransit DNS removed: its link went away", "interface", name)
 	s.dnsEndpoint.InterfaceName = ""

@@ -28,6 +28,10 @@ func registerPlatformFlags(flags *flag.FlagSet) platformFlags {
 func (platformFlags) interfaceName() string { return "" }
 
 func (p platformFlags) dnsOptions(resolver netip.AddrPort) (*netadmin.DNSOptions, error) {
+	if !resolver.Addr().Is4() {
+		// The resolver address is an lo0 alias, IPv4 only for now.
+		return nil, errors.New("--dns-address must be IPv4 on macOS")
+	}
 	return &netadmin.DNSOptions{Resolver: resolver, ScutilPath: *p.scutilPath}, nil
 }
 

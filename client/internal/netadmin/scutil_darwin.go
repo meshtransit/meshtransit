@@ -9,10 +9,15 @@ import (
 	"strings"
 )
 
-// scutilDNSKey is the dynamic-store entry that carries MeshTransit DNS. The
-// dynamic store lives in memory, so a reboot clears it; meshnetd removes it at
-// startup and when its DNS link goes away.
-const scutilDNSKey = "State:/Network/Service/net.meshtransit.dns/DNS"
+// The dynamic-store entries of the MeshTransit DNS service: its resolver and
+// the link that holds it. configd merges a service's resolver into the system
+// DNS configuration only together with the service's interface state. The
+// dynamic store lives in memory, so a reboot clears them; meshnetd removes them
+// at startup and when its DNS link goes away.
+const (
+	scutilDNSKey  = "State:/Network/Service/net.meshtransit.dns/DNS"
+	scutilIPv4Key = "State:/Network/Service/net.meshtransit.dns/IPv4"
+)
 
 // DefaultScutilPath is the macOS system configuration tool.
 const DefaultScutilPath = "/usr/sbin/scutil"
@@ -71,7 +76,7 @@ func (c *scutilConfigurator) Reset(ctx context.Context, _ DNSEndpoint) error {
 }
 
 func (c *scutilConfigurator) remove(ctx context.Context) error {
-	_, err := c.run(ctx, "remove "+scutilDNSKey+"\n")
+	_, err := c.run(ctx, "remove "+scutilDNSKey+"\nremove "+scutilIPv4Key+"\n")
 	return err
 }
 
@@ -101,14 +106,20 @@ func scutilApplyScript(config DNSConfig) (string, error) {
 	// validateDNSConfig has already refused duplicates across both lists and
 	// the root domain, which only a DefaultRoute config carries.
 	matchDomains := append(append([]string{}, config.RouteDomains...), config.SearchDomains...)
+	resolver := config.Endpoint.Resolver.Addr().String()
 	var script strings.Builder
 	script.WriteString("d.init\n")
-	script.WriteString("d.add ServerAddresses * " + config.Endpoint.Resolver.Addr().String() + "\n")
+	script.WriteString("d.add Addresses * " + resolver + "\n")
+	script.WriteString("d.add InterfaceName " + config.Endpoint.InterfaceName + "\n")
+	script.WriteString("set " + scutilIPv4Key + "\n")
+	script.WriteString("d.init\n")
+	script.WriteString("d.add ServerAddresses * " + resolver + "\n")
 	script.WriteString("d.add ServerPort # " + strconv.Itoa(int(config.Endpoint.Resolver.Port())) + "\n")
 	script.WriteString("d.add SupplementalMatchDomains * " + strings.Join(matchDomains, " ") + "\n")
 	if len(config.SearchDomains) != 0 {
 		script.WriteString("d.add SearchDomains * " + strings.Join(config.SearchDomains, " ") + "\n")
 	}
+	script.WriteString("d.add InterfaceName " + config.Endpoint.InterfaceName + "\n")
 	script.WriteString("set " + scutilDNSKey + "\n")
 	return script.String(), nil
 }
