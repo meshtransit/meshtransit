@@ -84,20 +84,70 @@ func TestUTUNDeviceHasNoEventsAndClosesOnce(t *testing.T) {
 	}
 }
 
-func TestUTUNDeviceDescribesAnEmptyRead(t *testing.T) {
+func TestUTUNDeviceFailsAnEmptyReadOnADetachedDescriptor(t *testing.T) {
 	t.Parallel()
 	device, kernel := pairDevice(t)
 	if _, err := kernel.Write(nil); err != nil {
 		t.Fatal(err)
 	}
-	packets := [][]byte{make([]byte, 128)}
-	_, err := device.Read(packets, []int{0}, 16)
+	_, err := device.Read([][]byte{make([]byte, 128)}, []int{0}, 16)
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("Read() error = %v, want EOF", err)
 	}
-	for _, detail := range []string{"empty read on utun99", "is not a utun", "link missing", "0 packets"} {
+	for _, detail := range []string{"empty read on utun99", "link missing", "0 packets and 0 empty reads"} {
 		if !strings.Contains(err.Error(), detail) {
 			t.Fatalf("error %q lacks %q", err, detail)
 		}
+	}
+}
+
+func TestUTUNDeviceSkipsEmptyReadsWhileAttached(t *testing.T) {
+	t.Parallel()
+	device, kernel := pairDevice(t)
+	device.isAttached = func() bool { return true }
+	ipv4 := []byte{0x45, 0, 0, 20, 1, 2, 3, 4}
+	for range 3 {
+		if _, err := kernel.Write(nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := kernel.Write(append([]byte{0, 0, 0, unix.AF_INET}, ipv4...)); err != nil {
+		t.Fatal(err)
+	}
+	packets := [][]byte{make([]byte, 128)}
+	sizes := []int{0}
+	count, err := device.Read(packets, sizes, 16)
+	if err != nil || count != 1 || !bytes.Equal(packets[0][16:16+sizes[0]], ipv4) {
+		t.Fatalf("Read() = %d, %v", count, err)
+	}
+	if device.emptyReads.Load() != 3 {
+		t.Fatalf("empty reads = %d, want 3", device.emptyReads.Load())
+	}
+}
+
+func TestUTUNDeviceBoundsSkippedEmptyReads(t *testing.T) {
+	t.Parallel()
+	device, kernel := pairDevice(t)
+	device.isAttached = func() bool { return true }
+	// The socketpair holds few datagrams, so write while Read drains them.
+	written := make(chan error, 1)
+	go func() {
+		for sent := 0; sent <= maxEmptyUTUNReads; {
+			if _, err := kernel.Write(nil); errors.Is(err, unix.ENOBUFS) {
+				time.Sleep(time.Millisecond)
+				continue
+			} else if err != nil {
+				written <- err
+				return
+			}
+			sent++
+		}
+		written <- nil
+	}()
+	if _, err := device.Read([][]byte{make([]byte, 128)}, []int{0}, 16); !errors.Is(err, io.EOF) {
+		t.Fatalf("Read() error = %v, want EOF after %d empty reads", err, maxEmptyUTUNReads)
+	}
+	if err := <-written; err != nil {
+		t.Fatal(err)
 	}
 }
