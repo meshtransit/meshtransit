@@ -107,7 +107,7 @@ func NewLoginServer(options LoginServerOptions) (*LoginServer, error) {
 	protocols := &http.Protocols{}
 	protocols.SetHTTP1(true)
 	owner.server = &http.Server{
-		Handler: http.HandlerFunc(owner.handle), Protocols: protocols,
+		Handler: withNoTransform(http.HandlerFunc(owner.handle)), Protocols: protocols,
 		DisableGeneralOptionsHandler: true,
 		ConnContext:                  loginConnectionContext,
 		ReadHeaderTimeout:            5 * time.Second, ReadTimeout: 35 * time.Second, WriteTimeout: 35 * time.Second,

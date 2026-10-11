@@ -239,6 +239,11 @@ merge (2026-10-09) are kept below.
 - A peer endpoint change no longer drops the node's relay grant: the
   connectivity-only reload rebuilt the snapshot without the grant, and the
   node then lost every relay until its next full refresh.
+- Every response of the browser auth and management servers carries
+  `Cache-Control: no-transform` (plus `no-store` when the handler set none),
+  so a proxy in front never compresses responses holding secrets (BREACH).
+  Inventory, distribution and session scope responses had no Cache-Control
+  and were compressed by Cloudflare.
 
 ### Removed
 

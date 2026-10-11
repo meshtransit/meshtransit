@@ -67,7 +67,7 @@ func NewManagementServer(options ManagementServerOptions) (*ManagementServer, er
 	listenConfig := &net.ListenConfig{}
 	return &ManagementServer{
 		server: &http.Server{
-			Handler:           options.Handler,
+			Handler:           withNoTransform(options.Handler),
 			ReadHeaderTimeout: managementReadHeaderTimeout,
 			ReadTimeout:       managementReadTimeout,
 			WriteTimeout:      managementWriteTimeout,

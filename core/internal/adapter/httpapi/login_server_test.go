@@ -184,7 +184,7 @@ func TestLoginServerBrowserWorkspaceSelection(t *testing.T) {
 	if err != nil || response.StatusCode != http.StatusOK ||
 		!strings.Contains(string(body), "Choose where to connect") ||
 		!strings.Contains(string(body), choices.page.Choices.WorkspaceDisplayName) ||
-		response.Header.Get("Cache-Control") != "no-store" {
+		response.Header.Get("Cache-Control") != servedNoStore {
 		t.Fatalf("chooser response = (%d, %q, %v)", response.StatusCode, body, err)
 	}
 	if choices.calls != 2 {
@@ -232,7 +232,7 @@ func TestLoginServerServesNoGrantLandingOverOwnedTLS(t *testing.T) {
 			if response.StatusCode != http.StatusOK || response.ProtoMajor != 1 || response.TLS.Version < tls.VersionTLS12 {
 				t.Fatal("landing crossed another transport profile")
 			}
-			if response.Header.Get("Set-Cookie") != "" || response.Header.Get("Location") != "" || response.Header.Get("Cache-Control") != "no-store" {
+			if response.Header.Get("Set-Cookie") != "" || response.Header.Get("Location") != "" || response.Header.Get("Cache-Control") != servedNoStore {
 				t.Fatal("landing granted credentials or lost no-store")
 			}
 			if method == http.MethodGet && !bytes.Contains(body, []byte(`data-return-path="/console"`)) {
@@ -292,7 +292,7 @@ func TestLoginServerServesSessionPrepareOverOwnedTLS(t *testing.T) {
 	}
 	invalidResponse := response.StatusCode != http.StatusOK || response.ProtoMajor != 1 ||
 		response.TLS.Version < tls.VersionTLS12 || response.Header.Get("Set-Cookie") != "" ||
-		response.Header.Get("Cache-Control") != "no-store" || bytes.Contains(body, []byte(managementTokenFixture))
+		response.Header.Get("Cache-Control") != servedNoStore || bytes.Contains(body, []byte(managementTokenFixture))
 	if invalidResponse || len(fixture.calls) != 0 || callback.calls != 0 {
 		t.Fatal("session preparation crossed transport, cookie or authority boundaries")
 	}
@@ -826,7 +826,7 @@ func TestLoginServerAnswersAStaleCallbackWithAPage(t *testing.T) {
 		t.Fatal("refusal page not consumed/closed")
 	}
 	if response.StatusCode != http.StatusBadRequest || response.Header.Get("Set-Cookie") != "" ||
-		response.Header.Get("Location") != "" || response.Header.Get("Cache-Control") != "no-store" {
+		response.Header.Get("Location") != "" || response.Header.Get("Cache-Control") != servedNoStore {
 		t.Fatalf("stale callback answered %d with headers %v", response.StatusCode, response.Header)
 	}
 	if !bytes.Contains(body, []byte("This sign-in link has expired")) || bytes.Contains(body, []byte("synthetic-private")) {
