@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin
 
 package dataplane
 
@@ -55,7 +55,7 @@ func (f *officialWireGuardFactory) New(
 	tunDevice, err := adoptPrivilegedTUNDescriptor(
 		file,
 		mtu,
-		tun.CreateUnmonitoredTUNFromFD,
+		openInheritedTUN,
 	)
 	if err != nil {
 		return nil, err
