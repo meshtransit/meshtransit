@@ -3,6 +3,7 @@ package policy
 import (
 	"errors"
 	"slices"
+	"strings"
 
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -39,6 +40,10 @@ type Snapshot struct {
 	revision    int64
 	rules       []Rule
 	rulesByPair map[nodePair][]int
+	// valid is set only by NewSnapshot after full validation; the snapshot
+	// is immutable, so IsValid need not validate every rule again (it is
+	// called once per peer candidate when a map is built).
+	valid bool
 }
 
 // NewSnapshot validates, copies, and indexes one active policy artifact.
@@ -61,6 +66,7 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		revision:    params.Revision,
 		rules:       rules,
 		rulesByPair: rulesByPair,
+		valid:       true,
 	}, nil
 }
 
@@ -75,8 +81,35 @@ func (snapshot Snapshot) Rules() []Rule { return cloneRules(snapshot.rules) }
 
 // IsValid reports whether the snapshot is exact-scoped, bounded, and canonical.
 func (snapshot Snapshot) IsValid() bool {
-	return snapshot.rulesByPair != nil &&
-		validSnapshotRules(snapshot.scope, snapshot.revision, snapshot.rules)
+	return snapshot.valid && snapshot.rulesByPair != nil
+}
+
+// PeersOf returns, sorted and without duplicates, every Node an explicit
+// rule pairs with self in either direction: exactly the Nodes for which
+// AllowsPeer(self, peer) holds. It costs one pass over the rules, which a
+// Node-reduced policy keeps to self's own.
+func (snapshot Snapshot) PeersOf(self node.ID) []node.ID {
+	if !snapshot.IsValid() || !self.IsValid() {
+		return []node.ID{}
+	}
+	seen := make(map[node.ID]struct{}, len(snapshot.rules))
+	peers := make([]node.ID, 0, len(snapshot.rules))
+	for _, rule := range snapshot.rules {
+		peer := rule.destinationNodeID
+		switch {
+		case rule.sourceNodeID == self && rule.destinationNodeID != self:
+		case rule.destinationNodeID == self && rule.sourceNodeID != self:
+			peer = rule.sourceNodeID
+		default:
+			continue
+		}
+		if _, exists := seen[peer]; !exists {
+			seen[peer] = struct{}{}
+			peers = append(peers, peer)
+		}
+	}
+	slices.SortFunc(peers, func(first, second node.ID) int { return strings.Compare(first.String(), second.String()) })
+	return peers
 }
 
 // AllowsPeer reports whether an explicit rule in either direction requires the

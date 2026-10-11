@@ -12,7 +12,7 @@ import (
 	"meshtransit.net/core/internal/domain/workspace"
 )
 
-func snapshotFixture(t *testing.T) Snapshot {
+func snapshotFixture(t testing.TB) Snapshot {
 	t.Helper()
 	workspaceID, err := workspace.ParseID("01890f00-0000-7000-8000-000000000101")
 	if err != nil {
@@ -79,7 +79,7 @@ func snapshotFixture(t *testing.T) Snapshot {
 	return snapshot
 }
 
-func relayDirectoryFixture(t *testing.T) relay.Directory {
+func relayDirectoryFixture(t testing.TB) relay.Directory {
 	t.Helper()
 	node, err := relay.NewNode(relay.NodeParams{
 		Name:      "1a",
