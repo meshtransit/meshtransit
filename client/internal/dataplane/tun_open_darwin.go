@@ -37,5 +37,30 @@ func openInheritedTUN(descriptor int) (tun.Device, string, error) {
 		return nil, "", err
 	}
 	_ = unix.Close(descriptor)
-	return device, name, nil
+	return newManagedUpTUN(device), name, nil
 }
+
+// managedUpTUN hides the up and down events wireguard-go derives from routing
+// messages, as Linux's unmonitored TUN does: meshd brings the device up itself
+// and rebuilds it when it must. Without this, a late "down" message for a
+// destroyed utun whose index the new one reused stopped the new device and
+// closed its UDP socket, over and over.
+type managedUpTUN struct {
+	tun.Device
+	events chan tun.Event
+}
+
+func newManagedUpTUN(inner tun.Device) *managedUpTUN {
+	wrapped := &managedUpTUN{Device: inner, events: make(chan tun.Event, 10)}
+	go func() {
+		defer close(wrapped.events)
+		for event := range inner.Events() {
+			if event &^= tun.EventUp | tun.EventDown; event != 0 {
+				wrapped.events <- event
+			}
+		}
+	}()
+	return wrapped
+}
+
+func (t *managedUpTUN) Events() <-chan tun.Event { return t.events }
