@@ -142,6 +142,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 			return 1
 		}
+		engine.SetPathLogger(logger.With("component", "data_plane"))
 		if cfg.TestPolicyDrift {
 			engine.SetPolicyDriftTest(true)
 			logger.Warn("TEST ONLY: the packet filter enforces one rule fewer than control sends")

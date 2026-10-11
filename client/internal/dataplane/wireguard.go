@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/netip"
 	"os"
 	"slices"
@@ -74,6 +75,27 @@ const (
 	peerPathDirect
 	peerPathRelay
 )
+
+func (path peerPath) String() string {
+	switch path {
+	case peerPathDirect:
+		return "direct"
+	case peerPathRelay:
+		return "relay"
+	default:
+		return "pending"
+	}
+}
+
+// endpointDigest names an endpoint in logs without its address: equal
+// endpoints give equal digests.
+func endpointDigest(endpoint string) string {
+	if endpoint == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(endpoint))
+	return hex.EncodeToString(sum[:4])
+}
 
 // PeerPathSnapshot reports aggregate path selection without exposing peer
 // identities, endpoint addresses, or key material.
@@ -221,7 +243,9 @@ type WireGuardEngine struct {
 	relayFallbacks          uint64
 	lastPromotion           time.Duration
 	maximumPromotion        time.Duration
-	credentials             *relayCredentials
+	// pathLogger, when set, records each peer's path changes.
+	pathLogger  *slog.Logger
+	credentials *relayCredentials
 }
 
 // NewWireGuard constructs the Linux encrypted packet engine.
@@ -838,7 +862,7 @@ func (e *WireGuardEngine) SetPreferredEndpoint(
 
 			return err
 		}
-		e.recordPathTransition(&peer, reset.basePath)
+		e.recordPathTransition(peerID, &peer, reset.basePath, reset.baseEndpoint)
 		peer.currentEndpoint = reset.baseEndpoint
 		peer.currentPath = reset.basePath
 		peer.sessionResetPending = false
@@ -981,7 +1005,7 @@ func (e *WireGuardEngine) configurePeerEndpoint(
 
 		return errors.New("dataplane: applying peer endpoint failed")
 	}
-	e.recordPathTransition(&peer, path)
+	e.recordPathTransition(peerID, &peer, path, endpoint)
 	peer.currentEndpoint = endpoint
 	peer.currentPath = path
 	e.peers[peerID] = peer
@@ -1018,8 +1042,23 @@ func (e *WireGuardEngine) adoptPlan(revision uint64, plan wireGuardPlan) {
 	}
 }
 
-func (e *WireGuardEngine) recordPathTransition(peer *wireGuardPeerState, next peerPath) {
-	if e == nil || peer == nil || peer.currentPath == next {
+// SetPathLogger records each peer's path changes (direct, relay) with the
+// peer's numeric ID and a short digest of the endpoint, never the address.
+func (e *WireGuardEngine) SetPathLogger(logger *slog.Logger) {
+	if e != nil {
+		e.pathLogger = logger
+	}
+}
+
+func (e *WireGuardEngine) recordPathTransition(peerID uint64, peer *wireGuardPeerState, next peerPath, endpoint string) {
+	if e == nil || peer == nil {
+		return
+	}
+	if e.pathLogger != nil && (peer.currentPath != next || peer.currentEndpoint != endpoint) {
+		e.pathLogger.Info("peer path changed", "peer", peerID, "from", peer.currentPath.String(),
+			"to", next.String(), "endpoint", endpointDigest(endpoint))
+	}
+	if peer.currentPath == next {
 		return
 	}
 	now := e.now()

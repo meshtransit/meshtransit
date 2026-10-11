@@ -1245,6 +1245,10 @@ func (s *Service) runEndpointRefresh(
 		lastPublished = update
 		hasPublished = true
 		s.notifyLocalEndpoints(candidates)
+		if s.logger != nil {
+			s.logger.Info("endpoints published", "candidates", candidates.Len(),
+				"home_relay", preferredRelay, "nat_known", update.Connectivity.NATKnown)
+		}
 	}
 
 	for {
@@ -1276,6 +1280,11 @@ func (s *Service) runEndpointRefresh(
 			}
 			s.networkObserved.Add(1)
 			networkTriggered = true
+			if s.logger != nil {
+				// Without an active map session the change waits for the
+				// session's first discovery round.
+				s.logger.Info("host network changed", "refresh_now", hasCurrent && current.active)
+			}
 			stopRefreshTimer(timer)
 			timer = nil
 			timerChannel = nil
