@@ -309,7 +309,7 @@ func completeApprovedBrowserRegistration(
 	if resumed {
 		helper.locked.device = existing
 	}
-	if err := helper.loadHostnames(ctx, &helper.locked); err != nil {
+	if err := helper.loadHostnames(ctx, &helper.locked, requestedHostname); err != nil {
 		return registration.Result{}, err
 	}
 	if err := helper.lockAddressState(ctx, &helper.locked); err != nil {

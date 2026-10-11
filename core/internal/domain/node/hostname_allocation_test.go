@@ -131,7 +131,7 @@ func TestNextAvailableHostnameRejectsUnsafeInput(t *testing.T) {
 	t.Parallel()
 
 	valid := mustHostname(t, "node.example")
-	tooMany := make([]node.Hostname, 1025)
+	tooMany := make([]node.Hostname, node.MaximumHostnameFamily+1)
 	for index := range tooMany {
 		tooMany[index] = valid
 	}

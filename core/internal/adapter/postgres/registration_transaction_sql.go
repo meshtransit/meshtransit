@@ -81,10 +81,14 @@ FOR UPDATE`
 const lockRegistrationAuditStreamSQL = `SELECT stream_internal_id, next_sequence, latest_event_hash
 FROM mesh_audit.lock_network_stream_head()`
 
+// loadRegistrationHostnamesSQL reads the live hostnames of the requested
+// hostname's family (node.HostnameFamilyPrefix): every name the allocator
+// may choose starts with that prefix, so the rest of the Network is not read.
 const loadRegistrationHostnamesSQL = `SELECT device.hostname
 FROM mesh.device AS device
 WHERE device.deleted_at IS NULL
   AND ($1::BIGINT IS NULL OR device.id <> $1::BIGINT)
+  AND pg_catalog.starts_with(device.hostname_key, $3::TEXT)
 ORDER BY device.hostname_key, device.id
 LIMIT $2::BIGINT`
 

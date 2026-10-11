@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"meshtransit.net/core/internal/domain/node"
 	"reflect"
 	"sync"
 	"testing"
@@ -79,6 +80,11 @@ func TestRegistrationTransactionCreatesCompleteAtomicMutation(t *testing.T) {
 	}
 	if got := registrationCallQueries(database.calls); !reflect.DeepEqual(got, wantCalls) {
 		t.Fatalf("database call order mismatch\ngot:  %#v\nwant: %#v", got, wantCalls)
+	}
+	hostnameCall := findRegistrationCall(t, database.calls, loadRegistrationHostnamesSQL)
+	family, err := node.HostnameFamilyPrefix(command.Hostname)
+	if err != nil || len(hostnameCall.arguments) != 3 || hostnameCall.arguments[2] != family {
+		t.Fatalf("hostname arguments = %#v, want the requested hostname's family %q", hostnameCall.arguments, family)
 	}
 	leaseCall := findRegistrationCall(t, database.calls, insertRegistrationLeaseSQL)
 	if len(leaseCall.arguments) != 10 || leaseCall.arguments[7] != "100.64.1.1" ||

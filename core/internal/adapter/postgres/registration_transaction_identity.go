@@ -98,7 +98,7 @@ func (transaction *registrationTransaction) resolveOpen(
 	if err := transaction.lockAuditHead(ctx, &locked); err != nil {
 		return registrationLockedState{}, err
 	}
-	if err := transaction.loadHostnames(ctx, &locked); err != nil {
+	if err := transaction.loadHostnames(ctx, &locked, command.Hostname); err != nil {
 		return registrationLockedState{}, err
 	}
 	if err := transaction.lockAddressState(ctx, &locked); err != nil {

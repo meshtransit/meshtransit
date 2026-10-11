@@ -6,7 +6,12 @@ import (
 	"strings"
 )
 
-const maxHostnameAllocationSnapshot = 1024
+// MaximumHostnameFamily bounds the Devices of one Network that may share a
+// requested hostname (and so its numbered variants); it matches the largest
+// Network inventory.
+const MaximumHostnameFamily = 200_000
+
+const maxHostnameAllocationSnapshot = MaximumHostnameFamily
 
 // ErrInvalidHostnameAllocation reports malformed or unbounded allocation input.
 var ErrInvalidHostnameAllocation = errors.New("node: invalid hostname allocation")
@@ -66,4 +71,25 @@ func hostnameCandidate(requested Hostname, ordinal int) (Hostname, error) {
 		return Hostname{}, ErrInvalidHostnameAllocation
 	}
 	return candidate, nil
+}
+
+// HostnameFamilyPrefix returns the prefix shared by requested and every
+// numbered variant NextAvailableHostname may choose for it. Reading only the
+// occupied hostnames with that prefix is enough to choose exactly as when
+// reading every hostname of the Network; the prefix may match more names,
+// which are then simply not candidates.
+func HostnameFamilyPrefix(requested Hostname) (string, error) {
+	if !requested.IsValid() {
+		return "", ErrInvalidHostnameAllocation
+	}
+	longestSuffix := len("-" + strconv.Itoa(maxHostnameAllocationSnapshot))
+	firstLabel, remainder, _ := strings.Cut(requested.value, ".")
+	if remainder != "" {
+		remainder = "." + remainder
+	}
+	stemBytes := min(len(firstLabel), maxDNSLabelBytes-longestSuffix, maxHostnameBytes-len(remainder)-longestSuffix)
+	if stemBytes < 1 {
+		return "", ErrInvalidHostnameAllocation
+	}
+	return firstLabel[:stemBytes], nil
 }

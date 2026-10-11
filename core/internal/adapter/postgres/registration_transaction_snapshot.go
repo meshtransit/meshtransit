@@ -8,7 +8,7 @@ import (
 	"meshtransit.net/core/internal/domain/node"
 )
 
-const maxRegistrationHostnameSnapshot = 1024
+const maxRegistrationHostnameSnapshot = node.MaximumHostnameFamily
 
 func (transaction *registrationTransaction) lockAuditHead(
 	ctx context.Context,
@@ -32,16 +32,22 @@ func (transaction *registrationTransaction) lockAuditHead(
 func (transaction *registrationTransaction) loadHostnames(
 	ctx context.Context,
 	locked *registrationLockedState,
+	requested node.Hostname,
 ) error {
 	var excludedDeviceID any
 	if locked.device.internalID > 0 {
 		excludedDeviceID = locked.device.internalID
+	}
+	family, err := node.HostnameFamilyPrefix(requested)
+	if err != nil {
+		return ErrRegistrationAllocation
 	}
 	rows, err := transaction.database.Query(
 		ctx,
 		loadRegistrationHostnamesSQL,
 		excludedDeviceID,
 		maxRegistrationHostnameSnapshot+1,
+		family,
 	)
 	if err != nil {
 		return fmt.Errorf("load hostname allocation snapshot: %w", err)
