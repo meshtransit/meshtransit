@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"slices"
+	"sync"
 	"time"
 
 	"meshtransit.net/client/internal/peercred"
@@ -38,7 +39,8 @@ type dnsConfigurator interface {
 type DNSOptions struct {
 	InterfaceName  string
 	Resolver       netip.AddrPort
-	ResolvectlPath string
+	ResolvectlPath string // Linux
+	ScutilPath     string // macOS
 }
 
 // ServerOptions fixes privileged device values and overlay pools at helper startup.
@@ -64,6 +66,10 @@ type Server struct {
 	activeTUN       TUNConfig
 	activeName      string
 	hasActiveTUN    bool
+	// mu serializes requests with background work (watchDNSLink on macOS).
+	mu sync.Mutex
+	// background runs alongside Serve, until it returns.
+	background func(context.Context)
 }
 
 func newServer(options ServerOptions, creator tunCreator) (*Server, error) {
@@ -135,6 +141,18 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	}
 	stopClose := context.AfterFunc(ctx, func() { _ = listener.Close() })
 	defer stopClose()
+	if s.background != nil {
+		backgroundCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			s.background(backgroundCtx)
+		}()
+		defer func() {
+			cancel()
+			<-done
+		}()
+	}
 
 	for {
 		connection, err := listener.Accept()
@@ -145,7 +163,10 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 
 			return fmt.Errorf("netadmin: accepting helper connection: %w", err)
 		}
-		if err := s.handle(ctx, connection); err != nil {
+		s.mu.Lock()
+		err = s.handle(ctx, connection)
+		s.mu.Unlock()
+		if err != nil {
 			s.logger.Warn("meshnetd request rejected", "error", err)
 		}
 		if err := connection.Close(); err != nil {

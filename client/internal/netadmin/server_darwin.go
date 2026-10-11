@@ -1,14 +1,84 @@
 package netadmin
 
+import (
+	"context"
+	"net"
+	"time"
+)
+
+// dnsLinkPollInterval is how often meshnetd checks that meshd still holds the
+// DNS link. When meshd exits, even without cleaning up, the kernel destroys the
+// link, and meshnetd then removes the host DNS entry that points at it.
+const dnsLinkPollInterval = 2 * time.Second
+
 // NewServer constructs a privileged helper confined to explicit overlay pools.
 // The kernel names macOS tunnels, so InterfaceName and DNS.InterfaceName must
 // be empty.
 func NewServer(options ServerOptions) (*Server, error) {
+	var configurator *scutilConfigurator
 	if options.DNS != nil {
-		return nil, ErrUnsupported // host DNS on macOS comes with C1i
+		path := options.DNS.ScutilPath
+		if path == "" {
+			path = DefaultScutilPath
+		}
+		var err error
+		if configurator, err = newScutilConfigurator(path); err != nil {
+			return nil, err
+		}
 	}
-	return newServerWithDNS(options, kernelTUNCreator{}, nil)
+	if configurator == nil {
+		return newServerWithDNS(options, kernelTUNCreator{}, nil)
+	}
+	server, err := newServerWithDNS(options, kernelTUNCreator{}, configurator)
+	if err != nil {
+		return nil, err
+	}
+	// A previous helper may have stopped with its entry still in the store.
+	ctx, cancel := context.WithTimeout(context.Background(), helperOperationTimeout)
+	defer cancel()
+	if err := configurator.Reset(ctx, DNSEndpoint{}); err != nil {
+		server.logger.Debug("no stale MeshTransit DNS entry removed", "error", err)
+	}
+	server.background = server.watchDNSLink
+	return server, nil
 }
 
 // validConfiguredInterfaceName requires an empty name: the kernel picks utunN.
 func validConfiguredInterfaceName(name string) bool { return name == "" }
+
+// watchDNSLink removes the host DNS entry once the DNS link it points at is
+// gone, so a crashed meshd never leaves names resolving to a dead resolver.
+func (s *Server) watchDNSLink(ctx context.Context) {
+	ticker := time.NewTicker(dnsLinkPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.resetDNSIfLinkGone(ctx, linkExists)
+		}
+	}
+}
+
+func linkExists(name string) bool {
+	_, err := net.InterfaceByName(name)
+	return err == nil
+}
+
+func (s *Server) resetDNSIfLinkGone(ctx context.Context, exists func(string) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	name := s.dnsEndpoint.InterfaceName
+	if s.dns == nil || name == "" || exists(name) {
+		return
+	}
+	operationCtx, cancel := context.WithTimeout(ctx, helperOperationTimeout)
+	defer cancel()
+	if err := s.dns.Reset(operationCtx, s.dnsEndpoint); err != nil {
+		s.logger.Warn("removing MeshTransit DNS after its link went away failed", "error", err)
+		return
+	}
+	s.logger.Info("MeshTransit DNS removed: its link went away", "interface", name)
+	s.dnsEndpoint.InterfaceName = ""
+}

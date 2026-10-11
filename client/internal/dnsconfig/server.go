@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/netip"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -324,7 +323,7 @@ func (s *Server) currentPlan() Plan {
 func validateDNSLink(link netadmin.DNSLink) error {
 	endpoint := link.Endpoint
 	if link.File == nil || endpoint.InterfaceName == "" ||
-		!strings.HasPrefix(endpoint.InterfaceName, "mesh") ||
+		!netadmin.ValidInterfaceName(endpoint.InterfaceName) ||
 		!endpoint.Resolver.IsValid() || endpoint.Resolver.Addr().Is4In6() ||
 		!endpoint.Resolver.Addr().IsGlobalUnicast() ||
 		endpoint.Resolver.Addr().IsLinkLocalUnicast() || endpoint.Resolver.Port() < 1024 {

@@ -15,14 +15,20 @@ import (
 )
 
 // platformFlags are the macOS helper settings; the kernel names tunnels.
-type platformFlags struct{}
+type platformFlags struct {
+	scutilPath *string
+}
 
-func registerPlatformFlags(*flag.FlagSet) platformFlags { return platformFlags{} }
+func registerPlatformFlags(flags *flag.FlagSet) platformFlags {
+	return platformFlags{
+		scutilPath: flags.String("scutil-path", netadmin.DefaultScutilPath, "absolute trusted scutil binary path"),
+	}
+}
 
 func (platformFlags) interfaceName() string { return "" }
 
-func (platformFlags) dnsOptions(netip.AddrPort) (*netadmin.DNSOptions, error) {
-	return nil, errors.New("--enable-dns is not supported on macOS yet")
+func (p platformFlags) dnsOptions(resolver netip.AddrPort) (*netadmin.DNSOptions, error) {
+	return &netadmin.DNSOptions{Resolver: resolver, ScutilPath: *p.scutilPath}, nil
 }
 
 // meshtransitGroup holds the people allowed to run meshctl.

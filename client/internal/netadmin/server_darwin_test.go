@@ -191,3 +191,33 @@ func TestValidInterfaceNameAcceptsKernelTunnels(t *testing.T) {
 		t.Error("macOS helper must leave interface names to the kernel")
 	}
 }
+
+type countingDNS struct{ resets int }
+
+func (c *countingDNS) Apply(context.Context, DNSConfig) error { return nil }
+
+func (c *countingDNS) Reset(context.Context, DNSEndpoint) error {
+	c.resets++
+	return nil
+}
+
+func TestResetDNSIfLinkGone(t *testing.T) {
+	t.Parallel()
+	dns := &countingDNS{}
+	server := &Server{
+		logger: slog.New(slog.DiscardHandler), dns: dns,
+		dnsEndpoint: DNSEndpoint{InterfaceName: "utun9", Resolver: netip.MustParseAddrPort("192.0.2.53:1053")},
+	}
+	server.resetDNSIfLinkGone(t.Context(), func(string) bool { return true })
+	if dns.resets != 0 {
+		t.Fatal("reset DNS while its link exists")
+	}
+	server.resetDNSIfLinkGone(t.Context(), func(string) bool { return false })
+	if dns.resets != 1 || server.dnsEndpoint.InterfaceName != "" {
+		t.Fatalf("resets = %d, endpoint = %+v", dns.resets, server.dnsEndpoint)
+	}
+	server.resetDNSIfLinkGone(t.Context(), func(string) bool { return false })
+	if dns.resets != 1 {
+		t.Fatal("reset DNS again with no link recorded")
+	}
+}

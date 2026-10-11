@@ -311,6 +311,10 @@ func validDNSDomain(value string, allowRoot bool) bool {
 	return true
 }
 
+// ValidInterfaceName reports whether name is one meshnetd can give a link:
+// mesh* on Linux, or a kernel-named utunN on macOS.
+func ValidInterfaceName(name string) bool { return validInterfaceName(name) }
+
 // validInterfaceName accepts the names meshnetd gives its links (mesh*) and
 // the names the macOS kernel gives tunnels (utun0 to utun9999).
 func validInterfaceName(name string) bool {
