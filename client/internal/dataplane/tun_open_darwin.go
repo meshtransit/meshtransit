@@ -4,8 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/tun"
@@ -35,7 +38,7 @@ func openInheritedTUN(descriptor int) (tun.Device, string, error) {
 	if file == nil {
 		return nil, "", errors.New("dataplane: invalid utun descriptor")
 	}
-	return &utunDevice{file: file, name: name, events: make(chan tun.Event)}, name, nil
+	return &utunDevice{file: file, name: name, events: make(chan tun.Event), opened: time.Now()}, name, nil
 }
 
 // utunDevice reads and writes packets on a macOS utun descriptor. It never
@@ -46,6 +49,8 @@ type utunDevice struct {
 	events    chan tun.Event
 	closeOnce sync.Once
 	closeErr  error
+	opened    time.Time
+	packets   atomic.Uint64
 }
 
 func (t *utunDevice) File() *os.File { return t.file }
@@ -55,11 +60,31 @@ func (t *utunDevice) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 		return 0, io.ErrShortBuffer
 	}
 	read, err := t.file.Read(bufs[0][offset-utunHeaderBytes:])
+	if read == 0 && (err == nil || errors.Is(err, io.EOF)) {
+		return 0, t.emptyReadError()
+	}
 	if read <= utunHeaderBytes {
 		return 0, err
 	}
+	t.packets.Add(1)
 	sizes[0] = read - utunHeaderBytes
 	return 1, err
+}
+
+// emptyReadError describes an empty read, which WireGuard treats as fatal:
+// whether the descriptor is still this utun, whether the link still exists,
+// and how long the device lived.
+func (t *utunDevice) emptyReadError() error {
+	socket := "unknown"
+	if raw, err := t.file.SyscallConn(); err == nil {
+		_ = raw.Control(func(descriptor uintptr) { socket = describeDescriptor(int(descriptor)) })
+	}
+	link := "present"
+	if _, err := net.InterfaceByName(t.name); err != nil {
+		link = "missing"
+	}
+	return fmt.Errorf("dataplane: empty read on %s: %s, link %s, after %s and %d packets: %w",
+		t.name, socket, link, time.Since(t.opened).Round(time.Millisecond), t.packets.Load(), io.EOF)
 }
 
 func (t *utunDevice) Write(bufs [][]byte, offset int) (int, error) {
@@ -113,3 +138,20 @@ func (t *utunDevice) Close() error {
 }
 
 func (t *utunDevice) BatchSize() int { return 1 }
+
+// describeDescriptor tells whether descriptor is still a utun kernel control
+// socket, and which one, or what else it now is.
+func describeDescriptor(descriptor int) string {
+	address, err := unix.Getsockname(descriptor)
+	if err != nil {
+		return fmt.Sprintf("fd %d has no socket address (%v)", descriptor, err)
+	}
+	if _, isControl := address.(*unix.SockaddrCtl); !isControl {
+		return fmt.Sprintf("fd %d is not a utun but a %T", descriptor, address)
+	}
+	name, err := unix.GetsockoptString(descriptor, sysprotoControl, utunOptIfname)
+	if err != nil {
+		return fmt.Sprintf("fd %d is a kernel control without a utun name (%v)", descriptor, err)
+	}
+	return fmt.Sprintf("fd %d is %s", descriptor, name)
+}

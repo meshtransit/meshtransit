@@ -2,8 +2,12 @@ package dataplane
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/tun"
@@ -17,7 +21,9 @@ func pairDevice(t *testing.T) (*utunDevice, *os.File) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	device := &utunDevice{file: os.NewFile(uintptr(fds[0]), "utun99"), name: "utun99", events: make(chan tun.Event)}
+	device := &utunDevice{
+		file: os.NewFile(uintptr(fds[0]), "utun99"), name: "utun99", events: make(chan tun.Event), opened: time.Now(),
+	}
 	kernel := os.NewFile(uintptr(fds[1]), "kernel")
 	t.Cleanup(func() {
 		_ = device.Close()
@@ -75,5 +81,23 @@ func TestUTUNDeviceHasNoEventsAndClosesOnce(t *testing.T) {
 	}
 	if err := device.Close(); err != nil {
 		t.Fatalf("second Close() = %v", err)
+	}
+}
+
+func TestUTUNDeviceDescribesAnEmptyRead(t *testing.T) {
+	t.Parallel()
+	device, kernel := pairDevice(t)
+	if _, err := kernel.Write(nil); err != nil {
+		t.Fatal(err)
+	}
+	packets := [][]byte{make([]byte, 128)}
+	_, err := device.Read(packets, []int{0}, 16)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("Read() error = %v, want EOF", err)
+	}
+	for _, detail := range []string{"empty read on utun99", "is not a utun", "link missing", "0 packets"} {
+		if !strings.Contains(err.Error(), detail) {
+			t.Fatalf("error %q lacks %q", err, detail)
+		}
 	}
 }
