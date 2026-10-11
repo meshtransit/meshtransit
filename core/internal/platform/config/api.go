@@ -394,6 +394,9 @@ func validateAPIExternalSecretOwnership(
 	externalSecrets := make([]string, 0, 4)
 	if control != nil {
 		externalSecrets = append(externalSecrets, control.TLSPrivateKeyFile.path, control.NoisePrivateKeyFile.path)
+		if control.NextNoisePrivateKeyFile != nil {
+			externalSecrets = append(externalSecrets, control.NextNoisePrivateKeyFile.path)
+		}
 		if api.TLSPrivateKeyFile.path == control.NoisePrivateKeyFile.path {
 			return settingError(envAPITLSPrivateKeyFile)
 		}

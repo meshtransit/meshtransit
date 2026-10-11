@@ -512,3 +512,33 @@ func TestDurableGuardRefusesReplayOnAnotherReplica(t *testing.T) {
 		t.Fatal("replayed timestamp accepted by another replica")
 	}
 }
+
+func TestKeyDocumentListsTheNextKeyDuringRotation(t *testing.T) {
+	next, err := key.NewControlPrivate(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newFixture(t, func(options *Options) {
+		options.Keys = append(options.Keys, ControlKey{Private: next, NotAfter: time.Now().Add(2 * 365 * 24 * time.Hour)})
+	})
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, f.http.URL+sharedmtcp.KeyPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	var document struct {
+		Keys []struct {
+			Key key.ControlPublic `json:"key"`
+		} `json:"keys"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Keys) != 2 || document.Keys[0].Key != f.control.Public() || document.Keys[1].Key != next.Public() {
+		t.Fatalf("key document = %+v, want current then next", document)
+	}
+}

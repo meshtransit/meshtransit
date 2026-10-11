@@ -57,10 +57,15 @@ type Record struct {
 	pendingNodePrivateKey string
 	controlPublicKey      string
 	controlKeyFingerprint string
-	pendingAuthURL        string
-	isRegistered          bool
-	createdAt             time.Time
-	updatedAt             time.Time
+	// nextControlPublicKey is the control key Core announced over a session
+	// authenticated with the current one (mtcp-v1 §11); the profile switches
+	// to it when Core stops offering the current key.
+	nextControlPublicKey      string
+	nextControlKeyFingerprint string
+	pendingAuthURL            string
+	isRegistered              bool
+	createdAt                 time.Time
+	updatedAt                 time.Time
 }
 
 // NewRecord validates newly generated protocol material before persistence.
@@ -91,6 +96,15 @@ func (r Record) ProfileID() string { return r.profileID }
 
 // ControlKeyFingerprint returns the non-secret pinned key fingerprint.
 func (r Record) ControlKeyFingerprint() string { return r.controlKeyFingerprint }
+
+// NextControlKey returns the staged next control key and its fingerprint, or
+// nil and "" when none is staged.
+func (r Record) NextControlKey() ([]byte, string) {
+	if r.nextControlPublicKey == "" {
+		return nil, ""
+	}
+	return []byte(r.nextControlPublicKey), r.nextControlKeyFingerprint
+}
 
 // Material returns defensive copies of private protocol material.
 func (r Record) Material() Material {
@@ -155,14 +169,18 @@ func validateRecord(record Record) error {
 			return fmt.Errorf("%w: pending node private key encoding is invalid", ErrInvalid)
 		}
 	}
-	if len(record.controlKeyFingerprint) != maxFingerprintBytes ||
-		!strings.HasPrefix(record.controlKeyFingerprint, "sha256:") {
-		return fmt.Errorf("%w: control key fingerprint is invalid", ErrInvalid)
+	if err := validateFingerprint(record.controlKeyFingerprint); err != nil {
+		return err
 	}
-	digest, err := hex.DecodeString(strings.TrimPrefix(record.controlKeyFingerprint, "sha256:"))
-	if err != nil || len(digest) != 32 ||
-		"sha256:"+hex.EncodeToString(digest) != record.controlKeyFingerprint {
-		return fmt.Errorf("%w: control key fingerprint is not canonical", ErrInvalid)
+	if record.nextControlPublicKey != "" || record.nextControlKeyFingerprint != "" {
+		if len(record.nextControlPublicKey) > maxKeyTextBytes ||
+			strings.TrimSpace(record.nextControlPublicKey) != record.nextControlPublicKey ||
+			record.nextControlPublicKey == "" || record.nextControlPublicKey == record.controlPublicKey {
+			return fmt.Errorf("%w: next control public key encoding is invalid", ErrInvalid)
+		}
+		if err := validateFingerprint(record.nextControlKeyFingerprint); err != nil {
+			return err
+		}
 	}
 	if len(record.pendingAuthURL) > maxAuthURLBytes {
 		return fmt.Errorf("%w: pending authorization url is too long", ErrInvalid)
@@ -201,4 +219,15 @@ func isProfileID(id string) bool {
 	}
 
 	return true
+}
+
+func validateFingerprint(fingerprint string) error {
+	if len(fingerprint) != maxFingerprintBytes || !strings.HasPrefix(fingerprint, "sha256:") {
+		return fmt.Errorf("%w: control key fingerprint is invalid", ErrInvalid)
+	}
+	digest, err := hex.DecodeString(strings.TrimPrefix(fingerprint, "sha256:"))
+	if err != nil || len(digest) != 32 || "sha256:"+hex.EncodeToString(digest) != fingerprint {
+		return fmt.Errorf("%w: control key fingerprint is not canonical", ErrInvalid)
+	}
+	return nil
 }

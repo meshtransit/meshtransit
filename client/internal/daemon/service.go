@@ -742,6 +742,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 		if reportsEnforcement {
 			enforcementReports = make(chan controlplane.EnforcementReport, 1)
 		}
+		nextControlKey, _ := record.NextControlKey()
 		go func() {
 			streamDone <- s.prober.StreamNetmap(
 				streamCtx,
@@ -757,6 +758,10 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					EndpointUpdates:     endpointUpdates,
 					EnforcementReports:  enforcementReports,
 					PathStats:           pathStats,
+					NextControlKey:      nextControlKey,
+					ControlKeysChanged: func(ctx context.Context, next []byte) error {
+						return s.stageNextControlKey(ctx, active.ID, next)
+					},
 					ConnectionChanged: func(connected bool) {
 						s.setControlConnected(active.ID, connected)
 					},
@@ -971,11 +976,12 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			// rebuild with backoff, never wait for an operator.
 			recoverable := errors.Is(streamErr, errRuntimeRecovery) || pathErr != nil
 			suspended := errors.Is(streamErr, controlplane.ErrNetmapAuthorityPaused)
+			rotated := errors.Is(streamErr, controlplane.ErrControlKeyRotated)
 			controlState := ControlSessionBlocked
 			switch {
 			case suspended:
 				controlState = ControlSessionSuspended
-			case recoverable:
+			case recoverable, rotated:
 				controlState = ControlSessionConnecting
 			}
 			s.setSyncStatus(syncStatus{
@@ -989,6 +995,22 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 					"stopping runtime after map stream failure: %w",
 					runtimeStopErr,
 				)
+			}
+			if rotated {
+				// Core moved to the key it announced; switch and connect again.
+				if err := s.promoteNextControlKey(ctx, active.ID, nextControlKey); err != nil {
+					s.logControlSessionFailure("switching to the next control key failed", err)
+					s.setSyncStatus(syncStatus{
+						profileID: active.ID, state: ControlSessionBlocked,
+						dataPlane: dataPlaneState, dns: dnsState,
+					})
+					if err := s.waitForSyncSignal(ctx); err != nil {
+						return err
+					}
+				}
+				runtimeRetry = minRuntimeRetry
+
+				continue
 			}
 			if suspended {
 				// Not a failure: wait for an administrator to resume the Device.
@@ -2119,6 +2141,39 @@ func (s *Service) registerWithRecord(
 	}
 
 	return login, nil
+}
+
+// stageNextControlKey stores the next control key an authenticated KeyUpdate
+// announced, or clears it when next is empty.
+func (s *Service) stageNextControlKey(ctx context.Context, profileID string, next []byte) error {
+	fingerprint := ""
+	if len(next) != 0 {
+		raw, err := controlplane.ParseControlPublicKey(next)
+		if err != nil {
+			return err
+		}
+		fingerprint = controlplane.ControlKeyFingerprint(raw)
+	}
+	if _, err := s.identities.StageNextControlKey(ctx, profileID, next, fingerprint); err != nil {
+		return err
+	}
+	if fingerprint != "" && s.logger != nil {
+		s.logger.Info("next control key staged", "profile", profileID, "fingerprint", fingerprint)
+	}
+	return nil
+}
+
+// promoteNextControlKey makes the staged next key the profile's control key
+// and pin.
+func (s *Service) promoteNextControlKey(ctx context.Context, profileID string, next []byte) error {
+	record, err := s.identities.PromoteNextControlKey(ctx, profileID, next)
+	if err != nil {
+		return err
+	}
+	if s.logger != nil {
+		s.logger.Info("control key rotated", "profile", profileID, "fingerprint", record.ControlKeyFingerprint())
+	}
+	return nil
 }
 
 func toIdentityMaterial(material controlplane.KeyMaterial) identity.Material {

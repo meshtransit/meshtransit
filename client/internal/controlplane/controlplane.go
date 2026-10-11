@@ -25,6 +25,10 @@ var (
 	// ErrControlKeyChanged indicates that discovery no longer matches the
 	// persisted control key.
 	ErrControlKeyChanged = errors.New("control: pinned control key changed")
+	// ErrControlKeyRotated means Core no longer offers the profile's control
+	// key but offers the next key the profile staged from an authenticated
+	// KeyUpdate: the caller promotes that key and connects again.
+	ErrControlKeyRotated = errors.New("control: control key rotated to the staged next key")
 	// ErrInvalidMaterial indicates malformed persisted key material.
 	ErrInvalidMaterial = errors.New("control: invalid identity material")
 	// ErrRegistration indicates a rejected or inconsistent registration.
@@ -127,6 +131,14 @@ type NetmapOptions struct {
 	// PathStats, when set, carries one report per interval of how traffic
 	// reached each peer.
 	PathStats <-chan PathStatsReport
+	// NextControlKey is the staged next control key ("mkey:" encoding), or
+	// nil.
+	NextControlKey []byte
+	// ControlKeysChanged, when set, receives the next control key an
+	// authenticated KeyUpdate announces (encoded, or nil when it announces
+	// none) whenever that differs from NextControlKey. It stores the key
+	// durably before returning; an error ends the session.
+	ControlKeysChanged func(ctx context.Context, next []byte) error
 	// ConnectionChanged, when set, is called with false when a connected
 	// control session is lost (the stream reconnects and the last map stays
 	// applied) and with true when a new session has a usable map again.

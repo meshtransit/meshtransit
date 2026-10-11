@@ -32,17 +32,21 @@ const (
 )
 
 type persistedRecord struct {
-	Version               int       `json:"version"`
-	ProfileID             string    `json:"profile_id"`
-	MachinePrivateKey     string    `json:"machine_private_key"`
-	NodePrivateKey        string    `json:"node_private_key"`
-	PendingNodePrivateKey string    `json:"pending_node_private_key,omitempty"`
-	ControlPublicKey      string    `json:"control_public_key"`
-	ControlKeyFingerprint string    `json:"control_key_fingerprint"`
-	PendingAuthURL        string    `json:"pending_auth_url,omitempty"`
-	IsRegistered          bool      `json:"is_registered"`
-	CreatedAt             time.Time `json:"created_at"`
-	UpdatedAt             time.Time `json:"updated_at"`
+	Version               int    `json:"version"`
+	ProfileID             string `json:"profile_id"`
+	MachinePrivateKey     string `json:"machine_private_key"`
+	NodePrivateKey        string `json:"node_private_key"`
+	PendingNodePrivateKey string `json:"pending_node_private_key,omitempty"`
+	ControlPublicKey      string `json:"control_public_key"`
+	ControlKeyFingerprint string `json:"control_key_fingerprint"`
+	// Written only once Core announces a next key: older builds refuse the
+	// unknown field, so a downgrade is unsupported during a key rotation.
+	NextControlPublicKey      string    `json:"next_control_public_key,omitempty"`
+	NextControlKeyFingerprint string    `json:"next_control_key_fingerprint,omitempty"`
+	PendingAuthURL            string    `json:"pending_auth_url,omitempty"`
+	IsRegistered              bool      `json:"is_registered"`
+	CreatedAt                 time.Time `json:"created_at"`
+	UpdatedAt                 time.Time `json:"updated_at"`
 }
 
 type persistedEnvelope struct {
@@ -413,6 +417,83 @@ func (s *Store) CompleteNodeKeyRotation(
 	return record, nil
 }
 
+// StageNextControlKey durably records the next control key Core announced,
+// or clears it when publicKey is empty. Repeating the staged key is a no-op.
+func (s *Store) StageNextControlKey(
+	ctx context.Context,
+	profileID string,
+	publicKey []byte,
+	fingerprint string,
+) (Record, error) {
+	return s.updateControlKeys(ctx, profileID, func(record *Record) error {
+		if string(publicKey) == record.nextControlPublicKey && fingerprint == record.nextControlKeyFingerprint {
+			return errUnchanged
+		}
+		record.nextControlPublicKey = string(publicKey)
+		record.nextControlKeyFingerprint = fingerprint
+		if len(publicKey) == 0 {
+			record.nextControlKeyFingerprint = ""
+		}
+		return nil
+	})
+}
+
+// PromoteNextControlKey makes the staged next key the profile's control key,
+// only if it is still the expected one.
+func (s *Store) PromoteNextControlKey(
+	ctx context.Context,
+	profileID string,
+	expectedPublicKey []byte,
+) (Record, error) {
+	return s.updateControlKeys(ctx, profileID, func(record *Record) error {
+		if len(expectedPublicKey) == 0 || record.nextControlPublicKey != string(expectedPublicKey) {
+			return fmt.Errorf("%w: staged next control key changed", ErrInvalid)
+		}
+		record.controlPublicKey = record.nextControlPublicKey
+		record.controlKeyFingerprint = record.nextControlKeyFingerprint
+		record.nextControlPublicKey = ""
+		record.nextControlKeyFingerprint = ""
+		return nil
+	})
+}
+
+// errUnchanged lets an update skip the write.
+var errUnchanged = errors.New("identity: unchanged")
+
+func (s *Store) updateControlKeys(ctx context.Context, profileID string, change func(*Record) error) (Record, error) {
+	if err := ctx.Err(); err != nil {
+		return Record{}, fmt.Errorf("updating control keys: %w", err)
+	}
+	if !isProfileID(profileID) {
+		return Record{}, ErrNotFound
+	}
+	if s == nil || s.root == nil || s.protector == nil {
+		return Record{}, errors.New("identity store is not initialized")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record, _, err := s.loadLocked(ctx, profileID)
+	if err != nil {
+		return Record{}, err
+	}
+	if err := change(&record); errors.Is(err, errUnchanged) {
+		return record, nil
+	} else if err != nil {
+		return Record{}, err
+	}
+	record.updatedAt = s.clock().UTC()
+	if err := validateRecord(record); err != nil {
+		return Record{}, err
+	}
+	if err := s.persistLocked(ctx, record, true); err != nil {
+		return Record{}, err
+	}
+
+	return record, nil
+}
+
 func (s *Store) loadLocked(
 	ctx context.Context,
 	profileID string,
@@ -691,32 +772,36 @@ func sameRecord(left, right Record) bool {
 
 func toPersisted(record Record) persistedRecord {
 	return persistedRecord{
-		Version:               recordVersion,
-		ProfileID:             record.profileID,
-		MachinePrivateKey:     record.machinePrivateKey,
-		NodePrivateKey:        record.nodePrivateKey,
-		PendingNodePrivateKey: record.pendingNodePrivateKey,
-		ControlPublicKey:      record.controlPublicKey,
-		ControlKeyFingerprint: record.controlKeyFingerprint,
-		PendingAuthURL:        record.pendingAuthURL,
-		IsRegistered:          record.isRegistered,
-		CreatedAt:             record.createdAt,
-		UpdatedAt:             record.updatedAt,
+		Version:                   recordVersion,
+		ProfileID:                 record.profileID,
+		MachinePrivateKey:         record.machinePrivateKey,
+		NodePrivateKey:            record.nodePrivateKey,
+		PendingNodePrivateKey:     record.pendingNodePrivateKey,
+		ControlPublicKey:          record.controlPublicKey,
+		ControlKeyFingerprint:     record.controlKeyFingerprint,
+		NextControlPublicKey:      record.nextControlPublicKey,
+		NextControlKeyFingerprint: record.nextControlKeyFingerprint,
+		PendingAuthURL:            record.pendingAuthURL,
+		IsRegistered:              record.isRegistered,
+		CreatedAt:                 record.createdAt,
+		UpdatedAt:                 record.updatedAt,
 	}
 }
 
 func fromPersisted(record persistedRecord) Record {
 	return Record{
-		profileID:             record.ProfileID,
-		machinePrivateKey:     record.MachinePrivateKey,
-		nodePrivateKey:        record.NodePrivateKey,
-		pendingNodePrivateKey: record.PendingNodePrivateKey,
-		controlPublicKey:      record.ControlPublicKey,
-		controlKeyFingerprint: record.ControlKeyFingerprint,
-		pendingAuthURL:        record.PendingAuthURL,
-		isRegistered:          record.IsRegistered,
-		createdAt:             record.CreatedAt,
-		updatedAt:             record.UpdatedAt,
+		profileID:                 record.ProfileID,
+		machinePrivateKey:         record.MachinePrivateKey,
+		nodePrivateKey:            record.NodePrivateKey,
+		pendingNodePrivateKey:     record.PendingNodePrivateKey,
+		controlPublicKey:          record.ControlPublicKey,
+		controlKeyFingerprint:     record.ControlKeyFingerprint,
+		nextControlPublicKey:      record.NextControlPublicKey,
+		nextControlKeyFingerprint: record.NextControlKeyFingerprint,
+		pendingAuthURL:            record.PendingAuthURL,
+		isRegistered:              record.IsRegistered,
+		createdAt:                 record.CreatedAt,
+		updatedAt:                 record.UpdatedAt,
 	}
 }
 

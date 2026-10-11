@@ -290,6 +290,20 @@ func (c *Client) checkPinned(ctx context.Context, origin *url.URL, control key.C
 	return controlplane.ErrControlKeyChanged
 }
 
+// offersControlKey reports whether the origin's key document lists control.
+func (c *Client) offersControlKey(ctx context.Context, origin *url.URL, control key.ControlPublic) bool {
+	keys, err := c.fetchKeys(ctx, origin)
+	if err != nil {
+		return false
+	}
+	for _, candidate := range keys {
+		if candidate.Key == control {
+			return true
+		}
+	}
+	return false
+}
+
 // profileKeys are a profile's keys decoded for one operation.
 type profileKeys struct {
 	machine key.MachinePrivate

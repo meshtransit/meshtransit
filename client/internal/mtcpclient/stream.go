@@ -82,6 +82,14 @@ func (c *Client) StreamNetmap(ctx context.Context, controlURL string, material c
 		client: c, origin: origin, keys: keys, options: options, handler: handler,
 		disco: disco, reports: reports,
 	}
+	if len(options.NextControlKey) != 0 {
+		raw, err := controlplane.ParseControlPublicKey(options.NextControlKey)
+		if err != nil {
+			return err
+		}
+		next := key.ControlPublic(raw)
+		stream.next = &next
+	}
 	return stream.run(streamCtx)
 }
 
@@ -172,6 +180,8 @@ type netmapStream struct {
 	reports  *reportBox
 	revision uint64
 	last     *networkmap.Snapshot // last delivered, with Revision zeroed
+	// next is the staged next control key (mtcp-v1 §11), or nil.
+	next *key.ControlPublic
 	// connected is whether the current session has a usable map (reported
 	// through NetmapOptions.ConnectionChanged).
 	connected bool
@@ -218,7 +228,8 @@ func (stream *netmapStream) run(ctx context.Context) error {
 
 func permanentStreamError(err error) bool {
 	return errors.Is(err, controlplane.ErrInvalidMaterial) || errors.Is(err, controlplane.ErrInvalidFingerprint) ||
-		errors.Is(err, controlplane.ErrControlKeyChanged) || errors.Is(err, controlplane.ErrNetmapRejected) ||
+		errors.Is(err, controlplane.ErrControlKeyChanged) || errors.Is(err, controlplane.ErrControlKeyRotated) ||
+		errors.Is(err, controlplane.ErrNetmapRejected) ||
 		errors.Is(err, controlplane.ErrNetmapInvalid) || errors.Is(err, controlplane.ErrNetmapAuthorityRevoked) ||
 		errors.Is(err, controlplane.ErrNetmapAuthorityPaused) || errors.Is(err, controlplane.ErrNetmapConsumer) ||
 		errors.Is(err, networkmap.ErrInvalid) || errors.Is(err, errUnknownKey) ||
@@ -249,6 +260,12 @@ type incoming struct {
 func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, error) {
 	c := stream.client
 	if err := c.checkPinned(ctx, stream.origin, stream.keys.control, stream.options.PinnedFingerprint); err != nil {
+		if errors.Is(err, controlplane.ErrControlKeyChanged) && stream.next != nil &&
+			c.offersControlKey(ctx, stream.origin, *stream.next) {
+			// Offline through the rotation: Core dropped the old key, and
+			// the next one was announced over an authenticated session.
+			return false, 0, controlplane.ErrControlKeyRotated
+		}
 		return false, 0, err
 	}
 	nodePublic := stream.keys.node.Public()
@@ -386,13 +403,34 @@ func (run *sessionRun) handle(ctx context.Context, message proto.Message) (time.
 
 func (run *sessionRun) keyUpdate(ctx context.Context, update *mtcpv1.KeyUpdate) error {
 	listed := false
+	var other *key.ControlPublic
 	for _, control := range update.GetControlKeys() {
-		if string(control.GetKey()) == string(run.s.control[:]) {
+		raw := control.GetKey()
+		if string(raw) == string(run.s.control[:]) {
 			listed = true
+			continue
+		}
+		if len(raw) == key.Size && other == nil {
+			announced := key.ControlPublic(raw)
+			other = &announced
 		}
 	}
+	stream := run.stream
 	if !listed {
+		if stream.next != nil && other != nil && *other == *stream.next {
+			return controlplane.ErrControlKeyRotated
+		}
 		return controlplane.ErrControlKeyChanged
+	}
+	if !sameControlKey(other, stream.next) && stream.options.ControlKeysChanged != nil {
+		var encoded []byte
+		if other != nil {
+			encoded = controlplane.EncodeControlPublicKey(*other)
+		}
+		if err := stream.options.ControlKeysChanged(ctx, encoded); err != nil {
+			return fmt.Errorf("mtcp: storing the next control key: %w", err)
+		}
+		stream.next = other
 	}
 	if err := run.state.setKeys(update); err != nil {
 		return err
@@ -653,4 +691,11 @@ func errorOutcome(failure *mtcpv1.Error) (time.Duration, error) {
 		}
 		return 0, nil
 	}
+}
+
+func sameControlKey(left, right *key.ControlPublic) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
 }

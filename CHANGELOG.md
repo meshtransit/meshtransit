@@ -252,6 +252,14 @@ merge (2026-10-09) are kept below.
 - Control key expiry is observable: the control role exports
   `meshtransit_mtcp_control_key_not_after_timestamp_seconds` (latest key) and
   warns in its log 60 days ahead instead of 30.
+- Control key rotation without re-enrolling Devices (mtcp-v1 §11). Core
+  takes a next key (`MESHTRANSIT_CONTROL_NOISE_NEXT_PRIVATE_KEY_FILE`,
+  `MESHTRANSIT_CONTROL_MTCP_NEXT_KEY_NOT_AFTER`), lists it in `/mtcp/v1/key`
+  and in every KeyUpdate, and answers handshakes made with it. meshd stores
+  the announced next key in its encrypted identity record and switches to
+  it when Core stops offering the current key, during a session or, after
+  being offline, at its next connection. Records with a staged next key
+  cannot be read by older meshd builds.
 
 ### Removed
 

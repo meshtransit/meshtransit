@@ -387,6 +387,9 @@ func (profile *PrivateLoginConfig) validOwnership(process Config) bool {
 		external = append(external,
 			SecretFile{path: process.Control.TLSPrivateKeyFile.path}, process.Control.NoisePrivateKeyFile,
 		)
+		if process.Control.NextNoisePrivateKeyFile != nil {
+			external = append(external, *process.Control.NextNoisePrivateKeyFile)
+		}
 	}
 	if process.Enrollment != nil {
 		for _, key := range profile.keys.keys {

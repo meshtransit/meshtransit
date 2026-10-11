@@ -41,7 +41,7 @@ func TestLoadControlMTCPConfig(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := loadControlMTCPConfig(mapLookup(test.values), now)
+			got, err := loadControlMTCPConfig(mapLookup(test.values), now, false)
 			if test.wantErr != "" {
 				if err == nil || !strings.HasSuffix(err.Error(), ": "+test.wantErr) {
 					t.Fatalf("error = %v, want one naming %s", err, test.wantErr)
@@ -71,13 +71,13 @@ func TestLoadControlMTCPHandshakeLimits(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
 	base := map[string]string{envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z"}
-	got, err := loadControlMTCPConfig(mapLookup(base), now)
+	got, err := loadControlMTCPConfig(mapLookup(base), now, false)
 	if err != nil || got.HandshakeRate != 10 || got.HandshakeBurst != 50 {
 		t.Fatalf("defaults = %d/%d, %v; want 10/50", got.HandshakeRate, got.HandshakeBurst, err)
 	}
 	raised := map[string]string{envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z",
 		envControlMTCPHandshakeRate: "100", envControlMTCPHandshakeBurst: "2000"}
-	if got, err := loadControlMTCPConfig(mapLookup(raised), now); err != nil ||
+	if got, err := loadControlMTCPConfig(mapLookup(raised), now, false); err != nil ||
 		got.HandshakeRate != 100 || got.HandshakeBurst != 2000 {
 		t.Fatalf("raised = %d/%d, %v", got.HandshakeRate, got.HandshakeBurst, err)
 	}
@@ -85,14 +85,39 @@ func TestLoadControlMTCPHandshakeLimits(t *testing.T) {
 		envControlMTCPHandshakeRate: "0", envControlMTCPHandshakeBurst: "100001",
 	} {
 		values := map[string]string{envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z", name: value}
-		if _, err := loadControlMTCPConfig(mapLookup(values), now); err == nil || !strings.HasSuffix(err.Error(), ": "+name) {
+		if _, err := loadControlMTCPConfig(mapLookup(values), now, false); err == nil || !strings.HasSuffix(err.Error(), ": "+name) {
 			t.Errorf("%s=%s accepted: %v", name, value, err)
 		}
 	}
 	// A burst below the rate would refuse a whole second's allowance.
 	low := map[string]string{envControlMTCPKeyNotAfter: "2027-10-10T00:00:00Z",
 		envControlMTCPHandshakeRate: "100", envControlMTCPHandshakeBurst: "50"}
-	if _, err := loadControlMTCPConfig(mapLookup(low), now); err == nil {
+	if _, err := loadControlMTCPConfig(mapLookup(low), now, false); err == nil {
 		t.Error("burst below the rate accepted")
+	}
+}
+
+func TestLoadControlMTCPNextKeyExpiry(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	values := map[string]string{
+		envControlMTCPKeyNotAfter:     "2027-10-10T00:00:00Z",
+		envControlMTCPNextKeyNotAfter: "2028-10-10T00:00:00Z",
+	}
+	got, err := loadControlMTCPConfig(mapLookup(values), now, true)
+	if err != nil || !got.NextKeyNotAfter.Equal(time.Date(2028, 10, 10, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("next key expiry = %v, %v", got.NextKeyNotAfter, err)
+	}
+	// The expiry and the next key file come together or not at all.
+	if _, err := loadControlMTCPConfig(mapLookup(values), now, false); err == nil {
+		t.Error("next key expiry accepted without a next key")
+	}
+	delete(values, envControlMTCPNextKeyNotAfter)
+	if _, err := loadControlMTCPConfig(mapLookup(values), now, true); err == nil {
+		t.Error("next key accepted without an expiry")
+	}
+	values[envControlMTCPNextKeyNotAfter] = "2026-10-09T00:00:00Z"
+	if _, err := loadControlMTCPConfig(mapLookup(values), now, true); err == nil {
+		t.Error("past next key expiry accepted")
 	}
 }

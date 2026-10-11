@@ -81,6 +81,21 @@ func composeMTCP(
 		return nil, nil, errors.Join(errInvalidMTCPComposition, err)
 	}
 	keys := []mtcpadapter.ControlKey{{Private: private, NotAfter: controlConfig.MTCP.KeyNotAfter}}
+	if controlConfig.NextNoisePrivateKeyFile != nil {
+		// During a rotation Core announces the next key to every session
+		// (KeyUpdate) and answers handshakes made with it (mtcp-v1 §11).
+		nextMaterial, err := controlConfig.NextNoisePrivateKeyFile.Read()
+		if err != nil {
+			return nil, nil, errors.Join(errInvalidMTCPComposition, err)
+		}
+		next, err := mtcpadapter.ParseControlKey(nextMaterial)
+		if err != nil {
+			return nil, nil, errors.Join(errInvalidMTCPComposition, err)
+		}
+		keys = append(keys, mtcpadapter.ControlKey{Private: next, NotAfter: controlConfig.MTCP.NextKeyNotAfter})
+		logger.Info("control key rotation in progress: next key announced",
+			"next_not_after", controlConfig.MTCP.NextKeyNotAfter)
+	}
 	// Past the expiry nodes refuse the key and the control role no longer
 	// starts, so warn while there is time to rotate it.
 	if remaining := time.Until(controlConfig.MTCP.KeyNotAfter); remaining < controlKeyExpiryWarning {

@@ -442,7 +442,7 @@ func (c *pathEndpointController) applyChangesWithRetiredGeneration(
 		// A peer without a map endpoint (offline, or not yet reported after
 		// Core came back) has nothing to return to: the map applied before
 		// this activation already set its WireGuard state.
-		if err != nil && !(allowRetired && errors.Is(err, dataplane.ErrPeerEndpointUnavailable)) {
+		if err != nil && (!allowRetired || !errors.Is(err, dataplane.ErrPeerEndpointUnavailable)) {
 			return err
 		}
 	}

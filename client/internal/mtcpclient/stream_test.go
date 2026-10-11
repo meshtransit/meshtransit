@@ -319,3 +319,38 @@ func TestStreamNetmapSendsPathStats(t *testing.T) {
 		t.Fatal("no path stats reached Core")
 	}
 }
+
+func TestStreamNetmapStagesAndFollowsTheNextControlKey(t *testing.T) {
+	t.Parallel()
+	next, _ := key.NewControlPrivate(nil)
+	nextPublic := next.Public()
+	core := newStreamCore(t, func(core *streamCore, s *coreSession, _ int32) {
+		current := s.control.Public()
+		later := time.Now().Add(time.Hour).UnixMilli()
+		_ = s.send(sharedmtcp.MessageKeyUpdate, &mtcpv1.KeyUpdate{Nonce: []byte("n1"), ControlKeys: []*mtcpv1.KeyUpdate_ControlKey{
+			{Key: current[:], NotAfterMs: later}, {Key: nextPublic[:], NotAfterMs: later + 1},
+		}})
+		if core.expect(s, sharedmtcp.MessagePong) == nil {
+			return
+		}
+		// Core now answers only with the next key.
+		_ = s.send(sharedmtcp.MessageKeyUpdate, &mtcpv1.KeyUpdate{Nonce: []byte("n2"), ControlKeys: []*mtcpv1.KeyUpdate_ControlKey{
+			{Key: nextPublic[:], NotAfterMs: later + 1},
+		}})
+		answerPings(s)
+	})
+	material, options := core.options(t)
+	var staged [][]byte
+	options.ControlKeysChanged = func(_ context.Context, announced []byte) error {
+		staged = append(staged, append([]byte(nil), announced...))
+		return nil
+	}
+	err := core.client().StreamNetmap(t.Context(), core.origin(), material, options,
+		func(context.Context, networkmap.Snapshot) error { return nil })
+	if !errors.Is(err, controlplane.ErrControlKeyRotated) {
+		t.Fatalf("StreamNetmap = %v, want ErrControlKeyRotated", err)
+	}
+	if len(staged) != 1 || string(staged[0]) != string(controlplane.EncodeControlPublicKey(nextPublic)) {
+		t.Fatalf("staged next keys = %q", staged)
+	}
+}

@@ -8,9 +8,13 @@ import (
 )
 
 const (
-	envControlMTCPEnabled        = "MESHTRANSIT_CONTROL_MTCP_ENABLED"
-	envControlMTCPKeyNotAfter    = "MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER"
-	envControlMTCPTrustedProxies = "MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS"
+	envControlMTCPEnabled     = "MESHTRANSIT_CONTROL_MTCP_ENABLED"
+	envControlMTCPKeyNotAfter = "MESHTRANSIT_CONTROL_MTCP_KEY_NOT_AFTER"
+	// envControlMTCPNextKeyNotAfter is the next control key's expiry; it is
+	// required exactly when MESHTRANSIT_CONTROL_NOISE_NEXT_PRIVATE_KEY_FILE
+	// is set.
+	envControlMTCPNextKeyNotAfter = "MESHTRANSIT_CONTROL_MTCP_NEXT_KEY_NOT_AFTER"
+	envControlMTCPTrustedProxies  = "MESHTRANSIT_CONTROL_MTCP_TRUSTED_PROXY_CIDRS"
 	// Per-source handshake admission (mtcp-v1 §14). A source is an IPv4
 	// address or IPv6 /64; raise these where many Devices share one NAT.
 	envControlMTCPHandshakeRate      = "MESHTRANSIT_CONTROL_MTCP_HANDSHAKE_RATE"
@@ -30,6 +34,8 @@ type ControlMTCPConfig struct {
 	// KeyNotAfter is the expiry advertised for the control key in the key
 	// document (mtcp-v1 §2.2).
 	KeyNotAfter time.Time
+	// NextKeyNotAfter is the next control key's expiry, zero without one.
+	NextKeyNotAfter time.Time
 	// HandshakeRate and HandshakeBurst bound new handshakes per source and
 	// second, before any cryptography.
 	HandshakeRate  int
@@ -44,7 +50,7 @@ func (cfg ControlMTCPConfig) TrustedProxyPrefixes() []netip.Prefix {
 	return slices.Clone(cfg.trustedProxyPrefixes)
 }
 
-func loadControlMTCPConfig(lookup LookupFunc, now time.Time) (ControlMTCPConfig, error) {
+func loadControlMTCPConfig(lookup LookupFunc, now time.Time, hasNextKey bool) (ControlMTCPConfig, error) {
 	// MTCP is the only control protocol; the switch stays readable so
 	// existing deployments that set it to true keep starting.
 	if enabled, present := lookup(envControlMTCPEnabled); present && enabled != "true" {
@@ -53,6 +59,15 @@ func loadControlMTCPConfig(lookup LookupFunc, now time.Time) (ControlMTCPConfig,
 	notAfter, err := time.Parse(time.RFC3339, valueOrDefault(lookup, envControlMTCPKeyNotAfter, ""))
 	if err != nil || !notAfter.After(now) || notAfter.Sub(now) > maxControlMTCPKeyLifetime {
 		return ControlMTCPConfig{}, settingError(envControlMTCPKeyNotAfter)
+	}
+	var nextNotAfter time.Time
+	if value, present := lookup(envControlMTCPNextKeyNotAfter); present != hasNextKey {
+		return ControlMTCPConfig{}, settingError(envControlMTCPNextKeyNotAfter)
+	} else if present {
+		nextNotAfter, err = time.Parse(time.RFC3339, value)
+		if err != nil || !nextNotAfter.After(now) || nextNotAfter.Sub(now) > maxControlMTCPKeyLifetime {
+			return ControlMTCPConfig{}, settingError(envControlMTCPNextKeyNotAfter)
+		}
 	}
 	proxies, err := parseTrustedProxyPrefixes(valueOrDefault(lookup, envControlMTCPTrustedProxies, ""))
 	if err != nil {
@@ -68,6 +83,9 @@ func loadControlMTCPConfig(lookup LookupFunc, now time.Time) (ControlMTCPConfig,
 	if err != nil || burst < rate {
 		return ControlMTCPConfig{}, settingError(envControlMTCPHandshakeBurst)
 	}
-	return ControlMTCPConfig{KeyNotAfter: notAfter.UTC(), HandshakeRate: rate, HandshakeBurst: burst,
+	if !nextNotAfter.IsZero() {
+		nextNotAfter = nextNotAfter.UTC()
+	}
+	return ControlMTCPConfig{KeyNotAfter: notAfter.UTC(), NextKeyNotAfter: nextNotAfter, HandshakeRate: rate, HandshakeBurst: burst,
 		trustedProxyPrefixes: proxies}, nil
 }
