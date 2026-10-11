@@ -42,6 +42,14 @@ type SnapshotReopener interface {
 	Reopen(context.Context, control.AuthenticatedMachine, Request) (Snapshot, error)
 }
 
+// SnapshotRefresher refreshes a running stream's snapshot from current to a
+// snapshot of at least minRevision, from shared Network state when it can
+// and by re-reading authority otherwise.
+type SnapshotRefresher interface {
+	Refresh(ctx context.Context, machine control.AuthenticatedMachine, request Request, current Snapshot,
+		minRevision int64) (Snapshot, error)
+}
+
 // ConnectivityReloader refreshes only the transient connectivity of a
 // snapshot. A stream woken by a peer's endpoint, home relay or presence
 // change uses it instead of reading the authoritative snapshot again, so a
@@ -393,6 +401,8 @@ func (service *StreamService) run(
 			refresh := service.refresh
 			if !wake.reconcile && !wake.revision.IsValid() && wake.connectivity.IsValid() {
 				refresh = service.refreshConnectivity
+			} else if !wake.reconcile && wake.revision.IsValid() && wake.revision.NetworkID() == current.Scope().NetworkID() {
+				refresh = service.refreshTo(wake.revision.Number())
 			}
 			next, err := refresh(ctx, machine, request, sink, current)
 			if err != nil {
@@ -416,7 +426,28 @@ func (service *StreamService) refresh(
 	sink StreamSink,
 	current Snapshot,
 ) (Snapshot, error) {
-	next, err := service.openSnapshot(ctx, machine, request, false)
+	return service.refreshAt(ctx, machine, request, sink, current, 0)
+}
+
+// refreshTo returns a refresh that waits for at least minRevision (the
+// revision a wakeup announced).
+func (service *StreamService) refreshTo(minRevision int64) func(
+	context.Context, control.AuthenticatedMachine, Request, StreamSink, Snapshot) (Snapshot, error) {
+	return func(ctx context.Context, machine control.AuthenticatedMachine, request Request, sink StreamSink,
+		current Snapshot) (Snapshot, error) {
+		return service.refreshAt(ctx, machine, request, sink, current, minRevision)
+	}
+}
+
+func (service *StreamService) refreshAt(
+	ctx context.Context,
+	machine control.AuthenticatedMachine,
+	request Request,
+	sink StreamSink,
+	current Snapshot,
+	minRevision int64,
+) (Snapshot, error) {
+	next, err := service.reopenSnapshot(ctx, machine, request, current, minRevision)
 	if errors.Is(err, ErrSuspended) {
 		if sendErr := sink.SendAuthorityPause(ctx, current); sendErr != nil {
 			return Snapshot{}, errors.Join(err, ErrStreamWrite, sendErr)
@@ -584,6 +615,28 @@ func withdrawAuthority(
 		return errors.Join(cause, ErrStreamWrite, err)
 	}
 	return cause
+}
+
+// reopenSnapshot refreshes a running stream's snapshot, from shared Network
+// state when the opener can (SnapshotRefresher) and by re-reading otherwise.
+func (service *StreamService) reopenSnapshot(
+	ctx context.Context,
+	machine control.AuthenticatedMachine,
+	request Request,
+	current Snapshot,
+	minRevision int64,
+) (Snapshot, error) {
+	refresher, ok := service.snapshots.(SnapshotRefresher)
+	if !ok {
+		return service.openSnapshot(ctx, machine, request, false)
+	}
+	operationCtx, cancel := context.WithTimeout(ctx, service.options.SnapshotTimeout)
+	defer cancel()
+	snapshot, err := refresher.Refresh(operationCtx, machine, request, current, minRevision)
+	if err == nil && len(snapshot.directDeviceProjections) != 0 && !snapshot.ProjectionExpiry().After(time.Now()) {
+		return Snapshot{}, ErrStreamDiscontinuity
+	}
+	return snapshot, err
 }
 
 func (service *StreamService) openSnapshot(

@@ -49,6 +49,8 @@ type fakeTransaction struct {
 	inventoryRows []*peerCandidateRows // one per shared-inventory read
 	// noNetworkRules serves a Network policy without the Device's rule.
 	noNetworkRules bool
+	// policyExpiry overrides when the Network policy's Devices expire.
+	policyExpiry   time.Time
 	policyRows     *policyRuleRows
 	directRows     *directEdgeRows
 	aliasRows      *directEdgeRows
@@ -93,16 +95,16 @@ func (transaction *fakeTransaction) Query(
 		}
 		return transaction.candidateRows, nil
 	case loadNetworkPolicyRulesSQL:
-		rules, _, _ := networkPolicyRows()
+		rules, _, _ := networkPolicyRows(transaction.policyExpiry)
 		if transaction.noNetworkRules {
 			return &genericRows{}, nil
 		}
 		return rules, nil
 	case loadNetworkSelectorMembersSQL:
-		_, members, _ := networkPolicyRows()
+		_, members, _ := networkPolicyRows(transaction.policyExpiry)
 		return members, nil
 	case loadNetworkPolicyDevicesSQL:
-		_, _, devices := networkPolicyRows()
+		_, _, devices := networkPolicyRows(transaction.policyExpiry)
 		return devices, nil
 	case loadNetworkDevicesSQL:
 		if len(transaction.inventoryRows) == 0 {
@@ -267,8 +269,11 @@ func (rows *genericRows) Close() {}
 
 // networkPolicyRows mirror validPolicyRuleRecord at Network level: one
 // Device rule 701 -> 702, both Devices live.
-func networkPolicyRows() (rules, members, devices *genericRows) {
+func networkPolicyRows(expiry time.Time) (rules, members, devices *genericRows) {
 	expires := time.Date(2026, time.September, 15, 3, 0, 0, 0, time.UTC)
+	if !expiry.IsZero() {
+		expires = expiry
+	}
 	return &genericRows{rows: [][]any{{"device", testRuleID, "device", int64(701), "device", int64(702), "tcp",
 			[]int32{80, 443}, []int32{81, 443}}}},
 		&genericRows{},
@@ -559,3 +564,12 @@ func (rows *grantRows) Scan(destinations ...any) error {
 func (*grantRows) Err() error { return nil }
 
 func (*grantRows) Close() {}
+
+// networkHeaderRow answers loadNetworkHeaderSQL.
+type networkHeaderRow struct{}
+
+func (networkHeaderRow) Scan(destinations ...any) error {
+	*destinations[0].(*string) = "Development Mesh"
+	*destinations[1].(*int64) = 2
+	return nil
+}

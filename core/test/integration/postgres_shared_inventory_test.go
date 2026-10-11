@@ -41,7 +41,7 @@ func assertSharedInventoryMatchesDirectRead(
 	if err != nil {
 		t.Fatalf("shared NewMapSessionStore() error = %v", err)
 	}
-	loaded := 0
+	loaded, derivedCount := 0, 0
 	for index, identity := range identities {
 		want, wantErr := direct.Load(ctx, identity)
 		got, gotErr := shared.Load(ctx, identity)
@@ -66,6 +66,22 @@ func assertSharedInventoryMatchesDirectRead(
 		if !reflect.DeepEqual(got.AuthorizedPeers(), want.AuthorizedPeers()) {
 			t.Fatalf("identity %d: shared peers %+v differ from direct %+v", index, got.AuthorizedPeers(), want.AuthorizedPeers())
 		}
+		if derived, found, err := shared.Derive(ctx, got, 0); err != nil {
+			t.Fatalf("identity %d: Derive() error = %v", index, err)
+		} else if found {
+			derivedCount++
+			if derived.NodeID() != want.NodeID() || derived.NetworkRevision() != want.NetworkRevision() ||
+				derived.RecoveryEpoch() != want.RecoveryEpoch() || derived.NetworkName() != want.NetworkName() ||
+				derived.Hostname() != want.Hostname() || derived.SessionGeneration() != want.SessionGeneration() ||
+				!derived.CreatedAt().Equal(want.CreatedAt()) || !derived.KeyExpiry().Equal(want.KeyExpiry()) ||
+				!derived.PacketPolicy().Equal(want.PacketPolicy()) || !reflect.DeepEqual(derived.Addresses(), want.Addresses()) ||
+				!reflect.DeepEqual(derived.PeerCandidates(), want.PeerCandidates()) ||
+				!reflect.DeepEqual(derived.AuthorizedPeers(), want.AuthorizedPeers()) {
+				t.Fatalf("identity %d: derived snapshot %+v differs from direct %+v", index, derived, want)
+			}
+		} else if !want.HasDirectProjections() {
+			t.Fatalf("identity %d: Derive() declined a Device without direct projections", index)
+		}
 		gotDNS, gotDNSErr := got.SharedDNSRecords()
 		wantDNS, wantDNSErr := want.SharedDNSRecords()
 		if !reflect.DeepEqual(got.InboundPacketRules(), want.InboundPacketRules()) ||
@@ -78,6 +94,9 @@ func assertSharedInventoryMatchesDirectRead(
 	stats := shared.InventoryStats()
 	if stats.PolicyMismatches != 0 {
 		t.Fatalf("Network policy expansion disagreed with the per-Device policy read: %+v", stats)
+	}
+	if stats.Derived != uint64(derivedCount) {
+		t.Fatalf("derived counter %d, compared %d", stats.Derived, derivedCount)
 	}
 	if loaded > 0 && (stats.Shared != uint64(loaded) || stats.Reads == 0) {
 		t.Fatalf("shared inventory never used: %+v", stats)

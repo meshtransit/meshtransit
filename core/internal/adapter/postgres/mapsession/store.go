@@ -77,16 +77,20 @@ type InventoryStats struct {
 	// Network policy differed from their own policy read (shadow check
 	// before the expansion replaces that read); they were read directly.
 	PolicyMismatches uint64
+	// Derived snapshots were refreshed from the shared view alone, without
+	// reading the Device.
+	Derived uint64
 }
 
 type inventoryStats struct {
-	shared, reads, direct, policyMismatch atomic.Uint64
+	shared, reads, direct, policyMismatch, derived atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
 func (store *Store) InventoryStats() InventoryStats {
 	return InventoryStats{Shared: store.stats.shared.Load(), Reads: store.stats.reads.Load(),
-		Direct: store.stats.direct.Load(), PolicyMismatches: store.stats.policyMismatch.Load()}
+		Direct: store.stats.direct.Load(), PolicyMismatches: store.stats.policyMismatch.Load(),
+		Derived: store.stats.derived.Load()}
 }
 
 // policyMatches checks, for a Device without direct projections, that the

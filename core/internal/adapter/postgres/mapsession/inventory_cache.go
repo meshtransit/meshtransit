@@ -19,6 +19,11 @@ type cachedInventory struct {
 	expiresAt time.Time // earliest Device key expiry in the inventory
 	inventory appmapsession.NetworkInventory
 	policy    appmapsession.NetworkPolicy // at the policy revision of the read
+	// header: present only while the Deployment, Workspace and Network can
+	// serve maps (schema 142).
+	serveable     bool
+	networkName   network.DisplayName
+	recoveryEpoch int64
 }
 
 // usableAt reports whether the inventory answers for revision at the
@@ -139,4 +144,70 @@ func (cache *inventoryCache) slotLocked(scope network.Scope) *inventorySlot {
 	slot := &inventorySlot{lastUsed: time.Now()}
 	cache.entries[scope] = slot
 	return slot
+}
+
+// clockMargin keeps a derived map clear of a deadline across the clock skew
+// between this replica and PostgreSQL.
+const clockMargin = 2 * time.Second
+
+// freshAt reports whether the inventory, read at PostgreSQL time readAt,
+// still describes the Network at local time now: read within maxAge and
+// before any listed Device or membership lapses (less the clock margin).
+func (cached cachedInventory) freshAt(now time.Time, maxAge time.Duration) bool {
+	age := now.Sub(cached.readAt)
+	return cached.inventory.IsValid() && age <= maxAge && age >= -maxAge &&
+		(cached.expiresAt.IsZero() || now.Add(clockMargin).Before(cached.expiresAt))
+}
+
+// latest returns scope's newest inventory of at least minRevision that is
+// fresh at local time now, reading it at most once across concurrent
+// callers. found is false when even a new read does not reach minRevision.
+func (cache *inventoryCache) latest(
+	ctx context.Context,
+	scope network.Scope,
+	minRevision int64,
+	now time.Time,
+	read inventoryReader,
+) (cachedInventory, bool, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		cache.mu.Lock()
+		slot := cache.slotLocked(scope)
+		if slot.current.revision >= minRevision && slot.current.freshAt(now, cache.maxAge) {
+			slot.lastUsed = time.Now()
+			current := slot.current
+			cache.mu.Unlock()
+			return current, true, nil
+		}
+		if wait := slot.loading; wait != nil {
+			cache.mu.Unlock()
+			select {
+			case <-wait:
+				continue
+			case <-ctx.Done():
+				return cachedInventory{}, false, ctx.Err()
+			}
+		}
+		done := make(chan struct{})
+		slot.loading = done
+		cache.mu.Unlock()
+
+		loaded, err := read(ctx)
+
+		cache.mu.Lock()
+		if err == nil && loaded.revision >= slot.current.revision {
+			slot.current = loaded
+			slot.lastUsed = time.Now()
+		}
+		slot.loading = nil
+		close(done)
+		cache.mu.Unlock()
+		if err != nil {
+			return cachedInventory{}, false, err
+		}
+		if loaded.revision >= minRevision && loaded.freshAt(now, cache.maxAge) {
+			return loaded, true, nil
+		}
+		return cachedInventory{}, false, nil
+	}
+	return cachedInventory{}, false, nil
 }

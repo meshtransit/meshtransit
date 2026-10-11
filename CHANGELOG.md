@@ -114,6 +114,28 @@ merge (2026-10-09) are kept below.
 - The relay accepts its key as a systemd credential (`LoadCredential=`,
   mode 0440 inside `$CREDENTIALS_DIRECTORY`); elsewhere the key file must
   still be 0600.
+- Core scale-out, step S1 (schema 140): each control replica reads a
+  Network's live Devices once per revision into a shared, immutable,
+  hash-indexed inventory (singleflight per Network) and builds every
+  stream's map from it instead of one peer-candidate query per Device.
+  `MESHTRANSIT_CONTROL_MAP_SHARED_INVENTORY` (default true) and
+  `MESHTRANSIT_CONTROL_MAP_INVENTORY_STATEMENT_TIMEOUT` (30 s) control it.
+  Metrics: `meshtransit_map_snapshots_total{source}`,
+  `meshtransit_map_inventory_reads_total`,
+  `meshtransit_map_inventory_policy_mismatches_total`. Snapshot build for
+  10,000 peers: 312 ms to 96 µs.
+- Core scale-out, step S2 (schemas 141, 142): the inventory carries the
+  Network's packet policy at selector level (Device, Device Group, Identity
+  Group, tag) and expands it per Device in O(rules + output) without
+  pairing group members. A revision wakeup refreshes a running stream
+  entirely from the shared view (no per-Device transaction); Devices with
+  direct shares or that left the view still take the full read. Integration
+  tests require the shared and derived maps to equal the direct read.
+- Core scale-out, step S4: a hostname family may hold 200,000 names (was
+  1024); the outbox worker coalesces deliveries per Network and drains
+  full batches back to back (batch 32, poll 200 ms); the Postgres pool
+  waits for released connections on shutdown. Scale test at 2000 Devices
+  in one Network: 26 registrations/s, revision p95 1.6 s.
 
 ### Fixed
 

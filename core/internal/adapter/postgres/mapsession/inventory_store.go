@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	appmapsession "meshtransit.net/core/internal/control/mapsession"
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -40,6 +41,9 @@ FROM mesh_ops.load_map_network_policy_devices_v1($1::INTEGER)`
 	maximumNetworkPolicyRules   = 1_000_000
 	maximumNetworkMemberships   = 10_000_000
 	maximumNetworkPolicyDevices = 1_000_000
+
+	loadNetworkHeaderSQL = `SELECT network_display_name, recovery_epoch
+FROM mesh_ops.load_map_network_header_v1()`
 )
 
 // loadNetworkDevicesSQL reads every live Device of the installed scope
@@ -103,6 +107,9 @@ func (store *Store) readInventory(
 	}
 	if cached.revision <= 0 || policyRevision <= 0 || cached.readAt.IsZero() {
 		return cachedInventory{}, ErrSnapshotEvidence
+	}
+	if err := readNetworkHeader(ctx, transaction, &cached); err != nil {
+		return cachedInventory{}, err
 	}
 	devices, err := store.readNetworkDevices(ctx, transaction, scope)
 	if err != nil {
@@ -299,4 +306,23 @@ func nonNil(err error) error {
 		return ErrSnapshotEvidence
 	}
 	return err
+}
+
+// readNetworkHeader reads the Network's display name and recovery epoch; no
+// row leaves the inventory unable to serve maps.
+func readNetworkHeader(ctx context.Context, transaction databaseTransaction, cached *cachedInventory) error {
+	var name string
+	err := transaction.QueryRow(ctx, loadNetworkHeaderSQL).Scan(&name, &cached.recoveryEpoch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return errors.Join(ErrLoadSnapshot, fmt.Errorf("read network header: %w", err))
+	}
+	displayName, err := network.ParseDisplayName(name)
+	if err != nil || cached.recoveryEpoch <= 0 {
+		return ErrSnapshotEvidence
+	}
+	cached.networkName, cached.serveable = displayName, true
+	return nil
 }

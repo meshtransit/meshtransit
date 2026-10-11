@@ -96,6 +96,48 @@ func (service *Service) Reopen(
 	return service.open(ctx, machine, request, false)
 }
 
+// SnapshotDeriver refreshes a running stream's snapshot from shared Network
+// state alone. found is false when the Device must be read instead.
+type SnapshotDeriver interface {
+	Derive(ctx context.Context, current Snapshot, minRevision int64) (Snapshot, bool, error)
+}
+
+// Refresh implements SnapshotRefresher: it derives the stream's next
+// snapshot from shared Network state when the store can, and otherwise
+// re-reads authority like Reopen. A derived snapshot belongs to the same
+// authenticated Device, session and keys as current.
+func (service *Service) Refresh(
+	ctx context.Context,
+	machine control.AuthenticatedMachine,
+	request Request,
+	current Snapshot,
+	minRevision int64,
+) (Snapshot, error) {
+	deriver, ok := service.store.(SnapshotDeriver)
+	if !ok || ctx == nil || !current.IsValid() || !request.IsValid() {
+		return service.Reopen(ctx, machine, request)
+	}
+	identity, err := machine.BindNodeKey(request.NodeKey())
+	if err != nil {
+		return Snapshot{}, errors.Join(ErrUnauthorized, err)
+	}
+	if current.NodeKey() != identity.NodeKey() || current.MachineKey().Fingerprint() != identity.MachineFingerprint() {
+		return Snapshot{}, ErrOpen
+	}
+	derived, found, err := deriver.Derive(ctx, current, minRevision)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("%w: derive snapshot: %w", ErrOpen, err)
+	}
+	if !found {
+		return service.Reopen(ctx, machine, request)
+	}
+	if !derived.IsValid() || derived.NodeKey() != identity.NodeKey() ||
+		derived.MachineKey().Fingerprint() != identity.MachineFingerprint() {
+		return Snapshot{}, ErrOpen
+	}
+	return service.loadConnectivity(ctx, derived)
+}
+
 func (service *Service) open(
 	ctx context.Context,
 	machine control.AuthenticatedMachine,
