@@ -1,3 +1,5 @@
+//go:build !darwin
+
 // Command meshcred manages the Linux host-bound identity credential.
 package main
 
