@@ -36,6 +36,12 @@ type SnapshotOpener interface {
 	Open(context.Context, control.AuthenticatedMachine, Request) (Snapshot, error)
 }
 
+// SnapshotReopener re-reads authority for a stream that already opened its
+// session, skipping the once-per-session writes of Open.
+type SnapshotReopener interface {
+	Reopen(context.Context, control.AuthenticatedMachine, Request) (Snapshot, error)
+}
+
 // ConnectivityReloader refreshes only the transient connectivity of a
 // snapshot. A stream woken by a peer's endpoint, home relay or presence
 // change uses it instead of reading the authoritative snapshot again, so a
@@ -155,7 +161,7 @@ func (service *StreamService) Serve(
 		return err
 	}
 
-	snapshot, err := service.openSnapshot(ctx, machine, request)
+	snapshot, err := service.openSnapshot(ctx, machine, request, true)
 	if err != nil {
 		return errors.Join(ErrStreamUnavailable, err)
 	}
@@ -410,7 +416,7 @@ func (service *StreamService) refresh(
 	sink StreamSink,
 	current Snapshot,
 ) (Snapshot, error) {
-	next, err := service.openSnapshot(ctx, machine, request)
+	next, err := service.openSnapshot(ctx, machine, request, false)
 	if errors.Is(err, ErrSuspended) {
 		if sendErr := sink.SendAuthorityPause(ctx, current); sendErr != nil {
 			return Snapshot{}, errors.Join(err, ErrStreamWrite, sendErr)
@@ -584,10 +590,15 @@ func (service *StreamService) openSnapshot(
 	ctx context.Context,
 	machine control.AuthenticatedMachine,
 	request Request,
+	first bool,
 ) (Snapshot, error) {
 	operationCtx, cancel := context.WithTimeout(ctx, service.options.SnapshotTimeout)
 	defer cancel()
-	snapshot, err := service.snapshots.Open(operationCtx, machine, request)
+	open := service.snapshots.Open
+	if reopener, ok := service.snapshots.(SnapshotReopener); ok && !first {
+		open = reopener.Reopen
+	}
+	snapshot, err := open(operationCtx, machine, request)
 	if err == nil && len(snapshot.directDeviceProjections) != 0 && !snapshot.ProjectionExpiry().After(time.Now()) {
 		return Snapshot{}, ErrStreamDiscontinuity
 	}

@@ -127,7 +127,7 @@ func (service *StreamService) watchInitialSnapshot(ctx context.Context, machine 
 		if len(current.SharingScopes()) == 0 {
 			return current, watch, nil
 		}
-		next, err := service.openSnapshot(ctx, machine, request)
+		next, err := service.openSnapshot(ctx, machine, request, false)
 		if err != nil {
 			watch.close()
 			return Snapshot{}, nil, errors.Join(ErrStreamUnavailable, err)

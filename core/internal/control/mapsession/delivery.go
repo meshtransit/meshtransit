@@ -79,7 +79,9 @@ func (service *StreamService) recordDelivery(ctx context.Context, snapshot Snaps
 	if service.delivery == nil {
 		return
 	}
-	recordCtx, cancel := context.WithTimeout(ctx, service.options.CoordinationTimeout)
+	// The record follows a frame already written: it outlives the stream (a
+	// client may disconnect right after its first map) but stays bounded.
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), service.options.CoordinationTimeout)
 	defer cancel()
 	_ = service.delivery.RecordDelivery(recordCtx, deliveryOf(snapshot, filter, time.Now()))
 }

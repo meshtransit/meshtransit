@@ -81,6 +81,27 @@ func (service *Service) Open(
 	machine control.AuthenticatedMachine,
 	request Request,
 ) (Snapshot, error) {
+	return service.open(ctx, machine, request, true)
+}
+
+// Reopen is Open for a stream that already opened this session: it re-reads
+// authority but does not write the client's compatibility claim again,
+// which Open recorded for the session's generation (a new generation ends
+// the stream).
+func (service *Service) Reopen(
+	ctx context.Context,
+	machine control.AuthenticatedMachine,
+	request Request,
+) (Snapshot, error) {
+	return service.open(ctx, machine, request, false)
+}
+
+func (service *Service) open(
+	ctx context.Context,
+	machine control.AuthenticatedMachine,
+	request Request,
+	recordCompatibility bool,
+) (Snapshot, error) {
 	if ctx == nil || service == nil || isNilDependency(service.store) ||
 		isNilDependency(service.endpoints) || isNilDependency(service.connectivity) ||
 		!service.options.isValid() || !request.IsValid() {
@@ -94,8 +115,10 @@ func (service *Service) Open(
 		return Snapshot{}, errors.Join(ErrUnauthorized, err)
 	}
 	if observer, ok := service.store.(DeviceAliasVersionObserver); ok {
-		if err := observer.ObserveDeviceAliasVersion(ctx, identity, request.DeviceAliasVersion()); err != nil {
-			return Snapshot{}, fmt.Errorf("%w: record client compatibility: %w", ErrOpen, err)
+		if recordCompatibility {
+			if err := observer.ObserveDeviceAliasVersion(ctx, identity, request.DeviceAliasVersion()); err != nil {
+				return Snapshot{}, fmt.Errorf("%w: record client compatibility: %w", ErrOpen, err)
+			}
 		}
 	} else if request.DeviceAliasVersion() != 0 {
 		return Snapshot{}, ErrOpen
