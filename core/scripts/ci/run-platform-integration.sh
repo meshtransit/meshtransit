@@ -10,6 +10,17 @@ esac
 go_runner_image='golang:1.26.8-bookworm@sha256:9fdc884aacc3bec89b20ffc69f4bb369c78210e3e4f600387b5128b12c199f81'
 source_dir="$(pwd -P)"
 postgres_image="${POSTGRES_IMAGE:-postgres:18.6-bookworm}"
+# PLATFORM_SCALE=1 runs the opt-in map-stream scale test in place of the
+# control process tests and stops there (core/scripts/loadtest/run.sh).
+# POSTGRES_SHM_SIZE and POSTGRES_SERVER_ARGS ("-c name=value ...") size the
+# fixture database for it.
+scale_mode="${PLATFORM_SCALE:-0}"
+postgres_shm_size="${POSTGRES_SHM_SIZE:-64m}"
+postgres_command=(postgres)
+if [[ -n "${POSTGRES_SERVER_ARGS:-}" ]]; then
+	read -r -a postgres_server_args <<<"${POSTGRES_SERVER_ARGS}"
+	postgres_command+=("${postgres_server_args[@]}")
+fi
 redis_image="${REDIS_IMAGE:-redis:8.8.0-trixie}"
 fixture_dir="$(mktemp -d)"
 runner_dir=''
@@ -233,7 +244,9 @@ docker run \
 	"${postgres_network[@]}" \
 	--env "POSTGRES_PASSWORD=${postgres_password}" \
 	--env 'POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256' \
+	--shm-size "${postgres_shm_size}" \
 	"${postgres_image}" \
+	"${postgres_command[@]}" \
 	>/dev/null
 
 for _ in $(seq 1 60); do
@@ -443,6 +456,16 @@ export MESHTRANSIT_POSTGRES_WORKER_PASSWORD_FILE="${fixture_dir}/worker-password
 export MESHTRANSIT_POSTGRES_WORKER_MAX_CONNECTIONS=2
 export MESHTRANSIT_TEST_MESHCORE_BINARY="${fixture_dir}/meshcore"
 run_go build -trimpath -o "${MESHTRANSIT_TEST_MESHCORE_BINARY}" ./core/cmd/meshcore
+if [[ "${scale_mode}" == 1 ]]; then
+	run_go test \
+		-tags=integration \
+		-count=1 \
+		-v \
+		-run '^TestRoleControlProcessScalesMapStreams$' \
+		-timeout="${PLATFORM_SCALE_TIMEOUT:-40m}" \
+		./core/test/integration
+	exit 0
+fi
 run_go test \
 	-tags=integration \
 	-count=1 \
