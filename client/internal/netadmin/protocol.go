@@ -373,24 +373,50 @@ func normalizeTUNConfig(config TUNConfig) (TUNConfig, error) {
 	if err != nil {
 		return TUNConfig{}, err
 	}
-	routes, err := normalizeHostPrefixes("route", config.Routes, maxTUNRoutes)
+	routes, err := normalizeRoutePrefixes(config.Routes, maxTUNRoutes)
 	if err != nil {
 		return TUNConfig{}, err
 	}
 	if len(routes) != 0 && len(addresses) == 0 {
 		return TUNConfig{}, fmt.Errorf("%w: routes require an interface address", ErrTUNConfig)
 	}
-	addressSet := make(map[netip.Prefix]struct{}, len(addresses))
-	for _, address := range addresses {
-		addressSet[address] = struct{}{}
-	}
 	for _, route := range routes {
-		if _, exists := addressSet[route]; exists {
+		if slices.ContainsFunc(addresses, route.Overlaps) {
 			return TUNConfig{}, fmt.Errorf("%w: route overlaps an interface address", ErrTUNConfig)
 		}
 	}
 
 	return TUNConfig{Addresses: addresses, Routes: routes}, nil
+}
+
+// normalizeRoutePrefixes accepts canonical global unicast prefixes that do
+// not overlap. meshd aggregates peer host routes exactly, so a route is one
+// host or a block of hosts; the server then requires every route to lie
+// wholly inside its allowlist, which is at most the safe overlay frame.
+func normalizeRoutePrefixes(values []netip.Prefix, maximum int) ([]netip.Prefix, error) {
+	if len(values) > maximum {
+		return nil, fmt.Errorf("%w: too many routes", ErrTUNConfig)
+	}
+	prefixes := append([]netip.Prefix{}, values...)
+	for index, prefix := range prefixes {
+		if !prefix.IsValid() {
+			return nil, fmt.Errorf("%w: route must be a canonical global prefix", ErrTUNConfig)
+		}
+		address := prefix.Addr().Unmap()
+		if prefix != prefix.Masked() || prefix.Addr() != address || prefix.Bits() == 0 ||
+			!address.IsGlobalUnicast() || address.IsLinkLocalUnicast() {
+			return nil, fmt.Errorf("%w: route must be a canonical global prefix", ErrTUNConfig)
+		}
+		prefixes[index] = prefix
+	}
+	slices.SortFunc(prefixes, comparePrefixes)
+	for index := 1; index < len(prefixes); index++ {
+		if prefixes[index].Overlaps(prefixes[index-1]) {
+			return nil, fmt.Errorf("%w: routes overlap", ErrTUNConfig)
+		}
+	}
+
+	return prefixes, nil
 }
 
 func normalizeHostPrefixes(

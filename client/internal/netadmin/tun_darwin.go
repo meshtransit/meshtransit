@@ -271,14 +271,14 @@ func ioctl[T ifreqFlags | ifAliasReq | in6AliasReq | ifreqAddr4](descriptor int,
 	return nil
 }
 
-// changeHostRoute adds or deletes a host route to prefix through the utun
-// link, over a routing socket (the equivalent of route add -host -interface).
+// changeHostRoute adds or deletes a route to prefix through the utun link,
+// over a routing socket (the equivalent of route add -net|-host -interface).
 func changeHostRoute(name string, prefix netip.Prefix, add bool) error {
 	link, err := net.InterfaceByName(name)
 	if err != nil {
 		return fmt.Errorf("finding utun link: %w", err)
 	}
-	message, err := hostRouteMessage(link.Index, prefix, add, os.Getpid())
+	message, err := routeMessage(link.Index, prefix, add, os.Getpid())
 	if err != nil {
 		return err
 	}
@@ -296,38 +296,50 @@ func changeHostRoute(name string, prefix netip.Prefix, add bool) error {
 	return nil
 }
 
-// hostRouteMessage builds the RTM_ADD or RTM_DELETE message for one host
-// prefix bound to the interface index.
-func hostRouteMessage(index int, prefix netip.Prefix, add bool, pid int) ([]byte, error) {
-	if !prefix.IsSingleIP() {
-		return nil, fmt.Errorf("%w: route %s is not a host prefix", ErrTUNConfig, prefix)
+// routeMessage builds the RTM_ADD or RTM_DELETE message for one canonical
+// prefix bound to the interface index: a host route for a single address,
+// otherwise a network route with its netmask.
+func routeMessage(index int, prefix netip.Prefix, add bool, pid int) ([]byte, error) {
+	if !prefix.IsValid() || prefix != prefix.Masked() {
+		return nil, fmt.Errorf("%w: route %s is not a canonical prefix", ErrTUNConfig, prefix)
 	}
-	var destination route.Addr
-	if prefix.Addr().Is4() {
-		destination = &route.Inet4Addr{IP: prefix.Addr().As4()}
-	} else {
-		destination = &route.Inet6Addr{IP: prefix.Addr().As16()}
-	}
+	destination := routeAddr(prefix.Addr())
 	messageType := unix.RTM_DELETE
 	if add {
 		messageType = unix.RTM_ADD
 	}
+	flags := unix.RTF_UP | unix.RTF_STATIC
+	addresses := []route.Addr{
+		unix.RTAX_DST:     destination,
+		unix.RTAX_GATEWAY: &route.LinkAddr{Index: index},
+	}
+	if prefix.IsSingleIP() {
+		flags |= unix.RTF_HOST
+	} else {
+		mask := net.CIDRMask(prefix.Bits(), prefix.Addr().BitLen())
+		maskAddress, _ := netip.AddrFromSlice(mask)
+		addresses = append(addresses, routeAddr(maskAddress)) // RTAX_NETMASK
+	}
 	message := &route.RouteMessage{
 		Version: unix.RTM_VERSION,
 		Type:    messageType,
-		Flags:   unix.RTF_UP | unix.RTF_HOST | unix.RTF_STATIC,
+		Flags:   flags,
 		ID:      uintptr(pid),
 		Seq:     1,
-		Addrs: []route.Addr{
-			unix.RTAX_DST:     destination,
-			unix.RTAX_GATEWAY: &route.LinkAddr{Index: index},
-		},
+		Addrs:   addresses,
 	}
 	encoded, err := message.Marshal()
 	if err != nil {
 		return nil, fmt.Errorf("encoding route to %s: %w", prefix, err)
 	}
 	return encoded, nil
+}
+
+func routeAddr(address netip.Addr) route.Addr {
+	if address.Is4() {
+		return &route.Inet4Addr{IP: address.As4()}
+	}
+	return &route.Inet6Addr{IP: address.As16()}
 }
 
 // loopbackInterface holds the MeshTransit resolver address on macOS.

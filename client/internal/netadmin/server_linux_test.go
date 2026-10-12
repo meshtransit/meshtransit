@@ -104,6 +104,15 @@ func TestNewServerAcceptsTheWholeOverlayFrame(t *testing.T) {
 	if err := validateAllowedTUNConfig(outside, server.allowedPrefixes); err == nil {
 		t.Fatal("validateAllowedTUNConfig() accepted a route outside the overlay frame")
 	}
+	// An aggregated route must lie wholly inside the frame, not only start in it.
+	straddling := TUNConfig{Routes: []netip.Prefix{netip.MustParsePrefix("100.0.0.0/8")}}
+	if err := validateAllowedTUNConfig(straddling, server.allowedPrefixes); err == nil {
+		t.Fatal("validateAllowedTUNConfig() accepted a route wider than the overlay frame")
+	}
+	aggregated := TUNConfig{Routes: []netip.Prefix{netip.MustParsePrefix("100.64.0.0/22")}}
+	if err := validateAllowedTUNConfig(aggregated, server.allowedPrefixes); err != nil {
+		t.Fatalf("validateAllowedTUNConfig() refused an aggregated overlay route: %v", err)
+	}
 }
 
 func TestClientServerOpenTUN(t *testing.T) {

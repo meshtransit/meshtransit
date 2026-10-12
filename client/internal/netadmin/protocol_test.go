@@ -3,6 +3,7 @@ package netadmin
 import (
 	"errors"
 	"net/netip"
+	"slices"
 	"testing"
 )
 
@@ -173,6 +174,37 @@ func TestNormalizeTUNConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "overlapping routes",
+			config: TUNConfig{
+				Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.1.1/32")},
+				Routes: []netip.Prefix{
+					netip.MustParsePrefix("100.64.0.0/30"),
+					netip.MustParsePrefix("100.64.0.2/32"),
+				},
+			},
+		},
+		{
+			name: "route covers address",
+			config: TUNConfig{
+				Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")},
+				Routes:    []netip.Prefix{netip.MustParsePrefix("100.64.0.0/30")},
+			},
+		},
+		{
+			name: "route not canonical",
+			config: TUNConfig{
+				Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.1.1/32")},
+				Routes:    []netip.Prefix{netip.MustParsePrefix("100.64.0.1/30")},
+			},
+		},
+		{
+			name: "default route",
+			config: TUNConfig{
+				Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.1.1/32")},
+				Routes:    []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")},
+			},
+		},
+		{
 			name: "route without address",
 			config: TUNConfig{
 				Routes: []netip.Prefix{netip.MustParsePrefix("100.64.0.2/32")},
@@ -187,5 +219,31 @@ func TestNormalizeTUNConfig(t *testing.T) {
 				t.Fatalf("normalizeTUNConfig() error = %v, want ErrTUNConfig", err)
 			}
 		})
+	}
+}
+
+// TestNormalizeTUNConfigAcceptsAggregatedRoutes: meshd sends peer routes
+// aggregated exactly (prefixset.Summarize); the helper takes canonical
+// prefixes that cover no interface address and do not overlap.
+func TestNormalizeTUNConfigAcceptsAggregatedRoutes(t *testing.T) {
+	t.Parallel()
+	config, err := normalizeTUNConfig(TUNConfig{
+		Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.3/32")},
+		Routes: []netip.Prefix{
+			netip.MustParsePrefix("100.64.0.4/30"),
+			netip.MustParsePrefix("100.64.0.0/31"),
+			netip.MustParsePrefix("fd07::/124"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("normalizeTUNConfig() error = %v", err)
+	}
+	want := []netip.Prefix{
+		netip.MustParsePrefix("100.64.0.0/31"),
+		netip.MustParsePrefix("100.64.0.4/30"),
+		netip.MustParsePrefix("fd07::/124"),
+	}
+	if !slices.Equal(config.Routes, want) {
+		t.Fatalf("routes = %v, want %v", config.Routes, want)
 	}
 }

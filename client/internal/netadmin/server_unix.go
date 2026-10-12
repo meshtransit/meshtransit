@@ -497,8 +497,10 @@ func validateAllowedTUNConfig(config TUNConfig, allowedPrefixes []netip.Prefix) 
 		append([]netip.Prefix{}, config.Addresses...),
 		config.Routes...,
 	) {
+		// The whole prefix must lie in one pool: an aggregated route that only
+		// starts inside the overlay must not claim addresses beyond it.
 		allowed := slices.ContainsFunc(allowedPrefixes, func(pool netip.Prefix) bool {
-			return pool.Contains(prefix.Addr())
+			return pool.Bits() <= prefix.Bits() && pool.Contains(prefix.Addr())
 		})
 		if !allowed {
 			return fmt.Errorf("%w: requested prefix is outside the helper allowlist", ErrTUNConfig)

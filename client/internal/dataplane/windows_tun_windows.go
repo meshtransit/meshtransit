@@ -40,7 +40,7 @@ func NewWindowsTUNOpener() *WindowsTUNOpener {
 // OpenTUN creates the adapter and gives it exactly the map's addresses and
 // per-peer routes. Closing the returned device removes the adapter.
 func (o *WindowsTUNOpener) OpenTUN(_ context.Context, config netadmin.TUNConfig) (netadmin.TUN, error) {
-	if err := validateOverlayHostPrefixes(config.Addresses, config.Routes); err != nil {
+	if err := validateOverlayPrefixes(config.Addresses, config.Routes); err != nil {
 		return netadmin.TUN{}, err
 	}
 	guid := winadapter.GUID
@@ -82,7 +82,7 @@ func (o *WindowsTUNOpener) OpenTUN(_ context.Context, config netadmin.TUNConfig)
 
 // ConfigureTUNRoutes replaces the open adapter's per-peer routes.
 func (o *WindowsTUNOpener) ConfigureTUNRoutes(_ context.Context, config netadmin.TUNConfig) error {
-	if err := validateOverlayHostPrefixes(config.Addresses, config.Routes); err != nil {
+	if err := validateOverlayPrefixes(config.Addresses, config.Routes); err != nil {
 		return err
 	}
 	o.mu.Lock()
@@ -95,15 +95,20 @@ func (o *WindowsTUNOpener) ConfigureTUNRoutes(_ context.Context, config netadmin
 	return winnet.ReplaceRoutes(luid, config.Routes)
 }
 
-// validateOverlayHostPrefixes accepts only canonical host prefixes inside the
-// overlay frame meshnetd enforces on Linux and macOS.
-func validateOverlayHostPrefixes(groups ...[]netip.Prefix) error {
-	for _, group := range groups {
-		for _, prefix := range group {
-			if !prefix.IsValid() || prefix.Bits() != prefix.Addr().BitLen() || prefix != prefix.Masked() ||
-				!netadmin.WithinSafeOverlayFrame(prefix) {
-				return fmt.Errorf("dataplane: %s is not an overlay host prefix", prefix)
-			}
+// validateOverlayPrefixes checks what meshd would configure: host addresses,
+// and routes that are canonical prefixes (aggregated peer addresses) lying
+// wholly inside the safe overlay frame and covering no own address.
+func validateOverlayPrefixes(addresses, routes []netip.Prefix) error {
+	for _, prefix := range addresses {
+		if !prefix.IsValid() || prefix.Bits() != prefix.Addr().BitLen() || prefix != prefix.Masked() ||
+			!netadmin.WithinSafeOverlayFrame(prefix) {
+			return fmt.Errorf("dataplane: %s is not an overlay host prefix", prefix)
+		}
+	}
+	for _, prefix := range routes {
+		if !prefix.IsValid() || prefix != prefix.Masked() || !netadmin.WithinSafeOverlayFrame(prefix) ||
+			slices.ContainsFunc(addresses, prefix.Overlaps) {
+			return fmt.Errorf("dataplane: %s is not an overlay route", prefix)
 		}
 	}
 

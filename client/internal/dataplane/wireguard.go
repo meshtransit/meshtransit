@@ -21,11 +21,18 @@ import (
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/packetmeta"
 	"meshtransit.net/client/internal/pathdiscovery"
+	"meshtransit.net/client/internal/prefixset"
 	"meshtransit.net/client/internal/relay"
 )
 
 const (
-	maxWireGuardPeers         = 256
+	maxWireGuardPeers = 256
+	// maxWireGuardAllowedIPs bounds the peer addresses of one map (overlay
+	// and alias addresses of both families).
+	maxWireGuardAllowedIPs = 4 * maxWireGuardPeers
+	// maxWireGuardRoutes bounds the routes installed after exact aggregation
+	// (prefixset.Summarize), which turns contiguous peer addresses into a few
+	// prefixes.
 	maxWireGuardRoutes        = 512
 	maxWireGuardPeerEndpoints = 128
 	// Keep direct NAT mappings warm without sending tunnel keepalives over relay paths.
@@ -1363,19 +1370,24 @@ func buildWireGuardPlan(
 		})
 		allRoutes = append(allRoutes, allowedIPs...)
 	}
-	if len(allRoutes) > maxWireGuardRoutes {
-		return wireGuardPlan{}, errors.New("dataplane: route count is outside the allowed range")
+	if len(allRoutes) > maxWireGuardAllowedIPs {
+		return wireGuardPlan{}, errors.New("dataplane: peer address count is outside the allowed range")
 	}
 	addresses := deduplicatePrefixes(selectedSelfAddresses)
 	if len(addresses) == 0 {
 		return wireGuardPlan{}, errors.New("dataplane: policy-selected self addresses are invalid")
 	}
-	routes, err := uniquePrefixes(allRoutes)
+	peerPrefixes, err := uniquePrefixes(allRoutes)
 	if err != nil {
 		return wireGuardPlan{}, err
 	}
+	// Exact aggregation: the routes cover the peer addresses and nothing else.
+	routes := prefixset.Summarize(peerPrefixes)
+	if len(routes) > maxWireGuardRoutes {
+		return wireGuardPlan{}, errors.New("dataplane: route count is outside the allowed range")
+	}
 	for _, route := range routes {
-		if slices.Contains(addresses, route) {
+		if slices.ContainsFunc(addresses, route.Overlaps) {
 			return wireGuardPlan{}, errors.New("dataplane: peer route overlaps a self address")
 		}
 	}

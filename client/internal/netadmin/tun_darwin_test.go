@@ -37,9 +37,9 @@ func TestHostRouteMessage(t *testing.T) {
 		{netip.MustParsePrefix("100.64.0.4/32"), true},
 		{netip.MustParsePrefix("fd07:d4de:9d87::4/128"), false},
 	} {
-		encoded, err := hostRouteMessage(17, test.prefix, test.add, 4242)
+		encoded, err := routeMessage(17, test.prefix, test.add, 4242)
 		if err != nil {
-			t.Fatalf("hostRouteMessage(%s) error = %v", test.prefix, err)
+			t.Fatalf("routeMessage(%s) error = %v", test.prefix, err)
 		}
 		messages, err := route.ParseRIB(route.RIBTypeRoute, encoded)
 		if err != nil || len(messages) != 1 {
@@ -72,7 +72,44 @@ func TestHostRouteMessage(t *testing.T) {
 			t.Fatalf("destination = %s, want %s", destination, test.prefix.Addr())
 		}
 	}
-	if _, err := hostRouteMessage(1, netip.MustParsePrefix("100.64.0.0/24"), true, 1); err == nil {
-		t.Fatal("hostRouteMessage accepted a subnet route")
+}
+
+func TestNetworkRouteMessageCarriesTheNetmask(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		prefix netip.Prefix
+		mask   netip.Addr
+	}{
+		{netip.MustParsePrefix("100.64.0.4/30"), netip.MustParseAddr("255.255.255.252")},
+		{netip.MustParsePrefix("fd07::/124"), netip.MustParseAddr("ffff:ffff:ffff:ffff:ffff:ffff:ffff:fff0")},
+	} {
+		encoded, err := routeMessage(17, test.prefix, true, 4242)
+		if err != nil {
+			t.Fatalf("routeMessage(%s) error = %v", test.prefix, err)
+		}
+		messages, err := route.ParseRIB(route.RIBTypeRoute, encoded)
+		if err != nil || len(messages) != 1 {
+			t.Fatalf("ParseRIB(%s) = %d messages, %v", test.prefix, len(messages), err)
+		}
+		message, ok := messages[0].(*route.RouteMessage)
+		if !ok {
+			t.Fatalf("message %T", messages[0])
+		}
+		if message.Flags&unix.RTF_HOST != 0 || message.Flags&(unix.RTF_UP|unix.RTF_STATIC) != unix.RTF_UP|unix.RTF_STATIC {
+			t.Fatalf("%s flags %#x, want a network route", test.prefix, message.Flags)
+		}
+		var mask netip.Addr
+		switch value := message.Addrs[unix.RTAX_NETMASK].(type) {
+		case *route.Inet4Addr:
+			mask = netip.AddrFrom4(value.IP)
+		case *route.Inet6Addr:
+			mask = netip.AddrFrom16(value.IP)
+		}
+		if mask != test.mask {
+			t.Fatalf("%s netmask = %v, want %s", test.prefix, mask, test.mask)
+		}
+	}
+	if _, err := routeMessage(1, netip.MustParsePrefix("100.64.0.1/30"), true, 1); err == nil {
+		t.Fatal("routeMessage accepted a non-canonical prefix")
 	}
 }

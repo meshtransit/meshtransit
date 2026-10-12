@@ -3,6 +3,7 @@ package dataplane
 import (
 	"context"
 	"crypto/ecdh"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -1934,4 +1935,38 @@ func (d *fakeWireGuardDevice) ReplaceRelayAuthority(homeRegion int, peers []rela
 	d.relayPeers = append([]relay.Peer(nil), peers...)
 
 	return d.relayUpdateErr
+}
+
+// TestWireGuardEngineInstallsAggregatedPeerRoutes: contiguous peer addresses
+// become one route, and the route covers no address that is not a peer.
+func TestWireGuardEngineInstallsAggregatedPeerRoutes(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	curve := ecdh.X25519()
+	for index, address := range []string{"100.64.0.5/32", "100.64.0.6/32", "100.64.0.7/32"} {
+		key, err := curve.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatalf("GenerateKey() error = %v", err)
+		}
+		prefix := netip.MustParsePrefix(address)
+		peer := snapshot.Peers[0]
+		peer.ID = uint64(10 + index)
+		peer.PublicKey = "nodekey:" + hex.EncodeToString(key.PublicKey().Bytes())
+		peer.Addresses = []netip.Prefix{prefix}
+		peer.AllowedIPs = []netip.Prefix{prefix}
+		snapshot.Peers = append(snapshot.Peers, peer)
+	}
+	opener := &wireGuardTUNOpener{}
+	engine, err := newWireGuardEngine(opener, 41641, &fakeWireGuardFactory{device: &fakeWireGuardDevice{}}, nil)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if state, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil || state != StateEncrypted {
+		t.Fatalf("Apply() = %q, %v", state, err)
+	}
+	want := []netip.Prefix{netip.MustParsePrefix("100.64.0.4/30")}
+	if !slices.Equal(opener.config.Routes, want) {
+		t.Fatalf("helper routes = %v, want %v", opener.config.Routes, want)
+	}
 }
