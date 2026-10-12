@@ -43,6 +43,11 @@ func openUTUN(descriptor int, logger *slog.Logger) (tun.Device, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("dataplane: reading utun name: %w", err)
 	}
+	// Nonblocking, so the Go poller waits on kqueue and a read never sleeps
+	// in the kernel, as wireguard-go's own darwin TUN reads utun.
+	if err := unix.SetNonblock(descriptor, true); err != nil {
+		return nil, "", fmt.Errorf("dataplane: setting utun nonblocking: %w", err)
+	}
 	file := os.NewFile(uintptr(descriptor), name)
 	if file == nil {
 		return nil, "", errors.New("dataplane: invalid utun descriptor")
@@ -172,8 +177,26 @@ func (t *utunDevice) emptyReadError() error {
 	if _, err := net.InterfaceByName(t.name); err != nil {
 		link = "missing"
 	}
-	return fmt.Errorf("dataplane: empty read on %s: descriptor %s, link %s, after %s, %d packets and %d empty reads: %w",
-		t.name, socket, link, time.Since(t.opened).Round(time.Millisecond), t.packets.Load(), t.emptyReads.Load(), io.EOF)
+	return fmt.Errorf("dataplane: empty read on %s: descriptor %s, link %s, %s queued, after %s, %d packets and %d empty reads: %w",
+		t.name, socket, link, t.queuedBytes(), time.Since(t.opened).Round(time.Millisecond),
+		t.packets.Load(), t.emptyReads.Load(), io.EOF)
+}
+
+// queuedBytes reports the bytes waiting in the socket (SO_NREAD): non-zero
+// while reads come back empty means empty records are queued, zero means the
+// socket reports end of data.
+func (t *utunDevice) queuedBytes() string {
+	raw, err := t.file.SyscallConn()
+	if err != nil {
+		return "unknown bytes"
+	}
+	queued, queuedErr := 0, error(nil)
+	if err := raw.Control(func(descriptor uintptr) {
+		queued, queuedErr = unix.GetsockoptInt(int(descriptor), unix.SOL_SOCKET, unix.SO_NREAD)
+	}); err != nil || queuedErr != nil {
+		return "unknown bytes"
+	}
+	return fmt.Sprintf("%d bytes", queued)
 }
 
 func (t *utunDevice) Write(bufs [][]byte, offset int) (int, error) {

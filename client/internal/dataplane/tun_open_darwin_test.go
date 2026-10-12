@@ -21,6 +21,10 @@ func pairDevice(t *testing.T) (*utunDevice, *os.File) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Nonblocking, as openUTUN makes the utun descriptor.
+	if err := unix.SetNonblock(fds[0], true); err != nil {
+		t.Fatal(err)
+	}
 	device := &utunDevice{
 		file: os.NewFile(uintptr(fds[0]), "utun99"), name: "utun99", events: make(chan tun.Event), opened: time.Now(),
 	}
@@ -157,5 +161,27 @@ func TestUTUNDeviceFailsWhenEmptyReadsOutlastTheGrace(t *testing.T) {
 	}
 	if err := <-written; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUTUNDeviceCloseEndsAWaitingRead(t *testing.T) {
+	t.Parallel()
+	device, _ := pairDevice(t)
+	result := make(chan error, 1)
+	go func() {
+		_, err := device.Read([][]byte{make([]byte, 128)}, []int{0}, 16)
+		result <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	if err := device.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if !errors.Is(err, os.ErrClosed) {
+			t.Fatalf("Read() error = %v, want os.ErrClosed", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not end the waiting Read")
 	}
 }
