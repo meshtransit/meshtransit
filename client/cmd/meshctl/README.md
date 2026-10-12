@@ -93,6 +93,8 @@ Global flags must appear before the command. `MESHCTL_SOCKET` and `MESHCTL_TIMEO
 - `meshctl login --auth-key-stdin`
 - `meshctl login complete`
 - `meshctl identity rotate-node-key`
+- `meshctl down`
+- `meshctl logout`
 - `meshctl netcheck`
 - `meshctl version`
 - `meshctl doctor control`
@@ -115,6 +117,18 @@ environment variables and are not persisted by either process.
 rotation for the active registered profile. `meshctl` sends no key or login
 credential and never receives private key material. A temporary failure can be
 retried safely; `meshd` retains and reuses the exact staged transition.
+
+`down` takes the machine off the network: `meshd` stops the control session,
+the data plane and MeshTransit DNS, and stays off across restarts until
+`meshctl up`. The Device stays registered.
+
+`logout` removes the machine from its Network: `meshd` stops the control
+session, asks Core to revoke the Device (its address then goes through
+quarantine before reuse), and gives the profile new machine and node keys,
+because Core never accepts revoked keys again. `meshctl up` then enrolls the
+machine as a new Device. If Core no longer knows the Device, for example
+because an administrator removed it, only the local keys are reset. A failed
+logout changes nothing and can be retried.
 
 `netcheck` asks `meshd` to classify the NAT in front of its encrypted packet
 socket now, using the relay map's STUN servers on that same socket, and prints

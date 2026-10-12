@@ -5,6 +5,14 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- meshctl down and logout (TD-CLI-04): down keeps the machine off the network
+  across restarts until up; logout revokes the Device through MTCP Logout and
+  gives the profile new keys, so up enrolls it again. Local API: POST /v1/down,
+  /v1/up and /v1/logout.
+- Core schema 143 (TD-CORE-14): a revoked Device's addresses go through a
+  24-hour quarantine, then registration reuses them.
+- meshnetd keeps a handed-over utun descriptor until meshd has received it,
+  which fixes utuns that reached meshd unable to deliver packets on macOS.
 - Merged Core, meshd and meshctl into one repository with per-directory
   licensing (core/ AGPL-3.0, client/ Apache-2.0).
 - Protocol specifications for disco v2, MTRP v1, keys, NAT classification and

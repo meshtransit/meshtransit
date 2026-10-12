@@ -194,6 +194,29 @@ func (s *Store) Activate(ctx context.Context, id string) (Profile, error) {
 	return selected, nil
 }
 
+// SetDisconnected persists whether meshd stays off the network (`meshctl
+// down`) and reports whether the value changed.
+func (s *Store) SetDisconnected(ctx context.Context, disconnected bool) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Errorf("updating connection preference: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.state.Disconnected == disconnected {
+		return false, nil
+	}
+	next := cloneSnapshot(s.state)
+	next.Disconnected = disconnected
+	if err := s.persist(next); err != nil {
+		return false, err
+	}
+	s.state = next
+
+	return true, nil
+}
+
 func (s *Store) load() error {
 	info, err := s.root.Lstat(stateFileName)
 	if errors.Is(err, os.ErrNotExist) {

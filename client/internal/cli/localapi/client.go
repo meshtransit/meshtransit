@@ -201,6 +201,41 @@ func (c *Client) CompleteLogin(ctx context.Context) (Login, error) {
 	return response, nil
 }
 
+// Down takes meshd off the network until Up.
+func (c *Client) Down(ctx context.Context) (Connection, error) {
+	return c.postConnection(ctx, "/v1/down")
+}
+
+// Up clears a Down.
+func (c *Client) Up(ctx context.Context) (Connection, error) {
+	return c.postConnection(ctx, "/v1/up")
+}
+
+func (c *Client) postConnection(ctx context.Context, path string) (Connection, error) {
+	response := Connection{}
+	if err := c.do(ctx, http.MethodPost, path, nil, http.StatusOK, &response); err != nil {
+		return Connection{}, err
+	}
+	if response.APIVersion != apiVersion {
+		return Connection{}, fmt.Errorf("localapi: unsupported api version %q", response.APIVersion)
+	}
+
+	return response, nil
+}
+
+// Logout ends the active profile's Device.
+func (c *Client) Logout(ctx context.Context) (Logout, error) {
+	response := Logout{}
+	if err := c.do(ctx, http.MethodPost, "/v1/logout", nil, http.StatusOK, &response); err != nil {
+		return Logout{}, err
+	}
+	if response.APIVersion != apiVersion {
+		return Logout{}, fmt.Errorf("localapi: unsupported api version %q", response.APIVersion)
+	}
+
+	return response, nil
+}
+
 // RotateNodeKey requests one crash-safe Node-key transition for the active
 // registered profile. Private key material remains owned by meshd.
 func (c *Client) RotateNodeKey(ctx context.Context) (NodeKeyRotation, error) {

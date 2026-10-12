@@ -247,3 +247,65 @@ func TestRotateNodeKey(t *testing.T) {
 		t.Fatalf("refused rotation: %v", err)
 	}
 }
+
+func TestLogout(t *testing.T) {
+	t.Parallel()
+	core := newRegistrationCore(t)
+	trust := core.trust(t)
+	var answer atomic.Int32 // 0 logged out, 1 not authorized, 2 internal, 3 expired first
+	logoutCore := func(s *coreSession) {
+		if _, first, err := s.receive(5 * time.Second); err != nil || first == nil {
+			return
+		} else if _, ok := first.(*mtcpv1.Ping); !ok {
+			return
+		}
+		if answer.Load() == 3 {
+			_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_EXPIRED})
+			return
+		}
+		_ = s.send(sharedmtcp.MessageMapSnapshot, &mtcpv1.MapSnapshot{View: &mtcpv1.View{Epoch: 1, Seq: 1}})
+		for {
+			_, message, err := s.receive(5 * time.Second)
+			if err != nil {
+				return
+			}
+			if _, ok := message.(*mtcpv1.Logout); !ok {
+				continue
+			}
+			switch answer.Load() {
+			case 1:
+				_ = s.send(sharedmtcp.MessageError, &mtcpv1.Error{Code: mtcpv1.Error_NOT_AUTHORIZED})
+			case 2:
+				_ = s.send(sharedmtcp.MessageError, &mtcpv1.Error{Code: mtcpv1.Error_INTERNAL, RetryAfterMs: 2000})
+			default:
+				_ = s.send(sharedmtcp.MessageLifecycle, &mtcpv1.Lifecycle{State: mtcpv1.Lifecycle_LOGGED_OUT})
+			}
+			return
+		}
+	}
+	core.set(func(fake *fakeCore) { fake.serve = logoutCore })
+	options := controlplane.RegisterOptions{Hostname: "laptop", PinnedFingerprint: trust.Fingerprint}
+	if err := core.client().Logout(t.Context(), core.origin(), trust.Material, options); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+	hellos, _ := core.sessions()
+	nodeRaw, _ := controlplane.ParsePrivateKey(trust.Material.NodePrivateKey)
+	node, _ := key.NodePrivateFromBytes(nodeRaw[:])
+	nodePublic := node.Public()
+	if last := hellos[len(hellos)-1]; string(last.GetNodeKey()) != string(nodePublic[:]) {
+		t.Fatal("the logout session must be opened by the current node key")
+	}
+	for _, testCase := range []struct {
+		answer int32
+		want   error
+	}{
+		{1, controlplane.ErrDeviceNotAuthorized},
+		{2, controlplane.ErrRegistrationTemporary},
+		{3, controlplane.ErrDeviceNotAuthorized},
+	} {
+		answer.Store(testCase.answer)
+		if err := core.client().Logout(t.Context(), core.origin(), trust.Material, options); !errors.Is(err, testCase.want) {
+			t.Fatalf("answer %d: Logout() error = %v, want %v", testCase.answer, err, testCase.want)
+		}
+	}
+}

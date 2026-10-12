@@ -795,6 +795,8 @@ type fakeClient struct {
 	login           localapi.Login
 	completedLogin  localapi.Login
 	rotation        localapi.NodeKeyRotation
+	connection      localapi.Connection
+	logout          localapi.Logout
 	netcheck        localapi.Netcheck
 	completeLogin   func(context.Context) (localapi.Login, error)
 	receivedAuthKey string
@@ -850,6 +852,18 @@ func (f *fakeClient) CompleteLogin(ctx context.Context) (localapi.Login, error) 
 
 func (f *fakeClient) RotateNodeKey(_ context.Context) (localapi.NodeKeyRotation, error) {
 	return f.rotation, f.err
+}
+
+func (f *fakeClient) Down(_ context.Context) (localapi.Connection, error) {
+	return f.connection, f.err
+}
+
+func (f *fakeClient) Up(_ context.Context) (localapi.Connection, error) {
+	return f.connection, f.err
+}
+
+func (f *fakeClient) Logout(_ context.Context) (localapi.Logout, error) {
+	return f.logout, f.err
 }
 
 func testOptions(client DaemonClient) Options {

@@ -233,6 +233,19 @@ type nodeKeyRotationResponse struct {
 	State      string `json:"state"`
 }
 
+type connectionResponse struct {
+	APIVersion string `json:"api_version"`
+	State      string `json:"state"`
+	Changed    bool   `json:"changed"`
+}
+
+type logoutResponse struct {
+	APIVersion     string `json:"api_version"`
+	ProfileID      string `json:"profile_id"`
+	State          string `json:"state"`
+	AlreadyRemoved bool   `json:"already_removed"`
+}
+
 type errorResponse struct {
 	APIVersion string `json:"api_version"`
 	Code       string `json:"code"`

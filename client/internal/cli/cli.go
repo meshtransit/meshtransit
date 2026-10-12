@@ -25,6 +25,7 @@ const (
 	loginRetryDelay         = 100 * time.Millisecond
 	maxAuthKeyBytes         = 4096
 	netcheckTimeout         = 15 * time.Second
+	connectionTimeout       = 45 * time.Second
 )
 
 var errLoginWaitTimeout = errors.New("browser authorization wait timed out")
@@ -40,6 +41,9 @@ type DaemonClient interface {
 	StartLogin(context.Context, string) (localapi.Login, error)
 	CompleteLogin(context.Context) (localapi.Login, error)
 	RotateNodeKey(context.Context) (localapi.NodeKeyRotation, error)
+	Down(context.Context) (localapi.Connection, error)
+	Up(context.Context) (localapi.Connection, error)
+	Logout(context.Context) (localapi.Logout, error)
 	RefreshNAT(context.Context) (localapi.Netcheck, error)
 }
 
@@ -106,9 +110,13 @@ func Run(
 	}
 
 	timeout := global.timeout
-	if commandArgs[0] == "netcheck" {
+	switch commandArgs[0] {
+	case "netcheck":
 		// A classification waits for STUN answers; never cut it short.
 		timeout = max(timeout, netcheckTimeout)
+	case "logout", "down":
+		// meshd first stops the control session; logout then waits for Core.
+		timeout = max(timeout, connectionTimeout)
 	}
 	client, err := options.NewClient(global.socketPath, timeout)
 	if err != nil {
@@ -140,6 +148,10 @@ func Run(
 		return runIdentity(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	case "netcheck":
 		return runNetcheck(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
+	case "down":
+		return runDown(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
+	case "logout":
+		return runLogout(ctx, commandArgs[1:], stdout, stderr, global.isJSON, client)
 	default:
 		_, _ = fmt.Fprintf(stderr, "meshctl: unknown command %q\n", commandArgs[0])
 		writeUsage(stderr)
@@ -889,6 +901,8 @@ func writeUsage(writer io.Writer) {
 
 Commands:
   up [--server U --fingerprint SHA256]    Connect this machine (MeshTransit Cloud by default)
+  down                                    Disconnect this machine and stay off until up
+  logout                                  Remove this machine from its Network; up enrolls it again
   status                                  Show daemon and data-plane status
   profile list                            List configured profiles
   profile create --name N --control-url U Create an isolated profile

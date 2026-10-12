@@ -39,6 +39,9 @@ type service interface {
 	StartLogin(context.Context, string) (daemon.Login, error)
 	CompleteLogin(context.Context) (daemon.Login, error)
 	RotateNodeKey(context.Context) (daemon.NodeKeyRotation, error)
+	Down(context.Context) (daemon.ConnectionChange, error)
+	Up(context.Context) (daemon.ConnectionChange, error)
+	Logout(context.Context) (daemon.LogoutResult, error)
 	RefreshNAT(context.Context) (daemon.NATStatus, error)
 }
 
@@ -157,6 +160,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/v1/login", s.handleLogin)
 	mux.HandleFunc("/v1/login/complete", s.handleLoginComplete)
 	mux.HandleFunc("/v1/identity/node-key/rotate", s.handleNodeKeyRotation)
+	mux.HandleFunc("/v1/down", s.handleDown)
+	mux.HandleFunc("/v1/up", s.handleUp)
+	mux.HandleFunc("/v1/logout", s.handleLogout)
 	mux.HandleFunc("/v1/netcheck", s.handleNetcheck)
 
 	bounded := http.MaxBytesHandler(mux, maxRequestBodyBytes)
@@ -238,6 +244,73 @@ func (s *Server) handleLoginComplete(writer http.ResponseWriter, request *http.R
 	}
 
 	s.writeLogin(writer, login)
+}
+
+// handleDown takes meshd off the network until /v1/up (meshctl down).
+func (s *Server) handleDown(writer http.ResponseWriter, request *http.Request) {
+	s.handleConnectionChange(writer, request, s.service.Down)
+}
+
+// handleUp clears a down (meshctl up).
+func (s *Server) handleUp(writer http.ResponseWriter, request *http.Request) {
+	s.handleConnectionChange(writer, request, s.service.Up)
+}
+
+func (s *Server) handleConnectionChange(
+	writer http.ResponseWriter,
+	request *http.Request,
+	change func(context.Context) (daemon.ConnectionChange, error),
+) {
+	if !s.acceptEmptyPost(writer, request) {
+		return
+	}
+	result, err := change(request.Context())
+	if err != nil {
+		s.writeServiceError(writer, err)
+
+		return
+	}
+	s.writeJSON(writer, http.StatusOK, connectionResponse{
+		APIVersion: apiVersion,
+		State:      result.State,
+		Changed:    result.Changed,
+	})
+}
+
+// handleLogout ends the active profile's Device in Core (meshctl logout).
+func (s *Server) handleLogout(writer http.ResponseWriter, request *http.Request) {
+	if !s.acceptEmptyPost(writer, request) {
+		return
+	}
+	result, err := s.service.Logout(request.Context())
+	if err != nil {
+		s.writeServiceError(writer, err)
+
+		return
+	}
+	s.writeJSON(writer, http.StatusOK, logoutResponse{
+		APIVersion:     apiVersion,
+		ProfileID:      result.ProfileID,
+		State:          result.State,
+		AlreadyRemoved: result.AlreadyRemoved,
+	})
+}
+
+// acceptEmptyPost answers anything but a body-less POST and reports whether
+// the request may proceed.
+func (s *Server) acceptEmptyPost(writer http.ResponseWriter, request *http.Request) bool {
+	if request.Method != http.MethodPost {
+		s.writeMethodNotAllowed(writer, http.MethodPost)
+
+		return false
+	}
+	if request.ContentLength > 0 {
+		s.writeError(writer, http.StatusBadRequest, "unexpected_body", "request body must be empty")
+
+		return false
+	}
+
+	return true
 }
 
 func (s *Server) handleNodeKeyRotation(writer http.ResponseWriter, request *http.Request) {
@@ -736,6 +809,15 @@ func (s *Server) writeServiceError(writer http.ResponseWriter, err error) {
 	case errors.Is(err, daemon.ErrNodeKeyRotation):
 		s.logger.Warn("node key rotation failed", "error", err)
 		s.writeError(writer, http.StatusBadGateway, "node_key_rotation_failed", "node key rotation failed")
+	case errors.Is(err, daemon.ErrControlSessionBusy):
+		s.writeError(writer, http.StatusServiceUnavailable, "control_session_busy", "meshd is still stopping its control session; try again")
+	case errors.Is(err, daemon.ErrLogout) &&
+		errors.Is(err, controlplane.ErrRegistrationTemporary):
+		s.logger.Warn("logout is temporarily unavailable", "error", err)
+		s.writeError(writer, http.StatusServiceUnavailable, "logout_unavailable", "logout is temporarily unavailable; try again")
+	case errors.Is(err, daemon.ErrLogout):
+		s.logger.Warn("logout failed", "error", err)
+		s.writeError(writer, http.StatusBadGateway, "logout_failed", "logout failed")
 	case errors.Is(err, daemon.ErrNATInactive):
 		s.writeError(writer, http.StatusConflict, "nat_classification_inactive", "no connected session to classify the network from")
 	case errors.Is(err, daemon.ErrControlProbe):

@@ -26,6 +26,21 @@ type upFakeClient struct {
 	trustedWith []string
 	loginCalls  int
 	completed   int
+	upCalls     int
+	upChanged   bool
+}
+
+func (f *upFakeClient) Down(context.Context) (localapi.Connection, error) {
+	return localapi.Connection{APIVersion: "v1", State: "down"}, nil
+}
+
+func (f *upFakeClient) Up(context.Context) (localapi.Connection, error) {
+	f.upCalls++
+	return localapi.Connection{APIVersion: "v1", State: "up", Changed: f.upChanged}, nil
+}
+
+func (f *upFakeClient) Logout(context.Context) (localapi.Logout, error) {
+	return localapi.Logout{APIVersion: "v1", State: "not_registered"}, nil
 }
 
 func (f *upFakeClient) Status(context.Context) (localapi.Status, error) {
@@ -159,6 +174,30 @@ func TestUpIsIdempotentOnAConnectedMachine(t *testing.T) {
 			client.created, client.activated, client.loginCalls)
 	}
 	if !strings.Contains(stdout, "Already connected") || !strings.Contains(stdout, "consumer-net.mesh") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+}
+
+func TestUpReconnectsAMachineThatWasDown(t *testing.T) {
+	t.Parallel()
+	client := &upFakeClient{
+		profiles: []localapi.Profile{
+			{ID: "cloud", Name: "MeshTransit", ControlURL: "https://control.meshtransit.net/", IsActive: true},
+		},
+		registration: "registered",
+		network:      "consumer-net.mesh",
+		pinned:       DefaultControlKeyFingerprint,
+		upChanged:    true,
+	}
+
+	code, stdout, stderr := runUpCommand(t, client)
+	if code != 0 {
+		t.Fatalf("up exit = %d, stderr = %s", code, stderr)
+	}
+	if client.upCalls != 1 || client.loginCalls != 0 {
+		t.Fatalf("up calls = %d, logins = %d; want the down cleared without a login", client.upCalls, client.loginCalls)
+	}
+	if !strings.Contains(stdout, "Connected again") {
 		t.Fatalf("stdout = %q", stdout)
 	}
 }

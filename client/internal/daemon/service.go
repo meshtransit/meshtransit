@@ -218,6 +218,7 @@ type controlProber interface {
 		[]byte,
 		controlplane.RegisterOptions,
 	) (controlplane.RegistrationResult, error)
+	Logout(context.Context, string, controlplane.KeyMaterial, controlplane.RegisterOptions) error
 	StreamNetmap(
 		context.Context,
 		string,
@@ -347,22 +348,26 @@ type Service struct {
 	logger               *slog.Logger
 	networkChanges       <-chan struct{}
 	syncSignal           chan struct{}
-	registrationGate     chan struct{}
-	dataPlaneMu          sync.Mutex
-	supervisorMu         sync.Mutex
-	supervisorRunning    bool
-	syncMu               sync.RWMutex
-	syncState            syncStatus
-	discoveryScope       uint64
-	networkObserved      atomic.Uint64
-	networkRefreshes     atomic.Uint64
-	runtimeFailures      atomic.Uint64
-	runtimeRecoveries    atomic.Uint64
-	runtimePending       atomic.Bool
-	pathProbes           *pathdiscovery.ProbeTelemetry
-	nat                  *natState
-	portMapper           PortMapper
-	cloud                CloudAddresses
+	// loggingOut holds the session loop down while Logout runs; downAcks
+	// counts the times the loop has stopped the runtime for a down.
+	loggingOut        atomic.Bool
+	downAcks          atomic.Uint64
+	registrationGate  chan struct{}
+	dataPlaneMu       sync.Mutex
+	supervisorMu      sync.Mutex
+	supervisorRunning bool
+	syncMu            sync.RWMutex
+	syncState         syncStatus
+	discoveryScope    uint64
+	networkObserved   atomic.Uint64
+	networkRefreshes  atomic.Uint64
+	runtimeFailures   atomic.Uint64
+	runtimeRecoveries atomic.Uint64
+	runtimePending    atomic.Bool
+	pathProbes        *pathdiscovery.ProbeTelemetry
+	nat               *natState
+	portMapper        PortMapper
+	cloud             CloudAddresses
 }
 
 type syncStatus struct {
@@ -512,6 +517,24 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if s.heldDown() {
+			// meshctl down, or Logout taking the map stream's place.
+			if err := s.stopRuntime(); err != nil {
+				return err
+			}
+			s.setSyncStatus(syncStatus{
+				profileID: s.profiles.Snapshot().ActiveProfileID,
+				state:     ControlSessionDown,
+				dataPlane: s.defaultDataPlaneState(),
+				dns:       DNSInactive,
+			})
+			s.downAcks.Add(1)
+			if err := s.waitForSyncSignal(ctx); err != nil {
+				return err
+			}
+
+			continue
 		}
 		active, err := s.profiles.Active(ctx)
 		if errors.Is(err, profile.ErrNotFound) {

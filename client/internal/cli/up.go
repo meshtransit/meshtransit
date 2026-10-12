@@ -106,6 +106,11 @@ func runUp(
 	if _, err := client.TrustControl(ctx, fingerprint); err != nil {
 		return writeRuntimeError(stderr, err)
 	}
+	// Undo a meshctl down; meshd then connects a registered profile again.
+	connection, err := client.Up(ctx)
+	if err != nil {
+		return writeRuntimeError(stderr, err)
+	}
 
 	status, err := client.Status(ctx)
 	if err != nil {
@@ -114,7 +119,12 @@ func runUp(
 	if status.ActiveProfileID == profile.ID && status.Registration == "registered" {
 		result.State, result.NetworkName = "registered", status.NetworkName
 
-		return writeUpDone(stdout, stderr, isJSON, result, "Already connected")
+		message := "Already connected"
+		if connection.Changed {
+			message = "Connected again"
+		}
+
+		return writeUpDone(stdout, stderr, isJSON, result, message)
 	}
 
 	login, err := client.StartLogin(ctx, "")

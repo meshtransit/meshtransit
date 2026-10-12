@@ -332,6 +332,52 @@ func (s *Store) SetRegistration(
 	return record, nil
 }
 
+// ReplaceCredentials gives the profile a new machine key and node key and
+// marks it unregistered, keeping its control key pin. A Device that logged
+// out or was revoked cannot reuse its keys: Core remembers them, so the
+// profile enrolls again as a new Device.
+func (s *Store) ReplaceCredentials(
+	ctx context.Context,
+	profileID string,
+	machinePrivateKey []byte,
+	nodePrivateKey []byte,
+) (Record, error) {
+	if err := ctx.Err(); err != nil {
+		return Record{}, fmt.Errorf("replacing identity credentials: %w", err)
+	}
+	if !isProfileID(profileID) {
+		return Record{}, ErrNotFound
+	}
+	if s == nil || s.root == nil || s.protector == nil {
+		return Record{}, errors.New("identity store is not initialized")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record, _, err := s.loadLocked(ctx, profileID)
+	if err != nil {
+		return Record{}, err
+	}
+	if string(machinePrivateKey) == record.machinePrivateKey || string(nodePrivateKey) == record.nodePrivateKey {
+		return Record{}, errors.New("identity credentials must be replaced by new keys")
+	}
+	record.machinePrivateKey = string(machinePrivateKey)
+	record.nodePrivateKey = string(nodePrivateKey)
+	record.pendingNodePrivateKey = ""
+	record.pendingAuthURL = ""
+	record.isRegistered = false
+	record.updatedAt = s.clock().UTC()
+	if err := validateRecord(record); err != nil {
+		return Record{}, err
+	}
+	if err := s.persistLocked(ctx, record, true); err != nil {
+		return Record{}, err
+	}
+
+	return record, nil
+}
+
 // BeginNodeKeyRotation durably stages one new private key before any remote
 // mutation. Repeating the exact staged key is idempotent.
 func (s *Store) BeginNodeKeyRotation(

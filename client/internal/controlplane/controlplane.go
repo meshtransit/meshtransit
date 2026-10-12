@@ -49,6 +49,9 @@ var (
 	// ErrNetmapAuthorityPaused indicates that control suspended this Device:
 	// it keeps its identity and retries until an administrator resumes it.
 	ErrNetmapAuthorityPaused = errors.New("control: map authority paused")
+	// ErrDeviceNotAuthorized means Core does not accept the profile's current
+	// keys as a Device: it was revoked or removed, or never registered.
+	ErrDeviceNotAuthorized = errors.New("control: the Device is not authorized")
 	// ErrEndpointUpdate indicates that a candidate publication did not complete.
 	ErrEndpointUpdate = errors.New("control: endpoint update failed")
 )

@@ -439,6 +439,48 @@ func TestServer_RequestValidation(t *testing.T) {
 			body:        []byte(`{}`),
 			expected:    http.StatusBadRequest,
 		},
+		{
+			name:     "down wrong method",
+			method:   http.MethodGet,
+			path:     "/v1/down",
+			expected: http.StatusMethodNotAllowed,
+		},
+		{
+			name:        "down rejects body",
+			method:      http.MethodPost,
+			path:        "/v1/down",
+			contentType: "application/json",
+			body:        []byte(`{}`),
+			expected:    http.StatusBadRequest,
+		},
+		{
+			name:     "up wrong method",
+			method:   http.MethodGet,
+			path:     "/v1/up",
+			expected: http.StatusMethodNotAllowed,
+		},
+		{
+			name:        "up rejects body",
+			method:      http.MethodPost,
+			path:        "/v1/up",
+			contentType: "application/json",
+			body:        []byte(`{}`),
+			expected:    http.StatusBadRequest,
+		},
+		{
+			name:     "logout wrong method",
+			method:   http.MethodGet,
+			path:     "/v1/logout",
+			expected: http.StatusMethodNotAllowed,
+		},
+		{
+			name:        "logout rejects body",
+			method:      http.MethodPost,
+			path:        "/v1/logout",
+			contentType: "application/json",
+			body:        []byte(`{}`),
+			expected:    http.StatusBadRequest,
+		},
 	}
 
 	for _, test := range tests {
@@ -627,6 +669,10 @@ func (fakeProber) RotateNodeKey(
 	}, nil
 }
 
+func (fakeProber) Logout(context.Context, string, controlplane.KeyMaterial, controlplane.RegisterOptions) error {
+	return nil
+}
+
 func (fakeProber) StreamNetmap(
 	ctx context.Context,
 	_ string,
@@ -801,5 +847,29 @@ func TestMapCloudStatus(t *testing.T) {
 	}
 	if empty := mapCloudStatus(daemon.CloudStatus{}, true); empty.State != daemon.CloudOff {
 		t.Fatalf("empty = %#v", empty)
+	}
+}
+
+func TestServer_UpAndLogoutWithoutADevice(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+	upRecorder := performRequest(t, server, http.MethodPost, "/v1/up", "", nil)
+	if upRecorder.Code != http.StatusOK {
+		t.Fatalf("up status = %d; body=%s", upRecorder.Code, upRecorder.Body.String())
+	}
+	up := decodeResponse[connectionResponse](t, upRecorder)
+	if up.APIVersion != apiVersion || up.State != daemon.ConnectionUp || up.Changed {
+		t.Fatalf("up response = %#v, want an unchanged up", up)
+	}
+
+	createProfile(t, server, "test", "https://control.example.com")
+	logoutRecorder := performRequest(t, server, http.MethodPost, "/v1/logout", "", nil)
+	if logoutRecorder.Code != http.StatusOK {
+		t.Fatalf("logout status = %d; body=%s", logoutRecorder.Code, logoutRecorder.Body.String())
+	}
+	logout := decodeResponse[logoutResponse](t, logoutRecorder)
+	if logout.APIVersion != apiVersion || logout.State != daemon.LogoutNotRegistered {
+		t.Fatalf("logout response = %#v, want not registered", logout)
 	}
 }

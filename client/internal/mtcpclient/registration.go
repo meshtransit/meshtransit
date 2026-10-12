@@ -270,6 +270,67 @@ func (c *Client) RotateNodeKey(ctx context.Context, controlURL string, material 
 	}
 }
 
+// Logout ends the Device over a session that its current keys open
+// (mtcp-v1 §6.5): Core revokes the Device and its keys and answers
+// Lifecycle{LOGGED_OUT}. Core refusing the keys (NOT_AUTHORIZED) wraps
+// controlplane.ErrDeviceNotAuthorized: the Device is already gone.
+func (c *Client) Logout(ctx context.Context, controlURL string, material controlplane.KeyMaterial,
+	options controlplane.RegisterOptions,
+) error {
+	keys, err := c.openKeys(material)
+	if err != nil {
+		return err
+	}
+	origin, err := c.origin(controlURL)
+	if err != nil {
+		return err
+	}
+	if err := c.checkPinned(ctx, origin, keys.control, options.PinnedFingerprint); err != nil {
+		return err
+	}
+	nodePublic := keys.node.Public()
+	s, err := c.open(ctx, origin, sessionOptions{
+		machine: keys.machine, control: keys.control,
+		nodeKey: nodePublic[:], version: options.Version,
+	})
+	if err != nil {
+		return err
+	}
+	defer s.close()
+	// A session is established by a Ping or a RegisterRequest (mtcp-v1 §3).
+	if err := s.send(sharedmtcp.MessagePing, &mtcpv1.Ping{}); err != nil {
+		return temporary(err)
+	}
+	if err := s.send(sharedmtcp.MessageLogout, &mtcpv1.Logout{}); err != nil {
+		return temporary(err)
+	}
+	deadline := time.Now().Add(answerTimeout)
+	for {
+		message, err := s.receiveUntil(ctx, deadline)
+		if err != nil {
+			// The answer may have been lost after Core logged the Device out;
+			// asking again is safe: Core then refuses the revoked keys.
+			return temporary(err)
+		}
+		switch m := message.(type) {
+		case *mtcpv1.Lifecycle:
+			switch m.GetState() {
+			case mtcpv1.Lifecycle_LOGGED_OUT:
+				return nil
+			case mtcpv1.Lifecycle_REVOKED, mtcpv1.Lifecycle_EXPIRED:
+				// Core told the session first that it holds no Device.
+				return fmt.Errorf("%w: %s", controlplane.ErrDeviceNotAuthorized, boundedText(m.GetReason()))
+			}
+		case *mtcpv1.Error:
+			if m.GetCode() == mtcpv1.Error_NOT_AUTHORIZED {
+				return fmt.Errorf("%w: %s", controlplane.ErrDeviceNotAuthorized, boundedText(m.GetMessage()))
+			}
+			return sessionError(m)
+		}
+		// Map messages and other Lifecycle states for the session are not needed.
+	}
+}
+
 // receiveUntil returns the next message before deadline or ctx ends.
 func (s *session) receiveUntil(ctx context.Context, deadline time.Time) (proto.Message, error) {
 	type result struct {

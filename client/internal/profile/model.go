@@ -43,6 +43,9 @@ type Snapshot struct {
 	Version         int       `json:"version"`
 	ActiveProfileID string    `json:"active_profile_id"`
 	Profiles        []Profile `json:"profiles"`
+	// Disconnected records `meshctl down`: meshd keeps the active profile
+	// registered but stays off the network, across restarts, until `up`.
+	Disconnected bool `json:"disconnected,omitempty"`
 }
 
 // CreateInput contains user-controlled fields accepted for a new profile.

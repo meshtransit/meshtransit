@@ -228,6 +228,21 @@ type Login struct {
 	AuthURL    string `json:"auth_url,omitempty"`
 }
 
+// Connection reports a down or up request.
+type Connection struct {
+	APIVersion string `json:"api_version"`
+	State      string `json:"state"`
+	Changed    bool   `json:"changed"`
+}
+
+// Logout reports a logout request.
+type Logout struct {
+	APIVersion     string `json:"api_version"`
+	ProfileID      string `json:"profile_id"`
+	State          string `json:"state"`
+	AlreadyRemoved bool   `json:"already_removed"`
+}
+
 // NodeKeyRotation is the non-secret result of a committed key transition.
 type NodeKeyRotation struct {
 	APIVersion string `json:"api_version"`

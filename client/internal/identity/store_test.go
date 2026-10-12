@@ -819,3 +819,45 @@ func (p *failingRewrapProtector) OpenWithRotation(
 }
 
 func (p *failingRewrapProtector) Close() error { return p.fallback.Close() }
+
+func TestStore_ReplaceCredentialsKeepsTheControlPin(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.October, 12, 1, 2, 3, 0, time.UTC)
+	store, err := openWith(t.TempDir(), func() time.Time { return now }, testProtector(t, 0x10))
+	if err != nil {
+		t.Fatalf("openWith() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	record := testRecord(t, now)
+	if err := store.Create(t.Context(), record); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := store.SetRegistration(t.Context(), testProfileID, "", true); err != nil {
+		t.Fatalf("SetRegistration() error = %v", err)
+	}
+
+	replaced, err := store.ReplaceCredentials(t.Context(), testProfileID, []byte("machine-new"), []byte("node-new"))
+	if err != nil {
+		t.Fatalf("ReplaceCredentials() error = %v", err)
+	}
+	loaded, err := store.Get(t.Context(), testProfileID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	for _, got := range []Record{replaced, loaded} {
+		material := got.Material()
+		if string(material.MachinePrivateKey) != "machine-new" || string(material.NodePrivateKey) != "node-new" ||
+			string(material.ControlPublicKey) != "control-public" ||
+			got.ControlKeyFingerprint() != record.ControlKeyFingerprint() ||
+			got.IsRegistered() || got.HasPendingAuth() {
+			t.Fatalf("replaced record = %s, want new keys, same pin, unregistered", got)
+		}
+	}
+	if _, err := store.ReplaceCredentials(t.Context(), testProfileID, []byte("machine-new"), []byte("node-other")); err == nil {
+		t.Fatal("ReplaceCredentials() accepted the current machine key")
+	}
+	if _, err := store.ReplaceCredentials(t.Context(), secondTestProfileID, []byte("a"), []byte("b")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ReplaceCredentials(missing) error = %v, want ErrNotFound", err)
+	}
+}

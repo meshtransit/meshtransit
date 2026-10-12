@@ -311,3 +311,35 @@ func newTestStore(t *testing.T) *Store {
 
 	return store
 }
+
+func TestStore_SetDisconnectedPersists(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if store.Snapshot().Disconnected {
+		t.Fatal("a new store starts disconnected")
+	}
+	if changed, err := store.SetDisconnected(t.Context(), true); err != nil || !changed {
+		t.Fatalf("SetDisconnected(true) = %t, %v", changed, err)
+	}
+	if changed, err := store.SetDisconnected(t.Context(), true); err != nil || changed {
+		t.Fatalf("repeat SetDisconnected(true) = %t, %v, want unchanged", changed, err)
+	}
+	_ = store.Close()
+
+	reopened, err := Open(dir)
+	if err != nil {
+		t.Fatalf("reopen error = %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	if !reopened.Snapshot().Disconnected {
+		t.Fatal("the disconnected preference did not survive a restart")
+	}
+	if changed, err := reopened.SetDisconnected(t.Context(), false); err != nil || !changed {
+		t.Fatalf("SetDisconnected(false) = %t, %v", changed, err)
+	}
+}
