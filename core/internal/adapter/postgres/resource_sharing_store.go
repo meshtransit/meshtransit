@@ -359,7 +359,15 @@ func resourceSharingDatabaseError(ctx context.Context, err error) error {
 	switch postgresError.Code {
 	case "22023":
 		return errors.Join(sharing.ErrInvalidManagementRequest, err)
-	case "MT001", "23505", "40001", "40P01", "55P03":
+	case "23505":
+		switch postgresError.ConstraintName {
+		case "imported_resource_network_name_current_uidx":
+			return errors.Join(sharing.ErrImportedNameTaken, sharing.ErrConflict, err)
+		case "imported_resource_access_name_current_uidx":
+			return errors.Join(sharing.ErrAccessNameTaken, sharing.ErrConflict, err)
+		}
+		return errors.Join(sharing.ErrConflict, err)
+	case "MT001", "40001", "40P01", "55P03":
 		return errors.Join(sharing.ErrConflict, err)
 	case "42501":
 		return errors.Join(sharing.ErrForbidden, err)

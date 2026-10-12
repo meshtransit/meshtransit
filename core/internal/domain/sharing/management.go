@@ -39,6 +39,12 @@ var (
 	ErrNotFound = errors.New("sharing: not found")
 	// ErrConflict reports stale version, revision, lifecycle, or authority input.
 	ErrConflict = errors.New("sharing: conflict")
+	// ErrImportedNameTaken reports, together with ErrConflict, that another
+	// current Imported Resource in the consumer Network has the display name.
+	ErrImportedNameTaken = errors.New("sharing: imported display name taken")
+	// ErrAccessNameTaken reports, together with ErrConflict, that another
+	// current Imported Resource in the consumer Network has the DNS name.
+	ErrAccessNameTaken = errors.New("sharing: access name taken")
 	// ErrUnavailable reports an unavailable authoritative dependency.
 	ErrUnavailable = errors.New("sharing: unavailable")
 )

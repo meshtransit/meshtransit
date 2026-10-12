@@ -1087,6 +1087,16 @@ func classifySharingError(err error) managementError {
 		return managementError{
 			Status: http.StatusNotFound, Code: "not_found", Message: "the requested resource is unavailable",
 		}
+	case errors.Is(err, sharing.ErrImportedNameTaken):
+		return managementError{
+			Status: http.StatusConflict, Code: "imported_name_taken",
+			Message: "another shared Device in this Network has that name",
+		}
+	case errors.Is(err, sharing.ErrAccessNameTaken):
+		return managementError{
+			Status: http.StatusConflict, Code: "access_name_taken",
+			Message: "another shared Device in this Network has that DNS name",
+		}
 	case errors.Is(err, sharing.ErrConflict):
 		return managementError{
 			Status: http.StatusConflict, Code: "conflict",

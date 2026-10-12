@@ -397,6 +397,14 @@ func TestSharingErrorsDoNotLeakAuthorityDetails(t *testing.T) {
 		{err: sharing.ErrForbidden, status: http.StatusForbidden, code: "forbidden"},
 		{err: sharing.ErrNotFound, status: http.StatusNotFound, code: "not_found"},
 		{err: sharing.ErrConflict, status: http.StatusConflict, code: "conflict"},
+		{
+			err:    errors.Join(sharing.ErrImportedNameTaken, sharing.ErrConflict),
+			status: http.StatusConflict, code: "imported_name_taken",
+		},
+		{
+			err:    errors.Join(sharing.ErrAccessNameTaken, sharing.ErrConflict),
+			status: http.StatusConflict, code: "access_name_taken",
+		},
 		{err: sharing.ErrUnavailable, status: http.StatusServiceUnavailable, code: "operation_unavailable"},
 		{err: errors.New("sensitive database detail"), status: http.StatusInternalServerError, code: "internal_failure"},
 	} {
