@@ -250,6 +250,12 @@ func enqueueDeviceRevocationApply(
 			},
 		})
 	}
+	transaction.enqueueRow(quarantineRevokedDeviceLeasesSQL, deviceRevocationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*int64) = 2
+			return nil
+		},
+	})
 	transaction.enqueueRow(advanceDeviceRevocationRevisionSQL, deviceRevocationTestRow{
 		scan: func(destinations ...any) error {
 			*destinations[0].(*int64) = 6

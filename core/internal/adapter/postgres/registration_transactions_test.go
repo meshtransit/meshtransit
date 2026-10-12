@@ -73,6 +73,7 @@ func TestRegistrationTransactionCreatesCompleteAtomicMutation(t *testing.T) {
 		insertRegistrationNodeKeySQL,
 		consumeRegistrationEnrollmentAuthoritySQL,
 		insertRegistrationCredentialUseSQL,
+		releaseReclaimedRegistrationLeaseSQL,
 		insertRegistrationLeaseSQL,
 		advanceRegistrationRevisionSQL,
 		completePendingRegistrationSQL,

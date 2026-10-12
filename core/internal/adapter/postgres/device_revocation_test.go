@@ -68,6 +68,7 @@ func TestDeviceRevocationTransactionPersistsAtomicTerminalEvidence(t *testing.T)
 		revokeDeviceSQL,
 		revokeMachineKeyEpochSQL,
 		revokeNodeKeyEpochSQL,
+		quarantineRevokedDeviceLeasesSQL,
 		advanceDeviceRevocationRevisionSQL,
 		appendDeviceRevocationEvidenceSQL,
 		completeDeviceRevocationIdempotencySQL,

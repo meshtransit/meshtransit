@@ -95,6 +95,40 @@ LIMIT $2::BIGINT`
 const lockRegistrationPrefixesSQL = `SELECT *
 FROM mesh_ops.lock_registration_prefixes($1::BIGINT)`
 
+// reclaimableLeasePredicate matches a lease (joined with its Device as
+// device) whose address may be given to a new Device: its quarantine has
+// ended, or it still belongs to a Device revoked before schema 143 at least
+// one quarantine interval ago. Such a lease is not live for allocation and
+// is released when its address is reused (releaseReclaimedRegistrationLeaseSQL).
+// The allocator queries left-join only revoked Devices (revokedDeviceJoin),
+// so device.id IS NOT NULL keeps the predicate false, never NULL, for the
+// rest.
+const reclaimableLeasePredicate = `(lease.state = 'quarantined'
+        AND lease.quarantine_until <= pg_catalog.clock_timestamp())
+    OR (lease.state = 'active' AND device.id IS NOT NULL AND device.state = 'revoked'
+        AND device.updated_at + mesh_ops.node_address_quarantine_v1() <= pg_catalog.clock_timestamp())`
+
+// revokedDeviceJoin joins a lease to its Device only when that Device is
+// revoked, so a large prefix does not look up every live lease's Device.
+const revokedDeviceJoin = `LEFT JOIN mesh.device AS device
+  ON device.id = lease.device_id AND device.state = 'revoked'`
+
+// releaseReclaimedRegistrationLeaseSQL releases the reclaimable lease, if any,
+// that holds the address a new Device is about to take, so the live-address
+// unique index admits the new lease. It runs in the registering transaction,
+// whose evidence and Network revision cover the release.
+const releaseReclaimedRegistrationLeaseSQL = `UPDATE mesh.node_address_lease AS lease
+SET state = 'released',
+    released_at = COALESCE(lease.released_at, GREATEST(device.updated_at, lease.updated_at)),
+    quarantine_until = NULL,
+    version = lease.version + 1,
+    updated_at = GREATEST($3::TIMESTAMPTZ, lease.updated_at)
+FROM mesh.device AS device
+WHERE device.id = lease.device_id
+  AND lease.network_prefix_id = $1::BIGINT
+  AND lease.address = $2::INET
+  AND (` + reclaimableLeasePredicate + `)`
+
 const loadRegistrationLeasesSQL = `SELECT
     lease.network_prefix_id,
     lease.device_id,
@@ -103,8 +137,10 @@ const loadRegistrationLeasesSQL = `SELECT
     lease.lease_role,
     lease.state
 FROM mesh.node_address_lease AS lease
+` + revokedDeviceJoin + `
 WHERE lease.network_prefix_id = $1::BIGINT
   AND lease.state IN ('active', 'quarantined')
+  AND NOT (` + reclaimableLeasePredicate + `)
   AND lease.address >= $3::INET
 ORDER BY lease.network_prefix_id, lease.address, lease.id
 LIMIT $2::BIGINT`
@@ -118,8 +154,10 @@ LIMIT $2::BIGINT`
 const lowestFreeRegistrationAddressSQL = `WITH live AS (
     SELECT lease.address
     FROM mesh.node_address_lease AS lease
+    ` + revokedDeviceJoin + `
     WHERE lease.network_prefix_id = $1::BIGINT
       AND lease.state IN ('active', 'quarantined')
+      AND NOT (` + reclaimableLeasePredicate + `)
 )
 SELECT pg_catalog.host(candidate.address)
 FROM (

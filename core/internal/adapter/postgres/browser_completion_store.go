@@ -396,6 +396,9 @@ func completeApprovedBrowserRegistration(
 		if lease.family == 6 {
 			leaseID = ids.v6Lease
 		}
+		if err := releaseReclaimedRegistrationLease(ctx, tx, lease, occurredAt); err != nil {
+			return registration.Result{}, err
+		}
 		if _, err := tx.Exec(ctx, insertRegistrationLeaseSQL,
 			leaseID.String(), authority.workspaceInternalID, authority.networkInternalID,
 			lease.prefix.realmInternalID, lease.prefix.poolInternalID,

@@ -110,6 +110,10 @@ WHERE device.id = $1::BIGINT
   AND device.state = 'active'
 RETURNING device.version, device.session_generation`
 
+// quarantineRevokedDeviceLeasesSQL moves the revoked Device's active leases
+// to quarantined (schema 143) and returns how many moved.
+const quarantineRevokedDeviceLeasesSQL = `SELECT mesh_ops.quarantine_device_leases_v1($1::BIGINT, $2::TIMESTAMPTZ)`
+
 const revokeMachineKeyEpochSQL = `UPDATE mesh.device_machine_key_epoch AS key_epoch
 SET valid_until = $8::TIMESTAMPTZ,
     revocation_reason = $9::TEXT,

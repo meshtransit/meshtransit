@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 142 {
-		t.Fatalf("len(Catalog()) = %d, want 142", len(catalog))
+	if len(catalog) != 143 {
+		t.Fatalf("len(Catalog()) = %d, want 143", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 142 {
-		t.Fatalf("LatestVersion() = %d, want 142", LatestVersion())
+	if LatestVersion() != 143 {
+		t.Fatalf("LatestVersion() = %d, want 143", LatestVersion())
 	}
 }
 
@@ -3413,6 +3413,36 @@ func TestMapNetworkHeader(t *testing.T) {
 	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP ", "INSERT ", "UPDATE ", "DELETE "} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 142 must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestNodeAddressQuarantine(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[142]
+	if migration.Version != 143 {
+		t.Fatalf("migration 143 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.node_address_quarantine_v1()",
+		"SELECT INTERVAL '24 hours'",
+		"CREATE FUNCTION mesh_ops.quarantine_device_leases_v1(",
+		"SECURITY INVOKER",
+		"WHERE device.id = p_device_id AND device.state = 'revoked'",
+		"SET state = 'quarantined',",
+		"GREATEST(p_now, lease.updated_at) + mesh_ops.node_address_quarantine_v1()",
+		"CREATE OR REPLACE FUNCTION mesh_ops.revoke_member_device_internal_v1(",
+		"PERFORM mesh_ops.quarantine_device_leases_v1(v_device.id, p_now);",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.quarantine_device_leases_v1(BIGINT, TIMESTAMPTZ) TO mesh_runtime;",
+		"FROM PUBLIC, mesh_runtime, mesh_worker, mesh_observer, mesh_audit_writer, mesh_share_writer;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 143 must contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{"BYPASSRLS", "DROP ", "INSERT ", "DELETE ", "SECURITY DEFINER", "'released'"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 143 must not contain %q", forbidden)
 		}
 	}
 }

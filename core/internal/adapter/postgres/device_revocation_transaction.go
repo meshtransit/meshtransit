@@ -447,6 +447,17 @@ func (transaction *deviceRevocationTransaction) applyLocked(
 		return revocation.Result{}, ErrDeviceRevocationEvidence
 	}
 
+	// The Device's addresses enter quarantine; registration reuses them after.
+	var quarantined int64
+	if err := transaction.database.QueryRow(
+		ctx,
+		quarantineRevokedDeviceLeasesSQL,
+		transaction.locked.deviceInternalID,
+		occurredAt,
+	).Scan(&quarantined); err != nil {
+		return revocation.Result{}, fmt.Errorf("quarantine Device addresses: %w", err)
+	}
+
 	var networkRevision, inventoryRevision int64
 	if err := transaction.database.QueryRow(ctx, advanceDeviceRevocationRevisionSQL).Scan(
 		&networkRevision,

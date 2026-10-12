@@ -417,6 +417,8 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLAccountSessionLogout(ctx, t, adminConnection, runtimePool)
 	assertPostgreSQLRevokedConsoleManagementScopes(ctx, t, runtimePool)
 	assertPostgreSQLDeviceLogout(ctx, t, adminConnection, runtimePool)
+	// After every revocation path, so their quarantines are all checked.
+	assertPostgreSQLNodeAddressQuarantine(ctx, t, adminConnection, runtimeConnection, runtimePool)
 	// Last, so every evidence writer exercised above is covered.
 	assertAuditSealV2(ctx, t, adminConnection)
 }

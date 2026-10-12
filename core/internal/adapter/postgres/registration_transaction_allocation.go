@@ -3,7 +3,9 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
+	"time"
 
 	"meshtransit.net/core/internal/domain/enrollment/registration"
 	"meshtransit.net/core/internal/domain/ipam"
@@ -69,6 +71,9 @@ func (transaction *registrationTransaction) persistRegistrationLeases(
 		if lease.family == 6 {
 			leaseID = change.MutationIDs().IPv6LeaseID()
 		}
+		if err := releaseReclaimedRegistrationLease(ctx, transaction.database, lease, change.OccurredAt()); err != nil {
+			return err
+		}
 		if err := transaction.execRegistrationInsert(
 			ctx,
 			"create Node address lease",
@@ -86,6 +91,25 @@ func (transaction *registrationTransaction) persistRegistrationLeases(
 		); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// releaseReclaimedRegistrationLease releases a lease whose quarantine has
+// ended if it holds the address about to be leased; most addresses have none.
+func releaseReclaimedRegistrationLease(
+	ctx context.Context,
+	database registrationDatabaseTransaction,
+	lease registrationLease,
+	at time.Time,
+) error {
+	result, err := database.Exec(ctx, releaseReclaimedRegistrationLeaseSQL,
+		lease.prefix.internalID, lease.address.String(), at)
+	if err != nil {
+		return fmt.Errorf("release reclaimed Node address lease: %w", err)
+	}
+	if result.RowsAffected() > 1 {
+		return fmt.Errorf("release reclaimed Node address lease: %w", ErrRegistrationEvidence)
 	}
 	return nil
 }
