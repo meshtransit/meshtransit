@@ -26,7 +26,6 @@ import (
 	"meshtransit.net/client/internal/netwatch"
 	"meshtransit.net/client/internal/portmap"
 	"meshtransit.net/client/internal/profile"
-	"meshtransit.net/client/internal/secretstore"
 	"meshtransit.net/client/internal/servicemanager"
 	"meshtransit.net/client/internal/socket"
 	"meshtransit.net/client/internal/version"
@@ -69,7 +68,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			logger.Error("closing profile store failed", "error", closeErr)
 		}
 	}()
-	protector, err := loadIdentityProtector(cfg.IdentityKeyPath)
+	protector, err := loadIdentityProtector(cfg.IdentityKeyPath, cfg.StateDir)
 	if err != nil {
 		logger.Error("loading identity envelope key failed", "error", err)
 
@@ -326,14 +325,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 	logger.Info("meshd stopped")
 
 	return 0
-}
-
-func loadIdentityProtector(path string) (*secretstore.Protector, error) {
-	if strings.HasPrefix(path, "/run/credentials/") {
-		return secretstore.LoadSystemdCredential(path)
-	}
-
-	return secretstore.Load(path)
 }
 
 func newLogger(writer io.Writer, levelName string) *slog.Logger {

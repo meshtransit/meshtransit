@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"meshtransit.net/client/internal/privatefile"
 )
 
 const (
@@ -181,7 +183,13 @@ func credentialParts(encoded []byte) (active, fallback []byte, hasFallback bool,
 
 // Load reads an owner-only key from an absolute, non-symlink path.
 func Load(path string) (*Protector, error) {
-	return load(path, validateOwnerOnly)
+	return load(path, func(info os.FileInfo) error {
+		if err := privatefile.CheckFile(path, info); err != nil {
+			return fmt.Errorf("%w: %w", ErrKeyInvalid, err)
+		}
+
+		return nil
+	})
 }
 
 // LoadSystemdCredential reads a key from a systemd private credential mount.
@@ -264,14 +272,6 @@ func load(path string, validateMetadata func(os.FileInfo) error) (*Protector, er
 
 func validCredentialSize(size int64) bool {
 	return size == KeySize || size == int64(credentialSize)
-}
-
-func validateOwnerOnly(info os.FileInfo) error {
-	if info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("%w: key permissions are too broad", ErrKeyInvalid)
-	}
-
-	return nil
 }
 
 func isSystemdCredentialPath(path string) bool {

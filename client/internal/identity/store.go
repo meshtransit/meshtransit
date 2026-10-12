@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"meshtransit.net/client/internal/privatefile"
+
 	"meshtransit.net/client/internal/secretstore"
 )
 
@@ -106,7 +108,7 @@ func openWith(
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return nil, errors.New("identity store path must be a directory, not a link")
 	}
-	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // Directories require execute bits.
+	if err := privatefile.RestrictDir(dir); err != nil {
 		return nil, fmt.Errorf("restricting identity store directory: %w", err)
 	}
 	root, err := os.OpenRoot(dir)
@@ -555,8 +557,8 @@ func (s *Store) loadLocked(
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return Record{}, false, fmt.Errorf("%w: record must be a regular file, not a link", ErrCorrupt)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return Record{}, false, fmt.Errorf("%w: record permissions are too broad", ErrCorrupt)
+	if err := privatefile.CheckFile(filepath.Join(s.dir, name), info); err != nil {
+		return Record{}, false, fmt.Errorf("%w: %w", ErrCorrupt, err)
 	}
 	if info.Size() <= 0 || info.Size() > maxRecordBytes {
 		return Record{}, false, fmt.Errorf("%w: record has an invalid size", ErrCorrupt)
@@ -712,7 +714,7 @@ func (s *Store) persistLocked(ctx context.Context, record Record, replace bool) 
 			return fmt.Errorf("removing linked temporary identity record: %w", err)
 		}
 	}
-	if err := syncRoot(s.root); err != nil {
+	if err := privatefile.SyncDir(s.root); err != nil {
 		return err
 	}
 
@@ -860,20 +862,6 @@ func randomTemporaryName() (string, error) {
 	}
 
 	return ".identity-" + hex.EncodeToString(buffer) + ".tmp", nil
-}
-
-func syncRoot(root *os.Root) (syncErr error) {
-	directory, err := root.Open(".")
-	if err != nil {
-		return fmt.Errorf("opening identity directory for sync: %w", err)
-	}
-	defer func() { syncErr = errors.Join(syncErr, directory.Close()) }()
-
-	if err := directory.Sync(); err != nil {
-		return fmt.Errorf("syncing identity directory: %w", err)
-	}
-
-	return nil
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {

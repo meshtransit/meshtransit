@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"meshtransit.net/client/internal/privatefile"
 )
 
 const (
@@ -228,8 +230,8 @@ func (s *Store) load() error {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return errors.New("profile state must be a regular file, not a link")
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("profile state permissions %04o are too broad", info.Mode().Perm())
+	if err := privatefile.CheckFile(filepath.Join(s.dir, stateFileName), info); err != nil {
+		return fmt.Errorf("profile state: %w", err)
 	}
 	if info.Size() > maxStateBytes {
 		return fmt.Errorf("profile state exceeds %d bytes", maxStateBytes)
@@ -300,7 +302,7 @@ func (s *Store) persist(snapshot Snapshot) error {
 	if err := s.root.Rename(temporaryName, stateFileName); err != nil {
 		return fmt.Errorf("replacing profile state: %w", err)
 	}
-	if err := syncRoot(s.root); err != nil {
+	if err := privatefile.SyncDir(s.root); err != nil {
 		return err
 	}
 
@@ -318,22 +320,8 @@ func ensurePrivateDir(dir string) error {
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return errors.New("profile store path must be a directory, not a link")
 	}
-	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // Directories require execute bits.
+	if err := privatefile.RestrictDir(dir); err != nil {
 		return fmt.Errorf("restricting profile store directory: %w", err)
-	}
-
-	return nil
-}
-
-func syncRoot(root *os.Root) (syncErr error) {
-	file, err := root.Open(".")
-	if err != nil {
-		return fmt.Errorf("opening profile store directory for sync: %w", err)
-	}
-	defer func() { syncErr = errors.Join(syncErr, file.Close()) }()
-
-	if err := file.Sync(); err != nil {
-		return fmt.Errorf("syncing profile store directory: %w", err)
 	}
 
 	return nil

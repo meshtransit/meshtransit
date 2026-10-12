@@ -1,3 +1,5 @@
+//go:build !windows
+
 package main
 
 import (
@@ -15,7 +17,7 @@ func TestLoadIdentityProtectorOwnerOnlyOverride(t *testing.T) {
 	if err := os.WriteFile(path, make([]byte, secretstore.KeySize), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	protector, err := loadIdentityProtector(path)
+	protector, err := loadIdentityProtector(path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +28,7 @@ func TestLoadIdentityProtectorOwnerOnlyOverride(t *testing.T) {
 	if err := os.Chmod(path, 0o440); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadIdentityProtector(path); !errors.Is(err, secretstore.ErrKeyInvalid) {
+	if _, err := loadIdentityProtector(path, ""); !errors.Is(err, secretstore.ErrKeyInvalid) {
 		t.Fatalf("broad override permissions accepted: %v", err)
 	}
 }
@@ -40,7 +42,7 @@ func TestLoadIdentityProtectorConfinesSystemdOverride(t *testing.T) {
 		"/run/credentials/../identity-key",
 	} {
 		t.Run(path, func(t *testing.T) {
-			if _, err := loadIdentityProtector(path); !errors.Is(err, secretstore.ErrKeyInvalid) {
+			if _, err := loadIdentityProtector(path, ""); !errors.Is(err, secretstore.ErrKeyInvalid) {
 				t.Fatalf("malformed systemd credential did not fail closed: %v", err)
 			}
 		})
