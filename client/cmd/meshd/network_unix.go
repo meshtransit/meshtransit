@@ -28,3 +28,8 @@ func platformNetwork(cfg config.Config) (tunOpener, *netadmin.Client, error) {
 
 	return client, client, nil
 }
+
+// networkLogAttrs names where host networking is done, for startup logs.
+func networkLogAttrs(cfg config.Config) []any {
+	return []any{"socket", cfg.NetAdminSocketPath}
+}

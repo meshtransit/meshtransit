@@ -9,6 +9,7 @@ import (
 	"meshtransit.net/client/internal/config"
 	"meshtransit.net/client/internal/dataplane"
 	"meshtransit.net/client/internal/netadmin"
+	"meshtransit.net/client/internal/winadapter"
 )
 
 // tunOpener opens the overlay TUN for the data plane.
@@ -27,4 +28,10 @@ func platformNetwork(cfg config.Config) (tunOpener, *netadmin.Client, error) {
 	}
 
 	return dataplane.NewWindowsTUNOpener(), nil, nil
+}
+
+// networkLogAttrs names where host networking is done, for startup logs: the
+// service itself configures the Wintun adapter, so there is no socket.
+func networkLogAttrs(config.Config) []any {
+	return []any{"adapter", winadapter.Name}
 }

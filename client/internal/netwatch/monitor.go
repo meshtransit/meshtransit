@@ -193,7 +193,10 @@ func readNetworkSnapshot(excluded map[string]struct{}) (networkSnapshot, error) 
 	if err != nil {
 		return networkSnapshot{}, fmt.Errorf("listing interfaces: %w", err)
 	}
-	excludedIndexes := make(map[int]struct{}, len(excluded))
+	excludedIndexes := make(map[int]struct{}, len(excluded)+1)
+	for _, index := range platformExcludedIndexes() {
+		excludedIndexes[index] = struct{}{}
+	}
 	for _, networkInterface := range interfaces {
 		if ignoredInterface(networkInterface, excluded) {
 			excludedIndexes[networkInterface.Index] = struct{}{}
@@ -206,7 +209,7 @@ func readNetworkSnapshot(excluded map[string]struct{}) (networkSnapshot, error) 
 	tokens := make([]string, 0, len(routeTokens)+(len(interfaces)*2))
 	tokens = append(tokens, routeTokens...)
 	for _, networkInterface := range interfaces {
-		if ignoredInterface(networkInterface, excluded) {
+		if _, skip := excludedIndexes[networkInterface.Index]; skip {
 			continue
 		}
 		if networkInterface.Flags&net.FlagLoopback != 0 {

@@ -10,26 +10,15 @@ import (
 	"slices"
 	"sync"
 
-	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/tun"
 
 	"meshtransit.net/client/internal/netadmin"
+	"meshtransit.net/client/internal/winadapter"
 	"meshtransit.net/client/internal/winnet"
 )
 
-const (
-	// windowsAdapterName names the Wintun adapter in Network Connections.
-	windowsAdapterName = "MeshTransit"
-	// windowsTUNMTU matches meshnetd's MTU on Linux and macOS.
-	windowsTUNMTU = 1280
-)
-
-// windowsAdapterGUID keeps one adapter identity across restarts, so Windows
-// does not list a new network for every start.
-var windowsAdapterGUID = windows.GUID{
-	Data1: 0x6d657368, Data2: 0x7472, Data3: 0x616e,
-	Data4: [8]byte{0x73, 0x69, 0x74, 0x00, 0x00, 0x00, 0x00, 0x01},
-}
+// windowsTUNMTU matches meshnetd's MTU on Linux and macOS.
+const windowsTUNMTU = 1280
 
 var setTunnelType sync.Once
 
@@ -43,7 +32,7 @@ type WindowsTUNOpener struct {
 
 // NewWindowsTUNOpener returns an opener for the service's adapter.
 func NewWindowsTUNOpener() *WindowsTUNOpener {
-	setTunnelType.Do(func() { tun.WintunTunnelType = windowsAdapterName })
+	setTunnelType.Do(func() { tun.WintunTunnelType = winadapter.Name })
 
 	return &WindowsTUNOpener{}
 }
@@ -54,8 +43,8 @@ func (o *WindowsTUNOpener) OpenTUN(_ context.Context, config netadmin.TUNConfig)
 	if err := validateOverlayHostPrefixes(config.Addresses, config.Routes); err != nil {
 		return netadmin.TUN{}, err
 	}
-	guid := windowsAdapterGUID
-	device, err := tun.CreateTUNWithRequestedGUID(windowsAdapterName, &guid, windowsTUNMTU)
+	guid := winadapter.GUID
+	device, err := tun.CreateTUNWithRequestedGUID(winadapter.Name, &guid, windowsTUNMTU)
 	if err != nil {
 		return netadmin.TUN{}, fmt.Errorf("dataplane: creating the Wintun adapter: %w", err)
 	}
@@ -77,7 +66,7 @@ func (o *WindowsTUNOpener) OpenTUN(_ context.Context, config netadmin.TUNConfig)
 
 	return netadmin.TUN{
 		Device:    device,
-		Name:      windowsAdapterName,
+		Name:      winadapter.Name,
 		MTU:       windowsTUNMTU,
 		Addresses: slices.Clone(config.Addresses),
 		Routes:    slices.Clone(config.Routes),

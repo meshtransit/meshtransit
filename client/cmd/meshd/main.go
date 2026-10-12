@@ -161,8 +161,7 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 		}
 		logger.Info(
 			"encrypted data plane enabled",
-			"socket", cfg.NetAdminSocketPath,
-			"listen_port", cfg.WireGuardListenPort,
+			append(networkLogAttrs(cfg), "listen_port", cfg.WireGuardListenPort)...,
 		)
 		if flowReporter != nil {
 			logger.Info(
@@ -192,7 +191,7 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 			return 1
 		}
 		daemonOptions.DNS = dnsManager
-		logger.Info("MeshTransit DNS enabled", "socket", cfg.NetAdminSocketPath)
+		logger.Info("MeshTransit DNS enabled", networkLogAttrs(cfg)...)
 	}
 	var networkMonitor *netwatch.Monitor
 	if cfg.EnableDataPlane {

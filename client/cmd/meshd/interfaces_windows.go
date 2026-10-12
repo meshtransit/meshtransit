@@ -2,6 +2,6 @@
 
 package main
 
-// ownInterfaces are the MeshTransit links that host network watching
-// ignores; on Windows that is the Wintun adapter.
-var ownInterfaces = []string{"MeshTransit"}
+// ownInterfaces is empty on Windows: netwatch recognises the Wintun adapter
+// by its fixed GUID, since an administrator can rename it.
+var ownInterfaces []string
