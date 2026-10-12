@@ -34,10 +34,16 @@ import (
 const identityMigrationTimeout = 30 * time.Second
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(entry(os.Args[1:]))
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	return runContext(context.Background(), args, stdout, stderr)
+}
+
+// runContext runs meshd until parent is cancelled (the Windows service
+// manager stopping it) or the process receives an interrupt.
+func runContext(parent context.Context, args []string, stdout, stderr io.Writer) int {
 	cfg, err := config.Parse(args, stderr)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "meshd: %v\n", err)
@@ -245,7 +251,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	}()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := notifier.Ready(ctx); err != nil {
 		logger.Error("reporting service readiness failed", "error", err)
