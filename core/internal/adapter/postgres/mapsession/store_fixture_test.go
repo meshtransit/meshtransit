@@ -59,6 +59,8 @@ type fakeTransaction struct {
 	reachableAliases bool
 	// scaledReaders reports the schema 147 readers as granted.
 	scaledReaders bool
+	// selectiveReaders reports the schema 149 readers as granted.
+	selectiveReaders bool
 	// boundDependencies reports the schema 146 dependency reader as granted.
 	boundDependencies bool
 }
@@ -126,14 +128,17 @@ func (transaction *fakeTransaction) Query(
 		return &grantRows{granted: transaction.boundDependencies}, nil
 	case scaledSharingDependenciesGrantedSQL, scaledAliasEdgesGrantedSQL:
 		return &grantRows{granted: transaction.scaledReaders}, nil
-	case loadSharingDependenciesSQL, loadBoundSharingDependenciesSQL, loadScaledSharingDependenciesSQL:
+	case selectiveSharingDependenciesGrantedSQL, selectiveAliasEdgesGrantedSQL:
+		return &grantRows{granted: transaction.selectiveReaders}, nil
+	case loadSharingDependenciesSQL, loadBoundSharingDependenciesSQL, loadScaledSharingDependenciesSQL,
+		loadSelectiveSharingDependenciesSQL:
 		if transaction.dependencyRows == nil {
 			return &directEdgeRows{}, nil
 		}
 		return transaction.dependencyRows, nil
 	case reachableAliasEdgesGrantedSQL:
 		return &grantRows{granted: transaction.reachableAliases}, nil
-	case loadAliasEdgesSQL, loadReachableAliasEdgesSQL, loadScaledAliasEdgesSQL:
+	case loadAliasEdgesSQL, loadReachableAliasEdgesSQL, loadScaledAliasEdgesSQL, loadSelectiveAliasEdgesSQL:
 		if transaction.aliasRows == nil {
 			return &directEdgeRows{}, nil
 		}

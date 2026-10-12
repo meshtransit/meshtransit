@@ -426,18 +426,26 @@ func assertSharingDependencies(
 		}
 		const v2 = `SELECT d::TEXT FROM mesh_ops.load_device_sharing_dependencies_v2($1::BYTEA, $2::BYTEA, $3::INTEGER) AS d`
 		const v3 = `SELECT d::TEXT FROM mesh_ops.load_device_sharing_dependencies_v3($1::BYTEA, $2::BYTEA, $3::INTEGER) AS d`
+		const v4 = `SELECT d::TEXT FROM mesh_ops.load_device_sharing_dependencies_v4($1::BYTEA, $2::BYTEA, $3::INTEGER) AS d`
 		previous := read(v2, 257)
 		slices.Sort(previous)
+		// v3 and v4 return the same rows in the same order (schema 149
+		// changes only how the contracts are found).
 		scaled := read(v3, 10000)
+		if selective := read(v4, 10000); !slices.Equal(selective, scaled) {
+			t.Fatalf("%s sharing dependencies v4 = %v, v3 = %v", name, selective, scaled)
+		}
 		slices.Sort(scaled)
 		if !slices.Equal(previous, scaled) {
 			t.Fatalf("%s sharing dependencies v3 = %v, v2 = %v", name, scaled, previous)
 		}
 		if want > 0 {
-			bounded := read(v3, 1)
-			if len(bounded) == 0 || len(bounded) > 2 || len(bounded) == 2 && bounded[1] != `{"limited": true}` ||
-				!slices.Contains(previous, bounded[0]) {
-				t.Fatalf("%s sharing dependencies v3 at limit 1 = %v", name, bounded)
+			for _, reader := range []string{v3, v4} {
+				bounded := read(reader, 1)
+				if len(bounded) == 0 || len(bounded) > 2 || len(bounded) == 2 && bounded[1] != `{"limited": true}` ||
+					!slices.Contains(previous, bounded[0]) {
+					t.Fatalf("%s sharing dependencies at limit 1 = %v", name, bounded)
+				}
 			}
 		}
 	}

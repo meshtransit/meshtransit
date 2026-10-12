@@ -48,7 +48,44 @@ FROM mesh_ops.load_device_alias_map_edges_v5($1::BYTEA, $2::BYTEA, $3::INTEGER) 
 const scaledAliasEdgesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
     pg_catalog.to_regprocedure('mesh_ops.load_device_alias_map_edges_v5(bytea,bytea,integer)'), 'EXECUTE'), FALSE)`
 
+// loadSelectiveAliasEdgesSQL is v5 choosing endpoints from this Device's
+// targets and rules instead of every endpoint (schema 149), used once the
+// operator granted it to this role.
+const loadSelectiveAliasEdgesSQL = `SELECT edge::TEXT
+FROM mesh_ops.load_device_alias_map_edges_v6($1::BYTEA, $2::BYTEA, $3::INTEGER) AS edge`
+
+const selectiveAliasEdgesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_device_alias_map_edges_v6(bytea,bytea,integer)'), 'EXECUTE'), FALSE)`
+
+// setStatementTimeoutSQL changes the transaction's statement bound.
+const setStatementTimeoutSQL = `SELECT pg_catalog.set_config('statement_timeout', $1, TRUE)`
+
+// loadDirectEdges reads the Device's shares. With ShareStatementTimeout
+// above StatementTimeout the share readers run under it: they are bounded by
+// the share limit (10000) but cost about half a millisecond per share, so a
+// Device receiving thousands of shares outlasts the per-statement bound that
+// suits every other map read. The request deadline still bounds the map.
 func (store *Store) loadDirectEdges(
+	ctx context.Context, transaction databaseTransaction, self appmapsession.Snapshot,
+	machineFingerprint, nodeKey []byte,
+) (appmapsession.Snapshot, error) {
+	widen := store.options.EnableDeviceAliases && store.options.ShareStatementTimeout > store.options.StatementTimeout
+	if widen {
+		if err := transaction.Exec(ctx, setStatementTimeoutSQL, postgresTimeout(store.options.ShareStatementTimeout)); err != nil {
+			return appmapsession.Snapshot{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("widen share read timeout: %w", err))
+		}
+	}
+	result, err := store.loadShareEdges(ctx, transaction, self, machineFingerprint, nodeKey)
+	if err != nil || !widen {
+		return result, err
+	}
+	if err := transaction.Exec(ctx, setStatementTimeoutSQL, postgresTimeout(store.options.StatementTimeout)); err != nil {
+		return appmapsession.Snapshot{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("restore statement timeout: %w", err))
+	}
+	return result, nil
+}
+
+func (store *Store) loadShareEdges(
 	ctx context.Context, transaction databaseTransaction, self appmapsession.Snapshot,
 	machineFingerprint, nodeKey []byte,
 ) (appmapsession.Snapshot, error) {
@@ -106,6 +143,14 @@ func (store *Store) loadDirectEdges(
 // aliasEdgesReader selects the newest alias map reader runtime may execute,
 // so a rolling upgrade or a pending operator step keeps the previous one.
 func aliasEdgesReader(ctx context.Context, transaction databaseTransaction) (edgeReader, error) {
+	selective, err := functionGranted(ctx, transaction, selectiveAliasEdgesGrantedSQL)
+	if err != nil {
+		return edgeReader{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("check alias map reader: %w", err))
+	}
+	if selective {
+		return edgeReader{query: loadSelectiveAliasEdgesSQL, limit: appmapsession.MaximumDirectDeviceProjections,
+			scaled: true}, nil
+	}
 	scaled, err := functionGranted(ctx, transaction, scaledAliasEdgesGrantedSQL)
 	if err != nil {
 		return edgeReader{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("check alias map reader: %w", err))

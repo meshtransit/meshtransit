@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 148 {
-		t.Fatalf("len(Catalog()) = %d, want 148", len(catalog))
+	if len(catalog) != 149 {
+		t.Fatalf("len(Catalog()) = %d, want 149", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 148 {
-		t.Fatalf("LatestVersion() = %d, want 148", LatestVersion())
+	if LatestVersion() != 149 {
+		t.Fatalf("LatestVersion() = %d, want 149", LatestVersion())
 	}
 }
 
@@ -3650,6 +3650,57 @@ func TestPolicyImportedResourceScale(t *testing.T) {
 	} {
 		if !strings.Contains(operator, want) {
 			t.Errorf("operator step 148 must contain %q", want)
+		}
+	}
+}
+
+func TestShareMapReaderSelection(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[148]
+	if migration.Version != 149 {
+		t.Fatalf("migration 149 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE INDEX compiled_policy_imported_destination_release_source_contract_idx",
+		"workspace_id, network_id, policy_release_id, source_device_id, trust_contract_id",
+		"CREATE FUNCTION mesh_ops.load_device_alias_map_edges_v6(",
+		"CREATE FUNCTION mesh_ops.load_device_sharing_dependencies_v4(",
+		"p_limit > 10000 THEN",
+		"ORDER BY shared.id LIMIT p_limit + 1",
+		"JOIN mesh.private_endpoint AS endpoint ON endpoint.trust_contract_id = contract.id",
+		"CREATE INDEX private_endpoint_trust_contract_idx ON mesh.private_endpoint (trust_contract_id);",
+		"SELECT DISTINCT self_rule.imported_resource_id",
+		"SELECT DISTINCT loop_rule.trust_contract_id",
+		"AND target.device_id = self_id AND target.state = 'active'",
+		"AND target.device_id=self_id AND target.state='active'",
+		"UNION ALL",
+		`RETURN NEXT '{"limited":true}'::JSONB;`,
+		"remote_network IS DISTINCT FROM last_network",
+		"FROM PUBLIC,mesh_runtime,mesh_worker,mesh_observer,mesh_audit_writer,mesh_share_writer,mesh_direct_map_reader;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 149 must contain %q", want)
+		}
+	}
+	// The readers only read; the superseded index is dropped by a later
+	// contract step, not under this migration's locks.
+	for _, forbidden := range []string{
+		"CREATE OR REPLACE", "BYPASSRLS", "DROP ", "INSERT ", "UPDATE ", "DELETE ", "GRANT ",
+		"edges_v5(", "dependencies_v3(", "ORDER BY endpoint.id LIMIT",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 149 must not contain %q", forbidden)
+		}
+	}
+	operator := ShareMapReaderSelectionOwnershipSQL()
+	for _, want := range []string{
+		"load_device_alias_map_edges_v6(BYTEA,BYTEA,INTEGER) OWNER TO mesh_device_alias_map_reader",
+		"load_device_sharing_dependencies_v4(BYTEA,BYTEA,INTEGER) OWNER TO mesh_device_alias_map_reader",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_device_alias_map_edges_v6(BYTEA,BYTEA,INTEGER) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_device_sharing_dependencies_v4(BYTEA,BYTEA,INTEGER) TO mesh_runtime;",
+	} {
+		if !strings.Contains(operator, want) {
+			t.Errorf("operator step 149 must contain %q", want)
 		}
 	}
 }

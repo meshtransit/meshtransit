@@ -407,6 +407,11 @@ func (snapshot Snapshot) InboundPacketRules() []InboundPacketRule {
 	return rules
 }
 
+// DirectDeviceProjectionCount returns how many shares the snapshot carries.
+func (snapshot Snapshot) DirectDeviceProjectionCount() int {
+	return len(snapshot.directDeviceProjections)
+}
+
 // HasDirectProjections reports whether the snapshot carries any direct
 // sharing projection or sharing dependency.
 func (snapshot Snapshot) HasDirectProjections() bool {

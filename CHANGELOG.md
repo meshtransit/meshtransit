@@ -5,6 +5,13 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- Core schema 149 (share scale step 4): the share map readers choose shares
+  from the Device's own targets and rules (alias v6, dependencies v4) instead
+  of scanning every endpoint or contract, so a providing Device's map no
+  longer grows with the deployment's shares and a receiving Device's cost is
+  linear. `MESHTRANSIT_CONTROL_MAP_SHARE_STATEMENT_TIMEOUT` (10 s) bounds the
+  share readers of a map: a Device receiving 10,000 shares reads them in
+  about 5 s. Opt-in load test: `PLATFORM_SHARE_SCALE=N`.
 - meshctl down and logout (TD-CLI-04): down keeps the machine off the network
   across restarts until up; logout revokes the Device through MTCP Logout and
   gives the profile new keys, so up enrolls it again. Local API: POST /v1/down,

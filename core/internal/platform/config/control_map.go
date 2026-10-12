@@ -25,6 +25,8 @@ const (
 	maxControlMapPeerLimit                 = 10_000
 	envControlMapInventoryStatementTimeout = "MESHTRANSIT_CONTROL_MAP_INVENTORY_STATEMENT_TIMEOUT"
 	defaultControlMapInventoryStatement    = 30 * time.Second
+	envControlMapShareStatementTimeout     = "MESHTRANSIT_CONTROL_MAP_SHARE_STATEMENT_TIMEOUT"
+	defaultControlMapShareStatement        = 10 * time.Second
 	defaultControlMapRequestTimeout        = 10 * time.Second
 	defaultControlMapStatementTimeout      = 3 * time.Second
 	defaultControlMapIdleLimit             = 5 * time.Second
@@ -61,6 +63,9 @@ type ControlMapConfig struct {
 	// InventoryStatementTimeout bounds that read (a whole Network).
 	SharedInventory           bool
 	InventoryStatementTimeout time.Duration
+	// ShareStatementTimeout bounds each share reader statement of a map (a
+	// Device receiving up to 10000 shares) when above StatementTimeout.
+	ShareStatementTimeout time.Duration
 	// SharedConnectivity keeps one connectivity table per Network on each
 	// replica, read once per wakeup instead of once per stream.
 	SharedConnectivity bool
@@ -167,6 +172,14 @@ func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
 	if err != nil {
 		return ControlMapConfig{}, settingError(envControlMapInventoryStatementTimeout)
 	}
+	shareTimeout, err := parseDurationInRange(
+		valueOrDefault(lookup, envControlMapShareStatementTimeout, defaultControlMapShareStatement.String()),
+		minControlMapDatabaseTimeout,
+		maxControlMapDatabaseTimeout,
+	)
+	if err != nil {
+		return ControlMapConfig{}, settingError(envControlMapShareStatementTimeout)
+	}
 	// The relay directory file is optional: a relay authority with a relay
 	// map supplies the directory instead (checked by Load).
 	var relayDirectory *RelayDirectoryConfig
@@ -192,6 +205,7 @@ func loadControlMapConfig(lookup LookupFunc) (ControlMapConfig, error) {
 
 		SharedInventory:           sharedInventory == "true",
 		InventoryStatementTimeout: inventoryTimeout,
+		ShareStatementTimeout:     shareTimeout,
 		SharedConnectivity:        sharedConnectivity == "true",
 		PeerLimit:                 peerLimit,
 	}, nil

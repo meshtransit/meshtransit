@@ -36,6 +36,7 @@ func TestLoadControlMapDefaults(t *testing.T) {
 		SharedConnectivity:        true,
 		PeerLimit:                 defaultControlMapPeerLimit,
 		InventoryStatementTimeout: defaultControlMapInventoryStatement,
+		ShareStatementTimeout:     defaultControlMapShareStatement,
 	}
 	directory := got.Control.Map.RelayDirectory
 	if directory == nil || *directory != relayDirectoryConfigFixture(t) {
@@ -82,6 +83,7 @@ func TestLoadControlMapExplicitValues(t *testing.T) {
 		SharedConnectivity:        true,
 		PeerLimit:                 defaultControlMapPeerLimit,
 		InventoryStatementTimeout: defaultControlMapInventoryStatement,
+		ShareStatementTimeout:     defaultControlMapShareStatement,
 	}) {
 		t.Fatalf("Control.Map = %+v, want explicit values", got.Control)
 	}
@@ -266,6 +268,31 @@ func TestLoadControlMapPeerLimit(t *testing.T) {
 		}
 		if err != nil || got.PeerLimit != test.want {
 			t.Errorf("%s: got %d, %v", name, got.PeerLimit, err)
+		}
+	}
+}
+
+func TestLoadControlMapShareStatementTimeout(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		values  map[string]string
+		timeout time.Duration
+		wantErr bool
+	}{
+		"default":  {values: map[string]string{}, timeout: defaultControlMapShareStatement},
+		"explicit": {values: map[string]string{envControlMapShareStatementTimeout: "20s"}, timeout: 20 * time.Second},
+		"too long": {values: map[string]string{envControlMapShareStatementTimeout: "2m"}, wantErr: true},
+		"zero":     {values: map[string]string{envControlMapShareStatementTimeout: "0s"}, wantErr: true},
+	} {
+		got, err := loadControlMapConfig(mapLookup(test.values))
+		if test.wantErr {
+			if err == nil || !strings.HasSuffix(err.Error(), ": "+envControlMapShareStatementTimeout) {
+				t.Errorf("%s: error = %v, want one naming %s", name, err, envControlMapShareStatementTimeout)
+			}
+			continue
+		}
+		if err != nil || got.ShareStatementTimeout != test.timeout {
+			t.Errorf("%s: got %v, %v", name, got.ShareStatementTimeout, err)
 		}
 	}
 }

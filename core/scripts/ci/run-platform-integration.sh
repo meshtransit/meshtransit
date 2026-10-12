@@ -15,6 +15,9 @@ postgres_image="${POSTGRES_IMAGE:-postgres:18.6-bookworm}"
 # POSTGRES_SHM_SIZE and POSTGRES_SERVER_ARGS ("-c name=value ...") size the
 # fixture database for it.
 scale_mode="${PLATFORM_SCALE:-0}"
+# PLATFORM_SHARE_SCALE=N builds N Device shares on the migrated fixture
+# database and measures map reads (TestPostgreSQLShareScale), then stops.
+share_scale="${PLATFORM_SHARE_SCALE:-0}"
 postgres_shm_size="${POSTGRES_SHM_SIZE:-64m}"
 postgres_command=(postgres)
 if [[ -n "${POSTGRES_SERVER_ARGS:-}" ]]; then
@@ -101,6 +104,10 @@ run_go() {
 		--env GOTMPDIR=/runner/tmp \
 		--env MESHTRANSIT_MIGRATION_INTEGRATION \
 		--env MESHTRANSIT_INTEGRATION \
+		--env MESHTRANSIT_SHARE_SCALE \
+		--env MESHTRANSIT_SHARE_SCALE_REPORT \
+		--env MESHTRANSIT_SHARE_SCALE_EXPLAIN \
+		--env MESHTRANSIT_SHARE_SCALE_COLD \
 		--env MESHTRANSIT_MIGRATION_POSTGRES_ADDRESS \
 		--env MESHTRANSIT_MIGRATION_POSTGRES_DATABASE \
 		--env MESHTRANSIT_MIGRATION_POSTGRES_USER \
@@ -430,6 +437,20 @@ run_go test \
 	-run '^TestPostgreSQLMigrations$' \
 	-timeout=5m \
 	./core/test/integration
+
+if [[ "${share_scale}" != 0 ]]; then
+	MESHTRANSIT_SHARE_SCALE="${share_scale}" run_go test \
+		-tags=integration \
+		-count=1 \
+		-v \
+		-run '^TestPostgreSQLShareScale$' \
+		-timeout="${PLATFORM_SCALE_TIMEOUT:-4h}" \
+		./core/test/integration
+	if [[ -n "${SHARE_SCALE_POSTGRES_LOG:-}" ]]; then
+		docker logs "${postgres_container}" > "${SHARE_SCALE_POSTGRES_LOG}" 2>&1 || true
+	fi
+	exit 0
+fi
 
 export MESHTRANSIT_IDENTITY_SUBJECT_TRANSITION_INTEGRATION=1
 run_go test \

@@ -45,6 +45,7 @@ func composeMapSession(
 			SharedInventory:           mapConfig.SharedInventory,
 			InventoryStatementTimeout: mapConfig.InventoryStatementTimeout,
 			InventoryMaxAge:           mapConfig.ReconcileInterval,
+			ShareStatementTimeout:     mapConfig.ShareStatementTimeout,
 		},
 	)
 	if err != nil {

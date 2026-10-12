@@ -371,16 +371,24 @@ func assertLimitedPrefix(t *testing.T, name string, limit int, rows, want []stri
 	}
 }
 
-// assertScaledAliasMapMatches proves schema 147 returns exactly v4's edges
-// below the limit, with no limited marker when the edges just fit, and
-// rejects limits outside 1..10000.
+// assertScaledAliasMapMatches proves schema 147 (v5) and schema 149 (v6)
+// return exactly v4's edges below the limit, with no limited marker when the
+// edges just fit, and reject limits outside 1..10000.
 func assertScaledAliasMapMatches(ctx context.Context, t *testing.T, tx pgx.Tx, machine, key []byte, want []string) {
+	t.Helper()
+	for _, reader := range []string{"load_device_alias_map_edges_v5", "load_device_alias_map_edges_v6"} {
+		assertScaledAliasReaderMatches(ctx, t, tx, reader, machine, key, want)
+	}
+	assertEndpointAliasMapMatches(ctx, t, tx, machine, key, want)
+}
+
+func assertScaledAliasReaderMatches(ctx context.Context, t *testing.T, tx pgx.Tx, reader string, machine, key []byte, want []string) {
 	t.Helper()
 	read := func(limit int) ([]string, error) {
 		if _, err := tx.Exec(ctx, `SAVEPOINT scaled_alias_map`); err != nil {
 			t.Fatal(err)
 		}
-		rows, err := tx.Query(ctx, `SELECT edge::TEXT FROM mesh_ops.load_device_alias_map_edges_v5($1::BYTEA,$2::BYTEA,$3::INTEGER) AS edge`,
+		rows, err := tx.Query(ctx, `SELECT edge::TEXT FROM mesh_ops.`+reader+`($1::BYTEA,$2::BYTEA,$3::INTEGER) AS edge`,
 			machine, key, limit)
 		var edges []string
 		if err == nil {
@@ -409,7 +417,7 @@ func assertScaledAliasMapMatches(ctx context.Context, t *testing.T, tx pgx.Tx, m
 	}
 	scaled, err := read(10000)
 	if err != nil || !slices.Equal(scaled, want) {
-		t.Fatalf("scaled alias map differs from v4: %d edges, want %d (%v)", len(scaled), len(want), err)
+		t.Fatalf("%s differs from v4: %d edges, want %d (%v)", reader, len(scaled), len(want), err)
 	}
 	// A smaller limit bounds endpoints visited as well as edges: the reader
 	// returns all of v4's edges, or a prefix of them ending with the marker.
@@ -418,16 +426,15 @@ func assertScaledAliasMapMatches(ctx context.Context, t *testing.T, tx pgx.Tx, m
 		if err != nil {
 			t.Fatalf("scaled alias map at limit %d: %v", limit, err)
 		}
-		assertLimitedPrefix(t, "alias map", limit, bounded, want)
+		assertLimitedPrefix(t, reader, limit, bounded, want)
 	}
 	for _, limit := range []int{0, 10001} {
 		if _, err := read(limit); err == nil {
-			t.Fatalf("scaled alias map accepted limit %d", limit)
+			t.Fatalf("%s accepted limit %d", reader, limit)
 		} else {
 			requireDeviceAliasCode(t, err, "22023")
 		}
 	}
-	assertEndpointAliasMapMatches(ctx, t, tx, machine, key, want)
 }
 
 // assertEndpointAliasMapMatches proves the readiness reader (schema 147)

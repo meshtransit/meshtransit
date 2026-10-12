@@ -31,6 +31,15 @@ FROM mesh_ops.load_device_sharing_dependencies_v3($1::BYTEA,$2::BYTEA,$3::INTEGE
 const scaledSharingDependenciesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
     pg_catalog.to_regprocedure('mesh_ops.load_device_sharing_dependencies_v3(bytea,bytea,integer)'), 'EXECUTE'), FALSE)`
 
+// loadSelectiveSharingDependenciesSQL is v3 choosing contracts from this
+// Device's rules and targets instead of every contract of its Network
+// (schema 149), used once the operator granted it.
+const loadSelectiveSharingDependenciesSQL = `SELECT dependency::TEXT
+FROM mesh_ops.load_device_sharing_dependencies_v4($1::BYTEA,$2::BYTEA,$3::INTEGER) AS dependency`
+
+const selectiveSharingDependenciesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_device_sharing_dependencies_v4(bytea,bytea,integer)'), 'EXECUTE'), FALSE)`
+
 func loadSharingDependencies(ctx context.Context, transaction databaseTransaction, self appmapsession.Snapshot, machineFingerprint, nodeKey []byte) (appmapsession.Snapshot, error) {
 	reader, err := sharingDependenciesReader(ctx, transaction)
 	if err != nil {
@@ -95,6 +104,14 @@ func loadSharingDependencies(ctx context.Context, transaction databaseTransactio
 // execute, so a rolling upgrade or a pending operator step keeps the
 // previous one.
 func sharingDependenciesReader(ctx context.Context, transaction databaseTransaction) (edgeReader, error) {
+	selective, err := functionGranted(ctx, transaction, selectiveSharingDependenciesGrantedSQL)
+	if err != nil {
+		return edgeReader{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("check sharing dependency reader: %w", err))
+	}
+	if selective {
+		return edgeReader{query: loadSelectiveSharingDependenciesSQL, limit: appmapsession.MaximumDirectDeviceProjections,
+			scaled: true}, nil
+	}
 	scaled, err := functionGranted(ctx, transaction, scaledSharingDependenciesGrantedSQL)
 	if err != nil {
 		return edgeReader{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("check sharing dependency reader: %w", err))

@@ -188,3 +188,12 @@ var policyImportedResourceScaleOwnershipSQL string
 // resolvers that accept 10000 Imported Resources (schema 148) to the share
 // writer, as for v1; the v1 chain stays executable for rollback.
 func PolicyImportedResourceScaleOwnershipSQL() string { return policyImportedResourceScaleOwnershipSQL }
+
+//go:embed operator/000149_share_map_reader_selection_ownership.sql
+var shareMapReaderSelectionOwnershipSQL string
+
+// ShareMapReaderSelectionOwnershipSQL moves the share map readers that choose
+// shares from the Device's own targets and rules (schema 149) to the alias
+// map reader and exposes them to runtime; v5 and v3 stay executable for
+// rollback.
+func ShareMapReaderSelectionOwnershipSQL() string { return shareMapReaderSelectionOwnershipSQL }

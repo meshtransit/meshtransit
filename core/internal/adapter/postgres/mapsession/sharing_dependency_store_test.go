@@ -4,6 +4,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	appmapsession "meshtransit.net/core/internal/control/mapsession"
 )
@@ -153,6 +154,83 @@ func TestStoreLegacyReadersKeepTheirBound(t *testing.T) {
 			if got := tx.arguments[index][2]; got != legacyEdgeLimit+1 {
 				t.Fatalf("legacy reader %s asked for %v rows, want %d", query, got, legacyEdgeLimit+1)
 			}
+		}
+	}
+}
+
+// TestStoreSelectiveReadersPreferredOnceGranted: the schema 149 readers
+// replace the schema 147 ones once granted, with the same limit and limited
+// row, and no earlier reader runs.
+func TestStoreSelectiveReadersPreferredOnceGranted(t *testing.T) {
+	store, _, tx, _, identity := validStoreFixture(t)
+	store.options.EnableDeviceAliases = true
+	tx.scaledReaders = true
+	tx.selectiveReaders = true
+	tx.dependencyRows = &directEdgeRows{values: []string{dependencyFixture, limitedEdge}}
+	snapshot, err := store.Load(t.Context(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.SharingScopes()) != 1 || !snapshot.IsPeerLimited() {
+		t.Fatalf("selective reader limit: %d scopes, limited %v", len(snapshot.SharingScopes()), snapshot.IsPeerLimited())
+	}
+	for index, query := range tx.queries {
+		switch query {
+		case loadSelectiveSharingDependenciesSQL, loadSelectiveAliasEdgesSQL:
+			if got := tx.arguments[index][2]; got != appmapsession.MaximumDirectDeviceProjections {
+				t.Fatalf("%s asked for %v rows", query, got)
+			}
+		case loadSharingDependenciesSQL, loadBoundSharingDependenciesSQL, loadScaledSharingDependenciesSQL,
+			loadAliasEdgesSQL, loadReachableAliasEdgesSQL, loadScaledAliasEdgesSQL:
+			t.Fatalf("an earlier reader ran once the selective ones were granted: %s", query)
+		}
+	}
+	if !slices.Contains(tx.queries, loadSelectiveAliasEdgesSQL) ||
+		!slices.Contains(tx.queries, loadSelectiveSharingDependenciesSQL) {
+		t.Fatalf("selective readers not used: %v", tx.queries)
+	}
+}
+
+// TestStoreShareReadersRunUnderTheShareTimeout: with a share statement bound
+// above the map's, the share readers run under it and the map's bound is
+// restored before the next read; without one, or with one not above the
+// map's (3s in the fixture), nothing changes.
+func TestStoreShareReadersRunUnderTheShareTimeout(t *testing.T) {
+	for _, share := range []time.Duration{0, 2 * time.Second, 3 * time.Second, 10 * time.Second} {
+		store, _, tx, _, identity := validStoreFixture(t)
+		store.options.EnableDeviceAliases = true
+		store.options.ShareStatementTimeout = share
+		tx.selectiveReaders = true
+		if _, err := store.Load(t.Context(), identity); err != nil {
+			t.Fatal(err)
+		}
+		var timeouts []any
+		widenedAt, restoredAt, dependenciesAt, aliasesAt := -1, -1, -1, -1
+		for index, query := range tx.queries {
+			switch query {
+			case setStatementTimeoutSQL:
+				timeouts = append(timeouts, tx.arguments[index][0])
+				if widenedAt < 0 {
+					widenedAt = index
+				} else {
+					restoredAt = index
+				}
+			case loadSelectiveSharingDependenciesSQL:
+				dependenciesAt = index
+			case loadSelectiveAliasEdgesSQL:
+				aliasesAt = index
+			}
+		}
+		if share <= store.options.StatementTimeout {
+			if len(timeouts) != 0 {
+				t.Fatalf("statement bound changed without a share bound: %v", timeouts)
+			}
+			continue
+		}
+		want := []any{postgresTimeout(share), postgresTimeout(store.options.StatementTimeout)}
+		if !slices.Equal(timeouts, want) || widenedAt > dependenciesAt || restoredAt < aliasesAt {
+			t.Fatalf("share bound %v set at %d, restored at %d (readers at %d, %d)", timeouts, widenedAt, restoredAt,
+				dependenciesAt, aliasesAt)
 		}
 	}
 }

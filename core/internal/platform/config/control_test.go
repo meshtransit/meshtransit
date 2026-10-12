@@ -60,6 +60,7 @@ func TestLoadControlConfigForControlRoles(t *testing.T) {
 					SharedConnectivity:        true,
 					PeerLimit:                 defaultControlMapPeerLimit,
 					InventoryStatementTimeout: defaultControlMapInventoryStatement,
+					ShareStatementTimeout:     defaultControlMapShareStatement,
 				},
 			}
 			gotControl := *got.Control

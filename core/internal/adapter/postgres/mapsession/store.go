@@ -53,6 +53,9 @@ type Options struct {
 	SharedInventory           bool
 	InventoryStatementTimeout time.Duration
 	InventoryMaxAge           time.Duration
+	// ShareStatementTimeout, when above StatementTimeout, bounds each share
+	// reader statement instead (a Device receiving up to 10000 shares).
+	ShareStatementTimeout time.Duration
 }
 
 // Store loads exact-scope snapshots in read-only repeatable-read transactions.
@@ -528,6 +531,7 @@ func validOptions(options Options) bool {
 		options.PolicyRuleLimit > 0 &&
 		options.PolicyRuleLimit <= appmapsession.MaximumPacketPolicyRules &&
 		options.RelayDirectory.IsValid() &&
+		options.ShareStatementTimeout >= 0 && options.ShareStatementTimeout <= maximumStatementTimeout &&
 		(!options.SharedInventory || options.InventoryStatementTimeout >= time.Millisecond &&
 			options.InventoryStatementTimeout <= maximumStatementTimeout &&
 			options.InventoryMaxAge >= time.Second && options.InventoryMaxAge <= maximumInventoryMaxAge)
