@@ -17,6 +17,7 @@ require (
 	github.com/redis/go-redis/v9 v9.22.0
 	go.uber.org/goleak v1.3.0
 	golang.org/x/net v0.58.0
+	golang.zx2c4.com/wireguard/windows v0.5.3
 )
 
 require (
