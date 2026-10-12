@@ -1,3 +1,5 @@
+//go:build !windows
+
 package localapi
 
 import (
@@ -9,7 +11,7 @@ import (
 
 // peerFromConn reads the kernel-verified user of the connecting process
 // (SO_PEERCRED on Linux, LOCAL_PEERCRED on macOS).
-func peerFromConn(connection net.Conn) (peerIdentity, error) {
+func peerFromConn(connection net.Conn, _ string) (peerIdentity, error) {
 	unixConnection, ok := connection.(*net.UnixConn)
 	if !ok {
 		return peerIdentity{}, errors.New("localapi: connection is not a unix socket")

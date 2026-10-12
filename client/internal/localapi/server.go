@@ -52,6 +52,7 @@ type Server struct {
 	handler          http.Handler
 	allowedUIDs      map[uint32]struct{}
 	allowSocketPeers bool
+	operatorsSID     string
 }
 
 // Options configures local authorization. AllowedUIDs is copied during
@@ -62,6 +63,9 @@ type Options struct {
 	// filesystem permissions on the daemon-owned Unix socket. It must only be
 	// enabled when the socket group is the intended operator boundary.
 	AllowSocketPeers bool
+	// OperatorsSID is the Windows operators group (MeshTransit Users), or ""
+	// when it does not exist; its enabled members may use the API.
+	OperatorsSID string
 }
 
 // New creates a local API server using explicit service and logger dependencies.
@@ -82,6 +86,7 @@ func New(service service, logger *slog.Logger, options Options) (*Server, error)
 		logger:           logger,
 		allowedUIDs:      allowedUIDs,
 		allowSocketPeers: options.AllowSocketPeers,
+		operatorsSID:     options.OperatorsSID,
 	}
 	server.handler = server.routes()
 
@@ -99,7 +104,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	if listener == nil {
 		return errors.New("localapi: listener is required")
 	}
-	if listener.Addr().Network() != "unix" {
+	if network := listener.Addr().Network(); network != "unix" && network != "pipe" {
 		return fmt.Errorf("localapi: unsupported listener network %q", listener.Addr().Network())
 	}
 
@@ -111,7 +116,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    16 << 10,
 		ConnContext: func(ctx context.Context, connection net.Conn) context.Context {
-			peer, err := peerFromConn(connection)
+			peer, err := peerFromConn(connection, s.operatorsSID)
 			if err != nil {
 				s.logger.Debug("local peer credentials unavailable", "error", err)
 			}
@@ -377,6 +382,9 @@ func (s *Server) isAuthorized(ctx context.Context) bool {
 	peer, exists := peerFromContext(ctx)
 	if !exists || !peer.isPresent || !peer.isVerified {
 		return false
+	}
+	if peer.operator {
+		return true
 	}
 	_, explicitlyAllowed := s.allowedUIDs[peer.uid]
 

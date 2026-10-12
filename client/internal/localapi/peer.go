@@ -8,6 +8,9 @@ type peerIdentity struct {
 	uid        uint32
 	isPresent  bool
 	isVerified bool
+	// operator is set on Windows when the caller's token is LocalSystem or
+	// an enabled member of Administrators or the operators group.
+	operator bool
 }
 
 type peerContextKey struct{}

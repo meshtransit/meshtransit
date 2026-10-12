@@ -222,17 +222,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 		return 1
 	}
-	daemonUID, err := effectiveUID()
+	apiOptions, err := localAPIOptions(cfg)
 	if err != nil {
-		logger.Error("reading daemon uid failed", "error", err)
+		logger.Error("preparing local api authorization failed", "error", err)
 
 		return 1
 	}
-	allowedUIDs := append([]uint32{0, daemonUID}, cfg.AllowedUIDs...)
-	server, err := localapi.New(service, logger, localapi.Options{
-		AllowedUIDs:      allowedUIDs,
-		AllowSocketPeers: cfg.AllowSocketPeers,
-	})
+	server, err := localapi.New(service, logger, apiOptions)
 	if err != nil {
 		logger.Error("creating local api failed", "error", err)
 
@@ -338,15 +334,6 @@ func loadIdentityProtector(path string) (*secretstore.Protector, error) {
 	}
 
 	return secretstore.Load(path)
-}
-
-func effectiveUID() (uint32, error) {
-	uid := os.Geteuid()
-	if uid < 0 || uint64(uid) > uint64(^uint32(0)) {
-		return 0, errors.New("effective uid is outside uint32")
-	}
-
-	return uint32(uid), nil
 }
 
 func newLogger(writer io.Writer, levelName string) *slog.Logger {

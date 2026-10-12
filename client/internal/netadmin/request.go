@@ -4,6 +4,7 @@ package netadmin
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -51,3 +52,7 @@ func newTUNRequest(operation string, config TUNConfig) (request, TUNConfig, erro
 		Routes:    prefixStrings(normalized.Routes),
 	}, normalized, nil
 }
+
+// errRequestFraming reports a request that is truncated, carries
+// descriptors or is not exactly one message.
+var errRequestFraming = errors.New("netadmin: invalid request framing")

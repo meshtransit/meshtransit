@@ -32,9 +32,6 @@ const (
 var (
 	// ErrProtocol indicates a malformed or unexpected helper response.
 	ErrProtocol = errors.New("netadmin: protocol error")
-	// errRequestFraming reports a request that is truncated, carries
-	// descriptors or is not exactly one message.
-	errRequestFraming = errors.New("netadmin: invalid request framing")
 	// ErrRemote indicates that meshnetd rejected a valid request.
 	ErrRemote = errors.New("netadmin: helper rejected request")
 	// ErrUnsupported indicates that privileged TUN setup is unavailable.

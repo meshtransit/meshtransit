@@ -49,7 +49,7 @@ func TestPeerFromConn(t *testing.T) {
 		t.Fatalf("Accept() timeout = %v", t.Context().Err())
 	}
 
-	peer, err := peerFromConn(server)
+	peer, err := peerFromConn(server, "")
 	if err != nil {
 		t.Fatalf("peerFromConn() error = %v", err)
 	}
@@ -72,4 +72,22 @@ func testEffectiveUID(t *testing.T) uint32 {
 	}
 
 	return uint32(uid)
+}
+
+func TestServerAuthorizesWindowsOperators(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServerWithOptions(t, Options{})
+	operator := contextWithPeer(t.Context(), peerIdentity{isPresent: true, isVerified: true, operator: true})
+	if !server.isAuthorized(operator) {
+		t.Fatal("a verified operator was refused")
+	}
+	stranger := contextWithPeer(t.Context(), peerIdentity{isPresent: true, isVerified: true, uid: 4242})
+	if server.isAuthorized(stranger) {
+		t.Fatal("a verified non-operator outside the allowlist was authorized")
+	}
+	unverified := contextWithPeer(t.Context(), peerIdentity{isPresent: true, operator: true})
+	if server.isAuthorized(unverified) {
+		t.Fatal("an unverified peer was authorized")
+	}
 }

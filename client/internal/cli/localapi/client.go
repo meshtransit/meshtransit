@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"mime"
-	"net"
 	"net/http"
 	"path/filepath"
 	"time"
@@ -46,12 +45,9 @@ func New(socketPath string, timeout time.Duration) (*Client, error) {
 		return nil, errors.New("localapi: timeout must be positive")
 	}
 
-	dialer := &net.Dialer{Timeout: timeout}
 	transport := &http.Transport{
 		DisableCompression: true,
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return dialer.DialContext(ctx, "unix", socketPath)
-		},
+		DialContext:        dialer(socketPath, timeout),
 	}
 
 	return &Client{
