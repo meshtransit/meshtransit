@@ -185,3 +185,37 @@ func TestUTUNDeviceCloseEndsAWaitingRead(t *testing.T) {
 		t.Fatal("Close did not end the waiting Read")
 	}
 }
+
+func TestReceiveShutTellsAShutSocketFromAnIdleOne(t *testing.T) {
+	t.Parallel()
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_DGRAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = unix.Close(fds[0])
+		_ = unix.Close(fds[1])
+	})
+	if err := unix.SetNonblock(fds[0], true); err != nil {
+		t.Fatal(err)
+	}
+	if receiveShut(fds[0]) {
+		t.Fatal("an idle socket reported its receive side shut")
+	}
+	if _, err := unix.Write(fds[1], []byte{0, 0, 0, 2, 0x45}); err != nil {
+		t.Fatal(err)
+	}
+	if receiveShut(fds[0]) {
+		t.Fatal("a socket with a queued packet reported its receive side shut")
+	}
+	buffer := make([]byte, 16)
+	if read, err := unix.Read(fds[0], buffer); err != nil || read != 5 {
+		t.Fatalf("peek consumed the packet: read %d, %v", read, err)
+	}
+	if err := unix.Shutdown(fds[0], unix.SHUT_RD); err != nil {
+		t.Fatal(err)
+	}
+	if !receiveShut(fds[0]) {
+		t.Fatal("a socket shut for reading was not reported")
+	}
+}

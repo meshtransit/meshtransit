@@ -2,6 +2,8 @@ package dataplane
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -96,5 +98,58 @@ func TestWireGuardEngineDoesNotSignalAnIntendedClose(t *testing.T) {
 	case <-engine.DeviceStops():
 		t.Fatal("an intended Close signalled a device stop")
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// shutTUNFactory fails like a TUN that arrived with its receive side shut,
+// a set number of times, then hands out devices.
+type shutTUNFactory struct {
+	stoppingFakeFactory
+	failures int
+	calls    int
+}
+
+func (f *shutTUNFactory) New(
+	ctx context.Context, file *os.File, mtu int, filter *policyFilter, observer PacketObserver, config *relay.Config,
+) (wireGuardDevice, error) {
+	f.calls++
+	if f.calls <= f.failures {
+		return nil, fmt.Errorf("dataplane: opening inherited tun descriptor: %w", errTUNReceiveShut)
+	}
+	return f.stoppingFakeFactory.New(ctx, file, mtu, filter, observer, config)
+}
+
+func TestWireGuardEngineReopensATUNThatArrivedShut(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	opener := &wireGuardTUNOpener{}
+	factory := &shutTUNFactory{failures: 2}
+	engine, err := newWireGuardEngine(opener, 41641, factory, nil)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if opener.calls != 3 || len(factory.devices) != 1 {
+		t.Fatalf("opens=%d devices=%d, want 3 opens and 1 device", opener.calls, len(factory.devices))
+	}
+}
+
+func TestWireGuardEngineGivesUpOnTUNsThatKeepArrivingShut(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	opener := &wireGuardTUNOpener{}
+	engine, err := newWireGuardEngine(opener, 41641, &shutTUNFactory{failures: tunOpenAttempts}, nil)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if _, err := engine.Apply(t.Context(), snapshot, privateKey); !errors.Is(err, errTUNReceiveShut) {
+		t.Fatalf("Apply() error = %v, want errTUNReceiveShut", err)
+	}
+	if opener.calls != tunOpenAttempts {
+		t.Fatalf("opens = %d, want %d", opener.calls, tunOpenAttempts)
 	}
 }

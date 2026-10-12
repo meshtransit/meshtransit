@@ -482,32 +482,9 @@ func (e *WireGuardEngine) applySnapshot(
 		return plan.state(), nil
 	}
 
-	tunDevice, err := e.opener.OpenTUN(ctx, netadmin.TUNConfig{
-		Addresses: append([]netip.Prefix{}, plan.addresses...),
-		Routes:    append([]netip.Prefix{}, plan.routes...),
-	})
+	device, err := e.openDevice(ctx, plan)
 	if err != nil {
-		return StateFailed, fmt.Errorf("dataplane: opening tun: %w", err)
-	}
-	if err := validateTUN(tunDevice, plan); err != nil {
-		if tunDevice.File != nil {
-			_ = tunDevice.File.Close()
-		}
-
 		return StateFailed, err
-	}
-	device, err := e.factory.New(
-		ctx,
-		tunDevice.File,
-		tunDevice.MTU,
-		e.filter,
-		e.observer,
-		plan.relayConfig,
-	)
-	if err != nil {
-		_ = tunDevice.File.Close()
-
-		return StateFailed, fmt.Errorf("dataplane: creating wireguard device: %w", err)
 	}
 	// Before Up, which dials the home region: its first failure must signal.
 	if failing, ok := device.(relayFailureDevice); ok {
@@ -528,6 +505,66 @@ func (e *WireGuardEngine) applySnapshot(
 	e.adoptPlan(snapshot.Revision, plan)
 
 	return plan.state(), nil
+}
+
+// errTUNReceiveShut means a TUN reached meshd already unable to deliver
+// packets (seen on macOS); another TUN from the helper usually works.
+var errTUNReceiveShut = errors.New("dataplane: tun arrived with its receive side shut")
+
+const (
+	tunOpenAttempts = 5
+	tunReopenDelay  = 200 * time.Millisecond
+)
+
+// openDevice asks the helper for a TUN and wraps it in a WireGuard device,
+// asking again when the TUN arrives unable to deliver packets.
+func (e *WireGuardEngine) openDevice(ctx context.Context, plan wireGuardPlan) (wireGuardDevice, error) {
+	for attempt := 1; ; attempt++ {
+		device, err := e.openDeviceOnce(ctx, plan)
+		if !errors.Is(err, errTUNReceiveShut) || attempt == tunOpenAttempts {
+			return device, err
+		}
+		if e.logger != nil {
+			e.logger.Warn("tun arrived with its receive side shut; opening another", "attempt", attempt)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(tunReopenDelay):
+		}
+	}
+}
+
+func (e *WireGuardEngine) openDeviceOnce(ctx context.Context, plan wireGuardPlan) (wireGuardDevice, error) {
+	tunDevice, err := e.opener.OpenTUN(ctx, netadmin.TUNConfig{
+		Addresses: append([]netip.Prefix{}, plan.addresses...),
+		Routes:    append([]netip.Prefix{}, plan.routes...),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dataplane: opening tun: %w", err)
+	}
+	if err := validateTUN(tunDevice, plan); err != nil {
+		if tunDevice.File != nil {
+			_ = tunDevice.File.Close()
+		}
+
+		return nil, err
+	}
+	device, err := e.factory.New(
+		ctx,
+		tunDevice.File,
+		tunDevice.MTU,
+		e.filter,
+		e.observer,
+		plan.relayConfig,
+	)
+	if err != nil {
+		_ = tunDevice.File.Close()
+
+		return nil, fmt.Errorf("dataplane: creating wireguard device: %w", err)
+	}
+
+	return device, nil
 }
 
 func deviceStopped(device wireGuardDevice) bool {

@@ -48,6 +48,12 @@ func openUTUN(descriptor int, logger *slog.Logger) (tun.Device, string, error) {
 	if err := unix.SetNonblock(descriptor, true); err != nil {
 		return nil, "", fmt.Errorf("dataplane: setting utun nonblocking: %w", err)
 	}
+	if receiveShut(descriptor) {
+		if logger != nil {
+			logger.Warn("utun arrived with its receive side shut", "interface", name)
+		}
+		return nil, "", errTUNReceiveShut
+	}
 	file := os.NewFile(uintptr(descriptor), name)
 	if file == nil {
 		return nil, "", errors.New("dataplane: invalid utun descriptor")
@@ -177,7 +183,7 @@ func (t *utunDevice) emptyReadError() error {
 	if _, err := net.InterfaceByName(t.name); err != nil {
 		link = "missing"
 	}
-	return fmt.Errorf("dataplane: empty read on %s: descriptor %s, link %s, %s queued, after %s, %d packets and %d empty reads: %w",
+	return fmt.Errorf("dataplane: empty read on %s (arrived readable): descriptor %s, link %s, %s queued, after %s, %d packets and %d empty reads: %w",
 		t.name, socket, link, t.queuedBytes(), time.Since(t.opened).Round(time.Millisecond),
 		t.packets.Load(), t.emptyReads.Load(), io.EOF)
 }
@@ -250,3 +256,13 @@ func (t *utunDevice) Close() error {
 }
 
 func (t *utunDevice) BatchSize() int { return 1 }
+
+// receiveShut peeks at a nonblocking utun without consuming a packet: an
+// idle utun has nothing to read (EAGAIN), one whose receive side is shut
+// reads 0 bytes at once. Recvmsg may fail to parse a source address after a
+// successful read; that error still means the read happened.
+func receiveShut(descriptor int) bool {
+	var buffer [1]byte
+	read, _, _, _, err := unix.Recvmsg(descriptor, buffer[:], nil, unix.MSG_PEEK|unix.MSG_DONTWAIT)
+	return read == 0 && (err == nil || errors.Is(err, unix.EAFNOSUPPORT))
+}
