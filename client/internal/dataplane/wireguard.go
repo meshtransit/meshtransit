@@ -511,6 +511,16 @@ func (e *WireGuardEngine) applySnapshot(
 // packets (seen on macOS); another TUN from the helper usually works.
 var errTUNReceiveShut = errors.New("dataplane: tun arrived with its receive side shut")
 
+// shutTUNError reports a TUN that arrived shut and keeps a descriptor of it
+// open: while it is held the kernel cannot hand its unit to the next TUN.
+type shutTUNError struct {
+	held io.Closer
+}
+
+func (e *shutTUNError) Error() string { return errTUNReceiveShut.Error() }
+
+func (e *shutTUNError) Unwrap() error { return errTUNReceiveShut }
+
 const (
 	tunOpenAttempts = 5
 	tunReopenDelay  = 200 * time.Millisecond
@@ -519,8 +529,18 @@ const (
 // openDevice asks the helper for a TUN and wraps it in a WireGuard device,
 // asking again when the TUN arrives unable to deliver packets.
 func (e *WireGuardEngine) openDevice(ctx context.Context, plan wireGuardPlan) (wireGuardDevice, error) {
+	var held []io.Closer
+	defer func() {
+		for _, closer := range held {
+			_ = closer.Close()
+		}
+	}()
 	for attempt := 1; ; attempt++ {
 		device, err := e.openDeviceOnce(ctx, plan)
+		var shut *shutTUNError
+		if errors.As(err, &shut) && shut.held != nil {
+			held = append(held, shut.held)
+		}
 		if !errors.Is(err, errTUNReceiveShut) || attempt == tunOpenAttempts {
 			return device, err
 		}

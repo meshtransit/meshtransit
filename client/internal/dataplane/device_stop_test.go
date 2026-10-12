@@ -107,6 +107,17 @@ type shutTUNFactory struct {
 	stoppingFakeFactory
 	failures int
 	calls    int
+	held     []*heldTUN
+}
+
+// heldTUN records whether the engine closed a TUN it set aside.
+type heldTUN struct {
+	closed bool
+}
+
+func (h *heldTUN) Close() error {
+	h.closed = true
+	return nil
 }
 
 func (f *shutTUNFactory) New(
@@ -114,7 +125,9 @@ func (f *shutTUNFactory) New(
 ) (wireGuardDevice, error) {
 	f.calls++
 	if f.calls <= f.failures {
-		return nil, fmt.Errorf("dataplane: opening inherited tun descriptor: %w", errTUNReceiveShut)
+		held := &heldTUN{}
+		f.held = append(f.held, held)
+		return nil, fmt.Errorf("dataplane: opening inherited tun descriptor: %w", &shutTUNError{held: held})
 	}
 	return f.stoppingFakeFactory.New(ctx, file, mtu, filter, observer, config)
 }
@@ -134,6 +147,11 @@ func TestWireGuardEngineReopensATUNThatArrivedShut(t *testing.T) {
 	}
 	if opener.calls != 3 || len(factory.devices) != 1 {
 		t.Fatalf("opens=%d devices=%d, want 3 opens and 1 device", opener.calls, len(factory.devices))
+	}
+	for index, held := range factory.held {
+		if !held.closed {
+			t.Fatalf("shut TUN %d stayed open after a working one arrived", index)
+		}
 	}
 }
 

@@ -27,9 +27,9 @@ func NewServer(options ServerOptions) (*Server, error) {
 		}
 	}
 	if configurator == nil {
-		return newServerWithDNS(options, kernelTUNCreator{}, nil)
+		return newServerWithDNS(options, kernelTUNCreator{logger: options.Logger}, nil)
 	}
-	server, err := newServerWithDNS(options, kernelTUNCreator{}, configurator)
+	server, err := newServerWithDNS(options, kernelTUNCreator{logger: options.Logger}, configurator)
 	if err != nil {
 		return nil, err
 	}

@@ -3,6 +3,7 @@ package netadmin
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
 	"os"
@@ -25,15 +26,63 @@ const (
 // kernelTUNCreator opens utun interfaces through the utun kernel control. The
 // kernel picks the unit (utunN); the link and its routes disappear when the
 // last descriptor closes, as on Linux.
-type kernelTUNCreator struct{}
+type kernelTUNCreator struct {
+	logger *slog.Logger
+}
 
-func (kernelTUNCreator) Open(
+// maxShutUTUNs bounds how many utuns that arrive with their receive side
+// shut Open sets aside before giving up.
+const maxShutUTUNs = 4
+
+// Open creates a utun and configures it. A new utun sometimes comes up with
+// its receive side already shut (seen right after the previous one closed):
+// it reads 0 bytes at once and never delivers a packet. Open keeps such a
+// utun open, which holds its unit so the kernel picks another for the next
+// try, and closes the rejects once it has a working one.
+func (creator kernelTUNCreator) Open(
 	_ string,
 	mtu int,
 	_ uint32,
 	addresses []netip.Prefix,
 	routes []netip.Prefix,
 ) (*os.File, string, error) {
+	var rejected []*os.File
+	defer func() {
+		for _, file := range rejected {
+			_ = file.Close()
+		}
+	}()
+	for {
+		file, name, err := openUTUN()
+		if err != nil {
+			return nil, "", err
+		}
+		if !utunReceiveShut(file) {
+			if err := configureUTUN(name, mtu, addresses); err != nil {
+				_ = file.Close()
+				return nil, "", err
+			}
+			if err := applyRouteDiff(nil, routes, func(prefix netip.Prefix, add bool) error {
+				return changeHostRoute(name, prefix, add)
+			}); err != nil {
+				_ = file.Close()
+				return nil, "", err
+			}
+			return file, name, nil
+		}
+		if creator.logger != nil {
+			creator.logger.Warn("new utun came up with its receive side shut; trying another", "interface", name)
+		}
+		rejected = append(rejected, file)
+		if len(rejected) >= maxShutUTUNs {
+			return nil, "", fmt.Errorf("creating utun interface: %d new utuns came up with their receive side shut", len(rejected))
+		}
+	}
+}
+
+// openUTUN connects a utun kernel control socket; unit 0 lets the kernel
+// choose the next free utunN.
+func openUTUN() (*os.File, string, error) {
 	descriptor, err := unix.Socket(unix.AF_SYSTEM, unix.SOCK_DGRAM, sysprotoControl)
 	if err != nil {
 		return nil, "", fmt.Errorf("opening utun control socket: %w", err)
@@ -44,40 +93,44 @@ func (kernelTUNCreator) Open(
 		_ = unix.Close(descriptor)
 		return nil, "", errors.New("creating utun file: invalid descriptor")
 	}
-	succeeded := false
-	defer func() {
-		if !succeeded {
-			_ = file.Close()
-		}
-	}()
-
 	info := &unix.CtlInfo{}
 	copy(info.Name[:], utunControlName)
 	if err := unix.IoctlCtlInfo(descriptor, info); err != nil {
+		_ = file.Close()
 		return nil, "", fmt.Errorf("finding utun control: %w", err)
 	}
-	// Unit 0 lets the kernel choose the next free utunN.
 	if err := unix.Connect(descriptor, &unix.SockaddrCtl{ID: info.Id, Unit: 0}); err != nil {
+		_ = file.Close()
 		return nil, "", fmt.Errorf("creating utun interface: %w", err)
 	}
 	name, err := unix.GetsockoptString(descriptor, sysprotoControl, utunOptIfname)
 	if err != nil {
+		_ = file.Close()
 		return nil, "", fmt.Errorf("reading utun interface name: %w", err)
 	}
 	if !validInterfaceName(name) {
+		_ = file.Close()
 		return nil, "", fmt.Errorf("utun interface name %q is unexpected", name)
 	}
-	if err := configureUTUN(name, mtu, addresses); err != nil {
-		return nil, "", err
-	}
-	if err := applyRouteDiff(nil, routes, func(prefix netip.Prefix, add bool) error {
-		return changeHostRoute(name, prefix, add)
-	}); err != nil {
-		return nil, "", err
-	}
-
-	succeeded = true
 	return file, name, nil
+}
+
+// utunReceiveShut peeks without consuming or blocking: an idle utun has
+// nothing to read (EAGAIN); one whose receive side is shut reads 0 bytes.
+// Recvmsg may fail to parse a source address after a successful read; that
+// error still means the read happened.
+func utunReceiveShut(file *os.File) bool {
+	raw, err := file.SyscallConn()
+	if err != nil {
+		return false
+	}
+	shut := false
+	_ = raw.Control(func(descriptor uintptr) {
+		var buffer [1]byte
+		read, _, _, _, err := unix.Recvmsg(int(descriptor), buffer[:], nil, unix.MSG_PEEK|unix.MSG_DONTWAIT)
+		shut = read == 0 && (err == nil || errors.Is(err, unix.EAFNOSUPPORT))
+	})
+	return shut
 }
 
 func (kernelTUNCreator) ReplaceRoutes(name string, current, desired []netip.Prefix) error {

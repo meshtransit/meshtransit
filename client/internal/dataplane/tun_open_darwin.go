@@ -52,7 +52,11 @@ func openUTUN(descriptor int, logger *slog.Logger) (tun.Device, string, error) {
 		if logger != nil {
 			logger.Warn("utun arrived with its receive side shut", "interface", name)
 		}
-		return nil, "", errTUNReceiveShut
+		shut := &shutTUNError{}
+		if held, err := unix.FcntlInt(uintptr(descriptor), unix.F_DUPFD_CLOEXEC, 0); err == nil {
+			shut.held = os.NewFile(uintptr(held), name)
+		}
+		return nil, "", shut
 	}
 	file := os.NewFile(uintptr(descriptor), name)
 	if file == nil {
