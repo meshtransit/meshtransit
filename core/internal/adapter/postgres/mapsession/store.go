@@ -83,17 +83,21 @@ type InventoryStats struct {
 	// Unchanged refreshes found the view the snapshot came from still the
 	// latest and kept the snapshot (O(1)).
 	Unchanged uint64
+	// SharingDeclines counts derivations declined because the Network takes
+	// part in a Device share; those Devices were read on their own.
+	SharingDeclines uint64
 }
 
 type inventoryStats struct {
-	shared, reads, direct, policyMismatch, derived, unchanged atomic.Uint64
+	shared, reads, direct, policyMismatch, derived, unchanged, sharingDeclines atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
 func (store *Store) InventoryStats() InventoryStats {
 	return InventoryStats{Shared: store.stats.shared.Load(), Reads: store.stats.reads.Load(),
 		Direct: store.stats.direct.Load(), PolicyMismatches: store.stats.policyMismatch.Load(),
-		Derived: store.stats.derived.Load(), Unchanged: store.stats.unchanged.Load()}
+		Derived: store.stats.derived.Load(), Unchanged: store.stats.unchanged.Load(),
+		SharingDeclines: store.stats.sharingDeclines.Load()}
 }
 
 // policyMatches checks, for a Device without direct projections, that the

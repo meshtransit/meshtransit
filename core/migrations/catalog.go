@@ -511,6 +511,7 @@ func Catalog() []Migration {
 		newMigration(142, "Map Network header", mapNetworkHeaderSQL),
 		newMigration(143, "Node address quarantine", nodeAddressQuarantineSQL),
 		newMigration(144, "Policy rules for inactive Devices", policyInactiveDeviceRulesSQL),
+		newMigration(145, "Map Network sharing", mapNetworkSharingSQL),
 	}
 }
 
@@ -722,3 +723,6 @@ var nodeAddressQuarantineSQL string
 
 //go:embed 000144_policy_inactive_device_rules.up.sql
 var policyInactiveDeviceRulesSQL string
+
+//go:embed 000145_map_network_sharing.up.sql
+var mapNetworkSharingSQL string

@@ -24,6 +24,10 @@ type cachedInventory struct {
 	serveable     bool
 	networkName   network.DisplayName
 	recoveryEpoch int64
+	// sharing: the Network takes part in a Device share (schema 145). Its
+	// Devices' maps depend on state outside the view (aliases, peers across
+	// Networks), so they are always read per Device.
+	sharing bool
 }
 
 // usableAt reports whether the inventory answers for revision at the

@@ -42,7 +42,9 @@ FROM mesh_ops.load_map_network_policy_devices_v1($1::INTEGER)`
 	maximumNetworkMemberships   = 10_000_000
 	maximumNetworkPolicyDevices = 1_000_000
 
-	loadNetworkHeaderSQL = `SELECT network_display_name, recovery_epoch
+	// Whether the Network takes part in a Device share (schema 145).
+	loadNetworkSharingSQL = `SELECT mesh_ops.map_network_has_sharing_v1()`
+	loadNetworkHeaderSQL  = `SELECT network_display_name, recovery_epoch
 FROM mesh_ops.load_map_network_header_v1()`
 )
 
@@ -110,6 +112,9 @@ func (store *Store) readInventory(
 	}
 	if err := readNetworkHeader(ctx, transaction, &cached); err != nil {
 		return cachedInventory{}, err
+	}
+	if err := transaction.QueryRow(ctx, loadNetworkSharingSQL).Scan(&cached.sharing); err != nil {
+		return cachedInventory{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("read network sharing: %w", err))
 	}
 	devices, err := store.readNetworkDevices(ctx, transaction, scope)
 	if err != nil {

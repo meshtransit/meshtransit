@@ -38,6 +38,7 @@ func sharedStoreFixture(t *testing.T, inventoryRevision int64, listSelf bool) (*
 		internalScopeRow{workspaceID: 101, networkID: 201},
 		inventoryRevisionRow{revision: inventoryRevision, readAt: inventoryReadAt},
 		networkHeaderRow{},
+		networkSharingRow{},
 	}
 	transaction.inventoryRows = []*peerCandidateRows{{records: inventory}}
 	store.options.SharedInventory = true
@@ -137,6 +138,7 @@ func TestInventoryUsableOnlyForItsRevisionAndWindow(t *testing.T) {
 		internalScopeRow{workspaceID: 101, networkID: 201},
 		inventoryRevisionRow{revision: 7, readAt: inventoryReadAt},
 		networkHeaderRow{},
+		networkSharingRow{},
 	}
 	scope, err := scopeFromText(testWorkspaceID, testNetworkID)
 	if err != nil {

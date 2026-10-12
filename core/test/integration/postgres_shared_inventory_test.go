@@ -66,6 +66,7 @@ func assertSharedInventoryMatchesDirectRead(
 		if !reflect.DeepEqual(got.AuthorizedPeers(), want.AuthorizedPeers()) {
 			t.Fatalf("identity %d: shared peers %+v differ from direct %+v", index, got.AuthorizedPeers(), want.AuthorizedPeers())
 		}
+		declinesBefore := shared.InventoryStats().SharingDeclines
 		if derived, found, err := shared.Derive(ctx, got, 0); err != nil {
 			t.Fatalf("identity %d: Derive() error = %v", index, err)
 		} else if found {
@@ -88,7 +89,9 @@ func assertSharedInventoryMatchesDirectRead(
 			if unchanged {
 				unchangedCount++
 			}
-		} else if !want.HasDirectProjections() {
+		} else if !want.HasDirectProjections() && shared.InventoryStats().SharingDeclines == declinesBefore {
+			// Only a Network that takes part in a Device share sends a
+			// Device without projections of its own to its own read.
 			t.Fatalf("identity %d: Derive() declined a Device without direct projections", index)
 		}
 		gotDNS, gotDNSErr := got.SharedDNSRecords()

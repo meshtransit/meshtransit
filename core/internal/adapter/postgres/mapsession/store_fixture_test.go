@@ -565,6 +565,14 @@ func (*grantRows) Err() error { return nil }
 
 func (*grantRows) Close() {}
 
+// networkSharingRow answers loadNetworkSharingSQL.
+type networkSharingRow struct{ sharing bool }
+
+func (row networkSharingRow) Scan(destinations ...any) error {
+	*destinations[0].(*bool) = row.sharing
+	return nil
+}
+
 // networkHeaderRow answers loadNetworkHeaderSQL.
 type networkHeaderRow struct{}
 

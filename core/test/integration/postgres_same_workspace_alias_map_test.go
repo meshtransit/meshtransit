@@ -203,6 +203,7 @@ func assertSameWorkspaceAliasMapProjection(ctx context.Context, t *testing.T, ad
 			t.Fatal(err)
 		}
 		assertReachableAliasMapMatches(ctx, t, tx, machine, key)
+		assertNetworkSharing(ctx, t, tx, perspective.name, true)
 		var encoded []string
 		edgeRows, err := tx.Query(ctx, `SELECT edge::TEXT FROM mesh_ops.load_device_alias_map_edges_v3($1::BYTEA,$2::BYTEA,257) AS edge`, machine, key)
 		if err != nil {
@@ -273,5 +274,47 @@ func assertSameWorkspaceAliasMapProjection(ctx context.Context, t *testing.T, ad
 		if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Once every contract of both Networks has ended, neither takes part in
+	// a share and their Devices may use the shared map view again.
+	if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE mesh.trust_contract
+        SET state = 'revoked', ended_at = GREATEST(created_at, clock_timestamp()),
+            updated_at = GREATEST(created_at, clock_timestamp())
+        WHERE state IN ('activating', 'active')
+          AND ((provider_workspace_id = 103 AND provider_network_id IN (203, 204))
+            OR (consumer_workspace_id = 103 AND consumer_network_id IN (203, 204)))`); err != nil {
+		t.Fatalf("end the same-Workspace contracts: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = origin`); err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range []struct {
+		name    string
+		network int64
+	}{{name: "consumer after revoke", network: 204}, {name: "provider after revoke", network: 203}} {
+		setIntegrationScope(ctx, t, tx, 103, scope.network)
+		if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+			t.Fatal(err)
+		}
+		assertNetworkSharing(ctx, t, tx, scope.name, false)
+		if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// assertNetworkSharing checks what the shared map view reads about the
+// scoped Network taking part in a Device share (schema 145).
+func assertNetworkSharing(ctx context.Context, t *testing.T, tx pgx.Tx, name string, want bool) {
+	t.Helper()
+	var sharing bool
+	if err := tx.QueryRow(ctx, `SELECT mesh_ops.map_network_has_sharing_v1()`).Scan(&sharing); err != nil {
+		t.Fatalf("%s Network sharing: %v", name, err)
+	}
+	if sharing != want {
+		t.Fatalf("%s Network sharing = %t, want %t", name, sharing, want)
 	}
 }

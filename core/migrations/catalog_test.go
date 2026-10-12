@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 144 {
-		t.Fatalf("len(Catalog()) = %d, want 144", len(catalog))
+	if len(catalog) != 145 {
+		t.Fatalf("len(Catalog()) = %d, want 145", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 144 {
-		t.Fatalf("LatestVersion() = %d, want 144", LatestVersion())
+	if LatestVersion() != 145 {
+		t.Fatalf("LatestVersion() = %d, want 145", LatestVersion())
 	}
 }
 
@@ -3473,6 +3473,32 @@ func TestPolicyInactiveDeviceRules(t *testing.T) {
 	} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 144 must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestMapNetworkSharing(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[144]
+	if migration.Version != 145 {
+		t.Fatalf("migration 145 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.map_network_has_sharing_v1()",
+		"SECURITY DEFINER",
+		"contract.state IN ('activating', 'active')",
+		"contract.expires_at > pg_catalog.transaction_timestamp()",
+		"contract.provider_network_id = scoped_network_id",
+		"contract.consumer_network_id = scoped_network_id",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.map_network_has_sharing_v1() TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 145 must contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP ", "INSERT ", "UPDATE ", "DELETE "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 145 must not contain %q", forbidden)
 		}
 	}
 }

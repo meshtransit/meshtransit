@@ -25,6 +25,7 @@ func liveStoreFixture(t *testing.T) (*Store, *fakeTransaction, snapshotRecord) {
 		internalScopeRow{workspaceID: 101, networkID: 201},
 		inventoryRevisionRow{revision: 7, readAt: now},
 		networkHeaderRow{},
+		networkSharingRow{},
 	}
 	transaction.inventoryRows = []*peerCandidateRows{{records: peers}}
 	transaction.policyExpiry = now.Add(24 * time.Hour)
@@ -105,5 +106,35 @@ func TestUnchangedKeepsASnapshotOfTheLatestView(t *testing.T) {
 	store.inventories = nil // as with SharedInventory off
 	if unchanged, err := store.Unchanged(t.Context(), loaded, 0); unchanged || err != nil {
 		t.Fatalf("Unchanged() without a shared view = %t, %v", unchanged, err)
+	}
+}
+
+// TestSharingNetworkIsAlwaysReadPerDevice covers a stream opened before a
+// share took effect: its snapshot has no sharing dependency, so only the
+// view can tell that the Network now takes part in a share, and the stream
+// must then read its Device (aliases, peers across Networks) instead of
+// keeping or deriving a map without them.
+func TestSharingNetworkIsAlwaysReadPerDevice(t *testing.T) {
+	store, transaction, record := liveStoreFixture(t)
+	for index, row := range transaction.rows {
+		if _, ok := row.(networkSharingRow); ok {
+			transaction.rows[index] = networkSharingRow{sharing: true}
+		}
+	}
+	loaded, err := store.Load(t.Context(), validIdentity(t))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.HasDirectProjections() {
+		t.Fatal("fixture snapshot already has sharing dependencies")
+	}
+	if unchanged, err := store.Unchanged(t.Context(), loaded, record.networkRevision); unchanged || err != nil {
+		t.Fatalf("Unchanged() in a sharing Network = %t, %v", unchanged, err)
+	}
+	if _, found, err := store.Derive(t.Context(), loaded, record.networkRevision); found || err != nil {
+		t.Fatalf("Derive() in a sharing Network = %t, %v", found, err)
+	}
+	if stats := store.InventoryStats(); stats.SharingDeclines != 1 || stats.Derived != 0 || stats.Unchanged != 0 {
+		t.Fatalf("stats = %+v, want one sharing decline", stats)
 	}
 }

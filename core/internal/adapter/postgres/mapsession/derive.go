@@ -14,7 +14,9 @@ import (
 // the stream holds; the result is at least minRevision.
 //
 // found is false when the caller must read the Device (Reopen): the shared
-// view is off or unavailable, the Device has direct projections, or the
+// view is off or unavailable, the Device has direct projections, the Network
+// takes part in a Device share (which a snapshot opened before the share
+// took effect does not reflect), or the
 // view does not list the Device exactly as current (suspended, revoked,
 // re-registered or rekeyed). A view lists a Device only when every check of
 // the authenticated scope read passes for it, so a Device it lists is one
@@ -38,6 +40,10 @@ func (store *Store) Derive(
 		return appmapsession.Snapshot{}, false, err
 	}
 	if !found || !cached.serveable || !cached.policy.IsValid() {
+		return appmapsession.Snapshot{}, false, nil
+	}
+	if cached.sharing {
+		store.stats.sharingDeclines.Add(1)
 		return appmapsession.Snapshot{}, false, nil
 	}
 	self, listed := cached.inventory.Device(current.NodeID())
@@ -85,8 +91,8 @@ func (store *Store) Derive(
 // Network when it was built from the latest shared view (the same objects,
 // which an identical reread keeps), at that view's revision and policy
 // revision, with the same header and relay directory, and no policy or key
-// deadline is near. Maps with direct projections or cut to a peer limit are
-// always rebuilt.
+// deadline is near. Maps with direct projections, cut to a peer limit or in
+// a Network that takes part in a Device share are always rebuilt.
 func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapshot, minRevision int64) (bool, error) {
 	if ctx == nil || store == nil || store.inventories == nil || !current.IsValid() ||
 		current.HasDirectProjections() || current.IsPeerLimited() || minRevision > current.NetworkRevision() {
@@ -104,7 +110,8 @@ func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapsho
 	}
 	changesAt := cached.policy.ChangesAt()
 	directory := store.relayDirectory(scope.NetworkID())
-	unchanged := cached.serveable && cached.policy.IsValid() && cached.revision == current.NetworkRevision() &&
+	unchanged := cached.serveable && !cached.sharing && cached.policy.IsValid() &&
+		cached.revision == current.NetworkRevision() &&
 		cached.policy.Revision() == current.PacketPolicy().Revision() && current.SharesInventory(cached.inventory) &&
 		cached.networkName == current.NetworkName() && cached.recoveryEpoch == current.RecoveryEpoch() &&
 		(changesAt.IsZero() || now.Add(clockMargin).Before(changesAt)) &&
