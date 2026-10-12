@@ -1805,8 +1805,7 @@ type fakeWireGuardFactory struct {
 
 func (f *fakeWireGuardFactory) New(
 	_ context.Context,
-	_ *os.File,
-	_ int,
+	_ netadmin.TUN,
 	_ *policyFilter,
 	_ PacketObserver,
 	relayConfig *relay.Config,

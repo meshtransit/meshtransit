@@ -22,7 +22,6 @@ import (
 	"meshtransit.net/client/internal/identity"
 	"meshtransit.net/client/internal/localapi"
 	"meshtransit.net/client/internal/mtcpclient"
-	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/netwatch"
 	"meshtransit.net/client/internal/portmap"
 	"meshtransit.net/client/internal/profile"
@@ -126,19 +125,16 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 			return 1
 		}
 	}
-	var netAdminClient *netadmin.Client
-	if cfg.EnableDataPlane || cfg.EnableDNS {
-		netAdminClient, err = netadmin.NewClient(cfg.NetAdminSocketPath, 5*time.Second)
-		if err != nil {
-			logger.Error("creating privileged helper client failed", "error", err)
+	opener, netAdminClient, err := platformNetwork(cfg)
+	if err != nil {
+		logger.Error("preparing host networking failed", "error", err)
 
-			return 1
-		}
+		return 1
 	}
 	daemonOptions.EnableDeviceAliases = cfg.EnableDeviceAliases
 	if cfg.EnableDataPlane {
 		engine, err := dataplane.NewWireGuardWithObserver(
-			netAdminClient,
+			opener,
 			cfg.WireGuardListenPort,
 			flowReporter,
 		)

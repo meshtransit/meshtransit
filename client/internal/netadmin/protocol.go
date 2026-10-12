@@ -11,6 +11,8 @@ import (
 	"os"
 	"slices"
 	"strings"
+
+	"golang.zx2c4.com/wireguard/tun"
 )
 
 const (
@@ -49,7 +51,10 @@ type TUNConfig struct {
 
 // TUN is an owned TUN descriptor returned by meshnetd.
 type TUN struct {
-	File      *os.File
+	File *os.File
+	// Device is a TUN opened in this process, used on Windows, where the
+	// service owns the Wintun adapter; File is nil then.
+	Device    tun.Device
 	Name      string
 	MTU       int
 	Addresses []netip.Prefix

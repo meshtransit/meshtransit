@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
+	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/relay"
 )
 
@@ -38,7 +38,7 @@ type stoppingFakeFactory struct {
 }
 
 func (f *stoppingFakeFactory) New(
-	context.Context, *os.File, int, *policyFilter, PacketObserver, *relay.Config,
+	context.Context, netadmin.TUN, *policyFilter, PacketObserver, *relay.Config,
 ) (wireGuardDevice, error) {
 	device := &stoppingFakeDevice{fakeWireGuardDevice: &fakeWireGuardDevice{}, done: make(chan struct{})}
 	f.devices = append(f.devices, device)
@@ -110,13 +110,13 @@ type shutTUNFactory struct {
 }
 
 func (f *shutTUNFactory) New(
-	ctx context.Context, file *os.File, mtu int, filter *policyFilter, observer PacketObserver, config *relay.Config,
+	ctx context.Context, tunValue netadmin.TUN, filter *policyFilter, observer PacketObserver, config *relay.Config,
 ) (wireGuardDevice, error) {
 	f.calls++
 	if f.calls <= f.failures {
 		return nil, fmt.Errorf("dataplane: opening inherited tun descriptor: %w", errTUNReceiveShut)
 	}
-	return f.stoppingFakeFactory.New(ctx, file, mtu, filter, observer, config)
+	return f.stoppingFakeFactory.New(ctx, tunValue, filter, observer, config)
 }
 
 func TestWireGuardEngineReopensATUNThatArrivedShut(t *testing.T) {

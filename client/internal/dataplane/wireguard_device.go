@@ -1,22 +1,20 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 package dataplane
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/netip"
-	"os"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
-	"golang.zx2c4.com/wireguard/tun"
+
 	"meshtransit.net/client/internal/interchange"
+	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/client/internal/relay"
 	"meshtransit.net/shared/netcheck"
@@ -50,8 +48,7 @@ func newWireGuardFactory() (wireGuardFactory, error) {
 
 func (f *officialWireGuardFactory) New(
 	ctx context.Context,
-	file *os.File,
-	mtu int,
+	tunValue netadmin.TUN,
 	filter *policyFilter,
 	observer PacketObserver,
 	relayConfig *relay.Config,
@@ -59,11 +56,7 @@ func (f *officialWireGuardFactory) New(
 	if f == nil || f.generations == nil {
 		return nil, errors.New("dataplane: wireguard factory is not initialized")
 	}
-	tunDevice, err := adoptPrivilegedTUNDescriptor(
-		file,
-		mtu,
-		inheritedTUNOpenerFor(f.logger),
-	)
+	tunDevice, err := acquireTUN(tunValue, f.logger)
 	if err != nil {
 		return nil, err
 	}
@@ -140,68 +133,6 @@ func (f *officialWireGuardFactory) New(
 		bind:      bind,
 		datagrams: datagrams,
 	}, nil
-}
-
-type inheritedTUNOpener func(int) (tun.Device, string, error)
-
-// adoptPrivilegedTUNDescriptor transfers a helper-configured TUN descriptor
-// into the unprivileged packet engine without attempting privileged link
-// changes. The duplicate gives the WireGuard adapter sole descriptor ownership.
-func adoptPrivilegedTUNDescriptor(
-	file *os.File,
-	expectedMTU int,
-	open inheritedTUNOpener,
-) (tun.Device, error) {
-	if file == nil || expectedMTU < 1280 || expectedMTU > 9000 {
-		return nil, errors.New("dataplane: inherited tun metadata is invalid")
-	}
-	if open == nil {
-		return nil, errors.New("dataplane: inherited tun opener is required")
-	}
-
-	descriptor, err := unix.FcntlInt(file.Fd(), unix.F_DUPFD_CLOEXEC, 0)
-	if err != nil {
-		return nil, fmt.Errorf("dataplane: duplicating inherited tun descriptor: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		_ = unix.Close(descriptor)
-
-		return nil, fmt.Errorf("dataplane: transferring inherited tun descriptor: %w", err)
-	}
-
-	tunDevice, actualName, err := open(descriptor)
-	if err != nil {
-		if tunDevice != nil {
-			_ = tunDevice.Close()
-		} else {
-			_ = unix.Close(descriptor)
-		}
-
-		return nil, fmt.Errorf("dataplane: opening inherited tun descriptor: %w", err)
-	}
-	if tunDevice == nil {
-		_ = unix.Close(descriptor)
-
-		return nil, errors.New("dataplane: inherited tun opener returned no device")
-	}
-	if actualName == "" {
-		_ = tunDevice.Close()
-
-		return nil, errors.New("dataplane: inherited tun name is empty")
-	}
-	actualMTU, err := tunDevice.MTU()
-	if err != nil {
-		_ = tunDevice.Close()
-
-		return nil, fmt.Errorf("dataplane: reading inherited tun mtu: %w", err)
-	}
-	if actualMTU != expectedMTU {
-		_ = tunDevice.Close()
-
-		return nil, errors.New("dataplane: inherited tun mtu does not match helper response")
-	}
-
-	return tunDevice, nil
 }
 
 func (d *officialWireGuardDevice) Configure(configuration io.Reader) error {

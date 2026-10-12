@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"golang.zx2c4.com/wireguard/tun"
+
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/packetmeta"
 )

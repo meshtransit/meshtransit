@@ -12,7 +12,6 @@ import (
 	"io"
 	"log/slog"
 	"net/netip"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -171,8 +170,7 @@ type relayFailureDevice interface {
 type wireGuardFactory interface {
 	New(
 		context.Context,
-		*os.File,
-		int,
+		netadmin.TUN,
 		*policyFilter,
 		PacketObserver,
 		*relay.Config,
@@ -544,22 +542,13 @@ func (e *WireGuardEngine) openDeviceOnce(ctx context.Context, plan wireGuardPlan
 		return nil, fmt.Errorf("dataplane: opening tun: %w", err)
 	}
 	if err := validateTUN(tunDevice, plan); err != nil {
-		if tunDevice.File != nil {
-			_ = tunDevice.File.Close()
-		}
+		closeTUN(tunDevice)
 
 		return nil, err
 	}
-	device, err := e.factory.New(
-		ctx,
-		tunDevice.File,
-		tunDevice.MTU,
-		e.filter,
-		e.observer,
-		plan.relayConfig,
-	)
+	device, err := e.factory.New(ctx, tunDevice, e.filter, e.observer, plan.relayConfig)
 	if err != nil {
-		_ = tunDevice.File.Close()
+		closeTUN(tunDevice)
 
 		return nil, fmt.Errorf("dataplane: creating wireguard device: %w", err)
 	}
@@ -1237,8 +1226,18 @@ func (e *WireGuardEngine) Close() error {
 	return nil
 }
 
+// closeTUN releases a TUN the factory did not take; closing twice is safe.
+func closeTUN(tunDevice netadmin.TUN) {
+	if tunDevice.File != nil {
+		_ = tunDevice.File.Close()
+	}
+	if tunDevice.Device != nil {
+		_ = tunDevice.Device.Close()
+	}
+}
+
 func validateTUN(tunDevice netadmin.TUN, plan wireGuardPlan) error {
-	if tunDevice.File == nil || tunDevice.Name == "" || tunDevice.MTU < 1280 ||
+	if (tunDevice.File == nil) == (tunDevice.Device == nil) || tunDevice.Name == "" || tunDevice.MTU < 1280 ||
 		tunDevice.MTU > 9000 {
 		return errors.New("dataplane: helper returned invalid tun metadata")
 	}

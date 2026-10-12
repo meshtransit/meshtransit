@@ -20,6 +20,10 @@ func SafeOverlayFrame() []netip.Prefix {
 	return append([]netip.Prefix(nil), safeOverlayFrame[:]...)
 }
 
+// WithinSafeOverlayFrame reports whether prefix lies wholly inside the safe
+// overlay frame; Windows, which has no privileged helper, checks it in meshd.
+func WithinSafeOverlayFrame(prefix netip.Prefix) bool { return withinSafeOverlayFrame(prefix) }
+
 // withinSafeOverlayFrame reports whether prefix lies wholly inside one frame
 // prefix. An allowlist may narrow the frame, never widen it.
 func withinSafeOverlayFrame(prefix netip.Prefix) bool {

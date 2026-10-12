@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"golang.zx2c4.com/wireguard/conn"
+
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/client/internal/relay"
 )

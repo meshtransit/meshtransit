@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"meshtransit.net/client/internal/netadmin"
 	"meshtransit.net/client/internal/networkmap"
 	"meshtransit.net/client/internal/relay"
 )
@@ -27,14 +28,13 @@ type aliasTransitionDevice struct {
 
 func (f *aliasTransitionFactory) New(
 	_ context.Context,
-	file *os.File,
-	_ int,
+	tunValue netadmin.TUN,
 	filter *policyFilter,
 	_ PacketObserver,
 	_ *relay.Config,
 ) (wireGuardDevice, error) {
 	f.device.filter = filter
-	f.device.file = file
+	f.device.file = tunValue.File
 	return f.device, nil
 }
 
