@@ -14,7 +14,8 @@
 -- acceptance to expiry, before endpoints and aliases are ready.
 --
 -- load_device_sharing_dependencies_v2 is v1 (schema 84) with the consumer
--- side narrowed the same way: v1 gave every consumer Device a dependency on
+-- side narrowed the same way, both where contracts are counted against the
+-- 256 limit and where dependencies are returned: v1 gave every consumer Device a dependency on
 -- the provider Network, so every Device of a consumer Network lost the shared
 -- view for good. A consumer Device that becomes a rule source is woken by its
 -- own Network's policy publication, so it needs no dependency before that.
@@ -155,7 +156,19 @@ BEGIN
     FOR contract_row IN
       SELECT contract.* FROM mesh.trust_contract AS contract
       WHERE contract.state IN ('activating','active') AND contract.expires_at>transaction_timestamp()
-        AND ((contract.consumer_workspace_id=self_workspace AND contract.consumer_network_id=self_network)
+        AND ((contract.consumer_workspace_id=self_workspace AND contract.consumer_network_id=self_network
+            -- Count only contracts this consumer Device sources a rule to, so
+            -- contracts into the Network for other Devices do not reach the
+            -- 256-contract limit for it.
+            AND EXISTS(SELECT 1 FROM mesh_ops.network_revision AS loop_revision
+              JOIN mesh.policy_release AS loop_release ON loop_release.workspace_id=loop_revision.workspace_id
+               AND loop_release.network_id=loop_revision.network_id
+               AND loop_release.policy_revision=loop_revision.policy_revision AND loop_release.state='active'
+              JOIN mesh.compiled_policy_imported_resource_destination AS loop_rule
+                ON loop_rule.workspace_id=loop_release.workspace_id AND loop_rule.network_id=loop_release.network_id
+               AND loop_rule.policy_release_id=loop_release.id AND loop_rule.trust_contract_id=contract.id
+               AND loop_rule.source_device_id=self_id
+              WHERE loop_revision.workspace_id=self_workspace AND loop_revision.network_id=self_network))
           OR (contract.provider_workspace_id=self_workspace AND contract.provider_network_id=self_network
             AND EXISTS(SELECT 1 FROM mesh.resource_device_target AS target
               WHERE target.workspace_id=self_workspace AND target.network_id=self_network

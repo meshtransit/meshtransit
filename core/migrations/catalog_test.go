@@ -3517,6 +3517,7 @@ func TestMapSharingDevices(t *testing.T) {
 		"GRANT EXECUTE ON FUNCTION mesh_ops.map_network_sharing_devices_v1(INTEGER) TO mesh_runtime;",
 		"CREATE FUNCTION mesh_ops.load_device_sharing_dependencies_v2(",
 		"rule.source_device_id=self_id",
+		"loop_rule.source_device_id=self_id",
 		"FROM PUBLIC,mesh_runtime,mesh_worker,mesh_observer,mesh_audit_writer,mesh_share_writer,mesh_direct_map_reader;",
 	} {
 		if !strings.Contains(migration.SQL, want) {
