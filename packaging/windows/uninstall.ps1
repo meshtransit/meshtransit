@@ -23,6 +23,14 @@ if ($service) {
     & sc.exe delete $serviceName | Out-Null
 }
 
+# meshd removes its DNS rule when it stops; remove it here too in case the
+# service died without stopping.
+$nrptRule = '{6D657368-7472-616E-7369-74000000D053}'
+foreach ($base in 'HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig',
+                  'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient\DnsPolicyConfig') {
+    Remove-Item -Path (Join-Path $base $nrptRule) -Force -ErrorAction SilentlyContinue
+}
+
 $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 $kept = ($machinePath -split ';') | Where-Object { $_ -and $_ -ne $installDir }
 [Environment]::SetEnvironmentVariable('Path', ($kept -join ';'), 'Machine')

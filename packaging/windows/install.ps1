@@ -57,15 +57,20 @@ foreach ($file in 'meshd.exe', 'meshctl.exe', 'wintun.dll', 'wintun-LICENSE.txt'
     if (Test-Path $path) { Copy-Item -Force $path $installDir }
 }
 
-$binary = '"' + (Join-Path $installDir 'meshd.exe') + '" --enable-data-plane --wireguard-listen-port=41641'
+$binary = '"' + (Join-Path $installDir 'meshd.exe') + '" --enable-data-plane --enable-dns --wireguard-listen-port=41641'
 if ($existing) {
-    & sc.exe config $serviceName binPath= $binary start= auto | Out-Null
+    # Windows PowerShell does not escape the quotes inside $binary for native
+    # commands, so sc.exe config would get a broken binPath; write the
+    # service's ImagePath directly instead.
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$serviceName" -Name ImagePath -Value $binary -Type ExpandString
+    Set-Service -Name $serviceName -StartupType Automatic
 } else {
     New-Service -Name $serviceName -DisplayName 'MeshTransit' -BinaryPathName $binary `
         -StartupType Automatic -Description 'MeshTransit mesh networking' | Out-Null
 }
 # Restart after 5 s on failure; reset the failure count after a day.
 & sc.exe failure $serviceName reset= 86400 actions= restart/5000/restart/5000/restart/30000 | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "sc.exe failure exited with $LASTEXITCODE" }
 
 $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 if (($machinePath -split ';') -notcontains $installDir) {

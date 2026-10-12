@@ -32,14 +32,17 @@ type EndpointSource interface {
 	Endpoint() (netadmin.DNSEndpoint, bool)
 }
 
-// Server owns the unprivileged UDP/TCP resolver and the descriptor for its
-// dedicated non-persistent Linux link. Plans are immutable after publication.
+// Server owns the unprivileged UDP/TCP resolver and the link its address
+// lives on: a dedicated non-persistent TUN from meshnetd on Linux and macOS,
+// a loopback address on Windows (no descriptor). Plans are immutable after
+// publication.
 type Server struct {
 	lifecycleMu sync.Mutex
 	opener      dnsLinkOpener
 	engine      *resolverEngine
 	plan        atomic.Pointer[Plan]
 	link        netadmin.DNSLink
+	running     bool
 	udp         *net.UDPConn
 	tcp         *net.TCPListener
 	cancel      context.CancelFunc
@@ -88,7 +91,7 @@ func (s *Server) Apply(ctx context.Context, plan Plan) error {
 		return s.stopLocked()
 	}
 	startedNow := false
-	if s.link.File == nil {
+	if !s.running {
 		if err := s.startLocked(ctx); err != nil {
 			return err
 		}
@@ -115,7 +118,7 @@ func (s *Server) Endpoint() (netadmin.DNSEndpoint, bool) {
 	}
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
-	if s.link.File == nil || s.udp == nil || s.tcp == nil {
+	if !s.running || s.udp == nil || s.tcp == nil {
 		return netadmin.DNSEndpoint{}, false
 	}
 
@@ -151,9 +154,7 @@ func (s *Server) startLocked(ctx context.Context) error {
 		return fmt.Errorf("dnsconfig: opening dns link: %w", err)
 	}
 	if err := validateDNSLink(link); err != nil {
-		if link.File != nil {
-			_ = link.File.Close()
-		}
+		closeLinkFile(link)
 
 		return err
 	}
@@ -164,19 +165,20 @@ func (s *Server) startLocked(ctx context.Context) error {
 	}
 	tcpListener, err := net.ListenTCP("tcp"+networkSuffix, net.TCPAddrFromAddrPort(address))
 	if err != nil {
-		_ = link.File.Close()
+		closeLinkFile(link)
 
 		return fmt.Errorf("dnsconfig: listening for tcp dns: %w", err)
 	}
 	udpListener, err := net.ListenUDP("udp"+networkSuffix, net.UDPAddrFromAddrPort(address))
 	if err != nil {
 		_ = tcpListener.Close()
-		_ = link.File.Close()
+		closeLinkFile(link)
 
 		return fmt.Errorf("dnsconfig: listening for udp dns: %w", err)
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.link = link
+	s.running = true
 	s.tcp = tcpListener
 	s.udp = udpListener
 	s.cancel = cancel
@@ -188,7 +190,7 @@ func (s *Server) startLocked(ctx context.Context) error {
 }
 
 func (s *Server) stopLocked() error {
-	if s.link.File == nil {
+	if !s.running {
 		return nil
 	}
 	if s.cancel != nil {
@@ -206,10 +208,13 @@ func (s *Server) stopLocked() error {
 		}
 	}
 	s.wait.Wait()
-	if err := s.link.File.Close(); err != nil {
-		closeErrors = append(closeErrors, fmt.Errorf("closing dns link: %w", err))
+	if s.link.File != nil {
+		if err := s.link.File.Close(); err != nil {
+			closeErrors = append(closeErrors, fmt.Errorf("closing dns link: %w", err))
+		}
 	}
 	s.link = netadmin.DNSLink{}
+	s.running = false
 	s.udp = nil
 	s.tcp = nil
 	s.cancel = nil
@@ -320,17 +325,10 @@ func (s *Server) currentPlan() Plan {
 	return *plan
 }
 
-func validateDNSLink(link netadmin.DNSLink) error {
-	endpoint := link.Endpoint
-	if link.File == nil || endpoint.InterfaceName == "" ||
-		!netadmin.ValidInterfaceName(endpoint.InterfaceName) ||
-		!endpoint.Resolver.IsValid() || endpoint.Resolver.Addr().Is4In6() ||
-		!endpoint.Resolver.Addr().IsGlobalUnicast() ||
-		endpoint.Resolver.Addr().IsLinkLocalUnicast() || endpoint.Resolver.Port() < 1024 {
-		return errors.New("dnsconfig: helper returned invalid dns link metadata")
+func closeLinkFile(link netadmin.DNSLink) {
+	if link.File != nil {
+		_ = link.File.Close()
 	}
-
-	return nil
 }
 
 func resolverLoop(plan Plan, endpoint netip.AddrPort) bool {

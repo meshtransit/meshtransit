@@ -17,7 +17,6 @@ import (
 	"meshtransit.net/client/internal/config"
 	"meshtransit.net/client/internal/daemon"
 	"meshtransit.net/client/internal/dataplane"
-	"meshtransit.net/client/internal/dnsconfig"
 	"meshtransit.net/client/internal/flowlog"
 	"meshtransit.net/client/internal/identity"
 	"meshtransit.net/client/internal/localapi"
@@ -172,21 +171,9 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 		}
 	}
 	if cfg.EnableDNS {
-		resolver, err := dnsconfig.NewServer(netAdminClient)
+		dnsManager, err := platformDNS(netAdminClient, logger)
 		if err != nil {
-			logger.Error("creating local dns resolver failed", "error", err)
-
-			return 1
-		}
-		hostDNS, err := dnsconfig.NewResolvedHost(netAdminClient, resolver)
-		if err != nil {
-			logger.Error("creating host dns configurator failed", "error", err)
-
-			return 1
-		}
-		dnsManager, err := dnsconfig.NewManager(resolver, hostDNS)
-		if err != nil {
-			logger.Error("creating dns manager failed", "error", err)
+			logger.Error("setting up MeshTransit DNS failed", "error", err)
 
 			return 1
 		}

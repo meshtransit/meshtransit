@@ -60,6 +60,13 @@ func (o *WindowsTUNOpener) OpenTUN(_ context.Context, config netadmin.TUNConfig)
 
 		return netadmin.TUN{}, err
 	}
+	// Failing closed is deliberate: an adapter that registers itself would
+	// put mesh addresses into the LAN's DNS.
+	if err := winnet.Quiet(luid); err != nil {
+		_ = device.Close()
+
+		return netadmin.TUN{}, err
+	}
 	o.mu.Lock()
 	o.luid = luid
 	o.mu.Unlock()

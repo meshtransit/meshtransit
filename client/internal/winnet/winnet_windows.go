@@ -8,6 +8,7 @@ import (
 	"net/netip"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 )
 
@@ -121,4 +122,38 @@ func families(addresses []netip.Prefix) []winipcfg.AddressFamily {
 	}
 
 	return result
+}
+
+// netbiosDisabled is NetbiosOptions' "disable NetBIOS over TCP/IP".
+const netbiosDisabled = 2
+
+// Quiet stops Windows from announcing the adapter: no dynamic DNS
+// registration of its addresses (which would put mesh addresses into the
+// LAN's DNS) and no NetBIOS over TCP/IP on it.
+func Quiet(luid uint64) error {
+	guid, err := winipcfg.LUID(luid).GUID()
+	if err != nil {
+		return fmt.Errorf("winnet: reading adapter GUID: %w", err)
+	}
+	for _, family := range []uint64{0, winipcfg.DnsInterfaceSettingsFlagIPv6} {
+		settings := &winipcfg.DnsInterfaceSettings{
+			Version: winipcfg.DnsInterfaceSettingsVersion1,
+			Flags: family | winipcfg.DnsInterfaceSettingsFlagRegistrationEnabled |
+				winipcfg.DnsInterfaceSettingsFlagRegisterAdapterName,
+		}
+		if err := winipcfg.SetInterfaceDnsSettings(*guid, settings); err != nil {
+			return fmt.Errorf("winnet: turning off DNS registration: %w", err)
+		}
+	}
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE,
+		`SYSTEM\CurrentControlSet\Services\NetBT\Parameters\Interfaces\Tcpip_`+guid.String(), registry.SET_VALUE)
+	if err != nil {
+		return fmt.Errorf("winnet: opening NetBIOS settings: %w", err)
+	}
+	defer func() { _ = key.Close() }()
+	if err := key.SetDWordValue("NetbiosOptions", netbiosDisabled); err != nil {
+		return fmt.Errorf("winnet: turning off NetBIOS: %w", err)
+	}
+
+	return nil
 }
