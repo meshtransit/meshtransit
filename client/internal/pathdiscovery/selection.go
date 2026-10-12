@@ -1,6 +1,7 @@
 package pathdiscovery
 
 import (
+	"container/heap"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -111,6 +112,36 @@ type PathSelector struct {
 	latest     ProbeGeneration
 	advancedAt time.Time
 	peers      map[uint64]*peerPathState
+	// expiries orders confirmed candidates by deadline, so a pong or an
+	// expiry touches only the peers whose evidence changed instead of every
+	// peer. Entries whose candidate was confirmed again or retired are stale
+	// and skipped when they surface.
+	expiries pathExpiries
+}
+
+// pathExpiry is the deadline of one confirmed candidate.
+type pathExpiry struct {
+	at       time.Time
+	peerID   uint64
+	endpoint netip.AddrPort
+}
+
+type pathExpiries []pathExpiry
+
+func (h pathExpiries) Len() int           { return len(h) }
+func (h pathExpiries) Less(i, j int) bool { return h[i].at.Before(h[j].at) }
+func (h pathExpiries) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *pathExpiries) Push(value any) {
+	if entry, ok := value.(pathExpiry); ok {
+		*h = append(*h, entry)
+	}
+}
+
+func (h *pathExpiries) Pop() any {
+	old := *h
+	last := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return last
 }
 
 // NewPathSelector creates an inactive selector with a short direct-path trust
@@ -186,6 +217,7 @@ func (s *PathSelector) Activate(
 	s.active = generation
 	s.latest = generation
 	s.peers = next
+	s.rebuildExpiriesLocked()
 
 	result := s.resultLocked(previous)
 	result.Activation = activation
@@ -221,6 +253,7 @@ func (s *PathSelector) Deactivate() PathSelectionResult {
 	s.active = ProbeGeneration{}
 	s.advancedAt = time.Time{}
 	s.peers = nil
+	s.expiries = nil
 
 	return s.resultLocked(previous)
 }
@@ -266,8 +299,10 @@ func (s *PathSelector) Observe(
 		return PathSelectionResult{}, ErrInvalidPathObservation
 	}
 
-	previous := s.selectionsLocked()
-	s.expireLocked(observation.ObservedAt)
+	due := s.dueLocked(observation.ObservedAt)
+	touched := touchedPeers(due, observation.PeerID)
+	previous := s.selectionsForLocked(touched)
+	s.applyExpiriesLocked(due, touched, observation.ObservedAt)
 	state = peer.candidates[observation.RemoteEndpoint]
 	if state.confirmedAt.IsZero() {
 		state.roundTrip = observation.RoundTrip
@@ -281,10 +316,14 @@ func (s *PathSelector) Observe(
 	state.confirmedAt = observation.ObservedAt
 	state.expiresAt = observation.ObservedAt.Add(s.trust)
 	peer.candidates[observation.RemoteEndpoint] = state
+	heap.Push(&s.expiries, pathExpiry{at: state.expiresAt, peerID: observation.PeerID, endpoint: observation.RemoteEndpoint})
 	s.advancedAt = observation.ObservedAt
 	s.selectPeerLocked(peer, observation.ObservedAt)
 
-	result := s.resultLocked(previous)
+	result := PathSelectionResult{
+		Changes:   pathChanges(previous, s.selectionsForLocked(touched)),
+		ExpiresAt: s.nextExpiryLocked(),
+	}
 	if len(result.Changes) == 0 && peer.selected == observation.RemoteEndpoint {
 		before, hadBefore := previous[observation.PeerID]
 		if hadBefore && before.RemoteEndpoint == observation.RemoteEndpoint {
@@ -326,11 +365,16 @@ func (s *PathSelector) Expire(now time.Time) (PathSelectionResult, error) {
 	if !s.advancedAt.IsZero() && now.Before(s.advancedAt) {
 		return PathSelectionResult{}, ErrPathTimeRegression
 	}
-	previous := s.selectionsLocked()
-	s.expireLocked(now)
+	due := s.dueLocked(now)
+	touched := touchedPeers(due, 0)
+	previous := s.selectionsForLocked(touched)
+	s.applyExpiriesLocked(due, touched, now)
 	s.advancedAt = now
 
-	return s.resultLocked(previous), nil
+	return PathSelectionResult{
+		Changes:   pathChanges(previous, s.selectionsForLocked(touched)),
+		ExpiresAt: s.nextExpiryLocked(),
+	}, nil
 }
 
 // Selections returns a deterministic copy of current selections. Callers must
@@ -388,16 +432,94 @@ func (s *PathSelector) canActivateLocked(generation ProbeGeneration) error {
 	return nil
 }
 
-func (s *PathSelector) expireLocked(now time.Time) {
-	for _, peer := range s.peers {
-		for endpoint, candidate := range peer.candidates {
-			if candidate.confirmedAt.IsZero() || candidate.expiresAt.After(now) {
-				continue
-			}
-			peer.candidates[endpoint] = pathCandidateState{}
+// dueLocked removes from the heap every entry due by now and returns the
+// ones still describing a confirmed candidate.
+func (s *PathSelector) dueLocked(now time.Time) []pathExpiry {
+	var due []pathExpiry
+	for len(s.expiries) > 0 && !s.expiries[0].at.After(now) {
+		entry, ok := heap.Pop(&s.expiries).(pathExpiry)
+		if ok && s.currentExpiry(entry) {
+			due = append(due, entry)
 		}
-		s.selectPeerLocked(peer, now)
 	}
+	return due
+}
+
+// currentExpiry reports whether entry is the live deadline of its candidate.
+func (s *PathSelector) currentExpiry(entry pathExpiry) bool {
+	peer := s.peers[entry.peerID]
+	if peer == nil {
+		return false
+	}
+	candidate, exists := peer.candidates[entry.endpoint]
+	return exists && !candidate.confirmedAt.IsZero() && candidate.expiresAt.Equal(entry.at)
+}
+
+// applyExpiriesLocked retires the due candidates and re-evaluates every
+// touched peer. Selections depend on time only through expiry, so peers
+// without retired evidence keep the selection they have.
+func (s *PathSelector) applyExpiriesLocked(due []pathExpiry, touched map[uint64]struct{}, now time.Time) {
+	for _, entry := range due {
+		if peer := s.peers[entry.peerID]; peer != nil {
+			peer.candidates[entry.endpoint] = pathCandidateState{}
+		}
+	}
+	for peerID := range touched {
+		s.selectPeerLocked(s.peers[peerID], now)
+	}
+}
+
+// nextExpiryLocked drops stale entries from the top and returns the next
+// live deadline, or zero.
+func (s *PathSelector) nextExpiryLocked() time.Time {
+	for len(s.expiries) > 0 {
+		if s.currentExpiry(s.expiries[0]) {
+			return s.expiries[0].at
+		}
+		heap.Pop(&s.expiries)
+	}
+	return time.Time{}
+}
+
+// rebuildExpiriesLocked indexes every confirmed candidate after the peer set
+// was replaced.
+func (s *PathSelector) rebuildExpiriesLocked() {
+	s.expiries = s.expiries[:0]
+	for peerID, peer := range s.peers {
+		if peer == nil {
+			continue
+		}
+		for endpoint, candidate := range peer.candidates {
+			if !candidate.confirmedAt.IsZero() {
+				s.expiries = append(s.expiries, pathExpiry{at: candidate.expiresAt, peerID: peerID, endpoint: endpoint})
+			}
+		}
+	}
+	heap.Init(&s.expiries)
+}
+
+// touchedPeers is the set of peers with due evidence, plus observed when
+// non-zero.
+func touchedPeers(due []pathExpiry, observed uint64) map[uint64]struct{} {
+	touched := make(map[uint64]struct{}, len(due)+1)
+	if observed != 0 {
+		touched[observed] = struct{}{}
+	}
+	for _, entry := range due {
+		touched[entry.peerID] = struct{}{}
+	}
+	return touched
+}
+
+// selectionsForLocked is selectionsLocked limited to peerIDs.
+func (s *PathSelector) selectionsForLocked(peerIDs map[uint64]struct{}) map[uint64]PathSelection {
+	selected := make(map[uint64]PathSelection, len(peerIDs))
+	for peerID := range peerIDs {
+		if selection, ok := s.selectionLocked(peerID); ok {
+			selected[peerID] = selection
+		}
+	}
+	return selected
 }
 
 func (s *PathSelector) selectPeerLocked(peer *peerPathState, now time.Time) {
@@ -430,26 +552,34 @@ func (s *PathSelector) selectPeerLocked(peer *peerPathState, now time.Time) {
 
 func (s *PathSelector) selectionsLocked() map[uint64]PathSelection {
 	selected := make(map[uint64]PathSelection)
-	for peerID, peer := range s.peers {
-		if peer == nil || !peer.selected.IsValid() {
-			continue
-		}
-		candidate, exists := peer.candidates[peer.selected]
-		if !exists || candidate.confirmedAt.IsZero() {
-			continue
-		}
-		selected[peerID] = PathSelection{
-			PeerID:                peerID,
-			Generation:            s.active,
-			RemoteEndpoint:        peer.selected,
-			ObservedLocalEndpoint: candidate.observedLocal,
-			RoundTrip:             candidate.roundTrip,
-			ConfirmedAt:           candidate.confirmedAt,
-			ExpiresAt:             candidate.expiresAt,
+	for peerID := range s.peers {
+		if selection, ok := s.selectionLocked(peerID); ok {
+			selected[peerID] = selection
 		}
 	}
 
 	return selected
+}
+
+// selectionLocked returns the peer's selected confirmed path, if any.
+func (s *PathSelector) selectionLocked(peerID uint64) (PathSelection, bool) {
+	peer := s.peers[peerID]
+	if peer == nil || !peer.selected.IsValid() {
+		return PathSelection{}, false
+	}
+	candidate, exists := peer.candidates[peer.selected]
+	if !exists || candidate.confirmedAt.IsZero() {
+		return PathSelection{}, false
+	}
+	return PathSelection{
+		PeerID:                peerID,
+		Generation:            s.active,
+		RemoteEndpoint:        peer.selected,
+		ObservedLocalEndpoint: candidate.observedLocal,
+		RoundTrip:             candidate.roundTrip,
+		ConfirmedAt:           candidate.confirmedAt,
+		ExpiresAt:             candidate.expiresAt,
+	}, true
 }
 
 func (s *PathSelector) resultLocked(
