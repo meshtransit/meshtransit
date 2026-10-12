@@ -15,6 +15,9 @@ type observedTUN struct {
 	tun.Device
 	filter   *policyFilter
 	observer PacketObserver
+	// lazy, when set, installs the peer of each allowed outbound packet
+	// before wireguard-go looks it up, and records inbound activity.
+	lazy *lazyPeers
 }
 
 func (d *observedTUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
@@ -50,6 +53,7 @@ func (d *observedTUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) 
 				copy(bufs[allowed][offset:], packet)
 			}
 			sizes[allowed] = len(packet)
+			d.lazy.outbound(packet)
 			if observesMetadata {
 				if headerErr == nil {
 					metadataObserver.ObservePacketMetadata(PacketOutbound, header)
@@ -78,6 +82,7 @@ func (d *observedTUN) Write(bufs [][]byte, offset int) (int, error) {
 			continue
 		}
 		packet := buffer[offset:]
+		d.lazy.inbound(packet)
 		if d.filter != nil && !d.filter.ProcessPacket(PacketInbound, packet) {
 			continue
 		}

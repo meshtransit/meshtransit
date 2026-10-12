@@ -24,6 +24,7 @@ import (
 	"meshtransit.net/client/internal/pathdiscovery"
 	"meshtransit.net/client/internal/prefixset"
 	"meshtransit.net/client/internal/relay"
+	"meshtransit.net/client/internal/wghandshake"
 )
 
 const (
@@ -60,6 +61,9 @@ type wireGuardPeerPlan struct {
 	basePath            peerPath
 	authorizedEndpoints []netip.AddrPort
 	allowedIPs          []netip.Prefix
+	// lazy peers are installed on demand and send no persistent keepalive,
+	// which would keep their sessions, and so the peers, alive.
+	lazy bool
 }
 
 type wireGuardPeerState struct {
@@ -73,6 +77,7 @@ type wireGuardPeerState struct {
 	authorizedEndpoints []netip.AddrPort
 	allowedIPs          []netip.Prefix
 	sessionResetPending bool
+	lazy                bool
 }
 
 type peerPath uint8
@@ -117,6 +122,13 @@ type PeerPathSnapshot struct {
 	RelayFallbackCount   uint64
 	LastDirectPromotion  time.Duration
 	MaxDirectPromotion   time.Duration
+	// InactiveCount counts map peers wireguard-go does not hold while lazy
+	// peers are active; the Lazy counters count installations, evictions and
+	// activation requests dropped (full queue or rate limit).
+	InactiveCount       int
+	LazyActivationCount uint64
+	LazyEvictionCount   uint64
+	LazyDroppedCount    uint64
 }
 
 // NodePrivateKey is the raw WireGuard-compatible node key. Its formatting is
@@ -220,6 +232,9 @@ type wireGuardPlan struct {
 	relayFingerprint        [32]byte
 	relayTopology           [32]byte
 	hasRelayFallback        bool
+	// mapPeers counts the map's peers when peers holds only the installed
+	// ones (lazy peers).
+	mapPeers int
 }
 
 // WireGuardEngine owns the encrypted userspace packet engine. The daemon
@@ -260,6 +275,22 @@ type WireGuardEngine struct {
 	// ends the current device's watcher before an intended Close.
 	deviceStops     chan struct{}
 	deviceWatchStop chan struct{}
+	// lazy links the device's packet paths to on-demand peer installation;
+	// lazySupported means the factory's devices call its hooks.
+	lazy          *lazyPeers
+	lazySupported bool
+	lazyDisabled  bool
+	lazyThreshold int
+	// lazyPlanPeers holds every map peer while lazy peers are active;
+	// lazyPreferred the paths chosen for peers wireguard-go does not hold.
+	lazyPlanPeers map[uint64]wireGuardPeerPlan
+	lazyPreferred map[uint64]netip.AddrPort
+	// lazyTrafficBase holds the counters of evicted peers, which
+	// wireguard-go forgets, so reported counters never go back.
+	lazyTrafficBase map[uint64]peerTraffic
+	// lazyResponder reads initiations to this node's key; it is reused while
+	// the key is the same and cleared once its device is closed.
+	lazyResponder *wghandshake.Responder
 }
 
 // NewWireGuard constructs the Linux encrypted packet engine.
@@ -302,7 +333,7 @@ func newWireGuardEngine(
 	if aware, ok := factory.(interchangeFactory); ok {
 		aware.setRelayCredentials(credentials)
 	}
-	return &WireGuardEngine{
+	engine := &WireGuardEngine{
 		relayFailures: make(chan struct{}, 1),
 		deviceStops:   make(chan struct{}, 1),
 		opener:        opener,
@@ -313,7 +344,14 @@ func newWireGuardEngine(
 		hostAddresses: localHostAddresses,
 		clock:         time.Now,
 		credentials:   credentials,
-	}, nil
+		lazyThreshold: lazyPeerThreshold,
+	}
+	engine.lazy = newLazyPeers(engine.installLazyPeer, engine.evictIdleLazyPeers, engine.now)
+	if aware, ok := factory.(lazyFactory); ok {
+		aware.setLazyPeers(engine.lazy)
+		engine.lazySupported = true
+	}
+	return engine, nil
 }
 
 // interchangeFactory is implemented by device factories that can dial
@@ -418,6 +456,12 @@ func (e *WireGuardEngine) applySnapshot(
 			}
 		}
 	}
+	plan, err = e.restrictLazyPlan(plan, privateKey)
+	if err != nil {
+		_ = e.closeLocked()
+
+		return StateFailed, err
+	}
 	if e.device != nil {
 		relayChanged := e.relayFingerprint != plan.relayFingerprint
 		relayReplaced := false
@@ -506,6 +550,7 @@ func (e *WireGuardEngine) applySnapshot(
 
 	device, err := e.openDevice(ctx, plan)
 	if err != nil {
+		e.forgetLazyPeers()
 		return StateFailed, err
 	}
 	// Before Up, which dials the home region: its first failure must signal.
@@ -514,11 +559,16 @@ func (e *WireGuardEngine) applySnapshot(
 	}
 	if err := device.Configure(bytes.NewReader(plan.configuration)); err != nil {
 		device.Close()
+		e.forgetLazyPeers()
 
 		return StateFailed, fmt.Errorf("dataplane: applying wireguard configuration: %w", err)
 	}
+	// Before Up: the first packet may be to a peer not yet installed.
+	e.lazy.attach()
 	if err := device.Up(); err != nil {
+		e.lazy.detach()
 		device.Close()
+		e.forgetLazyPeers()
 
 		return StateFailed, fmt.Errorf("dataplane: starting wireguard device: %w", err)
 	}
@@ -649,7 +699,7 @@ func (e *WireGuardEngine) replaceRelayAuthority(plan wireGuardPlan) error {
 }
 
 func (p wireGuardPlan) state() State {
-	if len(p.peers) == 0 {
+	if len(p.peers) == 0 && p.mapPeers == 0 {
 		return StateIdle
 	}
 	if p.pendingEndpoints {
@@ -923,13 +973,15 @@ func (e *WireGuardEngine) PeerPaths() PeerPathSnapshot {
 	}
 	snapshot := PeerPathSnapshot{
 		Available:            true,
-		PeerCount:            len(e.peers),
+		PeerCount:            max(len(e.peers), len(e.lazyPlanPeers)),
+		InactiveCount:        max(len(e.lazyPlanPeers)-len(e.peers), 0),
 		RelayBootstrapCount:  e.relayBootstraps,
 		DirectPromotionCount: e.directPromotions,
 		RelayFallbackCount:   e.relayFallbacks,
 		LastDirectPromotion:  e.lastPromotion,
 		MaxDirectPromotion:   e.maximumPromotion,
 	}
+	snapshot.LazyActivationCount, snapshot.LazyEvictionCount, snapshot.LazyDroppedCount = e.lazy.counts()
 	for _, peer := range e.peers {
 		switch peer.currentPath {
 		case peerPathDirect:
@@ -978,6 +1030,9 @@ func (e *WireGuardEngine) SetPreferredEndpoint(
 	}
 	peer, exists := e.peers[peerID]
 	if !exists {
+		if lazy, err := e.lazyPreferredEndpoint(peerID, endpoint, false); lazy {
+			return err
+		}
 		return ErrPeerEndpointUnavailable
 	}
 	// Map endpoints are authorized outright; others (CALL_ME_MAYBE,
@@ -994,6 +1049,7 @@ func (e *WireGuardEngine) SetPreferredEndpoint(
 			baseEndpoint: endpoint.String(),
 			basePath:     peerPathDirect,
 			allowedIPs:   append([]netip.Prefix(nil), peer.allowedIPs...),
+			lazy:         peer.lazy,
 		}
 		if err := e.resetPeerSessions([]wireGuardPeerPlan{reset}); err != nil {
 			_ = e.closeLocked()
@@ -1030,6 +1086,11 @@ func (e *WireGuardEngine) RestorePreferredEndpoint(
 		return ErrPeerEndpointGeneration
 	}
 	peer, exists := e.peers[peerID]
+	if !exists {
+		if lazy, err := e.lazyPreferredEndpoint(peerID, netip.AddrPort{}, true); lazy {
+			return err
+		}
+	}
 	if !exists || peer.baseEndpoint == "" {
 		return ErrPeerEndpointUnavailable
 	}
@@ -1079,6 +1140,7 @@ func (e *WireGuardEngine) advanceCompatiblePlan(
 		)
 		installed.allowedIPs = append([]netip.Prefix(nil), peer.allowedIPs...)
 		installed.discoveryKey = peer.discoveryKey
+		installed.lazy = peer.lazy
 		nextPeers[peer.id] = installed
 	}
 	e.configurationHash = plan.configurationHash
@@ -1153,7 +1215,7 @@ func (e *WireGuardEngine) configurePeerEndpoint(
 	configuration.WriteString("\nupdate_only=true\nendpoint=")
 	configuration.WriteString(endpoint)
 	configuration.WriteByte('\n')
-	writeWireGuardKeepalive(&configuration, path)
+	writeWireGuardKeepalive(&configuration, path, peer.lazy)
 	if err := e.device.Configure(bytes.NewReader(configuration.Bytes())); err != nil {
 		_ = e.closeLocked()
 
@@ -1194,6 +1256,7 @@ func (e *WireGuardEngine) adoptPlanPreserving(revision uint64, plan wireGuardPla
 			currentPath:         peer.basePath,
 			authorizedEndpoints: append([]netip.AddrPort(nil), peer.authorizedEndpoints...),
 			allowedIPs:          append([]netip.Prefix(nil), peer.allowedIPs...),
+			lazy:                peer.lazy,
 		}
 		if _, kept := preserved[peer.id]; kept {
 			if installed, ok := previous[peer.id]; ok {
@@ -1243,7 +1306,8 @@ func wireGuardPeerDiff(
 		installed, exists := current[peer.id]
 		sameKey := exists && installed.key == peer.key
 		if sameKey && installed.discoveryKey == peer.discoveryKey && installed.baseEndpoint == peer.baseEndpoint &&
-			installed.basePath == peer.basePath && slices.Equal(installed.allowedIPs, peer.allowedIPs) {
+			installed.basePath == peer.basePath && installed.lazy == peer.lazy &&
+			slices.Equal(installed.allowedIPs, peer.allowedIPs) {
 			preserved[peer.id] = struct{}{}
 			continue
 		}
@@ -1326,14 +1390,22 @@ func (e *WireGuardEngine) Close() error {
 }
 
 func (e *WireGuardEngine) closeLocked() error {
-	if e == nil || e.device == nil {
+	if e == nil {
+		return nil
+	}
+	if e.device == nil {
+		e.forgetLazyPeers()
 		return nil
 	}
 	if e.deviceWatchStop != nil {
 		close(e.deviceWatchStop)
 		e.deviceWatchStop = nil
 	}
+	// Release the packet paths waiting on activation first: closing the
+	// device waits for them.
+	e.lazy.reset()
 	e.device.Close()
+	e.forgetLazyPeers()
 	e.device = nil
 	e.configurationHash = [32]byte{}
 	e.deviceConfigurationHash = [32]byte{}
@@ -1560,7 +1632,7 @@ func writeWireGuardPeerConfiguration(
 		configuration.WriteString(peer.baseEndpoint)
 		configuration.WriteByte('\n')
 	}
-	writeWireGuardKeepalive(configuration, peer.basePath)
+	writeWireGuardKeepalive(configuration, peer.basePath, peer.lazy)
 	configuration.WriteString("replace_allowed_ips=true\n")
 	for _, allowedIP := range peer.allowedIPs {
 		configuration.WriteString("allowed_ip=")
@@ -1569,9 +1641,9 @@ func writeWireGuardPeerConfiguration(
 	}
 }
 
-func writeWireGuardKeepalive(configuration *bytes.Buffer, path peerPath) {
+func writeWireGuardKeepalive(configuration *bytes.Buffer, path peerPath, lazy bool) {
 	configuration.WriteString("persistent_keepalive_interval=")
-	if path == peerPathDirect {
+	if path == peerPathDirect && !lazy {
 		configuration.WriteString(strconv.Itoa(directPathKeepaliveSeconds))
 	} else {
 		configuration.WriteByte('0')
@@ -1615,7 +1687,7 @@ func equalPeerDataConfiguration(
 	}
 	for _, peer := range planned {
 		installed, exists := current[peer.id]
-		if !exists || installed.key != peer.key ||
+		if !exists || installed.key != peer.key || installed.lazy != peer.lazy ||
 			!slices.Equal(installed.allowedIPs, peer.allowedIPs) {
 			return false
 		}

@@ -9,7 +9,8 @@ func TestParsePeerTraffic(t *testing.T) {
 	t.Parallel()
 	first, second := strings.Repeat("11", 32), strings.Repeat("22", 32)
 	response := "private_key=" + strings.Repeat("33", 32) + "\nlisten_port=41641\n" +
-		"public_key=" + first + "\nendpoint=192.0.2.1:41641\nrx_bytes=100\ntx_bytes=200\n" +
+		"public_key=" + first + "\nendpoint=192.0.2.1:41641\nlast_handshake_time_sec=1760000000\n" +
+		"last_handshake_time_nsec=5\nrx_bytes=100\ntx_bytes=200\n" +
 		"public_key=" + second + "\nrx_bytes=7\ntx_bytes=notanumber\n" +
 		"public_key=zz\nrx_bytes=9\n" +
 		"errno=0\n"
@@ -22,13 +23,13 @@ func TestParsePeerTraffic(t *testing.T) {
 	for i := range key {
 		key[i] = 0x11
 	}
-	if got := traffic[key]; got.rx != 100 || got.tx != 200 {
+	if got := traffic[key]; got.rx != 100 || got.tx != 200 || got.handshake != 1_760_000_000 {
 		t.Fatalf("first peer %+v", got)
 	}
 	for i := range key {
 		key[i] = 0x22
 	}
-	if got := traffic[key]; got.rx != 7 || got.tx != 0 {
+	if got := traffic[key]; got.rx != 7 || got.tx != 0 || got.handshake != 0 {
 		t.Fatalf("second peer %+v", got)
 	}
 }

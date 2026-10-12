@@ -97,6 +97,12 @@ type PathStatus struct {
 	RelayFallbackCount        uint64 `json:"relay_fallback_count"`
 	LastDirectPromotionMillis int64  `json:"last_direct_promotion_ms"`
 	MaxDirectPromotionMillis  int64  `json:"max_direct_promotion_ms"`
+	// InactiveCount counts map peers WireGuard does not hold (lazy peers);
+	// the lazy counters count installations, evictions and dropped requests.
+	InactiveCount       int    `json:"inactive_count"`
+	LazyActivationCount uint64 `json:"lazy_activation_count"`
+	LazyEvictionCount   uint64 `json:"lazy_eviction_count"`
+	LazyDroppedCount    uint64 `json:"lazy_dropped_count"`
 }
 
 // PathProbeStatus contains redacted process-local direct-path diagnostics.

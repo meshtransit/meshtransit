@@ -626,13 +626,24 @@ func formatPathStatus(status localapi.PathStatus) string {
 		return "unavailable"
 	}
 
-	return fmt.Sprintf(
+	summary := fmt.Sprintf(
 		"%d total (%d direct, %d relay, %d pending)",
 		status.PeerCount,
 		status.DirectCount,
 		status.RelayCount,
 		status.PendingCount,
 	)
+	if status.InactiveCount > 0 || status.LazyActivationCount > 0 {
+		summary += fmt.Sprintf(
+			"; lazy: %d inactive, %d activations, %d evictions, %d dropped",
+			status.InactiveCount,
+			status.LazyActivationCount,
+			status.LazyEvictionCount,
+			status.LazyDroppedCount,
+		)
+	}
+
+	return summary
 }
 
 func formatPathTransitionStatus(status localapi.PathStatus) string {

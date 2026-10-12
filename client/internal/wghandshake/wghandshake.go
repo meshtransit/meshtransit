@@ -50,13 +50,35 @@ func NewResponder(private [32]byte) (*Responder, error) {
 	return responder, nil
 }
 
+// Matches reports, in constant time, whether r answers for private.
+func (r *Responder) Matches(private [32]byte) bool {
+	return r != nil && subtle.ConstantTimeCompare(r.private[:], private[:]) == 1
+}
+
+// Clear erases the responder's copy of the private key; the responder then
+// reads no initiation. Call it once nothing can use the responder.
+func (r *Responder) Clear() {
+	if r != nil {
+		clear(r.private[:])
+		r.keyedHash = [blake2s.Size]byte{}
+		r.mac1 = device.CookieChecker{}
+	}
+}
+
+// Addressed reports whether packet is a handshake initiation whose MAC1
+// proves the sender knows this responder's public key. It costs one keyed
+// hash, so callers can check it before rate limiting the costlier Initiator.
+func (r *Responder) Addressed(packet []byte) bool {
+	return r != nil && len(packet) == initiationSize &&
+		binary.LittleEndian.Uint32(packet) == device.MessageInitiationType &&
+		r.mac1.CheckMAC1(packet)
+}
+
 // Initiator returns the static public key of the peer that sent packet, a
 // handshake initiation addressed to this responder. It reports false for any
 // other packet, a wrong MAC1 or an undecryptable static key.
 func (r *Responder) Initiator(packet []byte) ([32]byte, bool) {
-	if r == nil || len(packet) != initiationSize ||
-		binary.LittleEndian.Uint32(packet) != device.MessageInitiationType ||
-		!r.mac1.CheckMAC1(packet) {
+	if !r.Addressed(packet) {
 		return [32]byte{}, false
 	}
 	ephemeral := packet[ephemeralOffset:staticOffset]

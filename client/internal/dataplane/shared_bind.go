@@ -25,9 +25,12 @@ type sharedBind struct {
 	generations *socketGenerationSource
 	mu          sync.RWMutex
 	handler     pathdiscovery.DatagramHandler
-	isOpen      bool
-	port        uint16
-	generation  uint64
+	// lazy, when set, sees each WireGuard datagram the handler does not take
+	// before wireguard-go does, to install the sender of an initiation.
+	lazy       *lazyPeers
+	isOpen     bool
+	port       uint16
+	generation uint64
 }
 
 // socketGenerationSource provides one monotonic namespace across every bind
@@ -297,7 +300,7 @@ func (b *sharedBind) wrapReceiver(
 		endpoints []conn.Endpoint,
 	) (int, error) {
 		count, err := receive(packets, sizes, endpoints)
-		if handler == nil {
+		if handler == nil && b.lazy == nil {
 			return count, err
 		}
 		for index := 0; index < count; index++ {
@@ -306,7 +309,8 @@ func (b *sharedBind) wrapReceiver(
 				continue
 			}
 			packet := packets[index][:sizes[index]]
-			if !handler.MatchesDatagram(packet) {
+			if handler == nil || !handler.MatchesDatagram(packet) {
+				b.observeWireGuard(packet, endpoints[index])
 				continue
 			}
 			if through, viaRelay := endpoints[index].(*relayEndpoint); viaRelay {
@@ -327,6 +331,22 @@ func (b *sharedBind) wrapReceiver(
 
 		return count, err
 	}
+}
+
+// observeWireGuard passes a WireGuard datagram to the lazy peer hook, with
+// the sender's node key when a relay delivered it.
+func (b *sharedBind) observeWireGuard(packet []byte, endpoint conn.Endpoint) {
+	if b.lazy == nil || !isInitiation(packet) {
+		return
+	}
+	if through, viaRelay := endpoint.(*relayEndpoint); viaRelay {
+		key := through.peerKey
+		b.lazy.initiation(packet, &key, netip.Addr{})
+
+		return
+	}
+	source, _ := datagramSource(endpoint)
+	b.lazy.initiation(packet, nil, source.Addr())
 }
 
 func datagramSource(endpoint conn.Endpoint) (netip.AddrPort, bool) {

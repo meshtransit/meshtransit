@@ -36,10 +36,12 @@ type trafficReportingDevice interface {
 	PeerTraffic() (map[[32]byte]peerTraffic, error)
 }
 
-type peerTraffic struct{ rx, tx uint64 }
+// peerTraffic is one peer's counters; handshake is the unix second of its
+// last completed handshake, zero when it never completed one.
+type peerTraffic struct{ rx, tx, handshake uint64 }
 
-// parsePeerTraffic reads the public_key, rx_bytes and tx_bytes lines of a
-// WireGuard UAPI get response.
+// parsePeerTraffic reads the public_key, rx_bytes, tx_bytes and
+// last_handshake_time_sec lines of a WireGuard UAPI get response.
 func parsePeerTraffic(response string) map[[32]byte]peerTraffic {
 	traffic := make(map[[32]byte]peerTraffic)
 	var current [32]byte
@@ -58,7 +60,7 @@ func parsePeerTraffic(response string) map[[32]byte]peerTraffic {
 				copy(current[:], raw)
 				traffic[current] = peerTraffic{}
 			}
-		case "rx_bytes", "tx_bytes":
+		case "rx_bytes", "tx_bytes", "last_handshake_time_sec":
 			if !have {
 				continue
 			}
@@ -67,10 +69,13 @@ func parsePeerTraffic(response string) map[[32]byte]peerTraffic {
 				continue
 			}
 			entry := traffic[current]
-			if name == "rx_bytes" {
+			switch name {
+			case "rx_bytes":
 				entry.rx = count
-			} else {
+			case "tx_bytes":
 				entry.tx = count
+			default:
+				entry.handshake = count
 			}
 			traffic[current] = entry
 		}
@@ -92,8 +97,9 @@ func relayRegionOf(endpoint string) int {
 	return id
 }
 
-// PeerPathStats returns every installed peer's path and counters. Counters
-// are zero when the device cannot report them. The daemon serializes this
+// PeerPathStats returns every installed peer's path and counters, and the
+// counters of lazy peers evicted since, with no path. Counters are zero when
+// the device cannot report them. The daemon serializes this
 // call with Apply and Close.
 func (e *WireGuardEngine) PeerPathStats() []PeerPathStat {
 	if e == nil {
@@ -108,7 +114,12 @@ func (e *WireGuardEngine) PeerPathStats() []PeerPathStat {
 	if reporting, ok := e.device.(trafficReportingDevice); ok {
 		traffic, _ = reporting.PeerTraffic() // best effort: paths still report
 	}
-	stats := make([]PeerPathStat, 0, len(e.peers))
+	stats := make([]PeerPathStat, 0, len(e.peers)+len(e.lazyTrafficBase))
+	for id, base := range e.lazyTrafficBase {
+		if _, installed := e.peers[id]; !installed {
+			stats = append(stats, PeerPathStat{PeerID: id, RxBytes: base.rx, TxBytes: base.tx})
+		}
+	}
 	for id, peer := range e.peers {
 		stat := PeerPathStat{PeerID: id}
 		switch peer.currentPath {
@@ -121,6 +132,8 @@ func (e *WireGuardEngine) PeerPathStats() []PeerPathStat {
 		if counters, found := traffic[peer.key]; found {
 			stat.RxBytes, stat.TxBytes = counters.rx, counters.tx
 		}
+		base := e.lazyTrafficBase[id]
+		stat.RxBytes, stat.TxBytes = stat.RxBytes+base.rx, stat.TxBytes+base.tx
 		stats = append(stats, stat)
 	}
 	return stats

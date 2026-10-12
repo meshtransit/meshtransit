@@ -12,6 +12,7 @@ import (
 
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
+	"golang.zx2c4.com/wireguard/tun"
 
 	"meshtransit.net/client/internal/interchange"
 	"meshtransit.net/client/internal/netadmin"
@@ -24,6 +25,11 @@ type officialWireGuardFactory struct {
 	generations *socketGenerationSource
 	credentials *relayCredentials
 	logger      *slog.Logger
+	lazy        *lazyPeers
+	// acquire and newBind, when set, replace the platform TUN adoption and
+	// the UDP sockets; tests run real devices over in-memory TUNs and binds.
+	acquire func(netadmin.TUN, *slog.Logger) (tun.Device, error)
+	newBind func() conn.Bind
 }
 
 type officialWireGuardDevice struct {
@@ -42,6 +48,10 @@ func (f *officialWireGuardFactory) setLogger(logger *slog.Logger) {
 	f.logger = logger
 }
 
+func (f *officialWireGuardFactory) setLazyPeers(lazy *lazyPeers) {
+	f.lazy = lazy
+}
+
 func newWireGuardFactory() (wireGuardFactory, error) {
 	return &officialWireGuardFactory{generations: &socketGenerationSource{}}, nil
 }
@@ -56,15 +66,23 @@ func (f *officialWireGuardFactory) New(
 	if f == nil || f.generations == nil {
 		return nil, errors.New("dataplane: wireguard factory is not initialized")
 	}
-	tunDevice, err := acquireTUN(tunValue, f.logger)
+	acquire, newBind := acquireTUN, conn.NewDefaultBind
+	if f.acquire != nil {
+		acquire = f.acquire
+	}
+	if f.newBind != nil {
+		newBind = f.newBind
+	}
+	tunDevice, err := acquire(tunValue, f.logger)
 	if err != nil {
 		return nil, err
 	}
-	if filter != nil || observer != nil {
+	if filter != nil || observer != nil || f.lazy != nil {
 		tunDevice = &observedTUN{
 			Device:   tunDevice,
 			filter:   filter,
 			observer: observer,
+			lazy:     f.lazy,
 		}
 	}
 	logger := newDeviceLogger(f.logger, time.Now)
@@ -83,7 +101,7 @@ func (f *officialWireGuardFactory) New(
 		}
 	}
 	bind, err := newSharedBindWithRelay(
-		conn.NewDefaultBind(),
+		newBind(),
 		f.generations,
 		relayPool,
 	)
@@ -93,6 +111,7 @@ func (f *officialWireGuardFactory) New(
 
 		return nil, err
 	}
+	bind.lazy = f.lazy
 	discovery, err := pathdiscovery.NewDiscovery(bind)
 	if err != nil {
 		_ = tunDevice.Close()

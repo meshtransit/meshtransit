@@ -664,6 +664,10 @@ func mapPathStatus(snapshot dataplane.PeerPathSnapshot) pathStatus {
 		RelayFallbackCount:        snapshot.RelayFallbackCount,
 		LastDirectPromotionMillis: snapshot.LastDirectPromotion.Milliseconds(),
 		MaxDirectPromotionMillis:  snapshot.MaxDirectPromotion.Milliseconds(),
+		InactiveCount:             snapshot.InactiveCount,
+		LazyActivationCount:       snapshot.LazyActivationCount,
+		LazyEvictionCount:         snapshot.LazyEvictionCount,
+		LazyDroppedCount:          snapshot.LazyDroppedCount,
 	}
 }
 

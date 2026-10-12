@@ -881,3 +881,20 @@ func testOptions(client DaemonClient) Options {
 }
 
 var _ DaemonClient = (*fakeClient)(nil)
+
+func TestFormatPathStatusReportsLazyPeers(t *testing.T) {
+	t.Parallel()
+
+	eager := localapi.PathStatus{Available: true, PeerCount: 2, DirectCount: 2}
+	if got := formatPathStatus(eager); got != "2 total (2 direct, 0 relay, 0 pending)" {
+		t.Fatalf("eager status = %q", got)
+	}
+	lazy := localapi.PathStatus{
+		Available: true, PeerCount: 1500, DirectCount: 3, InactiveCount: 1497,
+		LazyActivationCount: 9, LazyEvictionCount: 6, LazyDroppedCount: 1,
+	}
+	want := "1500 total (3 direct, 0 relay, 0 pending); lazy: 1497 inactive, 9 activations, 6 evictions, 1 dropped"
+	if got := formatPathStatus(lazy); got != want {
+		t.Fatalf("lazy status = %q, want %q", got, want)
+	}
+}

@@ -143,6 +143,7 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 			return 1
 		}
 		engine.SetLogger(logger.With("component", "data_plane"))
+		engine.SetLazyPeers(cfg.LazyPeers == "auto")
 		if cfg.TestPolicyDrift {
 			engine.SetPolicyDriftTest(true)
 			logger.Warn("TEST ONLY: the packet filter enforces one rule fewer than control sends")

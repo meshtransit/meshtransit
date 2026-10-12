@@ -171,3 +171,32 @@ func BenchmarkInitiator(b *testing.B) {
 		}
 	}
 }
+
+func TestAddressedChecksOnlyMAC1(t *testing.T) {
+	t.Parallel()
+	responderKey, initiatorKey := privateKey(0x11), privateKey(0x22)
+	packet := realInitiation(t, initiatorKey, publicKey(t, responderKey))
+	responder, err := NewResponder(responderKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := NewResponder(privateKey(0x33))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !responder.Addressed(packet) {
+		t.Fatal("a real initiation was not addressed to its responder")
+	}
+	if other.Addressed(packet) {
+		t.Fatal("an initiation was addressed to another key")
+	}
+	tampered := bytes.Clone(packet)
+	tampered[120] ^= 1
+	if responder.Addressed(tampered) || responder.Addressed(packet[:100]) {
+		t.Fatal("a bad MAC1 or a short packet was addressed")
+	}
+	var nilResponder *Responder
+	if nilResponder.Addressed(packet) {
+		t.Fatal("a nil responder accepted a packet")
+	}
+}

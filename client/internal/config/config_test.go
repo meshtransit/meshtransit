@@ -305,3 +305,18 @@ func TestParseCloudMetadata(t *testing.T) {
 		t.Fatal("an unknown cloud metadata mode was accepted")
 	}
 }
+
+func TestParseLazyPeers(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Parse(nil, io.Discard)
+	if err != nil || cfg.LazyPeers != "auto" {
+		t.Fatalf("default lazy peers = %q, %v", cfg.LazyPeers, err)
+	}
+	if cfg, err := Parse([]string{"--lazy-peers", "off"}, io.Discard); err != nil || cfg.LazyPeers != "off" {
+		t.Fatalf("--lazy-peers off = %q, %v", cfg.LazyPeers, err)
+	}
+	if _, err := Parse([]string{"--lazy-peers", "on"}, io.Discard); err == nil {
+		t.Fatal("an unknown lazy peers mode was accepted")
+	}
+}
