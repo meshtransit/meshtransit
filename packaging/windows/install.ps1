@@ -20,7 +20,6 @@ $source = $PSScriptRoot
 $installDir = Join-Path $env:ProgramFiles 'MeshTransit'
 $serviceName = 'MeshTransit'
 $groupName = 'MeshTransit Users'
-$pipe = '\\.\pipe\ProtectedPrefix\Administrators\MeshTransit\meshd'
 
 foreach ($file in 'meshd.exe', 'meshctl.exe', 'wintun.dll') {
     if (-not (Test-Path (Join-Path $source $file))) { throw "$file is missing next to install.ps1" }
@@ -74,10 +73,24 @@ if (($machinePath -split ';') -notcontains $installDir) {
 }
 
 Start-Service -Name $serviceName
-$deadline = (Get-Date).AddSeconds(20)
-while (-not (Test-Path $pipe) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
-if (-not (Test-Path $pipe)) {
-    throw 'The MeshTransit service did not start; see C:\ProgramData\MeshTransit\logs\meshd.log'
+# Ready means the service runs and meshctl gets an answer from it. Checking
+# for the pipe alone is unreliable: Test-Path fails while every pipe instance
+# is busy.
+$meshctl = Join-Path $installDir 'meshctl.exe'
+$deadline = (Get-Date).AddSeconds(45)
+$ready = $false
+while ((Get-Date) -lt $deadline) {
+    $status = (Get-Service -Name $serviceName).Status
+    if ($status -eq 'Stopped') { break }
+    if ($status -eq 'Running') {
+        & $meshctl status *> $null
+        if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+    }
+    Start-Sleep -Milliseconds 500
+}
+if (-not $ready) {
+    $status = (Get-Service -Name $serviceName).Status
+    throw "The MeshTransit service is $status and does not answer meshctl; see C:\ProgramData\MeshTransit\logs\meshd.log"
 }
 Write-Host 'MeshTransit is installed and running.'
 Write-Host 'Connect this machine with: meshctl up   (open a new terminal first; sign in again to use it without elevation)'

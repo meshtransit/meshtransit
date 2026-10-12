@@ -54,9 +54,11 @@ package-darwin:
 	bash packaging/darwin/build-tarball.sh "$(VERSION)" amd64 dist
 	bash packaging/darwin/build-tarball.sh "$(VERSION)" arm64 dist
 
+# Windows versions cannot carry Debian's "~" pre-release marker; 0.1.0~dev
+# becomes 0.1.0-dev.
 package-windows:
-	bash packaging/windows/build-zip.sh "$(VERSION)" amd64 dist
-	bash packaging/windows/build-zip.sh "$(VERSION)" arm64 dist
+	bash packaging/windows/build-zip.sh "$(subst ~,-,$(VERSION))" amd64 dist
+	bash packaging/windows/build-zip.sh "$(subst ~,-,$(VERSION))" arm64 dist
 
 package-deb-meshd:
 	bash packaging/linux/meshd/build-deb.sh "$(VERSION)" "$(ARCH)" dist
