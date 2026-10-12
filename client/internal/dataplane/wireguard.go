@@ -461,10 +461,19 @@ func (e *WireGuardEngine) applySnapshot(
 				return StateFailed, err
 			}
 		}
-		if err := e.device.Configure(bytes.NewReader(plan.peerConfiguration)); err != nil {
-			_ = e.Close()
+		// The same device keys and port: change only the peers that changed,
+		// so the others keep their sessions and paths. Otherwise replace all.
+		peerConfiguration := plan.peerConfiguration
+		var preserved, sessionResets map[uint64]struct{}
+		if e.deviceConfigurationHash == plan.deviceConfigurationHash {
+			peerConfiguration, preserved, sessionResets = wireGuardPeerDiff(e.peers, plan.peers)
+		}
+		if len(peerConfiguration) != 0 {
+			if err := e.device.Configure(bytes.NewReader(peerConfiguration)); err != nil {
+				_ = e.Close()
 
-			return StateFailed, errors.New("dataplane: applying wireguard peer configuration failed")
+				return StateFailed, errors.New("dataplane: applying wireguard peer configuration failed")
+			}
 		}
 		if routesChanged {
 			configurer, supported := e.opener.(tunRouteConfigurer)
@@ -482,7 +491,8 @@ func (e *WireGuardEngine) applySnapshot(
 				return StateFailed, fmt.Errorf("dataplane: replacing tun routes: %w", err)
 			}
 		}
-		e.adoptPlan(snapshot.Revision, plan)
+		e.adoptPlanPreserving(snapshot.Revision, plan, preserved)
+		e.markPeerSessionResetPendingIDs(sessionResets)
 
 		return plan.state(), nil
 	}
@@ -1089,6 +1099,17 @@ func (e *WireGuardEngine) markPeerSessionResetPending(peers []wireGuardPeerPlan)
 	}
 }
 
+// markPeerSessionResetPendingIDs is markPeerSessionResetPending for the
+// peers a diff removed and added again.
+func (e *WireGuardEngine) markPeerSessionResetPendingIDs(peerIDs map[uint64]struct{}) {
+	for peerID := range peerIDs {
+		if installed, exists := e.peers[peerID]; exists {
+			installed.sessionResetPending = true
+			e.peers[peerID] = installed
+		}
+	}
+}
+
 func (e *WireGuardEngine) configurePeerEndpoint(
 	peerID uint64,
 	peer wireGuardPeerState,
@@ -1125,6 +1146,13 @@ func (e *WireGuardEngine) configurePeerEndpoint(
 }
 
 func (e *WireGuardEngine) adoptPlan(revision uint64, plan wireGuardPlan) {
+	e.adoptPlanPreserving(revision, plan, nil)
+}
+
+// adoptPlanPreserving records plan as installed. Peers in preserved were left
+// untouched in the device, so they keep their current path and timers.
+func (e *WireGuardEngine) adoptPlanPreserving(revision uint64, plan wireGuardPlan, preserved map[uint64]struct{}) {
+	previous := e.peers
 	e.configurationHash = plan.configurationHash
 	e.deviceConfigurationHash = plan.deviceConfigurationHash
 	e.relayFingerprint = plan.relayFingerprint
@@ -1145,12 +1173,66 @@ func (e *WireGuardEngine) adoptPlan(revision uint64, plan wireGuardPlan) {
 			authorizedEndpoints: append([]netip.AddrPort(nil), peer.authorizedEndpoints...),
 			allowedIPs:          append([]netip.Prefix(nil), peer.allowedIPs...),
 		}
+		if _, kept := preserved[peer.id]; kept {
+			if installed, ok := previous[peer.id]; ok {
+				state.currentEndpoint, state.currentPath = installed.currentEndpoint, installed.currentPath
+				state.relayStartedAt, state.sessionResetPending = installed.relayStartedAt, installed.sessionResetPending
+				e.peers[peer.id] = state
+				continue
+			}
+		}
 		if state.basePath == peerPathRelay {
 			state.relayStartedAt = now
 			e.relayBootstraps++
 		}
 		e.peers[peer.id] = state
 	}
+}
+
+// wireGuardPeerDiff returns the UAPI configuration that turns the installed
+// peers into the planned ones without replace_peers: every installed key the
+// plan no longer has is removed explicitly, new and changed peers are written
+// in full, and a peer whose discovery identity changed is removed and added
+// again to drop its session. It also returns the peers left untouched and the
+// peers whose sessions were reset.
+func wireGuardPeerDiff(
+	current map[uint64]wireGuardPeerState,
+	planned []wireGuardPeerPlan,
+) ([]byte, map[uint64]struct{}, map[uint64]struct{}) {
+	plannedKeys := make(map[[32]byte]struct{}, len(planned))
+	for _, peer := range planned {
+		plannedKeys[peer.key] = struct{}{}
+	}
+	removed := make([][32]byte, 0)
+	for _, installed := range current {
+		if _, kept := plannedKeys[installed.key]; !kept {
+			removed = append(removed, installed.key)
+		}
+	}
+	slices.SortFunc(removed, func(left, right [32]byte) int { return bytes.Compare(left[:], right[:]) })
+	var configuration bytes.Buffer
+	for _, key := range removed {
+		writeWireGuardPeerKey(&configuration, key)
+		configuration.WriteString("remove=true\n")
+	}
+	preserved := make(map[uint64]struct{}, len(planned))
+	resets := make(map[uint64]struct{})
+	for _, peer := range planned {
+		installed, exists := current[peer.id]
+		sameKey := exists && installed.key == peer.key
+		if sameKey && installed.discoveryKey == peer.discoveryKey && installed.baseEndpoint == peer.baseEndpoint &&
+			installed.basePath == peer.basePath && slices.Equal(installed.allowedIPs, peer.allowedIPs) {
+			preserved[peer.id] = struct{}{}
+			continue
+		}
+		if sameKey && installed.discoveryKey != peer.discoveryKey {
+			writeWireGuardPeerKey(&configuration, peer.key)
+			configuration.WriteString("remove=true\n")
+			resets[peer.id] = struct{}{}
+		}
+		writeWireGuardPeerConfiguration(&configuration, peer)
+	}
+	return configuration.Bytes(), preserved, resets
 }
 
 // SetLogger records each peer's path changes (direct, relay) with the peer's

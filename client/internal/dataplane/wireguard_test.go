@@ -156,7 +156,12 @@ func TestWireGuardEngineRetainsPresenceTransportWithoutPeers(t *testing.T) {
 	if len(opener.config.Routes) != 0 || !slices.Equal(opener.config.Addresses, peerless.Self.Addresses) {
 		t.Fatalf("peerless helper config = %#v", opener.config)
 	}
-	if device.configuration != "replace_peers=true\n" {
+	// The update removes the one peer explicitly and leaves the device keys
+	// and port, so the bind is not restarted.
+	if strings.Contains(device.configuration, "private_key=") ||
+		strings.Contains(device.configuration, "listen_port=") ||
+		!strings.HasSuffix(device.configuration, "remove=true\n") ||
+		strings.Count(device.configuration, "public_key=") != 1 {
 		t.Fatalf("peerless wireguard update restarted the bind: %q", device.configuration)
 	}
 
@@ -1968,5 +1973,80 @@ func TestWireGuardEngineInstallsAggregatedPeerRoutes(t *testing.T) {
 	want := []netip.Prefix{netip.MustParsePrefix("100.64.0.4/30")}
 	if !slices.Equal(opener.config.Routes, want) {
 		t.Fatalf("helper routes = %v, want %v", opener.config.Routes, want)
+	}
+}
+
+// TestWireGuardEngineAppliesPeerDiffs: a peer joining or leaving changes
+// only that peer in the device; the other peers keep their sessions, and a
+// removed peer is removed explicitly.
+func TestWireGuardEngineAppliesPeerDiffs(t *testing.T) {
+	t.Parallel()
+
+	privateKey, snapshot := testWireGuardSnapshot(t)
+	newPeer := func(id uint64, address string) networkmap.Node {
+		key, err := ecdh.X25519().GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatalf("GenerateKey() error = %v", err)
+		}
+		prefix := netip.MustParsePrefix(address)
+		peer := snapshot.Peers[0]
+		peer.ID = id
+		peer.PublicKey = "nodekey:" + hex.EncodeToString(key.PublicKey().Bytes())
+		peer.Addresses = []netip.Prefix{prefix}
+		peer.AllowedIPs = []netip.Prefix{prefix}
+		return peer
+	}
+	stay := snapshot.Peers[0]
+	leaving := newPeer(20, "100.64.0.20/32")
+	joining := newPeer(30, "100.64.0.30/32")
+	snapshot.Peers = []networkmap.Node{stay, leaving}
+
+	device := &fakeWireGuardDevice{}
+	engine, err := newWireGuardEngine(&wireGuardTUNOpener{}, 41641, &fakeWireGuardFactory{device: device}, nil)
+	if err != nil {
+		t.Fatalf("newWireGuardEngine() error = %v", err)
+	}
+	if state, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil || state != StateEncrypted {
+		t.Fatalf("initial Apply() = %q, %v", state, err)
+	}
+
+	snapshot.Revision = 2
+	snapshot.Peers = []networkmap.Node{stay, joining}
+	if state, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil || state != StateEncrypted {
+		t.Fatalf("changed Apply() = %q, %v", state, err)
+	}
+	diff := device.configuration
+	keyLine := func(peer networkmap.Node) string {
+		return "public_key=" + strings.TrimPrefix(peer.PublicKey, "nodekey:") + "\n"
+	}
+	if strings.Contains(diff, "replace_peers") {
+		t.Fatalf("diff replaced every peer:\n%s", diff)
+	}
+	if !strings.Contains(diff, keyLine(leaving)+"remove=true\n") {
+		t.Fatalf("diff does not remove the leaving peer:\n%s", diff)
+	}
+	if !strings.Contains(diff, keyLine(joining)) {
+		t.Fatalf("diff does not add the joining peer:\n%s", diff)
+	}
+	if strings.Contains(diff, keyLine(stay)) {
+		t.Fatalf("diff touched a peer that did not change:\n%s", diff)
+	}
+	if device.closeCalls != 0 {
+		t.Fatalf("device closed %d times", device.closeCalls)
+	}
+
+	// Moving an address to another peer rewrites both; nothing else changes.
+	snapshot.Revision = 3
+	moved := joining
+	moved.Addresses = []netip.Prefix{netip.MustParsePrefix("100.64.0.31/32")}
+	moved.AllowedIPs = moved.Addresses
+	snapshot.Peers = []networkmap.Node{stay, moved}
+	if state, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil || state != StateEncrypted {
+		t.Fatalf("moved Apply() = %q, %v", state, err)
+	}
+	if diff := device.configuration; !strings.Contains(diff, keyLine(moved)+"protocol_version=1\n") ||
+		!strings.Contains(diff, "allowed_ip=100.64.0.31/32\n") || strings.Contains(diff, "remove=true") ||
+		strings.Contains(diff, keyLine(stay)) {
+		t.Fatalf("address change diff:\n%s", diff)
 	}
 }
