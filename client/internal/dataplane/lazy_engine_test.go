@@ -324,7 +324,7 @@ func TestLazyEngineSwitchesModesWithMapSize(t *testing.T) {
 func TestLazyEngineDisabledInstallsEveryPeer(t *testing.T) {
 	t.Parallel()
 	engine, fake, _, privateKey, snapshot := newLazyTestEngine(t, 0, 3)
-	engine.SetLazyPeers(false)
+	engine.SetLazyPeers(LazyPeersOff)
 	if _, err := engine.Apply(t.Context(), snapshot, privateKey); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
@@ -757,4 +757,25 @@ func TestLazyEngineConcurrentTrafficApplyAndClose(t *testing.T) {
 	}
 	close(stop)
 	traffic.Wait()
+}
+
+func TestLazyEngineModes(t *testing.T) {
+	t.Parallel()
+	engine, _, _, _, _ := newLazyTestEngine(t, lazyPeerThreshold, 0)
+	for _, test := range []struct {
+		mode    LazyPeerMode
+		peers   int
+		wantOn  bool
+		comment string
+	}{
+		{LazyPeersAuto, lazyPeerThreshold, false, "auto at the threshold"},
+		{LazyPeersAuto, lazyPeerThreshold + 1, true, "auto above the threshold"},
+		{LazyPeersOff, lazyPeerThreshold * 10, false, "off"},
+		{LazyPeersAlways, 1, true, "always"},
+	} {
+		engine.SetLazyPeers(test.mode)
+		if got := engine.lazyActive(test.peers); got != test.wantOn {
+			t.Errorf("%s: lazyActive(%d) = %t", test.comment, test.peers, got)
+		}
+	}
 }

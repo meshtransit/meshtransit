@@ -316,6 +316,9 @@ func TestParseLazyPeers(t *testing.T) {
 	if cfg, err := Parse([]string{"--lazy-peers", "off"}, io.Discard); err != nil || cfg.LazyPeers != "off" {
 		t.Fatalf("--lazy-peers off = %q, %v", cfg.LazyPeers, err)
 	}
+	if cfg, err := Parse([]string{"--lazy-peers", "always"}, io.Discard); err != nil || cfg.LazyPeers != "always" {
+		t.Fatalf("--lazy-peers always = %q, %v", cfg.LazyPeers, err)
+	}
 	if _, err := Parse([]string{"--lazy-peers", "on"}, io.Discard); err == nil {
 		t.Fatal("an unknown lazy peers mode was accepted")
 	}

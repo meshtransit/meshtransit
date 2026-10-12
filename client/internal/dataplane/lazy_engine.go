@@ -17,15 +17,31 @@ type lazyFactory interface {
 	setLazyPeers(*lazyPeers)
 }
 
-// SetLazyPeers turns lazy peers on (the default) or off. Call it before the
-// first Apply.
-func (e *WireGuardEngine) SetLazyPeers(enabled bool) {
+// LazyPeerMode chooses when maps install their peers on demand.
+type LazyPeerMode uint8
+
+const (
+	// LazyPeersAuto installs on demand in maps of more than 1,000 peers.
+	LazyPeersAuto LazyPeerMode = iota
+	// LazyPeersOff installs every peer.
+	LazyPeersOff
+	// LazyPeersAlways installs on demand in every map; for testing.
+	LazyPeersAlways
+)
+
+// SetLazyPeers chooses when peers are installed on demand. Call it before
+// the first Apply.
+func (e *WireGuardEngine) SetLazyPeers(mode LazyPeerMode) {
 	if e == nil {
 		return
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.lazyDisabled = !enabled
+	e.lazyDisabled = mode == LazyPeersOff
+	e.lazyThreshold = lazyPeerThreshold
+	if mode == LazyPeersAlways {
+		e.lazyThreshold = 0
+	}
 }
 
 // lazyActive reports whether a map of peers peers installs them on demand.

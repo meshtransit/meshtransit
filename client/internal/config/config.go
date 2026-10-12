@@ -36,7 +36,8 @@ type Config struct {
 	// cloud provider's metadata service on a recognised cloud) or off.
 	CloudMetadata string
 	// LazyPeers is auto (with a map of more than 1,000 peers, WireGuard holds
-	// only the peers that carry traffic) or off (it holds every peer).
+	// only the peers that carry traffic), off (it holds every peer) or always
+	// (any map; to test the on-demand path on small Networks).
 	LazyPeers string
 	// TestPolicyDrift makes the packet filter enforce one rule fewer than
 	// Core sends, to demonstrate that Core reports the mismatch. Test only.
@@ -89,7 +90,7 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 	flags.StringVar(&cfg.CloudMetadata, "cloud-metadata", "auto",
 		"read public addresses from the cloud metadata service on AWS, GCP, Azure or DigitalOcean: auto or off")
 	flags.StringVar(&cfg.LazyPeers, "lazy-peers", "auto",
-		"with more than 1,000 peers, keep only the peers that carry traffic in WireGuard: auto or off")
+		"with more than 1,000 peers, keep only the peers that carry traffic in WireGuard: auto, off, or always (TEST ONLY: any map)")
 	flags.BoolVar(&cfg.TestPolicyDrift, "test-policy-drift", false,
 		"TEST ONLY: enforce one packet-filter rule fewer than control sends, to demonstrate mismatch detection")
 	flags.BoolVar(
@@ -249,9 +250,9 @@ func validate(cfg Config) error {
 		return errors.New("cloud metadata must be auto or off")
 	}
 	switch cfg.LazyPeers {
-	case "auto", "off":
+	case "auto", "off", "always":
 	default:
-		return errors.New("lazy peers must be auto or off")
+		return errors.New("lazy peers must be auto, off or always")
 	}
 	if cfg.TestPolicyDrift && !cfg.EnableDataPlane {
 		return errors.New("policy drift testing requires --enable-data-plane")

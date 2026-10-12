@@ -143,7 +143,13 @@ func runContext(parent context.Context, args []string, stdout, stderr io.Writer)
 			return 1
 		}
 		engine.SetLogger(logger.With("component", "data_plane"))
-		engine.SetLazyPeers(cfg.LazyPeers == "auto")
+		switch cfg.LazyPeers {
+		case "off":
+			engine.SetLazyPeers(dataplane.LazyPeersOff)
+		case "always":
+			engine.SetLazyPeers(dataplane.LazyPeersAlways)
+			logger.Warn("TEST ONLY: every map installs its peers on demand")
+		}
 		if cfg.TestPolicyDrift {
 			engine.SetPolicyDriftTest(true)
 			logger.Warn("TEST ONLY: the packet filter enforces one rule fewer than control sends")

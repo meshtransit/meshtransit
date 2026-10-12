@@ -67,7 +67,7 @@ func newLazyDevicePair(t *testing.T, lazyA, lazyB bool, fillers int) (*lazyDevic
 		if lazy {
 			engine.lazyThreshold = 0
 		} else {
-			engine.SetLazyPeers(false)
+			engine.SetLazyPeers(LazyPeersOff)
 		}
 		t.Cleanup(func() { _ = engine.Close() })
 		var key NodePrivateKey
