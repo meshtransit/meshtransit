@@ -513,7 +513,29 @@ func writeResponse(connection *net.UnixConn, value response, file *os.File) erro
 	if err != nil {
 		return err
 	}
-	return writeResponseFrame(connection, payload, file)
+	if err := writeResponseFrame(connection, payload, file); err != nil {
+		return err
+	}
+	if file != nil {
+		awaitDescriptorReceipt(connection)
+	}
+	return nil
+}
+
+// awaitDescriptorReceipt waits, within the connection deadline, for meshd to
+// close its end, which it does once it has received the response. Until then
+// the caller keeps its own descriptor open. Closing it and the connection
+// while the descriptor is still in flight leaves only in-flight references,
+// and on macOS the kernel's in-flight descriptor collection can then flush
+// the socket as meshd receives it: the utun arrives with its receive side
+// shut and never delivers a packet.
+func awaitDescriptorReceipt(connection *net.UnixConn) {
+	var buffer [1]byte
+	for {
+		if _, err := connection.Read(buffer[:]); err != nil {
+			return
+		}
+	}
 }
 
 // configuredDNSEndpoint validates the DNS link fixed at startup. Where the
