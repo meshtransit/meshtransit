@@ -61,27 +61,36 @@ func (store *Store) loadDirectEdges(
 // aliasEdgesQuery selects the reachable-share reader once runtime may execute
 // it, so a rolling upgrade or a pending operator step keeps the previous one.
 func aliasEdgesQuery(ctx context.Context, transaction databaseTransaction) (string, error) {
-	rows, err := transaction.Query(ctx, reachableAliasEdgesGrantedSQL)
-	if err != nil || rows == nil {
-		if err == nil {
-			err = ErrSnapshotEvidence
-		}
+	granted, err := functionGranted(ctx, transaction, reachableAliasEdgesGrantedSQL)
+	if err != nil {
 		return "", errors.Join(ErrLoadSnapshot, fmt.Errorf("check alias map reader: %w", err))
-	}
-	defer rows.Close()
-	granted := false
-	if rows.Next() {
-		if err := rows.Scan(&granted); err != nil {
-			return "", errors.Join(ErrLoadSnapshot, fmt.Errorf("scan alias map reader: %w", err))
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return "", errors.Join(ErrLoadSnapshot, fmt.Errorf("iterate alias map reader: %w", err))
 	}
 	if granted {
 		return loadReachableAliasEdgesSQL, nil
 	}
 	return loadAliasEdgesSQL, nil
+}
+
+// functionGranted runs a has_function_privilege query for this role.
+func functionGranted(ctx context.Context, transaction databaseTransaction, query string) (bool, error) {
+	rows, err := transaction.Query(ctx, query)
+	if err != nil || rows == nil {
+		if err == nil {
+			err = ErrSnapshotEvidence
+		}
+		return false, err
+	}
+	defer rows.Close()
+	granted := false
+	if rows.Next() {
+		if err := rows.Scan(&granted); err != nil {
+			return false, fmt.Errorf("scan: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate: %w", err)
+	}
+	return granted, nil
 }
 
 func readSharingEdges(

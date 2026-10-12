@@ -109,18 +109,14 @@ func TestUnchangedKeepsASnapshotOfTheLatestView(t *testing.T) {
 	}
 }
 
-// TestSharingNetworkIsAlwaysReadPerDevice covers a stream opened before a
+// TestSharingDeviceIsAlwaysReadPerDevice covers a stream opened before a
 // share took effect: its snapshot has no sharing dependency, so only the
-// view can tell that the Network now takes part in a share, and the stream
-// must then read its Device (aliases, peers across Networks) instead of
-// keeping or deriving a map without them.
-func TestSharingNetworkIsAlwaysReadPerDevice(t *testing.T) {
+// view can tell that a share now binds the Device (its target on the
+// provider side, a rule source on the consumer side), and the stream must
+// then read the Device instead of keeping or deriving a map without it.
+func TestSharingDeviceIsAlwaysReadPerDevice(t *testing.T) {
 	store, transaction, record := liveStoreFixture(t)
-	for index, row := range transaction.rows {
-		if _, ok := row.(networkSharingRow); ok {
-			transaction.rows[index] = networkSharingRow{sharing: true}
-		}
-	}
+	setSharingDevices(transaction, record.numericNodeID)
 	loaded, err := store.Load(t.Context(), validIdentity(t))
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -129,12 +125,40 @@ func TestSharingNetworkIsAlwaysReadPerDevice(t *testing.T) {
 		t.Fatal("fixture snapshot already has sharing dependencies")
 	}
 	if unchanged, err := store.Unchanged(t.Context(), loaded, record.networkRevision); unchanged || err != nil {
-		t.Fatalf("Unchanged() in a sharing Network = %t, %v", unchanged, err)
+		t.Fatalf("Unchanged() for a share-bound Device = %t, %v", unchanged, err)
 	}
 	if _, found, err := store.Derive(t.Context(), loaded, record.networkRevision); found || err != nil {
-		t.Fatalf("Derive() in a sharing Network = %t, %v", found, err)
+		t.Fatalf("Derive() for a share-bound Device = %t, %v", found, err)
 	}
-	if stats := store.InventoryStats(); stats.SharingDeclines != 1 || stats.Derived != 0 || stats.Unchanged != 0 {
-		t.Fatalf("stats = %+v, want one sharing decline", stats)
+	if stats := store.InventoryStats(); stats.SharingDeclines != 2 || stats.Derived != 0 || stats.Unchanged != 0 {
+		t.Fatalf("stats = %+v, want two sharing declines", stats)
+	}
+}
+
+// TestOtherDevicesOfASharingNetworkKeepTheSharedView: a share binds only
+// its target and rule sources, so the rest of the Network stays on the view.
+func TestOtherDevicesOfASharingNetworkKeepTheSharedView(t *testing.T) {
+	store, transaction, record := liveStoreFixture(t)
+	setSharingDevices(transaction, record.numericNodeID+1000)
+	loaded, err := store.Load(t.Context(), validIdentity(t))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if unchanged, err := store.Unchanged(t.Context(), loaded, record.networkRevision); !unchanged || err != nil {
+		t.Fatalf("Unchanged() for an unbound Device = %t, %v", unchanged, err)
+	}
+	if _, found, err := store.Derive(t.Context(), loaded, record.networkRevision); !found || err != nil {
+		t.Fatalf("Derive() for an unbound Device = %t, %v", found, err)
+	}
+	if stats := store.InventoryStats(); stats.SharingDeclines != 0 {
+		t.Fatalf("stats = %+v, want no sharing decline", stats)
+	}
+}
+
+func setSharingDevices(transaction *fakeTransaction, devices ...int64) {
+	for index, row := range transaction.rows {
+		if _, ok := row.(networkSharingRow); ok {
+			transaction.rows[index] = networkSharingRow{devices: devices}
+		}
 	}
 }

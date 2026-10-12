@@ -83,8 +83,8 @@ type InventoryStats struct {
 	// Unchanged refreshes found the view the snapshot came from still the
 	// latest and kept the snapshot (O(1)).
 	Unchanged uint64
-	// SharingDeclines counts derivations declined because the Network takes
-	// part in a Device share; those Devices were read on their own.
+	// SharingDeclines counts refreshes (Unchanged, Derive) declined because a
+	// Device share binds the Device; it was read on its own.
 	SharingDeclines uint64
 }
 

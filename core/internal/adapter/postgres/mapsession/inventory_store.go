@@ -42,9 +42,11 @@ FROM mesh_ops.load_map_network_policy_devices_v1($1::INTEGER)`
 	maximumNetworkMemberships   = 10_000_000
 	maximumNetworkPolicyDevices = 1_000_000
 
-	// Whether the Network takes part in a Device share (schema 145).
-	loadNetworkSharingSQL = `SELECT mesh_ops.map_network_has_sharing_v1()`
-	loadNetworkHeaderSQL  = `SELECT network_display_name, recovery_epoch
+	// The Devices whose maps a share changes (schema 146): a contract's
+	// target, a rule source of an Imported Resource.
+	loadNetworkSharingDevicesSQL = `SELECT COALESCE(pg_catalog.array_agg(device_id), '{}')
+FROM mesh_ops.map_network_sharing_devices_v1($1::INTEGER)`
+	loadNetworkHeaderSQL = `SELECT network_display_name, recovery_epoch
 FROM mesh_ops.load_map_network_header_v1()`
 )
 
@@ -113,8 +115,8 @@ func (store *Store) readInventory(
 	if err := readNetworkHeader(ctx, transaction, &cached); err != nil {
 		return cachedInventory{}, err
 	}
-	if err := transaction.QueryRow(ctx, loadNetworkSharingSQL).Scan(&cached.sharing); err != nil {
-		return cachedInventory{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("read network sharing: %w", err))
+	if err := readSharingDevices(ctx, transaction, &cached); err != nil {
+		return cachedInventory{}, err
 	}
 	devices, err := store.readNetworkDevices(ctx, transaction, scope)
 	if err != nil {
@@ -315,6 +317,27 @@ func nonNil(err error) error {
 
 // readNetworkHeader reads the Network's display name and recovery epoch; no
 // row leaves the inventory unable to serve maps.
+// readSharingDevices records the Devices a share binds; their maps depend on
+// state outside the view, so they are always read per Device.
+func readSharingDevices(ctx context.Context, transaction databaseTransaction, cached *cachedInventory) error {
+	var devices []int64
+	if err := transaction.QueryRow(ctx, loadNetworkSharingDevicesSQL, maximumNetworkPolicyDevices+1).Scan(
+		&devices); err != nil {
+		return errors.Join(ErrLoadSnapshot, fmt.Errorf("read network sharing Devices: %w", err))
+	}
+	if len(devices) > maximumNetworkPolicyDevices {
+		return ErrSnapshotEvidence
+	}
+	cached.sharingDevices = make(map[int64]struct{}, len(devices))
+	for _, device := range devices {
+		if device <= 0 {
+			return ErrSnapshotEvidence
+		}
+		cached.sharingDevices[device] = struct{}{}
+	}
+	return nil
+}
+
 func readNetworkHeader(ctx context.Context, transaction databaseTransaction, cached *cachedInventory) error {
 	var name string
 	err := transaction.QueryRow(ctx, loadNetworkHeaderSQL).Scan(&name, &cached.recoveryEpoch)

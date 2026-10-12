@@ -57,6 +57,8 @@ type fakeTransaction struct {
 	dependencyRows *directEdgeRows
 	// reachableAliases reports the schema 114 reader as granted.
 	reachableAliases bool
+	// boundDependencies reports the schema 146 dependency reader as granted.
+	boundDependencies bool
 }
 
 func (transaction *fakeTransaction) Exec(
@@ -118,7 +120,9 @@ func (transaction *fakeTransaction) Query(
 			return &directEdgeRows{}, nil
 		}
 		return transaction.directRows, nil
-	case loadSharingDependenciesSQL:
+	case boundSharingDependenciesGrantedSQL:
+		return &grantRows{granted: transaction.boundDependencies}, nil
+	case loadSharingDependenciesSQL, loadBoundSharingDependenciesSQL:
 		if transaction.dependencyRows == nil {
 			return &directEdgeRows{}, nil
 		}
@@ -565,11 +569,12 @@ func (*grantRows) Err() error { return nil }
 
 func (*grantRows) Close() {}
 
-// networkSharingRow answers loadNetworkSharingSQL.
-type networkSharingRow struct{ sharing bool }
+// networkSharingRow answers loadNetworkSharingDevicesSQL: the numeric node
+// identifiers of the Devices a share binds.
+type networkSharingRow struct{ devices []int64 }
 
 func (row networkSharingRow) Scan(destinations ...any) error {
-	*destinations[0].(*bool) = row.sharing
+	*destinations[0].(*[]int64) = append([]int64{}, row.devices...)
 	return nil
 }
 

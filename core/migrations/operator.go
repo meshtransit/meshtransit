@@ -164,3 +164,11 @@ var aliasMapReachableSharesOwnershipSQL string
 // AliasMapReachableSharesOwnershipSQL moves the reachable-share alias map
 // reader to its NOLOGIN owner and exposes it to runtime.
 func AliasMapReachableSharesOwnershipSQL() string { return aliasMapReachableSharesOwnershipSQL }
+
+//go:embed operator/000146_device_sharing_dependencies_v2_ownership.sql
+var deviceSharingDependenciesV2OwnershipSQL string
+
+// DeviceSharingDependenciesV2OwnershipSQL moves the narrowed sharing
+// dependency reader (schema 146) to the alias map reader and exposes it to
+// runtime; v1 stays executable for rollback.
+func DeviceSharingDependenciesV2OwnershipSQL() string { return deviceSharingDependenciesV2OwnershipSQL }

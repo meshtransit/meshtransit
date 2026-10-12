@@ -13,8 +13,22 @@ import (
 const loadSharingDependenciesSQL = `SELECT dependency::TEXT
 FROM mesh_ops.load_device_sharing_dependencies_v1($1::BYTEA,$2::BYTEA,$3::INTEGER) AS dependency`
 
+// loadBoundSharingDependenciesSQL gives a consumer Device a dependency only
+// while it is the source of a rule to the share (schema 146), so the rest of
+// a consumer Network keeps the shared map view. It is used once the operator
+// granted it to this role.
+const loadBoundSharingDependenciesSQL = `SELECT dependency::TEXT
+FROM mesh_ops.load_device_sharing_dependencies_v2($1::BYTEA,$2::BYTEA,$3::INTEGER) AS dependency`
+
+const boundSharingDependenciesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_device_sharing_dependencies_v2(bytea,bytea,integer)'), 'EXECUTE'), FALSE)`
+
 func loadSharingDependencies(ctx context.Context, transaction databaseTransaction, self appmapsession.Snapshot, machineFingerprint, nodeKey []byte) (appmapsession.Snapshot, error) {
-	rows, err := transaction.Query(ctx, loadSharingDependenciesSQL, machineFingerprint, nodeKey, appmapsession.MaximumDirectDeviceProjections+1)
+	query, err := sharingDependenciesQuery(ctx, transaction)
+	if err != nil {
+		return appmapsession.Snapshot{}, err
+	}
+	rows, err := transaction.Query(ctx, query, machineFingerprint, nodeKey, appmapsession.MaximumDirectDeviceProjections+1)
 	if err != nil || rows == nil {
 		if err == nil {
 			err = ErrSnapshotEvidence
@@ -52,4 +66,17 @@ func loadSharingDependencies(ctx context.Context, transaction databaseTransactio
 		return appmapsession.Snapshot{}, errors.Join(ErrSnapshotEvidence, err)
 	}
 	return result, nil
+}
+
+// sharingDependenciesQuery selects the narrowed reader once runtime may
+// execute it, so a rolling upgrade or a pending operator step keeps v1.
+func sharingDependenciesQuery(ctx context.Context, transaction databaseTransaction) (string, error) {
+	granted, err := functionGranted(ctx, transaction, boundSharingDependenciesGrantedSQL)
+	if err != nil {
+		return "", errors.Join(ErrLoadSnapshot, fmt.Errorf("check sharing dependency reader: %w", err))
+	}
+	if granted {
+		return loadBoundSharingDependenciesSQL, nil
+	}
+	return loadSharingDependenciesSQL, nil
 }

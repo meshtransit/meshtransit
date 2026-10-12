@@ -78,3 +78,24 @@ func TestStoreUsesReachableAliasReaderOnceGranted(t *testing.T) {
 		}
 	}
 }
+
+func TestStoreUsesBoundDependencyReaderOnceGranted(t *testing.T) {
+	for _, granted := range []bool{false, true} {
+		store, _, tx, _, identity := validStoreFixture(t)
+		store.options.EnableDeviceAliases = true
+		tx.boundDependencies = granted
+		tx.dependencyRows = &directEdgeRows{values: []string{dependencyFixture}}
+		snapshot, err := store.Load(t.Context(), identity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, other := loadSharingDependenciesSQL, loadBoundSharingDependenciesSQL
+		if granted {
+			want, other = other, want
+		}
+		if !slices.Contains(tx.queries, boundSharingDependenciesGrantedSQL) || !slices.Contains(tx.queries, want) ||
+			slices.Contains(tx.queries, other) || len(snapshot.SharingScopes()) != 1 {
+			t.Fatalf("granted=%v used queries %v", granted, tx.queries)
+		}
+	}
+}

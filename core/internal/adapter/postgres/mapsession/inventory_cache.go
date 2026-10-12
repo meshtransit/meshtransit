@@ -24,10 +24,16 @@ type cachedInventory struct {
 	serveable     bool
 	networkName   network.DisplayName
 	recoveryEpoch int64
-	// sharing: the Network takes part in a Device share (schema 145). Its
-	// Devices' maps depend on state outside the view (aliases, peers across
-	// Networks), so they are always read per Device.
-	sharing bool
+	// sharingDevices: numeric node identifiers of the Devices a share binds
+	// (schema 146). Their maps depend on state outside the view (aliases,
+	// peers across Networks), so they are always read per Device.
+	sharingDevices map[int64]struct{}
+}
+
+// sharingBinds reports whether a share binds the Device numericNodeID.
+func (cached cachedInventory) sharingBinds(numericNodeID int64) bool {
+	_, bound := cached.sharingDevices[numericNodeID]
+	return bound
 }
 
 // usableAt reports whether the inventory answers for revision at the

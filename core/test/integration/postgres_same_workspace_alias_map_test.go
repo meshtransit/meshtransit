@@ -118,6 +118,8 @@ func assertSameWorkspaceAliasMapProjection(ctx context.Context, t *testing.T, ad
 	); err != nil {
 		t.Fatalf("read same-Workspace alias map fixture: %v", err)
 	}
+	var consumerDevice int64
+	var consumerMachine, consumerKey []byte
 	tx := beginDeviceAliasTransaction(ctx, t, admin, 4600)
 	defer rollbackIntegrationTransaction(ctx, t, tx)
 	if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {
@@ -182,8 +184,9 @@ func assertSameWorkspaceAliasMapProjection(ctx context.Context, t *testing.T, ad
 		{name: "consumer", network: 204, local: sourceAliases, remote: resourceAliases},
 		{name: "provider", network: 203, local: resourceAliases, remote: sourceAliases},
 	} {
+		var deviceID int64
 		var machine, key []byte
-		if err := tx.QueryRow(ctx, `SELECT machine.fingerprint, node_key.public_key
+		if err := tx.QueryRow(ctx, `SELECT device.id, machine.fingerprint, node_key.public_key
             FROM mesh.device AS device
             JOIN mesh.device_machine_key_epoch AS machine ON machine.device_id = device.id
              AND machine.epoch = device.current_machine_key_epoch
@@ -195,7 +198,7 @@ func assertSameWorkspaceAliasMapProjection(ctx context.Context, t *testing.T, ad
                     JOIN mesh.resource_device_target AS target ON target.resource_id = contract.resource_id
                      AND target.target_generation = contract.target_generation AND target.state = 'active'
                     WHERE contract.public_id = $3::UUID) END`,
-			perspective.network, consumerID, contract.ID().String()).Scan(&machine, &key); err != nil {
+			perspective.network, consumerID, contract.ID().String()).Scan(&deviceID, &machine, &key); err != nil {
 			t.Fatal(err)
 		}
 		setIntegrationScope(ctx, t, tx, 103, perspective.network)
@@ -204,6 +207,11 @@ func assertSameWorkspaceAliasMapProjection(ctx context.Context, t *testing.T, ad
 		}
 		assertReachableAliasMapMatches(ctx, t, tx, machine, key)
 		assertNetworkSharing(ctx, t, tx, perspective.name, true)
+		assertSharingBinds(ctx, t, tx, perspective.name, deviceID, true)
+		assertSharingDependencies(ctx, t, tx, perspective.name, "v2", machine, key, 1)
+		if perspective.network == 204 {
+			consumerDevice, consumerMachine, consumerKey = deviceID, machine, key
+		}
 		var encoded []string
 		edgeRows, err := tx.Query(ctx, `SELECT edge::TEXT FROM mesh_ops.load_device_alias_map_edges_v3($1::BYTEA,$2::BYTEA,257) AS edge`, machine, key)
 		if err != nil {
@@ -275,6 +283,30 @@ func assertSameWorkspaceAliasMapProjection(ctx context.Context, t *testing.T, ad
 			t.Fatal(err)
 		}
 	}
+	// A consumer Device that is no rule source keeps the shared map view: it
+	// leaves the share-bound set and gets no dependency from v2 (v1 gave every
+	// consumer Device one). The compiled rules go only in this rolled-back
+	// transaction.
+	if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM mesh.compiled_policy_imported_resource_destination
+        WHERE workspace_id = 103 AND network_id = 204`); err != nil {
+		t.Fatalf("drop the consumer rules: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = origin`); err != nil {
+		t.Fatal(err)
+	}
+	setIntegrationScope(ctx, t, tx, 103, 204)
+	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+		t.Fatal(err)
+	}
+	assertSharingBinds(ctx, t, tx, "consumer without a rule", consumerDevice, false)
+	assertSharingDependencies(ctx, t, tx, "consumer without a rule", "v2", consumerMachine, consumerKey, 0)
+	assertSharingDependencies(ctx, t, tx, "consumer without a rule", "v1", consumerMachine, consumerKey, 1)
+	if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {
+		t.Fatal(err)
+	}
 	// Once every contract of both Networks has ended, neither takes part in
 	// a share and their Devices may use the shared map view again.
 	if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
@@ -300,6 +332,7 @@ func assertSameWorkspaceAliasMapProjection(ctx context.Context, t *testing.T, ad
 			t.Fatal(err)
 		}
 		assertNetworkSharing(ctx, t, tx, scope.name, false)
+		assertSharingBinds(ctx, t, tx, scope.name, -1, false)
 		if _, err := tx.Exec(ctx, `RESET ROLE`); err != nil {
 			t.Fatal(err)
 		}
@@ -316,5 +349,42 @@ func assertNetworkSharing(ctx context.Context, t *testing.T, tx pgx.Tx, name str
 	}
 	if sharing != want {
 		t.Fatalf("%s Network sharing = %t, want %t", name, sharing, want)
+	}
+}
+
+// assertSharingBinds checks the share-bound Device set of the scoped Network
+// (schema 146): whether it lists device, or with device -1 whether it is
+// empty.
+func assertSharingBinds(ctx context.Context, t *testing.T, tx pgx.Tx, name string, device int64, want bool) {
+	t.Helper()
+	var devices []int64
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(array_agg(device_id), '{}')
+        FROM mesh_ops.map_network_sharing_devices_v1(1000)`).Scan(&devices); err != nil {
+		t.Fatalf("%s share-bound Devices: %v", name, err)
+	}
+	if device < 0 {
+		if (len(devices) != 0) != want {
+			t.Fatalf("%s share-bound Devices = %v, want any=%t", name, devices, want)
+		}
+		return
+	}
+	if slices.Contains(devices, device) != want {
+		t.Fatalf("%s share-bound Devices = %v, want %d listed=%t", name, devices, device, want)
+	}
+}
+
+// assertSharingDependencies counts the remote Networks the dependency
+// reader of version gives the authenticated Device.
+func assertSharingDependencies(
+	ctx context.Context, t *testing.T, tx pgx.Tx, name, version string, machine, key []byte, want int,
+) {
+	t.Helper()
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM mesh_ops.load_device_sharing_dependencies_`+version+
+		`($1::BYTEA, $2::BYTEA, 257)`, machine, key).Scan(&count); err != nil {
+		t.Fatalf("%s sharing dependencies %s: %v", name, version, err)
+	}
+	if count != want {
+		t.Fatalf("%s sharing dependencies %s = %d, want %d", name, version, count, want)
 	}
 }

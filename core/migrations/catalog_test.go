@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 145 {
-		t.Fatalf("len(Catalog()) = %d, want 145", len(catalog))
+	if len(catalog) != 146 {
+		t.Fatalf("len(Catalog()) = %d, want 146", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 145 {
-		t.Fatalf("LatestVersion() = %d, want 145", LatestVersion())
+	if LatestVersion() != 146 {
+		t.Fatalf("LatestVersion() = %d, want 146", LatestVersion())
 	}
 }
 
@@ -3499,6 +3499,42 @@ func TestMapNetworkSharing(t *testing.T) {
 	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP ", "INSERT ", "UPDATE ", "DELETE "} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 145 must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestMapSharingDevices(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[145]
+	if migration.Version != 146 {
+		t.Fatalf("migration 146 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE INDEX compiled_policy_imported_destination_release_source_idx",
+		"CREATE FUNCTION mesh_ops.map_network_sharing_devices_v1(p_limit INTEGER)",
+		"target.target_generation = contract.target_generation",
+		"rule.policy_release_id = release.id",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.map_network_sharing_devices_v1(INTEGER) TO mesh_runtime;",
+		"CREATE FUNCTION mesh_ops.load_device_sharing_dependencies_v2(",
+		"rule.source_device_id=self_id",
+		"FROM PUBLIC,mesh_runtime,mesh_worker,mesh_observer,mesh_audit_writer,mesh_share_writer,mesh_direct_map_reader;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 146 must contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "BYPASSRLS", "DROP ", "INSERT ", "UPDATE ", "DELETE "} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 146 must not contain %q", forbidden)
+		}
+	}
+	operator := DeviceSharingDependenciesV2OwnershipSQL()
+	for _, want := range []string{
+		"OWNER TO mesh_device_alias_map_reader",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_device_sharing_dependencies_v2(BYTEA,BYTEA,INTEGER) TO mesh_runtime;",
+	} {
+		if !strings.Contains(operator, want) {
+			t.Errorf("operator step 146 must contain %q", want)
 		}
 	}
 }
