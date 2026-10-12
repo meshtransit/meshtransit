@@ -3723,11 +3723,13 @@ func (x *PeerPathStats) GetRelayReason() PeerPathStats_RelayReason {
 }
 
 type RelayTicket struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ticket        []byte                 `protobuf:"bytes,1,opt,name=ticket,proto3" json:"ticket,omitempty"`
-	NotAfterMs    int64                  `protobuf:"varint,2,opt,name=not_after_ms,json=notAfterMs,proto3" json:"not_after_ms,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Ticket         []byte                 `protobuf:"bytes,1,opt,name=ticket,proto3" json:"ticket,omitempty"`
+	NotAfterMs     int64                  `protobuf:"varint,2,opt,name=not_after_ms,json=notAfterMs,proto3" json:"not_after_ms,omitempty"`
+	Zones          []byte                 `protobuf:"bytes,3,opt,name=zones,proto3" json:"zones,omitempty"`
+	FallbackTicket []byte                 `protobuf:"bytes,4,opt,name=fallback_ticket,json=fallbackTicket,proto3" json:"fallback_ticket,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *RelayTicket) Reset() {
@@ -3772,6 +3774,20 @@ func (x *RelayTicket) GetNotAfterMs() int64 {
 		return x.NotAfterMs
 	}
 	return 0
+}
+
+func (x *RelayTicket) GetZones() []byte {
+	if x != nil {
+		return x.Zones
+	}
+	return nil
+}
+
+func (x *RelayTicket) GetFallbackTicket() []byte {
+	if x != nil {
+		return x.FallbackTicket
+	}
+	return nil
 }
 
 type Lifecycle struct {
@@ -4851,11 +4867,13 @@ const file_mtcp_v1_mtcp_proto_rawDesc = "" +
 	"\x0ePEER_REFLEXIVE\x10\x03\x12\x0e\n" +
 	"\n" +
 	"PREDICTION\x10\x04\x12\f\n" +
-	"\bBIRTHDAY\x10\x05\"G\n" +
+	"\bBIRTHDAY\x10\x05\"\x86\x01\n" +
 	"\vRelayTicket\x12\x16\n" +
 	"\x06ticket\x18\x01 \x01(\fR\x06ticket\x12 \n" +
 	"\fnot_after_ms\x18\x02 \x01(\x03R\n" +
-	"notAfterMs\"\xb3\x02\n" +
+	"notAfterMs\x12\x14\n" +
+	"\x05zones\x18\x03 \x01(\fR\x05zones\x12'\n" +
+	"\x0ffallback_ticket\x18\x04 \x01(\fR\x0efallbackTicket\"\xb3\x02\n" +
 	"\tLifecycle\x12:\n" +
 	"\x05state\x18\x01 \x01(\x0e2$.meshtransit.mtcp.v1.Lifecycle.StateR\x05state\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12$\n" +

@@ -109,6 +109,7 @@ func (s *Server) handleInit(frame []byte, from binding, stream bool) {
 		control:    ratelimit.NewBucket(s.cfg.ControlRate, 2*s.cfg.ControlRate),
 		unverified: ratelimit.NewBucket(s.cfg.UnverifiedRate, 2*s.cfg.UnverifiedRate),
 		routeOpens: ratelimit.NewBucket(s.cfg.RouteOpenRate, s.cfg.RouteOpenRate),
+		zoneFrames: ratelimit.NewBucket(s.cfg.ZoneFrameRate, 2*s.cfg.ZoneFrameRate),
 	}
 	bound := from
 	bound.handshake = true
@@ -120,6 +121,14 @@ func (s *Server) handleInit(frame []byte, from binding, stream bool) {
 		s.cfg.Metrics.Handshake(result)
 		return
 	}
+	// Ready for the node's ZONES before it can send them: the session starts
+	// on the inline zones and completes its ticket from the frames, or
+	// learns from the acknowledgement that the relay will not hold them.
+	refused := false
+	if !ticket.ZonesComplete() {
+		ticket.Zones = append([]mtrp.Zone(nil), ticket.Zones...)
+		refused = !s.stageZones(sess, ticket)
+	}
 	// Answer first: the client completes its new session before it hears
 	// that the old one (already unreachable through the maps) is closed.
 	if err := s.sendTo(&bound, resp); err != nil {
@@ -130,6 +139,9 @@ func (s *Server) handleInit(frame []byte, from binding, stream bool) {
 	}
 	for _, old := range replaced {
 		s.closeSession(old, mtrp.SessionClosePolicy, 0, "replaced")
+	}
+	if refused {
+		s.ackTicket(sess, ticket)
 	}
 }
 

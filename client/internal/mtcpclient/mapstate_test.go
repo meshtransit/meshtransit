@@ -250,3 +250,63 @@ func TestConvertDeviceCarriesTheAliasGrant(t *testing.T) {
 		}
 	}
 }
+
+// TestMapStateChecksMTT2Zones: an MTT2 ticket is kept only with the zone
+// list it commits to, which reaches the product snapshot; a ticket without
+// it, a list for another ticket, or a list with an MTT1 ticket is rejected.
+func TestMapStateChecksMTT2Zones(t *testing.T) {
+	t.Parallel()
+	signer, _ := key.NewSigningPrivate(nil)
+	now := time.Now()
+	zones := []mtrp.Zone{{Kind: mtrp.ZoneNetwork, ID: [16]byte{2}}}
+	for i := range 40 {
+		zones = append(zones, mtrp.Zone{Kind: mtrp.ZoneTrustContract, ID: [16]byte{3, byte(i), 15: 1}})
+	}
+	base := mtrp.Ticket{
+		ID: [16]byte{1}, IssuedAtMS: now.UnixMilli(), NotAfterMS: now.Add(15 * time.Minute).UnixMilli(),
+		Node: key.NodePublic{1}, Disco: key.DiscoPublic{0xd1}, Deployment: [16]byte{1}, Zones: zones,
+	}
+	ticket, list, err := base.SignZones(signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := base
+	other.Zones = append(append([]mtrp.Zone(nil), zones[:40]...), mtrp.Zone{Kind: mtrp.ZoneTrustContract, ID: [16]byte{4, 15: 1}})
+	_, otherList, _ := other.SignZones(signer)
+	v1 := base
+	v1.Zones = zones[:1]
+	mtt1, _ := v1.Sign(signer)
+	until := now.Add(15 * time.Minute).UnixMilli()
+	for name, message := range map[string]*mtcpv1.RelayTicket{
+		"MTT2 without zones": {Ticket: ticket, NotAfterMs: until},
+		"another zone list":  {Ticket: ticket, NotAfterMs: until, Zones: otherList},
+		"truncated zones":    {Ticket: ticket, NotAfterMs: until, Zones: list[:len(list)-17]},
+		"MTT1 with zones":    {Ticket: mtt1, NotAfterMs: until, Zones: list},
+	} {
+		if err := newMapState().setTicket(message); !errors.Is(err, controlplane.ErrNetmapInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	inline := base
+	inline.ID[0] = 7
+	inline.Zones = zones[:mtrp.MaxZones]
+	fallback, _ := inline.Sign(signer)
+	otherNode := inline
+	otherNode.Node = key.NodePublic{9}
+	foreign, _ := otherNode.Sign(signer)
+	withForeign := &mtcpv1.RelayTicket{Ticket: ticket, NotAfterMs: until, Zones: list, FallbackTicket: foreign}
+	if err := newMapState().setTicket(withForeign); !errors.Is(err, controlplane.ErrNetmapInvalid) {
+		t.Errorf("a fallback for another node: %v", err)
+	}
+	state := newMapState()
+	withFallback := &mtcpv1.RelayTicket{Ticket: ticket, NotAfterMs: until, Zones: list, FallbackTicket: fallback}
+	if err := state.setTicket(withFallback); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(state.ticketZones, list) || !bytes.Equal(state.fallbackTicket, fallback) {
+		t.Fatal("zone list or fallback not kept")
+	}
+	if err := state.setTicket(&mtcpv1.RelayTicket{Ticket: mtt1, NotAfterMs: until}); err != nil || state.ticketZones != nil {
+		t.Fatalf("an MTT1 ticket kept the old zone list: %v", err)
+	}
+}

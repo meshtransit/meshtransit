@@ -19,6 +19,8 @@ type relayCredentials struct {
 	mu          sync.Mutex
 	disco       key.DiscoPrivate
 	ticket      []byte
+	zones       []byte // the MTT2 ticket's zone list
+	fallback    []byte // its MTT1 fallback
 	notAfter    time.Time
 	ticketDisco key.DiscoPublic
 }
@@ -39,6 +41,28 @@ func (c *relayCredentials) RelayCredentials() (key.DiscoPrivate, []byte, bool) {
 	return c.disco, bytes.Clone(c.ticket), true
 }
 
+// RelayTicketZones returns the zone list of ticket when it is the current
+// MTT2 ticket (interchange.ZoneCredentials).
+func (c *relayCredentials) RelayTicketZones(ticket []byte) []byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.zones) == 0 || !bytes.Equal(ticket, c.ticket) {
+		return nil
+	}
+	return bytes.Clone(c.zones)
+}
+
+// RelayFallbackTicket returns the MTT1 fallback of ticket when it is the
+// current MTT2 ticket (interchange.ZoneCredentials).
+func (c *relayCredentials) RelayFallbackTicket(ticket []byte) []byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.fallback) == 0 || !bytes.Equal(ticket, c.ticket) {
+		return nil
+	}
+	return bytes.Clone(c.fallback)
+}
+
 func (c *relayCredentials) setIdentity(disco key.DiscoPrivate) {
 	c.mu.Lock()
 	c.disco = disco
@@ -53,6 +77,8 @@ func (c *relayCredentials) setGrant(grant *networkmap.Interchange) {
 	}
 	c.mu.Lock()
 	c.ticket = bytes.Clone(grant.Ticket)
+	c.zones = bytes.Clone(grant.TicketZones)
+	c.fallback = bytes.Clone(grant.FallbackTicket)
 	c.notAfter = grant.TicketNotAfter
 	c.ticketDisco = key.DiscoPublic(grant.TicketDisco)
 	c.mu.Unlock()

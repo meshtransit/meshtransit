@@ -43,6 +43,15 @@ type Credentials interface {
 	RelayCredentials() (disco key.DiscoPrivate, ticket []byte, ok bool)
 }
 
+// ZoneCredentials is implemented by credentials whose tickets may be MTT2:
+// RelayTicketZones returns the zone list ticket commits to, and
+// RelayFallbackTicket the MTT1 ticket to use with a relay that does not
+// answer it, or nil.
+type ZoneCredentials interface {
+	RelayTicketZones(ticket []byte) []byte
+	RelayFallbackTicket(ticket []byte) []byte
+}
+
 // Dialer reaches a relay region. It implements relay.Dialer.
 type Dialer struct {
 	credentials Credentials
@@ -224,11 +233,23 @@ func (d *Dialer) handshake(ctx context.Context, t transport, relayKey key.RelayP
 			frames.close() // the caller closes t, which ends the reader
 		}
 	}()
+	// A relay that does not take MTT2 drops its INIT unanswered: with an
+	// MTT1 fallback, every other attempt (and a stream's second one) uses
+	// it. A relay that does take MTT2 receives it later as TICKET_UPDATE.
+	source, zoned := d.credentials.(ZoneCredentials)
+	if _, ticket, ok := d.credentials.RelayCredentials(); ok && zoned && stream && source.RelayFallbackTicket(ticket) != nil {
+		attempts = 2
+	}
 	var lastErr error
-	for range attempts {
+	for attempt := range attempts {
 		disco, ticket, ok := d.credentials.RelayCredentials()
 		if !ok {
 			return nil, ErrNoCredentials
+		}
+		if zoned && attempt%2 == 1 {
+			if fallback := source.RelayFallbackTicket(ticket); fallback != nil {
+				ticket = fallback
+			}
 		}
 		var index [4]byte
 		if _, err := io.ReadFull(d.random, index[:]); err != nil {

@@ -519,6 +519,7 @@ semantics. TLS, Noise, and enrollment private-key files must be purpose-separate
 | `MESHTRANSIT_RELAY_DRAIN` | empty | Comma-separated relay public keys (`mtrelay:…`, at most 64) told to drain. |
 | `MESHTRANSIT_RELAY_TRUSTED_PROXY_CIDRS` | empty | Canonical CIDRs allowed to supply `X-Forwarded-For` for the relay documents' per-client rate limit; set it to the ingress controller's pod range. |
 | `MESHTRANSIT_RELAY_DEPLOYMENT_PUBLIC_ID` | none | Deployment public ID (the entitlement's) that relay tickets name. With it and a relay map, Core issues each node a 15-minute relay ticket on its map entry (docs/protocol/mtrp-v1.md §9.1); without it no tickets are issued. |
+| `MESHTRANSIT_RELAY_TICKET_ZONES_V2` | `false` | `true` offers nodes `relay.zones2`: a Device in more than 31 Trust Contracts gets an MTT2 ticket naming all of them (docs/protocol/mtrp-v1.md §6.1), so every share can use relays. Needs `MESHTRANSIT_RELAY_DEPLOYMENT_PUBLIC_ID`. Turn it on once the relays in the relay maps accept MTT2 and ZONES frames: an older relay drops MTT2 and the node falls back to an MTT1 ticket for the Network and its 31 oldest shares. With it, `RelayTicket` messages to such nodes grow to about 175 KiB (zone list) instead of under 4 KiB. |
 
 The control role fails startup when the relay directory file is absent, unsafe,
 oversized, malformed, or does not match its digest pin. Core never fetches relay

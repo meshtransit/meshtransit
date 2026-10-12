@@ -21,6 +21,7 @@ const (
 	envRelayDrain            = "MESHTRANSIT_RELAY_DRAIN"
 	envRelayTrustedProxies   = "MESHTRANSIT_RELAY_TRUSTED_PROXY_CIDRS"
 	envRelayDeploymentID     = "MESHTRANSIT_RELAY_DEPLOYMENT_PUBLIC_ID"
+	envRelayTicketZonesV2    = "MESHTRANSIT_RELAY_TICKET_ZONES_V2"
 
 	maxRelayDrainEntries = 64
 )
@@ -45,6 +46,10 @@ type RelayAuthorityConfig struct {
 	// TicketDeployment, when set, makes Core issue relay tickets to nodes;
 	// it is the deployment public ID the tickets name (the entitlement's).
 	TicketDeployment *deployment.ID
+	// TicketZonesV2 offers clients relay.zones2: tickets for more than 31
+	// shares (MTT2). Enable it only once every relay in the relay maps
+	// accepts MTT2 and ZONES frames.
+	TicketZonesV2 bool
 }
 
 // String redacts the configuration in generic formatting.
@@ -87,7 +92,7 @@ func loadRelayAuthorityConfig(lookup LookupFunc, role app.Role) (*RelayAuthority
 	if enabled != "true" && enabled != "false" {
 		return nil, settingError(envRelayAuthorityEnabled)
 	}
-	settings := []string{envRelaySigningKeyFile, envRelayNextSigningKey, envRelayMapFile, envRelayMapSHA256, envRelayDrain, envRelayTrustedProxies, envRelayDeploymentID}
+	settings := []string{envRelaySigningKeyFile, envRelayNextSigningKey, envRelayMapFile, envRelayMapSHA256, envRelayDrain, envRelayTrustedProxies, envRelayDeploymentID, envRelayTicketZonesV2}
 	if enabled == "false" {
 		for _, name := range settings {
 			if _, present := lookup(name); present {
@@ -151,6 +156,13 @@ func loadRelayAuthorityConfig(lookup LookupFunc, role app.Role) (*RelayAuthority
 			return nil, settingError(envRelayDeploymentID)
 		}
 		cfg.TicketDeployment = &id
+	}
+	if value, present := lookup(envRelayTicketZonesV2); present {
+		if value != "true" && value != "false" || value == "true" && cfg.TicketDeployment == nil {
+			// MTT2 is a kind of ticket; without tickets it means nothing.
+			return nil, settingError(envRelayTicketZonesV2)
+		}
+		cfg.TicketZonesV2 = value == "true"
 	}
 	return cfg, nil
 }

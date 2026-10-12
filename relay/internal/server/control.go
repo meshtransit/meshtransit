@@ -47,9 +47,15 @@ func (s *Server) handleControl(frame []byte, from binding) {
 		return
 	}
 	// Charged after authentication, so forged frames cannot exhaust a
-	// victim's allowance.
+	// victim's allowance. ZONES frames have their own allowance: a node
+	// sends a whole zone list at once.
 	now := s.cfg.Now()
-	if !sess.allowControl(now) {
+	if len(plain) > 0 && mtrp.ControlType(plain[0]) == mtrp.ControlZones {
+		if !sess.allowZoneFrame(now) {
+			s.cfg.Metrics.Control("zones_rate_limited")
+			return
+		}
+	} else if !sess.allowControl(now) {
 		s.cfg.Metrics.Control("rate_limited")
 		return
 	}
@@ -71,6 +77,8 @@ func (s *Server) handleControl(frame []byte, from binding) {
 		s.closeRoute(sess, msg.Route, mtrp.RouteCloseByClient)
 	case mtrp.ControlTicketUpdate:
 		s.updateTicket(sess, msg.Ticket)
+	case mtrp.ControlZones:
+		s.addZones(sess, msg)
 	case mtrp.ControlPathResponse:
 		// Handled by updateBinding.
 	default:
@@ -153,8 +161,22 @@ func (s *Server) openRoute(src *session, msg mtrp.ControlMessage) {
 		refuse(mtrp.RouteErrorInvalid)
 		return
 	}
+	// The zone search may compare thousands of zones; it runs before routeMu,
+	// which then only confirms the zone in O(log n).
+	s.mu.RLock()
+	peer := s.byNode[msg.Peer]
+	s.mu.RUnlock()
+	if peer == nil {
+		refuse(mtrp.RouteErrorPeerAbsent)
+		return
+	}
+	zone, shared := sharedZone(src, peer, s.cfg.Revocations)
+	if !shared {
+		refuse(mtrp.RouteErrorPeerAbsent)
+		return
+	}
 	s.routeMu.Lock()
-	out, code := s.openRouteLocked(src, msg)
+	out, code := s.openRouteLocked(src, msg, peer, zone)
 	s.routeMu.Unlock()
 	if code != 0 {
 		refuse(code)
@@ -166,11 +188,13 @@ func (s *Server) openRoute(src *session, msg mtrp.ControlMessage) {
 // openRouteLocked decides and records a route. Called with routeMu held.
 // The peer learns about the route before the requester, so DATA from the
 // requester never arrives on a route the peer cannot attribute.
-func (s *Server) openRouteLocked(src *session, msg mtrp.ControlMessage) ([]outbound, mtrp.RouteErrorCode) {
+func (s *Server) openRouteLocked(src *session, msg mtrp.ControlMessage, peer *session, zone mtrp.Zone) ([]outbound, mtrp.RouteErrorCode) {
 	s.mu.RLock()
-	peer := s.byNode[msg.Peer]
+	current := s.byNode[msg.Peer]
 	s.mu.RUnlock()
-	if peer == nil || !sharesZone(src, peer, s.cfg.Revocations) {
+	// Tickets in force now (they change only under routeMu) must still
+	// share the zone found before it was taken.
+	if current != peer || !bothHold(src, peer, zone, s.cfg.Revocations) {
 		return nil, mtrp.RouteErrorPeerAbsent
 	}
 
@@ -209,11 +233,11 @@ func (s *Server) openRouteLocked(src *session, msg mtrp.ControlMessage) ([]outbo
 	}
 	// routeMu makes the checks above and these inserts one step.
 	src.mu.Lock()
-	src.routes[srcRoute] = route{peer: peer, peerRoute: peerRoute}
+	src.routes[srcRoute] = route{peer: peer, peerRoute: peerRoute, zone: zone}
 	src.byPeer[peer.node] = srcRoute
 	src.mu.Unlock()
 	peer.mu.Lock()
-	peer.routes[peerRoute] = route{peer: src, peerRoute: srcRoute}
+	peer.routes[peerRoute] = route{peer: src, peerRoute: srcRoute, zone: zone}
 	peer.byPeer[src.node] = peerRoute
 	peer.mu.Unlock()
 	s.cfg.Metrics.Routes(1)
@@ -261,51 +285,136 @@ func (s *Server) dropPeerRouteLocked(peer *session, peerRoute uint32, node key.N
 }
 
 // updateTicket renews a session's ticket (mtrp-v1 §5.3). The new ticket must
-// be for the same keys and not older than the current one. Routes whose peer
-// no longer shares a zone are closed as revoked; routeMu keeps a concurrent
-// route open from slipping past the check.
+// be for the same keys and not older than the current one. An MTT2 ticket
+// whose zones are not all inline waits for them (§5.4) while the current
+// ticket stays in force. A repeat of the current or pending ticket is
+// ignored before its signature is checked.
 func (s *Server) updateTicket(sess *session, raw []byte) {
+	if peek, err := mtrp.ParseTicketUnverified(raw); err == nil && sess.holdsTicket(peek.ID) {
+		s.cfg.Metrics.Control("repeated_ticket_update")
+		return
+	}
 	ticket, err := s.verifier.Verify(raw)
 	if err != nil || !key.Equal(ticket.Node, sess.node) || !key.Equal(ticket.Disco, sess.disco) {
 		s.cfg.Metrics.Control("bad_ticket_update")
 		return // the current ticket stays in force until it expires
 	}
 	ticket.Zones = append([]mtrp.Zone(nil), ticket.Zones...) // detach from the frame buffer
-	maxRoutes, bytesPerSecond := s.ticketLimits(ticket)
-
-	var out []outbound
-	s.routeMu.Lock()
-	sess.mu.Lock()
-	if ticket.IssuedAtMS < sess.ticket.IssuedAtMS || ticket.NotAfterMS < sess.ticket.NotAfterMS {
-		sess.mu.Unlock()
-		s.routeMu.Unlock()
-		s.cfg.Metrics.Control("stale_ticket_update")
+	if !ticket.ZonesComplete() && s.stageZones(sess, ticket) {
 		return
 	}
-	sess.ticket, sess.notAfter, sess.maxRoutes = ticket, ticket.NotAfter(), maxRoutes
+	s.applyTicket(sess, ticket, 0)
+}
+
+// applyTicket puts ticket in force unless the session holds a newer one.
+// charge is what was reserved for it beyond the session's current charge
+// (see stageZones); the session ends up charged exactly the zones it holds.
+// The ticket changes under routeMu, so a route opened concurrently was
+// checked against one ticket or the other, and the prune that follows sees
+// every route opened against the old one.
+func (s *Server) applyTicket(sess *session, ticket mtrp.Ticket, charge int) {
+	maxRoutes, bytesPerSecond := s.ticketLimits(ticket)
+	held := 0
+	if ticket.IsV2() && ticket.ZonesComplete() && ticket.ZoneTotal > mtrp.MaxZones {
+		held = ticket.ZoneTotal
+	}
+	s.routeMu.Lock()
+	sess.mu.Lock()
+	if sess.closed || ticket.IssuedAtMS < sess.ticket.IssuedAtMS || ticket.NotAfterMS < sess.ticket.NotAfterMS {
+		sess.mu.Unlock()
+		s.routeMu.Unlock()
+		s.releaseZones(charge)
+		s.cfg.Metrics.Control("stale_ticket_update")
+		if ticket.IsV2() {
+			s.ackTicket(sess, ticket) // the node stops sending this ticket's zones
+		}
+		return
+	}
+	if deficit := held - sess.chargedCurrent - charge; deficit > 0 && !s.reserveZones(deficit) {
+		// The session's charge shrank since the zones were staged and the
+		// budget cannot cover the rest: keep the inline zones only.
+		held, ticket.Zones = 0, ticket.Zones[:min(len(ticket.Zones), mtrp.MaxZones)]
+		s.cfg.Metrics.Control("zones_refused")
+	}
+	s.releaseZones(sess.chargedCurrent + charge - held)
+	if p := sess.pending; p != nil && p.Ticket().IssuedAtMS <= ticket.IssuedAtMS && p.Ticket().ID != ticket.ID {
+		// A ticket at least as new supersedes the one being assembled.
+		s.releaseZones(sess.chargedPending)
+		sess.pending, sess.chargedPending = nil, 0
+	}
+	sess.ticket, sess.notAfter, sess.maxRoutes, sess.chargedCurrent = ticket, ticket.NotAfter(), maxRoutes, held
 	sess.data.SetRate(bytesPerSecond, bytesPerSecond)
-	routes := maps.Clone(sess.routes)
 	sess.mu.Unlock()
-	out = s.pruneRoutesLocked(sess, routes, out)
 	s.routeMu.Unlock()
-	s.flush(out)
+	s.pruneRoutes(sess)
+	s.ackTicket(sess, ticket)
+}
+
+// ackTicket sends TICKET_ACK for ticket.
+func (s *Server) ackTicket(sess *session, ticket mtrp.Ticket) {
 	s.sendControl(sess, mtrp.ControlMessage{Type: mtrp.ControlTicketAck, NotAfterMS: uint64(ticket.NotAfterMS)}) //nolint:gosec // validated positive by Verify
 }
 
-// pruneRoutesLocked closes, as revoked, the routes of sess (a snapshot of its
-// route table) whose peer no longer shares a live zone with it, and appends
-// the notifications to out. Called with routeMu held.
-func (s *Server) pruneRoutesLocked(sess *session, routes map[uint32]route, out []outbound) []outbound {
+// pruneRoutes closes, as revoked, the routes of sess whose peer no longer
+// shares a live zone with it. Each route is first checked against the zone
+// that opened it (O(log n)); only routes that lost it search the tickets
+// for another zone, outside routeMu, and routeMu then confirms the outcome
+// with O(log n) checks so tickets with thousands of zones never stall route
+// changes relay-wide.
+func (s *Server) pruneRoutes(sess *session) {
+	sess.mu.Lock()
+	routes := maps.Clone(sess.routes)
+	sess.mu.Unlock()
+	type change struct {
+		number   uint32
+		route    route
+		zone     mtrp.Zone
+		replaced bool
+	}
+	var changes []change
 	for n, r := range routes {
-		if sharesZone(sess, r.peer, s.cfg.Revocations) {
+		if bothHold(sess, r.peer, r.zone, s.cfg.Revocations) {
 			continue
 		}
-		if removed, ok := s.removeRouteLocked(sess, n); ok {
-			out = append(out,
-				outbound{removed.peer, mtrp.ControlMessage{Type: mtrp.ControlRouteClose, Route: removed.peerRoute, RouteClose: mtrp.RouteCloseRevoked}},
-				outbound{sess, mtrp.ControlMessage{Type: mtrp.ControlRouteClose, Route: n, RouteClose: mtrp.RouteCloseRevoked}},
-			)
+		zone, ok := sharedZone(sess, r.peer, s.cfg.Revocations)
+		changes = append(changes, change{number: n, route: r, zone: zone, replaced: ok})
+	}
+	if len(changes) == 0 {
+		return
+	}
+	var out []outbound
+	s.routeMu.Lock()
+	for _, c := range changes {
+		switch {
+		case bothHold(sess, c.route.peer, c.route.zone, s.cfg.Revocations):
+		case c.replaced && bothHold(sess, c.route.peer, c.zone, s.cfg.Revocations):
+			s.setRouteZoneLocked(sess, c.number, c.route, c.zone)
+		case sess.routeTo(c.number) == c.route.peer:
+			if removed, ok := s.removeRouteLocked(sess, c.number); ok {
+				out = append(out,
+					outbound{removed.peer, mtrp.ControlMessage{Type: mtrp.ControlRouteClose, Route: removed.peerRoute, RouteClose: mtrp.RouteCloseRevoked}},
+					outbound{sess, mtrp.ControlMessage{Type: mtrp.ControlRouteClose, Route: c.number, RouteClose: mtrp.RouteCloseRevoked}},
+				)
+			}
 		}
 	}
-	return out
+	s.routeMu.Unlock()
+	s.flush(out)
+}
+
+// setRouteZoneLocked records the zone a route now rests on, on both halves.
+// Called with routeMu held.
+func (s *Server) setRouteZoneLocked(sess *session, n uint32, r route, zone mtrp.Zone) {
+	sess.mu.Lock()
+	if current, ok := sess.routes[n]; ok && current.peer == r.peer {
+		current.zone = zone
+		sess.routes[n] = current
+	}
+	sess.mu.Unlock()
+	r.peer.mu.Lock()
+	if back, ok := r.peer.routes[r.peerRoute]; ok && back.peer == sess {
+		back.zone = zone
+		r.peer.routes[r.peerRoute] = back
+	}
+	r.peer.mu.Unlock()
 }

@@ -13,9 +13,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"meshtransit.net/relay/internal/ratelimit"
@@ -36,6 +36,16 @@ const (
 	DefaultUnverifiedRate      = 16 << 10    // bytes/s towards an unverified binding
 	DefaultControlRate         = 50          // authenticated CONTROL frames per second
 	DefaultRouteOpenRate       = 20          // per second per session
+	// DefaultMaxSessionZones admits an MTT2 ticket for 10,000 Trust
+	// Contracts and the Network (Core's share limit).
+	DefaultMaxSessionZones = 10_001
+	// DefaultZoneBudget bounds the zones held relay-wide: about 35 bytes
+	// each while a list is assembled, 17 once in force, so ~35 MB at most;
+	// a hundred nodes with 10,000 shares each.
+	DefaultZoneBudget = 1_000_000
+	// DefaultZoneFrameRate lets a node send a full zone list (~170 ZONES
+	// frames) a few times over without touching its CONTROL allowance.
+	DefaultZoneFrameRate = 200
 	// MaxTimestampSkew bounds a ClientHello timestamp against the relay
 	// clock, which bounds how long replay state must be kept.
 	MaxTimestampSkew = time.Minute
@@ -66,6 +76,9 @@ type Config struct {
 	UnverifiedRate      float64 // bytes/s towards a binding without return-routability
 	ControlRate         float64 // per session
 	RouteOpenRate       float64 // per session
+	MaxSessionZones     int     // zones of one MTT2 ticket the relay assembles
+	ZoneBudget          int     // zones held across all sessions
+	ZoneFrameRate       float64 // ZONES frames per second per session
 
 	Now     func() time.Time
 	Random  io.Reader
@@ -94,6 +107,8 @@ type Server struct {
 	routeMu sync.Mutex // serialises route creation and removal across sessions
 
 	revGeneration uint64 // last revocation generation swept; owned by sweep
+
+	zonesHeld atomic.Int64 // zones charged to sessions' MTT2 tickets
 }
 
 // generational is implemented by revocation sources that can say when they
@@ -168,6 +183,9 @@ func defaults(cfg *Config) {
 	setDefault(&cfg.UnverifiedRate, DefaultUnverifiedRate)
 	setDefault(&cfg.ControlRate, DefaultControlRate)
 	setDefault(&cfg.RouteOpenRate, DefaultRouteOpenRate)
+	setDefault(&cfg.MaxSessionZones, DefaultMaxSessionZones)
+	setDefault(&cfg.ZoneBudget, DefaultZoneBudget)
+	setDefault(&cfg.ZoneFrameRate, DefaultZoneFrameRate)
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -366,6 +384,7 @@ func (s *Server) sweep() {
 		case checkRevocations:
 			s.pruneRoutes(sess) // a withdrawn zone may end some of its routes
 		}
+		s.sweepPendingZones(sess, now, checkRevocations)
 	}
 
 	// A timestamp older than the skew window can never be accepted again,
@@ -378,17 +397,6 @@ func (s *Server) sweep() {
 		}
 	}
 	s.mu.Unlock()
-}
-
-// pruneRoutes closes the routes of sess that no longer share a live zone.
-func (s *Server) pruneRoutes(sess *session) {
-	s.routeMu.Lock()
-	sess.mu.Lock()
-	routes := maps.Clone(sess.routes)
-	sess.mu.Unlock()
-	out := s.pruneRoutesLocked(sess, routes, nil)
-	s.routeMu.Unlock()
-	s.flush(out)
 }
 
 // closeSession removes a session, tells its client and closes its routes.
@@ -416,6 +424,8 @@ func (s *Server) closeSession(sess *session, reason mtrp.SessionCloseReason, ret
 	sess.closed = true
 	routes := sess.routes
 	sess.routes, sess.byPeer = nil, nil
+	s.releaseZones(sess.chargedCurrent + sess.chargedPending)
+	sess.chargedCurrent, sess.chargedPending, sess.pending = 0, 0, nil
 	sess.mu.Unlock()
 	for _, r := range routes {
 		s.dropPeerRouteLocked(r.peer, r.peerRoute, sess.node)

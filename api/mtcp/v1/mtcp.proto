@@ -463,8 +463,15 @@ message PeerPathStats {
 // ---- Relay, lifecycle, keys ----
 
 message RelayTicket {
-  bytes ticket = 1; // MTRP v1 ticket ("MTT1")
+  bytes ticket = 1; // MTRP v1 ticket ("MTT1", or "MTT2" with relay.zones2)
   int64 not_after_ms = 2;
+  // MTT2 only: every zone the ticket commits to, canonical, 17 bytes each
+  // (MTRP v1 §6.1). The node hands the zones past the inline ones to the
+  // relay in ZONES frames.
+  bytes zones = 3;
+  // MTT2 only: an MTT1 ticket for the same keys naming the inline zones,
+  // for relays that do not take MTT2.
+  bytes fallback_ticket = 4;
 }
 
 message Lifecycle {

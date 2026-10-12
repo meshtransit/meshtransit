@@ -87,7 +87,7 @@ var specs = map[MessageType]messageSpec{
 	MessageHealthReport:          {NodeToCore, 16 * kib, func() proto.Message { return &mtcpv1.HealthReport{} }},
 	MessagePathStatsReport:       {NodeToCore, 256 * kib, func() proto.Message { return &mtcpv1.PathStatsReport{} }},
 	MessageEnforcementReport:     {NodeToCore, kib, func() proto.Message { return &mtcpv1.EnforcementReport{} }},
-	MessageRelayTicket:           {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.RelayTicket{} }},
+	MessageRelayTicket:           {CoreToNode, 256 * kib, func() proto.Message { return &mtcpv1.RelayTicket{} }}, // MTT2 zones: 17 bytes × 10,001
 	MessageLifecycle:             {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.Lifecycle{} }},
 	MessageKeyUpdate:             {CoreToNode, 4 * kib, func() proto.Message { return &mtcpv1.KeyUpdate{} }},
 	MessageNotice:                {CoreToNode, 8 * kib, func() proto.Message { return &mtcpv1.Notice{} }},

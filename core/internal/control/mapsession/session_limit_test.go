@@ -1,6 +1,7 @@
 package mapsession
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -128,5 +129,59 @@ func TestSessionLimitKeepsTheOldestShares(t *testing.T) {
 	}
 	if _, err := shared.WithOmittedShares(-1); err == nil {
 		t.Fatal("negative omissions accepted")
+	}
+}
+
+// TestRelayGrantNamesEveryShareWithRelayZones: a session without
+// relay.zones2 gets a relay grant for its 31 oldest contracts (an MTT1
+// ticket); one that negotiated it names all of them.
+func TestRelayGrantNamesEveryShareWithRelayZones(t *testing.T) {
+	t.Parallel()
+	ports, err := policy.NewPortRange(443, 443)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, consumer, _ := directDeviceFixture(t, policy.ProtocolTCP, []policy.PortRange{ports})
+	const shares = MaximumRelayGrantContracts + 9
+	projections := make([]DirectDeviceProjection, 0, shares)
+	for variant := range uint16(shares) {
+		evidence := sharingtest.New(t, sharingtest.Params{
+			ProviderScope: provider.Scope(), ConsumerScope: consumer.Scope(), ProviderDeviceID: provider.NodeID(),
+			ConsumerDeviceID: consumer.NodeID(), ProviderAddress: provider.Addresses()[0].Addr(),
+			EvaluatedAt: provider.CreatedAt().Add(time.Hour), RecoveryEpoch: provider.RecoveryEpoch(),
+			Protocol: policy.ProtocolTCP, Ports: []policy.PortRange{ports}, Variant: variant + 1,
+		})
+		projection, err := NewDirectDeviceProjection(directDeviceParams(t, provider, provider, consumer, evidence))
+		if err != nil {
+			t.Fatalf("variant %d: %v", variant, err)
+		}
+		projections = append(projections, projection)
+	}
+	shared, err := provider.WithDirectDeviceProjections(projections)
+	if err != nil {
+		t.Fatal(err)
+	}
+	self := connectivityFixture(t, shared.NodeID(), shared.SessionGeneration(), 7, "198.51.100.9:41641", true)
+	if shared, err = shared.WithConnectivity([]Connectivity{self}); err != nil {
+		t.Fatal(err)
+	}
+	legacy, ok := shared.RelayGrantRequest()
+	if !ok || len(legacy.TrustContracts) != MaximumRelayGrantContracts {
+		t.Fatalf("legacy grant names %d contracts, want %d", len(legacy.TrustContracts), MaximumRelayGrantContracts)
+	}
+	shared.relayZones = true
+	zones, ok := shared.RelayGrantRequest()
+	if !ok || len(zones.TrustContracts) != shares || !slices.Equal(zones.TrustContracts[:MaximumRelayGrantContracts], legacy.TrustContracts) {
+		t.Fatalf("relay.zones2 grant names %d contracts, want %d", len(zones.TrustContracts), shares)
+	}
+	if legacy.equal(zones) {
+		t.Fatal("a grant for 31 contracts covers the request for all of them")
+	}
+	request, err := NewRequest(shared.NodeKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.RelayZones() || !request.WithRelayZones().RelayZones() {
+		t.Fatal("WithRelayZones did not declare, or changed the original")
 	}
 }

@@ -203,6 +203,9 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key) e
 	if conversation.session.Supports("map.large1") {
 		request = request.WithLargeMap()
 	}
+	if conversation.session.Supports("relay.zones2") {
+		request = request.WithRelayZones()
+	}
 	return conversation.application.options.Streams.Serve(ctx, machine, request, conversation.sink)
 }
 

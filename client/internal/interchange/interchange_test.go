@@ -1,6 +1,7 @@
 package interchange
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -330,5 +331,84 @@ func TestKeepaliveActivity(t *testing.T) {
 		case <-deadline:
 			t.Fatal("no keepalive answer")
 		}
+	}
+}
+
+// zoneCreds are testCreds whose ticket is MTT2.
+type zoneCreds struct {
+	*testCreds
+	zones    []byte
+	fallback []byte
+}
+
+func (c *zoneCreds) RelayFallbackTicket(ticket []byte) []byte {
+	if bytes.Equal(ticket, c.ticket) {
+		return c.fallback
+	}
+	return nil
+}
+
+func (c *zoneCreds) RelayTicketZones(ticket []byte) []byte {
+	if current, _, _ := c.RelayCredentials(); !current.IsZero() && bytes.Equal(ticket, c.ticket) {
+		return c.zones
+	}
+	return nil
+}
+
+// TestClientSendsTicketZonesUntilAcknowledged: with an MTT2 ticket for 300
+// contracts the client hands the relay the zones past the inline ones after
+// its handshake, sends them again when frames were lost, and stops once the
+// relay acknowledges the ticket.
+func TestClientSendsTicketZonesUntilAcknowledged(t *testing.T) {
+	t.Parallel()
+	r := newFakeRelay(t)
+	r.dropZones.Store(1) // the first pass loses a frame
+	base := newCreds(t, r, key.NodePublic{0x5a})
+	ticket, zones := r.ticketV2(key.NodePublic{0x5a}, base.disco.Public(), 300)
+	base.ticket = ticket
+	creds := &zoneCreds{testCreds: base, zones: zones}
+	dial(t, r, creds)
+	want := (301 - mtrp.MaxZones + mtrp.MaxControlZones - 1) / mtrp.MaxControlZones
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		frames, done := r.zoneCounts()
+		if done == 1 {
+			if frames < want {
+				t.Fatalf("completed after %d frames, want at least %d", frames, want)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("zones not completed: %d frames, want %d per pass", frames, want)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// Acknowledged: no further passes.
+	frames, _ := r.zoneCounts()
+	time.Sleep(2500 * time.Millisecond)
+	if again, _ := r.zoneCounts(); again != frames {
+		t.Fatalf("client kept sending ZONES after the acknowledgement: %d then %d", frames, again)
+	}
+}
+
+// TestDialFallsBackToMTT1ForAnOldRelay: a relay that drops MTT2 INITs (one
+// not yet upgraded) is reached with the MTT1 fallback ticket.
+func TestDialFallsBackToMTT1ForAnOldRelay(t *testing.T) {
+	t.Parallel()
+	r := newFakeRelay(t)
+	r.oldRelay.Store(true)
+	base := newCreds(t, r, key.NodePublic{0x5b})
+	ticket, zones := r.ticketV2(key.NodePublic{0x5b}, base.disco.Public(), 100)
+	base.ticket = ticket
+	creds := &zoneCreds{testCreds: base, zones: zones, fallback: r.fallbackFor(ticket)}
+	client := dial(t, r, creds)
+	client.mu.Lock()
+	used := client.ticket
+	client.mu.Unlock()
+	if !bytes.Equal(used, creds.fallback) {
+		t.Fatal("session not on the fallback ticket")
+	}
+	if frames, _ := r.zoneCounts(); frames != 0 {
+		t.Fatalf("%d ZONES frames sent for an MTT1 session", frames)
 	}
 }

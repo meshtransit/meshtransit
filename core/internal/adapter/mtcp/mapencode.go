@@ -40,7 +40,8 @@ func splitGrant(grant mapsession.RelayGrant) (grantParts, error) {
 		return grantParts{}, errors.Join(ErrMapEncoding, err)
 	}
 	parts := grantParts{relayMap: parsed.RelayMap,
-		ticket: &mtcpv1.RelayTicket{Ticket: parsed.Ticket, NotAfterMs: parsed.TicketNotAfter.UnixMilli()}}
+		ticket: &mtcpv1.RelayTicket{Ticket: parsed.Ticket, NotAfterMs: parsed.TicketNotAfter.UnixMilli(),
+			Zones: parsed.TicketZones, FallbackTicket: parsed.FallbackTicket}}
 	for _, trusted := range parsed.SigningKeys {
 		id := trusted.Key.ID()
 		parts.signingKeys = append(parts.signingKeys, &mtcpv1.KeyUpdate_SigningKey{

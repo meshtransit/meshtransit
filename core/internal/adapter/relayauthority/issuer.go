@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+	"slices"
 	"time"
 
 	"meshtransit.net/core/internal/control/mapsession"
@@ -87,7 +88,20 @@ func (issuer *Issuer) grant(request mapsession.RelayGrantRequest) (mapsession.Re
 	for _, contract := range request.TrustContracts {
 		ticket.Zones = append(ticket.Zones, mtrp.Zone{Kind: mtrp.ZoneTrustContract, ID: contract.Bytes()})
 	}
-	signed, err := ticket.Sign(issuer.publisher.opts.Signer)
+	// Up to MaxZones zones fit an MTT1 ticket. More (a session that declared
+	// relay.zones2) need MTT2, whose zone list the node sends the relay.
+	// An MTT2 ticket comes with an MTT1 fallback naming its inline zones
+	// (the Network and the 31 oldest contracts) for a relay not yet taking
+	// MTT2.
+	var signed, zones, fallback []byte
+	if len(ticket.Zones) <= mtrp.MaxZones {
+		signed, err = ticket.Sign(issuer.publisher.opts.Signer)
+	} else {
+		signed, zones, err = ticket.SignZones(issuer.publisher.opts.Signer)
+		if err == nil {
+			fallback, err = issuer.fallbackTicket(ticket)
+		}
+	}
 	if err != nil {
 		return mapsession.RelayGrant{}, err
 	}
@@ -96,11 +110,24 @@ func (issuer *Issuer) grant(request mapsession.RelayGrantRequest) (mapsession.Re
 		RelayMap:       relayMap.body,
 		Ticket:         signed,
 		TicketNotAfter: notAfter,
+		TicketZones:    zones,
+		FallbackTicket: fallback,
 	}.Marshal()
 	if err != nil {
 		return mapsession.RelayGrant{}, err
 	}
 	return mapsession.NewRelayGrantForMap(request, payload, notAfter, mapKey)
+}
+
+// fallbackTicket signs an MTT1 ticket for ticket's keys and lifetime that
+// names the first MaxZones of its zones in canonical order.
+func (issuer *Issuer) fallbackTicket(ticket mtrp.Ticket) ([]byte, error) {
+	if _, err := io.ReadFull(issuer.random, ticket.ID[:]); err != nil {
+		return nil, err
+	}
+	sorted := slices.SortedFunc(slices.Values(ticket.Zones), mtrp.CompareZones)
+	ticket.Zones = sorted[:mtrp.MaxZones]
+	return ticket.Sign(issuer.publisher.opts.Signer)
 }
 
 // RelayMapCurrent implements mapsession.RelayMapFreshness.

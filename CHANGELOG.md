@@ -5,6 +5,14 @@ merge (2026-10-09) are kept below.
 
 ## Unreleased
 
+- MTRP MTT2 tickets (share scale step 5): a relay ticket commits to up to
+  16,384 zones by digest and carries the first 32 inline; the node sends the
+  rest in ZONES frames, and the relay puts the ticket in force once the list
+  matches. Relays bound zones per session and relay-wide, and recheck a route
+  by the zone that opened it. Core issues MTT2 to nodes in more than 31 Trust
+  Contracts that negotiated `relay.zones2`, once
+  `MESHTRANSIT_RELAY_TICKET_ZONES_V2` is on, so every share (up to 10,000)
+  can use relays instead of the oldest 31. meshd declares `relay.zones2`.
 - Core schema 149 (share scale step 4): the share map readers choose shares
   from the Device's own targets and rules (alias v6, dependencies v4) instead
   of scanning every endpoint or contract, so a providing Device's map no

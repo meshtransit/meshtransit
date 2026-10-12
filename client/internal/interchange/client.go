@@ -31,6 +31,10 @@ const (
 	maxPendingPackets  = 8
 	credentialInterval = 30 * time.Second
 	eventQueue         = 256
+	// An MTT2 ticket's ZONES frames are sent again, backing off, until the
+	// relay acknowledges the ticket; datagrams may be lost.
+	zonesResendFirst = time.Second
+	zonesResendMax   = time.Minute
 )
 
 var (
@@ -79,8 +83,15 @@ type Client struct {
 	lastRecv    time.Time
 	probeSent   time.Time     // last unanswered KEEPALIVE, zero when answered
 	rtt         time.Duration // smoothed KEEPALIVE round trip
-	closed      bool
-	closeErr    error
+	// zones are the ZONES frames of the ticket in force at the relay that
+	// it has not acknowledged, sent again at zonesNext.
+	zones     []mtrp.ControlMessage
+	zonesAck  uint64 // the not_after of the TICKET_ACK that ends them
+	zonesNext time.Time
+	zonesWait time.Duration
+	lastAck   uint64 // not_after of the last TICKET_ACK
+	closed    bool
+	closeErr  error
 
 	events chan relay.ReceiveEvent
 	done   chan struct{}
@@ -350,6 +361,12 @@ func (c *Client) handleControl(msg mtrp.ControlMessage) bool {
 		return false
 	case mtrp.ControlTicketAck:
 		// The relay enforces the renewed ticket from now on.
+		c.mu.Lock()
+		c.lastAck = msg.NotAfterMS
+		if c.zones != nil && msg.NotAfterMS == c.zonesAck {
+			c.zones = nil
+		}
+		c.mu.Unlock()
 	default:
 	}
 	return true
@@ -403,6 +420,10 @@ func (c *Client) establish(request, route uint32, incoming *relay.Key) {
 func (c *Client) tickLoop() {
 	defer c.wg.Done()
 	_ = c.sendControl(mtrp.ControlMessage{Type: mtrp.ControlKeepalive}) // verifies the binding (§5.2)
+	c.mu.Lock()
+	ticket := c.ticket
+	c.mu.Unlock()
+	c.startZones(ticket)
 	lastKeepalive := c.now()
 	ticker := time.NewTicker(probeTick)
 	defer ticker.Stop()
@@ -421,6 +442,7 @@ func (c *Client) tickLoop() {
 				c.shutdown(ErrRelayUnresponsive)
 				return
 			}
+			c.resendZones(now)
 			sinceKeepalive := now.Sub(lastKeepalive)
 			if sinceKeepalive < c.keepalive && (silent < probeAfter || sinceKeepalive < probeEvery) {
 				continue
@@ -463,8 +485,49 @@ func (c *Client) refreshTicket() bool {
 	c.mu.Unlock()
 	if changed {
 		_ = c.sendControl(mtrp.ControlMessage{Type: mtrp.ControlTicketUpdate, Ticket: ticket})
+		c.startZones(ticket)
 	}
 	return true
+}
+
+// startZones sends the ZONES frames of an MTT2 ticket just handed to the
+// relay (mtrp-v1 §5.4). A ticket whose zones are all inline needs none.
+func (c *Client) startZones(ticket []byte) {
+	var frames []mtrp.ControlMessage
+	var notAfter uint64
+	if source, ok := c.credentials.(ZoneCredentials); ok {
+		if zones := source.RelayTicketZones(ticket); zones != nil {
+			if complete, err := mtrp.CompleteTicket(ticket, zones); err == nil {
+				frames, notAfter = mtrp.ZoneFrames(complete), uint64(complete.NotAfterMS) //nolint:gosec // positive by validation
+			}
+		}
+	}
+	c.mu.Lock()
+	if notAfter != 0 && c.lastAck == notAfter {
+		frames = nil // acknowledged already (a relay that will not hold them)
+	}
+	c.zones, c.zonesAck = frames, notAfter
+	c.zonesNext, c.zonesWait = time.Time{}, zonesResendFirst
+	c.mu.Unlock()
+	c.resendZones(c.now())
+}
+
+// resendZones sends the unacknowledged ZONES frames when they are due.
+func (c *Client) resendZones(now time.Time) {
+	c.mu.Lock()
+	frames := c.zones
+	if len(frames) == 0 || now.Before(c.zonesNext) {
+		c.mu.Unlock()
+		return
+	}
+	c.zonesNext = now.Add(c.zonesWait)
+	c.zonesWait = min(2*c.zonesWait, zonesResendMax)
+	c.mu.Unlock()
+	for _, frame := range frames {
+		if err := c.sendControl(frame); err != nil {
+			return
+		}
+	}
 }
 
 var _ relay.Client = (*Client)(nil)

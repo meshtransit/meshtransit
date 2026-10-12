@@ -25,11 +25,15 @@ var (
 // mtcpCapabilities lists what this Core serves (mtcp-v1 §13). Device alias
 // grants are offered only where the deployment projects them. map.large1:
 // maps of up to the configured peer limit go only to clients that declare it;
-// the others get at most 256 peers.
-func mtcpCapabilities(deviceAliases bool) []string {
+// the others get at most 256 peers. relay.zones2: relay tickets for more than
+// 31 shares (MTT2), offered once every relay takes them.
+func mtcpCapabilities(deviceAliases, relayZones bool) []string {
 	capabilities := []string{"map.zstd", "disco.v2", "relay.mtrp1", "dns.split", "stats.path1", "nat.report1", "map.large1"}
 	if deviceAliases {
 		capabilities = append(capabilities, "device-alias.v1")
+	}
+	if relayZones {
+		capabilities = append(capabilities, "relay.zones2")
 	}
 	return capabilities
 }
@@ -47,6 +51,7 @@ type mtcpDependencies struct {
 	origin        string
 	guard         mtcpadapter.TimestampGuard
 	logger        *slog.Logger
+	relayZones    bool // offer relay.zones2 (MESHTRANSIT_RELAY_TICKET_ZONES_V2)
 }
 
 // mtcpMapSessions is mapsession.Service: endpoints and snapshot opening.
@@ -129,7 +134,7 @@ func composeMTCP(
 		ClientIPs:      clients,
 		Handler:        application,
 		Guard:          deps.guard,
-		Capabilities:   mtcpCapabilities(controlConfig.Map.EnableDeviceAliases),
+		Capabilities:   mtcpCapabilities(controlConfig.Map.EnableDeviceAliases, deps.relayZones),
 		Logger:         logger,
 		Metrics:        metrics,
 		HandshakeRate:  controlConfig.MTCP.HandshakeRate,

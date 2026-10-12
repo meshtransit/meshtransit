@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/binary"
 	"net/netip"
 	"sync"
 	"sync/atomic"
@@ -180,7 +181,7 @@ type testClient struct {
 	ts      int64
 }
 
-var clientSeq atomic.Uint32
+var clientSeq, ticketIDs atomic.Uint32
 
 func (h *relayHarness) newClient(zones ...mtrp.Zone) *testClient {
 	h.t.Helper()
@@ -222,8 +223,11 @@ func (c *testClient) recvAny() bool { return c.h.net.next(c.addr) != nil }
 func (c *testClient) ticketAt(issued time.Time, zones ...mtrp.Zone) []byte {
 	c.h.t.Helper()
 	now := issued.UnixMilli()
+	// Each ticket has its own ID, as Core's do (repeats are ignored).
+	id := [16]byte{byte(c.index)} //nolint:gosec // test value
+	binary.BigEndian.PutUint32(id[4:], ticketIDs.Add(1))
 	t := mtrp.Ticket{
-		ID:         [16]byte{byte(c.index)}, //nolint:gosec // test value
+		ID:         id,
 		IssuedAtMS: now,
 		NotAfterMS: now + (10 * time.Minute).Milliseconds(),
 		Node:       c.node,

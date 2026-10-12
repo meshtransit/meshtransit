@@ -27,6 +27,11 @@ type Snapshot struct {
 type Interchange struct {
 	Ticket         []byte
 	TicketNotAfter time.Time
+	// TicketZones is, for an MTT2 ticket, every zone it commits to
+	// (mtrp.EncodeZones); the node hands relays those past the inline ones.
+	TicketZones []byte
+	// FallbackTicket is the MTT1 ticket for relays that do not take MTT2.
+	FallbackTicket []byte
 	TicketDisco    [32]byte // the disco key the ticket binds
 	MapVersion     uint64
 	MapExpiresAt   time.Time

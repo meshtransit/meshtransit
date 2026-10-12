@@ -95,7 +95,10 @@ type Snapshot struct {
 	// peerLimit is the session's bound on peers, set by the Service from
 	// the request (zero: the Service's own limit).
 	peerLimit int
-	valid     bool
+	// relayZones is set by the Service for a session that declared
+	// relay.zones2: its relay ticket may name every share.
+	relayZones bool
+	valid      bool
 }
 
 // NewSnapshot validates and copies one authoritative map snapshot.

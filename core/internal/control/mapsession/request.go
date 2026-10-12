@@ -16,6 +16,7 @@ var ErrInvalidRequest = errors.New("map session: invalid request")
 type Request struct {
 	nodeKey            node.Key
 	deviceAliasVersion uint8
+	relayZones         bool
 	largeMap           bool
 	endpointSet        node.EndpointSet
 	hasEndpointSet     bool
@@ -108,3 +109,14 @@ func (request Request) WithLargeMap() Request {
 
 // LargeMap reports whether the client declared large maps.
 func (request Request) LargeMap() bool { return request.largeMap }
+
+// WithRelayZones records that the client and Core negotiated relay.zones2:
+// the client hands relays MTT2 tickets and their zone lists, so its relay
+// grant may name every share instead of the oldest 31.
+func (request Request) WithRelayZones() Request {
+	request.relayZones = true
+	return request
+}
+
+// RelayZones reports whether the session negotiated relay.zones2.
+func (request Request) RelayZones() bool { return request.relayZones }

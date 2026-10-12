@@ -41,13 +41,19 @@ type fakeRelay struct {
 	ignoreU atomic.Bool // drop UDP INITs (UDP blocked)
 	mute    atomic.Bool // stop answering anything (a relay that died silently)
 	cookies atomic.Bool // demand mac2
+	// dropZones drops that many ZONES frames (lost datagrams).
+	dropZones atomic.Int32
+	// oldRelay drops INITs with MTT2 tickets, like a relay before MTT2.
+	oldRelay atomic.Bool
 
-	mu        sync.Mutex
-	byIndex   map[uint32]*fakeSession
-	byNode    map[key.NodePublic]*fakeSession
-	nextIndex uint32
-	updates   int
-	challenge uint64
+	mu         sync.Mutex
+	byIndex    map[uint32]*fakeSession
+	byNode     map[key.NodePublic]*fakeSession
+	nextIndex  uint32
+	updates    int
+	challenge  uint64
+	zoneFrames int // ZONES frames received
+	zonesDone  int // MTT2 tickets completed
 }
 
 type fakeSession struct {
@@ -57,6 +63,7 @@ type fakeSession struct {
 	routes  map[uint32]*fakeSession // by this session's route number
 	byPeer  map[key.NodePublic]uint32
 	answers int
+	zones   *mtrp.ZoneAssembly
 }
 
 func newFakeRelay(t testing.TB) *fakeRelay {
@@ -139,6 +146,47 @@ func (r *fakeRelay) ticket(node key.NodePublic, disco key.DiscoPublic, lifetime 
 		r.t.Fatal(err)
 	}
 	return b
+}
+
+// ticketV2 signs an MTT2 ticket in one Network zone and n Trust Contract
+// zones and returns it with its zone list.
+func (r *fakeRelay) ticketV2(node key.NodePublic, disco key.DiscoPublic, n int) ([]byte, []byte) {
+	now := time.Now()
+	var id [16]byte
+	_, _ = rand.Read(id[:])
+	id[0] |= 1
+	zones := []mtrp.Zone{{Kind: mtrp.ZoneNetwork, ID: [16]byte{1}}}
+	for i := range n {
+		zones = append(zones, mtrp.Zone{Kind: mtrp.ZoneTrustContract, ID: [16]byte{0x30, byte(i >> 8), byte(i), 15: 1}})
+	}
+	ticket, encoded, err := mtrp.Ticket{
+		ID: id, IssuedAtMS: now.UnixMilli(), NotAfterMS: now.Add(10 * time.Minute).UnixMilli(),
+		Node: node, Disco: disco, Deployment: [16]byte{0x01, 0x99, 6: 0x70, 8: 0x80}, Zones: zones,
+	}.SignZones(r.signer)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	return ticket, encoded
+}
+
+// fallbackFor signs the MTT1 fallback of an MTT2 ticket.
+func (r *fakeRelay) fallbackFor(ticket []byte) []byte {
+	t, err := mtrp.ParseTicketUnverified(ticket)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	t.ID[0] ^= 0x80
+	b, err := t.Sign(r.signer)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	return b
+}
+
+func (r *fakeRelay) zoneCounts() (frames, done int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.zoneFrames, r.zonesDone
 }
 
 func (r *fakeRelay) serveUDP() {
@@ -264,7 +312,7 @@ func (r *fakeRelay) handshake(frame []byte, from netip.AddrPort, send func([]byt
 		return
 	}
 	ticket, err := mtrp.Verifier{Keys: mtrp.NewStaticKeys(r.signer.Public())}.Verify(hs.Hello().Ticket)
-	if err != nil || ticket.Disco != hs.Peer() {
+	if err != nil || ticket.Disco != hs.Peer() || ticket.IsV2() && r.oldRelay.Load() {
 		return
 	}
 	r.mu.Lock()
@@ -276,6 +324,7 @@ func (r *fakeRelay) handshake(frame []byte, from netip.AddrPort, send func([]byt
 		return
 	}
 	sess := &fakeSession{session: session, node: ticket.Node, send: send, routes: map[uint32]*fakeSession{}, byPeer: map[key.NodePublic]uint32{}}
+	sess.zones, _ = mtrp.NewZoneAssembly(ticket)
 	r.mu.Lock()
 	r.byIndex[index] = sess
 	r.byNode[ticket.Node] = sess
@@ -321,6 +370,23 @@ func (r *fakeRelay) control(sess *fakeSession, msg mtrp.ControlMessage) {
 		r.updates++
 		r.mu.Unlock()
 		r.sendControl(sess, mtrp.ControlMessage{Type: mtrp.ControlTicketAck, NotAfterMS: 1})
+	case mtrp.ControlZones:
+		if r.dropZones.Add(-1) >= 0 {
+			return
+		}
+		r.mu.Lock()
+		r.zoneFrames++
+		var done *mtrp.Ticket
+		if sess.zones != nil && sess.zones.Add(msg) {
+			if complete, ok := sess.zones.Complete(); ok {
+				done, sess.zones = &complete, nil
+				r.zonesDone++
+			}
+		}
+		r.mu.Unlock()
+		if done != nil {
+			r.sendControl(sess, mtrp.ControlMessage{Type: mtrp.ControlTicketAck, NotAfterMS: uint64(done.NotAfterMS)}) //nolint:gosec // test value
+		}
 	case mtrp.ControlPathResponse:
 		r.mu.Lock()
 		if msg.Nonce == r.challenge {

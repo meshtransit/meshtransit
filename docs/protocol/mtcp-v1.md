@@ -239,7 +239,7 @@ payload     bytes[...]
 | 0x32 | `HealthReport` | N→C | 16 KiB |
 | 0x33 | `PathStatsReport` | N→C | 256 KiB |
 | 0x34 | `EnforcementReport` | N→C | 1 KiB |
-| 0x40 | `RelayTicket` | C→N | 4 KiB |
+| 0x40 | `RelayTicket` | C→N | 256 KiB (4 KiB without `relay.zones2`) |
 | 0x50 | `Lifecycle` | C→N | 4 KiB |
 | 0x51 | `KeyUpdate` | C→N | 4 KiB |
 | 0x52 | `Notice` | C→N | 8 KiB |
@@ -578,8 +578,14 @@ evidence from the node, not attestation (policy digest §6).
 
 ## 9. Relay access
 
-- `RelayTicket{ticket, not_after}` carries an MTRP v1 ticket (MTRP §6) for this
-  node's disco key. Core sends one right after authorization, and a fresh one
+- `RelayTicket{ticket, not_after, zones}` carries an MTRP v1 ticket (MTRP §6)
+  for this node's disco key. With `relay.zones2`, a node in more than 31 Trust
+  Contracts receives an MTT2 ticket naming all of them, and `zones` carries the
+  list it commits to (MTRP §6.1, 17 bytes per zone) and `fallback_ticket` an
+  MTT1 ticket for the same keys naming its inline zones, for relays that do
+  not take MTT2. The node rejects a ticket whose list or fallback does not
+  match. Without `relay.zones2` the ticket names
+  the Network and the 31 oldest Trust Contracts, and `zones` is empty. Core sends one right after authorization, and a fresh one
   at least 2 minutes before the current one expires, and immediately after any
   change of the node's zones (Network or Trust Contract membership).
 - The relay map is part of the map (section 7.3); the node verifies its
@@ -649,6 +655,8 @@ Names are lowercase, dot-separated, with a version suffix. Registered names:
 | `dns.split` | Node applies split DNS routes |
 | `stats.path1` | Node sends `PathStatsReport` |
 | `nat.report1` | Node sends NAT classification in `EndpointReport` |
+| `map.large1` | Node applies maps of up to 10,000 peers |
+| `relay.zones2` | Node hands relays MTT2 tickets and their ZONES (MTRP §5.4, §6.1). Core offers it only once every relay accepts them |
 
 Unknown names are ignored. Core sends a feature only when both sides list it.
 

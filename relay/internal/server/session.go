@@ -54,10 +54,13 @@ func (b *binding) matches(from binding) bool {
 }
 
 // route is one direction of a relayed pair: frames on the owner's route
-// number go to peer, which knows the pair as peerRoute.
+// number go to peer, which knows the pair as peerRoute. zone is the zone
+// both tickets shared when it opened, rechecked first when tickets or
+// revocations change.
 type route struct {
 	peer      *session
 	peerRoute uint32
+	zone      mtrp.Zone
 }
 
 // session is the relay's state for one authenticated client.
@@ -82,7 +85,15 @@ type session struct {
 	control    ratelimit.Bucket          // authenticated CONTROL frames per second
 	unverified ratelimit.Bucket          // bytes per second towards an unverified binding
 	routeOpens ratelimit.Bucket
+	zoneFrames ratelimit.Bucket // ZONES frames per second
 	closed     bool
+
+	// pending collects the zones of an MTT2 ticket not yet in force: the
+	// session keeps its current ticket until they all arrive (§5.4).
+	pending *mtrp.ZoneAssembly
+	// Zones charged to the relay budget for the current and pending ticket.
+	chargedCurrent, chargedPending int
+	reackAt                        time.Time // earliest repeat of a TICKET_ACK for resent ZONES
 }
 
 func (s *session) index() uint32 { return s.crypto.LocalIndex() }
@@ -139,16 +150,38 @@ func (s *session) newRouteNumberLocked() (uint32, bool) {
 	return 0, false
 }
 
-// sharesZone reports whether two sessions' tickets share a zone that Core
-// has not withdrawn (r may be nil).
-func sharesZone(a, b *session, r mtrp.Revocations) bool {
-	a.mu.Lock()
-	ta := a.ticket
-	a.mu.Unlock()
-	b.mu.Lock()
-	tb := b.ticket
-	b.mu.Unlock()
-	return mtrp.SharesLiveZone(ta, tb, r)
+// sharedZone returns a zone both sessions' tickets carry that Core has not
+// withdrawn (r may be nil).
+func sharedZone(a, b *session, r mtrp.Revocations) (mtrp.Zone, bool) {
+	ta, tb := a.currentTicket(), b.currentTicket()
+	return mtrp.SharedLiveZone(ta, tb, r)
+}
+
+// bothHold reports whether both sessions' tickets still carry z live.
+func bothHold(a, b *session, z mtrp.Zone, r mtrp.Revocations) bool {
+	return mtrp.HasLiveZone(a.currentTicket(), z, r) && mtrp.HasLiveZone(b.currentTicket(), z, r)
+}
+
+// routeTo returns the peer of route number n, or nil.
+func (s *session) routeTo(n uint32) *session {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.routes[n].peer
+}
+
+// holdsTicket reports whether id is the ticket in force or being assembled.
+func (s *session) holdsTicket(id [16]byte) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ticket.ID == id || s.pending != nil && s.pending.Ticket().ID == id
+}
+
+// currentTicket returns the ticket in force. Its zone slice is replaced,
+// never changed in place, so it may be read without the lock.
+func (s *session) currentTicket() mtrp.Ticket {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ticket
 }
 
 type dropReason uint8

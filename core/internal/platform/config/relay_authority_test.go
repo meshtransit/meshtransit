@@ -54,13 +54,15 @@ func TestRelayAuthorityConfigLoadsKeysMapAndDrain(t *testing.T) {
 		envRelayDrain:            " " + drained.String() + " ",
 		envRelayTrustedProxies:   "10.0.0.0/8,fd00::/8",
 		envRelayDeploymentID:     "01890f00-0000-7000-8000-000000000123",
+		envRelayTicketZonesV2:    "true",
 	}), app.RoleAll)
 	if err != nil || cfg == nil {
 		t.Fatalf("loadRelayAuthorityConfig() error = %v", err)
 	}
 	if cfg.MapFile != "/etc/meshtransit/relay-map.json" || cfg.MapDigest[0] != 0x11 ||
 		len(cfg.Drain) != 1 || cfg.Drain[0] != drained || len(cfg.TrustedProxyPrefixes) != 2 ||
-		cfg.TicketDeployment == nil || cfg.TicketDeployment.String() != "01890f00-0000-7000-8000-000000000123" {
+		cfg.TicketDeployment == nil || cfg.TicketDeployment.String() != "01890f00-0000-7000-8000-000000000123" ||
+		!cfg.TicketZonesV2 {
 		t.Fatal("map or drain settings not loaded")
 	}
 	signer, nextSigner, err := cfg.SigningKeys(t.Context())
@@ -110,6 +112,11 @@ func TestRelayAuthorityConfigRejectsInvalidSettings(t *testing.T) {
 			envRelayDeploymentID: "01890f00-0000-7000-8000-000000000123",
 		}), role: app.RoleControl},
 		{name: "empty drain entry", values: base(map[string]string{envRelayDrain: ""}), role: app.RoleControl},
+		{name: "MTT2 without tickets", values: base(map[string]string{envRelayTicketZonesV2: "true"}), role: app.RoleControl},
+		{name: "bad MTT2 switch", values: base(map[string]string{
+			envRelayMapFile: "/etc/meshtransit/relay-map.json", envRelayMapSHA256: "sha256:" + strings.Repeat("1", 64),
+			envRelayDeploymentID: "01890f00-0000-7000-8000-000000000123", envRelayTicketZonesV2: "yes",
+		}), role: app.RoleControl},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

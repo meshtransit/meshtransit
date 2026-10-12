@@ -529,6 +529,9 @@ func run(ctx context.Context, lookup config.LookupFunc, errorOutput io.Writer) (
 		if len(browserControl) == 1 {
 			deps.browser, deps.origin = &browserControl[0], processConfig.BrowserRegistration.Origin
 		}
+		if relay := processConfig.RelayAuthority; relay != nil && relay.TicketDeployment != nil {
+			deps.relayZones = relay.TicketZonesV2
+		}
 		mtcpServer, mtcpMetrics, mtcpErr := composeMTCP(*processConfig.Control, deps)
 		if mtcpErr != nil {
 			logger.ErrorContext(ctx, "startup failed", "error_code", "mtcp_composition_failure", "error", mtcpErr)

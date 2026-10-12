@@ -50,6 +50,9 @@ type mapState struct {
 	signingKeys []mtrp.TrustedKey
 	ticket      []byte
 	ticketUntil time.Time
+	ticketZones []byte // MTT2 only
+	// fallbackTicket is the MTT1 ticket beside an MTT2 one.
+	fallbackTicket []byte
 }
 
 func newMapState() *mapState { return &mapState{peers: make(map[string]*mtcpv1.Device)} }
@@ -174,14 +177,31 @@ func (state *mapState) setKeys(update *mtcpv1.KeyUpdate) error {
 	return nil
 }
 
-// setTicket records a relay ticket.
+// setTicket records a relay ticket. An MTT2 ticket must come with the zone
+// list it commits to, checked here so relays are only ever handed a list
+// that completes the ticket.
 func (state *mapState) setTicket(ticket *mtcpv1.RelayTicket) error {
 	if len(ticket.GetTicket()) == 0 || len(ticket.GetTicket()) > mtrp.MaxTicketSize || ticket.GetNotAfterMs() <= 0 {
 		return fmt.Errorf("%w: malformed relay ticket", controlplane.ErrNetmapInvalid)
 	}
+	if len(ticket.GetZones()) != 0 || isMTT2(ticket.GetTicket()) {
+		if _, err := mtrp.CompleteTicket(ticket.GetTicket(), ticket.GetZones()); err != nil {
+			return fmt.Errorf("%w: relay ticket zones: %w", controlplane.ErrNetmapInvalid, err)
+		}
+	}
+	if fallback := ticket.GetFallbackTicket(); len(fallback) != 0 {
+		if len(fallback) > mtrp.MaxTicketSize || mtrp.CheckFallbackTicket(ticket.GetTicket(), fallback) != nil {
+			return fmt.Errorf("%w: relay fallback ticket", controlplane.ErrNetmapInvalid)
+		}
+	}
 	state.ticket, state.ticketUntil = bytes.Clone(ticket.GetTicket()), time.UnixMilli(ticket.GetNotAfterMs())
+	state.ticketZones = bytes.Clone(ticket.GetZones())
+	state.fallbackTicket = bytes.Clone(ticket.GetFallbackTicket())
 	return nil
 }
+
+// isMTT2 reports whether ticket claims the MTT2 format.
+func isMTT2(ticket []byte) bool { return len(ticket) >= 4 && string(ticket[:4]) == "MTT2" }
 
 // snapshotInput carries what a product snapshot needs besides the view.
 type snapshotInput struct {
@@ -273,6 +293,7 @@ func (state *mapState) interchange(now time.Time) (*networkmap.Interchange, map[
 	}
 	return &networkmap.Interchange{
 		Ticket: bytes.Clone(state.ticket), TicketNotAfter: state.ticketUntil,
+		TicketZones: bytes.Clone(state.ticketZones), FallbackTicket: bytes.Clone(state.fallbackTicket),
 		TicketDisco: ticket.Disco, MapVersion: relayMap.Version, MapExpiresAt: relayMap.ExpiresAt,
 	}, regions, true
 }

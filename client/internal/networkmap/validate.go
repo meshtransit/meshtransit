@@ -513,6 +513,8 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 	if snapshot.Interchange != nil {
 		interchange := *snapshot.Interchange
 		interchange.Ticket = append([]byte(nil), interchange.Ticket...)
+		interchange.TicketZones = append([]byte(nil), interchange.TicketZones...)
+		interchange.FallbackTicket = append([]byte(nil), interchange.FallbackTicket...)
 		cloned.Interchange = &interchange
 	}
 

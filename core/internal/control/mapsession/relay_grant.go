@@ -13,8 +13,13 @@ import (
 )
 
 // MaximumRelayGrantContracts bounds the Trust Contract zones of one relay
-// grant: a relay ticket carries at most 32 zones, one of them the Network.
+// grant for a client without relay.zones2: an MTT1 ticket carries at most 32
+// zones, one of them the Network.
 const MaximumRelayGrantContracts = 31
+
+// MaximumRelayZoneContracts bounds them for a client that declared
+// relay.zones2 (MTT2 tickets): every share a map can carry.
+const MaximumRelayZoneContracts = MaximumDirectDeviceProjections
 
 // relayGrantRenewBefore is how long before expiry a grant is renewed. It
 // leaves the node time to hand the relay a fresh ticket (mtcp-v1 §9 asks
@@ -30,7 +35,7 @@ type RelayGrantRequest struct {
 	NodeKey        node.Key
 	DiscoveryKey   node.DiscoveryKey
 	Network        network.ID
-	TrustContracts []sharing.ContractID // sorted, unique, at most MaximumRelayGrantContracts
+	TrustContracts []sharing.ContractID // sorted, unique, at most the session's relay contract limit
 	// NotAfter bounds the grant: the node's authority deadline.
 	NotAfter time.Time
 }
@@ -128,10 +133,10 @@ func (snapshot Snapshot) RelayGrantRequest() (RelayGrantRequest, bool) {
 		return bytes.Compare(left[:], right[:])
 	})
 	contracts = slices.Compact(contracts)
-	if len(contracts) > MaximumRelayGrantContracts {
-		// UUIDv7 order keeps the oldest contracts; newer ones wait for an
-		// MTCP grant that can carry more zones.
-		contracts = contracts[:MaximumRelayGrantContracts]
+	if limit := snapshot.relayContractLimit(); len(contracts) > limit {
+		// UUIDv7 order keeps the oldest contracts; a client without
+		// relay.zones2 reaches newer ones only directly.
+		contracts = contracts[:limit]
 	}
 	return RelayGrantRequest{
 		NodeKey:        snapshot.NodeKey(),
@@ -140,6 +145,14 @@ func (snapshot Snapshot) RelayGrantRequest() (RelayGrantRequest, bool) {
 		TrustContracts: contracts,
 		NotAfter:       snapshot.KeyExpiry(),
 	}, true
+}
+
+// relayContractLimit is the session's bound on Trust Contract zones.
+func (snapshot Snapshot) relayContractLimit() int {
+	if snapshot.relayZones {
+		return MaximumRelayZoneContracts
+	}
+	return MaximumRelayGrantContracts
 }
 
 // relayGrantCurrent reports whether grant still covers request at now.

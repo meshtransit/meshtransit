@@ -168,6 +168,7 @@ Plaintext: `type u8 || body`.
 | 0x09 | SESSION_CLOSE | `reason u8 || retry_after_ms u32` (1 expired, 2 revoked, 3 draining, 4 policy, 5 idle) | relay |
 | 0x0A | PATH_CHALLENGE | `nonce u64` (non-zero, random) | relay |
 | 0x0B | PATH_RESPONSE | `nonce u64` (echo of the challenge) | client |
+| 0x0C | ZONES | `ticket_id bytes[16] \|\| offset u16 \|\| count u8 \|\| count × zone` (section 5.4) | client |
 
 ### 5.1 Routes
 
@@ -216,6 +217,35 @@ answers TICKET_ACK. At `not_after` without renewal the relay sends
 SESSION_CLOSE(expired) and erases the session. Revocations from Core close
 matching sessions with SESSION_CLOSE(revoked).
 
+### 5.4 Zone lists of MTT2 tickets
+
+An MTT2 ticket (section 6.1) carries its first zones inline and commits to the
+rest. After a handshake or TICKET_UPDATE with an MTT2 ticket whose zones are
+not all inline, the client sends the zones from index `min(zone_total, 32)`
+onward in ZONES frames: `count` is 1..59, `offset + count ≤ zone_total`, and
+the zones of each frame are in canonical order.
+
+- The relay collects the frames of the ticket it is completing (matched by
+  `ticket_id`); frames for any other ticket are ignored, as are repeats.
+  Frames for the ticket already in force mean the client missed the
+  acknowledgement: the relay repeats TICKET_ACK, at most once a second.
+- Once every zone has arrived, the relay checks that the whole list is
+  canonical, starts with the inline zones and matches `zone_digest`. Only then
+  does the ticket come into force, and the relay answers TICKET_ACK with its
+  `not_after`. A list that does not match is discarded entirely. The relay
+  checks again that the ticket is not revoked and its key still trusted
+  before putting it in force, as it may have been staged minutes earlier.
+- Until then a new session uses the inline zones, which the signature covers
+  directly, and a session that sent TICKET_UPDATE keeps its current ticket.
+- A relay may decline to hold more zones than its policy allows (per session,
+  and across the relay). It then puts the ticket in force with its inline zones
+  only and answers TICKET_ACK at once, so the client stops sending. A renewal
+  counts only the zones it adds to those the session already holds. A ticket
+  older than the one in force or being assembled is acknowledged and dropped.
+- The client sends the frames again, backing off from 1 s to 1 min, until it
+  receives that TICKET_ACK. ZONES frames have their own rate limit, which
+  allows several complete lists, and do not count against the CONTROL rate.
+
 ## 6. Tickets
 
 A ticket is a canonical binary structure signed by Core with Ed25519.
@@ -231,7 +261,7 @@ disco       bytes[32]  ; disco public key used for the MTRP handshake
 deployment  bytes[16]  ; deployment public ID
 max_bps     u32        ; bytes/s per session; 0 = relay default
 max_routes  u16        ; 0 = relay default
-zone_count  u8         ; 1..32
+zone_count  u8         ; 1..32 (MTT2: section 6.1)
 zones       zone_count × (kind u8 || id bytes[16])   ; kind 1 Network, 2 Trust Contract
 signature   bytes[64]  ; Ed25519 over ("meshtransit/mtrp-ticket/v1" || 0x00 || all preceding bytes)
 ```
@@ -247,6 +277,39 @@ Verification rules:
 - Zones MUST be sorted by `(kind, id)` without duplicates (canonical form).
 - Reject if `ticket_id`, `node` or `disco` is on a revocation list, or if
   every zone of the ticket is withdrawn.
+
+### 6.1 MTT2: tickets that commit to many zones
+
+An MTT1 ticket fits one handshake datagram, so it carries at most 32 zones. A
+node with more (a Device with more than 31 Trust Contracts) receives an MTT2
+ticket, but only from a Core that negotiated `relay.zones2` with it (MTCP §13).
+MTT2 is MTT1 with these changes:
+
+```
+magic        bytes[4]   = "MTT2"
+...          (key_id through max_routes as in MTT1)
+zone_total   u16        ; 1..16384 zones granted
+zone_digest  bytes[32]  ; SHA-256("meshtransit/mtrp-zones/v1" || 0x00 ||
+                        ;   ticket_id || zone_total u16 || all zones)
+inline_count u8         ; = min(zone_total, 32)
+zones        inline_count × zone   ; the first zones of the canonical list
+signature    bytes[64]
+```
+
+- The whole zone list is canonical (sorted by `(kind, id)`, no duplicates),
+  so the Network zone (kind 1) is always inline.
+- The signature covers `zone_digest`, and `zone_digest` binds the list to
+  `ticket_id`, so a list cannot be reused under another ticket.
+- Verification is as for MTT1 (section 6). Until the whole list is known,
+  revocation by zones judges the inline zones: a ticket whose inline zones,
+  its Network zone among them, are all withdrawn is refused (as a Private
+  Interchange relay refuses a Network it does not serve).
+- Beside an MTT2 ticket, Core issues an MTT1 fallback for the same keys and
+  lifetime that names the inline zones. A relay that does not know MTT2 drops
+  the INIT unanswered; the client retries with the fallback and later hands
+  the MTT2 ticket over with TICKET_UPDATE, which such a relay ignores.
+- Core sends the zone list to the node beside the ticket (`RelayTicket.zones`,
+  MTCP §9). The node checks it against the ticket before using either.
 
 ## 7. Relay behaviour requirements
 

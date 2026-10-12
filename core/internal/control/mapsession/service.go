@@ -165,6 +165,7 @@ func (service *Service) Refresh(
 		return Snapshot{}, ErrOpen
 	}
 	derived.peerLimit = service.options.sessionPeerLimit(request)
+	derived.relayZones = request.RelayZones()
 	return service.loadConnectivity(ctx, derived)
 }
 
@@ -214,6 +215,7 @@ func (service *Service) open(
 		return Snapshot{}, err
 	}
 	snapshot.peerLimit = service.options.sessionPeerLimit(request)
+	snapshot.relayZones = request.RelayZones()
 	return service.loadConnectivity(ctx, snapshot)
 }
 

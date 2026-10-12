@@ -23,6 +23,8 @@ const (
 	ControlSessionClose  ControlType = 0x09
 	ControlPathChallenge ControlType = 0x0A
 	ControlPathResponse  ControlType = 0x0B
+	// ControlZones carries zones of an MTT2 ticket (§5.4), client to relay.
+	ControlZones ControlType = 0x0C
 )
 
 // RouteErrorCode explains a refused ROUTE_OPEN.
@@ -73,6 +75,10 @@ type ControlMessage struct {
 	NotAfterMS   uint64
 	Nonce        uint64 // PATH_CHALLENGE and PATH_RESPONSE
 	Ticket       []byte
+	// ZONES: the ticket, the index of the first zone and the zones.
+	TicketID   [16]byte
+	ZoneOffset uint16
+	Zones      []Zone
 }
 
 // AppendControlMessage encodes m as a CONTROL plaintext.
@@ -128,6 +134,16 @@ func AppendControlMessage(dst []byte, m ControlMessage) ([]byte, error) {
 		dst = binary.BigEndian.AppendUint32(dst, m.RetryAfterMS)
 	case ControlPathChallenge, ControlPathResponse:
 		dst = binary.BigEndian.AppendUint64(dst, m.Nonce)
+	case ControlZones:
+		if m.TicketID == ([16]byte{}) || len(m.Zones) == 0 || len(m.Zones) > MaxControlZones ||
+			int(m.ZoneOffset)+len(m.Zones) > MaxTicketZones || !canonicalZones(m.Zones) {
+			return nil, ErrMalformed
+		}
+		count, _ := wire.Len8(len(m.Zones)) // at most MaxControlZones, checked above
+		dst = append(dst, m.TicketID[:]...)
+		dst = binary.BigEndian.AppendUint16(dst, m.ZoneOffset)
+		dst = append(dst, count)
+		dst = append(dst, EncodeZones(m.Zones)...)
 	default:
 		return nil, ErrUnsupported
 	}
@@ -208,6 +224,26 @@ func ParseControlMessage(b []byte) (ControlMessage, error) {
 			return ControlMessage{}, ErrMalformed
 		}
 		m.Nonce = binary.BigEndian.Uint64(body)
+	case ControlZones:
+		if len(body) < 16+2+1 {
+			return ControlMessage{}, ErrMalformed
+		}
+		copy(m.TicketID[:], body[:16])
+		m.ZoneOffset = binary.BigEndian.Uint16(body[16:18])
+		count := int(body[18])
+		if m.TicketID == ([16]byte{}) || count == 0 || count > MaxControlZones || !exact(19+count*zoneSize) ||
+			int(m.ZoneOffset)+count > MaxTicketZones {
+			return ControlMessage{}, ErrMalformed
+		}
+		m.Zones = make([]Zone, count)
+		for i := range m.Zones {
+			z := body[19+i*zoneSize:]
+			m.Zones[i].Kind = ZoneKind(z[0])
+			copy(m.Zones[i].ID[:], z[1:zoneSize])
+		}
+		if !canonicalZones(m.Zones) {
+			return ControlMessage{}, ErrMalformed
+		}
 	case ControlSessionClose:
 		if !exact(5) {
 			return ControlMessage{}, ErrMalformed
