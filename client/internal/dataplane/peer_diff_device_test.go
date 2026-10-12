@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"golang.zx2c4.com/wireguard/conn/bindtest"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/tuntest"
 )
@@ -19,7 +18,7 @@ import (
 // peer that did not change keeps its session.
 func TestPeerDiffKeepsSessionsOnARealDevice(t *testing.T) {
 	t.Parallel()
-	binds := bindtest.NewChannelBinds()
+	binds := newLossyChannelBinds()
 	tunA, tunB := tuntest.NewChannelTUN(), tuntest.NewChannelTUN()
 	logger := &device.Logger{Verbosef: device.DiscardLogf, Errorf: device.DiscardLogf}
 	deviceA := newEndpointAuthorityDevice(tunA.TUN(), binds[0], logger)

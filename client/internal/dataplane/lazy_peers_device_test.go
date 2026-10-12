@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"golang.zx2c4.com/wireguard/conn"
-	"golang.zx2c4.com/wireguard/conn/bindtest"
 	"golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/tun/tuntest"
 
@@ -47,7 +46,7 @@ type lazyDeviceNode struct {
 // fillers peers that never send. A lazy engine installs peers on demand.
 func newLazyDevicePair(t *testing.T, lazyA, lazyB bool, fillers int) (*lazyDeviceNode, *lazyDeviceNode) {
 	t.Helper()
-	binds := bindtest.NewChannelBinds()
+	binds := newLossyChannelBinds()
 	nodes := [2]*lazyDeviceNode{}
 	for index, lazy := range []bool{lazyA, lazyB} {
 		bind := binds[index]
