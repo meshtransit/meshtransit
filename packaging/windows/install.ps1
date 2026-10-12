@@ -37,9 +37,12 @@ if (Test-Path $sums) {
 if (-not (Get-LocalGroup -Name $groupName -ErrorAction SilentlyContinue)) {
     New-LocalGroup -Name $groupName -Description 'May use meshctl without elevation' | Out-Null
 }
-$user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-if (-not (Get-LocalGroupMember -Group $groupName -Member $user -ErrorAction SilentlyContinue)) {
+$user = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+# Get-LocalGroupMember -Member does not match every name form, so add and
+# accept an existing membership instead of checking first.
+try {
     Add-LocalGroupMember -Group $groupName -Member $user
+} catch [Microsoft.PowerShell.Commands.MemberExistsException] {
 }
 
 # Stop a running install before replacing its files.

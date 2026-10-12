@@ -30,24 +30,53 @@ func Configure(luid uint64, mtu int, addresses, routes []netip.Prefix) error {
 	return ReplaceRoutes(luid, routes)
 }
 
-// ReplaceRoutes makes routes the adapter's only on-link routes.
+// ReplaceRoutes makes routes the adapter's only on-link routes that
+// MeshTransit manages. It leaves the routes Windows derives from the
+// adapter's addresses (protocol Local: the address's host route, its subnet,
+// broadcast and multicast) in place, because without the host route Windows
+// drops every packet sent to the adapter's own address as not locally
+// destined. winipcfg's SetRoutes flushes those too, so it is not used.
 func ReplaceRoutes(luid uint64, routes []netip.Prefix) error {
-	data := make([]*winipcfg.RouteData, 0, len(routes))
+	missing := make(map[netip.Prefix]struct{}, len(routes))
 	for _, route := range routes {
 		if !route.IsValid() || route != route.Masked() {
 			return fmt.Errorf("winnet: route %s is not a canonical prefix", route)
 		}
+		missing[route] = struct{}{}
+	}
+	adapter := winipcfg.LUID(luid)
+	var errs []error
+	for _, family := range []winipcfg.AddressFamily{windows.AF_INET, windows.AF_INET6} {
+		rows, err := winipcfg.GetIPForwardTable2(family)
+		if err != nil {
+			return fmt.Errorf("winnet: reading routes: %w", err)
+		}
+		for i := range rows {
+			row := &rows[i]
+			if row.InterfaceLUID != adapter || row.Protocol != winipcfg.RouteProtocolNetMgmt {
+				continue
+			}
+			destination := row.DestinationPrefix.Prefix()
+			if _, wanted := missing[destination]; wanted && row.NextHop.Addr().IsUnspecified() {
+				delete(missing, destination)
+				continue
+			}
+			if err := row.Delete(); err != nil && !errors.Is(err, windows.ERROR_NOT_FOUND) {
+				errs = append(errs, fmt.Errorf("winnet: removing route %s: %w", destination, err))
+			}
+		}
+	}
+	for route := range missing {
 		nextHop := netip.IPv4Unspecified()
 		if route.Addr().Is6() {
 			nextHop = netip.IPv6Unspecified()
 		}
-		data = append(data, &winipcfg.RouteData{Destination: route, NextHop: nextHop})
-	}
-	if err := winipcfg.LUID(luid).SetRoutes(data); err != nil {
-		return fmt.Errorf("winnet: setting adapter routes: %w", err)
+		if err := adapter.AddRoute(route, nextHop, 0); err != nil && !errors.Is(err, windows.ERROR_OBJECT_ALREADY_EXISTS) {
+			errs = append(errs, fmt.Errorf("winnet: adding route %s: %w", route, err))
+		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // Index returns the adapter's interface index, which other Windows APIs and
