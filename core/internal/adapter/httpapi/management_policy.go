@@ -378,6 +378,11 @@ func classifyPolicyPublicationError(err error) managementError {
 			Status: http.StatusConflict, Code: "device_policy_edge_limit",
 			Message: "a Device would reach more than 10,000 rule edges; narrow the rules or split the group",
 		}
+	case errors.Is(err, policypublication.ErrDeviceUnavailable):
+		return managementError{
+			Status: http.StatusConflict, Code: "device_unavailable",
+			Message: "a new rule names a Device that is not in this Network or was removed",
+		}
 	case errors.Is(err, policypublication.ErrApprovalRequired),
 		errors.Is(err, policypublication.ErrApprovalUnavailable):
 		return managementError{

@@ -28,6 +28,9 @@ var (
 	ErrConflict = errors.New("policy publication: stale base revision")
 	// ErrForbidden hides which Account Session or policy.publish authority check failed.
 	ErrForbidden = errors.New("policy publication: forbidden")
+	// ErrDeviceUnavailable reports a new rule naming a Device that is not in
+	// the Network or was removed from it.
+	ErrDeviceUnavailable = errors.New("policy publication: a rule names an unavailable Device")
 )
 
 // AuditReason is a bounded human explanation for one authority change.

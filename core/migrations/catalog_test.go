@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 143 {
-		t.Fatalf("len(Catalog()) = %d, want 143", len(catalog))
+	if len(catalog) != 144 {
+		t.Fatalf("len(Catalog()) = %d, want 144", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 143 {
-		t.Fatalf("LatestVersion() = %d, want 143", LatestVersion())
+	if LatestVersion() != 144 {
+		t.Fatalf("LatestVersion() = %d, want 144", LatestVersion())
 	}
 }
 
@@ -3443,6 +3443,36 @@ func TestNodeAddressQuarantine(t *testing.T) {
 	for _, forbidden := range []string{"BYPASSRLS", "DROP ", "INSERT ", "DELETE ", "SECURITY DEFINER", "'released'"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 143 must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestPolicyInactiveDeviceRules(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[143]
+	if migration.Version != 144 {
+		t.Fatalf("migration 144 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE OR REPLACE FUNCTION mesh_ops.publish_compiled_policy_local_v1(",
+		"CREATE OR REPLACE FUNCTION mesh_ops.attach_policy_group_rules_v2(",
+		"source.state IN ('active', 'expired', 'suspended')",
+		"WHERE carried.policy_release_id = active_release_id",
+		"WHERE carried.policy_release_id = v_previous_release",
+		"ERRCODE = 'MTP05'",
+		"MESSAGE = 'compiled policy rule count mismatch'",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.attach_policy_group_rules_v2(UUID, TIMESTAMPTZ, JSONB) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 144 must contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"BYPASSRLS", "DROP ", "DELETE ",
+		"source_device.state = 'active'", "destination_device.state = 'active'",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 144 must not contain %q", forbidden)
 		}
 	}
 }

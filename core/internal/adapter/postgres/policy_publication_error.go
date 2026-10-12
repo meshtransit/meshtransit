@@ -25,6 +25,8 @@ func classifyPolicyPublicationDatabaseError(ctx context.Context, err error) erro
 		return errors.Join(publication.ErrConflict, err)
 	case "MTD06":
 		return errors.Join(publication.ErrEdgeBudget, err)
+	case "MTP05":
+		return errors.Join(publication.ErrDeviceUnavailable, err)
 	case "MT003", "MT006", "MT008", "MT009", "MT011", "42501":
 		return errors.Join(publication.ErrApprovalUnavailable, err)
 	case "40001", "40P01", "55P03":

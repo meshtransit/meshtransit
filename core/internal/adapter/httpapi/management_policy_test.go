@@ -324,6 +324,12 @@ func TestManagementHandlerPolicyPublicationFailsClosed(t *testing.T) {
 			status: http.StatusConflict, code: "approval_conflict", wantCall: true,
 		},
 		{
+			name: "removed Device", publishErr: errors.Join(
+				policypublication.ErrPublicationFailed, policypublication.ErrDeviceUnavailable,
+			),
+			status: http.StatusConflict, code: "device_unavailable", wantCall: true,
+		},
+		{
 			name: "publication unavailable", publishErr: policypublication.ErrRetryExhausted,
 			status: http.StatusServiceUnavailable, code: "operation_unavailable", wantCall: true,
 		},
