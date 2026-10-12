@@ -48,3 +48,33 @@ func assertShareLimitGuardPrivileges(ctx context.Context, t *testing.T, admin *p
 		t.Fatalf("an empty deployment reached the %s share limit", *reached)
 	}
 }
+
+// assertPolicyImportedResourceScalePrivileges checks the schema 148
+// publication chain: runtime publishes and resolves through v2; the internal
+// helpers stay closed to it.
+func assertPolicyImportedResourceScalePrivileges(ctx context.Context, t *testing.T, admin *pgx.Conn) {
+	t.Helper()
+	const (
+		publish = "mesh_ops.publish_compiled_policy_v2(uuid,bigint,bytea,integer,timestamp with time zone,jsonb)"
+		resolve = "mesh_ops.resolve_imported_policy_destinations_v2(bigint,bigint,bigint,bigint,uuid,uuid,uuid,uuid,uuid[],timestamp with time zone)"
+		lock    = "mesh_ops.lock_and_resolve_policy_imported_resources_internal_v2(jsonb,timestamp with time zone)"
+		attach  = "mesh_ops.attach_policy_imported_resource_destinations_internal_v2(uuid,timestamp with time zone,jsonb,jsonb)"
+	)
+	for _, check := range []struct {
+		role, function string
+		want           bool
+	}{
+		{"mesh_runtime", publish, true}, {"mesh_worker", publish, false},
+		{"mesh_runtime", resolve, true}, {"mesh_worker", resolve, false},
+		{"mesh_runtime", lock, false}, {"mesh_migrator", lock, true},
+		{"mesh_runtime", attach, false}, {"mesh_share_writer", attach, false},
+	} {
+		var allowed bool
+		if err := admin.QueryRow(ctx, `SELECT has_function_privilege($1, $2, 'EXECUTE')`, check.role, check.function).Scan(&allowed); err != nil {
+			t.Fatalf("%s on %s: %v", check.role, check.function, err)
+		}
+		if allowed != check.want {
+			t.Fatalf("%s EXECUTE on %s = %t, want %t", check.role, check.function, allowed, check.want)
+		}
+	}
+}

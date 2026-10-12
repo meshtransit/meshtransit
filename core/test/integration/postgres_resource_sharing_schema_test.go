@@ -513,13 +513,15 @@ WHERE namespace.nspname = 'mesh'
 	var functionCount int
 	var runtimeContract, migratorContract, foreignExecute, publicExecute, securityContract bool
 	var ownerContract bool
-	var fixedSearchPath, volatile, obsoleteAbsent, legacyExplainClosed bool
+	var fixedSearchPath, volatile, v2ChainPresent, legacyExplainClosed bool
 	if err := admin.QueryRow(ctx, `SELECT
     pg_catalog.count(*)::INTEGER,
     pg_catalog.bool_and(CASE
         WHEN procedure.proname IN (
             'publish_compiled_policy',
+            'publish_compiled_policy_v2',
             'resolve_imported_policy_destinations_v1',
+            'resolve_imported_policy_destinations_v2',
             'read_policy_simulation_baseline_v2',
             'explain_active_policy_v2',
             'explain_active_policy_v3',
@@ -529,6 +531,7 @@ WHERE namespace.nspname = 'mesh'
     END),
     pg_catalog.bool_and(CASE
         WHEN procedure.proname IN ('lock_and_resolve_policy_imported_resources_internal_v1',
+            'lock_and_resolve_policy_imported_resources_internal_v2',
             'read_compiled_imported_policy_evidence_internal_v1')
             THEN pg_catalog.has_function_privilege('mesh_migrator', procedure.oid, 'EXECUTE')
         ELSE TRUE
@@ -548,14 +551,17 @@ WHERE namespace.nspname = 'mesh'
           AND privilege.privilege_type = 'EXECUTE'
     )),
     pg_catalog.bool_and(CASE
-        WHEN procedure.proname = 'attach_policy_imported_resource_destinations_internal_v1'
+        WHEN procedure.proname IN ('attach_policy_imported_resource_destinations_internal_v1',
+            'attach_policy_imported_resource_destinations_internal_v2')
             THEN NOT procedure.prosecdef
         ELSE procedure.prosecdef
     END),
     pg_catalog.bool_and(CASE
         WHEN procedure.proname IN (
             'resolve_imported_policy_destinations_v1',
+            'resolve_imported_policy_destinations_v2',
             'lock_and_resolve_policy_imported_resources_internal_v1',
+            'lock_and_resolve_policy_imported_resources_internal_v2',
             'read_compiled_imported_policy_evidence_internal_v1'
         )
             THEN owner.rolname = 'mesh_share_writer'
@@ -565,9 +571,10 @@ WHERE namespace.nspname = 'mesh'
         procedure.proconfig @> ARRAY['search_path=pg_catalog, mesh, mesh_ops']
     ),
     pg_catalog.bool_and(procedure.provolatile = 'v'),
+    -- Schema 148 adds the 10000-Imported-Resource chain beside v1.
     pg_catalog.to_regprocedure(
         'mesh_ops.publish_compiled_policy_v2(uuid,bigint,bytea,integer,timestamptz,jsonb)'
-    ) IS NULL,
+    ) IS NOT NULL,
     NOT pg_catalog.has_function_privilege(
         'mesh_runtime',
         'mesh_ops.explain_active_policy_v1(uuid,uuid,uuid,uuid,bigint,bigint,bigint,bigint,bigint,uuid,uuid,uuid,uuid,uuid,text,integer,timestamptz,integer)',
@@ -579,10 +586,14 @@ JOIN pg_catalog.pg_roles AS owner ON owner.oid = procedure.proowner
 WHERE namespace.nspname = 'mesh_ops'
   AND procedure.proname = ANY(ARRAY[
       'attach_policy_imported_resource_destinations_internal_v1',
+      'attach_policy_imported_resource_destinations_internal_v2',
       'publish_compiled_policy_local_v1',
       'publish_compiled_policy',
+      'publish_compiled_policy_v2',
       'resolve_imported_policy_destinations_v1',
+      'resolve_imported_policy_destinations_v2',
       'lock_and_resolve_policy_imported_resources_internal_v1',
+      'lock_and_resolve_policy_imported_resources_internal_v2',
       'read_compiled_imported_policy_evidence_internal_v1',
       'read_policy_simulation_baseline_v2',
       'explain_active_policy_v2',
@@ -598,16 +609,16 @@ WHERE namespace.nspname = 'mesh_ops'
 		&ownerContract,
 		&fixedSearchPath,
 		&volatile,
-		&obsoleteAbsent,
+		&v2ChainPresent,
 		&legacyExplainClosed,
 	); err != nil {
 		t.Fatal("query Imported Resource policy function privileges", err)
 	}
-	if functionCount != 10 || !runtimeContract || !migratorContract || foreignExecute || publicExecute ||
-		!securityContract || !ownerContract || !fixedSearchPath || !volatile || !obsoleteAbsent ||
+	if functionCount != 14 || !runtimeContract || !migratorContract || foreignExecute || publicExecute ||
+		!securityContract || !ownerContract || !fixedSearchPath || !volatile || !v2ChainPresent ||
 		!legacyExplainClosed {
 		t.Fatalf(
-			"Imported Resource policy functions count=%d runtime=%t migrator=%t foreign=%t public=%t security=%t owner=%t path=%t volatile=%t obsolete_absent=%t legacy_explain_closed=%t",
+			"Imported Resource policy functions count=%d runtime=%t migrator=%t foreign=%t public=%t security=%t owner=%t path=%t volatile=%t v2_chain_present=%t legacy_explain_closed=%t",
 			functionCount,
 			runtimeContract,
 			migratorContract,
@@ -617,7 +628,7 @@ WHERE namespace.nspname = 'mesh_ops'
 			ownerContract,
 			fixedSearchPath,
 			volatile,
-			obsoleteAbsent,
+			v2ChainPresent,
 			legacyExplainClosed,
 		)
 	}

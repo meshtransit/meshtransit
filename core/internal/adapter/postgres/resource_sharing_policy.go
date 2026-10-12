@@ -16,7 +16,13 @@ import (
 	"meshtransit.net/core/internal/domain/sharing"
 )
 
-const maximumImportedPolicyDestinations = 256
+// maximumImportedPolicyDestinations bounds the Imported Resources one policy
+// names: the most rules one policy holds. Before schema 148 is granted, the
+// resolver accepts legacyImportedPolicyDestinations.
+const (
+	maximumImportedPolicyDestinations = 10_000
+	legacyImportedPolicyDestinations  = 256
+)
 
 type importedPolicyLocatorRecord struct {
 	ImportedResourceID          string `json:"imported_resource_id"`
@@ -104,6 +110,16 @@ func (store *ResourceSharingStore) ResolveImportedPolicyDestinations(
 		return nil, err
 	}
 
+	resolveQuery := resolveImportedPolicyDestinationsSQL
+	var scaled bool
+	if err = transaction.QueryRow(ctx, scaledImportedPolicyDestinationsGrantedSQL).Scan(&scaled); err != nil {
+		return nil, resourceSharingDatabaseError(ctx, err)
+	}
+	if scaled {
+		resolveQuery = resolveScaledImportedPolicyDestinationsSQL
+	} else if len(ids) > legacyImportedPolicyDestinations {
+		return nil, sharing.ErrInvalidManagementRequest
+	}
 	encodedIDs := make([]string, len(ids))
 	for index, id := range ids {
 		encodedIDs[index] = id.String()
@@ -131,7 +147,7 @@ func (store *ResourceSharingStore) ResolveImportedPolicyDestinations(
 		var encodedDestinations string
 		if err = transaction.QueryRow(
 			ctx,
-			resolveImportedPolicyDestinationsSQL,
+			resolveQuery,
 			locator.ProviderWorkspaceInternalID,
 			locator.ProviderNetworkInternalID,
 			locator.ConsumerWorkspaceInternalID,

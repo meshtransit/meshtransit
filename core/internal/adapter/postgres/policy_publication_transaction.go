@@ -334,9 +334,17 @@ func (transaction *policyPublicationTransaction) applyLocked(
 	command := change.Command()
 	semanticHash := command.Candidate().SemanticHash().Bytes()
 	var networkRevision, policyRevision, releaseVersion int64
+	publishQuery := publishCompiledPolicySQL
+	var scaled bool
+	if err := transaction.database.QueryRow(ctx, scaledPolicyPublicationGrantedSQL).Scan(&scaled); err != nil {
+		return publication.Result{}, fmt.Errorf("check policy publication function: %w", err)
+	}
+	if scaled {
+		publishQuery = publishScaledCompiledPolicySQL
+	}
 	if err := transaction.database.QueryRow(
 		ctx,
-		publishCompiledPolicySQL,
+		publishQuery,
 		change.MutationIDs().ReleaseID().String(),
 		command.BasePolicyRevision(),
 		semanticHash[:],

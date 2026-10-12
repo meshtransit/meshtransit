@@ -221,6 +221,10 @@ func TestPostgreSQLMigrations(t *testing.T) {
 		t.Fatalf("harden scaled share map readers: %v", err)
 	}
 	assertShareLimitGuardPrivileges(ctx, t, adminConnection)
+	if _, err := adminConnection.Exec(ctx, migrations.PolicyImportedResourceScaleOwnershipSQL()); err != nil {
+		t.Fatalf("harden scaled Imported Resource publication: %v", err)
+	}
+	assertPolicyImportedResourceScalePrivileges(ctx, t, adminConnection)
 	assertResourceSharingPrivilegeContract(ctx, t, adminConnection)
 	assertDeviceSharingDeploymentPreflight(ctx, t, adminConnection)
 	seedAuthorityFixture(ctx, t, adminConnection)

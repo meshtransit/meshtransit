@@ -94,6 +94,19 @@ const resolveImportedPolicyDestinationsSQL = `SELECT
         $9::UUID[], $10::TIMESTAMPTZ
     )::TEXT`
 
+// resolveScaledImportedPolicyDestinationsSQL resolves up to 10000 Imported
+// Resources instead of 256 (schema 148); used once runtime may run it.
+const resolveScaledImportedPolicyDestinationsSQL = `SELECT
+    mesh_ops.resolve_imported_policy_destinations_v2(
+        $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::BIGINT,
+        $5::UUID, $6::UUID, $7::UUID, $8::UUID,
+        $9::UUID[], $10::TIMESTAMPTZ
+    )::TEXT`
+
+const scaledImportedPolicyDestinationsGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.resolve_imported_policy_destinations_v2(bigint,bigint,bigint,bigint,uuid,uuid,uuid,uuid,uuid[],timestamp with time zone)'),
+    'EXECUTE'), FALSE)`
+
 const resourceSharingOfferProjectionSQL = `pg_catalog.jsonb_build_object(
     'offer_id', offer.public_id,
     'export_id', export.public_id,

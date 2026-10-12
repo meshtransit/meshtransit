@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -53,6 +54,7 @@ func TestPolicyPublicationTransactionCommitsReleaseRevisionAuditAndOutbox(t *tes
 		lockActivePolicyReleaseSQL,
 		lockPolicyPublicationAuditStreamSQL,
 		setPolicyPublicationChangeSQL,
+		scaledPolicyPublicationGrantedSQL,
 		publishCompiledPolicySQL,
 		appendPolicyPublicationEvidenceSQL,
 	}
@@ -142,6 +144,7 @@ func TestPolicyPublicationTransactionRevalidatesAndPersistsResourceDestination(t
 		lockActivePolicyReleaseSQL,
 		lockPolicyPublicationAuditStreamSQL,
 		setPolicyPublicationChangeSQL,
+		scaledPolicyPublicationGrantedSQL,
 		publishCompiledPolicySQL,
 		attachPolicyResourceDestinationsSQL,
 		appendPolicyPublicationEvidenceSQL,
@@ -200,6 +203,7 @@ func TestPolicyPublicationTransactionRevalidatesAndPersistsResourceGroupDestinat
 		lockActivePolicyReleaseSQL,
 		lockPolicyPublicationAuditStreamSQL,
 		setPolicyPublicationChangeSQL,
+		scaledPolicyPublicationGrantedSQL,
 		publishCompiledPolicySQL,
 		attachPolicyResourceGroupDestinationsSQL,
 		appendPolicyPublicationEvidenceSQL,
@@ -257,6 +261,7 @@ func TestPolicyPublicationTransactionPublishesImportedResourceAtomically(t *test
 		lockPolicyPublicationAuditStreamSQL,
 		activeWorkspaceGuardrailsSQL,
 		setPolicyPublicationChangeSQL,
+		scaledPolicyPublicationGrantedSQL,
 		publishCompiledPolicySQL,
 		appendPolicyPublicationEvidenceSQL,
 	}
@@ -483,6 +488,7 @@ func TestPolicyPublicationTransactionConsumesApprovalWithReleaseAuditAndOutbox(t
 		authorizePolicyPublicationSQL,
 		lockPolicyPublicationAuditStreamSQL,
 		setPolicyPublicationChangeSQL,
+		scaledPolicyPublicationGrantedSQL,
 		publishCompiledPolicySQL,
 		consumePolicyPublicationApprovalSQL,
 		appendPolicyPublicationEvidenceSQL,
@@ -697,5 +703,48 @@ func TestNewPolicyPublicationStoreRequiresRuntimePool(t *testing.T) {
 	}
 	if _, err := NewPolicyPublicationStore(runtimePool, options); err != nil {
 		t.Fatalf("NewPolicyPublicationStore(runtime) error = %v", err)
+	}
+}
+
+// TestPolicyPublicationTransactionUsesScaledPublishOnceGranted: a policy
+// naming Imported Resources publishes through publish_compiled_policy_v2
+// (schema 148) once runtime may run it, with the same arguments.
+func TestPolicyPublicationTransactionUsesScaledPublishOnceGranted(t *testing.T) {
+	t.Parallel()
+
+	command := policyImportedResourcePublicationCommandFixture(t)
+	databaseTransaction := newFakePolicyPublicationTransaction()
+	enqueuePolicyPublicationResolution(t, databaseTransaction, command, 5, 1)
+	enqueuePolicyPublicationApply(databaseTransaction, 6, 2)
+	// Serve the scaled query with the row the legacy one would have used.
+	databaseTransaction.rows[publishScaledCompiledPolicySQL] = databaseTransaction.rows[publishCompiledPolicySQL]
+	delete(databaseTransaction.rows, publishCompiledPolicySQL)
+	databaseTransaction.enqueueRow(scaledPolicyPublicationGrantedSQL, policyPublicationTestRow{
+		scan: func(destinations ...any) error {
+			*destinations[0].(*bool) = true
+			return nil
+		},
+	})
+	enqueueActiveGuardrails(databaseTransaction, "[]")
+	store := beginTestPolicyPublicationStore(t, databaseTransaction)
+	value, err := store.Begin(t.Context(), command.Candidate().Snapshot().Scope())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	transaction := value.(*policyPublicationTransaction)
+	resolution, err := transaction.Resolve(t.Context(), command, policyPublicationTestTime)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if _, err := transaction.Apply(t.Context(), policyPublicationChangeFixture(t, command, resolution)); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	calls := policyPublicationCallQueries(databaseTransaction.calls)
+	if !slices.Contains(calls, publishScaledCompiledPolicySQL) || slices.Contains(calls, publishCompiledPolicySQL) {
+		t.Fatalf("granted publish v2 not used: %v", calls)
+	}
+	publishCall := findPolicyPublicationCall(t, databaseTransaction.calls, publishScaledCompiledPolicySQL)
+	if len(publishCall.arguments) != 6 || publishCall.arguments[3] != 4 {
+		t.Fatalf("publish v2 arguments = %v", publishCall.arguments)
 	}
 }

@@ -85,6 +85,13 @@ func (transaction *fakePolicyPublicationTransaction) QueryRow(
 ) policyPublicationRow {
 	transaction.record(query, arguments)
 	queued := transaction.rows[query]
+	if len(queued) == 0 && query == scaledPolicyPublicationGrantedSQL {
+		// Unless a test grants it, runtime may not run publish v2.
+		return policyPublicationTestRow{scan: func(destinations ...any) error {
+			*destinations[0].(*bool) = false
+			return nil
+		}}
+	}
 	if len(queued) == 0 {
 		return policyPublicationTestRow{err: fmt.Errorf("unexpected policy publication query: %s", query)}
 	}

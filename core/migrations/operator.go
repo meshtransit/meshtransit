@@ -180,3 +180,11 @@ var shareMapReaderScaleOwnershipSQL string
 // the map peer limit (schema 147) to the alias map reader and exposes them to
 // runtime; v4 and v2 stay executable for rollback.
 func ShareMapReaderScaleOwnershipSQL() string { return shareMapReaderScaleOwnershipSQL }
+
+//go:embed operator/000148_policy_imported_resource_scale_ownership.sql
+var policyImportedResourceScaleOwnershipSQL string
+
+// PolicyImportedResourceScaleOwnershipSQL gives the Imported Resource
+// resolvers that accept 10000 Imported Resources (schema 148) to the share
+// writer, as for v1; the v1 chain stays executable for rollback.
+func PolicyImportedResourceScaleOwnershipSQL() string { return policyImportedResourceScaleOwnershipSQL }

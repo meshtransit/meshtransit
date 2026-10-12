@@ -68,6 +68,23 @@ FROM mesh_ops.publish_compiled_policy(
     $6::JSONB
 )`
 
+// publishScaledCompiledPolicySQL publishes a policy naming up to 10000
+// Imported Resources instead of 256 (schema 148); used once runtime may run
+// it.
+const publishScaledCompiledPolicySQL = `SELECT network_revision, policy_revision, release_version
+FROM mesh_ops.publish_compiled_policy_v2(
+    $1::UUID,
+    $2::BIGINT,
+    $3::BYTEA,
+    $4::INTEGER,
+    $5::TIMESTAMPTZ,
+    $6::JSONB
+)`
+
+const scaledPolicyPublicationGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.publish_compiled_policy_v2(uuid,bigint,bytea,integer,timestamp with time zone,jsonb)'),
+    'EXECUTE'), FALSE)`
+
 const attachPolicyResourceDestinationsSQL = `SELECT attached_count
 FROM mesh_ops.attach_policy_resource_destinations(
     $1::UUID,

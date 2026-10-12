@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 147 {
-		t.Fatalf("len(Catalog()) = %d, want 147", len(catalog))
+	if len(catalog) != 148 {
+		t.Fatalf("len(Catalog()) = %d, want 148", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 147 {
-		t.Fatalf("LatestVersion() = %d, want 147", LatestVersion())
+	if LatestVersion() != 148 {
+		t.Fatalf("LatestVersion() = %d, want 148", LatestVersion())
 	}
 }
 
@@ -3608,6 +3608,48 @@ func TestShareMapReaderScale(t *testing.T) {
 	} {
 		if !strings.Contains(operator, want) {
 			t.Errorf("operator step 147 must contain %q", want)
+		}
+	}
+}
+
+func TestPolicyImportedResourceScale(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[147]
+	if migration.Version != 148 {
+		t.Fatalf("migration 148 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.attach_policy_imported_resource_destinations_internal_v2(",
+		"pg_catalog.jsonb_array_length(p_authority) > 10000 THEN",
+		"CREATE FUNCTION mesh_ops.publish_compiled_policy_v2(",
+		"mesh_ops.lock_and_resolve_policy_imported_resources_internal_v2(",
+		"mesh_ops.attach_policy_imported_resource_destinations_internal_v2(",
+		"CREATE FUNCTION mesh_ops.resolve_imported_policy_destinations_v2(",
+		"OR requested_count NOT BETWEEN 1 AND 10000",
+		"jsonb_array_length(p_groups) NOT BETWEEN 1 AND 10000",
+		"FROM mesh_ops.publish_compiled_policy_local_v1(",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 148 must contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"CREATE OR REPLACE", "BYPASSRLS", "DROP ", "AND 256", "> 256",
+		"resolve_imported_policy_destinations_v1(", "lock_and_resolve_policy_imported_resources_internal_v1(",
+		"attach_policy_imported_resource_destinations_internal_v1(", "mesh_ops.publish_compiled_policy(",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 148 must not contain %q", forbidden)
+		}
+	}
+	operator := PolicyImportedResourceScaleOwnershipSQL()
+	for _, want := range []string{
+		") OWNER TO mesh_share_writer;",
+		"UUID, UUID, UUID, UUID, UUID[], TIMESTAMPTZ\n) TO mesh_runtime;",
+		"JSONB, TIMESTAMPTZ\n) TO mesh_migrator;",
+	} {
+		if !strings.Contains(operator, want) {
+			t.Errorf("operator step 148 must contain %q", want)
 		}
 	}
 }
