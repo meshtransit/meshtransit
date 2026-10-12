@@ -41,7 +41,7 @@ type AliasBinding struct {
 }
 
 const (
-	maxAliasPeers    = 256
+	maxAliasPeers    = 10_000 // matches Core's largest map (MESHTRANSIT_CONTROL_MAP_PEER_LIMIT, at most 10,000)
 	maxAliasServices = 64
 )
 

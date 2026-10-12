@@ -108,3 +108,34 @@ func TestPathSelectorMatchesFullReevaluation(t *testing.T) {
 		}
 	}
 }
+
+// BenchmarkPathSelectorObserveTenThousandPeers measures one pong with
+// maxPathPeers peers, each with a confirmed path.
+func BenchmarkPathSelectorObserveTenThousandPeers(b *testing.B) {
+	generation := testProbeGeneration(5)
+	snapshot := scaleSelectionSnapshot(generation.MapRevision, maxPathPeers)
+	selector := NewPathSelector()
+	if _, err := selector.Activate(snapshot, generation); err != nil {
+		b.Fatal(err)
+	}
+	local := netip.MustParseAddrPort("198.51.100.100:41641")
+	now := time.Unix(50_000, 0)
+	for _, peer := range snapshot.Peers {
+		if _, err := selector.Observe(PathObservation{
+			PeerID: peer.ID, Generation: generation, RemoteEndpoint: peer.Endpoints[0],
+			RoundTrip: time.Millisecond, ObservedAt: now, ObservedLocalEndpoint: local,
+		}); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ResetTimer()
+	for index := range b.N {
+		peer := snapshot.Peers[index%len(snapshot.Peers)]
+		if _, err := selector.Observe(PathObservation{
+			PeerID: peer.ID, Generation: generation, RemoteEndpoint: peer.Endpoints[0],
+			RoundTrip: time.Millisecond, ObservedAt: now, ObservedLocalEndpoint: local,
+		}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

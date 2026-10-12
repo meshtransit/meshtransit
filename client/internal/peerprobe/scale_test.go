@@ -119,3 +119,32 @@ func TestCallMeMaybeRespectsTheTickBudget(t *testing.T) {
 		t.Fatal("no CALL_ME_MAYBE sent")
 	}
 }
+
+// TestRegistryReplacesTenThousandPeersQuickly: a second map with the same
+// peers reuses every channel key, so it costs no X25519.
+func TestRegistryReplacesTenThousandPeersQuickly(t *testing.T) {
+	if testing.Short() {
+		t.Skip("scale test")
+	}
+	t.Parallel()
+	runtime, _, _, _, _, snapshot, generation := testRuntime(t)
+	snapshot.Peers = scalePeers(t, maxPeerChannels)
+	started := time.Now()
+	if _, _, err := runtime.Activate(snapshot, generation); err != nil {
+		t.Fatal(err)
+	}
+	first := time.Since(started)
+	next := snapshot
+	next.Revision++
+	nextGeneration := generation
+	nextGeneration.MapRevision = next.Revision
+	started = time.Now()
+	if _, _, err := runtime.Activate(next, nextGeneration); err != nil {
+		t.Fatal(err)
+	}
+	second := time.Since(started)
+	t.Logf("activate %d peers: first %v, same peers again %v", len(snapshot.Peers), first, second)
+	if second > first/2 {
+		t.Fatalf("re-activation took %v after %v: channel keys were derived again", second, first)
+	}
+}

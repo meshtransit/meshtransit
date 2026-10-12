@@ -18,7 +18,7 @@ import (
 const (
 	maxRegions        = 1_024
 	maxNodesPerRegion = 32
-	maxPeers          = 256
+	maxPeers          = 10_000 // matches Core's largest map (MESHTRANSIT_CONTROL_MAP_PEER_LIMIT, at most 10,000)
 	// MaxPacketSize is the largest encrypted packet accepted by relay orchestration.
 	MaxPacketSize = 2048
 )

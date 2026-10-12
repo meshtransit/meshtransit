@@ -187,8 +187,8 @@ func TestAliasPeerLimitRejectsTheWholeMap(t *testing.T) {
 	t.Parallel()
 	snapshot, now := aliasTestSnapshot()
 	template := snapshot.Peers[0]
-	snapshot.Peers = make([]Node, 0, 257)
-	for index := range 257 {
+	snapshot.Peers = make([]Node, 0, maxAliasPeers+1)
+	for index := range maxAliasPeers + 1 {
 		peer := cloneNode(template)
 		peer.ID = uint64(index + 2)
 		peer.PublicKey = fmt.Sprintf("nodekey:%064x", index+100)
@@ -200,7 +200,7 @@ func TestAliasPeerLimitRejectsTheWholeMap(t *testing.T) {
 		snapshot.Peers = append(snapshot.Peers, peer)
 	}
 	full := snapshot.Peers
-	snapshot.Peers = full[:256]
+	snapshot.Peers = full[:maxAliasPeers]
 	if _, err := ValidateAndClone(snapshot, now); err != nil {
 		t.Fatal(err)
 	}

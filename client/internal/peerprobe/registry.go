@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	maxPeerChannels = 256
+	maxPeerChannels = 10_000 // matches Core's largest map (MESHTRANSIT_CONTROL_MAP_PEER_LIMIT, at most 10,000)
 	// maxLearnedCandidates bounds the candidates learned per peer from
 	// CALL_ME_MAYBE and peer-reflexive sources (disco-v2 §4.1).
 	maxLearnedCandidates = 64

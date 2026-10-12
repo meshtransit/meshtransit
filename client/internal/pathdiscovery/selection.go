@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	maxPathPeers             = 256
+	maxPathPeers             = 10_000 // matches Core's largest map (MESHTRANSIT_CONTROL_MAP_PEER_LIMIT, at most 10,000)
 	maxPathCandidatesPerPeer = 128
 	defaultPathTrust         = 6500 * time.Millisecond
 	pathPreferencePercent    = 5

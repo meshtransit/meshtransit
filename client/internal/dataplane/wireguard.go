@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	maxWireGuardPeers = 256
+	maxWireGuardPeers = 10_000 // matches Core's largest map (MESHTRANSIT_CONTROL_MAP_PEER_LIMIT, at most 10,000)
 	// maxWireGuardAllowedIPs bounds the peer addresses of one map (overlay
 	// and alias addresses of both families).
 	maxWireGuardAllowedIPs = 4 * maxWireGuardPeers
