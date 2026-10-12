@@ -200,6 +200,9 @@ func (conversation *conversation) serve(ctx context.Context, nodeKey node.Key) e
 	if err != nil {
 		return mapsession.ErrUnauthorized
 	}
+	if conversation.session.Supports("map.large1") {
+		request = request.WithLargeMap()
+	}
 	return conversation.application.options.Streams.Serve(ctx, machine, request, conversation.sink)
 }
 

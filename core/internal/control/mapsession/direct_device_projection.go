@@ -16,8 +16,10 @@ import (
 	"meshtransit.net/core/internal/domain/sharing"
 )
 
-// MaximumDirectDeviceProjections bounds explicit cross-Network grants per map.
-const MaximumDirectDeviceProjections = 256
+// MaximumDirectDeviceProjections bounds the explicit cross-Network grants a
+// store puts in one snapshot: Core's largest map. A session sends at most its
+// peer limit of them (oldest contracts first) and reports the rest omitted.
+const MaximumDirectDeviceProjections = MaximumPeerCandidates
 
 // ErrInvalidDirectDeviceProjection reports incomplete or unsafe bilateral evidence.
 var ErrInvalidDirectDeviceProjection = errors.New("map session: invalid direct Device projection")
@@ -263,9 +265,9 @@ func validDirectDeviceProjections(params SnapshotParams, candidates snapshotCand
 	if len(params.DirectDeviceProjections) == 0 {
 		return true
 	}
-	if !validAliasGrantBounds(params) || len(params.DirectDeviceProjections) > MaximumDirectDeviceProjections ||
-		candidates.len()+len(params.DirectDeviceProjections) > candidates.limit() ||
-		len(params.PacketPolicy.Rules())+len(params.DirectDeviceProjections) > MaximumPacketPolicyRules {
+	// Peers, packet rules and projections are each bounded on their own; what
+	// one session sends is bounded by its peer limit (withSessionLimit).
+	if !validAliasGrantBounds(params) || len(params.DirectDeviceProjections) > MaximumDirectDeviceProjections {
 		return false
 	}
 	ruleIDs := make(map[policy.RuleID]struct{}, len(params.DirectDeviceProjections))
@@ -363,6 +365,23 @@ func (snapshot Snapshot) WithDirectDeviceProjections(values []DirectDeviceProjec
 	params := snapshot.params()
 	params.DirectDeviceProjections = slices.Clone(values)
 	return NewSnapshot(params)
+}
+
+// WithOmittedShares returns a copy that reports at least omitted more shares
+// than it carries, which a store left out to stay within its bounds.
+func (snapshot Snapshot) WithOmittedShares(omitted int) (Snapshot, error) {
+	if omitted < 0 {
+		return Snapshot{}, ErrInvalidSnapshot
+	}
+	params := snapshot.params()
+	params.OmittedShares = snapshot.omittedShares + omitted
+	return NewSnapshot(params)
+}
+
+// CompareDirectDeviceProjections orders projections as a snapshot keeps
+// them: oldest contract (a UUIDv7) first.
+func CompareDirectDeviceProjections(first, second DirectDeviceProjection) int {
+	return compareDirectDeviceProjections(first, second)
 }
 
 // InboundPacketRules returns local inbound rules and separately validated

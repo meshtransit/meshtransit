@@ -45,6 +45,10 @@ var (
 	// ErrAccessNameTaken reports, together with ErrConflict, that another
 	// current Imported Resource in the consumer Network has the DNS name.
 	ErrAccessNameTaken = errors.New("sharing: access name taken")
+	// ErrShareLimitReached reports, together with ErrConflict, that the
+	// receiving Network or the shared Device already has the most live shares
+	// one map carries.
+	ErrShareLimitReached = errors.New("sharing: share limit reached")
 	// ErrUnavailable reports an unavailable authoritative dependency.
 	ErrUnavailable = errors.New("sharing: unavailable")
 )

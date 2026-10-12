@@ -74,6 +74,21 @@ func assertSameWorkspaceAliasAllocation(ctx context.Context, t *testing.T, admin
 	if !sameNetworkConflict {
 		t.Fatal("a retained consumer-Network alias was reported free for another pair touching that Network")
 	}
+	// Two providers sharing into one Network: an allocation for another
+	// provider (201) into a Network this endpoint already uses (204) never
+	// returns the retained alias, nor any alias retained in either Network.
+	for _, pair := range [][2]int64{{201, 204}, {204, 201}, {201, 203}} {
+		var allocated string
+		var retained bool
+		if err := tx.QueryRow(ctx, `SELECT pg_catalog.host(a.address), mesh_ops.device_alias_address_retained_v1($1, a.address, $3, $4, NULL, NULL)
+            FROM (SELECT mesh_ops.allocate_network_scoped_alias_v1($1, $2, $3, $4) AS address) AS a`,
+			deploymentID, poolID, pair[0], pair[1]).Scan(&allocated, &retained); err != nil {
+			t.Fatalf("allocate for Networks %v: %v", pair, err)
+		}
+		if allocated == resourceAlias || retained {
+			t.Fatalf("Networks %v were given %s, retained %t (endpoint alias %s)", pair, allocated, retained, resourceAlias)
+		}
+	}
 	for _, role := range []struct {
 		name string
 		want bool
@@ -386,5 +401,44 @@ func assertSharingDependencies(
 	}
 	if count != want {
 		t.Fatalf("%s sharing dependencies %s = %d, want %d", name, version, count, want)
+	}
+	if version == "v2" {
+		// Schema 147 returns v2's dependencies below its limit; a smaller
+		// limit bounds the contracts visited and ends with the marker.
+		read := func(query string, limit int) []string {
+			rows, err := tx.Query(ctx, query, machine, key, limit)
+			if err != nil {
+				t.Fatalf("%s sharing dependencies: %v", name, err)
+			}
+			defer rows.Close()
+			var values []string
+			for rows.Next() {
+				var value string
+				if err := rows.Scan(&value); err != nil {
+					t.Fatal(err)
+				}
+				values = append(values, value)
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatalf("%s sharing dependencies: %v", name, err)
+			}
+			return values
+		}
+		const v2 = `SELECT d::TEXT FROM mesh_ops.load_device_sharing_dependencies_v2($1::BYTEA, $2::BYTEA, $3::INTEGER) AS d`
+		const v3 = `SELECT d::TEXT FROM mesh_ops.load_device_sharing_dependencies_v3($1::BYTEA, $2::BYTEA, $3::INTEGER) AS d`
+		previous := read(v2, 257)
+		slices.Sort(previous)
+		scaled := read(v3, 10000)
+		slices.Sort(scaled)
+		if !slices.Equal(previous, scaled) {
+			t.Fatalf("%s sharing dependencies v3 = %v, v2 = %v", name, scaled, previous)
+		}
+		if want > 0 {
+			bounded := read(v3, 1)
+			if len(bounded) == 0 || len(bounded) > 2 || len(bounded) == 2 && bounded[1] != `{"limited": true}` ||
+				!slices.Contains(previous, bounded[0]) {
+				t.Fatalf("%s sharing dependencies v3 at limit 1 = %v", name, bounded)
+			}
+		}
 	}
 }

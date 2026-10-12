@@ -397,9 +397,17 @@ func (store *ResourceSharingStore) DecideOffer(
 	var revisions resourceSharingMutationRevisions
 	var offerVersion, contractVersion int64
 	var contractState string
+	decideQuery := decideResourceShareOfferSQL
+	var limited bool
+	if err := transaction.QueryRow(ctx, limitedShareDecisionGrantedSQL).Scan(&limited); err != nil {
+		return sharing.MutationResult{}, resourceSharingDatabaseError(ctx, err)
+	}
+	if limited {
+		decideQuery = decideLimitedResourceShareOfferSQL
+	}
 	if err := transaction.QueryRow(
 		ctx,
-		decideResourceShareOfferSQL,
+		decideQuery,
 		provider.workspaceInternal,
 		provider.networkInternal,
 		consumer.workspaceInternal,

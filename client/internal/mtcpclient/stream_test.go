@@ -3,6 +3,7 @@ package mtcpclient
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -181,6 +182,10 @@ func TestStreamNetmapDeliversMapsAndReports(t *testing.T) {
 	}
 	if !pong || !report {
 		t.Fatalf("KeyUpdate acknowledged %t, endpoint report sent %t", pong, report)
+	}
+	// The map stream declares that this client applies large maps.
+	if !slices.ContainsFunc(core.hello, func(hello *mtcpv1.ClientHello) bool { return slices.Contains(hello.GetCapabilities(), "map.large1") }) {
+		t.Fatal("the map stream did not declare map.large1")
 	}
 }
 

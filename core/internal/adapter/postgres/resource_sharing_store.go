@@ -367,6 +367,8 @@ func resourceSharingDatabaseError(ctx context.Context, err error) error {
 			return errors.Join(sharing.ErrAccessNameTaken, sharing.ErrConflict, err)
 		}
 		return errors.Join(sharing.ErrConflict, err)
+	case "MT012":
+		return errors.Join(sharing.ErrShareLimitReached, sharing.ErrConflict, err)
 	case "MT001", "40001", "40P01", "55P03":
 		return errors.Join(sharing.ErrConflict, err)
 	case "42501":

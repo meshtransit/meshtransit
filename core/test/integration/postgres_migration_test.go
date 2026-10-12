@@ -217,6 +217,10 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	if _, err := adminConnection.Exec(ctx, migrations.DeviceSharingDependenciesV2OwnershipSQL()); err != nil {
 		t.Fatalf("harden narrowed sharing dependency reader: %v", err)
 	}
+	if _, err := adminConnection.Exec(ctx, migrations.ShareMapReaderScaleOwnershipSQL()); err != nil {
+		t.Fatalf("harden scaled share map readers: %v", err)
+	}
+	assertShareLimitGuardPrivileges(ctx, t, adminConnection)
 	assertResourceSharingPrivilegeContract(ctx, t, adminConnection)
 	assertDeviceSharingDeploymentPreflight(ctx, t, adminConnection)
 	seedAuthorityFixture(ctx, t, adminConnection)

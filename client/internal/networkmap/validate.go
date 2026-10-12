@@ -25,7 +25,7 @@ const (
 	maxDNSRoutes         = 512
 	maxDNSRouteResolvers = 32
 	maxDNSSearchDomains  = 64
-	maxDNSRecords        = 4_096
+	maxDNSRecords        = 32_768 // an A and an AAAA record for each of 10,000 shared Devices, with room
 	maxNameRunes         = 253
 	maxStableIDBytes     = 128
 	maxCapabilityBytes   = 512

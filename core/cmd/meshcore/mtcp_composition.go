@@ -23,9 +23,11 @@ var (
 )
 
 // mtcpCapabilities lists what this Core serves (mtcp-v1 §13). Device alias
-// grants are offered only where the deployment projects them.
+// grants are offered only where the deployment projects them. map.large1:
+// maps of up to the configured peer limit go only to clients that declare it;
+// the others get at most 256 peers.
 func mtcpCapabilities(deviceAliases bool) []string {
-	capabilities := []string{"map.zstd", "disco.v2", "relay.mtrp1", "dns.split", "stats.path1", "nat.report1"}
+	capabilities := []string{"map.zstd", "disco.v2", "relay.mtrp1", "dns.split", "stats.path1", "nat.report1", "map.large1"}
 	if deviceAliases {
 		capabilities = append(capabilities, "device-alias.v1")
 	}

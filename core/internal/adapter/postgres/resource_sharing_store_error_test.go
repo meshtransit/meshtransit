@@ -32,3 +32,15 @@ func TestResourceSharingDatabaseErrorNamesTheTakenName(t *testing.T) {
 		t.Errorf("other unique violation = %v, want a plain conflict", other)
 	}
 }
+
+func TestResourceSharingDatabaseErrorNamesTheShareLimit(t *testing.T) {
+	t.Parallel()
+	err := resourceSharingDatabaseError(context.Background(),
+		&pgconn.PgError{Code: "MT012", Message: "the receiving Network has reached its share limit"})
+	if !errors.Is(err, sharing.ErrShareLimitReached) || !errors.Is(err, sharing.ErrConflict) {
+		t.Fatalf("MT012 = %v, want the share limit and a conflict", err)
+	}
+	if other := resourceSharingDatabaseError(context.Background(), &pgconn.PgError{Code: "MT001"}); errors.Is(other, sharing.ErrShareLimitReached) {
+		t.Fatalf("MT001 = %v, reported as the share limit", other)
+	}
+}

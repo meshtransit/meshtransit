@@ -13,6 +13,46 @@ import (
 // leaving a peer out can never widen access.
 const DefaultPeerLimit = 10_000
 
+// LegacyPeerLimit bounds the maps of clients that do not declare large maps
+// (MTCP map.large1): those reject, and so lose, a map of more than 256 peers,
+// alias peers or shared Devices.
+const LegacyPeerLimit = 256
+
+// sessionPeerLimit is the peer bound of one session: the Service's limit,
+// and at most LegacyPeerLimit for a client that did not declare large maps.
+func (options ServiceOptions) sessionPeerLimit(request Request) int {
+	if request.LargeMap() {
+		return options.peerLimit()
+	}
+	return min(options.peerLimit(), LegacyPeerLimit)
+}
+
+// withSessionLimit bounds the snapshot to limit peers, shared Devices
+// included. Shares come first, oldest contract first (projections are sorted
+// by contract ID, a UUIDv7), so an accepted share keeps its place when newer
+// ones arrive; peers of the Network fill what remains by peerRank. The map
+// reports what it left out.
+func (snapshot Snapshot) withSessionLimit(limit int) (Snapshot, error) {
+	if limit <= 0 {
+		return snapshot, nil
+	}
+	if len(snapshot.directDeviceProjections) > limit {
+		// The shares left out count once, in omittedShares, which survives
+		// the rebuilds that recompute the authorized peers.
+		params := snapshot.params()
+		params.DirectDeviceProjections = params.DirectDeviceProjections[:limit]
+		params.OmittedShares = snapshot.omittedShares + len(snapshot.directDeviceProjections) - limit
+		next, err := NewSnapshot(params)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		next.relayGrant = snapshot.relayGrant
+		next.peerLimit = snapshot.peerLimit
+		snapshot = next
+	}
+	return snapshot.withPeerLimit(limit), nil
+}
+
 // peerRank orders peers for a limited map: explicit Device shares first,
 // then peers online now, then the rest.
 func (snapshot Snapshot) peerRank(peer PeerCandidate, shared map[node.ID]struct{}) int {
@@ -54,7 +94,7 @@ func (snapshot Snapshot) withPeerLimit(limit int) Snapshot {
 	}
 	slices.SortFunc(selected, comparePeerCandidates)
 
-	snapshot.authorizedTotal = len(snapshot.authorized)
+	snapshot.authorizedTotal = max(snapshot.authorizedTotal, len(snapshot.authorized))
 	snapshot.authorized = selected
 	if snapshot.connectivity != nil {
 		// A private read keeps only self and the selected peers.
@@ -74,12 +114,12 @@ func (snapshot Snapshot) withPeerLimit(limit int) Snapshot {
 }
 
 // PeerLimit reports how many peers the map carries and how many the policy
-// authorizes; they differ only for a limited map.
+// and the accepted shares authorize, counting each share left out as one
+// (shares left out by a store are a lower bound); they differ only for a
+// limited map.
 func (snapshot Snapshot) PeerLimit() (sent, authorized int) {
-	if snapshot.authorizedTotal > len(snapshot.authorized) {
-		return len(snapshot.authorized), snapshot.authorizedTotal
-	}
-	return len(snapshot.authorized), len(snapshot.authorized)
+	sent = len(snapshot.authorized)
+	return sent, max(snapshot.authorizedTotal, sent) + snapshot.omittedShares
 }
 
 // SharesInventory reports whether the snapshot's candidates are exactly
@@ -91,7 +131,7 @@ func (snapshot Snapshot) SharesInventory(inventory NetworkInventory) bool {
 // IsPeerLimited reports whether a peer limit cut the snapshot's peers; such
 // a map is rechosen at every full refresh (presence ranks its peers).
 func (snapshot Snapshot) IsPeerLimited() bool {
-	return snapshot.authorizedTotal > len(snapshot.authorized)
+	return snapshot.authorizedTotal > len(snapshot.authorized) || snapshot.omittedShares > 0
 }
 
 // sameAuthorizedPeers reports whether two maps carry the same peers: O(1)

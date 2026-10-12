@@ -513,6 +513,7 @@ func Catalog() []Migration {
 		newMigration(144, "Policy rules for inactive Devices", policyInactiveDeviceRulesSQL),
 		newMigration(145, "Map Network sharing", mapNetworkSharingSQL),
 		newMigration(146, "Map sharing Devices", mapSharingDevicesSQL),
+		newMigration(147, "Share map reader scale", shareMapReaderScaleSQL),
 	}
 }
 
@@ -730,3 +731,6 @@ var mapNetworkSharingSQL string
 
 //go:embed 000146_map_sharing_devices.up.sql
 var mapSharingDevicesSQL string
+
+//go:embed 000147_share_map_reader_scale.up.sql
+var shareMapReaderScaleSQL string

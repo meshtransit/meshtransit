@@ -878,3 +878,29 @@ func TestConversationStoresConnectivityWhenItChanges(t *testing.T) {
 		t.Fatalf("changed %+v", changed)
 	}
 }
+
+// TestServeDeclaresLargeMapsOnlyForClientsThatDo: the map stream's request
+// carries map.large1 exactly when the session negotiated it, so a client
+// without it keeps the 256-peer bound it can apply.
+func TestServeDeclaresLargeMapsOnlyForClientsThatDo(t *testing.T) {
+	t.Parallel()
+	for _, large := range []bool{false, true} {
+		f := newConversationFixture(t, sharedmtcp.MessagePing)
+		if large {
+			f.session.capabilities = append(f.session.capabilities, "map.large1")
+		}
+		nodeKey := f.streams.snapshot.NodeKey()
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- f.talk.serve(ctx, nodeKey) }()
+		f.expectStream(nodeKey)
+		cancel()
+		<-done
+		f.streams.mu.Lock()
+		requests := append([]mapsession.Request(nil), f.streams.requests...)
+		f.streams.mu.Unlock()
+		if len(requests) != 1 || requests[0].LargeMap() != large {
+			t.Fatalf("map.large1 negotiated %v: requests %d, large %v", large, len(requests), len(requests) == 1 && requests[0].LargeMap())
+		}
+	}
+}

@@ -351,4 +351,131 @@ func assertReachableAliasMapMatches(ctx context.Context, t *testing.T, tx pgx.Tx
 	if !slices.Equal(previous, reachable) {
 		t.Fatalf("reachable alias map differs: v3 %d edges, v4 %d edges", len(previous), len(reachable))
 	}
+	assertScaledAliasMapMatches(ctx, t, tx, machine, key, reachable)
+}
+
+// assertLimitedPrefix checks a schema 147 reader's rows at limit: exactly
+// want, or at most limit of want's leading rows followed by the limited
+// marker.
+func assertLimitedPrefix(t *testing.T, name string, limit int, rows, want []string) {
+	t.Helper()
+	if slices.Equal(rows, want) {
+		return
+	}
+	if len(rows) == 0 || rows[len(rows)-1] != `{"limited": true}` {
+		t.Fatalf("%s at limit %d: %d rows, want %d or a limited prefix", name, limit, len(rows), len(want))
+	}
+	kept := rows[:len(rows)-1]
+	if len(kept) > limit || !slices.Equal(kept, want[:len(kept)]) {
+		t.Fatalf("%s at limit %d kept %d rows that are not v4's leading %d", name, limit, len(kept), len(kept))
+	}
+}
+
+// assertScaledAliasMapMatches proves schema 147 returns exactly v4's edges
+// below the limit, with no limited marker when the edges just fit, and
+// rejects limits outside 1..10000.
+func assertScaledAliasMapMatches(ctx context.Context, t *testing.T, tx pgx.Tx, machine, key []byte, want []string) {
+	t.Helper()
+	read := func(limit int) ([]string, error) {
+		if _, err := tx.Exec(ctx, `SAVEPOINT scaled_alias_map`); err != nil {
+			t.Fatal(err)
+		}
+		rows, err := tx.Query(ctx, `SELECT edge::TEXT FROM mesh_ops.load_device_alias_map_edges_v5($1::BYTEA,$2::BYTEA,$3::INTEGER) AS edge`,
+			machine, key, limit)
+		var edges []string
+		if err == nil {
+			for rows.Next() {
+				var value string
+				if err = rows.Scan(&value); err != nil {
+					break
+				}
+				edges = append(edges, value)
+			}
+			rows.Close()
+			if err == nil {
+				err = rows.Err()
+			}
+		}
+		if err != nil {
+			if _, rollbackErr := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT scaled_alias_map`); rollbackErr != nil {
+				t.Fatal(rollbackErr)
+			}
+			return nil, err
+		}
+		if _, err := tx.Exec(ctx, `RELEASE SAVEPOINT scaled_alias_map`); err != nil {
+			t.Fatal(err)
+		}
+		return edges, nil
+	}
+	scaled, err := read(10000)
+	if err != nil || !slices.Equal(scaled, want) {
+		t.Fatalf("scaled alias map differs from v4: %d edges, want %d (%v)", len(scaled), len(want), err)
+	}
+	// A smaller limit bounds endpoints visited as well as edges: the reader
+	// returns all of v4's edges, or a prefix of them ending with the marker.
+	for limit := 1; limit <= len(want); limit++ {
+		bounded, err := read(limit)
+		if err != nil {
+			t.Fatalf("scaled alias map at limit %d: %v", limit, err)
+		}
+		assertLimitedPrefix(t, "alias map", limit, bounded, want)
+	}
+	for _, limit := range []int{0, 10001} {
+		if _, err := read(limit); err == nil {
+			t.Fatalf("scaled alias map accepted limit %d", limit)
+		} else {
+			requireDeviceAliasCode(t, err, "22023")
+		}
+	}
+	assertEndpointAliasMapMatches(ctx, t, tx, machine, key, want)
+}
+
+// assertEndpointAliasMapMatches proves the readiness reader (schema 147)
+// returns, for one endpoint, exactly the v5 edges of that endpoint. Only the
+// alias writer may run it; the caller's runtime role is restored after.
+func assertEndpointAliasMapMatches(ctx context.Context, t *testing.T, tx pgx.Tx, machine, key []byte, edges []string) {
+	t.Helper()
+	byEndpoint := map[string][]string{}
+	for _, edge := range edges {
+		var record struct {
+			Endpoint struct {
+				ID string `json:"id"`
+			} `json:"endpoint"`
+		}
+		if err := json.Unmarshal([]byte(edge), &record); err != nil || record.Endpoint.ID == "" {
+			t.Fatalf("edge without an endpoint: %v", err)
+		}
+		byEndpoint[record.Endpoint.ID] = append(byEndpoint[record.Endpoint.ID], edge)
+	}
+	if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_device_alias_writer`); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if _, err := tx.Exec(ctx, `SET LOCAL ROLE mesh_runtime`); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	for endpoint, want := range byEndpoint {
+		rows, err := tx.Query(ctx, `SELECT edge::TEXT FROM mesh_ops.load_device_alias_map_endpoint_edges_v1($1::BYTEA,$2::BYTEA,$3::UUID) AS edge`,
+			machine, key, endpoint)
+		if err != nil {
+			t.Fatalf("endpoint alias map %s: %v", endpoint, err)
+		}
+		var got []string
+		for rows.Next() {
+			var value string
+			if err := rows.Scan(&value); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			got = append(got, value)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			t.Fatalf("endpoint alias map %s: %v", endpoint, err)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("endpoint alias map %s: %d edges, v5 has %d", endpoint, len(got), len(want))
+		}
+	}
 }

@@ -2,6 +2,7 @@
 package sharingtest
 
 import (
+	"fmt"
 	"net/netip"
 	"testing"
 	"time"
@@ -30,6 +31,15 @@ type Params struct {
 	// Mode forces the endpoint mode. The zero value keeps the historical
 	// choice: alias across Workspaces, direct within one Workspace.
 	Mode sharing.EndpointMode
+	// Variant gives the contract, offer, export, import, endpoint, rule and
+	// access name distinct identities, ordered by Variant (zero keeps the
+	// historical ones), so one pair of Devices can share several times.
+	Variant uint16
+}
+
+// variantID is a fixed UUIDv7 whose leading node digits carry the variant.
+func variantID(variant uint16, suffix string) string {
+	return fmt.Sprintf("01890f00-0000-7000-8000-%04x%s", variant, suffix)
 }
 
 // Evidence contains independent Resource, published rule and endpoint evidence.
@@ -73,13 +83,13 @@ func New(t testing.TB, params Params) Evidence {
 	check(t, err)
 	traffic, err := sharing.NewTrafficSet([]sharing.TrafficConstraint{constraint})
 	check(t, err)
-	contractID, err := sharing.ParseContractID("01890f00-0000-7000-8000-000000000501")
+	contractID, err := sharing.ParseContractID(variantID(params.Variant, "00000501"))
 	check(t, err)
-	importID, err := sharing.ParseImportedResourceID("01890f00-0000-7000-8000-000000000502")
+	importID, err := sharing.ParseImportedResourceID(variantID(params.Variant, "00000502"))
 	check(t, err)
-	offerID, err := sharing.ParseOfferID("01890f00-0000-7000-8000-000000000503")
+	offerID, err := sharing.ParseOfferID(variantID(params.Variant, "00000503"))
 	check(t, err)
-	exportID, err := sharing.ParseExportID("01890f00-0000-7000-8000-000000000504")
+	exportID, err := sharing.ParseExportID(variantID(params.Variant, "00000504"))
 	check(t, err)
 	export, err := sharing.NewExport(sharing.ExportParams{
 		ID: exportID, ProviderScope: params.ProviderScope, ConsumerScope: params.ConsumerScope,
@@ -95,9 +105,13 @@ func New(t testing.TB, params Params) Evidence {
 		ExpiresAt: params.EvaluatedAt.Add(30 * time.Minute), State: sharing.ContractStateActive, Version: 1,
 	})
 	check(t, err)
-	endpointID, err := sharing.ParsePrivateEndpointID("01890f00-0000-7000-8000-000000000505")
+	endpointID, err := sharing.ParsePrivateEndpointID(variantID(params.Variant, "00000505"))
 	check(t, err)
-	accessName, err := sharing.ParseAccessName("device.shared.example.com")
+	host := "device"
+	if params.Variant != 0 {
+		host = fmt.Sprintf("device-%d", params.Variant)
+	}
+	accessName, err := sharing.ParseAccessName(host + ".shared.example.com")
 	check(t, err)
 	mode := sharing.EndpointModeDirect
 	if sharing.ClassifyScopeRelation(params.ProviderScope, params.ConsumerScope) == sharing.ScopeRelationCrossWorkspace {
@@ -118,7 +132,7 @@ func New(t testing.TB, params Params) Evidence {
 		EvaluatedAt: params.EvaluatedAt,
 	})
 	check(t, err)
-	ruleID, err := policy.ParseRuleID("01890f00-0000-7000-8000-000000000801")
+	ruleID, err := policy.ParseRuleID(variantID(params.Variant, "00000801"))
 	check(t, err)
 	rule, err := publication.NewImportedResourceDestination(publication.ImportedResourceDestinationParams{
 		RuleID: ruleID, SourceNodeID: params.ConsumerDeviceID, Resolution: resolution,

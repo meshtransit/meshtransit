@@ -109,12 +109,23 @@ type aliasWorkerTestTransaction struct {
 	intent              devicealias.ChangeIntent
 	cancel              context.CancelFunc
 	prepares, finalizes int
+	// scaled reports the schema 147 prepare as granted; prepared records
+	// the prepare queries run.
+	scaled   bool
+	prepared []string
 }
 
 func (transaction *aliasWorkerTestTransaction) QueryRow(ctx context.Context, query string, args ...any) outboxRow {
 	switch query {
-	case prepareDeviceAliasChangeSQL, prepareDeviceAliasWithdrawalSQL, prepareDeviceAliasResourceQuarantineSQL:
+	case scaledDeviceAliasChangeGrantedSQL:
+		return fakeOutboxRow{scan: func(values ...any) error {
+			*values[0].(*bool) = transaction.scaled
+			return nil
+		}}
+	case prepareDeviceAliasChangeSQL, prepareScaledDeviceAliasChangeSQL, prepareDeviceAliasWithdrawalSQL,
+		prepareDeviceAliasResourceQuarantineSQL:
 		transaction.prepares++
+		transaction.prepared = append(transaction.prepared, query)
 		return fakeOutboxRow{scan: func(values ...any) error {
 			if transaction.mode == "query error" || transaction.mode == "cleanup" {
 				return errors.New("synthetic prepare failure")
@@ -202,4 +213,35 @@ func (transaction *aliasWorkerTestTransaction) Commit(ctx context.Context) error
 		transaction.cancel()
 	}
 	return err
+}
+
+// TestDeviceAliasWorkerUsesScaledPrepareOnceGranted: reservation and
+// readiness go through prepare v3 (schema 147) once the worker may run it,
+// and through v2 until then; withdrawals keep their own entry points.
+func TestDeviceAliasWorkerUsesScaledPrepareOnceGranted(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		mode   devicealias.ChangeMode
+		scaled bool
+		want   string
+	}{
+		{devicealias.Reserve, false, prepareDeviceAliasChangeSQL},
+		{devicealias.Reserve, true, prepareScaledDeviceAliasChangeSQL},
+		{devicealias.Ready, true, prepareScaledDeviceAliasChangeSQL},
+		{devicealias.Withdraw, true, prepareDeviceAliasWithdrawalSQL},
+	} {
+		intent := aliasWorkerIntentFixture(t)
+		intent.Mode = test.mode
+		if intent.Mode.Withdraws() {
+			intent.ProviderNodeEpoch, intent.ConsumerNodeEpoch = 0, 0
+		}
+		transaction := &aliasWorkerTestTransaction{mode: string(test.mode), intent: intent, scaled: test.scaled}
+		store := &DeviceAliasWorkerStore{database: &fakeOutboxDatabase{transaction: transaction}}
+		if _, err := store.Change(t.Context(), intent); err != nil {
+			t.Fatalf("%s scaled=%v: %v", test.mode, test.scaled, err)
+		}
+		if len(transaction.prepared) != 1 || transaction.prepared[0] != test.want {
+			t.Fatalf("%s scaled=%v prepared with %v", test.mode, test.scaled, transaction.prepared)
+		}
+	}
 }

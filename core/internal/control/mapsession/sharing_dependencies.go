@@ -39,5 +39,5 @@ func validSharingDependencies(params SnapshotParams) bool {
 		}
 		seen[scope.NetworkID()] = scope
 	}
-	return len(seen) <= MaximumDirectDeviceProjections
+	return len(seen) <= 2*MaximumDirectDeviceProjections
 }

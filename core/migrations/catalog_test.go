@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 146 {
-		t.Fatalf("len(Catalog()) = %d, want 146", len(catalog))
+	if len(catalog) != 147 {
+		t.Fatalf("len(Catalog()) = %d, want 147", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 146 {
-		t.Fatalf("LatestVersion() = %d, want 146", LatestVersion())
+	if LatestVersion() != 147 {
+		t.Fatalf("LatestVersion() = %d, want 147", LatestVersion())
 	}
 }
 
@@ -3536,6 +3536,78 @@ func TestMapSharingDevices(t *testing.T) {
 	} {
 		if !strings.Contains(operator, want) {
 			t.Errorf("operator step 146 must contain %q", want)
+		}
+	}
+}
+
+func TestShareMapReaderScale(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[146]
+	if migration.Version != 147 {
+		t.Fatalf("migration 147 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.load_device_alias_map_edges_v5(",
+		"CREATE FUNCTION mesh_ops.load_device_sharing_dependencies_v3(",
+		"p_limit > 10000 THEN",
+		"ORDER BY endpoint.id LIMIT p_limit + 1",
+		"LIMIT p_limit - edge_count + 1",
+		`RETURN NEXT '{"limited":true}'::JSONB;`,
+		"self_rule.source_device_id = self_id",
+		"loop_rule.source_device_id=self_id",
+		"remote_network IS DISTINCT FROM last_network",
+		"CREATE FUNCTION mesh_ops.reserve_device_aliases_internal_v3(",
+		"lease.alias_role = 'consumer_source') >= 10000 THEN",
+		"CREATE FUNCTION mesh_ops.prepare_device_alias_change_v3(",
+		"PERFORM mesh_ops.reserve_device_aliases_internal_v3(",
+		"CREATE FUNCTION mesh_ops.load_device_alias_map_endpoint_edges_v1(",
+		"WHERE endpoint.public_id = p_endpoint AND endpoint.provider_network_id <> endpoint.consumer_network_id",
+		"mesh_ops.load_device_alias_map_endpoint_edges_v1(fingerprint,node_key,p_endpoint)",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_device_alias_map_endpoint_edges_v1(BYTEA,BYTEA,UUID) TO mesh_device_alias_writer;",
+		"CREATE FUNCTION mesh_ops.share_limit_reached_v1(",
+		"LIMIT 10001) AS live) > 10000 THEN 'consumer_network'",
+		"LANGUAGE sql VOLATILE PARALLEL UNSAFE SECURITY DEFINER",
+		"CREATE FUNCTION mesh_ops.decide_resource_share_offer_v5(",
+		"RAISE EXCEPTION USING ERRCODE = 'MT012'",
+		"RETURN QUERY SELECT * FROM mesh_ops.decide_resource_share_offer_v4(",
+		"FROM PUBLIC,mesh_runtime,mesh_worker,mesh_observer,mesh_audit_writer,mesh_share_writer,mesh_direct_map_reader;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 147 must contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"CREATE OR REPLACE", "BYPASSRLS", "DROP ",
+		"ERRCODE = '54000'", "ERRCODE='54000'", "LIMIT 257", "seen_networks", "_v2(fingerprint,node_key,257)",
+	} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 147 must not contain %q", forbidden)
+		}
+	}
+	// The map readers only read; the worker copies write as their v2 does.
+	readers, _, found := strings.Cut(migration.SQL, "CREATE FUNCTION mesh_ops.reserve_device_aliases_internal_v3(")
+	if !found {
+		t.Fatal("schema 147 has no alias worker section")
+	}
+	for _, forbidden := range []string{"INSERT ", "UPDATE ", "DELETE "} {
+		if strings.Contains(readers, forbidden) {
+			t.Errorf("schema 147 map readers must not contain %q", forbidden)
+		}
+	}
+	operator := ShareMapReaderScaleOwnershipSQL()
+	for _, want := range []string{
+		"load_device_alias_map_edges_v5(BYTEA,BYTEA,INTEGER) OWNER TO mesh_device_alias_map_reader",
+		"load_device_sharing_dependencies_v3(BYTEA,BYTEA,INTEGER) OWNER TO mesh_device_alias_map_reader",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_device_alias_map_edges_v5(BYTEA,BYTEA,INTEGER) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_device_sharing_dependencies_v3(BYTEA,BYTEA,INTEGER) TO mesh_runtime;",
+		"prepare_device_alias_change_v3(UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,UUID[],UUID,UUID,TEXT) OWNER TO mesh_device_alias_writer;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.prepare_device_alias_change_v3(UUID,UUID,UUID,BIGINT,BIGINT,BIGINT,UUID[],UUID,UUID,TEXT) TO mesh_worker;",
+		"load_device_alias_map_endpoint_edges_v1(BYTEA,BYTEA,UUID) OWNER TO mesh_device_alias_map_reader;",
+		") OWNER TO mesh_share_writer;",
+		"BIGINT, BIGINT, BIGINT, BIGINT, BIGINT, TIMESTAMPTZ\n) TO mesh_runtime;",
+	} {
+		if !strings.Contains(operator, want) {
+			t.Errorf("operator step 147 must contain %q", want)
 		}
 	}
 }

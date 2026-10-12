@@ -44,7 +44,7 @@ func TestDependencyReaderRejectsUnsafeOrOverflow(t *testing.T) {
 		{"missing Workspace", []string{`{"network_id":"01890f00-0000-7000-8000-000000000202"}`}},
 		{"same Network", []string{`{"workspace_id":"01890f00-0000-7000-8000-000000000101","network_id":"01890f00-0000-7000-8000-000000000201"}`}},
 		{"duplicate Network", []string{dependencyFixture, dependencyFixture}},
-		{"overflow", slices.Repeat([]string{dependencyFixture}, appmapsession.MaximumDirectDeviceProjections+1)},
+		{"legacy overflow", slices.Repeat([]string{dependencyFixture}, legacyEdgeLimit+1)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store, _, tx, _, identity := validStoreFixture(t)
@@ -96,6 +96,63 @@ func TestStoreUsesBoundDependencyReaderOnceGranted(t *testing.T) {
 		if !slices.Contains(tx.queries, boundSharingDependenciesGrantedSQL) || !slices.Contains(tx.queries, want) ||
 			slices.Contains(tx.queries, other) || len(snapshot.SharingScopes()) != 1 {
 			t.Fatalf("granted=%v used queries %v", granted, tx.queries)
+		}
+	}
+}
+
+// TestStoreScaledReadersReportLimitInsteadOfFailing: once granted, the
+// schema 147 readers are asked for the map peer limit and their limitedEdge
+// row reports the map limited instead of failing it; a row after it is not
+// a reader's output and fails closed.
+func TestStoreScaledReadersReportLimitInsteadOfFailing(t *testing.T) {
+	store, _, tx, _, identity := validStoreFixture(t)
+	store.options.EnableDeviceAliases = true
+	tx.scaledReaders = true
+	tx.dependencyRows = &directEdgeRows{values: []string{dependencyFixture, limitedEdge}}
+	snapshot, err := store.Load(t.Context(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.SharingScopes()) != 1 || !snapshot.IsPeerLimited() {
+		t.Fatalf("scaled reader limit: %d scopes, limited %v", len(snapshot.SharingScopes()), snapshot.IsPeerLimited())
+	}
+	for index, query := range tx.queries {
+		switch query {
+		case loadScaledSharingDependenciesSQL, loadScaledAliasEdgesSQL:
+			if got := tx.arguments[index][2]; got != appmapsession.MaximumDirectDeviceProjections {
+				t.Fatalf("%s asked for %v rows", query, got)
+			}
+		case loadSharingDependenciesSQL, loadBoundSharingDependenciesSQL, loadAliasEdgesSQL, loadReachableAliasEdgesSQL:
+			t.Fatalf("a legacy reader ran once the scaled ones were granted: %s", query)
+		}
+	}
+	if !slices.Contains(tx.queries, loadScaledAliasEdgesSQL) || !slices.Contains(tx.queries, loadScaledSharingDependenciesSQL) {
+		t.Fatalf("scaled readers not used: %v", tx.queries)
+	}
+
+	for _, values := range [][]string{{limitedEdge, dependencyFixture}} {
+		store, _, tx, _, identity := validStoreFixture(t)
+		store.options.EnableDeviceAliases = true
+		tx.scaledReaders = true
+		tx.dependencyRows = &directEdgeRows{values: values}
+		if _, err := store.Load(t.Context(), identity); !errors.Is(err, ErrSnapshotEvidence) {
+			t.Fatalf("a row after the limit was accepted: %v", err)
+		}
+	}
+}
+
+func TestStoreLegacyReadersKeepTheirBound(t *testing.T) {
+	store, _, tx, _, identity := validStoreFixture(t)
+	store.options.EnableDeviceAliases = true
+	if _, err := store.Load(t.Context(), identity); err != nil {
+		t.Fatal(err)
+	}
+	for index, query := range tx.queries {
+		switch query {
+		case loadSharingDependenciesSQL, loadAliasEdgesSQL, loadDirectEdgesSQL:
+			if got := tx.arguments[index][2]; got != legacyEdgeLimit+1 {
+				t.Fatalf("legacy reader %s asked for %v rows, want %d", query, got, legacyEdgeLimit+1)
+			}
 		}
 	}
 }

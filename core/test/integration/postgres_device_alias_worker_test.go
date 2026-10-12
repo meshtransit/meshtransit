@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -41,6 +42,8 @@ func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx
 		{"worker readiness write", `SET LOCAL ROLE mesh_worker; DELETE FROM mesh.device_alias_client_readiness`},
 		{"runtime prepare", `SET LOCAL ROLE mesh_runtime; SELECT mesh_ops.prepare_device_alias_change_v2(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)`},
 		{"worker inner allocator", `SET LOCAL ROLE mesh_worker; SELECT mesh_ops.reserve_device_aliases_internal_v1(NULL,NULL,NULL,NULL,NULL,NULL)`},
+		{"runtime prepare v3", `SET LOCAL ROLE mesh_runtime; SELECT mesh_ops.prepare_device_alias_change_v3(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)`},
+		{"worker inner allocator v3", `SET LOCAL ROLE mesh_worker; SELECT mesh_ops.reserve_device_aliases_internal_v3(NULL,NULL,NULL,NULL,NULL,NULL)`},
 	} {
 		if _, err := tx.Exec(ctx, `SAVEPOINT alias_worker_privilege`); err != nil {
 			t.Fatal(err)
@@ -53,8 +56,14 @@ func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx
 	}
 	assertAliasWorkCandidates(ctx, t, tx, deploymentID, endpointID, consumerID)
 	assertAliasWorkerAuthorityRejections(ctx, t, tx, deploymentID, endpointID, consumerID, generation, providerEpoch, consumerEpoch)
-	for _, mode := range []string{"missing_evidence", "wrong_evidence", "complete", "readiness", "readiness_missing_evidence"} {
-		t.Run("guarded alias worker "+mode, func(t *testing.T) {
+	// The _v3 modes run the same flow through prepare v3 (schema 147).
+	for _, run := range []string{"missing_evidence", "wrong_evidence", "complete", "readiness", "readiness_missing_evidence",
+		"complete_v3", "readiness_v3"} {
+		mode, version := strings.TrimSuffix(run, "_v3"), "v2"
+		if mode != run {
+			version = "v3"
+		}
+		t.Run("guarded alias worker "+run, func(t *testing.T) {
 			if _, err := tx.Exec(ctx, `RESET ROLE; SAVEPOINT guarded_alias_worker`); err != nil {
 				t.Fatal(err)
 			}
@@ -78,7 +87,7 @@ func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx
 			}
 			prepare := func(change, readiness string, kind string) aliasWorkerProof {
 				var body []byte
-				err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_change_v2($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,$10::TEXT)`,
+				err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_change_`+version+`($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,$10::TEXT)`,
 					deploymentID, endpointID, consumerID, generation, providerEpoch, consumerEpoch, []string{
 						"01890fb0-0000-7000-8000-000000004101", "01890fb0-0000-7000-8000-000000004102", "01890fb0-0000-7000-8000-000000004103", "01890fb0-0000-7000-8000-000000004104",
 					}, readiness, change, kind).Scan(&body)
@@ -135,7 +144,7 @@ func assertDeviceAliasGuardedWorker(ctx context.Context, t *testing.T, tx pgx.Tx
 					}
 					if readinessMode {
 						var replay []byte
-						if err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_change_v2($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,'ready')`,
+						if err := tx.QueryRow(ctx, `SELECT mesh_ops.prepare_device_alias_change_`+version+`($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,'ready')`,
 							deploymentID, endpointID, consumerID, generation, providerEpoch, consumerEpoch, []string{"01890fb0-0000-7000-8000-000000004101", "01890fb0-0000-7000-8000-000000004102", "01890fb0-0000-7000-8000-000000004103", "01890fb0-0000-7000-8000-000000004104"}, "01890fb0-0000-7000-8000-000000004130", "01890fb0-0000-7000-8000-000000004131").Scan(&replay); err != nil {
 							t.Fatal(err)
 						}

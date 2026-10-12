@@ -172,3 +172,11 @@ var deviceSharingDependenciesV2OwnershipSQL string
 // dependency reader (schema 146) to the alias map reader and exposes it to
 // runtime; v1 stays executable for rollback.
 func DeviceSharingDependenciesV2OwnershipSQL() string { return deviceSharingDependenciesV2OwnershipSQL }
+
+//go:embed operator/000147_share_map_reader_scale_ownership.sql
+var shareMapReaderScaleOwnershipSQL string
+
+// ShareMapReaderScaleOwnershipSQL moves the share map readers that scale to
+// the map peer limit (schema 147) to the alias map reader and exposes them to
+// runtime; v4 and v2 stay executable for rollback.
+func ShareMapReaderScaleOwnershipSQL() string { return shareMapReaderScaleOwnershipSQL }

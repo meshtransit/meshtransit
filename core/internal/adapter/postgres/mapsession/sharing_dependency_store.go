@@ -23,12 +23,24 @@ FROM mesh_ops.load_device_sharing_dependencies_v2($1::BYTEA,$2::BYTEA,$3::INTEGE
 const boundSharingDependenciesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
     pg_catalog.to_regprocedure('mesh_ops.load_device_sharing_dependencies_v2(bytea,bytea,integer)'), 'EXECUTE'), FALSE)`
 
+// loadScaledSharingDependenciesSQL is v2 bounded by the map peer limit
+// instead of 256 contracts (schema 147), used once the operator granted it.
+const loadScaledSharingDependenciesSQL = `SELECT dependency::TEXT
+FROM mesh_ops.load_device_sharing_dependencies_v3($1::BYTEA,$2::BYTEA,$3::INTEGER) AS dependency`
+
+const scaledSharingDependenciesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_device_sharing_dependencies_v3(bytea,bytea,integer)'), 'EXECUTE'), FALSE)`
+
 func loadSharingDependencies(ctx context.Context, transaction databaseTransaction, self appmapsession.Snapshot, machineFingerprint, nodeKey []byte) (appmapsession.Snapshot, error) {
-	query, err := sharingDependenciesQuery(ctx, transaction)
+	reader, err := sharingDependenciesReader(ctx, transaction)
 	if err != nil {
 		return appmapsession.Snapshot{}, err
 	}
-	rows, err := transaction.Query(ctx, query, machineFingerprint, nodeKey, appmapsession.MaximumDirectDeviceProjections+1)
+	requested := reader.limit + 1 // one more row reveals a legacy overflow
+	if reader.scaled {
+		requested = reader.limit
+	}
+	rows, err := transaction.Query(ctx, reader.query, machineFingerprint, nodeKey, requested)
 	if err != nil || rows == nil {
 		if err == nil {
 			err = ErrSnapshotEvidence
@@ -37,13 +49,18 @@ func loadSharingDependencies(ctx context.Context, transaction databaseTransactio
 	}
 	defer rows.Close()
 	scopes := make([]network.Scope, 0, 4)
+	limited := false
 	for rows.Next() {
-		if len(scopes) == appmapsession.MaximumDirectDeviceProjections {
-			return appmapsession.Snapshot{}, ErrSnapshotEvidence
-		}
 		var encoded string
 		if err := rows.Scan(&encoded); err != nil {
 			return appmapsession.Snapshot{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan sharing dependency: %w", err))
+		}
+		if reader.scaled && encoded == limitedEdge {
+			limited = true
+			continue
+		}
+		if len(scopes) == reader.limit || limited {
+			return appmapsession.Snapshot{}, ErrSnapshotEvidence
 		}
 		var record struct {
 			WorkspaceID string `json:"workspace_id"`
@@ -65,18 +82,33 @@ func loadSharingDependencies(ctx context.Context, transaction databaseTransactio
 	if err != nil {
 		return appmapsession.Snapshot{}, errors.Join(ErrSnapshotEvidence, err)
 	}
+	if limited {
+		// Contracts past the limit wake no refresh; report the map limited.
+		if result, err = result.WithOmittedShares(1); err != nil {
+			return appmapsession.Snapshot{}, errors.Join(ErrSnapshotEvidence, err)
+		}
+	}
 	return result, nil
 }
 
-// sharingDependenciesQuery selects the narrowed reader once runtime may
-// execute it, so a rolling upgrade or a pending operator step keeps v1.
-func sharingDependenciesQuery(ctx context.Context, transaction databaseTransaction) (string, error) {
+// sharingDependenciesReader selects the newest dependency reader runtime may
+// execute, so a rolling upgrade or a pending operator step keeps the
+// previous one.
+func sharingDependenciesReader(ctx context.Context, transaction databaseTransaction) (edgeReader, error) {
+	scaled, err := functionGranted(ctx, transaction, scaledSharingDependenciesGrantedSQL)
+	if err != nil {
+		return edgeReader{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("check sharing dependency reader: %w", err))
+	}
+	if scaled {
+		return edgeReader{query: loadScaledSharingDependenciesSQL, limit: appmapsession.MaximumDirectDeviceProjections,
+			scaled: true}, nil
+	}
 	granted, err := functionGranted(ctx, transaction, boundSharingDependenciesGrantedSQL)
 	if err != nil {
-		return "", errors.Join(ErrLoadSnapshot, fmt.Errorf("check sharing dependency reader: %w", err))
+		return edgeReader{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("check sharing dependency reader: %w", err))
 	}
 	if granted {
-		return loadBoundSharingDependenciesSQL, nil
+		return edgeReader{query: loadBoundSharingDependenciesSQL, limit: legacyEdgeLimit}, nil
 	}
-	return loadSharingDependenciesSQL, nil
+	return edgeReader{query: loadSharingDependenciesSQL, limit: legacyEdgeLimit}, nil
 }

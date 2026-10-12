@@ -1097,6 +1097,11 @@ func classifySharingError(err error) managementError {
 			Status: http.StatusConflict, Code: "access_name_taken",
 			Message: "another shared Device in this Network has that DNS name",
 		}
+	case errors.Is(err, sharing.ErrShareLimitReached):
+		return managementError{
+			Status: http.StatusConflict, Code: "share_limit_reached",
+			Message: "this Network or the shared Device already has the most shares one map carries",
+		}
 	case errors.Is(err, sharing.ErrConflict):
 		return managementError{
 			Status: http.StatusConflict, Code: "conflict",

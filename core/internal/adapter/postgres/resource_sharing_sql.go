@@ -215,6 +215,32 @@ FROM mesh_ops.decide_resource_share_offer_v4(
     $21::BIGINT, $22::BIGINT, $23::TIMESTAMPTZ
 )`
 
+// decideLimitedResourceShareOfferSQL is v4 behind the share limits (schema
+// 147): an accept fails with MT012 once the receiving Network or the shared
+// Device has the map peer limit of live shares. Used once runtime may run it.
+const decideLimitedResourceShareOfferSQL = `SELECT
+    provider_network_revision,
+    provider_sharing_revision,
+    consumer_network_revision,
+    consumer_sharing_revision,
+    offer_version,
+    contract_version,
+    imported_resource_version,
+    contract_state,
+    access_name_version
+FROM mesh_ops.decide_resource_share_offer_v5(
+    $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::BIGINT,
+    $5::UUID, $6::UUID, $7::UUID, $8::UUID, $9::UUID,
+    $10::BIGINT, $11::BYTEA, $12::TEXT, $13::UUID, $14::UUID,
+    $15::TEXT, $16::UUID, $17::TEXT,
+    $18::BIGINT, $19::BIGINT, $20::BIGINT,
+    $21::BIGINT, $22::BIGINT, $23::TIMESTAMPTZ
+)`
+
+const limitedShareDecisionGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.decide_resource_share_offer_v5(bigint,bigint,bigint,bigint,uuid,uuid,uuid,uuid,uuid,bigint,bytea,text,uuid,uuid,text,uuid,text,bigint,bigint,bigint,bigint,bigint,timestamp with time zone)'),
+    'EXECUTE'), FALSE)`
+
 const revokeResourceShareSQL = `SELECT
     provider_network_revision,
     provider_sharing_revision,

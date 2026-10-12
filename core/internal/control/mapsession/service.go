@@ -164,6 +164,7 @@ func (service *Service) Refresh(
 		derived.MachineKey().Fingerprint() != identity.MachineFingerprint() {
 		return Snapshot{}, ErrOpen
 	}
+	derived.peerLimit = service.options.sessionPeerLimit(request)
 	return service.loadConnectivity(ctx, derived)
 }
 
@@ -212,6 +213,7 @@ func (service *Service) open(
 	if err := service.observeEndpoints(ctx, snapshot, request); err != nil {
 		return Snapshot{}, err
 	}
+	snapshot.peerLimit = service.options.sessionPeerLimit(request)
 	return service.loadConnectivity(ctx, snapshot)
 }
 
@@ -289,11 +291,30 @@ func (service *Service) ReloadConnectivity(ctx context.Context, snapshot Snapsho
 	return service.loadConnectivity(ctx, snapshot)
 }
 
+// loadConnectivity attaches connectivity and bounds the snapshot to its
+// session's peer limit (the Service's when the snapshot has none).
 func (service *Service) loadConnectivity(ctx context.Context, snapshot Snapshot) (Snapshot, error) {
+	limit := snapshot.peerLimit
+	if limit <= 0 {
+		limit = service.options.peerLimit()
+	}
+	bounded, err := service.boundConnectivity(ctx, snapshot, limit)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	bounded.peerLimit = limit
+	return bounded, nil
+}
+
+func (service *Service) boundConnectivity(ctx context.Context, snapshot Snapshot, limit int) (Snapshot, error) {
 	if service.hub == nil || len(snapshot.directDeviceProjections) != 0 {
 		// A private read is bounded by the store: limit before reading, in
 		// stable order (presence is unknown until read).
-		snapshot = snapshot.withPeerLimit(service.options.peerLimit())
+		limited, err := snapshot.withSessionLimit(limit)
+		if err != nil {
+			return Snapshot{}, errors.Join(ErrOpen, err)
+		}
+		snapshot = limited
 	}
 	peers := snapshot.AuthorizedPeers()
 	keys := make([]ConnectivityKey, 0, len(peers)+1)
@@ -320,7 +341,7 @@ func (service *Service) loadConnectivity(ctx context.Context, snapshot Snapshot)
 		if err != nil {
 			return Snapshot{}, errors.Join(ErrOpen, err)
 		}
-		return shared.withPeerLimit(service.options.peerLimit()), nil
+		return shared.withPeerLimit(limit), nil
 	}
 	values, err := service.connectivity.LoadConnectivity(operationCtx, keys)
 	if err != nil {
@@ -344,7 +365,11 @@ func (service *Service) loadConnectivity(ctx context.Context, snapshot Snapshot)
 	if err != nil {
 		return Snapshot{}, errors.Join(ErrOpen, err)
 	}
-	return enriched.withPeerLimit(service.options.peerLimit()), nil
+	limited, err := enriched.withSessionLimit(limit)
+	if err != nil {
+		return Snapshot{}, errors.Join(ErrOpen, err)
+	}
+	return limited, nil
 }
 
 // ObserveSessionEndpoints records a node's transient connectivity for the

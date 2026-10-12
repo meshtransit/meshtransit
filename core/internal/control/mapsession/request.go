@@ -16,6 +16,7 @@ var ErrInvalidRequest = errors.New("map session: invalid request")
 type Request struct {
 	nodeKey            node.Key
 	deviceAliasVersion uint8
+	largeMap           bool
 	endpointSet        node.EndpointSet
 	hasEndpointSet     bool
 	preferredRelay     int
@@ -95,3 +96,15 @@ func (request Request) WithDeviceAliasVersion(version uint8) (Request, error) {
 
 // DeviceAliasVersion returns the declared compatibility contract, or zero.
 func (request Request) DeviceAliasVersion() uint8 { return request.deviceAliasVersion }
+
+// WithLargeMap records the client's declaration (MTCP map.large1) that it
+// applies maps of up to MaximumPeerCandidates peers. Without it a map carries
+// at most LegacyPeerLimit peers; the declaration only raises that bound and
+// grants no access.
+func (request Request) WithLargeMap() Request {
+	request.largeMap = true
+	return request
+}
+
+// LargeMap reports whether the client declared large maps.
+func (request Request) LargeMap() bool { return request.largeMap }

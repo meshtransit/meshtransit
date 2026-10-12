@@ -43,6 +43,16 @@ func NewDeviceAliasWorkerStore(pool *Pool) (*DeviceAliasWorkerStore, error) {
 
 const prepareDeviceAliasChangeSQL = `SELECT mesh_ops.prepare_device_alias_change_v2(
  $1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,$10::TEXT)`
+
+// prepareScaledDeviceAliasChangeSQL is v2 with a 10000 consumer budget per
+// endpoint and the readiness check through the map reader bounded by the map
+// peer limit (schema 147); used once the operator granted it to the worker.
+const prepareScaledDeviceAliasChangeSQL = `SELECT mesh_ops.prepare_device_alias_change_v3(
+ $1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::BIGINT,$6::BIGINT,$7::UUID[],$8::UUID,$9::UUID,$10::TEXT)`
+
+const scaledDeviceAliasChangeGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+ pg_catalog.to_regprocedure('mesh_ops.prepare_device_alias_change_v3(uuid,uuid,uuid,bigint,bigint,bigint,uuid[],uuid,uuid,text)'),
+ 'EXECUTE'), FALSE)`
 const prepareDeviceAliasResourceQuarantineSQL = `SELECT mesh_ops.prepare_device_alias_resource_quarantine_v2($1::UUID,$2::UUID,$3::BIGINT,$4::UUID)`
 
 const prepareDeviceAliasWithdrawalSQL = `SELECT mesh_ops.prepare_device_alias_withdrawal_v2($1::UUID,$2::UUID,$3::UUID,$4::BIGINT,$5::UUID,$6::TEXT)`
@@ -94,6 +104,13 @@ func (store *DeviceAliasWorkerStore) Change(ctx context.Context, intent deviceal
 	leases := []string{ids[0].String(), ids[1].String(), ids[2].String(), ids[3].String()}
 	var encoded []byte
 	prepareQuery := prepareDeviceAliasChangeSQL
+	var scaled bool
+	if err := transaction.QueryRow(ctx, scaledDeviceAliasChangeGrantedSQL).Scan(&scaled); err != nil {
+		return false, errors.Join(ErrDeviceAliasChange, err)
+	}
+	if scaled {
+		prepareQuery = prepareScaledDeviceAliasChangeSQL
+	}
 	prepareArgs := []any{intent.DeploymentID.String(), intent.EndpointID.String(), intent.ConsumerID.String(), intent.EndpointGeneration, intent.ProviderNodeEpoch, intent.ConsumerNodeEpoch, leases, ids[4].String(), ids[5].String(), string(intent.Mode)}
 	if intent.Mode.Withdraws() {
 		prepareQuery = prepareDeviceAliasWithdrawalSQL

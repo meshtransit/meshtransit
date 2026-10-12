@@ -51,6 +51,9 @@ type SnapshotParams struct {
 	PacketPolicy            policy.Snapshot
 	Connectivity            []Connectivity
 	RelayDirectory          relay.Directory
+	// OmittedShares is a lower bound on the shares a store left out of the
+	// snapshot to stay within its bounds; such a map reports itself limited.
+	OmittedShares int
 }
 
 // Snapshot is immutable authorization evidence for the first response of a map session.
@@ -86,7 +89,13 @@ type Snapshot struct {
 	// authorizedTotal is how many peers the policy authorizes when a peer
 	// limit cut authorized down (zero otherwise).
 	authorizedTotal int
-	valid           bool
+	// omittedShares is a lower bound on shares left out, by the store or
+	// by the session limit.
+	omittedShares int
+	// peerLimit is the session's bound on peers, set by the Service from
+	// the request (zero: the Service's own limit).
+	peerLimit int
+	valid     bool
 }
 
 // NewSnapshot validates and copies one authoritative map snapshot.
@@ -100,6 +109,9 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 	}
 	if candidates.len() > candidates.limit() {
 		return Snapshot{}, errors.Join(ErrInvalidSnapshot, ErrPeerCandidateLimit)
+	}
+	if params.OmittedShares < 0 {
+		return Snapshot{}, ErrInvalidSnapshot
 	}
 	params.PeerCandidates = nil
 	params.DirectDeviceProjections = slices.Clone(params.DirectDeviceProjections)
@@ -136,6 +148,7 @@ func NewSnapshot(params SnapshotParams) (Snapshot, error) {
 		connectivity:            params.Connectivity,
 		relayDirectory:          params.RelayDirectory,
 		authorized:              authorized,
+		omittedShares:           params.OmittedShares,
 		valid:                   true,
 	}, nil
 }
@@ -357,6 +370,7 @@ func (snapshot Snapshot) params() SnapshotParams {
 		PacketPolicy:            snapshot.packetPolicy,
 		Connectivity:            slices.Clone(snapshot.connectivity),
 		RelayDirectory:          snapshot.relayDirectory,
+		OmittedShares:           snapshot.omittedShares,
 	}
 }
 

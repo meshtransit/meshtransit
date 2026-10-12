@@ -216,9 +216,9 @@ func validAliasGrantBounds(params SnapshotParams) bool {
 	if len(constraints) == 0 {
 		return true
 	}
-	if len(authorized) > MaximumDirectDeviceProjections {
-		return false
-	}
+	// The number of alias peers a client holds is bounded per session
+	// (withSessionLimit), not per snapshot: a Network may authorize more
+	// peers than one map carries.
 	for peer, values := range constraints {
 		traffic, err := sharing.NewTrafficSet(values)
 		if err != nil {

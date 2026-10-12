@@ -269,7 +269,10 @@ func (stream *netmapStream) session(ctx context.Context) (bool, time.Duration, e
 		return false, 0, err
 	}
 	nodePublic := stream.keys.node.Public()
-	capabilities := []string{"map.zstd", "relay.mtrp1", "dns.split", "stats.path1", "nat.report1"}
+	// map.large1: this client applies maps of up to 10,000 peers, alias
+	// peers and policy rules, with two DNS records per shared Device; Core
+	// limits a client without it to the earlier bounds (256 peers).
+	capabilities := []string{"map.zstd", "relay.mtrp1", "dns.split", "stats.path1", "nat.report1", "map.large1"}
 	if stream.options.EnableDeviceAliases {
 		capabilities = append(capabilities, "device-alias.v1")
 	}
