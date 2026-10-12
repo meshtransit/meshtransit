@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/netip"
+	"slices"
 	"sync"
 	"time"
 
@@ -31,7 +32,10 @@ const (
 
 	// CALL_ME_MAYBE schedule (disco-v2 §4.2, §4.3): every 5 s during a
 	// peer's first minute without a trusted direct path, then every 15 s.
-	callMeMaybeTick       = time.Second
+	callMeMaybeTick = time.Second
+	// maxCallMeMaybePerTick bounds the CALL_ME_MAYBE sent through the relay
+	// per tick; peers in their first minute go first, the rest in turn.
+	maxCallMeMaybePerTick = 128
 	callMeMaybeFast       = 5 * time.Second
 	callMeMaybeSlow       = 15 * time.Second
 	callMeMaybeFastPeriod = time.Minute
@@ -95,6 +99,14 @@ type Runtime struct {
 	// answered is when each peer was last probed in answer to its ping;
 	// guarded by windowMu.
 	answered map[uint64]time.Time
+	// scheduleLimit bounds the targets of one probe round and
+	// callMeMaybeBudget the CALL_ME_MAYBE of one tick; probeCursor and
+	// callCursor (guarded by localMu) rotate where the next round or tick
+	// starts, so with more peers than one round reaches none is starved.
+	scheduleLimit     int
+	callMeMaybeBudget int
+	probeCursor       uint64
+	callCursor        uint64
 
 	localMu        sync.Mutex
 	localEndpoints []disco.Endpoint
@@ -177,7 +189,10 @@ func newRuntime(
 		reflexive: make(map[netip.AddrPort]time.Time),
 		callSent:  make(map[uint64]time.Time),
 		done:      workerCtx.Done(),
-		cancel:    cancel,
+
+		scheduleLimit:     maxScheduledProbes,
+		callMeMaybeBudget: maxCallMeMaybePerTick,
+		cancel:            cancel,
 	}
 	runtime.workers.Go(func() { runtime.runDatagrams(workerCtx) })
 	runtime.workers.Go(func() { runtime.runScheduler(workerCtx) })
@@ -209,7 +224,10 @@ func (r *Runtime) Activate(
 		return 0, 0, ErrInactive
 	default:
 	}
-	r.deactivateLocked()
+	// The registry swaps its channel set in Replace, keeping what each
+	// unchanged peer learned (candidates, first sighting, last pong) and its
+	// channel key; clearing it first would drop all of that on every map.
+	r.invalidateProbesLocked()
 	channelCount, err := r.registry.Replace(snapshot, generation, r.clock())
 	if err != nil {
 		return 0, 0, err
@@ -244,11 +262,18 @@ func (r *Runtime) Deactivate() int {
 }
 
 func (r *Runtime) deactivateLocked() int {
+	r.registry.Deactivate()
+
+	return r.invalidateProbesLocked()
+}
+
+// invalidateProbesLocked ends the active generation's probes and ping window
+// without touching the registry's channel set.
+func (r *Runtime) invalidateProbesLocked() int {
 	r.stateMu.Lock()
 	r.active = pathdiscovery.ProbeGeneration{}
 	r.stateMu.Unlock()
 	r.resetPingWindow(pathdiscovery.ProbeGeneration{})
-	r.registry.Deactivate()
 
 	removed := r.manager.Deactivate()
 	if removed > 0 {
@@ -675,14 +700,22 @@ func (r *Runtime) allowAnswerProbe(peerID uint64, now time.Time) bool {
 
 // roundTargets interleaves every probe-eligible peer's candidates (map
 // endpoints first, then learned ones), so one peer's long list cannot starve
-// the others.
+// the others. When a round cannot reach every peer, the next one starts
+// after the last peer it reached.
 func (r *Runtime) roundTargets() []probeTarget {
 	peers := r.registry.peers(r.clock())
-	targets := make([]probeTarget, 0, min(len(peers), maxScheduledProbes))
-	for endpointIndex := 0; endpointIndex < maxScheduledPerPeer; endpointIndex++ {
+	r.localMu.Lock()
+	cursor := r.probeCursor
+	r.localMu.Unlock()
+	peers = rotateAfter(peers, cursor)
+	limit := r.scheduleLimit
+	targets := make([]probeTarget, 0, min(len(peers), limit))
+	full := false
+	for endpointIndex := 0; endpointIndex < maxScheduledPerPeer && !full; endpointIndex++ {
 		for _, peer := range peers {
-			if len(targets) == maxScheduledProbes {
-				return targets
+			if len(targets) == limit {
+				full = true
+				break
 			}
 			if !peer.probe || endpointIndex >= len(peer.candidates) {
 				continue
@@ -693,8 +726,33 @@ func (r *Runtime) roundTargets() []probeTarget {
 			})
 		}
 	}
+	next := uint64(0)
+	if full {
+		next = targets[len(targets)-1].peerID
+	}
+	r.localMu.Lock()
+	r.probeCursor = next
+	r.localMu.Unlock()
 
 	return targets
+}
+
+// rotateAfter returns peers (sorted by ID) starting after the peer cursor.
+func rotateAfter(peers []peerStatus, cursor uint64) []peerStatus {
+	start, _ := slices.BinarySearchFunc(peers, cursor+1, func(peer peerStatus, id uint64) int {
+		switch {
+		case peer.peerID < id:
+			return -1
+		case peer.peerID > id:
+			return 1
+		default:
+			return 0
+		}
+	})
+	if start == 0 || start >= len(peers) {
+		return peers
+	}
+	return append(slices.Clone(peers[start:]), peers[:start]...)
 }
 
 func resetRuntimeTimer(timer *time.Timer, delay time.Duration) {
@@ -878,7 +936,14 @@ func (r *Runtime) sendCallMeMaybes(relayed pathdiscovery.RelayDatagramTransport)
 	now := r.clock()
 	peers := r.registry.peers(now)
 	live := make(map[uint64]struct{}, len(peers))
-	for _, peer := range peers {
+	r.localMu.Lock()
+	cursor := r.callCursor
+	r.localMu.Unlock()
+	// Peers in their first minute are punching a new path: they go first.
+	// The rest take turns after the cursor, within the tick's budget.
+	fresh := make([]peerStatus, 0)
+	settled := make([]peerStatus, 0, len(peers))
+	for _, peer := range rotateAfter(peers, cursor) {
 		live[peer.peerID] = struct{}{}
 		if !peer.probe || (!peer.lastPong.IsZero() && now.Sub(peer.lastPong) < directTrust) {
 			continue
@@ -893,6 +958,17 @@ func (r *Runtime) sendCallMeMaybes(relayed pathdiscovery.RelayDatagramTransport)
 		if !last.IsZero() && now.Sub(last) < interval {
 			continue
 		}
+		if interval == callMeMaybeFast {
+			fresh = append(fresh, peer)
+		} else {
+			settled = append(settled, peer)
+		}
+	}
+	budget := r.callMeMaybeBudget
+	for _, peer := range append(fresh, settled...) {
+		if budget == 0 {
+			break
+		}
 		message, ok := r.callMeMaybe(now)
 		if !ok {
 			return
@@ -901,11 +977,15 @@ func (r *Runtime) sendCallMeMaybes(relayed pathdiscovery.RelayDatagramTransport)
 		if err != nil {
 			continue
 		}
+		budget--
 		if err := relayed.SendRelayDatagram(packet, node); err != nil {
 			continue
 		}
 		r.localMu.Lock()
 		r.callSent[peer.peerID] = now
+		if now.Sub(peer.firstSeen) >= callMeMaybeFastPeriod {
+			r.callCursor = peer.peerID
+		}
 		r.localMu.Unlock()
 		r.telemetry.RecordCallMeMaybeSent()
 	}

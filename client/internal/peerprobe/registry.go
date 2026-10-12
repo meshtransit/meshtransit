@@ -259,12 +259,19 @@ func (r *Registry) Replace(
 	}
 	r.mu.RLock()
 	err := r.canReplaceLocked(generation)
+	// A channel key depends only on this identity and the peer's discovery
+	// key, so peers that keep their discovery key keep their key: a map
+	// change costs X25519 only for new discovery keys.
+	wires := make(map[key.DiscoPublic]*disco.PeerKey, len(r.byDiscovery))
+	for discoveryKey, peer := range r.byDiscovery {
+		wires[discoveryKey] = peer.wire
+	}
 	r.mu.RUnlock()
 	if err != nil {
 		return 0, err
 	}
 
-	next, err := buildChannelSet(r.identity, r.localDiscoveryKey, snapshot, now)
+	next, err := buildChannelSet(r.identity, r.localDiscoveryKey, snapshot, now, wires)
 	if err != nil {
 		return 0, err
 	}
@@ -687,6 +694,7 @@ func buildChannelSet(
 	localDiscoveryKey key.DiscoPublic,
 	snapshot networkmap.Snapshot,
 	now time.Time,
+	wires map[key.DiscoPublic]*disco.PeerKey,
 ) (channelSet, error) {
 	if snapshot.Revision == 0 || snapshot.Self.ID == 0 ||
 		!snapshot.Self.MachineAuthorized || snapshot.Self.Expired ||
@@ -746,9 +754,12 @@ func buildChannelSet(
 			}
 			endpoints[endpoint] = struct{}{}
 		}
-		wire, err := disco.NewPeerKey(identity, discoveryKey)
-		if err != nil {
-			return channelSet{}, fmt.Errorf("%w: deriving peer channel", ErrInvalidSnapshot)
+		wire := wires[discoveryKey]
+		if wire == nil {
+			wire, err = disco.NewPeerKey(identity, discoveryKey)
+			if err != nil {
+				return channelSet{}, fmt.Errorf("%w: deriving peer channel", ErrInvalidSnapshot)
+			}
 		}
 		peer := &peerChannel{
 			peerID:       node.ID,
