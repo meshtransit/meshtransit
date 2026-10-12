@@ -78,7 +78,7 @@ func Parse(args []string, stderr io.Writer) (Config, error) {
 		"enable the encrypted mesh packet path with fail-closed policy checks",
 	)
 	flags.BoolVar(&cfg.EnableDeviceAliases, "enable-device-aliases", false,
-		"enable qualification of peer-specific Device aliases; requires confined helper alias pools")
+		"reach Devices shared into this Network at their alias addresses (requires --enable-data-plane)")
 	flags.StringVar(&cfg.ControlProtocol, "control-protocol", "auto",
 		"control protocol: auto or mtcp (both MTCP v1; kept for existing unit files)")
 	flags.StringVar(&cfg.PortMapping, "port-mapping", "auto",

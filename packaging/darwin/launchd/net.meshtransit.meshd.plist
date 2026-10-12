@@ -13,6 +13,7 @@
 		<string>--enable-data-plane</string>
 		<string>--wireguard-listen-port=41641</string>
 		<string>--enable-dns</string>
+		<string>--enable-device-aliases</string>
 	</array>
 	<key>UserName</key>
 	<string>_meshd</string>
