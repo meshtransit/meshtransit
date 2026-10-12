@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"meshtransit.net/client/internal/netadmin"
@@ -222,8 +223,12 @@ type wireGuardPlan struct {
 }
 
 // WireGuardEngine owns the encrypted userspace packet engine. The daemon
-// serializes Apply and Close after stopping the map callback.
+// serializes Apply and Close after stopping the map callback. mu guards the
+// device configuration and the installed peers; methods that change or read
+// them take it, so work that does not run under the daemon's lock (lazy peer
+// activation) is serialized with Apply.
 type WireGuardEngine struct {
+	mu sync.Mutex
 	// relayFailures outlives the devices the engine replaces: each new
 	// device signals its relay connection failures into it.
 	relayFailures           chan struct{}
@@ -340,17 +345,19 @@ func (e *WireGuardEngine) Apply(
 	if e == nil || e.filter == nil {
 		return StateFailed, errors.New("dataplane: packet engine is not initialized")
 	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if snapshotHasAliases(snapshot) {
 		validated, err := networkmap.ValidateAndClone(snapshot, e.clock().UTC())
 		if err != nil {
-			_ = e.Close()
+			_ = e.closeLocked()
 			e.filter.UpdateNetwork(networkmap.Snapshot{})
 			return StateFailed, err
 		}
 		snapshot = validated
 	}
 	if err := e.filter.validateAliasTransition(snapshot); err != nil {
-		_ = e.Close()
+		_ = e.closeLocked()
 		e.filter.UpdateNetwork(networkmap.Snapshot{})
 		return StateFailed, err
 	}
@@ -386,7 +393,7 @@ func (e *WireGuardEngine) applySnapshot(
 
 	plan, err := buildWireGuardPlan(snapshot, privateKey, e.listenPort)
 	if err != nil {
-		_ = e.Close()
+		_ = e.closeLocked()
 
 		return StateFailed, err
 	}
@@ -397,15 +404,15 @@ func (e *WireGuardEngine) applySnapshot(
 		if e.logger != nil {
 			e.logger.Warn("wireguard device had stopped; rebuilding it")
 		}
-		_ = e.Close()
+		_ = e.closeLocked()
 	}
 	routesChanged := false
 	if e.device != nil {
 		if !slices.Equal(e.addresses, plan.addresses) || e.relayTopology != plan.relayTopology {
-			_ = e.Close()
+			_ = e.closeLocked()
 		} else if !slices.Equal(e.routes, plan.routes) {
 			if _, supported := e.opener.(tunRouteConfigurer); !supported {
-				_ = e.Close()
+				_ = e.closeLocked()
 			} else {
 				routesChanged = true
 			}
@@ -427,7 +434,7 @@ func (e *WireGuardEngine) applySnapshot(
 			}
 			if relayChanged {
 				if err := e.replaceRelayAuthority(plan); err != nil {
-					_ = e.Close()
+					_ = e.closeLocked()
 
 					return StateFailed, err
 				}
@@ -443,7 +450,7 @@ func (e *WireGuardEngine) applySnapshot(
 			}
 			if advanced {
 				if err := e.resetPeerSessions(sessionResets); err != nil {
-					_ = e.Close()
+					_ = e.closeLocked()
 
 					return StateFailed, err
 				}
@@ -456,7 +463,7 @@ func (e *WireGuardEngine) applySnapshot(
 		}
 		if relayChanged && !relayReplaced {
 			if err := e.replaceRelayAuthority(plan); err != nil {
-				_ = e.Close()
+				_ = e.closeLocked()
 
 				return StateFailed, err
 			}
@@ -470,7 +477,7 @@ func (e *WireGuardEngine) applySnapshot(
 		}
 		if len(peerConfiguration) != 0 {
 			if err := e.device.Configure(bytes.NewReader(peerConfiguration)); err != nil {
-				_ = e.Close()
+				_ = e.closeLocked()
 
 				return StateFailed, errors.New("dataplane: applying wireguard peer configuration failed")
 			}
@@ -478,7 +485,7 @@ func (e *WireGuardEngine) applySnapshot(
 		if routesChanged {
 			configurer, supported := e.opener.(tunRouteConfigurer)
 			if !supported {
-				_ = e.Close()
+				_ = e.closeLocked()
 
 				return StateFailed, errors.New("dataplane: live tun route update is unavailable")
 			}
@@ -486,7 +493,7 @@ func (e *WireGuardEngine) applySnapshot(
 				Addresses: append([]netip.Prefix(nil), plan.addresses...),
 				Routes:    append([]netip.Prefix(nil), plan.routes...),
 			}); err != nil {
-				_ = e.Close()
+				_ = e.closeLocked()
 
 				return StateFailed, fmt.Errorf("dataplane: replacing tun routes: %w", err)
 			}
@@ -906,7 +913,12 @@ func (e *WireGuardEngine) RelayHealth() relay.HealthSnapshot {
 // PeerPaths returns aggregate endpoint state for the installed peers. The
 // daemon serializes this call with Apply, incremental updates, and Close.
 func (e *WireGuardEngine) PeerPaths() PeerPathSnapshot {
-	if e == nil || e.device == nil {
+	if e == nil {
+		return PeerPathSnapshot{}
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.device == nil {
 		return PeerPathSnapshot{}
 	}
 	snapshot := PeerPathSnapshot{
@@ -953,7 +965,12 @@ func (e *WireGuardEngine) SetPreferredEndpoint(
 	peerID uint64,
 	endpoint netip.AddrPort,
 ) error {
-	if e == nil || e.device == nil || peerID == 0 {
+	if e == nil {
+		return ErrPeerEndpointUnavailable
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.device == nil || peerID == 0 {
 		return ErrPeerEndpointUnavailable
 	}
 	if mapRevision == 0 || mapRevision != e.appliedRevision {
@@ -979,7 +996,7 @@ func (e *WireGuardEngine) SetPreferredEndpoint(
 			allowedIPs:   append([]netip.Prefix(nil), peer.allowedIPs...),
 		}
 		if err := e.resetPeerSessions([]wireGuardPeerPlan{reset}); err != nil {
-			_ = e.Close()
+			_ = e.closeLocked()
 
 			return err
 		}
@@ -1001,7 +1018,12 @@ func (e *WireGuardEngine) RestorePreferredEndpoint(
 	mapRevision uint64,
 	peerID uint64,
 ) error {
-	if e == nil || e.device == nil || peerID == 0 {
+	if e == nil {
+		return ErrPeerEndpointUnavailable
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.device == nil || peerID == 0 {
 		return ErrPeerEndpointUnavailable
 	}
 	if mapRevision == 0 || mapRevision != e.appliedRevision {
@@ -1133,7 +1155,7 @@ func (e *WireGuardEngine) configurePeerEndpoint(
 	configuration.WriteByte('\n')
 	writeWireGuardKeepalive(&configuration, path)
 	if err := e.device.Configure(bytes.NewReader(configuration.Bytes())); err != nil {
-		_ = e.Close()
+		_ = e.closeLocked()
 
 		return errors.New("dataplane: applying peer endpoint failed")
 	}
@@ -1294,6 +1316,16 @@ func (e *WireGuardEngine) now() time.Time {
 // Close destroys the userspace device, which closes the TUN descriptor and
 // causes Linux to remove the non-persistent interface and its routes.
 func (e *WireGuardEngine) Close() error {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return e.closeLocked()
+}
+
+func (e *WireGuardEngine) closeLocked() error {
 	if e == nil || e.device == nil {
 		return nil
 	}

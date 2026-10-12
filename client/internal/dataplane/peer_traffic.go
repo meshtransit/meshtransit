@@ -96,7 +96,12 @@ func relayRegionOf(endpoint string) int {
 // are zero when the device cannot report them. The daemon serializes this
 // call with Apply and Close.
 func (e *WireGuardEngine) PeerPathStats() []PeerPathStat {
-	if e == nil || e.device == nil {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.device == nil {
 		return nil
 	}
 	var traffic map[[32]byte]peerTraffic
