@@ -105,6 +105,7 @@ func TestUTUNDeviceSkipsEmptyReadsWhileAttached(t *testing.T) {
 	t.Parallel()
 	device, kernel := pairDevice(t)
 	device.isAttached = func() bool { return true }
+	device.emptyReadPause = time.Millisecond
 	ipv4 := []byte{0x45, 0, 0, 20, 1, 2, 3, 4}
 	for range 3 {
 		if _, err := kernel.Write(nil); err != nil {
@@ -125,27 +126,34 @@ func TestUTUNDeviceSkipsEmptyReadsWhileAttached(t *testing.T) {
 	}
 }
 
-func TestUTUNDeviceBoundsSkippedEmptyReads(t *testing.T) {
+func TestUTUNDeviceFailsWhenEmptyReadsOutlastTheGrace(t *testing.T) {
 	t.Parallel()
 	device, kernel := pairDevice(t)
 	device.isAttached = func() bool { return true }
-	// The socketpair holds few datagrams, so write while Read drains them.
+	device.emptyReadGrace = 50 * time.Millisecond
+	device.emptyReadPause = time.Millisecond
+	// The socketpair holds few datagrams, so keep writing while Read drains.
+	stop := make(chan struct{})
 	written := make(chan error, 1)
 	go func() {
-		for sent := 0; sent <= maxEmptyUTUNReads; {
-			if _, err := kernel.Write(nil); errors.Is(err, unix.ENOBUFS) {
-				time.Sleep(time.Millisecond)
-				continue
-			} else if err != nil {
+		for {
+			select {
+			case <-stop:
+				written <- nil
+				return
+			default:
+			}
+			if _, err := kernel.Write(nil); err != nil && !errors.Is(err, unix.ENOBUFS) {
 				written <- err
 				return
 			}
-			sent++
+			time.Sleep(time.Millisecond)
 		}
-		written <- nil
 	}()
-	if _, err := device.Read([][]byte{make([]byte, 128)}, []int{0}, 16); !errors.Is(err, io.EOF) {
-		t.Fatalf("Read() error = %v, want EOF after %d empty reads", err, maxEmptyUTUNReads)
+	_, err := device.Read([][]byte{make([]byte, 128)}, []int{0}, 16)
+	close(stop)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("Read() error = %v, want EOF once the grace ends", err)
 	}
 	if err := <-written; err != nil {
 		t.Fatal(err)

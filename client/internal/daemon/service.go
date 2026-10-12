@@ -108,6 +108,10 @@ const (
 	suspendedFastPeriod   = time.Minute
 	suspendedMediumPeriod = 5 * time.Minute
 	runtimeRetryReset     = 30 * time.Second
+	// maxDataPlaneStopRetry caps the backoff after the data plane device
+	// stopped on its own: rebuilding it is local, and the window that stops
+	// it (boot, a network change) ends within seconds.
+	maxDataPlaneStopRetry = 4 * time.Second
 	minEndpointRefresh    = 20 * time.Second
 	maxEndpointRefresh    = 26 * time.Second
 	relayPreparationPoll  = time.Second
@@ -1045,6 +1049,7 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 				if runtimeRetry, err = s.recoverRuntime(ctx, runtimeRetry, synchronizedAt); err != nil {
 					return err
 				}
+				runtimeRetry = capRetryForCause(runtimeRetry, streamErr)
 
 				continue
 			}
@@ -1099,6 +1104,15 @@ func (s *Service) Run(ctx context.Context) (runErr error) {
 			}
 		}
 	}
+}
+
+// capRetryForCause keeps the backoff short when the data plane device
+// stopped on its own.
+func capRetryForCause(retry time.Duration, cause error) time.Duration {
+	if errors.Is(cause, errDataPlaneStopped) {
+		return min(retry, maxDataPlaneStopRetry)
+	}
+	return retry
 }
 
 // watchDataPlaneStops ends the session with errDataPlaneStopped when the

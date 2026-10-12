@@ -62,7 +62,7 @@ func (f *officialWireGuardFactory) New(
 	tunDevice, err := adoptPrivilegedTUNDescriptor(
 		file,
 		mtu,
-		openInheritedTUN,
+		inheritedTUNOpenerFor(f.logger),
 	)
 	if err != nil {
 		return nil, err

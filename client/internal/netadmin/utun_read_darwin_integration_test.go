@@ -23,7 +23,20 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const utunReaderEnv = "MESHTRANSIT_UTUN_READER"
+const (
+	utunReaderEnv = "MESHTRANSIT_UTUN_READER"
+	// utunReadSecondsEnv lengthens each case, for example to toggle Wi-Fi
+	// while it runs: MESHTRANSIT_UTUN_READ_SECONDS=60.
+	utunReadSecondsEnv = "MESHTRANSIT_UTUN_READ_SECONDS"
+)
+
+// readTicks is the number of 100 ms send ticks per case (4 s by default).
+func readTicks() int {
+	if seconds, err := strconv.Atoi(os.Getenv(utunReadSecondsEnv)); err == nil && seconds > 4 {
+		return seconds * 10
+	}
+	return 40
+}
 
 type utunReadCase struct {
 	name     string
@@ -134,7 +147,7 @@ func readUTUNAfterHandOff(t *testing.T, testCase utunReadCase) {
 	}
 	defer func() { _ = sender.Close() }()
 	var dnsLink *os.File
-	for tick := range 40 {
+	for tick := range readTicks() {
 		switch tick {
 		case 10: // like the DNS link: a second utun without routes
 			dnsLink, _, err = creator.Open("", 1280, 0, []netip.Prefix{}, []netip.Prefix{})

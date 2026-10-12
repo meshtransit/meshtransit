@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"sync"
@@ -22,14 +23,22 @@ const (
 	utunHeaderBytes = 4
 )
 
-// openInheritedTUN wraps the helper's utun descriptor in utunDevice.
+// inheritedTUNOpenerFor opens utun descriptors that report empty-read
+// episodes to logger.
+func inheritedTUNOpenerFor(logger *slog.Logger) inheritedTUNOpener {
+	return func(descriptor int) (tun.Device, string, error) {
+		return openUTUN(descriptor, logger)
+	}
+}
+
+// openUTUN wraps the helper's utun descriptor in utunDevice.
 //
 // wireguard-go's own darwin TUN also watches a routing socket: it turns
 // interface messages into up/down events and any routing socket error (such
 // as a buffer overflow while routes churn at boot) into a TUN read error, and
 // either stops the device or closes it. meshd brings the device up itself
 // and only needs packets, as Linux's unmonitored TUN gives it.
-func openInheritedTUN(descriptor int) (tun.Device, string, error) {
+func openUTUN(descriptor int, logger *slog.Logger) (tun.Device, string, error) {
 	name, err := unix.GetsockoptString(descriptor, sysprotoControl, utunOptIfname)
 	if err != nil {
 		return nil, "", fmt.Errorf("dataplane: reading utun name: %w", err)
@@ -38,7 +47,9 @@ func openInheritedTUN(descriptor int) (tun.Device, string, error) {
 	if file == nil {
 		return nil, "", errors.New("dataplane: invalid utun descriptor")
 	}
-	return &utunDevice{file: file, name: name, events: make(chan tun.Event), opened: time.Now()}, name, nil
+	return &utunDevice{
+		file: file, name: name, events: make(chan tun.Event), opened: time.Now(), logger: logger,
+	}, name, nil
 }
 
 // utunDevice reads and writes packets on a macOS utun descriptor. It never
@@ -55,28 +66,55 @@ type utunDevice struct {
 	// kernel check in tests.
 	emptyReads atomic.Uint64
 	isAttached func() bool
+	// logger, when set, records empty-read episodes the device rode out.
+	logger *slog.Logger
+	// emptyReadGrace and emptyReadPause override the defaults in tests.
+	emptyReadGrace time.Duration
+	emptyReadPause time.Duration
 }
 
 func (t *utunDevice) File() *os.File { return t.file }
 
-// maxEmptyUTUNReads bounds the empty reads skipped in one Read, so a utun
-// that only ever reads empty still fails instead of spinning.
-const maxEmptyUTUNReads = 64
+// Around boot and network changes macOS can make a fresh utun read empty,
+// over and over, for a while, although the descriptor is still the utun and
+// the link exists. WireGuard takes an empty read as EOF and closes the device,
+// and a rebuilt device hits the same window. Read rides it out instead.
+const (
+	defaultEmptyReadGrace = 10 * time.Second
+	defaultEmptyReadPause = 20 * time.Millisecond
+)
 
 func (t *utunDevice) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 	if offset < utunHeaderBytes {
 		return 0, io.ErrShortBuffer
 	}
-	for skipped := 0; ; skipped++ {
+	grace, pause := t.emptyReadGrace, t.emptyReadPause
+	if grace == 0 {
+		grace = defaultEmptyReadGrace
+	}
+	if pause == 0 {
+		pause = defaultEmptyReadPause
+	}
+	var emptySince time.Time
+	var empties uint64
+	for {
 		read, err := t.file.Read(bufs[0][offset-utunHeaderBytes:])
 		if read == 0 && (err == nil || errors.Is(err, io.EOF)) {
-			// macOS can hand a fresh utun an empty read; WireGuard would
-			// take the EOF as fatal. Skip it while the utun is still there.
-			if skipped < maxEmptyUTUNReads && t.attached() {
+			if emptySince.IsZero() {
+				emptySince = time.Now()
+			}
+			if time.Since(emptySince) < grace && t.attached() {
+				empties++
 				t.emptyReads.Add(1)
+				time.Sleep(pause)
 				continue
 			}
 			return 0, t.emptyReadError()
+		}
+		if !emptySince.IsZero() && t.logger != nil {
+			t.logger.Info("utun empty reads ended", "interface", t.name, "empty_reads", empties,
+				"duration", time.Since(emptySince).Round(time.Millisecond),
+				"device_age", time.Since(t.opened).Round(time.Millisecond))
 		}
 		if read <= utunHeaderBytes {
 			return 0, err
