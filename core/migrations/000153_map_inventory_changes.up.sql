@@ -18,7 +18,11 @@
 -- inventory reads: a Device's identity, owner, name, session generation,
 -- creation, expiry, state and current key epochs; its key epochs; its
 -- primary leases; and its owner's state, which marks every Device of the
--- owner. A Device that only expires changes no row, so the reader drops
+-- owner. The update triggers fire on every update and compare those columns
+-- (WHEN), so a column another trigger sets is not missed. A transaction that
+-- changes several Networks takes their heads in the order of its changes;
+-- writers that change Devices of several Networks at once must keep one
+-- order (ascending, as Network revisions are taken) to avoid deadlocks. A Device that only expires changes no row, so the reader drops
 -- Devices whose expiry passed itself. Deployment, Workspace and Network
 -- state are read with every inventory, as before.
 
@@ -160,9 +164,7 @@ AFTER INSERT OR DELETE ON mesh.device
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION mesh_ops.record_map_inventory_change_v1();
 CREATE CONSTRAINT TRIGGER device_map_inventory_change_update
-AFTER UPDATE OF workspace_id, network_id, id, public_id, owner_principal_id, hostname, session_generation,
-    created_at, expires_at, state, deleted_at, current_machine_key_epoch, current_node_key_epoch
-ON mesh.device
+AFTER UPDATE ON mesh.device
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW
 WHEN ((OLD.workspace_id, OLD.network_id, OLD.id, OLD.public_id, OLD.owner_principal_id, OLD.hostname,
@@ -178,8 +180,7 @@ AFTER INSERT OR DELETE ON mesh.device_machine_key_epoch
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION mesh_ops.record_map_inventory_change_v1();
 CREATE CONSTRAINT TRIGGER device_machine_key_epoch_map_inventory_change_update
-AFTER UPDATE OF workspace_id, network_id, device_id, epoch, state, public_key, fingerprint
-ON mesh.device_machine_key_epoch
+AFTER UPDATE ON mesh.device_machine_key_epoch
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW
 WHEN ((OLD.workspace_id, OLD.network_id, OLD.device_id, OLD.epoch, OLD.state, OLD.public_key, OLD.fingerprint)
@@ -192,8 +193,7 @@ AFTER INSERT OR DELETE ON mesh.device_node_key_epoch
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION mesh_ops.record_map_inventory_change_v1();
 CREATE CONSTRAINT TRIGGER device_node_key_epoch_map_inventory_change_update
-AFTER UPDATE OF workspace_id, network_id, device_id, epoch, state, public_key
-ON mesh.device_node_key_epoch
+AFTER UPDATE ON mesh.device_node_key_epoch
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW
 WHEN ((OLD.workspace_id, OLD.network_id, OLD.device_id, OLD.epoch, OLD.state, OLD.public_key)
@@ -205,8 +205,7 @@ AFTER INSERT OR DELETE ON mesh.node_address_lease
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION mesh_ops.record_map_inventory_change_v1();
 CREATE CONSTRAINT TRIGGER node_address_lease_map_inventory_change_update
-AFTER UPDATE OF workspace_id, network_id, device_id, address, family, lease_role, state
-ON mesh.node_address_lease
+AFTER UPDATE ON mesh.node_address_lease
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW
 WHEN ((OLD.workspace_id, OLD.network_id, OLD.device_id, OLD.address, OLD.family, OLD.lease_role, OLD.state)
@@ -215,8 +214,7 @@ WHEN ((OLD.workspace_id, OLD.network_id, OLD.device_id, OLD.address, OLD.family,
 EXECUTE FUNCTION mesh_ops.record_map_inventory_change_v1();
 
 CREATE CONSTRAINT TRIGGER principal_map_inventory_change_update
-AFTER UPDATE OF id, public_id, deployment_id, state, deleted_at
-ON mesh.principal
+AFTER UPDATE ON mesh.principal
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW
 WHEN ((OLD.id, OLD.public_id, OLD.deployment_id, OLD.state, OLD.deleted_at)

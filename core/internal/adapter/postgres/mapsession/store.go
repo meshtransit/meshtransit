@@ -91,11 +91,14 @@ type InventoryStats struct {
 	SharingDeclines uint64
 	// ChangeReads of the Reads applied the Devices changed since the cached
 	// inventory instead of reading the whole Network (schema 153).
-	ChangeReads uint64
+	// ChangeFallbacks read the whole Network because the changes contradicted
+	// the snapshot or the cached inventory.
+	ChangeReads     uint64
+	ChangeFallbacks uint64
 }
 
 type inventoryStats struct {
-	shared, reads, direct, policyMismatch, derived, unchanged, sharingDeclines, changeReads atomic.Uint64
+	shared, reads, direct, policyMismatch, derived, unchanged, sharingDeclines, changeReads, changeFallbacks atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
@@ -103,7 +106,8 @@ func (store *Store) InventoryStats() InventoryStats {
 	return InventoryStats{Shared: store.stats.shared.Load(), Reads: store.stats.reads.Load(),
 		Direct: store.stats.direct.Load(), PolicyMismatches: store.stats.policyMismatch.Load(),
 		Derived: store.stats.derived.Load(), Unchanged: store.stats.unchanged.Load(),
-		SharingDeclines: store.stats.sharingDeclines.Load(), ChangeReads: store.stats.changeReads.Load()}
+		SharingDeclines: store.stats.sharingDeclines.Load(), ChangeReads: store.stats.changeReads.Load(),
+		ChangeFallbacks: store.stats.changeFallbacks.Load()}
 }
 
 // policyMatches checks, for a Device without direct projections, that the

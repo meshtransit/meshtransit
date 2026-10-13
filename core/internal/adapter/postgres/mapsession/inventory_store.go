@@ -70,7 +70,9 @@ FROM mesh_ops.load_map_network_devices_v1($1::INTEGER)`
 // (schema 153), used once this role may run them.
 const (
 	inventoryChangesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
-    pg_catalog.to_regprocedure('mesh_ops.load_map_network_device_changes_v1(bigint,integer)'), 'EXECUTE'), FALSE)`
+    pg_catalog.to_regprocedure('mesh_ops.load_map_network_device_changes_v1(bigint,integer)'), 'EXECUTE'), FALSE)
+    AND COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.read_map_inventory_change_head_v1()'), 'EXECUTE'), FALSE)`
 	loadInventoryChangeHeadSQL  = `SELECT mesh_ops.read_map_inventory_change_head_v1()`
 	loadNetworkDeviceChangesSQL = `SELECT change_seq, numeric_node_id, listed,
     COALESCE(numeric_owner_id, 0), COALESCE(node_public_id::TEXT, ''), COALESCE(owner_public_id::TEXT, ''),
@@ -187,8 +189,13 @@ func (store *Store) readInventoryDevices(
 		}
 		if canApplyChanges(previous, *cached, scope) {
 			applied, err := store.applyInventoryChanges(ctx, transaction, scope, previous, cached)
-			if err != nil || applied {
+			if applied || ctx.Err() != nil {
 				return err
+			}
+			if err != nil {
+				// Changes that contradict the snapshot never block the Network:
+				// read it whole (a failed statement fails that read too).
+				store.stats.changeFallbacks.Add(1)
 			}
 		}
 	}
@@ -236,7 +243,7 @@ func (store *Store) applyInventoryChanges(
 	}
 	inventory, err := previous.inventory.WithChanges(changes, cached.readAt)
 	if err != nil {
-		return false, nil //nolint:nilerr // too many Devices or a conflict: read the whole Network
+		return false, err // too many Devices or a conflict: the caller reads the whole Network
 	}
 	cached.inventory, cached.fullReadAt = inventory, previous.fullReadAt
 	store.stats.changeReads.Add(1)

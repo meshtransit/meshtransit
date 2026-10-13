@@ -149,7 +149,12 @@ func TestInventoryIsReadWholeWhenChangesCannotApply(t *testing.T) {
 				t.Fatalf("readInventory() error = %v", err)
 			}
 			inventoryNodeIDs(t, second, 3)
-			if countQueries(transaction.queries, loadNetworkDevicesSQL) != 2 || store.InventoryStats().ChangeReads != 0 {
+			wantFallbacks := uint64(0)
+			if name == "change makes duplicate" {
+				wantFallbacks = 1
+			}
+			if countQueries(transaction.queries, loadNetworkDevicesSQL) != 2 || store.InventoryStats().ChangeReads != 0 ||
+				store.InventoryStats().ChangeFallbacks != wantFallbacks {
 				t.Fatalf("queries = %v, want the Network read whole again", transaction.queries)
 			}
 			if test.untracked && second.changeSeq != -1 {
@@ -167,20 +172,31 @@ func duplicateKeyChange() []inventoryChange {
 	return []inventoryChange{{seq: 11, record: duplicate}}
 }
 
-func TestInventoryRejectsAChangeOutsideTheSnapshot(t *testing.T) {
+// TestInventoryReadsWholeWhenAChangeLiesOutsideTheSnapshot: a change
+// numbered at or before the cached counter, or past this snapshot's head,
+// contradicts the snapshot; the Network is read whole instead of failing.
+func TestInventoryReadsWholeWhenAChangeLiesOutsideTheSnapshot(t *testing.T) {
 	t.Parallel()
-	store, transaction, scope := changeTrackingStore(t)
-	queueInventoryRead(transaction, 7, 10, true)
-	transaction.inventoryRows = []*peerCandidateRows{{records: []peerCandidateRecord{validPeerCandidateRecord(2)}}}
-	first, err := store.readInventory(t.Context(), scope, testWorkspaceID, testNetworkID, cachedInventory{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, seq := range []int64{10, 12} { // not after the cached counter, or past this snapshot's head
+	for _, seq := range []int64{10, 12} {
+		store, transaction, scope := changeTrackingStore(t)
+		queueInventoryRead(transaction, 7, 10, true)
+		transaction.inventoryRows = []*peerCandidateRows{
+			{records: []peerCandidateRecord{validPeerCandidateRecord(2)}},
+			{records: []peerCandidateRecord{validPeerCandidateRecord(3)}},
+		}
+		first, err := store.readInventory(t.Context(), scope, testWorkspaceID, testNetworkID, cachedInventory{})
+		if err != nil {
+			t.Fatal(err)
+		}
 		queueInventoryRead(transaction, 8, 11, true)
 		transaction.changeRows = []*inventoryChangeRows{{changes: []inventoryChange{{seq: seq, record: validPeerCandidateRecord(4)}}}}
-		if _, err := store.readInventory(t.Context(), scope, testWorkspaceID, testNetworkID, first); err == nil {
-			t.Fatalf("a change numbered %d was accepted", seq)
+		second, err := store.readInventory(t.Context(), scope, testWorkspaceID, testNetworkID, first)
+		if err != nil {
+			t.Fatalf("change numbered %d: readInventory() error = %v", seq, err)
+		}
+		inventoryNodeIDs(t, second, 3)
+		if stats := store.InventoryStats(); stats.ChangeFallbacks != 1 || stats.ChangeReads != 0 {
+			t.Fatalf("change numbered %d: stats %+v, want one fallback to a whole read", seq, stats)
 		}
 	}
 }

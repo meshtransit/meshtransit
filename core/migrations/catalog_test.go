@@ -3818,7 +3818,7 @@ func TestMapInventoryChanges(t *testing.T) {
 		t.Errorf("schema 153 has %d deferred triggers, want 9", got)
 	}
 	for _, forbidden := range []string{"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "TO mesh_worker", "BYPASSRLS",
-		"DROP ", "CREATE OR REPLACE"} {
+		"DROP ", "CREATE OR REPLACE", "AFTER UPDATE OF", "mesh.map_inventory_seq_"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 153 must not contain %q", forbidden)
 		}
