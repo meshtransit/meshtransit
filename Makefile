@@ -19,15 +19,19 @@ DEX_ARTIFACT_MANIFEST ?=
 DEX_UPSTREAM_SOURCE ?=
 DEX_ARTIFACT_BINARY ?=
 DEX_PREPARED_ROOT ?=
+MOBILE_OUT ?= bin/mobile
+ANDROID_API ?= 29
+GOMOBILE_BIN := $(CURDIR)/bin/gomobile-tools
 DEX_OLD_SOURCE ?=
 DEX_CURRENT_BINARY ?=
 DEX_CURRENT_BINARY_SHA256 ?=
 
-.PHONY: help build build-core build-client package-deb package-deb-meshd package-deb-meshctl package-darwin package-windows lint-client lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
+.PHONY: help build build-core build-client mobile-tools mobile-android mobile-ios package-deb package-deb-meshd package-deb-meshctl package-darwin package-windows lint-client lint-relay build-relay natlab-matrix proto proto-check mtcp-crosscheck check-boundaries scan-secrets fmt fmt-check tidy-check vet test test-race integration-deps integration-migrations integration-platform-container qualification-dex qualification-dex-boundary qualification-dex-compile qualification-dex-workspace qualification-dex-upgrade-restore verify-dex-artifact prepare-dex-source prepare-dex-workspace lint lint-integration vuln workflow-lint quality \
 	container-build container-build-multiarch container-push-multiarch container-push-relay-multiarch container-push-dexbroker-multiarch container-inspect container-smoke container-scan
 
 help:
 	@echo "Targets: build build-core build-client test test-race lint lint-client quality"
+	@echo "         mobile-android mobile-ios"
 	@echo "         check-boundaries integration-platform-container package-deb container-build"
 
 build: build-core build-client build-relay
@@ -46,6 +50,22 @@ build-client:
 build-relay:
 	mkdir -p bin
 	$(GO) build -trimpath -o bin/meshrelay ./relay/cmd/meshrelay
+
+# Mobile bindings of client/mobile (ADR-052), built with the gomobile and
+# gobind versions pinned in go.mod. The apps consume the outputs.
+mobile-tools:
+	mkdir -p $(GOMOBILE_BIN)
+	$(GO) build -o $(GOMOBILE_BIN)/ golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
+
+mobile-android: mobile-tools
+	mkdir -p $(MOBILE_OUT)
+	PATH="$(GOMOBILE_BIN):$$PATH" gomobile bind -trimpath -target=android/arm64,android/amd64 \
+		-androidapi $(ANDROID_API) -javapkg net.meshtransit.core -o $(MOBILE_OUT)/meshcore.aar ./client/mobile
+
+mobile-ios: mobile-tools
+	mkdir -p $(MOBILE_OUT)
+	PATH="$(GOMOBILE_BIN):$$PATH" gomobile bind -trimpath -target=ios \
+		-prefix MT -o $(MOBILE_OUT)/MeshCore.xcframework ./client/mobile
 
 package-deb: package-deb-meshd package-deb-meshctl
 

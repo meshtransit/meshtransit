@@ -89,12 +89,15 @@ go.uber.org/atomic
 go.uber.org/goleak
 golang.org/x/crypto
 golang.org/x/exp
+golang.org/x/mobile
+golang.org/x/mod
 golang.org/x/net
 golang.org/x/oauth2
 golang.org/x/sync
 golang.org/x/sys
 golang.org/x/text
 golang.org/x/time
+golang.org/x/tools
 golang.zx2c4.com/wintun
 golang.zx2c4.com/wireguard
 golang.zx2c4.com/wireguard/windows

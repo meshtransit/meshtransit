@@ -11,6 +11,9 @@
 | `github.com/klauspost/compress` | MTCP message compression | BSD-3-Clause, parts Apache-2.0 |
 | `google.golang.org/protobuf` | MTCP messages | BSD-3-Clause |
 | `golang.org/x/crypto`, `golang.org/x/net`, `golang.org/x/sys` | peer-probe cryptography, DNS messages, system calls | BSD-3-Clause |
+| `golang.org/x/mobile` | the Java and Objective-C bindings of `client/mobile` that the Android and iOS apps embed (ADR-052) | BSD-3-Clause |
+
+`golang.org/x/mod` and `golang.org/x/tools` (BSD-3-Clause) are required by the `gomobile` and `gobind` build tools pinned in `go.mod`; they run at build time and are not part of any shipped binary.
 
 The complete direct-dependency license texts are reproduced under `client/third_party/licenses/`. Product commands, API names, and documentation must not imply endorsement by any dependency's copyright holders or contributors.
 
