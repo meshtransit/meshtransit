@@ -95,13 +95,26 @@ func (delta ConnectivityDelta) IsValid() bool {
 	return true
 }
 
+// directConnectivityPeers: a map with fewer authorized peers than this
+// compares self and its peers directly instead of reading the table's change
+// log. Every stream of a Network is woken for each change, and the log is
+// read under the table's lock: during a reconnect storm thousands of streams
+// queued on it for a few Nodes each.
+const directConnectivityPeers = 64
+
 // connectivityCandidates returns, sorted, the Nodes whose connectivity may
-// differ between current and next: the change log between two versions of
-// one shared table, or else self and every authorized peer of next.
+// differ between current and next: none between one version of a shared
+// table and itself; for a map with many peers, the change log between two
+// versions of one table; or else self and every authorized peer of next.
 func connectivityCandidates(current, next Snapshot) []node.ID {
 	if from, to := current.sharedConnectivity, next.sharedConnectivity; from != nil && to != nil {
-		if changed, ok := from.changesTo(to); ok {
-			return changed
+		if from == to {
+			return nil
+		}
+		if len(next.authorized) >= directConnectivityPeers {
+			if changed, ok := from.changesTo(to); ok {
+				return changed
+			}
 		}
 	}
 	candidates := make([]node.ID, 0, len(next.authorized)+1)

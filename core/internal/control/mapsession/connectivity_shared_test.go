@@ -8,7 +8,7 @@ import (
 // sharedTableFixture is one Network's table on a replica, without a feed.
 func sharedTableFixture(t testing.TB, values ...Connectivity) *networkConnectivity {
 	t.Helper()
-	table := &networkConnectivity{subscribers: make(map[uint64]chan ConnectivityChanged)}
+	table := &networkConnectivity{subscribers: make(map[uint64]*connectivitySubscriber)}
 	table.current.Store(&connectivityVersion{table: table})
 	table.apply(values, true)
 	return table
@@ -26,7 +26,7 @@ func TestSharedConnectivityDeltaMatchesAPrivateRead(t *testing.T) {
 
 	table := sharedTableFixture(t, self, peerBefore, stranger)
 	before := table.current.Load()
-	after := table.apply([]Connectivity{peerAfter}, true)
+	after, _ := table.apply([]Connectivity{peerAfter}, true)
 
 	sharedCurrent, err := base.withSharedConnectivity(before)
 	if err != nil {
@@ -80,7 +80,7 @@ func TestSharedConnectivityDeltaMatchesAPrivateRead(t *testing.T) {
 	}
 
 	// A version change that touches only a stranger sends nothing.
-	unrelated := table.apply([]Connectivity{connectivityMapValue(t, stranger.Key().NodeID(), 1, false)}, true)
+	unrelated, _ := table.apply([]Connectivity{connectivityMapValue(t, stranger.Key().NodeID(), 1, false)}, true)
 	sharedLater, err := base.withSharedConnectivity(unrelated)
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,8 @@ func BenchmarkConnectivityChange(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			next, err := base.withSharedConnectivity(table.apply(changed[1:2], true))
+			version, _ := table.apply(changed[1:2], true)
+			next, err := base.withSharedConnectivity(version)
 			if err != nil {
 				b.Fatal(err)
 			}

@@ -94,6 +94,14 @@ type ConnectivityWatcher interface {
 	WatchNetwork(network.ID) (<-chan ConnectivityChanged, func(), error)
 }
 
+// InterestConnectivityWatcher is a ConnectivityWatcher that wakes a stream
+// only for changes of the Nodes its interest names; the returned function
+// replaces the interest as the stream's peers change.
+type InterestConnectivityWatcher interface {
+	WatchNetworkInterest(network.ID, ConnectivityInterest) (
+		<-chan ConnectivityChanged, func(), func(ConnectivityInterest), error)
+}
+
 // StreamOptions bounds one caller-owned map stream lifecycle.
 type StreamOptions struct {
 	ReplicaID           publicid.ID
@@ -301,6 +309,7 @@ func (service *StreamService) run(
 	advance := func(next Snapshot) {
 		previous := current
 		current = next
+		watch.followInterest(current)
 		revisionChanged := current.NetworkRevision() != delivered
 		if !revisionChanged &&
 			equalDirectDeviceProjections(previous.directDeviceProjections, current.directDeviceProjections) {

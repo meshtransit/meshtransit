@@ -32,6 +32,43 @@ type streamWatch struct {
 	// less per session. Both are nil when the forwarder runs.
 	revisionUpdates     <-chan network.RevisionAdvanced
 	connectivityUpdates <-chan ConnectivityChanged
+	// setInterest replaces the connectivity interest of the stream's own
+	// Network (nil when its watcher wakes for every change); interest is the
+	// one set last.
+	setInterest func(ConnectivityInterest)
+	interest    ConnectivityInterest
+}
+
+// followInterest points the own Network's connectivity wakeups at the
+// Nodes snapshot compares, and, when that changed, queues a catch-up from
+// the table's latest version: a change applied before the new interest took
+// effect is in that version, one applied after wakes the stream.
+func (watch *streamWatch) followInterest(snapshot Snapshot) {
+	if watch.setInterest == nil {
+		return
+	}
+	interest := streamConnectivityInterest(snapshot)
+	if interest.Equal(watch.interest) {
+		return
+	}
+	watch.setInterest(interest)
+	watch.interest = interest
+	watch.catchUp(snapshot)
+}
+
+// catchUp queues one connectivity reload of the stream's own Network; a
+// wakeup already queued reloads it as well.
+func (watch *streamWatch) catchUp(snapshot Snapshot) {
+	change, err := NewConnectivityChanged(snapshot.Scope().NetworkID(), snapshot.NodeID(),
+		snapshot.SessionGeneration(), ConnectivityChangeEndpoints)
+	if err != nil {
+		return
+	}
+	change.batched = true
+	select {
+	case watch.updates <- streamWakeup{connectivity: change}:
+	default:
+	}
 }
 
 // directWake validates one wakeup read directly from a source of a
@@ -67,7 +104,16 @@ func (service *StreamService) watchSnapshot(ctx context.Context, snapshot Snapsh
 			}
 			return nil, errors.Join(ErrStreamUnavailable, err)
 		}
-		connectivity, stop, err := service.connectivity.WatchNetwork(scope.NetworkID())
+		var connectivity <-chan ConnectivityChanged
+		var stop func()
+		if interested, ok := service.connectivity.(InterestConnectivityWatcher); ok && scope == snapshot.Scope() {
+			// The own Network wakes the stream only for self and its peers;
+			// sharing scopes keep every wakeup.
+			watch.interest = streamConnectivityInterest(snapshot)
+			connectivity, stop, watch.setInterest, err = interested.WatchNetworkInterest(scope.NetworkID(), watch.interest)
+		} else {
+			connectivity, stop, err = service.connectivity.WatchNetwork(scope.NetworkID())
+		}
 		if stop != nil {
 			watch.releases = append(watch.releases, stop)
 		}
@@ -83,6 +129,11 @@ func (service *StreamService) watchSnapshot(ctx context.Context, snapshot Snapsh
 		if len(scopes) == 1 {
 			watch.revisionUpdates, watch.connectivityUpdates = revisions, connectivity
 		}
+	}
+	if watch.setInterest != nil {
+		// The snapshot's connectivity was read before the subscription:
+		// catch up with what changed in between.
+		watch.catchUp(snapshot)
 	}
 	if len(scopes) == 1 {
 		close(watch.done) // nothing to join

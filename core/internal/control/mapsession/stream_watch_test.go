@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"meshtransit.net/core/internal/domain/network"
+	"meshtransit.net/core/internal/domain/node"
 	"meshtransit.net/core/internal/domain/policy"
 )
 
@@ -340,4 +341,79 @@ func TestStreamWatchOfOneNetworkReadsItsSourcesDirectly(t *testing.T) {
 			t.Fatalf("close() left %v watched", active)
 		}
 	})
+}
+
+// interestConnectivityFixture is a scopedConnectivityFixture that also takes
+// interests, recording each one set.
+type interestConnectivityFixture struct {
+	*scopedConnectivityFixture
+	interests []ConnectivityInterest
+}
+
+func (fixture *interestConnectivityFixture) WatchNetworkInterest(id network.ID, interest ConnectivityInterest) (
+	<-chan ConnectivityChanged, func(), func(ConnectivityInterest), error,
+) {
+	updates, release, err := fixture.WatchNetwork(id)
+	fixture.mu.Lock()
+	fixture.interests = append(fixture.interests, interest)
+	fixture.mu.Unlock()
+	return updates, release, func(next ConnectivityInterest) {
+		fixture.mu.Lock()
+		defer fixture.mu.Unlock()
+		fixture.interests = append(fixture.interests, next)
+	}, err
+}
+
+func (fixture *interestConnectivityFixture) recorded() []ConnectivityInterest {
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	return slices.Clone(fixture.interests)
+}
+
+// The own Network's connectivity wakes a stream for self and its peers; the
+// stream catches up when it subscribes and whenever its peers change.
+func TestStreamWatchFollowsItsPeersConnectivity(t *testing.T) {
+	alone := snapshotFixture(t)
+	withPeer, peer := snapshotWithAuthorizedPeerFixture(t)
+	connectivity := &interestConnectivityFixture{scopedConnectivityFixture: newScopedConnectivityFixture()}
+	service := newStreamServiceWithWatchersFixture(t, &streamSnapshotOpener{}, &streamPresenceStore{},
+		newScopedRevisionFixture(), connectivity)
+	watch, err := service.watchSnapshot(t.Context(), alone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watch.close()
+	caughtUp := func() bool {
+		select {
+		case wake := <-watch.updates:
+			return wake.connectivity.IsValid() && wake.connectivity.batched && !wake.reconcile &&
+				wake.connectivity.NetworkID() == alone.Scope().NetworkID()
+		default:
+			return false
+		}
+	}
+	if interests := connectivity.recorded(); len(interests) != 1 ||
+		!interests[0].Equal(ConnectivityOf([]node.ID{alone.NodeID()})) || !caughtUp() {
+		t.Fatalf("interests %+v: want self alone and a catch-up on subscribing", interests)
+	}
+
+	watch.followInterest(withPeer)
+	want := ConnectivityOf([]node.ID{withPeer.NodeID(), peer.NodeID()})
+	if interests := connectivity.recorded(); len(interests) != 2 || !interests[1].Equal(want) || !caughtUp() {
+		t.Fatalf("interests %+v: want self and the new peer and a catch-up", interests)
+	}
+	watch.followInterest(withPeer)
+	if interests := connectivity.recorded(); len(interests) != 2 || caughtUp() {
+		t.Fatalf("an unchanged interest was set again: %+v", interests)
+	}
+}
+
+// A map with many peers keeps every wakeup of its Network.
+func TestStreamConnectivityInterestOfALargeMap(t *testing.T) {
+	t.Parallel()
+	snapshot := snapshotFixture(t)
+	snapshot.authorized = make([]PeerCandidate, directConnectivityPeers)
+	if !streamConnectivityInterest(snapshot).Equal(AllConnectivity()) {
+		t.Fatal("a map with many peers must watch every Node")
+	}
 }

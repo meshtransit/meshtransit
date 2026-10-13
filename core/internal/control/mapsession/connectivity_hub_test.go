@@ -205,10 +205,10 @@ func TestConnectivityHubDoesNotLetAnOpenReadReplaceNewerState(t *testing.T) {
 	online := connectivityMapValue(t, connectivityMapNodeID(t, 1), 1, true)
 	offline := connectivityMapValue(t, connectivityMapNodeID(t, 1), 1, false)
 	table.apply([]Connectivity{online}, true)
-	if version := table.apply([]Connectivity{offline}, false); !version.lookup(online.key).Online() {
+	if version, _ := table.apply([]Connectivity{offline}, false); !version.lookup(online.key).Online() {
 		t.Fatal("a fill-only apply replaced a stored value")
 	}
-	if version := table.apply([]Connectivity{offline}, true); version.lookup(online.key).Online() {
+	if version, _ := table.apply([]Connectivity{offline}, true); version.lookup(online.key).Online() {
 		t.Fatal("the worker's apply did not replace the stored value")
 	}
 }
@@ -280,5 +280,121 @@ func TestChangeRingReportsWhatAReaderMissed(t *testing.T) {
 	}
 	if _, ok := ring.since(1); ok {
 		t.Fatal("since() claimed changes the ring no longer holds")
+	}
+}
+
+// A map with few peers compares self and its peers directly: the change
+// log (read under the table's lock) is only for maps with many peers.
+func TestConnectivityCandidatesReadTheLogOnlyForManyPeers(t *testing.T) {
+	t.Parallel()
+	self, unrelated := hubKey(t, 1, 1).nodeID, hubKey(t, 900, 1).nodeID
+	table := &networkConnectivity{}
+	table.log.append(2, []node.ID{unrelated})
+	from := &connectivityVersion{table: table, seq: 1}
+	to := &connectivityVersion{table: table, seq: 2}
+	current := Snapshot{nodeID: self, sharedConnectivity: from}
+	mapWith := func(peers int) Snapshot {
+		authorized := make([]PeerCandidate, 0, peers)
+		for index := range peers {
+			authorized = append(authorized, PeerCandidate{nodeID: hubKey(t, uint64(2+index), 1).nodeID})
+		}
+		slices.SortFunc(authorized, func(left, right PeerCandidate) int { return compareNodeIDs(left.nodeID, right.nodeID) })
+		return Snapshot{nodeID: self, authorized: authorized, sharedConnectivity: to}
+	}
+
+	small := mapWith(1)
+	want := []node.ID{self, small.authorized[0].nodeID}
+	slices.SortFunc(want, compareNodeIDs)
+	if got := connectivityCandidates(current, small); !slices.Equal(got, want) {
+		t.Fatalf("small map candidates = %v, want self and its peer %v", got, want)
+	}
+	if got := connectivityCandidates(current, mapWith(directConnectivityPeers)); !slices.Equal(got, []node.ID{unrelated}) {
+		t.Fatalf("large map candidates = %v, want the change log %v", got, []node.ID{unrelated})
+	}
+	if got := connectivityCandidates(Snapshot{nodeID: self, sharedConnectivity: to}, small); len(got) != 0 {
+		t.Fatalf("one version against itself = %v, want none", got)
+	}
+}
+
+// A stream is woken only for changes of the Nodes it is interested in; a
+// repair (resync) wakes every stream.
+func TestConnectivityHubWakesOnlyInterestedStreams(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		hub, store, watcher, networkID := newHubFixture(t)
+		keys := []ConnectivityKey{hubKey(t, 1, 1), hubKey(t, 2, 1), hubKey(t, 3, 1)}
+		peerOfTwo, releasePeerOfTwo, _, err := hub.WatchNetworkInterest(networkID,
+			ConnectivityOf([]node.ID{keys[0].nodeID, keys[1].nodeID}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer releasePeerOfTwo()
+		peerOfThree, releasePeerOfThree, setPeerOfThree, err := hub.WatchNetworkInterest(networkID,
+			ConnectivityOf([]node.ID{keys[2].nodeID}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer releasePeerOfThree()
+		everything, releaseEverything, err := hub.WatchNetwork(networkID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer releaseEverything()
+		if _, err := hub.view(t.Context(), networkID, keys); err != nil {
+			t.Fatal(err)
+		}
+
+		store.put(connectivityMapValue(t, keys[1].nodeID, 1, true))
+		watcher.send(t, hubWake(t, networkID, keys[1]))
+		synctest.Wait()
+		if !woken(peerOfTwo) || woken(peerOfThree) || !woken(everything) {
+			t.Fatal("a change of Node 2 must wake the stream interested in it and the one watching everything only")
+		}
+
+		// A wakeup that changes nothing wakes nobody.
+		watcher.send(t, hubWake(t, networkID, keys[1]))
+		synctest.Wait()
+		if woken(peerOfTwo) || woken(peerOfThree) || woken(everything) {
+			t.Fatal("an unchanged Node woke a stream")
+		}
+
+		// After its interest moves to Node 2, the second stream is woken for it.
+		setPeerOfThree(ConnectivityOf([]node.ID{keys[1].nodeID}))
+		store.put(connectivityMapValue(t, keys[1].nodeID, 1, false))
+		watcher.send(t, hubWake(t, networkID, keys[1]))
+		synctest.Wait()
+		if !woken(peerOfTwo) || !woken(peerOfThree) || !woken(everything) {
+			t.Fatal("a stream whose interest moved to Node 2 was not woken for it")
+		}
+	})
+}
+
+func woken(updates <-chan ConnectivityChanged) bool {
+	select {
+	case <-updates:
+		return true
+	default:
+		return false
+	}
+}
+
+func TestConnectivityInterestWants(t *testing.T) {
+	t.Parallel()
+	one, two, three := hubKey(t, 1, 1).nodeID, hubKey(t, 2, 1).nodeID, hubKey(t, 3, 1).nodeID
+	interest := ConnectivityOf([]node.ID{three, one, one})
+	for name, test := range map[string]struct {
+		changed []node.ID
+		want    bool
+	}{
+		"named":       {changed: ConnectivityOf([]node.ID{two, three}).nodes, want: true},
+		"not named":   {changed: []node.ID{two}, want: false},
+		"none":        {changed: []node.ID{}, want: false},
+		"unknown set": {changed: nil, want: true},
+	} {
+		if got := interest.wants(test.changed); got != test.want {
+			t.Errorf("%s: wants() = %t, want %t", name, got, test.want)
+		}
+	}
+	if !AllConnectivity().wants([]node.ID{two}) || !interest.Equal(ConnectivityOf([]node.ID{one, three})) {
+		t.Fatal("every-Node interest or Equal")
 	}
 }

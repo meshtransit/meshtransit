@@ -114,7 +114,7 @@ type networkConnectivity struct {
 
 	mu          sync.Mutex // serializes writes, the log and subscribers
 	log         changeRing
-	subscribers map[uint64]chan ConnectivityChanged
+	subscribers map[uint64]*connectivitySubscriber
 	next        uint64
 	failed      bool
 
@@ -123,10 +123,22 @@ type networkConnectivity struct {
 
 // WatchNetwork implements ConnectivityWatcher for streams: it opens the
 // Network's table on first use and forwards each wakeup only after the
-// table has read it, so a stream that catches up then sees the change.
+// table has read it, so a stream that catches up then sees the change. The
+// stream is woken for every change of the Network.
 func (hub *ConnectivityHub) WatchNetwork(networkID network.ID) (<-chan ConnectivityChanged, func(), error) {
+	updates, release, _, err := hub.WatchNetworkInterest(networkID, AllConnectivity())
+	return updates, release, err
+}
+
+// WatchNetworkInterest implements InterestConnectivityWatcher: WatchNetwork
+// that wakes the stream only for changes of the Nodes its interest names.
+// The returned function replaces the interest; the stream then catches up
+// from the table's latest version, which holds every change applied before.
+func (hub *ConnectivityHub) WatchNetworkInterest(networkID network.ID, interest ConnectivityInterest) (
+	<-chan ConnectivityChanged, func(), func(ConnectivityInterest), error,
+) {
 	if hub == nil || !networkID.IsValid() {
-		return nil, nil, ErrInvalidConnectivityHub
+		return nil, nil, nil, ErrInvalidConnectivityHub
 	}
 	hub.mu.Lock()
 	defer hub.mu.Unlock()
@@ -134,21 +146,23 @@ func (hub *ConnectivityHub) WatchNetwork(networkID network.ID) (<-chan Connectiv
 	if table == nil {
 		var err error
 		if table, err = hub.openTable(networkID); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		hub.networks[networkID] = table
 	}
 	table.mu.Lock()
 	defer table.mu.Unlock()
 	if table.failed {
-		return nil, nil, ErrStreamUnavailable
+		return nil, nil, nil, ErrStreamUnavailable
 	}
 	table.next++
-	subscriber := table.next
-	updates := make(chan ConnectivityChanged, 1)
-	table.subscribers[subscriber] = updates
+	id := table.next
+	subscriber := &connectivitySubscriber{updates: make(chan ConnectivityChanged, 1)}
+	subscriber.setInterest(interest)
+	table.subscribers[id] = subscriber
 	var once sync.Once
-	return updates, func() { once.Do(func() { hub.unsubscribe(table, subscriber) }) }, nil
+	return subscriber.updates, func() { once.Do(func() { hub.unsubscribe(table, id) }) },
+		subscriber.setInterest, nil
 }
 
 // openTable subscribes to the Network's wakeups and starts its worker.
@@ -170,7 +184,7 @@ func (hub *ConnectivityHub) openTable(networkID network.ID) (*networkConnectivit
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	table := &networkConnectivity{hub: hub, id: networkID, cancel: cancel, release: release,
-		done: make(chan struct{}), subscribers: make(map[uint64]chan ConnectivityChanged)}
+		done: make(chan struct{}), subscribers: make(map[uint64]*connectivitySubscriber)}
 	table.current.Store(&connectivityVersion{table: table})
 	go table.run(ctx, upstream)
 	return table, nil
@@ -179,11 +193,11 @@ func (hub *ConnectivityHub) openTable(networkID network.ID) (*networkConnectivit
 func (hub *ConnectivityHub) unsubscribe(table *networkConnectivity, subscriber uint64) {
 	hub.mu.Lock()
 	table.mu.Lock()
-	updates, found := table.subscribers[subscriber]
-	if found {
+	found, ok := table.subscribers[subscriber]
+	if ok {
 		delete(table.subscribers, subscriber)
 		if !table.failed {
-			close(updates)
+			close(found.updates)
 		}
 	}
 	last := len(table.subscribers) == 0
@@ -257,13 +271,19 @@ func (table *networkConnectivity) applyWakeups(ctx context.Context, batch []Conn
 	for _, key := range newest {
 		keys = append(keys, key)
 	}
+	// A failed read leaves the table as it was (the resync repairs it) and
+	// wakes every stream, as before the table filtered wakeups; a read
+	// wakes the streams interested in a Node it changed.
+	var changed []node.ID
 	if len(keys) != 0 {
 		if values, err := table.read(ctx, keys); err == nil {
-			table.apply(values, true)
+			_, changed = table.apply(values, true)
+			if changed == nil {
+				changed = []node.ID{}
+			}
 		}
-		// A failed read leaves the table as it was; the resync repairs it.
 	}
-	table.forward(batch)
+	table.forward(batch, changed)
 }
 
 // resync rereads every Node of the table, in batches, and wakes the streams
@@ -284,7 +304,7 @@ func (table *networkConnectivity) resync(ctx context.Context) {
 	if after := table.current.Load(); after != before && len(keys) != 0 {
 		wake, err := NewConnectivityChanged(table.id, keys[0].nodeID, keys[0].generation, ConnectivityChangeEndpoints)
 		if err == nil {
-			table.forward([]ConnectivityChanged{wake})
+			table.forward([]ConnectivityChanged{wake}, nil) // a repair concerns every stream
 		}
 	}
 }
@@ -325,7 +345,7 @@ func (hub *ConnectivityHub) read(ctx context.Context, keys []ConnectivityKey) ([
 // generation), so a read for a newly opened stream never replaces state the
 // worker read later. Only the worker overwrites, and it rereads every Node
 // it is woken for, so the table converges on Redis.
-func (table *networkConnectivity) apply(values []Connectivity, overwrite bool) *connectivityVersion {
+func (table *networkConnectivity) apply(values []Connectivity, overwrite bool) (*connectivityVersion, []node.ID) {
 	table.mu.Lock()
 	defer table.mu.Unlock()
 	current := table.current.Load()
@@ -341,22 +361,34 @@ func (table *networkConnectivity) apply(values []Connectivity, overwrite bool) *
 		changed = append(changed, value.key.nodeID)
 	}
 	if len(changed) == 0 {
-		return current
+		return current, nil
 	}
 	next := &connectivityVersion{table: table, seq: current.seq + 1, entries: entries}
 	table.log.append(next.seq, changed)
 	table.current.Store(next)
-	return next
+	sorted := slices.Clone(changed)
+	slices.SortFunc(sorted, compareNodeIDs)
+	return next, slices.Compact(sorted)
 }
 
-// forward wakes each stream of the Network once per batch, latest wins: a
-// stream catches up from the change log, not from the wakeup's Node.
-func (table *networkConnectivity) forward(batch []ConnectivityChanged) {
+// forward wakes each stream of the Network interested in a changed Node
+// (nil: an unknown set, every stream) once per batch, latest wins: a stream
+// catches up from the table, not from the wakeup's Node. A stream not
+// interested is not woken at all: during a reconnect storm every endpoint
+// report would otherwise wake every stream of the Network.
+func (table *networkConnectivity) forward(batch []ConnectivityChanged, changed []node.ID) {
+	if changed != nil && len(changed) == 0 {
+		return
+	}
 	change := batch[len(batch)-1]
 	change.batched = true
 	table.mu.Lock()
 	defer table.mu.Unlock()
-	for _, updates := range table.subscribers {
+	for _, subscriber := range table.subscribers {
+		if !subscriber.wants(changed) {
+			continue
+		}
+		updates := subscriber.updates
 		select {
 		case updates <- change:
 		default:
@@ -375,8 +407,8 @@ func (table *networkConnectivity) fail() {
 	table.mu.Lock()
 	defer table.mu.Unlock()
 	table.failed = true
-	for _, updates := range table.subscribers {
-		close(updates)
+	for _, subscriber := range table.subscribers {
+		close(subscriber.updates)
 	}
 }
 
@@ -412,7 +444,8 @@ func (hub *ConnectivityHub) view(ctx context.Context, networkID network.ID,
 	if err != nil {
 		return nil, err
 	}
-	return table.apply(values, false), nil
+	version, _ := table.apply(values, false)
+	return version, nil
 }
 
 func (hub *ConnectivityHub) privateView(ctx context.Context, keys []ConnectivityKey) (*connectivityVersion, error) {
