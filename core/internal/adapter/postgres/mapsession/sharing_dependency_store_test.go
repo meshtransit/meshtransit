@@ -224,6 +224,24 @@ func TestStoreKeyedReadersPreferredOnceGranted(t *testing.T) {
 	}
 }
 
+// TestStoreNetworkOnceDependencyReaderPreferredOnceGranted: the schema 156
+// dependency reader replaces the schema 155 one once granted.
+func TestStoreNetworkOnceDependencyReaderPreferredOnceGranted(t *testing.T) {
+	store, _, tx, _, identity := validStoreFixture(t)
+	store.options.EnableDeviceAliases = true
+	tx.keyedReaders = true
+	tx.networkOnceDependencies = true
+	tx.dependencyRows = &directEdgeRows{values: []string{dependencyFixture}}
+	snapshot, err := store.Load(t.Context(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.SharingScopes()) != 1 || !slices.Contains(tx.queries, loadNetworkOnceSharingDependenciesSQL) ||
+		slices.Contains(tx.queries, loadKeyedSharingDependenciesSQL) || !slices.Contains(tx.queries, loadKeyedAliasEdgesSQL) {
+		t.Fatalf("queries = %v: want dependencies v6 with alias v7", tx.queries)
+	}
+}
+
 // TestStoreShareReadersRunUnderTheShareTimeout: with a share statement bound
 // above the map's, the share readers run under it and the map's bound is
 // restored before the next read; without one, or with one not above the

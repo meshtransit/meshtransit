@@ -86,7 +86,7 @@ func assertMapReaderPlansScale(ctx context.Context, t *testing.T) {
 	shareReaders := []struct{ name, query string }{
 		{"direct shares", `SELECT count(*) FROM mesh_ops.load_direct_share_map_edges_v1($1::BYTEA, $2::BYTEA, 257)`},
 		{"alias shares", `SELECT count(*) FROM mesh_ops.load_device_alias_map_edges_v7($1::BYTEA, $2::BYTEA, 10000)`},
-		{"sharing dependencies", `SELECT count(*) FROM mesh_ops.load_device_sharing_dependencies_v5($1::BYTEA, $2::BYTEA, 10000)`},
+		{"sharing dependencies", `SELECT count(*) FROM mesh_ops.load_device_sharing_dependencies_v6($1::BYTEA, $2::BYTEA, 10000)`},
 	}
 	for _, mode := range []string{"auto", "force_generic_plan"} {
 		if _, err := transaction.Exec(ctx, "SELECT pg_catalog.set_config('plan_cache_mode', $1, TRUE)", mode); err != nil {

@@ -213,3 +213,11 @@ var shareReaderKeyLookupOwnershipSQL string
 // authenticate the Device by its node key (schema 155) to the alias map
 // reader and exposes them to runtime; v6 and v4 stay executable for rollback.
 func ShareReaderKeyLookupOwnershipSQL() string { return shareReaderKeyLookupOwnershipSQL }
+
+//go:embed operator/000156_dependency_reader_network_once_ownership.sql
+var dependencyReaderNetworkOnceOwnershipSQL string
+
+// DependencyReaderNetworkOnceOwnershipSQL moves the dependency reader that
+// proves each remote Network once (schema 156) to the alias map reader and
+// exposes it to runtime; v5 stays executable for rollback.
+func DependencyReaderNetworkOnceOwnershipSQL() string { return dependencyReaderNetworkOnceOwnershipSQL }

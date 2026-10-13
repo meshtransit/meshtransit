@@ -865,6 +865,9 @@ func measureShareScaleReaders(ctx context.Context, t *testing.T, admin *pgx.Conn
 	if v5 := read("dependencies v5", "load_device_sharing_dependencies_v5"); !slices.Equal(v4, v5) {
 		t.Fatalf("%s dependencies v5 returned %d rows unlike v4's %d", role, len(v5), len(v4))
 	}
+	if v6 := read("dependencies v6", "load_device_sharing_dependencies_v6"); !slices.Equal(v4, v6) {
+		t.Fatalf("%s dependencies v6 returned %d rows unlike v4's %d", role, len(v6), len(v4))
+	}
 	legacy := ""
 	if _, err := tx.Exec(ctx, `SAVEPOINT legacy_reader`); err != nil {
 		t.Fatal(err)

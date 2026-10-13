@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 155 {
-		t.Fatalf("len(Catalog()) = %d, want 155", len(catalog))
+	if len(catalog) != 156 {
+		t.Fatalf("len(Catalog()) = %d, want 156", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 155 {
-		t.Fatalf("LatestVersion() = %d, want 155", LatestVersion())
+	if LatestVersion() != 156 {
+		t.Fatalf("LatestVersion() = %d, want 156", LatestVersion())
 	}
 }
 
@@ -3914,4 +3914,52 @@ func functionDefinition(t *testing.T, sql, name string) string {
 		t.Fatalf("%s not terminated", name)
 	}
 	return sql[start : start+end+len("$function$;")]
+}
+
+func TestDependencyReaderNetworkOnce(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[155]
+	if migration.Version != 156 {
+		t.Fatalf("migration 156 = %+v", migration)
+	}
+	previous := functionDefinition(t, Catalog()[154].SQL, "load_device_sharing_dependencies_v5")
+	next := functionDefinition(t, migration.SQL, "load_device_sharing_dependencies_v6")
+	skip := `      -- Contracts come ordered by the other side's Network: once one proved
+      -- a dependency on that Network, the rest of its contracts add nothing.
+      IF last_network_id = (CASE WHEN contract_row.provider_network_id=self_network
+          THEN contract_row.consumer_network_id ELSE contract_row.provider_network_id END) THEN
+        CONTINUE;
+      END IF;
+`
+	remember := `        last_network_id:=CASE WHEN contract_row.provider_network_id=self_network
+          THEN contract_row.consumer_network_id ELSE contract_row.provider_network_id END;
+`
+	want := strings.Replace(previous, "load_device_sharing_dependencies_v5(", "load_device_sharing_dependencies_v6(", 1)
+	for _, insert := range []struct{ after, text string }{
+		{"    last_network UUID;\n", "    last_network_id BIGINT;\n"},
+		{"        RETURN NEXT '{\"limited\":true}'::JSONB;\n        EXIT;\n      END IF;\n", skip},
+		{"        last_network:=remote_network;\n", remember},
+	} {
+		if strings.Count(want, insert.after) != 1 {
+			t.Fatalf("v5 has %d of %q", strings.Count(want, insert.after), insert.after)
+		}
+		want = strings.Replace(want, insert.after, insert.after+insert.text, 1)
+	}
+	if next != want {
+		t.Error("dependencies v6 must be v5 with only the per-Network skip added")
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "DROP ", "GRANT ", "OWNER TO"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 156 must not contain %q", forbidden)
+		}
+	}
+	operator := DependencyReaderNetworkOnceOwnershipSQL()
+	for _, want := range []string{
+		"load_device_sharing_dependencies_v6(BYTEA,BYTEA,INTEGER) OWNER TO mesh_device_alias_map_reader",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_device_sharing_dependencies_v6(BYTEA,BYTEA,INTEGER) TO mesh_runtime;",
+	} {
+		if !strings.Contains(operator, want) {
+			t.Errorf("operator step 156 must contain %q", want)
+		}
+	}
 }
