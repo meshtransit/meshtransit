@@ -284,6 +284,10 @@ func (service *StreamService) run(
 	relayRenewal := time.NewTimer(time.Hour)
 	relayRenewal.Stop()
 	defer relayRenewal.Stop()
+	var pacer refreshPacer
+	pacedRefresh := time.NewTimer(time.Hour)
+	pacedRefresh.Stop()
+	defer pacedRefresh.Stop()
 
 	defer func() { watch.close() }()
 	current := initial
@@ -309,6 +313,18 @@ func (service *StreamService) run(
 		delivered, deliveredFilter = current.NetworkRevision(), filter
 		service.recordDelivery(ctx, current, filter)
 	}
+	// fullRefresh runs one full refresh and records it for pacing.
+	fullRefresh := func(refresh func(context.Context, control.AuthenticatedMachine, Request, StreamSink,
+		Snapshot) (Snapshot, error)) error {
+		started := time.Now()
+		next, err := refresh(ctx, machine, request, sink, current)
+		if err != nil {
+			return err
+		}
+		pacer.refreshed(time.Now(), time.Since(started))
+		advance(next)
+		return nil
+	}
 	// wakeUp refreshes current for one wakeup (revision, connectivity or a
 	// coalesced reconcile), skipping what the stream already reflects.
 	wakeUp := func(wake streamWakeup) error {
@@ -321,18 +337,24 @@ func (service *StreamService) run(
 				return nil
 			}
 		}
-		refresh := service.refresh
 		if !wake.reconcile && !wake.revision.IsValid() && wake.connectivity.IsValid() {
-			refresh = service.refreshConnectivity
-		} else if wake.revision.IsValid() && wake.revision.NetworkID() == current.Scope().NetworkID() {
-			refresh = service.refreshTo(wake.revision.Number())
+			next, err := service.refreshConnectivity(ctx, machine, request, sink, current)
+			if err != nil {
+				return err
+			}
+			advance(next)
+			return nil
 		}
-		next, err := refresh(ctx, machine, request, sink, current)
-		if err != nil {
-			return err
+		refresh := service.refresh
+		ownRevision := int64(0)
+		if wake.revision.IsValid() && wake.revision.NetworkID() == current.Scope().NetworkID() {
+			ownRevision = wake.revision.Number()
+			refresh = service.refreshTo(ownRevision)
 		}
-		advance(next)
-		return nil
+		if !wake.reconcile && wake.revision.IsValid() && pacer.hold(time.Now(), ownRevision) {
+			return nil // merged into the paced refresh
+		}
+		return fullRefresh(refresh)
 	}
 	for {
 		if !current.KeyExpiry().Equal(expiry) {
@@ -367,6 +389,13 @@ func (service *StreamService) run(
 		} else {
 			projectionExpiry.Stop()
 		}
+		var pacedRefreshDue <-chan time.Time
+		if due, held := pacer.due(); held {
+			pacedRefresh.Reset(time.Until(due))
+			pacedRefreshDue = pacedRefresh.C
+		} else {
+			pacedRefresh.Stop()
+		}
 		var relayRenewalDue <-chan time.Time
 		// A renewal that failed leaves RenewAt in the past; it is retried by
 		// the reconcile ticker instead of a hot loop.
@@ -380,19 +409,19 @@ func (service *StreamService) run(
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-relayRenewalDue:
-			next, err := service.refresh(ctx, machine, request, sink, current)
-			if err != nil {
+			if err := fullRefresh(service.refresh); err != nil {
 				return err
 			}
-			advance(next)
 		case <-authorityExpiry.C:
 			return withdrawAuthority(ctx, sink, current, ErrAuthorizationExpired)
 		case <-projectionDeadline:
-			next, err := service.refresh(ctx, machine, request, sink, current)
-			if err != nil {
+			if err := fullRefresh(service.refresh); err != nil {
 				return err
 			}
-			advance(next)
+		case <-pacedRefreshDue:
+			if err := fullRefresh(service.refreshTo(pacer.pendingRevision)); err != nil {
+				return err
+			}
 		case <-renewal.C:
 			claimed, err := service.renewPresence(ctx, lease)
 			if err != nil {
@@ -439,11 +468,9 @@ func (service *StreamService) run(
 				return err
 			}
 		case <-reconcile.C:
-			next, err := service.refresh(ctx, machine, request, sink, current)
-			if err != nil {
+			if err := fullRefresh(service.refresh); err != nil {
 				return err
 			}
-			advance(next)
 		}
 	}
 }
