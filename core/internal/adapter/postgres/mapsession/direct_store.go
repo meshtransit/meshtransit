@@ -57,6 +57,15 @@ FROM mesh_ops.load_device_alias_map_edges_v6($1::BYTEA, $2::BYTEA, $3::INTEGER) 
 const selectiveAliasEdgesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
     pg_catalog.to_regprocedure('mesh_ops.load_device_alias_map_edges_v6(bytea,bytea,integer)'), 'EXECUTE'), FALSE)`
 
+// loadKeyedAliasEdgesSQL is v6 authenticating the Device by its node key
+// instead of scanning its Network (schema 155), used once the operator
+// granted it to this role.
+const loadKeyedAliasEdgesSQL = `SELECT edge::TEXT
+FROM mesh_ops.load_device_alias_map_edges_v7($1::BYTEA, $2::BYTEA, $3::INTEGER) AS edge`
+
+const keyedAliasEdgesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_device_alias_map_edges_v7(bytea,bytea,integer)'), 'EXECUTE'), FALSE)`
+
 // setStatementTimeoutSQL changes the transaction's statement bound.
 const setStatementTimeoutSQL = `SELECT pg_catalog.set_config('statement_timeout', $1, TRUE)`
 
@@ -67,7 +76,7 @@ const setStatementTimeoutSQL = `SELECT pg_catalog.set_config('statement_timeout'
 // suits every other map read. The request deadline still bounds the map.
 func (store *Store) loadDirectEdges(
 	ctx context.Context, transaction databaseTransaction, self appmapsession.Snapshot,
-	machineFingerprint, nodeKey []byte,
+	machineFingerprint, nodeKey []byte, legacy bool,
 ) (appmapsession.Snapshot, error) {
 	widen := store.options.EnableDeviceAliases && store.options.ShareStatementTimeout > store.options.StatementTimeout
 	if widen {
@@ -75,7 +84,7 @@ func (store *Store) loadDirectEdges(
 			return appmapsession.Snapshot{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("widen share read timeout: %w", err))
 		}
 	}
-	result, err := store.loadShareEdges(ctx, transaction, self, machineFingerprint, nodeKey)
+	result, err := store.loadShareEdges(ctx, transaction, self, machineFingerprint, nodeKey, legacy)
 	if err != nil || !widen {
 		return result, err
 	}
@@ -85,9 +94,11 @@ func (store *Store) loadDirectEdges(
 	return result, nil
 }
 
+// loadShareEdges reads the Device's shares; legacy false leaves out the
+// legacy direct endpoint reader (the Network holds none).
 func (store *Store) loadShareEdges(
 	ctx context.Context, transaction databaseTransaction, self appmapsession.Snapshot,
-	machineFingerprint, nodeKey []byte,
+	machineFingerprint, nodeKey []byte, legacy bool,
 ) (appmapsession.Snapshot, error) {
 	if store.options.EnableDeviceAliases {
 		var err error
@@ -98,10 +109,16 @@ func (store *Store) loadShareEdges(
 	}
 	// Direct endpoints are no longer created (schema 92 activates every
 	// share on the alias path); the legacy reader serves the rows left.
-	direct := edgeReader{query: loadDirectEdgesSQL, limit: legacyEdgeLimit}
-	projections, limited, err := readSharingEdges(ctx, transaction, self, machineFingerprint, nodeKey, direct, decodeDirectEdge)
-	if err != nil {
-		return appmapsession.Snapshot{}, err
+	var projections []appmapsession.DirectDeviceProjection
+	limited := false
+	if legacy {
+		direct := edgeReader{query: loadDirectEdgesSQL, limit: legacyEdgeLimit}
+		var err error
+		projections, limited, err = readSharingEdges(ctx, transaction, self, machineFingerprint, nodeKey, direct,
+			decodeDirectEdge)
+		if err != nil {
+			return appmapsession.Snapshot{}, err
+		}
 	}
 	if store.options.EnableDeviceAliases {
 		reader, err := aliasEdgesReader(ctx, transaction)
@@ -125,6 +142,7 @@ func (store *Store) loadShareEdges(
 		projections = projections[:appmapsession.MaximumDirectDeviceProjections]
 	}
 	result := self
+	var err error
 	if len(projections) != 0 {
 		result, err = self.WithDirectDeviceProjections(projections)
 		if err != nil {
@@ -143,6 +161,14 @@ func (store *Store) loadShareEdges(
 // aliasEdgesReader selects the newest alias map reader runtime may execute,
 // so a rolling upgrade or a pending operator step keeps the previous one.
 func aliasEdgesReader(ctx context.Context, transaction databaseTransaction) (edgeReader, error) {
+	keyed, err := functionGranted(ctx, transaction, keyedAliasEdgesGrantedSQL)
+	if err != nil {
+		return edgeReader{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("check alias map reader: %w", err))
+	}
+	if keyed {
+		return edgeReader{query: loadKeyedAliasEdgesSQL, limit: appmapsession.MaximumDirectDeviceProjections,
+			scaled: true}, nil
+	}
 	selective, err := functionGranted(ctx, transaction, selectiveAliasEdgesGrantedSQL)
 	if err != nil {
 		return edgeReader{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("check alias map reader: %w", err))

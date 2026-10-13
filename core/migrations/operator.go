@@ -205,3 +205,11 @@ var deviceSharedOnceOwnershipSQL string
 // share of one Device into one Network (schema 151), to the share writer and
 // exposes it to runtime; decide v5 stays executable for rollback.
 func DeviceSharedOnceOwnershipSQL() string { return deviceSharedOnceOwnershipSQL }
+
+//go:embed operator/000155_share_reader_key_lookup_ownership.sql
+var shareReaderKeyLookupOwnershipSQL string
+
+// ShareReaderKeyLookupOwnershipSQL moves the share map readers that
+// authenticate the Device by its node key (schema 155) to the alias map
+// reader and exposes them to runtime; v6 and v4 stay executable for rollback.
+func ShareReaderKeyLookupOwnershipSQL() string { return shareReaderKeyLookupOwnershipSQL }

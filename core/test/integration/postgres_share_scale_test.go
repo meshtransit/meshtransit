@@ -402,11 +402,11 @@ func (side shareScaleSide) insert(ctx context.Context, t *testing.T, tx pgx.Tx) 
 		offset := device.id - shareScaleDeviceBase
 		batch.Queue(`INSERT INTO mesh.device_machine_key_epoch (id, public_id, workspace_id, network_id, device_id, epoch,
                 public_key, fingerprint, valid_from, state) OVERRIDING SYSTEM VALUE
-                VALUES ($7, $1::UUID, $2, $3, $4, 1, $5, $6, clock_timestamp(), 'active')`,
+                VALUES ($7, $1::UUID, $2, $3, $4, 1, $5, $6, transaction_timestamp(), 'active')`,
 			shareScaleUUID(t), shareScaleWorkspace, networkID, device.id, machine[:], fingerprint[:], 6*shareScaleDeviceBase+offset)
 		batch.Queue(`INSERT INTO mesh.device_node_key_epoch (id, public_id, workspace_id, network_id, device_id, epoch,
                 public_key, fingerprint, valid_from, state) OVERRIDING SYSTEM VALUE
-                VALUES ($7, $1::UUID, $2, $3, $4, 1, $5, $6, clock_timestamp(), 'active')`,
+                VALUES ($7, $1::UUID, $2, $3, $4, 1, $5, $6, transaction_timestamp(), 'active')`,
 			shareScaleUUID(t), shareScaleWorkspace, networkID, device.id, key[:], keyFingerprint[:], 7*shareScaleDeviceBase+offset)
 		batch.Queue(`INSERT INTO mesh.node_address_lease (id, public_id, workspace_id, network_id, address_realm_id,
                 address_pool_id, network_prefix_id, device_id, address, family, generation, lease_role, state, created_at)
@@ -851,13 +851,19 @@ func measureShareScaleReaders(ctx context.Context, t *testing.T, admin *pgx.Conn
 		}
 		return values
 	}
-	if v5, v6 := read("alias v5", "load_device_alias_map_edges_v5"),
-		read("alias v6", "load_device_alias_map_edges_v6"); !slices.Equal(v5, v6) {
+	v6 := read("alias v6", "load_device_alias_map_edges_v6")
+	if v5 := read("alias v5", "load_device_alias_map_edges_v5"); !slices.Equal(v5, v6) {
 		t.Fatalf("%s alias v6 returned %d rows unlike v5's %d", role, len(v6), len(v5))
 	}
-	if v3, v4 := read("dependencies v3", "load_device_sharing_dependencies_v3"),
-		read("dependencies v4", "load_device_sharing_dependencies_v4"); !slices.Equal(v3, v4) {
+	if v7 := read("alias v7", "load_device_alias_map_edges_v7"); !slices.Equal(v6, v7) {
+		t.Fatalf("%s alias v7 returned %d rows unlike v6's %d", role, len(v7), len(v6))
+	}
+	v4 := read("dependencies v4", "load_device_sharing_dependencies_v4")
+	if v3 := read("dependencies v3", "load_device_sharing_dependencies_v3"); !slices.Equal(v3, v4) {
 		t.Fatalf("%s dependencies v4 returned %d rows unlike v3's %d", role, len(v4), len(v3))
+	}
+	if v5 := read("dependencies v5", "load_device_sharing_dependencies_v5"); !slices.Equal(v4, v5) {
+		t.Fatalf("%s dependencies v5 returned %d rows unlike v4's %d", role, len(v5), len(v4))
 	}
 	legacy := ""
 	if _, err := tx.Exec(ctx, `SAVEPOINT legacy_reader`); err != nil {

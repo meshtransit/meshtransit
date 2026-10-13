@@ -208,8 +208,10 @@ type snapshotRead struct {
 	workspaceValue string
 	networkValue   string
 	// sharesSkipped: the share readers did not run (an inventory showed the
-	// Device takes part in no share).
+	// Device takes part in no share); directSkipped: the legacy direct
+	// endpoint reader did not run (the Network held no such endpoint).
 	sharesSkipped bool
+	directSkipped bool
 }
 
 // withSharedInventory completes a shared-inventory read with the Network's
@@ -233,7 +235,8 @@ func (store *Store) withSharedInventory(ctx context.Context, read snapshotRead) 
 	if !store.policyMatches(cached, read) {
 		return appmapsession.Snapshot{}, false, nil
 	}
-	if read.sharesSkipped && !cached.sharesAbsent(read.snapshot.NumericNodeID()) {
+	if (read.sharesSkipped && !cached.sharesAbsent(read.snapshot.NumericNodeID())) ||
+		(read.directSkipped && cached.directEndpoints) {
 		// The inventory this read is completed with (of its revision or later)
 		// shows a share: read the Device again with its shares.
 		store.stats.shareRechecks.Add(1)
@@ -386,15 +389,19 @@ func (store *Store) loadSnapshot(
 	// shares; a shared read skips them when the Network's latest inventory
 	// shows the Device takes part in no share, and withSharedInventory
 	// checks that against the inventory it completes the read with.
-	skipShares := false
+	// The legacy direct endpoint reader is skipped alone when the Network
+	// holds no such endpoint, whatever shares the Device takes part in.
+	skipShares, skipDirect := false, false
 	if shared {
-		if cached, found := store.inventories.peek(scope); found && cached.sharesAbsent(record.numericNodeID) {
-			skipShares = true
-			store.stats.sharesSkipped.Add(1)
+		if cached, found := store.inventories.peek(scope); found {
+			skipShares = cached.sharesAbsent(record.numericNodeID)
+			skipDirect = !cached.directEndpoints
 		}
 	}
-	if !skipShares {
-		snapshot, err = store.loadDirectEdges(ctx, transaction, snapshot, fingerprint[:], nodeKey[:])
+	if skipShares {
+		store.stats.sharesSkipped.Add(1)
+	} else {
+		snapshot, err = store.loadDirectEdges(ctx, transaction, snapshot, fingerprint[:], nodeKey[:], !skipDirect)
 		if err != nil {
 			return snapshotRead{}, err
 		}
@@ -406,6 +413,7 @@ func (store *Store) loadSnapshot(
 	return snapshotRead{
 		snapshot: snapshot, complete: !shared, revision: record.networkRevision, readAt: record.readAt,
 		workspaceValue: workspaceValue, networkValue: networkValue, sharesSkipped: skipShares,
+		directSkipped: skipShares || skipDirect,
 	}, nil
 }
 

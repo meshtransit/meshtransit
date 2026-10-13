@@ -191,6 +191,39 @@ func TestStoreSelectiveReadersPreferredOnceGranted(t *testing.T) {
 	}
 }
 
+// TestStoreKeyedReadersPreferredOnceGranted: the schema 155 readers, which
+// authenticate the Device by its node key, replace the schema 149 ones once
+// granted, with the same limit, and no earlier reader runs.
+func TestStoreKeyedReadersPreferredOnceGranted(t *testing.T) {
+	store, _, tx, _, identity := validStoreFixture(t)
+	store.options.EnableDeviceAliases = true
+	tx.selectiveReaders = true
+	tx.keyedReaders = true
+	tx.dependencyRows = &directEdgeRows{values: []string{dependencyFixture, limitedEdge}}
+	snapshot, err := store.Load(t.Context(), identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.SharingScopes()) != 1 || !snapshot.IsPeerLimited() {
+		t.Fatalf("keyed reader limit: %d scopes, limited %v", len(snapshot.SharingScopes()), snapshot.IsPeerLimited())
+	}
+	for index, query := range tx.queries {
+		switch query {
+		case loadKeyedSharingDependenciesSQL, loadKeyedAliasEdgesSQL:
+			if got := tx.arguments[index][2]; got != appmapsession.MaximumDirectDeviceProjections {
+				t.Fatalf("%s asked for %v rows", query, got)
+			}
+		case loadSharingDependenciesSQL, loadBoundSharingDependenciesSQL, loadScaledSharingDependenciesSQL,
+			loadSelectiveSharingDependenciesSQL, loadAliasEdgesSQL, loadReachableAliasEdgesSQL, loadScaledAliasEdgesSQL,
+			loadSelectiveAliasEdgesSQL:
+			t.Fatalf("an earlier reader ran once the keyed ones were granted: %s", query)
+		}
+	}
+	if !slices.Contains(tx.queries, loadKeyedAliasEdgesSQL) || !slices.Contains(tx.queries, loadKeyedSharingDependenciesSQL) {
+		t.Fatalf("keyed readers not used: %v", tx.queries)
+	}
+}
+
 // TestStoreShareReadersRunUnderTheShareTimeout: with a share statement bound
 // above the map's, the share readers run under it and the map's bound is
 // restored before the next read; without one, or with one not above the

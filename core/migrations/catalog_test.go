@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 154 {
-		t.Fatalf("len(Catalog()) = %d, want 154", len(catalog))
+	if len(catalog) != 155 {
+		t.Fatalf("len(Catalog()) = %d, want 155", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 154 {
-		t.Fatalf("LatestVersion() = %d, want 154", LatestVersion())
+	if LatestVersion() != 155 {
+		t.Fatalf("LatestVersion() = %d, want 155", LatestVersion())
 	}
 }
 
@@ -3847,4 +3847,71 @@ func TestMapNetworkDirectEndpoints(t *testing.T) {
 			t.Errorf("schema 154 must not contain %q", forbidden)
 		}
 	}
+}
+
+func TestShareReaderKeyLookup(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[154]
+	if migration.Version != 155 {
+		t.Fatalf("migration 155 = %+v", migration)
+	}
+	selection := Catalog()[148].SQL
+	for _, reader := range []struct{ previous, next string }{
+		{"load_device_alias_map_edges_v6", "load_device_alias_map_edges_v7"},
+		{"load_device_sharing_dependencies_v4", "load_device_sharing_dependencies_v5"},
+	} {
+		previous := functionDefinition(t, selection, reader.previous)
+		next := functionDefinition(t, migration.SQL, reader.next)
+		lookup := strings.Index(previous, "    SELECT device.id INTO self_id\n")
+		end := strings.Index(previous, "AND owner.state = 'active' AND owner.deleted_at IS NULL;\n")
+		if lookup < 0 || end < lookup {
+			t.Fatalf("%s: self lookup not found", reader.previous)
+		}
+		end += len("AND owner.state = 'active' AND owner.deleted_at IS NULL;\n")
+		want := strings.Replace(previous[:lookup], reader.previous, reader.next, 1) +
+			"    self_id := mesh_ops.authenticate_map_share_device_v1(\n" +
+			"        p_machine_key_fingerprint, p_node_key, self_workspace, self_network);\n" + previous[end:]
+		if next != want {
+			t.Errorf("%s must be %s with only the self lookup replaced", reader.next, reader.previous)
+		}
+	}
+	for _, want := range []string{
+		"LANGUAGE sql\nSTABLE\nSECURITY INVOKER\nSET search_path = pg_catalog, mesh, mesh_ops",
+		"WHERE node_key.public_key = p_node_key",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.authenticate_map_share_device_v1(BYTEA, BYTEA, BIGINT, BIGINT)\n    TO mesh_device_alias_map_reader;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 155 must contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "DROP ", "GRANT EXECUTE ON FUNCTION mesh_ops.load_device", "OWNER TO"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 155 must not contain %q", forbidden)
+		}
+	}
+	operator := ShareReaderKeyLookupOwnershipSQL()
+	for _, want := range []string{
+		"load_device_alias_map_edges_v7(BYTEA,BYTEA,INTEGER) OWNER TO mesh_device_alias_map_reader",
+		"load_device_sharing_dependencies_v5(BYTEA,BYTEA,INTEGER) OWNER TO mesh_device_alias_map_reader",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_device_alias_map_edges_v7(BYTEA,BYTEA,INTEGER) TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_device_sharing_dependencies_v5(BYTEA,BYTEA,INTEGER) TO mesh_runtime;",
+	} {
+		if !strings.Contains(operator, want) {
+			t.Errorf("operator step 155 must contain %q", want)
+		}
+	}
+}
+
+// functionDefinition returns one CREATE FUNCTION statement of sql.
+func functionDefinition(t *testing.T, sql, name string) string {
+	t.Helper()
+	start := strings.Index(sql, "CREATE FUNCTION mesh_ops."+name+"(")
+	if start < 0 {
+		t.Fatalf("%s not defined", name)
+	}
+	end := strings.Index(sql[start:], "$function$;")
+	if end < 0 {
+		t.Fatalf("%s not terminated", name)
+	}
+	return sql[start : start+end+len("$function$;")]
 }

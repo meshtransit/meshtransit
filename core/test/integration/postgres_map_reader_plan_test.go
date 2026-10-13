@@ -21,10 +21,15 @@ import (
 const (
 	mapReaderPlanDevices   = 2000
 	mapReaderRowsPerDevice = 32
+	// shareReaderRows bounds the rows a share reader may touch for a
+	// Device without shares, whatever the Network's size: authenticating
+	// the Device is a few key lookups.
+	shareReaderRows = 200
 )
 
-// assertMapReaderPlansScale proves schema 152: the inventory and per-Device
-// candidate readers stay linear in the Network's size while the planner's
+// assertMapReaderPlansScale proves schemas 152 and 155: the inventory and
+// per-Device candidate readers stay linear in the Network's size, and the
+// share readers authenticate a Device in constant work, while the planner's
 // statistics still describe the Network before it grew, and under a generic
 // plan. The Devices are added in a transaction that rolls back.
 func assertMapReaderPlansScale(ctx context.Context, t *testing.T) {
@@ -78,6 +83,11 @@ func assertMapReaderPlansScale(ctx context.Context, t *testing.T) {
 		{"candidates", `SELECT count(*) FROM mesh_ops.load_map_peer_candidates_v2($1::BYTEA, $2::BYTEA, 10001)`,
 			[]any{machine[:], key[:]}},
 	}
+	shareReaders := []struct{ name, query string }{
+		{"direct shares", `SELECT count(*) FROM mesh_ops.load_direct_share_map_edges_v1($1::BYTEA, $2::BYTEA, 257)`},
+		{"alias shares", `SELECT count(*) FROM mesh_ops.load_device_alias_map_edges_v7($1::BYTEA, $2::BYTEA, 10000)`},
+		{"sharing dependencies", `SELECT count(*) FROM mesh_ops.load_device_sharing_dependencies_v5($1::BYTEA, $2::BYTEA, 10000)`},
+	}
 	for _, mode := range []string{"auto", "force_generic_plan"} {
 		if _, err := transaction.Exec(ctx, "SELECT pg_catalog.set_config('plan_cache_mode', $1, TRUE)", mode); err != nil {
 			t.Fatalf("set plan_cache_mode %s: %v", mode, err)
@@ -93,6 +103,7 @@ func assertMapReaderPlansScale(ctx context.Context, t *testing.T) {
 				if err := transaction.QueryRow(ctx, reader.query, reader.args...).Scan(&listed); err != nil {
 					t.Fatalf("%s (%s, call %d): %v", reader.name, mode, call, err)
 				}
+				flushPlans(ctx, t, transaction)
 				if listed < mapReaderPlanDevices-1 {
 					t.Fatalf("%s (%s) listed %d Devices, want at least %d", reader.name, mode, listed, mapReaderPlanDevices-1)
 				}
@@ -107,7 +118,34 @@ func assertMapReaderPlansScale(ctx context.Context, t *testing.T) {
 					t.Logf("%s (%s): %d rows touched for %d Devices", reader.name, mode, touched, listed)
 				}
 			}
+			for _, reader := range shareReaders {
+				mu.Lock()
+				plans = plans[:0]
+				mu.Unlock()
+				var edges int
+				if err := transaction.QueryRow(ctx, reader.query, machine[:], key[:]).Scan(&edges); err != nil {
+					t.Fatalf("%s (%s, call %d): %v", reader.name, mode, call, err)
+				}
+				flushPlans(ctx, t, transaction)
+				mu.Lock()
+				touched, statement := mapReaderRowsTouched(t, plans)
+				mu.Unlock()
+				if edges != 0 || touched > shareReaderRows {
+					t.Fatalf("%s (%s, call %d): %d edges, touched %d rows in\n%s",
+						reader.name, mode, call, edges, touched, statement)
+				}
+			}
 		}
+	}
+}
+
+// flushPlans runs a trivial statement: with the extended protocol a
+// statement's portal, and so its auto_explain plan, ends with the next
+// statement, so this delivers the last reader's plan before it is checked.
+func flushPlans(ctx context.Context, t *testing.T, transaction pgx.Tx) {
+	t.Helper()
+	if _, err := transaction.Exec(ctx, "SELECT 1"); err != nil {
+		t.Fatalf("flush auto_explain plans: %v", err)
 	}
 }
 

@@ -12,6 +12,14 @@ import (
 // share binds the Device and, unless direct, no direct endpoint exists.
 func shareSkipFixture(t *testing.T, direct bool) (*Store, *fakeTransaction, control.AuthenticatedNode, snapshotRecord) {
 	t.Helper()
+	return shareSkipFixtureBinding(t, direct, nil)
+}
+
+// shareSkipFixtureBinding is shareSkipFixture with the Devices a share binds.
+func shareSkipFixtureBinding(t *testing.T, direct bool, bound []int64) (
+	*Store, *fakeTransaction, control.AuthenticatedNode, snapshotRecord,
+) {
+	t.Helper()
 	store, transaction, identity := sharedStoreFixture(t, 7, true)
 	transaction.directEndpointReader = true
 	record := validSnapshotRecord(t, identity)
@@ -23,7 +31,7 @@ func shareSkipFixture(t *testing.T, direct bool) (*Store, *fakeTransaction, cont
 		internalScopeRow{workspaceID: 101, networkID: 201},
 		inventoryRevisionRow{revision: 7, readAt: inventoryReadAt},
 		networkHeaderRow{},
-		networkSharingRow{},
+		networkSharingRow{devices: bound},
 		directEndpointsRow{present: direct},
 	}
 	return store, transaction, identity, record
@@ -100,5 +108,56 @@ func TestStoreRereadsADeviceWhoseInventoryShowsAShare(t *testing.T) {
 	if stats.SharesSkipped != 1 || stats.ShareRechecks != 1 || stats.Direct != 1 ||
 		countQueries(transaction.queries, loadDirectEdgesSQL) != 2 {
 		t.Fatalf("stats %+v, queries %v: want the Device read again with its shares", stats, transaction.queries)
+	}
+}
+
+// TestStoreSkipsOnlyTheLegacyReaderForADeviceWithShares: a share binds the
+// Device, so its share readers run, but the Network holds no legacy direct
+// endpoint, so the legacy reader does not.
+func TestStoreSkipsOnlyTheLegacyReaderForADeviceWithShares(t *testing.T) {
+	store, transaction, identity, record := shareSkipFixtureBinding(t, false, []int64{701})
+	store.options.EnableDeviceAliases = true
+	transaction.keyedReaders = true
+	if _, err := store.Load(t.Context(), identity); err != nil {
+		t.Fatal(err)
+	}
+	queueDeviceRead(transaction, record)
+	if _, err := store.Load(t.Context(), identity); err != nil {
+		t.Fatalf("second Load() error = %v", err)
+	}
+	stats := store.InventoryStats()
+	if countQueries(transaction.queries, loadDirectEdgesSQL) != 1 || countQueries(transaction.queries, loadKeyedAliasEdgesSQL) != 2 ||
+		stats.SharesSkipped != 0 || stats.ShareRechecks != 0 {
+		t.Fatalf("stats %+v, queries %v: want the alias readers twice and the legacy one once", stats, transaction.queries)
+	}
+}
+
+// TestStoreRereadsADeviceWhoseNetworkGainedDirectEndpoints: the read skipped
+// the legacy reader on the cached inventory's word, but the inventory it is
+// completed with shows a legacy direct endpoint: read the Device again.
+func TestStoreRereadsADeviceWhoseNetworkGainedDirectEndpoints(t *testing.T) {
+	store, transaction, identity, record := shareSkipFixtureBinding(t, false, []int64{701})
+	if _, err := store.Load(t.Context(), identity); err != nil {
+		t.Fatal(err)
+	}
+	newer := record
+	newer.networkRevision = 8
+	queueDeviceRead(transaction, newer)
+	transaction.rows = append(transaction.rows,
+		internalScopeRow{workspaceID: 101, networkID: 201},
+		inventoryRevisionRow{revision: 8, readAt: inventoryReadAt},
+		networkHeaderRow{},
+		networkSharingRow{devices: []int64{record.numericNodeID}},
+		directEndpointsRow{present: true},
+	)
+	transaction.inventoryRows = append(transaction.inventoryRows, &peerCandidateRows{records: []peerCandidateRecord{
+		validPeerCandidateRecord(2), validPeerCandidateRecord(3), selfCandidateRecord(newer)}})
+	queueDeviceRead(transaction, newer) // the direct re-read
+	if _, err := store.Load(t.Context(), identity); err != nil {
+		t.Fatalf("second Load() error = %v", err)
+	}
+	stats := store.InventoryStats()
+	if stats.ShareRechecks != 1 || stats.Direct != 1 || countQueries(transaction.queries, loadDirectEdgesSQL) != 2 {
+		t.Fatalf("stats %+v, queries %v: want the Device read again with the legacy reader", stats, transaction.queries)
 	}
 }

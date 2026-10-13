@@ -40,6 +40,15 @@ FROM mesh_ops.load_device_sharing_dependencies_v4($1::BYTEA,$2::BYTEA,$3::INTEGE
 const selectiveSharingDependenciesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
     pg_catalog.to_regprocedure('mesh_ops.load_device_sharing_dependencies_v4(bytea,bytea,integer)'), 'EXECUTE'), FALSE)`
 
+// loadKeyedSharingDependenciesSQL is v4 authenticating the Device by its node
+// key instead of scanning its Network (schema 155), used once the operator
+// granted it.
+const loadKeyedSharingDependenciesSQL = `SELECT dependency::TEXT
+FROM mesh_ops.load_device_sharing_dependencies_v5($1::BYTEA,$2::BYTEA,$3::INTEGER) AS dependency`
+
+const keyedSharingDependenciesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_device_sharing_dependencies_v5(bytea,bytea,integer)'), 'EXECUTE'), FALSE)`
+
 func loadSharingDependencies(ctx context.Context, transaction databaseTransaction, self appmapsession.Snapshot, machineFingerprint, nodeKey []byte) (appmapsession.Snapshot, error) {
 	reader, err := sharingDependenciesReader(ctx, transaction)
 	if err != nil {
@@ -104,6 +113,14 @@ func loadSharingDependencies(ctx context.Context, transaction databaseTransactio
 // execute, so a rolling upgrade or a pending operator step keeps the
 // previous one.
 func sharingDependenciesReader(ctx context.Context, transaction databaseTransaction) (edgeReader, error) {
+	keyed, err := functionGranted(ctx, transaction, keyedSharingDependenciesGrantedSQL)
+	if err != nil {
+		return edgeReader{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("check sharing dependency reader: %w", err))
+	}
+	if keyed {
+		return edgeReader{query: loadKeyedSharingDependenciesSQL, limit: appmapsession.MaximumDirectDeviceProjections,
+			scaled: true}, nil
+	}
 	selective, err := functionGranted(ctx, transaction, selectiveSharingDependenciesGrantedSQL)
 	if err != nil {
 		return edgeReader{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("check sharing dependency reader: %w", err))
