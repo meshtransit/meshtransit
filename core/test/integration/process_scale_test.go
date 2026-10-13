@@ -86,6 +86,10 @@ func TestRoleControlProcessScalesMapStreams(t *testing.T) {
 		adminConfig.PostgreSQL.Database, adminConfig.PostgreSQL.User, adminConfig.PostgreSQL.PasswordFile,
 		adminConfig.PostgreSQL.CAFile, adminConfig.ConnectTimeout)
 	credential := seedScaleEnrollment(ctx, t, admin, processConfig)
+	seeded := scaleSeedCount(t)
+	if seeded > 0 {
+		t.Logf("seed: %d Devices in %v", seeded, seedScaleNetworkDevices(ctx, t, admin, seeded).Round(time.Millisecond))
+	}
 	processes := scaleProcessCount(t, sessions)
 	perProcess := (sessions + processes - 1) / processes
 	controlAddresses := []string{reserveLoopbackAddress(t)}
@@ -122,7 +126,8 @@ func TestRoleControlProcessScalesMapStreams(t *testing.T) {
 	metrics := readScaleMetrics(t, running)
 	saveScaleHeapProfile(ctx, t)
 
-	t.Logf("scale summary: sessions=%d processes=%d peers_visible=%t", sessions, processes, peersVisible)
+	t.Logf("scale summary: sessions=%d processes=%d peers_visible=%t seeded=%d", sessions, processes, peersVisible,
+		seeded)
 	for index, health := range healthAddresses {
 		t.Logf("control process %d: %s", index, scaleProcessSummary(ctx, t, health))
 	}

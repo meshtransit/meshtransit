@@ -128,7 +128,12 @@ func assertShareTargetFailures(
 	// Only the disposable integration administrator injects invalid live inputs.
 	// Production roles cannot bypass the evidence or lifecycle triggers.
 	for _, fault := range []struct{ name, sql string }{
-		{name: "expired target", sql: `UPDATE mesh.device SET expires_at = transaction_timestamp() - interval '1 microsecond' WHERE id = $1`},
+		// Activation checks expiry at Core's clock (p_occurred_at); a minute in
+		// the past keeps the target expired across clock skew between the test
+		// host and the database (a microsecond made the case flaky).
+		{name: "expired target", sql: `UPDATE mesh.device
+            SET expires_at = GREATEST(created_at + interval '1 microsecond', transaction_timestamp() - interval '1 minute')
+            WHERE id = $1`},
 		{name: "revoked target", sql: `UPDATE mesh.device SET state = 'revoked' WHERE id = $1`},
 		{name: "missing current Node epoch", sql: `UPDATE mesh.device SET current_node_key_epoch = current_node_key_epoch + 1 WHERE id = $1`},
 	} {
