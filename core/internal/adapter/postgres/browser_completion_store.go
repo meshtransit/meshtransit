@@ -309,16 +309,13 @@ func completeApprovedBrowserRegistration(
 	if resumed {
 		helper.locked.device = existing
 	}
-	if err := helper.loadHostnames(ctx, &helper.locked, requestedHostname); err != nil {
+	if err := helper.selectHostname(ctx, &helper.locked, requestedHostname); err != nil {
 		return registration.Result{}, err
 	}
 	if err := helper.lockAddressState(ctx, &helper.locked); err != nil {
 		return registration.Result{}, err
 	}
-	selectedHostname, err := node.NextAvailableHostname(requestedHostname, helper.locked.hostnames)
-	if err != nil {
-		return registration.Result{}, err
-	}
+	selectedHostname := helper.locked.hostname
 	if resumed {
 		selectedHostname, err = node.ParseHostname(existing.hostname)
 		if err != nil {
@@ -407,6 +404,9 @@ func completeApprovedBrowserRegistration(
 		); err != nil {
 			return registration.Result{}, err
 		}
+	}
+	if err := helper.storeAddressFloors(ctx); err != nil {
+		return registration.Result{}, err
 	}
 	var newNetworkRevision, newInventoryRevision int64
 	if err := tx.QueryRow(ctx, advanceRegistrationRevisionSQL).Scan(

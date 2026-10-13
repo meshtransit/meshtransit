@@ -306,12 +306,14 @@ func enqueueOpenRegistrationResolution(
 		*destinations[2].(*[]byte) = make([]byte, 32)
 		return nil
 	}})
-	database.enqueueRows(loadRegistrationHostnamesSQL, &registrationTestRows{scans: []func(...any) error{
+	// The requested hostname is taken; its first variant is free.
+	database.enqueueRows(registrationHostnamesTakenSQL, &registrationTestRows{scans: []func(...any) error{
 		func(destinations ...any) error {
 			*destinations[0].(*string) = command.Hostname.String()
 			return nil
 		},
 	}})
+	database.enqueueRows(registrationHostnamesTakenSQL, &registrationTestRows{})
 	database.enqueueRows(lockRegistrationPrefixesSQL, &registrationTestRows{scans: []func(...any) error{
 		func(destinations ...any) error {
 			*destinations[0].(*int64) = 501
@@ -322,8 +324,9 @@ func enqueueOpenRegistrationResolution(
 			return nil
 		},
 	}})
-	database.enqueueRow(lowestFreeRegistrationAddressSQL, registrationTestRow{scan: func(destinations ...any) error {
+	database.enqueueRow(lockRegistrationAddressFloorSQL, registrationTestRow{scan: func(destinations ...any) error {
 		*destinations[0].(*string) = "100.64.1.1"
+		*destinations[1].(*string) = "100.64.1.0/24"
 		return nil
 	}})
 	database.enqueueRows(loadRegistrationLeasesSQL, &registrationTestRows{})

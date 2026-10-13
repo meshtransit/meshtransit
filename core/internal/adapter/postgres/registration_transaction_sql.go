@@ -81,16 +81,17 @@ FOR UPDATE`
 const lockRegistrationAuditStreamSQL = `SELECT stream_internal_id, next_sequence, latest_event_hash
 FROM mesh_audit.lock_network_stream_head()`
 
-// loadRegistrationHostnamesSQL reads the live hostnames of the requested
-// hostname's family (node.HostnameFamilyPrefix): every name the allocator
-// may choose starts with that prefix, so the rest of the Network is not read.
-const loadRegistrationHostnamesSQL = `SELECT device.hostname
+// registrationHostnamesTakenSQL returns which of the candidate hostnames ($3)
+// a live Device of the Network other than the registering one ($4) holds. It
+// probes the Network's hostname unique index once per candidate, so the cost
+// does not grow with the Network.
+const registrationHostnamesTakenSQL = `SELECT device.hostname_key
 FROM mesh.device AS device
-WHERE device.deleted_at IS NULL
-  AND ($1::BIGINT IS NULL OR device.id <> $1::BIGINT)
-  AND pg_catalog.starts_with(device.hostname_key, $3::TEXT)
-ORDER BY device.hostname_key, device.id
-LIMIT $2::BIGINT`
+WHERE device.workspace_id = $1::BIGINT
+  AND device.network_id = $2::BIGINT
+  AND device.hostname_key = ANY($3::TEXT[])
+  AND device.deleted_at IS NULL
+  AND ($4::BIGINT IS NULL OR device.id <> $4::BIGINT)`
 
 const lockRegistrationPrefixesSQL = `SELECT *
 FROM mesh_ops.lock_registration_prefixes($1::BIGINT)`
@@ -129,13 +130,18 @@ WHERE device.id = lease.device_id
   AND lease.address = $2::INET
   AND (` + reclaimableLeasePredicate + `)`
 
+// loadRegistrationLeasesSQL reads one window of a prefix's live leases in
+// address order from $3, through the prefix's live-address index. A lease
+// that is active for a revoked Device (before schema 143) is live until it is
+// reclaimable but does not settle the address floor (schema 157).
 const loadRegistrationLeasesSQL = `SELECT
     lease.network_prefix_id,
     lease.device_id,
     pg_catalog.host(lease.address),
     lease.family,
     lease.lease_role,
-    lease.state
+    lease.state,
+    (lease.state = 'active' AND device.id IS NOT NULL)
 FROM mesh.node_address_lease AS lease
 ` + revokedDeviceJoin + `
 WHERE lease.network_prefix_id = $1::BIGINT
@@ -145,34 +151,46 @@ WHERE lease.network_prefix_id = $1::BIGINT
 ORDER BY lease.network_prefix_id, lease.address, lease.id
 LIMIT $2::BIGINT`
 
-// lowestFreeRegistrationAddressSQL finds the lowest address of a prefix that
-// no live lease holds: the first host ($2) or the address after a live lease.
-// Allocation searches from there, so a prefix may hold more Devices than one
-// search window (the caller holds the allocator lock; the live-address unique
-// index stays the final arbiter). The last address of each family is skipped
-// because adding one to it overflows; it is never a host of a mesh prefix.
-const lowestFreeRegistrationAddressSQL = `WITH live AS (
-    SELECT lease.address
-    FROM mesh.node_address_lease AS lease
-    ` + revokedDeviceJoin + `
-    WHERE lease.network_prefix_id = $1::BIGINT
-      AND lease.state IN ('active', 'quarantined')
-      AND NOT (` + reclaimableLeasePredicate + `)
-)
-SELECT pg_catalog.host(candidate.address)
-FROM (
-    SELECT $2::INET AS address
-    UNION
-    SELECT live.address + 1
-    FROM live
-    WHERE pg_catalog.host(live.address) NOT IN (
-        '255.255.255.255', 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'
-    )
-) AS candidate
-WHERE NOT EXISTS (
-    SELECT 1 FROM live WHERE live.address = candidate.address
-)
-ORDER BY candidate.address
+// lockRegistrationAddressFloorSQL locks a prefix's address floor (schema
+// 157): every address from the prefix's first host up to the floor is held
+// by a settled lease, so the lowest free address below it is a lease whose
+// quarantine ended. The caller holds the prefix's allocator lock.
+const lockRegistrationAddressFloorSQL = `SELECT
+    pg_catalog.host(address_floor.floor_address),
+    address_floor.prefix::TEXT
+FROM mesh_ops.registration_address_floor AS address_floor
+WHERE address_floor.network_prefix_id = $1::BIGINT
+FOR UPDATE`
+
+// insertRegistrationAddressFloorSQL creates a prefix's floor at its first
+// host ($5) when it has none; the caller then locks it.
+const insertRegistrationAddressFloorSQL = `INSERT INTO mesh_ops.registration_address_floor (
+    workspace_id,
+    network_id,
+    network_prefix_id,
+    prefix,
+    floor_address
+) VALUES ($1::BIGINT, $2::BIGINT, $3::BIGINT, $4::CIDR, $5::INET)
+ON CONFLICT (network_prefix_id) DO NOTHING`
+
+// storeRegistrationAddressFloorSQL raises a locked prefix's floor past the
+// addresses this transaction found settled, including the one it leased.
+const storeRegistrationAddressFloorSQL = `UPDATE mesh_ops.registration_address_floor AS address_floor
+SET floor_address = $2::INET,
+    prefix = $3::CIDR
+WHERE address_floor.network_prefix_id = $1::BIGINT`
+
+// lowestReclaimableRegistrationAddressSQL finds the lowest address in
+// [$2, $3) whose lease's quarantine has ended, through the prefix's
+// quarantine index. Below the floor these are the only free addresses.
+const lowestReclaimableRegistrationAddressSQL = `SELECT pg_catalog.host(lease.address)
+FROM mesh.node_address_lease AS lease
+WHERE lease.network_prefix_id = $1::BIGINT
+  AND lease.state = 'quarantined'
+  AND lease.address >= $2::INET
+  AND lease.address < $3::INET
+  AND lease.quarantine_until <= pg_catalog.clock_timestamp()
+ORDER BY lease.address
 LIMIT 1`
 
 const lockRegistrationDeviceLeasesSQL = `SELECT lease.family

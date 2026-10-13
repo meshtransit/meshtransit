@@ -63,13 +63,23 @@ WHERE device.id = lease.device_id AND device.public_id = $1::UUID AND lease.stat
 
 	legacy := registerQuarantineNode(ctx, t, adminConnection, runtimePool, 4)
 	legacyAddress := quarantineLeaseAddress(ctx, t, adminConnection, legacy)
-	// Revoked before schema 143: the lease stayed active.
+	// Revoked before schema 143: the lease stayed active. Such a lease does
+	// not settle the address floor, so schema 157's backfill (or the
+	// revocation trigger this fixture switches off) keeps the floor at or
+	// below it.
 	forceQuarantineFixture(ctx, t, adminConnection, `
 UPDATE mesh.device
 SET state = 'revoked', version = version + 1,
     updated_at = pg_catalog.clock_timestamp() - INTERVAL '25 hours',
     created_at = LEAST(created_at, pg_catalog.clock_timestamp() - INTERVAL '26 hours')
-WHERE public_id = $1::UUID`, legacy)
+WHERE public_id = $1::UUID;
+UPDATE mesh_ops.registration_address_floor AS address_floor
+SET floor_address = lease.address
+FROM mesh.node_address_lease AS lease
+JOIN mesh.device AS device ON device.id = lease.device_id
+WHERE device.public_id = $1::UUID AND lease.state = 'active'
+  AND address_floor.network_prefix_id = lease.network_prefix_id
+  AND address_floor.floor_address > lease.address`, legacy)
 	reclaimed := registerQuarantineNode(ctx, t, adminConnection, runtimePool, 5)
 	if address := quarantineLeaseAddress(ctx, t, adminConnection, reclaimed); address != legacyAddress {
 		t.Fatalf("registration took %s, want legacy revoked address %s", address, legacyAddress)
@@ -143,6 +153,25 @@ func registerQuarantineNode(
 	index byte,
 ) string {
 	t.Helper()
+	return registerAddressTestNode(ctx, t, adminConnection, runtimePool, index,
+		addressTestKeys{authority: 0xA0 + index, machine: 0xB0 + index, node: 0xC0 + index})
+}
+
+// addressTestKeys are the bytes a registration fixture's credential, machine
+// key and node key are filled with; they must not repeat another fixture's.
+type addressTestKeys struct {
+	authority, machine, node byte
+}
+
+func registerAddressTestNode(
+	ctx context.Context,
+	t *testing.T,
+	adminConnection *pgx.Conn,
+	runtimePool *postgresadapter.Pool,
+	index byte,
+	keys addressTestKeys,
+) string {
+	t.Helper()
 	command := seedOpenRegistrationFixture(ctx, t, adminConnection, registrationAuthorityFixture{
 		authorityInternalID:    7400 + int64(index)*10,
 		registrationInternalID: 7405 + int64(index)*10,
@@ -153,9 +182,9 @@ func registerQuarantineNode(
 		outboxPublicID:         fmt.Sprintf("01890f23-0000-7000-8000-0000000074%02d", index),
 		digestLabel:            fmt.Sprintf("integration-address-quarantine-%d", index),
 		hostname:               fmt.Sprintf("quarantine-%d.example", index),
-		authorityMaterial:      0xA0 + index,
-		machineMaterial:        0xB0 + index,
-		nodeMaterial:           0xC0 + index,
+		authorityMaterial:      keys.authority,
+		machineMaterial:        keys.machine,
+		nodeMaterial:           keys.node,
 	})
 	transactions, err := postgresadapter.NewRegistrationTransactions(
 		runtimePool,

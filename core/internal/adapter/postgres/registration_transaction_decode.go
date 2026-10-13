@@ -175,10 +175,12 @@ type registrationPrefix struct {
 	poolInternalID  int64
 	prefix          netip.Prefix
 	family          int
-	// searchStart is the lowest free address the store found; occupied
-	// holds the live leases from it on.
-	searchStart netip.Addr
-	occupied    []netip.Addr
+	// examined is set once the prefix's floor is locked and its lowest free
+	// address found: free (invalid when the prefix is full), and nextFloor,
+	// the floor to store once free is leased (invalid to keep the floor).
+	examined  bool
+	free      netip.Addr
+	nextFloor netip.Addr
 }
 
 type registrationAuditHead struct {
@@ -215,7 +217,7 @@ type registrationLockedState struct {
 	currentNetworkRevision   int64
 	currentInventoryRevision int64
 	audit                    registrationAuditHead
-	hostnames                []node.Hostname
+	hostname                 node.Hostname
 	prefixes                 []registrationPrefix
 	activeLeaseFamilies      map[int]struct{}
 }

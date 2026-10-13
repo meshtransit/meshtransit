@@ -93,3 +93,25 @@ func HostnameFamilyPrefix(requested Hostname) (string, error) {
 	}
 	return firstLabel[:stemBytes], nil
 }
+
+// HostnameCandidates returns the candidates NextAvailableHostname tries for
+// requested at ordinals from, from+1, ..., from+count-1, in that order:
+// requested itself at ordinal 0, then its numbered variants. A caller that
+// looks each one up in order and takes the first that no live Device holds
+// chooses exactly as NextAvailableHostname over every hostname of the
+// Network.
+func HostnameCandidates(requested Hostname, from, count int) ([]Hostname, error) {
+	if !requested.IsValid() || from < 0 || count <= 0 || count > MaximumHostnameFamily+1 ||
+		from > MaximumHostnameFamily+1-count {
+		return nil, ErrInvalidHostnameAllocation
+	}
+	candidates := make([]Hostname, 0, count)
+	for ordinal := from; ordinal < from+count; ordinal++ {
+		candidate, err := hostnameCandidate(requested, ordinal)
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	return candidates, nil
+}

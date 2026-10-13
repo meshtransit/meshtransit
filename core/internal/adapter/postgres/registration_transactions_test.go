@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"meshtransit.net/core/internal/domain/node"
 	"reflect"
 	"sync"
 	"testing"
@@ -63,9 +62,10 @@ func TestRegistrationTransactionCreatesCompleteAtomicMutation(t *testing.T) {
 		lockRegistrationProfileSQL,
 		lockRegistrationDeviceSQL,
 		lockRegistrationAuditStreamSQL,
-		loadRegistrationHostnamesSQL,
+		registrationHostnamesTakenSQL,
+		registrationHostnamesTakenSQL,
 		lockRegistrationPrefixesSQL,
-		lowestFreeRegistrationAddressSQL,
+		lockRegistrationAddressFloorSQL,
 		loadRegistrationLeasesSQL,
 		setRegistrationChangeSQL,
 		insertRegistrationDeviceSQL,
@@ -75,6 +75,7 @@ func TestRegistrationTransactionCreatesCompleteAtomicMutation(t *testing.T) {
 		insertRegistrationCredentialUseSQL,
 		releaseReclaimedRegistrationLeaseSQL,
 		insertRegistrationLeaseSQL,
+		storeRegistrationAddressFloorSQL,
 		advanceRegistrationRevisionSQL,
 		completePendingRegistrationSQL,
 		appendRegistrationEvidenceSQL,
@@ -82,10 +83,15 @@ func TestRegistrationTransactionCreatesCompleteAtomicMutation(t *testing.T) {
 	if got := registrationCallQueries(database.calls); !reflect.DeepEqual(got, wantCalls) {
 		t.Fatalf("database call order mismatch\ngot:  %#v\nwant: %#v", got, wantCalls)
 	}
-	hostnameCall := findRegistrationCall(t, database.calls, loadRegistrationHostnamesSQL)
-	family, err := node.HostnameFamilyPrefix(command.Hostname)
-	if err != nil || len(hostnameCall.arguments) != 3 || hostnameCall.arguments[2] != family {
-		t.Fatalf("hostname arguments = %#v, want the requested hostname's family %q", hostnameCall.arguments, family)
+	hostnameCall := findRegistrationCall(t, database.calls, registrationHostnamesTakenSQL)
+	if len(hostnameCall.arguments) != 4 ||
+		!reflect.DeepEqual(hostnameCall.arguments[2], []string{command.Hostname.String()}) ||
+		hostnameCall.arguments[3] != nil {
+		t.Fatalf("hostname arguments = %#v, want the requested hostname alone first", hostnameCall.arguments)
+	}
+	floorCall := findRegistrationCall(t, database.calls, storeRegistrationAddressFloorSQL)
+	if !reflect.DeepEqual(floorCall.arguments, []any{int64(501), "100.64.1.2/32", "100.64.1.0/24"}) {
+		t.Fatalf("floor arguments = %#v, want the address after the lease", floorCall.arguments)
 	}
 	leaseCall := findRegistrationCall(t, database.calls, insertRegistrationLeaseSQL)
 	if len(leaseCall.arguments) != 10 || leaseCall.arguments[7] != "100.64.1.1" ||
@@ -116,17 +122,6 @@ func TestRegistrationTransactionResumesWithoutReplacingKeysOrLeases(t *testing.T
 		*destinations[5].(*[]byte) = append([]byte(nil), machineKey[:]...)
 		*destinations[6].(*[]byte) = append([]byte(nil), nodeKey[:]...)
 		return nil
-	}}
-	database.rowSets[loadRegistrationLeasesSQL][0] = &registrationTestRows{scans: []func(...any) error{
-		func(destinations ...any) error {
-			*destinations[0].(*int64) = 501
-			*destinations[1].(*int64) = 603
-			*destinations[2].(*string) = "100.64.1.1"
-			*destinations[3].(*int) = 4
-			*destinations[4].(*string) = "primary"
-			*destinations[5].(*string) = "active"
-			return nil
-		},
 	}}
 	database.enqueueRows(lockRegistrationDeviceLeasesSQL, &registrationTestRows{scans: []func(...any) error{
 		func(destinations ...any) error {
@@ -178,6 +173,9 @@ func TestRegistrationTransactionResumesWithoutReplacingKeysOrLeases(t *testing.T
 		insertRegistrationMachineKeySQL,
 		insertRegistrationNodeKeySQL,
 		insertRegistrationLeaseSQL,
+		// The Device keeps its IPv4 lease, so no prefix is examined.
+		lockRegistrationAddressFloorSQL,
+		storeRegistrationAddressFloorSQL,
 	} {
 		for _, call := range database.calls {
 			if call.query == forbidden {
@@ -347,36 +345,5 @@ func TestRegistrationDatabaseErrorsPreserveRetryAndCommitSemantics(t *testing.T)
 	if !errors.Is(classified, context.Canceled) ||
 		!errors.Is(classified, registration.ErrCommitOutcomeUnknown) {
 		t.Fatalf("classifyRegistrationCommitError(canceled) = %v", classified)
-	}
-}
-
-// A prefix holding more live leases than one search window still allocates:
-// the search starts at the lowest free address Postgres found.
-func TestRegistrationTransactionAllocatesPastTheSearchWindow(t *testing.T) {
-	t.Parallel()
-
-	command := validRegistrationReplayCommand(t)
-	database := newFakeRegistrationDatabaseTransaction()
-	enqueueOpenRegistrationResolution(t, database, command)
-	database.rows[lowestFreeRegistrationAddressSQL][0] = registrationTestRow{scan: func(destinations ...any) error {
-		*destinations[0].(*string) = "100.64.1.200"
-		return nil
-	}}
-	enqueueRegistrationWrites(database)
-	transaction := beginTestRegistrationTransaction(t, database, command)
-	resolution, err := transaction.Resolve(t.Context(), command)
-	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
-	}
-	if _, err := transaction.Apply(t.Context(), testRegistrationChange(t, command, resolution)); err != nil {
-		t.Fatalf("Apply() error = %v", err)
-	}
-	leases := findRegistrationCall(t, database.calls, loadRegistrationLeasesSQL)
-	if len(leases.arguments) != 3 || leases.arguments[2] != "100.64.1.200/32" {
-		t.Fatalf("lease window arguments = %#v, want the search start", leases.arguments)
-	}
-	leaseCall := findRegistrationCall(t, database.calls, insertRegistrationLeaseSQL)
-	if leaseCall.arguments[7] != "100.64.1.200" {
-		t.Fatalf("allocated %v, want the lowest free address", leaseCall.arguments[7])
 	}
 }

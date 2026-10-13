@@ -17,6 +17,8 @@ type registrationLease struct {
 	family  int
 }
 
+// allocateRegistrationLeases takes, for each family the Device does not hold,
+// the lowest free address of the first examined prefix that has one.
 func (transaction *registrationTransaction) allocateRegistrationLeases() ([]registrationLease, error) {
 	allocated := make([]registrationLease, 0, 2)
 	activeFamilies := len(transaction.locked.activeLeaseFamilies)
@@ -31,21 +33,12 @@ func (transaction *registrationTransaction) allocateRegistrationLeases() ([]regi
 				continue
 			}
 			familyAvailable = true
-			address, err := ipam.NextAvailableAddressFrom(
-				prefix.prefix,
-				prefix.searchStart,
-				prefix.occupied,
-				transaction.candidateLimit,
-			)
-			if errors.Is(err, ipam.ErrAddressExhausted) {
+			if !prefix.examined || !prefix.free.IsValid() {
 				continue
-			}
-			if err != nil {
-				return nil, errors.Join(ErrRegistrationAllocation, err)
 			}
 			allocated = append(allocated, registrationLease{
 				prefix:  prefix,
-				address: address,
+				address: prefix.free,
 				family:  family,
 			})
 			break
@@ -92,7 +85,7 @@ func (transaction *registrationTransaction) persistRegistrationLeases(
 			return err
 		}
 	}
-	return nil
+	return transaction.storeAddressFloors(ctx)
 }
 
 // releaseReclaimedRegistrationLease releases a lease whose quarantine has

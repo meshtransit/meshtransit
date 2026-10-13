@@ -441,6 +441,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertPostgreSQLDeviceLogout(ctx, t, adminConnection, runtimePool)
 	// After every revocation path, so their quarantines are all checked.
 	assertPostgreSQLNodeAddressQuarantine(ctx, t, adminConnection, runtimeConnection, runtimePool)
+	assertRegistrationAddressFloor(ctx, t, adminConnection, runtimePool)
 	// Add Devices in transactions they roll back.
 	assertMapReaderPlansScale(ctx, t)
 	assertMapInventoryChanges(ctx, t)

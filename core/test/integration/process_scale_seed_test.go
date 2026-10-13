@@ -19,9 +19,11 @@ import (
 // MESHTRANSIT_SCALE_SEED_DEVICES=N adds N live Devices to the fixture
 // Network before the scale sessions register, so registration, map opens and
 // fan-out are measured in a Network that already holds N Devices. They are
-// written by SQL in one audited inventory change, with real keys and
-// addresses from the bottom of the scale prefix, so address allocation works
-// as it would in a full Network.
+// written by SQL in one audited inventory change, with real keys, and take
+// the lowest free IPv4 addresses of the Network's prefixes in allocation
+// order, as registered Devices would: the scale sessions then register past
+// them, in the prefix that holds the most Devices. The seed writes no address
+// floor (schema 157), so the first registration walks the seeded leases.
 const (
 	scaleSeedEnvironment = "MESHTRANSIT_SCALE_SEED_DEVICES"
 	scaleSeedMaximum     = 200_000
@@ -51,19 +53,15 @@ func scaleSeedCount(t *testing.T) int {
 func seedScaleNetworkDevices(ctx context.Context, t *testing.T, admin *pgx.Conn, count int) time.Duration {
 	t.Helper()
 	started := time.Now()
-	var profileID, realmID, poolID, prefixID int64
-	var prefixText string
-	if err := admin.QueryRow(ctx, `SELECT profile.id, prefix.address_realm_id, prefix.address_pool_id, prefix.id,
-    prefix.prefix::TEXT
-FROM mesh.network_prefix AS prefix
-JOIN mesh.enrollment_profile AS profile
-  ON profile.workspace_id = prefix.workspace_id AND profile.network_id = prefix.network_id
- AND profile.display_name = 'Scale enrollment' AND profile.state = 'active'
-WHERE prefix.workspace_id = 101 AND prefix.network_id = 201 AND prefix.prefix = $1::CIDR
-ORDER BY profile.id DESC LIMIT 1`, scaleExtraPrefix).Scan(&profileID, &realmID, &poolID, &prefixID, &prefixText); err != nil {
-		t.Fatalf("read the scale prefix and profile: %v", err)
+	var profileID int64
+	if err := admin.QueryRow(ctx, `SELECT profile.id
+FROM mesh.enrollment_profile AS profile
+WHERE profile.workspace_id = 101 AND profile.network_id = 201
+  AND profile.display_name = 'Scale enrollment' AND profile.state = 'active'
+ORDER BY profile.id DESC LIMIT 1`).Scan(&profileID); err != nil {
+		t.Fatalf("read the scale profile: %v", err)
 	}
-	prefix := netip.MustParsePrefix(prefixText)
+	seats := scaleSeedSeats(ctx, t, admin, count)
 	ids := make([]int64, count)
 	publicIDs, hostnames := make([]string, count), make([]string, count)
 	machineIDs, nodeIDs, leaseIDs := make([]int64, count), make([]int64, count), make([]int64, count)
@@ -71,7 +69,7 @@ ORDER BY profile.id DESC LIMIT 1`, scaleExtraPrefix).Scan(&profileID, &realmID, 
 	machineKeys, machineFingerprints := make([][]byte, count), make([][]byte, count)
 	nodeKeys, nodeFingerprints := make([][]byte, count), make([][]byte, count)
 	addresses := make([]string, count)
-	address := prefix.Addr().Next()
+	realmIDs, poolIDs, prefixIDs := make([]int64, count), make([]int64, count), make([]int64, count)
 	for index := range count {
 		id := scaleSeedDeviceBase + int64(index)
 		ids[index] = id
@@ -99,11 +97,9 @@ ORDER BY profile.id DESC LIMIT 1`, scaleExtraPrefix).Scan(&profileID, &realmID, 
 		machineFingerprint, keyFingerprint := machine.Fingerprint(), key.Fingerprint()
 		machineKeys[index], machineFingerprints[index] = machineBytes[:], machineFingerprint[:]
 		nodeKeys[index], nodeFingerprints[index] = keyBytes[:], keyFingerprint[:]
-		if !prefix.Contains(address) {
-			t.Fatalf("the scale prefix %s holds fewer than %d Devices", prefix, count)
-		}
-		addresses[index] = netip.PrefixFrom(address, 32).String()
-		address = address.Next()
+		seat := seats[index]
+		addresses[index] = netip.PrefixFrom(seat.address, 32).String()
+		realmIDs[index], poolIDs[index], prefixIDs[index] = seat.realmID, seat.poolID, seat.prefixID
 	}
 	var revision int64
 	if err := admin.QueryRow(ctx, `SELECT network_revision + 1 FROM mesh_ops.network_revision
@@ -150,10 +146,11 @@ FROM unnest($1::BIGINT[], $2::TEXT[], $3::BIGINT[], $4::BYTEA[], $5::BYTEA[])
 			{"leases", `INSERT INTO mesh.node_address_lease (id, public_id, workspace_id, network_id, address_realm_id,
     address_pool_id, network_prefix_id, device_id, address, family, generation, lease_role, state, created_at)
 OVERRIDING SYSTEM VALUE
-SELECT seeded.id, seeded.public_id::UUID, 101, 201, $4, $5, $6, seeded.device_id, seeded.address::INET, 4, 1,
-    'primary', 'active', transaction_timestamp() - interval '1 second'
-FROM unnest($1::BIGINT[], $2::TEXT[], $3::BIGINT[], $7::TEXT[]) AS seeded(id, public_id, device_id, address)`,
-				[]any{leaseIDs, leasePublicIDs, ids, realmID, poolID, prefixID, addresses}},
+SELECT seeded.id, seeded.public_id::UUID, 101, 201, seeded.realm_id, seeded.pool_id, seeded.prefix_id,
+    seeded.device_id, seeded.address::INET, 4, 1, 'primary', 'active', transaction_timestamp() - interval '1 second'
+FROM unnest($1::BIGINT[], $2::TEXT[], $3::BIGINT[], $4::BIGINT[], $5::BIGINT[], $6::BIGINT[], $7::TEXT[])
+    AS seeded(id, public_id, device_id, realm_id, pool_id, prefix_id, address)`,
+				[]any{leaseIDs, leasePublicIDs, ids, realmIDs, poolIDs, prefixIDs, addresses}},
 		} {
 			if _, err := tx.Exec(ctx, statement.sql, statement.args...); err != nil {
 				t.Fatalf("seed %d scale %s: %v", count, statement.name, err)
@@ -165,4 +162,76 @@ FROM unnest($1::BIGINT[], $2::TEXT[], $3::BIGINT[], $7::TEXT[]) AS seeded(id, pu
 		t.Fatalf("analyze the seeded tables: %v", err)
 	}
 	return time.Since(started)
+}
+
+// scaleSeedSeat is one seeded Device's address and the prefix it is in.
+type scaleSeedSeat struct {
+	realmID, poolID, prefixID int64
+	address                   netip.Addr
+}
+
+// scaleSeedSeats returns count free IPv4 hosts of Network 201's prefixes, in
+// allocation order (family, then prefix ID), lowest first.
+func scaleSeedSeats(ctx context.Context, t *testing.T, admin *pgx.Conn, count int) []scaleSeedSeat {
+	t.Helper()
+	type prefixRow struct {
+		realmID, poolID, prefixID int64
+		prefix                    netip.Prefix
+	}
+	rows, err := admin.Query(ctx, `SELECT prefix.address_realm_id, prefix.address_pool_id, prefix.id, prefix.prefix::TEXT
+FROM mesh.network_prefix AS prefix
+WHERE prefix.workspace_id = 101 AND prefix.network_id = 201 AND prefix.family = 4 AND prefix.state = 'active'
+ORDER BY prefix.family, prefix.id`)
+	if err != nil {
+		t.Fatalf("read the Network's prefixes: %v", err)
+	}
+	var prefixes []prefixRow
+	for rows.Next() {
+		var row prefixRow
+		var value string
+		if err := rows.Scan(&row.realmID, &row.poolID, &row.prefixID, &value); err != nil {
+			t.Fatalf("scan a prefix: %v", err)
+		}
+		row.prefix = netip.MustParsePrefix(value)
+		prefixes = append(prefixes, row)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read the Network's prefixes: %v", err)
+	}
+	seats := make([]scaleSeedSeat, 0, count)
+	for _, row := range prefixes {
+		held := map[netip.Addr]struct{}{}
+		leases, err := admin.Query(ctx, `SELECT pg_catalog.host(address) FROM mesh.node_address_lease
+WHERE network_prefix_id = $1 AND state IN ('active', 'quarantined')`, row.prefixID)
+		if err != nil {
+			t.Fatalf("read prefix %d leases: %v", row.prefixID, err)
+		}
+		for leases.Next() {
+			var value string
+			if err := leases.Scan(&value); err != nil {
+				t.Fatalf("scan a lease: %v", err)
+			}
+			held[netip.MustParseAddr(value)] = struct{}{}
+		}
+		leases.Close()
+		if err := leases.Err(); err != nil {
+			t.Fatalf("read prefix %d leases: %v", row.prefixID, err)
+		}
+		// Every host but the network and broadcast addresses.
+		for address := row.prefix.Addr().Next(); len(seats) < count; address = address.Next() {
+			if next := address.Next(); !row.prefix.Contains(next) {
+				break
+			}
+			if _, taken := held[address]; taken {
+				continue
+			}
+			seats = append(seats, scaleSeedSeat{realmID: row.realmID, poolID: row.poolID,
+				prefixID: row.prefixID, address: address})
+		}
+	}
+	if len(seats) < count {
+		t.Fatalf("the Network's prefixes hold %d more Devices, not %d", len(seats), count)
+	}
+	return seats
 }

@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 156 {
-		t.Fatalf("len(Catalog()) = %d, want 156", len(catalog))
+	if len(catalog) != 157 {
+		t.Fatalf("len(Catalog()) = %d, want 157", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 156 {
-		t.Fatalf("LatestVersion() = %d, want 156", LatestVersion())
+	if LatestVersion() != 157 {
+		t.Fatalf("LatestVersion() = %d, want 157", LatestVersion())
 	}
 }
 
@@ -3960,6 +3960,47 @@ func TestDependencyReaderNetworkOnce(t *testing.T) {
 	} {
 		if !strings.Contains(operator, want) {
 			t.Errorf("operator step 156 must contain %q", want)
+		}
+	}
+}
+
+func TestRegistrationAddressFloor(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[156]
+	if migration.Version != 157 {
+		t.Fatalf("migration 157 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh_ops.registration_address_floor (",
+		"ALTER TABLE mesh_ops.registration_address_floor FORCE ROW LEVEL SECURITY;",
+		"GRANT SELECT, INSERT, UPDATE ON mesh_ops.registration_address_floor TO mesh_runtime;",
+		"AND network_prefix.prefix = registration_address_floor.prefix",
+		"ON mesh.node_address_lease (network_prefix_id, address)\n    WHERE state IN ('active', 'quarantined');",
+		"INCLUDE (quarantine_until)\n    WHERE state = 'quarantined';",
+		"AFTER UPDATE ON mesh.node_address_lease\nFOR EACH ROW\nWHEN (OLD.state IN ('active', 'quarantined')",
+		"AFTER DELETE ON mesh.node_address_lease\nFOR EACH ROW\nWHEN (OLD.state IN ('active', 'quarantined'))",
+		"AND NOT (lease.state = 'active' AND device.id IS NOT NULL)",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 157 must contain %q", want)
+		}
+	}
+	// The floor only goes down outside the allocator, and the triggers
+	// cannot be reached as functions.
+	for _, want := range []string{
+		"AND address_floor.floor_address > OLD.address;",
+		"REVOKE ALL ON FUNCTION mesh_ops.lower_registration_address_floor_v1() FROM PUBLIC;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 157 must contain %q", want)
+		}
+	}
+	// Revocation must not read leases (a revocation commits while the lease
+	// table is locked, see the peer candidate tests).
+	for _, forbidden := range []string{"CREATE OR REPLACE", "DROP ", "OWNER TO", "GRANT EXECUTE", "DELETE ON mesh_ops",
+		"ON mesh.device"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 157 must not contain %q", forbidden)
 		}
 	}
 }

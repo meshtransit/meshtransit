@@ -62,6 +62,7 @@ func (transaction *registrationTransaction) changeMatchesLockedState(
 		!registrationBefore.CreatedAt().Equal(registrationAfter.CreatedAt()) ||
 		!registrationBefore.ExpiresAt().Equal(registrationAfter.ExpiresAt()) ||
 		change.Profile() != resolution.Profile() || change.Identity() != locked.command.Identity ||
+		change.Hostname() != locked.command.Hostname ||
 		credentialAfter.ID() != credentialBefore.ID() ||
 		credentialAfter.ProfileID() != credentialBefore.ProfileID() ||
 		credentialAfter.IssuerID() != credentialBefore.IssuerID() ||
@@ -92,10 +93,11 @@ func (transaction *registrationTransaction) applyLocked(
 	ctx context.Context,
 	change registration.Change,
 ) (registration.Result, error) {
-	hostname, err := node.NextAvailableHostname(change.Hostname(), transaction.locked.hostnames)
-	if err != nil {
-		return registration.Result{}, errors.Join(ErrRegistrationAllocation, err)
+	hostname := transaction.locked.hostname
+	if !hostname.IsValid() {
+		return registration.Result{}, ErrRegistrationAllocation
 	}
+	var err error
 	expiresAt, err := change.Profile().DeviceExpiresAt(change.OccurredAt())
 	if err != nil {
 		return registration.Result{}, err
