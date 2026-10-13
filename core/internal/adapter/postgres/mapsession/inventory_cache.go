@@ -28,12 +28,23 @@ type cachedInventory struct {
 	// (schema 146). Their maps depend on state outside the view (aliases,
 	// peers across Networks), so they are always read per Device.
 	sharingDevices map[int64]struct{}
+	// directEndpoints: the Network holds a legacy direct share endpoint
+	// (schema 154), which every Device of a consumer Network reads, or the
+	// database cannot tell.
+	directEndpoints bool
 	// changeSeq is the Network's change counter (schema 153) the inventory
 	// reflects, or -1 when the database tracks no changes; the next read
 	// applies the Devices changed after it. fullReadAt is the local time of
 	// the last read of the whole Network.
 	changeSeq  int64
 	fullReadAt time.Time
+}
+
+// sharesAbsent reports whether no share reader can return anything for the
+// Device numericNodeID: a share binds it neither directly nor through a
+// legacy direct endpoint of its Network.
+func (cached cachedInventory) sharesAbsent(numericNodeID int64) bool {
+	return cached.inventory.IsValid() && !cached.directEndpoints && !cached.sharingBinds(numericNodeID)
 }
 
 // sharingBinds reports whether a share binds the Device numericNodeID.
@@ -159,6 +170,18 @@ func (cache *inventoryCache) fetch(
 		return loaded, usable(loaded), nil
 	}
 	return cachedInventory{}, false, nil
+}
+
+// peek returns scope's cached inventory, whatever its revision or age,
+// without reading one.
+func (cache *inventoryCache) peek(scope network.Scope) (cachedInventory, bool) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	slot, found := cache.entries[scope]
+	if !found || !slot.current.inventory.IsValid() {
+		return cachedInventory{}, false
+	}
+	return slot.current, true
 }
 
 // slotLocked returns scope's slot, evicting the least recently used idle

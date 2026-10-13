@@ -520,6 +520,7 @@ func Catalog() []Migration {
 		newMigration(151, "Device shared once per Network", deviceSharedOnceSQL),
 		newMigration(152, "Map reader index lookups", mapReaderIndexLookupsSQL),
 		newMigration(153, "Map inventory changes", mapInventoryChangesSQL),
+		newMigration(154, "Map Network direct endpoints", mapNetworkDirectEndpointsSQL),
 	}
 }
 
@@ -758,3 +759,6 @@ var mapReaderIndexLookupsSQL string
 
 //go:embed 000153_map_inventory_changes.up.sql
 var mapInventoryChangesSQL string
+
+//go:embed 000154_map_network_direct_endpoints.up.sql
+var mapNetworkDirectEndpointsSQL string

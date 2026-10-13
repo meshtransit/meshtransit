@@ -48,6 +48,12 @@ FROM mesh_ops.load_map_network_policy_devices_v1($1::INTEGER)`
 FROM mesh_ops.map_network_sharing_devices_v1($1::INTEGER)`
 	loadNetworkHeaderSQL = `SELECT network_display_name, recovery_epoch
 FROM mesh_ops.load_map_network_header_v1()`
+
+	// Whether the Network holds a legacy direct share endpoint (schema 154),
+	// used once this role may run it.
+	directEndpointsGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.map_network_has_direct_endpoints_v1()'), 'EXECUTE'), FALSE)`
+	loadDirectEndpointsSQL = `SELECT mesh_ops.map_network_has_direct_endpoints_v1()`
 )
 
 // loadNetworkDevicesSQL reads every live Device of the installed scope
@@ -145,6 +151,9 @@ func (store *Store) readInventory(
 		return cachedInventory{}, err
 	}
 	if err := readSharingDevices(ctx, transaction, &cached); err != nil {
+		return cachedInventory{}, err
+	}
+	if err := readDirectEndpoints(ctx, transaction, &cached); err != nil {
 		return cachedInventory{}, err
 	}
 	if err := store.readInventoryDevices(ctx, transaction, scope, previous, &cached); err != nil {
@@ -483,6 +492,23 @@ func readSharingDevices(ctx context.Context, transaction databaseTransaction, ca
 			return ErrSnapshotEvidence
 		}
 		cached.sharingDevices[device] = struct{}{}
+	}
+	return nil
+}
+
+// readDirectEndpoints records whether the Network holds a legacy direct
+// share endpoint; a database that cannot tell counts as holding one.
+func readDirectEndpoints(ctx context.Context, transaction databaseTransaction, cached *cachedInventory) error {
+	granted, err := functionGranted(ctx, transaction, directEndpointsGrantedSQL)
+	if err != nil {
+		return errors.Join(ErrLoadSnapshot, fmt.Errorf("check direct endpoint reader: %w", err))
+	}
+	cached.directEndpoints = true
+	if !granted {
+		return nil
+	}
+	if err := transaction.QueryRow(ctx, loadDirectEndpointsSQL).Scan(&cached.directEndpoints); err != nil {
+		return errors.Join(ErrLoadSnapshot, fmt.Errorf("read network direct endpoints: %w", err))
 	}
 	return nil
 }

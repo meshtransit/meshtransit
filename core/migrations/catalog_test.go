@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 153 {
-		t.Fatalf("len(Catalog()) = %d, want 153", len(catalog))
+	if len(catalog) != 154 {
+		t.Fatalf("len(Catalog()) = %d, want 154", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 153 {
-		t.Fatalf("LatestVersion() = %d, want 153", LatestVersion())
+	if LatestVersion() != 154 {
+		t.Fatalf("LatestVersion() = %d, want 154", LatestVersion())
 	}
 }
 
@@ -3821,6 +3821,30 @@ func TestMapInventoryChanges(t *testing.T) {
 		"DROP ", "CREATE OR REPLACE", "AFTER UPDATE OF", "mesh.map_inventory_seq_"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 153 must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestMapNetworkDirectEndpoints(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[153]
+	if migration.Version != 154 {
+		t.Fatalf("migration 154 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE FUNCTION mesh_ops.map_network_has_direct_endpoints_v1()",
+		"LANGUAGE sql\nSTABLE\nSECURITY DEFINER\nSET search_path = pg_catalog, mesh, mesh_ops",
+		"AND endpoint.provider_network_id = mesh_ops.current_network_id()",
+		"AND endpoint.consumer_network_id = mesh_ops.current_network_id()",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.map_network_has_direct_endpoints_v1() TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 154 must contain %q", want)
+		}
+	}
+	for _, forbidden := range []string{"CREATE OR REPLACE", "DROP ", "INSERT", "UPDATE", "DELETE", "TO mesh_worker"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 154 must not contain %q", forbidden)
 		}
 	}
 }

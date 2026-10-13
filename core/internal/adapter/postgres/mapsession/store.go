@@ -95,10 +95,17 @@ type InventoryStats struct {
 	// the snapshot or the cached inventory.
 	ChangeReads     uint64
 	ChangeFallbacks uint64
+	// SharesSkipped reads ran no share reader because the Network's latest
+	// inventory showed the Device takes part in no share (schema 154);
+	// ShareRechecks of them were read again because the inventory they were
+	// completed with showed one.
+	SharesSkipped uint64
+	ShareRechecks uint64
 }
 
 type inventoryStats struct {
-	shared, reads, direct, policyMismatch, derived, unchanged, sharingDeclines, changeReads, changeFallbacks atomic.Uint64
+	shared, reads, direct, policyMismatch, derived, unchanged, sharingDeclines, changeReads, changeFallbacks,
+	sharesSkipped, shareRechecks atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
@@ -107,7 +114,8 @@ func (store *Store) InventoryStats() InventoryStats {
 		Direct: store.stats.direct.Load(), PolicyMismatches: store.stats.policyMismatch.Load(),
 		Derived: store.stats.derived.Load(), Unchanged: store.stats.unchanged.Load(),
 		SharingDeclines: store.stats.sharingDeclines.Load(), ChangeReads: store.stats.changeReads.Load(),
-		ChangeFallbacks: store.stats.changeFallbacks.Load()}
+		ChangeFallbacks: store.stats.changeFallbacks.Load(), SharesSkipped: store.stats.sharesSkipped.Load(),
+		ShareRechecks: store.stats.shareRechecks.Load()}
 }
 
 // policyMatches checks, for a Device without direct projections, that the
@@ -199,6 +207,9 @@ type snapshotRead struct {
 	readAt         time.Time
 	workspaceValue string
 	networkValue   string
+	// sharesSkipped: the share readers did not run (an inventory showed the
+	// Device takes part in no share).
+	sharesSkipped bool
 }
 
 // withSharedInventory completes a shared-inventory read with the Network's
@@ -220,6 +231,12 @@ func (store *Store) withSharedInventory(ctx context.Context, read snapshotRead) 
 		return appmapsession.Snapshot{}, false, nil
 	}
 	if !store.policyMatches(cached, read) {
+		return appmapsession.Snapshot{}, false, nil
+	}
+	if read.sharesSkipped && !cached.sharesAbsent(read.snapshot.NumericNodeID()) {
+		// The inventory this read is completed with (of its revision or later)
+		// shows a share: read the Device again with its shares.
+		store.stats.shareRechecks.Add(1)
 		return appmapsession.Snapshot{}, false, nil
 	}
 	inventory := cached.inventory
@@ -365,9 +382,22 @@ func (store *Store) loadSnapshot(
 	if err != nil {
 		return snapshotRead{}, err
 	}
-	snapshot, err = store.loadDirectEdges(ctx, transaction, snapshot, fingerprint[:], nodeKey[:])
-	if err != nil {
-		return snapshotRead{}, err
+	// The share readers authenticate the Device again and scan for its
+	// shares; a shared read skips them when the Network's latest inventory
+	// shows the Device takes part in no share, and withSharedInventory
+	// checks that against the inventory it completes the read with.
+	skipShares := false
+	if shared {
+		if cached, found := store.inventories.peek(scope); found && cached.sharesAbsent(record.numericNodeID) {
+			skipShares = true
+			store.stats.sharesSkipped.Add(1)
+		}
+	}
+	if !skipShares {
+		snapshot, err = store.loadDirectEdges(ctx, transaction, snapshot, fingerprint[:], nodeKey[:])
+		if err != nil {
+			return snapshotRead{}, err
+		}
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return snapshotRead{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("commit read snapshot: %w", err))
@@ -375,7 +405,7 @@ func (store *Store) loadSnapshot(
 	committed = true
 	return snapshotRead{
 		snapshot: snapshot, complete: !shared, revision: record.networkRevision, readAt: record.readAt,
-		workspaceValue: workspaceValue, networkValue: networkValue,
+		workspaceValue: workspaceValue, networkValue: networkValue, sharesSkipped: skipShares,
 	}, nil
 }
 

@@ -51,6 +51,9 @@ type fakeTransaction struct {
 	// changeRows answers each of its reads in turn.
 	inventoryChanges bool
 	changeRows       []*inventoryChangeRows
+	// directEndpointReader reports the schema 154 reader as granted; its
+	// answer is then queued in rows (directEndpointsRow).
+	directEndpointReader bool
 	// noNetworkRules serves a Network policy without the Device's rule.
 	noNetworkRules bool
 	// policyExpiry overrides when the Network policy's Devices expire.
@@ -116,6 +119,8 @@ func (transaction *fakeTransaction) Query(
 	case loadNetworkPolicyDevicesSQL:
 		_, _, devices := networkPolicyRows(transaction.policyExpiry)
 		return devices, nil
+	case directEndpointsGrantedSQL:
+		return &grantRows{granted: transaction.directEndpointReader}, nil
 	case inventoryChangesGrantedSQL:
 		return &grantRows{granted: transaction.inventoryChanges}, nil
 	case loadNetworkDeviceChangesSQL:
@@ -243,6 +248,14 @@ func (row inventoryRevisionRow) Scan(destinations ...any) error {
 	*destinations[1].(*int64) = 5
 	*destinations[2].(*time.Time) = row.readAt
 	*destinations[3].(*bool) = true
+	return nil
+}
+
+// directEndpointsRow answers loadDirectEndpointsSQL.
+type directEndpointsRow struct{ present bool }
+
+func (row directEndpointsRow) Scan(destinations ...any) error {
+	*destinations[0].(*bool) = row.present
 	return nil
 }
 
