@@ -19,6 +19,12 @@ scale_mode="${PLATFORM_SCALE:-0}"
 # database and measures map reads (TestPostgreSQLShareScale), then stops.
 share_scale="${PLATFORM_SHARE_SCALE:-0}"
 postgres_shm_size="${POSTGRES_SHM_SIZE:-64m}"
+# POSTGRES_MEMORY caps the fixture database's memory (docker --memory, for
+# example 768m as on POC); unset leaves it uncapped.
+postgres_memory=()
+if [[ -n "${POSTGRES_MEMORY:-}" ]]; then
+	postgres_memory=(--memory "${POSTGRES_MEMORY}")
+fi
 # PLATFORM_PG_MEMORY_GATE_MB: fail when one statement of the migration
 # qualification grows a PostgreSQL backend by more than this many MB (a
 # backend keeps that memory until it closes); 0 disables the gate.
@@ -260,6 +266,7 @@ docker run \
 	--env "POSTGRES_PASSWORD=${postgres_password}" \
 	--env 'POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256' \
 	--shm-size "${postgres_shm_size}" \
+	"${postgres_memory[@]+"${postgres_memory[@]}"}" \
 	"${postgres_image}" \
 	"${postgres_command[@]}" \
 	>/dev/null
@@ -498,8 +505,12 @@ if [[ "${scale_mode}" == 1 ]]; then
 		-v \
 		-run '^TestRoleControlProcessScalesMapStreams$' \
 		-timeout="${PLATFORM_SCALE_TIMEOUT:-40m}" \
-		./core/test/integration
-	exit 0
+		./core/test/integration || scale_status=$?
+	if [[ -n "${SCALE_POSTGRES_LOG:-}" ]]; then
+		docker logs "${postgres_container}" > "${SCALE_POSTGRES_LOG}" 2>&1 || true
+		docker inspect "${postgres_container}" --format '{{.State.OOMKilled}} restarts={{.RestartCount}}' >> "${SCALE_POSTGRES_LOG}" 2>&1 || true
+	fi
+	exit "${scale_status:-0}"
 fi
 run_go test \
 	-tags=integration \
