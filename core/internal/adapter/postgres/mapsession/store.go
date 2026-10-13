@@ -89,10 +89,13 @@ type InventoryStats struct {
 	// SharingDeclines counts refreshes (Unchanged, Derive) declined because a
 	// Device share binds the Device; it was read on its own.
 	SharingDeclines uint64
+	// ChangeReads of the Reads applied the Devices changed since the cached
+	// inventory instead of reading the whole Network (schema 153).
+	ChangeReads uint64
 }
 
 type inventoryStats struct {
-	shared, reads, direct, policyMismatch, derived, unchanged, sharingDeclines atomic.Uint64
+	shared, reads, direct, policyMismatch, derived, unchanged, sharingDeclines, changeReads atomic.Uint64
 }
 
 // InventoryStats returns the counters since the store was built.
@@ -100,7 +103,7 @@ func (store *Store) InventoryStats() InventoryStats {
 	return InventoryStats{Shared: store.stats.shared.Load(), Reads: store.stats.reads.Load(),
 		Direct: store.stats.direct.Load(), PolicyMismatches: store.stats.policyMismatch.Load(),
 		Derived: store.stats.derived.Load(), Unchanged: store.stats.unchanged.Load(),
-		SharingDeclines: store.stats.sharingDeclines.Load()}
+		SharingDeclines: store.stats.sharingDeclines.Load(), ChangeReads: store.stats.changeReads.Load()}
 }
 
 // policyMatches checks, for a Device without direct projections, that the
@@ -202,9 +205,9 @@ type snapshotRead struct {
 func (store *Store) withSharedInventory(ctx context.Context, read snapshotRead) (appmapsession.Snapshot, bool, error) {
 	scope := read.snapshot.Scope()
 	cached, found, err := store.inventories.get(ctx, scope, read.revision, read.readAt,
-		func(readCtx context.Context) (cachedInventory, error) {
+		func(readCtx context.Context, previous cachedInventory) (cachedInventory, error) {
 			store.stats.reads.Add(1)
-			return store.readInventory(readCtx, scope, read.workspaceValue, read.networkValue)
+			return store.readInventory(readCtx, scope, read.workspaceValue, read.networkValue, previous)
 		})
 	if err != nil {
 		return appmapsession.Snapshot{}, false, err

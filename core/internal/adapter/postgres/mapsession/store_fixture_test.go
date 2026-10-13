@@ -47,6 +47,10 @@ type fakeTransaction struct {
 	rollbackCalls int
 	candidateRows *peerCandidateRows
 	inventoryRows []*peerCandidateRows // one per shared-inventory read
+	// inventoryChanges reports the schema 153 change reader as granted;
+	// changeRows answers each of its reads in turn.
+	inventoryChanges bool
+	changeRows       []*inventoryChangeRows
 	// noNetworkRules serves a Network policy without the Device's rule.
 	noNetworkRules bool
 	// policyExpiry overrides when the Network policy's Devices expire.
@@ -112,6 +116,15 @@ func (transaction *fakeTransaction) Query(
 	case loadNetworkPolicyDevicesSQL:
 		_, _, devices := networkPolicyRows(transaction.policyExpiry)
 		return devices, nil
+	case inventoryChangesGrantedSQL:
+		return &grantRows{granted: transaction.inventoryChanges}, nil
+	case loadNetworkDeviceChangesSQL:
+		if len(transaction.changeRows) == 0 {
+			return nil, errors.New("unexpected inventory change read")
+		}
+		rows := transaction.changeRows[0]
+		transaction.changeRows = transaction.changeRows[1:]
+		return rows, nil
 	case loadNetworkDevicesSQL:
 		if len(transaction.inventoryRows) == 0 {
 			return nil, errors.New("unexpected inventory read")
@@ -232,6 +245,53 @@ func (row inventoryRevisionRow) Scan(destinations ...any) error {
 	*destinations[3].(*bool) = true
 	return nil
 }
+
+// changeHeadRow answers loadInventoryChangeHeadSQL.
+type changeHeadRow struct{ head int64 }
+
+func (row changeHeadRow) Scan(destinations ...any) error {
+	*destinations[0].(*int64) = row.head
+	return nil
+}
+
+// inventoryChange is one row of loadNetworkDeviceChangesSQL: a listed
+// Device's record, or a removed Device's numeric ID.
+type inventoryChange struct {
+	seq     int64
+	removed int64
+	record  peerCandidateRecord
+}
+
+type inventoryChangeRows struct {
+	changes []inventoryChange
+	index   int
+}
+
+func (rows *inventoryChangeRows) Next() bool {
+	if rows.index >= len(rows.changes) {
+		return false
+	}
+	rows.index++
+	return true
+}
+
+func (rows *inventoryChangeRows) Scan(destinations ...any) error {
+	change := rows.changes[rows.index-1]
+	*destinations[0].(*int64) = change.seq
+	if change.removed != 0 {
+		*destinations[1].(*int64) = change.removed
+		*destinations[2].(*bool) = false
+		return nil
+	}
+	*destinations[1].(*int64) = change.record.numericNodeID
+	*destinations[2].(*bool) = true
+	candidate := &peerCandidateRows{records: []peerCandidateRecord{change.record}, index: 1}
+	return candidate.Scan(append([]any{new(int64)}, destinations[3:]...)...)
+}
+
+func (rows *inventoryChangeRows) Err() error { return nil }
+
+func (rows *inventoryChangeRows) Close() {}
 
 // genericRows serves rows whose columns are scanned positionally.
 type genericRows struct {

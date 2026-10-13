@@ -66,13 +66,40 @@ const loadNetworkDevicesSQL = `SELECT
     addresses
 FROM mesh_ops.load_map_network_devices_v1($1::INTEGER)`
 
-// readInventory reads one Network's whole live inventory in its own
-// read-only repeatable-read transaction, with the inventory statement bound.
+// The Network's change counter and the Devices changed after a counter
+// (schema 153), used once this role may run them.
+const (
+	inventoryChangesGrantedSQL = `SELECT COALESCE(pg_catalog.has_function_privilege(
+    pg_catalog.to_regprocedure('mesh_ops.load_map_network_device_changes_v1(bigint,integer)'), 'EXECUTE'), FALSE)`
+	loadInventoryChangeHeadSQL  = `SELECT mesh_ops.read_map_inventory_change_head_v1()`
+	loadNetworkDeviceChangesSQL = `SELECT change_seq, numeric_node_id, listed,
+    COALESCE(numeric_owner_id, 0), COALESCE(node_public_id::TEXT, ''), COALESCE(owner_public_id::TEXT, ''),
+    COALESCE(hostname, ''), COALESCE(machine_key, ''::BYTEA), COALESCE(node_key, ''::BYTEA),
+    COALESCE(session_generation, 0), COALESCE(created_at, 'epoch'::TIMESTAMPTZ),
+    COALESCE(key_expiry, 'epoch'::TIMESTAMPTZ), COALESCE(addresses, '{}'::TEXT[])
+FROM mesh_ops.load_map_network_device_changes_v1($1::BIGINT, $2::INTEGER)`
+
+	// maximumInventoryChanges bounds one read of changed Devices; a Network
+	// with more since the cached inventory is read whole.
+	maximumInventoryChanges = 4096
+	// inventoryFullReadInterval bounds how long an inventory is kept up to
+	// date from changes alone before the Network is read whole again.
+	inventoryFullReadInterval = 10 * time.Minute
+)
+
+// readInventory reads one Network's live inventory in its own read-only
+// repeatable-read transaction, with the inventory statement bound. With
+// previous, an inventory of the same Network that tracked its change
+// counter, it reads only the Devices changed since and applies them; it
+// reads the whole Network when there is no such inventory, when the
+// Network's header changed, past maximumInventoryChanges, and at least every
+// inventoryFullReadInterval.
 func (store *Store) readInventory(
 	ctx context.Context,
 	scope network.Scope,
 	workspaceValue string,
 	networkValue string,
+	previous cachedInventory,
 ) (cached cachedInventory, resultErr error) {
 	startedAt := time.Now()
 	defer func() {
@@ -118,8 +145,7 @@ func (store *Store) readInventory(
 	if err := readSharingDevices(ctx, transaction, &cached); err != nil {
 		return cachedInventory{}, err
 	}
-	devices, err := store.readNetworkDevices(ctx, transaction, scope)
-	if err != nil {
+	if err := store.readInventoryDevices(ctx, transaction, scope, previous, &cached); err != nil {
 		return cachedInventory{}, err
 	}
 	cached.policy, err = readNetworkPolicy(ctx, transaction, scope, policyRevision, releaseActive)
@@ -130,19 +156,135 @@ func (store *Store) readInventory(
 		return cachedInventory{}, errors.Join(ErrLoadSnapshot, fmt.Errorf("commit inventory read: %w", err))
 	}
 	committed = true
-	cached.inventory, err = appmapsession.NewNetworkInventory(scope, devices)
-	if err != nil {
-		return cachedInventory{}, errors.Join(ErrSnapshotEvidence, err)
-	}
-	for _, device := range devices {
-		if cached.expiresAt.IsZero() || device.KeyExpiry().Before(cached.expiresAt) {
-			cached.expiresAt = device.KeyExpiry()
-		}
-	}
+	cached.expiresAt = cached.inventory.EarliestKeyExpiry()
 	if changes := cached.policy.ChangesAt(); !changes.IsZero() && (cached.expiresAt.IsZero() || changes.Before(cached.expiresAt)) {
 		cached.expiresAt = changes
 	}
 	return cached, nil
+}
+
+// readInventoryDevices sets cached's inventory and change counter: previous
+// with the Devices changed since applied when it can, else the whole
+// Network.
+func (store *Store) readInventoryDevices(
+	ctx context.Context,
+	transaction databaseTransaction,
+	scope network.Scope,
+	previous cachedInventory,
+	cached *cachedInventory,
+) error {
+	cached.changeSeq = -1
+	tracked, err := functionGranted(ctx, transaction, inventoryChangesGrantedSQL)
+	if err != nil {
+		return errors.Join(ErrLoadSnapshot, fmt.Errorf("check inventory change reader: %w", err))
+	}
+	if tracked {
+		if err := transaction.QueryRow(ctx, loadInventoryChangeHeadSQL).Scan(&cached.changeSeq); err != nil {
+			return errors.Join(ErrLoadSnapshot, fmt.Errorf("read inventory change counter: %w", err))
+		}
+		if cached.changeSeq < 0 {
+			return ErrSnapshotEvidence
+		}
+		if canApplyChanges(previous, *cached, scope) {
+			applied, err := store.applyInventoryChanges(ctx, transaction, scope, previous, cached)
+			if err != nil || applied {
+				return err
+			}
+		}
+	}
+	devices, err := store.readNetworkDevices(ctx, transaction, scope)
+	if err != nil {
+		return err
+	}
+	cached.inventory, err = appmapsession.NewNetworkInventory(scope, devices)
+	if err != nil {
+		return errors.Join(ErrSnapshotEvidence, err)
+	}
+	cached.fullReadAt = time.Now()
+	return nil
+}
+
+// canApplyChanges reports whether cached may be previous with the Devices
+// changed since applied: previous tracked the same Network's counter, which
+// has not gone back, both serve maps under the same recovery epoch, and the
+// last whole read is recent.
+func canApplyChanges(previous, cached cachedInventory, scope network.Scope) bool {
+	return previous.inventory.IsValid() && previous.inventory.Scope() == scope &&
+		previous.changeSeq >= 0 && cached.changeSeq >= previous.changeSeq &&
+		previous.serveable && cached.serveable && previous.recoveryEpoch == cached.recoveryEpoch &&
+		!cached.readAt.Before(previous.readAt) && time.Since(previous.fullReadAt) < inventoryFullReadInterval
+}
+
+// applyInventoryChanges reads the Devices changed after previous's counter
+// and applies them. applied is false when there are too many, or they do
+// not fit one inventory, and the caller reads the whole Network.
+func (store *Store) applyInventoryChanges(
+	ctx context.Context,
+	transaction databaseTransaction,
+	scope network.Scope,
+	previous cachedInventory,
+	cached *cachedInventory,
+) (bool, error) {
+	var changes []appmapsession.InventoryChange
+	if cached.changeSeq > previous.changeSeq {
+		var complete bool
+		var err error
+		changes, complete, err = readNetworkDeviceChanges(ctx, transaction, scope, previous.changeSeq, cached.changeSeq)
+		if err != nil || !complete {
+			return false, err
+		}
+	}
+	inventory, err := previous.inventory.WithChanges(changes, cached.readAt)
+	if err != nil {
+		return false, nil //nolint:nilerr // too many Devices or a conflict: read the whole Network
+	}
+	cached.inventory, cached.fullReadAt = inventory, previous.fullReadAt
+	store.stats.changeReads.Add(1)
+	return true, nil
+}
+
+// readNetworkDeviceChanges reads the Devices changed after since, up to the
+// counter head of the same snapshot. complete is false past
+// maximumInventoryChanges.
+func readNetworkDeviceChanges(
+	ctx context.Context,
+	transaction databaseTransaction,
+	scope network.Scope,
+	since, head int64,
+) ([]appmapsession.InventoryChange, bool, error) {
+	rows, err := transaction.Query(ctx, loadNetworkDeviceChangesSQL, since, maximumInventoryChanges+1)
+	if err != nil || rows == nil {
+		return nil, false, errors.Join(ErrLoadSnapshot, fmt.Errorf("read network inventory changes: %w", nonNil(err)))
+	}
+	defer rows.Close()
+	changes := make([]appmapsession.InventoryChange, 0, 16)
+	for rows.Next() {
+		if len(changes) == maximumInventoryChanges {
+			return nil, false, nil
+		}
+		var changeSeq int64
+		var listed bool
+		var record peerCandidateRecord
+		if err := rows.Scan(&changeSeq, &record.numericNodeID, &listed, &record.numericOwnerID, &record.nodeID,
+			&record.ownerID, &record.hostname, &record.machineKey, &record.nodeKey, &record.sessionGeneration,
+			&record.createdAt, &record.keyExpiry, &record.addresses); err != nil {
+			return nil, false, errors.Join(ErrLoadSnapshot, fmt.Errorf("scan network inventory change: %w", err))
+		}
+		if changeSeq <= since || changeSeq > head || record.numericNodeID <= 0 {
+			return nil, false, ErrSnapshotEvidence
+		}
+		change := appmapsession.InventoryChange{NumericNodeID: record.numericNodeID, Removed: !listed}
+		if listed {
+			if change.Device, err = record.candidate(scope); err != nil {
+				return nil, false, err
+			}
+		}
+		changes = append(changes, change)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, errors.Join(ErrLoadSnapshot, fmt.Errorf("iterate network inventory changes: %w", err))
+	}
+	return changes, true, nil
 }
 
 func (store *Store) readNetworkDevices(

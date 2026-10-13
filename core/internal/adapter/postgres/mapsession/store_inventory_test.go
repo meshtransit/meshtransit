@@ -162,7 +162,7 @@ func TestInventoryUsableOnlyForItsRevisionAndWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cached, err := store.readInventory(t.Context(), scope, testWorkspaceID, testNetworkID)
+	cached, err := store.readInventory(t.Context(), scope, testWorkspaceID, testNetworkID, cachedInventory{})
 	if err != nil {
 		t.Fatalf("readInventory() error = %v", err)
 	}

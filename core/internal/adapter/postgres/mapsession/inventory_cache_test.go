@@ -32,7 +32,7 @@ func TestInventoryCacheReadsOncePerRevisionAcrossConcurrentCallers(t *testing.T)
 	inventory := testInventory(t)
 	var reads atomic.Int32
 	release := make(chan struct{})
-	read := func(context.Context) (cachedInventory, error) {
+	read := func(context.Context, cachedInventory) (cachedInventory, error) {
 		reads.Add(1)
 		<-release
 		return cachedInventory{revision: 7, readAt: inventoryReadAt, inventory: inventory}, nil
@@ -67,13 +67,15 @@ func TestInventoryCacheServesTheRevisionOrALaterOne(t *testing.T) {
 	cache := newInventoryCache(30 * time.Second)
 	scope, _ := scopeFromText(testWorkspaceID, testNetworkID)
 	inventory := testInventory(t)
-	newer := func(context.Context) (cachedInventory, error) {
+	newer := func(context.Context, cachedInventory) (cachedInventory, error) {
 		return cachedInventory{revision: 9, readAt: inventoryReadAt, inventory: inventory}, nil
 	}
 	if cached, found, err := cache.get(t.Context(), scope, 7, inventoryReadAt, newer); !found || err != nil || cached.revision != 9 {
 		t.Fatalf("a read of revision 7 did not get the later 9: found=%t err=%v", found, err)
 	}
-	failing := func(context.Context) (cachedInventory, error) { return cachedInventory{}, errors.New("down") }
+	failing := func(context.Context, cachedInventory) (cachedInventory, error) {
+		return cachedInventory{}, errors.New("down")
+	}
 	if cached, found, err := cache.get(t.Context(), scope, 9, inventoryReadAt.Add(time.Second), failing); !found || err != nil ||
 		cached.revision != 9 {
 		t.Fatalf("the cached revision 9 was not served: found=%t err=%v", found, err)
@@ -127,7 +129,7 @@ func TestInventoryCacheCallerJoinsTheNextReadAfterAStaleOne(t *testing.T) {
 			inventory := testInventory(t)
 			var reads atomic.Int32
 			reader := func(revision int64, release <-chan struct{}) inventoryReader {
-				return func(context.Context) (cachedInventory, error) {
+				return func(context.Context, cachedInventory) (cachedInventory, error) {
 					reads.Add(1)
 					<-release
 					return cachedInventory{revision: revision, readAt: inventoryReadAt, inventory: inventory}, nil

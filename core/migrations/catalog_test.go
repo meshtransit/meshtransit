@@ -11,8 +11,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 152 {
-		t.Fatalf("len(Catalog()) = %d, want 152", len(catalog))
+	if len(catalog) != 153 {
+		t.Fatalf("len(Catalog()) = %d, want 153", len(catalog))
 	}
 	cleanup := catalog[88]
 	if cleanup.Description != expiredUnprovisionedShareCleanupDescription {
@@ -1607,8 +1607,8 @@ func TestCatalogContainsOrderedFoundations(t *testing.T) {
 			t.Errorf("Network management RBAC migration SQL contains unsafe capability %q", forbidden)
 		}
 	}
-	if LatestVersion() != 152 {
-		t.Fatalf("LatestVersion() = %d, want 152", LatestVersion())
+	if LatestVersion() != 153 {
+		t.Fatalf("LatestVersion() = %d, want 153", LatestVersion())
 	}
 }
 
@@ -3784,6 +3784,43 @@ func TestMapReaderIndexLookups(t *testing.T) {
 	for _, forbidden := range []string{"GRANT", "REVOKE", "OWNER", "DROP ", "BYPASSRLS", "INSERT", "UPDATE", "DELETE"} {
 		if strings.Contains(migration.SQL, forbidden) {
 			t.Errorf("schema 152 must not contain %q", forbidden)
+		}
+	}
+}
+
+func TestMapInventoryChanges(t *testing.T) {
+	t.Parallel()
+	migration := Catalog()[152]
+	if migration.Version != 153 {
+		t.Fatalf("migration 153 = %+v", migration)
+	}
+	for _, want := range []string{
+		"CREATE TABLE mesh_ops.map_inventory_change_head (",
+		"CREATE TABLE mesh_ops.map_inventory_change (",
+		"CREATE INDEX map_inventory_change_seq_idx\n    ON mesh_ops.map_inventory_change (workspace_id, network_id, change_seq, device_id);",
+		"ALTER TABLE mesh_ops.map_inventory_change_head FORCE ROW LEVEL SECURITY;",
+		"ALTER TABLE mesh_ops.map_inventory_change FORCE ROW LEVEL SECURITY;",
+		"DO UPDATE SET change_seq = head.change_seq + 1",
+		"CREATE CONSTRAINT TRIGGER device_map_inventory_change_write",
+		"CREATE CONSTRAINT TRIGGER device_map_inventory_change_update",
+		"CREATE CONSTRAINT TRIGGER device_machine_key_epoch_map_inventory_change_update",
+		"CREATE CONSTRAINT TRIGGER device_node_key_epoch_map_inventory_change_update",
+		"CREATE CONSTRAINT TRIGGER node_address_lease_map_inventory_change_update",
+		"CREATE CONSTRAINT TRIGGER principal_map_inventory_change_update",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.read_map_inventory_change_head_v1() TO mesh_runtime;",
+		"GRANT EXECUTE ON FUNCTION mesh_ops.load_map_network_device_changes_v1(BIGINT, INTEGER) TO mesh_runtime;",
+	} {
+		if !strings.Contains(migration.SQL, want) {
+			t.Errorf("schema 153 must contain %q", want)
+		}
+	}
+	if got := strings.Count(migration.SQL, "DEFERRABLE INITIALLY DEFERRED"); got != 9 {
+		t.Errorf("schema 153 has %d deferred triggers, want 9", got)
+	}
+	for _, forbidden := range []string{"GRANT SELECT", "GRANT INSERT", "GRANT UPDATE", "TO mesh_worker", "BYPASSRLS",
+		"DROP ", "CREATE OR REPLACE"} {
+		if strings.Contains(migration.SQL, forbidden) {
+			t.Errorf("schema 153 must not contain %q", forbidden)
 		}
 	}
 }

@@ -32,9 +32,9 @@ func (store *Store) Derive(
 	scope := current.Scope()
 	wanted := max(minRevision, current.NetworkRevision())
 	cached, found, err := store.inventories.latest(ctx, scope, wanted, time.Now(),
-		func(readCtx context.Context) (cachedInventory, error) {
+		func(readCtx context.Context, previous cachedInventory) (cachedInventory, error) {
 			store.stats.reads.Add(1)
-			return store.readInventory(readCtx, scope, scope.WorkspaceID().String(), scope.NetworkID().String())
+			return store.readInventory(readCtx, scope, scope.WorkspaceID().String(), scope.NetworkID().String(), previous)
 		})
 	if err != nil {
 		return appmapsession.Snapshot{}, false, err
@@ -101,9 +101,9 @@ func (store *Store) Unchanged(ctx context.Context, current appmapsession.Snapsho
 	scope := current.Scope()
 	now := time.Now()
 	cached, found, err := store.inventories.latest(ctx, scope, current.NetworkRevision(), now,
-		func(readCtx context.Context) (cachedInventory, error) {
+		func(readCtx context.Context, previous cachedInventory) (cachedInventory, error) {
 			store.stats.reads.Add(1)
-			return store.readInventory(readCtx, scope, scope.WorkspaceID().String(), scope.NetworkID().String())
+			return store.readInventory(readCtx, scope, scope.WorkspaceID().String(), scope.NetworkID().String(), previous)
 		})
 	if err != nil || !found {
 		return false, err

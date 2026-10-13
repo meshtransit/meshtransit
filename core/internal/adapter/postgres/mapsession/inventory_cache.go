@@ -28,6 +28,12 @@ type cachedInventory struct {
 	// (schema 146). Their maps depend on state outside the view (aliases,
 	// peers across Networks), so they are always read per Device.
 	sharingDevices map[int64]struct{}
+	// changeSeq is the Network's change counter (schema 153) the inventory
+	// reflects, or -1 when the database tracks no changes; the next read
+	// applies the Devices changed after it. fullReadAt is the local time of
+	// the last read of the whole Network.
+	changeSeq  int64
+	fullReadAt time.Time
 }
 
 // sharingBinds reports whether a share binds the Device numericNodeID.
@@ -73,8 +79,10 @@ func newInventoryCache(maxAge time.Duration) *inventoryCache {
 		capacity: inventoryCacheEntries}
 }
 
-// inventoryReader reads one Network's inventory in its own transaction.
-type inventoryReader func(context.Context) (cachedInventory, error)
+// inventoryReader reads one Network's inventory in its own transaction,
+// given the inventory the cache holds (possibly none), which it may bring up
+// to date instead of reading the whole Network.
+type inventoryReader func(ctx context.Context, previous cachedInventory) (cachedInventory, error)
 
 // get returns an inventory of scope at revision or later, usable at
 // PostgreSQL time now, reading it at most once across concurrent callers.
@@ -131,9 +139,10 @@ func (cache *inventoryCache) fetch(
 		}
 		done := make(chan struct{})
 		slot.loading = done
+		previous := slot.current
 		cache.mu.Unlock()
 
-		loaded, err := read(ctx)
+		loaded, err := read(ctx, previous)
 
 		cache.mu.Lock()
 		if err == nil && loaded.revision >= slot.current.revision {

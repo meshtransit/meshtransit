@@ -3,6 +3,7 @@ package mapsession
 import (
 	"errors"
 	"slices"
+	"time"
 
 	"meshtransit.net/core/internal/domain/network"
 	"meshtransit.net/core/internal/domain/node"
@@ -34,6 +35,8 @@ type networkInventory struct {
 	byNumeric  map[int64]int
 	byMachine  map[node.MachineKey]int
 	byNodeKey  map[node.Key]int
+	// earliestExpiry is the earliest key expiry of a listed Device.
+	earliestExpiry time.Time
 }
 
 // NewNetworkInventory validates and indexes one Network's live Devices.
@@ -66,6 +69,9 @@ func newNetworkInventory(scope network.Scope, devices []PeerCandidate) (*network
 		}
 		if !inventory.claim(index, candidate) {
 			return nil, ErrInvalidInventory
+		}
+		if inventory.earliestExpiry.IsZero() || candidate.keyExpiry.Before(inventory.earliestExpiry) {
+			inventory.earliestExpiry = candidate.keyExpiry
 		}
 	}
 	return inventory, nil
@@ -116,6 +122,64 @@ func (inventory NetworkInventory) Scope() network.Scope {
 		return network.Scope{}
 	}
 	return inventory.inner.scope
+}
+
+// InventoryChange is one Device's change since an inventory was read: its
+// current entry, or, when Removed, that it is no longer listed.
+type InventoryChange struct {
+	NumericNodeID int64
+	Removed       bool
+	Device        PeerCandidate
+}
+
+// WithChanges returns a new inventory: this one with changes applied in
+// order (the last change of a Device wins) and every Device whose key expired
+// at or before now left out. Without a change or an expiry it returns this
+// very inventory, so maps built from it stay the same object. The result is
+// validated as NewNetworkInventory validates.
+func (inventory NetworkInventory) WithChanges(changes []InventoryChange, now time.Time) (NetworkInventory, error) {
+	if inventory.inner == nil {
+		return NetworkInventory{}, ErrInvalidInventory
+	}
+	latest := make(map[int64]InventoryChange, len(changes))
+	for _, change := range changes {
+		if change.NumericNodeID <= 0 || (!change.Removed && (!change.Device.IsValid() ||
+			change.Device.numericNodeID != change.NumericNodeID)) {
+			return NetworkInventory{}, ErrInvalidInventory
+		}
+		latest[change.NumericNodeID] = change
+	}
+	expired := func(candidate PeerCandidate) bool { return !now.Before(candidate.keyExpiry) }
+	unchanged := len(latest) == 0
+	devices := make([]PeerCandidate, 0, len(inventory.inner.candidates)+len(latest))
+	for _, candidate := range inventory.inner.candidates {
+		if _, changed := latest[candidate.numericNodeID]; changed {
+			continue
+		}
+		if expired(candidate) {
+			unchanged = false
+			continue
+		}
+		devices = append(devices, candidate)
+	}
+	if unchanged {
+		return inventory, nil
+	}
+	for _, change := range latest {
+		if !change.Removed && !expired(change.Device) {
+			devices = append(devices, change.Device)
+		}
+	}
+	return NewNetworkInventory(inventory.inner.scope, devices)
+}
+
+// EarliestKeyExpiry returns the earliest key expiry of a listed Device, or
+// zero when none is listed.
+func (inventory NetworkInventory) EarliestKeyExpiry() time.Time {
+	if inventory.inner == nil {
+		return time.Time{}
+	}
+	return inventory.inner.earliestExpiry
 }
 
 // Len returns the number of live Devices.
