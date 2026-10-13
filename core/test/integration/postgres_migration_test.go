@@ -444,6 +444,7 @@ func TestPostgreSQLMigrations(t *testing.T) {
 	assertRegistrationAddressFloor(ctx, t, adminConnection, runtimePool)
 	// Add Devices in transactions they roll back.
 	assertMapReaderPlansScale(ctx, t)
+	assertRegistrationAllocationPlansScale(ctx, t)
 	assertMapInventoryChanges(ctx, t)
 	assertMapNetworkDirectEndpoints(ctx, t, adminConnection)
 	// The policy publication, group and tag fixtures above compared maps

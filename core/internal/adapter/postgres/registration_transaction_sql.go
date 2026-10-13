@@ -82,16 +82,24 @@ const lockRegistrationAuditStreamSQL = `SELECT stream_internal_id, next_sequence
 FROM mesh_audit.lock_network_stream_head()`
 
 // registrationHostnamesTakenSQL returns which of the candidate hostnames ($3)
-// a live Device of the Network other than the registering one ($4) holds. It
-// probes the Network's hostname unique index once per candidate, so the cost
-// does not grow with the Network.
-const registrationHostnamesTakenSQL = `SELECT device.hostname_key
-FROM mesh.device AS device
-WHERE device.workspace_id = $1::BIGINT
-  AND device.network_id = $2::BIGINT
-  AND device.hostname_key = ANY($3::TEXT[])
-  AND device.deleted_at IS NULL
-  AND ($4::BIGINT IS NULL OR device.id <> $4::BIGINT)`
+// a live Device of the Network other than the registering one ($4) holds,
+// one probe of the Network's hostname unique index per candidate. With
+// current statistics the cost does not grow with the Network. A Workspace
+// created after mesh.device was last analyzed is rated at about one row,
+// and the planner may then probe another Workspace-led index and filter the
+// Workspace's Devices until autovacuum analyzes the table again.
+const registrationHostnamesTakenSQL = `SELECT probe.hostname_key
+FROM pg_catalog.unnest($3::TEXT[]) AS candidate(hostname_key)
+CROSS JOIN LATERAL (
+    SELECT device.hostname_key
+    FROM mesh.device AS device
+    WHERE device.workspace_id = $1::BIGINT
+      AND device.network_id = $2::BIGINT
+      AND device.hostname_key = candidate.hostname_key
+      AND device.deleted_at IS NULL
+      AND ($4::BIGINT IS NULL OR device.id <> $4::BIGINT)
+    LIMIT 1
+) AS probe`
 
 const lockRegistrationPrefixesSQL = `SELECT *
 FROM mesh_ops.lock_registration_prefixes($1::BIGINT)`
